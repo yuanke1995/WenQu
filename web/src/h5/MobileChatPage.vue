@@ -98,8 +98,14 @@
           :last-round="m === panelAi"
           :debug-display="debugDisplayVisible" :session-id="currentSessionId || ''" :loading="loading"
           :variant-switching="variantSwitching" :goal="sessionGoal"
+          :delivery="deliveryCardOfMessage(m)" :goal-delivery="goalDelivery"
+          :hide-artifacts="deliveryListHidden(m)"
           :approval-now="approvalNow" :progress="planExecProgressOf(m)"
+          :adjusts="planAdjustsOfMsg(m)"
           @activate="activeIdx = $event"
+          @adjust="openPlanAdjust({ m, index: i })"
+          @locate-replanned="locateReplanned(m)"
+          @locate-source="locatePlanSource(m)"
           @preview="openPreview"
           @paste-view="openPasteView"
           @source="openSourceDetail"
@@ -114,9 +120,12 @@
           @more="openRound"
           @open-plan="openPlanViewer"
           @goal-view="goalViewerOpen = true"
+          @goal-delivery="openDelivery(goalDelivery)"
           @goal-edit="startGoalInlineEdit"
           @goal-restart="startGoal($event)"
           @goal-delete="runGoalAction('delete')"
+          @delivery-view="openDelivery"
+          @delivery-zip="downloadDeliveryZip"
         />
       </template>
     </main>
@@ -125,8 +134,18 @@
     <PlanViewer :open="planViewer.open" :card="planViewer.card" :sid="planViewer.sid"
                 :pkey="planViewer.pkey" :title="planViewer.title" :version="planViewer.version"
                 :initial-tab="planViewer.tab" :msg="viewerMsgLive" :progress="viewerProgress"
+                :adjusts="viewerAdjusts"
                 @close="closePlanViewer" @approve="onViewerApprove"
-                @revise="onViewerRevise" @supersede="onViewerSupersede" @stop="onViewerStop" />
+                @revise="onViewerRevise" @supersede="onViewerSupersede" @stop="onViewerStop"
+                @adjust="onViewerAdjust" @locate-source="onViewerLocateSource" />
+
+    <!-- 批准后调整计划：与 PC 共用同一面板（≤720px 自动落底部 sheet） -->
+    <PlanAdjustSheet :open="planAdjust.open" :running="planAdjust.running"
+                     :done="planAdjust.done" :doing="planAdjust.doing" :total="planAdjust.total"
+                     :failed="planAdjust.failed" :step-label="planAdjust.stepLabel"
+                     :busy="planAdjust.busy" :error="planAdjust.error"
+                     :suggest-replan="planAdjust.suggestReplan"
+                     @close="closePlanAdjust" @submit="submitPlanAdjust" />
 
     <button v-if="!stickToBottom && messages.length" class="m-jump" type="button" title="回到最新" aria-label="回到最新" @click="scrollForce()">
       <arrow-down-outlined />
@@ -214,6 +233,9 @@
           <span v-if="goalProgressPercent != null" class="m-gb-track" :title="'预算已用 ' + goalProgressPercent + '%'">
             <i :style="{ width: goalProgressPercent + '%' }" />
           </span>
+          <button v-if="goalDelivery" type="button" class="m-gb-dlv"
+                  :title="'打开交付包：' + goalDelivery.fileCount + ' 件'"
+                  @click="openDelivery(goalDelivery)">产出 {{ goalDelivery.fileCount }} 件</button>
           <span v-if="goalBarError" class="m-gb-error" role="alert">{{ goalBarError }}</span>
           <span v-else-if="goalBarMeta" class="m-gb-meta">{{ goalBarMeta }}</span>
         </div>
@@ -416,7 +438,8 @@
     <SkillContentModal :open="!!skillDoc" :name="skillDoc" :entry="skillDocEntry"
                        :session-id="currentSessionId || ''"
                        @update:open="v => { if (!v) skillDoc = '' }" />
-    <MobileRefSheet :open="refOpen" @close="refOpen = false" @source="openSourceDetail" @open-hitl="focusHitlM" />
+    <MobileRefSheet :open="refOpen" :packages="deliveryPackages" @close="refOpen = false"
+                    @source="openSourceDetail" @open-hitl="focusHitlM" @delivery-view="onRefDelivery" />
     <MobileNotifSheet :open="notifOpen" @close="notifOpen = false" />
     <MobileRoundSheet :open="roundOpen" :index="roundIdx" @close="roundOpen = false" @events="openRoundEvents" />
     <!-- 过程回放（事件账本）：顶栏入口看整个会话，单轮 sheet 里的那一项只看那一轮。
@@ -534,6 +557,11 @@
     <!-- 目标操作：第一行只留主行动，其余动作收在这里（触屏点不开 hover，也不能把四颗图标挤在一行） -->
     <BottomSheet :open="goalActionsOpen" title="目标操作" max-height="60dvh" @close="goalActionsOpen = false">
       <div class="m-goalact">
+        <button v-if="goalDelivery" type="button" class="m-goalact-row" @click="actFromGoalSheet('delivery')">
+          <folder-open-outlined class="m-goalact-ic" />
+          <span class="m-goalact-t">查看交付</span>
+          <span class="m-goalact-s">{{ goalDelivery.fileCount }} 件 · 入口与全部文件</span>
+        </button>
         <button v-if="goalCanEdit" type="button" class="m-goalact-row" @click="actFromGoalSheet('edit')">
           <edit-outlined class="m-goalact-ic" />
           <span class="m-goalact-t">修改目标</span>
@@ -568,6 +596,11 @@
     <GoalViewer :open="goalViewerOpen" :session-id="currentSessionId || ''" :goal="sessionGoal" device="h5"
                 @close="goalViewerOpen = false"
                 @action="onGoalViewerAction" @jump="jumpToGoalTurn" />
+    <!-- 交付包：卡片/目标条/终态卡/「状态与来源」四处入口共用这一个 sheet（内容与 PC 抽屉同一份） -->
+    <BottomSheet :open="deliveryOpen" :title="deliveryTarget ? deliveryTarget.name : '交付包'"
+                 max-height="78dvh" @close="deliveryOpen = false">
+      <DeliveryPanel :delivery="deliveryTarget" @zip="downloadDeliveryZip" />
+    </BottomSheet>
   </div>
 </template>
 
@@ -599,8 +632,10 @@ import BottomSheet from './BottomSheet.vue'
 import MobileMsgRow from './MobileMsgRow.vue'
 // 目标过程抽屉与终态卡：与 PC 共用同一份
 import GoalViewer from '../components/GoalViewer.vue'
+// 交付面板：与 PC 抽屉同一份内容，这里放进底部 sheet
+import DeliveryPanel from '../components/DeliveryPanel.vue'
 import PlanViewer from '../components/PlanViewer.vue'
-import { planExecProgress } from '../chat/plan'
+import PlanAdjustSheet from '../components/PlanAdjustSheet.vue'
 // 顶栏/输入卡上方的「子智能体」药丸：与 PC 壳共用同一份组件（触屏形态点开走底部 sheet）
 import SubagentPill from '../components/SubagentPill.vue'
 import MobileSessionSheet from './MobileSessionSheet.vue'
@@ -718,6 +753,8 @@ const {
   // 确认栏在本页打字框原位，卡片本体共用 PlanCard
   planModeOn, setPlanMode, submitPlanApproval, revisePlanInPlace, continuePlanConversation,
   pendingPlan, curPlanCard, planExpired, planCountdownText,
+  // 批准后调整（A/B）与执行进度/调整记录：与 PC 同一份引擎口径
+  adjustPlanAfterApproval, planExecProgressOf, planAdjustsOfMsg,
   approvalNow,
   // 目标模式：摘要条常驻在输入卡上方，改原文开底部 sheet，目标卡在「状态与来源」sheet。
   // 词汇、显隐、动作可用性与编辑字段全在引擎侧（与 PC 共用一份），本页只画形状。
@@ -726,6 +763,8 @@ const {
   goalBarVisible, goalBarMeta, goalBarError, goalRoundLine, goalProgressPercent,
   goalCanPause, goalCanResume, goalCanEdit, goalCanCancel, goalCanClearRecord,
   goalTerminalCard, goalTerminalTitle, goalTerminalNote, goalVersionLabel, goalTurnStreaming, runGoalAction,
+  // 交付包：目标跨轮一个包、普通回答按轮一个包（与 PC 同一份引擎口径）
+  goalDelivery, deliveryPackages, deliveryCardOfMessage, deliveryListHidden, downloadDeliveryZip,
   goalEditing, goalEdit, goalEditBusy, goalEditSaveable,
   startGoalInlineEdit, saveGoalEdit,
   // 任务清单：快照与「何时露/怎么计数」全吃引擎那一份，本页只留折叠开关。
@@ -746,6 +785,19 @@ const {
 const goalActionsOpen = ref(false)
 const goalCancelAsk = ref(false)
 const goalViewerOpen = ref(false)
+// 交付包面板：卡片/目标条/终态卡三处入口都落到同一包；底部 sheet 与 PC 抽屉同一份内容
+const deliveryOpen = ref(false)
+const deliveryTarget = ref(null)
+function openDelivery (pkg) {
+  if (!pkg) return
+  deliveryTarget.value = pkg
+  deliveryOpen.value = true
+}
+/** 「状态与来源」里点交付包：先收起那张 sheet，再开交付 panel（同一层不叠两层） */
+function onRefDelivery (pkg) {
+  refOpen.value = false
+  openDelivery(pkg)
+}
 function openGoalActions () {
   goalCancelAsk.value = false
   goalActionsOpen.value = true
@@ -759,6 +811,11 @@ async function actFromGoalSheet (action) {
   if (action === 'view') {
     goalActionsOpen.value = false
     goalViewerOpen.value = true
+    return
+  }
+  if (action === 'delivery') {
+    goalActionsOpen.value = false
+    openDelivery(goalDelivery.value)
     return
   }
   if (action === 'cancel') {
@@ -806,6 +863,8 @@ watch(currentSessionId, () => {
   goalActionsOpen.value = false
   goalCancelAsk.value = false
   goalViewerOpen.value = false
+  deliveryOpen.value = false
+  deliveryTarget.value = null
 })
 
 // ==================== 计划视图（移动壳） ====================
@@ -832,12 +891,6 @@ function openPlanViewer ({ m, index, version, tab } = {}) {
   planViewer.open = true
 }
 const closePlanViewer = () => { planViewer.open = false }
-/** 计划卡的执行进度：与 PC 同一口径（清单缺失/不属于这一轮就 null，退回步骤预览） */
-const planExecProgressOf = m => {
-  if (!m || !m.planCard) return null
-  return planExecProgress(m.planCard, sessionTodos.value, m.turnId || '',
-    loading.value && m === panelAi.value)
-}
 const viewerMsg = () => {
   if (!planViewer.card || planViewer.sid !== (currentSessionId.value || '')) return null
   return messages.value.find(m => m && m.planCard === planViewer.card) || null
@@ -850,6 +903,128 @@ const viewerProgress = computed(() => {
 })
 /** 执行页签的「停止执行」：与输入区的停止按钮同一入口 */
 const onViewerStop = () => { stop() }
+/** 抽屉里的本轮调整记录（执行页签） */
+const viewerAdjusts = computed(() => {
+  const m = viewerMsgLive.value
+  return m ? planAdjustsOfMsg(m) : []
+})
+/** 抽屉里点「调整计划」：面板盖在抽屉上，成功后一起收 */
+const onViewerAdjust = () => {
+  const m = viewerMsg()
+  if (m) openPlanAdjust({ m, fromViewer: true })
+}
+/** 抽屉卡头的血缘标：回到旧计划的执行记录 */
+const onViewerLocateSource = () => {
+  const id = planViewer.card && planViewer.card.adjustFrom && planViewer.card.adjustFrom.cardId
+  closePlanViewer()
+  locatePlanCardById(id)
+}
+/** 按计划卡 id 定位（H5 用行的 data-row-index 滚动，不另造一套锚点） */
+const locatePlanCardById = id => {
+  if (!id) return
+  const mi = messages.value.findIndex(m => m && m.planCard && m.planCard.id === id)
+  if (mi < 0) return
+  nextTick(() => {
+    document.querySelector(`[data-row-index="${mi}"]`)
+      ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  })
+}
+const locateReplanned = m => {
+  const id = m && m.planCard && m.planCard.replannedBy && m.planCard.replannedBy.cardId
+  locatePlanCardById(id)
+}
+const locatePlanSource = m => {
+  const id = m && m.planCard && m.planCard.adjustFrom && m.planCard.adjustFrom.cardId
+  locatePlanCardById(id)
+}
+
+// ==================== 批准后调整计划（与 PC 同一份引擎动作） ====================
+const planAdjust = reactive({
+  open: false, m: null, fromViewer: false,
+  running: false, done: 0, doing: 0, total: 0, failed: 0, stepLabel: '',
+  busy: false, error: '', suggestReplan: false
+})
+/* 面板打开期间本轮结束：running 跟着消息对象走；切会话时整块作废 */
+watch(() => planAdjust.m && planAdjust.m.loading, v => {
+  if (!planAdjust.open) return
+  planAdjust.running = !!v
+})
+watch(currentSessionId, () => {
+  planAdjust.open = false
+  planAdjust.m = null
+  planAdjust.error = ''
+  planAdjust.suggestReplan = false
+})
+const openPlanAdjust = ({ m, fromViewer = false } = {}) => {
+  const c = m && m.planCard
+  if (!c || c.status !== 'approved' || c.restored) return
+  if (c.replannedBy || c.replannedAt) return
+  const prog = planExecProgressOf(m)
+  const items = (prog && prog.items) || []
+  const doingAt = items.findIndex(i => i.status === 'doing')
+  planAdjust.m = m
+  planAdjust.fromViewer = !!fromViewer
+  planAdjust.running = !!m.loading
+  planAdjust.done = prog ? prog.done : 0
+  planAdjust.doing = doingAt >= 0 ? 1 : 0
+  planAdjust.total = prog ? prog.total : 0
+  planAdjust.failed = prog ? prog.failed : 0
+  planAdjust.stepLabel = doingAt >= 0 ? `第 ${doingAt + 1} 步「${items[doingAt].text}」` : ''
+  planAdjust.busy = false
+  planAdjust.error = ''
+  planAdjust.suggestReplan = false
+  planAdjust.open = true
+}
+const closePlanAdjust = () => {
+  if (planAdjust.busy) return
+  planAdjust.open = false
+  planAdjust.m = null
+  planAdjust.error = ''
+  planAdjust.suggestReplan = false
+}
+const submitPlanAdjust = async ({ text, mode }) => {
+  if (planAdjust.busy) return
+  const m = planAdjust.m
+  if (!m) return
+  planAdjust.busy = true
+  planAdjust.error = ''
+  planAdjust.suggestReplan = false
+  let r
+  try {
+    r = await adjustPlanAfterApproval(m, text, mode)
+  } catch (e) {
+    r = { ok: false, reason: 'error' }
+  }
+  planAdjust.busy = false
+  if (!r || !r.ok) {
+    const reason = r && r.reason
+    planAdjust.error = reason === 'ended'
+      ? '这一轮刚好结束了。要改计划，请改用「停止并重新计划」。'
+      : reason === 'stop-failed'
+        ? '这一轮没停下来，先不要重新计划。可以稍后再试。'
+        : reason === 'busy'
+          ? '还有一轮在跑，等它结束再调整。'
+          : reason === 'restored'
+          ? '这张计划是恢复的，请回到发起它的设备调整。'
+          : reason === 'model'
+            ? '还没有可用模型，请先选择模型。'
+            : reason === 'empty'
+              ? '先写下要改什么。'
+              : '提交失败，请重试。'
+    if (reason === 'ended') planAdjust.suggestReplan = true
+    return
+  }
+  const wasRunning = planAdjust.running
+  const fromViewer = planAdjust.fromViewer
+  planAdjust.open = false
+  planAdjust.m = null
+  planAdjust.error = ''
+  planAdjust.suggestReplan = false
+  if (fromViewer) closePlanViewer()
+  message.info(mode === 'replan'
+    ? (wasRunning ? '已停止本轮，正在按新意见重新计划' : '正在按新意见重新计划')
+    : '已送到正在执行的一轮，下一步开始前生效')
+}
 const onViewerApprove = () => {
   const m = viewerMsg()
   if (!m) return
@@ -1560,6 +1735,13 @@ onUnmounted(() => {
 .m-gb-round { flex: none; font-size: 11px; line-height: 16px; padding: 0 5px; border-radius: 5px; border: 1px solid var(--app-border); color: var(--app-text3); white-space: nowrap; }
 .m-gb-track { flex: none; width: 60px; height: 3px; border-radius: 999px; background: var(--app-border); overflow: hidden; }
 .m-gb-track i { display: block; height: 100%; border-radius: 999px; background: var(--app-accent); transition: width .25s ease; }
+/* 产出入口：第二行里唯一可点的数，用浅蓝胶囊把它从停因灰字里拎出来 */
+.m-gb-dlv {
+  flex: none; padding: 0 7px; border-radius: 5px;
+  border: 1px solid var(--app-accent-border);
+  background: var(--app-accent-weak); color: var(--app-accent);
+  font-size: 11px; line-height: 16px; white-space: nowrap;
+}
 .m-gb-meta { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; line-height: 16px; color: var(--app-text3); font-variant-numeric: tabular-nums; }
 .m-gb-error { flex: 1; min-width: 0; font-size: 11.5px; line-height: 16px; color: var(--app-danger); word-break: break-word; }
 /* 目标操作 sheet：一行一个动作，说明写在标题下面；危险动作（取消/删除）单独一档色 */

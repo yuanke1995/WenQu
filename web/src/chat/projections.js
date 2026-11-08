@@ -1648,6 +1648,80 @@ const goalEchoTipOf = (g, goalId) => {
   return [head, goalRoundLineOf(g), g.hint, goalBlockReasonOf(g), goalOutcomeLineOf(g)].filter(Boolean).join('\n')
 }
 
+// ==================== 交付包（产物清单的聚合口径） ====================
+/* 以前产物是「回答的附件」：每件一行、两个常驻动作，多文件一次交付就把对话刷成文件管理器。
+ * 现在把一组产物收成一个交付包（有入口、有分组、有体量），卡片与抽屉都吃这一份；
+ * 目标模式再在包上面加版本与验收，普通问答只少这两样，形状不许另起一套。 */
+
+/** 产物在交付包里的角色：决定分组与卡片标签（入口会由 {@link deliveryOf} 改写） */
+export const deliveryTagOf = filename => {
+  const name = String(filename || '')
+  if (/^(robots\.txt|sitemap\.xml|favicon\.(svg|ico|png))$/i.test(name)) return '站点文件'
+  if (/\.(svg|ico|webmanifest)$/i.test(name) || /\.xml$/i.test(name)) return '站点文件'
+  if (/\.html?$/i.test(name)) return '页面'
+  if (/\.(md|markdown|pdf|docx|txt)$/i.test(name)) return '文档'
+  return '文件'
+}
+/** 主入口：index.html → README → 任一 html → 第一件（没有入口也允许，不是所有交付都有站点） */
+export const deliveryEntryOf = files => {
+  const list = files || []
+  return list.find(f => /^index\.html?$/i.test(String(f.filename || ''))) ||
+    list.find(f => /^readme\.(md|markdown|txt)$/i.test(String(f.filename || ''))) ||
+    list.find(f => /\.html?$/i.test(String(f.filename || ''))) ||
+    list[0] || null
+}
+/** 交付包名的主语：目标原文/问题去掉指令词与后半句（"做一个问渠官网，…" → "问渠官网"） */
+export const deliverySubjectOf = text => {
+  let head = String(text || '').split(/[，,。；;：:\n]/)[0].trim()
+  for (let i = 0; i < 3; i++) {
+    head = head.replace(/^(请|帮我|帮忙|给我|做一个|做个|写一个|写个|生成|搭建|创建|设计|实现)/, '').trim()
+  }
+  return head.slice(0, 24)
+}
+/**
+ * 产物清单 → 交付包视图（卡片、抽屉、H5 汇总同吃这一份）。
+ *
+ * <p>meta 由调用方给：{@code name / versionLabel / round / stateLabel / badgeTone / approved /
+ * turnIds / anchorKey / scope / shared}。单文件也能成包——聊天里要不要把它画成卡片由调用方定
+ * （1 件的普通回答仍走旧的一行，别为了一颗文件支一张大卡）。
+ */
+export const deliveryOf = (files, meta = {}) => {
+  // 分享页的产物没有 url（只有按 token 现换的 seq），登录态产物没有 seq；两者都算有效条目
+  const raw = (files || []).filter(f => f && (f.url || f.seq != null))
+  if (!raw.length) return null
+  const withTag = raw.map(f => ({ ...f, tag: deliveryTagOf(f.filename) }))
+  const entry = deliveryEntryOf(withTag)
+  if (entry) entry.tag = '入口'
+  const total = withTag.reduce((s, f) => s + (Number(f.size) || 0), 0)
+  const keyOf = f => f
+    ? (f.id != null ? 'id:' + f.id : (f.seq != null ? 'seq:' + f.seq : (f.url || 'name:' + f.filename)))
+    : ''
+  const pages = withTag.filter(f => f.tag === '页面' && (!entry || keyOf(f) !== keyOf(entry)))
+  const docs = withTag.filter(f => f.tag === '文档')
+  const site = withTag.filter(f => f.tag === '站点文件')
+  const other = withTag.filter(f => f.tag === '文件')
+  const groups = [
+    { key: 'entry', label: '入口', files: entry ? [entry] : [], closed: false },
+    { key: 'pages', label: '内容页', files: pages, closed: false },
+    { key: 'docs', label: '文档', files: docs, closed: false },
+    { key: 'site', label: '站点文件', files: site, closed: true },
+    { key: 'other', label: '其他', files: other, closed: true }
+  ].filter(g => g.files.length)
+  return {
+    ...meta,
+    entry,
+    files: withTag,
+    fileCount: withTag.length,
+    sizeLabel: fmtSize(total),
+    pageCount: pages.length,
+    siteCount: site.length,
+    groups,
+    turnIds: meta.turnIds || [],
+    anchorKey: meta.anchorKey || '',
+    stateLabel: meta.stateLabel || '',
+    badgeTone: meta.badgeTone || ''
+  }
+}
 
 export {
   TOOL_LABELS, TOOL_DESCS, bareToolName, toolLabel, toolDesc, toolCallsView, executedCount,

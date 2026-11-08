@@ -107,6 +107,19 @@ public final class ChatCommand {
     /** 计划模式：先出计划卡、批准后执行 */
     final boolean planMode;
     /**
+     * 重新计划所基于的旧计划批准 ID（仅计划模式有效）：服务端用它把上一版计划与执行进度拼进本轮提示词，
+     * 并随新计划记录落血缘。不存在/不属于本会话/未批准时为空，本轮照常出计划。
+     */
+    final String planBaseId;
+    /** 旧计划是第几版（按同一轮内 planApproval 记录顺序数；无血缘时为 0） */
+    final int planBaseVersion;
+    /** 旧计划那一轮的执行清单统计（无清单/无血缘均为 0） */
+    final int planBaseDone;
+    final int planBaseTotal;
+    final int planBaseFailed;
+    /** 拼进本轮用户消息的「上一版计划 + 执行进度」上下文段（空=没有血缘） */
+    final String planBaseContext;
+    /**
      * 本轮是**插话续发**：用户在这轮回答跑到一半时补了一句方向，框架那一轮没收下它（撞步数上限、
      * 被叫停或提前收尾），随 done 交回前端后作为新一轮发出。
      * <p>为什么必须显式带标记：作为新一轮发出去时，模型只看到一条孤零零的新用户消息，会当成

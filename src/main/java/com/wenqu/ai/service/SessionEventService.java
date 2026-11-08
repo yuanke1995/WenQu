@@ -146,6 +146,33 @@ public class SessionEventService {
         }
     }
 
+    /**
+     * 读某一轮<b>最后一次</b>写下的任务清单（账本里 {@code type=todo} 的终态快照）。
+     * <p>会话表 {@code c_ai_session.todos} 只留最新一份，后续轮次一写就会把旧轮的进度顶掉；
+     * 账本按 {@code (session_id, turn_id)} 精确留痕，历史已批准计划的 N/M 才能在该轮结束后仍然读回。
+     *
+     * @return 清单 JSON（{@code {turnId,items,updatedAt}}）；该轮没写过清单返回 null
+     */
+    public String latestTodoOfTurn(String sessionId, String userId, String turnId) {
+        if (sessionId == null || sessionId.isBlank() || userId == null || userId.isBlank()
+                || turnId == null || turnId.isBlank()) {
+            return null;
+        }
+        try {
+            java.util.List<SessionEvent> rows = sessionEventMapper.selectList(new LambdaQueryWrapper<SessionEvent>()
+                    .eq(SessionEvent::getSessionId, sessionId)
+                    .eq(SessionEvent::getUserId, userId)
+                    .eq(SessionEvent::getTurnId, turnId)
+                    .eq(SessionEvent::getType, "todo")
+                    .orderByDesc(SessionEvent::getId)
+                    .last("limit 1"));
+            return rows.isEmpty() ? null : rows.get(0).getPayload();
+        } catch (Exception e) {
+            log.warn("[EVENT] 读取轮次任务清单失败 session={} turn={}: {}", sessionId, turnId, e.getMessage());
+            return null;
+        }
+    }
+
     /** 问题行落库在那一轮第一条事件<b>之前</b>最多容许的间隔（前置阶段：改写/检索/思考都要时间） */
     private static final Duration BEFORE_FIRST_EVENT = Duration.ofMinutes(2);
     /** 回答行在最后一条事件<b>之后</b>最多容许的间隔（落库要走完引用自检与图片过滤） */

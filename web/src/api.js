@@ -359,7 +359,7 @@ export function sendQuestion (sessionId, question, images = [], opts = {}) {
     // 新增事件只改那张表。这里只解构请求体要用的字段。
     deepThink = false, reasoningLevel = '', agentId = '', model = '', attachments = [], skills = [],
     mentions = [], historyRefs = [], regenerate = false, replaceMessageId = '',
-    editMessageId = '', planMode = false, fromSteer = false
+    editMessageId = '', planMode = false, fromSteer = false, planBaseId = ''
   } = opts
   return streamChatSse(signal => fetch(`${BASE}/chat`, {
     method: 'POST',
@@ -368,6 +368,9 @@ export function sendQuestion (sessionId, question, images = [], opts = {}) {
       sessionId, question, images, deepThink,
       // 计划模式（人在回路）：true=本轮先产出执行计划，经用户批准/编辑后再正式回答
       planMode: planMode || undefined,
+      // 重新计划血缘（B+）：旧计划批准 ID。服务端据此把上一版计划与该轮进度拼进本轮提示词，
+      // 并把血缘落进新计划记录；空=不是重新计划
+      planBaseId: planBaseId || undefined,
       // 思考强度档位（低/中/高/超高/极致）：仅在模型库登记了支持档位时由界面给出，空串=用模型默认档位
       reasoningLevel: reasoningLevel || '',
       agentId: agentId || '', model: model || '',
@@ -1382,9 +1385,11 @@ export const stopChatTurn = sessionId =>
   request('/chat/stop', { method: 'POST', body: JSON.stringify({ sessionId }) })
 
 /** 会话当前任务清单（writeTodo 整表覆盖的那一份）：切会话/刷新后输入框上方那条「任务清单」据此回显。
+ *  带 turnId 时读该轮在事件账本里的最后一份：旧的已批准计划在后续轮次/刷新后仍能显示它那一轮的 N/M。
  *  返回 {todos:{turnId,items:[{content,status}],updatedAt}} 或 null */
-export const getSessionTodosApi = sessionId =>
-  request(`/session/${encodeURIComponent(sessionId)}/todos`)
+export const getSessionTodosApi = (sessionId, turnId = '') =>
+  request(`/session/${encodeURIComponent(sessionId)}/todos`
+    + (turnId ? `?turnId=${encodeURIComponent(turnId)}` : ''))
 
 /** 目标模式：创建目标（对齐 DSH：只有一句目标原文，没有验收标准、没有启动策略）。
  *  建行即开跑，系统自己跨轮推进到完成；轮数上限只是兜底安全阈值，不是给用户的预算。

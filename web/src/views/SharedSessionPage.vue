@@ -16,22 +16,10 @@
         <div v-if="m.role === 'user'" class="sh-bubble user">{{ m.content }}</div>
         <div v-else class="sh-bubble ai">
           <AnswerBody :content="m.content" :images="m.images" :citations="false" />
-          <!-- 产物：模型为本轮问题生成的文件，本就是这段对话的一部分，跟着分享出去。
-               下载地址不来自响应里的 url（那是被 1 小时签名保护的地址，分享链接却能挂很久），
-               而是按 token 现场换——见下方 artifactHref。
-               这里保留 target="_blank"：下载地址是 /share/** 接口（按 seq 取回，不受签名过期影响），
-               与登录态对话页的 /ai/artifacts/** 签名直链不同，新标签打开更稳妥。 -->
-          <div v-if="m.artifacts && m.artifacts.length" class="sh-art-list">
-            <a v-for="(a, ai) in m.artifacts" :key="ai" class="sh-art"
-               :href="artifactHref(a)" :download="a.filename" target="_blank" rel="noopener"
-               :title="'下载 ' + a.filename">
-              <file-text-outlined class="sh-art-icon" />
-              <span class="sh-art-name">{{ a.filename }}</span>
-              <span v-if="a.description" class="sh-art-desc">{{ a.description }}</span>
-              <span v-if="fmtSize(a.size)" class="sh-art-size">{{ fmtSize(a.size) }}</span>
-              <download-outlined class="sh-art-dl" />
-            </a>
-          </div>
+          <!-- 产物：与登录态对话页同一张交付卡（只读形态）。
+               分享页没有登录态，所以不开预览台、不给 ZIP：产物只能新标签打开/下载，
+               地址按 token 现场换（见 artifactHref）——签名 URL 挂不住分享的有效期。 -->
+          <DeliveryCard v-if="deliveryAt(i)" :delivery="deliveryAt(i)" shared :href-of="artifactHref" />
           <!-- 引用来源只给文档名与章节：知识块全文不外发（链接一旦外流不至于把库内容带出去） -->
           <div v-if="m.sources && m.sources.length" class="sh-src">
             <div class="sh-src-t">引用来源</div>
@@ -69,6 +57,9 @@ import { getSharedSession } from '../api'
 // 正文与图片灯箱与主聊天页同源（mermaid 补画也已下沉到 AnswerBody，不再由本页整容器扫一遍）
 import AnswerBody from '../components/AnswerBody.vue'
 import AnswerViewerHost from '../components/AnswerViewerHost.vue'
+// 交付卡：与登录态对话页同一份组件（只读形态）
+import DeliveryCard from '../components/DeliveryCard.vue'
+import { deliveryOf, deliverySubjectOf } from '../chat/projections'
 
 const route = useRoute()
 const router = useRouter()
@@ -89,13 +80,24 @@ const external = s => s?.origin === 'WEB' || s?.origin === 'MCP'
 const BASE = import.meta.env.VITE_API_BASE || '/proxy/api/ai'
 const artifactHref = a => `${BASE}/share/session/${encodeURIComponent(String(route.params.token || ''))}/artifact?seq=${a.seq}`
 
-/** 字节数 → 可读体积（分享页只做展示，够用即可；未知大小不显示） */
-const fmtSize = n => {
-  const v = Number(n)
-  if (!Number.isFinite(v) || v <= 0) return ''
-  if (v < 1024) return v + ' B'
-  if (v < 1024 * 1024) return (v / 1024).toFixed(1) + ' KB'
-  return (v / 1024 / 1024).toFixed(1) + ' MB'
+/** 分享页的交付包：只按「这一轮」聚合。
+ *  分享快照里没有目标上下文，不假装跨轮一个包；产物地址由 {@link artifactHref} 现场换。 */
+const deliveryAt = i => {
+  const m = info.value.messages[i]
+  if (!m || m.role !== 'ai' || !Array.isArray(m.artifacts) || !m.artifacts.length) return null
+  let question = ''
+  for (let j = i - 1; j >= 0; j--) {
+    const u = info.value.messages[j]
+    if (u && u.role === 'user' && String(u.content || '').trim()) {
+      question = String(u.content).replace(/[`*#>]/g, '').trim()
+      break
+    }
+  }
+  return deliveryOf(m.artifacts, {
+    name: (deliverySubjectOf(question) || '本次交付') + ' · 交付',
+    scope: 'turn',
+    anchorKey: 'share-' + (m.seq != null ? m.seq : i)
+  })
 }
 
 const fmtTime = ts => {
@@ -149,22 +151,7 @@ onMounted(async () => {
   background: var(--app-panel); border: 1px solid var(--app-border);
   padding: 12px 14px; border-radius: 12px 12px 12px 2px; width: 100%;
 }
-/* 产物卡：与对话页 .artifact-item 同一形态（图标 + 文件名 + 说明 + 下载箭头），
-   但用 --app-* token 以适配分享页的独立配色；文件名单行省略，窄屏不撑破 */
-.sh-art-list { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
-.sh-art {
-  display: flex; align-items: center; gap: 7px;
-  padding: 7px 9px; border: 1px solid var(--app-border); border-radius: 8px;
-  background: var(--app-bg); color: var(--app-text2);
-  text-decoration: none; font-size: 12px; min-width: 0;
-}
-.sh-art:hover { border-color: var(--app-accent); background: var(--app-accent-weak); }
-.sh-art-icon { color: var(--app-accent); flex: none; }
-.sh-art-name { font-weight: 500; color: var(--app-accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.sh-art-desc { color: var(--app-text3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.sh-art-size { color: var(--app-text3); font-size: 11px; flex: none; margin-left: auto; }
-.sh-art-dl { color: var(--app-text3); flex: none; }
-
+/* 引用来源：只给文档名与章节，不给库内全文 */
 .sh-src { margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--app-border); }
 .sh-src-t { font-size: 11px; color: var(--app-text3); margin-bottom: 6px; }
 .sh-src-item { display: flex; gap: 6px; align-items: baseline; font-size: 12px; color: var(--app-text2); padding: 2px 0; }
@@ -190,9 +177,6 @@ onMounted(async () => {
   .sh-list { gap: 12px; }
   .sh-bubble.user { max-width: 92%; }
   .sh-bubble.ai { padding: 10px 12px; }
-  /* 产物行是分享页的主要交互目标，放到 44px 触摸热区；文件名仍单行省略不换行 */
-  .sh-art { padding: 11px 10px; }
-  .sh-art-desc { display: none; }
   /* 页脚链接是主要交互，44px 触摸热区 */
   .sh-foot { margin: 20px 0 16px; padding-top: 12px; }
   .sh-brand { display: inline-flex; align-items: center; min-height: 44px; }

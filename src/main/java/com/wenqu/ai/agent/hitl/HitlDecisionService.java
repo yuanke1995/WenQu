@@ -197,8 +197,11 @@ public class HitlDecisionService {
             rec.setParentTurnId(parentTurnId);
             rec.setToolName(toolName);
             rec.setStatus("PENDING");
+            // 计划卡整份计划都在 request_args 里（恢复待批卡时要按它重建正文）；2000 字上限会把计划
+            // 与血缘字段一起截掉。列本身已是 TEXT，这里给计划一张更宽的额度，其余审批仍按 2000。
+            int argCap = "planApproval".equals(toolName) ? 16000 : 2000;
             rec.setRequestArgs(requestArgs == null ? ""
-                    : (requestArgs.length() > 2000 ? requestArgs.substring(0, 2000) : requestArgs));
+                    : (requestArgs.length() > argCap ? requestArgs.substring(0, argCap) : requestArgs));
             rec.setCreatedAt(java.time.LocalDateTime.now());
             toolApprovalMapper.insert(rec);
         } catch (Exception e) {
@@ -215,6 +218,33 @@ public class HitlDecisionService {
             log.debug("[AGENTX] 查待办记录失败: {}", e.getMessage());
             return null;
         }
+    }
+
+    /**
+     * 计划批准记录是它那一轮里的第几版（从 1 起）：同一轮内退回重出会落多条 planApproval，
+     * 按创建时间顺序数。用于「调整自 vN」的血缘标；记录本身不属于计划卡或没有轮次时返回 1。
+     */
+    public int planVersionOf(String planApprovalId) {
+        ToolApproval rec = findApproval(planApprovalId);
+        if (rec == null || rec.getTurnId() == null || rec.getTurnId().isBlank()
+                || rec.getSessionId() == null || rec.getSessionId().isBlank()) {
+            return 1;
+        }
+        try {
+            java.util.List<ToolApproval> rows = toolApprovalMapper.selectList(
+                    new LambdaQueryWrapper<ToolApproval>()
+                            .eq(ToolApproval::getSessionId, rec.getSessionId())
+                            .eq(ToolApproval::getTurnId, rec.getTurnId())
+                            .eq(ToolApproval::getToolName, "planApproval")
+                            .orderByAsc(ToolApproval::getCreatedAt)
+                            .orderByAsc(ToolApproval::getId));
+            for (int i = 0; i < rows.size(); i++) {
+                if (planApprovalId.equals(rows.get(i).getId())) return i + 1;
+            }
+        } catch (Exception e) {
+            log.debug("[PLAN] 统计计划版本失败: {}", e.getMessage());
+        }
+        return 1;
     }
 
     /** 框架待办被答复/裁决：把这一行落成终态（超时与忽略都不代答，只标状态）。 */
@@ -947,6 +977,19 @@ public class HitlDecisionService {
             item.put("turnId", last.getTurnId() == null ? "" : last.getTurnId());
             item.put("plan", versions.get(versions.size() - 1).get("plan"));
             item.put("versions", versions);
+            // 重新计划血缘（B+）：待批准的新计划也带来源，刷新后卡头的「调整自 vN」不必等批准落库才出现
+            try {
+                JSONObject args = JSON.parseObject(last.getRequestArgs());
+                if (args != null && args.getString("planBaseId") != null) {
+                    item.put("planBaseId", args.getString("planBaseId"));
+                    item.put("planBaseVersion", args.getIntValue("planBaseVersion"));
+                    item.put("planBaseDone", args.getIntValue("planBaseDone"));
+                    item.put("planBaseTotal", args.getIntValue("planBaseTotal"));
+                    item.put("planBaseFailed", args.getIntValue("planBaseFailed"));
+                }
+            } catch (Exception ignore) {
+                // 老记录没有血缘字段/JSON 异常：按无血缘处理，不影响待批卡重建
+            }
             item.put("timeoutMs", window);
             item.put("remainingMs", remaining);
             item.put("createdAt", createdMs);

@@ -59,6 +59,10 @@ public class ChatController {
     private final com.wenqu.ai.agentx.FrameworkSessions frameworkSessions;
     /** 任务清单的存储桥（权威真源是框架 AgentState，这里读它；读不到才回落会话表） */
     private final com.wenqu.ai.service.TodoBridge todoBridge;
+    /** 历史轮次的任务清单（账本 type=todo 留痕）：旧计划刷新后要能读回它那一轮的 N/M */
+    private final com.wenqu.ai.service.SessionEventService sessionEvents;
+    /** 计划血缘（B+）：把上一版已批准计划与那一轮执行进度拼进重新计划的提示词 */
+    private final com.wenqu.ai.service.PlanLineageService planLineage;
     /**
      * 轮次控制与存活（P6 刀 2）：「停止本轮」「运行中插话」「有没有一轮在跑」「接流回来」
      * 这四个入口都在它那里——它们问的是这一轮的通道与生死，不是这一轮怎么把答案生成出来。
@@ -242,6 +246,12 @@ public class ChatController {
         }
         rejectApiKeyForWorkspaceSession(httpRequest, sessionId);
 
+        // 重新计划血缘（B+）：只对计划模式生效。归属/状态不满足时 resolve 返回 null——
+        // 这张旧卡可能来自被清理的会话，重新计划本身仍要能跑，只是不带上一版上下文与血缘标。
+        final com.wenqu.ai.service.PlanLineageService.Resolved planBase = request.isPlanMode()
+                ? planLineage.resolve(sessionId, userId, request.getPlanBaseId())
+                : null;
+
         // 同步段这几道校验都是「一句话还没发出去就被挡下」，抛 400。以前挡下就什么都不留：
         // 用户那句提问是当场打出去的，刷一下页面连问带错一起消失，读到的就成了「软件吞了我一句话」。
         // 400 的语义照旧（前端 toast 与错误卡都认它），只在抛之前补一笔留痕。
@@ -309,6 +319,12 @@ public class ChatController {
                 .regenerate(request.isRegenerate()).replaceMessageId(request.getReplaceMessageId())
                 .reasoningLevel(request.getReasoningLevel())
                 .editVariantGroup(editVariantGroup).planMode(request.isPlanMode())
+                .planBaseId(planBase == null ? null : planBase.planBaseId())
+                .planBaseVersion(planBase == null ? 0 : planBase.version())
+                .planBaseDone(planBase == null ? 0 : planBase.done())
+                .planBaseTotal(planBase == null ? 0 : planBase.total())
+                .planBaseFailed(planBase == null ? 0 : planBase.failed())
+                .planBaseContext(planBase == null ? "" : planBase.promptNote())
                 .fromSteer(request.isFromSteer())
                 .variables(variables)
                 .build(), emitter);
@@ -892,21 +908,30 @@ public class ChatController {
         return ResultJson.ok("操作成功");
     }
 
-    @Operation(summary = "任务清单", description = "取本会话当前任务清单：返回 "
+    @Operation(summary = "任务清单", description = "取本会话当前任务清单，或指定轮次的清单：返回 "
             + "{todos:{turnId,items:[{content,status}],updatedAt}} 或 null。切会话/刷新后输入框上方那条「任务清单」据此回显；"
-            + "校验会话归属。清单的权威存储是框架 AgentState（todo_write 工具的同一份），"
+            + "带 turnId 时读该轮在事件账本里的最后一份（旧已批准计划在后续轮次/刷新后仍能回显它那一轮的 N/M）；"
+            + "校验会话归属。不带 turnId 时权威存储是框架 AgentState（todo_write 工具的同一份），"
             + "本进程内没有该会话实例时回落会话表里最后落的那份（服务重启后的兜底）。")
     @Permission("session:read")
     @GetMapping("/session/{sessionId}/todos")
     public ResultJson getSessionTodos(
-            @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId) {
+            @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId,
+            @Parameter(description = "轮次 ID（可选）：给了就只读这一轮在账本里的最后一份清单")
+            @RequestParam(value = "turnId", required = false) String turnId) {
         String uid = RequestUser.uid();
         sessionService.assertOwned(sessionId, uid);
         java.util.Map<String, Object> out = new java.util.HashMap<>();
-        // 首选框架 state（权威真源）；读不到（实例不在本进程 / 重启过）才回落会话表那份
-        String doc = todoBridge.docJson(frameworkSessions.peek(uid, sessionId), "");
-        if (doc == null || doc.isBlank()) {
-            doc = sessionService.todosOf(sessionId);
+        String doc;
+        if (turnId != null && !turnId.isBlank()) {
+            // 历史轮次：只认账本里那一轮的 todo 事件，不拿当前清单冒充旧进度
+            doc = sessionEvents.latestTodoOfTurn(sessionId, uid, turnId.trim());
+        } else {
+            // 首选框架 state（权威真源）；读不到（实例不在本进程 / 重启过）才回落会话表那份
+            doc = todoBridge.docJson(frameworkSessions.peek(uid, sessionId), "");
+            if (doc == null || doc.isBlank()) {
+                doc = sessionService.todosOf(sessionId);
+            }
         }
         out.put("todos", doc == null || doc.isBlank() ? null : com.alibaba.fastjson.JSON.parse(doc));
         return ResultJson.ok(out);

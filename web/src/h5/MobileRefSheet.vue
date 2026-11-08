@@ -85,23 +85,18 @@
       <div v-if="sessionTokens.rounds" class="rs-kv"><span>累计送入</span><b>{{ fmtTokens(sessionTokens.prompt) }} tokens</b></div>
       <div class="rs-kv"><span>检索轮次 / 引用</span><b>{{ sessionRetrieval.rounds }} 轮 · {{ sessionRetrieval.refs }} 段</b></div>
 
-      <!-- ---- 产物 ---- -->
-      <template v-if="artifacts.length">
-        <div class="rs-section">本会话产物<span class="rs-n">{{ artifacts.length }}</span></div>
-        <div v-for="(a, i) in artifacts" :key="i" class="rs-art">
-          <file-text-outlined class="rs-ic" />
-          <span class="rs-art-name">{{ a.filename }}</span>
-          <span class="rs-art-acts">
-            <a v-if="canPreview(a)" class="rs-art-act" :href="resolveImg(a.url)"
-               target="_blank" rel="noopener" data-pv
-               :data-pv-name="a.filename" :data-pv-ext="artifactExt(a)"
-               :data-pv-kind="previewKindOf(a)"
-               :data-pv-size="a.size" :data-pv-id="a.id"
-               title="预览"><eye-outlined />预览</a>
-            <a class="rs-art-act" :href="resolveImg(a.url)" :download="a.filename"
-               title="下载"><download-outlined />下载</a>
+      <!-- ---- 交付 ---- -->
+      <template v-if="packages.length">
+        <div class="rs-section">交付包<span class="rs-n">{{ packages.length }}</span></div>
+        <button v-for="d in packages" :key="d.anchorKey || d.name" type="button" class="rs-dlv"
+                @click="$emit('delivery-view', d)">
+          <folder-open-outlined class="rs-ic" />
+          <span class="rs-dlv-main">
+            <span class="rs-dlv-name">{{ d.name }}</span>
+            <span class="rs-dlv-sub">{{ d.fileCount }} 件 · {{ d.sizeLabel }}<template v-if="d.stateLabel"> · {{ d.stateLabel }}</template></span>
           </span>
-        </div>
+          <span class="rs-dlv-go">查看 ›</span>
+        </button>
       </template>
 
       <!-- ---- 沙盒文件：模型写进沙盒、却没交付成产物的文件 ----
@@ -244,18 +239,21 @@ import { fmtSourceScore, fmtWindow,
 import { roundSteps, roundHold, roundHeadTail, roundPhase, isRunStep } from '../chat/roundSummary'
 // 产物地址必须过 resolveImg：后端给的是 /ai/artifacts/**，不经媒体前缀在开发态会落到 SPA 回退（下载到 index.html）
 import { resolveImg } from '../utils/markdown'
-import { canPreview, artifactExt, previewKindOf } from '../utils/artifactView'
 import { buildSessionMd, saveMd } from '../views/exportMd'
 import { copyText } from '../utils/clipboard'
 import { useSessionShare } from '../views/shareSession'
 
-const props = defineProps({ open: { type: Boolean, default: false } })
-defineEmits(['close', 'source', 'open-hitl'])
+const props = defineProps({
+  open: { type: Boolean, default: false },
+  /** 本会话的交付包（目标包在前、其余按轮次倒序）：点开共用交付面板 */
+  packages: { type: Array, default: () => [] }
+})
+defineEmits(['close', 'source', 'open-hitl', 'delivery-view'])
 
 const engine = inject('wqChat')
 // 目标模式：与 PC 同一份 sessionGoal（会话级一份，横跨多轮），卡片本体共用 GoalCard——状态词、
 // 轮次与「为什么停在这儿」都由它按 projections 那一份算，本 sheet 只负责把卡片摆上去。
-const { groupedSources, lastTokens, lastSources, sessionTokens, sessionRetrieval, sessionArtifacts,
+const { groupedSources, lastTokens, lastSources, sessionTokens, sessionRetrieval,
   currentSessionId, currentSessionTitle, messages,
   // 容量与实测用量整份吃引擎那一份：与 PC 悬浮卡同一个算法、同一套行。
   // 此前移动壳自持一份分类表与 cap 计算，两端各写各的，同一轮的占用被两把尺量出两个数
@@ -280,7 +278,6 @@ const toggleSrc = g => { srcOpen[g.key] = !srcOpenOf(g) }
 const groups = computed(() => groupedSources.value)
 const sources = computed(() => lastSources.value || [])
 const tokens = computed(() => lastTokens.value)
-const artifacts = computed(() => sessionArtifacts.value)
 
 // ==================== 本轮 ====================
 // 判据与 PC 右栏那张卡（RightProcessCard）共用 roundSummary：并重复卡、卡头那半句、
@@ -377,6 +374,18 @@ watch(() => props.open, v => { if (v) { loadSandboxFiles(); loadSandboxProcs() }
 .rs-kv.is-sub { padding-left: 12px; }
 .rs-kv.is-sub > span { color: var(--app-text3); }
 .rs-art { display: flex; align-items: center; gap: 8px; padding: 4px 12px; border: 1px solid var(--app-border); border-radius: 10px; margin-bottom: 6px; color: var(--app-text2); font-size: 13px; }
+/* 交付包一行：名字 + 件数/体量 + 「查看」；点开进交付面板（与卡片/目标条同一个 sheet） */
+.rs-dlv {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 9px 12px; margin-bottom: 6px;
+  border: 1px solid var(--app-border); border-radius: 10px;
+  background: var(--app-panel); text-align: left;
+}
+.rs-dlv:active { background: var(--app-panel-2); }
+.rs-dlv-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.rs-dlv-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--app-text); }
+.rs-dlv-sub { font-size: 11px; color: var(--app-text3); }
+.rs-dlv-go { flex: none; font-size: 11.5px; color: var(--app-accent); }
 .rs-art-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rs-art-acts { flex: none; display: flex; align-items: center; }
 /* 触屏热区：与消息流里的产物行同一口径（预览/下载各自 ≥44px） */

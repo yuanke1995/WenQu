@@ -727,6 +727,13 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         if (!goalNote.isEmpty()) {
             modelInput = modelInput + goalNote;
         }
+        // 重新计划血缘（B+）：上一版计划与那一轮执行进度必须拼进本轮用户消息，而不是只留在历史里——
+        // 长会话被压缩/换设备/历史裁剪后，历史里的旧计划可能已经不在模型上下文里。
+        // 只在本轮确实开计划模式时拼：普通问答带 planBaseId 没有意义，也别往上下文塞一整份旧计划。
+        String planBaseNote = cmd.getPlanBaseContext();
+        if (planEngaged && planBaseNote != null && !planBaseNote.isBlank()) {
+            modelInput = modelInput + planBaseNote;
+        }
         // 目标工具按轮下发：只有在活跃目标（用户插话轮）里才进模型工具表，普通问答不常驻。
         slot.noteGoalActive(!goalNote.isEmpty());
         // 框架原生支持多模态：submit(Msg)，Msg 里可混排 TextBlock 与 ImageBlock。
@@ -1019,6 +1026,16 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             planRecord.put("status", "approve".equals(planOutcomeRaw) ? "approved"
                     : "supersede".equals(planOutcomeRaw) ? "superseded" : "rejected");
             planRecord.put("versions", new java.util.ArrayList<>(recording.planVersions));
+            // B+ 血缘：这一版自己的稳定 id + 它基于哪一版旧计划（旧计划那一轮的执行统计也落库，
+            // 刷新/换设备后新卡仍能显示「调整自 v1 · 已执行 2/5」，不必再依赖本机内存）。
+            if (recording.planApprovalId != null) planRecord.put("id", recording.planApprovalId);
+            if (cmd.getPlanBaseId() != null && !cmd.getPlanBaseId().isBlank()) {
+                planRecord.put("planBaseId", cmd.getPlanBaseId());
+                planRecord.put("planBaseVersion", cmd.getPlanBaseVersion());
+                planRecord.put("planBaseDone", cmd.getPlanBaseDone());
+                planRecord.put("planBaseTotal", cmd.getPlanBaseTotal());
+                planRecord.put("planBaseFailed", cmd.getPlanBaseFailed());
+            }
         }
 
         // 机器预算用尽退场、卡片还挂着：这一轮不会再有跟随者（超时回收要靠活着的那个循环，它已经退了）。
@@ -2281,6 +2298,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
          * 用户回头看不出这一轮到底是按哪一版计划跑的。
          */
         private final java.util.List<Map<String, Object>> planVersions = new java.util.ArrayList<>();
+        /**
+         * 最后一版计划卡的批准 ID（随助手消息落 plan 列）：B+ 的血缘需要一个稳定锚点——
+         * 旧卡要能被新卡指回、刷新后「查看新一轮」要能按 id 定位；只有正文的 plan 记录做不到这一点。
+         */
+        private volatile String planApprovalId;
 
         Recording(java.util.Queue<String> spills,
                   com.wenqu.ai.agent.subagent.SubAgentConsultService.Ledger consultLedger,
@@ -3291,12 +3313,25 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 if (recording != null) {
                     Map<String, Object> version = new java.util.LinkedHashMap<>();
                     version.put("plan", planText);
+                    version.put("planApprovalId", entry.getKey());
                     recording.planVersions.add(version);
+                    recording.planApprovalId = entry.getKey();
                 }
                 channel.emit(RunEventType.PLAN_APPROVAL, com.alibaba.fastjson2.JSON.toJSONString(planCard));
-                // 落同一张 c_ai_tool_approval（tool_name=planApproval）：不落的话刷新后这张卡取不回来
+                // 落同一张 c_ai_tool_approval（tool_name=planApproval）：不落的话刷新后这张卡取不回来。
+                // 血缘也一起存进 request_args：待批准的新计划刷新后要能显示「调整自 vN」，
+                // 而此刻还没有助手消息行可挂 plan 记录（那张卡要等本轮收尾才落库）。
+                Map<String, Object> pendingArgs = new java.util.LinkedHashMap<>();
+                pendingArgs.put("plan", planText);
+                if (cmd.getPlanBaseId() != null && !cmd.getPlanBaseId().isBlank()) {
+                    pendingArgs.put("planBaseId", cmd.getPlanBaseId());
+                    pendingArgs.put("planBaseVersion", cmd.getPlanBaseVersion());
+                    pendingArgs.put("planBaseDone", cmd.getPlanBaseDone());
+                    pendingArgs.put("planBaseTotal", cmd.getPlanBaseTotal());
+                    pendingArgs.put("planBaseFailed", cmd.getPlanBaseFailed());
+                }
                 sessions.recordPending(cmd, sessionKey, turnId, entry.getKey(), "planApproval",
-                        com.alibaba.fastjson2.JSON.toJSONString(Map.of("plan", planText)));
+                        com.alibaba.fastjson2.JSON.toJSONString(pendingArgs));
                 // 计划卡等人拍板是有时限的：不确认这一轮会超时并停止。屏幕外的人看不见那张卡，
                 // 只能靠这一句把人叫回来
                 turnNotify.onPlanPending(cmd, entry.getKey());

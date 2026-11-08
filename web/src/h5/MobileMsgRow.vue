@@ -63,7 +63,9 @@
                           :title="goalTerminalTitleOf(terminalGoal)"
                           :note="goalTerminalNoteOf(terminalGoal)"
                           :version="goalVersionLabelOf(terminalGoal)"
+                          :has-delivery="!!goalDelivery"
                           @view="$emit('goal-view')"
+                          @delivery="$emit('goal-delivery')"
                           @edit="$emit('goal-edit')"
                           @restart="$emit('goal-restart', terminalGoal.objective)"
                           @delete="$emit('goal-delete')" />
@@ -314,7 +316,11 @@
         <div v-if="m.planCard" @click.stop>
           <PlanCard :card="m.planCard" :sid="sessionId" :pkey="m.planCard.id || index"
                     :progress="progress" :artifact-count="(m.artifacts || []).length"
-                    @open="(v, tab) => emit('open-plan', { m, index, version: v, tab })" />
+                    :adjusts="adjusts"
+                    @open="(v, tab) => emit('open-plan', { m, index, version: v, tab })"
+                    @adjust="emit('adjust')"
+                    @locate-replanned="emit('locate-replanned')"
+                    @locate-source="emit('locate-source')" />
         </div>
 
         <!-- 工具审批（人在回路）：贴着被审批的那一步；通知深链也定位到这一张 -->
@@ -340,7 +346,11 @@
 
         <!-- 产物：预览＝进预览台（与 PC 气泡、产物页、工作区文件同一判据同一待遇），下载走同一份签名地址。
              两个入口各占一块触屏热区，不靠长按之类的隐藏手势 -->
-        <div v-if="m.artifacts && m.artifacts.length" class="artifacts">
+        <!-- 交付包：这一轮的产物收进一张卡（与 PC 同一份 DeliveryCard）；收进卡的轮不再逐行平铺 -->
+        <DeliveryCard v-if="delivery" :delivery="delivery"
+                      @view="$emit('delivery-view', delivery)"
+                      @zip="$emit('delivery-zip', delivery)" />
+        <div v-if="m.artifacts && m.artifacts.length && !hideArtifacts" class="artifacts">
           <div v-for="(a, ai) in m.artifacts" :key="ai" class="artifact">
             <file-text-outlined class="artifact-ic" /><span class="artifact-name">{{ a.filename }}</span>
             <span class="artifact-acts">
@@ -457,6 +467,7 @@ import TurnBar from '../components/TurnBar.vue'
 import SubAgentChatCard from '../components/SubAgentChatCard.vue'
 import ToolSpillButton from '../components/ToolSpillButton.vue'
 import GoalTerminalCard from '../components/GoalTerminalCard.vue'
+import DeliveryCard from '../components/DeliveryCard.vue'
 import AgentAvatar from '../components/AgentAvatar.vue'
 
 // 簇头活动图标（与 PC 同位）：类别 → 图标，收起时常显、展开让位给下开三角（触屏无 hover）
@@ -481,14 +492,24 @@ const props = defineProps({
   variantSwitching: { type: Boolean, default: false },
   /** 会话当前目标：回声胶囊的状态词只认它那一条 goalId（与 PC 共用外壳同一判据） */
   goal: { type: Object, default: null },
+  /** 这一条回答的交付包（父级按 deliveryCardOfMessage 取；null=不支卡） */
+  delivery: { type: Object, default: null },
+  /** 当前目标的交付包（终态卡上的「查看交付」入口用） */
+  goalDelivery: { type: Object, default: null },
+  /** 该轮产物已收进交付包（父级按 deliveryListHidden 算）：不再逐行平铺 */
+  hideArtifacts: { type: Boolean, default: false },
   /** 审批倒计时基准（引擎每秒推进的 approvalNow）：与 PC 的 approvalLeftSecOf 同一份口径 */
   approvalNow: { type: Number, default: 0 },
   /** 计划卡执行进度（planExecProgress 的产物；无清单/不属于本轮时 null） */
-  progress: { type: Object, default: null }
+  progress: { type: Object, default: null },
+  /** 本轮调整记录（执行中插话） */
+  adjusts: { type: Array, default: () => [] }
 })
 const emit = defineEmits(['activate', 'preview', 'paste-view', 'source', 'retry', 'edit', 'feedback', 'approve',
   'switch-version', 'ask', 'copy', 'copy-user', 'more', 'open-plan',
-  'goal-view', 'goal-edit', 'goal-restart', 'goal-delete'])
+  'adjust', 'locate-replanned', 'locate-source',
+  'goal-view', 'goal-edit', 'goal-restart', 'goal-delete', 'goal-delivery',
+  'delivery-view', 'delivery-zip'])
 
 /** 终态卡只挂在那条「设为目标」的回声下：同一个 goalId 且当前目标已到终态 */
 const terminalGoal = computed(() => {

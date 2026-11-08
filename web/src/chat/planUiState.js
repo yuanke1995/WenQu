@@ -44,3 +44,21 @@ export const setPlanViewerVersion = (sid, pkey, version) => {
   c[k] = { ...(c[k] || {}), version: Number(version) || 0 }
   write()
 }
+
+/**
+ * 旧计划已被「重新计划」的时刻（按计划卡 id 记）。
+ * <p>为什么需要它：重新计划的新一轮要先流式生成、再落 plan 记录；在这段间隙里刷新，
+ * 旧卡的历史记录里还没有「被重新规划」的标记，会退回报「已批准」并重新露出调整入口。
+ * 本机记住这一刻，刷新后旧卡仍是「已停止 · 已重新规划」；换设备时等新计划落库后由血缘自动接上。
+ */
+export const planReplannedAtOf = (sid, cardId) => {
+  if (!sid || !cardId) return 0
+  const v = read()[slot(sid, 'replanned:' + cardId)]
+  return v && Number(v.at) ? Number(v.at) : 0
+}
+export const setPlanReplanned = (sid, cardId, at = Date.now()) => {
+  if (!sid || !cardId) return
+  const c = read()
+  c[slot(sid, 'replanned:' + cardId)] = { at: Number(at) || Date.now() }
+  write()
+}

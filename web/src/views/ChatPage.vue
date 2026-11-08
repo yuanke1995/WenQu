@@ -52,6 +52,13 @@
                   @close="goalViewerOpen = false"
                   @action="onGoalViewerAction" @jump="jumpToGoalTurn" />
 
+      <!-- 交付抽屉：与目标过程抽屉同款（右侧 420px）。卡片 / 目标条 / 终态卡三处都落到这里，
+           关掉仍回到对话原位；清单分组与批量动作只在面板里出现。 -->
+      <a-drawer v-model:open="deliveryOpen" placement="right" :width="420"
+                :body-style="{ padding: '0' }" :title="deliveryTarget ? deliveryTarget.name : '交付包'">
+        <DeliveryPanel :delivery="deliveryTarget" @zip="downloadDeliveryZip" />
+      </a-drawer>
+
       <!-- 技能正文查看：写入已交给助手，读的这一侧要能审（正文是逐字进提示词的）；移动壳用同一份组件 -->
       <SkillContentModal :open="!!skillDoc" :name="skillDoc" :entry="skillDocEntry"
                          :session-id="currentSessionId || ''"
@@ -421,7 +428,11 @@
               <PlanCard v-if="m.planCard" :card="m.planCard" :sid="currentSessionId || ''"
                         :pkey="m.planCard.id || i" :progress="planExecProgressOf(m)"
                         :artifact-count="(m.artifacts || []).length"
-                        @open="(v, tab) => openPlanViewer(m, i, v, tab)" />
+                        :adjusts="planAdjustsOfMsg(m)"
+                        @open="(v, tab) => openPlanViewer(m, i, v, tab)"
+                        @adjust="openPlanAdjust(m)"
+                        @locate-replanned="locateReplanned(m)"
+                        @locate-source="locatePlanSource(m)" />
               <!-- 工具执行审批（人在回路）：智能体开启"执行前确认"后，有副作用工具（沙盒/MCP）执行前需用户批准。
                    通知深链也定位到这一张（引擎 hydratePendingApprovals → 滚动 + 闪一圈），顶部不再另画横幅 -->
               <div v-if="(m.approvals || []).length > 1" class="approval-count">
@@ -454,7 +465,13 @@
                    「预览」＝进预览台（整屏 + 可控视口，见 utils/previewStage）：页面设计档给真实视口，
                    读字档把 Markdown/表格/代码在应用里排好版；锚点的 href 仍是那份签名地址，
                    所以 Ctrl/中键点击照旧开真标签。哪些类型怎么摆是 artifactView 里那一份判据，开不了的只给下载 -->
-              <div v-if="m.role === 'ai' && m.artifacts && m.artifacts.length" class="artifact-list">
+              <!-- 交付包：这一轮的产物收进一张卡（入口/体量/折叠清单）；收进卡的轮不再逐行平铺。
+                   1 件的普通回答没有卡，仍走下面那行旧样式。 -->
+              <DeliveryCard v-if="m.role === 'ai' && deliveryCardOfMessage(m)"
+                            :delivery="deliveryCardOfMessage(m)"
+                            @view="openDelivery"
+                            @zip="downloadDeliveryZip" />
+              <div v-if="m.role === 'ai' && m.artifacts && m.artifacts.length && !deliveryListHidden(m)" class="artifact-list">
                 <div v-for="(a, ai) in m.artifacts" :key="ai" class="artifact-item">
                   <file-text-outlined class="artifact-icon" />
                   <span class="artifact-name" :title="a.filename">{{ a.filename }}</span>
@@ -656,8 +673,9 @@
                  删除记录后 sessionGoal 变 null，这张卡随之一并消失 -->
             <GoalTerminalCard v-if="m.role === 'user' && m.goalCommand && goalTerminalCard && goalTerminalCard.goalId === m.goalCommand"
                               :goal="goalTerminalCard" :title="goalTerminalTitle" :note="goalTerminalNote"
-                              :version="goalVersionLabel"
+                              :version="goalVersionLabel" :has-delivery="!!goalDelivery"
                               @view="openGoalViewer"
+                              @delivery="openDelivery(goalDelivery)"
                               @edit="startGoalInlineEdit"
                               @restart="startGoal(goalTerminalCard.objective)"
                               @delete="runGoalAction('delete')" />
@@ -930,6 +948,9 @@
               <i :style="{ width: goalProgressPercent + '%' }" />
             </span>
             <span v-if="goalBarMeta" class="gb-hint">{{ goalBarMeta }}</span>
+            <button v-if="goalDelivery" type="button" class="gb-more-link"
+                    :title="'打开交付包：' + goalDelivery.fileCount + ' 件'"
+                    @click="openDelivery(goalDelivery)">产出 {{ goalDelivery.fileCount }} 件 ›</button>
             <button type="button" class="gb-more-link" @click="openGoalViewer">查看过程 ›</button>
           </div>
           <!-- 第三行：动作（主行动 + 修改 + 取消）；删除记录只在终态卡上出现 -->
@@ -1340,20 +1361,19 @@
       </div>
       <!-- 本会话产物：有文件才显示整卡（空则隐藏，不占版面）。预览＝进预览台（与气泡内产物卡、产物页
            同一判据同一待遇），下载走同一份签名地址；更多入口跳产物页 -->
-      <div v-if="sessionArtifacts.length" class="rp-card">
-        <div class="rp-label">产物 · {{ sessionArtifacts.length }} 个</div>
-        <div v-for="(a, pi) in sessionArtifacts" :key="pi" class="rp-art">
-          <file-text-outlined class="rp-art-ic" />
-          <span class="rp-art-name" :title="a.filename + (a.description ? '：' + a.description : '')">{{ a.filename }}</span>
-          <a v-if="canPreview(a)" class="rp-art-act" :href="resolveImg(a.url)"
-             target="_blank" rel="noopener" data-pv
-             :data-pv-name="a.filename" :data-pv-ext="artifactExt(a)"
-             :data-pv-kind="previewKindOf(a)"
-             :data-pv-size="a.size" :data-pv-id="a.id"
-             title="预览（按住 Ctrl 或中键开成新标签页）"><eye-outlined /></a>
-          <a class="rp-art-act" :href="resolveImg(a.url)" :download="a.filename"
-             :title="'下载 ' + a.filename"><download-outlined /></a>
-        </div>
+      <!-- 本会话交付：按交付包列（目标跨轮一个包、其余按轮一个包），点开进交付抽屉；
+           不再把每件产物摊成一行——那是气泡里刚被收掉的那套形状 -->
+      <div v-if="deliveryPackages.length" class="rp-card">
+        <div class="rp-label">交付 · {{ deliveryPackages.length }} 个包</div>
+        <button v-for="d in deliveryPackages" :key="d.anchorKey || d.name" type="button" class="rp-dlv"
+                @click="openDelivery(d)">
+          <folder-open-outlined class="rp-art-ic" />
+          <span class="rp-dlv-main">
+            <span class="rp-dlv-name">{{ d.name }}</span>
+            <span class="rp-dlv-sub">{{ d.fileCount }} 件 · {{ d.sizeLabel }}<template v-if="d.stateLabel"> · {{ d.stateLabel }}</template></span>
+          </span>
+          <caret-right-outlined class="rp-dlv-go" />
+        </button>
         <div class="rp-art-all" @click="router.push('/artifacts')">在产物页查看全部 ›</div>
       </div>
       <!-- 本会话沙盒目录：助手在沙盒里做出、却没交付成产物的文件（产物卡只管已交付的那一份）。
@@ -1476,9 +1496,18 @@
     <PlanViewer :open="planViewer.open" :card="planViewer.card" :sid="planViewer.sid"
                 :pkey="planViewer.pkey" :title="planViewer.title" :version="planViewer.version"
                 :initial-tab="planViewer.tab" :msg="planViewerMsg" :progress="planViewerProgress"
+                :adjusts="planViewerAdjusts"
                 @close="closePlanViewer" @approve="onViewerApprove"
                 @revise="onViewerRevise" @supersede="onViewerSupersede" @locate="onViewerLocate"
-                @stop="onViewerStop" />
+                @stop="onViewerStop" @adjust="onViewerAdjust" @locate-source="onViewerLocateSource" />
+
+    <!-- 批准后调整计划：A 插话（不中断）/ B 停止并重新计划；与移动壳共用同一组件 -->
+    <PlanAdjustSheet :open="planAdjust.open" :running="planAdjust.running"
+                     :done="planAdjust.done" :doing="planAdjust.doing" :total="planAdjust.total"
+                     :failed="planAdjust.failed" :step-label="planAdjust.stepLabel"
+                     :busy="planAdjust.busy" :error="planAdjust.error"
+                     :suggest-replan="planAdjust.suggestReplan"
+                     @close="closePlanAdjust" @submit="submitPlanAdjust" />
 
     <!-- 会话分享（只读链接） -->
     <a-modal v-model:open="shareVisible" title="分享这段对话" :footer="null" width="520px">
@@ -1759,6 +1788,9 @@ import SkillContentModal from '../components/SkillContentModal.vue'
 // 目标终态卡（挂在「设为目标」那条回声下）与目标过程抽屉：PC 与移动壳共用同一份
 import GoalTerminalCard from '../components/GoalTerminalCard.vue'
 import GoalViewer from '../components/GoalViewer.vue'
+// 交付包：对话内一张卡 + 右侧抽屉（清单/批量动作），与 H5 共用同一份判据
+import DeliveryCard from '../components/DeliveryCard.vue'
+import DeliveryPanel from '../components/DeliveryPanel.vue'
 // 回答正文与它的浮层宿主：与两个分享页共用同一份实现（详见 src/chat/answerViewer.js 顶部说明）
 import AnswerBody from '../components/AnswerBody.vue'
 import AnswerViewerHost from '../components/AnswerViewerHost.vue'
@@ -1769,7 +1801,8 @@ import { useChatSearch } from '../chat/useChatSearch'
 import Composer from '../chat/Composer.vue'
 import PlanCard from '../components/PlanCard.vue'
 import PlanViewer from '../components/PlanViewer.vue'
-import { planStepCount, planExecProgress } from '../chat/plan'
+import PlanAdjustSheet from '../components/PlanAdjustSheet.vue'
+import { planStepCount } from '../chat/plan'
 import TurnChangesCard from '../components/TurnChangesCard.vue'
 import { splitAtts } from '../chat/attachments'
 import { SUPPORTED_EXTS, extOf } from '../chat/intake'
@@ -3557,6 +3590,8 @@ const {
   // 计划模式（人在回路）：斜杠命令开关 + 计划卡裁决动作
   planModeOn, setPlanMode, submitPlanApproval, revisePlanInPlace, continuePlanConversation,
   pendingPlan, curPlanCard, planExpired, planCountdownText,
+  // 批准后调整（A/B）与执行进度/调整记录：判据与取数都在引擎，页面只接线
+  adjustPlanAfterApproval, planExecProgressOf, planAdjustsOfMsg,
   // 工具审批卡倒计时（真实剩余秒数；到点按钮锁住）
   approvalLeftSecOf,
   // 目标模式：平台总闸 goalModeOn + 会话级目标态 + 全部动作。
@@ -3567,6 +3602,7 @@ const {
   goalCanPause, goalCanResume, goalCanEdit, goalCanCancel, goalCanClearRecord,
   goalPreempted, goalVersionLabel, goalProgressPercent,
   goalTerminalCard, goalTerminalTitle, goalTerminalNote, goalTurnStreaming,
+  goalDelivery, deliveryPackages, deliveryCardOfMessage, deliveryListHidden, downloadDeliveryZip,
   goalEditing, goalEdit, goalEditBusy, goalEditSaveable,
   startGoalInlineEdit, saveGoalEdit,
   // 思考能力 / 档位（悬浮面板消费）
@@ -3632,6 +3668,14 @@ const confirmGoalCancel = async () => {
   await runGoalAction('cancel')
 }
 const openGoalViewer = () => { goalViewerOpen.value = true }
+// ---- 交付抽屉：卡片、目标条、终态卡三处入口都落到同一份包（ref 里存当前要看的那一包） ----
+const deliveryOpen = ref(false)
+const deliveryTarget = ref(null)
+const openDelivery = pkg => {
+  if (!pkg) return
+  deliveryTarget.value = pkg
+  deliveryOpen.value = true
+}
 // 抽屉里的动作回本页同一条动作出口：修改走条子的就地编辑；取消先收起抽屉、在条上做二次确认
 const onGoalViewerAction = async (action) => {
   if (action === 'edit') {
@@ -3663,7 +3707,11 @@ watch(() => sessionGoal.value && (sessionGoal.value.goalId + ':' + sessionGoal.v
   goalCancelArmed.value = false
 })
 // 换会话时把过程抽屉一并收起：它读的是「当前会话的当前目标」，不关会拿 B 会话的会话号去读 A 的目标账本
-watch(currentSessionId, () => { goalViewerOpen.value = false })
+watch(currentSessionId, () => {
+  goalViewerOpen.value = false
+  deliveryOpen.value = false
+  deliveryTarget.value = null
+})
 
 // 长会话里「翻回前面问过什么」只能靠滚动条盲摸，锚点轨给对话一个可点目录。
 // 刻度只画提问行（role=user）；预览卡两行口径照参考样式：问题深色在上、回答摘录灰字在下。
@@ -4171,15 +4219,6 @@ const planTaskTitleOf = i => {
 // 切会话后抽屉里的卡已经不在当前消息流里：收起来，避免把上一会话的计划批到新会话
 watch(currentSessionId, () => { planViewer.open = false })
 
-/**
- * 计划卡的执行进度：清单缺失/不属于这一轮就返回 null（卡片退回计划步骤预览）。
- * running 只认「最后一轮 AI 且正在生成」——旧轮的已批准计划在下一轮开始时不该继续转圈。
- */
-const planExecProgressOf = m => {
-  if (!m || !m.planCard) return null
-  return planExecProgress(m.planCard, sessionTodos.value, m.turnId || '',
-    loading.value && m === panelAi.value)
-}
 /** 抽屉当前那条消息与它的执行进度（执行页签用；切会话/消息流变化时一起失效） */
 const planViewerMsg = computed(() => planMsgOfViewer())
 const planViewerProgress = computed(() => {
@@ -4188,6 +4227,129 @@ const planViewerProgress = computed(() => {
 })
 /** 执行页签的「停止执行」：与输入框旁的停止同一入口（先撤 Esc 待命，再真停服务端） */
 const onViewerStop = () => { stopNow() }
+/** 抽屉里的本轮调整记录（执行页签） */
+const planViewerAdjusts = computed(() => {
+  const m = planViewerMsg.value
+  return m ? planAdjustsOfMsg(m) : []
+})
+/** 抽屉里点「调整计划」：面板盖在抽屉上，成功后一起收 */
+const onViewerAdjust = () => {
+  const m = planViewerMsg.value
+  if (m) openPlanAdjust(m, true)
+}
+/** 抽屉卡头的血缘标：回到旧计划的执行记录 */
+const onViewerLocateSource = () => {
+  const id = planViewer.card && planViewer.card.adjustFrom && planViewer.card.adjustFrom.cardId
+  closePlanViewer()
+  locatePlanCardById(id)
+}
+/** 按计划卡 id 在消息流里定位（旧卡「查看新一轮」与新卡「调整自 v1」共用） */
+const locatePlanCardById = id => {
+  if (!id) return
+  const mi = messages.value.findIndex(m => m && m.planCard && m.planCard.id === id)
+  if (mi >= 0) jumpToPlan(mi)
+}
+
+// ==================== 批准后调整计划（A 插话 / B 停止并重新计划） ====================
+// 面板只负责编辑与二次确认；这里的接线只做三件事：按当前状态算默认档与代价、把提交交给引擎、
+// 成功收口（必要时连抽屉一起关）／失败留在面板上并给可执行的下一步。
+const planAdjust = reactive({
+  open: false, m: null, fromViewer: false,
+  running: false, done: 0, doing: 0, total: 0, failed: 0, stepLabel: '',
+  busy: false, error: '', suggestReplan: false
+})
+/* 面板打开期间本轮结束/新清单到达：running 跟着消息对象走，选项与二次确认不撒谎 */
+watch(() => planAdjust.m && planAdjust.m.loading, v => {
+  if (!planAdjust.open) return
+  planAdjust.running = !!v
+})
+// 切会话：面板与它挂的那条消息一起作废，避免把意见发到新会话
+watch(currentSessionId, () => {
+  planAdjust.open = false
+  planAdjust.m = null
+  planAdjust.error = ''
+  planAdjust.suggestReplan = false
+})
+const openPlanAdjust = (m, fromViewer = false) => {
+  const c = m && m.planCard
+  if (!c || c.status !== 'approved' || c.restored) return
+  if (c.replannedBy || c.replannedAt) return
+  const prog = planExecProgressOf(m)
+  const items = (prog && prog.items) || []
+  const doingAt = items.findIndex(i => i.status === 'doing')
+  planAdjust.m = m
+  planAdjust.fromViewer = !!fromViewer
+  planAdjust.running = !!m.loading
+  planAdjust.done = prog ? prog.done : 0
+  planAdjust.doing = doingAt >= 0 ? 1 : 0
+  planAdjust.total = prog ? prog.total : 0
+  planAdjust.failed = prog ? prog.failed : 0
+  planAdjust.stepLabel = doingAt >= 0
+    ? `第 ${doingAt + 1} 步「${items[doingAt].text}」`
+    : ''
+  planAdjust.busy = false
+  planAdjust.error = ''
+  planAdjust.suggestReplan = false
+  planAdjust.open = true
+}
+const closePlanAdjust = () => {
+  if (planAdjust.busy) return
+  planAdjust.open = false
+  planAdjust.m = null
+  planAdjust.error = ''
+  planAdjust.suggestReplan = false
+}
+const submitPlanAdjust = async ({ text, mode }) => {
+  if (planAdjust.busy) return
+  const m = planAdjust.m
+  if (!m) return
+  planAdjust.busy = true
+  planAdjust.error = ''
+  planAdjust.suggestReplan = false
+  let r
+  try {
+    r = await adjustPlanAfterApproval(m, text, mode)
+  } catch (e) {
+    r = { ok: false, reason: 'error' }
+  }
+  planAdjust.busy = false
+  if (!r || !r.ok) {
+    const reason = r && r.reason
+    planAdjust.error = reason === 'ended'
+      ? '这一轮刚好结束了。要改计划，请改用「停止并重新计划」。'
+      : reason === 'stop-failed'
+        ? '这一轮没停下来，先不要重新计划。可以稍后再试。'
+        : reason === 'busy'
+          ? '还有一轮在跑，等它结束再调整。'
+          : reason === 'restored'
+          ? '这张计划是恢复的，请回到发起它的设备调整。'
+          : reason === 'model'
+            ? '还没有可用模型，请先在右上角选择模型。'
+            : reason === 'empty'
+              ? '先写下要改什么。'
+              : '提交失败，请重试。'
+    if (reason === 'ended') planAdjust.suggestReplan = true
+    return
+  }
+  const wasRunning = planAdjust.running
+  const fromViewer = planAdjust.fromViewer
+  planAdjust.open = false
+  planAdjust.m = null
+  planAdjust.error = ''
+  planAdjust.suggestReplan = false
+  if (fromViewer) closePlanViewer()
+  message.info(mode === 'replan'
+    ? (wasRunning ? '已停止本轮，正在按新意见重新计划' : '正在按新意见重新计划')
+    : '已送到正在执行的一轮，下一步开始前生效')
+}
+const locateReplanned = m => {
+  const id = m && m.planCard && m.planCard.replannedBy && m.planCard.replannedBy.cardId
+  locatePlanCardById(id)
+}
+const locatePlanSource = m => {
+  const id = m && m.planCard && m.planCard.adjustFrom && m.planCard.adjustFrom.cardId
+  locatePlanCardById(id)
+}
 
 // 与移动壳共用一份；卡片本体（三段式与旧计划收一行）收在共用组件 components/PlanCard.vue 里。
 // 这里只剩 PC 特有的意见框文案与键盘直达。
@@ -5389,6 +5551,13 @@ onMounted(async () => {
 
 /* 右栏产物卡 */
 .rp-art { display: flex; align-items: center; gap: 6px; padding: 4px 0; }
+/* 右栏交付包一行：名称 + 件数/体量 + 箭头；点开右侧交付抽屉（与卡片目标条同一份） */
+.rp-dlv { display: flex; align-items: center; gap: 7px; width: 100%; padding: 6px 0; border: 0; background: transparent; text-align: left; cursor: pointer; }
+.rp-dlv:hover .rp-dlv-name { color: var(--app-accent); }
+.rp-dlv-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.rp-dlv-name { font-size: 12px; color: var(--app-text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rp-dlv-sub { font-size: 10.5px; color: var(--app-text3); }
+.rp-dlv-go { flex: none; font-size: 10px; color: var(--app-text3); }
 .rp-art:hover .rp-art-name { color: var(--app-accent); }
 .rp-art-ic { color: var(--app-accent); font-size: 12px; flex: none; }
 .rp-art-name { flex: 1; min-width: 0; font-size: 12px; color: var(--app-text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -1,0 +1,1898 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>问渠 · 目标模式产物交付 UI/UX —— 从「文件附件」到「可验收的交付包」</title>
+<style>
+/* ============================================================
+   报告外壳：与 goal-mode-ux / plan-mode-ux 同一套令牌
+   ============================================================ */
+:root {
+  --bg: #f4f6f9;
+  --bg2: #ffffff;
+  --bg3: #fafbfc;
+  --ink: #1f2329;
+  --muted: #5f6570;
+  --faint: #98a0aa;
+  --rule: #e6e9ed;
+  --rule2: #d8dde3;
+  --accent: #2e6be6;
+  --accent-weak: #eef2f7;
+  --accent-border: #bcd0f7;
+  --ok: #3b8f4e;
+  --ok-weak: #eaf5ec;
+  --warn: #a3691b;
+  --warn-weak: #faf3e6;
+  --warn-border: #f0dfb6;
+  --danger: #cf1322;
+  --danger-weak: #fff2f0;
+  --danger-border: #f3c9c9;
+  --violet: #7c3aed;
+  --violet-weak: #f5f3ff;
+  --code: #f0f2f5;
+  --radius: 10px;
+  --radius-lg: 14px;
+  --shadow: 0 18px 50px rgba(16, 24, 40, .12);
+  --shadow-sm: 0 2px 8px rgba(16, 24, 40, .06);
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+          'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+button { font-family: var(--font); cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.report {
+  max-width: 1180px;
+  margin: 28px auto 64px;
+  background: var(--bg2);
+  border: 1px solid var(--rule);
+  border-radius: 18px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.cover {
+  padding: 52px 56px 38px;
+  background: linear-gradient(180deg, #fbfcff 0%, #ffffff 100%);
+  border-bottom: 1px solid var(--rule);
+}
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: .16em;
+  color: var(--accent);
+  text-transform: uppercase;
+}
+.cover h1 {
+  margin: 16px 0 0;
+  font-size: 36px;
+  line-height: 1.26;
+  letter-spacing: -.02em;
+  font-weight: 700;
+}
+.cover h1 em { font-style: normal; color: var(--accent); }
+.lede {
+  max-width: 840px;
+  margin: 18px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.85;
+}
+.lede b { color: var(--ink); }
+.meta-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 24px; }
+.meta-chip {
+  font-size: 11.5px;
+  color: var(--muted);
+  border: 1px solid var(--rule);
+  background: var(--bg2);
+  border-radius: 999px;
+  padding: 4px 11px;
+}
+.meta-chip b { color: var(--ink); font-weight: 600; }
+.summary-band { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 28px; }
+.summary-card {
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  padding: 15px 16px 14px;
+  background: linear-gradient(180deg, #fff, var(--bg3));
+}
+.summary-card .num { font-family: var(--mono); font-size: 10px; letter-spacing: .08em; color: var(--accent); }
+.summary-card strong { display: block; margin-top: 7px; font-size: 15px; }
+.summary-card span { display: block; margin-top: 4px; font-size: 12px; color: var(--muted); line-height: 1.65; }
+.toc {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 20px;
+  margin-top: 26px;
+  padding-top: 18px;
+  border-top: 1px dashed var(--rule);
+}
+.toc a { font-size: 12px; color: var(--muted); }
+.toc a:hover { color: var(--accent); }
+
+.sec { padding: 42px 56px; border-bottom: 1px solid var(--rule); }
+.sec:last-of-type { border-bottom: 0; }
+.sec-head { display: flex; align-items: baseline; gap: 14px; }
+.sec-no { font-family: var(--mono); font-size: 11px; color: var(--accent); letter-spacing: .08em; }
+.sec h2 { margin: 0; font-size: 22px; letter-spacing: -.01em; }
+.lead { max-width: 900px; margin: 12px 0 0; color: var(--muted); line-height: 1.85; }
+.lead b { color: var(--ink); }
+.sub { margin: 30px 0 0; font-size: 15px; }
+.sub:first-of-type { margin-top: 24px; }
+.sub-note { margin: 4px 0 0; font-size: 12.5px; color: var(--faint); }
+.kbd {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--muted);
+  border: 1px solid var(--rule2);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 1px 5px;
+  background: var(--bg3);
+  white-space: nowrap;
+}
+code {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--code);
+  border-radius: 4px;
+  padding: 1px 5px;
+  white-space: nowrap;
+}
+
+/* ---------- 诊断 / 原则 ---------- */
+.issue-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 18px; }
+.issue {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--bg3);
+  padding: 13px 15px 14px;
+}
+.issue .tag { font-family: var(--mono); font-size: 9.5px; letter-spacing: .08em; color: var(--danger); }
+.issue h4 { margin: 5px 0 0; font-size: 13.5px; }
+.issue p { margin: 5px 0 0; font-size: 12.5px; line-height: 1.7; color: var(--muted); }
+
+.goal-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 18px; }
+.goal {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  padding: 16px 16px 14px;
+  background: linear-gradient(180deg, var(--bg3), #fff);
+}
+.goal .big { font-size: 26px; line-height: 1; font-weight: 750; letter-spacing: -.03em; color: var(--accent); }
+.goal h4 { margin: 8px 0 0; font-size: 13.5px; }
+.goal p { margin: 4px 0 0; font-size: 12px; line-height: 1.65; color: var(--muted); }
+
+.principle-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 18px; }
+.principle {
+  display: flex;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--bg3);
+}
+.principle .pno { font-family: var(--mono); font-size: 10.5px; font-weight: 700; color: var(--accent); padding-top: 1px; }
+.principle strong { display: block; font-size: 13px; }
+.principle p { margin: 2px 0 0; font-size: 12px; line-height: 1.65; color: var(--muted); }
+
+/* ---------- 线框图 ---------- */
+.wire {
+  margin-top: 18px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-lg);
+  padding: 14px;
+  background: var(--bg3);
+}
+.wire-main { display: flex; flex-direction: column; gap: 8px; }
+.wire-box {
+  position: relative;
+  border: 1px dashed var(--rule2);
+  border-radius: var(--radius);
+  background: var(--bg2);
+  padding: 10px 12px 10px 38px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.wire-box strong { color: var(--ink); }
+.wire-box .n {
+  position: absolute; left: 10px; top: 9px;
+  width: 20px; height: 20px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--mono); font-size: 10px; font-weight: 700;
+  color: #fff; background: var(--accent);
+}
+.wire-box.accent { border-color: var(--accent-border); background: var(--accent-weak); }
+.wire-box.tall { min-height: 62px; }
+
+/* ---------- 表格 ---------- */
+.tbl { width: 100%; border-collapse: collapse; margin-top: 16px; font-size: 12.5px; }
+.tbl th {
+  text-align: left;
+  font-weight: 600;
+  font-size: 11.5px;
+  color: var(--muted);
+  background: var(--bg3);
+  border: 1px solid var(--rule);
+  padding: 8px 10px;
+  white-space: nowrap;
+}
+.tbl td { border: 1px solid var(--rule); padding: 8px 10px; vertical-align: top; line-height: 1.65; }
+.tbl td:first-child { font-weight: 600; white-space: nowrap; }
+.tbl tr:nth-child(even) td { background: #fcfcfd; }
+.tbl .ok { color: var(--ok); font-weight: 600; }
+.tbl .warn { color: var(--warn); font-weight: 600; }
+.tbl .danger { color: var(--danger); font-weight: 600; }
+.tbl .rec { background: var(--ok-weak); }
+
+.bullets { margin: 12px 0 0; padding-left: 18px; }
+.bullets li { margin: 5px 0; font-size: 13px; line-height: 1.7; color: var(--muted); }
+.bullets li b { color: var(--ink); }
+
+/* ---------- 决策卡 ---------- */
+.decisions { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 16px; }
+.decision {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  padding: 14px 15px;
+  background: var(--bg3);
+}
+.decision .dno { font-family: var(--mono); font-size: 9.5px; color: var(--warn); letter-spacing: .08em; }
+.decision h4 { margin: 4px 0 0; font-size: 13.5px; }
+.decision p { margin: 5px 0 0; font-size: 12.5px; line-height: 1.7; color: var(--muted); }
+.decision .opts { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+.decision .opt { font-size: 12px; color: var(--muted); }
+.decision .opt b { color: var(--ink); }
+.decision .opt.rec b { color: var(--ok); }
+
+.note-strip {
+  display: flex; gap: 8px;
+  margin-top: 16px;
+  padding: 11px 14px;
+  border: 1px solid var(--accent-border);
+  background: var(--accent-weak);
+  border-radius: var(--radius);
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--muted);
+}
+.note-strip b { color: var(--ink); }
+.note-strip.warn { background: var(--warn-weak); border-color: var(--warn-border); }
+.note-strip.warn b { color: var(--warn); }
+
+/* 交付话术对照 */
+.buyer-note {
+  margin-top: 14px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--bg3);
+  padding: 13px 15px;
+}
+.bn-line { font-size: 12.5px; line-height: 1.8; color: var(--muted); }
+.bn-line + .bn-line { margin-top: 8px; }
+.bn-line b { color: var(--ink); }
+
+/* ============================================================
+   Mock 设计令牌
+   ============================================================ */
+.ui-scope {
+  --m-bg: #f7f8fa;
+  --m-panel: #ffffff;
+  --m-panel2: #fafbfc;
+  --m-line: #e6e9ed;
+  --m-line2: #d8dde3;
+  --m-ink: #1f2329;
+  --m-muted: #5f6570;
+  --m-faint: #98a0aa;
+  --m-accent: #2e6be6;
+  --m-accent-weak: #eef2f7;
+  --m-accent-border: #bcd0f7;
+  --m-ok: #3b8f4e;
+  --m-ok-weak: #eaf5ec;
+  --m-warn: #a3691b;
+  --m-warn-weak: #faf3e6;
+  --m-warn-border: #f0dfb6;
+  --m-danger: #cf1322;
+  --m-danger-weak: #fff2f0;
+  --m-danger-border: #f3c9c9;
+  line-height: 1.5;
+  color: var(--m-ink);
+}
+.ico {
+  width: 14px; height: 14px; flex: none;
+  fill: none; stroke: currentColor;
+  stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round;
+}
+.spacer { flex: 1; }
+.mock-scroll { overflow-x: auto; padding-bottom: 4px; }
+.mock {
+  width: 100%;
+  min-width: 780px;
+  margin-top: 16px;
+  background: var(--m-bg);
+  border: 1px solid var(--m-line2);
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 16px 40px rgba(16, 24, 40, .10);
+  font-size: 13px;
+  position: relative;
+}
+.mk-bar {
+  height: 34px;
+  display: flex; align-items: center; gap: 10px;
+  padding: 0 12px;
+  background: #f1f3f5;
+  border-bottom: 1px solid var(--m-line);
+}
+.mk-bar .dots { display: flex; gap: 5px; }
+.mk-bar .dots i { width: 9px; height: 9px; border-radius: 50%; background: #d3d8de; display: block; }
+.mk-bar .dots i:first-child { background: #e6a6a0; }
+.mk-bar .dots i:nth-child(2) { background: #e6cf9b; }
+.mk-bar .dots i:nth-child(3) { background: #a9cfae; }
+.mk-url {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--m-faint);
+  background: #fff;
+  border: 1px solid var(--m-line);
+  border-radius: 5px;
+  padding: 2px 8px;
+}
+.mk-tag {
+  font-size: 10px;
+  color: var(--m-accent);
+  background: var(--m-accent-weak);
+  border: 1px solid var(--m-accent-border);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+.chat { padding: 14px 18px 0; }
+.thread { min-height: 250px; display: flex; flex-direction: column; gap: 14px; }
+.urow { display: flex; justify-content: flex-end; }
+.ububble {
+  max-width: 62%;
+  background: var(--m-accent-weak);
+  border: 1px solid var(--m-accent-border);
+  color: #1b4bb5;
+  border-radius: 10px 10px 2px 10px;
+  padding: 8px 12px;
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+.airow { display: flex; gap: 10px; }
+.ai-avatar {
+  width: 26px; height: 26px; flex: none;
+  border-radius: 8px;
+  background: var(--m-accent-weak);
+  color: var(--m-accent);
+  border: 1px solid var(--m-accent-border);
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--mono); font-size: 11px; font-weight: 700;
+}
+.ai-col { min-width: 0; flex: 1; max-width: 660px; }
+.aitext { font-size: 12.5px; line-height: 1.8; color: var(--m-ink); }
+.aitext b { color: var(--m-accent); font-weight: 600; }
+.ai-meta { margin-top: 6px; font-size: 10.5px; color: var(--m-faint); }
+
+/* ---------- 交付卡 ---------- */
+.dc {
+  margin-top: 9px;
+  border: 1px solid var(--m-line2);
+  border-radius: 14px;
+  background: #fff;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(16, 24, 40, .05);
+}
+.dc.warn { border-color: var(--m-warn-border); }
+.dc-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 13px;
+  border-bottom: 1px solid var(--m-line);
+  background: #fcfdff;
+}
+.dc-head .ico { color: var(--m-accent); width: 15px; height: 15px; }
+.dc-title { font-size: 12.5px; font-weight: 650; }
+.dc-ver {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--m-muted);
+  border: 1px solid var(--m-line2);
+  border-radius: 4px;
+  padding: 0 4px;
+  line-height: 1.7;
+}
+.dc-badge {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--m-ok);
+  background: var(--m-ok-weak);
+  border: 1px solid #cfe4d3;
+  border-radius: 999px;
+  padding: 1px 8px;
+  display: inline-flex; align-items: center; gap: 3px;
+}
+.dc-badge.warn { color: var(--m-warn); background: var(--m-warn-weak); border-color: var(--m-warn-border); }
+.dc-hero { display: flex; gap: 12px; padding: 12px 13px 10px; }
+.dc-thumb {
+  width: 128px; height: 82px; flex: none;
+  border: 1px solid var(--m-line);
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+}
+.dc-thumb-bar {
+  height: 13px;
+  background: #eef1f5;
+  display: flex; align-items: center; gap: 3px;
+  padding: 0 5px;
+}
+.dc-thumb-bar i { width: 4px; height: 4px; border-radius: 50%; background: #c9cfd8; display: block; }
+.dc-thumb-body { padding: 7px 8px; }
+.dc-thumb-line { height: 5px; border-radius: 2px; background: #e9edf3; margin-bottom: 4px; }
+.dc-thumb-line.w70 { width: 70%; }
+.dc-thumb-line.w50 { width: 50%; }
+.dc-thumb-line.hi { background: #cfe0fb; width: 45%; }
+.dc-main { min-width: 0; flex: 1; }
+.dc-name { font-size: 13px; font-weight: 650; }
+.dc-desc { margin-top: 2px; font-size: 11.5px; color: var(--m-muted); line-height: 1.65; }
+.dc-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
+.chip {
+  font-size: 10px;
+  color: var(--m-muted);
+  background: var(--m-panel2);
+  border: 1px solid var(--m-line);
+  border-radius: 999px;
+  padding: 1px 7px;
+  display: inline-flex; align-items: center; gap: 3px;
+}
+.chip.ok { color: var(--m-ok); background: var(--m-ok-weak); border-color: #cfe4d3; }
+.chip.warn { color: var(--m-warn); background: var(--m-warn-weak); border-color: var(--m-warn-border); }
+.dc-acts { display: flex; align-items: center; gap: 8px; padding: 0 13px 11px; }
+.btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  border-radius: 8px;
+  padding: 6px 11px;
+  font-size: 11.5px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.btn.primary { background: var(--m-accent); color: #fff; }
+.btn.primary .ico { color: #fff; }
+.btn.ghost { background: #fff; border-color: var(--m-line2); color: var(--m-muted); }
+.btn.text { background: transparent; color: var(--m-muted); padding: 6px 4px; }
+.dc-list { border-top: 1px dashed var(--m-line); padding: 7px 10px 9px; }
+.frow {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 6px;
+  border-radius: 6px;
+  font-size: 11.5px;
+}
+.frow:hover { background: var(--m-accent-weak); }
+.frow .ico { color: var(--m-accent); width: 13px; height: 13px; }
+.fname { color: var(--m-accent); font-weight: 550; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ftag { font-size: 10px; color: var(--m-faint); }
+.facts { margin-left: auto; display: flex; gap: 9px; color: var(--m-faint); opacity: 0; transition: opacity .12s; }
+.frow:hover .facts { opacity: 1; }
+.facts span { display: inline-flex; align-items: center; gap: 2px; font-size: 10px; }
+.facts .ico { color: var(--m-faint); width: 11px; height: 11px; }
+.dc-more {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 11px; color: var(--m-muted);
+  padding: 5px 6px;
+  cursor: default;
+}
+.dc-more .ico { width: 11px; height: 11px; }
+
+/* ---------- 目标条 ---------- */
+.goalbar {
+  max-width: 660px;
+  margin: 16px 0 0 auto;
+  border: 1px solid var(--m-accent-border);
+  background: #f7faff;
+  border-radius: 12px;
+  padding: 8px 11px 9px;
+}
+.gb-row1 { display: flex; align-items: center; gap: 7px; }
+.gb-pill {
+  font-size: 9.5px;
+  color: var(--m-accent);
+  border: 1px solid var(--m-accent-border);
+  background: #fff;
+  border-radius: 999px;
+  padding: 0 7px;
+  line-height: 1.9;
+  white-space: nowrap;
+}
+.gb-obj { font-size: 11.5px; color: var(--m-ink); min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gb-ver { font-family: var(--mono); font-size: 9.5px; color: var(--m-faint); }
+.gb-state { margin-left: auto; font-size: 10px; color: var(--m-ok); white-space: nowrap; }
+.gb-prog { height: 3px; background: #e3e9f5; border-radius: 2px; margin-top: 6px; overflow: hidden; }
+.gb-fill { height: 100%; width: 46%; background: var(--m-accent); border-radius: 2px; }
+.gb-row3 { display: flex; align-items: center; gap: 12px; margin-top: 6px; font-size: 10.5px; color: var(--m-muted); }
+.gb-link { color: var(--m-accent); font-weight: 600; display: inline-flex; align-items: center; gap: 3px; }
+.gb-link .ico { width: 11px; height: 11px; }
+.gb-hint { color: var(--m-faint); }
+
+.composer {
+  max-width: 660px;
+  margin: 10px 0 14px auto;
+  border: 1px solid var(--m-line2);
+  border-radius: 12px;
+  background: #fff;
+  padding: 9px 12px;
+  font-size: 11.5px;
+  color: var(--m-faint);
+}
+
+/* ---------- 终态卡 ---------- */
+.tcard {
+  max-width: 420px;
+  margin: 7px 0 0 36px;
+  border: 1px solid var(--m-line2);
+  border-radius: 10px;
+  background: #fff;
+  padding: 9px 11px;
+}
+.tcard-head { display: flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 600; }
+.tcard-head .ico { color: var(--m-ok); width: 13px; height: 13px; }
+.tcard-head .dc-badge { margin-left: auto; }
+.tcard-sub { margin-top: 3px; font-size: 10.5px; color: var(--m-faint); }
+.tcard-acts { display: flex; gap: 8px; margin-top: 7px; }
+.tcard-acts .btn { padding: 4px 9px; font-size: 11px; }
+
+/* ---------- 抽屉 ---------- */
+.mock.split { display: flex; min-width: 900px; }
+.chat-dim { flex: 1; min-width: 0; opacity: .55; filter: saturate(.8); }
+.drawer {
+  width: 400px; flex: none;
+  background: #fff;
+  border-left: 1px solid var(--m-line2);
+  display: flex; flex-direction: column;
+}
+.drw-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--m-line);
+}
+.drw-head .ico { color: var(--m-accent); }
+.drw-title { font-size: 12.5px; font-weight: 650; }
+.drw-ver { font-family: var(--mono); font-size: 9.5px; color: var(--m-accent); background: var(--m-accent-weak); border: 1px solid var(--m-accent-border); border-radius: 4px; padding: 0 4px; }
+.drw-close { margin-left: auto; color: var(--m-faint); }
+.drw-body { padding: 12px 14px 8px; }
+.drw-sec { margin-top: 14px; }
+.drw-sec:first-child { margin-top: 0; }
+.drw-label { font-size: 10.5px; color: var(--m-faint); letter-spacing: .04em; }
+.drw-label .n { color: var(--m-muted); }
+.entry {
+  margin-top: 6px;
+  border: 1px solid var(--m-accent-border);
+  background: #f7faff;
+  border-radius: 10px;
+  padding: 9px 10px;
+  display: flex; align-items: center; gap: 9px;
+}
+.entry .thumb {
+  width: 58px; height: 38px; flex: none;
+  border: 1px solid var(--m-line);
+  border-radius: 5px;
+  background: #fff;
+  overflow: hidden;
+}
+.entry .thumb .dc-thumb-bar { height: 9px; padding: 0 3px; }
+.entry .thumb .dc-thumb-bar i { width: 3px; height: 3px; }
+.entry .thumb-body { padding: 3px 4px; }
+.entry .thumb-body i { display: block; height: 3px; background: #e9edf3; border-radius: 1px; margin-bottom: 2px; }
+.entry .thumb-body i.hi { background: #cfe0fb; width: 55%; }
+.entry-main { min-width: 0; }
+.entry-name { font-size: 11.5px; font-weight: 650; }
+.entry-sub { font-size: 10px; color: var(--m-muted); margin-top: 1px; }
+.entry .btn.primary { margin-left: auto; flex: none; padding: 5px 9px; font-size: 11px; }
+.checkrow { display: flex; align-items: center; gap: 7px; padding: 4px 2px; font-size: 11px; color: var(--m-muted); }
+.checkrow .ico { color: var(--m-ok); width: 12px; height: 12px; }
+.checkrow .ok { color: var(--m-ok); font-weight: 600; margin-left: auto; }
+.grp { margin-top: 9px; }
+.grp-head {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 10.5px;
+  color: var(--m-muted);
+  padding: 4px 2px;
+  border-bottom: 1px solid var(--m-line);
+}
+.grp-head .n { font-family: var(--mono); color: var(--m-faint); }
+.grp-head .spacer { flex: 1; }
+.grp-head .collapse { color: var(--m-faint); font-size: 10px; }
+.frow.draw { padding: 6px 4px; border-bottom: 1px dashed #f0f2f5; }
+.drw-foot {
+  margin-top: auto;
+  border-top: 1px solid var(--m-line);
+  padding: 10px 14px 12px;
+  display: flex; align-items: center; gap: 8px;
+  background: #fff;
+}
+.drw-foot .btn.primary { flex: 1; justify-content: center; }
+.drw-note { padding: 0 14px 10px; font-size: 10px; color: var(--m-faint); }
+
+/* ---------- H5 ---------- */
+.phone {
+  width: min(350px, 100%);
+  margin: 16px auto 0;
+  border-radius: 30px;
+  border: 8px solid #1f2329;
+  background: var(--m-bg);
+  overflow: hidden;
+  box-shadow: 0 18px 44px rgba(16, 24, 40, .18);
+}
+.p-top {
+  height: 54px;
+  background: #fff;
+  border-bottom: 1px solid var(--m-line);
+  display: flex; align-items: center; gap: 8px;
+  padding: 0 12px;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.p-top .ico { color: var(--m-faint); }
+.p-top .spacer { flex: 1; }
+.p-body { padding: 12px 12px 0; min-height: 430px; }
+.p-urow { display: flex; justify-content: flex-end; }
+.p-ububble {
+  max-width: 84%;
+  background: var(--m-accent-weak);
+  border: 1px solid var(--m-accent-border);
+  color: #1b4bb5;
+  border-radius: 9px 9px 2px 9px;
+  padding: 7px 10px;
+  font-size: 11.5px;
+  line-height: 1.65;
+}
+.p-aitext { margin-top: 10px; font-size: 11.5px; line-height: 1.7; }
+.h5dc {
+  margin-top: 8px;
+  border: 1px solid var(--m-line2);
+  border-radius: 12px;
+  background: #fff;
+  overflow: hidden;
+}
+.h5dc-head { display: flex; align-items: center; gap: 6px; padding: 8px 10px 4px; }
+.h5dc-head .ico { color: var(--m-accent); width: 14px; height: 14px; }
+.h5dc-title { font-size: 11.5px; font-weight: 650; }
+.h5dc-head .dc-badge { margin-left: auto; }
+.h5dc-sub { padding: 0 10px; font-size: 10px; color: var(--m-muted); line-height: 1.6; }
+.h5dc-chips { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 10px 0; }
+.h5dc-acts { display: flex; gap: 6px; padding: 8px 10px 10px; }
+.h5dc-acts .btn.primary { flex: 1; justify-content: center; padding: 7px 9px; }
+.h5dc-acts .btn.ghost { flex: none; padding: 7px 9px; }
+.p-goalbar {
+  margin: 12px 0 0;
+  border: 1px solid var(--m-accent-border);
+  background: #f7faff;
+  border-radius: 10px;
+  padding: 7px 9px;
+}
+.p-gb-row1 { display: flex; align-items: center; gap: 6px; }
+.p-gb-obj { font-size: 10.5px; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.p-gb-more { margin-left: auto; font-size: 10px; color: var(--m-muted); }
+.p-gb-row2 { display: flex; align-items: center; gap: 6px; margin-top: 4px; font-size: 9.5px; color: var(--m-faint); }
+.p-gb-track { flex: 1; height: 3px; background: #e3e9f5; border-radius: 2px; overflow: hidden; }
+.p-gb-fill { height: 100%; width: 46%; background: var(--m-accent); }
+.p-composer {
+  margin: 10px 0 12px;
+  border: 1px solid var(--m-line2);
+  background: #fff;
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 10.5px;
+  color: var(--m-faint);
+}
+.sheet-mask { position: relative; }
+.sheet {
+  position: absolute; inset: 0;
+  background: rgba(15, 23, 42, .30);
+}
+.sheet-card {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  background: #fff;
+  border-radius: 16px 16px 0 0;
+  padding: 6px 12px 12px;
+}
+.sheet-grip { width: 38px; height: 4px; border-radius: 2px; background: #dfe3e8; margin: 0 auto 8px; }
+.sheet-head { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 650; }
+.sheet-head .ico { color: var(--m-accent); }
+.sheet-head .dc-badge { margin-left: auto; }
+.sheet-entry { margin-top: 9px; border: 1px solid var(--m-accent-border); background: #f7faff; border-radius: 10px; padding: 8px 9px; display: flex; align-items: center; gap: 8px; }
+.sheet-entry-main { min-width: 0; }
+.sheet-entry-name { font-size: 11px; font-weight: 650; }
+.sheet-entry-sub { font-size: 9.5px; color: var(--m-muted); }
+.sheet-entry .btn.primary { margin-left: auto; flex: none; padding: 5px 8px; font-size: 10.5px; }
+.sheet-grp { margin-top: 8px; }
+.sheet-grp .grp-head { font-size: 10px; }
+.sheet-grp .frow { padding: 5px 3px; font-size: 10.5px; }
+.sheet-foot { display: flex; gap: 7px; margin-top: 10px; }
+.sheet-foot .btn.primary { flex: 1; justify-content: center; padding: 8px 9px; }
+.sheet-foot .btn.ghost { flex: none; padding: 8px 9px; }
+
+/* ---------- 标注 ---------- */
+.legend { margin: 10px 0 0; padding-left: 0; list-style: none; }
+.legend li { display: flex; gap: 8px; margin: 5px 0; font-size: 12px; line-height: 1.65; color: var(--muted); }
+.pin {
+  flex: none;
+  width: 17px; height: 17px; border-radius: 50%;
+  background: var(--accent); color: #fff;
+  font-family: var(--mono); font-size: 9.5px; font-weight: 700;
+  display: inline-flex; align-items: center; justify-content: center;
+  margin-top: 1px;
+}
+.tagline { margin-top: 8px; font-size: 12px; color: var(--faint); }
+.footer { padding: 24px 56px 34px; font-size: 11.5px; color: var(--faint); }
+
+@media (max-width: 900px) {
+  .sec { padding: 30px 22px; }
+  .cover { padding: 34px 22px 26px; }
+  .cover h1 { font-size: 26px; }
+  .issue-grid, .principle-grid, .decisions, .goal-grid { grid-template-columns: 1fr; }
+  .summary-band { grid-template-columns: 1fr; }
+  .footer { padding: 20px 22px 26px; }
+  /* 窄屏 mock 横向滚动区左右出血，给 780px 的桌面 mock 留出更多可视宽度；
+     页面本身不横向溢出（溢出只发生在 mock-scroll 内部） */
+  .mock-scroll { margin-left: -22px; margin-right: -22px; padding-left: 22px; padding-right: 22px; }
+}
+</style>
+</head>
+<body>
+<main class="report">
+
+  <!-- ==================== 封面 ==================== -->
+  <header class="cover">
+    <div class="eyebrow">GOAL MODE · DELIVERABLE UX · 2026-11-08</div>
+    <h1>目标模式的产物交付：<br>从「<em>9 行文件附件</em>」到「<em>1 个可验收的交付包</em>」</h1>
+    <p class="lede">
+      截图里的目标已经跑完，用户得到的是：正文一张 6 行文件表，下面再挂 9 行「预览 / 下载」。
+      同一批文件说了两遍，真正该回答的问题——<b>「这个站点做成了吗、从哪里打开、验收过没有」</b>——反而没有入口。
+      这份方案把交付物从「回答的附件」提升为「目标的一个交付对象」：对话里只留一张交付卡，全量清单与批量动作收进交付抽屉，
+      目标条与终态卡常驻「产出 N 件」入口。先看方案，拍板后再动代码。
+    </p>
+    <div class="meta-row">
+      <span class="meta-chip">依据：<b>2026-11-08 真机截图</b>（一个官网 = 6 页面 + 3 站点文件）</span>
+      <span class="meta-chip">适用：<b>PC 主对话 / 移动壳</b></span>
+      <span class="meta-chip">复用：<b>预览台 / 批量 ZIP / 目标过程抽屉</b></span>
+      <span class="meta-chip">状态：<b>待拍板</b></span>
+    </div>
+    <div class="summary-band">
+      <div class="summary-card">
+        <div class="num">01 / 对话内</div>
+        <strong>一张交付卡代替 N 行附件</strong>
+        <span>卡里回答四件事：这是什么包、入口在哪、验收过没有、还有哪些文件。</span>
+      </div>
+      <div class="summary-card">
+        <div class="num">02 / 全量清单</div>
+        <strong>清单收进交付抽屉</strong>
+        <span>PC 右抽屉、H5 底部 sheet；按角色分组，支持批量下载与定位到产出轮次。</span>
+      </div>
+      <div class="summary-card">
+        <div class="num">03 / 目标层</div>
+        <strong>目标条与终态卡常驻入口</strong>
+        <span>「产出 9 件」不是一次性消息，刷新、换轮、重跑后都还能一键回到交付面。</span>
+      </div>
+    </div>
+    <nav class="toc">
+      <a href="#s1">01 现状与根因</a>
+      <a href="#s2">02 目标与原则</a>
+      <a href="#s3">03 方案对比</a>
+      <a href="#s4">04 信息架构</a>
+      <a href="#s5">05 PC 效果图</a>
+      <a href="#s6">06 H5 效果图</a>
+      <a href="#s7">07 状态与文案</a>
+      <a href="#s8">08 交互细则</a>
+      <a href="#s9">09 落地差距</a>
+      <a href="#s10">10 拍板项</a>
+      <a href="#s11">11 验收清单</a>
+    </nav>
+  </header>
+
+  <!-- ==================== 01 现状 ==================== -->
+  <section class="sec" id="s1">
+    <div class="sec-head"><span class="sec-no">01</span><h2>现状：一次站点交付，被拆成了 9 行附件</h2></div>
+    <p class="lead">
+      问题的根不在「文件行太高」，而在<b>交付单位错了</b>：系统只有单个 artifact，没有「交付包」这个概念。
+      于是模型只能把 9 个文件逐条陈列，界面也只能逐条渲染；用户看到的是一份文件清单，而不是一个可打开、可验收的站点。
+    </p>
+
+    <div class="issue-grid">
+      <div class="issue">
+        <div class="tag">ISSUE 01</div>
+        <h4>清单淹没了结论</h4>
+        <p>9 行附件在回答末尾平铺，占掉约三分之一屏。用户真正需要的「做完了没有、从哪打开」被压到最上面一行正文里，滚两下就看不见了。</p>
+      </div>
+      <div class="issue">
+        <div class="tag">ISSUE 02</div>
+        <h4>同一批文件说了两遍</h4>
+        <p>正文表格逐页说明 6 个页面，下面附件区又把 9 个文件各列一行。两份清单信息重叠却不互补：表格有「每页内容」，卡片只有文件名。</p>
+      </div>
+      <div class="issue">
+        <div class="tag">ISSUE 03</div>
+        <h4>没有「交付包」对象</h4>
+        <p>数据层只有 artifact，没有 bundle、入口、版本、验收。界面无法回答「这是一个站点还是 9 个散件」——用户只能自己拼。</p>
+      </div>
+      <div class="issue">
+        <div class="tag">ISSUE 04</div>
+        <h4>没有「打开站点」</h4>
+        <p>交付的是多页站点，主行动却只能是单件预览。index.html 的 CSS/页面引用是相对路径，单独预览还会断，站点根本跑不起来。</p>
+      </div>
+      <div class="issue">
+        <div class="tag">ISSUE 05</div>
+        <h4>验收成本 18 次点击</h4>
+        <p>9 件 ×（预览 + 下载）= 18 次点击。批量 ZIP 在「我的产物」页已有接口，聊天里的交付现场却拿不到。</p>
+      </div>
+      <div class="issue">
+        <div class="tag">ISSUE 06</div>
+        <h4>过程件与交付件同权</h4>
+        <p>favicon.svg、robots.txt、sitemap.xml 与 6 个页面同排同色。哪些是「打开站点的入口」，哪些是「站点配套」，用户分不出来。</p>
+      </div>
+      <div class="issue">
+        <div class="tag">ISSUE 07</div>
+        <h4>交付状态缺失</h4>
+        <p>目标还在跑，文件就一条条长出来；目标失败或取消后，这些文件卡仍留在回答里，没有任何「算不算数、验没验收」的标记。</p>
+      </div>
+      <div class="issue">
+        <div class="tag">ISSUE 08</div>
+        <h4>移动端更糟</h4>
+        <p>一行文件名加两个常驻链接，长文件名被挤成省略号，触屏热区又小；9 行清单在手机上要滑一整屏。</p>
+      </div>
+    </div>
+
+    <h3 class="sub">现状复现（按截图裁切）</h3>
+    <p class="sub-note">回答正文的表格与下方附件清单重复表达同一批文件；两个动作常驻，每行都在抢视线。</p>
+    <div class="mock-scroll">
+      <div class="mock ui-scope" style="min-width:820px">
+        <div class="mk-bar">
+          <div class="dots"><i></i><i></i><i></i></div>
+          <div class="mk-url">localhost:5800/chat?sid=…</div>
+          <span class="spacer"></span>
+          <span class="mk-tag">目标模式 · 已完成</span>
+        </div>
+        <div class="chat">
+          <div class="thread" style="min-height:0">
+            <div class="urow"><div class="ububble">做一个问渠官网，AI 回答可信、需要真实链接，交付可验收。</div></div>
+            <div class="airow">
+              <div class="ai-avatar">Q</div>
+              <div class="ai-col" style="max-width:720px">
+                <div class="aitext">页面结构已经生成，共 6 个页面，说明如下：</div>
+                <table class="tbl" style="margin-top:8px;font-size:11.5px">
+                  <tr><th style="width:150px">页面</th><th>内容</th></tr>
+                  <tr><td>index.html 首页</td><td>品牌标、答案来源、双按钮、核心能力与 FAQ</td></tr>
+                  <tr><td>product.html 产品能力</td><td>六项能力概述，每项三个要点</td></tr>
+                  <tr><td>agents.html 智能体</td><td>三张智能体卡、问题示例、四条设计原则</td></tr>
+                  <tr><td>deploy.html 部署文档</td><td>环境、启动、配置、验证、排查与扩容</td></tr>
+                  <tr><td>about.html 关于</td><td>名字由来、四条信条、三种参与方式</td></tr>
+                  <tr><td>404.html</td><td>品牌化错误页，返回首页与常用入口</td></tr>
+                </table>
+                <div class="aitext" style="margin-top:10px;color:var(--m-muted)">顺手补齐站点级文件：robots.txt、sitemap.xml、favicon.svg；其中 sitemap 的最后一行需要替换真实域名。</div>
+
+                <div style="margin-top:8px;display:flex;flex-direction:column;gap:5px">
+                  <div class="frow" style="border:1px solid var(--m-line);border-radius:7px;padding:5px 8px">
+                    <span class="ftag">▣</span><span class="fname">index.html</span><span class="ftag">首页</span>
+                    <span class="facts" style="opacity:1"><span>预览</span><span>下载</span></span>
+                  </div>
+                  <div class="frow" style="border:1px solid var(--m-line);border-radius:7px;padding:5px 8px">
+                    <span class="ftag">▣</span><span class="fname">product.html</span>
+                    <span class="facts" style="opacity:1"><span>预览</span><span>下载</span></span>
+                  </div>
+                  <div class="frow" style="border:1px solid var(--m-line);border-radius:7px;padding:5px 8px">
+                    <span class="ftag">▣</span><span class="fname">agents.html</span>
+                    <span class="facts" style="opacity:1"><span>预览</span><span>下载</span></span>
+                  </div>
+                  <div class="frow" style="border:1px solid var(--m-line);border-radius:7px;padding:5px 8px">
+                    <span class="ftag">▣</span><span class="fname">deploy.html</span>
+                    <span class="facts" style="opacity:1"><span>预览</span><span>下载</span></span>
+                  </div>
+                  <div class="frow" style="border:1px solid var(--m-line);border-radius:7px;padding:5px 8px">
+                    <span class="ftag">▣</span><span class="fname">about.html</span>
+                    <span class="facts" style="opacity:1"><span>预览</span><span>下载</span></span>
+                  </div>
+                  <div class="frow" style="border:1px solid var(--m-line);border-radius:7px;padding:5px 8px">
+                    <span class="ftag">▣</span><span class="fname">404.html</span>
+                    <span class="facts" style="opacity:1"><span>预览</span><span>下载</span></span>
+                  </div>
+                  <div class="frow" style="border:1px solid var(--m-line);border-radius:7px;padding:5px 8px">
+                    <span class="ftag">▣</span><span class="fname">favicon.svg</span>
+                    <span class="facts" style="opacity:1"><span>预览</span><span>下载</span></span>
+                  </div>
+                  <div class="frow" style="border:1px solid var(--m-line);border-radius:7px;padding:5px 8px">
+                    <span class="ftag">▣</span><span class="fname">robots.txt</span>
+                    <span class="facts" style="opacity:1"><span>预览</span><span>下载</span></span>
+                  </div>
+                  <div class="frow" style="border:1px solid var(--m-line);border-radius:7px;padding:5px 8px">
+                    <span class="ftag">▣</span><span class="fname">sitemap.xml</span>
+                    <span class="facts" style="opacity:1"><span>预览</span><span>下载</span></span>
+                  </div>
+                </div>
+                <div class="ai-meta">10:20 · 9 个文件</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="note-strip warn">
+      <b>一句话诊断：</b>用户要的是「一个能打开的站点」，系统交付的是「9 个能分别下载的文件」。
+      差别不在视觉，在交付单位——先把单位改成「交付包」，卡片、抽屉、目标条才有地方长。
+    </div>
+  </section>
+
+  <!-- ==================== 02 目标与原则 ==================== -->
+  <section class="sec" id="s2">
+    <div class="sec-head"><span class="sec-no">02</span><h2>目标与原则</h2></div>
+    <p class="lead">
+      这次改版只解决一件事：<b>让「目标做完了」这件事在界面上成立</b>。文件下载仍然要做，但它是验收之后的二级动作，不是交付本身。
+    </p>
+
+    <div class="goal-grid">
+      <div class="goal"><div class="big">1</div><h4>一张卡</h4><p>对话里每组交付只留一张卡，任何轮次都不再逐条铺文件。</p></div>
+      <div class="goal"><div class="big">3</div><h4>三个问题</h4><p>卡片按顺序回答：这是什么、从哪打开、验收过没有。</p></div>
+      <div class="goal"><div class="big">0</div><h4>零重复</h4><p>正文只管结论与验收口径，文件清单只出现在交付卡与抽屉里。</p></div>
+      <div class="goal"><div class="big">2</div><h4>两处常驻</h4><p>目标条与终态卡都给「产出 N 件」入口，换轮、刷新都不丢。</p></div>
+    </div>
+
+    <div class="principle-grid">
+      <div class="principle"><div class="pno">P1</div><div><strong>交付单位是包，不是文件</strong><p>一个目标产出的一组文件 = 一个交付包（有名字、版本、入口、验收状态）。单个文件只是包内条目。</p></div></div>
+      <div class="principle"><div class="pno">P2</div><div><strong>对话里只留一张交付卡</strong><p>默认展示主入口 + 验收 + 前两件文件；其余折叠成「查看全部 N 件」。不再每行挂两个常驻动作。</p></div></div>
+      <div class="principle"><div class="pno">P3</div><div><strong>主入口优先于下载</strong><p>站点/应用先给「打开站点」；文档包先给「打开主文档」。下载是第二步，放在同一行但不做主按钮。</p></div></div>
+      <div class="principle"><div class="pno">P4</div><div><strong>验收先于清单</strong><p>先给「页面可达 / 断链 / 移动视口」这类可核对的结论，再让用户去翻文件。未验收就说未验收。</p></div></div>
+      <div class="principle"><div class="pno">P5</div><div><strong>逐件动作退到 hover</strong><p>预览/下载仍在，但只在行悬停（移动端常驻）出现；批量 ZIP 才是主行动。</p></div></div>
+      <div class="principle"><div class="pno">P6</div><div><strong>过程产物默认折叠且标灰</strong><p>favicon / robots / sitemap 这类配套文件归入「站点文件」组，默认收起，不和入口页平权。</p></div></div>
+    </div>
+  </section>
+
+  <!-- ==================== 03 方案对比 ==================== -->
+  <section class="sec" id="s3">
+    <div class="sec-head"><span class="sec-no">03</span><h2>四个方案：从「压缩列表」到「交付包 + 验收面」</h2></div>
+    <p class="lead">
+      前两个方案不用动数据，第三个要补一点交付包元数据，第四个是反向方案（把交付搬离对话）。
+      推荐 <b>方案 C</b>，但按 P0 → P1 → P2 分期落地：P0 纯前端就能拿到 80% 的体验。
+    </p>
+    <table class="tbl">
+      <tr>
+        <th style="width:150px">方案</th>
+        <th>对话内呈现</th>
+        <th>清单落点</th>
+        <th>主行动</th>
+        <th>成本</th>
+        <th>结论</th>
+      </tr>
+      <tr>
+        <td>A 压缩清单</td>
+        <td>行高变矮、超过 3 件折叠成「共 9 个文件」</td>
+        <td>点开仍在气泡内展开</td>
+        <td>预览第一件</td>
+        <td class="ok">低</td>
+        <td class="warn">治标：重复表达与验收缺失都还在</td>
+      </tr>
+      <tr>
+        <td>B 交付卡 + 抽屉</td>
+        <td>一张交付卡，折叠前两件</td>
+        <td>PC 右抽屉 / H5 底部 sheet</td>
+        <td>打开第一件</td>
+        <td class="ok">中</td>
+        <td>可用：解决了重复与清单淹没，但「站点」仍没有被当成一个包</td>
+      </tr>
+      <tr class="rec">
+        <td>C 交付包 + 验收面</td>
+        <td>一张交付卡：包名 / 版本 / 入口 / 验收 / 折叠清单</td>
+        <td>交付抽屉：分组清单 + 批量 ZIP + 版本</td>
+        <td>打开站点（主入口）</td>
+        <td class="warn">中高（需少量后端补口）</td>
+        <td class="ok">推荐：交付语义完整，可分三期</td>
+      </tr>
+      <tr>
+        <td>D 全部搬去「我的产物」</td>
+        <td>对话里不显示产物，只留一句「已交付」</td>
+        <td>离开对话去 /artifacts 翻</td>
+        <td>打开产物页</td>
+        <td class="ok">中</td>
+        <td class="danger">不推荐：断了「目标—交付」的上下文，验收变成考古</td>
+      </tr>
+    </table>
+    <div class="note-strip">
+      <b>为什么不是 A：</b>截图里真正刺眼的是「表格 + 9 行清单」这份重复，而不是行高。
+      <b>为什么不是 D：</b>目标模式的价值就是「我说目标、它交付、我在原地验收」，把人赶去另一个页面等于放弃这条链路。
+    </div>
+  </section>
+
+  <!-- ==================== 04 信息架构 ==================== -->
+  <section class="sec" id="s4">
+    <div class="sec-head"><span class="sec-no">04</span><h2>信息架构：一个包、一张卡、一个抽屉、两处常驻入口</h2></div>
+    <p class="lead">
+      所有入口都指向同一个交付包实体，避免「每轮一份、刷新即丢」。对话内的卡是<b>摘要</b>，抽屉是<b>事实面</b>，目标条与终态卡是<b>索引</b>。
+    </p>
+
+    <div class="wire">
+      <div class="wire-main">
+        <div class="wire-box accent tall">
+          <span class="n">1</span>
+          <strong>对话内 · 交付卡</strong>
+          <div style="margin-top:4px">包名 + 版本 + 验收徽标 / 主入口缩略图 + 一句话 / 验收 chips / 打开站点 + 下载 ZIP + 查看全部 / 折叠清单（入口 + 前 1 件 + 其余 N 件）</div>
+        </div>
+        <div class="wire-box tall">
+          <span class="n">2</span>
+          <strong>交付抽屉（PC 右侧 400px / H5 底部 sheet）</strong>
+          <div style="margin-top:4px">入口卡（打开站点）/ 验收清单 / 按角色分组文件 / 每行悬停预览·下载 / 底部 下载全部 ZIP · 保存到我的产物</div>
+        </div>
+        <div class="wire-box">
+          <span class="n">3</span>
+          <strong>目标条第三行</strong>
+          <div style="margin-top:2px">第 N 轮 · 细进度 · <b>产出 9 件 ›</b> · 查看过程</div>
+        </div>
+        <div class="wire-box">
+          <span class="n">4</span>
+          <strong>终态卡（挂在「设为目标」的问答下）</strong>
+          <div style="margin-top:2px">已交付 9 件 / 已验收 3 项 · <b>查看交付</b> · 重新设定目标 · 删除记录</div>
+        </div>
+        <div class="wire-box">
+          <span class="n">5</span>
+          <strong>数据来源</strong>
+          <div style="margin-top:2px">P0 用「消息 artifacts + goal turnId」在前端聚合；P1 由后端在目标视图给出 <code>deliverables</code>（包名 / 入口 / 版本 / 验收）；单个 artifact 仍是下载与预览的最小单位。</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== 05 PC 效果图 ==================== -->
+  <section class="sec" id="s5">
+    <div class="sec-head"><span class="sec-no">05</span><h2>PC 效果图</h2></div>
+    <p class="lead">
+      下面四张图覆盖目标模式的四个现场：<b>已交付</b>、<b>看全部</b>、<b>目标层索引</b>、<b>部分交付（未完成）</b>。
+      交付卡沿用气泡宽度上限，不抢正文；抽屉复用目标过程抽屉的骨架与交互。
+    </p>
+
+    <h3 class="sub">5.1 已交付 · 对话内交付卡</h3>
+    <p class="sub-note">原来 9 行附件的位置，现在只有一张卡；回答正文不再逐条列文件。</p>
+    <div class="mock-scroll">
+      <div class="mock ui-scope">
+        <div class="mk-bar">
+          <div class="dots"><i></i><i></i><i></i></div>
+          <div class="mk-url">localhost:5800/chat?sid=…</div>
+          <span class="spacer"></span>
+          <span class="mk-tag">目标模式 · 已完成</span>
+        </div>
+        <div class="chat">
+          <div class="thread">
+            <div class="urow"><div class="ububble">做一个问渠官网，AI 回答可信、需要真实链接，交付可验收。</div></div>
+            <div class="airow">
+              <div class="ai-avatar">Q</div>
+              <div class="ai-col">
+                <div class="aitext">
+                  站点已交付：<b>6 个页面</b>全部可打开，站内链接无断链，移动视口无横向溢出；
+                  入口在 <b>index.html</b>，另外补了 favicon、robots 与 sitemap。
+                </div>
+
+                <div class="dc">
+                  <div class="dc-head">
+                    <svg class="ico" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+                    <span class="dc-title">问渠官网 · 交付包</span>
+                    <span class="dc-ver">v2</span>
+                    <span class="dc-badge">
+                      <svg class="ico" viewBox="0 0 24 24" style="width:10px;height:10px"><path d="M20 6L9 17l-5-5"/></svg>
+                      已验收
+                    </span>
+                  </div>
+                  <div class="dc-hero">
+                    <div class="dc-thumb">
+                      <div class="dc-thumb-bar"><i></i><i></i><i></i></div>
+                      <div class="dc-thumb-body">
+                        <div class="dc-thumb-line hi"></div>
+                        <div class="dc-thumb-line w70"></div>
+                        <div class="dc-thumb-line w50"></div>
+                        <div class="dc-thumb-line w70"></div>
+                      </div>
+                    </div>
+                    <div class="dc-main">
+                      <div class="dc-name">打开站点 · index.html</div>
+                      <div class="dc-desc">6 个页面 · 9 个文件 · 1.4 MB · 第 4 轮交付</div>
+                      <div class="dc-chips">
+                        <span class="chip ok"><svg class="ico" viewBox="0 0 24 24" style="width:10px;height:10px"><path d="M20 6L9 17l-5-5"/></svg>页面可达 6/6</span>
+                        <span class="chip ok">断链 0</span>
+                        <span class="chip ok">移动视口通过</span>
+                        <span class="chip">sitemap 需替换域名</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="dc-acts">
+                    <button class="btn primary">
+                      <svg class="ico" viewBox="0 0 24 24"><path d="M14 3h7v7"/><path d="M21 3l-9 9"/><path d="M19 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h6"/></svg>
+                      打开站点
+                    </button>
+                    <button class="btn ghost">
+                      <svg class="ico" viewBox="0 0 24 24"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 21h16"/></svg>
+                      下载 ZIP
+                    </button>
+                    <button class="btn text">查看全部 9 件
+                      <svg class="ico" viewBox="0 0 24 24" style="width:11px;height:11px"><path d="M6 9l6 6 6-6"/></svg>
+                    </button>
+                  </div>
+                  <div class="dc-list">
+                    <div class="frow">
+                      <svg class="ico" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+                      <span class="fname">index.html</span>
+                      <span class="ftag">入口</span>
+                      <span class="facts"><span>预览</span><span>下载</span></span>
+                    </div>
+                    <div class="frow">
+                      <svg class="ico" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+                      <span class="fname">product.html</span>
+                      <span class="ftag">页面</span>
+                      <span class="facts"><span>预览</span><span>下载</span></span>
+                    </div>
+                    <div class="dc-more">
+                      展开其余 7 件（favicon、robots、sitemap 与 4 个内容页）
+                      <svg class="ico" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="ai-meta">10:20 · 目标第 4 轮交付 · 共 9 个文件</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="goalbar">
+          <div class="gb-row1">
+            <span class="gb-pill">目标</span>
+            <span class="gb-obj">做一个问渠官网，交付可验收的真实站点</span>
+            <span class="gb-ver">v2</span>
+            <span class="gb-state">已完成</span>
+          </div>
+          <div class="gb-prog"><div class="gb-fill"></div></div>
+          <div class="gb-row3">
+            <span>第 4 轮</span>
+            <span>产出 9 件</span>
+            <a class="gb-link" href="#s5">打开交付
+              <svg class="ico" viewBox="0 0 24 24" style="width:10px;height:10px"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>
+            </a>
+            <span class="spacer"></span>
+            <span class="gb-hint">本轮无新进展，已按证据核验完成</span>
+          </div>
+        </div>
+        <div class="composer">输入消息，Enter 发送 · 目标已完成，可以继续追问或重新设定</div>
+      </div>
+    </div>
+    <ul class="legend">
+      <li><span class="pin">1</span><span><b>卡头</b>只有一行：包名、版本、验收徽标。版本让「重跑过」这件事可见。</span></li>
+      <li><span class="pin">2</span><span><b>主入口即主行动</b>：缩略图 + 打开站点；「下载 ZIP」「查看全部」同级但次级，不再逐行放链接。</span></li>
+      <li><span class="pin">3</span><span><b>验收 chips</b>先给结论：页面可达、断链、移动视口；不确定的（sitemap 需替换域名）用中性 chip 明说。</span></li>
+      <li><span class="pin">4</span><span><b>折叠清单</b>只露入口与下一件，其余收成一行；悬停行才出现预览/下载，避免 18 个常驻动作。</span></li>
+      <li><span class="pin">5</span><span><b>目标条</b>第三行给「产出 9 件 · 打开交付」；这是刷新、换轮后仍然存在的回到交付面的入口。</span></li>
+    </ul>
+
+    <h3 class="sub">5.2 看全部 · 交付抽屉</h3>
+    <p class="sub-note">抽屉与目标过程抽屉同款（右侧 400px）；左栏对话压暗，不新开页面、不丢上下文。</p>
+    <div class="mock-scroll">
+      <div class="mock split ui-scope">
+        <div class="chat-dim">
+          <div class="chat" style="padding-top:16px">
+            <div class="thread" style="min-height:360px">
+              <div class="urow"><div class="ububble">做一个问渠官网，交付可验收的真实站点。</div></div>
+              <div class="airow">
+                <div class="ai-avatar">Q</div>
+                <div class="ai-col">
+                  <div class="aitext">站点已交付：6 个页面全部可打开，站内链接无断链。</div>
+                  <div class="dc" style="max-width:520px">
+                    <div class="dc-head">
+                      <svg class="ico" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+                      <span class="dc-title">问渠官网 · 交付包</span><span class="dc-ver">v2</span>
+                      <span class="dc-badge">已验收</span>
+                    </div>
+                    <div class="dc-hero">
+                      <div class="dc-thumb"><div class="dc-thumb-bar"><i></i><i></i><i></i></div><div class="dc-thumb-body"><div class="dc-thumb-line hi"></div><div class="dc-thumb-line w70"></div><div class="dc-thumb-line w50"></div></div></div>
+                      <div class="dc-main">
+                        <div class="dc-name">打开站点 · index.html</div>
+                        <div class="dc-desc">6 个页面 · 9 个文件 · 1.4 MB</div>
+                      </div>
+                    </div>
+                    <div class="dc-acts">
+                      <button class="btn primary">打开站点</button>
+                      <button class="btn ghost">下载 ZIP</button>
+                      <button class="btn text">查看全部 9 件</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="drawer">
+          <div class="drw-head">
+            <svg class="ico" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+            <span class="drw-title">问渠官网 · 交付包</span>
+            <span class="drw-ver">v2</span>
+            <svg class="ico drw-close" viewBox="0 0 24 24"><path d="M6 6l12 12"/><path d="M18 6L6 18"/></svg>
+          </div>
+          <div class="drw-body">
+            <div class="drw-sec">
+              <div class="drw-label">主入口</div>
+              <div class="entry">
+                <div class="thumb"><div class="dc-thumb-bar"><i></i><i></i><i></i></div><div class="thumb-body"><i class="hi"></i><i></i><i></i></div></div>
+                <div class="entry-main">
+                  <div class="entry-name">index.html</div>
+                  <div class="entry-sub">6 个页面 · 9 个文件 · 1.4 MB</div>
+                </div>
+                <button class="btn primary">打开站点</button>
+              </div>
+            </div>
+
+            <div class="drw-sec">
+              <div class="drw-label">验收</div>
+              <div class="checkrow">
+                <svg class="ico" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>
+                6 个页面均可打开 <span class="ok">6/6</span>
+              </div>
+              <div class="checkrow">
+                <svg class="ico" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>
+                站内链接无断链 <span class="ok">0</span>
+              </div>
+              <div class="checkrow">
+                <svg class="ico" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>
+                移动视口无横向溢出 <span class="ok">通过</span>
+              </div>
+            </div>
+
+            <div class="drw-sec">
+              <div class="drw-label">文件 <span class="n">9</span></div>
+
+              <div class="grp">
+                <div class="grp-head"><span>入口</span><span class="n">1</span><span class="spacer"></span><span class="collapse">收起</span></div>
+                <div class="frow draw">
+                  <svg class="ico" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+                  <span class="fname">index.html</span><span class="ftag">1.2 KB</span>
+                  <span class="facts" style="opacity:1"><span>预览</span><span>下载</span></span>
+                </div>
+              </div>
+
+              <div class="grp">
+                <div class="grp-head"><span>内容页</span><span class="n">5</span><span class="spacer"></span><span class="collapse">收起</span></div>
+                <div class="frow draw">
+                  <svg class="ico" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+                  <span class="fname">product.html</span><span class="ftag">8.4 KB</span>
+                  <span class="facts" style="opacity:1"><span>预览</span><span>下载</span></span>
+                </div>
+                <div class="frow draw">
+                  <svg class="ico" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+                  <span class="fname">agents.html</span><span class="ftag">7.1 KB</span>
+                  <span class="facts" style="opacity:1"><span>预览</span><span>下载</span></span>
+                </div>
+                <div class="frow draw">
+                  <svg class="ico" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+                  <span class="fname">deploy.html</span><span class="ftag">9.6 KB</span>
+                  <span class="facts" style="opacity:1"><span>预览</span><span>下载</span></span>
+                </div>
+                <div class="frow draw">
+                  <svg class="ico" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+                  <span class="fname">about.html</span><span class="ftag">6.2 KB</span>
+                  <span class="facts" style="opacity:1"><span>预览</span><span>下载</span></span>
+                </div>
+                <div class="frow draw">
+                  <svg class="ico" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+                  <span class="fname">404.html</span><span class="ftag">3.8 KB</span>
+                  <span class="facts" style="opacity:1"><span>预览</span><span>下载</span></span>
+                </div>
+              </div>
+
+              <div class="grp">
+                <div class="grp-head"><span>站点文件</span><span class="n">3</span><span class="spacer"></span><span class="collapse">展开</span></div>
+                <div class="frow draw" style="color:var(--m-faint)">
+                  <span class="fname" style="color:var(--m-muted)">favicon.svg · robots.txt · sitemap.xml</span>
+                  <span class="facts" style="opacity:1"><span>展开</span></span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="drw-note">过程文件与交付件分开；sitemap.xml 的域名占位需替换后再发布。</div>
+          <div class="drw-foot">
+            <button class="btn primary">
+              <svg class="ico" viewBox="0 0 24 24"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 21h16"/></svg>
+              下载全部（ZIP）
+            </button>
+            <button class="btn ghost">保存到「我的产物」</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <ul class="legend">
+      <li><span class="pin">1</span><span><b>主入口置顶</b>：缩略图、文件名、体量与「打开站点」一行读完，不需要先滚清单。</span></li>
+      <li><span class="pin">2</span><span><b>验收清单是事实</b>：每项一行、右侧给数值；未通过项换警示色并给「为什么」的短句。</span></li>
+      <li><span class="pin">3</span><span><b>按角色分组</b>：入口 / 内容页 / 站点文件；站点文件默认收起，主次一眼分明。</span></li>
+      <li><span class="pin">4</span><span><b>批量动作收底</b>：下载全部（ZIP）是主按钮；保存到「我的产物」是持久化的次级动作。</span></li>
+    </ul>
+
+    <h3 class="sub">5.3 目标层 · 目标条与终态卡</h3>
+    <p class="sub-note">交付不是某条消息的私产：目标条给索引，终态卡给收口，刷新与重跑后都还在。</p>
+    <div class="mock-scroll">
+      <div class="mock ui-scope" style="min-width:820px">
+        <div class="mk-bar"><div class="dots"><i></i><i></i><i></i></div><div class="mk-url">localhost:5800/chat?sid=…</div><span class="spacer"></span><span class="mk-tag">目标模式</span></div>
+        <div class="chat" style="padding-bottom:0">
+          <div class="thread" style="min-height:0">
+            <div class="urow"><div class="ububble">做一个问渠官网，交付可验收的真实站点。</div></div>
+            <div class="airow">
+              <div class="ai-avatar">Q</div>
+              <div class="ai-col">
+                <div class="aitext" style="color:var(--m-muted)">（交付卡见 5.1；这里只看目标层的两个索引）</div>
+                <div class="tcard">
+                  <div class="tcard-head">
+                    <svg class="ico" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>
+                    目标已交付 · 9 件
+                    <span class="dc-badge">已验收 3/3</span>
+                  </div>
+                  <div class="tcard-sub">问渠官网 · 6 个页面 · 入口 index.html · 第 4 轮</div>
+                  <div class="tcard-acts">
+                    <button class="btn primary" style="padding:4px 9px;font-size:11px">查看交付</button>
+                    <button class="btn ghost" style="padding:4px 9px;font-size:11px">重新设定目标</button>
+                    <button class="btn text" style="font-size:11px">删除记录</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="goalbar" style="margin:10px 18px 14px auto">
+          <div class="gb-row1">
+            <span class="gb-pill">目标</span>
+            <span class="gb-obj">做一个问渠官网，交付可验收的真实站点</span>
+            <span class="gb-ver">v2</span>
+            <span class="gb-state" style="color:var(--m-ok)">已完成</span>
+          </div>
+          <div class="gb-prog"><div class="gb-fill"></div></div>
+          <div class="gb-row3">
+            <span>第 4 轮</span>
+            <span style="color:var(--m-ink);font-weight:600">产出 9 件</span>
+            <a class="gb-link" href="#s5">查看交付
+              <svg class="ico" viewBox="0 0 24 24" style="width:10px;height:10px"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>
+            </a>
+            <span class="spacer"></span>
+            <span class="gb-hint">已完成 · 可继续追问</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <ul class="legend">
+      <li><span class="pin">1</span><span><b>终态卡</b>挂在触发目标的那条用户消息下；「查看交付」直接开抽屉，不必滚回消息里找文件。</span></li>
+      <li><span class="pin">2</span><span><b>目标条</b>无论进行中还是已完成都给「产出 N 件」；进行中显示已产出数，点开就是当前包的最新快照。</span></li>
+    </ul>
+
+    <h3 class="sub">5.4 部分交付 · 未完成 / 失败</h3>
+    <p class="sub-note">目标没跑完时，已产出的文件照样能看能下，但必须明确「未验收」，不能装作交付完成。</p>
+    <div class="mock-scroll">
+      <div class="mock ui-scope" style="min-width:780px">
+        <div class="mk-bar"><div class="dots"><i></i><i></i><i></i></div><div class="mk-url">localhost:5800/chat?sid=…</div><span class="spacer"></span><span class="mk-tag">目标模式 · 未完成</span></div>
+        <div class="chat">
+          <div class="thread" style="min-height:0">
+            <div class="urow"><div class="ububble">做一个问渠官网，交付可验收的真实站点。</div></div>
+            <div class="airow">
+              <div class="ai-avatar">Q</div>
+              <div class="ai-col">
+                <div class="aitext" style="color:var(--m-muted)">目标在第 3 轮停下：4 个页面与 2 个站点文件已产出，但链路检查没有跑完，以下交付未经完整验收。</div>
+                <div class="dc warn">
+                  <div class="dc-head">
+                    <svg class="ico" viewBox="0 0 24 24" style="color:var(--m-warn)"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.3 3.9L2.4 18a2 2 0 0 0 1.7 3h16a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>
+                    <span class="dc-title">问渠官网 · 交付包</span>
+                    <span class="dc-ver">v2</span>
+                    <span class="dc-badge warn">未验收</span>
+                  </div>
+                  <div class="dc-hero">
+                    <div class="dc-thumb"><div class="dc-thumb-bar"><i></i><i></i><i></i></div><div class="dc-thumb-body"><div class="dc-thumb-line hi"></div><div class="dc-thumb-line w70"></div><div class="dc-thumb-line w50"></div></div></div>
+                    <div class="dc-main">
+                      <div class="dc-name">已产出 6 件 · 打开 index.html</div>
+                      <div class="dc-desc">4 个页面 + favicon、robots；sitemap 与 2 个页面尚未生成</div>
+                      <div class="dc-chips">
+                        <span class="chip warn">链路检查未完成</span>
+                        <span class="chip">页面可达 4/6</span>
+                        <span class="chip">sitemap 缺失</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="dc-acts">
+                    <button class="btn primary">打开已产出页面</button>
+                    <button class="btn ghost">下载已产出 6 件</button>
+                    <button class="btn text">查看全部 6 件</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="goalbar" style="margin:12px 18px 14px auto;border-color:var(--m-warn-border);background:var(--m-warn-weak)">
+          <div class="gb-row1">
+            <span class="gb-pill" style="color:var(--m-warn);border-color:var(--m-warn-border)">目标</span>
+            <span class="gb-obj">做一个问渠官网，交付可验收的真实站点</span>
+            <span class="gb-ver">v2</span>
+            <span class="gb-state" style="color:var(--m-warn)">未完成</span>
+          </div>
+          <div class="gb-prog"><div class="gb-fill" style="width:64%;background:var(--m-warn)"></div></div>
+          <div class="gb-row3">
+            <span>第 3 轮</span>
+            <span style="color:var(--m-ink);font-weight:600">产出 6 件</span>
+            <a class="gb-link" href="#s5" style="color:var(--m-warn)">查看交付
+              <svg class="ico" viewBox="0 0 24 24" style="width:10px;height:10px"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>
+            </a>
+            <span class="spacer"></span>
+            <span class="gb-hint">连续两轮没有新进展，已停下</span>
+          </div>
+        </div>
+        <div class="composer">输入「继续」或直接修改目标；目标会接着往下跑</div>
+      </div>
+    </div>
+    <div class="note-strip warn">
+      <b>未完成也要有交付面：</b>已产出的 6 件不是废纸，用户可能就要这 4 个页面；但徽标必须是「未验收」，主行动要写「打开已产出页面」而不是「打开站点」。
+    </div>
+  </section>
+
+  <!-- ==================== 06 H5 ==================== -->
+  <section class="sec" id="s6">
+    <div class="sec-head"><span class="sec-no">06</span><h2>H5 效果图：卡片更薄，清单进底部 sheet</h2></div>
+    <p class="lead">
+      触屏没有 hover，逐件动作必须常驻，但不能每行两个；第一屏只留主入口与两个次级动作，全量清单收进底部 sheet。
+    </p>
+
+    <h3 class="sub">6.1 对话内 · 交付卡（已交付）</h3>
+    <div class="mock-scroll" style="display:flex;justify-content:center">
+      <div class="phone ui-scope">
+        <div class="p-top">
+          <svg class="ico" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>
+          <span>做一个问渠官网</span>
+          <span class="spacer"></span>
+          <svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg>
+        </div>
+        <div class="p-body">
+          <div class="p-urow"><div class="p-ububble">做一个问渠官网，交付可验收的真实站点。</div></div>
+          <div class="p-aitext">站点已交付：6 个页面全部可打开，站内链接无断链。</div>
+          <div class="h5dc">
+            <div class="h5dc-head">
+              <svg class="ico" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+              <span class="h5dc-title">问渠官网 · 交付包</span>
+              <span class="dc-ver">v2</span>
+              <span class="dc-badge">已验收</span>
+            </div>
+            <div class="h5dc-sub">9 个文件 · 1.4 MB · 入口 index.html · 第 4 轮交付</div>
+            <div class="h5dc-chips">
+              <span class="chip ok">页面 6/6</span>
+              <span class="chip ok">断链 0</span>
+              <span class="chip ok">移动视口通过</span>
+            </div>
+            <div class="h5dc-acts">
+              <button class="btn primary">
+                <svg class="ico" viewBox="0 0 24 24"><path d="M14 3h7v7"/><path d="M21 3l-9 9"/><path d="M19 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h6"/></svg>
+                打开站点
+              </button>
+              <button class="btn ghost">
+                <svg class="ico" viewBox="0 0 24 24"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 21h16"/></svg>
+                下载 ZIP
+              </button>
+            </div>
+            <div class="dc-more" style="padding:0 10px 9px;font-size:10.5px">
+              查看全部 9 件
+              <svg class="ico" viewBox="0 0 24 24" style="width:10px;height:10px"><path d="M6 9l6 6 6-6"/></svg>
+            </div>
+          </div>
+          <div class="p-goalbar">
+            <div class="p-gb-row1">
+              <span class="gb-pill" style="font-size:9px">目标</span>
+              <span class="p-gb-obj">做一个问渠官网，交付可验收的真实站点</span>
+              <span class="p-gb-more">更多</span>
+            </div>
+            <div class="p-gb-row2">
+              <span>第 4 轮</span>
+              <span class="p-gb-track"><span class="p-gb-fill"></span></span>
+              <span>产出 9 件</span>
+            </div>
+          </div>
+          <div class="p-composer">输入消息，目标已完成</div>
+        </div>
+      </div>
+    </div>
+    <ul class="legend">
+      <li><span class="pin">1</span><span><b>首屏四行读完</b>：包名、体量、验收、主入口；不再有 9 行清单。</span></li>
+      <li><span class="pin">2</span><span><b>两个动作并排</b>：打开站点占主位，下载 ZIP 次级；「查看全部」是文字链，不抢按钮。</span></li>
+      <li><span class="pin">3</span><span><b>目标条第二行</b>给「产出 9 件」；目标条的「更多」sheet 里也重复这一项，保证两个入口都能到。</span></li>
+    </ul>
+
+    <h3 class="sub">6.2 查看全部 · 底部 sheet</h3>
+    <div class="mock-scroll" style="display:flex;justify-content:center">
+      <div class="phone ui-scope sheet-mask">
+        <div class="p-top" style="opacity:.55">
+          <svg class="ico" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>
+          <span>做一个问渠官网</span>
+          <span class="spacer"></span>
+        </div>
+        <div class="p-body" style="min-height:430px;opacity:.45">
+          <div class="p-urow"><div class="p-ububble">做一个问渠官网，交付可验收的真实站点。</div></div>
+          <div class="h5dc"><div class="h5dc-head"><span class="h5dc-title">问渠官网 · 交付包</span><span class="dc-badge">已验收</span></div><div class="h5dc-sub">9 个文件 · 入口 index.html</div></div>
+        </div>
+        <div class="sheet">
+          <div class="sheet-card">
+            <div class="sheet-grip"></div>
+            <div class="sheet-head">
+              <svg class="ico" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+              交付包 · 问渠官网
+              <span class="dc-ver">v2</span>
+              <span class="dc-badge">已验收</span>
+            </div>
+            <div class="sheet-entry">
+              <div class="entry-main">
+                <div class="sheet-entry-name">index.html · 主入口</div>
+                <div class="sheet-entry-sub">6 个页面 · 9 个文件 · 1.4 MB</div>
+              </div>
+              <button class="btn primary">打开站点</button>
+            </div>
+            <div class="sheet-grp">
+              <div class="grp-head"><span>入口</span><span class="n">1</span><span class="spacer"></span><span class="collapse">收起</span></div>
+              <div class="frow"><svg class="ico" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg><span class="fname">index.html</span><span class="facts" style="opacity:1"><span>预览</span><span>下载</span></span></div>
+            </div>
+            <div class="sheet-grp">
+              <div class="grp-head"><span>内容页</span><span class="n">5</span><span class="spacer"></span><span class="collapse">收起</span></div>
+              <div class="frow"><svg class="ico" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg><span class="fname">product.html</span><span class="facts" style="opacity:1"><span>预览</span><span>下载</span></span></div>
+              <div class="frow"><svg class="ico" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg><span class="fname">agents.html</span><span class="facts" style="opacity:1"><span>预览</span><span>下载</span></span></div>
+              <div class="frow"><svg class="ico" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg><span class="fname">deploy.html</span><span class="facts" style="opacity:1"><span>预览</span><span>下载</span></span></div>
+              <div class="frow"><svg class="ico" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg><span class="fname">about.html</span><span class="facts" style="opacity:1"><span>预览</span><span>下载</span></span></div>
+              <div class="frow"><svg class="ico" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg><span class="fname">404.html</span><span class="facts" style="opacity:1"><span>预览</span><span>下载</span></span></div>
+            </div>
+            <div class="sheet-grp">
+              <div class="grp-head"><span>站点文件</span><span class="n">3</span><span class="spacer"></span><span class="collapse">展开</span></div>
+              <div class="frow" style="color:var(--m-faint)"><span class="fname" style="color:var(--m-muted)">favicon.svg · robots.txt · sitemap.xml</span></div>
+            </div>
+            <div class="sheet-foot">
+              <button class="btn primary">
+                <svg class="ico" viewBox="0 0 24 24"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 21h16"/></svg>
+                下载全部（ZIP）
+              </button>
+              <button class="btn ghost">保存到产物</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <ul class="legend">
+      <li><span class="pin">1</span><span><b>sheet 高度 78%</b>，背景对话压暗但不卸载；关掉就回到原位，不丢上下文。</span></li>
+      <li><span class="pin">2</span><span><b>入口单独一组</b>，内容页与站点文件各一组；默认只展开入口与内容页，站点文件折叠。</span></li>
+      <li><span class="pin">3</span><span><b>底部动作吸底</b>：ZIP 是主按钮；「保存到产物」是持久化次级动作。</span></li>
+    </ul>
+  </section>
+
+  <!-- ==================== 07 状态与文案 ==================== -->
+  <section class="sec" id="s7">
+    <div class="sec-head"><span class="sec-no">07</span><h2>状态矩阵与文案</h2></div>
+    <p class="lead">
+      交付的每个状态都必须说清楚「这堆文件算不算数」。状态词只允许六个：正在产出 / 已交付 / 未验收 / 未完成 / 已取消 / 已替换。
+    </p>
+    <table class="tbl">
+      <tr>
+        <th style="width:140px">目标状态</th>
+        <th>交付卡头部</th>
+        <th>主行动</th>
+        <th>清单</th>
+        <th>目标条 / 终态卡</th>
+      </tr>
+      <tr>
+        <td>RUNNING · 已产出 3 件</td>
+        <td>「正在产出 · 3 件」＋细进度</td>
+        <td>打开已产出页面（逐件预览）</td>
+        <td>只露已产出的，按生成顺序</td>
+        <td>产出 3 件（数字随 SSE 增长）</td>
+      </tr>
+      <tr class="rec">
+        <td>ACHIEVED · 已验收</td>
+        <td>「已交付 · 9 件」＋已验收徽标</td>
+        <td>打开站点</td>
+        <td>入口 + 前 1 件，其余折叠</td>
+        <td>产出 9 件 · 查看交付</td>
+      </tr>
+      <tr>
+        <td>RUNNING 但验收未跑</td>
+        <td>「已产出 · 6 件」＋未验收徽标</td>
+        <td>打开已产出页面</td>
+        <td>全量但标灰未验收</td>
+        <td>产出 6 件 · 未验收</td>
+      </tr>
+      <tr>
+        <td>FAILED / 中断</td>
+        <td>「部分交付 · 6 件」＋未验收（黄）</td>
+        <td>打开已产出页面 + 下载已产出</td>
+        <td>分组，缺失项显式说明</td>
+        <td>产出 6 件 · 继续目标</td>
+      </tr>
+      <tr>
+        <td>CANCELLED</td>
+        <td>「已取消 · 保留 6 件」＋未验收</td>
+        <td>打开已产出页面</td>
+        <td>全量；标注「目标已取消」</td>
+        <td>终态卡：保留交付 6 件</td>
+      </tr>
+      <tr>
+        <td>重新交付 v2</td>
+        <td>「已交付 · 9 件」＋v2</td>
+        <td>打开站点（默认最新）</td>
+        <td>可切 v1 / v2，旧版不删</td>
+        <td>产出 9 件 · v2</td>
+      </tr>
+      <tr>
+        <td>零产出</td>
+        <td>不出现交付卡</td>
+        <td>—</td>
+        <td>—</td>
+        <td>产出 0 件（置灰，不可点）</td>
+      </tr>
+    </table>
+
+    <h3 class="sub">模型侧交付话术（治「重复表达」的根）</h3>
+    <p class="sub-note">清单由界面承担，回答正文只写验收结论；这是提示词约束，不靠前端去重。</p>
+    <div class="buyer-note">
+      <div class="bn-line"><b>应该这样收尾：</b>「站点已交付：6 个页面可打开，断链 0，移动视口通过；入口 index.html。sitemap 的域名占位需替换后发布。」</div>
+      <div class="bn-line"><b>不要再这样：</b>把 6 个页面的表格 + 9 个文件的清单逐条写进回答正文。文件清单交给交付卡与抽屉，回答只说「做了什么、验了什么、还差什么」。</div>
+    </div>
+  </section>
+
+  <!-- ==================== 08 交互细则 ==================== -->
+  <section class="sec" id="s8">
+    <div class="sec-head"><span class="sec-no">08</span><h2>交互细则</h2></div>
+    <table class="tbl">
+      <tr>
+        <th style="width:132px">动作</th>
+        <th>PC</th>
+        <th>H5</th>
+        <th>结果 / 边界</th>
+      </tr>
+      <tr>
+        <td>打开站点</td>
+        <td>进预览台「站点档」：iframe 同一交付包基址，站内相对链接可用；Ctrl/中键开新标签</td>
+        <td>全屏预览，顶部返回；站内跳转留在预览内</td>
+        <td>P2 能力；P0 先打开入口文件，明确提示「单页预览，站内链接可能失效」</td>
+      </tr>
+      <tr>
+        <td>下载 ZIP</td>
+        <td>复用 <code>/artifact/batch-download</code>；文件名用交付包名 + 版本</td>
+        <td>同左，系统下载</td>
+        <td>P0 用现有文件名；P1 支持 <code>bundleName</code> 与保留相对路径</td>
+      </tr>
+      <tr>
+        <td>查看全部</td>
+        <td>右侧 400px 抽屉（与目标过程抽屉同骨架），Esc 关闭</td>
+        <td>底部 sheet 78% 高，下滑关闭</td>
+        <td>只开一层，不叠模态；打开时对话仍可滚动</td>
+      </tr>
+      <tr>
+        <td>单件预览 / 下载</td>
+        <td>行悬停出现两个图标；点击进预览台现有分档</td>
+        <td>行尾常驻两个触屏热区（≥40px）</td>
+        <td>没有预览能力的类型只给下载，不给死按钮</td>
+      </tr>
+      <tr>
+        <td>定位到产出轮次</td>
+        <td>抽屉行右键/更多菜单「定位到第 N 轮」</td>
+        <td>行尾「…」菜单</td>
+        <td>复用目标轮的 turnId 定位（与「查看过程」同一套滚动逻辑）</td>
+      </tr>
+      <tr>
+        <td>复制全部链接</td>
+        <td>抽屉底部次级菜单</td>
+        <td>sheet 底部次级菜单</td>
+        <td>签名链接 1 小时有效，复制时提示有效期</td>
+      </tr>
+      <tr>
+        <td>保存到「我的产物」</td>
+        <td>已是默认归宿（artifact 本就落库），按钮改为「在产物页查看」</td>
+        <td>同左，跳 /artifacts</td>
+        <td>避免造一个假动作：不重复落库，只做跳转</td>
+      </tr>
+      <tr>
+        <td>键盘</td>
+        <td>交付卡 Tab 可达；Enter 打开主入口；Esc 关抽屉</td>
+        <td>—</td>
+        <td>焦点回到触发元素</td>
+      </tr>
+    </table>
+    <div class="note-strip warn">
+      <b>签名与相对链接是硬约束：</b>当前产物落在 <code>artifacts/{uid}/{yyyyMM}/{id}_{name}</code>，单文件签名 URL 无法让
+      <code>index.html</code> 里的相对 CSS/页面引用生效。所以「打开站点」必须等 P2 的交付包目录与基址；P0 不要假装能打开整站。
+    </div>
+  </section>
+
+  <!-- ==================== 09 落地差距 ==================== -->
+  <section class="sec" id="s9">
+    <div class="sec-head"><span class="sec-no">09</span><h2>落地差距：已有六成，缺的是「包」与「基址」</h2></div>
+    <p class="lead">
+      这次方案尽量复用现成能力，避免为了 UI 再造一套。真正需要后端补的只有两件：交付包的元数据与可整站预览的基址。
+    </p>
+    <table class="tbl">
+      <tr>
+        <th style="width:160px">能力</th>
+        <th>现状</th>
+        <th>缺口</th>
+        <th style="width:90px">期次</th>
+      </tr>
+      <tr>
+        <td>气泡产物清单</td>
+        <td><code>m.artifacts</code> 已在每轮落库与回显，ChatPage / MobileMsgRow 各有一份渲染</td>
+        <td>改成 DeliveryCard，清单收进抽屉</td>
+        <td class="ok">P0</td>
+      </tr>
+      <tr>
+        <td>会话产物汇总</td>
+        <td><code>sessionArtifacts</code> 已在前端按轮次倒序汇总</td>
+        <td>按交付包分组（包名 / 入口 / 版本）</td>
+        <td class="ok">P0</td>
+      </tr>
+      <tr>
+        <td>批量 ZIP</td>
+        <td><code>downloadArtifactsZip</code> 与 <code>/artifact/batch-download</code> 已可用</td>
+        <td>包名与相对路径保留（现在是「我的产物_时间」平铺）</td>
+        <td class="warn">P1</td>
+      </tr>
+      <tr>
+        <td>预览台</td>
+        <td>页面档 / 读字档已成熟，支持 HTML 视口</td>
+        <td>新增「站点档」：同包多文件同基址</td>
+        <td class="danger">P2</td>
+      </tr>
+      <tr>
+        <td>目标过程抽屉</td>
+        <td>GoalViewer 已有版本轨、时间线、动作底栏</td>
+        <td>复用为交付抽屉（换内容区，骨架不动）</td>
+        <td class="ok">P0</td>
+      </tr>
+      <tr>
+        <td>终态卡 / 目标条</td>
+        <td>已有终态卡与目标条三段式</td>
+        <td>加「产出 N 件 · 查看交付」入口</td>
+        <td class="ok">P0</td>
+      </tr>
+      <tr>
+        <td>验收检查</td>
+        <td>无</td>
+        <td>页面可达、断链、移动视口；可由工具产出检查结果，随交付包回传</td>
+        <td class="danger">P2</td>
+      </tr>
+      <tr>
+        <td>版本（重跑）</td>
+        <td>目标有 objectiveVersion，产物没有 ver</td>
+        <td>交付包维度 v1..vN；旧版保留（建议 7 天或手动清理）</td>
+        <td class="warn">P1</td>
+      </tr>
+    </table>
+
+    <h3 class="sub">分期建议</h3>
+    <div class="wire">
+      <div class="wire-main">
+        <div class="wire-box accent">
+          <span class="n">P0</span>
+          <strong>纯前端（先拿到 80%）</strong>
+          <div style="margin-top:3px">DeliveryCard 替换 artifact-list；按消息/目标聚合；交付抽屉复用 GoalViewer；目标条与终态卡加「产出 N 件」；模型话术约束。</div>
+        </div>
+        <div class="wire-box">
+          <span class="n">P1</span>
+          <strong>交付包元数据（后端小改）</strong>
+          <div style="margin-top:3px">artifact 记录补 goalId / turnId（或由消息反查）；目标视图给 deliverables（包名、入口、版本、验收摘要）；batch-download 支持包名与相对路径。</div>
+        </div>
+        <div class="wire-box">
+          <span class="n">P2</span>
+          <strong>整站预览与验收（真交付）</strong>
+          <div style="margin-top:3px">同包产物按目录落盘 + <code>/ai/bundles/{bundleId}/**</code> 基址；预览台「站点档」；断链/可达/移动视口检查；版本切换。</div>
+        </div>
+      </div>
+    </div>
+    <div class="note-strip">
+      <b>风险登记：</b>单文件 1MB 上限对多页站点可能不够；签名默认 1 小时，预览基址需按包签名而不是按文件；
+      旧产物是扁平 objectKey，迁移到包目录要兼容存量链接（新老两套路径并存，不重写老记录）。
+    </div>
+  </section>
+
+  <!-- ==================== 10 拍板项 ==================== -->
+  <section class="sec" id="s10">
+    <div class="sec-head"><span class="sec-no">10</span><h2>拍板项</h2></div>
+    <p class="lead">下面七条是这份方案的决策边界；拍板后按 P0 → P1 → P2 实施。默认全部按推荐项走。</p>
+    <div class="decisions">
+      <div class="decision">
+        <div class="dno">D1 · 交付单位</div>
+        <h4>以「交付包」为单位，不以文件为单位</h4>
+        <p>一个目标产出的一组文件归一个包：有包名、入口、版本、验收状态。单文件仍是下载与预览的最小单位。</p>
+        <div class="opts">
+          <div class="opt rec"><b>推荐：</b>交付包（支持整站/文档集/单文件三种形态）</div>
+          <div class="opt">备选：仍以文件为单位，只压缩列表</div>
+        </div>
+      </div>
+      <div class="decision">
+        <div class="dno">D2 · 对话内呈现</div>
+        <h4>一张交付卡，折叠清单最多露两件</h4>
+        <p>卡内顺序固定：包名与验收 → 主入口 → 操作 → 折叠清单。超过两件一律折叠，不在气泡里展开全量。</p>
+        <div class="opts">
+          <div class="opt rec"><b>推荐：</b>卡 + 折叠（入口与下一件）</div>
+          <div class="opt">备选：卡内全量清单（移动端会更长）</div>
+        </div>
+      </div>
+      <div class="decision">
+        <div class="dno">D3 · 清单落点</div>
+        <h4>PC 右抽屉 / H5 底部 sheet，复用目标过程抽屉</h4>
+        <p>不新开页面、不跳 /artifacts；关掉回到原位。抽屉里才给分组、批量、复制链接与定位轮次。</p>
+        <div class="opts">
+          <div class="opt rec"><b>推荐：</b>抽屉 / sheet</div>
+          <div class="opt">备选：新页面（会丢上下文）</div>
+        </div>
+      </div>
+      <div class="decision">
+        <div class="dno">D4 · 主行动</div>
+        <h4>站点/应用给「打开站点」，文档集给「打开主文档」</h4>
+        <p>主按钮永远指向入口，不指向下载。下载 ZIP 同级但次级；逐件动作退到 hover（移动端常驻热区）。</p>
+        <div class="opts">
+          <div class="opt rec"><b>推荐：</b>入口优先</div>
+          <div class="opt">备选：下载优先（适合纯素材包）</div>
+        </div>
+      </div>
+      <div class="decision">
+        <div class="dno">D5 · 过程件</div>
+        <h4>站点配套文件归组、默认折叠、标灰</h4>
+        <p>favicon / robots / sitemap 永远是「站点文件」组；展开后仍可预览下载，但不与入口页同权。</p>
+        <div class="opts">
+          <div class="opt rec"><b>推荐：</b>分组折叠</div>
+          <div class="opt">备选：平铺（回到截图的老问题）</div>
+        </div>
+      </div>
+      <div class="decision">
+        <div class="dno">D6 · 目标层</div>
+        <h4>目标条与终态卡常驻「产出 N 件」</h4>
+        <p>进行中数字随产出增长；终态卡给「查看交付」。不依赖某一条回答是否还在可视区。</p>
+        <div class="opts">
+          <div class="opt rec"><b>推荐：</b>两处入口</div>
+          <div class="opt">备选：只放对话卡</div>
+        </div>
+      </div>
+      <div class="decision">
+        <div class="dno">D7 · 模型话术</div>
+        <h4>回答正文不逐条罗列文件，只写验收结论</h4>
+        <p>清单交给界面；正文收尾只回答「做了什么、验了什么、还差什么」。这是提示词约束，不做前端去重修补。</p>
+        <div class="opts">
+          <div class="opt rec"><b>推荐：</b>写进目标模式的交付提示词</div>
+          <div class="opt">备选：保留表格，由前端隐藏重复清单</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== 11 验收清单 ==================== -->
+  <section class="sec" id="s11">
+    <div class="sec-head"><span class="sec-no">11</span><h2>验收清单</h2></div>
+    <p class="lead">P0 落地后逐条核对；P2 的整站预览与验收检查单独验。</p>
+    <ul class="bullets">
+      <li><b>一个包一张卡：</b>同一目标的 9 个文件在对话里只出现一张交付卡，不再逐行平铺。</li>
+      <li><b>正文零重复：</b>回答正文不出现完整文件清单；表格若保留，只说页面分工，不逐文件列名。</li>
+      <li><b>主入口可用：</b>「打开站点」指向包内入口；P0 阶段明确单页预览的边界提示。</li>
+      <li><b>折叠正确：</b>清单默认只露两件；展开后行悬停才出现预览/下载；移动端热区 ≥40px。</li>
+      <li><b>抽屉完整：</b>分组、验收、批量 ZIP、复制链接、定位轮次全部可用；Esc / 下滑可关。</li>
+      <li><b>目标层常驻：</b>目标条与终态卡都有「产出 N 件」；刷新、切换会话、重跑后仍指向当前包。</li>
+      <li><b>状态诚实：</b>未完成/已取消显示「未验收」，已交付显示「已验收」；不把未验收说成完成。</li>
+      <li><b>零产出不显示：</b>目标尚未产出时不出现空交付卡；目标条「产出 0 件」置灰不可点。</li>
+      <li><b>无回归：</b>非目标模式的普通问答、分享页的产物列表、/artifacts 批量下载行为不变。</li>
+      <li><b>可访问：</b>交付卡可用键盘走完；状态不只靠颜色区分；图标按钮有 aria-label。</li>
+    </ul>
+    <div class="note-strip">
+      拍板后我按 <b>P0（前端可先上）→ P1（包元数据）→ P2（整站预览与验收）</b> 实施。
+      P0 上线即可消除截图里的重复清单与「只能逐件下载」两个最刺眼的问题；P2 才真正兑现「交付一个站点」。
+    </div>
+  </section>
+
+  <div class="footer">
+    问渠 · 目标模式产物交付方案 · 2026-11-08 · 依据真机截图与现有实现（previewStage / downloadArtifactsZip / GoalViewer / GoalTerminalCard）
+  </div>
+</main>
+</body>
+</html>

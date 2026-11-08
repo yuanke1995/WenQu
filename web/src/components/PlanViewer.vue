@@ -20,6 +20,8 @@
             <h3 class="pv-title">{{ title || '本轮执行计划' }}</h3>
             <div class="pv-sub">
               <span class="pv-state" :class="'st-' + stateTone">{{ stateText }}</span>
+              <button v-if="lineageLabel" type="button" class="pv-src" title="回到旧计划的执行记录"
+                      @click="emit('locate-source')">{{ lineageLabel }} ↗</button>
               <span v-if="chain.length > 1" class="pv-rev">已修改 {{ chain.length - 1 }} 次</span>
               <span v-if="card.auto" class="pv-auto">自动开启</span>
             </div>
@@ -124,6 +126,16 @@
               </div>
             </div>
 
+            <!-- 执行中调整：插话没有 stepId，不硬塞进步骤时间线；单独一块更诚实 -->
+            <div v-if="adjusts.length" class="pv-adjusts">
+              <div class="pv-adjusts-head">执行中调整 <span class="pv-adjusts-n">{{ adjusts.length }}</span></div>
+              <div v-for="(a, ai) in adjusts" :key="ai" class="pv-adjust-row">
+                <span class="pv-adjust-st">已送达</span>
+                <span class="pv-adjust-t">{{ a.text }}</span>
+              </div>
+              <p class="pv-adjusts-note">插话只影响还没执行的部分，不会改动计划正文；已完成的步骤不会重做。</p>
+            </div>
+
             <ol v-if="exec.steps.length" class="pv-tl">
               <li v-for="s in exec.steps" :key="s.index" :class="'is-' + s.status">
                 <span class="pv-tl-dot"></span>
@@ -180,6 +192,8 @@
             <div class="pv-foot-row">
               <span class="pv-hint">{{ execFootHint }}</span>
               <div class="pv-acts">
+                <button v-if="adjustable" type="button" class="pv-btn ghost"
+                        @click="emit('adjust')">调整计划</button>
                 <button v-if="execRunning && !readOnly" type="button" class="pv-btn warn"
                         @click="emit('stop')">停止执行</button>
                 <button type="button" class="pv-btn primary" @click="emit('close')">
@@ -225,7 +239,12 @@
 
           <div v-else class="pv-foot-row">
             <span class="pv-hint">{{ readOnlyHint }}</span>
-            <button type="button" class="pv-btn ghost" @click="emit('close')">关闭</button>
+            <div class="pv-acts">
+              <button v-if="adjustable" type="button" class="pv-btn primary"
+                      @click="emit('adjust')">调整计划</button>
+              <button type="button" class="pv-btn" :class="{ ghost: adjustable }"
+                      @click="emit('close')">关闭</button>
+            </div>
           </div>
         </footer>
       </aside>
@@ -257,9 +276,12 @@ const props = defineProps({
   /** 本轮助手消息：执行页签的工具调用与产物都挂在它上面 */
   msg: { type: Object, default: null },
   /** 执行进度（planExecProgress 的产物）：步骤与状态以任务清单为准 */
-  progress: { type: Object, default: null }
+  progress: { type: Object, default: null },
+  /** 本轮调整记录（执行中插话）：[{text,messageId}]；执行页签并列展示 */
+  adjusts: { type: Array, default: () => [] }
 })
-const emit = defineEmits(['close', 'approve', 'revise', 'supersede', 'locate', 'stop'])
+const emit = defineEmits(['close', 'approve', 'revise', 'supersede', 'locate', 'stop',
+                          'adjust', 'locate-source'])
 
 const closeBtn = ref(null)
 const bodyEl = ref(null)
@@ -283,24 +305,53 @@ const prevPlan = computed(() => sel.value > 0 ? planText(chain.value[sel.value -
 const diff = computed(() => diffSteps(prevPlan.value, planText(v.value.plan)))
 const marked = (kind, i) => !!(diffOn.value && sel.value > 0 && diff.value[kind].has(i))
 
+/** 已重新规划（旧卡保留执行记录）：卡头状态要与执行事实一致，不能还挂「已批准」 */
+const replanned = computed(() => !!(props.card && (props.card.replannedBy || props.card.replannedAt)))
 const stateText = computed(() => {
   if (props.card?.revising) return props.card.revisingStarted ? '生成中…' : '修改中…'
+  if (replanned.value) {
+    const p = props.progress
+    if (p && p.total && p.done >= p.total) return '已完成 · 已重新规划'
+    if (p && p.failed) return '未完成 · 已重新规划'
+    if (p && p.total) return '已停止 · 已重新规划'
+    return '已重新规划'
+  }
   return {
     drafting: '生成中…', pending: '待确认', approved: '已批准',
     superseded: '已被取代', rejected: '未批准', stopped: '已停止'
   }[props.card?.status] || ''
 })
-const stateTone = computed(() => ({
-  drafting: 'drafting', pending: 'pending', approved: 'ok',
-  superseded: 'muted', rejected: 'muted', stopped: 'muted'
-}[props.card?.status] || 'muted'))
+const stateTone = computed(() => {
+  if (props.card?.revising) return props.card.revisingStarted ? 'drafting' : 'pending'
+  if (replanned.value) return 'muted'
+  return {
+    drafting: 'drafting', pending: 'pending', approved: 'ok',
+    superseded: 'muted', rejected: 'muted', stopped: 'muted'
+  }[props.card?.status] || 'muted'
+})
+/** 调整入口：已批准、本机接得上、非只读、且还没被重新规划 */
+const adjustable = computed(() => !!(props.card && props.card.status === 'approved'
+  && !props.card.restored && !props.readOnly && !replanned.value))
 const readOnlyHint = computed(() => {
+  if (replanned.value) return '这一版已停止执行并按新意见重新规划；执行记录与产物保留'
   const st = props.card?.status
-  if (st === 'approved') return '计划已批准执行，此视图为只读'
+  if (st === 'approved') {
+    if (props.card?.restored) return '这张计划是恢复的，请回到发起它的设备调整'
+    return '计划正文已锁；可以调整执行方向，或重新计划'
+  }
   if (st === 'superseded') return '这一版已被取代，只保留修改记录'
   if (st === 'rejected') return '这一版未获批准，本轮已停止'
   if (st === 'stopped') return '本轮已停止，这一版没有走到批准'
   return '只读'
+})
+/** 卡头血缘标：新计划基于哪一版、带过来多少执行进度 */
+const lineageLabel = computed(() => {
+  const f = props.card && props.card.adjustFrom
+  if (!f || !f.cardId) return ''
+  const v = Number(f.version) || 1
+  const total = Number(f.total) || 0
+  const done = Number(f.done) || 0
+  return total > 0 ? `调整自 v${v} · 已执行 ${done}/${total}` : `调整自 v${v}`
 })
 
 // ==================== 执行页签 ====================
@@ -326,6 +377,7 @@ const execPct = computed(() => {
   return Math.max(0, Math.min(100, Math.round((p.done / p.total) * 100)))
 })
 const execFootHint = computed(() => {
+  if (replanned.value) return '这一版已按新意见重新规划；执行记录与产物保留'
   if (execRunning.value) return '执行在后台进行，关掉这个抽屉不会停止本轮'
   if (execFailed.value) return `有 ${execFailed.value} 个步骤失败：可直接在输入框说明后让它重试`
   if (props.progress && props.progress.total && props.progress.done >= props.progress.total) return '执行已完成，记录已保留'
@@ -456,6 +508,9 @@ onUnmounted(() => {
 .pv-state.st-ok { color: var(--app-ok); }
 .pv-state.st-drafting, .pv-state.st-muted { color: var(--app-text3); }
 .pv-rev, .pv-auto { padding-left: 8px; border-left: 1px solid var(--app-border); }
+.pv-src { border: 1px solid var(--app-accent-border); background: var(--app-accent-weak); color: var(--app-accent);
+  border-radius: 4px; padding: 1px 6px; font-size: 10.5px; line-height: 1.5; cursor: pointer; }
+.pv-src:hover { border-color: var(--app-accent); }
 .pv-close { flex: none; margin-left: auto; width: 28px; height: 28px; border: 1px solid var(--app-border); border-radius: 7px; background: var(--app-panel); color: var(--app-text2); cursor: pointer; display: flex; align-items: center; justify-content: center; }
 .pv-close:hover { color: var(--app-accent); border-color: var(--app-accent); }
 
@@ -516,6 +571,16 @@ onUnmounted(() => {
 
 /* ---------- 执行页签 ---------- */
 .pv-exec-sum { margin-bottom: 14px; }
+
+/* 执行中调整：单独一块，不混进步骤时间线（插话没有 stepId，硬塞会伪造归属） */
+.pv-adjusts { margin-bottom: 14px; border: 1px solid var(--app-accent-border); background: var(--app-accent-weak);
+  border-radius: 8px; padding: 9px 10px; }
+.pv-adjusts-head { display: flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600; color: var(--app-accent); }
+.pv-adjusts-n { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 10px; }
+.pv-adjust-row { display: flex; align-items: flex-start; gap: 7px; margin-top: 6px; font-size: 11.5px; line-height: 1.6; color: var(--app-text); }
+.pv-adjust-st { flex: none; font-size: 10px; color: var(--app-ok); }
+.pv-adjust-t { min-width: 0; overflow-wrap: anywhere; }
+.pv-adjusts-note { margin: 7px 0 0; font-size: 10.5px; line-height: 1.6; color: var(--app-text3); }
 .pv-bar { height: 4px; border-radius: 999px; background: var(--app-panel-2); overflow: hidden; }
 .pv-bar i { display: block; height: 100%; border-radius: 999px; background: var(--app-ok); transition: width .3s ease; }
 .pv-exec-nums { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 7px; font-size: 11px; color: var(--app-text3); }

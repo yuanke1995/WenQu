@@ -10,6 +10,7 @@
     </div>
     <div v-if="note" class="gt-note">{{ note }}</div>
     <div class="gt-actions">
+      <button v-if="hasDelivery" type="button" class="gt-btn" @click="$emit('delivery')">查看交付</button>
       <button type="button" class="gt-btn" @click="$emit('view')">查看过程</button>
       <button v-if="canEdit" type="button" class="gt-btn" @click="$emit('edit')">修改目标</button>
       <button v-else type="button" class="gt-btn" @click="$emit('restart')">重新设定目标</button>
@@ -27,9 +28,11 @@ const props = defineProps({
   goal: { type: Object, required: true },
   title: { type: String, default: '' },
   note: { type: String, default: '' },
-  version: { type: String, default: '' }
+  version: { type: String, default: '' },
+  /** 这个目标有产出交付包：多给一颗「查看交付」（没有产出的目标不给死入口） */
+  hasDelivery: { type: Boolean, default: false }
 })
-defineEmits(['view', 'edit', 'restart', 'delete'])
+defineEmits(['view', 'delivery', 'edit', 'restart', 'delete'])
 
 const tone = computed(() => {
   const s = props.goal && props.goal.status

@@ -109,24 +109,48 @@ export function planChain (card) {
  * 只有「计划已批准 + 清单存在 + 清单属于这一轮」才返回进度；否则 null——
  * 卡片退回计划步骤预览，绝不按工具调用数去编造「第几步已完成」。
  */
-export function planExecProgress (card, todos, turnId, running) {
+export function planExecProgress (card, todos, turnId, running, snapshot = null) {
   if (!card || card.status !== 'approved') return null
   const items = (todos && Array.isArray(todos.items)) ? todos.items : []
-  if (!items.length) return null
-  if (todos.turnId && turnId && todos.turnId !== turnId) return null
-  const mapped = items.map(i => ({
-    text: String(i.content || ''),
-    status: i.status === 'done' ? 'done'
-      : (i.status === 'doing' ? 'doing' : (i.status === 'failed' ? 'failed' : 'wait'))
-  }))
-  return {
-    items: mapped,
-    done: mapped.filter(x => x.status === 'done').length,
-    failed: mapped.filter(x => x.status === 'failed').length,
-    total: mapped.length,
-    running: !!running
+  const matched = items.length && !(todos.turnId && turnId && todos.turnId !== turnId)
+  if (matched) {
+    const mapped = items.map(i => ({
+      text: String(i.content || ''),
+      status: i.status === 'done' ? 'done'
+        : (i.status === 'doing' ? 'doing' : (i.status === 'failed' ? 'failed' : 'wait'))
+    }))
+    return {
+      items: mapped,
+      done: mapped.filter(x => x.status === 'done').length,
+      failed: mapped.filter(x => x.status === 'failed').length,
+      total: mapped.length,
+      running: !!running
+    }
   }
+  // 实时清单不属于这一轮（新一轮的 writeTodo 已把它顶掉）时回退冻结快照：
+  // 旧卡仍显示它那一轮走到哪儿，而不是变回「已批准 · 共 N 步」。快照是收尾那一刻的事实，不再转圈。
+  if (snapshot && Array.isArray(snapshot.items) && snapshot.items.length) {
+    return {
+      items: snapshot.items,
+      done: Number(snapshot.done) || 0,
+      failed: Number(snapshot.failed) || 0,
+      total: Number(snapshot.total) || snapshot.items.length,
+      running: false
+    }
+  }
+  return null
 }
+
+/**
+ * 计划卡上的「本轮调整」：只对已批准的计划展示本轮 steer 段。
+ * 传进来的 rows 通常就是 turnSteerRows(msg) 的结果（它本身只含 kind='steer'）。
+ */
+export const planAdjustsOf = (card, rows) =>
+  (card && card.status === 'approved' && Array.isArray(rows)) ? rows : []
+
+/** 计划卡当前是第几版（1 基）：版本链 = 已归档各版 + 当前版 */
+export const planVersionOf = card =>
+  (Array.isArray(card && card.versions) ? card.versions.length : 0) + 1
 
 /** 不进执行详情的记账型工具：它们不是「这一步做了什么」，列出来只会把时间线撑成日志 */
 const BOOKKEEPING_TOOLS = new Set(['writeTodo', 'askUser', 'plan_enter', 'plan_write', 'plan_exit'])

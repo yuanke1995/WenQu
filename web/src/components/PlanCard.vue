@@ -32,6 +32,8 @@
           </template>
         </span>
         <span v-else class="pc-ver">v{{ version }}</span>
+        <button v-if="lineage" type="button" class="pc-src" title="回到旧计划的执行记录"
+                @click="emit('locate-source')">{{ lineage }} ↗</button>
         <span class="pc-state" :class="'st-' + stateTone">{{ stateText }}</span>
         <button v-if="!isLive" type="button" class="pc-fold" title="收起为一行" @click="toggleLine">
           <up-outlined />
@@ -81,6 +83,13 @@
         <button type="button" class="pc-link" @click="emit('open', null)">查看原计划</button>
       </div>
 
+      <!-- 执行中调整：只放一条摘要（最近一条），完整记录在抽屉执行页；点它直接落到执行页签 -->
+      <button v-if="adjusts.length" type="button" class="pc-adjusts" @click="emit('open', null, 'exec')">
+        <span class="pc-adjusts-lab">本轮调整 {{ adjusts.length }}</span>
+        <span class="pc-adjusts-txt" :title="lastAdjust">最近：{{ lastAdjust }}</span>
+        <span class="pc-adjusts-go">查看</span>
+      </button>
+
       <div class="pc-foot">
         <span class="pc-meta">
           <template v-if="card.revising">正在按意见修改…</template>
@@ -92,11 +101,16 @@
             共 {{ stepCount }} 步<template v-if="chain.length > 1"> · 已修改 {{ chain.length - 1 }} 次</template>
           </template>
         </span>
-        <button type="button" class="pc-open" :disabled="!card.plan && card.status === 'drafting'"
-                @click="emit('open', null, progress ? 'exec' : 'plan')">
-          {{ progress ? '查看执行详情' : (card.status === 'approved' ? '查看计划详情' : '查看完整计划') }}
-          <arrow-right-outlined />
-        </button>
+        <span class="pc-acts">
+          <button v-if="replanned && card.replannedBy" type="button" class="pc-act"
+                  title="跳到按新意见生成的那一版计划" @click="emit('locate-replanned')">查看新一轮 ↗</button>
+          <button v-if="canAdjust" type="button" class="pc-act" @click="emit('adjust')">调整计划</button>
+          <button type="button" class="pc-open" :disabled="!card.plan && card.status === 'drafting'"
+                  @click="emit('open', null, progress ? 'exec' : 'plan')">
+            {{ progress ? '查看执行详情' : (card.status === 'approved' ? '查看计划详情' : '查看完整计划') }}
+            <arrow-right-outlined />
+          </button>
+        </span>
       </div>
     </template>
   </div>
@@ -118,9 +132,13 @@ const props = defineProps({
   /** 批准后的执行进度：{items:[{text,status}], done, total, running}；没有清单时为 null */
   progress: { type: Object, default: null },
   /** 本轮产物数（产物列表与计划卡并排展示时，卡脚给个计数） */
-  artifactCount: { type: Number, default: 0 }
+  artifactCount: { type: Number, default: 0 },
+  /** 本轮调整记录（执行中插话）：[{text,messageId}]；只对已批准计划展示 */
+  adjusts: { type: Array, default: () => [] },
+  /** 只读（分享页/历史只读场）：不给「调整计划」入口 */
+  readOnly: { type: Boolean, default: false }
 })
-const emit = defineEmits(['open'])
+const emit = defineEmits(['open', 'adjust', 'locate-replanned', 'locate-source'])
 
 const rootEl = ref(null)
 // 待确认/生成中的计划常驻展开；批准之后默认收成一行，避免历史计划把消息流刷满。
@@ -149,8 +167,33 @@ const shownVers = computed(() => {
   if (all.length <= 4) return all
   return [0, all.length - 3, all.length - 2, all.length - 1]
 })
+/** 已按新意见重新规划（旧卡保留执行记录）：状态不再报「已批准/未完成」，而是说清它被重新规划过 */
+const replanned = computed(() => !!(props.card.replannedBy || props.card.replannedAt))
+/** 调整入口只在「已批准 + 本机接得上 + 非只读 + 还没被重新规划」时出现 */
+const canAdjust = computed(() => props.card.status === 'approved'
+  && !props.card.restored && !props.readOnly && !replanned.value)
+const lastAdjust = computed(() => {
+  const rows = props.adjusts || []
+  return rows.length ? String(rows[rows.length - 1].text || '') : ''
+})
+/** 新计划的血缘标：基于哪一版旧计划、那一轮已执行到 N/M（旧卡没有这个字段） */
+const lineage = computed(() => {
+  const f = props.card.adjustFrom
+  if (!f || !f.cardId) return ''
+  const v = Number(f.version) || 1
+  const total = Number(f.total) || 0
+  const done = Number(f.done) || 0
+  return total > 0 ? `调整自 v${v} · ${done}/${total}` : `调整自 v${v}`
+})
 const stateText = computed(() => {
   if (props.card.revising) return props.card.revisingStarted ? '生成中…' : '修改中…'
+  if (replanned.value) {
+    const p = props.progress
+    if (p && p.total && p.done >= p.total) return '已完成 · 已重新规划'
+    if (p && p.failed) return '未完成 · 已重新规划'
+    if (p && p.total) return '已停止 · 已重新规划'
+    return '已重新规划'
+  }
   if (props.progress) {
     if (props.progress.running) return '执行中'
     if (props.progress.total && props.progress.done >= props.progress.total) return '已完成'
@@ -164,6 +207,7 @@ const stateText = computed(() => {
 })
 const stateTone = computed(() => {
   if (props.card.revising) return props.card.revisingStarted ? 'drafting' : 'pending'
+  if (replanned.value) return 'muted'
   if (props.progress) {
     if (props.progress.running) return 'run'
     if (props.progress.total && props.progress.done >= props.progress.total) return 'ok'
@@ -224,6 +268,11 @@ const toggleLine = async () => {
 .pc-state.st-pending, .pc-state.st-run { color: var(--app-warn-text); }
 .pc-state.st-ok { color: var(--app-ok); }
 .pc-state.st-fail { color: var(--app-danger, #cf1322); }
+/* 血缘标：新计划卡头的小号来源，点击回旧卡执行记录；不抢版本号与状态的读数 */
+.pc-src { flex: none; border: 1px solid var(--app-accent-border); background: var(--app-accent-weak);
+  color: var(--app-accent); border-radius: 4px; padding: 1px 5px; font-size: 10px; line-height: 1.5;
+  font-weight: 500; cursor: pointer; white-space: nowrap; }
+.pc-src:hover { border-color: var(--app-accent); }
 
 /* 卡头版本轨：v1 › v2 › v3；只做入口，正文仍在抽屉里 */
 .pc-vers { display: inline-flex; align-items: center; gap: 1px; min-width: 0; overflow: hidden; }
@@ -267,9 +316,23 @@ const toggleLine = async () => {
 .pc-rejected { margin-top: 6px; display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--app-text3); }
 .pc-link { border: 0; background: none; padding: 0; font-size: 12px; color: var(--app-accent); cursor: pointer; }
 
+/* 执行中调整摘要：一条带底色的小行，不抢步骤区的注意力；完整记录在执行抽屉里 */
+.pc-adjusts { display: flex; align-items: center; gap: 6px; width: 100%; margin-top: 7px; padding: 4px 7px;
+  border: 1px solid var(--app-accent-border); background: var(--app-accent-weak); border-radius: 6px;
+  font-size: 11px; line-height: 1.5; color: var(--app-text3); cursor: pointer; text-align: left; }
+.pc-adjusts:hover { border-color: var(--app-accent); }
+.pc-adjusts-lab { flex: none; font-weight: 600; color: var(--app-accent); }
+.pc-adjusts-txt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pc-adjusts-go { flex: none; color: var(--app-accent); }
+
 .pc-foot { display: flex; align-items: center; gap: 8px; margin-top: 8px; padding-top: 7px; border-top: 1px dashed var(--app-border); font-size: 11.5px; color: var(--app-text3); }
-.pc-meta { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pc-open { flex: none; margin-left: auto; display: inline-flex; align-items: center; gap: 3px; border: 0; background: none; padding: 2px 0; min-height: 24px; font-size: 12px; font-weight: 600; color: var(--app-warn-text); cursor: pointer; }
+.pc-meta { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pc-acts { flex: none; margin-left: auto; display: flex; align-items: center; gap: 2px; }
+/* 次级动作（调整计划 / 查看新一轮）：不压过主出口，但热区 ≥ 24px */
+.pc-act { flex: none; border: 0; background: none; padding: 3px 5px; min-height: 24px; font-size: 12px;
+  font-weight: 500; color: var(--app-accent); cursor: pointer; white-space: nowrap; }
+.pc-act:hover { color: var(--app-accent-hover); background: var(--app-accent-weak); border-radius: 4px; }
+.pc-open { flex: none; display: inline-flex; align-items: center; gap: 3px; border: 0; background: none; padding: 2px 0; min-height: 24px; font-size: 12px; font-weight: 600; color: var(--app-warn-text); cursor: pointer; }
 .plan-card.plan-approved .pc-open, .plan-card.plan-superseded .pc-open, .plan-card.plan-rejected .pc-open { color: var(--app-accent); }
 .pc-open:hover { color: var(--app-accent-hover); }
 .pc-open:disabled { color: var(--app-text3); cursor: default; }
