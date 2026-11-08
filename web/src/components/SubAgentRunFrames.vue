@@ -117,6 +117,28 @@ const mkTool = (o, st) => ({
   result: o.result == null ? '' : String(o.result),
   error: o.error == null ? '' : String(o.error)
 })
+// 账本里历史帧有的被后端按整段 2000 字符硬截过（转义串拦腰一刀、尾部悬空反斜杠，JSON 已失效）。
+// 硬解析失败就只抢头部的配对字段——name/status/startedAtMs 都在帧头，一般完整；抢回终态
+// 就能与 start 行配对收圈，不再永远转圈。入参/结果段救不回就留空（展开只剩头部信息）。
+const salvageToolStatus = c => {
+  const str = re => {
+    const m = re.exec(c)
+    if (!m) return null
+    try { return JSON.parse(m[1]) } catch { return m[1].slice(1, -1) }
+  }
+  const name = str(/"name"\s*:\s*("(?:[^"\\]|\\.)*")/)
+  if (!name) return null
+  const st = /"status"\s*:\s*"(start|done|error)"/.exec(c)
+  const num = re => { const m = re.exec(c); return m ? Number(m[1]) || 0 : 0 }
+  return {
+    name,
+    label: str(/"label"\s*:\s*("(?:[^"\\]|\\.)*")/),
+    status: st ? st[1] : 'start',
+    startedAtMs: num(/"startedAtMs"\s*:\s*(\d+)/),
+    elapsedMs: num(/"elapsedMs"\s*:\s*(\d+)/),
+    args: '', result: '', error: ''
+  }
+}
 
 const rows = computed(() => {
   const out = []
@@ -127,7 +149,7 @@ const rows = computed(() => {
     const c = typeof f.c === 'string' ? f.c : ''
     if (t === 'tool_status') {
       let o = null
-      try { o = JSON.parse(c) } catch { /* 载荷残缺：跳过，少一行比一行乱强 */ }
+      try { o = JSON.parse(c) } catch { o = salvageToolStatus(c) }
       if (!o || !o.name) continue
       // 早产卡只是「入参还在生成」的进度帧：它和随后的 start/done 各画一行，一次调用会变三帧，
       // 且那张 start 行永远停在转圈。抽屉只认正式起止。

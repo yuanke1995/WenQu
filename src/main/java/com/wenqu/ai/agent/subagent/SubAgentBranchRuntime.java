@@ -134,7 +134,7 @@ public class SubAgentBranchRuntime {
             sink.forwardProcess((type, content) -> {
                 if (RUN_FRAME_TYPES.contains(type) && runFrames.size() < RUN_FRAME_MAX) {
                     String c = content == null ? "" : content;
-                    if (c.length() > RUN_FRAME_CHARS) c = c.substring(0, RUN_FRAME_CHARS) + "…";
+                    if (c.length() > RUN_FRAME_CHARS) c = shrinkFrame(c);
                     String runKey = type + "|" + c.substring(0, Math.min(200, c.length()));
                     if (seenRunKeys.add(runKey)) {
                         Map<String, Object> f = new LinkedHashMap<>();
@@ -363,6 +363,38 @@ public class SubAgentBranchRuntime {
                 }
             }
         };
+    }
+
+    /**
+     * 帧载荷超限时的收缩：按<b>字段</b>截断，不整段 {@code substring}。整段硬切会把 JSON 的转义串
+     * 拦腰砍断（尾部悬空一个反斜杠），落进账本的帧就成了非法 JSON——前端回放
+     * {@code JSON.parse} 失败把终态帧整帧丢掉，start 行永远转圈（2026-11-08 线上实证：
+     * SQL 大结果的 {@code tool_status} done 帧被顶到 2000 上限）。配对键
+     * name/status/startedAtMs 都在帧头不受影响；字符串字段先按预算递减截断，缩到下限仍超
+     * 就整字段丢重载荷（subChat/result/args）。非 JSON 帧解析不了才退回整段截断（前端按原样文本兜底）。
+     */
+    private static String shrinkFrame(String c) {
+        try {
+            com.alibaba.fastjson2.JSONObject o = com.alibaba.fastjson2.JSON.parseObject(c);
+            if (o == null) return c.substring(0, RUN_FRAME_CHARS) + "…";
+            for (int budget = 600; budget >= 40; budget /= 2) {
+                for (Map.Entry<String, Object> en : o.entrySet()) {
+                    if (en.getValue() instanceof String s && s.length() > budget) {
+                        en.setValue(s.substring(0, budget) + "…(已截断)");
+                    }
+                }
+                String out = com.alibaba.fastjson2.JSON.toJSONString(o);
+                if (out.length() <= RUN_FRAME_CHARS) return out;
+            }
+            for (String heavy : new String[]{"subChat", "result", "args"}) {
+                o.remove(heavy);
+                String out = com.alibaba.fastjson2.JSON.toJSONString(o);
+                if (out.length() <= RUN_FRAME_CHARS) return out;
+            }
+            return com.alibaba.fastjson2.JSON.toJSONString(o);
+        } catch (Exception e) {
+            return c.substring(0, RUN_FRAME_CHARS) + "…";
+        }
     }
 
     /**
