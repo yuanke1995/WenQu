@@ -24,6 +24,10 @@ public final class ConfigDefaults {
     public static final double RETRIEVAL_MIN_CONTEXT_SCORE = 0.6;
     /** retrieval.minFusionScore：融合分门（未启用重排时生效；2026-10-04 评测基线标定） */
     public static final double RETRIEVAL_MIN_FUSION_SCORE = 0.5;
+    /** retrieval.lowConfidencePolicy：低分全灭时的策略（top1=只保底最相关的 1 条；off=不保底） */
+    public static final String RETRIEVAL_LOW_CONFIDENCE_POLICY = "top1";
+    /** retrieval.top1Floor：保底条目的最低分（低于此分视为没有相关内容，不强行塞给模型） */
+    public static final double RETRIEVAL_TOP1_FLOOR = 0.05;
     /** 多路检索共识加分（仅评测的多路近似使用；原 retrieval.multiConsensusBonus 已随深度思考退役） */
     public static final double RETRIEVAL_MULTI_CONSENSUS_BONUS = 0.03;
     /** rerank.minHits：候选少于该数不触发 cross-encoder（设置页「重排触发下限」可调，此为默认值） */

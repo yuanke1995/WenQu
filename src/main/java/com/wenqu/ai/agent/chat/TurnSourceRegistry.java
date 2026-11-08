@@ -8,6 +8,7 @@ import com.wenqu.ai.service.ConfigService;
 import com.wenqu.ai.service.HybridRetrievalService;
 import com.wenqu.ai.service.ImageUrlSigner;
 import com.wenqu.ai.service.RerankService;
+import com.wenqu.ai.service.RetrievalGate;
 import com.wenqu.ai.service.KnowledgeRetrievalTool;
 import com.wenqu.ai.service.websearch.WebSearchResult;
 import com.wenqu.ai.service.websearch.WebSearchService;
@@ -171,6 +172,14 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
         // 2. 分域门 + 配额（数值与主管线上下文填充一致：一个面板一把尺）
         double minRerankGate = configService.getDouble("retrieval.minContextScore", ConfigDefaults.RETRIEVAL_MIN_CONTEXT_SCORE);
         double minFusionGate = configService.getDouble("retrieval.minFusionScore", ConfigDefaults.RETRIEVAL_MIN_FUSION_SCORE);
+        // 门判据统一走 RetrievalGate（含低分全灭时保底 top-1），这里不再自己写一遍分数比较
+        RetrievalGate.Result gateResult = RetrievalGate.apply(candidates, minRerankGate, minFusionGate,
+                rerankActive, configService.get("retrieval.lowConfidencePolicy"),
+                configService.getDouble("retrieval.top1Floor", ConfigDefaults.RETRIEVAL_TOP1_FLOOR));
+        candidates = gateResult.kept();
+        if (gateResult.lowConfidence()) {
+            log.info("[CONSULT] 父轮问题与咨询来源语义匹配偏低，按 top-1 保底登记 1 条（问题=\"{}\"）", question);
+        }
         int maxBlocksPerDoc = configService.getInt("context.maxBlocksPerDoc", 3);
         int maxBlocksPerKb = configService.getInt("context.maxBlocksPerKb", 4);
         int maxPerConsult = Math.max(1, configService.getInt("context.maxContextHits", 8));
@@ -204,22 +213,11 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
                 : Map.of();
 
         List<com.wenqu.ai.agent.subagent.SubAgentConsultService.SourceSink.Registered> out = new ArrayList<>();
-        int filtered = 0;
+        int filtered = gateResult.dropped();
         for (HybridRetrievalService.Hit h : candidates) {
             if (out.size() >= maxPerConsult) {
                 log.info("[CONSULT] 单次咨询引用达上限 {}，剩余不再登记", maxPerConsult);
                 break;
-            }
-            Double rr = h.rerankScore();
-            if (rr == null && rerankActive) {   // 窗口外未重排的尾部：不借融合门入场（同主管线）
-                filtered++;
-                continue;
-            }
-            double rankScore = rr != null ? rr : h.score();
-            double gate = rr != null ? minRerankGate : minFusionGate;
-            if (gate > 0 && rankScore < gate) {
-                filtered++;
-                continue;
             }
             String docId = h.docId();
             if (maxBlocksPerDoc > 0 && docId != null && !docId.isBlank()

@@ -311,6 +311,53 @@ svg.ic { stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: ro
 .tbl td .sub { color: var(--app-text3); font-size: 11px; }
 .drawer-foot { padding: 12px 20px 16px; border-top: 1px solid var(--app-border); font-size: 11.5px;
   line-height: 1.75; color: var(--app-text3); }
+
+/* ---------------- 编辑 / 导出弹窗（04 / 05） ---------------- */
+.form-row { margin-bottom: 13px; }
+.form-label { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; font-size: 12px; color: var(--app-text2); }
+.form-label .opt { font-size: 11px; color: var(--app-text3); }
+.input { height: 32px; display: flex; align-items: center; padding: 0 10px; border: 1px solid var(--app-border-strong);
+  border-radius: 7px; font-size: 12.5px; color: var(--app-text); background: var(--app-panel); }
+.input.dim { color: var(--app-text3); }
+.input.err { border-color: var(--app-danger); }
+.form-tip { margin-top: 5px; font-size: 11.5px; line-height: 1.6; color: var(--app-text3); }
+.form-tip.ok { color: var(--app-ok); }
+.form-tip.bad { color: var(--app-danger); }
+.radio-row { display: flex; gap: 6px; }
+.radio { height: 28px; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; border-radius: 7px;
+  border: 1px solid var(--app-border); font-size: 12px; color: var(--app-text2); }
+.radio .rd { width: 13px; height: 13px; border-radius: 50%; border: 1px solid var(--app-border-strong); }
+.radio.on { border-color: var(--app-accent); color: var(--app-accent); background: var(--app-accent-weak); }
+.radio.on .rd { border-color: var(--app-accent); background: var(--app-accent); box-shadow: inset 0 0 0 3px #fff; }
+.radio .rec { font-size: 10px; line-height: 14px; padding: 0 4px; border-radius: 3px;
+  background: var(--app-ok-weak); color: var(--app-ok); }
+.auth-fold { border: 1px solid var(--app-border); border-radius: 8px; overflow: hidden; }
+.auth-fold .fh { height: 34px; display: flex; align-items: center; gap: 6px; padding: 0 10px;
+  background: var(--app-panel-2); font-size: 12px; color: var(--app-text2); }
+.auth-fold .fh .ic { width: 11px; height: 11px; color: var(--app-text3); }
+.auth-fold .fh .n { margin-left: auto; font-size: 11px; color: var(--app-text3); }
+.auth-fold .fb { padding: 10px; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip { height: 24px; display: inline-flex; align-items: center; gap: 5px; padding: 0 8px; border-radius: 5px;
+  background: var(--app-accent-weak); color: var(--app-accent); font-family: var(--mono); font-size: 11px; }
+.chip .x { color: var(--app-accent); opacity: .7; }
+.kv-row { display: flex; gap: 6px; align-items: center; margin-top: 8px; }
+.kv-row .input { flex: 1; }
+.kv-row .input.key { flex: none; width: 132px; }
+.kv-row .link-btn { flex: none; }
+.inline-ops { display: flex; gap: 10px; margin-top: 8px; font-size: 11.5px; }
+.preset-tip { margin-top: 8px; font-size: 11px; color: var(--app-text3); }
+.warn-line { display: flex; align-items: flex-start; gap: 6px; margin-top: 12px; font-size: 12px;
+  line-height: 1.65; color: var(--app-warn-text); }
+.warn-line .ic { width: 12px; height: 12px; flex: none; margin-top: 2px; }
+.export-list { margin-top: 12px; border: 1px solid var(--app-border); border-radius: 8px; overflow: hidden; }
+.export-row { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 11px;
+  border-bottom: 1px solid #f1f3f5; font-size: 12px; color: var(--app-text2); }
+.export-row:last-child { border-bottom: none; }
+.export-row .ic { width: 12px; height: 12px; color: var(--app-text3); flex: none; }
+.export-row .nm { color: var(--app-text); }
+.export-row .tag-cred { margin-left: auto; font-size: 11px; color: var(--app-warn-text); }
+.export-row .tag-plat { margin-left: auto; font-size: 11px; color: var(--app-text3); }
 </style>
 </head>
 <body>
@@ -715,6 +762,93 @@ svg.ic { stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: ro
         </div>
         <div class="drawer-foot">统计口径：本人在对话与工作流中的真实调用（试调用计入）；已删除服务的记录保留原样显示。</div>
       </aside>
+    </div>
+  </div>
+
+  <!-- ============ 04 添加 / 编辑服务 ============ -->
+  <div class="scene-block">
+    <div class="cap"><b>04</b><em>添加 / 编辑服务</em><span>地址失焦自动识别传输类型；名称即时查重；认证区折叠且不回显明文</span></div>
+    <div class="scene">
+      <div class="scene-bg"></div>
+      <div class="mask"></div>
+      <div class="modal" style="width:580px">
+        <div class="modal-head">
+          <div class="modal-title"><span class="t">编辑服务</span></div>
+          <div class="modal-sub">统计查询 · 个人服务，凭据仅你自己可见</div>
+        </div>
+        <div class="modal-body">
+          <div class="form-row">
+            <div class="form-label">名称</div>
+            <div class="input err">统计查询</div>
+            <div class="form-tip bad">已存在同名服务</div>
+          </div>
+          <div class="form-row">
+            <div class="form-label">服务地址</div>
+            <div class="input">https://mcp.example.com/mcp</div>
+          </div>
+          <div class="form-row">
+            <div class="form-label">传输类型</div>
+            <div class="radio-row">
+              <span class="radio on"><span class="rd"></span>streamable<span class="rec">推荐</span></span>
+              <span class="radio"><span class="rd"></span>SSE</span>
+            </div>
+            <div class="form-tip ok">已按地址自动识别传输类型：streamable</div>
+            <div class="form-tip">streamable：标准 MCP 传输，默认端点 /mcp；SSE：旧版传输，默认端点 /sse</div>
+          </div>
+          <div class="form-row" style="margin-bottom:0">
+            <div class="auth-fold">
+              <div class="fh"><svg class="ic"><use href="#i-chev"/></svg>认证与请求头<span class="n">已保存 2 个键名</span></div>
+              <div class="fb">
+                <div class="chips">
+                  <span class="chip">Authorization<span class="x">×</span></span>
+                  <span class="chip">X-Api-Key<span class="x">×</span></span>
+                </div>
+                <div class="kv-row">
+                  <div class="input key dim">Authorization</div>
+                  <div class="input dim">留空即沿用已存值</div>
+                </div>
+                <div class="inline-ops">
+                  <button class="link-btn">+ 添加一行</button>
+                  <button class="link-btn" style="color:var(--app-danger)">清除全部凭据</button>
+                </div>
+                <div class="preset-tip">请求头的值加密入库、不回显；编辑时不动认证区即保持原凭据。</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-foot">
+          <button class="btn ghost" style="margin-right:auto"><svg class="ic"><use href="#i-reload"/></svg>测试连接</button>
+          <button class="btn ghost">取消</button>
+          <button class="btn">保存</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 05 导出 ============ -->
+  <div class="scene-block">
+    <div class="cap"><b>05</b><em>导出服务</em><span>纯前端构造 mcpServers JSON；带凭据的服务只列名单、不导出值</span></div>
+    <div class="scene">
+      <div class="scene-bg"></div>
+      <div class="mask"></div>
+      <div class="modal" style="width:470px">
+        <div class="modal-head">
+          <div class="modal-title"><span class="t">导出 MCP 服务</span></div>
+          <div class="modal-sub">将把 2 个服务导出为 mcpServers JSON（Claude / Cursor 兼容）</div>
+        </div>
+        <div class="modal-body">
+          <div class="export-list">
+            <div class="export-row"><svg class="ic"><use href="#i-db"/></svg><span class="nm">统计查询</span><span class="tag-cred">含凭据，导入后需重填</span></div>
+            <div class="export-row"><svg class="ic"><use href="#i-db"/></svg><span class="nm">代码检索</span><span class="tag-plat">平台服务</span></div>
+          </div>
+          <div class="warn-line"><svg class="ic"><use href="#i-warn"/></svg>
+            <span>请求头的值不会导出：带凭据的服务导入后需重新填写请求头。</span></div>
+        </div>
+        <div class="modal-foot">
+          <button class="btn ghost">取消</button>
+          <button class="btn"><svg class="ic"><use href="#i-download"/></svg>导出全部</button>
+        </div>
+      </div>
     </div>
   </div>
 </div>

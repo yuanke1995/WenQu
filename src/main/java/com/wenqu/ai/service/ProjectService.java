@@ -46,6 +46,8 @@ public class ProjectService {
     private final ArtifactMapper artifactMapper;
     /** 工作区源文件夹（本机目录）：工作区 = 一台本机上的一个或多个真实目录。 */
     private final ProjectRootMapper projectRootMapper;
+    /** 工作区事项清单：删工作区时随工作区清理（没有独立入口，留孤儿行只会占库） */
+    private final com.wenqu.ai.mapper.ProjectItemMapper projectItemMapper;
     /**
      * 归档联动停用/恢复定时任务。
      * <p>必须惰性取：{@code ScheduledJobService} 的构造器依赖本类（校验任务的工作区归属），
@@ -56,11 +58,13 @@ public class ProjectService {
     public ProjectService(ProjectMapper projectMapper, SessionMapper sessionMapper,
                           ArtifactMapper artifactMapper,
                           ProjectRootMapper projectRootMapper,
+                          com.wenqu.ai.mapper.ProjectItemMapper projectItemMapper,
                           org.springframework.beans.factory.ObjectProvider<ScheduledJobService> scheduledJobProvider) {
         this.projectMapper = projectMapper;
         this.sessionMapper = sessionMapper;
         this.artifactMapper = artifactMapper;
         this.projectRootMapper = projectRootMapper;
+        this.projectItemMapper = projectItemMapper;
         this.scheduledJobProvider = scheduledJobProvider;
     }
 
@@ -290,9 +294,12 @@ public class ProjectService {
         artifactMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<Artifact>()
                 .eq(Artifact::getProjectId, p.getId())
                 .set(Artifact::getProjectId, null));
-        // 目录绑定随工作区一起清理（逻辑删工作区行，物理删根目录映射；绝对路径本身不动）
+        // 目录绑定与事项清单随工作区一起清理（逻辑删工作区行；绝对路径本身不动）
         projectRootMapper.delete(new LambdaQueryWrapper<ProjectRoot>()
                 .eq(ProjectRoot::getProjectId, p.getId()));
+        projectItemMapper.delete(new LambdaQueryWrapper<com.wenqu.ai.model.ProjectItem>()
+                .eq(com.wenqu.ai.model.ProjectItem::getProjectId, p.getId())
+                .eq(com.wenqu.ai.model.ProjectItem::getUid, uid));
         // 逻辑删除工作区行（@TableLogic 自动写 deleted=1，select 自动过滤）
         projectMapper.deleteById(p.getId());
         log.info("[PROJECT] 删除工作区（会话/产物已摘归属，本机文件未动）uid={} id={} name={}",

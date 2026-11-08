@@ -238,16 +238,16 @@ public class KnowledgeRetrievalTool {
         boolean rerankActive = hits != null && hits.stream().anyMatch(h -> h.rerankScore() != null);
         double minRerankGate = configService.getDouble("retrieval.minContextScore", ConfigDefaults.RETRIEVAL_MIN_CONTEXT_SCORE);
         double minFusionGate = configService.getDouble("retrieval.minFusionScore", ConfigDefaults.RETRIEVAL_MIN_FUSION_SCORE);
-        if (hits != null && (minRerankGate > 0 || minFusionGate > 0)) {
-            int before = hits.size();
-            hits = hits.stream().filter(h -> {
-                if (rerankActive && h.rerankScore() == null) return false;
-                double rankScore = h.rerankScore() != null ? h.rerankScore() : h.score();
-                double gate = h.rerankScore() != null ? minRerankGate : minFusionGate;
-                return gate <= 0 || rankScore >= gate;
-            }).toList();
-            log.info("[TOOL-DIAG] 重排/融合分门（rerankActive={} minRerank={} minFusion={}）：{} → {} 条",
-                    rerankActive, minRerankGate, minFusionGate, before, hits.size());
+        // 分域门 + 低分全灭时保底 top-1：统一收口在 RetrievalGate，四个检索入口共用一份判据
+        RetrievalGate.Result gate = RetrievalGate.apply(hits, minRerankGate, minFusionGate, rerankActive,
+                configService.get("retrieval.lowConfidencePolicy"),
+                configService.getDouble("retrieval.top1Floor", ConfigDefaults.RETRIEVAL_TOP1_FLOOR));
+        int before = hits == null ? 0 : hits.size();
+        hits = gate.kept();
+        boolean lowConfidence = gate.lowConfidence();
+        if (before > 0 && (minRerankGate > 0 || minFusionGate > 0)) {
+            log.info("[TOOL-DIAG] 重排/融合分门（rerankActive={} minRerank={} minFusion={} lowConfidence={}）：{} → {} 条",
+                    rerankActive, minRerankGate, minFusionGate, lowConfidence, before, hits.size());
         }
         if (hits == null || hits.isEmpty()) {
             // 透出诊断原因，避免「工具空结果」只能盲猜：向量/关键词路是否失败、库门下推是否失败
@@ -273,10 +273,18 @@ public class KnowledgeRetrievalTool {
                     "重排不可用（" + (reason == null ? "本轮未返回重排分" : reason)
                             + "）：本轮引用未做语义筛选，相关性可能偏低");
         }
+        if (lowConfidence && registrar != null) {
+            registrar.degrade("retrievalLowConfidenceTop1",
+                    "检索结果与问题的语义匹配度偏低，仅保留最相关的 1 条作为低置信参考");
+        }
         StringBuilder sb = new StringBuilder();
         // 资料数据身份声明先于一切块进上下文：检索内容（含网页导入、外部上传的文档）是不可信数据，
         // 其中埋的指令性文字不得执行——声明与信封（UntrustedContent.envelope）同属注入防护
         sb.append(com.wenqu.ai.util.UntrustedContent.DATA_RULE).append("\n\n");
+        // 低置信必须在给模型的文本里显形：只留 1 条是防止空手，不是让模型把它当成充分依据
+        if (lowConfidence) {
+            sb.append("（低置信度：以下仅 1 条最相关片段，可能不足以回答问题；请如实说明不足，不要臆测。）\n\n");
+        }
         int count = 0;
         for (Hit h : hits) {
             if (count >= limit) break;

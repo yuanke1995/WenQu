@@ -46,6 +46,8 @@ public final class ModelOutputParser {
     private final StringBuilder dsml = new StringBuilder();
     /** 尚未定性的一段尾巴：可能是标签的一部分，留着等下一个增量。 */
     private final StringBuilder pending = new StringBuilder();
+    /** 新开一个 related 块且前面已有内容：下一段正文前要补分隔符（否则 chips() 会把两块粘成一条）。 */
+    private boolean relatedNeedsSep;
     private Mode mode = Mode.BODY;
 
     private enum Mode {BODY, RELATED, PROCESS, DSML}
@@ -148,6 +150,7 @@ public final class ModelOutputParser {
                     continue;
                 }
                 pending.append(s.substring(cut + (isRelated ? REL_OPEN.length() : PROC_OPEN.length())));
+                if (isRelated && related.length() > 0) relatedNeedsSep = true;
                 mode = isRelated ? Mode.RELATED : Mode.PROCESS;
             } else if (mode == Mode.DSML) {
                 dsml.append(s);
@@ -158,12 +161,12 @@ public final class ModelOutputParser {
                 if (end < 0) {
                     int hold = closePrefixHold(s, REL_CLOSE);
                     if (hold < 0) return out.toString();
-                    related.append(s, 0, s.length() - hold);
+                    appendRelated(s.substring(0, s.length() - hold));
                     pending.setLength(0);
                     pending.append(s.substring(s.length() - hold));
                     return out.toString();
                 }
-                related.append(s, 0, end);
+                appendRelated(s.substring(0, end));
                 pending.setLength(0);
                 pending.append(s.substring(end + REL_CLOSE.length()));
                 mode = Mode.BODY;
@@ -207,7 +210,7 @@ public final class ModelOutputParser {
             return "";
         }
         if (mode == Mode.RELATED) {
-            related.append(tail);
+            appendRelated(tail);
             return "";
         }
         if (mode == Mode.PROCESS) {
@@ -228,6 +231,21 @@ public final class ModelOutputParser {
             return "";
         }
         return tail;
+    }
+
+    /**
+     * 往 related 累积一段正文：新开块与上一块之间补分隔符。
+     * <p>不补时 "问1|问2" + "问3" 会粘成 "问2问3"，chips() 按 | 切分就少一条建议。
+     * 分隔符已在末尾或本段自带时不再补，避免出现空条目。
+     */
+    private void appendRelated(String s) {
+        if (s == null || s.isEmpty()) return;
+        if (relatedNeedsSep && related.length() > 0) {
+            char last = related.charAt(related.length() - 1);
+            if (last != '|' && last != '\n' && !s.stripLeading().startsWith("|")) related.append('|');
+        }
+        relatedNeedsSep = false;
+        related.append(s);
     }
 
     /** 已剥出的过程独白（累计全文）。 */

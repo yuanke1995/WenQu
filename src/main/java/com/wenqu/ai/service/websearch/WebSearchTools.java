@@ -4,6 +4,7 @@ import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.service.ConfigService;
 import com.wenqu.ai.service.HybridRetrievalService;
 import com.wenqu.ai.service.RerankService;
+import com.wenqu.ai.service.RetrievalGate;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
@@ -217,6 +218,7 @@ public class WebSearchTools {
         if (gateQuery == null || gateQuery.isBlank()) gateQuery = query.trim();
         List<WebSearchResult> kept = results;
         int filtered = 0;
+        boolean lowConfidence = false;
         String unavailable = rerankService.debugUnavailableReason();
         Map<String, Double> scoreBySnippet = unavailable == null
                 ? rankByQuery(results, gateQuery) : Map.of();
@@ -232,6 +234,25 @@ public class WebSearchTools {
                 } else {
                     filtered++;
                     log.debug("[WEB-SEARCH] 相关度不足不过门：{}（rerank={}）", r.title(), rr);
+                }
+            }
+            // 全灭时按与库内检索同一套策略保底 top-1（只留 1 条并显形低置信），
+            // 否则一次绝对门误杀会让「其实有一条沾边」的搜索变成「没搜到」
+            if (kept.isEmpty() && RetrievalGate.top1Enabled(configService.get("retrieval.lowConfidencePolicy"))) {
+                double floor = configService.getDouble("retrieval.top1Floor", ConfigDefaults.RETRIEVAL_TOP1_FLOOR);
+                WebSearchResult best = null;
+                Double bestScore = null;
+                for (WebSearchResult r : results) {
+                    Double rr = scoreBySnippet.get(r.snippet());
+                    if (rr == null || rr < floor) continue;
+                    if (bestScore == null || rr > bestScore) { best = r; bestScore = rr; }
+                }
+                if (best != null) {
+                    kept = List.of(new WebSearchResult(best.title(), best.url(), best.snippet(), best.siteName(),
+                            best.publishedAt(), best.score(), bestScore));
+                    filtered = results.size() - 1;
+                    lowConfidence = true;
+                    log.info("[WEB-SEARCH] 相关度全灭，按 top-1 保底保留：{}（rerank={}）", best.title(), bestScore);
                 }
             }
         } else {
@@ -261,11 +282,18 @@ public class WebSearchTools {
             return "未检索到与问题相关的网页结果（" + filtered + " 条搜索结果相关度不足，已过滤）。"
                     + "请如实说明没有找到可依据的联网资料，不要凭记忆编写内容。";
         }
+        if (lowConfidence && sink != null) {
+            sink.degrade("retrievalLowConfidenceTop1",
+                    "联网结果与问题的语义匹配度偏低，仅保留最相关的 1 条作为低置信参考");
+        }
 
         int snippetChars = configService.getInt("webSearch.snippetChars", DEFAULT_SNIPPET_CHARS);
         StringBuilder sb = new StringBuilder();
         // 联网摘要与知识库正文同为不可信数据：信封+数据声明与检索工具同口径（防网页内容埋指令）
         sb.append(com.wenqu.ai.util.UntrustedContent.DATA_RULE).append("\n\n");
+        if (lowConfidence) {
+            sb.append("（低置信度：以下仅 1 条最相关网页结果，可能不足以回答问题；请如实说明不足，不要臆测。）\n\n");
+        }
         int seq = 0;
         for (WebSearchResult r : kept) {
             seq++;

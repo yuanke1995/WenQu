@@ -32,10 +32,15 @@ public final class UsageAttr {
      * OpenAI 兼容端点的计量归属），台账按它落 c_ai_usage_log.api_key_id 供按 Key 对账；
      * 其余通道恒为 null（record 第五字段缺省 null，旧构造点零变化）。
      */
-    public record Attr(String uid, String sessionId, String messageId, String kind, String apiKeyId) {
-        /** 旧形状的兼容构造（apiKeyId=null） */
+    public record Attr(String uid, String sessionId, String messageId, String kind, String apiKeyId, String shareId) {
+        /** 旧形状的兼容构造（apiKeyId/shareId=null） */
         public Attr(String uid, String sessionId, String messageId, String kind) {
-            this(uid, sessionId, messageId, kind, null);
+            this(uid, sessionId, messageId, kind, null, null);
+        }
+
+        /** 带 API Key 的兼容构造（shareId=null） */
+        public Attr(String uid, String sessionId, String messageId, String kind, String apiKeyId) {
+            this(uid, sessionId, messageId, kind, apiKeyId, null);
         }
     }
 
@@ -81,6 +86,12 @@ public final class UsageAttr {
 
     /** 带 API Key 归属的构造（OpenAI 兼容端点用） */
     public static Attr of(String uid, String sessionId, String messageId, String kind, String apiKeyId) {
-        return new Attr(uid, sessionId, messageId, kind, apiKeyId);
+        return new Attr(uid, sessionId, messageId, kind, apiKeyId, null);
+    }
+
+    /** 游客分享轮次：带 shareId 的归属（台账据此按分享聚合 token 用量） */
+    public static Attr of(String uid, String sessionId, String messageId, String kind,
+                          String apiKeyId, String shareId) {
+        return new Attr(uid, sessionId, messageId, kind, apiKeyId, shareId);
     }
 }

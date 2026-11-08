@@ -95,6 +95,11 @@ public final class ChatCommand {
      */
     final String guestUid;
     /**
+     * 游客轮所属分享 id（仅 guestMode 有值）：用量台账按它聚合 token，
+     * 供分享级日额度闸在下一轮前判断是否超限。
+     */
+    final String shareId;
+    /**
      * 游客轮经发布者显式授权的 MCP server 名单（仅 guestMode 有值；空/缺=未授权，MCP 照旧不挂）。
      * <p>从分享配置的 {@code guest_mcp_servers} 来，经 ShareController 填进命令——工具装配
      * （{@code McpToolProvider}）与执行期预批（{@code WenquAgentxTools#mountFrom}）都读这一份，

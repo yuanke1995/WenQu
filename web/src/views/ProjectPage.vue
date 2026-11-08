@@ -218,6 +218,56 @@
             </div>
           </section>
 
+          <!-- 事项清单（C2）：记下 → 去聊 → 勾掉；进入工作区先看见还欠着的事 -->
+          <section class="app-card pj-card pj-item-card">
+            <div class="pj-card-head">
+              <h2 class="pj-card-title">事项
+                <span v-if="openItems.length" class="pj-mini-pill">{{ openItems.length }}</span>
+              </h2>
+              <span class="pj-spacer"></span>
+              <button class="pj-text-btn" type="button" :disabled="itemBusy"
+                      @click="itemAdding = !itemAdding; itemDraft = ''">
+                {{ itemAdding ? '取消' : '＋ 记一条' }}
+              </button>
+            </div>
+            <div class="pj-item-body">
+              <div v-if="itemAdding" class="pj-item-add">
+                <a-input v-model:value="itemDraft" size="small" :maxlength="200"
+                         placeholder="这个工作区接下来要做什么？" @press-enter="addItem" />
+                <button class="app-btn" type="button" :disabled="!itemDraft.trim() || itemBusy"
+                        @click="addItem">{{ itemBusy ? '添加中…' : '添加' }}</button>
+              </div>
+              <a-spin :spinning="itemLoading">
+                <div v-if="itemError" class="pj-empty err">
+                  {{ itemError }}
+                  <button class="pj-text-btn" type="button" @click="loadItems">重试</button>
+                </div>
+                <div v-else-if="!items.length" class="pj-empty">
+                  还没有事项。把「接下来要做什么」记在这里，点「去聊」直接带进对话。
+                </div>
+                <div v-else class="pj-item-list">
+                  <div v-for="it in items" :key="it.id" class="pj-item-row"
+                       :class="{ done: it.status === 'done' }">
+                    <button class="pj-item-check" type="button"
+                            :title="it.status === 'done' ? '标记未完成' : '标记完成'"
+                            @click="toggleItem(it)">
+                      <check-outlined v-if="it.status === 'done'" />
+                      <span v-else class="pj-item-dot"></span>
+                    </button>
+                    <div class="pj-item-main">
+                      <span class="pj-item-title">{{ it.title }}</span>
+                      <span v-if="it.note" class="pj-item-note">{{ it.note }}</span>
+                    </div>
+                    <button v-if="it.status !== 'done'" class="pj-text-btn" type="button"
+                            @click="chatItem(it)">去聊</button>
+                    <button class="pj-item-x" type="button" title="删除事项"
+                            @click="removeItem(it)">×</button>
+                  </div>
+                </div>
+              </a-spin>
+            </div>
+          </section>
+
           <!-- 记忆 -->
           <section class="app-card pj-card pj-mem-card">
             <div class="pj-card-head">
@@ -270,6 +320,7 @@ import hljs from 'highlight.js/lib/common'
 import {
   getProject, updateProject, bindProjectExecutor, pickExecutorDir, openProjectFolder,
   listExecutors, listProjectFiles, getWorkspaceMemory, saveWorkspaceMemory,
+  listProjectItems, createProjectItem, updateProjectItem, deleteProjectItem,
   downloadProjectFile, setNewSessionProject, projectFileContent, saveProjectFileContent
 } from '../api'
 import { sessionStore, loadSessions as refreshSidebarSessions } from './store'
@@ -706,6 +757,85 @@ const saveMemoryIsolated = async v => {
   }
 }
 
+// ---------- 事项清单（C2） ----------
+const items = ref([])
+const itemLoading = ref(false)
+const itemError = ref('')
+const itemDraft = ref('')
+const itemAdding = ref(false)
+const itemBusy = ref(false)
+const openItems = computed(() => items.value.filter(i => i.status !== 'done'))
+
+const loadItems = async () => {
+  itemLoading.value = true
+  try {
+    const r = await listProjectItems(id.value)
+    items.value = (r && r.data) || []
+    itemError.value = ''
+  } catch (e) {
+    items.value = []
+    itemError.value = e.message || '读取失败'
+  } finally {
+    itemLoading.value = false
+  }
+}
+
+const addItem = async () => {
+  const title = itemDraft.value.trim()
+  if (!title || itemBusy.value) return
+  itemBusy.value = true
+  try {
+    const r = await createProjectItem(id.value, { title })
+    if (r && r.data) items.value.push(r.data)
+    itemDraft.value = ''
+    itemAdding.value = false
+  } catch (e) {
+    message.error('添加失败：' + (e.message || '请重试'))
+  } finally {
+    itemBusy.value = false
+  }
+}
+
+/** 勾选只改用户明确点的这一条；不按对话内容自动推断状态（避免「编造进度」） */
+const toggleItem = async it => {
+  if (itemBusy.value) return
+  const next = it.status === 'done' ? 'open' : 'done'
+  itemBusy.value = true
+  try {
+    const r = await updateProjectItem(id.value, it.id, { status: next })
+    if (r && r.data) Object.assign(it, r.data)
+  } catch (e) {
+    message.error('更新失败：' + (e.message || '请重试'))
+  } finally {
+    itemBusy.value = false
+  }
+}
+
+const removeItem = async it => {
+  itemBusy.value = true
+  try {
+    await deleteProjectItem(id.value, it.id)
+    items.value = items.value.filter(x => x.id !== it.id)
+  } catch (e) {
+    message.error('删除失败：' + (e.message || '请重试'))
+  } finally {
+    itemBusy.value = false
+  }
+}
+
+/** 去聊：有关联会话就接回那条；否则在本工作区新建一条，ask 只预填输入框、不自动发送 */
+const chatItem = it => {
+  const ask = it.title
+  const bind = { itemId: it.id, itemProjectId: id.value }
+  if (it.sessionId) {
+    router.push({ path: '/chat', query: { sid: it.sessionId, ask, ...bind } })
+    return
+  }
+  setNewSessionProject(id.value)
+  sessionStore.newChatTick++
+  router.push({ path: '/chat', query: { ask, ...bind } })
+}
+
 // ---------- 记忆 ----------
 const wmOpen = ref(false)
 const wmLoading = ref(false)
@@ -828,7 +958,7 @@ const load = async () => {
     executorPick.value = undefined
     ensureFileDir()
     loadedOnce.value = true
-    await Promise.all([loadFiles(), loadMemory()])
+    await Promise.all([loadFiles(), loadMemory(), loadItems()])
   } catch (e) {
     message.error('工作区加载失败：' + (e.message || '请重试'))
   } finally {
@@ -848,6 +978,9 @@ watch(id, () => {
   clearPreview()
   wmContent.value = ''
   wmError.value = ''
+  items.value = []
+  itemError.value = ''
+  itemAdding.value = false
   load()
 })
 
@@ -1057,6 +1190,34 @@ onUnmounted(() => {
   flex: none; padding: 8px 16px; border-top: 1px solid var(--app-border);
   font-size: 11.5px; color: var(--app-warn-text); background: var(--app-warn-weak);
 }
+
+/* ---------- 事项清单 ---------- */
+.pj-item-card { margin-top: 12px; }
+.pj-item-body { padding: 0 16px 12px; }
+.pj-item-add { display: flex; gap: 8px; margin-bottom: 8px; }
+.pj-item-add .app-btn { flex: none; height: 28px; padding: 0 12px; }
+.pj-item-list { display: flex; flex-direction: column; gap: 2px; }
+.pj-item-row {
+  display: flex; align-items: center; gap: 8px; padding: 5px 4px;
+  border-radius: 6px;
+}
+.pj-item-row:hover { background: var(--app-panel-2); }
+.pj-item-check {
+  flex: none; width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--app-border); border-radius: 50%; background: none; cursor: pointer;
+  color: var(--app-accent); padding: 0;
+}
+.pj-item-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--app-text3); opacity: .55; }
+.pj-item-row.done .pj-item-check { border-color: var(--app-accent); background: var(--app-accent-weak); }
+.pj-item-main { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 1px; }
+.pj-item-title { font-size: 12.5px; color: var(--app-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pj-item-row.done .pj-item-title { color: var(--app-text3); text-decoration: line-through; }
+.pj-item-note { font-size: 11.5px; color: var(--app-text3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pj-item-x {
+  flex: none; width: 22px; height: 22px; border: 0; background: none; cursor: pointer;
+  color: var(--app-text3); font-size: 15px; line-height: 1; border-radius: 5px;
+}
+.pj-item-x:hover { color: var(--app-danger); background: var(--app-panel-2); }
 
 /* ---------- 记忆 ---------- */
 .pj-mem-path {

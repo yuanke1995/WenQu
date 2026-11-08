@@ -32,6 +32,13 @@ public class UsageLedgerService {
     private final UsageLogMapper usageLogMapper;
 
     /**
+     * 分享游客额度（可空）：测试与无分享场景不注入也不影响记账。
+     * 用字段注入而不是构造器，避免把台账的构造签名与分享域强绑。
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private ShareBudgetService shareBudgetService;
+
+    /**
      * 非流式调用记账（即刻浏览器式：usage 随响应一次返回）。
      *
      * @param attr        显式归属（可为 null）
@@ -89,8 +96,11 @@ public class UsageLedgerService {
             }
         }
         UsageLog row = new UsageLog();
-        // 租户归属在记账线程就地定（未绑定按默认租户）：见 UsageLog#tenantId 的注释
+        // 租户归属在记账线程就地定（未绑定按默认租户）：见 UsageLog#tenantId 的注释。
+        // 线程没有身份时（模型框架的弹性线程）按这笔用量的归属 uid 反查租户——
+        // 只靠 current() 会把游客/工作流线程的账落成 default，按租户结算随之失真。
         String tenant = com.wenqu.ai.util.TenantContext.current();
+        if (tenant == null || tenant.isBlank()) tenant = com.wenqu.ai.util.TenantContext.resolveFor(uid);
         row.setTenantId(tenant == null || tenant.isBlank()
                 ? com.wenqu.ai.util.TenantContext.DEFAULT_TENANT : tenant);
         row.setUid(uid == null || uid.isBlank() || RequestUser.SYSTEM.equals(uid) ? null : uid);
@@ -106,6 +116,10 @@ public class UsageLedgerService {
         row.setEstimated(estimated);
         try {
             usageLogMapper.insert(row);
+            // 游客轮：把本笔 token 累加到分享的当日额度（best-effort，不影响记账与问答）
+            if (shareBudgetService != null && attr != null && attr.shareId() != null && !attr.shareId().isBlank()) {
+                shareBudgetService.addTokens(attr.shareId(), prompt + completion);
+            }
         } catch (Exception e) {
             // 记账失败不能拖垮问答（该花的钱已花），但必须显形——静默失败会让台账与账单对不上却无从察觉
             log.error("[UsageLedger] 用量台账写入失败（该笔用量不会进入统计）: uid={}, model={}, tokens={}, err={}",

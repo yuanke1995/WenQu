@@ -55,9 +55,14 @@ public class SubAgentBranchRuntime {
     /** 运行视角（2026-11-07）：随账本落库的关键帧类型。tool_output 只直播不落库——终态工具卡已带 result。 */
     private static final Set<String> RUN_FRAME_TYPES = Set.of(
             "tool_status", "retrieved", "artifact", "warn", "approval_required", "ask_user");
-    /** 帧缓冲上限（条 / 单帧字符）：回放要的是「哪一步干了什么」，不是流水账全文 */
+    /**
+     * 帧缓冲上限（条数）：回放要的是「哪一步干了什么」，不是流水账全文。帧内容<b>不设上限</b>——
+     * 帧与直播同源（toolCard 那份，result 在源头已按平台口径截到 2000 字符），这里若再按字符砍一刀，
+     * 会把转义串拦腰砍断，落进账本的帧就成了非法 JSON（2026-11-08 线上实证：done 帧砍残后
+     * 前端解析失败整帧丢弃，start 行永远转圈）。整包超限由 {@code writeRunLedger} 的闸兜住——
+     * 只整帧丢弃、不砍半截。
+     */
     private static final int RUN_FRAME_MAX = 240;
-    private static final int RUN_FRAME_CHARS = 2000;
 
     /** 父会话 → 正在跑的分支：父轮结束或强制同步超时要能精确叫停并收口待办。 */
     private final java.util.concurrent.ConcurrentHashMap<String, java.util.Set<BranchHandle>> branches =
@@ -134,7 +139,6 @@ public class SubAgentBranchRuntime {
             sink.forwardProcess((type, content) -> {
                 if (RUN_FRAME_TYPES.contains(type) && runFrames.size() < RUN_FRAME_MAX) {
                     String c = content == null ? "" : content;
-                    if (c.length() > RUN_FRAME_CHARS) c = shrinkFrame(c);
                     String runKey = type + "|" + c.substring(0, Math.min(200, c.length()));
                     if (seenRunKeys.add(runKey)) {
                         Map<String, Object> f = new LinkedHashMap<>();
@@ -366,38 +370,6 @@ public class SubAgentBranchRuntime {
     }
 
     /**
-     * 帧载荷超限时的收缩：按<b>字段</b>截断，不整段 {@code substring}。整段硬切会把 JSON 的转义串
-     * 拦腰砍断（尾部悬空一个反斜杠），落进账本的帧就成了非法 JSON——前端回放
-     * {@code JSON.parse} 失败把终态帧整帧丢掉，start 行永远转圈（2026-11-08 线上实证：
-     * SQL 大结果的 {@code tool_status} done 帧被顶到 2000 上限）。配对键
-     * name/status/startedAtMs 都在帧头不受影响；字符串字段先按预算递减截断，缩到下限仍超
-     * 就整字段丢重载荷（subChat/result/args）。非 JSON 帧解析不了才退回整段截断（前端按原样文本兜底）。
-     */
-    private static String shrinkFrame(String c) {
-        try {
-            com.alibaba.fastjson2.JSONObject o = com.alibaba.fastjson2.JSON.parseObject(c);
-            if (o == null) return c.substring(0, RUN_FRAME_CHARS) + "…";
-            for (int budget = 600; budget >= 40; budget /= 2) {
-                for (Map.Entry<String, Object> en : o.entrySet()) {
-                    if (en.getValue() instanceof String s && s.length() > budget) {
-                        en.setValue(s.substring(0, budget) + "…(已截断)");
-                    }
-                }
-                String out = com.alibaba.fastjson2.JSON.toJSONString(o);
-                if (out.length() <= RUN_FRAME_CHARS) return out;
-            }
-            for (String heavy : new String[]{"subChat", "result", "args"}) {
-                o.remove(heavy);
-                String out = com.alibaba.fastjson2.JSON.toJSONString(o);
-                if (out.length() <= RUN_FRAME_CHARS) return out;
-            }
-            return com.alibaba.fastjson2.JSON.toJSONString(o);
-        } catch (Exception e) {
-            return c.substring(0, RUN_FRAME_CHARS) + "…";
-        }
-    }
-
-    /**
      * 运行视角的落库（2026-11-07）：这一支的关键帧流随收束写一条 {@code type=subagent} 账本事件，
      * 挂<b>父会话与父轮</b>——刷新/换设备后卡片上的「完整过程」从它懒取回放（与 subChat 快照互补：
      * 那份是≤20 步的摘要，这份是关键帧全量）。旁路纪律与账本一致：写失败只留一行 warn，不碰回报；
@@ -419,7 +391,7 @@ public class SubAgentBranchRuntime {
                 payload.put("frames", kept);
                 json = JSON.toJSONString(payload);
                 if (json.length() <= 190_000 || kept.size() <= 20) break;
-                // 兜底截断：帧缓冲本就有 240×2000 的上限，走到这里说明 JSON 转义膨胀超了——
+                // 兜底截断：帧缓冲本就有 240 条的上限，走到这里说明 JSON 转义膨胀超了——
                 // 砍较早的一半，最近的步骤对排障最有价值
                 kept.subList(0, kept.size() / 2).clear();
             }

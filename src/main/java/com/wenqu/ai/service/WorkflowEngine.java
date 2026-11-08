@@ -557,12 +557,20 @@ public class WorkflowEngine {
             // 分域取门：重排分走节点低分门（config.minScore，未声明跟随 retrieval.minContextScore）；
             // 未重排（关闭/失败回退）的融合分走 retrieval.minFusionScore——两个分值域分布不同，不可共用一个门
             Double fusionGate = withReplay(ctx, () -> configService.getDouble("retrieval.minFusionScore", ConfigDefaults.RETRIEVAL_MIN_FUSION_SCORE));
-            List<Hit> kept = filterByMinScore(hits, minScore, fusionGate == null ? 0 : fusionGate, rerankActive);
+            // 与主检索工具同一份门：分域 + 低分全灭时保底 top-1（RetrievalGate），不在这里另写过滤流
+            String lowPolicy = withReplay(ctx, () -> configService.get("retrieval.lowConfidencePolicy"));
+            Double top1Floor = withReplay(ctx, () -> configService.getDouble("retrieval.top1Floor", ConfigDefaults.RETRIEVAL_TOP1_FLOOR));
+            RetrievalGate.Result gate = RetrievalGate.apply(hits, minScore, fusionGate == null ? 0 : fusionGate,
+                    rerankActive, lowPolicy, top1Floor == null ? 0 : top1Floor);
+            List<Hit> kept = gate.kept();
             int skipped = hits.size() - kept.size();
             List<Map<String, Object>> chunks = new ArrayList<>();
             StringBuilder text = new StringBuilder();
             // 知识库节点正文是不可信数据：数据声明 + 逐块信封（UntrustedContent，与主链路检索同口径）
             text.append(com.wenqu.ai.util.UntrustedContent.DATA_RULE).append("\n\n");
+            if (gate.lowConfidence()) {
+                text.append("（低置信度：以下仅 1 条最相关片段，可能不足以回答问题；请如实说明不足，不要臆测。）\n\n");
+            }
             int count = 0;
             for (Hit h : kept) {
                 if (count >= topK) break;

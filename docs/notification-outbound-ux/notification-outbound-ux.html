@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>问渠 · 通知外发通道效果图</title>
+<style>
+/* ============================================================
+   问渠 · 通知外发（邮件通道）
+   画布 1600×1000；token 全部取自 web/src/views/app.css
+   ============================================================ */
+:root {
+  --app-bg: #f7f8fa;
+  --app-panel: #ffffff;
+  --app-panel-2: #fafbfc;
+  --app-border: #e6e9ed;
+  --app-border-strong: #d8dde3;
+  --app-text: #1f2329;
+  --app-text2: #5f6570;
+  --app-text3: #98a0aa;
+  --app-accent: #2e6be6;
+  --app-accent-hover: #1f5bd8;
+  --app-accent-weak: #eef2f7;
+  --app-danger: #d4552e;
+  --app-ok: #3b8f4e;
+  --app-warn: #c77c14;
+  --app-ok-weak: #eaf5ec;
+  --app-warn-weak: #faf3e6;
+  --app-warn-text: #a3691b;
+  --app-danger-weak: #fff2f0;
+  --app-code-bg: #f6f8fa;
+  --app-shadow-sm: 0 1px 2px rgba(16, 24, 40, .04);
+  --app-shadow-lg: 0 12px 32px rgba(16, 24, 40, .14);
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+          'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body { font-family: var(--font); background: #eef1f5; color: var(--app-text); font-size: 13px;
+  -webkit-font-smoothing: antialiased; }
+svg.ic { stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+.sheet { width: 1600px; margin: 0 auto; padding: 36px 0 60px; }
+.sheet-top { padding: 0 2px 22px; }
+.sheet-title { font-size: 22px; font-weight: 600; color: #1f2329; }
+.sheet-sub { margin-top: 8px; font-size: 13px; color: #8a929d; }
+.sheet-sub b { color: #5f6570; font-weight: 500; }
+.scene-block { margin-top: 30px; }
+.scene-block:first-of-type { margin-top: 8px; }
+.cap { display: flex; align-items: baseline; gap: 10px; padding: 0 2px 10px; font-size: 13px; color: #5f6570; }
+.cap b { font-size: 11px; font-weight: 600; color: #98a0aa; letter-spacing: .08em; }
+.cap em { font-style: normal; color: #1f2329; font-weight: 600; font-size: 14px; }
+.cap span { color: #98a0aa; font-size: 12px; }
+.scene { width: 1600px; height: 1000px; display: flex; overflow: hidden; background: var(--app-bg);
+  position: relative; box-shadow: 0 20px 50px rgba(16, 24, 40, .16); }
+
+/* ---------------- 侧栏 ---------------- */
+.side { width: 232px; flex: none; height: 100%; display: flex; flex-direction: column;
+  background: var(--app-panel); border-right: 1px solid var(--app-border); padding: 10px 8px 8px; }
+.logo-row { display: flex; align-items: center; gap: 8px; padding: 2px 6px 12px; }
+.logo-mark { width: 22px; height: 22px; border-radius: 6px; background: var(--app-accent); position: relative; flex: none; }
+.logo-mark::after { content: ''; position: absolute; left: 5px; right: 5px; top: 10px; height: 2px;
+  background: rgba(255,255,255,.9); border-radius: 2px; box-shadow: 0 -4px 0 rgba(255,255,255,.55), 0 4px 0 rgba(255,255,255,.35); }
+.logo-name { font-size: 13px; font-weight: 500; color: var(--app-text); }
+.logo-row .fold { margin-left: auto; color: var(--app-text3); width: 26px; height: 26px;
+  display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; }
+.side-nav { display: flex; flex-direction: column; gap: 1px; flex: none; }
+.nav-item { display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 9px;
+  border-radius: 8px; font-size: 13px; color: var(--app-text2); white-space: nowrap; }
+.nav-item .ic { width: 14px; height: 14px; color: var(--app-text3); flex: none; }
+.nav-item.active { background: var(--app-accent-weak); color: var(--app-text); font-weight: 500; }
+.side-foot { margin-top: auto; display: flex; align-items: center; gap: 6px; padding: 8px 4px 2px;
+  border-top: 1px solid var(--app-border); }
+.avatar { width: 24px; height: 24px; border-radius: 50%; background: #e8ecf2; color: var(--app-text2);
+  font-size: 12px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; }
+.side-foot .who { font-size: 12px; color: var(--app-text2); }
+.side-foot .sp { flex: 1; }
+.icon-btn { width: 26px; height: 26px; border: none; background: transparent; color: var(--app-text3);
+  display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; padding: 0; }
+.icon-btn .ic { width: 14px; height: 14px; }
+
+/* ---------------- 设置页 ---------------- */
+.main { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--app-bg); }
+.page-head { flex: none; display: flex; align-items: center; padding: 18px 20px 14px; }
+.page-title { margin: 0; font-size: 17px; font-weight: 600; color: var(--app-text); }
+.head-r { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.tenant-pill { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px;
+  border-radius: 999px; border: 1px solid var(--app-border); background: var(--app-panel-2);
+  font-size: 12px; color: var(--app-text2); }
+.tenant-pill .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--app-ok); }
+.set-wrap { flex: 1; min-height: 0; display: flex; gap: 16px; padding: 0 20px 20px; }
+.set-nav { width: 172px; flex: none; background: var(--app-panel); border: 1px solid var(--app-border);
+  border-radius: 10px; padding: 8px; height: fit-content; box-shadow: var(--app-shadow-sm); }
+.set-nav-item { display: flex; align-items: center; gap: 7px; height: 32px; padding: 0 9px; border-radius: 7px;
+  font-size: 12.5px; color: var(--app-text2); }
+.set-nav-item.active { background: var(--app-accent-weak); color: var(--app-text); font-weight: 500; }
+.set-nav-item .sp { flex: 1; }
+.set-nav-item .n { font-size: 11px; color: var(--app-text3); font-variant-numeric: tabular-nums; }
+.set-content { flex: 1; min-width: 0; background: var(--app-panel); border: 1px solid var(--app-border);
+  border-radius: 10px; box-shadow: var(--app-shadow-sm); padding: 20px 22px; overflow: hidden; }
+.set-title { font-size: 15px; font-weight: 600; color: var(--app-text); }
+.set-desc { margin-top: 5px; font-size: 12px; color: var(--app-text3); line-height: 1.7; }
+.sec-title { display: flex; align-items: center; gap: 8px; margin: 22px 0 10px; font-size: 13px; font-weight: 500; color: var(--app-text); }
+.sec-title .hint { font-size: 11.5px; color: var(--app-text3); font-weight: 400; }
+.form { margin-top: 16px; }
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 18px; }
+.form-row.full { grid-column: 1 / -1; }
+.form-label { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; font-size: 12px; color: var(--app-text2); }
+.form-label .opt { font-size: 11px; color: var(--app-text3); }
+.input { height: 30px; display: flex; align-items: center; padding: 0 10px; border: 1px solid var(--app-border-strong);
+  border-radius: 7px; font-size: 12.5px; color: var(--app-text); background: var(--app-panel); }
+.input.dim { color: var(--app-text3); }
+.form-tip { margin-top: 6px; font-size: 11.5px; line-height: 1.6; color: var(--app-text3); }
+.form-tip.ok { color: var(--app-ok); }
+.radio-row { display: flex; gap: 6px; }
+.radio { height: 28px; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; border-radius: 7px;
+  border: 1px solid var(--app-border); font-size: 12px; color: var(--app-text2); }
+.radio .rd { width: 13px; height: 13px; border-radius: 50%; border: 1px solid var(--app-border-strong); }
+.radio.on { border-color: var(--app-accent); color: var(--app-accent); background: var(--app-accent-weak); }
+.radio.on .rd { border-color: var(--app-accent); background: var(--app-accent); box-shadow: inset 0 0 0 3px #fff; }
+.switch { width: 32px; height: 18px; border-radius: 999px; background: var(--app-accent); position: relative; flex: none; }
+.switch::after { content: ''; position: absolute; top: 2px; right: 2px; width: 14px; height: 14px;
+  border-radius: 50%; background: #fff; }
+.switch.off { background: #c9cdd4; }
+.switch.off::after { right: auto; left: 2px; }
+.switch-row { display: flex; align-items: center; gap: 10px; }
+.switch-row .t { font-size: 13px; color: var(--app-text); }
+.switch-row .s { margin-top: 2px; font-size: 11.5px; color: var(--app-text3); }
+.btn { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 13px; border-radius: 7px;
+  border: none; background: var(--app-accent); color: #fff; font-size: 12px; white-space: nowrap; }
+.btn .ic { width: 12px; height: 12px; }
+.btn.ghost { background: transparent; color: var(--app-text2); border: 1px solid var(--app-border); }
+.btn.sm { height: 26px; padding: 0 10px; border-radius: 6px; }
+.btn-row { display: flex; align-items: center; gap: 8px; margin-top: 18px; padding-top: 16px;
+  border-top: 1px solid var(--app-border); }
+.test-ok { display: inline-flex; align-items: center; gap: 6px; margin-left: 4px; font-size: 12px; color: var(--app-ok); }
+
+/* 类型矩阵 */
+.matrix { margin-top: 8px; border: 1px solid var(--app-border); border-radius: 8px; overflow: hidden; }
+.mtbl { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.mtbl th { height: 30px; padding: 0 12px; font-size: 11.5px; font-weight: 500; color: var(--app-text2);
+  text-align: left; background: var(--app-panel-2); border-bottom: 1px solid var(--app-border); }
+.mtbl th.c, .mtbl td.c { text-align: center; width: 92px; }
+.mtbl td { height: 34px; padding: 0 12px; font-size: 12px; color: var(--app-text2); border-bottom: 1px solid #f1f3f5; }
+.mtbl tr:last-child td { border-bottom: none; }
+.mtbl td.c .ck { display: inline-flex; width: 15px; height: 15px; border-radius: 4px; border: 1px solid var(--app-border-strong);
+  align-items: center; justify-content: center; color: transparent; }
+.mtbl td.c .ck.on { border-color: var(--app-accent); background: var(--app-accent); color: #fff; }
+.mtbl td.c .ck.on svg { width: 9px; height: 9px; }
+.mtbl td.c .ck.muted { background: var(--app-panel-2); }
+.type-name { color: var(--app-text); }
+.type-desc { display: block; margin-top: 1px; font-size: 11px; color: var(--app-text3); }
+
+/* 抽屉 */
+.mask { position: absolute; inset: 0; background: rgba(16, 22, 32, .38); }
+.drawer { position: absolute; top: 0; right: 0; bottom: 0; width: 560px; background: var(--app-panel);
+  box-shadow: -14px 0 40px rgba(16, 24, 40, .18); display: flex; flex-direction: column; }
+.drawer-head { padding: 18px 20px 12px; border-bottom: 1px solid var(--app-border); position: relative; }
+.drawer-head .t { font-size: 15px; font-weight: 600; color: var(--app-text); }
+.drawer-head .s { margin-top: 4px; font-size: 12px; color: var(--app-text3); }
+.drawer-head .x { position: absolute; right: 16px; top: 16px; color: var(--app-text3); width: 26px; height: 26px;
+  display: inline-flex; align-items: center; justify-content: center; }
+.drawer-body { flex: 1; min-height: 0; padding: 12px 20px 16px; overflow: hidden; }
+.dtbl { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.dtbl th { height: 30px; font-size: 11px; font-weight: 400; color: var(--app-text3); text-align: left;
+  border-bottom: 1px solid var(--app-border); padding: 0 6px; }
+.dtbl td { height: 46px; font-size: 12px; color: var(--app-text2); border-bottom: 1px solid #f1f3f5; padding: 0 6px; }
+.dtbl td .to { color: var(--app-text); }
+.dtbl td .subj { display: block; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--app-text2); }
+.dtbl td .time { font-size: 11px; color: var(--app-text3); font-variant-numeric: tabular-nums; }
+.tag { display: inline-flex; align-items: center; height: 19px; padding: 0 7px; border-radius: 4px; font-size: 11px; white-space: nowrap; }
+.tag.ok { background: var(--app-ok-weak); color: var(--app-ok); }
+.tag.bad { background: var(--app-danger-weak); color: var(--app-danger); }
+.tag.wait { background: var(--app-warn-weak); color: var(--app-warn-text); }
+.tag.skip { background: #f2f3f5; color: var(--app-text3); }
+.drawer-foot { padding: 12px 20px 16px; border-top: 1px solid var(--app-border); font-size: 11.5px;
+  line-height: 1.75; color: var(--app-text3); }
+
+/* ---------------- 个人设置 ---------------- */
+.pref-card { background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 10px;
+  box-shadow: var(--app-shadow-sm); padding: 18px 20px; }
+.pref-head { display: flex; align-items: flex-start; gap: 10px; }
+.pref-head .t { font-size: 14px; font-weight: 600; color: var(--app-text); }
+.pref-head .s { margin-top: 4px; font-size: 12px; color: var(--app-text3); }
+.pref-warn { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 9px;
+  border-radius: 5px; background: var(--app-warn-weak); color: var(--app-warn-text); font-size: 11.5px; }
+.ptbl { width: 100%; border-collapse: collapse; table-layout: fixed; margin-top: 12px; }
+.ptbl th { height: 30px; font-size: 11.5px; font-weight: 500; color: var(--app-text2); text-align: left;
+  background: var(--app-panel-2); padding: 0 12px; border-bottom: 1px solid var(--app-border); }
+.ptbl th.c, .ptbl td.c { text-align: center; width: 110px; }
+.ptbl td { height: 42px; padding: 0 12px; font-size: 12.5px; color: var(--app-text2); border-bottom: 1px solid #f1f3f5; }
+.ptbl tr:last-child td { border-bottom: none; }
+.ptbl td .type-desc { display: block; margin-top: 1px; font-size: 11px; color: var(--app-text3); }
+.ptbl td.c .switch.sm { width: 26px; height: 15px; }
+.ptbl td.c .switch.sm::after { width: 11px; height: 11px; }
+.ptbl td.c .switch.sm.off::after { top: 2px; }
+
+/* ---------------- 邮件模板 ---------------- */
+.mail-bg { position: absolute; inset: 0; background: #eef1f5; display: flex; align-items: center; justify-content: center; }
+.mail-shell { width: 760px; background: var(--app-panel); border-radius: 10px; box-shadow: var(--app-shadow-lg);
+  overflow: hidden; }
+.mail-meta { padding: 16px 24px; border-bottom: 1px solid var(--app-border); background: var(--app-panel-2); }
+.mail-meta .subj { font-size: 16px; font-weight: 600; color: var(--app-text); }
+.mail-meta .from { margin-top: 8px; display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--app-text3); }
+.mail-meta .from .avatar { width: 26px; height: 26px; background: var(--app-accent-weak); color: var(--app-accent); }
+.mail-meta .from b { color: var(--app-text2); font-weight: 500; }
+.mail-body { padding: 28px 34px 30px; }
+.mail-brand { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--app-text3); }
+.mail-brand .logo-mark { width: 20px; height: 20px; }
+.mail-h { margin: 22px 0 0; font-size: 19px; font-weight: 600; color: var(--app-text); }
+.mail-p { margin: 10px 0 0; font-size: 13.5px; line-height: 1.85; color: var(--app-text2); }
+.mail-btn { display: inline-flex; align-items: center; height: 36px; padding: 0 20px; margin-top: 22px;
+  border-radius: 7px; background: var(--app-accent); color: #fff; font-size: 13px; text-decoration: none; }
+.mail-div { margin-top: 26px; padding-top: 16px; border-top: 1px solid var(--app-border);
+  font-size: 11.5px; line-height: 1.8; color: var(--app-text3); }
+.mail-tag { display: inline-flex; align-items: center; height: 20px; padding: 0 7px; border-radius: 4px;
+  background: var(--app-warn-weak); color: var(--app-warn-text); font-size: 11px; margin-bottom: 12px; }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-chat" viewBox="0 0 24 24"><path d="M20 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2z"/></symbol>
+  <symbol id="i-bot" viewBox="0 0 24 24"><rect x="4" y="7" width="16" height="12" rx="3"/><path d="M12 3v4M9 12h.01M15 12h.01M9 16h6"/></symbol>
+  <symbol id="i-bag" viewBox="0 0 24 24"><path d="M5 8h14l1 12H4z"/><path d="M9 8a3 3 0 0 1 6 0"/></symbol>
+  <symbol id="i-db" viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6"/><path d="M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></symbol>
+  <symbol id="i-chart" viewBox="0 0 24 24"><path d="M5 20V11M12 20V6M19 20v-6"/></symbol>
+  <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0"/><circle cx="18" cy="9" r="2.4"/><path d="M15 15a5 5 0 0 1 6 4.6"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7 3v6c0 4-3 7-7 9-4-2-7-5-7-9V6z"/></symbol>
+  <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3 5.6 18.4"/></symbol>
+  <symbol id="i-fold" viewBox="0 0 24 24"><path d="M4 7h16M4 12h10M4 17h16"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 13a8 8 0 0 1-9-9 8 8 0 1 0 9 9z"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 5 5 9-10"/></symbol>
+  <symbol id="i-mail" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 7 8 6 8-6"/></symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 9a6 6 0 0 1 12 0c0 7 3 7 3 9H3c0-2 3-2 3-9"/><path d="M10 21h4"/></symbol>
+  <symbol id="i-warn" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></symbol>
+  <symbol id="i-reload" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20 4v7h-7"/></symbol>
+</svg>
+
+<div class="sheet">
+  <div class="sheet-top">
+    <div class="sheet-title">问渠 · 通知外发通道效果图</div>
+    <div class="sheet-sub">SMTP 配置 · <b>外发类型白名单</b> · <b>个人邮件偏好</b> · 邮件模板 · 发送记录 · 默认全关、站内与 WebPush 零变化</div>
+  </div>
+
+  <!-- ================= 01 系统设置 · 通知外发 ================= -->
+  <div class="scene-block">
+    <div class="cap"><b>01</b><em>系统设置 · 通知外发</em><span>总闸默认关；SMTP 密码不回显；类型白名单决定「允许外发」，不是「默认发送」</span></div>
+    <div class="scene">
+      <aside class="side">
+        <div class="logo-row"><span class="logo-mark"></span><span class="logo-name">问渠</span>
+          <span class="fold"><svg class="ic"><use href="#i-fold"/></svg></span></div>
+        <div class="side-nav">
+          <div class="nav-item"><svg class="ic"><use href="#i-plus"/></svg>新建对话</div>
+          <div class="nav-item"><svg class="ic"><use href="#i-chat"/></svg>对话</div>
+          <div class="nav-item"><svg class="ic"><use href="#i-bot"/></svg>智能体</div>
+          <div class="nav-item"><svg class="ic"><use href="#i-bag"/></svg>市场</div>
+          <div class="nav-item"><svg class="ic"><use href="#i-db"/></svg>知识库</div>
+          <div class="nav-item"><svg class="ic"><use href="#i-file"/></svg>我的产物</div>
+          <div class="nav-item"><svg class="ic"><use href="#i-chart"/></svg>使用统计</div>
+          <div class="nav-item"><svg class="ic"><use href="#i-users"/></svg>成员管理</div>
+          <div class="nav-item"><svg class="ic"><use href="#i-shield"/></svg>安全与运维</div>
+          <div class="nav-item active"><svg class="ic"><use href="#i-settings"/></svg>系统设置</div>
+        </div>
+        <div class="side-foot"><span class="avatar">管</span><span class="who">平台管理员</span><span class="sp"></span>
+          <button class="icon-btn"><svg class="ic"><use href="#i-moon"/></svg></button></div>
+      </aside>
+      <main class="main">
+        <div class="page-head"><h1 class="page-title">系统设置</h1>
+          <div class="head-r"><span class="tenant-pill"><span class="dot"></span>北辰科技</span></div></div>
+        <div class="set-wrap">
+          <nav class="set-nav">
+            <div class="set-nav-item">基础信息</div>
+            <div class="set-nav-item">模型供应商</div>
+            <div class="set-nav-item">检索与重排</div>
+            <div class="set-nav-item">工具调用</div>
+            <div class="set-nav-item">通知<span class="sp"></span><span class="n">站内</span></div>
+            <div class="set-nav-item active">通知外发<span class="sp"></span><span class="n">邮件</span></div>
+            <div class="set-nav-item">安全与访问</div>
+            <div class="set-nav-item">维护与诊断</div>
+            <div class="set-nav-item">调试设置</div>
+          </nav>
+          <section class="set-content">
+            <div style="display:flex;align-items:flex-start;gap:12px">
+              <div>
+                <div class="set-title">通知外发</div>
+                <div class="set-desc">通过 SMTP 把站内通知同步到邮箱。总闸关闭时不发任何邮件，站内通知与浏览器推送不受影响。</div>
+              </div>
+              <div class="switch-row" style="margin-left:auto;flex:none">
+                <div><div class="t">启用邮件外发</div><div class="s">关闭时全站零外发</div></div>
+                <span class="switch"></span>
+              </div>
+            </div>
+
+            <div class="sec-title">邮件服务 <span class="hint">密码加密入库，编辑时留空即沿用</span></div>
+            <div class="form">
+              <div class="form-grid">
+                <div class="form-row"><div class="form-label">SMTP 主机</div><div class="input">smtp.example.com</div></div>
+                <div class="form-row"><div class="form-label">端口</div><div class="input">587</div></div>
+                <div class="form-row"><div class="form-label">传输安全</div>
+                  <div class="radio-row">
+                    <span class="radio on"><span class="rd"></span>STARTTLS</span>
+                    <span class="radio"><span class="rd"></span>SSL</span>
+                    <span class="radio"><span class="rd"></span>无</span>
+                  </div>
+                </div>
+                <div class="form-row"><div class="form-label">认证账号</div><div class="input">notify@example.com</div></div>
+                <div class="form-row"><div class="form-label">认证密码</div><div class="input dim">已保存 · 留空不修改</div></div>
+                <div class="form-row"><div class="form-label">发件人地址</div><div class="input">notify@example.com</div></div>
+                <div class="form-row"><div class="form-label">发件人显示名</div><div class="input">北辰科技 · 问渠</div></div>
+                <div class="form-row"><div class="form-label">超时 <span class="opt">毫秒</span></div><div class="input">10000</div></div>
+              </div>
+              <div class="btn-row">
+                <button class="btn">保存配置</button>
+                <button class="btn ghost"><svg class="ic"><use href="#i-mail"/></svg>发送测试邮件</button>
+                <span class="test-ok"><svg class="ic" style="width:12px;height:12px"><use href="#i-check"/></svg>测试邮件已发送至 guanli@example.com</span>
+              </div>
+            </div>
+
+            <div class="sec-title">允许外发的通知类型 <span class="hint">勾选=允许；个人仍需在通知偏好中单独开启</span></div>
+            <div class="matrix">
+              <table class="mtbl">
+                <thead><tr><th>类型</th><th class="c">站内</th><th class="c">邮件</th></tr></thead>
+                <tbody>
+                  <tr><td><span class="type-name">待处理 · 工具审批</span><span class="type-desc">批准 / 拒绝 / 超时</span></td>
+                    <td class="c"><span class="ck on"><svg class="ic"><use href="#i-check"/></svg></span></td>
+                    <td class="c"><span class="ck on"><svg class="ic"><use href="#i-check"/></svg></span></td></tr>
+                  <tr><td><span class="type-name">待处理 · 智能体提问</span><span class="type-desc">未作答不会自动选择</span></td>
+                    <td class="c"><span class="ck on"><svg class="ic"><use href="#i-check"/></svg></span></td>
+                    <td class="c"><span class="ck on"><svg class="ic"><use href="#i-check"/></svg></span></td></tr>
+                  <tr><td><span class="type-name">待处理 · 计划确认</span><span class="type-desc">挂起有倒计时</span></td>
+                    <td class="c"><span class="ck on"><svg class="ic"><use href="#i-check"/></svg></span></td>
+                    <td class="c"><span class="ck on"><svg class="ic"><use href="#i-check"/></svg></span></td></tr>
+                  <tr><td><span class="type-name">失败 · 工作流 / 解析 / 定时任务</span><span class="type-desc">需要人工介入的错误</span></td>
+                    <td class="c"><span class="ck on"><svg class="ic"><use href="#i-check"/></svg></span></td>
+                    <td class="c"><span class="ck on"><svg class="ic"><use href="#i-check"/></svg></span></td></tr>
+                  <tr><td><span class="type-name">额度 · 模型 / 用量</span><span class="type-desc">接近或超出配额</span></td>
+                    <td class="c"><span class="ck on"><svg class="ic"><use href="#i-check"/></svg></span></td>
+                    <td class="c"><span class="ck on"><svg class="ic"><use href="#i-check"/></svg></span></td></tr>
+                  <tr><td><span class="type-name">完成 · 解析 / 定时任务 / 对话</span><span class="type-desc">正常完成，噪音较大</span></td>
+                    <td class="c"><span class="ck on"><svg class="ic"><use href="#i-check"/></svg></span></td>
+                    <td class="c"><span class="ck muted"></span></td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- ================= 02 个人设置 · 通知偏好 ================= -->
+  <div class="scene-block">
+    <div class="cap"><b>02</b><em>个人设置 · 通知偏好</em><span>邮件列只对平台白名单内的类型可勾；未开通道时整列置灰并给一句人话</span></div>
+    <div class="scene">
+      <aside class="side">
+        <div class="logo-row"><span class="logo-mark"></span><span class="logo-name">问渠</span>
+          <span class="fold"><svg class="ic"><use href="#i-fold"/></svg></span></div>
+        <div class="side-nav">
+          <div class="nav-item"><svg class="ic"><use href="#i-plus"/></svg>新建对话</div>
+          <div class="nav-item"><svg class="ic"><use href="#i-chat"/></svg>对话</div>
+          <div class="nav-item"><svg class="ic"><use href="#i-bot"/></svg>智能体</div>
+          <div class="nav-item"><svg class="ic"><use href="#i-bag"/></svg>市场</div>
+          <div class="nav-item"><svg class="ic"><use href="#i-db"/></svg>知识库</div>
+          <div class="nav-item"><svg class="ic"><use href="#i-file"/></svg>我的产物</div>
+          <div class="nav-item"><svg class="ic"><use href="#i-chart"/></svg>使用统计</div>
+          <div class="nav-item active"><svg class="ic"><use href="#i-settings"/></svg>个人设置</div>
+        </div>
+        <div class="side-foot"><span class="avatar">陈</span><span class="who">陈立</span><span class="sp"></span>
+          <button class="icon-btn"><svg class="ic"><use href="#i-moon"/></svg></button></div>
+      </aside>
+      <main class="main">
+        <div class="page-head"><h1 class="page-title">个人设置</h1>
+          <div class="head-r"><span class="tenant-pill"><span class="dot"></span>北辰科技</span></div></div>
+        <div class="set-wrap">
+          <nav class="set-nav">
+            <div class="set-nav-item">个人资料</div>
+            <div class="set-nav-item">默认模型</div>
+            <div class="set-nav-item">对话偏好</div>
+            <div class="set-nav-item active">通知偏好</div>
+            <div class="set-nav-item">记忆</div>
+            <div class="set-nav-item">技能</div>
+            <div class="set-nav-item">安全</div>
+          </nav>
+          <section class="set-content">
+            <div class="pref-card" style="border:none;box-shadow:none;padding:0">
+              <div class="pref-head">
+                <div>
+                  <div class="t">通知偏好</div>
+                  <div class="s">站内通知始终接收；邮件提醒只对你主动开启的类型发送。</div>
+                </div>
+                <span class="pref-warn"><svg class="ic" style="width:12px;height:12px"><use href="#i-warn"/></svg>邮件通道未开启，邮件开关暂不可用</span>
+              </div>
+              <table class="ptbl">
+                <thead><tr><th>通知类型</th><th class="c">站内</th><th class="c">邮件提醒</th></tr></thead>
+                <tbody>
+                  <tr><td><span class="type-name">工具审批待处理</span><span class="type-desc">有人等你批准工具执行</span></td>
+                    <td class="c"><span class="switch sm"></span></td>
+                    <td class="c"><span class="switch sm off" style="opacity:.45"></span></td></tr>
+                  <tr><td><span class="type-name">智能体提问待回答</span><span class="type-desc">助手在等你的选择</span></td>
+                    <td class="c"><span class="switch sm"></span></td>
+                    <td class="c"><span class="switch sm off" style="opacity:.45"></span></td></tr>
+                  <tr><td><span class="type-name">计划确认</span><span class="type-desc">执行计划等你确认后动手</span></td>
+                    <td class="c"><span class="switch sm"></span></td>
+                    <td class="c"><span class="switch sm off" style="opacity:.45"></span></td></tr>
+                  <tr><td><span class="type-name">工作流 / 解析失败</span><span class="type-desc">需要人工介入</span></td>
+                    <td class="c"><span class="switch sm"></span></td>
+                    <td class="c"><span class="switch sm off" style="opacity:.45"></span></td></tr>
+                  <tr><td><span class="type-name">解析完成 / 定时任务完成</span><span class="type-desc">正常完成</span></td>
+                    <td class="c"><span class="switch sm"></span></td>
+                    <td class="c"><span class="switch sm off" style="opacity:.45"></span></td></tr>
+                </tbody>
+              </table>
+              <div class="form-tip" style="margin-top:12px">邮件通道由管理员在系统设置 → 通知外发中开启；开启后你仍需在这里主动勾选才会收到邮件。</div>
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- ================= 03 邮件模板 ================= -->
+  <div class="scene-block">
+    <div class="cap"><b>03</b><em>邮件模板 · 待处理通知</em><span>统一模板：品牌名 + 标题 + 一句话摘要 + 深链按钮 + 关闭入口；不开放模板编辑</span></div>
+    <div class="scene">
+      <div class="mail-bg">
+        <div class="mail-shell">
+          <div class="mail-meta">
+            <div class="subj">待处理：工作流「周报生成」等待人工审核</div>
+            <div class="from"><span class="avatar">北</span>
+              <span><b>北辰科技 · 问渠</b> &lt;notify@example.com&gt;</span>
+              <span>·</span><span>收件人 陈立 &lt;chenli@example.com&gt;</span></div>
+          </div>
+          <div class="mail-body">
+            <div class="mail-brand"><span class="logo-mark"></span>北辰科技 · 问渠</div>
+            <div class="mail-tag">待处理</div>
+            <div class="mail-h">工作流「周报生成」等待人工审核</div>
+            <div class="mail-p">运行 #run_20261108_0932 已执行到「人工审核」节点，当前停留在审批卡上。超过 24 小时未处理将按超时终止。</div>
+            <a class="mail-btn">去处理</a>
+            <div class="mail-div">你收到这封邮件，是因为你在个人设置中开启了「工作流待审核」的邮件提醒。<br>
+              可在 个人设置 → 通知偏好 中随时关闭；站内通知不受影响。</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 04 发送记录 ================= -->
+  <div class="scene-block">
+    <div class="cap"><b>04</b><em>发送记录</em><span>设置页右侧抽屉；只读台账，失败可看原因，重试自动进行</span></div>
+    <div class="scene">
+      <aside class="side">
+        <div class="logo-row"><span class="logo-mark"></span><span class="logo-name">问渠</span>
+          <span class="fold"><svg class="ic"><use href="#i-fold"/></svg></span></div>
+        <div class="side-nav">
+          <div class="nav-item"><svg class="ic"><use href="#i-plus"/></svg>新建对话</div>
+          <div class="nav-item"><svg class="ic"><use href="#i-chat"/></svg>对话</div>
+          <div class="nav-item"><svg class="ic"><use href="#i-bot"/></svg>智能体</div>
+          <div class="nav-item"><svg class="ic"><use href="#i-bag"/></svg>市场</div>
+          <div class="nav-item"><svg class="ic"><use href="#i-db"/></svg>知识库</div>
+          <div class="nav-item"><svg class="ic"><use href="#i-file"/></svg>我的产物</div>
+          <div class="nav-item"><svg class="ic"><use href="#i-chart"/></svg>使用统计</div>
+          <div class="nav-item"><svg class="ic"><use href="#i-users"/></svg>成员管理</div>
+          <div class="nav-item"><svg class="ic"><use href="#i-shield"/></svg>安全与运维</div>
+          <div class="nav-item active"><svg class="ic"><use href="#i-settings"/></svg>系统设置</div>
+        </div>
+        <div class="side-foot"><span class="avatar">管</span><span class="who">平台管理员</span><span class="sp"></span>
+          <button class="icon-btn"><svg class="ic"><use href="#i-moon"/></svg></button></div>
+      </aside>
+      <main class="main">
+        <div class="page-head"><h1 class="page-title">系统设置</h1>
+          <div class="head-r"><span class="tenant-pill"><span class="dot"></span>北辰科技</span></div></div>
+        <div class="set-wrap">
+          <nav class="set-nav">
+            <div class="set-nav-item">基础信息</div>
+            <div class="set-nav-item">模型供应商</div>
+            <div class="set-nav-item">检索与重排</div>
+            <div class="set-nav-item">工具调用</div>
+            <div class="set-nav-item">通知</div>
+            <div class="set-nav-item active">通知外发</div>
+            <div class="set-nav-item">安全与访问</div>
+            <div class="set-nav-item">维护与诊断</div>
+          </nav>
+          <section class="set-content" style="opacity:.9">
+            <div class="set-title">通知外发</div>
+            <div class="set-desc">发送记录按最近时间倒序保留 30 天；失败自动重试，耗尽后给管理员一条站内通知。</div>
+          </section>
+        </div>
+      </main>
+      <div class="mask"></div>
+      <div class="drawer">
+        <div class="drawer-head">
+          <div class="t">发送记录</div>
+          <div class="s">北辰科技 · 最近 7 天 · 成功 128 / 失败 3</div>
+          <span class="x"><svg class="ic" style="width:14px;height:14px"><use href="#i-x"/></svg></span>
+        </div>
+        <div class="drawer-body">
+          <table class="dtbl">
+            <thead><tr><th style="width:76px">时间</th><th style="width:150px">收件人</th><th>主题</th><th style="width:76px">状态</th></tr></thead>
+            <tbody>
+              <tr><td class="time">09:41</td><td class="to">chenli@example.com</td>
+                <td><span class="subj">待处理：工具审批等待批准</span></td><td><span class="tag ok">已送达</span></td></tr>
+              <tr><td class="time">09:28</td><td class="to">zhouwei@example.com</td>
+                <td><span class="subj">失败：知识库「产品手册」解析失败</span></td><td><span class="tag ok">已送达</span></td></tr>
+              <tr><td class="time">09:12</td><td class="to">linyi@example.com</td>
+                <td><span class="subj">待处理：计划等待确认</span></td><td><span class="tag wait">重试中 · 第 2 次</span></td></tr>
+              <tr><td class="time">08:56</td><td class="to">zhaomin@example.com</td>
+                <td><span class="subj">额度：模型用量接近上限</span></td><td><span class="tag bad">已耗尽</span></td></tr>
+              <tr><td class="time">08:40</td><td class="to">wudi@example.com</td>
+                <td><span class="subj">待处理：智能体提问等待回答</span></td><td><span class="tag ok">已送达</span></td></tr>
+              <tr><td class="time">08:20</td><td class="to">chenli@example.com</td>
+                <td><span class="subj">完成：定时任务「每日摘要」已执行</span></td><td><span class="tag skip">未勾选</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="drawer-foot">状态口径：已送达=SMTP 接受；重试中=按 60s/300s/900s 退避；已耗尽=三次失败，已给管理员站内通知；未勾选=个人通知偏好未开启该类型，未尝试发送。</div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

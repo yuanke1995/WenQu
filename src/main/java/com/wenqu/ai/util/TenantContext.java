@@ -81,6 +81,25 @@ public final class TenantContext {
         }
     }
 
+    /**
+     * 按指定成员解析租户，不依赖线程上的身份。
+     * <p>用于「线程上没有 RequestUser，但手里有归属 uid」的记账/异步收尾点
+     * （如模型框架线程里的用量台账）：不解析就会落 DB 默认租户，按租户结算随之失真。
+     * 线程已绑定时直接返回绑定值（与 {@link #current()} 同优先级）。
+     */
+    public static String resolveFor(String uid) {
+        String bound = CURRENT.get();
+        if (bound != null) return bound;
+        java.util.function.Function<String, String> r = resolver;
+        if (r == null || uid == null || uid.isBlank() || RequestUser.SYSTEM.equals(uid)) return null;
+        RESOLVING.set(Boolean.TRUE);
+        try {
+            return r.apply(uid);
+        } finally {
+            RESOLVING.remove();
+        }
+    }
+
     /** 是否处于平台视图（跨租户管理动作） */
     public static boolean inPlatformView() {
         return Boolean.TRUE.equals(PLATFORM.get());

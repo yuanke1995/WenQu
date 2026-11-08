@@ -1744,7 +1744,7 @@ import { LoadingOutlined, DownOutlined, CaretRightOutlined, CheckOutlined, Close
 import { debugRetrieval, deleteMessageGroup, submitFeedback as apiSubmitFeedback,
          addEvalCase, getSessionShare, enableSessionShare, disableSessionShare,
          getSessionWorkspace, getPermissionPresets, setSessionPermission,
-         openProjectFolder } from '../api'
+         openProjectFolder, updateProjectItem } from '../api'
 import { renderMd, resolveImg, onImgError } from '../utils/markdown'
 import { canPreview, artifactExt, previewKindOf } from '../utils/artifactView'
 import { loadSessions, sessionStore } from './store'
@@ -4635,6 +4635,16 @@ onMounted(async () => {
     text.value = askPrefill
     focusInput()
     router.replace({ path: '/chat', query: { ...route.query, ask: undefined } }).catch(() => {})
+  }
+  // 工作区事项「去聊」带来的关联标记：把这条事项与当前会话绑上，
+  // 下次再点「去聊」就接回同一条对话，而不是每次另起一条（绑定失败不挡对话）
+  const itemId = String(route.query.itemId || '')
+  const itemProjectId = String(route.query.itemProjectId || '')
+  if (itemId && itemProjectId) {
+    if (currentSessionId.value) {
+      updateProjectItem(itemProjectId, itemId, { sessionId: currentSessionId.value }).catch(() => {})
+    }
+    router.replace({ path: '/chat', query: { ...route.query, itemId: undefined, itemProjectId: undefined } }).catch(() => {})
   }
   // ready 后会话已加载、消息区进入稳态布局，此时测出的滚动条槽宽才准
   nextTick(syncScrollbarGutter)

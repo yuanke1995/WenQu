@@ -150,7 +150,9 @@ public final class TurnPromptAssembler {
                     // 按上传归属者读（免登录分享时是访客，不是发布者）——见 ChatCommand#uploadOwnerUid
                     attachments.prepare(cmd.getAttachments(), cmd.uploadOwnerUid());
             String text = attachments.buildContextText(prepared);
-            if (!text.isBlank()) sb.append('\n').append(text);
+            // 附件正文是外部输入（游客分享在发布者开启 guestFiles 时也可带料）：
+            // 与 @ 文档/调用变量同一口径套信封，埋在文件里的指令不得当系统指令执行
+            if (!text.isBlank()) sb.append('\n').append(com.wenqu.ai.util.UntrustedContent.envelope("附件正文", text));
         }
         // 2) @ 引用：kb=收窄本轮检索；doc=该文档内容直接带入上下文；agent=强制咨询。
         if (cmd.getMentions() != null && !cmd.getMentions().isEmpty()) {

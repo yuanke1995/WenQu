@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>问渠 · 多租户生命周期效果图</title>
+<style>
+/* ============================================================
+   问渠 · 多租户生命周期（邀请流 / 登录品牌 / 首登引导 / 归档）
+   画布 1600×1000；token 全部取自 web/src/views/app.css
+   ============================================================ */
+:root {
+  --app-bg: #f7f8fa;
+  --app-panel: #ffffff;
+  --app-panel-2: #fafbfc;
+  --app-border: #e6e9ed;
+  --app-border-strong: #d8dde3;
+  --app-text: #1f2329;
+  --app-text2: #5f6570;
+  --app-text3: #98a0aa;
+  --app-accent: #2e6be6;
+  --app-accent-hover: #1f5bd8;
+  --app-accent-weak: #eef2f7;
+  --app-danger: #d4552e;
+  --app-ok: #3b8f4e;
+  --app-warn: #c77c14;
+  --app-ok-weak: #eaf5ec;
+  --app-warn-weak: #faf3e6;
+  --app-warn-text: #a3691b;
+  --app-danger-weak: #fff2f0;
+  --app-code-bg: #f6f8fa;
+  --app-shadow-sm: 0 1px 2px rgba(16, 24, 40, .04);
+  --app-shadow-lg: 0 12px 32px rgba(16, 24, 40, .14);
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+          'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: var(--font);
+  background: #eef1f5;
+  color: var(--app-text);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}
+svg.ic { stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ---------------- 设计稿外壳 ---------------- */
+.sheet { width: 1600px; margin: 0 auto; padding: 36px 0 60px; }
+.sheet-top { padding: 0 2px 22px; }
+.sheet-title { font-size: 22px; font-weight: 600; letter-spacing: .01em; color: #1f2329; }
+.sheet-sub { margin-top: 8px; font-size: 13px; color: #8a929d; }
+.sheet-sub b { color: #5f6570; font-weight: 500; }
+.scene-block { margin-top: 30px; }
+.scene-block:first-of-type { margin-top: 8px; }
+.cap { display: flex; align-items: baseline; gap: 10px; padding: 0 2px 10px; font-size: 13px; color: #5f6570; }
+.cap b { font-size: 11px; font-weight: 600; color: #98a0aa; letter-spacing: .08em; }
+.cap em { font-style: normal; color: #1f2329; font-weight: 600; font-size: 14px; }
+.cap span { color: #98a0aa; font-size: 12px; }
+.scene {
+  width: 1600px; height: 1000px; display: flex; overflow: hidden;
+  background: var(--app-bg); position: relative;
+  box-shadow: 0 20px 50px rgba(16, 24, 40, .16);
+}
+
+/* ---------------- 侧栏 ---------------- */
+.side {
+  width: 232px; flex: none; height: 100%; display: flex; flex-direction: column;
+  background: var(--app-panel); border-right: 1px solid var(--app-border); padding: 10px 8px 8px;
+}
+.logo-row { display: flex; align-items: center; gap: 8px; padding: 2px 6px 12px; }
+.logo-mark { width: 22px; height: 22px; border-radius: 6px; background: var(--app-accent); position: relative; flex: none; }
+.logo-mark::after { content: ''; position: absolute; left: 5px; right: 5px; top: 10px; height: 2px;
+  background: rgba(255,255,255,.9); border-radius: 2px; box-shadow: 0 -4px 0 rgba(255,255,255,.55), 0 4px 0 rgba(255,255,255,.35); }
+.logo-name { font-size: 13px; font-weight: 500; color: var(--app-text); }
+.logo-row .fold { margin-left: auto; color: var(--app-text3); width: 26px; height: 26px;
+  display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; }
+.side-nav { display: flex; flex-direction: column; gap: 1px; flex: none; }
+.nav-item { display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 9px;
+  border-radius: 8px; font-size: 13px; color: var(--app-text2); white-space: nowrap; }
+.nav-item .ic { width: 14px; height: 14px; color: var(--app-text3); flex: none; }
+.nav-item.active { background: var(--app-accent-weak); color: var(--app-text); font-weight: 500; }
+.nav-item.active .ic { color: var(--app-text2); }
+.side-sec { margin-top: 18px; display: flex; align-items: center; gap: 4px; padding: 0 7px 5px; }
+.side-sec .t { font-size: 11px; font-weight: 600; color: var(--app-text3); letter-spacing: .04em; }
+.side-sec .plus { margin-left: auto; color: var(--app-text3); }
+.sess-row { display: flex; align-items: center; gap: 7px; height: 27px; padding: 0 7px 0 9px;
+  font-size: 12px; color: var(--app-text3); }
+.sess-row .ic { width: 12px; height: 12px; flex: none; }
+.side-foot { margin-top: auto; display: flex; align-items: center; gap: 6px; padding: 8px 4px 2px;
+  border-top: 1px solid var(--app-border); }
+.avatar { width: 24px; height: 24px; border-radius: 50%; background: #e8ecf2; color: var(--app-text2);
+  font-size: 12px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; }
+.side-foot .who { font-size: 12px; color: var(--app-text2); }
+.side-foot .sp { flex: 1; }
+.icon-btn { width: 26px; height: 26px; border: none; background: transparent; color: var(--app-text3);
+  display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; padding: 0; }
+.icon-btn .ic { width: 14px; height: 14px; }
+
+/* ---------------- 主区 ---------------- */
+.main { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--app-bg); }
+.page-head { flex: none; display: flex; align-items: center; gap: 12px; padding: 18px 20px 14px; }
+.page-title { font-size: 17px; font-weight: 600; color: var(--app-text); margin: 0; }
+.head-count { font-size: 12px; color: var(--app-text2); }
+.head-count b { color: var(--app-text); font-weight: 600; }
+.head-r { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.search { width: 200px; height: 28px; display: flex; align-items: center; gap: 6px; padding: 0 9px;
+  border: 1px solid var(--app-border); border-radius: 6px; background: var(--app-panel);
+  color: var(--app-text3); font-size: 12px; }
+.search .ic { width: 12px; height: 12px; }
+.btn { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 13px;
+  border-radius: 7px; border: none; background: var(--app-accent); color: #fff; font-size: 12px; white-space: nowrap; }
+.btn .ic { width: 12px; height: 12px; }
+.btn.ghost { background: transparent; color: var(--app-text2); border: 1px solid var(--app-border); }
+.btn.danger { background: var(--app-danger); }
+.btn.sm { height: 26px; padding: 0 10px; border-radius: 6px; }
+.tenant-pill { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px;
+  border-radius: 999px; border: 1px solid var(--app-border); background: var(--app-panel-2);
+  font-size: 12px; color: var(--app-text2); white-space: nowrap; }
+.tenant-pill .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--app-ok); }
+
+.tabs { flex: none; height: 42px; display: flex; align-items: stretch; gap: 26px; padding: 0 20px;
+  background: var(--app-panel); border-top: 1px solid var(--app-border); border-bottom: 1px solid var(--app-border); }
+.tab { display: flex; align-items: center; position: relative; font-size: 13px; color: var(--app-text2); }
+.tab.on { color: var(--app-accent); font-weight: 500; }
+.tab.on::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 2px;
+  border-radius: 1px; background: var(--app-accent); }
+.tab .n { margin-left: 5px; font-size: 11px; color: var(--app-text3); }
+
+.body { flex: 1; min-height: 0; padding: 14px 20px 20px; }
+.table-wrap { background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 10px;
+  overflow: hidden; box-shadow: var(--app-shadow-sm); }
+.tbl { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.tbl th { height: 32px; padding: 0 12px; font-size: 12px; font-weight: 500; color: var(--app-text2);
+  text-align: left; background: var(--app-panel-2); border-bottom: 1px solid var(--app-border); }
+.tbl td { height: 46px; padding: 0 12px; font-size: 12.5px; color: var(--app-text2);
+  border-bottom: 1px solid #f0f2f4; }
+.tbl tr:last-child td { border-bottom: none; }
+.tbl td.name { color: var(--app-text); font-weight: 500; }
+.member { display: flex; align-items: center; gap: 9px; }
+.member .avatar { width: 26px; height: 26px; }
+.member .sub { display: block; margin-top: 1px; font-size: 11px; color: var(--app-text3); font-weight: 400; }
+.role-pill { display: inline-flex; align-items: center; height: 20px; padding: 0 7px; border-radius: 4px;
+  background: var(--app-accent-weak); color: var(--app-accent); font-size: 11.5px; }
+.status { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; }
+.status .dot { width: 6px; height: 6px; border-radius: 50%; }
+.dot.ok { background: var(--app-ok); } .dot.off { background: var(--app-text3); }
+.dot.warn { background: var(--app-warn); } .dot.bad { background: var(--app-danger); }
+.status.ok { color: var(--app-ok); } .status.off { color: var(--app-text3); }
+.link-btn { border: none; background: transparent; padding: 0; font-size: 12px; color: var(--app-accent); white-space: nowrap; }
+.link-btn.mute { color: var(--app-text2); }
+.link-btn.danger { color: var(--app-danger); }
+
+/* ---------------- 弹窗 ---------------- */
+.scene-bg { position: absolute; inset: 0; overflow: hidden; }
+.mask { position: absolute; inset: 0; background: rgba(16, 22, 32, .38); }
+.modal { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: 520px; background: var(--app-panel); border-radius: 14px; box-shadow: var(--app-shadow-lg); overflow: hidden; }
+.modal.wide { width: 680px; }
+.modal-head { padding: 18px 24px 0; }
+.modal-title { font-size: 15px; font-weight: 600; color: var(--app-text); }
+.modal-sub { margin-top: 5px; font-size: 12px; color: var(--app-text3); }
+.modal-body { padding: 16px 24px 0; }
+.form-row { margin-bottom: 14px; }
+.form-label { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; font-size: 12px; color: var(--app-text2); }
+.form-label .opt { font-size: 11px; color: var(--app-text3); }
+.input { height: 32px; display: flex; align-items: center; padding: 0 10px; border: 1px solid var(--app-border-strong);
+  border-radius: 7px; font-size: 12.5px; color: var(--app-text2); background: var(--app-panel); }
+.input.flex { display: flex; gap: 8px; padding: 0 0 0 10px; }
+.input.flex code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--mono); font-size: 11.5px; color: var(--app-text); }
+.input.flex .btn { height: 30px; border-radius: 0 7px 7px 0; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip { height: 26px; display: inline-flex; align-items: center; gap: 5px; padding: 0 9px; border-radius: 6px;
+  border: 1px solid var(--app-border); font-size: 12px; color: var(--app-text2); background: var(--app-panel); }
+.chip.on { border-color: var(--app-accent); color: var(--app-accent); background: var(--app-accent-weak); }
+.radio-row { display: flex; gap: 6px; }
+.radio { height: 28px; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; border-radius: 7px;
+  border: 1px solid var(--app-border); font-size: 12px; color: var(--app-text2); }
+.radio .rd { width: 13px; height: 13px; border-radius: 50%; border: 1px solid var(--app-border-strong); }
+.radio.on { border-color: var(--app-accent); color: var(--app-accent); background: var(--app-accent-weak); }
+.radio.on .rd { border-color: var(--app-accent); background: var(--app-accent); box-shadow: inset 0 0 0 3px #fff; }
+.form-tip { margin-top: 6px; font-size: 11.5px; line-height: 1.6; color: var(--app-text3); }
+.form-tip.ok { color: var(--app-ok); }
+.form-tip.warn { color: var(--app-warn-text); }
+.modal-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 18px 24px 18px; margin-top: 6px;
+  border-top: 1px solid var(--app-border); }
+.invite-result { margin-top: 4px; padding: 12px; border-radius: 10px; background: var(--app-panel-2);
+  border: 1px solid var(--app-border); }
+.invite-result .t { font-size: 12px; color: var(--app-text2); margin-bottom: 8px; }
+.pending { margin-top: 16px; }
+.pending .t { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; font-size: 12px; color: var(--app-text2); }
+.pending .t span { font-size: 11.5px; color: var(--app-text3); }
+.ptbl { width: 100%; border-collapse: collapse; }
+.ptbl th { height: 28px; padding: 0 8px; font-size: 11px; font-weight: 400; color: var(--app-text3);
+  text-align: left; border-bottom: 1px solid var(--app-border); }
+.ptbl td { height: 34px; padding: 0 8px; font-size: 12px; color: var(--app-text2); border-bottom: 1px solid #f1f3f5; }
+.ptbl td.name { color: var(--app-text); }
+
+/* ---------------- 独立页（登录 / 加入） ---------------- */
+.auth { width: 1600px; height: 1000px; display: flex; position: relative; overflow: hidden;
+  background: var(--app-bg); box-shadow: 0 20px 50px rgba(16, 24, 40, .16); }
+.auth-brand { width: 720px; flex: none; height: 100%; position: relative; overflow: hidden;
+  background: linear-gradient(160deg, #f3f6fb 0%, #eef2f8 52%, #f7f8fa 100%); padding: 72px 80px; }
+.auth-brand .mark { display: flex; align-items: center; gap: 10px; }
+.auth-brand .mark .logo-mark { width: 28px; height: 28px; border-radius: 8px; }
+.auth-brand .mark .nm { font-size: 14px; font-weight: 500; color: var(--app-text2); }
+.auth-brand h1 { margin: 76px 0 0; font-size: 34px; line-height: 1.35; font-weight: 600; letter-spacing: .01em; color: var(--app-text); }
+.auth-brand .desc { margin-top: 18px; max-width: 440px; font-size: 14px; line-height: 1.9; color: var(--app-text3); }
+.auth-brand .meta { position: absolute; left: 80px; bottom: 64px; display: flex; align-items: center; gap: 10px;
+  font-size: 12px; color: var(--app-text3); }
+.auth-brand .wave { position: absolute; left: 0; right: 0; bottom: 0; height: 150px;
+  background: radial-gradient(120% 100% at 20% 100%, rgba(46,107,230,.08), transparent 60%); }
+.auth-form-wrap { flex: 1; display: flex; align-items: center; justify-content: center; background: var(--app-panel); }
+.auth-card { width: 372px; }
+.auth-card .kicker { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--app-text3); }
+.auth-card h3 { margin: 10px 0 0; font-size: 22px; font-weight: 600; color: var(--app-text); }
+.auth-card .sub { margin-top: 8px; font-size: 13px; line-height: 1.7; color: var(--app-text3); }
+.auth-card .line { height: 2px; width: 44px; margin-top: 16px; border-radius: 2px;
+  background: linear-gradient(90deg, var(--app-accent), rgba(46,107,230,0)); }
+.form { margin-top: 26px; }
+.form .form-row { margin-bottom: 16px; }
+.form .input { height: 38px; border-radius: 8px; }
+.form .btn.full { width: 100%; height: 38px; justify-content: center; font-size: 13px; border-radius: 8px; }
+.form .btn.ghost.full { background: var(--app-panel); }
+.auth-foot { margin-top: 18px; font-size: 12px; color: var(--app-text3); text-align: center; }
+.auth-foot a { color: var(--app-accent); text-decoration: none; }
+.invite-tip { display: flex; align-items: center; gap: 8px; margin-top: 20px; padding: 10px 12px;
+  border-radius: 8px; background: var(--app-panel-2); border: 1px solid var(--app-border);
+  font-size: 12px; color: var(--app-text2); }
+.invite-tip .role-pill { flex: none; }
+
+/* ---------------- 首登引导 ---------------- */
+.checklist { margin: 0 20px 14px; background: var(--app-panel); border: 1px solid var(--app-border);
+  border-radius: 10px; box-shadow: var(--app-shadow-sm); padding: 16px 18px 14px; }
+.checklist .cl-head { display: flex; align-items: flex-start; gap: 12px; }
+.checklist .cl-title { font-size: 15px; font-weight: 600; color: var(--app-text); }
+.checklist .cl-sub { margin-top: 4px; font-size: 12px; color: var(--app-text3); }
+.checklist .cl-dismiss { margin-left: auto; font-size: 12px; color: var(--app-text3); }
+.cl-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px 28px; margin-top: 14px; }
+.cl-item { display: flex; align-items: center; gap: 9px; height: 34px; border-bottom: 1px solid #f1f3f5; }
+.cl-item:last-child, .cl-item:nth-last-child(2) { border-bottom: none; }
+.cl-dot { width: 15px; height: 15px; border-radius: 50%; border: 1px solid var(--app-border-strong); flex: none;
+  display: inline-flex; align-items: center; justify-content: center; }
+.cl-item.done .cl-dot { background: var(--app-ok-weak); border-color: var(--app-ok); color: var(--app-ok); }
+.cl-item .txt { font-size: 12.5px; color: var(--app-text2); }
+.cl-item.done .txt { color: var(--app-text3); text-decoration: line-through; }
+.cl-item .go { margin-left: auto; font-size: 12px; color: var(--app-accent); }
+.cl-item.done .go { color: var(--app-text3); }
+
+/* ---------------- 租户归档 ---------------- */
+.archived td { opacity: .6; }
+.state-tag { display: inline-flex; align-items: center; height: 20px; padding: 0 7px; border-radius: 4px; font-size: 11.5px; }
+.state-tag.on { background: var(--app-ok-weak); color: var(--app-ok); }
+.state-tag.off { background: #f2f3f5; color: var(--app-text3); }
+.state-tag.arc { background: var(--app-warn-weak); color: var(--app-warn-text); }
+.note-line { margin-top: 12px; font-size: 11.5px; line-height: 1.7; color: var(--app-text3); }
+</style>
+</head>
+<body>
+<!-- 图标精灵 -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-chat" viewBox="0 0 24 24"><path d="M20 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2z"/></symbol>
+  <symbol id="i-bot" viewBox="0 0 24 24"><rect x="4" y="7" width="16" height="12" rx="3"/><path d="M12 3v4M9 12h.01M15 12h.01M9 16h6"/></symbol>
+  <symbol id="i-bag" viewBox="0 0 24 24"><path d="M5 8h14l1 12H4z"/><path d="M9 8a3 3 0 0 1 6 0"/></symbol>
+  <symbol id="i-db" viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6"/><path d="M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></symbol>
+  <symbol id="i-chart" viewBox="0 0 24 24"><path d="M5 20V11M12 20V6M19 20v-6"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5 21 21"/></symbol>
+  <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0"/><circle cx="18" cy="9" r="2.4"/><path d="M15 15a5 5 0 0 1 6 4.6"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7 3v6c0 4-3 7-7 9-4-2-7-5-7-9V6z"/></symbol>
+  <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3 5.6 18.4"/></symbol>
+  <symbol id="i-fold" viewBox="0 0 24 24"><path d="M4 7h16M4 12h10M4 17h16"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 13a8 8 0 0 1-9-9 8 8 0 1 0 9 9z"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7 0l2-2a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-2 2a5 5 0 0 0 7 7l1-1"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 5 5 9-10"/></symbol>
+  <symbol id="i-mail" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 7 8 6 8-6"/></symbol>
+</svg>
+
+<div class="sheet">
+  <div class="sheet-top">
+    <div class="sheet-title">问渠 · 多租户生命周期效果图</div>
+    <div class="sheet-sub">对齐现有工作台与设计 token · <b>邀请流</b> · <b>登录品牌</b> · <b>首登引导</b> · <b>归档清退</b> · 单租户部署全部零变化</div>
+  </div>
+
+  <!-- ================= 01 成员管理 · 邀请入口 ================= -->
+  <div class="scene-block">
+    <div class="cap"><b>01</b><em>成员管理 · 邀请入口</em><span>工具栏「邀请成员」在「新建用户」左侧；租户管理员可见，平台管理员视角不变</span></div>
+    <div class="scene">
+      <div class="scene-bg">
+        <aside class="side">
+          <div class="logo-row"><span class="logo-mark"></span><span class="logo-name">问渠</span>
+            <span class="fold"><svg class="ic"><use href="#i-fold"/></svg></span></div>
+          <div class="side-nav">
+            <div class="nav-item"><svg class="ic"><use href="#i-plus"/></svg>新建对话</div>
+            <div class="nav-item"><svg class="ic"><use href="#i-chat"/></svg>对话</div>
+            <div class="nav-item"><svg class="ic"><use href="#i-bot"/></svg>智能体</div>
+            <div class="nav-item"><svg class="ic"><use href="#i-bag"/></svg>市场</div>
+            <div class="nav-item"><svg class="ic"><use href="#i-db"/></svg>知识库</div>
+            <div class="nav-item"><svg class="ic"><use href="#i-file"/></svg>我的产物</div>
+            <div class="nav-item"><svg class="ic"><use href="#i-chart"/></svg>使用统计</div>
+            <div class="nav-item active"><svg class="ic"><use href="#i-users"/></svg>成员管理</div>
+            <div class="nav-item"><svg class="ic"><use href="#i-shield"/></svg>安全与运维</div>
+            <div class="nav-item"><svg class="ic"><use href="#i-settings"/></svg>系统设置</div>
+          </div>
+          <div class="side-sec"><span class="t">最近会话</span><span class="plus">＋</span></div>
+          <div class="sess-row"><svg class="ic"><use href="#i-chat"/></svg><span>季度经营分析怎么拆</span></div>
+          <div class="sess-row"><svg class="ic"><use href="#i-chat"/></svg><span>整理 onboarding 手册</span></div>
+          <div class="sess-row"><svg class="ic"><use href="#i-chat"/></svg><span>客服话术一致性检查</span></div>
+          <div class="side-foot"><span class="avatar">陈</span><span class="who">陈立</span><span class="sp"></span>
+            <button class="icon-btn"><svg class="ic"><use href="#i-moon"/></svg></button></div>
+        </aside>
+        <main class="main">
+          <div class="page-head">
+            <h1 class="page-title">成员管理</h1>
+            <span class="head-count">共 <b>18</b> 位成员</span>
+            <div class="head-r">
+              <span class="tenant-pill"><span class="dot"></span>北辰科技</span>
+              <div class="search"><svg class="ic"><use href="#i-search"/></svg>搜索姓名或账号</div>
+              <button class="btn ghost"><svg class="ic"><use href="#i-mail"/></svg>邀请成员</button>
+              <button class="btn"><svg class="ic"><use href="#i-plus"/></svg>新建用户</button>
+              <button class="btn ghost">租户管理</button>
+            </div>
+          </div>
+          <div class="tabs">
+            <span class="tab on">成员<span class="n">18</span></span>
+            <span class="tab">部门<span class="n">4</span></span>
+          </div>
+          <div class="body">
+            <div class="table-wrap">
+              <table class="tbl">
+                <thead><tr>
+                  <th style="width:260px">成员</th><th style="width:170px">部门</th><th style="width:160px">角色</th>
+                  <th style="width:120px">状态</th><th style="width:170px">最近登录</th><th>操作</th>
+                </tr></thead>
+                <tbody>
+                  <tr><td><div class="member"><span class="avatar">陈</span><span><span class="name">陈立</span><span class="sub">chenli</span></span></div></td>
+                    <td>产品部</td><td><span class="role-pill">租户管理员</span></td>
+                    <td><span class="status ok"><span class="dot ok"></span>正常</span></td><td>今天 09:41</td>
+                    <td><button class="link-btn">编辑</button></td></tr>
+                  <tr><td><div class="member"><span class="avatar">周</span><span><span class="name">周维</span><span class="sub">zhouwei</span></span></div></td>
+                    <td>研发部</td><td><span class="role-pill">成员</span></td>
+                    <td><span class="status ok"><span class="dot ok"></span>正常</span></td><td>今天 08:52</td>
+                    <td><button class="link-btn">编辑</button></td></tr>
+                  <tr><td><div class="member"><span class="avatar">林</span><span><span class="name">林一</span><span class="sub">linyi</span></span></div></td>
+                    <td>市场部</td><td><span class="role-pill">成员</span></td>
+                    <td><span class="status ok"><span class="dot ok"></span>正常</span></td><td>昨天 17:26</td>
+                    <td><button class="link-btn">编辑</button></td></tr>
+                  <tr><td><div class="member"><span class="avatar">赵</span><span><span class="name">赵敏</span><span class="sub">zhaomin</span></span></div></td>
+                    <td>研发部</td><td><span class="role-pill">成员</span></td>
+                    <td><span class="status off"><span class="dot off"></span>已停用</span></td><td>10 月 28 日</td>
+                    <td><button class="link-btn">编辑</button></td></tr>
+                  <tr><td><div class="member"><span class="avatar">吴</span><span><span class="name">吴迪</span><span class="sub">wudi</span></span></div></td>
+                    <td>产品部</td><td><span class="role-pill">成员</span></td>
+                    <td><span class="status ok"><span class="dot ok"></span>正常</span></td><td>11 月 6 日</td>
+                    <td><button class="link-btn">编辑</button></td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </main>
+      </div>
+      <div class="mask"></div>
+      <div class="modal">
+        <div class="modal-head">
+          <div class="modal-title">邀请成员</div>
+          <div class="modal-sub">生成一条一次性邀请链接，对方打开即可注册并加入北辰科技</div>
+        </div>
+        <div class="modal-body">
+          <div class="form-row">
+            <div class="form-label">角色</div>
+            <div class="chips">
+              <span class="chip on"><svg class="ic" style="width:11px;height:11px"><use href="#i-check"/></svg>成员</span>
+              <span class="chip">知识库管理员</span>
+              <span class="chip">部门管理员</span>
+            </div>
+            <div class="form-tip">可多选；不选时按租户默认角色。</div>
+          </div>
+          <div class="form-row">
+            <div class="form-label">部门 <span class="opt">可选</span></div>
+            <div class="input">研发部</div>
+          </div>
+          <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+            <div>
+              <div class="form-label">有效期</div>
+              <div class="radio-row">
+                <span class="radio on"><span class="rd"></span>7 天</span>
+                <span class="radio"><span class="rd"></span>15 天</span>
+                <span class="radio"><span class="rd"></span>30 天</span>
+              </div>
+            </div>
+            <div>
+              <div class="form-label">可用次数</div>
+              <div class="radio-row">
+                <span class="radio on"><span class="rd"></span>1 次</span>
+                <span class="radio"><span class="rd"></span>5 次</span>
+                <span class="radio"><span class="rd"></span>不限</span>
+              </div>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-label">限定邮箱 <span class="opt">可选</span></div>
+            <div class="input" style="color:var(--app-text3)">name@company.com</div>
+            <div class="form-tip">填写后仅该邮箱可接受邀请；不填则持有链接即可注册。</div>
+          </div>
+        </div>
+        <div class="modal-foot">
+          <button class="btn ghost">取消</button>
+          <button class="btn">生成邀请链接</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 02 邀请生成结果 ================= -->
+  <div class="scene-block">
+    <div class="cap"><b>02</b><em>邀请生成结果</em><span>链接只显示一次；下方紧凑表管理在途邀请，可随时撤销</span></div>
+    <div class="scene">
+      <div class="scene-bg">
+        <aside class="side">
+          <div class="logo-row"><span class="logo-mark"></span><span class="logo-name">问渠</span>
+            <span class="fold"><svg class="ic"><use href="#i-fold"/></svg></span></div>
+          <div class="side-nav">
+            <div class="nav-item"><svg class="ic"><use href="#i-plus"/></svg>新建对话</div>
+            <div class="nav-item"><svg class="ic"><use href="#i-chat"/></svg>对话</div>
+            <div class="nav-item"><svg class="ic"><use href="#i-bot"/></svg>智能体</div>
+            <div class="nav-item"><svg class="ic"><use href="#i-bag"/></svg>市场</div>
+            <div class="nav-item"><svg class="ic"><use href="#i-db"/></svg>知识库</div>
+            <div class="nav-item"><svg class="ic"><use href="#i-file"/></svg>我的产物</div>
+            <div class="nav-item"><svg class="ic"><use href="#i-chart"/></svg>使用统计</div>
+            <div class="nav-item active"><svg class="ic"><use href="#i-users"/></svg>成员管理</div>
+            <div class="nav-item"><svg class="ic"><use href="#i-shield"/></svg>安全与运维</div>
+            <div class="nav-item"><svg class="ic"><use href="#i-settings"/></svg>系统设置</div>
+          </div>
+          <div class="side-sec"><span class="t">最近会话</span><span class="plus">＋</span></div>
+          <div class="sess-row"><svg class="ic"><use href="#i-chat"/></svg><span>季度经营分析怎么拆</span></div>
+          <div class="sess-row"><svg class="ic"><use href="#i-chat"/></svg><span>整理 onboarding 手册</span></div>
+          <div class="side-foot"><span class="avatar">陈</span><span class="who">陈立</span><span class="sp"></span>
+            <button class="icon-btn"><svg class="ic"><use href="#i-moon"/></svg></button></div>
+        </aside>
+        <main class="main">
+          <div class="page-head">
+            <h1 class="page-title">成员管理</h1>
+            <span class="head-count">共 <b>18</b> 位成员</span>
+            <div class="head-r">
+              <span class="tenant-pill"><span class="dot"></span>北辰科技</span>
+              <div class="search"><svg class="ic"><use href="#i-search"/></svg>搜索姓名或账号</div>
+              <button class="btn ghost"><svg class="ic"><use href="#i-mail"/></svg>邀请成员</button>
+              <button class="btn"><svg class="ic"><use href="#i-plus"/></svg>新建用户</button>
+              <button class="btn ghost">租户管理</button>
+            </div>
+          </div>
+          <div class="tabs"><span class="tab on">成员<span class="n">18</span></span><span class="tab">部门<span class="n">4</span></span></div>
+          <div class="body"></div>
+        </main>
+      </div>
+      <div class="mask"></div>
+      <div class="modal" style="width:560px">
+        <div class="modal-head">
+          <div class="modal-title">邀请成员</div>
+          <div class="modal-sub">已生成一条邀请链接 · 有效期至 11 月 15 日 18:00</div>
+        </div>
+        <div class="modal-body">
+          <div class="invite-result">
+            <div class="t">邀请链接（只显示这一次）</div>
+            <div class="input flex">
+              <code>https://wenqu.example.com/join/7f3a9c2e8b1d</code>
+              <button class="btn">复制链接</button>
+            </div>
+            <div class="form-tip">复制后直接发给对方；对方打开即填账号注册。关闭弹窗后无法再次查看明文链接。</div>
+          </div>
+          <div class="form-tip warn" style="margin-top:10px">尚未配置邮件通道，本次仅提供链接复制；配置后可直接发送邀请邮件。</div>
+          <div class="pending">
+            <div class="t">待接受邀请 <span>2 条在途</span></div>
+            <table class="ptbl">
+              <thead><tr><th style="width:150px">角色</th><th style="width:80px">已用</th><th style="width:150px">到期</th><th style="width:90px">状态</th><th>操作</th></tr></thead>
+              <tbody>
+                <tr><td class="name">成员 · 研发部</td><td>0 / 1</td><td>11 月 15 日 18:00</td>
+                  <td><span class="status ok"><span class="dot ok"></span>有效</span></td>
+                  <td><button class="link-btn danger">撤销</button></td></tr>
+                <tr><td class="name">知识库管理员</td><td>4 / 5</td><td>11 月 12 日 10:30</td>
+                  <td><span class="status off"><span class="dot warn"></span>快用尽</span></td>
+                  <td><button class="link-btn danger">撤销</button></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="modal-foot"><button class="btn ghost">关闭</button></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 03 邀请落地页 /join ================= -->
+  <div class="scene-block">
+    <div class="cap"><b>03</b><em>自助注册 · /join/{token}</em><span>匿名页；左侧租户品牌，右侧账号表单，预选角色与邀请人明示</span></div>
+    <div class="auth">
+      <div class="auth-brand">
+        <div class="mark"><span class="logo-mark"></span><span class="nm">北辰科技</span></div>
+        <h1>统一智能工作台<br>让每个答案回到源头</h1>
+        <div class="desc">知识、工具与智能体在这里汇合。新成员通过邀请加入后，即可在授权范围内使用团队知识库、助手与工作流。</div>
+        <div class="meta"><span class="tenant-pill"><span class="dot"></span>北辰科技</span><span>·</span><span>由 陈立 邀请</span></div>
+        <div class="wave"></div>
+      </div>
+      <div class="auth-form-wrap">
+        <div class="auth-card">
+          <div class="kicker"><svg class="ic" style="width:13px;height:13px"><use href="#i-mail"/></svg>邀请注册</div>
+          <h3>加入北辰科技</h3>
+          <div class="sub">创建你的账号，注册后直接进入工作台。</div>
+          <div class="line"></div>
+          <div class="invite-tip">
+            <span class="role-pill">成员</span>
+            <span>研发部 · 邀请有效期至 11 月 15 日 18:00</span>
+          </div>
+          <div class="form">
+            <div class="form-row"><div class="form-label">登录账号</div><div class="input">wudi</div>
+              <div class="form-tip">字母或数字，创建后不可修改。</div></div>
+            <div class="form-row"><div class="form-label">设置密码</div><div class="input" style="color:var(--app-text3)">至少 6 位</div></div>
+            <div class="form-row"><div class="form-label">姓名 <span class="opt">可选</span></div><div class="input" style="color:var(--app-text3)">用于成员列表展示</div></div>
+            <button class="btn full">创建账号并加入</button>
+          </div>
+          <div class="auth-foot">已有账号？<a>去登录</a></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 04 登录页租户品牌 ================= -->
+  <div class="scene-block">
+    <div class="cap"><b>04</b><em>登录页 · 租户品牌</em><span>子域或 ?tenant= 命中时按租户出品牌；default 租户与现状完全一致</span></div>
+    <div class="auth">
+      <div class="auth-brand" style="background:linear-gradient(160deg,#edf7f3 0%,#f2f8f6 52%,#f7f8fa 100%)">
+        <div class="mark"><span class="logo-mark" style="background:#1f8a63"></span><span class="nm">北辰科技</span></div>
+        <h1>北辰科技<br>统一智能工作台</h1>
+        <div class="desc">把团队知识、常用工具与智能体收进一个入口。每个结论都能回到文档里的那一行。</div>
+        <div class="meta"><span>问渠 · Ask the source.</span></div>
+        <div class="wave" style="background:radial-gradient(120% 100% at 20% 100%, rgba(31,138,99,.09), transparent 60%)"></div>
+      </div>
+      <div class="auth-form-wrap">
+        <div class="auth-card">
+          <div class="kicker"><span class="tenant-pill"><span class="dot"></span>北辰科技</span></div>
+          <h3>登录</h3>
+          <div class="sub">使用你的北辰科技账号进入工作台。</div>
+          <div class="line" style="background:linear-gradient(90deg,#1f8a63,rgba(31,138,99,0))"></div>
+          <div class="form">
+            <div class="form-row"><div class="form-label">登录账号</div><div class="input">chenli</div></div>
+            <div class="form-row"><div class="form-label">密码</div><div class="input" style="color:var(--app-text3)">请输入密码</div></div>
+            <button class="btn full" style="background:#1f8a63">登录</button>
+            <div style="height:10px"></div>
+            <button class="btn ghost full">使用 北辰科技 SSO 登录</button>
+          </div>
+          <div class="auth-foot">账号问题请联系北辰科技管理员</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 05 新租户首登引导 ================= -->
+  <div class="scene-block">
+    <div class="cap"><b>05</b><em>新租户首登引导</em><span>顶部一条 checklist 卡，不弹窗不拦截；完成或「不再提示」后收起</span></div>
+    <div class="scene">
+      <div class="scene-bg">
+        <aside class="side">
+          <div class="logo-row"><span class="logo-mark"></span><span class="logo-name">问渠</span>
+            <span class="fold"><svg class="ic"><use href="#i-fold"/></svg></span></div>
+          <div class="side-nav">
+            <div class="nav-item"><svg class="ic"><use href="#i-plus"/></svg>新建对话</div>
+            <div class="nav-item active"><svg class="ic"><use href="#i-chat"/></svg>对话</div>
+            <div class="nav-item"><svg class="ic"><use href="#i-bot"/></svg>智能体</div>
+            <div class="nav-item"><svg class="ic"><use href="#i-bag"/></svg>市场</div>
+            <div class="nav-item"><svg class="ic"><use href="#i-db"/></svg>知识库</div>
+            <div class="nav-item"><svg class="ic"><use href="#i-file"/></svg>我的产物</div>
+            <div class="nav-item"><svg class="ic"><use href="#i-chart"/></svg>使用统计</div>
+            <div class="nav-item"><svg class="ic"><use href="#i-users"/></svg>成员管理</div>
+            <div class="nav-item"><svg class="ic"><use href="#i-shield"/></svg>安全与运维</div>
+            <div class="nav-item"><svg class="ic"><use href="#i-settings"/></svg>系统设置</div>
+          </div>
+          <div class="side-sec"><span class="t">最近会话</span><span class="plus">＋</span></div>
+          <div class="sess-row"><svg class="ic"><use href="#i-chat"/></svg><span>欢迎，先试着问一句</span></div>
+          <div class="side-foot"><span class="avatar">陈</span><span class="who">陈立</span><span class="sp"></span>
+            <button class="icon-btn"><svg class="ic"><use href="#i-moon"/></svg></button></div>
+        </aside>
+        <main class="main">
+          <div class="page-head">
+            <h1 class="page-title">对话</h1>
+            <div class="head-r"><span class="tenant-pill"><span class="dot"></span>北辰科技</span>
+              <span class="avatar">陈</span></div>
+          </div>
+          <div class="checklist">
+            <div class="cl-head">
+              <div>
+                <div class="cl-title">欢迎来到北辰科技</div>
+                <div class="cl-sub">完成这几步，团队就能开始用了 · 已完成 2 / 5</div>
+              </div>
+              <span class="cl-dismiss">不再提示</span>
+            </div>
+            <div class="cl-grid">
+              <div class="cl-item done"><span class="cl-dot"><svg class="ic" style="width:9px;height:9px"><use href="#i-check"/></svg></span>
+                <span class="txt">修改初始密码</span><span class="go">已修改</span></div>
+              <div class="cl-item done"><span class="cl-dot"><svg class="ic" style="width:9px;height:9px"><use href="#i-check"/></svg></span>
+                <span class="txt">新建第一个部门</span><span class="go">已创建</span></div>
+              <div class="cl-item"><span class="cl-dot"></span><span class="txt">邀请第一位成员</span><span class="go">去邀请</span></div>
+              <div class="cl-item"><span class="cl-dot"></span><span class="txt">绑定聊天模型</span><span class="go">去绑定</span></div>
+              <div class="cl-item"><span class="cl-dot"></span><span class="txt">建第一个知识库</span><span class="go">去创建</span></div>
+            </div>
+          </div>
+          <div class="body" style="display:flex;align-items:center;justify-content:center">
+            <div style="text-align:center;color:var(--app-text3)">
+              <div style="font-size:15px;color:var(--app-text2);margin-bottom:8px">从一句话开始</div>
+              <div style="font-size:12.5px">在下方输入框提问，或先完成上面的配置。</div>
+            </div>
+          </div>
+        </main>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 06 租户归档 ================= -->
+  <div class="scene-block">
+    <div class="cap"><b>06</b><em>租户归档 · 清退</em><span>不提供「删除租户」；归档=只读可导出，彻底清除走运维脚本并二次确认</span></div>
+    <div class="scene">
+      <div class="scene-bg">
+        <aside class="side">
+          <div class="logo-row"><span class="logo-mark"></span><span class="logo-name">问渠</span>
+            <span class="fold"><svg class="ic"><use href="#i-fold"/></svg></span></div>
+          <div class="side-nav">
+            <div class="nav-item"><svg class="ic"><use href="#i-plus"/></svg>新建对话</div>
+            <div class="nav-item"><svg class="ic"><use href="#i-chat"/></svg>对话</div>
+            <div class="nav-item"><svg class="ic"><use href="#i-bot"/></svg>智能体</div>
+            <div class="nav-item"><svg class="ic"><use href="#i-bag"/></svg>市场</div>
+            <div class="nav-item"><svg class="ic"><use href="#i-db"/></svg>知识库</div>
+            <div class="nav-item active"><svg class="ic"><use href="#i-users"/></svg>租户与开通</div>
+            <div class="nav-item"><svg class="ic"><use href="#i-shield"/></svg>安全与运维</div>
+            <div class="nav-item"><svg class="ic"><use href="#i-settings"/></svg>系统设置</div>
+          </div>
+          <div class="side-sec"><span class="t">平台</span></div>
+          <div class="sess-row"><svg class="ic"><use href="#i-users"/></svg><span>当前：平台管理员</span></div>
+          <div class="side-foot"><span class="avatar">管</span><span class="who">平台管理员</span><span class="sp"></span>
+            <button class="icon-btn"><svg class="ic"><use href="#i-moon"/></svg></button></div>
+        </aside>
+        <main class="main">
+          <div class="page-head">
+            <h1 class="page-title">租户与开通</h1>
+            <span class="head-count">共 <b>3</b> 个租户</span>
+            <div class="head-r">
+              <span class="tenant-pill" style="border-color:var(--app-accent);color:var(--app-accent)">平台</span>
+              <button class="btn ghost">落点清单</button>
+              <button class="btn"><svg class="ic"><use href="#i-plus"/></svg>开通租户</button>
+            </div>
+          </div>
+          <div class="tabs"><span class="tab on">租户<span class="n">3</span></span><span class="tab">开通申请<span class="n">1</span></span></div>
+          <div class="body">
+            <div class="table-wrap">
+              <table class="tbl">
+                <thead><tr><th style="width:220px">租户</th><th style="width:90px">成员</th><th style="width:140px">联系人</th>
+                  <th style="width:110px">状态</th><th style="width:180px">开通时间</th><th>操作</th></tr></thead>
+                <tbody>
+                  <tr><td class="name">北辰科技</td><td>18</td><td>陈立</td>
+                    <td><span class="state-tag on">启用</span></td><td>2026-09-18</td><td><button class="link-btn">归档</button></td></tr>
+                  <tr><td class="name">云栖设计</td><td>7</td><td>沈青</td>
+                    <td><span class="state-tag off">停用</span></td><td>2026-10-02</td><td><button class="link-btn">归档</button></td></tr>
+                  <tr class="archived"><td class="name">旧项目组</td><td>0</td><td>—</td>
+                    <td><span class="state-tag arc">归档</span></td><td>2026-08-11</td><td><button class="link-btn">恢复</button></td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="note-line">停用只挡该租户成员登录，数据一律保留；归档后数据只读、可导出清单。没有「删除租户」按钮——彻底清除走运维脚本，先 dry-run 打印行数再二次确认。</div>
+          </div>
+        </main>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

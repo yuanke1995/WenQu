@@ -1,6 +1,11 @@
 <template>
   <a-modal :open="open" title="新建工作区" :footer="null" :width="560" @cancel="close">
     <div class="wq">
+      <div class="wq-label">从现有工作区复制（可选）</div>
+      <a-select v-model:value="templateId" allow-clear :options="templateOptions" style="width:100%"
+                placeholder="不复制：空白工作区" />
+      <div class="wq-hint">复制事项清单与工作区记忆骨架；不复制文件、会话与产物。</div>
+
       <div class="wq-label wq-label-row">
         <span>源文件夹</span>
         <button type="button" class="app-link-btn" :disabled="picking || !executor || !executor.online" @click="pickDir">
@@ -65,7 +70,8 @@ import { message } from 'ant-design-vue'
 import { CheckOutlined, FolderOpenOutlined, PlusOutlined } from '@ant-design/icons-vue'
 import { WORKSPACE_ICONS, WORKSPACE_COLORS, workspaceIconOf } from '../utils/workspaceIcons'
 import { localExecutorId } from '../utils/localExecutor'
-import { createProject, listExecutors, pickExecutorDir, updateProject } from '../api'
+import { createProject, getProject, listExecutors, listProjects, pickExecutorDir, updateProject,
+         getWorkspaceMemory, saveWorkspaceMemory } from '../api'
 
 const props = defineProps({ open: { type: Boolean, default: false } })
 const emit = defineEmits(['update:open', 'created', 'pick-device'])
@@ -80,6 +86,11 @@ const icon = ref('folder')
 const color = ref(COLORS[0])
 const creating = ref(false)
 const picking = ref(false)
+const templateId = ref(undefined)
+const templates = ref([])
+const templateOptions = computed(() => templates.value.map(p => ({
+  value: p.id, label: p.displayName || p.name || '未命名工作区'
+})))
 
 // 工作区固定建在这台电脑上：设备 id 只从「这台电脑」读，不再让用户挑别的电脑。
 // 设备清单只用于显示本机名字与在线状态（离线设备也要列，否则状态没法说清）。
@@ -105,6 +116,30 @@ async function loadDevice () {
     devices.value = []
   }
 }
+
+async function loadTemplates () {
+  try {
+    const r = await listProjects()
+    templates.value = ((r && r.data) || []).filter(p => !p.isImplicit
+      && (!p.executorId || p.executorId === localExecutorId()))
+  } catch (e) {
+    templates.value = []
+  }
+}
+
+/** 选模板：沿用源工作区的目录与执行器，避免用户为「复制设置」再选一遍同一批文件夹 */
+watch(templateId, async pid => {
+  if (!pid) return
+  try {
+    const r = await getProject(pid)
+    const p = (r && r.data) || {}
+    executorId.value = p.executorId || executorId.value
+    dirs.value = (p.roots || []).map(x => ({ path: x.path, name: x.alias || baseName(x.path) }))
+    if (!name.value.trim()) name.value = (p.name || '工作区') + ' 副本'
+  } catch (e) {
+    message.warning('模板工作区读取失败：' + (e.message || '请重试'))
+  }
+})
 
 /** 每次打开都重读一次：用户可能刚在「这台电脑」里换过设备，localStorage 不是响应式的 */
 function refreshLocalDevice () {
@@ -156,10 +191,16 @@ async function create () {
   creating.value = true
   try {
     const roots = dirs.value.map(d => ({ path: d.path, alias: d.name }))
-    const created = await createProject(name.value.trim(), executorId.value, roots)
+    const created = await createProject(name.value.trim(), executorId.value, roots, templateId.value)
     const id = (created && created.data && created.data.id) || ''
     if (!id) throw new Error('创建工作区没有返回 id')
     await updateProject(id, { icon: icon.value, color: color.value })
+    // 模板复制只给记忆骨架：源工作区的具体结论可能已过期，不该原样继承
+    if (templateId.value) {
+      try {
+        await saveWorkspaceMemory(id, '# 工作区记忆\n\n> 记录这个工作区的稳定事实：约定、决策、结构、坑、偏好。\n')
+      } catch (e) { /* 执行器离线时不挡创建 */ }
+    }
     emit('created', id)
     close()
   } catch (e) {
@@ -175,7 +216,9 @@ watch(() => props.open, open => {
   name.value = ''
   icon.value = 'folder'
   color.value = COLORS[0]
+  templateId.value = undefined
   refreshLocalDevice()
+  loadTemplates()
 })
 
 onMounted(() => { if (props.open) refreshLocalDevice() })

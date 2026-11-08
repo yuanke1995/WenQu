@@ -47,6 +47,7 @@ public class ProjectController {
 
     private final ProjectService projectService;
     private final ProjectFileService projectFileService;
+    private final com.wenqu.ai.service.ProjectItemService projectItemService;
     private final com.wenqu.ai.executor.ExecutorService executorService;
     private final com.wenqu.ai.executor.ExecutorRegistry executorRegistry;
 
@@ -262,16 +263,100 @@ public class ProjectController {
         }
     }
 
+    @Operation(summary = "工作区事项清单", description = "记下→去聊→勾掉的最短闭环；按 sort_no 与创建时间排序")
+    @Permission("project:read")
+    @GetMapping("/{id}/items")
+    public ResultJson items(@PathVariable("id") String id) {
+        try {
+            List<Map<String, Object>> out = new ArrayList<>();
+            for (com.wenqu.ai.model.ProjectItem it : projectItemService.list(RequestUser.uid(), id)) {
+                out.add(toItemDto(it));
+            }
+            return ResultJson.ok(out);
+        } catch (IllegalArgumentException e) {
+            return ResultJson.error(400, e.getMessage());
+        }
+    }
+
+    @Operation(summary = "新增工作区事项", description = "body: {title, note?, sessionId?}；标题必填，状态默认 open")
+    @Permission("project:write")
+    @PostMapping("/{id}/items")
+    public ResultJson createItem(@PathVariable("id") String id, @RequestBody Map<String, String> body) {
+        try {
+            String title = body == null ? null : body.get("title");
+            String note = body == null ? null : body.get("note");
+            String sessionId = body == null ? null : body.get("sessionId");
+            return ResultJson.ok(toItemDto(projectItemService.create(
+                    RequestUser.uid(), id, title, note, sessionId)), "已添加");
+        } catch (IllegalArgumentException e) {
+            return ResultJson.error(400, e.getMessage());
+        }
+    }
+
+    @Operation(summary = "更新工作区事项", description = "传才改：title / note / status(open|doing|done) / sessionId")
+    @Permission("project:write")
+    @PutMapping("/{id}/items/{itemId}")
+    public ResultJson updateItem(@PathVariable("id") String id, @PathVariable("itemId") String itemId,
+                                 @RequestBody Map<String, String> body) {
+        try {
+            var updated = projectItemService.update(
+                    RequestUser.uid(), id, itemId,
+                    body == null ? null : body.get("title"),
+                    body == null ? null : body.get("note"),
+                    body == null ? null : body.get("status"),
+                    body == null ? null : body.get("sessionId"));
+            return ResultJson.ok(toItemDto(updated), "已保存");
+        } catch (IllegalArgumentException e) {
+            return ResultJson.error(400, e.getMessage());
+        }
+    }
+
+    @Operation(summary = "删除工作区事项", description = "只删这一条事项，不动会话/产物/文件")
+    @Permission("project:write")
+    @DeleteMapping("/{id}/items/{itemId}")
+    public ResultJson deleteItem(@PathVariable("id") String id, @PathVariable("itemId") String itemId) {
+        try {
+            projectItemService.delete(RequestUser.uid(), id, itemId);
+            return ResultJson.ok(true, "已删除");
+        } catch (IllegalArgumentException e) {
+            return ResultJson.error(400, e.getMessage());
+        }
+    }
+
+    private static Map<String, Object> toItemDto(com.wenqu.ai.model.ProjectItem it) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", it.getId());
+        m.put("projectId", it.getProjectId());
+        m.put("title", it.getTitle());
+        m.put("note", it.getNote());
+        m.put("status", it.getStatus());
+        m.put("sessionId", it.getSessionId());
+        m.put("sortNo", it.getSortNo());
+        m.put("createTime", it.getCreateTime() == null ? null : it.getCreateTime().toString());
+        m.put("updateTime", it.getUpdateTime() == null ? null : it.getUpdateTime().toString());
+        return m;
+    }
+
     @Operation(summary = "新建本机工作区",
-            description = "body: {name, executorId, roots:[{path, alias?}]}。"
+            description = "body: {name, executorId, roots:[{path, alias?}], fromProjectId?}。"
                     + "工作区是用户电脑上的一个或多个真实目录：roots 至少一项，第一项为主目录（cwd 与相对路径基准），"
-                    + "全部目录必须在同一台执行器上。服务器只记路径映射，不保存文件副本。")
+                    + "全部目录必须在同一台执行器上。服务器只记路径映射，不保存文件副本。"
+                    + "fromProjectId 是模板复制：root 与执行器缺省时沿用源工作区，事项清单复制为 open（不复制文件/会话）")
     @Permission("project:write")
     @PostMapping
     public ResultJson create(@RequestBody CreateReq req) {
         try {
             String uid = RequestUser.uid();
-            String executorId = req == null || req.executorId() == null ? "" : req.executorId().trim();
+            String fromProjectId = req == null || req.fromProjectId() == null ? "" : req.fromProjectId().trim();
+            // 模板复制（D）：源工作区只提供「设置」，不带文件与会话
+            Project source = fromProjectId.isEmpty() ? null : projectService.ownedOrNull(uid, fromProjectId);
+            if (!fromProjectId.isEmpty() && source == null) {
+                return ResultJson.error(400, "模板工作区不存在或不属于你");
+            }
+            String executorId = req.executorId() == null ? "" : req.executorId().trim();
+            if (executorId.isEmpty() && source != null && source.getExecutorId() != null) {
+                executorId = source.getExecutorId().trim();
+            }
             if (executorId.isEmpty()) {
                 return ResultJson.error(400, "请先选择一台在线的本机执行器，再选文件夹");
             }
@@ -284,14 +369,23 @@ public class ProjectController {
                     if (r != null) roots.add(new com.wenqu.ai.service.ProjectService.RootSpec(r.path(), r.alias()));
                 }
             }
+            // 没带目录时沿用源工作区的目录别名配置（同一台电脑上的真实路径）
+            if (roots.isEmpty() && source != null) {
+                for (ProjectRoot r : projectService.rootsOf(source)) {
+                    roots.add(new com.wenqu.ai.service.ProjectService.RootSpec(r.getPath(), r.getAlias()));
+                }
+            }
             Project p = projectService.create(uid, req.name(), executorId, roots);
+            if (source != null) {
+                projectItemService.copyItems(uid, source.getId(), p.getId());
+            }
             return ResultJson.ok(toDto(p), "已创建");
         } catch (IllegalArgumentException e) {
             return ResultJson.error(400, e.getMessage());
         }
     }
 
-    public record CreateReq(String name, String executorId, List<RootReq> roots) {
+    public record CreateReq(String name, String executorId, List<RootReq> roots, String fromProjectId) {
     }
 
     public record RootReq(String path, String alias) {

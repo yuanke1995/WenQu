@@ -10,6 +10,7 @@
     "dev": "node ../scripts/mac/dev-with-agent.mjs",
     "dev:prod": "VITE_PROXY_TARGET=http://49.232.129.201/ai node ../scripts/mac/dev-with-agent.mjs",
     "build": "vite build",
+    "test": "node --test test/*.test.mjs",
     "preview": "vite preview",
     "dev:web": "vite"
   },

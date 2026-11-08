@@ -68,6 +68,14 @@ public class ShareController {
     private final SessionService sessionService;
     private final ChatService chatService;
     private final com.wenqu.ai.service.UserRoleService userRoleService;
+    /**
+     * 游客请求落行的租户归属：分享页是匿名入口，请求线程没有身份（RequestUser=SYSTEM），
+     * 不显式绑发布者租户，会话/消息/台账会按 DB 默认值落 default——按租户结算与配额聚合会失真。
+     * 归属口径只在这里定一次，读写都包在 {@code TenantContext.as(发布者租户)} 里。
+     */
+    private final com.wenqu.ai.service.TenantService tenantService;
+    /** 游客日额度闸（P3 费用面第一层）：分享级 + 访客级轮次上限，跨副本 Redis 计数 */
+    private final com.wenqu.ai.service.ShareBudgetService shareBudgetService;
 
     /**
      * 轮次控制与存活（P6 刀 2）。免登录分享页也要能问「这一轮还在跑吗」、能接回正在跑的流、
@@ -104,6 +112,16 @@ public class ShareController {
     }
 
     /**
+     * 在资源归属人的租户里跑一段：游客请求没有身份，未绑定时租户拦截器不拼谓词（读全平台）、
+     * 插入按 DB 默认落 default。按发布者租户显式绑定后，读写的租户口径与登录态一致。
+     * 取不到归属（脏数据/成员被删）时不强行绑定——退回未绑定态，与修前行为一致，不阻断访问。
+     */
+    private <T> T inOwnerTenant(String uid, java.util.function.Supplier<T> body) {
+        String tenant = uid == null || uid.isBlank() ? null : tenantService.tenantOf(uid);
+        return tenant == null || tenant.isBlank() ? body.get() : com.wenqu.ai.util.TenantContext.as(tenant, body);
+    }
+
+    /**
      * 会话只读分享（免登录）：按 token 取回被分享会话的标题与消息。
      * <p>
      * 与智能体分享的差别：这里没有"以分享者身份执行"的授权语义——只读、且内容已裁剪
@@ -119,11 +137,13 @@ public class ShareController {
         rateLimitService.checkRateLimit("share-read", "ip:" + clientIp(httpRequest));
         var share = sessionShareService.resolvePublic(token);
         if (share == null) throw new BizException(404, "分享链接无效或已停止访问");
-        Map<String, Object> out = new java.util.LinkedHashMap<>();
-        out.put("title", sessionShareService.sessionTitle(share.getSessionId()));
-        out.put("sharedAt", share.getCreateTime());
-        out.put("messages", sessionShareService.publicHistory(share.getSessionId()));
-        return ResultJson.ok(out);
+        return inOwnerTenant(share.getCreatedBy(), () -> {
+            Map<String, Object> out = new java.util.LinkedHashMap<>();
+            out.put("title", sessionShareService.sessionTitle(share.getSessionId()));
+            out.put("sharedAt", share.getCreateTime());
+            out.put("messages", sessionShareService.publicHistory(share.getSessionId()));
+            return ResultJson.ok(out);
+        });
     }
 
     @Operation(summary = "分享信息", description = "token 换取智能体公开信息（名称/描述/图标 + 游客能力位与限额；不含提示词与知识库配置）")
@@ -194,8 +214,9 @@ public class ShareController {
             @RequestParam("visitorId") String visitorId,
             HttpServletRequest httpRequest) {
         rateLimitService.checkRateLimit("share-read", "ip:" + clientIp(httpRequest));
-        agentShareService.resolveGuest(token); // 链接失效则历史同样拒绝
+        var ctx = agentShareService.resolveGuest(token); // 链接失效则历史同样拒绝
         String visitorUid = AgentShareService.visitorUid(visitorId);
+        return inOwnerTenant(ctx.owner().getUid(), () -> {
         try {
             sessionService.assertOwned(sessionId, visitorUid);
         } catch (BizException e) {
@@ -225,6 +246,7 @@ public class ShareController {
             if (fb != null) msg.put("fb", fb);
         }
         return ResultJson.ok(history);
+        });
     }
 
     @Operation(summary = "游客历史会话", description = "列出该访客在此分享链接下的会话（按访客 uid + 智能体过滤，只返回自己的）")
@@ -235,8 +257,9 @@ public class ShareController {
             HttpServletRequest httpRequest) {
         rateLimitService.checkRateLimit("share-read", "ip:" + clientIp(httpRequest));
         var ctx = agentShareService.resolveGuest(token);
-        return ResultJson.ok(Map.of("items", sessionService.listSessionsForAgent(
-                AgentShareService.visitorUid(visitorId), ctx.agent().getId(), 50)));
+        return inOwnerTenant(ctx.owner().getUid(), () -> ResultJson.ok(Map.of("items",
+                sessionService.listSessionsForAgent(
+                        AgentShareService.visitorUid(visitorId), ctx.agent().getId(), 50))));
     }
 
     @Operation(summary = "清除游客会话", description = "删除该访客在此分享链接下的全部会话（公用电脑上的收尾动作；只作用于自己 uid 名下的数据）")
@@ -248,8 +271,8 @@ public class ShareController {
         var ctx = agentShareService.resolveGuest(token);
         // 批量删除同样按 IP 限频：免登录的写动作（虽然是删自己的）
         rateLimitService.checkRateLimit("share-read", "ip:" + clientIp(httpRequest));
-        int deleted = sessionService.deleteSessionsOfVisitor(
-                AgentShareService.visitorUid(visitorId), ctx.agent().getId());
+        int deleted = inOwnerTenant(ctx.owner().getUid(), () -> sessionService.deleteSessionsOfVisitor(
+                AgentShareService.visitorUid(visitorId), ctx.agent().getId()));
         audit.record("[AUDIT] 游客清除会话 ip={} agent={} 会话数={}",
                 clientIp(httpRequest), ctx.agent().getId(), deleted);
         return ResultJson.ok(Map.of("deleted", deleted));
@@ -285,6 +308,8 @@ public class ShareController {
             throw new BizException("单条内容过长（最多 " + maxChars + " 字）");
         }
         String visitorUid = AgentShareService.visitorUid(body.getVisitorId());
+        // 费用面第一层：分享级与访客级日轮次上限，先于图片/附件解析（最便宜的一关）
+        shareBudgetService.checkGuestTurn(ctx.share().getId(), visitorUid);
         // 多模态：先过发布者的能力开关，再过形状/数量/体积。顺序不能反——开关关着的时候
         // 用户最需要看到的是"这个分享没开放图片"，而不是"单张图片不能超过 10MB"
         List<String> images = parseGuestImages(ctx.share(), body.getImages());
@@ -295,53 +320,57 @@ public class ShareController {
         java.util.Map<String, String> variables = AgentShareService.variablesEnabled(ctx.share())
                 ? ChatCommand.normalizeVariables(body.getVariables()) : null;
 
-        String sessionId = body.getSessionId();
-        if (sessionId == null || sessionId.isBlank()) {
-            sessionId = sessionService.createSession(visitorUid);
-        } else {
-            try {
-                sessionService.assertOwned(sessionId, visitorUid);
-            } catch (BizException e) {
-                if (e.getCode() == 404) {
-                    sessionId = sessionService.ensureSession(sessionId, visitorUid);
-                } else {
-                    throw e;
-                }
-            }
-        }
-        // 重新生成：必须在会话归属确认之后解析（校验要拿 sessionId 比对消息归属）
-        String replaceMessageId = resolveReplaceTarget(body.getReplaceMessageId(), sessionId);
-        // 会话行记下作答方：免登录链路的作答方恒等于被发布的那个智能体，分享页「我的历史会话」按它列、
-        // 闲置访客会话按它回收，两处都读这一列。登录对话页刻意不写（会话不钉住智能体）。
-        sessionService.recordTurnAgent(sessionId, ctx.agent().getId(), ctx.agent().getName());
-
         // 游客对话同样不设容器级 SSE 超时：整轮截断由 ChatRunRuntime 的存活看门狗按机器耗时判定
         SseEmitter emitter = new SseEmitter(0L);
-        // guestMode=true：工具白名单收窄（知识检索+内置），身份按发布者装载（检索可见性/默认模型）
-        chatService.chat(ChatCommand.builder()
-                .sessionId(sessionId).question(message.trim()).userId(owner.getUid())
-                .receivedAtMs(receivedAtMs)
-                // 接流归属用访客身份（不是发布者）：分享页刷新/换设备能把这一轮接回来，
-                // 而别人即便拿到同一个 token 也接不走不属于自己的会话
-                .userImages(images).attachments(attachments).skills(List.of())
-                .agentId(ctx.agent().getId()).modelOverride(modelRef).guestMode(true)
-                .guestUid(visitorUid)
-                // 游客 MCP 授权名单（发布者在分享配置按 server 粒度勾选）：装配与预批都读这一份，
-                // 名单之外的个人 MCP server 照旧不可见（见 McpToolProvider 的游客分支）
-                .guestMcpServers(AgentShareService.guestMcpServersOf(ctx.share()))
-                // 附件的字节在**访客**的目录里（上传通道按 share-visitor 隔离落盘），
-                // 而 userId 是发布者（检索可见性按他执行）——两者必须分开说，
-                // 否则附件正文会被当成"已过期"读不出来（见 ChatCommand#attachmentOwnerUid）
-                .attachmentOwnerUid(visitorUid)
-                // regenerate + replaceMessageId：分享页的「重新生成」复用登录态同一套语义
-                // （不重复落库用户消息；工作流驱动的智能体还会据此软删旧回答）
-                .regenerate(body.isRegenerate()).replaceMessageId(replaceMessageId)
-                .variables(variables)
-                .build(), emitter);
-        agentShareService.incrementVisit(ctx.share().getId());
-        audit.record("[AUDIT] 游客对话 ip={} agent={} session={} 图片={} 附件={} 重新生成={}",
-                clientIp(httpRequest), ctx.agent().getId(), sessionId,
-                images.size(), attachments.size(), body.isRegenerate());
+        // 会话/消息/台账都按发布者租户落行：匿名请求线程未绑租户时，插入会落 DB 默认 default，
+        // 按租户结算与配额聚合随即失真（见 plan-tenancy-real §2.2）
+        inOwnerTenant(owner.getUid(), () -> {
+            String sessionId = body.getSessionId();
+            if (sessionId == null || sessionId.isBlank()) {
+                sessionId = sessionService.createSession(visitorUid);
+            } else {
+                try {
+                    sessionService.assertOwned(sessionId, visitorUid);
+                } catch (BizException e) {
+                    if (e.getCode() == 404) {
+                        sessionId = sessionService.ensureSession(sessionId, visitorUid);
+                    } else {
+                        throw e;
+                    }
+                }
+            }
+            // 重新生成：必须在会话归属确认之后解析（校验要拿 sessionId 比对消息归属）
+            String replaceMessageId = resolveReplaceTarget(body.getReplaceMessageId(), sessionId);
+            // 会话行记下作答方：免登录链路的作答方恒等于被发布的那个智能体，分享页「我的历史会话」按它列、
+            // 闲置访客会话按它回收，两处都读这一列。登录对话页刻意不写（会话不钉住智能体）。
+            sessionService.recordTurnAgent(sessionId, ctx.agent().getId(), ctx.agent().getName());
+            // guestMode=true：工具白名单收窄（知识检索+内置），身份按发布者装载（检索可见性/默认模型）
+            chatService.chat(ChatCommand.builder()
+                    .sessionId(sessionId).question(message.trim()).userId(owner.getUid())
+                    .receivedAtMs(receivedAtMs)
+                    // 接流归属用访客身份（不是发布者）：分享页刷新/换设备能把这一轮接回来，
+                    // 而别人即便拿到同一个 token 也接不走不属于自己的会话
+                    .userImages(images).attachments(attachments).skills(List.of())
+                    .agentId(ctx.agent().getId()).modelOverride(modelRef).guestMode(true)
+                    .guestUid(visitorUid).shareId(ctx.share().getId())
+                    // 游客 MCP 授权名单（发布者在分享配置按 server 粒度勾选）：装配与预批都读这一份，
+                    // 名单之外的个人 MCP server 照旧不可见（见 McpToolProvider 的游客分支）
+                    .guestMcpServers(AgentShareService.guestMcpServersOf(ctx.share()))
+                    // 附件的字节在**访客**的目录里（上传通道按 share-visitor 隔离落盘），
+                    // 而 userId 是发布者（检索可见性按他执行）——两者必须分开说，
+                    // 否则附件正文会被当成"已过期"读不出来（见 ChatCommand#attachmentOwnerUid）
+                    .attachmentOwnerUid(visitorUid)
+                    // regenerate + replaceMessageId：分享页的「重新生成」复用登录态同一套语义
+                    // （不重复落库用户消息；工作流驱动的智能体还会据此软删旧回答）
+                    .regenerate(body.isRegenerate()).replaceMessageId(replaceMessageId)
+                    .variables(variables)
+                    .build(), emitter);
+            agentShareService.incrementVisit(ctx.share().getId());
+            audit.record("[AUDIT] 游客对话 ip={} agent={} session={} 图片={} 附件={} 重新生成={}",
+                    clientIp(httpRequest), ctx.agent().getId(), sessionId,
+                    images.size(), attachments.size(), body.isRegenerate());
+            return null;
+        });
         return emitter;
     }
 

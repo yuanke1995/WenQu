@@ -3800,7 +3800,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     private io.agentscope.harness.agent.memory.MemoryConfig memoryConfig(
             ChatCommand cmd, io.agentscope.core.model.Model auxModel, String modelRef) {
         io.agentscope.core.model.Model memoryModel = new MeteredModel(auxModel, usageLedger, quotaService, contentSafety,
-                com.wenqu.ai.util.UsageAttr.of(cmd.getUserId(), cmd.getSessionId(), null, "memory"), modelRef);
+                com.wenqu.ai.util.UsageAttr.of(cmd.getUserId(), cmd.getSessionId(), null, "memory",
+                        null, cmd.getShareId()), modelRef);
         int maxMdTokens = Math.max(500, configService.getInt("memory.maxMdTokens",
                 com.wenqu.ai.config.ConfigDefaults.MEMORY_MAX_MD_TOKENS));
         int minutes = configService.getInt("memory.flushThrottleMinutes",
@@ -3850,7 +3851,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     private io.agentscope.harness.agent.memory.compaction.CompactionConfig compactionConfig(
             ChatCommand cmd, io.agentscope.core.model.Model auxModel, String modelRef) {
         io.agentscope.core.model.Model compressModel = new MeteredModel(auxModel, usageLedger, quotaService, contentSafety,
-                com.wenqu.ai.util.UsageAttr.of(cmd.getUserId(), cmd.getSessionId(), null, "compress"),
+                com.wenqu.ai.util.UsageAttr.of(cmd.getUserId(), cmd.getSessionId(), null, "compress",
+                        null, cmd.getShareId()),
                 modelRef);
         io.agentscope.harness.agent.memory.compaction.CompactionConfig.Builder b =
                 io.agentscope.harness.agent.memory.compaction.CompactionConfig.builder()
@@ -3972,7 +3974,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 .build();
         io.agentscope.core.model.Model chatModel = new MeteredModel(baseModel, usageLedger, quotaService, contentSafety,
                 com.wenqu.ai.util.UsageAttr.of(cmd.getUserId(), cmd.getSessionId(), null,
-                        cmd.branchTurn() ? "subagent" : "chat", cmd.getApiKeyId()), hooks.modelRef());
+                        cmd.branchTurn() ? "subagent" : "chat", cmd.getApiKeyId(), cmd.getShareId()), hooks.modelRef());
         // 主链那份包装器登记到会话表：它是本轮「断流」计数的唯一来源（实例跨轮复用，收尾读差值）
         sessions.noteChatModel(sessions.key(cmd), (MeteredModel) chatModel);
         // 可派遣的助手（派遣由框架的 agent_spawn 驱使）：这一份列表同时决定两件事——
