@@ -1926,15 +1926,23 @@ export const setUserPreference = payload =>
   })
 
 // ---- 我的记忆（个人设置 → 我的记忆）：只作用于登录 uid 名下的 MEMORY.md 与 memory/*.md ----
-export const getMemoryOverview = () => request('/memory', { timeout: 20000 })
-export const getMemoryContent = path =>
-  request('/memory/content?path=' + encodeURIComponent(path || ''), { timeout: 20000 })
-export const saveMemoryMd = content =>
-  request('/memory', { method: 'PUT', body: JSON.stringify({ content: content || '' }) })
-export const compactMemory = () => request('/memory/compact', { method: 'POST', timeout: 20000 })
-export const clearMyMemory = () => request('/memory', { method: 'DELETE', timeout: 20000 })
-export const deleteMemoryDaily = date =>
-  request('/memory/daily?date=' + encodeURIComponent(date || ''), { method: 'DELETE', timeout: 20000 })
+// agentId 可选（对外能力第二批·agent 级记忆）：非空=该智能体的专属记忆根 {uid}/agents/{agentId}，
+// 空=用户级记忆（行为与旧签名逐字一致）
+const memAgentQ = agentId => (agentId ? '&agentId=' + encodeURIComponent(agentId) : '')
+export const getMemoryOverview = agentId =>
+  request('/memory' + (agentId ? '?agentId=' + encodeURIComponent(agentId) : ''), { timeout: 20000 })
+export const getMemoryContent = (path, agentId) =>
+  request('/memory/content?path=' + encodeURIComponent(path || '') + memAgentQ(agentId), { timeout: 20000 })
+export const saveMemoryMd = (content, agentId) =>
+  request('/memory?agentId=' + encodeURIComponent(agentId || ''), {
+    method: 'PUT', body: JSON.stringify({ content: content || '' })
+  })
+export const compactMemory = agentId =>
+  request('/memory/compact?agentId=' + encodeURIComponent(agentId || ''), { method: 'POST', timeout: 20000 })
+export const clearMyMemory = agentId =>
+  request('/memory?agentId=' + encodeURIComponent(agentId || ''), { method: 'DELETE', timeout: 20000 })
+export const deleteMemoryDaily = (date, agentId) =>
+  request('/memory/daily?date=' + encodeURIComponent(date || '') + memAgentQ(agentId), { method: 'DELETE', timeout: 20000 })
 // 自助修改个人资料（仅本人；uid 不可改）：username/avatar 各自缺省=不修改，avatar 空串=清除头像
 export const updateMyProfile = (username, avatar) => {
   const body = { username }

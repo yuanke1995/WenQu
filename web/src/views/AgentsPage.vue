@@ -393,6 +393,11 @@
                       </div>
                       <div v-else class="ap-hint">不选则沿用系统的多视角并行检索。</div>
                     </div>
+                    <div class="ap-adv-field">
+                      <label class="ap-field-label">记忆域</label>
+                      <a-select v-model:value="form.memoryMode" :options="memoryModeOptions" size="small" style="width:100%" />
+                      <div class="ap-hint">专属=这个助手有自己独立的长期记忆；叠加=独立记忆之外再把用户全局记忆只读打底。</div>
+                    </div>
                     <div class="ap-adv-field ap-adv-full">
                       <label class="ap-field-label">轮终回调</label>
                       <a-input v-model:value="form.callbackUrl" size="small" allow-clear
@@ -824,6 +829,12 @@ const CAPS = [
 // 多实例能力：跟随全局 / 指定（选「指定」才展开具体项多选）/ 不使用
 // 两者的「跟随全局」都点名全局当前是哪一侧：原来这句话只挂在描述末尾的灰字里，
 // 控件本身仍是「跟随全局」四个字——看默认值得把目光从选框挪开，且普通用户压根看不到那行灰字
+// 记忆域三态（对外能力第二批）：''=跟随全局（用户级记忆） 1=专属 2=叠加；后端认 0/1/2/null
+const memoryModeOptions = [
+  { label: '跟随全局（用户级记忆）', value: '' },
+  { label: '专属（独立记忆，不注入全局）', value: '1' },
+  { label: '叠加（独立记忆 + 全局只读打底）', value: '2' }
+]
 const globalSuffix = c => {
   const t = globalText(c)
   return t ? '（' + (t.startsWith('关闭') ? '关' : '开') + '）' : ''
@@ -1059,6 +1070,7 @@ const blankForm = () => ({
   workflowTools: [],
   // 轮终回调（v2 对外能力第二批）：URL 明文；密钥不回显（callbackSecretSet 只表「已配置」）
   callbackUrl: '', callbackSecret: '', callbackSecretSet: false,
+  memoryMode: '',  // ''=跟随全局 / '1'=专属 / '2'=叠加（对外能力第二批·agent 级记忆）
   // 目标模式（资源级二态）：1=开 0=关。平台级总闸已去掉，这一格是唯一判据；null 从旧数据来时按开处理
   goalEnabled: 1,
   // 有副作用工具（沙盒/MCP）执行审批：''=跟随档位（默认） auto=自动执行 ask=执行前确认 off=禁用
@@ -1662,6 +1674,7 @@ const resetOverrides = () => {
       form.value.toolDeny = []
       form.value.maxToolSteps = null
       form.value.subAgentIds = []
+      form.value.memoryMode = ''
     }
   })
 }
@@ -1789,6 +1802,7 @@ const openEdit = a => {
     callbackUrl: a.callbackUrl || '',
     callbackSecret: '',
     callbackSecretSet: !!a.callbackSecretSet,
+    memoryMode: a.memoryMode == null ? '' : String(a.memoryMode),
     // 目标模式：NULL/1=开，0=关（后端同口径）
     goalEnabled: a.goalEnabled === 0 ? 0 : 1,
     toolApprovalMode: a.toolApprovalMode || '',
@@ -1932,6 +1946,8 @@ const save = async () => {
     // 轮终回调（v2 对外能力第二批）：密钥留空=沿用旧密文（后端按空跳过重加密）
     callbackUrl: (f.callbackUrl || '').trim() || null,
     callbackSecret: f.callbackSecret || '',
+    // 记忆域（对外能力第二批）：'' → null=跟随全局；1/2 原样
+    memoryMode: f.memoryMode === '' || f.memoryMode == null ? null : Number(f.memoryMode),
     // 目标模式：二态始终带上（关掉后要能落 0；NULL 只留给旧数据）
     goalEnabled: f.goalEnabled === 0 ? 0 : 1,
     // 执行确认留空 → null = 跟随权限档位的建议值（只读调研→逐项确认、全自主→直接执行）

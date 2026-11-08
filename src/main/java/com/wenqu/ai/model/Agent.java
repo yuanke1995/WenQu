@@ -99,6 +99,14 @@ public class Agent {
     private Integer toolWorkflow;
 
     /**
+     * 记忆域（对外能力第二批·agent 级记忆）：NULL/0=跟随全局（用户级记忆，现状行为）、
+     * 1=专属（记忆根换 {uid}/agents/{agentId}，不再注入全局记忆）、
+     * 2=叠加（专属根活跃写 + 用户全局 MEMORY.md 只读注入）。
+     * 注意 2 是合法值，不能用 toTri 解析（它把非零归一成 1）。
+     */
+    private Integer memoryMode;
+
+    /**
      * 目标模式开关（资源级）: 1=开 0=关 NULL=开。平台级总闸已去掉，这一格就是唯一判据。
      * <p>关=界面无入口、引擎不接目标上下文、续跑驱动不接管；与「任务上下文投影」已解耦
      * （2026-10-22 对齐 DSH 后目标不再借框架的任务/验收投影，改由 GoalService 自己带给模型）。

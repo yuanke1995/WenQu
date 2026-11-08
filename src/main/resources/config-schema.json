@@ -93,6 +93,13 @@
       ]
     },
     {
+      "key": "agentMemory",
+      "title": "智能体级记忆（agent 级记忆域）",
+      "sections": [
+        "总开关"
+      ]
+    },
+    {
       "key": "skills",
       "title": "技能",
       "sections": [
@@ -2940,6 +2947,19 @@
       "min": 0,
       "max": 10,
       "note": "首发失败后的重试次数（退避 60s/5min/30min/2h，超出按最后一档）。0=失败即耗尽。改的是下一次投递，已有 pending 行按落行时的排程走。"
+    },
+    {
+      "backendKey": "agentMemory.enabled",
+      "panel": "agentMemory",
+      "section": 0,
+      "group": "agentMemory",
+      "key": "enabled",
+      "path": "agentMemory.enabled",
+      "label": "总开关",
+      "type": "switch",
+      "def": true,
+      "tier": 2,
+      "note": "开启后智能体可配「记忆域」：专属（各自独立的长期记忆，互不串味）或叠加（专属活跃 + 用户全局记忆只读打底）。默认开不改变任何存量行为——未配置记忆域的智能体仍用用户级记忆。"
     },
     {
       "backendKey": "webSearch.provider",

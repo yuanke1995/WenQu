@@ -51,8 +51,13 @@ public class MemoryService {
     // ==================== 读 ====================
 
     public Map<String, Object> overview(String uid) {
+        return overview(uid, null);
+    }
+
+    /** 智能体专属记忆的概览（agentId 空 = 用户级，行为不变；对外能力第二批） */
+    public Map<String, Object> overview(String uid, String agentId) {
         String u = MemoryPaths.requireUid(uid);
-        Path root = MemoryPaths.root(configService, u);
+        Path root = MemoryPaths.agentRoot(configService, u, agentId);
         String content = readOrEmpty(root.resolve(MemoryPaths.MEMORY_MD));
         int maxTokens = maxTokens();
         int maxChars = maxChars(maxTokens);
@@ -72,7 +77,12 @@ public class MemoryService {
     }
 
     public Map<String, Object> content(String uid, String relativePath) {
-        Path file = MemoryPaths.resolveContent(configService, uid, relativePath);
+        return content(uid, null, relativePath);
+    }
+
+    /** 智能体专属记忆的文件读取（agentId 空 = 用户级） */
+    public Map<String, Object> content(String uid, String agentId, String relativePath) {
+        Path file = MemoryPaths.resolveContent(configService, uid, agentId, relativePath);
         if (!Files.isRegularFile(file)) {
             throw new BizException(404, "记忆文件不存在");
         }
@@ -92,8 +102,13 @@ public class MemoryService {
     // ==================== 写 ====================
 
     public Map<String, Object> saveMemoryMd(String uid, String content) {
+        return saveMemoryMd(uid, null, content);
+    }
+
+    /** 智能体专属记忆的保存（agentId 空 = 用户级；审计与限额同一套） */
+    public Map<String, Object> saveMemoryMd(String uid, String agentId, String content) {
         String u = MemoryPaths.requireUid(uid);
-        Path root = MemoryPaths.root(configService, u);
+        Path root = MemoryPaths.agentRoot(configService, u, agentId);
         String text = content == null ? "" : content;
         int maxChars = maxChars(maxTokens());
         if (text.length() > maxChars) {
@@ -102,14 +117,20 @@ public class MemoryService {
         }
         writeAtomic(root.resolve(MemoryPaths.MEMORY_MD), text);
         markStale(u);
-        audit.record("[AUDIT] 用户编辑长期记忆 uid={} chars={}", u, text.length());
-        return overview(u);
+        audit.record("[AUDIT] 用户编辑长期记忆 uid={} agent={} chars={}", u,
+                agentId == null ? "-" : agentId, text.length());
+        return overview(u, agentId);
     }
 
     /** 清空全部记忆（MEMORY.md + 日账 + 归档 + consolidation 游标）。 */
     public Map<String, Object> clearAll(String uid) {
+        return clearAll(uid, null);
+    }
+
+    /** 智能体专属记忆的清空（agentId 空 = 用户级；关实例仍是 evictUser 整档，flush 写不到已删文件） */
+    public Map<String, Object> clearAll(String uid, String agentId) {
         String u = MemoryPaths.requireUid(uid);
-        Path root = MemoryPaths.root(configService, u);
+        Path root = MemoryPaths.agentRoot(configService, u, agentId);
         // 先关实例再删文件：否则正在跑的会话收尾时还会 flush，清空后又被写回一条。
         // 关掉不会丢历史（stateStore 里仍在），下一次提问按原会话重建。
         try {
@@ -125,11 +146,16 @@ public class MemoryService {
             throw new BizException(500, "清空记忆失败");
         }
         markStale(u);
-        audit.record("[AUDIT] 用户清空长期记忆 uid={}", u);
-        return overview(u);
+        audit.record("[AUDIT] 用户清空长期记忆 uid={} agent={}", u, agentId == null ? "-" : agentId);
+        return overview(u, agentId);
     }
 
     public Map<String, Object> deleteDaily(String uid, String date) {
+        return deleteDaily(uid, null, date);
+    }
+
+    /** 智能体专属记忆的日账删除（agentId 空 = 用户级） */
+    public Map<String, Object> deleteDaily(String uid, String agentId, String date) {
         String u = MemoryPaths.requireUid(uid);
         LocalDate day;
         try {
@@ -137,7 +163,7 @@ public class MemoryService {
         } catch (DateTimeParseException e) {
             throw new BizException("日期格式应为 YYYY-MM-DD");
         }
-        Path file = MemoryPaths.resolveContent(configService, u, "memory/" + day + ".md");
+        Path file = MemoryPaths.resolveContent(configService, u, agentId, "memory/" + day + ".md");
         try {
             Files.deleteIfExists(file);
         } catch (IOException e) {
@@ -145,24 +171,30 @@ public class MemoryService {
             throw new BizException(500, "删除日账失败");
         }
         markStale(u);
-        audit.record("[AUDIT] 用户删除长期记忆日账 uid={} date={}", u, day);
-        return overview(u);
+        audit.record("[AUDIT] 用户删除长期记忆日账 uid={} agent={} date={}", u,
+                agentId == null ? "-" : agentId, day);
+        return overview(u, agentId);
     }
 
     /** 按当前 token 上限裁剪 MEMORY.md（面板「按上限裁剪」按钮；写入路径另有自动裁剪）。 */
     public Map<String, Object> compact(String uid) {
+        return compact(uid, null);
+    }
+
+    /** 智能体专属记忆的裁剪（agentId 空 = 用户级） */
+    public Map<String, Object> compact(String uid, String agentId) {
         String u = MemoryPaths.requireUid(uid);
-        Path file = MemoryPaths.root(configService, u).resolve(MemoryPaths.MEMORY_MD);
+        Path file = MemoryPaths.agentRoot(configService, u, agentId).resolve(MemoryPaths.MEMORY_MD);
         String text = readOrEmpty(file);
         int maxChars = maxChars(maxTokens());
         String trimmed = MemoryBudget.trim(text, maxChars);
         if (!trimmed.equals(text)) {
             writeAtomic(file, trimmed);
             markStale(u);
-            audit.record("[AUDIT] 用户按上限裁剪长期记忆 uid={} chars={} -> {}",
-                    u, text.length(), trimmed.length());
+            audit.record("[AUDIT] 用户按上限裁剪长期记忆 uid={} agent={} chars={} -> {}",
+                    u, agentId == null ? "-" : agentId, text.length(), trimmed.length());
         }
-        return overview(u);
+        return overview(u, agentId);
     }
 
     // ==================== 内部 ====================

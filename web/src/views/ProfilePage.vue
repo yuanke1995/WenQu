@@ -197,6 +197,12 @@
                 {{ memOverview.daily.length }} 天日账
               </span>
             </h2>
+            <a-select v-model:value="memAgentId" class="mem-agent-select" size="small"
+                      :options="memAgentOptions" style="width: 240px" placeholder="用户级记忆"
+                      @change="loadMemory" />
+            <div class="pf-sub-hint" style="margin-top:4px">
+              可切换查看各智能体的专属记忆（该智能体「记忆域」配为专属/叠加时才产生）；用户级记忆是全体智能体共享的那一份。
+            </div>
             <p class="pf-panel-sub">
               助手会在问答结束后把值得长期记住的信息整理进下面的「长期记忆」，日账则是每天追加的原始记录。
               日账是只读的，删除后无法恢复。
@@ -471,7 +477,7 @@ import { changePasswordApi, getUserPreference, setUserPreference, updateMyProfil
          notificationPreferences, notificationSavePreferences,
          listMySessionShares, stopShareBySession, purgeShareRecord, enableSessionShare,
          getMemoryOverview, getMemoryContent, saveMemoryMd, compactMemory, clearMyMemory,
-         deleteMemoryDaily } from '../api'
+         deleteMemoryDaily, listAgents } from '../api'
 import ModelSelect from '../components/ModelSelect.vue'
 import ApiKeysPanel from '../components/ApiKeysPanel.vue'
 import UserAvatar from '../components/UserAvatar.vue'
@@ -817,6 +823,9 @@ const toggleMemAuto = async checked => {
 const memLoading = ref(false)
 const memSaving = ref(false)
 const memClearing = ref(false)
+// 记忆域切换（对外能力第二批）：null=用户级记忆；非空=该智能体的专属记忆根
+const memAgentId = ref(null)
+const memAgentOptions = ref([{ label: '用户级记忆（全体共享）', value: null }])
 // 阅读态：直接从 overview.content 解析（内容被后台任务更新时这里跟着变）
 const memDocView = computed(() => parseMemoryDoc(memOverview.value.content || ''))
 const memEditing = ref(false)
@@ -854,13 +863,26 @@ const fmtSize = n => {
 const loadMemory = async () => {
   memLoading.value = true
   try {
-    const r = await getMemoryOverview()
+    const r = await getMemoryOverview(memAgentId.value)
     memOverview.value = (r && r.data) || memOverview.value
   } catch (e) {
     message.error(e.message || '记忆加载失败')
   } finally {
     memLoading.value = false
   }
+}
+
+// 智能体下拉：只列自己的主智能体；切换即时重载（专属记忆在该智能体「记忆域」配置后才会产生内容）
+const loadMemAgents = async () => {
+  try {
+    const r = await listAgents()
+    const rows = (r && r.data) || {}
+    const list = Array.isArray(rows) ? rows : (rows.list || rows.agents || [])
+    memAgentOptions.value = [
+      { label: '用户级记忆（全体共享）', value: null },
+      ...list.filter(a => a && a.id).map(a => ({ label: a.name || a.id, value: a.id }))
+    ]
+  } catch { /* 下拉失败不影响用户级记忆的查看 */ }
 }
 
 // 把小节的 entries 摊平为渲染行：子题头 + 其条目（带缩进标记），阅读态与编辑态共用
@@ -920,7 +942,7 @@ const saveMemory = async () => {
   }
   memSaving.value = true
   try {
-    const r = await saveMemoryMd(text)
+    const r = await saveMemoryMd(text, memAgentId.value)
     memOverview.value = (r && r.data) || memOverview.value
     memEditing.value = false
     message.success('记忆已保存')
@@ -1011,7 +1033,7 @@ const delSub = sub => {
 const onCompactMemory = async () => {
   memLoading.value = true
   try {
-    const r = await compactMemory()
+    const r = await compactMemory(memAgentId.value)
     memOverview.value = (r && r.data) || memOverview.value
     message.success('已按上限裁剪')
   } catch (e) {
@@ -1028,7 +1050,7 @@ const onClearMemory = () => {
     onOk: async () => {
       memClearing.value = true
       try {
-        const r = await clearMyMemory()
+        const r = await clearMyMemory(memAgentId.value)
         memOverview.value = (r && r.data) || memOverview.value
         memEditing.value = false
         message.success('已清空长期记忆')
@@ -1042,7 +1064,7 @@ const onClearMemory = () => {
 }
 const viewDaily = async date => {
   try {
-    const r = await getMemoryContent('memory/' + date + '.md')
+    const r = await getMemoryContent('memory/' + date + '.md', memAgentId.value)
     memViewTitle.value = '日账 ' + date
     memViewText.value = (r && r.data && r.data.content) || ''
     memViewOpen.value = true
@@ -1057,7 +1079,7 @@ const onDeleteDaily = date => {
     okText: '删除', okType: 'danger', cancelText: '取消',
     onOk: async () => {
       try {
-        const r = await deleteMemoryDaily(date)
+        const r = await deleteMemoryDaily(date, memAgentId.value)
         memOverview.value = (r && r.data) || memOverview.value
         message.success('日账已删除')
       } catch (e) {
@@ -1188,7 +1210,7 @@ watch(current, v => {
     focusSid.value = route.query.sid || ''
     loadShares()
   }
-  if (v === 'memory') { loadMemory(); load() }
+  if (v === 'memory') { loadMemory(); loadMemAgents(); load() }
 })
 
 onMounted(() => {

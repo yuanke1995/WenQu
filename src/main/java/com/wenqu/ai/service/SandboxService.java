@@ -268,6 +268,16 @@ public class SandboxService {
 
     public AbstractFilesystem frameworkFilesystem(String sessionId, String uid, boolean unrestrictedWrites,
                                                  boolean sandboxReady) {
+        return frameworkFilesystem(sessionId, uid, unrestrictedWrites, sandboxReady, null);
+    }
+
+    /**
+     * 带智能体记忆域的重载（对外能力第二批）：{@code memoryAgentId} 非空 = 本轮记忆路由到
+     * {@code {uid}/agents/{agentId}} 专属根（智能体 memory_mode=专属/叠加，引擎侧已过总闸与三态判定）；
+     * 空 = 用户根，与旧签名逐字同行为。
+     */
+    public AbstractFilesystem frameworkFilesystem(String sessionId, String uid, boolean unrestrictedWrites,
+                                                 boolean sandboxReady, String memoryAgentId) {
         if (sessionId == null || sessionId.isBlank() || uid == null || uid.isBlank()) {
             return null;
         }
@@ -300,7 +310,7 @@ public class SandboxService {
                         () -> turnChanges.currentTurnId(sessionId),
                         // 上一轮轮号：模型第一次写可能抢在服务端 turnStart 前，补拍快照时用它做用户改动对账
                         () -> turnChanges.currentPreviousTurnId(sessionId));
-                return memoryRouted(executorFs, uid);
+                return memoryRouted(executorFs, uid, memoryAgentId);
             }
             // 隐式会话的本机后端：工作区=用户电脑上的会话目录，不建容器。
             // 与显式本机工作区同形（ExecutorFilesystem + 轮身份），只是根目录由会话解析给出。
@@ -313,7 +323,7 @@ public class SandboxService {
                         executorRegistry, sessionWs.executorId(), roots, unrestrictedWrites,
                         () -> turnChanges.currentTurnId(sessionId),
                         () -> turnChanges.currentPreviousTurnId(sessionId));
-                return memoryRouted(executorFs, uid);
+                return memoryRouted(executorFs, uid, memoryAgentId);
             }
             if (!sandboxReady) {
                 // 本轮装配超时/失败：别把沙盒文件系统交给框架。框架建实例时 WorkspaceManager.validate()
@@ -327,7 +337,7 @@ public class SandboxService {
                     true, true, unrestrictedWrites, ProvisionerSandboxBackend.procTagFor(sessionId));
             String sandboxId = ProvisionerSandboxProvider.sandboxIdForThread(scope.scopeId(), uid);
             ProvisionerSandboxFilesystem sandboxFs = new ProvisionerSandboxFilesystem(backend, sandboxId);
-            return memoryRouted(sandboxFs, uid);
+            return memoryRouted(sandboxFs, uid, memoryAgentId);
         } catch (Exception e) {
             log.warn("[SANDBOX] 框架文件系统装配失败 (session={}): {}", sessionId, e.getMessage());
             return null;
@@ -349,6 +359,11 @@ public class SandboxService {
      * 需要命令/构建的会话走工作区档（见 {@code FrameworkSessions} 的沙盒分支）。
      */
     public AbstractFilesystem chatScratchFilesystem(String sessionId, String uid) {
+        return chatScratchFilesystem(sessionId, uid, null);
+    }
+
+    /** 带智能体记忆域的重载（对外能力第二批）：memoryAgentId 非空 = 记忆路由到智能体专属根 */
+    public AbstractFilesystem chatScratchFilesystem(String sessionId, String uid, String memoryAgentId) {
         if (sessionId == null || sessionId.isBlank() || uid == null || uid.isBlank()) {
             return null;
         }
@@ -361,7 +376,7 @@ public class SandboxService {
                         chatScratchRoot().toAbsolutePath());
             }
             LocalFilesystem scratch = new LocalFilesystem(root, true, 64);
-            Path memRoot = memoryRoot(uid);
+            Path memRoot = memoryRoot(uid, memoryAgentId);
             AbstractFilesystem memoryMd = new MemoryCappedFilesystem(
                     memRoot, MEMORY_MAX_FILE_MB, MemoryBudget.maxChars(configService));
             AbstractFilesystem memoryDir = new LocalFilesystem(
@@ -551,9 +566,10 @@ public class SandboxService {
      * <p>路由装配失败（拿到非法路径等）就退回不路由：记忆落沙箱是旧行为，比整轮没有文件系统好。
      */
     private AbstractFilesystem memoryRouted(
-            io.agentscope.harness.agent.filesystem.sandbox.AbstractSandboxFilesystem sandboxFs, String uid) {
+            io.agentscope.harness.agent.filesystem.sandbox.AbstractSandboxFilesystem sandboxFs, String uid,
+            String memoryAgentId) {
         try {
-            Path base = memoryRoot(uid);
+            Path base = memoryRoot(uid, memoryAgentId);
             // MEMORY.md 走带硬上限的文件系统：框架的 consolidation prompt 只是建议，
             // 模型可以写到 57 KB；写入落盘时按 memory.maxMdTokens 裁掉，注入才不会只剩头尾。
             // 日账是 append-only 原始记录，不裁。
@@ -574,9 +590,22 @@ public class SandboxService {
      * （{@code workspace.resolve(uid).resolve("memory")}）落在同一处，两套访问才对得上。
      */
     private Path memoryRoot(String uid) {
+        return memoryRoot(uid, null);
+    }
+
+    /** 记忆根：memoryAgentId 非空 = 智能体专属根 {stateDir}/{uid}/agents/{agentId}（与 MemoryPaths.agentRoot 同一口径） */
+    private Path memoryRoot(String uid, String memoryAgentId) {
         String raw = configService.get(KEY_STATE_DIR);
         if (raw == null || raw.isBlank()) raw = STATE_DIR_DEFAULT;
-        return Path.of(raw).resolve(uid);
+        Path p = Path.of(raw).resolve(uid);
+        if (memoryAgentId != null && !memoryAgentId.isBlank()) {
+            // agentId 是平台生成的标识串（UUID/雪花），与 MemoryPaths.requireUid 同一白名单防 ../ 穿越
+            if (!memoryAgentId.matches("[A-Za-z0-9_@.\\-]+")) {
+                throw new IllegalArgumentException("非法的智能体记忆目录: " + memoryAgentId);
+            }
+            p = p.resolve("agents").resolve(memoryAgentId);
+        }
+        return p;
     }
 
     /** 聊天档宿主临时目录根：多副本部署必须把它指到共享卷，否则同一会话切副本会看不到文件。 */

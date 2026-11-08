@@ -48,6 +48,21 @@ public final class MemoryPaths {
         return root;
     }
 
+    /**
+     * 智能体专属记忆根：{@code stateDir/{uid}/agents/{agentId}}（对外能力第二批，memory_mode=专属/叠加）。
+     * agentId 空 = 回落用户根（与 {@link #root} 同一返回，调用方不必分支）。
+     * agentId 与 uid 同一白名单口径（都是平台生成的标识串），防 {@code ../} 穿越。
+     */
+    public static Path agentRoot(ConfigService configService, String uid, String agentId) {
+        if (agentId == null || agentId.isBlank()) return root(configService, uid);
+        Path base = root(configService, uid);
+        Path root = base.resolve("agents").resolve(requireUid(agentId)).normalize();
+        if (!root.startsWith(base.normalize())) {
+            throw new BizException("非法的智能体记忆目录");
+        }
+        return root;
+    }
+
     public static String requireUid(String uid) {
         String u = uid == null ? "" : uid.trim();
         if (u.isEmpty() || RequestUser.SYSTEM.equalsIgnoreCase(u)) {
@@ -72,7 +87,12 @@ public final class MemoryPaths {
      * 不对外暴露（前者是内部游标，后者是超期归档）。
      */
     public static Path resolveContent(ConfigService configService, String uid, String relativePath) {
-        Path root = root(configService, uid);
+        return resolveContent(configService, uid, null, relativePath);
+    }
+
+    /** 智能体专属记忆的读取口径（agentId 空 = 用户根，与 {@link #resolveContent(ConfigService, String, String)} 同形） */
+    public static Path resolveContent(ConfigService configService, String uid, String agentId, String relativePath) {
+        Path root = agentRoot(configService, uid, agentId);
         String raw = relativePath == null ? "" : relativePath.replace('\\', '/').trim();
         while (raw.startsWith("/")) raw = raw.substring(1);
         if (raw.isEmpty()) throw new BizException("路径不能为空");

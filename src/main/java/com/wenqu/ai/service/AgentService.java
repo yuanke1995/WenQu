@@ -114,6 +114,7 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         m.put("toolWorkflow", "工作流工具");
         m.put("workflowTools", "工作流工具集");
         m.put("callbackUrl", "轮终回调地址");
+        m.put("memoryMode", "记忆域");
         m.put("toolApprovalMode", "工具审批模式");
         m.put("permissionPreset", "权限档位");
         m.put("toolDeny", "工具黑名单");
@@ -553,6 +554,7 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         if (b.containsKey("workflowTools")) uw.set(Agent::getWorkflowTools, a.getWorkflowTools());
         if (b.containsKey("callbackUrl")) uw.set(Agent::getCallbackUrl, a.getCallbackUrl());
         if (b.containsKey("callbackSecret")) uw.set(Agent::getCallbackSecret, a.getCallbackSecret());
+        if (b.containsKey("memoryMode")) uw.set(Agent::getMemoryMode, a.getMemoryMode());
         // 工具执行审批三态（auto/ask/off；null=跟随权限档位的建议值）
         if (b.containsKey("toolApprovalMode")) uw.set(Agent::getToolApprovalMode, a.getToolApprovalMode());
         // 权限档位（P2；null=跟随平台默认档）
@@ -658,6 +660,15 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         if (body.containsKey("callbackSecret")) {
             String s = body.get("callbackSecret") == null ? null : String.valueOf(body.get("callbackSecret"));
             if (s != null && !s.isBlank()) a.setCallbackSecret(cryptoService.encrypt(s.trim()));
+        }
+        // 记忆域三态（对外能力第二批）：NULL/0=跟随全局 1=专属 2=叠加。不用 toTri（非零归一成 1 会把叠加压成专属），
+        // 认不得的值直接拒——静默归 null 会让「配了叠加」变成「其实跟着全局」，配置页看不出漂移
+        if (body.containsKey("memoryMode")) {
+            Integer m = toIntOrNull(body.get("memoryMode"));
+            if (m != null && m != 0 && m != 1 && m != 2) {
+                throw new com.wenqu.ai.common.BizException("记忆域取值无法识别：" + m + "（可选 0=跟随全局 / 1=专属 / 2=叠加，留空=跟随全局）");
+            }
+            a.setMemoryMode(m == null || m == 0 ? null : m);
         }
         if (body.containsKey("toolWorkflow")) a.setToolWorkflow(toTri(body.get("toolWorkflow")));
         // 工作流工具集：归一化+存在性/发布态校验（同上，先于 toolDeny 校验）
@@ -1072,6 +1083,7 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         uw.set(Agent::getToolWorkflow, asInt(cfg.get("toolWorkflow")));
         uw.set(Agent::getWorkflowTools, raw(cfg.get("workflowTools")));
         uw.set(Agent::getCallbackUrl, raw(cfg.get("callbackUrl")));
+        uw.set(Agent::getMemoryMode, asInt(cfg.get("memoryMode")));
         uw.set(Agent::getToolApprovalMode, raw(cfg.get("toolApprovalMode")));
         uw.set(Agent::getPermissionPreset, raw(cfg.get("permissionPreset")));
         uw.set(Agent::getToolDeny, raw(cfg.get("toolDeny")));

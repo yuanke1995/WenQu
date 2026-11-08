@@ -383,6 +383,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_agent` (
     `workflow_tools`  MEDIUMTEXT   DEFAULT NULL COMMENT '工作流工具集(JSON 数组: 已发布工作流 id, ≤8 个; NULL=未配置。运行时读发布版本; 嵌套深度上限 2 层防环: 工具族到顶不挂+运行入口 fail-loud 双闸)',
     `callback_url`    VARCHAR(512) DEFAULT NULL COMMENT '轮终回调地址(对外能力第二批): 非空时每轮结束 POST 签名结果(X-Wenqu-Event=agent.turn.finished, 持久化重试见 c_ai_webhook_delivery); NULL=不回调',
     `callback_secret` VARCHAR(1024) DEFAULT NULL COMMENT '轮终回调签名密钥(JWE 密文, 回显脱敏, 值不变不重加密); 空=只带事件头不带签名',
+    `memory_mode`     INT          DEFAULT NULL COMMENT '记忆域(对外能力第二批·agent级记忆): NULL/0=跟随全局(用户级记忆) 1=专属(记忆根 {uid}/agents/{agentId}, 不再注入全局) 2=叠加(专属根活跃写+全局只读注入)',
     `is_subagent`     INT           DEFAULT 0 COMMENT '是否子智能体: 0=主智能体（对话页可选） 1=子智能体（供主智能体委派）',
     `sub_agent_ids`   VARCHAR(1000) DEFAULT NULL COMMENT '主智能体可委派的子智能体ID: NULL/空=走默认多视角策略 逗号分隔=用这些',
     `subagent_mode`   VARCHAR(16)  DEFAULT NULL COMMENT '被当作子智能体咨询时怎么跑(P3a): digest=只并行检索+提炼要点(原有行为) full=跑完整问答管线(自己的知识库/工具/技能/沙盒/产物生效); NULL=跟随平台默认 agent.subagentMode',
