@@ -37,6 +37,7 @@
           <footer class="pa-foot">
             <span class="pa-hint">上一步返回编辑，不会停止任何东西</span>
             <div class="pa-acts">
+              <button type="button" class="pa-btn ghost" :disabled="busy" @click="emit('close')">取消</button>
               <button type="button" class="pa-btn" :disabled="busy" @click="step = 'edit'">上一步</button>
               <button type="button" class="pa-btn warn" :disabled="busy || !text.trim()" @click="submit">
                 {{ busy ? '正在停止…' : '停止并重新计划' }}

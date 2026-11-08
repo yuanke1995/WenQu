@@ -853,6 +853,12 @@ function ensureTurnTodos (sid, list) {
   }
 }
 
+// 新一轮开始写清单后，旧已批准计划的分步进度会被最新一份顶掉：按轮把账本清单补回来
+// （只在新一轮出现时触发，同一轮内的实时更新仍走 sessionTodos，不重复拉取）
+watch(() => sessionTodos.value && sessionTodos.value.turnId, tid => {
+  if (tid) ensureTurnTodos(currentSessionId.value, messages.value)
+})
+
 /** 计划执行进度：实时清单（属于这一轮）→ 该轮账本清单 → 收尾冻结快照，依次回退 */
 const planExecProgressOf = m => {
   if (!m || !m.planCard) return null
@@ -3205,14 +3211,23 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
           c.revisingStarted = true
         }
         c.id = j.planApprovalId
-        // 重新计划（B+）：新卡拿到稳定 id 后，把旧卡的「查看新一轮」补上（刷新后由历史血缘重建）
-        if (userMsg && userMsg.planAdjustFrom) {
-          if (!c.adjustFrom) c.adjustFrom = { ...userMsg.planAdjustFrom }
-          if (c.adjustFrom && c.adjustFrom.cardId) {
-            const old = messages.value.find(x => x && x.planCard && x.planCard.id === c.adjustFrom.cardId)
-            if (old && !old.planCard.replannedBy) {
-              old.planCard.replannedBy = { cardId: c.id, version: planVersionOf(c) }
+        // 重新计划（B+）：来源优先取本轮的 userMsg；断线接流/换设备时 userMsg 不存在，
+        // 改从 plan_approval 帧自带的血缘字段恢复（后端同一份数据，两个入口不各写一套）
+        const frameFrom = (typeof j.planBaseId === 'string' && j.planBaseId)
+          ? {
+              cardId: j.planBaseId,
+              version: Number(j.planBaseVersion) || 1,
+              done: Number(j.planBaseDone) || 0,
+              total: Number(j.planBaseTotal) || 0,
+              failed: Number(j.planBaseFailed) || 0
             }
+          : null
+        const applyFrom = (userMsg && userMsg.planAdjustFrom) || c.adjustFrom || frameFrom
+        if (applyFrom && !c.adjustFrom) c.adjustFrom = { ...applyFrom }
+        if (c.adjustFrom && c.adjustFrom.cardId && c.id) {
+          const old = messages.value.find(x => x && x.planCard && x.planCard.id === c.adjustFrom.cardId)
+          if (old && !old.planCard.replannedBy) {
+            old.planCard.replannedBy = { cardId: c.id, version: planVersionOf(c) }
           }
         }
         // 后端权威稿（已剥标签/护栏截断）覆盖流式累积；过 planText 归一化，
@@ -3736,8 +3751,12 @@ const regenerate = async mi => {
         ai.versions = [snapshotVersion(ai)]
         ai.vIndex = 0
       }
+      // 重新计划的那一轮也要带上血缘：内存轮用用户消息上的标记，刷新后的历史轮用计划卡上的来源
+      const planBaseId = (messages.value[i].planAdjustFrom && messages.value[i].planAdjustFrom.cardId)
+        || (ai.planCard && ai.planCard.adjustFrom && ai.planCard.adjustFrom.cardId) || ''
       // 传消息对象（不是下标）：流式状态已按会话拆分，replace 走对象身份
-      streamAnswer(messages.value[i].content, imgs, ai, false, 1, deep, atts, skills, mentions, null, historyRefs, '', null, planMode)
+      streamAnswer(messages.value[i].content, imgs, ai, false, 1, deep, atts, skills, mentions, null, historyRefs, '', null, planMode, false, false,
+                   planBaseId ? { planBaseId } : null)
       return
     }
   }

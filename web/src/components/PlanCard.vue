@@ -5,19 +5,24 @@
        旧计划（已批准/已被取代/未批准）默认收成一行，点开才铺三段式（按会话记住）。
        裁决动作不在这里：打字框整块顶替成确认栏（PC 的 planp-*、移动壳的 m-planp-*）。 -->
   <div ref="rootEl" class="plan-card" :class="'plan-' + card.status">
-    <!-- 旧计划：一行摘要。点整行展开 / 收起，不再用覆盖正文的绝对定位按钮 -->
-    <button v-if="!expanded && !isLive" type="button" class="pc-line" :title="lineTitle"
-            @click="toggleLine">
-      <ordered-list-outlined class="pc-ic" />
-      <span class="pc-line-t">执行计划</span>
-      <span class="pc-ver">v{{ version }}</span>
-      <span class="pc-state" :class="'st-' + stateTone">{{ stateText }}</span>
-      <span class="pc-line-meta">
-        <template v-if="progress">{{ progress.done }}/{{ progress.total }}{{ progress.running ? ' 进行中' : (progress.done >= progress.total ? ' 已完成' : ' 未完成') }}<template v-if="progress.failed"> · {{ progress.failed }} 失败</template></template>
-        <template v-else>{{ stepCount }} 步</template>
-      </span>
-      <caret-right-outlined class="pc-line-caret" />
-    </button>
+    <!-- 旧计划：一行摘要。点整行展开 / 收起，不再用覆盖正文的绝对定位按钮。
+         已重新规划的旧卡在行尾多一颗「查看新一轮」直达；不把两个按钮塞进同一个 button。 -->
+    <div v-if="!expanded && !isLive" class="pc-line-wrap">
+      <button type="button" class="pc-line" :title="lineTitle" @click="toggleLine">
+        <ordered-list-outlined class="pc-ic" />
+        <span class="pc-line-t">执行计划</span>
+        <span class="pc-ver">v{{ version }}</span>
+        <span class="pc-state" :class="'st-' + stateTone">{{ stateText }}</span>
+        <span class="pc-line-meta">
+          <template v-if="progress">{{ progress.done }}/{{ progress.total }}{{ progress.running ? ' 进行中' : (progress.done >= progress.total ? ' 已完成' : ' 未完成') }}<template v-if="progress.failed"> · {{ progress.failed }} 失败</template></template>
+          <template v-else>{{ stepCount }} 步</template>
+        </span>
+        <caret-right-outlined class="pc-line-caret" />
+      </button>
+      <button v-if="replanned && card.replannedBy" type="button" class="pc-line-jump"
+              title="跳到按新意见生成的那一版计划" aria-label="查看新一轮"
+              @click="emit('locate-replanned')">新一轮 ↗</button>
+    </div>
 
     <template v-else>
       <div class="pc-head">
@@ -283,7 +288,12 @@ const toggleLine = async () => {
 .pc-fold { flex: none; margin-left: 2px; border: 0; background: none; padding: 2px; color: var(--app-text3); cursor: pointer; border-radius: 4px; }
 .pc-fold:hover { color: var(--app-accent); background: var(--app-accent-weak); }
 
-/* 旧计划一行摘要（整行可点，热区 ≥ 24px） */
+/* 旧计划一行摘要（整行可点，热区 ≥ 24px）；行尾的「新一轮」是独立按钮，不与展开按钮嵌套 */
+.pc-line-wrap { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.pc-line-wrap .pc-line { flex: 1; width: auto; min-width: 0; }
+.pc-line-jump { flex: none; border: 0; background: none; padding: 2px 4px; min-height: 24px; font-size: 10.5px;
+  color: var(--app-accent); cursor: pointer; white-space: nowrap; }
+.pc-line-jump:hover { background: var(--app-accent-weak); border-radius: 4px; }
 .pc-line { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 24px; padding: 0; border: 0; background: none; text-align: left; color: var(--app-text2); cursor: pointer; }
 .pc-line:hover .pc-line-t { color: var(--app-accent); }
 .pc-line-t { flex: none; font-size: 13px; font-weight: 600; }

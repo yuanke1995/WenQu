@@ -3310,6 +3310,15 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 planCard.put("planApprovalId", entry.getKey());
                 planCard.put("plan", planText);
                 planCard.put("timeoutMs", configService.getInt("chat.planTimeoutMs", 600000));
+                // 血缘随 plan_approval 一起下发：这张新计划是基于哪一版旧计划、带过来多少执行进度。
+                // 断线接流/换设备时没有原始 userMsg，只能靠帧自身带；待批卡则从 request_args 里取同一份。
+                if (cmd.getPlanBaseId() != null && !cmd.getPlanBaseId().isBlank()) {
+                    planCard.put("planBaseId", cmd.getPlanBaseId());
+                    planCard.put("planBaseVersion", cmd.getPlanBaseVersion());
+                    planCard.put("planBaseDone", cmd.getPlanBaseDone());
+                    planCard.put("planBaseTotal", cmd.getPlanBaseTotal());
+                    planCard.put("planBaseFailed", cmd.getPlanBaseFailed());
+                }
                 if (recording != null) {
                     Map<String, Object> version = new java.util.LinkedHashMap<>();
                     version.put("plan", planText);
