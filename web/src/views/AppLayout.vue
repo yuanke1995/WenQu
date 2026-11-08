@@ -256,6 +256,7 @@
                 <div v-if="!sec.bare" class="space-head" role="button" tabindex="0"
                      :aria-expanded="!spaceHidden(row)"
                      :title="(spaceHidden(row) ? '展开：' : '收起：') + row.name"
+                     @contextmenu.prevent="onSpaceCtxMenu($event, row)"
                      @click="toggleSpace(row)"
                      @keydown.enter.self.prevent="toggleSpace(row)"
                      @keydown.space.self.prevent="toggleSpace(row)">
@@ -303,6 +304,7 @@
                        :class="{ active: !batchMode && isActive('/chat') && route.query.sid === s.id, picked: batchMode && batchSel.has(s.id), running: sessBusy(s) }"
                        :style="{ '--sess-i': sessRowOrdinal.get(s.id) ?? 0 }"
                        :title="sessTooltip(s)"
+                       @contextmenu.prevent="onSessionCtxMenu($event, s)"
                        @click="batchMode ? toggleBatchSel(s.id) : openSession(s.id)">
                     <span v-if="batchMode" class="batch-check" :class="{ on: batchSel.has(s.id) }">
                       <check-outlined v-if="batchSel.has(s.id)" />
@@ -315,10 +317,20 @@
                     <a-tooltip v-if="s.shared" title="这段对话正在对外分享（只读链接生效中）">
                       <share-alt-outlined class="sess-share-flag" @click.stop="openShareManage(s.id)" />
                     </a-tooltip>
-                    <span class="sess-title" :class="{ fav: s.isFavorite === 1 }">
+                    <!-- 重命名就地改：名字换成多行输入框，回车/失焦保存、Esc 取消（与工作区同一套口径）。
+                         用 textarea 而非 input：长标题在 232px 侧栏里一行放不下，横向滚动只能看到末尾，
+                         撑成多行后整段都在视野里，想删哪个字直接点过去。 -->
+                    <textarea v-if="renameSessionId === s.id" :ref="setRenameSessionInputEl"
+                              v-model="renameSessionDraft" class="sess-name-input" rows="1" :maxlength="50"
+                              placeholder="会话标题" @click.stop
+                              @input="autoGrowRenameInput"
+                              @keydown.enter.prevent="commitSessionRename(s)"
+                              @keydown.esc.prevent="cancelSessionRename"
+                              @blur="commitSessionRename(s)"></textarea>
+                    <span v-else class="sess-title" :class="{ fav: s.isFavorite === 1 }">
                       <star-filled v-if="s.isFavorite === 1" class="sess-fav-flag" />{{ s.title || '新对话' }}
                     </span>
-                    <template v-if="!batchMode">
+                    <template v-if="!batchMode && renameSessionId !== s.id">
                       <a-tooltip :title="s.isPinned === 1 ? '取消置顶' : '置顶'">
                         <button class="sess-op" :class="{ on: s.isPinned === 1 }" @click.stop="togglePin(s)"><pushpin-outlined /></button>
                       </a-tooltip>
@@ -365,11 +377,39 @@
         </template>
       </div>
 
-      <!-- 重命名会话 -->
-      <a-modal v-model:open="renameState.open" title="重命名会话" ok-text="保存" cancel-text="取消" @ok="doRename">
-        <a-input v-model:value="renameState.title" :maxlength="50" placeholder="会话标题（≤50 字）"
-                 @press-enter="doRename" />
-      </a-modal>
+      <!-- 右键菜单：会话行与工作区头共用一份浮层，锚点跟着光标走。
+           直接自绘 fixed 容器 + a-menu：antd 的 a-dropdown 必须有真实触发器，
+           0×0 受控锚点实测点不出来；Teleport 到 body 也避开侧栏 overflow/transform 的影响。
+           动作仍交给 sessionMenu / spaceMenu，避免右键与 ⋯ 两套文案漂移。 -->
+      <Teleport to="body">
+        <div v-if="ctxMenu.open" ref="ctxMenuEl" class="ctx-menu"
+             :style="{ left: ctxMenu.x + 'px', top: ctxMenu.y + 'px' }"
+             @contextmenu.prevent>
+          <a-menu v-if="ctxMenu.kind === 'session'" @click="onCtxSessionMenu">
+            <a-menu-item key="rename"><edit-outlined /> 重命名</a-menu-item>
+            <a-menu-item key="favorite">
+              <star-filled v-if="ctxMenu.target && ctxMenu.target.isFavorite === 1" /><star-outlined v-else />
+              {{ ctxMenu.target && ctxMenu.target.isFavorite === 1 ? '取消收藏' : '收藏' }}
+            </a-menu-item>
+            <a-menu-item key="export"><download-outlined /> 导出 Markdown</a-menu-item>
+            <a-menu-item key="share"><share-alt-outlined /> 分享</a-menu-item>
+            <a-menu-item v-if="ctxMenu.target && ctxMenu.target.shared" key="share-manage"><share-alt-outlined /> 分享管理</a-menu-item>
+            <a-menu-item key="move"><folder-open-outlined /> 移动到工作区…</a-menu-item>
+            <a-menu-item key="batch"><check-square-outlined /> 批量管理</a-menu-item>
+            <a-menu-divider />
+            <a-menu-item key="delete" danger><delete-outlined /> 删除</a-menu-item>
+          </a-menu>
+          <a-menu v-else @click="onCtxSpaceMenu">
+            <a-menu-item key="open" :disabled="ctxMenu.target && ctxMenu.target.virtual"><folder-open-outlined /> 进入工作区</a-menu-item>
+            <a-menu-item key="folder" :disabled="ctxMenu.target && ctxMenu.target.virtual"><export-outlined /> 在电脑上打开</a-menu-item>
+            <a-menu-item key="rename" :disabled="ctxMenu.target && ctxMenu.target.virtual"><edit-outlined /> 重命名</a-menu-item>
+            <a-menu-divider />
+            <a-menu-item v-if="ctxMenu.target && ctxMenu.target.status === 'archived'" key="restore"><reload-outlined /> 恢复</a-menu-item>
+            <a-menu-item v-else key="archive"><inbox-outlined /> 归档</a-menu-item>
+            <a-menu-item v-if="ctxMenu.target && !ctxMenu.target.isImplicit" key="delete" danger><delete-outlined /> 删除工作区</a-menu-item>
+          </a-menu>
+        </div>
+      </Teleport>
 
       <div class="side-foot">
         <!-- 头像+昵称即「个人设置」入口（此前另有一个与头像语义重复的人形图标，折叠态还挤溢出） -->
@@ -1226,24 +1266,49 @@ const toggleFavorite = async s => {
     await loadSessions()
   } catch (e) { message.error(e.message || '操作失败') }
 }
-const renameState = reactive({ open: false, id: '', title: '' })
-const renameSession = s => {
-  renameState.open = true
-  renameState.id = s.id
-  renameState.title = s.title || ''
+// 会话重命名就地改：与工作区同一套 UX——名字换输入框，回车/失焦保存、Esc 取消。
+// 同一时刻只允许一行进入编辑态；不做空标题/同名提交，直接当取消处理（和工作区一样静默）。
+const renameSessionId = ref('')
+const renameSessionDraft = ref('')
+const renameSessionInputEl = ref(null)
+const setRenameSessionInputEl = el => { renameSessionInputEl.value = el }
+// 重命名用多行输入：标题在 232px 的侧栏里一行放不下，input 只能横向滚到末尾。
+// textarea 按内容自动撑高（最多 96px，再多内部滚动），整段文字始终在视野里，点哪删哪。
+const autoGrowRenameInput = () => {
+  const el = renameSessionInputEl.value
+  if (!el) return
+  el.style.height = 'auto'
+  el.style.height = Math.min(el.scrollHeight, 96) + 'px'
 }
-const doRename = async () => {
-  const t = renameState.title.trim()
-  if (!t) { message.warning('标题不能为空'); return }
+const startSessionRename = s => {
+  renameSessionId.value = s.id
+  renameSessionDraft.value = s.title || ''
+  nextTick(() => {
+    const el = renameSessionInputEl.value
+    if (!el) return
+    el.focus()
+    el.select()
+    autoGrowRenameInput()
+    // 全选后浏览器常把光标停在末尾（长标题会停在最后一行），拉回顶部：从第一个字开始看
+    el.scrollTop = 0
+  })
+}
+// 收起编辑态（保存/取消共用）
+const endSessionRename = () => { renameSessionId.value = '' }
+const cancelSessionRename = () => { endSessionRename() }
+const commitSessionRename = async s => {
+  if (renameSessionId.value !== s.id) return
+  const name = (renameSessionDraft.value || '').trim()
+  endSessionRename()
+  if (!name || name === (s.title || '')) return
   try {
-    await renameSessionApi(renameState.id, t)
+    await renameSessionApi(s.id, name)
     message.success('已重命名')
-    renameState.open = false
     await loadSessions()
   } catch (e) { message.error(e.message || '重命名失败') }
 }
 const sessionMenu = (s, key) => {
-  if (key === 'rename') renameSession(s)
+  if (key === 'rename') startSessionRename(s)
   else if (key === 'favorite') toggleFavorite(s)
   else if (key === 'export') exportSessionMd(s)
   else if (key === 'share') requestShareOpen(s)
@@ -1416,6 +1481,76 @@ const spaceMenu = (space, key) => {
     delTarget.value = space
     delOpen.value = true
   }
+}
+
+// ==================== 侧栏右键菜单（会话行 / 工作区头） ====================
+// 一份浮层服务两种目标：右键时记下光标坐标（fixed 定位即 clientX/Y），
+// kind 决定铺哪套菜单项；点选后直接复用 sessionMenu / spaceMenu。
+const ctxMenu = reactive({ open: false, kind: '', x: 0, y: 0, target: null })
+// 浮层本体：开出来先按光标摆，下一帧量到真实尺寸再把贴边的那一侧翻回来（右键在屏幕右下角时不会出屏）
+const ctxMenuEl = ref(null)
+// 右键浮层没有 trigger，点外/滚动/Esc/失焦全靠这三条监听自己收口。
+// 点菜单项时 pointerdown 落在浮层内（.ctx-menu），这里放行，让 a-menu 的 click 正常执行。
+const ctxOnPointerDown = ev => {
+  if (ev.target && ev.target.closest && ev.target.closest('.ctx-menu')) return
+  closeCtxMenu()
+}
+const ctxOnKeyDown = ev => { if (ev.key === 'Escape') closeCtxMenu() }
+const ctxOnScroll = () => closeCtxMenu()
+const bindCtxClose = () => {
+  unbindCtxClose()
+  document.addEventListener('pointerdown', ctxOnPointerDown, true)
+  document.addEventListener('keydown', ctxOnKeyDown, true)
+  window.addEventListener('scroll', ctxOnScroll, true)
+  window.addEventListener('blur', ctxOnScroll)
+}
+const unbindCtxClose = () => {
+  document.removeEventListener('pointerdown', ctxOnPointerDown, true)
+  document.removeEventListener('keydown', ctxOnKeyDown, true)
+  window.removeEventListener('scroll', ctxOnScroll, true)
+  window.removeEventListener('blur', ctxOnScroll)
+}
+const openCtxMenu = async (ev, kind, target) => {
+  ctxMenu.kind = kind
+  ctxMenu.target = target
+  ctxMenu.x = ev.clientX
+  ctxMenu.y = ev.clientY
+  ctxMenu.open = true
+  bindCtxClose()
+  await nextTick()
+  const el = ctxMenuEl.value
+  if (!el) return
+  const r = el.getBoundingClientRect()
+  const maxX = window.innerWidth - r.width - 8
+  const maxY = window.innerHeight - r.height - 8
+  ctxMenu.x = Math.min(ev.clientX, Math.max(8, maxX))
+  ctxMenu.y = Math.min(ev.clientY, Math.max(8, maxY))
+}
+const closeCtxMenu = () => {
+  ctxMenu.open = false
+  unbindCtxClose()
+}
+// 组件销毁时别把全局监听留下（否则换页后仍会对着已卸载的浮层调用 close）
+onUnmounted(unbindCtxClose)
+const onSessionCtxMenu = (ev, s) => {
+  // 批量态整行是勾选热区，右键不抢语义（也避免和批量全选打架）
+  if (batchMode.value) return
+  openCtxMenu(ev, 'session', s)
+}
+const onSpaceCtxMenu = (ev, space) => {
+  // 与行尾 ⋯ 同一判据：不可选（隐式兜底/归档组占位）的工作区不提供操作
+  if (!space.selectable) return
+  openCtxMenu(ev, 'space', space)
+}
+const onCtxSessionMenu = ({ key }) => {
+  const s = ctxMenu.target
+  closeCtxMenu()
+  if (s) sessionMenu(s, key)
+}
+const onCtxSpaceMenu = ({ key }) => {
+  const space = ctxMenu.target
+  closeCtxMenu()
+  if (space) spaceMenu(space, key)
 }
 
 // ==================== 删除工作区（只摘归属，本机文件不动） ====================
@@ -1972,6 +2107,17 @@ watch(() => route.fullPath, () => {
 .sess-item.active { background: var(--app-accent-weak); color: var(--app-text); box-shadow: inset 2px 0 0 var(--app-accent); }
 .sess-item.picked { background: var(--app-accent-weak); color: var(--app-text); }
 .sess-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
+/* 会话就地改名：多行输入（textarea 按内容自动撑高，见 autoGrowRenameInput）。
+   宽度吃掉整行、行长随内容变高；最多 96px 后内部滚动，不会把整列会话顶出屏幕。 */
+.sess-name-input {
+  flex: 1; min-width: 0; padding: 2px 5px; margin: -1px 0;
+  font: inherit; font-size: 12.5px; line-height: 18px;
+  color: var(--app-text); background: var(--app-panel);
+  border: 1px solid var(--app-accent-border); border-radius: 5px;
+  outline: none; resize: none; overflow-y: auto;
+  min-height: 22px; max-height: 96px; word-break: break-word; cursor: text;
+}
+.sess-name-input:focus { border-color: var(--app-accent); }
 .sess-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--app-text3); margin: 0 auto; }
 .sess-item.active .sess-dot { background: var(--app-accent); }
 /* 折叠成图标条：圆点居中，行不再左缩进 */
@@ -2188,4 +2334,20 @@ watch(() => route.fullPath, () => {
 .pj-mode-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
 .pj-mode-label { font-size: 12px; color: var(--app-text2); white-space: nowrap; }
 .pj-mode-tail { margin-left: 8px; color: var(--app-text3); }
+
+/* 侧栏右键菜单：teleport 到 body，位置由光标坐标驱动（见 openCtxMenu），这里只管外观。
+   菜单项压成 dropdown 的紧凑档（32px 行高），与行尾 ⋯ 菜单视觉一致。 */
+.ctx-menu {
+  position: fixed; z-index: 1050; min-width: 168px; padding: 4px;
+  background: var(--app-panel); border: 1px solid var(--app-border);
+  border-radius: var(--app-radius); box-shadow: var(--app-shadow-lg);
+}
+.ctx-menu .ant-menu { background: transparent; border: none; box-shadow: none; }
+.ctx-menu .ant-menu-item {
+  height: 32px; line-height: 32px; margin: 0; padding: 0 12px;
+  border-radius: var(--app-radius-sm); font-size: 13px;
+}
+.ctx-menu .ant-menu-item .anticon { font-size: 13px; }
+.ctx-menu .ant-menu-item-danger { color: var(--app-danger); }
+.ctx-menu .ant-menu-item-divider { margin: 4px 0; }
 </style>
