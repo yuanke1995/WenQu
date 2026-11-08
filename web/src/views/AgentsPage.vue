@@ -400,9 +400,9 @@
                     </div>
                     <div class="ap-adv-field ap-adv-full">
                       <label class="ap-field-label">轮终回调</label>
-                      <a-input v-model:value="form.callbackUrl" size="small" allow-clear
+                      <a-input v-model:value="form.callbackUrl" size="small" allow-clear autocomplete="off"
                                placeholder="https://宿主系统.example.com/wenqu/callback（每轮结束 POST 结果）" />
-                      <a-input-password v-model:value="form.callbackSecret" size="small" class="ap-cb-secret"
+                      <a-input-password v-model:value="form.callbackSecret" size="small" class="ap-cb-secret" autocomplete="new-password"
                                         :placeholder="form.callbackSecretSet ? '已配置（重新填写可更换，留空沿用）' : '签名密钥（可选，留空则不带签名头）'" />
                       <div class="ap-hint">每轮结束向该地址 POST 签名结果（X-Wenqu-Event: agent.turn.finished，含回答与状态）；失败自动重试，持续失败会通知你。内网地址会被拒绝。</div>
                     </div>

@@ -181,11 +181,11 @@
         <div class="auto-block-title">运行终态回调</div>
         <div class="auto-row">
           <span class="auto-label">地址</span>
-          <a-input v-model:value="autoForm.callbackUrl" placeholder="https://your.app/hook（运行成功/失败/超时后 POST JSON）" allow-clear />
+          <a-input v-model:value="autoForm.callbackUrl" placeholder="https://your.app/hook（运行成功/失败/超时后 POST JSON）" allow-clear autocomplete="off" />
         </div>
         <div class="auto-row">
           <span class="auto-label">签名密钥</span>
-          <a-input-password v-model:value="autoForm.callbackSecret"
+          <a-input-password v-model:value="autoForm.callbackSecret" autocomplete="new-password"
                             :placeholder="autoSecretSet ? '已设置（留空保持不变）' : '选填：HMAC-SHA256 签名密钥'" />
         </div>
         <div class="wf-meta auto-hint">
