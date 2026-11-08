@@ -34,8 +34,8 @@
             <button class="app-link-btn" type="button" @click="openHistory">历史报告</button>
           </div>
           <div v-if="trend.length" class="trend-bars" aria-label="近 7 天巡检趋势">
-            <span v-for="d in trend" :key="d.date" class="trend-bar"
-                  :class="d.overall === 'fail' ? 'err' : d.overall === 'warn' ? 'warn' : 'ok'"
+            <span v-for="d in trendSlots" :key="d.date" class="trend-bar"
+                  :class="d.overall === 'fail' ? 'err' : d.overall === 'warn' ? 'warn' : d.overall === 'empty' ? 'empty' : 'ok'"
                   :style="{ height: barHeight(d) }" :title="trendTitle(d)"></span>
           </div>
           <div v-else class="trend-empty">暂无历史趋势</div>
@@ -254,6 +254,19 @@ const visibleGroups = computed(() => groups.value
 const worst = computed(() => checks.value.find(c => c.level === 'fail') || checks.value.find(c => c.level === 'warn') || null)
 
 const trend = ref([])
+const pad2 = n => String(n).padStart(2, '0')
+// 始终铺满 7 个日期槽位：只有 1~2 天报告时，柱子不会因为 flex:1 被拉成整块色块
+const trendSlots = computed(() => {
+  const byDate = new Map((trend.value || []).map(d => [d.date, d]))
+  const base = new Date()
+  const out = []
+  for (let i = 6; i >= 0; i--) {
+    const dt = new Date(base.getFullYear(), base.getMonth(), base.getDate() - i)
+    const key = `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}-${pad2(dt.getDate())}`
+    out.push(byDate.get(key) || { date: key, runs: 0, fail: 0, warn: 0, overall: 'empty' })
+  }
+  return out
+})
 async function loadTrend () {
   try {
     const r = await getOpsCheckupTrend(7)
@@ -262,11 +275,12 @@ async function loadTrend () {
     trend.value = []
   }
 }
-const barHeight = d => {
-  const runs = Math.max(1, Number(d.runs || 1))
-  return `${Math.min(100, 22 + runs * 12)}%`
-}
-const trendTitle = d => `${d.date} · ${d.runs} 次 · 失败 ${d.fail || 0} · 留意 ${d.warn || 0}`
+const barHeight = d => d.overall === 'empty'
+  ? '2px'
+  : `${Math.min(100, 22 + Math.max(1, Number(d.runs || 1)) * 12)}%`
+const trendTitle = d => d.overall === 'empty'
+  ? `${d.date} · 无巡检`
+  : `${d.date} · ${d.runs} 次 · 失败 ${d.fail || 0} · 留意 ${d.warn || 0}`
 
 const fmtTime = s => (s ? String(s).replace('T', ' ').slice(0, 19) : '—')
 const levelText = l => ({ ok: '正常', warn: '留意', fail: '必须处理' }[l] || l || '—')
@@ -421,6 +435,7 @@ loadTrend()
 .trend-bar.ok { background: var(--app-ok); opacity: .82; }
 .trend-bar.warn { background: var(--app-warn); opacity: .9; }
 .trend-bar.err { background: var(--app-danger); }
+.trend-bar.empty { min-height: 0; background: var(--app-border); opacity: .5; }
 .trend-empty { height: 34px; display: flex; align-items: center; justify-content: center; font-size: 10px; color: var(--app-text3); }
 .trend-foot { font-size: 9.5px; color: var(--app-text3); margin-top: 6px; }
 
