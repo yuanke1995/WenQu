@@ -92,6 +92,7 @@ public class AgentWebhookService {
             if (cmd.getAgentId() == null || cmd.getAgentId().isBlank()) return;
             final String agentId = cmd.getAgentId();
             final String sessionId = cmd.getSessionId();
+            final String apiKeyId = cmd.getApiKeyId();   // 接入方分流用：同一 URL 下按 Key 区分调用来源
             final String uidF = uid;
             final String turnIdF = turnId;
             final String statusF = status;
@@ -103,7 +104,7 @@ public class AgentWebhookService {
             final long elapsedF = elapsedMs;
             boolean submitted = com.wenqu.ai.thread.ThreadPoolManager.execute(() -> {
                 try {
-                    deliver(uidF, agentId, sessionId, turnIdF, statusF, failureF, contentF,
+                    deliver(uidF, agentId, apiKeyId, sessionId, turnIdF, statusF, failureF, contentF,
                             messageIdF, tokensF, artifactsF, elapsedF);
                 } catch (Exception e) {
                     log.warn("[WEBHOOK] 轮终投递失败（旁路，不影响问答）: session={} : {}",
@@ -113,7 +114,7 @@ public class AgentWebhookService {
             if (!submitted) {
                 // 拒投：显式出路——把这一轮记成到期 pending，扫描任务下一拍补发（不丢）
                 log.warn("[WEBHOOK] 线程池拒投，转扫描补发: session={}", sessionId);
-                scheduleImmediateRetry(uidF, agentId, sessionId, turnIdF, statusF, failureF,
+                scheduleImmediateRetry(uidF, agentId, apiKeyId, sessionId, turnIdF, statusF, failureF,
                         contentF, messageIdF, tokensF, artifactsF, elapsedF);
             }
         } catch (Exception e) {
@@ -124,14 +125,14 @@ public class AgentWebhookService {
     // ==================== 投递与重试 ====================
 
     /** 落行 + 首发（异步线程内执行） */
-    private void deliver(String uid, String agentId, String sessionId, String turnId, String status,
+    private void deliver(String uid, String agentId, String apiKeyId, String sessionId, String turnId, String status,
                          String failure, String content, String messageId,
                          Map<String, Object> tokens, List<Map<String, Object>> artifacts, long elapsedMs) {
         Agent agent = agentMapper.selectById(agentId);
         if (agent == null || agent.getCallbackUrl() == null || agent.getCallbackUrl().isBlank()) return;
         String url = agent.getCallbackUrl().trim();
         String secret = decryptSecret(agent.getCallbackSecret());
-        String payload = JSON.toJSONString(buildPayload(turnId, sessionId, agentId, agent.getName(),
+        String payload = JSON.toJSONString(buildPayload(turnId, sessionId, agentId, apiKeyId, agent.getName(),
                 status, failure, content, messageId, tokens, artifacts, elapsedMs));
         WebhookDelivery row = new WebhookDelivery();
         row.setId(UUID.randomUUID().toString());
@@ -238,7 +239,7 @@ public class AgentWebhookService {
     // ==================== 内部 ====================
 
     /** 线程池拒投的显式出路：直接落一条到期 pending 行（首发都没发出去，attempts=0） */
-    private void scheduleImmediateRetry(String uid, String agentId, String sessionId, String turnId,
+    private void scheduleImmediateRetry(String uid, String agentId, String apiKeyId, String sessionId, String turnId,
                                         String status, String failure, String content, String messageId,
                                         Map<String, Object> tokens, List<Map<String, Object>> artifacts,
                                         long elapsedMs) {
@@ -246,7 +247,7 @@ public class AgentWebhookService {
             Agent agent = agentMapper.selectById(agentId);
             if (agent == null || agent.getCallbackUrl() == null || agent.getCallbackUrl().isBlank()) return;
             String secret = decryptSecret(agent.getCallbackSecret());
-            String payload = JSON.toJSONString(buildPayload(turnId, sessionId, agentId, agent.getName(),
+            String payload = JSON.toJSONString(buildPayload(turnId, sessionId, agentId, apiKeyId, agent.getName(),
                     status, failure, content, messageId, tokens, artifacts, elapsedMs));
             WebhookDelivery row = new WebhookDelivery();
             row.setId(UUID.randomUUID().toString());
@@ -267,8 +268,8 @@ public class AgentWebhookService {
         }
     }
 
-    /** 出站载荷（接收方契约：幂等键 turnId/messageId；正文 ≤64KB） */
-    private Map<String, Object> buildPayload(String turnId, String sessionId, String agentId,
+    /** 出站载荷（接收方契约：幂等键 turnId/messageId；apiKeyId=调用来源 Key（网页轮不带）；正文 ≤64KB） */
+    private Map<String, Object> buildPayload(String turnId, String sessionId, String agentId, String apiKeyId,
                                              String agentName, String status, String failure,
                                              String content, String messageId,
                                              Map<String, Object> tokens, List<Map<String, Object>> artifacts,
@@ -280,6 +281,8 @@ public class AgentWebhookService {
         payload.put("messageId", messageId);
         payload.put("agentId", agentId);
         payload.put("agentName", agentName == null ? "" : agentName);
+        // 接入方分流：同一回调地址被多个外部系统共用时，按 Key 归属区分（网页端轮无 Key，省略）
+        if (apiKeyId != null && !apiKeyId.isBlank()) payload.put("apiKeyId", apiKeyId);
         payload.put("status", status);
         if (failure != null && !failure.isBlank()) payload.put("failure", failure);
         payload.put("finalContent", content.length() > CONTENT_MAX_CHARS
