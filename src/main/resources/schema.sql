@@ -1212,6 +1212,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_usage_log` (
     `message_id`        VARCHAR(64)  DEFAULT NULL COMMENT '触发该次调用的回答消息（可空：调用先于消息落库或无归属回答）',
     `model`             VARCHAR(190) DEFAULT NULL COMMENT '模型引用 providerId/modelId',
     `kind`              VARCHAR(32)  NOT NULL DEFAULT 'chat' COMMENT '调用用途: chat=问答主链路 subagent=子智能体分支 memory=记忆提取 compress=历史压缩 citecheck=引用自检 workflow=工作流节点 graphrag=图谱 index=索引 probe=探测 eval=评测 other',
+    `api_key_id`        VARCHAR(50)  DEFAULT NULL COMMENT '发起本笔调用的 API Key id(对外能力第二批: OpenAI 兼容端点按 Key 计量归属, 与 c_ai_api_key.id 同形); NULL=非 Key 通道',
     `prompt_tokens`     BIGINT       NOT NULL DEFAULT 0 COMMENT '输入 token（含缓存命中部分，与网关 usage.prompt_tokens 同口径）',
     `completion_tokens` BIGINT       NOT NULL DEFAULT 0 COMMENT '输出 token（含思考过程与工具调用参数生成）',
     `cached_tokens`     BIGINT       NOT NULL DEFAULT 0 COMMENT '命中 prompt 缓存的输入 token',

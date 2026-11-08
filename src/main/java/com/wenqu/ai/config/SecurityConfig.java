@@ -268,6 +268,10 @@ public class SecurityConfig implements WebMvcConfigurer {
         // 与普通用户白名单同层（API Key 走第 1 层放行分支）；权限面收在 WorkflowService 内：
         // 工作流对该身份可读才可触发，不可见/未发布一律拒绝，不因端点开放而放宽资源级判定。
         if (path.startsWith("/api/ai/v1/workflows")) return true;
+        // OpenAI 兼容端点（对外能力第二批）：/api/ai/v1/chat/completions——外部项目持 API Key
+        // 以 OpenAI SDK 语义调用智能体（model=智能体id）。资源级判定在端点内（智能体可见性），
+        // 与 /v1/workflows 同层同口径；刻意不进 isKeyDeniedEndpoint——这个端点就是给 Key 用的。
+        if (path.equals("/api/ai/v1/chat/completions")) return true;
         return false;
     }
 

@@ -897,7 +897,10 @@ public class ConfigService {
         // 与 httpTool.enabled 同一理由默认开：没有配置工作流的智能体该族天然不挂，闸开着也无工具可出。
         d.put("workflowTool.enabled", "true");            // 工作流工具总开关（需 tool.enabled 总闸开启）
         d.put("agentWebhook.enabled", "true");
-        d.put("agentMemory.enabled", "true");             // 智能体级记忆总闸（关=全部智能体按用户级记忆走，memory_mode 失效）            // 智能体轮终 webhook 出站总开关（关=不再外推；已有 pending 行由扫描按原排程走完或就地耗尽）
+        d.put("agentMemory.enabled", "true");
+        // 开放 API 跨域白名单（对外能力第二批·管道层）：空=不回 CORS 头（现状零变化）；
+        // 逗号分隔，如 "https://hr.example.com,https://crm.example.com"。只作用于 /api/ai/v1/**。
+        d.put("apiOpen.allowedOrigins", "");             // 智能体级记忆总闸（关=全部智能体按用户级记忆走，memory_mode 失效）            // 智能体轮终 webhook 出站总开关（关=不再外推；已有 pending 行由扫描按原排程走完或就地耗尽）
         // 技能：内置随版本分发 + 用户自装（user-data/skills-users/{uid}）+ 助手在对话里沉淀到沙盒工作区。
         // 平台侧只剩两件事：哪些技能全平台不再用（skill.disabled），以及 URL 安装允许哪些来源域名。
         // 技能正文读取上限改为平台常量（SKILL_MAX_FILE_CHARS），不再作为设置项。

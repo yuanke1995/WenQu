@@ -83,6 +83,12 @@ public final class ChatCommand {
      */
     final boolean apiKey;
     /**
+     * 发起本调用的 API Key id（对外能力第二批）：用量台账按它落 c_ai_usage_log.api_key_id（Key 主键为 VARCHAR），
+     * 供按 Key 对账。仅 X-Api-Key 通道由控制器从拦截器属性取值传入，其余调用方恒为 null
+     * （与 {@link #apiKey} 布尔位分开：那个管能力面收窄，这个管计量归属）。
+     */
+    final String apiKeyId;
+    /**
      * 这一轮的<b>访客身份</b>（{@code share-visitor:{客户端随机}}，仅 guestMode 有值）。
      * <p>接流总线按它认归属，不能用 {@link #userId}——后者是<b>发布者</b>（免登录问答要按发布者的
      * 资料可见性检索）。少了这一个，要么分享页接不上流，要么任何人都能接走别人会话的流。

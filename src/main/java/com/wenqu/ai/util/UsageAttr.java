@@ -27,8 +27,16 @@ public final class UsageAttr {
     private UsageAttr() {
     }
 
-    /** 归属快照 */
-    public record Attr(String uid, String sessionId, String messageId, String kind) {
+    /**
+     * 归属快照。{@code apiKeyId} 非空 = 这笔用量由某条 API Key 的调用发起（对外能力第二批：
+     * OpenAI 兼容端点的计量归属），台账按它落 c_ai_usage_log.api_key_id 供按 Key 对账；
+     * 其余通道恒为 null（record 第五字段缺省 null，旧构造点零变化）。
+     */
+    public record Attr(String uid, String sessionId, String messageId, String kind, String apiKeyId) {
+        /** 旧形状的兼容构造（apiKeyId=null） */
+        public Attr(String uid, String sessionId, String messageId, String kind) {
+            this(uid, sessionId, messageId, kind, null);
+        }
     }
 
     /** 同步调用方持有归属（务必在 finally 中 clear，避免线程复用污染） */
@@ -69,5 +77,10 @@ public final class UsageAttr {
     /** 建 frontier 用：顺序取值（无则为 null），便于快速构造 Attr */
     public static Attr of(String uid, String sessionId, String messageId, String kind) {
         return new Attr(uid, sessionId, messageId, kind);
+    }
+
+    /** 带 API Key 归属的构造（OpenAI 兼容端点用） */
+    public static Attr of(String uid, String sessionId, String messageId, String kind, String apiKeyId) {
+        return new Attr(uid, sessionId, messageId, kind, apiKeyId);
     }
 }

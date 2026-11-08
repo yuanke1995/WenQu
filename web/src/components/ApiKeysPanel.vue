@@ -70,6 +70,11 @@
         <template v-else-if="column.key === 'lastUsed'">
           <span :class="{ 'key-dim': !record.lastUsedAt }">{{ record.lastUsedAt ? fmtTs(record.lastUsedAt) : '从未使用' }}</span>
         </template>
+        <template v-else-if="column.key === 'usage30d'">
+          <span class="key-dim" :title="'近 30 天：' + (record.usage30dCalls || 0) + ' 次调用 / ' + (record.usage30dTokens || 0) + ' tokens（含 OpenAI 兼容端点）'">
+            {{ (record.usage30dCalls || 0) }} 次 · {{ fmtTokens(record.usage30dTokens || 0) }}
+          </span>
+        </template>
         <template v-else-if="column.key === 'created'">
           <span class="key-dim">{{ fmtDate(record.createTime) }}</span>
         </template>
@@ -322,6 +327,7 @@ const keyCols = [
   { title: '启用', key: 'status', width: 54 },
   { title: 'MCP 入口', key: 'mcp', width: 84 },
   { title: '最近使用', key: 'lastUsed', width: 130 },
+  { title: '近30天用量', key: 'usage30d', width: 130 },
   { title: '创建时间', key: 'created', width: 90 },
   { title: '有效期', key: 'expire', width: 90 },
   { title: '操作', key: 'act', width: 84 }
@@ -401,6 +407,9 @@ const lastUsedKey = computed(() => keys.value
     .filter(k => k.lastUsedAt)
     .sort((a, b) => String(b.lastUsedAt).localeCompare(String(a.lastUsedAt)))[0] || null)
 const fmtTs = s => (s ? String(s).replace('T', ' ').slice(0, 16) : '—')
+const fmtTokens = n => (n >= 1000000 ? (n / 1000000).toFixed(1) + 'M'
+  : n >= 1000 ? (n / 1000).toFixed(1) + 'K' : String(n))
+
 const fmtDate = s => (s ? String(s).slice(0, 10) : '长期')
 
 const loadKeys = async () => {

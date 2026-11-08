@@ -3972,7 +3972,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 .build();
         io.agentscope.core.model.Model chatModel = new MeteredModel(baseModel, usageLedger, quotaService, contentSafety,
                 com.wenqu.ai.util.UsageAttr.of(cmd.getUserId(), cmd.getSessionId(), null,
-                        cmd.branchTurn() ? "subagent" : "chat"), hooks.modelRef());
+                        cmd.branchTurn() ? "subagent" : "chat", cmd.getApiKeyId()), hooks.modelRef());
         // 主链那份包装器登记到会话表：它是本轮「断流」计数的唯一来源（实例跨轮复用，收尾读差值）
         sessions.noteChatModel(sessions.key(cmd), (MeteredModel) chatModel);
         // 可派遣的助手（派遣由框架的 agent_spawn 驱使）：这一份列表同时决定两件事——

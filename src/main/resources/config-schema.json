@@ -100,6 +100,13 @@
       ]
     },
     {
+      "key": "apiOpen",
+      "title": "开放 API（外部项目嵌入）",
+      "sections": [
+        "跨域"
+      ]
+    },
+    {
       "key": "skills",
       "title": "技能",
       "sections": [
@@ -2960,6 +2967,19 @@
       "def": true,
       "tier": 2,
       "note": "开启后智能体可配「记忆域」：专属（各自独立的长期记忆，互不串味）或叠加（专属活跃 + 用户全局记忆只读打底）。默认开不改变任何存量行为——未配置记忆域的智能体仍用用户级记忆。"
+    },
+    {
+      "backendKey": "apiOpen.allowedOrigins",
+      "panel": "apiOpen",
+      "section": 0,
+      "group": "apiOpen",
+      "key": "allowedOrigins",
+      "path": "apiOpen.allowedOrigins",
+      "label": "跨域白名单",
+      "type": "text",
+      "def": "",
+      "tier": 2,
+      "note": "允许浏览器 JS 直调 /api/ai/v1/**（OpenAI 兼容端点）的来源，逗号分隔，如 https://hr.example.com。留空=不回跨域头（服务端调用不受影响，无需配置）。"
     },
     {
       "backendKey": "webSearch.provider",

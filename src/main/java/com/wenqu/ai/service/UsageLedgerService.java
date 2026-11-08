@@ -98,6 +98,7 @@ public class UsageLedgerService {
         row.setMessageId(attr == null ? null : attr.messageId());
         row.setModel(modelRef);
         row.setKind(attr == null || attr.kind() == null ? "chat" : attr.kind());
+        row.setApiKeyId(attr == null ? null : attr.apiKeyId());
         row.setPromptTokens(prompt);
         row.setCompletionTokens(completion);
         row.setCachedTokens(cached);

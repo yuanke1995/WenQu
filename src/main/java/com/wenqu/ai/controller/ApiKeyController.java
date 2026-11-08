@@ -41,13 +41,39 @@ import com.wenqu.ai.security.Permission;
 @Tag(name = "API Key 管理", description = "对外开放问答能力的密钥签发与吊销")
 public class ApiKeyController {
 
+    private final com.wenqu.ai.mapper.UsageLogMapper usageLogMapper;
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(ApiKeyController.class);
+
     private final ApiKeyService apiKeyService;
 
     @Operation(summary = "Key 列表", description = "不含明文与哈希，仅前缀与使用/过期状态；谁建归谁（只看得到自己签发的 Key）")
     @Permission("apikey:read")
     @GetMapping("/list")
     public ResultJson list() {
-        return ResultJson.ok(apiKeyService.list());
+        java.util.List<?> rows = apiKeyService.list();
+        // 近 30 天按 Key 用量小计（对外能力第二批：OpenAI 兼容端点的计量归属在此显形；
+        // 聚合失败不挡列表——小计是增强信息，缺了只少一列）
+        java.util.Map<String, java.util.Map<String, Object>> usage = new java.util.LinkedHashMap<>();
+        try {
+            for (java.util.Map<String, Object> r : usageLogMapper.statApiKeyUsage(
+                    com.wenqu.ai.util.RequestUser.uid(),
+                    java.time.LocalDateTime.now().minusDays(30))) {
+                Object k = r.get("k");
+                if (k != null) usage.put(String.valueOf(k), r);
+            }
+        } catch (Exception e) {
+            log.warn("[API-KEY] 用量小计聚合失败（列表照常返回）: {}", e.getMessage());
+        }
+        com.alibaba.fastjson2.JSONArray out = new com.alibaba.fastjson2.JSONArray();
+        for (Object row : rows) {
+            com.alibaba.fastjson2.JSONObject o = (com.alibaba.fastjson2.JSONObject) com.alibaba.fastjson2.JSON.toJSON(row);
+            Object id = o.get("id");
+            java.util.Map<String, Object> u = id == null ? null : usage.get(String.valueOf(id));
+            o.put("usage30dCalls", u == null ? 0 : ((Number) u.getOrDefault("c", 0)).intValue());
+            o.put("usage30dTokens", u == null ? 0L : ((Number) u.getOrDefault("t", 0L)).longValue());
+            out.add(o);
+        }
+        return ResultJson.ok(out);
     }
 
     @Operation(summary = "签发 Key", description = "返回明文 apiKey（此后可在列表点「眼睛」回显/复制——明文以部署密钥加密保管）。"

@@ -48,6 +48,9 @@ public class UsageLog {
     /** 调用用途：chat / dispatch / subagent / memory / compress / rewrite / citecheck / think / workflow / graphrag / index / probe / eval / other */
     private String kind;
 
+    /** 发起本笔调用的 API Key id（对外能力第二批；null=非 API Key 通道。Key 主键是 VARCHAR，与 c_ai_api_key.id 同形） */
+    private String apiKeyId;
+
     /** 输入 token（含缓存命中部分，与网关 usage.prompt_tokens 同口径） */
     private Long promptTokens;
 
