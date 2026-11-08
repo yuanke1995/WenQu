@@ -1,8 +1,9 @@
 <script setup>
 // 用户头像（三态渲染，与后端 c_ai_user.avatar 口径一致）：
-//   avatar 以 / 开头 → 上传图片 URL（<img> 圆形裁切）；
+//   avatar 以 / 开头 → 上传图片 URL（经 resolveMediaUrl 补开发态 /proxy 前缀后 <img> 圆形裁切）；
 //   avatar 为 emoji 字符 → 表情块；空 → 昵称首字（兜底）。
 import { computed } from 'vue'
+import { resolveMediaUrl } from '../utils/mediaUrl'
 
 const props = defineProps({
   /** 头像取值（后端 avatar 字段；空=昵称首字） */
@@ -24,10 +25,11 @@ const initialChar = computed(() => {
   return (n || '游').charAt(0).toUpperCase() || '游'
 })
 const fontSize = computed(() => Math.round(props.size * 0.42) + 'px')
+const imgSrc = computed(() => resolveMediaUrl(props.avatar))
 </script>
 
 <template>
-  <img v-if="kind === 'img'" class="ua" :style="{ width: size + 'px', height: size + 'px' }" :src="avatar" alt="" />
+  <img v-if="kind === 'img'" class="ua" :style="{ width: size + 'px', height: size + 'px' }" :src="imgSrc" alt="" />
   <span v-else class="ua" :style="{ width: size + 'px', height: size + 'px', fontSize }">
     {{ kind === 'emoji' ? avatar : initialChar }}
   </span>

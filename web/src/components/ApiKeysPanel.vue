@@ -315,6 +315,7 @@ import { listApiKeys, createApiKey, setApiKeyDisabled, setApiKeyMcp, deleteApiKe
          updateApiKey, revealApiKey, getMcpAuditLogs, getMcpAuditSummary } from '../api'
 import { authUser } from '../utils/auth'
 import { writeClipboard } from '../utils/clipboard'
+import { publicUrl } from '../utils/publicUrl'
 
 const keys = ref([])
 const keysLoading = ref(false)
@@ -444,13 +445,13 @@ const curlSample = computed(() => {
 })
 
 /**
- * 平台级 MCP 接入点。地址由 window.location.origin 拼出，因此开发态是 vite 的 5800
- * （vite 已把 /ai 代理到后端），生产态就是前端域名——不需要用户自己去拼。
+ * 平台级 MCP 接入点。基址走 publicUrl（本地连线上后端时按 VITE_PROXY_TARGET 推导服务器地址）：
+ * 本地起 web 调试时地址也要能被外部客户端真实访问，不能固化成 vite 的 5800。
  *
  * 凭据头用真 Key 前缀 + "..."：完整明文在列表「眼睛」里随时可回显，这里不可能拿到，
  * 用前缀是为了让粘贴的人一眼知道该换成什么，而不是留一句"你的 Key"让人猜位置。
  */
-const mcpPlatformUrl = computed(() => window.location.origin + '/ai/mcp')
+const mcpPlatformUrl = computed(() => publicUrl('/ai/mcp'))
 const mcpPlatformJson = computed(() => {
   const k = keys.value.find(x => !x.disabled && !x.expired)?.keyPrefix || 'sk-你的Key'
   return JSON.stringify({

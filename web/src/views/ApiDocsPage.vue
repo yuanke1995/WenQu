@@ -2,8 +2,8 @@
   对接文档（在线）：API Key 对外集成的完整手册 —— 怎么用 / 有什么能力 / 接哪些。
   内容全部对应后端真实实现（SecurityConfig 白名单∩拒绝名单、ChatController、
   WorkflowApiController、McpServerService 平台级工具集），不写接口上不存在的能力。
-  示例地址动态取 window.location.origin（与 ApiKeysPanel 的 curl/MCP 示例同一拼法），
-  开发态是 vite 5800（已把 /ai 代理到后端），生产态就是前端域名。
+  示例地址统一走 publicUrl（本地连线上后端时按 VITE_PROXY_TARGET 推导服务器地址，未设置回落当前 origin，
+  与 ApiKeysPanel 同源）：本地起 web 时，文档里的地址必须是真的服务器地址，不能固化成 localhost:5800。
 -->
 <template>
   <div class="app-page">
@@ -278,6 +278,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { publicUrl } from '../utils/publicUrl'
 import { CheckOutlined, CopyOutlined } from '@ant-design/icons-vue'
 import { writeClipboard } from '../utils/clipboard'
 
@@ -294,9 +295,9 @@ const sections = [
   { id: 'doc-errors', label: '错误码与限频' }
 ]
 
-/** 地址动态拼法与 ApiKeysPanel 同源：开发态走 vite 5800 的 /ai 代理，生产态即前端域名 */
-const baseUrl = computed(() => window.location.origin + '/ai')
-const mcpUrl = computed(() => window.location.origin + '/ai/mcp')
+/** 地址动态拼法与 ApiKeysPanel 同源：基址走 publicUrl（按 VITE_PROXY_TARGET 推导，未设置回落当前 origin） */
+const baseUrl = computed(() => publicUrl('/ai'))
+const mcpUrl = computed(() => publicUrl('/ai/mcp'))
 const mcpJson = computed(() => JSON.stringify({
   mcpServers: { wenqu: { url: mcpUrl.value, headers: { Authorization: 'Bearer sk-你的Key' } } }
 }, null, 2))

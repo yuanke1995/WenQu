@@ -102,6 +102,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { getFirstRun, loginApi, initializeAdmin, getOidcConfig, getOidcLoginUrl, getTenantBrand } from '../api'
 import { setToken } from '../utils/auth'
+import { resolveMediaUrl } from '../utils/mediaUrl'
 import { resetSessionStore } from './store'
 import BrandMark from '../components/BrandMark.vue'
 import { themeState, toggleTheme } from '../utils/theme'
@@ -128,7 +129,7 @@ const oidcLoading = ref('')
 const brand = ref(null)
 const brandName = computed(() => (brand.value && brand.value.brandName) || '问渠')
 const brandSlogan = computed(() => (brand.value && brand.value.loginHint) || '答案，自有源头 · Ask the source.')
-const brandLogo = computed(() => (brand.value && brand.value.brandLogo) || '')
+const brandLogo = computed(() => resolveMediaUrl((brand.value && brand.value.brandLogo) || ''))
 const tenantStyle = computed(() => {
   const c = String((brand.value && brand.value.brandColor) || '')
   return /^#[0-9a-fA-F]{6}$/.test(c) ? { '--app-accent': c, '--app-accent-hover': c } : {}

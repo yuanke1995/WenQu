@@ -13,20 +13,10 @@ import { themeState } from './theme'
 import { fixChartHeader } from './chartLayout'
 import { sandboxRun } from '../api.js'
 
-// 媒体（文档图片/产物）URL 前缀，与后端返回的 /ai/** 路径配套：
-//   开发态：vite dev server 用 /proxy 转发到后端 context-path(/ai)，故需剥掉 /ai 再挂 /proxy；
-//   生产态：nginx 已有 location /ai/ 直通后端，路径原样可用。
-// 前缀由 VITE_MEDIA_BASE 决定（生产为空串＝原样返回），**不可无条件拼 /proxy**——
-// 那个前缀只存在于 vite dev server，线上 /proxy/images/** 会落进 SPA 回退返回 index.html，
-// 浏览器拿 HTML 当图片解码必然失败（症状：文档图片/产物一律"加载失败"，但签名并未过期）。
-const MEDIA_BASE = import.meta.env.VITE_MEDIA_BASE ?? ''
-
-// 图片 URL 兼容（data:/http 原样；相对路径按环境决定是否加前缀）
-export const resolveImg = u => {
-  if (!u) return u
-  if (u.startsWith('data:') || u.startsWith('http')) return u
-  return MEDIA_BASE ? MEDIA_BASE + u.replace(/^\/ai/, '') : u
-}
+// 媒体（文档图片/产物）URL 前缀：解析规则集中在 utils/mediaUrl.js（头像/Logo 等轻量组件共用），
+// 这里转出给既有调用方，避免两套前缀逻辑各走各的（开发态漏加 /proxy 就会落到 SPA 回退拿到 index.html）。
+import { resolveMediaUrl as resolveImg } from './mediaUrl'
+export { resolveImg }
 
 // 图片加载兜底：加载失败替换为灰底占位图（签名过期/文件缺失等场景避免裂图）
 export const FALLBACK_IMG = 'data:image/svg+xml;utf8,' + encodeURIComponent(

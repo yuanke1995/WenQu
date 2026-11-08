@@ -94,6 +94,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import { createTenantInvite, listTenantInvites, revokeTenantInvite } from '../api'
 import { copyText } from '../utils/clipboard'
+import { publicUrl } from '../utils/publicUrl'
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -171,7 +172,7 @@ async function submit () {
     const r = await createTenantInvite(body)
     if (!r || !r.success) { message.error((r && r.msg) || '生成失败'); return }
     const path = (r.data && r.data.path) || ''
-    inviteUrl.value = path ? location.origin + path : ''
+    inviteUrl.value = path ? publicUrl(path) : ''
     created.value = true
     emit('created')
     loadInvites()

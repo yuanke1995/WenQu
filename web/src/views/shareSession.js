@@ -10,9 +10,10 @@ import { message } from 'ant-design-vue'
 import { getSessionShare, enableSessionShare, disableSessionShare } from '../api'
 import { markSessionShared } from './store'
 import { copyText } from '../utils/clipboard'
+import { publicUrl } from '../utils/publicUrl'
 
-/** 分享链接的唯一拼装处（只读携带者可看不可续聊） */
-export const shareUrlOf = token => (token ? `${location.origin}/shared/${token}` : '')
+/** 分享链接的唯一拼装处（只读携带者可看不可续聊）；基址走 publicUrl，本地起 web 时也能指向真实服务器 */
+export const shareUrlOf = token => (token ? publicUrl(`/shared/${token}`) : '')
 
 const emptyInfo = () => ({ enabled: false, token: '', visitCount: 0 })
 

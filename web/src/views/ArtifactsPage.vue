@@ -422,6 +422,7 @@ import { onImgError, resolveImg } from '../utils/markdown'
 import { canPreview, previewKindOf } from '../utils/artifactView'
 import { projectOnThisComputer } from '../utils/localExecutor'
 import { copyText } from '../utils/clipboard'
+import { publicUrl } from '../utils/publicUrl'
 import MoveToWorkspaceModal from '../components/MoveToWorkspaceModal.vue'
 
 // ==================== 类型分组与图标 ====================
@@ -855,9 +856,9 @@ const onMenuClick = (key, r) => {
   else if (key === 'delete') askDelete(r)
 }
 const copyLink = async r => {
-  const href = resolveImg(r.url)
-  const abs = href && href.startsWith('http') ? href : window.location.origin + href
-  await copyText(abs, '已复制下载链接')
+  // 复制出去的是给外部用的地址：服务器基址 + 后端原始路径（/ai/artifacts/...）。
+  // 不能把开发态的 /proxy 前缀带出去——服务器上没有这个反代。
+  await copyText(publicUrl(r.url), '已复制下载链接')
 }
 
 // ==================== 下载 ====================

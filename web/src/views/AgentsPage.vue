@@ -783,6 +783,7 @@ import { ensureAuth, isAdminSync } from '../utils/auth'
 import { loadModelIndex } from '../utils/modelRef'
 import { locateField } from '../utils/fieldLocate'
 import { copyText } from '../utils/clipboard'
+import { publicUrl } from '../utils/publicUrl'
 import { MdEditor, MdPreview } from 'md-editor-v3'
 import 'md-editor-v3/lib/style.css'
 import { themeState } from '../utils/theme'
@@ -1404,9 +1405,9 @@ const pubTab = ref('link')
 /** iframe 嵌入尺寸：此前 420×640 写死在代码里，用户想改只能复制出去手改。做成可调并实时反映进代码 */
 const pubFrameW = ref(420)
 const pubFrameH = ref(640)
-const shareUrl = computed(() => pubToken.value ? window.location.origin + '/s/' + pubToken.value : '')
+const shareUrl = computed(() => pubToken.value ? publicUrl('/s/' + pubToken.value) : '')
 // MCP 端点（/ai/mcp/{token}）：与网页分享同一 token，token 即凭据
-const mcpUrl = computed(() => pubToken.value ? window.location.origin + '/ai/mcp/' + pubToken.value : '')
+const mcpUrl = computed(() => pubToken.value ? publicUrl('/ai/mcp/' + pubToken.value) : '')
 const mcpJson = computed(() => mcpUrl.value
   ? JSON.stringify({ mcpServers: { [pubAgentName.value || 'wenqu']: { url: mcpUrl.value } } }, null, 2)
   : '')

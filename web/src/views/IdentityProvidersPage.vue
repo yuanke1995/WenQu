@@ -236,6 +236,7 @@ import {
   triggerIdentitySync, listSyncLogs
 } from '../api'
 import { listRoleOptions, listDepartments, listTenants } from '../api'
+import { publicOrigin } from '../utils/publicUrl'
 
 const list = ref([])
 const roles = ref([])
@@ -246,7 +247,7 @@ const saving = ref(false)
 const drawerOpen = ref(false)
 const editingId = ref('')
 const cfg = ref({})
-const origin = window.location.origin
+const origin = publicOrigin()
 
 const typeLabel = t => ({ saml: 'SAML 登录', scim: 'SCIM 入站', ldap: 'LDAP 目录' }[t] || t)
 const typeColor = t => ({ saml: 'purple', scim: 'cyan', ldap: 'geekblue' }[t] || 'default')
