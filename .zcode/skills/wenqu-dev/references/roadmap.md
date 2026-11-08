@@ -96,3 +96,4 @@
 - 配置默认值三层口径：schema def 只给前端、defaults() 是运行时权威、getDouble fallback 纯防御；多读点 key 默认值进 ConfigDefaults 常量类。
 - 显式本机工作区（ExecutorFilesystem）的服务器沙盒白建已修：`frameworkSandboxContext` 对显式工作区直接返回 null，不再创建无用的服务器容器；待本机执行器配对后真机验证（2026-11-06 代码审计/修复）。
 - ~~`scripts/mac/check-agent-runtime.py --fixtures` 与 `c_ai_agent_share` 表结构漂移~~ 已修（2026-11-06）：`c_ai_agent` 选 `id`、分享 SSE 用 raw POST、`count(*)` 断言按首行值判；修复后分享/访客夹具全过。
+- 检索低分门（retrieval.minContextScore=0.6 绝对门）会误杀「隐性问答」：问元信息（如「引用的诗词是什么」）而块内只有引文无出处时，重排只给部分匹配分（实测 0.192，同块显式问法 0.999），第 1 名照样被杀。2026-11-08 线上实证（工作流检索 count=0 全杀；主问答同轮因模型没调 search_knowledge 工具、靠预训练知识答对造成「检索通了」假象）。当日处理=只补内容（01-产品简介 补诗句出处标注 c8076c14，同步后 0.992 过门、工作流 E2E 通）；机制层修法（保底 top-1 / 相对门）未拍板，动检索域时先评估。
