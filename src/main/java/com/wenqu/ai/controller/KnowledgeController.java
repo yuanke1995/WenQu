@@ -231,7 +231,7 @@ public class KnowledgeController {
     }
 
     @Operation(summary = "新增知识块", description = "手动创建知识块（自动生成向量），用于补充知识库缺口。可关联已有文档或独立创建")
-    @Permission("knowledge:write")
+    @Permission("knowledge:admin")
     @PostMapping("/knowledge")
     public ResultJson createKnowledge(
             @Parameter(description = "{\"title\": \"问题/标题\", \"content\": \"回答内容\", \"docId\": \"可选关联文档ID\"}")

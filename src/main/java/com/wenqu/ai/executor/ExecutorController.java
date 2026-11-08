@@ -2,6 +2,7 @@ package com.wenqu.ai.executor;
 
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
+import com.wenqu.ai.security.Permission;
 import com.wenqu.ai.util.RequestUser;
 import io.swagger.v3.oas.annotations.Operation;
 import jakarta.servlet.http.HttpServletRequest;
@@ -97,6 +98,7 @@ public class ExecutorController {
     }
 
     @Operation(summary = "已登记的执行器", description = "当前用户的设备清单（不含令牌）")
+    @Permission("executor:self")
     @GetMapping("/devices")
     public Map<String, Object> devices() {
         List<Map<String, Object>> rows = executorService.list(RequestUser.uid());
@@ -105,6 +107,7 @@ public class ExecutorController {
     }
 
     @Operation(summary = "浏览执行器上的目录", description = "只列目录（单层）。path 为空 = 列出执行器授权的根目录。用于「选择工作区目录」")
+    @Permission("executor:self")
     @GetMapping("/browse")
     public Map<String, Object> browse(@RequestParam("executorId") String executorId,
                                       @RequestParam(value = "path", required = false) String path) {
@@ -156,6 +159,7 @@ public class ExecutorController {
     }
 
     @Operation(summary = "在宿主上弹原生目录选择框", description = "远程浏览器够不到宿主桌面时由执行器代弹系统选择框，返回绝对路径")
+    @Permission("executor:self")
     @PostMapping("/pick-dir")
     public Map<String, Object> pickDir(@RequestBody(required = false) Map<String, Object> body) {
         String executorId = body == null || body.get("executorId") == null ? "" : String.valueOf(body.get("executorId"));
@@ -173,6 +177,7 @@ public class ExecutorController {
     }
 
     @Operation(summary = "删除执行器", description = "撤销令牌，立即失效")
+    @Permission("executor:self")
     @DeleteMapping("/device/{id}")
     public Map<String, Object> revoke(@PathVariable("id") String id) {
         executorService.revoke(RequestUser.uid(), id);

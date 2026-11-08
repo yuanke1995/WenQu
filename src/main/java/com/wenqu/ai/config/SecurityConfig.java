@@ -136,6 +136,11 @@ public class SecurityConfig implements WebMvcConfigurer {
         if ("POST".equals(method) && path.equals("/api/ai/chat")) return true;
         // 聊天附件上传（问答链路材料）：上传换 fileId，文件按登录 uid 隔离落盘并限频（ChatController 内处理）
         if ("POST".equals(method) && path.equals("/api/ai/chat/attachment")) return true;
+        // 实时聊天附件（同一条上传链路的流式变体）：同样按登录 uid 隔离落盘。
+        // 漏放行的症状是普通用户发图直接被 403，管理员靠直通看不出来。
+        if ("POST".equals(method) && path.equals("/api/ai/chat/attachment/live")) return true;
+        // 消息版本 diff（计划/目标修订对比）：归属由消息所属会话的登录 uid 校验
+        if ("GET".equals(method) && path.matches("/api/ai/message/[^/]+/changes/[^/]+/diff")) return true;
         // 停止本轮（问答链路控制）：POST /chat/stop——归属由 ChatService.stopTurn 按
         // 「停止人 uid == 发起本轮 uid」严格校验，别人停不动；不放行则普通用户点停止直接 403
         if ("POST".equals(method) && path.equals("/api/ai/chat/stop")) return true;
@@ -220,6 +225,33 @@ public class SecurityConfig implements WebMvcConfigurer {
         // 自助修改昵称（PUT /user/profile，仅本人：uid 取登录态，Controller 内只动本人 username 列）
         if ("PUT".equals(method) && path.equals("/api/ai/user/profile")) return true;
         if ("PUT".equals(method) && path.matches("/api/ai/user/[^/]+/password")) return true;
+        // 个人资料自助：头像上传 / 通知邮箱 / 首登引导状态——数据一律取登录 uid，只作用于本人。
+        // 这三条此前漏在白名单外，导致 self:preference 授权点整组无法推导，普通用户的
+        // 偏好、设置、侧栏布局跟着一起 403（授权点粒度整组进出的连带效应）。
+        if ("POST".equals(method) && path.equals("/api/ai/user/avatar")) return true;
+        if ("PUT".equals(method) && path.equals("/api/ai/user/email")) return true;
+        if ("GET".equals(method) && path.equals("/api/ai/tenant/onboarding")) return true;
+        // 个人用量与配额（stats:self）：只读本人台账与约束到本人的配额规则（uid 取登录态）。
+        // 费用报表 /stats/cost 与 /analytics/* 仍在 stats:read（管理面）。
+        if ("GET".equals(method) && (path.equals("/api/ai/stats/usage") || path.equals("/api/ai/stats/quota"))) {
+            return true;
+        }
+        // 平台公告的**用户侧**（announcement:self）：生效公告横幅 + 标记本人已读。
+        // 公告管理清单/发布/下线仍在 ops:read 与 ops:manage（管理面）。
+        if ("GET".equals(method) && path.equals("/api/ai/ops/announcement/active")) return true;
+        if ("POST".equals(method) && path.matches("/api/ai/ops/announcement/[^/]+/read")) return true;
+        // 本机执行器（个人资产，executor:self）：设备清单 / 目录浏览 / 原生选目录 / 撤销设备，
+        // 归属一律按 RequestUser.uid() 校验（别人的设备既看不到也撤不掉）。
+        if (path.equals("/api/ai/executor/devices") || path.equals("/api/ai/executor/browse")
+                || path.equals("/api/ai/executor/pick-dir")
+                || ("DELETE".equals(method) && path.matches("/api/ai/executor/device/[^/]+"))) return true;
+        // 浏览器推送订阅（个人资产，webpush:manage）：订阅句柄与测试推送都只针对登录本人
+        if (path.equals("/api/ai/webpush/config") || path.equals("/api/ai/webpush/keys")
+                || path.equals("/api/ai/webpush/subscribe") || path.equals("/api/ai/webpush/unsubscribe")
+                || path.equals("/api/ai/webpush/test")) return true;
+        // 知识库导入导出：只作用于可管理的知识库（KnowledgeBaseService 内按归属校验）
+        if ("GET".equals(method) && path.matches("/api/ai/kb/[^/]+/export")) return true;
+        if ("POST".equals(method) && path.matches("/api/ai/kb/[^/]+/import")) return true;
         // 知识库 / 文档 / 智能体对普通用户开放**自建自管**（2026-09-26，用户数据隔离由
         // ResourceVisibilityService 在 Controller 内做资源级判定：创建者=可管理、他人按共享范围、
         // 知识库对他人封顶只读）。这里按端点精确放行；不匹配的（如 /agent/{id}/default 设默认、
@@ -329,25 +361,36 @@ public class SecurityConfig implements WebMvcConfigurer {
      * {@code /document/queue/stats} 是全局解析队列计数（无用户数据），供普通用户的文档页展示。</p>
      */
     private static boolean isKbOrDocEndpoint(String method, String path) {
-        if (path == null) return false;
-        if (path.equals("/api/ai/document/stats")) return false;
+        if (path == null || method == null) return false;
+        // 管理面：命中即拒（逐条列名，不给通配留缝）
+        if (path.equals("/api/ai/document/stats") || path.equals("/api/ai/document/health")
+                || path.equals("/api/ai/document/vector-diagnose")
+                || path.equals("/api/ai/document/rebuild-kb")) {
+            return false;
+        }
         if (path.equals("/api/ai/document/queue/stats")) return true;
-        // 运维端点（向量索引诊断 / 同模型重建）：**刻意不放行给普通用户**——
-        // 重建会 DROP 整库索引并重新调嵌入模型，是重量级且花钱的操作，只走管理员判定。
-        // 注意：新增 /xxx-yyy 形态的端点必须在此显式排除，否则会「看着像同一段」被漏掉而落默认门禁。
-        if (path.equals("/api/ai/document/vector-diagnose")) return false;
-        if (path.equals("/api/ai/document/rebuild-kb")) return false;
-        // 知识库：列表 / 详情 / 新建 / 编辑 / 删除 / 移动文档
+        // 知识库：本体 / 列表 / 文档归属 / 导入导出
         if (path.equals("/api/ai/kb") || path.equals("/api/ai/kb/list")
-                || path.matches("/api/ai/kb/[^/]+") || path.matches("/api/ai/kb/doc/[^/]+")) return true;
-        // 文档：列表 / 上传 / 批量 / 单个的启停用·共享·重解析·补图述·版本·回滚·源文件·自动刷新·删除
+                || path.matches("/api/ai/kb/doc/[^/]+")
+                || path.matches("/api/ai/kb/[^/]+/export")
+                || path.matches("/api/ai/kb/[^/]+/import")
+                || path.matches("/api/ai/kb/[^/]+")) return true;
+        // 文档：上传 / 链接导入 / 列表 / 批量 / 回收站（恢复与清理）——均为自建自管范围
         if (path.equals("/api/ai/document") || path.equals("/api/ai/document/list")
                 || path.equals("/api/ai/document/upload") || path.equals("/api/ai/document/upload/batch")
+                || path.equals("/api/ai/document/import-url")
                 || path.equals("/api/ai/document/batch/delete") || path.equals("/api/ai/document/batch/reparse")
-                || path.matches("/api/ai/document/[^/]+")
-                || path.matches("/api/ai/document/[^/]+/(source|versions|status|share|reparse|backfill-descriptions|rollback|refresh-config)")) {
-            return true;
-        }
+                || path.equals("/api/ai/document/batch/status")
+                || path.equals("/api/ai/document/queue/dead")
+                || path.equals("/api/ai/document/recycle") || path.equals("/api/ai/document/recycle/purge")
+                || path.equals("/api/ai/document/recycle/batch/restore")
+                || path.equals("/api/ai/document/recycle/batch/purge")) return true;
+        // 单个文档的多段动作：逐个列名（rollback 属管理面 document:admin，刻意不在此表）
+        if (path.matches("/api/ai/document/[^/]+/(source|versions|status|share|reparse"
+                + "|backfill-descriptions|refresh-config|tags|restore|purge)")) return true;
+        if (path.matches("/api/ai/document/queue/task/[^/]+")) return true;
+        // 单个文档：GET 详情 / DELETE 删除——id 不透明，归属与共享范围在服务层判定
+        if (path.matches("/api/ai/document/[^/]+")) return true;
         return false;
     }
 
@@ -376,10 +419,13 @@ public class SecurityConfig implements WebMvcConfigurer {
                         // 「跟随默认」当前是什么值：与上面两份同属配置页的读侧元数据，
                         // 漏放行的症状是普通用户界面上只剩「跟随系统默认」五个字、不知道默认是哪一档
                         || path.equals("/api/ai/agent/config-defaults")
+                        // 可咨询智能体清单（对话页「问其他智能体」下拉的数据源，只读精简字段）
+                        || path.equals("/api/ai/agent/consultable")
                         || path.matches("/api/ai/agent/[^/]+/versions")
                         || path.matches("/api/ai/agent/[^/]+/publish");
             case "POST":
                 return path.equals("/api/ai/agent") || path.equals("/api/ai/agent/batch-delete")
+                        || path.equals("/api/ai/agent/http-tools/preview")
                         || path.matches("/api/ai/agent/[^/]+/rollback")
                         || path.matches("/api/ai/agent/[^/]+/publish");
             case "PUT":
@@ -461,7 +507,7 @@ public class SecurityConfig implements WebMvcConfigurer {
         if (path == null) return false;
         return path.equals("/api/ai/provider")
                 || path.matches("/api/ai/provider/[^/]+")
-                || path.matches("/api/ai/provider/[^/]+/(models|enabled|references)")
+                || path.matches("/api/ai/provider/[^/]+/(models|enabled|references|clear-session-models)")
                 || path.equals("/api/ai/provider/models/fetch")
                 || path.equals("/api/ai/provider/test");
     }

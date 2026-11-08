@@ -265,7 +265,7 @@ public class AgentController {
     }
 
     @Operation(summary = "设为默认", description = "设为默认智能体（其余清零）；仅影响前端下拉预选，不自动强制应用。全局动作，仅管理员")
-    @Permission("agent:write")
+    @Permission("agent:admin")
     @PostMapping("/{id}/default")
     public ResultJson setDefault(@PathVariable("id") String id) {
         agentService.setDefault(id);

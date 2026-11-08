@@ -41,7 +41,7 @@ public class UsageStatsController {
                     + "heatmap=近365天稀疏日清单；trend/models=时间范围内每日×模型趋势与模型占比（models 含按模型费用）；"
                     + "kinds=同窗口按用途占比（对话问答 / 子智能体分支 / 历史压缩 / "
                     + "引用自检 / 记忆提取 / 智能体咨询）——辅助调用的开销没有对应消息，只有这里看得见")
-    @Permission("stats:read")
+    @Permission("stats:self")
     @GetMapping("/stats/usage")
     public ResultJson<Map<String, Object>> usage(
             @Parameter(description = "趋势与模型占比的时间范围（天）：7 或 30")
@@ -56,7 +56,7 @@ public class UsageStatsController {
     @Operation(summary = "我此刻受哪些配额管着",
             description = "返回约束到本人的规则（平台/本部门/本人三档）与各档本周期已用量。"
                     + "问答被配额拦下时给出的那句提示，与这里读的是同一份数——两处数字不一致会让人怀疑闸门在说谎。")
-    @Permission("stats:read")
+    @Permission("stats:self")
     @GetMapping("/stats/quota")
     public ResultJson<List<Map<String, Object>>> myQuota() {
         String uid = RequestUser.uid();

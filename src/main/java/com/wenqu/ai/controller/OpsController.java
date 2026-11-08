@@ -195,7 +195,7 @@ public class OpsController {
 
     @Operation(summary = "当前生效公告（登录用户）", description = "本租户发布中、在时间窗口内、命中当前用户部门/角色的公告；"
             + "登录后横幅数据源；任何登录用户可读，read 标记表示当前用户是否已读过")
-    @Permission("ops:read")
+    @Permission("announcement:self")
     @GetMapping("/announcement/active")
     public ResultJson<List<Announcement>> activeAnnouncements(HttpServletRequest request) {
         return ResultJson.ok(announcementService.active());
@@ -203,6 +203,7 @@ public class OpsController {
 
     @Operation(summary = "标记公告已读", description = "横幅关闭或展开详情时调用；幂等，同一公告同一人只记一次。"
             + "任何登录用户都可标记自己的已读，不需要 ops 权限")
+    @Permission("announcement:self")
     @PostMapping("/announcement/{id}/read")
     public ResultJson markAnnouncementRead(@PathVariable("id") String id) {
         announcementService.markRead(id);
