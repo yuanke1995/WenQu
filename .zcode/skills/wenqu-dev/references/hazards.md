@@ -42,6 +42,7 @@
 3. **顺手修别杀邻居**：关面板时顺手 closeLightbox 杀掉浮窗预览的案例——收尾阶段自查「这次改动是否波及无关路径」。
 4. **「被删/没生效」先查配置语义**（isHiddenHelp 勾选案例），别急着当回归修。
 5. **登录/会话类「bug」先核对账号口径**：登录只认 uid=登录账号，username=昵称仅展示。
+6. **document 级冒相点击委托会被中途 @click.stop 掐死**（2026-11-08 产物页预览按钮案例）：`.art-acts` 容器加 `@click.stop` 防误选后，previewStage 的冒相委托收不到点击，锚点退化成裸新标签跳转、焦点留在锚点上把 hover 态按钮钉成常驻。全局委托一律挂捕获相（`addEventListener('click', fn, true)`），页面侧 `@click.stop` 语义才能共存。
 
 ## 流程雷
 

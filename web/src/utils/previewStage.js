@@ -492,6 +492,10 @@ const openStage = (anchor, src, kind) => {
 // ==================== 全局委托 ====================
 // 锚点带 data-pv 即接入；href 仍是那份真签名地址，所以带修饰键的点击一律放行给浏览器
 // （Ctrl/⌘ 点击与中键开真标签，右键另存照常），只有左键普通点击才收进预览台。
+// 挂捕获相（第三个参数 true）：产物页的操作区容器（.art-acts/.art-card-acts）带 @click.stop
+// 阻止冒泡去点亮行/卡片自己的选中——冒相委托收不到这种点击，锚点就退化成裸新标签跳转，
+// 且焦点留在锚点上把 hover 态按钮钉成常驻（2026-11-08 真机复现）。捕获相在 stop 生效前跑，
+// 页面侧的 @click.stop 语义原样保留。
 if (typeof document !== 'undefined') {
   document.addEventListener('click', e => {
     if (e.defaultPrevented || e.button !== 0) return
@@ -527,7 +531,7 @@ if (typeof document !== 'undefined') {
     if (kind === PV.NONE) return
     e.preventDefault()
     openStage(a, src, kind)
-  })
+  }, true)
   // 读字档里的代码块复制按钮：正文点击委托归各页面自己（它要带来源/图片上下文），
   // 预览台这份在 document 级补一次，只认 .code-copy 且不碰别的类名。
   document.addEventListener('click', e => {
