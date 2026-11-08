@@ -283,7 +283,7 @@
             <div v-for="r in visibleRows" :key="r.id"
                  :class="['art-card', { picked: selectedIds.includes(r.id) }]"
                  @click="onCardClick(r)">
-              <div class="art-thumb" :class="'k-' + kindOfRow(r)">
+              <div class="art-thumb" :class="'k-' + kindOfRow(r)" :ref="el => registerThumb(r, el)">
                 <span class="art-thumb-badge" :class="'k-' + kindOfRow(r)">{{ extOfRow(r) }}</span>
                 <a-checkbox :checked="selectedIds.includes(r.id)"
                             :class="['art-thumb-check', { on: selectionMode }]"
@@ -292,14 +292,26 @@
                             @change="e => toggleSelect(r.id, e.target.checked)" />
                 <img v-if="kindOfRow(r) === 'image'" class="art-thumb-img"
                      :src="resolveImg(r.url)" :alt="r.displayName || r.filename" @error="onImgError" />
-                <div v-else class="art-mini" :class="'art-mini-' + kindOfRow(r)">
-                  <template v-if="kindOfRow(r) === 'page'">
+                <template v-else-if="previewKindOf(r) === 'page'">
+                  <iframe v-if="frameReady.has(r.id)" :ref="el => bindFrame(r.id, el)"
+                          class="art-thumb-frame" scrolling="no"
+                          :style="{ transform: 'scale(' + (frameScale[r.id] || 0.45) + ')' }"
+                          :src="resolveImg(r.url)" sandbox="allow-scripts" loading="lazy"
+                          referrerpolicy="no-referrer" tabindex="-1" aria-hidden="true"
+                          title="产物首屏预览"></iframe>
+                  <div v-else class="art-mini art-mini-page">
                     <div class="art-mini-bar"><i></i><i></i><i></i></div>
                     <div class="art-mini-line accent"></div>
                     <div class="art-mini-line"></div>
                     <div class="art-mini-line short"></div>
-                  </template>
-                  <template v-else-if="kindOfRow(r) === 'doc'">
+                  </div>
+                </template>
+                <div v-else-if="thumbLines(r)" class="art-thumb-text" :class="{ 'is-code': kindOfRow(r) === 'code' }">
+                  <div v-for="(l, i) in thumbLines(r)" :key="i"
+                       :class="['art-thumb-text-line', { head: l.head }]">{{ l.text }}</div>
+                </div>
+                <div v-else class="art-mini" :class="'art-mini-' + kindOfRow(r)">
+                  <template v-if="kindOfRow(r) === 'doc'">
                     <div class="art-mini-line accent"></div>
                     <div class="art-mini-line"></div>
                     <div class="art-mini-line"></div>
@@ -403,8 +415,8 @@ import {
   ReloadOutlined, SearchOutlined, SortAscendingOutlined, TableOutlined, UnorderedListOutlined
 } from '@ant-design/icons-vue'
 import {
-  deleteArtifact, deleteArtifactsBatch, downloadArtifactsZip, getArtifactStats, listArtifacts,
-  listProjects, moveArtifactProject, moveArtifactsBatch, renameArtifact
+  artifactContent, deleteArtifact, deleteArtifactsBatch, downloadArtifactsZip, getArtifactStats,
+  listArtifacts, listProjects, moveArtifactProject, moveArtifactsBatch, renameArtifact
 } from '../api'
 import { onImgError, resolveImg } from '../utils/markdown'
 import { artifactExt, canPreview, previewKindOf } from '../utils/artifactView'
@@ -459,6 +471,152 @@ const baseName = name => {
 }
 const isRenamed = r => !!r.displayName && r.displayName !== baseName(r.originalFilename || r.filename)
 const sourceTitle = r => r.sessionTitle || '会话'
+
+// ==================== 网格真实缩略（原型） ====================
+// 网格此前给每个非图片产物画同一张“迷你文档”，扫一眼分不出内容。这里改成真实内容：
+// 网页类把产物挂进 iframe（按 375 逻辑宽渲染后缩放铺满缩略区，只露首屏），文本类拉原文取前几行，
+// 图片本来就是真图。iframe 一屏开太多会真的跑几十份文档，所以按可见区域懒加载并限量。
+const THUMB_LOGICAL_W = 375
+const LIVE_FRAME_MAX = 10
+const TEXT_FETCH_MAX = 3
+const TEXT_LINE_MAX = 4
+const TEXT_KINDS = new Set(['md', 'text', 'table'])
+const thumbText = reactive({})
+const frameReady = reactive(new Set())
+const frameScale = reactive({})
+const thumbEls = new Map()
+const frameQueue = []
+const textQueue = []
+let textBusy = 0
+let thumbIo = null
+let frameRo = null
+
+const thumbLines = r => {
+  const st = thumbText[r.id]
+  return st && st.lines.length ? st.lines : null
+}
+const pickLines = raw => {
+  const out = []
+  for (const line of String(raw || '').split(/\r?\n/)) {
+    let t = line.trim()
+    if (!t) continue
+    // Markdown 的结构字符在这个尺寸只会变成噪音：标题保留重字，其余去掉标记
+    const head = /^#{1,6}\s/.test(t)
+    t = t.replace(/^#{1,6}\s+/, '').replace(/^[-*+>]\s+/, '').replace(/^\d+\.\s+/, '')
+    if (/^[:|\-\s]+$/.test(t)) continue
+    t = t.replace(/\*\*/g, '').replace(/`/g, '')
+    if (t) out.push({ text: t, head })
+    if (out.length >= TEXT_LINE_MAX) break
+  }
+  return out
+}
+const pumpText = () => {
+  while (textBusy < TEXT_FETCH_MAX && textQueue.length) {
+    const row = textQueue.shift()
+    const st = thumbText[row.id]
+    if (!st || st.status !== 'loading') continue
+    textBusy += 1
+    artifactContent(row.id)
+      .then(res => {
+        const lines = pickLines((res && res.data && res.data.content) || '')
+        thumbText[row.id] = { lines, status: lines.length ? 'ready' : 'empty' }
+      })
+      .catch(() => { thumbText[row.id] = { lines: [], status: 'error' } })
+      .finally(() => { textBusy -= 1; pumpText() })
+  }
+}
+const pumpFrames = () => {
+  while (frameQueue.length) {
+    if (frameReady.size < LIVE_FRAME_MAX) {
+      frameReady.add(frameQueue.shift().id)
+      continue
+    }
+    // 名额满时只换掉已经滚出视口的帧；全都在视口内就排队，等下一张离开再说。
+    // 不在离开视口时直接卸载：滚回来时会退回线框，看着就像“过一会又变回去了”。
+    let victim = ''
+    let worst = 0
+    for (const id of frameReady) {
+      const el = thumbEls.get(id)
+      if (!el) { victim = id; worst = Infinity; continue }
+      const r = el.getBoundingClientRect()
+      const vh = window.innerHeight || 0
+      const d = r.bottom < 0 ? -r.bottom : (r.top > vh ? r.top - vh : 0)
+      if (d > worst) { worst = d; victim = id }
+    }
+    if (!victim || worst <= 0) break
+    frameReady.delete(victim)
+    delete frameScale[victim]
+  }
+}
+const enqueueFrame = row => {
+  if (frameReady.has(row.id) || frameQueue.some(q => q.id === row.id)) return
+  frameQueue.push(row)
+  pumpFrames()
+}
+const exitThumb = row => {
+  const i = frameQueue.findIndex(q => q.id === row.id)
+  if (i >= 0) frameQueue.splice(i, 1)
+  if (previewKindOf(row) === 'page') pumpFrames()
+}
+const startThumb = row => {
+  const kind = previewKindOf(row)
+  if (kind === 'page') { enqueueFrame(row); return }
+  if (!TEXT_KINDS.has(kind) || thumbText[row.id]) return
+  thumbText[row.id] = { lines: [], status: 'loading' }
+  textQueue.push(row)
+  pumpText()
+}
+const ensureThumbIo = () => {
+  if (thumbIo || typeof IntersectionObserver === 'undefined') return thumbIo
+  thumbIo = new IntersectionObserver(entries => {
+    for (const entry of entries) {
+      const row = entry.target.__artRow
+      if (!row) continue
+      if (entry.isIntersecting) startThumb(row)
+      else exitThumb(row)
+    }
+  }, { rootMargin: '160px 0px' })
+  return thumbIo
+}
+const registerThumb = (row, el) => {
+  if (!el || !ensureThumbIo()) return
+  const prev = thumbEls.get(row.id)
+  if (prev === el) return
+  if (prev) thumbIo.unobserve(prev)
+  el.__artRow = row
+  thumbEls.set(row.id, el)
+  thumbIo.observe(el)
+}
+const bindFrame = (id, el) => {
+  if (!el) return
+  const box = el.parentElement
+  if (!box) return
+  if (typeof ResizeObserver !== 'undefined') {
+    if (!frameRo) {
+      frameRo = new ResizeObserver(entries => {
+        for (const entry of entries) {
+          const fid = entry.target.__artId
+          if (fid && entry.contentRect.width) frameScale[fid] = entry.contentRect.width / THUMB_LOGICAL_W
+        }
+      })
+    }
+    box.__artId = id
+    frameRo.observe(box)
+  }
+  if (box.clientWidth) frameScale[id] = box.clientWidth / THUMB_LOGICAL_W
+}
+const pruneFrames = ids => {
+  for (const id of frameReady) {
+    if (!ids.has(id)) {
+      frameReady.delete(id)
+      delete frameScale[id]
+    }
+  }
+  for (let i = frameQueue.length - 1; i >= 0; i -= 1) {
+    if (!ids.has(frameQueue[i].id)) frameQueue.splice(i, 1)
+  }
+  pumpFrames()
+}
 
 // ==================== 页面状态 ====================
 const VIEW_KEY = 'artifacts.view'
@@ -567,6 +725,8 @@ const load = async () => {
     // 勾选只保留当前列表里仍存在的产物（搜索/刷新后失效的勾选自动剔除）
     const ids = new Set(visibleRows.value.map(x => x.id))
     selectedIds.value = selectedIds.value.filter(id => ids.has(id))
+    // 已挂载的 iframe 也按同一份 id 收敛：被筛掉的卡片不再占名额
+    pruneFrames(ids)
   } catch (e) {
     if (seq !== reqSeq) return
     // 列表失败要说清；已有结果时保留上一次结果，由页内错误条提示重试
@@ -888,6 +1048,11 @@ onMounted(() => {
 onBeforeUnmount(() => {
   clearTimeout(keywordTimer)
   document.removeEventListener('keydown', onKeydown)
+  if (thumbIo) thumbIo.disconnect()
+  if (frameRo) frameRo.disconnect()
+  thumbEls.clear()
+  frameQueue.length = 0
+  textQueue.length = 0
 })
 </script>
 
@@ -1124,6 +1289,25 @@ onBeforeUnmount(() => {
 .art-thumb-check { position: absolute; top: 7px; left: 7px; z-index: 3; opacity: 0; transition: opacity .15s; }
 .art-card:hover .art-thumb-check, .art-thumb-check.on { opacity: 1; }
 .art-thumb-img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* 网页产物：按 375 逻辑宽渲染再缩放，只露首屏；不可点击，点击交给卡片 */
+.art-thumb-frame {
+  position: absolute; top: 0; left: 0; width: 375px; height: 320px;
+  border: 0; transform-origin: top left; pointer-events: none;
+  background: var(--app-panel);
+}
+/* 文本产物：直接摆原文前几行，比同构线框更能看出内容 */
+.art-thumb-text {
+  position: absolute; inset: 8px 10px; padding: 5px 7px;
+  background: var(--app-panel); border: 1px solid var(--app-border);
+  border-radius: 5px; overflow: hidden;
+  font-size: 10px; line-height: 14px; color: var(--app-text2);
+}
+.art-thumb-text.is-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  line-height: 13px;
+}
+.art-thumb-text-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.art-thumb-text-line.head { font-weight: 600; color: var(--app-text); }
 .art-mini {
   position: absolute; inset: 18px 20px 12px;
   background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 6px;
