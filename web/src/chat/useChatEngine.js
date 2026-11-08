@@ -1048,11 +1048,16 @@ const deliveryByKey = computed(() => {
   for (const d of turnDeliveries.value) if (d.anchorKey) map.set(d.anchorKey, d)
   return map
 })
-/** 已收进交付包的所有轮：这些轮不再逐行平铺产物 */
+/** 已收进「交付卡」的所有轮：这些轮不再逐行平铺产物。
+ *  只有真会画出卡的那些包才算数——普通回答单件不成卡（仍走旧的一行），不能算「已收进」，
+ *  否则那一行会在 done 把 turnId 填上的同一刻被隐藏，屏幕上什么都不剩（2026-11-08 线上：单网页交付）。 */
 const deliveryTurnIds = computed(() => {
   const set = new Set()
   if (goalDelivery.value) for (const t of goalDelivery.value.turnIds) set.add(t)
-  for (const d of turnDeliveries.value) for (const t of d.turnIds) set.add(t)
+  for (const d of turnDeliveries.value) {
+    if (d.scope !== 'goal' && d.fileCount < 2) continue
+    for (const t of d.turnIds) set.add(t)
+  }
   return set
 })
 /** 某条回答对应的交付包（目标包只挂在它最后一轮上；其余按轮各一份） */
@@ -1063,7 +1068,7 @@ const deliveryCardOfMessage = m => {
   if (!d) return null
   return (d.scope === 'goal' || d.fileCount >= 2) ? d : null
 }
-/** 该轮产物是否已经收进某个交付包：收进去后不再逐行平铺（目标轮的所有轮次都算收进去了） */
+/** 该轮产物是否已经以交付卡形式展示：成卡的才收起逐行清单（普通回答单件照旧平铺一行） */
 const deliveryListHidden = m => {
   if (deliveryCardOfMessage(m)) return true
   const tid = String((m && m.turnId) || '')
