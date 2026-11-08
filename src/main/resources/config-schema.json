@@ -142,6 +142,14 @@
       ]
     },
     {
+      "key": "notify-mail",
+      "title": "通知外发（邮件）",
+      "sections": [
+        "邮件服务（SMTP）",
+        "投递规则（类型白名单 / 聚合 / 重试）"
+      ]
+    },
+    {
       "key": "sandbox",
       "title": "沙盒（运行限制；连接走环境变量）",
       "sections": [
@@ -1380,6 +1388,41 @@
       "step": 0.05,
       "width": 200,
       "note": "未启用重排/重排不可用时生效：加权融合分低于该值的块不进上下文。2026-10-04 按评测基线标定 0.5（期望块 95.7% 在 0.55 以上，无关块 70% 低于 0.5、通过率 30%；旧默认 0.25 时无关块通过率 82.7%）。调权重（vectorWeight 等）后需重跑基线再标定，0=关闭",
+      "tier": 2
+    },
+    {
+      "backendKey": "retrieval.lowConfidencePolicy",
+      "panel": "retrieval",
+      "section": 1,
+      "group": "retrieval",
+      "key": "lowConfidencePolicy",
+      "path": "retrieval.lowConfidencePolicy",
+      "label": "低分保底策略",
+      "type": "select",
+      "def": "top1",
+      "width": 240,
+      "options": [
+        { "value": "top1", "label": "top1（全灭时保底最相关 1 条，低置信显形）" },
+        { "value": "off", "label": "off（不保底，严格按绝对门）" }
+      ],
+      "note": "绝对门把所有候选都门掉时：top1=只保留最相关的 1 条并标注低置信（解决隐性问答被误杀）；off=退回严格绝对门。只对重排分域生效，重排不可用时不保底",
+      "tier": 2
+    },
+    {
+      "backendKey": "retrieval.top1Floor",
+      "panel": "retrieval",
+      "section": 1,
+      "group": "retrieval",
+      "key": "top1Floor",
+      "path": "retrieval.top1Floor",
+      "label": "保底最低分",
+      "type": "number",
+      "def": 0.05,
+      "min": 0,
+      "max": 1,
+      "step": 0.01,
+      "width": 200,
+      "note": "top1 保底的分数下限：低于它的候选视为没有相关内容，不强行塞给模型",
       "tier": 2
     },
     {
@@ -3689,6 +3732,181 @@
       "tier": 3
     },
     {
+      "backendKey": "notify.mail.enabled",
+      "panel": "notify-mail",
+      "section": 0,
+      "group": "notify",
+      "key": "mail.enabled",
+      "path": "notify.mail.enabled",
+      "label": "启用邮件外发",
+      "type": "switch",
+      "def": false,
+      "width": 240,
+      "note": "总闸：关闭时不发任何邮件，站内通知与浏览器推送不受影响。开启后仍需每名成员在个人设置 → 通知偏好里勾选类型，才会收到邮件。",
+      "tier": 3
+    },
+    {
+      "backendKey": "notify.mail.host",
+      "panel": "notify-mail",
+      "section": 0,
+      "group": "notify",
+      "key": "mail.host",
+      "path": "notify.mail.host",
+      "label": "SMTP 主机",
+      "type": "text",
+      "def": "",
+      "width": 300,
+      "ph": "smtp.example.com",
+      "tier": 3
+    },
+    {
+      "backendKey": "notify.mail.port",
+      "panel": "notify-mail",
+      "section": 0,
+      "group": "notify",
+      "key": "mail.port",
+      "path": "notify.mail.port",
+      "label": "SMTP 端口",
+      "type": "number",
+      "def": 587,
+      "min": 1,
+      "max": 65535,
+      "width": 160,
+      "tier": 3
+    },
+    {
+      "backendKey": "notify.mail.security",
+      "panel": "notify-mail",
+      "section": 0,
+      "group": "notify",
+      "key": "mail.security",
+      "path": "notify.mail.security",
+      "label": "传输安全",
+      "type": "select",
+      "def": "starttls",
+      "width": 220,
+      "options": [
+        { "value": "starttls", "label": "STARTTLS（587）" },
+        { "value": "ssl", "label": "SSL（465）" },
+        { "value": "none", "label": "无加密" }
+      ],
+      "tier": 3
+    },
+    {
+      "backendKey": "notify.mail.username",
+      "panel": "notify-mail",
+      "section": 0,
+      "group": "notify",
+      "key": "mail.username",
+      "path": "notify.mail.username",
+      "label": "认证账号",
+      "type": "text",
+      "def": "",
+      "width": 300,
+      "ph": "notify@example.com（留空=不认证）",
+      "tier": 3
+    },
+    {
+      "backendKey": "notify.mail.smtpPassword",
+      "panel": "notify-mail",
+      "section": 0,
+      "group": "notify",
+      "key": "mail.smtpPassword",
+      "path": "notify.mail.smtpPassword",
+      "label": "认证口令",
+      "type": "password",
+      "def": "",
+      "width": 300,
+      "ph": "加密入库，编辑时留空即沿用",
+      "tier": 3
+    },
+    {
+      "backendKey": "notify.mail.from",
+      "panel": "notify-mail",
+      "section": 0,
+      "group": "notify",
+      "key": "mail.from",
+      "path": "notify.mail.from",
+      "label": "发件人地址",
+      "type": "text",
+      "def": "",
+      "width": 300,
+      "ph": "留空=用认证账号",
+      "tier": 3
+    },
+    {
+      "backendKey": "notify.mail.fromName",
+      "panel": "notify-mail",
+      "section": 0,
+      "group": "notify",
+      "key": "mail.fromName",
+      "path": "notify.mail.fromName",
+      "label": "发件人显示名",
+      "type": "text",
+      "def": "问渠",
+      "width": 260,
+      "tier": 3
+    },
+    {
+      "backendKey": "notify.mail.webBaseUrl",
+      "panel": "notify-mail",
+      "section": 0,
+      "group": "notify",
+      "key": "mail.webBaseUrl",
+      "path": "notify.mail.webBaseUrl",
+      "label": "前端基址（邮件深链）",
+      "type": "text",
+      "def": "",
+      "width": 320,
+      "ph": "https://wenqu.example.com（留空=邮件不带按钮）",
+      "tier": 3
+    },
+    {
+      "backendKey": "notify.mail.types",
+      "panel": "notify-mail",
+      "section": 1,
+      "group": "notify",
+      "key": "mail.types",
+      "path": "notify.mail.types",
+      "label": "允许外发的类型（逗号分隔）",
+      "type": "textarea",
+      "def": "tool.approval,tool.ask,plan.approval,workflow.approval,tenant.request,model.quota,quota",
+      "width": 560,
+      "note": "平台允许外发的通知类型；个人仍需在通知偏好中单独勾选。类型常量：tool.approval / tool.ask / plan.approval / workflow.approval / workflow.failed / parse.failed / schedule.failed / tenant.request / model.quota / quota 等。",
+      "tier": 3
+    },
+    {
+      "backendKey": "notify.mail.minIntervalMs",
+      "panel": "notify-mail",
+      "section": 1,
+      "group": "notify",
+      "key": "mail.minIntervalMs",
+      "path": "notify.mail.minIntervalMs",
+      "label": "同类聚合窗口(ms)",
+      "type": "number",
+      "def": 300000,
+      "min": 0,
+      "max": 86400000,
+      "step": 60000,
+      "width": 220,
+      "note": "同接收人 + 同类型 + 同去重键在此窗口内只发一封；0=关闭聚合。",
+      "tier": 3
+    },
+    {
+      "backendKey": "notify.mail.retryDelaysSeconds",
+      "panel": "notify-mail",
+      "section": 1,
+      "group": "notify",
+      "key": "mail.retryDelaysSeconds",
+      "path": "notify.mail.retryDelaysSeconds",
+      "label": "重试间隔（秒，逗号分隔）",
+      "type": "text",
+      "def": "60,300,900",
+      "width": 260,
+      "note": "投递失败按这些间隔重试；超过次数置「已耗尽」，并给管理员一条站内通知。",
+      "tier": 3
+    },
+    {
       "backendKey": "notification.cleanupIntervalMs",
       "panel": "maintenance",
       "section": 12,
@@ -3719,6 +3937,22 @@
         ]
       ],
       "hidden": true
+    },
+    {
+      "backendKey": "mcp.patrolIntervalMs",
+      "panel": "mcp",
+      "section": 1,
+      "group": "mcp",
+      "key": "patrolIntervalMs",
+      "path": "mcp.patrolIntervalMs",
+      "label": "连接健康巡检间隔(ms)",
+      "type": "number",
+      "def": 300000,
+      "min": 0,
+      "step": 60000,
+      "width": 240,
+      "note": "对非空闲连接池里「已连接」的服务定期拉一次工具清单：远端挂掉时自动翻红并进入退避重试，不再长期显示已连接。0=关闭巡检。",
+      "tier": 3
     },
     {
       "backendKey": "mcp.server.enabled",

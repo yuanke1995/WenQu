@@ -33,6 +33,8 @@ import com.wenqu.ai.security.Permission;
 public class NotificationController {
 
     private final NotificationService notificationService;
+    private final com.wenqu.ai.service.MailDispatchService mailDispatch;
+    private final com.wenqu.ai.mapper.UserMapper userMapper;
 
     @Operation(summary = "通知列表", description = "当前用户的通知（新→旧）；支持 type/types 类型筛选、q 关键词、unreadOnly 仅未读、cursor 游标分页。" +
             "返回 {items:[通知], nextCursor, hasMore, total, unreadCount}")
@@ -120,20 +122,32 @@ public class NotificationController {
         return ResultJson.ok(Map.of("deleted", notificationService.clear(RequestUser.uid(), scope)));
     }
 
-    @Operation(summary = "通知类型偏好（静音）", description = "返回本用户已静音的通知类型列表（类型常量数组）")
+    @Operation(summary = "通知类型偏好（静音 + 邮件提醒）",
+            description = "返回本用户已静音的通知类型、已开启邮件提醒的类型，以及平台邮件通道是否开启")
     @Permission("self:notification")
     @GetMapping("/preferences")
     public ResultJson getPreferences() {
-        return ResultJson.ok(Map.of("mutedTypes", notificationService.getMutedTypes(RequestUser.uid())));
+        com.wenqu.ai.model.User u = userMapper.selectById(RequestUser.uid());
+        return ResultJson.ok(Map.of(
+                "mutedTypes", notificationService.getMutedTypes(RequestUser.uid()),
+                "mailTypes", mailDispatch.getSelfMailTypes(RequestUser.uid()),
+                "mailEnabled", mailDispatch.enabled(),
+                "email", u == null || u.getEmail() == null ? "" : u.getEmail()));
     }
 
-    @Operation(summary = "保存通知类型偏好（静音）", description = "body: {mutedTypes:[类型常量...]}；空数组=恢复接收全部类型")
+    @Operation(summary = "保存通知类型偏好（静音 + 邮件提醒）",
+            description = "body: {mutedTypes:[类型常量...], mailTypes:[类型常量...]}；空数组=不静音/不收邮件")
     @Permission("self:notification")
     @PutMapping("/preferences")
     public ResultJson savePreferences(@RequestBody Map<String, Object> body) {
-        Object raw = body == null ? null : body.get("mutedTypes");
-        List<String> types = raw instanceof List<?> l ? l.stream().map(String::valueOf).toList() : List.of();
-        notificationService.setMutedTypes(RequestUser.uid(), types);
-        return ResultJson.ok(Map.of("mutedTypes", notificationService.getMutedTypes(RequestUser.uid())));
+        Object rawMuted = body == null ? null : body.get("mutedTypes");
+        List<String> muted = rawMuted instanceof List<?> l ? l.stream().map(String::valueOf).toList() : List.of();
+        notificationService.setMutedTypes(RequestUser.uid(), muted);
+        Object rawMail = body == null ? null : body.get("mailTypes");
+        List<String> mail = rawMail instanceof List<?> l ? l.stream().map(String::valueOf).toList() : List.of();
+        mailDispatch.setSelfMailTypes(RequestUser.uid(), mail);
+        return ResultJson.ok(Map.of(
+                "mutedTypes", notificationService.getMutedTypes(RequestUser.uid()),
+                "mailTypes", mailDispatch.getSelfMailTypes(RequestUser.uid())));
     }
 }

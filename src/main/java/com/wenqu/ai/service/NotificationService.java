@@ -67,6 +67,8 @@ public class NotificationService {
     private final UserRoleService userRoleService;
     /** Web Push：一条<b>新</b>通知落库后推给本人已订阅的设备（旁路，失败只记日志） */
     private final WebPushNotifier webPush;
+    /** 邮件外发（P1）：落库后判规则并写投递台账；SMTP 发送由后台任务承担 */
+    private final MailDispatchService mailDispatch;
 
     /** 列表单次上限（防止一次拉爆；前端铃铛面板一屏足够） */
     private static final int LIST_MAX_LIMIT = 200;
@@ -143,6 +145,8 @@ public class NotificationService {
             // 推送挂在「真的多了一条」之后：上面三种提前 return（无归属/已静音/去重合并）都不推——
             // 同一件事反复弹系统级通知，比不弹更打扰人
             webPush.push(uid, type, n.getTitle(), n.getContent(), refType, refId, refSub, n.getId());
+            // 邮件外发：同样只在「真的多了一条」后判规则（合并/静音的重复事件不再打扰）
+            mailDispatch.dispatch(n);
         } catch (Exception e) {
             log.warn("[NOTIFY] 通知落库失败（不影响主链路）type={} uid={} title={} err={}",
                     type, uid, title, e.getMessage());

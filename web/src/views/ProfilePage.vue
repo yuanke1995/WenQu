@@ -126,6 +126,25 @@
 
           <div class="pf-field">
             <div class="pf-field-head">
+              <span class="pf-label">邮件提醒</span>
+              <span class="pf-meta-right">
+                <span class="pf-sub-hint">{{ mailEnabled ? '邮件通道已开启' : '管理员尚未开启邮件通道' }}</span>
+              </span>
+            </div>
+            <div class="np-mail-row">
+              <a-input v-model:value="mailEmail" size="small" :maxlength="160"
+                       placeholder="你的通知邮箱，如 name@company.com" :disabled="!mailEnabled" />
+              <button class="app-btn ghost" type="button" :disabled="!mailEnabled || mailSaving" @click="saveMailEmail">
+                {{ mailSaving ? '保存中…' : '保存邮箱' }}
+              </button>
+            </div>
+            <div class="pf-sub-hint" style="margin-top:6px">
+              邮箱保存后，只有下方每一项开启「邮件」的类型才会发邮件；站内通知不受影响。
+            </div>
+          </div>
+
+          <div class="pf-field">
+            <div class="pf-field-head">
               <span class="pf-label">接收哪些通知</span>
               <span class="pf-meta-right">
                 <span v-if="muteDirty" class="pf-dirty">未保存</span>
@@ -149,6 +168,10 @@
                     <a-switch :checked="!muted(t.type)" size="small" @change="v => toggleMute(t.type, v)" />
                     <component :is="t.icon" class="np-ic" :class="t.tone" />
                     <span>{{ t.label }}</span>
+                    <a-tooltip :title="mailEnabled ? '同时发一封邮件到你的通知邮箱' : '管理员尚未开启邮件通道'">
+                      <a-switch class="np-mail-switch" :checked="mailTypes.includes(t.type)" size="small"
+                                :disabled="!mailEnabled" @click.stop @change="v => toggleMail(t.type, v)" />
+                    </a-tooltip>
                   </label>
                 </div>
               </div>
@@ -474,7 +497,7 @@ import { shareUrlOf } from './shareSession'
 import { markSessionShared, resetSessionStore } from './store'
 import { NOTIF_BUCKETS, NOTIF_BUCKET_ORDER, NOTIF_TYPES, emitNotifChanged, notifBucket } from '../chat/useNotifications'
 import { changePasswordApi, getUserPreference, setUserPreference, updateMyProfile, uploadAvatarApi,
-         notificationPreferences, notificationSavePreferences,
+         notificationPreferences, notificationSavePreferences, updateMyEmail,
          listMySessionShares, stopShareBySession, purgeShareRecord, enableSessionShare,
          getMemoryOverview, getMemoryContent, saveMemoryMd, compactMemory, clearMyMemory,
          deleteMemoryDaily, listAgents } from '../api'
@@ -604,6 +627,23 @@ const onTestPush = async () => {
 const mutedTypes = ref([])
 const savedMutedTypes = ref([])
 const muteSaving = ref(false)
+// 邮件提醒：平台通道是否开 / 本人邮箱 / 已勾选的类型
+const mailEnabled = ref(false)
+const mailEmail = ref('')
+const mailTypes = ref([])
+const mailSaving = ref(false)
+const toggleMail = (t, on) => {
+  mailTypes.value = on ? [...new Set([...mailTypes.value, t])] : mailTypes.value.filter(x => x !== t)
+}
+async function saveMailEmail () {
+  mailSaving.value = true
+  try {
+    await updateMyEmail(mailEmail.value.trim())
+    message.success('邮箱已保存')
+  } catch (e) {
+    message.error('保存失败：' + (e.message || '请重试'))
+  } finally { mailSaving.value = false }
+}
 // 排序后比对：静音清单是有序数组，开关顺序变化不代表内容变化
 const muteKey = list => [...(list || [])].sort().join('|')
 const muteDirty = computed(() => muteKey(mutedTypes.value) !== muteKey(savedMutedTypes.value))
@@ -634,15 +674,19 @@ const restoreDefault = async () => {
 const loadMutes = async () => {
   try {
     const r = await notificationPreferences()
-    const list = (r && r.data && r.data.mutedTypes) || []
+    const d = (r && r.data) || {}
+    const list = d.mutedTypes || []
     mutedTypes.value = list
     savedMutedTypes.value = [...list]
+    mailTypes.value = d.mailTypes || []
+    mailEnabled.value = Boolean(d.mailEnabled)
+    mailEmail.value = d.email || ''
   } catch (e) { message.error('通知偏好读取失败：' + (e.message || '请重试')) }
 }
 const saveMutes = async () => {
   muteSaving.value = true
   try {
-    await notificationSavePreferences(mutedTypes.value)
+    await notificationSavePreferences(mutedTypes.value, mailTypes.value)
     savedMutedTypes.value = [...mutedTypes.value]
     message.success('已保存')
     // 静音变化不影响已收到的通知，但通知中心的筛选计数应与新偏好保持一致
@@ -1245,6 +1289,9 @@ watch(current, v => { if (v === 'notify') refreshPushState().then(refreshCap).ca
 .np-group .np-grid { padding: 10px; }
 .np-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px 16px; }
 .np-item { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--app-text); }
+.np-mail-row { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.np-mail-row :deep(.ant-input) { max-width: 320px; }
+.np-mail-switch { margin-left: auto; flex: none; }
 .np-ic { font-size: 15px; flex: none; }
 .np-ic.ok { color: var(--app-ok); }
 .np-ic.err { color: var(--app-danger); }

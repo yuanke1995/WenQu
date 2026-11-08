@@ -588,8 +588,11 @@ export const bindProjectExecutor = (projectId, executorId, roots) =>
 // 我的工作区容器（implicit 兜底容器在前，前端会过滤掉）；首次调用会懒创建 implicit 行
 export const listProjects = () => request('/project/list')
 // 工作区 = 本机上的一个或多个真实目录；roots[0] 是主目录（cwd 与相对路径基准）
-export const createProject = (name, executorId, roots) =>
-  said(request('/project', { method: 'POST', body: JSON.stringify({ name, executorId, roots }) }), { k: 'spaces' })
+export const createProject = (name, executorId, roots, fromProjectId) =>
+  said(request('/project', {
+    method: 'POST',
+    body: JSON.stringify(fromProjectId ? { name, executorId, roots, fromProjectId } : { name, executorId, roots })
+  }), { k: 'spaces' })
 // 删除工作区：只摘归属，其下会话与产物仍然保留；本机目录里的文件一个都不动
 export const deleteProject = id =>
   said(request(`/project/${id}`, { method: 'DELETE' }), { k: 'spaces' })
@@ -601,6 +604,15 @@ export const saveWorkspaceMemory = (id, content) =>
   request(`/project/${encodeURIComponent(id)}/workspace-memory`, {
     method: 'PUT', body: JSON.stringify({ content: content || '' })
   })
+// 工作区事项清单（C2）：记下 → 去聊 → 勾掉；状态只由用户动作改
+export const listProjectItems = id => request(`/project/${encodeURIComponent(id)}/items`)
+export const createProjectItem = (id, body) =>
+  request(`/project/${encodeURIComponent(id)}/items`, { method: 'POST', body: JSON.stringify(body || {}) })
+export const updateProjectItem = (id, itemId, body) =>
+  request(`/project/${encodeURIComponent(id)}/items/${encodeURIComponent(itemId)}`,
+    { method: 'PUT', body: JSON.stringify(body || {}) })
+export const deleteProjectItem = (id, itemId) =>
+  request(`/project/${encodeURIComponent(id)}/items/${encodeURIComponent(itemId)}`, { method: 'DELETE' })
 // 归档 / 恢复工作区（不动会话与产物，implicit 兜底容器不可归档）
 export const setProjectStatus = (id, status) =>
   said(request(`/project/${id}/status`, { method: 'PUT', body: JSON.stringify({ status }) }), { k: 'spaces' })
@@ -2043,7 +2055,15 @@ export const webpushSubscribe = sub => request('/webpush/subscribe', { method: '
 export const webpushUnsubscribe = id => request('/webpush/unsubscribe', { method: 'POST', body: JSON.stringify({ id }) })
 export const webpushTest = () => request('/webpush/test', { method: 'POST', timeout: 20000 })
 export const webpushGenKeys = () => request('/webpush/keys', { method: 'POST' })
-export const notificationSavePreferences = mutedTypes => request('/notification/preferences', { method: 'PUT', body: JSON.stringify({ mutedTypes }) })
+/** 保存通知类型偏好：静音清单 + 邮件提醒类型（空数组=全收/不收邮件） */
+export const notificationSavePreferences = (mutedTypes, mailTypes) => request('/notification/preferences', { method: 'PUT', body: JSON.stringify({ mutedTypes, mailTypes: mailTypes || [] }) })
+/** 设置本人通知邮箱（空串=清除） */
+export const updateMyEmail = email => request('/user/email', { method: 'PUT', body: JSON.stringify({ email }) })
+/** 邮件外发：发一封测试邮件到当前管理员邮箱 */
+export const sendMailTest = () => request('/notify/mail/test', { method: 'POST', timeout: 30000 })
+/** 邮件外发：最近投递记录（status 可选 pending/success/exhausted/skipped） */
+export const getMailDeliveries = (status = '', limit = 50) =>
+  request(`/notify/mail/deliveries?limit=${limit}${status ? '&status=' + encodeURIComponent(status) : ''}`)
 // 工具审批恢复：按 approvalId 取本人审批记录（tool.approval 通知点击后重建审批卡）
 // （此前误写 /chat/tool-approval/，后端实际映射 /api/ai/tool-approval/{id}，恢复查询一直 404）
 export const getToolApproval = id => request(`/tool-approval/${encodeURIComponent(id)}`)
@@ -2112,3 +2132,32 @@ export const agentEvalGate = agentId =>
 /** 保存前检查：body = 智能体保存 payload 原样透传，返回门禁状态 + 本次保存的字段级变更清单（不落数据） */
 export const agentEvalGateCheck = (agentId, payload) =>
   request(`/agent-eval/agents/${encodeURIComponent(agentId)}/gate`, { method: 'POST', body: JSON.stringify(payload || {}), timeout: 60000 })
+
+// ==================== P1 多租户生命周期 ====================
+/** 登录页租户品牌（免登录；tenant 留空=default） */
+export const getTenantBrand = tenant =>
+  request(`/auth/brand${tenant ? '?tenant=' + encodeURIComponent(tenant) : ''}`)
+/** 本租户在途邀请（不返回 token 明文） */
+export const listTenantInvites = () => request('/tenant/invites')
+/** 生成邀请：{roleIds,deptId,email,maxUses,expireDays}；返回 path=/join/{token}（明文仅此一次） */
+export const createTenantInvite = body =>
+  request('/tenant/invites', { method: 'POST', body: JSON.stringify(body || {}) })
+/** 撤销邀请 */
+export const revokeTenantInvite = id =>
+  request(`/tenant/invites/${encodeURIComponent(id)}/revoke`, { method: 'POST', body: '{}' })
+/** 邀请预览（免登录） */
+export const previewJoin = token => request(`/join/${encodeURIComponent(token)}`)
+/** 接受邀请并注册（免登录）；返回 {token,user} */
+export const acceptJoin = (token, body) =>
+  request(`/join/${encodeURIComponent(token)}`, { method: 'POST', body: JSON.stringify(body || {}) })
+/** 归档租户（只读、可恢复） */
+export const archiveTenant = id =>
+  request(`/tenant/${encodeURIComponent(id)}/archive`, { method: 'POST', body: '{}' })
+/** 恢复归档租户 */
+export const restoreTenant = id =>
+  request(`/tenant/${encodeURIComponent(id)}/restore`, { method: 'POST', body: '{}' })
+/** 更新租户品牌：{brandName,brandLogo,brandColor,loginHint}；空串=恢复默认 */
+export const updateTenantBrand = (id, body) =>
+  request(`/tenant/${encodeURIComponent(id)}/brand`, { method: 'POST', body: JSON.stringify(body || {}) })
+/** 新租户首登引导状态（五项按真实数据计算） */
+export const getTenantOnboarding = () => request('/tenant/onboarding')

@@ -164,6 +164,36 @@
                 </div>
               </div>
 
+              <!-- 通知外发（邮件）：配置字段走 schema 通用渲染，这里只放验证动作 -->
+              <div v-if="current === 'notify-mail'" class="mail-ops">
+                <div class="mail-ops-head">投递验证</div>
+                <div class="mail-ops-row">
+                  <button class="app-btn ghost" :disabled="mailTestBusy" @click="sendMailTestClick">
+                    {{ mailTestBusy ? '发送中…' : '发送测试邮件' }}
+                  </button>
+                  <button class="app-btn ghost" @click="openMailLog">查看投递记录</button>
+                  <span class="mail-ops-hint">测试邮件发到你个人资料里的邮箱；失败原因会直接显示。</span>
+                </div>
+                <div v-if="mailTestResult" class="mail-ops-result" :class="mailTestResult.ok ? 'ok' : 'bad'">
+                  {{ mailTestResult.text }}
+                </div>
+                <a-modal v-model:open="mailLogOpen" title="邮件投递记录" :footer="null" width="760">
+                  <div class="mail-log-hint">最近 50 条（含按规则未发送的 skipped，便于排障）</div>
+                  <a-table :data-source="mailLogs" :loading="mailLogLoading" size="small" :pagination="false"
+                           row-key="id" :columns="mailLogCols" :scroll="{ y: 380 }">
+                    <template #bodyCell="{ column, record }">
+                      <template v-if="column.key === 'status'">
+                        <span class="mail-log-status" :class="record.status">{{ mailLogStatusText(record.status) }}</span>
+                      </template>
+                      <template v-else-if="column.key === 'time'">{{ (record.createTime || '').replace('T', ' ').slice(5, 16) }}</template>
+                      <template v-else-if="column.key === 'error'">
+                        <span class="mail-log-err" :title="record.lastError">{{ record.lastError || '—' }}</span>
+                      </template>
+                    </template>
+                  </a-table>
+                </a-modal>
+              </div>
+
               <!-- 定时任务·运行状态页签：ScheduleCenter 内存快照（统计随重启归零）。
                    暂停/恢复即把间隔配置写 0 / 默认值，复用既有保存链路。
                    间隔与「专属参数」都可就地编辑：这两个旋钮只对本任务生效，是管理员最常调的，
@@ -554,7 +584,8 @@ import { getConfig, getConfigSchema, saveConfig, resetConfig,
          getScheduleTasks, triggerScheduleTask, getScheduleRuns, clearScheduleRuns,
          getToolInventory, listAvailableSkills, listKnowledgeBases,
          searchIndexStats, searchIndexReindex, searchIndexClear, vectorDiagnose, rebuildKbVectors,
-         documentHealth } from '../api'
+         documentHealth,
+         sendMailTest, getMailDeliveries } from '../api'
 import SchemaField from '../components/SchemaField.vue'
 import IntervalEditor from '../components/IntervalEditor.vue'
 import TimeoutPreset from '../components/TimeoutPreset.vue'
@@ -690,8 +721,43 @@ const formBlocks = computed(() => {
   return out
 })
 
+// ---------- 通知外发（邮件）验证动作 ----------
+const mailTestBusy = ref(false)
+const mailTestResult = ref(null)
+const mailLogOpen = ref(false)
+const mailLogLoading = ref(false)
+const mailLogs = ref([])
+const mailLogCols = [
+  { title: '时间', key: 'time', width: 92 },
+  { title: '收件人', dataIndex: 'to', key: 'to', width: 190, ellipsis: true },
+  { title: '主题', dataIndex: 'subject', key: 'subject', ellipsis: true },
+  { title: '状态', key: 'status', width: 86 },
+  { title: '重试', dataIndex: 'attempts', key: 'attempts', width: 56 },
+  { title: '原因', key: 'error', width: 170 }
+]
+const mailLogStatusText = s => ({ pending: '待投递', success: '已送达', exhausted: '已耗尽', skipped: '未发送' }[s] || s)
+async function sendMailTestClick () {
+  mailTestBusy.value = true
+  mailTestResult.value = null
+  try {
+    const r = await sendMailTest()
+    mailTestResult.value = { ok: true, text: `测试邮件已发送至 ${(r && r.data && r.data.to) || '你的邮箱'}` }
+  } catch (e) {
+    mailTestResult.value = { ok: false, text: e.message || '发送失败' }
+  } finally { mailTestBusy.value = false }
+}
+async function openMailLog () {
+  mailLogOpen.value = true
+  mailLogLoading.value = true
+  try {
+    const r = await getMailDeliveries()
+    mailLogs.value = (r && r.data) || []
+  } catch (e) {
+    message.error('投递记录加载失败：' + (e.message || '请重试'))
+  } finally { mailLogLoading.value = false }
+}
+
 const navPanels = computed(() => {
-  // 联网搜索与技能已并入「工具调用」页签，导航不再单列；
   // 「检索设置」在导航里时，把 RAG 链路的其余三组收进它的页签，导航也不再单列
   const groupRag = PANELS.some(p => p.key === 'retrieval')
   const ragChildren = new Set(['context', 'chunk', 'vision'])
@@ -1823,4 +1889,18 @@ onMounted(() => { fetchAndFill(); loadToolInventory(); loadSkillOptions() })
   background: var(--app-panel-2); border: 1px solid var(--app-border); border-radius: 8px; padding: 8px 10px;
 }
 .idx-ops-diag code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+.mail-ops { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--app-border); }
+.mail-ops-head { margin-bottom: 8px; font-size: 13px; font-weight: 500; color: var(--app-text); }
+.mail-ops-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.mail-ops-hint { font-size: 11.5px; color: var(--app-text3); }
+.mail-ops-result { margin-top: 10px; padding: 8px 10px; border-radius: 6px; font-size: 12px; }
+.mail-ops-result.ok { background: var(--app-ok-weak); color: var(--app-ok); }
+.mail-ops-result.bad { background: var(--app-danger-weak); color: var(--app-danger); }
+.mail-log-hint { margin-bottom: 8px; font-size: 11.5px; color: var(--app-text3); }
+.mail-log-status.pending { color: var(--app-warn); }
+.mail-log-status.success { color: var(--app-ok); }
+.mail-log-status.exhausted { color: var(--app-danger); }
+.mail-log-status.skipped { color: var(--app-text3); }
+.mail-log-err { display: inline-block; max-width: 160px; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; color: var(--app-text3); font-size: 11.5px; }
 </style>

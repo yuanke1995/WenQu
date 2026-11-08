@@ -703,6 +703,12 @@ public class ConfigService {
         d.put("retrieval.vecThreshold", "0.3");            // 向量相似度归一化基准/下限
         d.put("retrieval.minContextScore", String.valueOf(ConfigDefaults.RETRIEVAL_MIN_CONTEXT_SCORE));  // 最低相关分门槛（仅对重排分 0~1 分域生效，对齐 Dify/Coze Score 阈值；0=关）
         d.put("retrieval.minFusionScore", String.valueOf(ConfigDefaults.RETRIEVAL_MIN_FUSION_SCORE));    // 融合分门槛（未启用重排时生效；2026-10-04 评测基线标定：期望块 95.7%≥0.55，无关块 70%<0.5、通过率 30%，旧 0.25 时通过率 82.7% 拦不住词面重叠噪声；调检索权重后需重标定；0=关）
+        d.put("retrieval.lowConfidencePolicy", ConfigDefaults.RETRIEVAL_LOW_CONFIDENCE_POLICY); // 低分全灭时是否保底 top-1（top1/off；默认 top1）
+        d.put("retrieval.top1Floor", String.valueOf(ConfigDefaults.RETRIEVAL_TOP1_FLOOR)); // 保底条目的最低分
+        // 分享游客日额度（P3 费用面第一层）：0/负=关闭该层；访客级防换 visitorId 刷
+        d.put("share.guestDailyTurns", "200");              // 每条分享每日游客轮次上限
+        d.put("share.guestDailyTurnsPerVisitor", "20");     // 每访客每条分享每日轮次上限
+        d.put("share.guestDailyTokens", "2000000");          // 每条分享每日游客 token 上限（台账累加，下一轮前拦）
         // retrieval.queryRewriteEnabled 已退役（2026-10）：多轮查询改写实现已随手写运行时删除，
         // 框架/检索链路没有第二个读取点；存量行由 schema.sql 清理。
         d.put("retrieval.aclTopKSupplant", "true");        // 权限补采是否顶掉原 topK 尾部（2026-10-20 补 schema 字段：此前 defaults 登记了但设置页没有这一行，改了无法回显、PUT 还会被整笔拒）
@@ -991,6 +997,19 @@ public class ConfigService {
         d.put("notification.turnMinSeconds", "60");          // 一轮机器耗时达到此秒数才报「跑完了」：短轮答案当场就到屏幕，多报一条是噪音
         d.put("notification.cleanupIntervalMs", "86400000"); // 站内通知清理间隔（ms，默认每日；≤0 暂停）
         d.put("notification.dedupWindow", "1440");          // 同类通知合并窗口(分钟)：同目标重复发生的同类通知合并为一条，0=关闭合并
+        // ---------- 通知外发：邮件通道（P1） ----------
+        d.put("notify.mail.enabled", "false");               // 总闸：关闭时全站零外发，站内通知与 WebPush 不受影响
+        d.put("notify.mail.host", "");                       // SMTP 主机
+        d.put("notify.mail.port", "587");                    // SMTP 端口
+        d.put("notify.mail.security", "starttls");           // none / ssl / starttls
+        d.put("notify.mail.username", "");                   // SMTP 认证账号（空=不认证）
+        d.put("notify.mail.smtpPassword", "");               // SMTP 口令（以 Password 结尾 → RSA 加密入库、快照脱敏）
+        d.put("notify.mail.from", "");                       // 发件人地址（空=用认证账号）
+        d.put("notify.mail.fromName", "问渠");               // 发件人显示名
+        d.put("notify.mail.types", "tool.approval,tool.ask,plan.approval,workflow.approval,tenant.request,model.quota,quota");
+        d.put("notify.mail.minIntervalMs", "300000");        // 同 uid+type+dedupKey 的聚合窗口
+        d.put("notify.mail.retryDelaysSeconds", "60,300,900"); // 重试间隔（秒），超过次数置 exhausted
+        d.put("notify.mail.webBaseUrl", "");                 // 邮件深链基址（空=邮件不带「去处理」按钮）
         d.put("webpush.enabled", "false");                  // Web Push 总闸：站内通知同时推到浏览器系统级通知（还需 env 里有 VAPID 密钥对，缺钥时这条开了也不动）
         d.put("webpush.ttlSeconds", "86400");             // 推送载荷在推送服务上能等多久（秒，默认 1 天）：过期就不弹——「这一轮跑完了」不该三天后才跳出来
         d.put("workflow.maxConcurrentRuns", "4");          // 第 2 期：异步运行并发上限（派发池 core=max；保存即生效，池已建时直接调大小）
@@ -1027,6 +1046,7 @@ public class ConfigService {
         d.put("mcp.server.timeoutMs", String.valueOf(ConfigDefaults.MCP_SERVER_TIMEOUT_MS));   // 单次工具调用等待问答完成的超时（ms）
         d.put("mcp.server.allowedOrigins", "");    // 允许的 Origin 列表（逗号分隔；空=仅允许回环地址）
         d.put("mcp.turnWaitMs", "1500");           // 问答链路等待 MCP 连接收敛的上限(ms)：0=不在本轮等，已有工具/缓存照用，后台继续连
+        d.put("mcp.patrolIntervalMs", "300000");   // 定时健康巡检间隔(ms)：非空闲池里已连接服务定期 listTools，失败自动翻红并接退避重试；0=关
         return d;
     }
 
