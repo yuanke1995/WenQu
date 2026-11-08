@@ -412,13 +412,15 @@
       </Teleport>
 
       <div class="side-foot">
-        <!-- 头像+昵称即「个人设置」入口（此前另有一个与头像语义重复的人形图标，折叠态还挤溢出） -->
+        <!-- 头像+昵称即「个人设置」入口（此前另有一个与头像语义重复的人形图标，折叠态还挤溢出）。
+             身份两行：名字在上，租户/角色退为副信息——租户不再用强调色药丸抢在头像前面 -->
         <a-tooltip :title="collapsed ? '个人设置（' + (userName || '未登录') + '）' : '个人设置'" placement="right">
           <button class="foot-user" @click="goProfile">
-            <span v-if="!collapsed && tenantPill" class="side-tenant"
-                  :class="{ plat: tenantPlat }" :title="tenantTitle">{{ tenantPill }}</span>
-            <UserAvatar :avatar="userAvatar" :name="userName" :size="22" />
-            <span v-if="!collapsed" class="user-name">{{ userName || '未登录' }}</span>
+            <UserAvatar :avatar="userAvatar" :name="userName" :size="28" />
+            <span v-if="!collapsed" class="foot-identity">
+              <span class="user-name">{{ userName || '未登录' }}</span>
+              <span v-if="footMeta" class="foot-meta" :title="tenantTitle">{{ footMeta }}</span>
+            </span>
           </button>
         </a-tooltip>
         <!-- 站内通知铃铛：Badge=未读数（30s 轮询），点开拉列表；popover 挂 body，样式走底部非 scoped 块 -->
@@ -614,17 +616,17 @@ const userAvatar = computed(() => {
   return (i && i.avatar) || ''
 })
 /**
- * 当前租户指示：单租户部署（default 且非平台管理员）不显示，避免给存量部署加噪音。
- * 平台管理员恒显示（default 时标「平台」，非 default 时「租户名 · 平台」），
+ * 底部身份副行：租户 + 角色。单租户部署且非管理员时不显示，避免给存量部署加噪音。
+ * 平台管理员恒显示（default 时「平台管理员」，非 default 时「租户名 · 平台管理员」），
  * 否则自己身处哪个租户这件事在界面上完全不可见。
  */
-const tenantPill = computed(() => {
+const footMeta = computed(() => {
   const t = tenantStateSync()
   if (!t) return ''
-  if (t.superadmin) return t.isDefault ? '平台' : `${t.name} · 平台`
-  return t.isDefault ? '' : t.name
+  const role = t.superadmin ? '平台管理员' : (isAdmin.value ? '管理员' : '')
+  if (t.isDefault) return role
+  return role ? `${t.name} · ${role}` : t.name
 })
-const tenantPlat = computed(() => Boolean(tenantStateSync() && tenantStateSync().superadmin))
 const tenantTitle = computed(() => {
   const t = tenantStateSync()
   if (!t) return ''
@@ -1828,6 +1830,8 @@ watch(() => route.fullPath, () => {
    横排 3 个 26px 图标在 ~56px 图标条里放不下，此前直接溢出 */
 .side.collapsed .side-foot { flex-direction: column; gap: 6px; padding: 8px 0; }
 .side.collapsed .side-foot .app-icon-btn { margin-left: 0 !important; }
+/* 折叠态只剩头像：28px 头像要落在 56px 条的中轴上，不能再左对齐 */
+.side.collapsed .foot-user { flex: none; justify-content: center; padding: 0; }
 /* 品牌标用 BrandMark 组件（SVG 自带圆角与品牌渐变，明暗主题通用）；此处只留占位规则 */
 .logo-name { font-weight: 500; font-size: 13px; white-space: nowrap; }
 /* 形态操作组：编辑 + 折叠，整体靠右（margin-left:auto 必须落在**容器**上——
@@ -2238,26 +2242,32 @@ watch(() => route.fullPath, () => {
 /* 这一排到侧栏底边的距离由 .side-foot 自己的上下 padding 决定（.side 的 padding-bottom 已让给它）：
    否则「分隔线→内容」6px 与「内容→窗口底边」12px 不等，整排看着贴在线上、下面空一大块 */
 .side-foot {
-  display: flex; align-items: center; gap: 4px; padding: 8px 6px;
+  display: flex; align-items: center; gap: 2px; padding: 9px 8px;
   border-top: 1px solid var(--app-border);
 }
-/* 头像+昵称 = 个人设置入口（点击进 /profile），占满剩余宽度把右侧两个图标推到行尾 */
+/* 头像+昵称 = 个人设置入口（点击进 /profile），占满剩余宽度把右侧三个图标推到行尾 */
 .foot-user {
-  flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px;
-  border: none; background: transparent; cursor: pointer; padding: 3px 4px;
-  border-radius: 6px; text-align: left;
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px;
+  border: none; background: transparent; cursor: pointer; padding: 4px;
+  border-radius: 7px; text-align: left;
   transition: background .15s;
 }
-.foot-user:hover { background: var(--app-accent-weak); }
-.user-name { font-size: 12px; color: var(--app-text2); min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* 当前租户指示：状态不是动作，安静一颗 pill；单租户部署不渲染（见 tenantPill） */
-.side-tenant {
-  flex: none; max-width: 92px; padding: 1px 6px; border-radius: 999px;
-  border: 1px solid var(--app-border); background: var(--app-panel-2);
-  color: var(--app-text2); font-size: 11px; line-height: 16px;
+/* 整块入口用第三级底而不是主色弱底：hover 时不至于把整条底栏染蓝 */
+.foot-user:hover { background: var(--app-bg-layer-3); }
+/* 头像加一圈淡描边：主色弱底与面板白太接近，28px 无边界会看着发飘 */
+.foot-user :deep(.ua) { box-shadow: inset 0 0 0 1px var(--app-accent-border); }
+.foot-identity { display: flex; flex-direction: column; min-width: 0; }
+.user-name {
+  font-size: 13px; line-height: 17px; font-weight: 500; color: var(--app-text);
+  min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* 租户/角色是状态不是动作：11px 弱文本，跟在名字下方，不与头像争注意力 */
+.foot-meta {
+  font-size: var(--app-fs-xs); line-height: 14px; color: var(--app-text3);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.side-tenant.plat { color: var(--app-accent); border-color: var(--app-accent); }
+/* 底部动作图标统一 28px 命中区（原 26px 与 22px 头像光学不齐），图标本身 15px */
+.side-foot .app-icon-btn { width: 28px; height: 28px; font-size: 15px; }
 .pwd-err { margin: 4px 0 0; font-size: 12px; color: var(--app-danger); }
 
 /* .main 恒为纵向 flex 容器，.main-body 吃掉剩余高度。
