@@ -60,6 +60,14 @@ public class ChatService {
             "rerank.model", "rerank.baseUrl");
 
     /**
+     * 事件账本里适合带上小对象的卡片类事件：产物、提问、审批、计划、派遣路由。
+     * 只在载荷不超过 1500 字时解析——大计划不整段塞进回放响应。
+     */
+    private static final Set<String> LEDGER_OBJECT_EVENT_TYPES = Set.of(
+            "artifact", "ask_user", "approval_required", "plan", "plan_approval",
+            "agent_delegated", "agent_consulted", "subagent_route");
+
+    /**
      * 解析智能体检索参数 JSON → 覆盖表；**白名单之外的键一律丢弃**（防止借参数覆盖改到无关配置），
      * 解析失败只忽略该来源、不中断问答。
      */
@@ -1057,11 +1065,49 @@ public class ChatService {
                 com.alibaba.fastjson2.JSONObject o = com.alibaba.fastjson2.JSON.parseObject(p);
                 if (o != null) {
                     item.put("name", o.getString("name"));
+                    item.put("label", o.getString("label"));
+                    item.put("hint", o.getString("hint"));
                     item.put("status", o.getString("status"));
                     if (o.get("elapsedMs") != null) item.put("elapsedMs", o.get("elapsedMs"));
+                    if (o.get("stepId") != null) item.put("stepId", o.get("stepId"));
+                    if (o.get("startedAtMs") != null) item.put("startedAtMs", o.get("startedAtMs"));
+                    if (o.get("waitedMs") != null) item.put("waitedMs", o.get("waitedMs"));
+                    // 入参与输出只给摘要：完整那份在消息表的工具卡里，回放不需要再存一遍。
+                    // 结构化返回（而不是让前端从 240 字 summary 里反解），字段才不会被截断切掉。
+                    // 只带完整且够短的入参：半截 JSON 前端解不出摘要，反而会把原文当「参数」铺出来
+                    String args = o.getString("args");
+                    if (args != null && !args.isBlank() && args.length() <= 200) {
+                        item.put("argsBrief", args);
+                    }
+                    String result = o.getString("result");
+                    if (result != null && !result.isBlank()) {
+                        item.put("resultBrief", result.length() > 240 ? result.substring(0, 240) + "…" : result);
+                    }
                 }
             } catch (Exception ignore) {
                 // 载荷不是 JSON（历史行或被截断）：照旧只给摘要，对照视图少一个编号而已
+            }
+        }
+        // 用量/检索是「累计快照」不是单次调用：把整份数值带出来，前端才能按最新态合并、
+        // 展开时列逐帧；不再让面板从 240 字摘要里猜。
+        if ("usage".equals(ev.getType()) || "retrieved".equals(ev.getType())) {
+            try {
+                com.alibaba.fastjson2.JSONObject o = com.alibaba.fastjson2.JSON.parseObject(p);
+                if (o != null) {
+                    item.put("usage".equals(ev.getType()) ? "usage" : "retrieval", o);
+                }
+            } catch (Exception ignore) {
+                // 历史行截断/非 JSON：退回 summary，界面仍能显示一行原始文本
+            }
+        }
+        // 其余卡片类事件给小对象（有上限）：产物、提问、审批、计划、派遣路由。
+        // 上限内才解析，避免把一份大计划整段塞进回放响应。
+        if (p.length() <= 1500 && LEDGER_OBJECT_EVENT_TYPES.contains(ev.getType())) {
+            try {
+                Object o = com.alibaba.fastjson2.JSON.parse(p);
+                if (o != null) item.put("data", o);
+            } catch (Exception ignore) {
+                // 非 JSON：保留 summary 原文
             }
         }
         // 子智能体运行过程（2026-11-07）：摘要是给人看的一行话；完整帧流整份带上——

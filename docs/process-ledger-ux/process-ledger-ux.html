@@ -1,0 +1,1638 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>问渠 · 执行过程（事件账本）—— 价值评估、优化方案与效果图</title>
+<style>
+/* ============================================================
+   报告外壳：沿用问渠工作台设计令牌（与 goal-mode-ux 同一套）
+   ============================================================ */
+:root {
+  --bg: #f4f6f9;
+  --bg2: #ffffff;
+  --bg3: #fafbfc;
+  --ink: #1f2329;
+  --muted: #5f6570;
+  --faint: #98a0aa;
+  --rule: #e6e9ed;
+  --rule2: #d8dde3;
+  --accent: #2e6be6;
+  --accent-weak: #eef2f7;
+  --accent-border: #bcd0f7;
+  --ok: #3b8f4e;
+  --ok-weak: #eaf5ec;
+  --ok-border: #cfe4d3;
+  --warn: #a3691b;
+  --warn-weak: #faf3e6;
+  --warn-border: #f0dfb6;
+  --danger: #cf1322;
+  --danger-weak: #fff2f0;
+  --danger-border: #f3c9c9;
+  --violet: #7c3aed;
+  --violet-weak: #f5f3ff;
+  --violet-border: #ddd6fe;
+  --code: #f0f2f5;
+  --radius: 10px;
+  --radius-lg: 14px;
+  --shadow: 0 18px 50px rgba(16, 24, 40, .12);
+  --shadow-sm: 0 2px 8px rgba(16, 24, 40, .06);
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+          'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+button { font-family: var(--font); cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---------- 报告骨架 ---------- */
+.report {
+  max-width: 1180px;
+  margin: 28px auto 64px;
+  background: var(--bg2);
+  border: 1px solid var(--rule);
+  border-radius: 18px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.cover {
+  padding: 52px 56px 38px;
+  background: linear-gradient(180deg, #fbfcff 0%, #ffffff 100%);
+  border-bottom: 1px solid var(--rule);
+}
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: .16em;
+  color: var(--accent);
+  text-transform: uppercase;
+}
+.cover h1 {
+  margin: 16px 0 0;
+  font-size: 34px;
+  line-height: 1.28;
+  letter-spacing: -.02em;
+  font-weight: 700;
+}
+.cover h1 em { font-style: normal; color: var(--accent); }
+.lede {
+  max-width: 860px;
+  margin: 18px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.85;
+}
+.lede b { color: var(--ink); }
+.meta-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 24px; }
+.meta-chip {
+  font-size: 11.5px;
+  color: var(--muted);
+  border: 1px solid var(--rule);
+  background: var(--bg2);
+  border-radius: 999px;
+  padding: 4px 11px;
+}
+.meta-chip b { color: var(--ink); font-weight: 600; }
+.summary-band { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 28px; }
+.summary-card {
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  padding: 15px 16px 14px;
+  background: linear-gradient(180deg, #fff, var(--bg3));
+}
+.summary-card .num {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .08em;
+  color: var(--accent);
+}
+.summary-card strong { display: block; margin-top: 7px; font-size: 15px; }
+.summary-card span { display: block; margin-top: 4px; font-size: 12px; color: var(--muted); line-height: 1.65; }
+.toc {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 20px;
+  margin-top: 26px;
+  padding-top: 18px;
+  border-top: 1px dashed var(--rule);
+}
+.toc a { font-size: 12px; color: var(--muted); }
+.toc a:hover { color: var(--accent); }
+
+.sec { padding: 42px 56px; border-bottom: 1px solid var(--rule); }
+.sec:last-of-type { border-bottom: 0; }
+.sec-head { display: flex; align-items: baseline; gap: 14px; }
+.sec-no { font-family: var(--mono); font-size: 11px; color: var(--accent); letter-spacing: .08em; }
+.sec h2 { margin: 0; font-size: 22px; letter-spacing: -.01em; }
+.lead { max-width: 900px; margin: 12px 0 0; color: var(--muted); line-height: 1.85; }
+.lead b { color: var(--ink); }
+.sub { margin: 32px 0 0; font-size: 15px; }
+.sub:first-of-type { margin-top: 24px; }
+.sub-note { margin: 4px 0 0; font-size: 12.5px; color: var(--faint); }
+code {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--code);
+  border-radius: 4px;
+  padding: 1px 5px;
+  white-space: nowrap;
+}
+
+/* ---------- 结论 ---------- */
+.verdict {
+  margin-top: 20px;
+  border: 1px solid var(--accent-border);
+  background: linear-gradient(180deg, #f7faff, #fff);
+  border-radius: var(--radius-lg);
+  padding: 20px 22px;
+}
+.verdict .vt {
+  font-size: 12px;
+  font-family: var(--mono);
+  color: var(--accent);
+  letter-spacing: .08em;
+}
+.verdict h3 {
+  margin: 6px 0 0;
+  font-size: 19px;
+  line-height: 1.4;
+}
+.verdict p { margin: 8px 0 0; font-size: 13px; color: var(--muted); line-height: 1.8; }
+.verdict p b { color: var(--ink); }
+
+.tbl { width: 100%; border-collapse: collapse; margin-top: 16px; font-size: 12.5px; }
+.tbl th {
+  text-align: left;
+  font-weight: 600;
+  font-size: 11.5px;
+  color: var(--muted);
+  background: var(--bg3);
+  border: 1px solid var(--rule);
+  padding: 8px 10px;
+  white-space: nowrap;
+}
+.tbl td { border: 1px solid var(--rule); padding: 9px 10px; vertical-align: top; line-height: 1.65; }
+.tbl td:first-child { font-weight: 600; white-space: nowrap; }
+.tbl tr:nth-child(even) td { background: #fcfcfd; }
+.tbl .ok { color: var(--ok); font-weight: 600; }
+.tbl .warn { color: var(--warn); font-weight: 600; }
+.tbl .danger { color: var(--danger); font-weight: 600; }
+.tbl .dim { color: var(--faint); }
+
+/* ---------- 诊断 ---------- */
+.issue-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 18px; }
+.issue {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--bg3);
+  padding: 13px 15px 14px;
+}
+.issue .tag { font-family: var(--mono); font-size: 9.5px; letter-spacing: .08em; color: var(--danger); }
+.issue h4 { margin: 5px 0 0; font-size: 13.5px; }
+.issue p { margin: 5px 0 0; font-size: 12.5px; line-height: 1.7; color: var(--muted); }
+.issue code { display: inline-block; margin-top: 8px; }
+
+.principle-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 18px; }
+.principle {
+  display: flex;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--bg3);
+}
+.principle .pno { font-family: var(--mono); font-size: 10.5px; font-weight: 700; color: var(--accent); padding-top: 1px; }
+.principle strong { display: block; font-size: 13px; }
+.principle p { margin: 2px 0 0; font-size: 12px; line-height: 1.65; color: var(--muted); }
+
+.bullets { margin: 12px 0 0; padding-left: 18px; }
+.bullets li { margin: 5px 0; font-size: 13px; line-height: 1.7; color: var(--muted); }
+.bullets li b { color: var(--ink); }
+
+/* ---------- 方案表 ---------- */
+.plan-tag {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--accent-border);
+  background: var(--accent-weak);
+  color: var(--accent);
+}
+.plan-tag.p1 { border-color: var(--warn-border); background: var(--warn-weak); color: var(--warn); }
+.plan-tag.p2 { border-color: var(--rule2); background: var(--bg3); color: var(--muted); }
+.plan-tag.no { border-color: var(--danger-border); background: var(--danger-weak); color: var(--danger); }
+
+/* ============================================================
+   效果图：应用内模态（尺寸按线上 880px 面板）
+   ============================================================ */
+.mock-scroll { overflow-x: auto; padding-bottom: 4px; }
+.mock {
+  width: 100%;
+  min-width: 900px;
+  margin-top: 16px;
+  background: var(--bg);
+  border: 1px solid var(--rule2);
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 16px 40px rgba(16, 24, 40, .10);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.mk-bar {
+  height: 34px;
+  display: flex; align-items: center; gap: 10px;
+  padding: 0 12px;
+  background: #f1f3f5;
+  border-bottom: 1px solid var(--rule);
+}
+.mk-bar .dots { display: flex; gap: 5px; }
+.mk-bar .dots i { width: 9px; height: 9px; border-radius: 50%; background: #d3d8de; display: block; }
+.mk-bar .dots i:first-child { background: #e6a6a0; }
+.mk-bar .dots i:nth-child(2) { background: #e6cf9b; }
+.mk-bar .dots i:nth-child(3) { background: #a9cfae; }
+.mk-url {
+  flex: 1; max-width: 560px; margin: 0 auto;
+  height: 20px; border-radius: 6px;
+  background: #fff;
+  border: 1px solid var(--rule);
+  display: flex; align-items: center; padding: 0 10px;
+  font-family: var(--mono); font-size: 10px; color: var(--faint);
+}
+.mk-tag {
+  font-size: 10px; color: var(--muted);
+  border: 1px solid var(--rule2); border-radius: 999px;
+  padding: 1px 8px; background: #fff;
+}
+.mk-tag.new { color: var(--ok); border-color: var(--ok-border); background: var(--ok-weak); }
+
+/* 模态外壳 */
+.mk-body {
+  position: relative;
+  padding: 34px 26px 40px;
+  min-height: 260px;
+  background:
+    radial-gradient(1200px 300px at 50% -80px, #eef2f7 0%, transparent 60%),
+    var(--bg);
+}
+.behind {
+  position: absolute; inset: 0;
+  padding: 26px 40px;
+  color: var(--faint);
+  font-size: 12px;
+  filter: blur(1.2px);
+  opacity: .55;
+  pointer-events: none;
+  overflow: hidden;
+}
+.behind p { margin: 0 0 12px; }
+.behind .bline { height: 7px; border-radius: 4px; background: #e3e7ec; margin-bottom: 9px; }
+.behind .bline.w1 { width: 46%; }
+.behind .bline.w2 { width: 72%; }
+.behind .bline.w3 { width: 58%; }
+.pm {
+  position: relative;
+  width: 860px;
+  margin: 0 auto;
+  background: #fff;
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(16, 24, 40, .16);
+  overflow: hidden;
+}
+.pm-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--rule);
+}
+.pm-title { font-size: 15px; font-weight: 650; letter-spacing: -.01em; }
+.pm-sub { font-size: 11.5px; color: var(--faint); }
+.pm-x {
+  margin-left: auto;
+  width: 26px; height: 26px; border: 0; background: none; color: var(--faint);
+  display: inline-flex; align-items: center; justify-content: center; font-size: 16px;
+}
+.pm-body { padding: 14px 18px 18px; }
+
+/* 通用小图标 */
+.ico { width: 13px; height: 13px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.ico.fill { fill: currentColor; stroke: none; }
+
+/* ---------- 现状 ---------- */
+.raw-tip {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  font-size: 12px; color: var(--muted); margin-bottom: 10px;
+}
+.raw-turn { border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; }
+.raw-head {
+  display: flex; align-items: center; gap: 8px; padding: 7px 10px; font-size: 12px;
+  background: var(--bg3); border-bottom: 1px solid var(--rule);
+}
+.raw-head .time { font-variant-numeric: tabular-nums; }
+.raw-head .meta { color: var(--faint); font-size: 11px; }
+.raw-head .types { margin-left: auto; color: var(--faint); font-size: 11px; }
+.raw-list { padding: 4px 10px 8px; }
+.raw-row { display: flex; gap: 8px; align-items: baseline; padding: 4px 2px; font-size: 11.5px; }
+.raw-row .type { flex: 0 0 56px; color: var(--accent); }
+.raw-row .at { flex: 0 0 56px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.raw-row .sum {
+  flex: 1; min-width: 0; color: var(--muted); font-family: var(--mono); font-size: 10.5px;
+  line-height: 1.55; word-break: break-all;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.badge-n {
+  flex: none; width: 16px; height: 16px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-family: var(--mono); font-size: 9px; font-weight: 700;
+  background: var(--danger-weak); color: var(--danger); border: 1px solid var(--danger-border);
+}
+.anno-list { margin: 14px 0 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px 22px; }
+.anno-list li { font-size: 12px; color: var(--muted); line-height: 1.65; display: flex; gap: 8px; }
+.anno-list .n {
+  flex: none; width: 16px; height: 16px; margin-top: 1px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-family: var(--mono); font-size: 9px; font-weight: 700;
+  background: var(--danger-weak); color: var(--danger); border: 1px solid var(--danger-border);
+}
+.anno-list b { color: var(--ink); }
+
+/* ---------- 新版：概览条 ---------- */
+.pm-toolbar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 0 0 12px; border-bottom: 1px solid var(--rule); margin-bottom: 12px;
+}
+.pm-hint { font-size: 11.5px; color: var(--faint); }
+.pm-btn {
+  height: 26px; padding: 0 10px;
+  display: inline-flex; align-items: center; gap: 5px;
+  border: 1px solid var(--rule2); border-radius: 6px;
+  background: #fff; color: var(--muted); font-size: 11.5px;
+}
+.pm-btn:hover { border-color: var(--accent-border); color: var(--accent); }
+.pm-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.pm-btn .ico { width: 11px; height: 11px; }
+.pm-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+
+.stat-strip {
+  display: flex; align-items: stretch; gap: 0;
+  border: 1px solid var(--rule); border-radius: 10px; overflow: hidden;
+  background: linear-gradient(180deg, #fff, var(--bg3));
+  margin-bottom: 12px;
+}
+.stat {
+  flex: 1; padding: 9px 12px; border-right: 1px solid var(--rule);
+  min-width: 0;
+}
+.stat:last-child { border-right: 0; }
+.stat .k { font-size: 10px; color: var(--faint); letter-spacing: .04em; }
+.stat .v { font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -.02em; margin-top: 1px; }
+.stat .v small { font-size: 10.5px; font-weight: 500; color: var(--faint); margin-left: 3px; letter-spacing: 0; }
+.stat.err .v { color: var(--danger); }
+.stat.amber .v { color: var(--warn); }
+.stat.blue .v { color: var(--accent); }
+
+/* ---------- 新版：轮卡片 ---------- */
+.turn-card {
+  border: 1px solid var(--rule); border-radius: 10px;
+  background: #fff; margin-bottom: 8px; overflow: hidden;
+}
+.turn-card.open { border-color: var(--accent-border); box-shadow: 0 0 0 3px var(--accent-weak); }
+.turn-head {
+  display: flex; align-items: center; gap: 9px; padding: 10px 12px 8px;
+}
+.caret { width: 12px; height: 12px; color: var(--faint); flex: none; transition: transform .15s; }
+.caret.open { transform: rotate(90deg); }
+.turn-time { font-size: 12px; font-variant-numeric: tabular-nums; }
+.turn-dur { font-size: 12px; font-weight: 650; color: var(--accent); font-variant-numeric: tabular-nums; }
+.turn-note { font-size: 11px; color: var(--faint); }
+.turn-chips { margin-left: auto; display: flex; align-items: center; gap: 5px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  height: 18px; padding: 0 7px; border-radius: 999px;
+  font-size: 10.5px; color: var(--muted);
+  background: var(--bg3); border: 1px solid var(--rule);
+  white-space: nowrap;
+}
+.chip i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; display: block; }
+.chip.blue { color: var(--accent); background: var(--accent-weak); border-color: var(--accent-border); }
+.chip.violet { color: var(--violet); background: var(--violet-weak); border-color: var(--violet-border); }
+.chip.amber { color: var(--warn); background: var(--warn-weak); border-color: var(--warn-border); }
+.chip.ok { color: var(--ok); background: var(--ok-weak); border-color: var(--ok-border); }
+.chip.err { color: var(--danger); background: var(--danger-weak); border-color: var(--danger-border); }
+
+.phase-wrap { padding: 0 12px 10px 32px; }
+.phase { display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: #eef1f4; }
+.phase i { display: block; height: 100%; }
+.phase .prep { background: #b7c4d4; }
+.phase .gen { background: #8fb0f0; }
+.phase .wait { background: var(--warn-border); }
+.phase .wrap { background: #b7c4d4; }
+.phase .fail { background: var(--danger); }
+.phase-legend { display: flex; gap: 12px; margin-top: 5px; font-size: 10px; color: var(--faint); }
+.phase-legend span { display: inline-flex; align-items: center; gap: 4px; }
+.phase-legend i { width: 8px; height: 4px; border-radius: 2px; display: block; }
+.turn-line { padding: 0 12px 10px 32px; font-size: 11.5px; color: var(--muted); line-height: 1.6; }
+.turn-line b { color: var(--ink); }
+
+/* ---------- 新版：指标条 ---------- */
+.fit {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+  padding: 8px 10px; border: 1px solid var(--rule); border-radius: 9px;
+  background: var(--bg3); margin-bottom: 12px;
+}
+.fit .lab { font-size: 10.5px; color: var(--faint); margin-right: 2px; }
+
+/* ---------- 新版：对照双栏 ---------- */
+.split { display: grid; grid-template-columns: minmax(0, 1.02fr) minmax(0, 1fr); gap: 14px; }
+.ans-col { min-width: 0; border-right: 1px solid var(--rule); padding-right: 14px; }
+.q {
+  font-size: 12px; color: var(--muted); line-height: 1.6;
+  padding-bottom: 8px; border-bottom: 1px solid var(--rule); margin-bottom: 9px;
+}
+.q b { color: var(--ink); font-weight: 600; }
+.think {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11px; color: var(--faint); margin-bottom: 9px;
+}
+.steps { list-style: none; margin: 0 0 10px; padding: 0; }
+.steps li {
+  display: flex; align-items: center; gap: 7px; padding: 4px 7px;
+  border: 1px solid var(--rule); border-radius: 6px; margin-bottom: 4px;
+  font-size: 11px; background: #fff; cursor: pointer;
+}
+.steps li.hit { border-color: var(--accent-border); background: var(--accent-weak); }
+.steps li .no, .tl-no {
+  flex: none; width: 17px; height: 17px; border-radius: 9px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-family: var(--mono); font-size: 9.5px;
+  background: var(--accent-weak); color: var(--accent);
+}
+.steps li .nm { color: var(--ink); }
+.steps li .st { margin-left: auto; color: var(--faint); font-size: 10px; }
+.steps li .st.bad { color: var(--danger); }
+.answer {
+  font-size: 12.5px; line-height: 1.8; color: var(--ink);
+}
+.answer p { margin: 0 0 8px; }
+.answer .dim { color: var(--muted); }
+.answer .srcline { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--rule); font-size: 11px; color: var(--faint); }
+.answer .srcline b { color: var(--accent); font-weight: 600; }
+
+/* ---------- 新版：时间轴 ---------- */
+.tl-head { display: flex; align-items: center; gap: 7px; margin-bottom: 8px; }
+.tl-head .t { font-size: 11.5px; font-weight: 600; }
+.tl-head .s { font-size: 10.5px; color: var(--faint); }
+.filters { display: flex; flex-wrap: wrap; gap: 5px; margin: 0 0 10px; }
+.fchip {
+  height: 22px; padding: 0 8px; border-radius: 999px;
+  border: 1px solid var(--rule); background: #fff;
+  color: var(--muted); font-size: 10.5px;
+  display: inline-flex; align-items: center; gap: 4px;
+}
+.fchip.on { border-color: var(--accent-border); background: var(--accent-weak); color: var(--accent); font-weight: 600; }
+.fchip .n { font-family: var(--mono); font-size: 9.5px; opacity: .8; }
+.tl { position: relative; padding-left: 4px; }
+.tl-row { display: grid; grid-template-columns: 54px 16px minmax(0, 1fr); gap: 8px; padding: 6px 0; position: relative; }
+.tl-row + .tl-row::before {
+  content: ''; position: absolute; left: 62px; top: -7px; height: 14px;
+  width: 1px; background: var(--rule);
+}
+.tl-time { font-size: 10px; color: var(--faint); font-variant-numeric: tabular-nums; padding-top: 3px; text-align: right; }
+.tl-rail { position: relative; display: flex; justify-content: center; }
+.tl-dot {
+  width: 9px; height: 9px; border-radius: 50%; margin-top: 5px;
+  background: #fff; border: 2px solid var(--rule2);
+}
+.tl-row.tool .tl-dot { border-color: var(--accent); }
+.tl-row.retr .tl-dot { border-color: var(--violet); }
+.tl-row.use .tl-dot { border-color: var(--warn); }
+.tl-row.card .tl-dot { border-color: var(--ok); }
+.tl-row.art .tl-dot { border-color: #0f766e; }
+.tl-row.sub .tl-dot { border-color: var(--violet); }
+.tl-row.err .tl-dot { border-color: var(--danger); background: var(--danger-weak); }
+.tl-row.wait .tl-dot { border-color: var(--warn); background: var(--warn-weak); }
+.tl-row.done .tl-dot { border-color: var(--faint); }
+.tl-main {
+  min-width: 0; padding: 5px 9px; border: 1px solid var(--rule); border-radius: 7px;
+  background: #fff;
+}
+.tl-row.err .tl-main { border-color: var(--danger-border); background: var(--danger-weak); }
+.tl-row.wait .tl-main { border-color: var(--warn-border); background: var(--warn-weak); }
+.tl-row.done .tl-main { background: var(--bg3); }
+.tl-row.hit .tl-main { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-weak); }
+.tl-top { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.tl-no { flex: none; }
+.tl-type { font-size: 10px; font-weight: 600; letter-spacing: .02em; }
+.tl-row.tool .tl-type { color: var(--accent); }
+.tl-row.retr .tl-type { color: var(--violet); }
+.tl-row.use .tl-type { color: var(--warn); }
+.tl-row.card .tl-type { color: var(--ok); }
+.tl-row.art .tl-type { color: #0f766e; }
+.tl-row.err .tl-type { color: var(--danger); }
+.tl-row.wait .tl-type { color: var(--warn); }
+.tl-row.done .tl-type { color: var(--faint); }
+.tl-name { font-size: 11.5px; color: var(--ink); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tl-dur { margin-left: auto; font-size: 10px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.tl-dur.slow { color: var(--warn); font-weight: 600; }
+.tl-dur.bad { color: var(--danger); font-weight: 600; }
+.tl-sub { margin-top: 2px; font-size: 10.5px; color: var(--muted); line-height: 1.55; }
+.tl-sub .term {
+  display: inline-block; margin: 2px 3px 0 0; padding: 0 5px; border-radius: 4px;
+  background: var(--bg3); border: 1px solid var(--rule); color: var(--muted);
+  font-size: 10px; line-height: 16px;
+}
+.tl-link { color: var(--accent); cursor: pointer; font-size: 10.5px; }
+.tl-badge {
+  font-size: 9.5px; line-height: 15px; padding: 0 5px; border-radius: 4px;
+  border: 1px solid var(--rule); color: var(--faint); background: var(--bg3);
+}
+.tl-badge.ok { color: var(--ok); border-color: var(--ok-border); background: var(--ok-weak); }
+.tl-badge.bad { color: var(--danger); border-color: var(--danger-border); background: var(--danger-weak); }
+.tl-badge.warn { color: var(--warn); border-color: var(--warn-border); background: var(--warn-weak); }
+.tl-expand {
+  margin-top: 5px; border-top: 1px dashed var(--rule); padding-top: 5px;
+  font-size: 10px; color: var(--faint);
+  display: flex; align-items: center; gap: 5px;
+}
+.mini-table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 10px; }
+.mini-table th { text-align: right; font-weight: 500; color: var(--faint); padding: 3px 5px; border-bottom: 1px solid var(--rule); }
+.mini-table th:first-child { text-align: left; }
+.mini-table td { text-align: right; padding: 3px 5px; color: var(--muted); font-variant-numeric: tabular-nums; border-bottom: 1px solid #f3f5f7; }
+.mini-table td:first-child { text-align: left; color: var(--faint); }
+.mini-table tr:last-child td { border-bottom: 0; color: var(--ink); font-weight: 600; }
+
+/* ---------- 明细 mock ---------- */
+.detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.dcard { border: 1px solid var(--rule); border-radius: 10px; background: #fff; overflow: hidden; }
+.dcard-h {
+  display: flex; align-items: center; gap: 7px; padding: 9px 11px;
+  border-bottom: 1px solid var(--rule); background: var(--bg3);
+  font-size: 11.5px;
+}
+.dcard-h .t { font-weight: 650; }
+.dcard-h .m { margin-left: auto; font-size: 10px; color: var(--faint); }
+.dcard-b { padding: 10px 12px; }
+.kv { display: grid; grid-template-columns: 76px 1fr; gap: 4px 10px; font-size: 11px; }
+.kv .k { color: var(--faint); }
+.kv .v { color: var(--ink); font-variant-numeric: tabular-nums; }
+.kv .v b { font-weight: 650; }
+.bar { height: 4px; border-radius: 2px; background: #eef1f4; overflow: hidden; margin-top: 5px; }
+.bar i { display: block; height: 100%; background: var(--accent); }
+.term-list { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
+.term-list .term {
+  padding: 1px 6px; border-radius: 4px; background: var(--violet-weak);
+  border: 1px solid var(--violet-border); color: var(--violet); font-size: 10.5px;
+}
+.srclist { margin: 0; padding: 0; list-style: none; }
+.srclist li { display: flex; gap: 6px; font-size: 10.5px; color: var(--muted); padding: 3px 0; border-bottom: 1px dashed var(--rule); }
+.srclist li:last-child { border-bottom: 0; }
+.srclist .i { color: var(--faint); font-family: var(--mono); font-size: 9.5px; }
+
+/* ---------- 入口对照 ---------- */
+.entry-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 16px; }
+.entry {
+  border: 1px solid var(--rule); border-radius: 12px; overflow: hidden; background: #fff;
+}
+.entry-h {
+  padding: 8px 12px; border-bottom: 1px solid var(--rule); background: var(--bg3);
+  display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--muted);
+}
+.entry-h .tag { margin-left: auto; font-family: var(--mono); font-size: 9.5px; }
+.entry-b { padding: 16px 18px; background: linear-gradient(180deg, #fff, var(--bg3)); }
+.chat-head-mock {
+  display: flex; align-items: center; gap: 8px; padding-bottom: 12px; border-bottom: 1px solid var(--rule);
+}
+.chat-head-mock .st { font-size: 12px; font-weight: 600; }
+.chat-head-mock .acts { margin-left: auto; display: flex; gap: 6px; }
+.quiet-btn {
+  font-size: 10.5px; color: var(--muted); border: 1px solid transparent; border-radius: 6px;
+  padding: 2px 7px; background: none;
+}
+.quiet-btn.on { border-color: var(--accent-border); background: var(--accent-weak); color: var(--accent); font-weight: 600; }
+.quiet-btn .ico { width: 10px; height: 10px; margin-right: 3px; vertical-align: -1px; }
+.turnbar-mock { display: flex; align-items: center; gap: 8px; margin-top: 14px; font-size: 11px; color: var(--faint); }
+.turnbar-mock .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
+.turnbar-mock .link { margin-left: auto; color: var(--accent); font-size: 11px; }
+.entry-cap { margin-top: 8px; font-size: 11px; color: var(--faint); }
+.entry-cap b { color: var(--ink); }
+
+/* 移动端说明 */
+.note-card {
+  margin-top: 16px; border: 1px solid var(--rule); border-radius: 10px;
+  background: var(--bg3); padding: 13px 15px; font-size: 12.5px; color: var(--muted); line-height: 1.75;
+}
+.note-card b { color: var(--ink); }
+
+/* ---------- 落地清单 ---------- */
+.check { margin: 12px 0 0; padding: 0; list-style: none; display: grid; grid-template-columns: 1fr 1fr; gap: 6px 20px; }
+.check li { display: flex; gap: 8px; font-size: 12.5px; color: var(--muted); line-height: 1.65; }
+.check .box {
+  flex: none; width: 14px; height: 14px; margin-top: 2px; border-radius: 3px;
+  border: 1px solid var(--rule2); background: #fff;
+}
+.footer { padding: 22px 56px 30px; color: var(--faint); font-size: 11.5px; line-height: 1.8; }
+@media (max-width: 860px) {
+  .cover, .sec { padding-left: 24px; padding-right: 24px; }
+  .summary-band, .issue-grid, .principle-grid, .detail-grid, .entry-grid, .check { grid-template-columns: 1fr; }
+  .split { grid-template-columns: 1fr; }
+  .ans-col { border-right: 0; padding-right: 0; border-bottom: 1px solid var(--rule); padding-bottom: 12px; }
+  .stat-strip { flex-wrap: wrap; }
+  .stat { flex: 1 1 30%; border-bottom: 1px solid var(--rule); }
+}
+</style>
+</head>
+<body>
+<div class="report">
+
+  <!-- ==================== 封面 ==================== -->
+  <header class="cover">
+    <div class="eyebrow">WENQU · CHAT UX REVIEW · 2026-11-08</div>
+    <h1>执行过程（事件账本）<br>值不值得优化：一次<em>产品与实现</em>的双向体检</h1>
+    <p class="lede">
+      结论先说：<b>这个功能有价值，但现在只兑现了其中很小一部分。</b>
+      它已经把数据采集齐了，却把「过程」呈现成了一串原始 JSON；
+      对普通用户看不懂、对排障的人不够用。<b>值得做一次分层优化，但不值得做成一个完整的可观测平台。</b>
+      下面给出代码层面的证据、分层方案与四张效果图。
+    </p>
+    <div class="meta-row">
+      <span class="meta-chip">前端组件 <b>SessionEventsPanel.vue</b></span>
+      <span class="meta-chip">读口 <b>GET /api/ai/session/{id}/events</b></span>
+      <span class="meta-chip">存储 <b>c_ai_session_event</b></span>
+      <span class="meta-chip">保留期 <b>30 天</b></span>
+      <span class="meta-chip">PC 模态 <b>880px</b> · 移动底部 sheet 共用</span>
+    </div>
+    <div class="summary-band">
+      <div class="summary-card">
+        <div class="num">01 / 价值</div>
+        <strong>中等偏高，但只服务了两类人</strong>
+        <span>重度用户排障是真需求；普通用户只在「答案可疑、想知道查了什么」时用得到。当前的呈现挡住了后者。</span>
+      </div>
+      <div class="summary-card">
+        <div class="num">02 / 问题</div>
+        <strong>数据够，表达不够；承诺与事实不符</strong>
+        <span>原始 JSON、累计快照被当成多次调用、没有时间轴与筛选；账本里工具步缺失，导致「对照正文」的编号联动失效。</span>
+      </div>
+      <div class="summary-card">
+        <div class="num">03 / 建议</div>
+        <strong>P0 兑现承诺，P1 给出洞察，P2 才谈导出</strong>
+        <span>改造集中在读口与前端渲染，不新增表、不重做存储。不做全量 trace 平台，也不把它变成第二个使用统计页。</span>
+      </div>
+    </div>
+    <nav class="toc">
+      <a href="#s1">01 结论：作用有多大</a>
+      <a href="#s2">02 现状体检（代码 + 截图）</a>
+      <a href="#s3">03 设计目标与原则</a>
+      <a href="#s4">04 优化方案（P0/P1/P2）</a>
+      <a href="#s5">05 效果图</a>
+      <a href="#s6">06 落地与验收</a>
+    </nav>
+  </header>
+
+  <!-- ==================== 01 结论 ==================== -->
+  <section class="sec" id="s1">
+    <div class="sec-head"><span class="sec-no">01</span><h2>结论：作用有多大</h2></div>
+    <p class="lead">
+      「执行过程」回答的是一个很具体的问题：<b>这一轮到底是怎么跑出来的？</b>
+      这个问题在不同人身上出现的频率完全不同。先按人群拆开看，再判断投入。
+    </p>
+
+    <table class="tbl">
+      <thead>
+        <tr><th>人群 / 场景</th><th>什么时候会点开</th><th>当前可用度</th><th>优化后的价值</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>普通使用者</td>
+          <td>答案看起来不对、想确认「它到底查了什么」、或者一轮为什么跑了很久</td>
+          <td class="danger">低。首屏是一串 JSON，找不到「检索词 / 命中几段 / 时间花在哪」</td>
+          <td class="ok">高。一句话摘要 + 时间轴，3 秒能读懂这一轮</td>
+        </tr>
+        <tr>
+          <td>重度用户 / 开发者</td>
+          <td>工具失败、审批被挡、检索没命中、token 暴涨、回答变慢</td>
+          <td class="warn">中低。能查到事件，但没有筛选、搜索、失败定位与耗时分布</td>
+          <td class="ok">高。筛选 + 失败高亮 + 耗时/用量明细，可直接定位</td>
+        </tr>
+        <tr>
+          <td>运营 / 审计</td>
+          <td>复盘一次问题会话、把过程附到工单</td>
+          <td class="danger">低。没有导出，只能截图；审计另有 AuditLogPage，两边不打通</td>
+          <td class="warn">中。复制 Markdown / 导出 JSON 后够用</td>
+        </tr>
+        <tr>
+          <td>新用户</td>
+          <td>几乎不会主动点</td>
+          <td class="dim">无感。入口是标题栏一个 11px 的「过程」文字按钮</td>
+          <td class="warn">不必强推。等他在答案旁产生疑问时再给入口</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="verdict">
+      <div class="vt">VERDICT</div>
+      <h3>有必要优化，但只做「让已有数据说人话」这一层</h3>
+      <p>
+        理由很直接：<b>数据已经在库里了</b>——工具、检索、用量、三张卡、产物、子智能体、失败与停止，账本都落过；
+        缺的不是采集，而是<b>呈现与聚合</b>。这意味着优化的边际成本很低：一个事件渲染器 + 一个时间轴，就能把「日志」变成「解释」。
+      </p>
+      <p>
+        但也要划边界：<b>不要把它做成完整的 trace 平台</b>。不做分布式链路追踪、不做实时直播时间轴、不做跨会话分析大屏——
+        那是另一个产品，收益和成本都不匹配。这个面板的定位应该只有一句话：
+        <b>「这一轮为什么是这么答的」的解释器。</b>
+      </p>
+    </div>
+
+    <ul class="bullets">
+      <li><b>值得做的信号：</b>「对照正文」是唯一能解释因果关系的能力，但目前两侧编号对不上；把它修好，价值立刻成立。</li>
+      <li><b>值得做的信号：</b>一次 103 秒的轮次，真正的故事是中间 89 秒的生成期；当前界面只把它表现为两行之间的空隙。</li>
+      <li><b>不值得做的信号：</b>面板没有搜索/筛选/导出时，排障者会直接放弃去翻服务器日志——说明它现在没有承担起排障入口的角色。</li>
+    </ul>
+  </section>
+
+  <!-- ==================== 02 现状体检 ==================== -->
+  <section class="sec" id="s2">
+    <div class="sec-head"><span class="sec-no">02</span><h2>现状体检：六个具体问题</h2></div>
+    <p class="lead">
+      下面每一条都能在代码或你给的两张截图里对上号。按影响排序，前三条是「就算不改交互也必须先修」的。
+    </p>
+
+    <div class="issue-grid">
+      <div class="issue">
+        <div class="tag">ISSUE 01 · 数据缺口</div>
+        <h4>账本里没有工具步，「对照正文」的编号对不上</h4>
+        <p>
+          账本只在 <code>LEDGER_SSE_TYPES</code> 白名单里的 SSE 事件入账，<code>tool_status</code> 不在其中；
+          主引擎路径也没有单独的 tool 入账调用。面板的「对照」却只对 <code>type=tool</code> 的事件编号，
+          两边编号天然对不齐，点击左侧步骤不会有右侧行被点亮。
+        </p>
+        <code>ChatRunRuntime.java#L464-L467 · SessionEventsPanel.vue#L146-L157</code>
+      </div>
+      <div class="issue">
+        <div class="tag">ISSUE 02 · 原始 JSON</div>
+        <h4>「用量」「检索」直接把 payload 当正文展示</h4>
+        <p>
+          读口只给 240 字摘要，前端把摘要原样铺在行里。于是用户看到的是
+          <code>{"prompt":22315,"output":258,…}</code>，而不是「输入 22.3k · 输出 258 · 缓存 8.4k」。
+          信息都在，只是没翻译。
+        </p>
+        <code>ChatService.java#L1045-L1092 · SessionEventsPanel.vue#L78-L86</code>
+      </div>
+      <div class="issue">
+        <div class="tag">ISSUE 03 · 语义误读</div>
+        <h4>累计快照被当成多次调用</h4>
+        <p>
+          一轮里 5 条 usage 是同一份累计用量的进度帧（prompt 22k→48k→63k→97k），
+          4 条 retrieved 也是累计命中数的快照。折叠头却写成「检索×4 · 用量×5」，
+          读起来像发生了 4 次检索、5 次模型调用。
+        </p>
+        <code>折叠头统计：SessionEventsPanel.vue#L233-L238</code>
+      </div>
+      <div class="issue">
+        <div class="tag">ISSUE 04 · 时间不可见</div>
+        <h4>没有时间轴，耗时分布读不出来</h4>
+        <p>
+          截图那轮共 103 秒，其中 14:04:35 → 14:06:04 有 89 秒空档——那才是长回答的生成期。
+          当前只有首末时间和每行时刻，没有比例条，用户无法判断时间花在检索、生成还是等人。
+        </p>
+        <code>SessionEventsPanel.vue#L51-L90</code>
+      </div>
+      <div class="issue">
+        <div class="tag">ISSUE 05 · 噪声淹信号</div>
+        <h4>真正有价值的事件被用量行挤掉</h4>
+        <p>
+          9 条事件里 5 条是同一串用量 JSON，占了面板大部分视觉面积；
+          检索词、命中段数、失败与卡片反而被压到看不见。面板应该按「里程碑」呈现，而不是按「帧」呈现。
+        </p>
+        <code>截图 2：9 条 = 5×用量 + 4×检索</code>
+      </div>
+      <div class="issue">
+        <div class="tag">ISSUE 06 · 入口与工具</div>
+        <h4>入口深、没有筛选/搜索/导出</h4>
+        <p>
+          会话级入口是标题栏最右侧的纯文字按钮；单轮入口在消息的下拉菜单里。
+          面板内没有本地筛选、搜索、复制或导出，排障者只能靠肉眼滚 200 条。
+        </p>
+        <code>ChatPage.vue#L32-L33 · ChatPage.vue#L532</code>
+      </div>
+    </div>
+
+    <h3 class="sub" id="s2-1">2.1 现状复刻（依据截图 2 的同一轮数据）</h3>
+    <p class="sub-note">同样的 9 条事件，按当前组件的渲染口径复刻；红色编号对应上面的问题。</p>
+
+    <div class="mock-scroll">
+      <div class="mock">
+        <div class="mk-bar">
+          <div class="dots"><i></i><i></i><i></i></div>
+          <div class="mk-url">wenqu.local / chat · 做一个问渠官网（科技风）</div>
+          <span class="mk-tag">现状</span>
+        </div>
+        <div class="mk-body">
+          <div class="behind">
+            <p>已完成的回答正文…</p>
+            <div class="bline w1"></div><div class="bline w2"></div><div class="bline w3"></div>
+            <div class="bline w1"></div><div class="bline w2"></div>
+          </div>
+          <div class="pm">
+            <div class="pm-head">
+              <span class="pm-title">执行过程（事件账本）</span>
+              <span class="pm-sub">只列最近若干轮</span>
+              <button class="pm-x">×</button>
+            </div>
+            <div class="pm-body">
+              <div class="raw-tip">
+                <span>共 1 轮 · 只列最近若干轮，按发生顺序。点开每一轮看它跑了哪些步。</span>
+              </div>
+              <div class="raw-turn">
+                <div class="raw-head">
+                  <span class="caret">›</span>
+                  <span class="time">11-08 14:04</span>
+                  <span class="meta">9 条</span>
+                  <span class="meta" style="color:var(--accent)">103.0s</span>
+                  <span class="types">检索×4 · 用量×5</span>
+                  <span class="badge-n" title="问题 03">3</span>
+                </div>
+                <div class="raw-list">
+                  <div class="raw-row">
+                    <span class="type">检索</span><span class="at">14:04:28</span>
+                    <span class="sum">{"keywords":2,"refs":4,"terms":["问渠 产品介绍 核心能力","问渠 智能体 工作链路 部署"]}</span>
+                    <span class="badge-n" title="问题 02">2</span>
+                  </div>
+                  <div class="raw-row">
+                    <span class="type">用量</span><span class="at">14:04:30</span>
+                    <span class="sum">{"prompt":22315,"output":258,"finalOutput":123,"total":22573,"cached":8448,"cacheWrite":0,"reasoning":0,"context":11920,"outputsReal":true,"hits":4,"window":100000…</span>
+                    <span class="badge-n" title="问题 02 / 05">2</span>
+                  </div>
+                  <div class="raw-row">
+                    <span class="type">检索</span><span class="at">14:04:31</span>
+                    <span class="sum">{"keywords":4,"refs":6,"terms":["问渠 产品介绍 核心能力","问渠 智能体 工作链路 部署","知识库 检索 引用 溯源 文档解析","私有化部署 Docker Compose 安全 权限"]}</span>
+                    <span class="badge-n" title="问题 03">3</span>
+                  </div>
+                  <div class="raw-row">
+                    <span class="type">用量</span><span class="at">14:04:35</span>
+                    <span class="sum">{"prompt":48681,"output":455,"finalOutput":121,"total":49136,"cached":29184,"cacheWrite":0,"reasoning":0,"context":13516,"outputsReal":true,"hits":6,"window":100000…</span>
+                    <span class="badge-n" title="问题 02 / 05">2</span>
+                  </div>
+                  <div class="raw-row">
+                    <span class="type">检索</span><span class="at">14:04:35</span>
+                    <span class="sum">{"keywords":6,"refs":10,"terms":["问渠 产品介绍 核心能力","问渠 智能体 工作链路 部署","知识库 检索 引用 溯源 文档解析","私有化部署 Docker Compose 安全 权限","工作流 编排 节点 定时任务","产物交付 文件 网页 图表 导出"]}</span>
+                    <span class="badge-n" title="问题 04">4</span>
+                  </div>
+                  <div class="raw-row">
+                    <span class="type">用量</span><span class="at">14:06:04</span>
+                    <span class="sum">{"prompt":63786,"output":18454,"finalOutput":17999,"total":82240,"cached":40704,"context":15105,"outputsReal":true…</span>
+                    <span class="badge-n" title="问题 04 / 05">4</span>
+                  </div>
+                  <div class="raw-row">
+                    <span class="type">用量</span><span class="at">14:06:09</span>
+                    <span class="sum">{"prompt":97012,"output":19094,"finalOutput":640,"total":116106,"cached":53760,"context":33226…</span>
+                    <span class="badge-n" title="问题 04 / 05">4</span>
+                  </div>
+                  <div class="raw-row">
+                    <span class="type">用量</span><span class="at">14:06:11</span>
+                    <span class="sum">{"prompt":97012,"output":19094,"finalOutput":640,"total":116106,"cached":53760,"context":33226…</span>
+                    <span class="badge-n" title="问题 05">5</span>
+                  </div>
+                  <div class="raw-row">
+                    <span class="type">检索</span><span class="at">14:06:11</span>
+                    <span class="sum">{"keywords":6,"refs":10,"terms":["问渠 产品介绍 核心能力","问渠 智能体 工作链路 部署","知识库 检索 引用 溯源 文档解析","私有化部署 Docker Compose 安全 权限","工作流 编排 节点 定时任务","产物交付 文件 网页 图表 导出"]}</span>
+                    <span class="badge-n" title="问题 04">4</span>
+                  </div>
+                </div>
+              </div>
+              <ul class="anno-list">
+                <li><span class="n">2</span><span><b>原始 JSON 当正文：</b>用量、检索的 payload 直接铺在行里，读不出结论。</span></li>
+                <li><span class="n">3</span><span><b>累计快照被当成多次：</b>「检索×4 / 用量×5」听起来像 4 次检索、5 次调用。</span></li>
+                <li><span class="n">4</span><span><b>89 秒空档不可见：</b>14:04:35 → 14:06:04 的长回答生成期只是一段行间距。</span></li>
+                <li><span class="n">5</span><span><b>重复帧占面积：</b>最后两条用量完全相同，仍各占一行。</span></li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <h3 class="sub" id="s2-2">2.2 一个容易忽略的事实</h3>
+    <p class="sub-note">
+      面板文案承诺「工具步与耗时」，但当前主引擎路径下账本通常只落检索/用量/卡片类事件。
+      因此这轮 103 秒里到底调了哪些工具、各花多久，账本回答不了——它只能回答「检索了几次、用量多少」。
+      这也解释了为什么「对照正文」看起来有按钮、却几乎没有可点的联动。
+    </p>
+  </section>
+
+  <!-- ==================== 03 设计目标 ==================== -->
+  <section class="sec" id="s3">
+    <div class="sec-head"><span class="sec-no">03</span><h2>设计目标与原则</h2></div>
+    <p class="lead">
+      优化不是把面板做复杂，而是把同一份数据按「读者」重新分层：<b>先给结论，再给证据，最后才给原始帧。</b>
+    </p>
+
+    <div class="principle-grid">
+      <div class="principle">
+        <span class="pno">01</span>
+        <div><strong>3 秒读懂一轮</strong><p>折叠状态也要有：耗时、阶段比例、检索/工具/失败计数、一句话结论。不展开就能判断「正常 / 异常」。</p></div>
+      </div>
+      <div class="principle">
+        <span class="pno">02</span>
+        <div><strong>一次点击定位</strong><p>从最终答案的某一段，点到它对应的工具/检索/等待节点；反过来也成立。编号必须两侧同源。</p></div>
+      </div>
+      <div class="principle">
+        <span class="pno">03</span>
+        <div><strong>快照不是事件</strong><p>usage / retrieved 是累计状态，按「最新态 + 趋势」呈现；不要按帧铺行，更不要把快照数当成调用次数。</p></div>
+      </div>
+      <div class="principle">
+        <span class="pno">04</span>
+        <div><strong>原始帧仍然可查</strong><p>人话摘要默认，原始 payload 一次点击后可见。既不吓到普通用户，也不夺走排障者的原文。</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== 04 方案 ==================== -->
+  <section class="sec" id="s4">
+    <div class="sec-head"><span class="sec-no">04</span><h2>优化方案：P0 兑现承诺，P1 给出洞察，P2 才谈导出</h2></div>
+    <p class="lead">
+      三档按「不做会失真 / 不做没洞察 / 不做也能用」划分。P0 与 P1 是建议范围；P2 视使用情况再定。
+    </p>
+
+    <h3 class="sub" id="s4-1">4.1 P0 · 先让面板说真话（必须做）</h3>
+    <table class="tbl">
+      <thead>
+        <tr><th>动作</th><th>具体改法</th><th>涉及位置</th><th>验收</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><span class="plan-tag">P0-1</span> 补齐工具步</td>
+          <td>把 <code>tool_status</code> 的终态帧（done / error / denied + elapsedMs）并入账本；或在读口用消息里的 <code>toolCalls</code> 合成工时节点。二者择一，保证账本与消息同源。</td>
+          <td><code>ChatRunRuntime</code> 入账白名单 / <code>ChatService.eventItem</code></td>
+          <td>单轮面板能看到每一步工具、状态、耗时；与正文工具卡数量一致</td>
+        </tr>
+        <tr>
+          <td><span class="plan-tag">P0-2</span> 事件渲染器</td>
+          <td>前端按 type 提供「人话摘要」：usage → 输入/输出/缓存/上下文；retrieved → 检索词数/命中段数 + 词条 chips；tool → 工具名 + 参数摘要 + 状态 + 耗时；error → 原文；artifact → 文件名。禁止直接把 payload 铺行。</td>
+          <td>新增 <code>process/presenter.js</code>（或并入 projections）</td>
+          <td>面板中不再出现可见的 JSON 花括号</td>
+        </tr>
+        <tr>
+          <td><span class="plan-tag">P0-3</span> 快照合并</td>
+          <td>同一轮的 usage / retrieved 折叠为一个节点，展示最新态；展开才是逐帧明细。折叠头不再用「×N」统计这两类。</td>
+          <td><code>SessionEventsPanel.vue</code> 的 group / summary</td>
+          <td>一轮 9 条 → 首屏 3~4 个里程碑节点；「检索×4」消失</td>
+        </tr>
+        <tr>
+          <td><span class="plan-tag">P0-4</span> 字段不再被截断</td>
+          <td>工具行的 <code>name/status/elapsedMs</code> 由后端结构化返回（已是现状），但需确保入账的 payload 截断不会切掉这些字段；检索/用量同理，不要靠 240 字摘要反解。</td>
+          <td><code>ChatService.eventItem</code> · <code>SessionEventService</code></td>
+          <td>任意长度 payload 下，工具编号与状态都正确</td>
+        </tr>
+        <tr>
+          <td><span class="plan-tag">P0-5</span> 单轮入口前移</td>
+          <td>在「已完成 · 用时 1 分 48 秒」这条状态行右侧加「过程 ›」文字链（保留消息下拉里的入口），让用户在产生疑问的原地就能点。</td>
+          <td><code>ChatPage.vue</code> TurnBar / 消息操作</td>
+          <td>不经过菜单即可进入单轮过程</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3 class="sub" id="s4-2">4.2 P1 · 让面板给出洞察（建议做）</h3>
+    <table class="tbl">
+      <thead>
+        <tr><th>动作</th><th>具体改法</th><th>验收</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><span class="plan-tag p1">P1-1</span> 时间轴</td>
+          <td>账本行改为纵向时间轴：时刻 + 类型节点 + 摘要 + 耗时；顶部一条阶段比例条（准备 / 生成 / 等待 / 收尾），把 89 秒的空档显性化。</td>
+          <td>不展开也能看出时间分布</td>
+        </tr>
+        <tr>
+          <td><span class="plan-tag p1">P1-2</span> 单轮指标条</td>
+          <td>总耗时 / 工具数 / 检索数 / 等待时长 / 失败数 / 最终用量，做成一行可点的筛选项。</td>
+          <td>点击「失败 1」只剩失败节点</td>
+        </tr>
+        <tr>
+          <td><span class="plan-tag p1">P1-3</span> 对照联动</td>
+          <td>两侧编号统一以消息 <code>toolCalls</code> 为源；账本工具节点带同一编号；点任一侧，另一侧高亮并滚到可见。</td>
+          <td>左侧第 3 步 ↔ 右侧第 3 个工具节点</td>
+        </tr>
+        <tr>
+          <td><span class="plan-tag p1">P1-4</span> 筛选与搜索</td>
+          <td>「全部 / 工具 / 检索 / 卡片 / 产物 / 失败」chips + 本地关键字过滤（不发请求）。</td>
+          <td>200 条内可秒级定位</td>
+        </tr>
+        <tr>
+          <td><span class="plan-tag p1">P1-5</span> 失败与等待突出</td>
+          <td>error / denied / stop / timeout 用红色节点与原文；「等待你 42s」单独成段，并说明它计入总耗时但不计入工具耗时。</td>
+          <td>一眼能回答「为什么慢 / 为什么错」</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3 class="sub" id="s4-3">4.3 P2 · 可选项（先别做重）</h3>
+    <table class="tbl">
+      <thead>
+        <tr><th>动作</th><th>具体改法</th><th>建议</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><span class="plan-tag p2">P2-1</span> 导出 / 复制</td>
+          <td>「复制 Markdown」与「下载 JSON（最近 N 轮）」，用于工单与复盘。分享链接仍不包含账本（沿用 guest 过滤）。</td>
+          <td>使用率起来后再做</td>
+        </tr>
+        <tr>
+          <td><span class="plan-tag p2">P2-2</span> 跨轮对比</td>
+          <td>会话级总览加每轮耗时/用量的迷你条，看出哪轮变慢、变贵。</td>
+          <td>与 P1-1 同一套数据，增量小</td>
+        </tr>
+        <tr>
+          <td><span class="plan-tag p2">P2-3</span> 与使用统计打通</td>
+          <td>用量节点底部「查看使用统计 ›」跳到 StatsPage。</td>
+          <td>避免重复造统计</td>
+        </tr>
+        <tr>
+          <td><span class="plan-tag no">不做</span> 全量 trace 平台</td>
+          <td>分布式 span 树、实时直播时间轴、跨会话分析大屏、采样与指标看板。</td>
+          <td>成本与定位都不匹配</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3 class="sub" id="s4-4">4.4 事件 → 人话：一张对照表</h3>
+    <p class="sub-note">这就是 P0-2 的核心契约。后端不必改协议，前端只认这张表。</p>
+    <table class="tbl">
+      <thead>
+        <tr><th>type</th><th>默认摘要（人话）</th><th>展开后</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>tool</td><td>工具名 + 参数摘要 + 完成/失败/被挡下 + 耗时</td><td>完整入参、输出摘要、失败原因、「查看完整输出」</td></tr>
+        <tr><td>retrieved</td><td>N 个检索词 · 命中 M 段资料</td><td>检索词 chips + 来源列表（编号对齐正文引用）</td></tr>
+        <tr><td>usage</td><td>累计 116.1k · 输入 97.0k · 输出 19.1k · 缓存 53.8k · 上下文 33.2k / 100k</td><td>逐帧快照表（时刻 / 输入 / 输出 / 缓存 / 上下文）</td></tr>
+        <tr><td>ask_user / approval / plan</td><td>问了什么 / 批准了什么 / 计划几步，以及你的裁决</td><td>卡片原文与裁决时间</td></tr>
+        <tr><td>artifact</td><td>产物名 · 类型 · 大小</td><td>打开 / 预览</td></tr>
+        <tr><td>subagent</td><td>哪位助手 · 完成/超时 · 帧数</td><td>完整帧流（沿用现有 SubAgentRunFrames）</td></tr>
+        <tr><td>error / stop / warn</td><td>失败原因原文 / 用户停止 / 提醒</td><td>原文 + 收尾状态</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ==================== 05 效果图 ==================== -->
+  <section class="sec" id="s5">
+    <div class="sec-head"><span class="sec-no">05</span><h2>效果图</h2></div>
+    <p class="lead">
+      下面四张按线上的尺寸与令牌绘制（模态 880px、行高与字号沿用现有面板）。<b>样例轮混合了工具、失败与等待</b>，
+      是为了把各种节点类型都演示出来；时间与用量按你截图那一轮的量级取。
+    </p>
+
+    <!-- 5.1 入口 -->
+    <h3 class="sub" id="s5-1">5.1 入口：把「过程」放到疑问发生的地方</h3>
+    <p class="sub-note">左：现状，入口在标题栏最右侧 + 消息菜单里。右：建议，「过程」进标题栏动作区，并在整轮状态行右侧常驻一个文字链。</p>
+    <div class="entry-grid">
+      <div class="entry">
+        <div class="entry-h">现状<span class="tag">BEFORE</span></div>
+        <div class="entry-b">
+          <div class="chat-head-mock">
+            <span class="st">做一个问渠官网（科技风）</span>
+            <div class="acts">
+              <button class="quiet-btn">过程</button>
+              <button class="quiet-btn">状态</button>
+            </div>
+          </div>
+          <div class="turnbar-mock"><span class="dot"></span>已完成 · 用时 1 分 48 秒</div>
+          <div class="entry-cap">入口不在视线焦点，单轮过程还藏在消息菜单里。</div>
+        </div>
+      </div>
+      <div class="entry">
+        <div class="entry-h">建议<span class="tag" style="color:var(--ok)">AFTER</span></div>
+        <div class="entry-b">
+          <div class="chat-head-mock">
+            <span class="st">做一个问渠官网（科技风）</span>
+            <div class="acts">
+              <button class="quiet-btn on">
+                <svg class="ico" viewBox="0 0 16 16"><path d="M2.5 8h2l1.5-3 2 6 1.5-3h5"/></svg>过程
+              </button>
+              <button class="quiet-btn">状态</button>
+            </div>
+          </div>
+          <div class="turnbar-mock"><span class="dot"></span>已完成 · 用时 1 分 48 秒
+            <span class="link">过程 ›</span>
+          </div>
+          <div class="entry-cap"><b>答案旁边就有入口</b>：看完答案产生疑问，原地点开，不用先找菜单。</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 5.2 会话级总览 -->
+    <h3 class="sub" id="s5-2">5.2 会话级总览：不展开也能判断一轮正常与否</h3>
+    <p class="sub-note">每轮一张卡片，折叠态给出耗时、阶段比例、计数与一句话结论；展开才看时间轴。</p>
+    <div class="mock-scroll">
+      <div class="mock">
+        <div class="mk-bar">
+          <div class="dots"><i></i><i></i><i></i></div>
+          <div class="mk-url">wenqu.local / chat · 做一个问渠官网（科技风）</div>
+          <span class="mk-tag new">建议稿</span>
+        </div>
+        <div class="mk-body">
+          <div class="behind">
+            <p>已完成的回答正文…</p>
+            <div class="bline w1"></div><div class="bline w2"></div><div class="bline w3"></div>
+            <div class="bline w1"></div><div class="bline w2"></div>
+          </div>
+          <div class="pm">
+            <div class="pm-head">
+              <span class="pm-title">执行过程</span>
+              <span class="pm-sub">最近 8 轮 · 只服务事后回看</span>
+              <button class="pm-x">×</button>
+            </div>
+            <div class="pm-body">
+              <div class="pm-toolbar">
+                <span class="pm-hint">共 3 轮 · 按发生顺序</span>
+                <div class="pm-right">
+                  <button class="pm-btn"><svg class="ico" viewBox="0 0 16 16"><path d="M3 4h10M3 8h10M3 12h6"/></svg>筛选</button>
+                  <button class="pm-btn"><svg class="ico" viewBox="0 0 16 16"><path d="M6 3.5h7v7M4.5 12.5h7"/></svg>导出</button>
+                </div>
+              </div>
+
+              <div class="stat-strip">
+                <div class="stat blue"><div class="k">工具调用</div><div class="v">10 <small>步</small></div></div>
+                <div class="stat"><div class="k">检索</div><div class="v">6 <small>词 / 10 段</small></div></div>
+                <div class="stat amber"><div class="k">等待你</div><div class="v">42 <small>秒</small></div></div>
+                <div class="stat"><div class="k">用时</div><div class="v">3m08s</div></div>
+                <div class="stat err"><div class="k">失败</div><div class="v">2</div></div>
+              </div>
+
+              <!-- 轮 1：展开，带时间轴摘要 -->
+              <div class="turn-card open">
+                <div class="turn-head">
+                  <span class="caret open">›</span>
+                  <span class="turn-time">11-08 14:04</span>
+                  <span class="turn-dur">103.0s</span>
+                  <span class="turn-note">最近一轮</span>
+                  <div class="turn-chips">
+                    <span class="chip blue"><i></i>工具 4</span>
+                    <span class="chip violet"><i></i>检索 6 词</span>
+                    <span class="chip amber"><i></i>等待 42s</span>
+                    <span class="chip err"><i></i>失败 1</span>
+                  </div>
+                </div>
+                <div class="phase-wrap">
+                  <div class="phase">
+                    <i class="prep" style="flex:7"></i>
+                    <i class="gen" style="flex:44"></i>
+                    <i class="wait" style="flex:42"></i>
+                    <i class="wrap" style="flex:10"></i>
+                  </div>
+                  <div class="phase-legend">
+                    <span><i style="background:#b7c4d4"></i>准备 7s</span>
+                    <span><i style="background:#8fb0f0"></i>生成 44s</span>
+                    <span><i style="background:var(--warn-border)"></i>等你 42s</span>
+                    <span><i style="background:#b7c4d4"></i>收尾 10s</span>
+                  </div>
+                </div>
+                <div class="turn-line">
+                  查了 <b>6 个检索词</b>（命中 10 段资料），写了 1 份文件、重跑 1 次脚本，<b>中途等你批准 42 秒</b>；最终产出 <b>report.html</b>。
+                </div>
+                <div style="padding:0 12px 12px">
+                  <div class="fit" style="margin-bottom:0">
+                    <span class="lab">阶段</span>
+                    <span class="chip">检索</span>
+                    <span class="chip">写文件</span>
+                    <span class="chip">运行脚本</span>
+                    <span class="chip amber">等待批准</span>
+                    <span class="chip ok">产物</span>
+                    <span class="pm-btn" style="margin-left:auto;height:22px">展开时间轴 ›</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 轮 2：折叠 -->
+              <div class="turn-card">
+                <div class="turn-head">
+                  <span class="caret">›</span>
+                  <span class="turn-time">11-08 13:41</span>
+                  <span class="turn-dur">28.4s</span>
+                  <div class="turn-chips">
+                    <span class="chip blue"><i></i>工具 2</span>
+                    <span class="chip"><i></i>无检索</span>
+                    <span class="chip ok"><i></i>正常</span>
+                  </div>
+                </div>
+                <div class="phase-wrap">
+                  <div class="phase">
+                    <i class="prep" style="flex:5"></i>
+                    <i class="gen" style="flex:80"></i>
+                    <i class="wrap" style="flex:15"></i>
+                  </div>
+                </div>
+                <div class="turn-line">读了两份文件后直接作答，没有检索、没有失败、没有人等。</div>
+              </div>
+
+              <!-- 轮 3：折叠，有失败 -->
+              <div class="turn-card">
+                <div class="turn-head">
+                  <span class="caret">›</span>
+                  <span class="turn-time">11-08 13:12</span>
+                  <span class="turn-dur">56.2s</span>
+                  <div class="turn-chips">
+                    <span class="chip blue"><i></i>工具 4</span>
+                    <span class="chip err"><i></i>失败 1</span>
+                  </div>
+                </div>
+                <div class="phase-wrap">
+                  <div class="phase">
+                    <i class="prep" style="flex:4"></i>
+                    <i class="gen" style="flex:62"></i>
+                    <i class="fail" style="flex:20"></i>
+                    <i class="wrap" style="flex:14"></i>
+                  </div>
+                </div>
+                <div class="turn-line"><b style="color:var(--danger)">运行脚本失败 1 次</b>，重试后完成。点开看失败原因。</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 5.3 单轮对照 -->
+    <h3 class="sub" id="s5-3">5.3 单轮对照：左边答案，右边时间轴</h3>
+    <p class="sub-note">这是整个功能的「主菜」。两侧编号同源，点任一侧都会在另一侧高亮；顶部指标条本身就是筛选器。</p>
+    <div class="mock-scroll">
+      <div class="mock">
+        <div class="mk-bar">
+          <div class="dots"><i></i><i></i><i></i></div>
+          <div class="mk-url">wenqu.local / chat · 这一轮的过程</div>
+          <span class="mk-tag new">建议稿</span>
+        </div>
+        <div class="mk-body">
+          <div class="pm">
+            <div class="pm-head">
+              <span class="pm-title">执行过程 · 这一轮</span>
+              <span class="pm-sub">11-08 14:04 · 6 步 · 103.0s</span>
+              <button class="pm-x">×</button>
+            </div>
+            <div class="pm-body">
+              <div class="fit">
+                <span class="lab">这一轮</span>
+                <span class="chip ok"><i></i>工具 4</span>
+                <span class="chip violet"><i></i>检索 6 词 · 10 段</span>
+                <span class="chip amber"><i></i>等你 42s</span>
+                <span class="chip err"><i></i>失败 1</span>
+                <span class="chip"><i></i>用量 116.1k</span>
+                <span class="chip blue"><i></i>103.0s</span>
+                <span class="pm-btn" style="margin-left:auto;height:24px">
+                  <svg class="ico" viewBox="0 0 16 16"><path d="M3 4h10M3 8h10M3 12h6"/></svg>只看失败
+                </span>
+              </div>
+
+              <div class="split">
+                <!-- 左：答案与步骤 -->
+                <div class="ans-col">
+                  <div class="q"><b>问：</b>做一个问渠官网（科技风），要能直接打开、不依赖外部资源。</div>
+                  <div class="think"><span class="caret">›</span>它先想了这些（1,204 字）</div>
+                  <ol class="steps">
+                    <li class="hit"><span class="no">1</span><span class="nm">检索知识库</span><span class="st">6 词 / 10 段</span></li>
+                    <li><span class="no">2</span><span class="nm">读文件 report.md</span><span class="st">完成</span></li>
+                    <li><span class="no">3</span><span class="nm">写文件 draft.html</span><span class="st">完成</span></li>
+                    <li><span class="no">4</span><span class="nm">运行脚本 build.py</span><span class="st bad">失败</span></li>
+                    <li><span class="no">5</span><span class="nm">重跑 build.py</span><span class="st">完成</span></li>
+                    <li><span class="no">6</span><span class="nm">产物 report.html</span><span class="st">完成</span></li>
+                  </ol>
+                  <div class="answer">
+                    <p>页面已按科技风完成，所有样式和脚本都在本地，双击即可打开；不依赖任何外部 CDN。</p>
+                    <p class="dim">首屏是主视觉 + 五个能力模块；下方是部署与安全两栏…</p>
+                    <div class="srcline">引用来源：<b>[1]</b> 问渠产品介绍 · <b>[3]</b> 部署与安全 <span class="dim">（点角标可回右侧检索节点）</span></div>
+                  </div>
+                </div>
+
+                <!-- 右：时间轴 -->
+                <div>
+                  <div class="tl-head">
+                    <span class="t">时间轴</span>
+                    <span class="s">按发生顺序 · 耗时不含等人</span>
+                  </div>
+                  <div class="filters">
+                    <button class="fchip on">全部 <span class="n">11</span></button>
+                    <button class="fchip">工具 <span class="n">4</span></button>
+                    <button class="fchip">检索 <span class="n">1</span></button>
+                    <button class="fchip">卡片 <span class="n">2</span></button>
+                    <button class="fchip">产物 <span class="n">1</span></button>
+                    <button class="fchip">失败 <span class="n">1</span></button>
+                  </div>
+                  <div class="tl">
+                    <div class="tl-row retr hit">
+                      <div class="tl-time">14:04:28</div>
+                      <div class="tl-rail"><i class="tl-dot"></i></div>
+                      <div class="tl-main">
+                        <div class="tl-top">
+                          <span class="tl-no">1</span>
+                          <span class="tl-type">检索</span>
+                          <span class="tl-name">知识库</span>
+                          <span class="tl-badge ok">命中 10 段</span>
+                          <span class="tl-dur">1.4s</span>
+                        </div>
+                        <div class="tl-sub">
+                          <span class="term">问渠 产品介绍 核心能力</span>
+                          <span class="term">智能体 工作链路 部署</span>
+                          <span class="term">知识库 检索 引用 溯源</span>
+                          <span class="tl-link">+3 个词</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="tl-row tool">
+                      <div class="tl-time">14:04:40</div>
+                      <div class="tl-rail"><i class="tl-dot"></i></div>
+                      <div class="tl-main">
+                        <div class="tl-top">
+                          <span class="tl-no">2</span>
+                          <span class="tl-type">工具</span>
+                          <span class="tl-name">读文件</span>
+                          <span class="tl-badge ok">完成</span>
+                          <span class="tl-dur">1.2s</span>
+                        </div>
+                        <div class="tl-sub">report.md · 8.4 KB <span class="tl-link">查看输出 ›</span></div>
+                      </div>
+                    </div>
+
+                    <div class="tl-row tool">
+                      <div class="tl-time">14:05:10</div>
+                      <div class="tl-rail"><i class="tl-dot"></i></div>
+                      <div class="tl-main">
+                        <div class="tl-top">
+                          <span class="tl-no">3</span>
+                          <span class="tl-type">工具</span>
+                          <span class="tl-name">写文件</span>
+                          <span class="tl-badge ok">完成</span>
+                          <span class="tl-dur">3.4s</span>
+                        </div>
+                        <div class="tl-sub">index.html · 18.2 KB</div>
+                      </div>
+                    </div>
+
+                    <div class="tl-row err">
+                      <div class="tl-time">14:05:20</div>
+                      <div class="tl-rail"><i class="tl-dot"></i></div>
+                      <div class="tl-main">
+                        <div class="tl-top">
+                          <span class="tl-no">4</span>
+                          <span class="tl-type">失败</span>
+                          <span class="tl-name">运行脚本 build.py</span>
+                          <span class="tl-badge bad">exit 1</span>
+                          <span class="tl-dur bad">0.8s</span>
+                        </div>
+                        <div class="tl-sub">ModuleNotFoundError: No module named 'pandas' <span class="tl-link">查看完整输出 ›</span></div>
+                      </div>
+                    </div>
+
+                    <div class="tl-row tool">
+                      <div class="tl-time">14:05:30</div>
+                      <div class="tl-rail"><i class="tl-dot"></i></div>
+                      <div class="tl-main">
+                        <div class="tl-top">
+                          <span class="tl-no">5</span>
+                          <span class="tl-type">工具</span>
+                          <span class="tl-name">重跑 build.py</span>
+                          <span class="tl-badge ok">完成</span>
+                          <span class="tl-dur slow">12.1s</span>
+                        </div>
+                        <div class="tl-sub">产出 dist/index.html · 24 KB</div>
+                      </div>
+                    </div>
+
+                    <div class="tl-row wait">
+                      <div class="tl-time">14:05:50</div>
+                      <div class="tl-rail"><i class="tl-dot"></i></div>
+                      <div class="tl-main">
+                        <div class="tl-top">
+                          <span class="tl-type">等待</span>
+                          <span class="tl-name">等你批准写文件</span>
+                          <span class="tl-badge warn">已批准</span>
+                          <span class="tl-dur slow">42s</span>
+                        </div>
+                        <div class="tl-sub">这 42 秒计入整轮 103 秒，但不计入工具耗时——所以时间轴能解释「慢在哪」。</div>
+                      </div>
+                    </div>
+
+                    <div class="tl-row art">
+                      <div class="tl-time">14:06:40</div>
+                      <div class="tl-rail"><i class="tl-dot"></i></div>
+                      <div class="tl-main">
+                        <div class="tl-top">
+                          <span class="tl-no">6</span>
+                          <span class="tl-type">产物</span>
+                          <span class="tl-name">report.html</span>
+                          <span class="tl-badge ok">可预览</span>
+                          <span class="tl-dur">—</span>
+                        </div>
+                        <div class="tl-sub">24.1 KB · 单击打开 <span class="tl-link">预览 ›</span></div>
+                      </div>
+                    </div>
+
+                    <div class="tl-row use">
+                      <div class="tl-time">14:06:46</div>
+                      <div class="tl-rail"><i class="tl-dot"></i></div>
+                      <div class="tl-main">
+                        <div class="tl-top">
+                          <span class="tl-type">用量</span>
+                          <span class="tl-name">累计 116.1k</span>
+                          <span class="tl-badge">5 次快照 · 末帧为准</span>
+                          <span class="tl-dur">—</span>
+                        </div>
+                        <div class="tl-sub">输入 97.0k · 输出 19.1k · 缓存 53.8k · 上下文 33.2k / 100k</div>
+                        <div class="tl-expand"><span class="caret">›</span>展开 5 次快照与合计</div>
+                      </div>
+                    </div>
+
+                    <div class="tl-row done">
+                      <div class="tl-time">14:06:46</div>
+                      <div class="tl-rail"><i class="tl-dot"></i></div>
+                      <div class="tl-main">
+                        <div class="tl-top">
+                          <span class="tl-type">结束</span>
+                          <span class="tl-name">本轮完成</span>
+                          <span class="tl-dur">103.0s</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 5.4 明细 -->
+    <h3 class="sub" id="s5-4">5.4 点开节点：用量与检索的明细</h3>
+    <p class="sub-note">默认给人话摘要；点开才看逐帧数字与来源列表。既保留原文，又不让它占据首屏。</p>
+    <div class="mock-scroll">
+      <div class="mock">
+        <div class="mk-bar">
+          <div class="dots"><i></i><i></i><i></i></div>
+          <div class="mk-url">wenqu.local / chat · 节点展开态</div>
+          <span class="mk-tag new">建议稿</span>
+        </div>
+        <div class="mk-body">
+          <div class="pm">
+            <div class="pm-head">
+              <span class="pm-title">执行过程 · 节点明细</span>
+              <span class="pm-sub">展开发生在原位置，不另开弹窗</span>
+              <button class="pm-x">×</button>
+            </div>
+            <div class="pm-body">
+              <div class="detail-grid">
+                <div class="dcard">
+                  <div class="dcard-h">
+                    <span class="tl-type" style="color:var(--warn)">用量</span>
+                    <span class="t">本轮累计与 5 次快照</span>
+                    <span class="m">最后一次为准</span>
+                  </div>
+                  <div class="dcard-b">
+                    <div class="kv">
+                      <span class="k">输入</span><span class="v"><b>97,012</b> tokens</span>
+                      <span class="k">输出</span><span class="v">19,094</span>
+                      <span class="k">最终正文</span><span class="v">640</span>
+                      <span class="k">缓存命中</span><span class="v">53,760</span>
+                      <span class="k">上下文占用</span><span class="v">33,226 / 100,000</span>
+                      <span class="k">合计</span><span class="v"><b>116,106</b></span>
+                    </div>
+                    <div class="bar"><i style="width:33%"></i></div>
+                    <table class="mini-table">
+                      <thead><tr><th>时刻</th><th>输入</th><th>输出</th><th>缓存</th><th>上下文</th></tr></thead>
+                      <tbody>
+                        <tr><td>14:04:30</td><td>22,315</td><td>258</td><td>8,448</td><td>11,920</td></tr>
+                        <tr><td>14:04:35</td><td>48,681</td><td>455</td><td>29,184</td><td>13,516</td></tr>
+                        <tr><td>14:06:04</td><td>63,786</td><td>18,454</td><td>40,704</td><td>15,105</td></tr>
+                        <tr><td>14:06:09</td><td>97,012</td><td>19,094</td><td>53,760</td><td>33,226</td></tr>
+                        <tr><td>14:06:11</td><td>97,012</td><td>19,094</td><td>53,760</td><td>33,226</td></tr>
+                      </tbody>
+                    </table>
+                    <div class="tl-expand" style="border-top:0;padding-top:4px">
+                      <span class="tl-link">查看使用统计 ›</span>
+                      <span style="margin-left:auto">重复帧已合并为「末帧」</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="dcard">
+                  <div class="dcard-h">
+                    <span class="tl-type" style="color:var(--violet)">检索</span>
+                    <span class="t">6 个检索词 · 命中 10 段</span>
+                    <span class="m">4 次快照</span>
+                  </div>
+                  <div class="dcard-b">
+                    <div class="term-list">
+                      <span class="term">问渠 产品介绍 核心能力</span>
+                      <span class="term">智能体 工作链路 部署</span>
+                      <span class="term">知识库 检索 引用 溯源</span>
+                      <span class="term">私有化部署 Docker</span>
+                      <span class="term">工作流 编排 定时任务</span>
+                      <span class="term">产物交付 网页 图表</span>
+                    </div>
+                    <ul class="srclist">
+                      <li><span class="i">[1]</span><span>问渠产品介绍 · 核心能力</span></li>
+                      <li><span class="i">[2]</span><span>问渠产品介绍 · 智能体工作链路</span></li>
+                      <li><span class="i">[3]</span><span>部署与安全 · Docker Compose</span></li>
+                      <li><span class="i">[4]</span><span>知识库 · 检索与引用溯源</span></li>
+                      <li><span class="i">[5]</span><span>工作流 · 编排与定时任务</span></li>
+                      <li><span class="i">…</span><span>另外 5 段（共 10 段）</span></li>
+                    </ul>
+                    <div class="tl-expand" style="border-top:0;padding-top:6px">
+                      <span class="tl-link">在知识库中打开来源 ›</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="note-card">
+                <b>原始帧仍然可达：</b>每个节点的右上角有「查看原始事件」，点开是这段 payload 的完整 JSON（只读、可复制）。
+                默认不展示，是因为 95% 的读者要的是结论，不是字段名。
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <h3 class="sub" id="s5-5">5.5 移动端</h3>
+    <p class="sub-note">
+      面板由同一份组件装载在底部 sheet 里，以上改动自动继承；只需把双栏在窄屏折成上下（现状已如此），
+      并把时间轴节点高度从 6px 行距加到 10px，保证触屏点得准。筛选 chips 在窄屏横向可滚。
+    </p>
+  </section>
+
+  <!-- ==================== 06 落地 ==================== -->
+  <section class="sec" id="s6">
+    <div class="sec-head"><span class="sec-no">06</span><h2>落地与验收</h2></div>
+    <p class="lead">
+      P0 的改动集中在读口与渲染层，<b>不新增表、不改 SSE 协议、不动消息表</b>；
+      P1 只替换账本的视觉结构。风险主要在「工具步与消息 toolCalls 的一致性」，需要一条对齐用例。
+    </p>
+
+    <h3 class="sub" id="s6-1">6.1 验收清单</h3>
+    <ul class="check">
+      <li><span class="box"></span>单轮面板能看到全部工具步，数量与正文工具卡一致</li>
+      <li><span class="box"></span>面板首屏不再出现可见的 JSON 花括号</li>
+      <li><span class="box"></span>一轮 9 条噪声事件折叠为 3~4 个里程碑节点</li>
+      <li><span class="box"></span>折叠头不再出现「检索×4 / 用量×5」这类伪计数</li>
+      <li><span class="box"></span>时间轴上能看出阶段比例，等待时长单独成段</li>
+      <li><span class="box"></span>点左侧任一步，右侧对应节点高亮并滚动到可见</li>
+      <li><span class="box"></span>失败节点默认可见且能展开完整输出</li>
+      <li><span class="box"></span>移动端 sheet 与 PC 表现一致（除双栏折叠）</li>
+    </ul>
+
+    <h3 class="sub" id="s6-2">6.2 怎么判断「优化有没有用」</h3>
+    <table class="tbl">
+      <thead>
+        <tr><th>信号</th><th>观察方式</th><th>期望方向</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>入口点击率</td><td>顶栏「过程」+ 状态行「过程 ›」的点击占比</td><td>上升（说明入口位置对）</td></tr>
+        <tr><td>单轮对照使用率</td><td>从消息进入且发生左右联动的事件数 / 进入次数</td><td>上升（说明对照真的可用）</td></tr>
+        <tr><td>读懂率</td><td>5 人小样本任务：找出「这一轮为什么慢」「哪一步失败」</td><td>全部在 30 秒内答对</td></tr>
+        <tr><td>排障替代</td><td>支持工单中附过程截图/导出的比例</td><td>上升（说明进入了工作流）</td></tr>
+        <tr><td>噪声投诉</td><td>「看不懂 / 全是代码」类反馈</td><td>下降</td></tr>
+      </tbody>
+    </table>
+
+    <h3 class="sub" id="s6-3">6.3 风险与取舍</h3>
+    <ul class="bullets">
+      <li><b>工具步来源不一致：</b>账本与消息 <code>toolCalls</code> 可能因并发/重试而数量不同。建议以消息为准做「权威步数」，账本只补充耗时与失败原文。</li>
+      <li><b>历史数据：</b>旧账本没有工具事件，也不能凭空补。面板对历史轮显示「本轮未记录工具步」，不要显示成 0。</li>
+      <li><b>性能：</b>一次最多 200 条，前端过滤足够；不要为此加分页或再开接口。</li>
+      <li><b>隐私：</b>分享链接继续走 <code>answerOnly</code>，账本不出现在访客视图；导出保留「仅本人」。</li>
+      <li><b>定位：</b>不做实时直播时间轴。跑动中的过程已经在正文过程簇里，账本只服务事后回看。</li>
+    </ul>
+  </section>
+
+  <footer class="footer">
+    依据：<code>web/src/components/SessionEventsPanel.vue</code>、<code>web/src/views/ChatPage.vue</code>、
+    <code>src/main/java/com/wenqu/ai/service/ChatService.java</code>、
+    <code>src/main/java/com/wenqu/ai/agent/chat/ChatRunRuntime.java</code>、<code>c_ai_session_event</code>，
+    以及 2026-11-08 提供的两张线上截图。效果图为设计建议，未改动任何线上代码。
+    <br>
+    单张效果图：<a href="effect-1-before.png">现状复刻</a> ·
+    <a href="effect-2-entry.png">入口</a> ·
+    <a href="effect-3-overview.png">会话总览</a> ·
+    <a href="effect-4-compare.png">单轮对照</a> ·
+    <a href="effect-5-detail.png">节点明细</a>
+  </footer>
+
+</div>
+</body>
+</html>

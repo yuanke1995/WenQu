@@ -460,11 +460,54 @@ public class ChatRunRuntime {
      * 账本再存一份只是把大 JSON 截断成半截文本，没有增量信息。也不含 token/thinking/process/
      * stage/image/plan_delta/keepalive 这类高频增量——它们会让账本行数淹没真正的执行轨迹。
      * （stage 通道已整体退役：一轮的进行中提示只剩「整轮用时」那一条。）
+     * <p>{@code tool_status} 单独走 {@link #toolLedgerPayload}：一次调用只记终态一行，
+     * start/preparing 帧不落账本，参数与输出压成摘要——完整原文仍由消息表与工具卡承载。
      */
     private static final java.util.Set<String> LEDGER_SSE_TYPES = java.util.Set.of(
             "approval_required", "ask_user", "plan", "plan_approval", "plan_cancelled", "plan_superseded",
             "artifact", "agent_delegated", "agent_consulted",
             "retrieved", "usage", "error", "warn");
+
+    /** 工具终态帧的 SSE 类型；落账本时统一记成 {@code tool}，前端不必认识两个名字。 */
+    private static final String TOOL_STATUS_SSE_TYPE = "tool_status";
+
+    /**
+     * 工具终态 → 账本摘要。只保留「这一步是谁、成没成、多久、第几步」，
+     * 入参与输出各截一段：账本服务事后回看，不承担原文复读（原文在消息表/工具卡里）。
+     * <p>返回 null 表示这一帧不该入账（start/preparing，或载荷不可解析）。
+     */
+    private static String toolLedgerPayload(String content) {
+        if (content == null || content.isBlank()) return null;
+        try {
+            com.alibaba.fastjson2.JSONObject o = JSON.parseObject(content);
+            String status = o.getString("status");
+            if (status == null || "start".equals(status)
+                    || Boolean.TRUE.equals(o.getBoolean("preparing"))) {
+                return null;
+            }
+            com.alibaba.fastjson2.JSONObject out = new com.alibaba.fastjson2.JSONObject();
+            for (String k : new String[]{"name", "label", "hint", "status", "elapsedMs",
+                    "stepId", "startedAtMs", "waitedMs"}) {
+                Object v = o.get(k);
+                if (v != null) out.put(k, v);
+            }
+            // 入参只在够短时整份带走：截断后的半截 JSON 前端解析不了，参数摘要反而消失。
+            // 长入参的完整原文在消息表的工具卡里，账本不重复存。
+            String args = o.getString("args");
+            if (args != null && !args.isBlank() && args.length() <= 200) out.put("args", args);
+            String result = o.getString("result");
+            if (result != null && !result.isBlank()) out.put("result", clipForLedger(result, 240));
+            return out.toJSONString();
+        } catch (Exception e) {
+            // 载荷不是 JSON（历史行或被截断）：宁可不记这一行，也不往账本写半截垃圾
+            log.debug("[LEDGER] tool_status 载荷解析失败，跳过: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    private static String clipForLedger(String s, int max) {
+        return s.length() <= max ? s : s.substring(0, max) + "…";
+    }
 
     /** 客户端是否已断开（供各等待点短路，避免断开后继续跑 LLM 调用与检索） */
     public static boolean clientDisconnected(SseEmitter emitter) {
@@ -506,10 +549,15 @@ public class ChatRunRuntime {
         // （{@link #LEDGER_SSE_TYPES}）——token/thinking/plan_delta 这类增量与心跳没有超出消息表的信息量。
         TurnHandle handle = ownHandle(emitter, sessionId);
         String turnId = ledgerTurnId != null ? ledgerTurnId : handle == null ? null : handle.turnId();
-        if (LEDGER_SSE_TYPES.contains(type)) {
-            sessionEventService.append(sessionId,
-                    ledgerUserId != null ? ledgerUserId : handle == null ? null : handle.userId(),
-                    turnId, type, content);
+        boolean toolLedger = TOOL_STATUS_SSE_TYPE.equals(type);
+        if (LEDGER_SSE_TYPES.contains(type) || toolLedger) {
+            String ledgerType = toolLedger ? "tool" : type;
+            String ledgerPayload = toolLedger ? toolLedgerPayload(content) : content;
+            if (ledgerPayload != null) {
+                sessionEventService.append(sessionId,
+                        ledgerUserId != null ? ledgerUserId : handle == null ? null : handle.userId(),
+                        turnId, ledgerType, ledgerPayload);
+            }
         }
         if ("error".equals(type) && content != null && !content.isBlank()) {
             TURN_ERRORS.put(emitter, new TurnError(sessionId, turnId, content));
