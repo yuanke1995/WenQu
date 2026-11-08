@@ -447,6 +447,77 @@ public class McpClientService {
      * 刷新时先补一次重连（只碰坏连接，代价与失败服务数成正比），再由 serverStatuses 正常出列表。
      * 只在用户点「刷新」时调用——进页面拉状态不重试，避免挂着几个死服务把首屏状态请求拖到超时。
      */
+    /** 上次巡检时刻（{@code mcp.patrolIntervalMs} 内部节流的判据） */
+    private volatile long lastPatrolAt = 0;
+
+    /**
+     * 定时健康巡检（P1 · MCP 面板升级 3.4）：把「远端挂掉却还显示已连接」的窗口收掉。
+     * <p>只碰非空闲池、只碰 connected 服务；远程 listTools 一律在锁外做，失败才在锁内翻红并接上
+     * 既有退避重试链。配置 0 = 关闭巡检。
+     */
+    @org.springframework.scheduling.annotation.Scheduled(fixedDelay = 60_000, initialDelay = 120_000)
+    public void patrol() {
+        int interval;
+        try {
+            interval = configService.getInt("mcp.patrolIntervalMs", 300_000);
+        } catch (Exception e) {
+            return;
+        }
+        if (interval <= 0) return;
+        long now = System.currentTimeMillis();
+        synchronized (this) {
+            if (now - lastPatrolAt < interval) return;
+            lastPatrolAt = now;
+        }
+        for (Map.Entry<String, UserPool> e : pools.entrySet()) {
+            UserPool pool = e.getValue();
+            if (pool == null || now - pool.lastAccess >= IDLE_EVICT_MILLIS) continue;
+            try {
+                patrolPool(e.getKey(), pool);
+            } catch (Exception ex) {
+                log.debug("[MCP] 巡检用户 {} 失败: {}", e.getKey(), ex.toString());
+            }
+        }
+    }
+
+    private void patrolPool(String uid, UserPool pool) {
+        List<String> names = new ArrayList<>();
+        synchronized (pool) {
+            for (Map.Entry<String, String> st : pool.states.entrySet()) {
+                if ("connected".equals(st.getValue()) && pool.clients.containsKey(st.getKey())) {
+                    names.add(st.getKey());
+                }
+            }
+        }
+        for (String name : names) {
+            McpSyncClient client;
+            synchronized (pool) {
+                client = pool.clients.get(name);
+            }
+            if (client == null) continue;
+            try {
+                List<McpSchema.Tool> tools = client.listTools().tools();
+                putCacheIfCurrent(pool, name, client, tools);
+            } catch (Exception e) {
+                UserMcp row = null;
+                int token = 0;
+                synchronized (pool) {
+                    if (pool.clients.get(name) != client) continue;
+                    pool.clients.remove(name);
+                    pool.states.put(name, "failed:" + rootMessage(e));
+                    for (UserMcp r : pool.rows) {
+                        if (name.equals(r.getName())) { row = r; break; }
+                    }
+                    Integer t = pool.tokens.get(name);
+                    token = t == null ? 0 : t;
+                }
+                log.info("[MCP] uid={} server {} 巡检失败，已翻红并进入退避重试: {}", uid, name, rootMessage(e));
+                closeQuietly(List.of(client));
+                if (row != null) scheduleRetry(uid, pool, new ConnectTarget(row, token), 1);
+            }
+        }
+    }
+
     public void retryBroken(String uid) {
         if (uid == null || uid.isBlank()) return;
         UserPool pool = ensureConnections(uid);

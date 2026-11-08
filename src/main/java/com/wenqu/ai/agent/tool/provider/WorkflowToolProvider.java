@@ -52,8 +52,8 @@ public class WorkflowToolProvider implements ToolFamilyProvider {
         if (mc == null || !mc.masterOn() || !mc.approvalPolicyAllows(ToolFamily.WORKFLOW)) {
             return List.of();
         }
-        if (mc.guestMode() || mc.branchTurn()) {
-            return List.of();   // 游客/分支不挂（见类注释 1、2 条）
+        if (mc.branchTurn()) {
+            return List.of();   // 分支轮不挂（见类注释第 2 条）
         }
         Integer flag = mc.agentFlag(ToolFamily.WORKFLOW);
         if (flag != null && flag != 1) return List.of();   // 智能体显式关
@@ -61,7 +61,8 @@ public class WorkflowToolProvider implements ToolFamilyProvider {
 
         WorkflowToolService.Mount mount;
         try {
-            mount = workflowToolService.mount(mc.agentId(), mc.userId(), mc.turnWfDepth());
+            // 游客放行（P1 · B 档）：只挂只读工作流；副作用工作流在 service 内过滤，执行口再校验一次
+            mount = workflowToolService.mount(mc.agentId(), mc.userId(), mc.turnWfDepth(), mc.guestMode());
         } catch (Exception e) {
             log.warn("[WF-TOOL] 装配失败（跳过，不影响问答）agent={}: {}", mc.agentId(), e.getMessage());
             return List.of();

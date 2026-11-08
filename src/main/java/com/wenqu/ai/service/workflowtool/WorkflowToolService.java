@@ -85,6 +85,15 @@ public class WorkflowToolService {
      * 引用的工作流已删除/下线 = 静默跳过（下线是正常生命周期，不该每轮报警）。
      */
     public Mount mount(String agentId, String userId, int wfDepth) {
+        return mount(agentId, userId, wfDepth, false);
+    }
+
+    /**
+     * 游客放行（P1 · B 档）：{@code guest=true} 时只挂「只读工作流」——节点全部落在
+     * start/end/llm/retrieval/condition/loop/template 之内。含代码执行、HTTP、MCP、知识写入、
+     * 人工审核、子智能体、技能注入的一律不挂；执行入口还会再校验一次（fail-closed）。
+     */
+    public Mount mount(String agentId, String userId, int wfDepth, boolean guest) {
         if (agentId == null || agentId.isBlank()) return new Mount(List.of(), null);
         if (wfDepth >= MAX_WF_DEPTH) return new Mount(List.of(), null);   // 防环：到顶不再挂（见类注释）
         Agent agent = agentMapper.selectById(agentId);
@@ -104,9 +113,38 @@ public class WorkflowToolService {
                 log.debug("[WF-TOOL] 智能体引用的工作流不可用（已删除或未发布），本轮跳过: agent={} workflow={}", agentId, id);
                 continue;
             }
-            out.add(new WorkflowToolCallback(row, startInputSchema(row), nextDepth, principal));
+            if (guest && !isGuestSafe(row)) {
+                log.info("[WF-TOOL] 游客轮跳过含副作用节点的工作流: agent={} workflow={}", agentId, id);
+                continue;
+            }
+            out.add(new WorkflowToolCallback(row, startInputSchema(row), nextDepth, principal, guest));
         }
         return new Mount(List.copyOf(out), null);
+    }
+
+    /** 游客可调用的节点集合：纯读取/生成，不写库、不出站、不执行命令、不等人裁决 */
+    private static final Set<String> GUEST_SAFE_NODES =
+            Set.of("start", "end", "llm", "retrieval", "condition", "loop", "template");
+
+    /**
+     * 是否游客安全：已发布 DSL 的全部节点类型都在只读集合内。
+     * <p>解析失败按不安全处理（fail-closed）；空节点表也按不安全（没有 start/end 的图本就不该发布）。
+     */
+    public static boolean isGuestSafe(Workflow row) {
+        if (row == null || row.getPublishedDsl() == null || row.getPublishedDsl().isBlank()) return false;
+        try {
+            com.alibaba.fastjson2.JSONObject root = JSON.parseObject(row.getPublishedDsl());
+            com.alibaba.fastjson2.JSONArray nodes = root == null ? null : root.getJSONArray("nodes");
+            if (nodes == null || nodes.isEmpty()) return false;
+            for (int i = 0; i < nodes.size(); i++) {
+                com.alibaba.fastjson2.JSONObject n = nodes.getJSONObject(i);
+                String type = n == null ? null : n.getString("type");
+                if (type == null || !GUEST_SAFE_NODES.contains(type)) return false;
+            }
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     /** 触发者身份（部门/角色现查库，不依赖 ThreadLocal——工具回调线程上身份不可靠，见类注释） */
@@ -272,12 +310,15 @@ public class WorkflowToolService {
         private final String inputSchema;
         private final int wfDepth;
         private final WorkflowService.Principal principal;
+        private final boolean guest;
 
-        WorkflowToolCallback(Workflow row, String inputSchema, int wfDepth, WorkflowService.Principal principal) {
+        WorkflowToolCallback(Workflow row, String inputSchema, int wfDepth,
+                             WorkflowService.Principal principal, boolean guest) {
             this.row = row;
             this.inputSchema = inputSchema;
             this.wfDepth = wfDepth;
             this.principal = principal;
+            this.guest = guest;
         }
 
         @Override
@@ -294,6 +335,10 @@ public class WorkflowToolService {
 
         @Override
         public String call(String toolInput) {
+            // 执行入口二次校验（fail-closed）：配置在装配后被改、或快照含副作用节点，一律拒绝
+            if (guest && !isGuestSafe(row)) {
+                throw new com.wenqu.ai.common.BizException("该工作流包含副作用节点，游客不可调用");
+            }
             Map<String, Object> args;
             try {
                 args = toolInput == null || toolInput.isBlank()

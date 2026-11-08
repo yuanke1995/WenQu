@@ -154,6 +154,8 @@ public class ChatService {
     private final ProjectTurnGuard projectTurnGuard;
     /** 智能体配置（4.1）：对话页下拉选中后，按智能体覆盖模型/提示词/工具/知识库范围 */
     private final AgentService agentService;
+    /** 游客分享的 chatflow 安全闸：判定绑定工作流是否只含只读节点（P1 · 工作流游客放行 B 档） */
+    private final com.wenqu.ai.mapper.WorkflowMapper workflowMapper;
     private final ModelRegistryService modelRegistryService;
     /**
      * M4：工作流服务（智能体绑定工作流时取用）。走 ObjectProvider <b>惰性</b>获取而不是直接注入：
@@ -228,7 +230,21 @@ public class ChatService {
     }
 
     /**
-     * 工作流驱动的那一轮：解析本轮身份（模型/作答方/@咨询/降级），然后把整轮交给
+     * 游客轮绑定的工作流是否只读安全（P1 · B 档）：节点全在 start/end/llm/retrieval/condition/loop/template。
+     * 未绑定、查不到、解析失败一律按「不安全」处理（fail-closed），只有明确只读才放行。
+     */
+    private boolean guestSafeBoundWorkflow(com.wenqu.ai.model.Agent agent) {
+        try {
+            if (agent == null || agent.getWorkflowId() == null || agent.getWorkflowId().isBlank()) return false;
+            com.wenqu.ai.model.Workflow row = workflowMapper.selectById(agent.getWorkflowId());
+            return com.wenqu.ai.service.workflowtool.WorkflowToolService.isGuestSafe(row);
+        } catch (Exception e) {
+            log.warn("[FAIL-LOUD] 游客工作流安全判定失败（按不可用处理）: {}", e.toString());
+            return false;
+        }
+    }
+
+    /**
      * {@link ChatflowBridge} 跑那张图 —— <b>之后不再有任何推理逻辑</b>。
      *
      * <p>为什么单独成方法：这段原本是手写推理循环 {@code runChat} 的前导段，而推理循环本体
@@ -297,6 +313,13 @@ public class ChatService {
             log.info("[AGENT] 本轮使用智能体 {}（{}）", agent.getId(), agent.getName());
             // 会话行记一笔"最近作答方"（供分享页按智能体列会话与访客回收用）
             sessionService.recordTurnAgent(sessionId, agent.getId(), agent.getName());
+        }
+        // 游客分享 + chatflow：只放行只读工作流（B 档）。含副作用节点的一律拒绝本轮，
+        // 不放行等于把业务流程的执行权借给匿名访问者（工具路径另有 provider 侧同口径过滤）
+        if (guestMode && agent != null && !guestSafeBoundWorkflow(agent)) {
+            rejectTurn(emitter, cmd, sessionId, userId, turnId,
+                    "这个智能体绑定的工作流包含副作用节点，游客暂不可使用（请登录后再试）");
+            return;
         }
         // M4：智能体绑定工作流（chatflow）——回答由工作流产出，整条不走常规检索/生成链路。
         // 图片/附件在此路径下不参与（工作流只接收文本入参），显式登记为降级提示而不是静默丢弃。
@@ -379,6 +402,7 @@ public class ChatService {
                       KnowledgeRetrievalTool knowledgeRetrievalTool,
                       AskUserTools askUserTools,
                       AgentService agentService,
+                      com.wenqu.ai.mapper.WorkflowMapper workflowMapper,
                       KnowledgeBaseService knowledgeBaseService,
                       com.wenqu.ai.mapper.UserMapper userMapper,
                       ModelRegistryService modelRegistryService,
@@ -400,6 +424,7 @@ public class ChatService {
         this.knowledgeRetrievalTool = knowledgeRetrievalTool;
         this.askUserTools = askUserTools;
         this.agentService = agentService;
+        this.workflowMapper = workflowMapper;
         this.knowledgeBaseService = knowledgeBaseService;
         this.userMapper = userMapper;
         this.userConfigService = userConfigService;

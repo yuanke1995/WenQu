@@ -36,6 +36,7 @@
             <a-checkbox :checked="allChecked" :indeterminate="someChecked" @change="toggleAll">全选</a-checkbox>
             <button class="app-btn ghost small" :disabled="!selected.length || batchBusy" @click="doBatchEnabled(true)">启用</button>
             <button class="app-btn ghost small" :disabled="!selected.length || batchBusy" @click="doBatchEnabled(false)">停用</button>
+            <button class="app-btn ghost small" :disabled="!selected.length || batchBusy" @click="doBatchReconnect">重连</button>
             <button class="app-btn ghost small batch-del" :disabled="!selected.length || batchBusy" @click="doBatchDelete">删除</button>
           </template>
           <button class="app-btn ghost small" :class="{ 'batch-on': batchMode }" @click="toggleBatchMode">{{ batchMode ? '退出管理' : '批量管理' }}</button>
@@ -177,17 +178,20 @@
         <button v-if="!form.id" class="app-link-btn import-entry" @click="openImport">粘贴 JSON 导入</button>
       </template>
       <a-form layout="vertical">
-        <a-form-item label="名称" required>
+        <a-form-item label="名称" required :validate-status="nameError ? 'error' : ''" :help="nameError">
           <a-input v-model:value="form.name" placeholder="如：时间工具 / 内部系统查询" :maxlength="40" />
         </a-form-item>
         <a-form-item label="服务地址" required>
-          <a-input v-model:value="form.url" placeholder="http://127.0.0.1:8931 或 http://host:port/mcp" />
+          <a-input v-model:value="form.url" placeholder="http://127.0.0.1:8931 或 http://host:port/mcp"
+                   @blur="onUrlBlur" />
         </a-form-item>
         <a-form-item label="传输类型">
-          <a-radio-group v-model:value="form.type" size="small" button-style="solid">
+          <a-radio-group v-model:value="form.type" size="small" button-style="solid" @change="onTypeChange">
             <a-radio-button value="streamable">streamable（推荐）</a-radio-button>
             <a-radio-button value="sse">SSE</a-radio-button>
           </a-radio-group>
+          <div v-if="autoTypeHint" class="form-tip ok">已按地址自动识别传输类型：{{ form.type }}</div>
+          <div class="form-tip">streamable：标准 MCP 传输，默认端点 /mcp；SSE：旧版传输，默认端点 /sse</div>
         </a-form-item>
         <a-collapse ghost class="adv-collapse">
           <a-collapse-panel key="auth" header="认证与请求头（一般保持默认即可）">
@@ -446,6 +450,30 @@ const doBatchEnabled = async on => {
   }
 }
 
+/** 批量重连（P1 · MCP 3.8）：逐个调单服务重连，结果按 reportBatch 口径汇报 */
+const doBatchReconnect = async () => {
+  if (!selected.value.length) return
+  batchBusy.value = true
+  const succeeded = []
+  const failed = []
+  try {
+    for (const id of selected.value) {
+      const s = servers.value.find(x => x.id === id)
+      try {
+        const r = await reconnectMcpServer(id)
+        if (r && r.success) succeeded.push(s ? s.name : id)
+        else failed.push({ name: s ? s.name : id, error: (r && r.msg) || '重连失败' })
+      } catch (e) {
+        failed.push({ name: s ? s.name : id, error: e.message || '重连失败' })
+      }
+    }
+    reportBatch({ data: { succeeded, failed } }, '重连')
+    await loadStatus()
+  } finally {
+    batchBusy.value = false
+  }
+}
+
 const doBatchDelete = () => {
   Modal.confirm({
     title: `删除选中的 ${selected.value.length} 个服务？`,
@@ -682,14 +710,38 @@ const headersObject = () => {
   }
   return any ? out : null
 }
+// ---- 编辑弹窗：URL 自动识别传输类型 + 名称即时查重（P1 · MCP 3.6）----
+const typeTouched = ref(false)
+const autoTypeHint = ref(false)
+const nameError = computed(() => {
+  const n = form.value.name.trim().toLowerCase()
+  if (!n) return ''
+  const hit = servers.value.some(s => String(s.name || '').trim().toLowerCase() === n && s.id !== form.value.id)
+  return hit ? '已存在同名服务' : ''
+})
+const inferType = url => (String(url || '').trim().toLowerCase().endsWith('/sse') ? 'sse' : 'streamable')
+const onUrlBlur = () => {
+  if (typeTouched.value) return
+  const t = inferType(form.value.url)
+  if (t !== form.value.type) {
+    form.value.type = t
+    autoTypeHint.value = true
+  }
+}
+const onTypeChange = () => { typeTouched.value = true; autoTypeHint.value = false }
+
 const openAdd = () => {
   form.value = { id: '', name: '', url: '', type: 'streamable', hasHeaders: false }
+  typeTouched.value = false
+  autoTypeHint.value = false
   resetHeaderState()
   resetProbe()
   formOpen.value = true
 }
 const openEdit = s => {
   form.value = { id: s.id, name: s.name, url: s.url || '', type: s.type || 'streamable', hasHeaders: !!s.hasHeaders }
+  typeTouched.value = false
+  autoTypeHint.value = false
   resetHeaderState()
   savedHeaderKeys.value = Array.isArray(s.headerKeys) ? [...s.headerKeys] : []
   resetProbe()
@@ -717,6 +769,7 @@ const submitForm = async () => {
   const name = form.value.name.trim()
   const url = form.value.url.trim()
   if (!name) { message.warning('请填写名称'); return }
+  if (nameError.value) { message.warning(nameError.value); return }
   if (!url) { message.warning('请填写服务地址'); return }
   const payload = { name, url, type: form.value.type }
   if (form.value.id) {
@@ -878,6 +931,8 @@ onBeforeUnmount(stopPoll) // 离开页面就别再轮询了
 .head-search-ic { color: var(--app-text3); font-size: 12px; }
 .batch-group { display: flex; align-items: center; gap: 8px; padding-left: 12px; border-left: 1px solid var(--app-border); }
 .batch-on { color: var(--app-accent); border-color: var(--app-accent); }
+.form-tip { margin-top: 5px; font-size: 11.5px; line-height: 1.6; color: var(--app-text3); }
+.form-tip.ok { color: var(--app-ok); }
 .batch-del { color: var(--app-danger); }
 .mcp-check { flex: none; }
 .key-dim { color: var(--app-text3); font-size: 12px; }
