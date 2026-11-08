@@ -105,6 +105,15 @@ public final class AgentxToolDescriptionCompact implements MiddlewareBase {
             }
             String compact = firstSentence(t.getDescription());
             if (compact == null) {
+                // 压不了的条目必须原样保留——一旦前面已有条目被压缩（out 已初始化），这里直接
+                // continue 会把这条工具从发模型的清单里<b>静默丢掉</b>：说明只有一句的工具
+                // （工具名后直接跟参数、或一句话说完的短说明）在「任何一把可压缩」的轮里全数
+                // 消失，模型坚称没有这个工具而实际 schema 里有（2026-11-08 工作流当工具 E2E
+                // 实证：34 把注册、请求只发 25 把，丢的 7 把全是单句说明）。out 还没初始化时
+                // continue 仍是「全程无压缩→返回 null→调用方原样发」语义的一半。
+                if (out != null) {
+                    out.add(t);
+                }
                 continue;
             }
             if (out == null) {
