@@ -25,8 +25,10 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
@@ -70,6 +72,9 @@ public class OpenAiCompatController {
     /** 单条 message 内容上限（与 chat.maxQuestionChars 的量级口径一致，防止单请求吃爆内存） */
     private static final int MESSAGE_MAX_CHARS = 32_000;
     private static final int MESSAGES_MAX_COUNT = 64;
+    /** Function calling：单请求 tools 上限与 schema 总字节上限（P1 §3.4） */
+    private static final int TOOLS_MAX_COUNT = 32;
+    private static final int TOOLS_MAX_SCHEMA_BYTES = 64 * 1024;
 
     /** 智能体 id 形态：平台生成的标识串（UUID/雪花），防把任意字符串当 id 打库 */
     private static final Pattern AGENT_ID = Pattern.compile("[A-Za-z0-9_-]{8,64}");
@@ -88,6 +93,28 @@ public class OpenAiCompatController {
         }
         if (messages.size() > MESSAGES_MAX_COUNT) {
             return bad("invalid_request_error", "messages 过多（上限 " + MESSAGES_MAX_COUNT + " 条）");
+        }
+        // Function calling（P1 §3.4）：只接受只读工具，副作用工具 fail-closed 不暴露；
+        // 未知工具静默忽略（不在声明集合里就不可能在响应里出现 tool_calls）
+        Set<String> declaredTools = new LinkedHashSet<>();
+        JSONArray tools = body.getJSONArray("tools");
+        if (tools != null && !tools.isEmpty()) {
+            if (tools.size() > TOOLS_MAX_COUNT) {
+                return bad("invalid_request_error", "tools 过多（上限 " + TOOLS_MAX_COUNT + " 个）");
+            }
+            int schemaBytes = 0;
+            for (int i = 0; i < tools.size(); i++) {
+                JSONObject t = tools.getJSONObject(i);
+                JSONObject fn = t == null ? null : t.getJSONObject("function");
+                String name = fn == null ? null : fn.getString("name");
+                if (name == null || name.isBlank() || name.length() > 64) continue;
+                schemaBytes += JSON.toJSONString(t).length();
+                if (sideEffectTool(name)) continue;   // 有副作用/需审批：HTTP 无交互通道，不暴露
+                declaredTools.add(name);
+            }
+            if (schemaBytes > TOOLS_MAX_SCHEMA_BYTES) {
+                return bad("invalid_request_error", "tools 的 schema 总量超过 64KB");
+            }
         }
         boolean stream = Boolean.TRUE.equals(body.getBoolean("stream"));
 
@@ -127,6 +154,10 @@ public class OpenAiCompatController {
                 if (question != null) history.add(new String[]{"user", question.toString()});
                 question = null;
                 history.add(new String[]{"assistant", content});
+            } else if ("tool".equals(role)) {
+                // 客户端回传的工具结果（OpenAI function calling 第二轮）：作为工具结果消息继续同一话题
+                String id = m.getString("tool_call_id");
+                history.add(new String[]{"user", "[工具结果" + (id == null || id.isBlank() ? "" : " " + id) + "] " + content});
             }
         }
         if (question == null || question.isBlank()) {
@@ -146,6 +177,11 @@ public class OpenAiCompatController {
             }
             CollectingSseEmitter sink = new CollectingSseEmitter();
             String completionId = "chatcmpl-" + UUID.randomUUID().toString().replace("-", "").substring(0, 24);
+            // 真流式（P1 · OpenAI 端点补齐）：先建通道、注册正文增量转发，再开跑；
+            // 尾帧与清理由后台等待线程完成，不能等整轮跑完才返回 SseEmitter
+            if (stream) {
+                return openAiStream(sink, completionId, agentId, sessionId, uid, apiKeyId, finalQuestion, start, declaredTools);
+            }
             try {
                 chatService.chat(ChatCommand.of(sessionId, finalQuestion, uid)
                         .userImages(List.of()).attachments(List.of()).skills(List.of())
@@ -166,11 +202,26 @@ public class OpenAiCompatController {
                 String content = done == null || done.getString("finalContent") == null
                         ? sink.answer() : done.getString("finalContent");
                 Map<String, Object> usage = usageOf(done);
-                if (stream) {
-                    // ResponseEntity<SseEmitter> 由 Spring 的 ResponseBodyEmitterReturnValueHandler 原生支持
-                    return org.springframework.http.ResponseEntity.ok()
-                            .header("X-Accel-Buffering", "no")
-                            .body(streamResponse(completionId, agentId, content, usage));
+                // Function calling：模型本轮调用过客户端声明的只读工具 → 按 OpenAI 协议回 tool_calls，
+                // 由调用方执行后带 role=tool 再发下一轮（工具结果在下一轮 history 里恢复）
+                List<Map<String, Object>> declaredCalls = declaredToolCalls(done, declaredTools);
+                if (!declaredCalls.isEmpty()) {
+                    Map<String, Object> resp = new LinkedHashMap<>();
+                    resp.put("id", completionId);
+                    resp.put("object", "chat.completion");
+                    resp.put("created", System.currentTimeMillis() / 1000);
+                    resp.put("model", agentId);
+                    Map<String, Object> message = new LinkedHashMap<>();
+                    message.put("role", "assistant");
+                    message.put("content", null);
+                    message.put("tool_calls", declaredCalls);
+                    Map<String, Object> choice = new LinkedHashMap<>();
+                    choice.put("message", message);
+                    choice.put("finish_reason", "tool_calls");
+                    choice.put("index", 0);
+                    resp.put("choices", List.of(choice));
+                    resp.put("usage", usage);
+                    return org.springframework.http.ResponseEntity.ok(resp);
                 }
                 Map<String, Object> out = new LinkedHashMap<>();
                 out.put("id", completionId);
@@ -201,34 +252,411 @@ public class OpenAiCompatController {
             return org.springframework.http.ResponseEntity.status(500)
                     .body(error("api_error", "调用失败：" + e.getMessage()));
         } finally {
-            // 临时会话跑完即删（评测线同一先例）：软删留审计痕迹，历史接口不可见
-            try {
-                sessionService.deleteSession(uid, sessionId);
-            } catch (Exception ignored) {
+            // 临时会话跑完即删（评测线同一先例）：软删留审计痕迹，历史接口不可见。
+            // 流式分支的会话由后台收尾线程删除（此处不能提前删，否则整轮落库时会话已不在）
+            if (!stream) {
+                try {
+                    sessionService.deleteSession(uid, sessionId);
+                } catch (Exception ignored) {
+                }
             }
             log.info("[OPENAI-COMPAT] 完成: agent={} uid={} key={} stream={} 耗时={}ms",
                     agentId, uid, apiKeyId == null ? "-" : apiKeyId, stream, System.currentTimeMillis() - start);
         }
     }
 
-    /** OpenAI chunk 流：先 role 帧、正文增量、再 usage 尾帧，最后 [DONE]（SseEmitter 直接写） */
-    private SseEmitter streamResponse(String completionId, String agentId, String content,
-                                      Map<String, Object> usage) {
-        SseEmitter emitter = new SseEmitter(TURN_TIMEOUT_MS);
+    /**
+     * 真增量流式（P1 · OpenAI 端点补齐）：先返回 SseEmitter，正文 token 到达即转发，
+     * 整轮结束后补 usage 尾帧与 [DONE]。临时会话在后台收尾时删除，外层 finally 不再重复删。
+     */
+    private org.springframework.http.ResponseEntity<?> openAiStream(CollectingSseEmitter sink, String completionId,
+                                                                    String agentId, String sessionId, String uid,
+                                                                    String apiKeyId, String finalQuestion, long start,
+                                                                    Set<String> declaredTools) {
+        SseEmitter out = new SseEmitter(TURN_TIMEOUT_MS);
         try {
-            chunk(emitter, completionId, agentId, delta("role", "assistant"));
-            if (content != null && !content.isEmpty()) {
-                // 单块下发：问渠的回答在此前已整段生成（收集型通道），没有逐 token 增量可借——
-                // 真增量流式需要把引擎 token 通道接进来，属后续增量（v1 语义等价、一次性到达）
-                chunk(emitter, completionId, agentId, delta("content", content));
-            }
-            chunk(emitter, completionId, agentId, Map.of());
-            emitter.send(SseEmitter.event().data("[DONE]"));
-            emitter.complete();
+            chunk(out, completionId, agentId, delta("role", "assistant"));
         } catch (Exception e) {
-            emitter.completeWithError(e);
+            out.completeWithError(e);
+            return org.springframework.http.ResponseEntity.ok().header("X-Accel-Buffering", "no").body(out);
         }
-        return emitter;
+        sink.forwardTokens(text -> {
+            if (text == null || text.isEmpty()) return;
+            try {
+                chunk(out, completionId, agentId, delta("content", text));
+            } catch (Exception ignored) {
+                // 客户端断开：本轮继续跑完并落审计（收集型通道不参与断线中止语义）
+            }
+        });
+        try {
+            chatService.chat(ChatCommand.of(sessionId, finalQuestion, uid)
+                    .userImages(List.of()).attachments(List.of()).skills(List.of())
+                    .agentId(agentId)
+                    .apiKey(apiKeyId != null)
+                    .apiKeyId(apiKeyId)
+                    .build(), sink);
+        } catch (BizException e) {
+            sendStreamError(out, completionId, agentId, "invalid_request_error", e.getMessage());
+            finishStream(sink, uid, sessionId, agentId, apiKeyId, start, null);
+            return org.springframework.http.ResponseEntity.ok().header("X-Accel-Buffering", "no").body(out);
+        } catch (Exception e) {
+            sendStreamError(out, completionId, agentId, "api_error", "调用失败：" + e.getMessage());
+            finishStream(sink, uid, sessionId, agentId, apiKeyId, start, null);
+            return org.springframework.http.ResponseEntity.ok().header("X-Accel-Buffering", "no").body(out);
+        }
+        java.util.concurrent.CompletableFuture.runAsync(() -> {
+            try {
+                boolean timeout = !sink.awaitDone(TURN_TIMEOUT_MS);
+                if (timeout) {
+                    sendStreamError(out, completionId, agentId, "timeout",
+                            "回答超时（" + TURN_TIMEOUT_MS / 1000 + " 秒）未完成");
+                } else if (sink.lastError() != null && !sink.lastError().isBlank()) {
+                    sendStreamError(out, completionId, agentId, "api_error", "执行失败：" + sink.lastError());
+                } else {
+                    JSONObject done = parseDone(sink.donePayload());
+                    List<Map<String, Object>> calls = declaredToolCalls(done, declaredTools);
+                    if (!calls.isEmpty()) {
+                        sendToolCallsChunk(out, completionId, agentId, calls);
+                    } else {
+                        chunk(out, completionId, agentId, Map.of());
+                    }
+                    sendUsageChunk(out, completionId, agentId, usageOf(done));
+                    out.send(SseEmitter.event().data("[DONE]"));
+                    out.complete();
+                }
+            } catch (Exception e) {
+                try {
+                    out.completeWithError(e);
+                } catch (Exception ignored) {
+                }
+            } finally {
+                finishStream(sink, uid, sessionId, agentId, apiKeyId, start, null);
+            }
+        });
+        return org.springframework.http.ResponseEntity.ok().header("X-Accel-Buffering", "no").body(out);
+    }
+
+    /** 流式收尾：注销通道登记 + 删临时会话 + 留一条完成日志（与同步路径同一口径） */
+    private void finishStream(CollectingSseEmitter sink, String uid, String sessionId, String agentId,
+                              String apiKeyId, long start, String ignored) {
+        ChatRunRuntime.forgetSseChannel(sink);
+        try {
+            sessionService.deleteSession(uid, sessionId);
+        } catch (Exception ignoredEx) {
+        }
+        log.info("[OPENAI-COMPAT] 流式完成: agent={} uid={} key={} 耗时={}ms",
+                agentId, uid, apiKeyId == null ? "-" : apiKeyId, System.currentTimeMillis() - start);
+    }
+
+    /** 流式错误帧：OpenAI 客户端按 error 字段分流，不再补 [DONE] */
+    private void sendStreamError(SseEmitter out, String id, String model, String type, String message) {
+        try {
+            Map<String, Object> chunk = new LinkedHashMap<>();
+            chunk.put("id", id);
+            chunk.put("object", "chat.completion.chunk");
+            chunk.put("created", System.currentTimeMillis() / 1000);
+            chunk.put("model", model);
+            chunk.put("choices", List.of());
+            chunk.put("error", error(type, message).get("error"));
+            out.send(SseEmitter.event().data(JSON.toJSONString(chunk)));
+            out.complete();
+        } catch (Exception e) {
+            try {
+                out.completeWithError(e);
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    /** usage 尾帧（OpenAI 流式约定：choices 为空、usage 单独一帧） */
+    private void sendUsageChunk(SseEmitter out, String id, String model, Map<String, Object> usage) throws Exception {
+        Map<String, Object> chunk = new LinkedHashMap<>();
+        chunk.put("id", id);
+        chunk.put("object", "chat.completion.chunk");
+        chunk.put("created", System.currentTimeMillis() / 1000);
+        chunk.put("model", model);
+        chunk.put("choices", List.of());
+        chunk.put("usage", usage);
+        out.send(SseEmitter.event().data(JSON.toJSONString(chunk)));
+    }
+
+    /** 流式 tool_calls 帧：delta 带 tool_calls，finish_reason=tool_calls */
+    private void sendToolCallsChunk(SseEmitter out, String id, String model,
+                                    List<Map<String, Object>> calls) throws Exception {
+        Map<String, Object> chunk = new LinkedHashMap<>();
+        chunk.put("id", id);
+        chunk.put("object", "chat.completion.chunk");
+        chunk.put("created", System.currentTimeMillis() / 1000);
+        chunk.put("model", model);
+        Map<String, Object> delta = new LinkedHashMap<>();
+        List<Map<String, Object>> indexed = new ArrayList<>();
+        for (int i = 0; i < calls.size(); i++) {
+            Map<String, Object> one = new LinkedHashMap<>(calls.get(i));
+            one.put("index", i);
+            indexed.add(one);
+        }
+        delta.put("tool_calls", indexed);
+        Map<String, Object> choice = new LinkedHashMap<>();
+        choice.put("delta", delta);
+        choice.put("finish_reason", "tool_calls");
+        choice.put("index", 0);
+        chunk.put("choices", List.of(choice));
+        out.send(SseEmitter.event().data(JSON.toJSONString(chunk)));
+    }
+
+    /**
+     * 本轮工具调用 → OpenAI tool_calls：只回客户端声明过的只读工具。
+     * <p>框架已按智能体配置执行过这些工具（只读，重复执行无害）；副作用工具在入参解析时就被剔除，
+     * 所以这里不会出现「客户端再执行一次写操作」的双重副作用。
+     */
+    private List<Map<String, Object>> declaredToolCalls(JSONObject done, Set<String> declared) {
+        if (done == null || declared == null || declared.isEmpty()) return List.of();
+        JSONArray calls = done.getJSONArray("toolCalls");
+        if (calls == null || calls.isEmpty()) return List.of();
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (int i = 0; i < calls.size(); i++) {
+            JSONObject c = calls.getJSONObject(i);
+            String name = c == null ? null : c.getString("name");
+            if (name == null || !declared.contains(name)) continue;
+            String args = c.getString("args");
+            Map<String, Object> fn = new LinkedHashMap<>();
+            fn.put("name", name);
+            fn.put("arguments", args == null || args.isBlank() ? "{}" : args);
+            Map<String, Object> call = new LinkedHashMap<>();
+            call.put("id", "call_" + UUID.randomUUID().toString().replace("-", "").substring(0, 20));
+            call.put("type", "function");
+            call.put("function", fn);
+            out.add(call);
+        }
+        return out;
+    }
+
+    /** 有副作用/需审批/会改变平台状态的工具：HTTP 无交互通道，function calling 一律不暴露 */
+    private static boolean sideEffectTool(String name) {
+        String n = name == null ? "" : name.trim();
+        return n.equals("run_code") || n.equals("run_code_script") || n.equals("write_file")
+                || n.equals("edit_file") || n.equals("presentArtifact") || n.equals("writeTodo")
+                || n.equals("askUser") || n.startsWith("goal_") || n.startsWith("plan_")
+                || n.startsWith("agent_") || n.startsWith("task_") || n.startsWith("wen_qu")
+                || n.startsWith("wf_") || n.startsWith("localBrowser");
+    }
+
+    // ==================== Responses API（P1 · OpenAI 端点补齐 3-2） ====================
+
+    @Operation(summary = "Responses API（OpenAI 兼容）")
+    @PostMapping("/api/ai/v1/responses")
+    public org.springframework.http.ResponseEntity<?> responses(@RequestBody JSONObject body) {
+        long start = System.currentTimeMillis();
+        String agentId = body.getString("model");
+        if (agentId == null || agentId.isBlank() || !AGENT_ID.matcher(agentId).matches()) {
+            return bad("invalid_request_error", "model 必须是智能体 id（在问渠智能体页查看）");
+        }
+        Object rawInput = body.get("input");
+        if (rawInput == null) return bad("invalid_request_error", "input 不能为空");
+
+        String uid = RequestUser.uid();
+        String apiKeyId = apiKeyIdOf();
+        rateLimitService.checkRateLimit("chat", uid);
+        Agent agent = agentService.get(agentId);
+        if (agent == null) {
+            return org.springframework.http.ResponseEntity.status(404)
+                    .body(error("not_found", "model 不存在或不可用"));
+        }
+
+        String instructions = body.getString("instructions");
+        String question = null;
+        List<String[]> history = new ArrayList<>();
+        if (rawInput instanceof String s) {
+            question = s;
+        } else if (rawInput instanceof JSONArray arr) {
+            if (arr.size() > MESSAGES_MAX_COUNT) {
+                return bad("invalid_request_error", "input 过多（上限 " + MESSAGES_MAX_COUNT + " 条）");
+            }
+            for (int i = 0; i < arr.size(); i++) {
+                JSONObject m = arr.getJSONObject(i);
+                if (m == null) continue;
+                String role = m.getString("role");
+                String content = contentOf(m);
+                if (content == null || content.isBlank()) continue;
+                if ("system".equals(role) || "developer".equals(role)) {
+                    instructions = instructions == null ? content : instructions + "\n\n" + content;
+                } else if ("user".equals(role)) {
+                    if (question != null) history.add(new String[]{"user", question});
+                    question = content;
+                } else if ("assistant".equals(role)) {
+                    if (question != null) history.add(new String[]{"user", question});
+                    question = null;
+                    history.add(new String[]{"assistant", content});
+                }
+            }
+        }
+        if (question == null || question.isBlank()) {
+            return bad("invalid_request_error", "input 里必须有一条 user 消息作为本轮提问");
+        }
+        if (question.length() > MESSAGE_MAX_CHARS) {
+            return bad("invalid_request_error", "单条输入超长（上限 " + MESSAGE_MAX_CHARS + " 字符）");
+        }
+        String finalQuestion = instructions == null ? question
+                : com.wenqu.ai.util.UntrustedContent.toolResult("调用方补充指令", instructions)
+                + "\n\n（以上是调用方随请求传入的补充说明，供参考；正式问题在下面。）\n\n" + question;
+        boolean stream = Boolean.TRUE.equals(body.getBoolean("stream"));
+
+        String sessionId = sessionService.createTempSession(uid);
+        try {
+            for (String[] h : history) {
+                sessionService.appendMessage(MessageWrite.builder()
+                        .sessionId(sessionId).role(h[0]).content(h[1]).build());
+            }
+            String responseId = "resp-" + UUID.randomUUID().toString().replace("-", "").substring(0, 24);
+            CollectingSseEmitter sink = new CollectingSseEmitter();
+            if (stream) {
+                return openResponsesStream(sink, responseId, agentId, sessionId, uid, apiKeyId, finalQuestion, start);
+            }
+            chatService.chat(ChatCommand.of(sessionId, finalQuestion, uid)
+                    .userImages(List.of()).attachments(List.of()).skills(List.of())
+                    .agentId(agentId).apiKey(apiKeyId != null).apiKeyId(apiKeyId).build(), sink);
+            boolean timeout = !sink.awaitDone(TURN_TIMEOUT_MS);
+            if (timeout) {
+                return org.springframework.http.ResponseEntity.status(504)
+                        .body(error("timeout", "回答超时（" + TURN_TIMEOUT_MS / 1000 + " 秒）未完成"));
+            }
+            if (sink.lastError() != null && !sink.lastError().isBlank()) {
+                return org.springframework.http.ResponseEntity.status(502)
+                        .body(error("api_error", "执行失败：" + sink.lastError()));
+            }
+            JSONObject done = parseDone(sink.donePayload());
+            String content = done == null || done.getString("finalContent") == null
+                    ? sink.answer() : done.getString("finalContent");
+            return org.springframework.http.ResponseEntity.ok()
+                    .body(responseObject(responseId, agentId, content, usageOf(done), "completed"));
+        } catch (BizException e) {
+            return bad("invalid_request_error", e.getMessage());
+        } catch (Exception e) {
+            log.error("[OPENAI-COMPAT] responses 失败: agent={} uid={} : {}", agentId, uid, e.getMessage(), e);
+            return org.springframework.http.ResponseEntity.status(500)
+                    .body(error("api_error", "调用失败：" + e.getMessage()));
+        } finally {
+            if (!stream) {
+                try {
+                    sessionService.deleteSession(uid, sessionId);
+                } catch (Exception ignored) {
+                }
+            }
+            log.info("[OPENAI-COMPAT] responses 完成: agent={} uid={} stream={} 耗时={}ms",
+                    agentId, uid, stream, System.currentTimeMillis() - start);
+        }
+    }
+
+    /** Responses 对象（非流式与流式 completed 事件共用同一形状） */
+    private Map<String, Object> responseObject(String id, String model, String text,
+                                               Map<String, Object> usage, String status) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("id", id);
+        out.put("object", "response");
+        out.put("created_at", System.currentTimeMillis() / 1000);
+        out.put("model", model);
+        out.put("status", status);
+        Map<String, Object> content = new LinkedHashMap<>();
+        content.put("type", "output_text");
+        content.put("text", text == null ? "" : text);
+        content.put("annotations", List.of());
+        Map<String, Object> message = new LinkedHashMap<>();
+        message.put("type", "message");
+        message.put("id", id + "-msg");
+        message.put("role", "assistant");
+        message.put("status", status);
+        message.put("content", List.of(content));
+        out.put("output", List.of(message));
+        Map<String, Object> u = new LinkedHashMap<>();
+        u.put("input_tokens", usage == null ? 0 : usage.getOrDefault("prompt_tokens", 0));
+        u.put("output_tokens", usage == null ? 0 : usage.getOrDefault("completion_tokens", 0));
+        u.put("total_tokens", usage == null ? 0 : usage.getOrDefault("total_tokens", 0));
+        out.put("usage", u);
+        return out;
+    }
+
+    /** Responses 真增量流：response.created → output_text.delta → response.completed */
+    private org.springframework.http.ResponseEntity<?> openResponsesStream(CollectingSseEmitter sink,
+                                                                           String responseId, String agentId,
+                                                                           String sessionId, String uid,
+                                                                           String apiKeyId, String finalQuestion,
+                                                                           long start) {
+        SseEmitter out = new SseEmitter(TURN_TIMEOUT_MS);
+        try {
+            sendResponseEvent(out, "response.created", Map.of(
+                    "type", "response.created",
+                    "response", responseObject(responseId, agentId, "", null, "in_progress")));
+        } catch (Exception e) {
+            out.completeWithError(e);
+            return org.springframework.http.ResponseEntity.ok().header("X-Accel-Buffering", "no").body(out);
+        }
+        sink.forwardTokens(text -> {
+            if (text == null || text.isEmpty()) return;
+            try {
+                Map<String, Object> d = new LinkedHashMap<>();
+                d.put("type", "response.output_text.delta");
+                d.put("item_id", responseId + "-msg");
+                d.put("output_index", 0);
+                d.put("content_index", 0);
+                d.put("delta", text);
+                sendResponseEvent(out, "response.output_text.delta", d);
+            } catch (Exception ignored) {
+            }
+        });
+        try {
+            chatService.chat(ChatCommand.of(sessionId, finalQuestion, uid)
+                    .userImages(List.of()).attachments(List.of()).skills(List.of())
+                    .agentId(agentId).apiKey(apiKeyId != null).apiKeyId(apiKeyId).build(), sink);
+        } catch (Exception e) {
+            sendResponseEventSilently(out, "response.failed", Map.of(
+                    "type", "response.failed",
+                    "response", responseObject(responseId, agentId, "", null, "failed")));
+            finishStream(sink, uid, sessionId, agentId, apiKeyId, start, null);
+            return org.springframework.http.ResponseEntity.ok().header("X-Accel-Buffering", "no").body(out);
+        }
+        java.util.concurrent.CompletableFuture.runAsync(() -> {
+            try {
+                boolean timeout = !sink.awaitDone(TURN_TIMEOUT_MS);
+                if (timeout || (sink.lastError() != null && !sink.lastError().isBlank())) {
+                    sendResponseEvent(out, "response.failed", Map.of(
+                            "type", "response.failed",
+                            "response", responseObject(responseId, agentId, "", null,
+                                    timeout ? "failed" : "failed")));
+                } else {
+                    JSONObject done = parseDone(sink.donePayload());
+                    String text = done == null || done.getString("finalContent") == null
+                            ? sink.answer() : done.getString("finalContent");
+                    sendResponseEvent(out, "response.completed", Map.of(
+                            "type", "response.completed",
+                            "response", responseObject(responseId, agentId, text, usageOf(done), "completed")));
+                    out.complete();
+                }
+            } catch (Exception e) {
+                try {
+                    out.completeWithError(e);
+                } catch (Exception ignored) {
+                }
+            } finally {
+                finishStream(sink, uid, sessionId, agentId, apiKeyId, start, null);
+            }
+        });
+        return org.springframework.http.ResponseEntity.ok().header("X-Accel-Buffering", "no").body(out);
+    }
+
+    private void sendResponseEvent(SseEmitter out, String event, Map<String, Object> data) throws Exception {
+        out.send(SseEmitter.event().name(event).data(JSON.toJSONString(data)));
+    }
+
+    private void sendResponseEventSilently(SseEmitter out, String event, Map<String, Object> data) {
+        try {
+            sendResponseEvent(out, event, data);
+            out.complete();
+        } catch (Exception e) {
+            try {
+                out.completeWithError(e);
+            } catch (Exception ignored) {
+            }
+        }
     }
 
     private Map<String, Object> delta(String key, String value) {

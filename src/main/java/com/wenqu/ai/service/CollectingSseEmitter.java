@@ -52,6 +52,11 @@ public class CollectingSseEmitter extends SseEmitter {
      * 原样转给父轮通道一次，父轮侧只改事件名、不改内容——不在此处重新组装一份协议。
      */
     private volatile java.util.function.BiConsumer<String, String> forwarder;
+    /**
+     * 正文增量转发口（OpenAI 兼容端点的真流式）：每收到一帧 {@code token} 就把增量交出去。
+     * 只转发正文，不转发 thinking/tool 过程——外部客户端拿到的 content 必须是最终答案本身。
+     */
+    private volatile java.util.function.Consumer<String> tokenForwarder;
 
     public CollectingSseEmitter() {
         super(0L);   // 不设 SSE 超时：节奏由调用方的 awaitDone 控制
@@ -74,6 +79,11 @@ public class CollectingSseEmitter extends SseEmitter {
         this.forwarder = listener;
     }
 
+    /** 登记正文增量转发口（OpenAI 兼容端点真流式用；null=不转发） */
+    public void forwardTokens(java.util.function.Consumer<String> listener) {
+        this.tokenForwarder = listener;
+    }
+
     /**
      * 父轮不再等待（停止或超时）：让 {@link #awaitDone} 立即返回，分支执行器据此收尾。
      * <p>只负责解除等待，真正叫停子轮由分支执行器调 {@code ChatRunRuntime.stopTurn}。
@@ -93,7 +103,18 @@ public class CollectingSseEmitter extends SseEmitter {
             String type = o.getString("type");
             if (type == null) return;
             switch (type) {
-                case "token" -> answer.append(nullToEmpty(o.getString("content")));
+                case "token" -> {
+                    String c = nullToEmpty(o.getString("content"));
+                    answer.append(c);
+                    java.util.function.Consumer<String> f = tokenForwarder;
+                    if (f != null) {
+                        try {
+                            f.accept(c);
+                        } catch (Exception ignored) {
+                            // 客户端已断开：本轮仍按后台续跑/落库口径收尾
+                        }
+                    }
+                }
                 case "thinking" -> thinking.append(nullToEmpty(o.getString("content")));
                 case "error" -> {
                     lastError = nullToEmpty(o.getString("content"));
