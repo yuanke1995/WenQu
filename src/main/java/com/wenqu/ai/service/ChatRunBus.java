@@ -8,6 +8,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -69,7 +71,17 @@ public class ChatRunBus {
      * 而这条轮其实还在压缩——正是这一帧当初要加的原因。
      */
     private static final List<String> MIRROR_TYPES =
-            List.of("plan", "todo", "retrieved", "usage", "warn", "goal_state", "compact_state");
+            List.of("plan", "todo", "retrieved", "usage", "warn", "goal_state", "compact_state",
+                    "runcode_progress");
+
+    /** 工具实时输出只保留尾部这么多字符（与前端 liveOutput 的展示上限同一个量级） */
+    private static final int TOOL_OUTPUT_KEEP = 65_536;
+    /** 子智能体直播帧上限（与前端 _frames 的截断口径一致：超出丢最早） */
+    private static final int SUBAGENT_FRAME_MAX = 240;
+    /** 单帧超过这个长度就不进快照：前端按 JSON 解析帧载荷，截断会变成非法 JSON */
+    private static final int SUBAGENT_FRAME_CHARS = 16_000;
+    /** run_code 的工具名（终态时清掉扇出镜像，避免下一跑接到上一跑的板） */
+    private static final String RUN_CODE_TOOL = "run_code";
 
     private final ConfigService configService;
     /** 跨副本层（Phase 0 · P1）：注册表、事件帧广播、远端观众与快照请求 */
@@ -85,12 +97,95 @@ public class ChatRunBus {
         final List<Sub> subs = new CopyOnWriteArrayList<>();
         /** 镜像事件的最后一份 content */
         final Map<String, String> mirror = new ConcurrentHashMap<>();
+        /**
+         * 工具实时输出（按工具名累积的最后一段）：tool_output 是增量帧、不是状态帧，镜像只留最后一份
+         * 没有意义，必须在总线上攒成一段，接流方才能看到「工具跑到一半时的输出」。
+         * <p>只在总线里、进程内；本轮关闭随 Run 一起回收。
+         */
+        final Map<String, StringBuilder> toolOutputs = new HashMap<>();
+        /** 上面那份是否发生过截断（前端据此显示「前面输出已省略」） */
+        final Map<String, Boolean> toolOutputTruncated = new HashMap<>();
+        /** 早产工具卡的最后一帧（入参还在生成时）：正式 start 一到就清掉同名项 */
+        final Map<String, String> preparing = new HashMap<>();
+        /** 子智能体直播帧（原样 content，前端按 subagent_step 逐帧重放） */
+        final List<String> subagentSteps = new ArrayList<>();
         /** 已发出的事件序号。与 {@link #subs}、{@link #bareSince} 的变更同锁（见 {@link #bump}） */
         long seq;
         /** 最后一个观众离开的时刻（0=还有观众） */
         long bareSince;
         long lastKeepaliveAt = System.currentTimeMillis();
         boolean closed;
+
+        /**
+         * 收下一条「只能靠缓冲重建」的增量事件。调用方必须持有 run 锁（见 {@link #bump}）。
+         * <p>tool_output / tool_status / subagent_step 是逐帧增量：镜像只留最后一份会丢掉过程，
+         * 必须在这里按工具名/帧序列攒起来。任何解析失败都只是这一帧不参与快照，不影响扇出。
+         */
+        void observe(String type, String content) {
+            if (type == null || content == null) return;
+            try {
+                if ("tool_output".equals(type)) {
+                    com.alibaba.fastjson2.JSONObject o = JSON.parseObject(content);
+                    String name = o == null ? null : o.getString("name");
+                    String delta = o == null ? null : o.getString("delta");
+                    if (name == null || delta == null) return;
+                    StringBuilder buf = toolOutputs.computeIfAbsent(name, k -> new StringBuilder());
+                    buf.append(delta);
+                    if (buf.length() > TOOL_OUTPUT_KEEP) {
+                        buf.delete(0, buf.length() - TOOL_OUTPUT_KEEP);
+                        toolOutputTruncated.put(name, true);
+                    }
+                    return;
+                }
+                if ("tool_status".equals(type)) {
+                    com.alibaba.fastjson2.JSONObject o = JSON.parseObject(content);
+                    String name = o == null ? null : o.getString("name");
+                    if (name == null || name.isBlank()) return;
+                    boolean preparingFrame = Boolean.TRUE.equals(o.get("preparing"));
+                    String status = o.getString("status");
+                    if (preparingFrame) {
+                        preparing.put(name, content);
+                    } else {
+                        preparing.remove(name);
+                        // 正式 start / 终态都意味着上一段输出到此为止：清掉同名缓冲，
+                        // 免得下一次同名调用接上来时快照把上一跑的输出挂到新卡上
+                        if ("start".equals(status) || "done".equals(status) || "error".equals(status)) {
+                            toolOutputs.remove(name);
+                            toolOutputTruncated.remove(name);
+                        }
+                    }
+                    if (RUN_CODE_TOOL.equals(name) && ("start".equals(status) || "done".equals(status)
+                            || "error".equals(status))) {
+                        mirror.remove("runcode_progress");
+                    }
+                    return;
+                }
+                if ("subagent_step".equals(type)) {
+                    if (content.length() > SUBAGENT_FRAME_CHARS) return;
+                    if (subagentSteps.size() >= SUBAGENT_FRAME_MAX) subagentSteps.remove(0);
+                    subagentSteps.add(content);
+                }
+            } catch (Exception e) {
+                // 帧形状变了：这一帧不进快照，实时扇出照常进行
+                log.debug("[RUN] 快照缓冲跳过异常帧: type={} {}", type, e.getMessage());
+            }
+        }
+
+        /** 快照读取（调用方须持有 run 锁）：把运行期缓冲转成下发副本 */
+        Map<String, Object> liveBuffers() {
+            Map<String, Object> out = new LinkedHashMap<>();
+            Map<String, Object> outputs = new LinkedHashMap<>();
+            for (Map.Entry<String, StringBuilder> e : toolOutputs.entrySet()) {
+                Map<String, Object> one = new LinkedHashMap<>();
+                one.put("text", e.getValue().toString());
+                one.put("truncated", Boolean.TRUE.equals(toolOutputTruncated.get(e.getKey())));
+                outputs.put(e.getKey(), one);
+            }
+            out.put("toolOutputs", outputs);
+            out.put("preparing", new ArrayList<>(preparing.values()));
+            out.put("subagentSteps", new ArrayList<>(subagentSteps));
+            return out;
+        }
 
         /** P6 刀 2：轮次控制搬到 {@code agent.chat.ChatRunRuntime} 后跨包读这两个字段，
          *  表本身仍不外露——只给读口。 */
@@ -254,13 +349,14 @@ public class ChatRunBus {
     }
 
     /**
-     * 发一条载荷本身就是 JSON 值的事件（tool_status / tool_output 的 content 是对象而不是字符串）。
-     * <p>不镜像：这两类不在 {@link #MIRROR_TYPES} 里，接流方靠快照的 toolCalls 清单重建工具卡片。
+     * 发一条载荷本身就是 JSON 值的事件（tool_status / tool_output / runcode_progress 的 content 是对象而不是字符串）。
+     * <p>tool_status / tool_output 不进 {@link #MIRROR_TYPES}：接流方靠快照的 toolCalls 清单重建工具卡片，
+     * 运行中的输出与早产进度由 {@link Run#observe} 另行缓冲；{@code runcode_progress} 是状态型，进镜像。
      */
     public boolean publishRaw(SseEmitter emitter, String type, String rawJson, String sessionId) {
         Run run = owned(emitter);
         if (run == null) return false;
-        long seq = bump(run, type, null);
+        long seq = bump(run, type, rawJson);
         if (seq < 0) return false;
         return fan(run, seq, rawFrame(type, rawJson, sessionId, seq), type);
     }
@@ -273,7 +369,7 @@ public class ChatRunBus {
     public boolean publishToSession(String sessionId, String type, String rawJson) {
         Run run = running(sessionId);
         if (run == null) return false;
-        long seq = bump(run, type, null);
+        long seq = bump(run, type, rawJson);
         if (seq < 0) return false;
         return fan(run, seq, rawFrame(type, rawJson, sessionId, seq), type);
     }
@@ -307,6 +403,9 @@ public class ChatRunBus {
             if (mirrorValue != null && MIRROR_TYPES.contains(type)) {
                 run.mirror.put(type, mirrorValue);
             }
+            // 增量型运行态（工具输出/早产进度/子智能体直播）在这里攒成快照缓冲；
+            // 与序号推进同锁，快照不会读到半截
+            run.observe(type, mirrorValue);
             return seq;
         }
     }
@@ -375,6 +474,8 @@ public class ChatRunBus {
         snap.put("uid", run.userId);
         snap.put("seq", run.seq);
         snap.put("beganAt", run.beganAt);
+        // 工具实时输出 / 早产工具卡 / 子智能体直播帧：状态型镜像装不下这些增量，单独给缓冲副本
+        snap.putAll(run.liveBuffers());
         Map<String, String> events = new LinkedHashMap<>();
         for (String type : MIRROR_TYPES) {
             String v = run.mirror.get(type);

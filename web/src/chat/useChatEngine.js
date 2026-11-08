@@ -1228,6 +1228,21 @@ onUnmounted(() => { if (goalPollTimer) clearInterval(goalPollTimer) })
  *  症状是「正在回答时刷一下，正在跑的那一条连同它上面的提问一起没了」。 */
 const historyLoads = new Map()
 
+/** 插话在库里同时是一条用户消息和回答时间线里的一段：时间线已经用掉的那个 messageId，
+ *  对应的独立用户行必须退场，否则新页签会看到“用户气泡 + 回答内插话”两份。
+ *  历史回显与接流快照共用这一条判据。 */
+const dropSteeredUserRows = list => {
+  const ids = new Set()
+  for (const m of list || []) {
+    if (!m || m.role !== 'ai') continue
+    for (const seg of (m.timeline || [])) {
+      if (seg && seg.kind === 'steer' && seg.messageId) ids.add(String(seg.messageId))
+    }
+  }
+  if (!ids.size) return list
+  return list.filter(m => !(m.role === 'user' && m.messageId && ids.has(String(m.messageId))))
+}
+
 const switchSession = async sid => {
   // 真正换会话先结算上一会话的插话队列（见 settleSteerOnLeave）：队列是模块级单例，不清会以
   // 「上一会话那轮的话」挂在新区块的输入框上；同会话重铺（计划/提问卡 restored 后的重拉）不清
@@ -1364,14 +1379,7 @@ const switchSession = async sid => {
       // （后端在框架把它写进上下文的那一刻留的痕，位置就是模型真听到它的地方）。界面只认后面那个，
       // 这条用户行就此退场——一句不许显示两遍。没被任何时间线用掉的那些（没赶上这一轮、或本轮
       // 根本没落库回答）照旧按普通用户行显示，说过的话不许凭空消失。
-      const steered = new Set()
-      for (const m of list) {
-        if (m.role !== 'ai') continue
-        for (const seg of (m.timeline || [])) if (seg && seg.kind === 'steer' && seg.messageId) steered.add(seg.messageId)
-      }
-      messages.value = steered.size
-        ? list.filter(m => !(m.role === 'user' && m.messageId && steered.has(m.messageId)))
-        : list
+      messages.value = dropSteeredUserRows(list)
       // 计划血缘与历史轮次进度（B+）：两张卡互相指认 + 按 turnId 回捞旧轮清单，
       // 刷新/换设备后旧卡仍是「2/5 已完成」，新卡仍能点回「调整自 v1」
       linkPlanLineage(messages.value)
@@ -1729,10 +1737,14 @@ function settleAbortedPlan (msg) {
     msg.planStopped = true
     return true
   }
-  if (c.status === 'drafting') {
-    // 首版计划没写完就结束：半截正文仍可查看，但卡必须落终态
+  if (c.status === 'drafting' || c.status === 'pending') {
+    // 首版计划没写完 / 还挂着待确认就整轮结束（超时、被停）：卡必须落终态，
+    // 否则新页签接流留下的待确认卡会永远停在那里。
     c.status = 'stopped'
     c.busy = false
+    c.revising = false
+    c.revisingStarted = false
+    c.pendingFeedback = ''
     msg.planStopped = true
     return true
   }
@@ -2878,7 +2890,10 @@ const applyTurnSnapshot = (msg, snap, sid) => {
   if (!snap || snap.running !== true) return false
   msg.content = typeof snap.content === 'string' ? snap.content : ''
   if (typeof snap.processText === 'string' && snap.processText) msg.processText = snap.processText
-  if (typeof snap.thinking === 'string' && snap.thinking) { msg.thinking = snap.thinking; msg.thinkLoading = false }
+  if (typeof snap.thinking === 'string' && snap.thinking) msg.thinking = snap.thinking
+  // 快照给了「思考是否还开着」：接上时正在长的那一段要保住 thinkLoading，
+  // 否则前端会把下一片增量另起一段（同一个思考被拆成两段）
+  msg.thinkLoading = !!snap.thinkingOpen
   if (Array.isArray(snap.toolCalls)) msg.toolCalls = snap.toolCalls
   if (Array.isArray(snap.artifacts) && snap.artifacts.length) msg.artifacts = snap.artifacts
   if (Array.isArray(snap.images) && snap.images.length) msg.images = snap.images
@@ -2901,11 +2916,34 @@ const applyTurnSnapshot = (msg, snap, sid) => {
     msg.time = earlierStart(msg.time, resumedStartAt(snap.elapsedMs, Date.now()))
   }
   if (typeof snap.prepMs === 'number') msg.turnPrepMs = snap.prepMs
-  if (snap.planRecord) msg.planCard = planCardFromRecord(snap.planRecord, undefined, sid)
   // 时间线必须在 toolCalls/artifacts 之后重建：段里的下标指向这两份清单，清单没铺好就先建会指空
   if (Array.isArray(snap.timeline) && snap.timeline.length) msg.timeline = restoreTimeline(msg, snap.timeline)
   // 接流快照带 blocks 时按它重建：块自带全文，正文/过程/工具的顺序与终态一致
   if (snap.blocks && typeof snap.blocks === 'object') applyBlocks(msg, snap.blocks)
+  // 计划卡：快照直接给运行时那张卡（草稿/待确认/已批准/退回重出），比落库 planRecord 更完整；
+  // 旧服务端只给 planRecord 时退回按记录重建。重连要保留用户正在输入的意见与仍在提交的 busy 态。
+  if (snap.planCard && typeof snap.planCard === 'object') {
+    const prev = msg.planCard
+    const card = {
+      ...snap.planCard,
+      versions: (Array.isArray(snap.planCard.versions) ? snap.planCard.versions : [])
+        .map(v => ({ plan: (v && v.plan) || '', feedback: (v && v.feedback) || '' })),
+      editText: (prev && prev.editText) || '',
+      busy: !!snap.planCard.busy,
+      deadline: 0
+    }
+    if (card.revising && !card.revisingStarted) {
+      card.deadline = 0
+    } else if (card.status === 'pending' && typeof snap.planCard.remainingMs === 'number') {
+      // remainingMs 是「还剩多久」而不是绝对时刻：按本机钟换算，跨端钟差进不来
+      card.deadline = snap.planCard.remainingMs > 0 ? Date.now() + snap.planCard.remainingMs : Date.now()
+    }
+    // 重连时用户可能已经点了提交：快照不能把仍在飞的 busy 清掉，否则确认栏会重复提交
+    if (prev && prev.busy && card.status === 'pending') card.busy = true
+    msg.planCard = card
+  } else if (snap.planRecord) {
+    msg.planCard = planCardFromRecord(snap.planRecord, undefined, sid)
+  }
   // 快照只给思考全文、给不了分段（那一轮跑到一半接上来的）：头部补一段，
   // 之后实时流出的每一轮各起一段，接流方看到的与从头看着的一样
   ensureThinkSegment(msg)
@@ -2981,7 +3019,9 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
   const viewing = () => currentSessionId.value === sid  // 只有正在看这个会话才滚动/贴底
   // 流式期间：先按新高度重算留白、等它落屏，再贴底——留白让贴底落点停在本轮问题置顶处，
   // 回答长过一屏后留白归零，贴底就自然变成跟着最新内容走（用户上翻仍会解除跟随）
-  const liveScroll = () => { if (viewing()) hooks.scrollFollow?.() }
+  // 快照回放期间暂停贴底：子智能体帧可能有上百条，逐帧滚动会让页面抖成筛子；回放完再统一滚一次
+  let replayingSnapshot = false
+  const liveScroll = () => { if (!replayingSnapshot && viewing()) hooks.scrollFollow?.() }
   const abort = new AbortController()
   const st = { msg, abort }
   chatStreams.set(sid, st)
@@ -3049,6 +3089,58 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       full = msg.content || ''
       flushedLen = full.length
       gotToken = full.length > 0
+      // 快照里属于「运行期增量」的那几份，复用实时事件同一套回调重建；先清旧值再回放，
+      // 断线重连时不会把上一次接流已经铺过的输出/步骤叠第二遍。
+      replayingSnapshot = true
+      try {
+        const ev = snap.events || {}
+        if (snap.toolOutputs && typeof snap.toolOutputs === 'object') {
+          for (const t of (msg.toolCalls || [])) {
+            delete t.liveOutput
+            delete t.outputTruncated
+          }
+          for (const [name, out] of Object.entries(snap.toolOutputs)) {
+            if (!out || typeof out.text !== 'string') continue
+            handlers.onToolOutput({ name, delta: out.text })
+            if (out.truncated) {
+              const t = [...(msg.toolCalls || [])].reverse()
+                .find(x => x.name === name && x.status === 'start')
+              if (t) t.outputTruncated = true
+            }
+          }
+        }
+        if (Array.isArray(snap.preparing)) {
+          if (Array.isArray(msg.toolCalls)) msg.toolCalls = msg.toolCalls.filter(t => !t.preparing)
+          for (const frame of snap.preparing) handlers.onToolStatus(frame)
+        }
+        if (Array.isArray(snap.subagentSteps)) {
+          for (const t of (msg.toolCalls || [])) {
+            delete t._live
+            delete t._steps
+            delete t._frames
+            delete t._frameKeys
+          }
+          for (const frame of snap.subagentSteps) handlers.onSubagentStep(frame)
+        }
+        if (ev.runcode_progress) {
+          handlers.onRunCodeProgress(typeof ev.runcode_progress === 'string'
+            ? ev.runcode_progress
+            : JSON.stringify(ev.runcode_progress))
+        } else {
+          const running = (msg.toolCalls || []).some(t => t.name === 'run_code' && t.status === 'start')
+          if (!running) msg.runBoard = null
+        }
+        // 目标态镜像 applyTurnSnapshot 不解析，直接复用实时回调
+        if (ev.goal_state) handlers.onGoalState(ev.goal_state)
+      } finally {
+        replayingSnapshot = false
+      }
+      // 正在长的思考段：快照接上时必须沿用同一条段，否则下一片增量会另起一段
+      thinkRoundOpen = !!snap.thinkingOpen
+      // 插话段已在快照里，历史里那条同名用户消息要退场（插话已应用后才接流的入口）
+      if (currentSessionId.value === sid) messages.value = dropSteeredUserRows(messages.value)
+      // 快照里的计划卡可能带血缘（调整自 vN）：补一次双向指认，旧卡的「查看新一轮」不必等刷新
+      if (msg.planCard) linkPlanLineage(messages.value)
       resumeRetryOf.delete(sid)   // 接上了：重连计数归零（这一轮的通道之后断了还有三次机会）
       liveScroll()
     },
@@ -3548,6 +3640,16 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         // 「未批准 · 已停止本轮」与「已被取代」已经标在计划卡角标上，两句并排是重复
         if (p.planCancelled) msg.planStopped = true
         if (p.planSuperseded) msg.planSuperseded = true
+        // 接流时没拿到计划卡（或只拿到 drafting/pending/revising 的中间态）：done 的 planRecord 是
+        // 本轮计划的最终落库稿，用它补上/纠正；已有 approved/rejected/superseded 的实时卡不覆盖，
+        // 保留本地版本链与执行态。
+        if (p.planRecord && typeof p.planRecord === 'object') {
+          const finalCard = planCardFromRecord(p.planRecord, undefined, sid)
+          const cur = msg.planCard
+          if (!cur || !['approved', 'rejected', 'superseded'].includes(cur.status)) {
+            msg.planCard = finalCard
+          }
+        }
         // 退回重出没有等到新稿就收尾（后端报错/被停）：解锁并退回原稿状态，别把确认栏锁死
         if (msg.planCard) {
           msg.planCard.busy = false
@@ -3559,6 +3661,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
             settleAbortedPlan(msg)
           }
         }
+        if (currentSessionId.value === sid && msg.planCard) linkPlanLineage(messages.value)
         // 插话队列结算：本轮收尾（答完/被停/失败）时结算一次——还没点「立即发送」的在这里
         // 自动作为新一轮发出（本轮已结束，"插进去"没有对象了），纯文字没赶上工具步的由后端回
         // pendingSteers。用户说过的话不许静默丢掉，这是插话机制的底线。
@@ -4045,6 +4148,7 @@ function applySteerFrame (payload, msg) {
   if (!t) return
   const id = f.messageId || ''
   if (id) steerQueue.value = steerQueue.value.filter(s => !(s.awaiting && s.messageId === id))
+  if (id) messages.value = messages.value.filter(m => !(m.role === 'user' && m.messageId === id))
   pushTimelineSteer(msg, t, id)
 }
 

@@ -21,6 +21,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.function.Function;
@@ -731,6 +732,16 @@ public class FrameworkSessions {
      */
     private final Map<String, String> planOutcomes = new ConcurrentHashMap<>();
 
+    /**
+     * 计划「退回重出」的界面状态：用户已提交修改、新稿还没开始/还在写时为 true；
+     * 新的 plan_approval 落地时由引擎 {@link #markPlanPending(String)} 复位。
+     * <p>快照要靠它区分「等确认 v2」与「正在按意见重出 v3」——两者 recording 侧都表现为
+     * pending + 无草稿，只有这个状态能分开。
+     */
+    private final Set<String> planRevising = ConcurrentHashMap.newKeySet();
+    /** 产出当前这一版计划的「修改意见」（进计划版本链的 feedback） */
+    private final Map<String, String> planFeedbacks = new ConcurrentHashMap<>();
+
     /** 计划卡的裁决：批准走 approve，其余按拒绝并把用户意见作为理由送回模型。 */
     public boolean respondPlanApproval(String planApprovalId, boolean approved, String reason) {
         return respondPlanApproval(planApprovalId, approved, reason, approved ? "approve" : "reject");
@@ -755,6 +766,7 @@ public class FrameworkSessions {
             if (sessionKey == null || resume(planApprovalId, "plan", approved, why, null) == null) return false;
             pendingOwner.remove(planApprovalId);
             planOutcomes.put(sessionKey, outcome == null ? "reject" : outcome);
+            notePlanOutcomeState(sessionKey, outcome, why);
             return true;
         }
         Held h = live;
@@ -771,14 +783,46 @@ public class FrameworkSessions {
         hitl.resolveFrameworkPending(planApprovalId, approved ? "APPROVED"
                 : "supersede".equals(outcome) ? "SUPERSEDED" : "REJECTED", null, why);
         planOutcomes.put(sessionKey, outcome == null ? "reject" : outcome);
+        notePlanOutcomeState(sessionKey, outcome, why);
         log.info("[agentx] 计划卡已裁决 id={} approved={} outcome={}", planApprovalId, approved, outcome);
         ensureFollowing(planApprovalId);
         return true;
     }
 
+    /** 记下界面计划状态：退回重出期间 planRevising=true，意见留给下一版的 feedback。 */
+    private void notePlanOutcomeState(String sessionKey, String outcome, String reason) {
+        if (sessionKey == null) return;
+        if ("revise".equals(outcome)) {
+            planRevising.add(sessionKey);
+            if (reason != null && !reason.isBlank()) planFeedbacks.put(sessionKey, reason);
+        } else {
+            planRevising.remove(sessionKey);
+        }
+    }
+
+    /** 新的 plan_approval 已落地：退回重出状态结束，等待用户裁决这一版。 */
+    public void markPlanPending(String sessionKey) {
+        if (sessionKey == null) return;
+        planRevising.remove(sessionKey);
+        planFeedbacks.remove(sessionKey);
+    }
+
+    /** 这一会话此刻是否处于「已提交修改、新稿还没落地」的等待期 */
+    public boolean isPlanRevising(String sessionKey) {
+        return sessionKey != null && planRevising.contains(sessionKey);
+    }
+
+    /** 最近一次「退回重出」提交的修改意见（产出下一版计划的那条） */
+    public String peekPlanFeedback(String sessionKey) {
+        return sessionKey == null ? null : planFeedbacks.get(sessionKey);
+    }
+
     /** 引擎取走并清掉本轮的计划裁决（一次裁决只对应一次定格）。 */
     public String takePlanOutcome(String sessionKey) {
-        return sessionKey == null ? null : planOutcomes.remove(sessionKey);
+        if (sessionKey == null) return null;
+        planRevising.remove(sessionKey);
+        planFeedbacks.remove(sessionKey);
+        return planOutcomes.remove(sessionKey);
     }
 
     /** 只看不取：跟随循环要在「还在跑」的时候就知道用户点了继续对话，取走了收尾就没得发帧。 */

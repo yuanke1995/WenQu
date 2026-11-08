@@ -1042,16 +1042,18 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 不落的表现：刷新后只剩「还在等确认」的那一张（它由待办恢复端点重建），已批过的每张计划都消失，
         // 用户回头看不出这一轮是按哪一版计划跑的。
         Map<String, Object> planRecord = null;
-        if (planOutcomeRaw != null && !recording.planVersions.isEmpty()) {
-            Map<String, Object> last = recording.planVersions.get(recording.planVersions.size() - 1);
+        java.util.List<Map<String, Object>> planVersionList = recording.planVersionsCopy();
+        if (planOutcomeRaw != null && !planVersionList.isEmpty()) {
+            Map<String, Object> last = planVersionList.get(planVersionList.size() - 1);
             planRecord = new java.util.LinkedHashMap<>();
             planRecord.put("plan", last.get("plan"));
             planRecord.put("status", "approve".equals(planOutcomeRaw) ? "approved"
                     : "supersede".equals(planOutcomeRaw) ? "superseded" : "rejected");
-            planRecord.put("versions", new java.util.ArrayList<>(recording.planVersions));
+            // 版本项现在带 feedback（产出该版的修改意见）：刷新后 PlanViewer 的版本轨也能逐版回看
+            planRecord.put("versions", planVersionList);
             // B+ 血缘：这一版自己的稳定 id + 它基于哪一版旧计划（旧计划那一轮的执行统计也落库，
             // 刷新/换设备后新卡仍能显示「调整自 v1 · 已执行 2/5」，不必再依赖本机内存）。
-            if (recording.planApprovalId != null) planRecord.put("id", recording.planApprovalId);
+            if (recording.planApprovalIdValue() != null) planRecord.put("id", recording.planApprovalIdValue());
             if (cmd.getPlanBaseId() != null && !cmd.getPlanBaseId().isBlank()) {
                 planRecord.put("planBaseId", cmd.getPlanBaseId());
                 planRecord.put("planBaseVersion", cmd.getPlanBaseVersion());
@@ -1456,12 +1458,13 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                         sessionId, e.toString());
             }
         }
+        String memoryAgentId = memoryAgentIdOf(cmd);
         if (!sandboxEnabled || (!localProject && !localSession
                 && !sessions.sandboxAttached(sessions.key(cmd)))) {
-            return sandboxService.chatScratchFilesystem(sessionId, uid);
+            return sandboxService.chatScratchFilesystem(sessionId, uid, memoryAgentId);
         }
         return sandboxService.frameworkFilesystem(sessionId, uid, unrestrictedWrites,
-                sessions.sandboxAttached(sessions.key(cmd)));
+                sessions.sandboxAttached(sessions.key(cmd)), memoryAgentId);
     }
 
     /**
@@ -2215,6 +2218,17 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
          * <p>同轮多次 {@code plan_write} 是覆盖语义（框架侧 replace the file），保留最后一份即可。
          */
         private String planMarkdown = "";
+        /**
+         * 当前这一版计划正在流式产出的正文（{@code plan/changed} 的 PLAN_DELTA 增量累积）。
+         * <p>与 {@link #planMarkdown} 不同：后者是 plan_write 入参里的整份稿，只有工具请求那一刻才有；
+         * 接流快照要回答「此刻屏幕上那张计划卡里写到哪了」，只能用这份增量缓冲。
+         * 新的 plan_approval 落地后清空（权威稿以 planVersions 最后一版为准）。
+         */
+        private final StringBuffer planDraft = new StringBuffer();
+        /** 正在等用户裁决最新一版计划（快照据此区分「生成中」与「待确认」） */
+        private volatile boolean planPending;
+        /** 最新一版计划挂出待确认的时刻（快照算 remainingMs 用，只给时长不给绝对时刻） */
+        private volatile long planPendingAt;
         /** 每次调用的开始时刻（与入参同一个配对键），终态时算耗时下发——前端工具卡读 elapsedMs，缺它就显示 0ms。 */
         private final Map<String, Long> toolStartMs = new java.util.LinkedHashMap<>();
         /**
@@ -2369,7 +2383,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
          * <p>{@code thinkFrom} 记这一段在累计全文里的起点——一次问答常有多轮思考（每轮工具调用前各一次），
          * 只交全文会让它们首尾粘成一块；按轮成段写进时间线，前端才能把「它在哪一步想了什么」就地渲染。
          */
-        private boolean thinkingOpen;
+        private volatile boolean thinkingOpen;
         private int thinkFrom;
         /**
          * {@code <related>}／{@code <process>} 的流式剥离器：正文增量先过它再下发。
@@ -2383,12 +2397,68 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
          * 否则刷新后只剩「还在等确认」的那张（它由待办恢复端点重建），已批过的每张计划都消失，
          * 用户回头看不出这一轮到底是按哪一版计划跑的。
          */
-        private final java.util.List<Map<String, Object>> planVersions = new java.util.ArrayList<>();
+        private final java.util.List<Map<String, Object>> planVersions =
+                java.util.Collections.synchronizedList(new java.util.ArrayList<>());
         /**
          * 最后一版计划卡的批准 ID（随助手消息落 plan 列）：B+ 的血缘需要一个稳定锚点——
          * 旧卡要能被新卡指回、刷新后「查看新一轮」要能按 id 定位；只有正文的 plan 记录做不到这一点。
          */
         private volatile String planApprovalId;
+
+        /** 计划草稿增量（{@code plan/changed} 的 PLAN_DELTA）：新草稿一出现就不再是「待确认」状态。 */
+        void planDelta(String delta) {
+            if (delta == null || delta.isEmpty()) return;
+            synchronized (planDraft) {
+                planDraft.append(delta);
+            }
+            planPending = false;
+        }
+
+        /** 一版计划挂出待确认：记下权威稿与产出它的意见，清空草稿缓冲。 */
+        void planVersion(String plan, String feedback, String approvalId) {
+            Map<String, Object> version = new java.util.LinkedHashMap<>();
+            version.put("plan", plan == null ? "" : plan);
+            version.put("feedback", feedback == null ? "" : feedback);
+            if (approvalId != null) version.put("planApprovalId", approvalId);
+            synchronized (planVersions) {
+                planVersions.add(version);
+            }
+            synchronized (planDraft) {
+                planDraft.setLength(0);
+            }
+            if (approvalId != null) planApprovalId = approvalId;
+            planPending = true;
+            planPendingAt = System.currentTimeMillis();
+        }
+
+        /** 快照读取：计划版本链副本（调用方按返回副本渲染，不直接暴露内部列表） */
+        java.util.List<Map<String, Object>> planVersionsCopy() {
+            synchronized (planVersions) {
+                return new java.util.ArrayList<>(planVersions);
+            }
+        }
+
+        String planDraftText() {
+            synchronized (planDraft) {
+                return planDraft.toString();
+            }
+        }
+
+        boolean hasPlanActivity() {
+            return planPending || !planDraftText().isEmpty() || !planVersionsCopy().isEmpty();
+        }
+
+        boolean planPendingNow() {
+            return planPending;
+        }
+
+        long planPendingAtMs() {
+            return planPendingAt;
+        }
+
+        String planApprovalIdValue() {
+            return planApprovalId;
+        }
 
         Recording(java.util.Queue<String> spills,
                   com.wenqu.ai.agent.subagent.SubAgentConsultService.Ledger consultLedger,
@@ -2468,6 +2538,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             if (end > thinkFrom) timeline.add(Map.of("kind", "think", "from", thinkFrom, "to", end));
             transcript.thinkingEnd();
             return thinking.toString();
+        }
+
+        /** 快照线程读「思考段是否还开着」：与 thinking()/closeThinking() 同一把锁，避免读到断段瞬间 */
+        synchronized boolean thinkingOpenSnapshot() {
+            return thinkingOpen;
         }
 
         /**
@@ -2625,6 +2700,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             snap.put("content", body);
             snap.put("processText", related.process());
             if (thinking.length() > 0) snap.put("thinking", thinking.toString());
+            // 思考段还开着吗：前端据此续写同一段，而不是把下一片增量另起一段
+            snap.put("thinkingOpen", thinkingOpenSnapshot());
             snap.put("toolCalls", new java.util.ArrayList<>(toolCalls));
             java.util.List<Map<String, Object>> tl = new java.util.ArrayList<>(timeline);
             if (body.length() > timelineAnchor) {
@@ -2873,6 +2950,47 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 无工作区 / 未绑目录 / 文件不存在 / 执行器离线 / 读失败 → 返回空串，绝不拖累一轮对话。
      * 写由模型经沙盒文件工具完成（edit_file / write 到 .wenqu/MEMORY.md），前端面板也可直接编辑。
      */
+    /**
+     * 本轮的智能体记忆域（对外能力第二批）：智能体 memory_mode=专属(1)/叠加(2) 且平台总闸开着时
+     * 返回智能体 id——记忆路由换到 {@code {uid}/agents/{agentId}} 专属根（注入/工具读写/flush/合并
+     * 都随根走，框架 WorkspaceContextMiddleware 读的是路由后的那份）；其余（null/0 或总闸关）返回
+     * null = 用户级记忆，行为逐字不变。
+     */
+    private String memoryAgentIdOf(ChatCommand cmd) {
+        if (!configService.getBoolean("agentMemory.enabled", true)) return null;
+        Agent agent = tools.agentOf(cmd);
+        if (agent == null || agent.getId() == null) return null;
+        Integer mode = agent.getMemoryMode();
+        if (mode == null || (mode != 1 && mode != 2)) return null;
+        return agent.getId();
+    }
+
+    /**
+     * 叠加档（memory_mode=2）的用户级全局记忆只读注入：框架记忆根已换到智能体专属根（活跃写），
+     * 用户全局 MEMORY.md 以「资料」身份再注入一份——消毒套信封（与 workspaceMemoryContext 同一
+     * 处置），并明说只读：全局记忆不因本智能体的对话改写，写类工具也落不到它（路由已换根）。
+     * 专属档（1）不注入：替换语义，智能体只看自己的记忆。
+     */
+    private String userMemoryReadonlyContext(ChatCommand cmd) {
+        try {
+            Agent agent = tools.agentOf(cmd);
+            if (agent == null || agent.getMemoryMode() == null || agent.getMemoryMode() != 2) return "";
+            String uid = cmd.getUserId();
+            if (uid == null || uid.isBlank()) return "";
+            java.nio.file.Path md = com.wenqu.ai.memory.MemoryPaths.resolveContent(
+                    configService, uid, null, com.wenqu.ai.memory.MemoryPaths.MEMORY_MD);
+            if (md == null || !java.nio.file.Files.exists(md)) return "";
+            String content = java.nio.file.Files.readString(md);
+            if (content == null || content.isBlank()) return "";
+            String body = com.wenqu.ai.util.UntrustedContent.toolResult("用户全局记忆 MEMORY.md", content);
+            return "\n\n【用户全局记忆（只读）】下面是这位用户跨智能体沉淀的长期事实，本次对话应当参考。"
+                    + "它是只读背景：本助手的专属记忆在别处维护，不要试图用文件工具修改这份全局记忆。\n" + body;
+        } catch (Exception e) {
+            log.warn("[agentx] 用户全局记忆只读注入失败（跳过）session={}: {}", cmd.getSessionId(), e.getMessage());
+            return "";
+        }
+    }
+
     private String workspaceMemoryContext(ChatCommand cmd) {
         try {
             String projectId = projectService.projectIdOfSession(cmd.getSessionId());
@@ -3269,6 +3387,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 if (plan instanceof List<?> list && !list.isEmpty()) {
                     channel.emit(RunEventType.PLAN, com.alibaba.fastjson2.JSON.toJSONString(list));
                 } else if (!str(plan).isBlank()) {
+                    recording.planDelta(str(plan));
                     emit(channel, RunEventType.PLAN_DELTA, str(plan));
                 }
             }
@@ -3438,11 +3557,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                     planCard.put("planBaseFailed", cmd.getPlanBaseFailed());
                 }
                 if (recording != null) {
-                    Map<String, Object> version = new java.util.LinkedHashMap<>();
-                    version.put("plan", planText);
-                    version.put("planApprovalId", entry.getKey());
-                    recording.planVersions.add(version);
-                    recording.planApprovalId = entry.getKey();
+                    // 产出这一版的意见就是用户上一次「退回重出」提交的正文；首次计划没有意见
+                    String produceFeedback = sessions.peekPlanFeedback(sessionKey);
+                    recording.planVersion(planText, produceFeedback, entry.getKey());
+                    // 新一版已挂出待确认：退回重出状态到此结束（下一次 revise 由裁决入口重新置位）
+                    sessions.markPlanPending(sessionKey);
                 }
                 channel.emit(RunEventType.PLAN_APPROVAL, com.alibaba.fastjson2.JSON.toJSONString(planCard));
                 // 落同一张 c_ai_tool_approval（tool_name=planApproval）：不落的话刷新后这张卡取不回来。
@@ -3863,9 +3982,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 tools.consultSubagentTargets(cmd, policy, slot);
         // 工作区记忆只读一次：既要拼进系统提示词，也要让本轮污点知道「上下文里已经混有可编辑资料」
         String workspaceMemory = workspaceMemoryContext(cmd);
+        // 叠加档（memory_mode=2）：用户全局 MEMORY.md 以只读资料身份跟注入（专属档不注入，见方法注释）
+        String userMemoryReadonly = userMemoryReadonlyContext(cmd);
         // 记忆是持久注入面：本轮后续的破坏性命令/越界写要回到人面前确认（见 AgentxTaint）。
         // 实例按会话常驻，这个标记跟着实例走；记忆文件之后新增/清空要等重建才换，方向是「更保守」。
-        slot.noteWorkspaceMemoryTainted(!workspaceMemory.isEmpty());
+        slot.noteWorkspaceMemoryTainted(!workspaceMemory.isEmpty() || !userMemoryReadonly.isEmpty());
         HarnessAgent.Builder agentBuilder = HarnessAgent.builder()
                 .agentId(AGENT_ID)
                 .name("wenqu")
@@ -3878,6 +3999,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 路径喂给模型——不挂回去，计划卡就变成「它打算在沙盒里怎么写文件」的说明书
                 .sysPrompt(rolePrompt(binding.row()) + projectContext(cmd)
                         + workspaceMemory
+                        + userMemoryReadonly
                         // 框架会把工作区渲染成服务器沙盒路径；本机执行器模式要补一段真话压住它
                         + localExecutorEnvironment(cmd)
                         + (subagentTargets.isEmpty() ? "" : tools.dispatchDiscipline())
@@ -4295,8 +4417,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * <p>字段名与前端 {@code applyTurnSnapshot} 一一对齐，且与「刷新后读历史」那份同源同形：
      * 正文/思考/工具卡/时间线出自 {@link Recording#snapshotFields()}，引用出自本轮引用池，产物走
      * {@code takeArtifacts} 那份不消费的副本。缺哪一项，前端只是那一段还没长出来，不会报错。
-     * <p>不含待裁决的卡片（提问/计划/审批）：它们的时限与「唤醒句柄还在不在」以库为准，前端走既有的
-     * pending 端点恢复；也不含逐字增量，正文取缓冲本身比回放上千条 token 帧快。
+     * <p>提问/审批卡不含：它们的时限与「唤醒句柄还在不在」以库为准，前端走既有的 pending 端点恢复；
+     * 计划卡例外——它有自己的运行态（草稿/待确认/退回重出/已批准），必须随快照下发，否则新页签在
+     * 计划批准后的人机等待期里整张卡都不见了。也不含逐字增量，正文取缓冲本身比回放上千条 token 帧快。
      *
      * @param startedAt 本轮开轮时刻（服务端墙上钟，见 {@code followTurn} 的入参）
      * @param prepMs    开轮前准备那一段（服务端收到提问 → 开轮起表）；0 = 这一跑没有「收到提问」基准
@@ -4314,6 +4437,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         snap.put("artifacts", artifactService.takeArtifacts(cmd.getSessionId()));
         snap.put("model", route.modelId());
         snap.put("turnId", turnId);
+        // 计划卡：草稿/待确认/退回重出/已批准都按运行时状态重建；落库的 planRecord 只在收尾有
+        Map<String, Object> planCard = planCardForSnapshot(cmd, recording);
+        if (planCard != null) snap.put("planCard", planCard);
         // 游客接流同样只给答案块；完整 blocks 留在服务端与登录态历史里
         if (cmd.isGuestMode() && snap.get("blocks") != null) {
             Map<String, Object> minimal = TurnBlocks.answerOnly(snap.get("blocks"));
@@ -4337,6 +4463,104 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             if (name != null) snap.put("agentName", name);
         }
         return snap;
+    }
+
+    /**
+     * 计划卡的接流快照：把 Recording 的运行态翻译成前端 PlanCard 的字段形状。
+     * <p>判定顺序：
+     * <ol>
+     *   <li>用户已裁决（approve/reject/supersede）→ 终态卡，版本链取已产各版；</li>
+     *   <li>草稿非空（首版生成中 / 退回重出新稿流式）→ drafting；</li>
+     *   <li>等待裁决 → pending；若 FrameworkSessions 标着 revising（修改已提交、新稿还没开始）→
+     *       仍显示原稿，但锁住裁决控件并标“修改中”；</li>
+     *   <li>都没有 → 不下发。</li>
+     * </ol>
+     * <p>{@code remainingMs} 只给时长，由前端按本机钟换算 deadline，避免两端钟差。
+     */
+    private Map<String, Object> planCardForSnapshot(ChatCommand cmd, Recording recording) {
+        if (recording == null || !recording.hasPlanActivity()) return null;
+        String sessionKey = sessions.key(cmd);
+        String outcome = sessions.peekPlanOutcome(sessionKey);
+        String revisionFeedback = sessions.peekPlanFeedback(sessionKey);
+        boolean revising = sessions.isPlanRevising(sessionKey);
+        long timeoutMs = configService.getInt("chat.planTimeoutMs", 600000);
+        java.util.List<Map<String, Object>> all = recording.planVersionsCopy();
+        String draft = recording.planDraftText();
+
+        Map<String, Object> card = new java.util.LinkedHashMap<>();
+        card.put("id", recording.planApprovalIdValue() == null ? "" : recording.planApprovalIdValue());
+        card.put("auto", false);
+        card.put("busy", false);
+        card.put("editText", "");
+        card.put("revising", false);
+        card.put("revisingStarted", false);
+        card.put("pendingFeedback", "");
+        card.put("timeoutMs", timeoutMs);
+        card.put("remainingMs", 0L);
+
+        boolean finalOutcome = "approve".equals(outcome) || "supersede".equals(outcome)
+                || "reject".equals(outcome);
+
+        java.util.List<Map<String, Object>> prior = new java.util.ArrayList<>();
+        if (finalOutcome) {
+            if (all.isEmpty()) return null;
+            Map<String, Object> last = all.get(all.size() - 1);
+            for (int i = 0; i < all.size() - 1; i++) prior.add(planVersionOut(all.get(i)));
+            card.put("status", "approve".equals(outcome) ? "approved"
+                    : "supersede".equals(outcome) ? "superseded" : "rejected");
+            card.put("plan", str(last.get("plan")));
+            card.put("feedback", str(last.get("feedback")));
+            card.put("versions", prior);
+        } else if (!draft.isEmpty()) {
+            for (Map<String, Object> v : all) prior.add(planVersionOut(v));
+            card.put("status", "drafting");
+            card.put("plan", draft);
+            card.put("feedback", revising ? (revisionFeedback == null ? "" : revisionFeedback) : "");
+            card.put("versions", prior);
+            if (revising) {
+                card.put("revising", true);
+                card.put("revisingStarted", true);
+                card.put("pendingFeedback", revisionFeedback == null ? "" : revisionFeedback);
+                card.put("busy", true);
+            }
+        } else if (recording.planPendingNow() && !all.isEmpty()) {
+            Map<String, Object> last = all.get(all.size() - 1);
+            for (int i = 0; i < all.size() - 1; i++) prior.add(planVersionOut(all.get(i)));
+            card.put("status", "pending");
+            card.put("plan", str(last.get("plan")));
+            card.put("feedback", str(last.get("feedback")));
+            card.put("versions", prior);
+            if (revising) {
+                card.put("revising", true);
+                card.put("revisingStarted", false);
+                card.put("pendingFeedback", revisionFeedback == null ? "" : revisionFeedback);
+                card.put("busy", true);
+            } else {
+                long remaining = Math.max(0L, recording.planPendingAtMs() + timeoutMs - System.currentTimeMillis());
+                card.put("remainingMs", remaining);
+            }
+        } else {
+            return null;
+        }
+
+        if (cmd.getPlanBaseId() != null && !cmd.getPlanBaseId().isBlank()) {
+            Map<String, Object> from = new java.util.LinkedHashMap<>();
+            from.put("cardId", cmd.getPlanBaseId());
+            from.put("version", cmd.getPlanBaseVersion());
+            from.put("done", cmd.getPlanBaseDone());
+            from.put("total", cmd.getPlanBaseTotal());
+            from.put("failed", cmd.getPlanBaseFailed());
+            card.put("adjustFrom", from);
+        }
+        return card;
+    }
+
+    /** 版本链下发形状：只有 PlanCard/PlanViewer 读的正文与意见，不把内部的批准 ID 摆到界面数据里 */
+    private static Map<String, Object> planVersionOut(Map<String, Object> v) {
+        Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("plan", v == null ? "" : str(v.get("plan")));
+        out.put("feedback", v == null ? "" : str(v.get("feedback")));
+        return out;
     }
 
     /**

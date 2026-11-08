@@ -67,6 +67,18 @@ export const applyBlocks = (m, payload) => {
       if (text) timeline.push({ kind: 'steer', text, messageId: String(b.messageId || '') })
     }
   }
+  // 产物按 id/URL 合并：接流快照的 blocks 在本轮收尾前不含 artifact block，直接覆盖会把
+  // 已经产出的产物卡清空；收尾时 blocks 完整，则仍以 blocks 为准，只保留它尚未覆盖到的后续产物。
+  const keyOfArtifact = a => String(
+    (a && a.id) || String((a && a.url) || '').split('?')[0] || (a && a.filename) || ''
+  )
+  const existingArtifacts = Array.isArray(m.artifacts) ? m.artifacts : []
+  const seenArtifacts = new Set(artifacts.map(keyOfArtifact).filter(Boolean))
+  for (const a of existingArtifacts) {
+    const k = keyOfArtifact(a)
+    if (!k || seenArtifacts.has(k)) continue
+    artifacts.push(a)
+  }
   m.content = content
   m.thinking = thinking
   m.processText = processText
