@@ -898,7 +898,11 @@ const turnSteerRows = m => {
 }
 
 // ---- 工具卡片：标题行直接亮出关键参数（命令/路径/检索词），点击展开看完整入参与输出 ----
-const TOOL_BRIEF_KEYS = ['command', 'query', 'path', 'dir', 'filename', 'url', 'kbIds']
+// message 收在末位：它是「本次调用的载荷文本」这一通用语义（agent_send 追加的那句话、
+// MCP 通知类的正文），不是某把工具的专名；排在后面保证带 path/query 的工具行为不变。
+// 没进白名单的句柄类字段（agent_key/task_id 这类指针）永远不该被当成摘要——
+// 那类工具要么在此名单里有正主（agent_send→message），要么入参里本就没别的可亮。
+const TOOL_BRIEF_KEYS = ['command', 'query', 'path', 'dir', 'filename', 'url', 'kbIds', 'message']
 const oneLine = (s, n) => { const x = String(s).replace(/\s+/g, ' ').trim(); return x.length > n ? x.slice(0, n) + '…' : x }
 const toolBrief = t => {
   // 早产工具卡（后端在模型流式生成入参时就先建卡）：此刻还没有 args，只能报「正在生成多少字」。
