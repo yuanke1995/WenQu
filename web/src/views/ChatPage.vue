@@ -47,6 +47,11 @@
                             :message="eventsMsg" :question="eventsQuestion" />
       </a-modal>
 
+      <!-- 目标过程：右栏抽屉，版本轨 / 用量预算 / 按轮时间线 / 结果；窄屏由组件切全屏 -->
+      <GoalViewer :open="goalViewerOpen" :session-id="currentSessionId || ''" :goal="sessionGoal" device="pc"
+                  @close="goalViewerOpen = false"
+                  @action="onGoalViewerAction" @jump="jumpToGoalTurn" />
+
       <!-- 技能正文查看：写入已交给助手，读的这一侧要能审（正文是逐字进提示词的）；移动壳用同一份组件 -->
       <SkillContentModal :open="!!skillDoc" :name="skillDoc" :entry="skillDocEntry"
                          :session-id="currentSessionId || ''"
@@ -413,7 +418,10 @@
               <!-- 计划模式（人在回路）：执行计划卡（只读）。裁决入口在底部输入框区的计划确认栏
                    （与提问卡同形，见 pendingPlan / planp-*）；卡片本体两端共用 chat/PlanCard.vue，
                    刷新/换设备后由 hydratePendingPlans 按落库记录重建（restored 卡同样可裁决） -->
-              <PlanCard v-if="m.planCard" :card="m.planCard" />
+              <PlanCard v-if="m.planCard" :card="m.planCard" :sid="currentSessionId || ''"
+                        :pkey="m.planCard.id || i" :progress="planExecProgressOf(m)"
+                        :artifact-count="(m.artifacts || []).length"
+                        @open="(v, tab) => openPlanViewer(m, i, v, tab)" />
               <!-- 工具执行审批（人在回路）：智能体开启"执行前确认"后，有副作用工具（沙盒/MCP）执行前需用户批准。
                    通知深链也定位到这一张（引擎 hydratePendingApprovals → 滚动 + 闪一圈），顶部不再另画横幅 -->
               <div v-if="(m.approvals || []).length > 1" class="approval-count">
@@ -644,6 +652,15 @@
               <div class="add-mount"></div>
               <input :ref="setEditAttachInputRef" type="file" multiple style="display:none" @change="onEditAttachChange" />
             </div>
+            <!-- 目标终态卡：挂在「设为目标」那条回声下（goalId 认，刷新从历史重建）。
+                 删除记录后 sessionGoal 变 null，这张卡随之一并消失 -->
+            <GoalTerminalCard v-if="m.role === 'user' && m.goalCommand && goalTerminalCard && goalTerminalCard.goalId === m.goalCommand"
+                              :goal="goalTerminalCard" :title="goalTerminalTitle" :note="goalTerminalNote"
+                              :version="goalVersionLabel"
+                              @view="openGoalViewer"
+                              @edit="startGoalInlineEdit"
+                              @restart="startGoal(goalTerminalCard.objective)"
+                              @delete="runGoalAction('delete')" />
           </template>
         </ChatThread>
         <!-- 手动 /compact 的进行中：只认手动那一路。轮内自动压缩的进度说在气泡那条状态行上
@@ -676,6 +693,7 @@
       <ChatInput
         ref="composerRef" v-model="text" :resolve="chipOf" :placeholder="composerPlaceholder"
         :sending="loading" steerable :can-send="canSend" :stop-armed="escArmed"
+        :send-title="goalTurnStreaming ? '插话：先回答你这句，目标随后自动继续' : ''"
         attach-title="添加：上传文件图片 / 引用资料 / 引用历史问答 / 快捷命令"
         :attach-on="(addOpen && !addOnEdit) || pickedSkills.length > 0"
         :replace-box="!!(pendingAsk || pendingPlan)"
@@ -720,7 +738,7 @@
                      快照，停掉的那一项再转下去就是撒谎。 -->
                 <span class="tb-box" :class="{ run: t.status === 'doing' && loading }">
                   <loading-outlined v-if="t.status === 'doing' && loading" spin />
-                  <template v-else>{{ t.status === 'done' ? '✓' : '' }}</template>
+                  <template v-else>{{ t.status === 'done' ? '✓' : (t.status === 'failed' ? '✕' : '') }}</template>
                 </span>
                 <span class="tb-txt">{{ t.content }}</span>
                 <span v-if="t.status === 'doing' && loading" class="tb-run-tag">执行中</span>
@@ -811,14 +829,14 @@
           </div>
           </div>
           <!-- 计划确认栏：待批准时整块顶替打字框（模型在等裁决，此刻也没法发新消息），与提问面板同构——
-          编号选项：1. 确认（点即按原稿执行）2. 继续对话（光输入框，写要改什么，非空才能送出）。
-          不满意就继续对话：意见作为一条用户消息发出，本版计划作废，模型接着对话按意见重做计划；
+          编号选项：1. 确认（点即按原稿执行）2. 提修改意见（默认同一轮内升版，消息流不新增气泡）。
+          「转到对话修改」是低频备选：意见作为一条新消息发出，本版计划作废，模型接着对话重做计划。
           计划正文在气泡里只读展示。底部「取消」= 提问面板的「忽略」 -->
           <div v-else class="ci-box planp-box">
           <div class="planp-head">
           <span class="planp-tag">执行计划</span>
           <span v-if="planExpired" class="planp-state warn">已超时，本轮将停止</span>
-          <span v-else class="planp-state">待确认</span>
+          <span v-else class="planp-state">{{ curPlanCard.revising ? '修改中…' : '待确认' }}</span>
           <span v-if="planCountdownText" class="planp-timer" :class="{ warn: planExpired }">
           <clock-circle-outlined /> {{ planCountdownText }}
           </span>
@@ -834,21 +852,28 @@
           <span class="planp-no">2.</span>
           <div class="planp-custom">
           <a-textarea v-model:value="curPlanCard.editText" :bordered="false" :auto-size="{ minRows: 1, maxRows: 8 }" :maxlength="8000"
-          :disabled="curPlanCard.busy || planExpired"
-          :placeholder="planEditPlaceholder" @keydown="onPlanPanelKeydown" />
+          :disabled="curPlanCard.busy || planExpired || curPlanCard.restored"
+          :placeholder="curPlanCard.restored ? '这张卡是恢复的，请用「转到对话修改」' : planEditPlaceholder"
+          @keydown="onPlanPanelKeydown" />
           </div>
           </div>
           </div>
           <div class="planp-foot">
-          <span class="planp-hint"><info-circle-outlined /> 继续对话会按你的意见重做计划；「确认」才执行；未处理将超时并停止本轮</span>
+          <span class="planp-hint"><info-circle-outlined /> 默认在同一轮内按意见升版（不新增气泡）；「转到对话修改」才把意见变成新消息；未处理将超时并停止本轮</span>
           <span class="planp-actions">
           <!-- 与提问面板同形：面板顶替打字框时，停止入口只能放在面板里 -->
           <button class="app-btn ghost small p-stop" type="button"
           title="叫停整轮：不再执行任何工具。与「取消」不同——取消是「不批准这一版计划」，卡片会定格「未批准」"
           @click="stopNow">停止本轮</button>
           <button class="app-btn ghost small" :disabled="curPlanCard.busy || planExpired" @click="submitPlanApproval(pendingPlan, 'cancel')">取消</button>
+          <button v-if="curPlanCard.restored" class="app-btn small" :disabled="curPlanCard.busy || planExpired || !(curPlanCard.editText || '').trim()"
+          @click="continuePlanConversation(pendingPlan, curPlanCard.editText)">转到对话修改</button>
+          <template v-else>
+          <button class="app-btn ghost small" :disabled="curPlanCard.busy || planExpired || !(curPlanCard.editText || '').trim()"
+          @click="continuePlanConversation(pendingPlan, curPlanCard.editText)">转到对话修改</button>
           <button class="app-btn small" :disabled="curPlanCard.busy || planExpired || !(curPlanCard.editText || '').trim()"
-          @click="continuePlanConversation(pendingPlan, curPlanCard.editText)">继续对话</button>
+          @click="revisePlanInPlace(pendingPlan, curPlanCard.editText)">提交修改</button>
+          </template>
           </span>
           </div>
           </div>
@@ -864,27 +889,24 @@
              的自定义输入行同一口径），保存/取消用文字按钮——只读行那颗 ✕ 是「删除目标」，
              编辑行不能再拿 ✕ 表示「取消」，同一个字形两种含义会点错。 -->
         <div v-if="goalBarVisible" class="goal-bar" :class="{ editing: goalEditing }" data-goal-bar>
-          <div class="gb-row">
+          <!-- 取消二次确认就地长开（不弹层）：说清「取消 ≠ 删除」，点错一次也回得来 -->
+          <div v-if="goalCancelArmed" class="gb-confirm">
+            <div class="gb-confirm-t">取消这条目标？</div>
+            <div class="gb-confirm-s">已经跑出来的内容、历史与过程都会保留；以后想看，终态卡还在这儿。</div>
+            <div class="gb-confirm-actions">
+              <button type="button" class="gb-btn ghost" @click="goalCancelArmed = false">继续推进</button>
+              <button type="button" class="gb-btn danger" @click="confirmGoalCancel">取消目标</button>
+            </div>
+          </div>
+          <!-- 第一行：身份（胶囊 + 原文 + 版本 + 状态） -->
+          <div class="gb-row gb-identity">
             <span v-if="!goalEditing" class="gb-pill" title="目标模式：助手会自己接着往下推进，直到宣布完成">
               <aim-outlined /><span>目标</span>
             </span>
             <template v-if="!goalEditing">
               <span class="gb-objective" :title="goalBarTitle">{{ sessionGoal.objective }}</span>
-              <span v-if="goalRoundLine" class="gb-round">{{ goalRoundLine }}</span>
+              <span class="gb-ver" :title="'目标原文第 ' + goalVersionLabel + ' 版'">{{ goalVersionLabel }}</span>
               <span class="gb-state" :class="'st-' + goalStateClass" :title="goalBarMeta">{{ goalStateLabel }}</span>
-              <span class="gb-actions">
-                <button v-if="goalCanPause" type="button" class="gb-icon"
-                        title="停止目标：先停在这里，已经跑出来的部分都留着（可以再继续）" @click="runGoalAction('pause')">
-                  <pause-circle-outlined />
-                </button>
-                <button v-else-if="goalCanResume" type="button" class="gb-icon"
-                        title="继续目标：接着往下推" @click="runGoalAction('resume')"><play-circle-outlined /></button>
-                <button v-if="goalCanEdit" type="button" class="gb-icon" title="编辑目标原文"
-                        @click="startGoalInlineEdit"><edit-outlined /></button>
-                <button type="button" class="gb-icon"
-                        title="删除目标：不再往下推进，已经跑出来的内容全部保留"
-                        @click="runGoalAction('clear')"><close-outlined /></button>
-              </span>
             </template>
             <template v-else>
               <a-textarea v-model:value="goalEdit.objective" class="gb-edit-input"
@@ -900,6 +922,29 @@
                         @click="saveGoalEdit">{{ goalEditBusy ? '保存中…' : '保存' }}</button>
               </span>
             </template>
+          </div>
+          <!-- 第二行：进度（轮次 + 细进度条 + 停因/让位提示 + 过程入口）；token/时间只放详情抽屉 -->
+          <div v-if="!goalEditing" class="gb-row gb-progress">
+            <span class="gb-round">{{ goalRoundLine }}</span>
+            <span v-if="goalProgressPercent != null" class="gb-track" :title="'预算已用 ' + goalProgressPercent + '%'">
+              <i :style="{ width: goalProgressPercent + '%' }" />
+            </span>
+            <span v-if="goalBarMeta" class="gb-hint">{{ goalBarMeta }}</span>
+            <button type="button" class="gb-more-link" @click="openGoalViewer">查看过程 ›</button>
+          </div>
+          <!-- 第三行：动作（主行动 + 修改 + 取消）；删除记录只在终态卡上出现 -->
+          <div v-if="!goalEditing" class="gb-row gb-actions-row">
+            <button v-if="goalCanPause" type="button" class="gb-btn primary"
+                    title="暂停目标：先停在这里，已经跑出来的部分都留着（可以再继续）"
+                    @click="runGoalAction('pause')">暂停目标</button>
+            <button v-else-if="goalCanResume" type="button" class="gb-btn primary"
+                    :title="goalPreempted ? '立即继续：不等这一轮答完，现在就接着推进目标' : '继续目标：接着往下推'"
+                    @click="runGoalAction('resume')">{{ goalPreempted ? '立即继续' : '继续目标' }}</button>
+            <button v-if="goalCanEdit" type="button" class="gb-btn ghost" title="修改目标原文（保存后从这一版继续）"
+                    @click="startGoalInlineEdit">修改目标</button>
+            <button v-if="goalCanCancel" type="button" class="gb-btn danger-weak"
+                    title="取消目标：结束并留痕，历史与过程都保留（以后还能回看）"
+                    @click="armGoalCancel">取消目标</button>
           </div>
           <span v-if="goalBarError" class="gb-error" role="alert">{{ goalBarError }}</span>
         </div>
@@ -1398,9 +1443,8 @@
           </div>
         </div>
       </div>
-      <!-- 计划：本会话每轮出过的计划各列一条（继续对话后每次重做都算一份），点击定位到那一轮气泡。
-           默认折叠沉底：它的条数随会话长度无上限增长，而动作只是「跳回历史某一轮」——低频导航不该占顶部固定槽位，
-           更不该把上面几张交互卡挤出首屏。有待确认的计划时自动展开，避免「计划要批」这件事被藏住。 -->
+      <!-- 计划：本会话每轮出过的计划各列一条（继续对话/退回重出后每次重做都算一份），点开右侧完整计划抽屉。
+           待确认的计划自动展开并置顶，避免「计划要批」这件事被藏住；历史计划沉底折叠。 -->
       <div v-if="sessionPlans.length" class="rp-card">
         <button type="button" class="rp-card-head rp-plan-head" @click="planOpen = !planOpen"
                 :title="planOpen ? '收起计划' : '展开计划'">
@@ -1412,10 +1456,11 @@
         </button>
         <div class="rp-group-body" :class="{ open: planOpen }">
           <div class="rp-group-body-in">
-            <button v-for="p in sessionPlans" :key="p.mi" type="button" class="rp-plan-row" @click="jumpToPlan(p.mi)"
+            <button v-for="p in sessionPlans" :key="p.mi" type="button" class="rp-plan-row" @click="openPlanFromRail(p)"
                     :title="p.label">
               <ordered-list-outlined class="rp-plan-ic" />
               <span class="rp-plan-t">{{ p.label }}</span>
+              <span class="rp-plan-meta"><template v-if="p.vers">v{{ p.vers + 1 }} · </template>{{ p.steps }} 步</span>
               <span class="rp-plan-st" :class="'is-' + p.status">{{ planStateText(p.status) }}</span>
             </button>
           </div>
@@ -1426,6 +1471,14 @@
     <!-- 正文浮层宿主（来源弹窗 / 角标悬浮卡 / 图片灯箱）：DOM 与状态见 components/AnswerViewerHost.vue
          与 chat/answerViewer.js。整页只挂这一处——每条消息各挂一份会让多图切换互相打架。 -->
     <AnswerViewerHost :debug-visible="debugDisplayVisible" :session-id="currentSessionId" />
+
+    <!-- 完整计划 / 版本轨 / 裁决：卡片与右栏的「查看完整计划」都落到这一处抽屉（H5 由移动壳挂同款） -->
+    <PlanViewer :open="planViewer.open" :card="planViewer.card" :sid="planViewer.sid"
+                :pkey="planViewer.pkey" :title="planViewer.title" :version="planViewer.version"
+                :initial-tab="planViewer.tab" :msg="planViewerMsg" :progress="planViewerProgress"
+                @close="closePlanViewer" @approve="onViewerApprove"
+                @revise="onViewerRevise" @supersede="onViewerSupersede" @locate="onViewerLocate"
+                @stop="onViewerStop" />
 
     <!-- 会话分享（只读链接） -->
     <a-modal v-model:open="shareVisible" title="分享这段对话" :footer="null" width="520px">
@@ -1703,6 +1756,9 @@ import RightProcessCard from '../components/RightProcessCard.vue'
 // 顶栏「子智能体」药丸：派遣在跑时给一个不随正文滚走的位置（PC 浮层 / 触屏底部 sheet 同一份组件）
 import SubagentPill from '../components/SubagentPill.vue'
 import SkillContentModal from '../components/SkillContentModal.vue'
+// 目标终态卡（挂在「设为目标」那条回声下）与目标过程抽屉：PC 与移动壳共用同一份
+import GoalTerminalCard from '../components/GoalTerminalCard.vue'
+import GoalViewer from '../components/GoalViewer.vue'
 // 回答正文与它的浮层宿主：与两个分享页共用同一份实现（详见 src/chat/answerViewer.js 顶部说明）
 import AnswerBody from '../components/AnswerBody.vue'
 import AnswerViewerHost from '../components/AnswerViewerHost.vue'
@@ -1712,6 +1768,8 @@ import { useChatEngine } from '../chat/useChatEngine'
 import { useChatSearch } from '../chat/useChatSearch'
 import Composer from '../chat/Composer.vue'
 import PlanCard from '../components/PlanCard.vue'
+import PlanViewer from '../components/PlanViewer.vue'
+import { planStepCount, planExecProgress } from '../chat/plan'
 import TurnChangesCard from '../components/TurnChangesCard.vue'
 import { splitAtts } from '../chat/attachments'
 import { SUPPORTED_EXTS, extOf } from '../chat/intake'
@@ -2048,8 +2106,9 @@ const onCtxCapEnter = () => { ctxCapHovered = true; clearTimeout(ctxCapTimer) }
 const onCtxCapLeave = () => { ctxCapHovered = false; hideCtxCap() }
 // 「在沙盒中运行」按钮的开关不再由本页持有：正文统一走 AnswerBody，runnable 直接写在调用点上
 // （问答页是唯一有会话上下文的消费方；其它页面默认不开——没有会话，按钮点了必然失败）。
-// ===== 右栏「计划」：本会话每轮出过的计划各列一条（最新在前，点击定位到那一轮气泡） =====
-// 标签取该轮的用户问题——计划卡没有标题，问题最能认出是哪一份；状态口径与气泡里的计划卡一致
+// ===== 右栏「计划」：本会话每轮出过的计划各列一条（待确认置顶，其余最新在前） =====
+// 标签取该轮的用户问题——计划卡没有标题，问题最能认出是哪一份；状态口径与气泡里的计划卡一致。
+// 行上补「第几版 + 几步」：同一任务反复修订时，只靠问题文本分不出哪份是最后一版。
 const sessionPlans = computed(() => {
   const out = []
   const list = messages.value
@@ -2061,9 +2120,17 @@ const sessionPlans = computed(() => {
       const prev = list[j]
       if (prev && prev.role === 'user') { label = String(prev.content || '').replace(/\s+/g, ' ').trim(); break }
     }
-    out.push({ mi: i, label: label || '（无提问）', status: m.planCard.status })
+    const c = m.planCard
+    out.push({
+      mi: i,
+      label: label || '（无提问）',
+      status: c.status,
+      vers: Array.isArray(c.versions) ? c.versions.length : 0,
+      steps: planStepCount(c.plan)
+    })
   }
-  return out
+  // 待确认的计划必须露在最上面（它卡着本轮，不是历史导航）；同一状态内保持最新在前
+  return out.sort((a, b) => Number(b.status === 'pending') - Number(a.status === 'pending'))
 })
 const planStateText = st => ({
   drafting: '生成中', pending: '待确认', approved: '已批准', superseded: '已被取代', rejected: '未批准'
@@ -2076,6 +2143,12 @@ const jumpToPlan = mi => {
   void el.offsetWidth
   el.classList.add('plan-jump')
   setTimeout(() => el.classList.remove('plan-jump'), 1500)
+}
+/** 右栏计划行：直接打开完整计划抽屉（与气泡卡脚同一落点），不再只是滚动定位 */
+const openPlanFromRail = p => {
+  const m = messages.value[p.mi]
+  if (!m || !m.planCard) return
+  openPlanViewer(m, p.mi)
 }
 // 免责声明（与旧版同一份文案）
 const disclaimerVisible = ref(false)
@@ -2178,6 +2251,8 @@ const stopNow = () => { disarmEsc(); stop() }
  *  窄屏不写 Enter/Shift+Enter 提示（触屏没有这两个键） */
 const composerPlaceholder = computed(() => {
   if (loading.value) {
+    // 目标轮在跑：用户打的这句是「插话」，不走排队——先回答你这句，目标随后自动继续
+    if (goalTurnStreaming.value) return '插话：先回答你这句，目标随后自动继续'
     return isNarrow.value
       ? '补一句方向（先排到上面，点「立即发送」才送出）'
       : '补一句方向（Enter 先排到上面 · ⌘/Ctrl+Enter 立刻插进本轮）'
@@ -3480,7 +3555,7 @@ const {
   pickAskOption, commitAskCustom, askOptionPicked, askCustomPicked, askQuestionAnswered,
   askAnsweredCount, askNextUnanswered, askAutoSubmittable, askHintText,
   // 计划模式（人在回路）：斜杠命令开关 + 计划卡裁决动作
-  planModeOn, setPlanMode, submitPlanApproval, continuePlanConversation,
+  planModeOn, setPlanMode, submitPlanApproval, revisePlanInPlace, continuePlanConversation,
   pendingPlan, curPlanCard, planExpired, planCountdownText,
   // 工具审批卡倒计时（真实剩余秒数；到点按钮锁住）
   approvalLeftSecOf,
@@ -3489,7 +3564,9 @@ const {
   sessionGoal, goalModeOn, startGoal, runGoalAction,
   goalTerminal, goalBarVisible, goalStateLabel, goalStateClass, goalRoundLine,
   goalBarTitle, goalBarMeta, goalBarError,
-  goalCanPause, goalCanResume, goalCanEdit,
+  goalCanPause, goalCanResume, goalCanEdit, goalCanCancel, goalCanClearRecord,
+  goalPreempted, goalVersionLabel, goalProgressPercent,
+  goalTerminalCard, goalTerminalTitle, goalTerminalNote, goalTurnStreaming,
   goalEditing, goalEdit, goalEditBusy, goalEditSaveable,
   startGoalInlineEdit, saveGoalEdit,
   // 思考能力 / 档位（悬浮面板消费）
@@ -3546,7 +3623,48 @@ const {
   focusInput
 })
 
-// ---- 左侧问题锚点轨：一条刻度对应一轮提问，悬浮出问答预览、点击滚到那一轮 ----
+// ---- 目标条上的两处交互状态：取消二次确认（就地长开，不弹层）与过程抽屉 ----
+const goalCancelArmed = ref(false)
+const goalViewerOpen = ref(false)
+const armGoalCancel = () => { goalCancelArmed.value = true }
+const confirmGoalCancel = async () => {
+  goalCancelArmed.value = false
+  await runGoalAction('cancel')
+}
+const openGoalViewer = () => { goalViewerOpen.value = true }
+// 抽屉里的动作回本页同一条动作出口：修改走条子的就地编辑；取消先收起抽屉、在条上做二次确认
+const onGoalViewerAction = async (action) => {
+  if (action === 'edit') {
+    goalViewerOpen.value = false
+    startGoalInlineEdit()
+    return
+  }
+  if (action === 'cancel') {
+    goalViewerOpen.value = false
+    goalCancelArmed.value = true
+    return
+  }
+  await runGoalAction(action)
+  if (action === 'delete') goalViewerOpen.value = false
+}
+/** 从过程抽屉跳到某一轮：按 turnId 找回那条回答，再滚到它对应的提问行 */
+const jumpToGoalTurn = (turnId) => {
+  goalViewerOpen.value = false
+  const list = messages.value || []
+  const aiIdx = list.findIndex(m => m && m.turnId === turnId)
+  if (aiIdx < 0) return
+  let userIdx = aiIdx
+  while (userIdx > 0 && list[userIdx] && list[userIdx].role !== 'user') userIdx--
+  const el = box.value?.querySelector(`[data-row-index="${userIdx}"]`)
+  el?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+}
+// 目标换了一条（另起/删除）或离开可见档时，确认态必须撤下：留着它，下一次点「取消」会跳过二次确认
+watch(() => sessionGoal.value && (sessionGoal.value.goalId + ':' + sessionGoal.value.status), () => {
+  goalCancelArmed.value = false
+})
+// 换会话时把过程抽屉一并收起：它读的是「当前会话的当前目标」，不关会拿 B 会话的会话号去读 A 的目标账本
+watch(currentSessionId, () => { goalViewerOpen.value = false })
+
 // 长会话里「翻回前面问过什么」只能靠滚动条盲摸，锚点轨给对话一个可点目录。
 // 刻度只画提问行（role=user）；预览卡两行口径照参考样式：问题深色在上、回答摘录灰字在下。
 // ⚠️ 必须放在引擎解构之后：下面的 watch 会在 setup 当场求值 qaAnchors，而 messages 的
@@ -3992,19 +4110,102 @@ const historyRefPreview = hr => {
 // 新一轮完整走一遍（重新检索），模型带着上一版计划按意见重做——可反复，直到「确认」才执行。
 // 计划正文同时在气泡里只读展示。底部「取消」= 提问面板的「忽略」。
 // 挂卡判据、超时锁与倒计时（pendingPlan / curPlanCard / planExpired / planCountdownText）在引擎里，
-// 与移动壳共用一份；卡片本体（版本链、长计划折叠）也收在共用组件 chat/PlanCard.vue 里。
+// 与移动壳共用一份。
+
+// ==================== 计划视图（完整计划 / 版本轨 / 裁决） ====================
+// 卡片只出三段式摘要，完整正文与版本记录在右侧抽屉（H5 由移动壳挂同一个 PlanViewer）。
+// 抽屉里的 card 是**同一个对象**引用：批准/修订/流式增量都实时反映，不需要复制一份状态。
+const planViewer = reactive({ open: false, card: null, sid: '', pkey: '', mi: -1, title: '', version: -1, tab: 'plan' })
+/** 打开某轮的完整计划；version=null 表示按上次停留版本/当前版；tab='exec' 直接落到执行页签 */
+const openPlanViewer = (m, i, version = null, tab = 'plan') => {
+  if (!m || !m.planCard) return
+  planViewer.card = m.planCard
+  planViewer.sid = currentSessionId.value || ''
+  planViewer.pkey = m.planCard.id || ('i' + i)
+  planViewer.mi = i
+  planViewer.title = planTaskTitleOf(i)
+  planViewer.version = Number.isInteger(version) ? version : -1
+  planViewer.tab = tab === 'exec' ? 'exec' : 'plan'
+  planViewer.open = true
+}
+const closePlanViewer = () => { planViewer.open = false }
+/** 抽屉里的裁决：动作都回引擎，抽屉只负责收口自身状态 */
+const onViewerApprove = () => {
+  const m = planMsgOfViewer()
+  if (!m) return
+  submitPlanApproval(m, 'approve')
+  closePlanViewer()
+}
+const onViewerRevise = t => {
+  const m = planMsgOfViewer()
+  if (!m) return
+  revisePlanInPlace(m, t)
+}
+const onViewerSupersede = async t => {
+  const m = planMsgOfViewer()
+  if (!m) return
+  closePlanViewer()
+  await continuePlanConversation(m, t)
+}
+const onViewerLocate = () => {
+  const mi = planViewer.mi
+  closePlanViewer()
+  if (mi >= 0 && mi < messages.value.length && messages.value[mi]?.planCard === planViewer.card) jumpToPlan(mi)
+}
+/** 抽屉当前挂在哪条消息上：按计划卡对象反查（切会话后自动失效） */
+const planMsgOfViewer = () => {
+  if (!planViewer.card || planViewer.sid !== (currentSessionId.value || '')) return null
+  return messages.value.find(m => m && m.planCard === planViewer.card) || null
+}
+/** 计划标题：取它前面最近一条用户提问的第一行（截断到 60 字） */
+const planTaskTitleOf = i => {
+  for (let j = Math.min(i, messages.value.length) - 1; j >= 0; j--) {
+    const m = messages.value[j]
+    if (m && m.role === 'user' && String(m.content || '').trim()) {
+      const line = String(m.content).trim().split('\n')[0]
+      return line.length > 60 ? line.slice(0, 60) + '…' : line
+    }
+  }
+  return currentSessionTitle.value || ''
+}
+// 切会话后抽屉里的卡已经不在当前消息流里：收起来，避免把上一会话的计划批到新会话
+watch(currentSessionId, () => { planViewer.open = false })
+
+/**
+ * 计划卡的执行进度：清单缺失/不属于这一轮就返回 null（卡片退回计划步骤预览）。
+ * running 只认「最后一轮 AI 且正在生成」——旧轮的已批准计划在下一轮开始时不该继续转圈。
+ */
+const planExecProgressOf = m => {
+  if (!m || !m.planCard) return null
+  return planExecProgress(m.planCard, sessionTodos.value, m.turnId || '',
+    loading.value && m === panelAi.value)
+}
+/** 抽屉当前那条消息与它的执行进度（执行页签用；切会话/消息流变化时一起失效） */
+const planViewerMsg = computed(() => planMsgOfViewer())
+const planViewerProgress = computed(() => {
+  const m = planViewerMsg.value
+  return m ? planExecProgressOf(m) : null
+})
+/** 执行页签的「停止执行」：与输入框旁的停止同一入口（先撤 Esc 待命，再真停服务端） */
+const onViewerStop = () => { stopNow() }
+
+// 与移动壳共用一份；卡片本体（三段式与旧计划收一行）收在共用组件 components/PlanCard.vue 里。
 // 这里只剩 PC 特有的意见框文案与键盘直达。
 const planEditPlaceholder = computed(() => isNarrow.value
-  ? '不满意就继续对话：写下要改什么…'
-  : '不满意就继续对话：写下要改什么…（Enter 送出，Shift+Enter 换行）')
-/** 计划意见框回车=直接「继续对话」送出（与主输入框同一口径：Shift 留给换行，输入法选字的回车不算提交） */
+  ? '要改什么？同一轮内按意见升版…'
+  : '要改什么？同一轮内按意见升版，不新增气泡…（Enter 提交，Shift+Enter 换行）')
+/** 计划意见框回车=直接提交修改（与主输入框同一口径：Shift 留给换行，输入法选字的回车不算提交）。
+ *  恢复态卡没有本设备的流，回车改走「转到对话修改」，与按钮的降级口径一致 */
 const onPlanPanelKeydown = e => {
   if (e.isComposing || e.keyCode === 229) return
   const c = curPlanCard.value
   if (!c || c.busy || planExpired.value) return
   if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    const q = String(c.editText || '').trim()
+    if (!q) return
     e.preventDefault()
-    continuePlanConversation(pendingPlan.value, c.editText)
+    if (c.restored) continuePlanConversation(pendingPlan.value, q)
+    else revisePlanInPlace(pendingPlan.value, q)
   }
 }
 
@@ -4881,6 +5082,8 @@ onMounted(async () => {
 .tb-item.done .tb-box { background: var(--app-ok); border-color: var(--app-ok); }
 .tb-item.done .tb-txt { color: var(--app-text3); text-decoration: line-through; }
 .tb-item.doing .tb-txt { color: var(--app-accent); font-weight: 500; }
+.tb-item.failed .tb-box { background: #fff1f0; border-color: var(--app-danger, #cf1322); color: var(--app-danger, #cf1322); }
+.tb-item.failed .tb-txt { color: var(--app-danger, #cf1322); }
 .tb-txt { min-width: 0; word-break: break-word; }
 
 /* 插话队列（输入框正上方）：生成中按发送先落到这里排队，点「立即发送」才真发给模型。
@@ -5242,7 +5445,7 @@ onMounted(async () => {
    上下各外扩 4px 盖住行内边距，逐行连成一条——只靠缩进时「深一段后突然浅一行」读不出归谁，线在就一眼看出。 */
 .rp-sb-ind { flex: none; width: 12px; align-self: stretch; margin: -4px -6px -4px 0; border-left: 1px solid var(--app-border); }
 
-/* 右栏计划卡：本会话出过的计划列表（问题为标签 + 状态角标；点击定位到那一轮并闪一下） */
+/* 右栏计划卡：本会话出过的计划列表（问题为标签 + 版本/步数 + 状态角标；点击打开完整计划抽屉） */
 .rp-plan-row {
   display: flex; align-items: center; gap: 6px; width: 100%; text-align: left;
   padding: 4px 6px; margin: 0 -6px; border: none; background: none; border-radius: 6px;
@@ -5252,6 +5455,7 @@ onMounted(async () => {
 .rp-plan-row:hover .rp-plan-t { color: var(--app-accent); }
 .rp-plan-ic { flex: none; font-size: 12px; color: var(--app-text3); }
 .rp-plan-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rp-plan-meta { flex: none; font-size: 10.5px; color: var(--app-text3); font-variant-numeric: tabular-nums; }
 .rp-plan-st { flex: none; font-size: 11px; color: var(--app-text3); }
 .rp-plan-st.is-pending { color: var(--app-warn-text); }
 .rp-plan-st.is-approved { color: var(--app-ok); }
@@ -5409,12 +5613,12 @@ onMounted(async () => {
 
 /* ==================== 目标模式 ==================== */
 /* 目标条坐在输入卡片内部、正文之上：它已经是卡片的一部分，不再画第二层边框/底色/阴影，
-   只用一条极浅的下分隔线把自己和正文分开。一行放下：目标 pill、原文（单行省略）、
-   只读状态（进行中/已暂停）、图标动作（暂停/继续/编辑/删除）。
-   跑了几轮、停在哪、后端给的那句提示都收进悬浮行，不占版面。
-   就地编辑就在同一行长开：原文换成自适应高文本域，保存/取消钉在行尾。 */
+   只用一条极浅的下分隔线把自己和正文分开。三段式——
+   ① 身份：目标 pill、原文（单行省略）、版本、状态；② 进度：轮次、细进度条、停因/让位提示、过程入口；
+   ③ 动作：主行动（暂停/继续）+ 修改 + 取消。token、时间这类细节只进详情抽屉，不占版面。
+   就地编辑在第一行长开：原文换成自适应高文本域，保存/取消钉在行尾。 */
 .goal-bar {
-  display: flex; flex-direction: column; gap: 4px;
+  display: flex; flex-direction: column; gap: 6px;
   box-sizing: border-box; width: 100%; min-width: 0;
   padding: 0 0 8px; margin-bottom: 8px;
   border-bottom: 1px solid var(--app-border);
@@ -5433,20 +5637,51 @@ onMounted(async () => {
   flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-size: 13px; line-height: 20px; color: var(--app-text);
 }
-/* 只读状态：弱色药丸，不抢原文；动作能不能点由图标自己说。 */
+/* 版本：改过目标原文就换一版；只报第几版，不抢原文与状态的注意力 */
+.gb-ver {
+  flex: none; font-size: 11px; line-height: 18px; padding: 0 6px;
+  border-radius: 6px; background: var(--app-panel-2); color: var(--app-text3); white-space: nowrap;
+}
+/* 只读状态：弱色药丸，不抢原文；动作能不能点由按钮自己说。 */
 .gb-state { flex: none; font-size: 12px; line-height: 18px; padding: 0 6px; border-radius: 6px; color: var(--app-text3); white-space: nowrap; }
 .gb-state.st-running { color: var(--app-accent); background: var(--app-accent-weak); }
 .gb-state.st-paused { color: var(--app-warn-text); background: var(--app-warn-weak); }
-/* 轮次弱标签：坐在状态词左边（「第 3 轮」+「进行中」），只报跑到第几轮，不抢状态词的色 */
+.gb-state.st-achieved { color: var(--app-success, #067647); background: var(--app-success-weak, #ecfdf3); }
+.gb-state.st-failed { color: var(--app-danger); background: var(--app-danger-weak); }
+.gb-state.st-cancelled { color: var(--app-text3); background: var(--app-panel-2); }
+/* 进度行：轮次、细进度条、提示与过程入口在同一行 */
+.gb-progress { color: var(--app-text3); }
 .gb-round { flex: none; font-size: 11px; line-height: 18px; padding: 0 6px; border-radius: 6px; border: 1px solid var(--app-border); color: var(--app-text3); white-space: nowrap; }
-.gb-actions { flex: none; display: flex; align-items: center; gap: 2px; }
-.gb-icon {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 28px; height: 28px; padding: 0; border: none; border-radius: 50%;
-  background: transparent; color: var(--app-text3); cursor: pointer;
+.gb-track {
+  flex: none; width: 96px; height: 4px; border-radius: 999px;
+  background: var(--app-border); overflow: hidden;
 }
-.gb-icon:hover:not(:disabled) { background: var(--app-panel-2); color: var(--app-text2); }
-.gb-icon:disabled { opacity: .4; cursor: default; }
+.gb-track i { display: block; height: 100%; border-radius: 999px; background: var(--app-accent); transition: width .25s ease; }
+.gb-hint {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 12px; line-height: 18px; color: var(--app-text3);
+}
+.gb-more-link {
+  flex: none; margin-left: auto; padding: 0; border: none; background: transparent;
+  font-size: 12px; line-height: 18px; color: var(--app-text3); cursor: pointer; white-space: nowrap;
+}
+.gb-more-link:hover { color: var(--app-accent); }
+/* 动作行：主行动用实心，修改用描边，取消用弱危险（不抢主行动，也不能藏得太深） */
+.gb-actions-row { gap: 6px; }
+.gb-actions { flex: none; display: flex; align-items: center; gap: 6px; }
+.gb-btn.danger-weak { background: transparent; color: var(--app-text3); border-color: transparent; }
+.gb-btn.danger-weak:hover:not(:disabled) { color: var(--app-danger); background: var(--app-danger-weak); }
+.gb-btn.danger { background: var(--app-danger); color: #fff; }
+.gb-btn.danger:hover:not(:disabled) { filter: brightness(.94); }
+/* 取消二次确认：就地长开的窄条，不做弹层（目标条本身就在眼睛前面） */
+.gb-confirm {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 10px 12px; border-radius: 10px;
+  background: var(--app-danger-weak); border: 1px solid var(--app-danger-border, var(--app-border));
+}
+.gb-confirm-t { font-size: 13px; line-height: 18px; font-weight: 600; color: var(--app-text); }
+.gb-confirm-s { font-size: 12px; line-height: 18px; color: var(--app-text3); }
+.gb-confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
 /* 就地编辑：文本域去框（:bordered="false"）吃掉剩余宽度，1~6 行自适应。
    这一条已经在卡片里，再套一圈 antd 默认描边就是卡里套卡。
    字号/行高与只读原文完全一致，点「编辑」时文字不跳位；上下各 4px 内边距把首行撑成 28px，
@@ -5474,11 +5709,11 @@ onMounted(async () => {
 .gb-btn.ghost:disabled { opacity: .55; cursor: default; }
 .gb-error { font-size: 12px; line-height: 18px; color: var(--app-danger); word-break: break-word; }
 
-/* 窄屏：状态词让位给原文与动作键（触屏点右栏看状态），图标键放大到触控热区 */
+/* 窄屏：状态词让位给原文与动作键（触屏点右栏看状态） */
 @media (max-width: 768px) {
   .gb-row { gap: 6px; }
-  .gb-state, .gb-round { display: none; }
-  .gb-icon { width: 32px; height: 32px; }
+  .gb-state, .gb-ver, .gb-round { display: none; }
+  .gb-track { width: 72px; }
 }
 
 /* ==================== 响应式：窄屏适配 ====================

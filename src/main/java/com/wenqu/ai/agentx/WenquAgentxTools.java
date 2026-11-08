@@ -122,7 +122,26 @@ public class WenquAgentxTools {
                             com.wenqu.ai.agent.subagent.SubAgentConsultService.Ledger consultLedger,
                             RequestUser.Snapshot identity,
                             Map<String, String> overrides, Map<String, String> userOverrides,
-                            RunCodeHolder runCode) {
+                            RunCodeHolder runCode, StepTrack step) {
+    }
+
+    /**
+     * 本轮「当前在做清单第几项」的活状态（-1 = 还没开始/没有清单）。
+     * <p>写入口只有 {@code writeTodo}（清单里唯一标成 doing 的那一项就是当前步骤），读它的是工具卡下发
+     * （{@code tool_status} 的 {@code stepId}）。有了它，执行详情才能把工具与产物稳定归到某一步，
+     * 而不是按调用顺序猜——猜一次就会串步一次。
+     * <p>刻意与 {@link RunCodeHolder} 一样是可变对象：清单在工具线程上写，工具卡在流水线线程上读。
+     */
+    public static final class StepTrack {
+        private volatile int index = -1;
+
+        public int index() {
+            return index;
+        }
+
+        void index(int value) {
+            this.index = value;
+        }
     }
 
     /**
@@ -151,7 +170,7 @@ public class WenquAgentxTools {
                               com.wenqu.ai.agent.subagent.SubAgentConsultService.Ledger ledger) {
         return new TurnHooks(cmd.getSessionId(), cmd.getUserId(), modelRef, turnId, spills, ledger,
                 RequestUser.snapshot(), configService.currentOverrides(), configService.currentUserOverrides(),
-                new RunCodeHolder());
+                new RunCodeHolder(), new StepTrack());
     }
 
     /**
@@ -864,6 +883,13 @@ public class WenquAgentxTools {
             }
             String doc = todoBridge.docJson(state, n.items(), turnId);
             if (doc == null) return "错误：清单写入后读不出条目，本轮未能同步任务清单。";
+            // 当前步骤：清单里唯一 doing 的那一项（归一后至多一项）。工具卡按它打 stepId，
+            // 执行详情据此把工具与产物归到具体步骤；没有 doing 就归 -1（还没进到某一步）
+            int active = -1;
+            for (int i = 0; i < n.items().size(); i++) {
+                if ("doing".equals(n.items().get(i).status())) { active = i; break; }
+            }
+            hooks.step().index(active);
             // 账本留痕：断线后台续跑那一轮，清单也要能事后回放（与手写侧同一句）
             sessionEventService.append(hooks.sessionId(), hooks.userId(), turnId, "todo", doc);
             // 会话表那一份只是重启后的回显兜底（权威真源是框架 state；见 TodoBridge 类注释）

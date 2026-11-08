@@ -1449,6 +1449,12 @@ export const resolvePlanApproval = (planApprovalId, approved, plan = '') =>
 export const supersedePlanApproval = (planApprovalId, feedback = '') =>
   request(`/plan-approval/${encodeURIComponent(planApprovalId)}`, { method: 'POST', body: JSON.stringify({ supersede: true, plan: feedback }) })
 
+/** 执行计划「同一轮退回重出」（计划模式，人在回路）：用户不满意本版，带上修改意见让模型在同一轮内
+ *  产出下一版（可反复），消息流不新增气泡；返回后新一轮计划仍走 plan_delta / plan_approval 事件。
+ *  仅本轮用户本人可裁决 */
+export const revisePlanApproval = (planApprovalId, feedback = '') =>
+  request(`/plan-approval/${encodeURIComponent(planApprovalId)}`, { method: 'POST', body: JSON.stringify({ revise: true, plan: feedback }) })
+
 /** 待批准计划（卡片恢复入口）：列本人该会话仍挂起的执行计划批准卡。
  *  返回 {items:[{planApprovalId,plan,versions:[{plan,feedback}],timeoutMs,remainingMs,createdAt,expired,live}]}；
  *  versions=本轮退回重出的版本链（feedback=产出该版的用户意见）；live=false 表示唤醒句柄已随进程重启消失，

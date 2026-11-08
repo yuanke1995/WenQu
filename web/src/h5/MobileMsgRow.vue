@@ -58,6 +58,15 @@
         <div v-if="m.errorCard" class="u-stopped u-fail" :title="m.errorCard.message">
           <close-circle-outlined /> {{ errorBrief(m.errorCard.message, m.errorCard.kind) }}
         </div>
+        <!-- 目标终态卡：挂在「设为目标」那条回声下（goalId 认），与 PC 同一份组件 -->
+        <GoalTerminalCard v-if="terminalGoal" :goal="terminalGoal"
+                          :title="goalTerminalTitleOf(terminalGoal)"
+                          :note="goalTerminalNoteOf(terminalGoal)"
+                          :version="goalVersionLabelOf(terminalGoal)"
+                          @view="$emit('goal-view')"
+                          @edit="$emit('goal-edit')"
+                          @restart="$emit('goal-restart', terminalGoal.objective)"
+                          @delete="$emit('goal-delete')" />
         <div v-if="showActions" class="u-actions">
           <template v-if="showUserActs">
             <div v-if="m.variantCount > 1" class="ver-switch">
@@ -303,7 +312,9 @@
         <!-- 执行计划卡（人在回路）：与 PC 同一份组件；裁决入口在底部确认栏，这里只读留痕。
              .stop：卡在卡片里的「查看完整计划/修改记录」不该顺手把整行选中 -->
         <div v-if="m.planCard" @click.stop>
-          <PlanCard :card="m.planCard" />
+          <PlanCard :card="m.planCard" :sid="sessionId" :pkey="m.planCard.id || index"
+                    :progress="progress" :artifact-count="(m.artifacts || []).length"
+                    @open="(v, tab) => emit('open-plan', { m, index, version: v, tab })" />
         </div>
 
         <!-- 工具审批（人在回路）：贴着被审批的那一步；通知深链也定位到这一张 -->
@@ -433,6 +444,7 @@ import {
   toolCallsView, executedCount, toolSearchQueries, retrievalLineTitle,
   fmtMsgTime, fmtSize, errorBrief, sourceName, canSwitchPrev, canSwitchNext, verLabel, agentBadgeOf,
   pasteTitle, pasteSub, isPastedText, usageCtxTokens, goalEchoStateOf, goalEchoTipOf,
+  goalTerminalCardOf, goalTerminalTitleOf, goalTerminalNoteOf, goalVersionLabelOf,
   degradationItems, degradationWarn,
   toolCardOpen, toggleToolCard
 } from '../chat/projections'
@@ -444,6 +456,7 @@ import PlanCard from '../components/PlanCard.vue'
 import TurnBar from '../components/TurnBar.vue'
 import SubAgentChatCard from '../components/SubAgentChatCard.vue'
 import ToolSpillButton from '../components/ToolSpillButton.vue'
+import GoalTerminalCard from '../components/GoalTerminalCard.vue'
 import AgentAvatar from '../components/AgentAvatar.vue'
 
 // 簇头活动图标（与 PC 同位）：类别 → 图标，收起时常显、展开让位给下开三角（触屏无 hover）
@@ -469,10 +482,20 @@ const props = defineProps({
   /** 会话当前目标：回声胶囊的状态词只认它那一条 goalId（与 PC 共用外壳同一判据） */
   goal: { type: Object, default: null },
   /** 审批倒计时基准（引擎每秒推进的 approvalNow）：与 PC 的 approvalLeftSecOf 同一份口径 */
-  approvalNow: { type: Number, default: 0 }
+  approvalNow: { type: Number, default: 0 },
+  /** 计划卡执行进度（planExecProgress 的产物；无清单/不属于本轮时 null） */
+  progress: { type: Object, default: null }
 })
 const emit = defineEmits(['activate', 'preview', 'paste-view', 'source', 'retry', 'edit', 'feedback', 'approve',
-  'switch-version', 'ask', 'copy', 'copy-user', 'more'])
+  'switch-version', 'ask', 'copy', 'copy-user', 'more', 'open-plan',
+  'goal-view', 'goal-edit', 'goal-restart', 'goal-delete'])
+
+/** 终态卡只挂在那条「设为目标」的回声下：同一个 goalId 且当前目标已到终态 */
+const terminalGoal = computed(() => {
+  if (props.m.role !== 'user' || !props.m.goalCommand || !props.goal) return null
+  if (props.goal.goalId !== props.m.goalCommand) return null
+  return goalTerminalCardOf(props.goal) ? props.goal : null
+})
 
 const approvalLeftOf = card => approvalLeftSec(card, props.approvalNow)
 

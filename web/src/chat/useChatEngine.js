@@ -9,7 +9,7 @@ import { isAdminSync } from '../utils/auth'
 import { message } from 'ant-design-vue'
 import { sendQuestion, resumeChat, getChatRun, newSession, getHistory, deleteSessionApi, switchMessageVariant, compactSessionApi, sessionHistorySummaryApi, getConfig, getRuntimeConfig, listAvailableAgents, listConsultableAgents,
          listAvailableSkills, getUserPreference, approveToolCall, getToolApproval, answerAgentAsk, ignoreAgentAsk, stopChatTurn, steerChatTurn,
-         listPendingAsks, listPendingApprovals, resolvePlanApproval, supersedePlanApproval, listPendingPlans, updateSessionModelApi, getSessionModelApi,
+         listPendingAsks, listPendingApprovals, resolvePlanApproval, supersedePlanApproval, revisePlanApproval, listPendingPlans, updateSessionModelApi, getSessionModelApi,
          listKnowledgeBases, listDocuments, uploadChatAttachment, getSessionTodosApi,
          listSandboxFiles, downloadSandboxFile, sandboxFileToArtifact,
          listSandboxProcs, killSandboxProc,
@@ -30,7 +30,9 @@ import { THINK_CAPS, REASONING_LEVELS, THINK_LEVEL_ON, levelLabel,
          resumedStartAt, earlierStart, settledTurnMs,
          goalTerminalOf, goalBarVisibleOf, goalPhraseOf, goalStateLabelOf, goalStateClassOf,
          goalBlockReasonOf, goalBarTitleOf, goalBarMetaOf, goalRoundLineOf,
-         goalCanPauseOf, goalCanResumeOf, goalCanEditOf,
+         goalCanPauseOf, goalCanResumeOf, goalCanEditOf, goalCanCancelOf, goalCanClearRecordOf,
+         goalPreemptedOf, goalVersionLabelOf, goalProgressPercentOf,
+         goalTerminalCardOf, goalTerminalTitleOf, goalTerminalNoteOf,
          rememberAgents, isDispatchTool, consultNameOf, stepBriefOf, TURN_STOP_SUFFIX, applyBlocks } from './projections'
 
 export function useChatEngine (hooks = {}) {
@@ -820,10 +822,12 @@ const todoSummary = computed(() => {
   const n = s => items.filter(i => i.status === s).length
   const done = n('done')
   const doing = n('doing')
+  const failed = n('failed')
   const parts = []
   if (done) parts.push(`${done} 已完成`)
   if (doing) parts.push(`${doing} 进行中`)
-  if (items.length - done - doing > 0) parts.push(`${items.length - done - doing} 待处理`)
+  if (failed) parts.push(`${failed} 失败`)
+  if (items.length - done - doing - failed > 0) parts.push(`${items.length - done - doing - failed} 待处理`)
   return parts.length ? parts.join(' · ') : `${items.length} 项`
 })
 
@@ -1351,6 +1355,10 @@ const send = async (opts = {}) => {
   // # 历史引用（本轮显式指定的会话历史问答）：只带 messageId，内容由服务端按会话归属查库回填
   const historyRefs = pendingHistoryRefs.value.map(h => ({ messageId: h.messageId }))
   if (!q && !imgs.length && !atts.length) return
+  // 目标轮在浏览器里跑着时用户说话＝插话（让位一轮）：不能排成 steer（后台目标轮没登记 TurnHandle，
+  // steer 必然失败）。先断本地这道呈现通道（不请服务端 stop，否则目标会被记成 stopped 而不是 preempted），
+  // 后面的普通发送会让后端把目标轮打断并转 PAUSED/preempted，答完再自动接回。
+  if (loading.value && goalTurnStreaming.value) surrenderGoalStream()
   // 生成中再发一句 = 排进插话队列（输入框上方那排 chip），**不发请求**。
   // 主输入框不再因跑着而禁用：想改方向不该被迫先停止本轮。载荷与正常提问完全同权
   // （图片/附件/技能/@/#/模型/思考/计划模式）。发给模型要等用户在 chip 上点「立即发送」，
@@ -1443,7 +1451,9 @@ const pendingPlan = computed(() => {
   const list = messages.value
   for (let i = list.length - 1; i >= 0; i--) {
     const m = list[i]
-    if (m && m.role === 'ai' && m.planCard && m.planCard.status === 'pending') return m
+    // 退回重出期间（revising）也必须继续算「待确认」：否则底部确认栏会在升版途中消失，
+    // 打字框冒出来，用户可能在模型重做计划的同一轮里又发一条新消息
+    if (m && m.role === 'ai' && m.planCard && (m.planCard.status === 'pending' || m.planCard.revising)) return m
   }
   return null
 })
@@ -1467,6 +1477,49 @@ const planCountdownText = computed(() => {
   const s = Math.max(0, Math.ceil((c.deadline - planNow.value) / 1000))
   return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0')
 })
+/**
+ * 退回重出（revise）中途被打断：丢掉半截新稿，把上一份完整稿恢复为当前版
+ * （版本链回到原长度）。半截稿既不能批准、也不该当成一版给人看。
+ */
+function restoreAbortedDraft (c) {
+  const vs = Array.isArray(c.versions) ? c.versions : []
+  const prev = vs.length ? vs[vs.length - 1] : null
+  if (prev) {
+    c.plan = prev.plan || ''
+    c.feedback = prev.feedback || ''
+    vs.pop()
+  }
+}
+
+/**
+ * 本轮结束时收掉一张没走完的计划卡（被停止 / 断流 / 报错）。
+ * <p>不处理的话卡片会永远停在「生成中…」：`pendingPlan` 认 drafting/revising，拍板栏与输入框
+ * 一起被锁死，用户除了刷新没有出口。退回重出（revise）尤其危险——半截新稿既不能批准
+ * （旧裁决已被 revise 消费掉），也不该当成一版给人看，所以恢复上一份完整稿、卡片落「已停止」。
+ * <p>`!revisingStarted` 的那一支不在这里收：那是「意见刚提交、新稿一个字还没来」，原稿还完整待确认。
+ */
+function settleAbortedPlan (msg) {
+  const c = msg && msg.planCard
+  if (!c) return false
+  if (c.revising && c.revisingStarted) {
+    restoreAbortedDraft(c)
+    c.status = 'stopped'
+    c.revising = false
+    c.revisingStarted = false
+    c.pendingFeedback = ''
+    c.busy = false
+    msg.planStopped = true
+    return true
+  }
+  if (c.status === 'drafting') {
+    // 首版计划没写完就结束：半截正文仍可查看，但卡必须落终态
+    c.status = 'stopped'
+    c.busy = false
+    msg.planStopped = true
+    return true
+  }
+  return false
+}
 
 // ==================== 目标模式（Goal Mode） ====================
 // 对齐 DSH：用户写一句目标，系统自己跨轮往下推进，做完了就停——没有验收标准、没有人工确认、
@@ -1568,9 +1621,9 @@ async function goalAct (action, extra) {
       g.busy = false
       return null
     }
-    // 删除是「从界面上撤下」：即便服务端回的是 CANCELLED 视图，也不把它重新贴回右栏面板，
-    // 否则用户点了删除还看见一张「已结束」的目标卡。刷新后端点也会对 CANCELLED 回 null。
-    if (action === 'clear') setGoal(sid, null)
+    // 取消是「结束并留痕」：服务端回 CANCELLED，视图保留它（终态卡与过程回看要用）。
+    // 删除记录才是从界面上撤下——旧客户端的 clear 也按删除处理（它本来就是那个意思）。
+    if (action === 'delete' || action === 'clear' || action === 'clearRecord') setGoal(sid, null)
     else if (r && r.data) setGoal(sid, { ...r.data })
     // 继续（以及改目标后仍在跑）都可能当场有新的一轮在飞：接流不等探测那一跳
     if (action === 'resume' || (action === 'edit' && goalsMap.value[sid]?.status === 'RUNNING')) {
@@ -1603,6 +1656,43 @@ const goalBarMeta = computed(() => goalBarMetaOf(sessionGoal.value))
 const goalCanPause = computed(() => goalCanPauseOf(sessionGoal.value))
 const goalCanResume = computed(() => goalCanResumeOf(sessionGoal.value))
 const goalCanEdit = computed(() => goalCanEditOf(sessionGoal.value))
+/** 取消 / 删除记录是两件事：取消任何活目标（含未完成）都能点，删除只在终态出现 */
+const goalCanCancel = computed(() => goalCanCancelOf(sessionGoal.value))
+const goalCanClearRecord = computed(() => goalCanClearRecordOf(sessionGoal.value))
+const goalPreempted = computed(() => goalPreemptedOf(sessionGoal.value))
+/** 条子三段：身份（原文+版本）/ 进度（轮次+细条）/ 动作——token、时间都在详情抽屉里 */
+const goalVersionLabel = computed(() => goalVersionLabelOf(sessionGoal.value))
+const goalProgressPercent = computed(() => goalProgressPercentOf(sessionGoal.value))
+/** 消息流里的终态卡：挂在「设为目标」那条回声下，按 goalId 认；删除记录后 sessionGoal 变 null 即消失 */
+const goalTerminalCard = computed(() => sessionGoal.value && goalTerminalCardOf(sessionGoal.value) ? sessionGoal.value : null)
+const goalTerminalTitle = computed(() => goalTerminalTitleOf(sessionGoal.value))
+const goalTerminalNote = computed(() => goalTerminalNoteOf(sessionGoal.value))
+/** 目标轮正在浏览器里流式呈现（turnId 以 goal: 开头）：这时用户发送＝插话，不得排成 steer */
+const goalTurnStreaming = computed(() => {
+  const sid = currentSessionId.value
+  const st = sid ? chatStreams.get(sid) : null
+  return !!(st && st.msg && String(st.msg.turnId || '').startsWith('goal:'))
+})
+/** 本地让出目标轮的呈现通道：只断开这一侧，不请服务端停止。
+ *  标记 surrendered 让收尾不把这段空回答写成「已停止生成」——它实际是被用户这句打断的。 */
+const surrenderGoalStream = () => {
+  const sid = currentSessionId.value
+  const st = sid ? chatStreams.get(sid) : null
+  if (!st || !st.msg || !String(st.msg.turnId || '').startsWith('goal:')) return false
+  st.surrendered = true
+  chatStreams.delete(sid)
+  const m = st.msg
+  m.loading = false
+  // 这一轮还没来得及吐出任何一段正文（只剩一颗刚点亮的空壳）：直接撤下，
+  // 否则用户那句插话的下面会留一行空白气泡。已经跑出内容/工具过程的不动——那是用户要回看的痕。
+  if (!String(m.content || '').trim() && !(m.toolCalls || []).length && !(m.artifacts || []).length
+      && !(m.timeline || []).length && !m.errorCard) {
+    const i = messages.value.indexOf(m)
+    if (i >= 0) messages.value.splice(i, 1)
+  }
+  try { st.abort?.abort() } catch (e) { /* 已断开 */ }
+  return true
+}
 /** 条子里那一行红字：动作失败的原文（条子就在眼睛前面，不弹层；悬浮行与详情面带着细节） */
 const goalBarError = computed(() => sessionGoal.value?.actionError || '')
 const runGoalAction = action => goalAct(action)
@@ -1680,6 +1770,40 @@ async function submitPlanApproval (m, action) {
   } catch (e) {
     message.error(e.message || '提交失败')
     if (m.planCard) m.planCard.busy = false
+  }
+}
+
+/**
+ * 计划「同一轮退回重出」（默认修改路径，DECISION 01）：意见不回显成用户消息，消息流不新增气泡；
+ * 本版在下一份增量到达时归档进 versions，卡片原地显示新一版。可反复，直到批准/拒绝/超时。
+ * 恢复态卡没有本设备的流可接，改走「转到对话修改」（supersede），避免提交后等不到新稿。
+ */
+async function revisePlanInPlace (m, text) {
+  const c = m && m.planCard
+  if (!c || c.busy || c.status !== 'pending') return false
+  if (c.restored) { message.warning('这张计划卡是恢复的，修改请用「转到对话修改」'); return false }
+  const q = String(text || '').trim()
+  if (!q) { message.warning('先写下要改什么，再提交修改'); return false }
+  c.busy = true
+  c.pendingFeedback = q
+  try {
+    const r = await revisePlanApproval(c.id, q)
+    if (r && r.success === false) {
+      message.warning(r.msg || '提交失败')
+      c.busy = false
+      c.pendingFeedback = ''
+      return false
+    }
+    c.revising = true
+    c.revisingStarted = false
+    c.deadline = 0                      // 旧一版的倒计时到此为止；新稿的 plan_approval 会带新的 timeoutMs
+    scrollSoft()
+    return true
+  } catch (e) {
+    message.error(e.message || '提交失败')
+    c.busy = false
+    c.pendingFeedback = ''
+    return false
   }
 }
 
@@ -2706,7 +2830,17 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       // 计划模式：计划正文流式增量进计划卡（终版以 plan_approval 下发的落库稿为准）
       if (!msg.planCard) msg.planCard = { plan: '', status: 'drafting', busy: false, editText: '', versions: [], feedback: '' }
       const c = msg.planCard
-      if (c.status !== 'drafting') return   // 已进入待批准态：迟到的增量丢弃（以权威稿为准）
+      // 退回重出（revise）：第一份新稿增量到达时才归档旧版——此前提交失败仍能回到原稿；
+      // feedback 归属「产出它的那条意见」（后端 versions 同一口径）：旧版带走旧 feedback，
+      // 新意见立即挂到正在生成的新版上，抽屉里逐版读得出为什么改。
+      if (c.revising && !c.revisingStarted) {
+        if (planText(c.plan)) c.versions.push({ plan: c.plan, feedback: c.feedback || '' })
+        c.feedback = c.pendingFeedback || ''
+        c.plan = ''
+        c.revisingStarted = true
+      }
+      if (c.status !== 'drafting' && !(c.revising && c.revisingStarted)) return
+      if (c.revising && c.revisingStarted) c.status = 'drafting'
       c.plan += t
       liveScroll()
     },
@@ -2717,10 +2851,24 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         if (!j || !j.planApprovalId) return
         if (!msg.planCard) msg.planCard = { plan: '', status: 'drafting', busy: false, editText: '', versions: [], feedback: '' }
         const c = msg.planCard
+        // 没有增量、直接出终稿：这里补一次旧版归档（旧版带走它自己的 feedback，新意见挂到新版）
+        if (c.revising && !c.revisingStarted && planText(c.plan)) {
+          c.versions.push({ plan: c.plan, feedback: c.feedback || '' })
+          c.feedback = c.pendingFeedback || ''
+          c.plan = ''
+          c.revisingStarted = true
+        }
         c.id = j.planApprovalId
         // 后端权威稿（已剥标签/护栏截断）覆盖流式累积；过 planText 归一化，
         // 非字符串直接透传会让卡片渲染成 [object Object]
         c.plan = planText(j.plan) || c.plan
+        if (c.revising) {
+          // 这一版对应的意见写进版本链（当前版 feedback；不改 feedback 会串到旧版说明上）
+          c.feedback = c.pendingFeedback || ''
+          c.revising = false
+          c.revisingStarted = false
+          c.pendingFeedback = ''
+        }
         c.timeoutMs = Number(j.timeoutMs) || 0
         c.deadline = c.timeoutMs > 0 ? Date.now() + c.timeoutMs : 0
         c.status = 'pending'
@@ -2731,13 +2879,28 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
     },
     onPlanCancelled: () => {
       // 计划被拒/超时：卡片定格为「未批准」，整轮就此收束（后端不再发回答，done 也无正文）
-      if (msg.planCard) { msg.planCard.status = 'rejected'; msg.planCard.busy = false }
+      if (msg.planCard) {
+        // 退回重出的新稿没写完就整轮收束：恢复上一份完整稿，别把半截内容当终版
+        if (msg.planCard.revising && msg.planCard.revisingStarted) restoreAbortedDraft(msg.planCard)
+        msg.planCard.status = 'rejected'
+        msg.planCard.busy = false
+        msg.planCard.revising = false
+        msg.planCard.revisingStarted = false
+        msg.planCard.pendingFeedback = ''
+      }
       msg.planStopped = true
       liveScroll()
     },
     onPlanSuperseded: () => {
       // 用户对计划提出修改、继续对话：本版定格「已被取代」，整轮就此收束（新一轮将按意见重做计划）
-      if (msg.planCard) { msg.planCard.status = 'superseded'; msg.planCard.busy = false }
+      if (msg.planCard) {
+        if (msg.planCard.revising && msg.planCard.revisingStarted) restoreAbortedDraft(msg.planCard)
+        msg.planCard.status = 'superseded'
+        msg.planCard.busy = false
+        msg.planCard.revising = false
+        msg.planCard.revisingStarted = false
+        msg.planCard.pendingFeedback = ''
+      }
       msg.planSuperseded = true
       liveScroll()
     },
@@ -2940,6 +3103,17 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         // 「未批准 · 已停止本轮」与「已被取代」已经标在计划卡角标上，两句并排是重复
         if (p.planCancelled) msg.planStopped = true
         if (p.planSuperseded) msg.planSuperseded = true
+        // 退回重出没有等到新稿就收尾（后端报错/被停）：解锁并退回原稿状态，别把确认栏锁死
+        if (msg.planCard) {
+          msg.planCard.busy = false
+          if (msg.planCard.revising && !msg.planCard.revisingStarted) {
+            msg.planCard.revising = false
+            msg.planCard.pendingFeedback = ''
+          } else {
+            // 半截新稿 / 没写完的首版：卡片落「已停止」，确认栏与输入框随之解锁
+            settleAbortedPlan(msg)
+          }
+        }
         // 插话队列结算：本轮收尾（答完/被停/失败）时结算一次——还没点「立即发送」的在这里
         // 自动作为新一轮发出（本轮已结束，"插进去"没有对象了），纯文字没赶上工具步的由后端回
         // pendingSteers。用户说过的话不许静默丢掉，这是插话机制的底线。
@@ -3025,7 +3199,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       // 空正文那一支的收束语排在补尾注<b>之后</b>，两者只出一个。早先排在之前，尾注那句的「正文为空
       // 就不补」判据被自己刚填的那句骗过，界面上就是「（已停止生成）」与「已停止本轮」并排（真机 2026-11-04）。
       // 计划被拒/超时、被「继续对话」取代那两支都不写：卡片角标已经说了同一件事（「未批准 · 已停止本轮」/「已被取代」）。
-      if (msg.content === '' && !msg.planStopped && !msg.planSuperseded) {
+      if (msg.content === '' && !msg.planStopped && !msg.planSuperseded && !st.surrendered) {
         msg.content = STOP_PLACEHOLDER
       }
       // 整轮已收口：提问卡（若还在）撤掉——超时/忽略走的是 done 前的 tool_status 终态，此处兜底
@@ -3136,6 +3310,15 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       msg.retrying = false
       // 这一轮已经断了，审批卡不会再有结果：撤掉，别留两颗必然点不动的按钮
       msg.approvals = []
+      // 计划卡同理：断流/报错不会再有 plan_approval，卡不能停在「生成中」把输入框锁死
+      settleAbortedPlan(msg)
+      if (msg.planCard) {
+        msg.planCard.busy = false
+        if (msg.planCard.revising && !msg.planCard.revisingStarted) {
+          msg.planCard.revising = false
+          msg.planCard.pendingFeedback = ''
+        }
+      }
       // 本轮失败：正在长的那一段思考必须停下进行中标记（它认的是「这一轮还在流」，
       // 而 loading 已假 → 该段自然收起），否则那一行会永远转下去，把「这一轮断了」读成「它还在想」
       msg.thinkLoading = false
@@ -3999,7 +4182,7 @@ onUnmounted(() => {
     pickAskOption, commitAskCustom, askOptionPicked, askCustomPicked, askQuestionAnswered,
     askAnsweredCount, askNextUnanswered, askAnswerText, askAutoSubmittable, askHintText,
     // 计划模式（人在回路）：开关（/plan 命令）与计划卡裁决动作；hydrate 供通知深链/切会话点名
-    planModeOn, setPlanMode, submitPlanApproval, continuePlanConversation, hydratePendingPlans,
+    planModeOn, setPlanMode, submitPlanApproval, revisePlanInPlace, continuePlanConversation, hydratePendingPlans,
     // 待批准卡的派生态与倒计时（确认栏顶替打字框的判据，两端共用）
     pendingPlan, curPlanCard, planExpired, planCountdownText,
     // 工具审批卡倒计时：PC 直接调 approvalLeftSecOf(card)，移动壳把 approvalNow 传给消息行
@@ -4009,6 +4192,8 @@ onUnmounted(() => {
     // 目标条与详情面的状态口径（词汇、显隐、动作可用性）＋就地编辑态：两端共用一份，不在页面里各写一遍
     goalTerminal, goalBarVisible, goalPhrase, goalBarTitle, goalBarMeta, goalBarError, goalBlockReason,
     goalStateLabel, goalStateClass, goalRoundLine, goalCanPause, goalCanResume, goalCanEdit,
+    goalCanCancel, goalCanClearRecord, goalPreempted, goalVersionLabel, goalProgressPercent,
+    goalTerminalCard, goalTerminalTitle, goalTerminalNote, goalTurnStreaming, surrenderGoalStream,
     goalEditing, goalEdit, goalEditBusy, goalEditSaveable, startGoalInlineEdit, saveGoalEdit,
     // 思考能力 / 档位
     thinkCapsOf, reasoningLevelsOf, deepThinkMap, deepOnOf, deepThinkOn, levelOptionsOf, currentLevelOf,

@@ -96,7 +96,8 @@ const outcomeLine = computed(() => goalOutcomeLineOf(props.card))
 .goal-state { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 1px 8px; border-radius: 8px; background: #f0f1f3; color: #555; white-space: nowrap; }
 .goal-state-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .goal-state.st-achieved { background: var(--app-ok-weak); color: var(--app-ok); }
-.goal-state.st-ended { background: var(--app-danger-weak); color: var(--app-danger); }
+.goal-state.st-ended, .goal-state.st-failed { background: var(--app-danger-weak); color: var(--app-danger); }
+.goal-state.st-cancelled { background: #f0f1f3; color: #777; }
 /* 暂停：用户自己踩的刹车，还归用户管，用警示色而不是「已终结」的红 */
 .goal-state.st-paused { background: var(--app-warn-weak); color: var(--app-warn-text); }
 .goal-state.st-running { background: var(--app-info-weak); color: var(--app-accent); }

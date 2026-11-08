@@ -1,0 +1,1488 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>问渠 · 目标模式 UI/UX —— 暂停 / 修改 / 继续 / 取消 / 运行中插话 方案与效果图</title>
+<style>
+/* ============================================================
+   报告外壳：沿用问渠工作台设计令牌（与 plan-mode-ux 同一套）
+   ============================================================ */
+:root {
+  --bg: #f4f6f9;
+  --bg2: #ffffff;
+  --bg3: #fafbfc;
+  --ink: #1f2329;
+  --muted: #5f6570;
+  --faint: #98a0aa;
+  --rule: #e6e9ed;
+  --rule2: #d8dde3;
+  --accent: #2e6be6;
+  --accent-weak: #eef2f7;
+  --accent-border: #bcd0f7;
+  --ok: #3b8f4e;
+  --ok-weak: #eaf5ec;
+  --warn: #a3691b;
+  --warn-weak: #faf3e6;
+  --warn-border: #f0dfb6;
+  --danger: #cf1322;
+  --danger-weak: #fff2f0;
+  --danger-border: #f3c9c9;
+  --violet: #7c3aed;
+  --violet-weak: #f5f3ff;
+  --code: #f0f2f5;
+  --radius: 10px;
+  --radius-lg: 14px;
+  --shadow: 0 18px 50px rgba(16, 24, 40, .12);
+  --shadow-sm: 0 2px 8px rgba(16, 24, 40, .06);
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+          'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+button { font-family: var(--font); cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---------- 报告骨架 ---------- */
+.report {
+  max-width: 1180px;
+  margin: 28px auto 64px;
+  background: var(--bg2);
+  border: 1px solid var(--rule);
+  border-radius: 18px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.cover {
+  padding: 52px 56px 38px;
+  background: linear-gradient(180deg, #fbfcff 0%, #ffffff 100%);
+  border-bottom: 1px solid var(--rule);
+}
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: .16em;
+  color: var(--accent);
+  text-transform: uppercase;
+}
+.cover h1 {
+  margin: 16px 0 0;
+  font-size: 36px;
+  line-height: 1.26;
+  letter-spacing: -.02em;
+  font-weight: 700;
+}
+.cover h1 em { font-style: normal; color: var(--accent); }
+.lede {
+  max-width: 820px;
+  margin: 18px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.85;
+}
+.lede b { color: var(--ink); }
+.meta-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 24px; }
+.meta-chip {
+  font-size: 11.5px;
+  color: var(--muted);
+  border: 1px solid var(--rule);
+  background: var(--bg2);
+  border-radius: 999px;
+  padding: 4px 11px;
+}
+.meta-chip b { color: var(--ink); font-weight: 600; }
+.summary-band { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 28px; }
+.summary-card {
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  padding: 15px 16px 14px;
+  background: linear-gradient(180deg, #fff, var(--bg3));
+}
+.summary-card .num {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .08em;
+  color: var(--accent);
+}
+.summary-card strong { display: block; margin-top: 7px; font-size: 15px; }
+.summary-card span { display: block; margin-top: 4px; font-size: 12px; color: var(--muted); line-height: 1.65; }
+.toc {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 20px;
+  margin-top: 26px;
+  padding-top: 18px;
+  border-top: 1px dashed var(--rule);
+}
+.toc a { font-size: 12px; color: var(--muted); }
+.toc a:hover { color: var(--accent); }
+
+.sec { padding: 42px 56px; border-bottom: 1px solid var(--rule); }
+.sec:last-of-type { border-bottom: 0; }
+.sec-head { display: flex; align-items: baseline; gap: 14px; }
+.sec-no { font-family: var(--mono); font-size: 11px; color: var(--accent); letter-spacing: .08em; }
+.sec h2 { margin: 0; font-size: 22px; letter-spacing: -.01em; }
+.lead { max-width: 900px; margin: 12px 0 0; color: var(--muted); line-height: 1.85; }
+.lead b { color: var(--ink); }
+.sub { margin: 30px 0 0; font-size: 15px; }
+.sub:first-of-type { margin-top: 24px; }
+.sub-note { margin: 4px 0 0; font-size: 12.5px; color: var(--faint); }
+.kbd {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--muted);
+  border: 1px solid var(--rule2);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 1px 5px;
+  background: var(--bg3);
+  white-space: nowrap;
+}
+code {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--code);
+  border-radius: 4px;
+  padding: 1px 5px;
+  white-space: nowrap;
+}
+
+/* ---------- 诊断 / 原则 ---------- */
+.issue-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 18px; }
+.issue {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--bg3);
+  padding: 13px 15px 14px;
+}
+.issue .tag { font-family: var(--mono); font-size: 9.5px; letter-spacing: .08em; color: var(--danger); }
+.issue h4 { margin: 5px 0 0; font-size: 13.5px; }
+.issue p { margin: 5px 0 0; font-size: 12.5px; line-height: 1.7; color: var(--muted); }
+.issue code { display: inline-block; margin-top: 8px; }
+
+.goal-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 18px; }
+.goal {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  padding: 16px 16px 14px;
+  background: linear-gradient(180deg, var(--bg3), #fff);
+}
+.goal .big { font-size: 26px; line-height: 1; font-weight: 750; letter-spacing: -.03em; color: var(--accent); }
+.goal h4 { margin: 8px 0 0; font-size: 13.5px; }
+.goal p { margin: 4px 0 0; font-size: 12px; line-height: 1.65; color: var(--muted); }
+
+.principle-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 18px; }
+.principle {
+  display: flex;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--bg3);
+}
+.principle .pno { font-family: var(--mono); font-size: 10.5px; font-weight: 700; color: var(--accent); padding-top: 1px; }
+.principle strong { display: block; font-size: 13px; }
+.principle p { margin: 2px 0 0; font-size: 12px; line-height: 1.65; color: var(--muted); }
+
+/* ---------- 线框图 ---------- */
+.wire {
+  margin-top: 18px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-lg);
+  padding: 14px;
+  background: var(--bg3);
+}
+.wire-main { display: flex; flex-direction: column; gap: 8px; }
+.wire-box {
+  position: relative;
+  border: 1px dashed var(--rule2);
+  border-radius: var(--radius);
+  background: var(--bg2);
+  padding: 10px 12px 10px 38px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.wire-box strong { color: var(--ink); }
+.wire-box .n {
+  position: absolute; left: 10px; top: 9px;
+  width: 20px; height: 20px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--mono); font-size: 10px; font-weight: 700;
+  color: #fff; background: var(--accent);
+}
+.wire-box.accent { border-color: var(--accent-border); background: var(--accent-weak); }
+.wire-box.tall { min-height: 62px; }
+
+/* ---------- 表格 ---------- */
+.tbl { width: 100%; border-collapse: collapse; margin-top: 16px; font-size: 12.5px; }
+.tbl th {
+  text-align: left;
+  font-weight: 600;
+  font-size: 11.5px;
+  color: var(--muted);
+  background: var(--bg3);
+  border: 1px solid var(--rule);
+  padding: 8px 10px;
+  white-space: nowrap;
+}
+.tbl td { border: 1px solid var(--rule); padding: 8px 10px; vertical-align: top; line-height: 1.65; }
+.tbl td:first-child { font-weight: 600; white-space: nowrap; }
+.tbl tr:nth-child(even) td { background: #fcfcfd; }
+.tbl .ok { color: var(--ok); font-weight: 600; }
+.tbl .warn { color: var(--warn); font-weight: 600; }
+.tbl .danger { color: var(--danger); font-weight: 600; }
+
+.bullets { margin: 12px 0 0; padding-left: 18px; }
+.bullets li { margin: 5px 0; font-size: 13px; line-height: 1.7; color: var(--muted); }
+.bullets li b { color: var(--ink); }
+
+/* ---------- 决策卡 ---------- */
+.decisions { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 16px; }
+.decision {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  padding: 14px 15px;
+  background: var(--bg3);
+}
+.decision .dno { font-family: var(--mono); font-size: 9.5px; color: var(--warn); letter-spacing: .08em; }
+.decision h4 { margin: 4px 0 0; font-size: 13.5px; }
+.decision p { margin: 5px 0 0; font-size: 12.5px; line-height: 1.7; color: var(--muted); }
+.decision .opts { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+.decision .opt { font-size: 12px; color: var(--muted); }
+.decision .opt b { color: var(--ink); }
+.decision .opt.rec b { color: var(--ok); }
+
+/* ============================================================
+   Mock 设计令牌（与线上 app.css 同源）
+   ============================================================ */
+.ui-scope {
+  --m-bg: #f7f8fa;
+  --m-panel: #ffffff;
+  --m-panel2: #fafbfc;
+  --m-line: #e6e9ed;
+  --m-line2: #d8dde3;
+  --m-ink: #1f2329;
+  --m-muted: #5f6570;
+  --m-faint: #98a0aa;
+  --m-accent: #2e6be6;
+  --m-accent-weak: #eef2f7;
+  --m-accent-border: #bcd0f7;
+  --m-ok: #3b8f4e;
+  --m-ok-weak: #eaf5ec;
+  --m-warn: #a3691b;
+  --m-warn-weak: #faf3e6;
+  --m-warn-border: #f0dfb6;
+  --m-danger: #cf1322;
+  --m-danger-weak: #fff2f0;
+  --m-danger-border: #f3c9c9;
+  --m-violet: #7c3aed;
+  --m-violet-weak: #f5f3ff;
+  line-height: 1.5;
+  color: var(--m-ink);
+}
+.ico {
+  width: 14px; height: 14px; flex: none;
+  fill: none; stroke: currentColor;
+  stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round;
+}
+.ico.fill { fill: currentColor; stroke: none; }
+.spacer { flex: 1; }
+
+.mock-scroll { overflow-x: auto; padding-bottom: 4px; }
+.mock {
+  width: 100%;
+  min-width: 760px;
+  margin-top: 16px;
+  background: var(--m-bg);
+  border: 1px solid var(--m-line2);
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 16px 40px rgba(16, 24, 40, .10);
+  font-size: 13px;
+  position: relative;
+}
+.mk-bar {
+  height: 34px;
+  display: flex; align-items: center; gap: 10px;
+  padding: 0 12px;
+  background: #f1f3f5;
+  border-bottom: 1px solid var(--m-line);
+}
+.mk-bar .dots { display: flex; gap: 5px; }
+.mk-bar .dots i { width: 9px; height: 9px; border-radius: 50%; background: #d3d8de; display: block; }
+.mk-bar .dots i:first-child { background: #e6a6a0; }
+.mk-bar .dots i:nth-child(2) { background: #e6cf9b; }
+.mk-bar .dots i:nth-child(3) { background: #a9cfae; }
+.mk-url {
+  flex: 1; max-width: 520px; margin: 0 auto;
+  height: 20px; border-radius: 6px;
+  background: var(--m-panel);
+  border: 1px solid var(--m-line);
+  display: flex; align-items: center; padding: 0 10px;
+  font-family: var(--mono); font-size: 10px; color: var(--m-faint);
+}
+.mk-tag {
+  font-size: 10px; color: var(--m-muted);
+  border: 1px solid var(--m-line); border-radius: 999px;
+  padding: 1px 7px; background: var(--m-panel);
+}
+.mk-body { padding: 22px 28px 26px; }
+.mk-chat { min-height: 210px; }
+
+/* ---------- 聊天气泡 ---------- */
+.m-msg { display: flex; margin-bottom: 14px; }
+.m-msg.user { justify-content: flex-end; }
+.m-msg.ai { justify-content: flex-start; }
+.bubble {
+  background: var(--m-panel2);
+  border-radius: 12px;
+  padding: 9px 14px;
+  max-width: 520px;
+  font-size: 13px;
+  line-height: 1.65;
+}
+.bubble.user { background: var(--m-accent-weak); color: #1b4bb5; }
+.ai-line { margin: 0; font-size: 13px; color: var(--m-ink); }
+.ai-line .dim { color: var(--m-muted); }
+
+/* ---------- 目标条（建议稿） ---------- */
+.m-composer {
+  border-top: 1px solid var(--m-line);
+  background: var(--m-panel);
+  padding: 12px 24px 16px;
+}
+.composer-card {
+  border: 1px solid var(--m-line2);
+  border-radius: 12px;
+  background: var(--m-panel);
+  padding: 12px;
+  max-width: 680px;
+  margin: 0 auto;
+  box-shadow: 0 4px 14px rgba(16,24,40,.05);
+}
+.goalbar {
+  display: flex; flex-direction: column; gap: 8px;
+  padding-bottom: 10px; margin-bottom: 2px;
+  border-bottom: 1px solid var(--m-line);
+}
+.gb-row1 { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.gb-pill {
+  flex: none; display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11.5px; line-height: 20px; padding: 0 8px; border-radius: 999px;
+  background: var(--m-accent-weak); color: var(--m-accent); white-space: nowrap;
+  border: 1px solid var(--m-accent-border);
+}
+.gb-pill .ico { width: 12px; height: 12px; }
+.gb-obj {
+  flex: 1; min-width: 0;
+  font-size: 13px; font-weight: 600; line-height: 1.45;
+  color: var(--m-ink);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.gb-obj.one { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gb-ver {
+  flex: none; font-family: var(--mono); font-size: 9.5px;
+  color: var(--m-muted); border: 1px solid var(--m-line);
+  border-radius: 4px; padding: 0 4px;
+}
+.state {
+  flex: none; display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11.5px; line-height: 20px; padding: 0 8px; border-radius: 999px;
+  white-space: nowrap; border: 1px solid transparent;
+}
+.state i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; display: block; }
+.state.run { background: var(--m-accent-weak); color: var(--m-accent); border-color: var(--m-accent-border); }
+.state.run i { animation: breathe 1.8s ease-in-out infinite; }
+@keyframes breathe { 0%,100%{opacity:1} 50%{opacity:.3} }
+.state.pause { background: var(--m-warn-weak); color: var(--m-warn); border-color: var(--m-warn-border); }
+.state.wait { background: #f6f7f8; color: var(--m-muted); border-color: var(--m-line); }
+.state.done { background: var(--m-ok-weak); color: var(--m-ok); border-color: #cfe4d3; }
+.state.end { background: var(--m-danger-weak); color: var(--m-danger); border-color: var(--m-danger-border); }
+
+.gb-row2 { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.gb-meta { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--m-muted); white-space: nowrap; }
+.gb-meta .ico { width: 12px; height: 12px; color: var(--m-faint); }
+.gb-meta b { font-weight: 600; color: var(--m-ink); font-variant-numeric: tabular-nums; }
+.gb-reason { flex: 1; min-width: 0; font-size: 11.5px; color: var(--m-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gb-reason.warn { color: var(--m-warn); }
+.gb-link {
+  flex: none; border: none; background: none; padding: 0;
+  display: inline-flex; align-items: center; gap: 2px;
+  font-size: 11.5px; color: var(--m-accent);
+}
+.gb-link .ico { width: 11px; height: 11px; }
+.budget { flex: none; display: inline-flex; align-items: center; gap: 6px; font-size: 10.5px; color: var(--m-faint); font-variant-numeric: tabular-nums; }
+.budget .track { width: 64px; height: 4px; border-radius: 2px; background: #e9ecf0; overflow: hidden; }
+.budget .track i { display: block; height: 100%; width: 26%; background: var(--m-accent); border-radius: 2px; }
+.budget.low .track i { background: var(--m-warn); }
+
+.gb-row3 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.gb-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.m-btn {
+  height: 28px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  padding: 0 12px;
+  border-radius: 7px;
+  border: 1px solid var(--m-line2);
+  background: #fff;
+  color: var(--m-muted);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+.m-btn .ico { width: 12px; height: 12px; }
+.m-btn.primary { background: var(--m-accent); border-color: var(--m-accent); color: #fff; font-weight: 600; }
+.m-btn.primary .ico { color: #fff; }
+.m-btn.warn { color: var(--m-warn); border-color: var(--m-warn-border); background: #fffaf0; font-weight: 600; }
+.m-btn.danger { color: var(--m-danger); border-color: var(--m-danger-border); background: #fff; }
+.m-btn.text { border-color: transparent; background: none; color: var(--m-faint); padding: 0 6px; }
+.m-btn:disabled { opacity: .5; }
+
+/* 目标条现状（对照用） */
+.goalbar-old {
+  display: flex; align-items: center; gap: 8px;
+  padding-bottom: 8px; margin-bottom: 8px;
+  border-bottom: 1px solid var(--m-line);
+  min-width: 0;
+}
+.gb-old-obj { flex: 1; min-width: 0; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.round {
+  flex: none; font-size: 10.5px; line-height: 18px; padding: 0 6px;
+  border: 1px solid var(--m-line); border-radius: 6px; color: var(--m-faint); white-space: nowrap;
+}
+.iconbtn {
+  flex: none; width: 26px; height: 26px; border: none; background: none; border-radius: 50%;
+  color: var(--m-faint); display: inline-flex; align-items: center; justify-content: center;
+}
+.iconbtn.danger { color: var(--m-danger); }
+.iconbtn.group { border: 1px solid var(--m-line); background: #fff; }
+
+/* 输入框 */
+.ci-box {
+  min-height: 62px; display: flex; flex-direction: column; justify-content: space-between;
+  padding: 6px 2px 2px;
+}
+.ci-text { font-size: 12.5px; color: var(--m-faint); }
+.ci-foot { display: flex; align-items: center; gap: 6px; margin-top: 14px; }
+.ci-tool {
+  width: 24px; height: 24px; border: 1px solid var(--m-line); border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center; color: var(--m-faint);
+  font-size: 12px; background: #fff;
+}
+.ci-send {
+  margin-left: auto; width: 30px; height: 30px; border-radius: 50%;
+  border: none; background: var(--m-accent); color: #fff;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+
+/* 编辑态 */
+.gb-edit {
+  border: 1px solid var(--m-line2); border-radius: 10px; background: #fff;
+  padding: 10px 12px; display: flex; flex-direction: column; gap: 8px;
+}
+.gb-edit textarea {
+  border: none; outline: none; resize: none; width: 100%; min-height: 54px;
+  font-family: var(--font); font-size: 13px; line-height: 1.6; color: var(--m-ink);
+  padding: 0; background: transparent;
+}
+.gb-edit .hint { font-size: 10.5px; color: var(--m-faint); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.gb-edit .hint b { color: var(--m-accent); font-weight: 600; }
+.gb-edit .hint .warn { color: var(--m-warn); }
+.gb-edit-foot { display: flex; align-items: center; gap: 8px; }
+.gb-edit-foot .spacer { flex: 1; }
+.vrail { display: inline-flex; align-items: center; gap: 3px; }
+.vrail span {
+  font-family: var(--mono); font-size: 9.5px; padding: 1px 5px; border-radius: 4px;
+  border: 1px solid var(--m-line); color: var(--m-faint);
+}
+.vrail span.on { background: var(--m-accent-weak); border-color: var(--m-accent-border); color: var(--m-accent); font-weight: 700; }
+.vrail .arr { border: none; color: var(--m-faint); }
+
+/* 浮层确认 */
+.pop {
+  position: relative;
+  max-width: 360px; margin: 0 auto 10px;
+  border: 1px solid var(--m-danger-border);
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 12px 30px rgba(16,24,40,.12);
+  overflow: hidden;
+}
+.pop-head { display: flex; align-items: center; gap: 7px; padding: 11px 14px 4px; font-size: 12.5px; font-weight: 600; }
+.pop-head .ico { color: var(--m-danger); }
+.pop-body { padding: 0 14px 10px; font-size: 11.5px; line-height: 1.65; color: var(--m-muted); }
+.pop-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 10px 14px; background: var(--m-panel2); border-top: 1px solid var(--m-line); }
+.pop-arrow {
+  position: absolute; left: 50%; bottom: -6px; width: 10px; height: 10px;
+  background: var(--m-panel2); border-right: 1px solid var(--m-danger-border); border-bottom: 1px solid var(--m-danger-border);
+  transform: translateX(-50%) rotate(45deg);
+}
+
+/* ---------- 终态卡（消息流内） ---------- */
+.goal-done {
+  max-width: 560px;
+  border: 1px solid var(--m-line2);
+  border-radius: 10px;
+  background: var(--m-panel);
+  overflow: hidden;
+  margin: 8px 0 0 auto;
+}
+.goal-done.ok { border-color: #cfe4d3; }
+.goal-done.end { border-color: var(--m-line2); }
+.gd-head { display: flex; align-items: center; gap: 7px; padding: 9px 12px; font-size: 12px; }
+.gd-head .ico { color: var(--m-ok); }
+.goal-done.end .gd-head .ico { color: var(--m-faint); }
+.gd-title { font-weight: 600; }
+.gd-meta { margin-left: auto; font-size: 10.5px; color: var(--m-faint); font-variant-numeric: tabular-nums; }
+.gd-body { padding: 0 12px 8px; font-size: 11.5px; line-height: 1.65; color: var(--m-muted); }
+.gd-foot { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-top: 1px dashed var(--m-line); background: var(--m-panel2); }
+.gd-foot .btnlink { border: none; background: none; padding: 0; font-size: 11px; color: var(--m-accent); }
+.gd-foot .btnlink.mute { color: var(--m-faint); margin-left: auto; }
+.gd-chip {
+  display: inline-flex; align-items: center; gap: 4px; font-size: 10px;
+  color: var(--m-muted); background: #f2f4f6; border-radius: 4px; padding: 1px 5px;
+}
+
+/* ---------- 目标详情抽屉 ---------- */
+.mock.split { display: flex; }
+.mk-chat-col { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.mk-chat-col .mk-body { flex: 1; }
+.drawer {
+  width: 430px; flex: none; border-left: 1px solid var(--m-line2);
+  background: var(--m-panel); display: flex; flex-direction: column;
+  box-shadow: -8px 0 24px rgba(16,24,40,.06);
+}
+.dw-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 14px 16px; border-bottom: 1px solid var(--m-line);
+}
+.dw-eyebrow { font-family: var(--mono); font-size: 9px; letter-spacing: .1em; color: var(--m-faint); }
+.dw-title { font-size: 13px; font-weight: 600; }
+.dw-close { margin-left: auto; width: 24px; height: 24px; border: none; background: none; color: var(--m-faint); display: inline-flex; align-items: center; justify-content: center; }
+.dw-body { flex: 1; overflow: auto; padding: 14px 16px 18px; }
+.dw-obj {
+  font-size: 13px; font-weight: 600; line-height: 1.6; margin: 0 0 10px;
+}
+.dw-sub { font-size: 10.5px; color: var(--m-faint); margin: 14px 0 7px; letter-spacing: .04em; }
+.dw-state-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.bar-line { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 11px; color: var(--m-muted); }
+.bar-line .lab { width: 44px; flex: none; color: var(--m-faint); }
+.bar-line .track { flex: 1; height: 5px; border-radius: 3px; background: #eceff3; overflow: hidden; }
+.bar-line .track i { display: block; height: 100%; border-radius: 3px; background: var(--m-accent); }
+.bar-line .num { width: 72px; flex: none; text-align: right; font-variant-numeric: tabular-nums; font-size: 10.5px; color: var(--m-faint); }
+.rounds { display: flex; flex-direction: column; gap: 0; margin-top: 4px; }
+.round-row {
+  display: flex; gap: 10px; padding: 9px 0;
+  border-bottom: 1px dashed var(--m-line);
+}
+.round-row:last-child { border-bottom: none; }
+.rr-dot { flex: none; width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--m-line2); color: var(--m-faint); font-family: var(--mono); font-size: 9.5px; display: flex; align-items: center; justify-content: center; margin-top: 1px; background: #fff; }
+.round-row.ok .rr-dot { border-color: #cfe4d3; background: var(--m-ok-weak); color: var(--m-ok); }
+.round-row.warn .rr-dot { border-color: var(--m-warn-border); background: var(--m-warn-weak); color: var(--m-warn); }
+.round-row.run .rr-dot { border-color: var(--m-accent-border); background: var(--m-accent-weak); color: var(--m-accent); }
+.rr-main { flex: 1; min-width: 0; }
+.rr-title { font-size: 11.5px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+.rr-title .t { font-family: var(--mono); font-size: 9.5px; color: var(--m-faint); font-weight: 400; }
+.rr-desc { font-size: 11px; color: var(--m-muted); line-height: 1.6; margin-top: 2px; }
+.rr-link { font-size: 10.5px; color: var(--m-accent); margin-top: 3px; display: inline-block; }
+.dw-outcome {
+  border: 1px solid var(--m-line); background: var(--m-panel2);
+  border-radius: 8px; padding: 9px 10px; font-size: 11px; line-height: 1.65; color: var(--m-muted);
+}
+.dw-foot {
+  display: flex; align-items: center; gap: 8px; padding: 11px 16px;
+  border-top: 1px solid var(--m-line); background: var(--m-panel2);
+}
+.dw-foot .spacer { flex: 1; }
+
+/* ---------- 手机 ---------- */
+.phone {
+  width: 375px; margin: 16px auto 0;
+  background: #fff; border: 1px solid var(--m-line2); border-radius: 22px;
+  overflow: hidden; box-shadow: 0 16px 40px rgba(16,24,40,.12);
+}
+.ph-top { height: 34px; display: flex; align-items: center; justify-content: center; background: #fafbfc; border-bottom: 1px solid var(--m-line); font-size: 10px; color: var(--m-faint); }
+.ph-body { padding: 12px 12px 14px; }
+.m-goalbar {
+  border: 1px solid var(--m-line2); border-radius: 10px; background: #fff;
+  padding: 9px 10px; margin-bottom: 10px; box-shadow: 0 2px 8px rgba(16,24,40,.04);
+}
+.m-gb-row1 { display: flex; align-items: center; gap: 7px; }
+.m-gb-pill {
+  flex: none; display: inline-flex; align-items: center; gap: 4px;
+  font-size: 10.5px; line-height: 18px; padding: 0 7px; border-radius: 999px;
+  background: var(--m-warn-weak); color: var(--m-warn); border: 1px solid var(--m-warn-border);
+}
+.m-gb-pill .ico { width: 11px; height: 11px; }
+.m-gb-obj { flex: 1; min-width: 0; font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.m-gb-btn {
+  flex: none; width: 26px; height: 26px; border-radius: 50%;
+  border: none; background: var(--m-panel2); color: var(--m-muted);
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.m-gb-row2 { display: flex; align-items: center; gap: 8px; margin-top: 5px; font-size: 10px; color: var(--m-faint); }
+.m-gb-row2 .more { margin-left: auto; border: none; background: none; color: var(--m-accent); font-size: 10px; padding: 0; }
+.m-sheet {
+  margin-top: 12px; border: 1px solid var(--m-line2); border-radius: 14px 14px 0 0;
+  background: #fff; box-shadow: 0 -8px 24px rgba(16,24,40,.10); overflow: hidden;
+}
+.m-sheet-head { padding: 12px 14px 6px; font-size: 12px; font-weight: 600; text-align: center; }
+.m-sheet-sub { padding: 0 14px 8px; font-size: 10.5px; color: var(--m-faint); text-align: center; }
+.m-opt { display: flex; align-items: center; gap: 9px; padding: 11px 14px; border-top: 1px solid var(--m-line); font-size: 12px; }
+.m-opt .ico { color: var(--m-faint); }
+.m-opt.danger { color: var(--m-danger); }
+.m-opt.danger .ico { color: var(--m-danger); }
+.m-opt .sub { margin-left: auto; font-size: 10px; color: var(--m-faint); }
+.m-edit { padding: 0 14px 14px; }
+.m-edit textarea {
+  width: 100%; min-height: 66px; border: 1px solid var(--m-line); border-radius: 9px;
+  padding: 8px 9px; font-family: var(--font); font-size: 12px; line-height: 1.6; color: var(--m-ink); resize: none;
+}
+.m-edit-hint { margin-top: 6px; font-size: 10px; color: var(--m-faint); }
+.m-edit-foot { margin-top: 10px; display: flex; gap: 8px; }
+.m-edit-foot .m-btn { flex: 1; height: 32px; justify-content: center; }
+.m-gb-meta-line { display: flex; align-items: center; gap: 6px; padding: 0 2px 6px; }
+
+/* ---------- 说明条 ---------- */
+.note-strip {
+  display: flex; align-items: flex-start; gap: 8px;
+  margin-top: 12px; padding: 9px 12px; border-radius: 8px;
+  background: var(--bg3); border: 1px solid var(--rule);
+  font-size: 12px; line-height: 1.65; color: var(--muted);
+}
+.note-strip .n-ico { flex: none; width: 15px; height: 15px; color: var(--accent); margin-top: 1px; }
+.note-strip b { color: var(--ink); }
+.note-strip.warn { background: var(--warn-weak); border-color: var(--warn-border); }
+.note-strip.warn .n-ico { color: var(--warn); }
+
+/* ---------- 流程 ---------- */
+.flow { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-top: 18px; }
+.flow-step {
+  position: relative; border: 1px solid var(--rule); border-radius: var(--radius);
+  background: var(--bg3); padding: 12px 12px 11px;
+}
+.flow-step .fs-no { font-family: var(--mono); font-size: 9.5px; color: var(--accent); }
+.flow-step strong { display: block; font-size: 12.5px; margin-top: 3px; }
+.flow-step p { margin: 4px 0 0; font-size: 11.5px; line-height: 1.6; color: var(--muted); }
+.flow-step::after {
+  content: '→'; position: absolute; right: -9px; top: 50%; transform: translateY(-50%);
+  color: var(--faint); font-size: 12px;
+}
+.flow-step:last-child::after { display: none; }
+.flow-step.hi { border-color: var(--accent-border); background: var(--accent-weak); }
+
+@media (max-width: 900px) {
+  .report { margin: 12px; }
+  .cover, .sec { padding-left: 22px; padding-right: 22px; }
+  .cover h1 { font-size: 27px; }
+  .summary-band, .goal-grid, .issue-grid, .principle-grid, .decisions { grid-template-columns: 1fr; }
+  .flow { grid-template-columns: 1fr; }
+  .flow-step::after { content: '↓'; right: auto; left: 50%; top: auto; bottom: -10px; transform: translateX(-50%); }
+}
+</style>
+</head>
+<body>
+<div class="report">
+
+<!-- ==================== 封面 ==================== -->
+<header class="cover">
+  <div class="eyebrow">WENQU · GOAL MODE · UI / UX PROPOSAL</div>
+  <h1>目标模式：把「一条目标」做成<br><em>有状态、可回退、说得清</em>的驾驶舱</h1>
+  <p class="lede">
+    目标已经是会话级、跨轮自动推进的一等对象，但界面上它仍是一条<b>只有图标的一行 chip</b>：
+    停/继续/改/删四个动作权重相同，「已暂停」分不清是用户停的、预算停的、还是被插话让位；
+    更关键的是——<b>目标正在跑时，用户其实没法插话</b>：发送会落进 steer 队列，而 `/chat/steer`
+    只认用户轮、不认目标轮，点了「立即发送」只会被退回输入框。
+    本方案不动问答主线，只把目标条、动作语义、终态留痕和插话链路补成一套能读懂、能回退的闭环。
+  </p>
+  <div class="meta-row">
+    <span class="meta-chip">基线 <b>2026-11-08</b></span>
+    <span class="meta-chip">目标任务运行时（QUEUED / RUNNING / PAUSED / VERIFYING）</span>
+    <span class="meta-chip">PC + H5 同构</span>
+    <span class="meta-chip">不改问答发送 / 流式 / 审批主线</span>
+  </div>
+  <div class="summary-band">
+    <div class="summary-card">
+      <div class="num">01 · GOAL BAR</div>
+      <strong>从「一排图标」到「三段仪表」</strong>
+      <span>状态 + 原文 + 进度一行读完；暂停/继续成为文字主行动，修改与取消降为次级，取消必须二次确认。</span>
+    </div>
+    <div class="summary-card">
+      <div class="num">02 · ACTIONS</div>
+      <strong>暂停 / 修改 / 继续 / 取消，四档各自说清</strong>
+      <span>暂停可继续、修改升版从下一轮生效、取消留痕不丢过程、终态不再凭空消失。</span>
+    </div>
+    <div class="summary-card">
+      <div class="num">03 · INTERJECT</div>
+      <strong>插话 = 让位一轮，答完自动接续</strong>
+      <span>目标在跑时你说话，目标转「已让位」；你的这轮答完自动回到「进行中」，不用手动点继续。</span>
+    </div>
+  </div>
+  <nav class="toc">
+    <a href="#s1">01 现状诊断</a>
+    <a href="#s2">02 目标与原则</a>
+    <a href="#s3">03 方案总览</a>
+    <a href="#s4">04 插话链路</a>
+    <a href="#s5">05 效果图</a>
+    <a href="#s6">06 交互规则与边界</a>
+    <a href="#s7">07 落地要点</a>
+    <a href="#s8">08 分阶段与验收</a>
+    <a href="#s9">09 待拍板项</a>
+  </nav>
+</header>
+
+<!-- ==================== 01 诊断 ==================== -->
+<section class="sec" id="s1">
+  <div class="sec-head"><span class="sec-no">01</span><h2>现状诊断：目标能跑，但读不懂、退不回</h2></div>
+  <p class="lead">
+    后端已经把目标做成跨轮对象：状态机、租约调度、证据核验、预算、过程账本、目标态帧都齐了。
+    <b>缺的是界面这一层</b>——目标条只承担「显示原文 + 四颗图标」，用户做判断需要的停因、轮次、生效时点、终态记录都不在视野里。
+  </p>
+
+  <div class="issue-grid">
+    <div class="issue">
+      <div class="tag">A1 · ACTION WEIGHT</div>
+      <h4>四个动作同一权重，破坏性动作没有护栏</h4>
+      <p>暂停、编辑、删除并排成三颗 28px 图标，删除（✕）与编辑同色同大小，点一下目标就从界面消失，没有确认、没有「取消 / 删除」的区别。</p>
+      <code>ChatPage.vue :886-897</code>
+    </div>
+    <div class="issue">
+      <div class="tag">A2 · STATE AMBIGUITY</div>
+      <h4>「已暂停」一个词盖住了四种停法</h4>
+      <p>用户手动停、插话让位、预算用满、进程丢心跳，界面上都读作「已暂停」。停因只藏在桌面 hover 行或移动端第二行小字里。</p>
+      <code>projections.js :1523-1535</code>
+    </div>
+    <div class="issue">
+      <div class="tag">A3 · CANCEL MISSING</div>
+      <h4>只有「删除」，没有「取消」</h4>
+      <p>现在点 ✕ 走 <code>clear</code>：目标立即转 CANCELLED，前后端都不再回显。用户想「先停掉这件事、留个记录」，只能删得干干净净。</p>
+      <code>GoalService.java :323-339</code>
+    </div>
+    <div class="issue">
+      <div class="tag">A4 · EDIT OPAQUE</div>
+      <h4>修改不说版本，也不说从哪一轮生效</h4>
+      <p>原文可改、版本会递增、当前在飞那一轮不受影响——这些语义后端都写了，界面上只有一个光文本域，改完不知道「旧轮还算不算数」。</p>
+      <code>GoalService.java :294-320</code>
+    </div>
+    <div class="issue">
+      <div class="tag">A5 · INTERJECT BROKEN</div>
+      <h4>目标在跑时插话是条死路</h4>
+      <p>目标轮跑起来后会话处于「生成中」，输入框把发送变成插话队列；但 <code>/chat/steer</code> 只认用户轮的 <code>TurnRegistry</code>，目标轮没有登记，点「立即发送」必然被退回输入框。用户只能先按暂停、再提问，且手动暂停后不会自动接回。</p>
+      <code>ChatRunRuntime.java :388-416</code>
+    </div>
+    <div class="issue">
+      <div class="tag">A6 · NO TERMINAL HOME</div>
+      <h4>达成或取消后，目标凭空消失</h4>
+      <p>目标条只在 LIVE / FAILED 显示；ACHIEVED、CANCELLED 一撤，聊天区只剩最后一段正文。按 goal_id 聚合的过程账本接口已经有了，但前端一颗入口都没接。</p>
+      <code>getGoalEventsApi（未使用）</code>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 02 目标与原则 ==================== -->
+<section class="sec" id="s2">
+  <div class="sec-head"><span class="sec-no">02</span><h2>目标与原则：目标条是仪表盘，不是工具栏</h2></div>
+  <p class="lead">
+    目标横跨多轮、可能跑几十分钟，它不属于任何一颗气泡。用户需要的不是「哪颗图标能点」，而是
+    <b>一眼看清它在哪、还能退到哪、什么时候会再往前</b>。
+  </p>
+
+  <div class="goal-grid">
+    <div class="goal"><div class="big">1 眼</div><h4>状态与进度一屏读完</h4><p>状态词、轮次、停因、预算占用同时在场，不靠 hover。</p></div>
+    <div class="goal"><div class="big">4 档</div><h4>暂停 / 修改 / 继续 / 取消</h4><p>四档各有明确语义与可用条件，不互相顶班。</p></div>
+    <div class="goal"><div class="big">0 丢</div><h4>任何退出都留痕</h4><p>取消留终态卡，修改留版本，暂停留过程；删除只删记录。</p></div>
+    <div class="goal"><div class="big">1 轮</div><h4>插话只让位一轮</h4><p>说话不打断已跑出的成果，答完自动接续，不用手动继续。</p></div>
+  </div>
+
+  <div class="principle-grid">
+    <div class="principle"><div class="pno">P1</div><div><strong>状态词只说一件事</strong><p>「进行中 / 已让位 / 已暂停 / 未完成 / 已完成 / 已取消」，停因用第二行一句话补，不塞进同一颗胶囊。</p></div></div>
+    <div class="principle"><div class="pno">P2</div><div><strong>主行动只有一个</strong><p>进行中主按钮是「暂停」，停下后主按钮是「继续」；修改与取消永远在次级位，避免误触。</p></div></div>
+    <div class="principle"><div class="pno">P3</div><div><strong>破坏性动作先确认</strong><p>取消目标走一次就地确认浮层；文案说清「已跑轮次和过程都保留」，不是「删除」。</p></div></div>
+    <div class="principle"><div class="pno">P4</div><div><strong>插话不排队</strong><p>目标在跑时发送 = 让位提问；不再把目标轮当作可 steer 的轮次，队列语义只留给用户自己的轮。</p></div></div>
+    <div class="principle"><div class="pno">P5</div><div><strong>只讲用户结果，不露机制</strong><p>不出现 TASK_STATE / steer / preempt / verifier；只说「答完自动继续」「从第 4 轮起按新目标跑」。</p></div></div>
+    <div class="principle"><div class="pno">P6</div><div><strong>终态必须有落点</strong><p>达成、取消、未完成都落一张只读终态卡在消息流里，过程账本可从卡上进。</p></div></div>
+  </div>
+</section>
+
+<!-- ==================== 03 方案总览 ==================== -->
+<section class="sec" id="s3">
+  <div class="sec-head"><span class="sec-no">03</span><h2>方案总览：目标条三段式 + 动作语义表</h2></div>
+  <p class="lead">
+    目标条仍然坐在输入卡片内部、正文之上（位置不变，不新起一层外框）。只把这一行拆成
+    <b>身份 / 进度 / 动作</b> 三段：上一段回答「这是什么目标」，中段回答「跑到哪了、为什么停」，
+    下段回答「现在能做什么」。
+  </p>
+
+  <div class="wire">
+    <div class="wire-main">
+      <div class="wire-box accent"><span class="n">1</span><strong>身份行</strong>：目标 pill + 原文（最多两行，超长折起）+ 版本 chip（v2）+ 状态胶囊（进行中 / 已让位 / 已暂停 / 未完成）</div>
+      <div class="wire-box"><span class="n">2</span><strong>进度行</strong>：<b>第 3 轮</b> · 已跑 4 分 12 秒 · 预算 26%（细进度条）· 停因一句话（"连续两轮没有新进展" / "这句答完自动继续"）· 右端「查看过程 ›」</div>
+      <div class="wire-box tall"><span class="n">3</span><strong>动作行</strong>：主按钮（暂停目标 / 继续目标 / 立即继续）+ 次级「修改目标」+ 危险弱化「取消目标」。<b>编辑态</b>整段换成文本域 + 版本轨 + 「从下一轮生效」提示 + 取消 / 保存。</div>
+    </div>
+  </div>
+
+  <h3 class="sub">3.1 状态词与主行动</h3>
+  <table class="tbl">
+    <thead><tr><th>后端状态</th><th>用户看到的词</th><th>色档</th><th>第二行说停因</th><th>主行动</th></tr></thead>
+    <tbody>
+      <tr><td>RUNNING / QUEUED</td><td>进行中</td><td class="ok">主色（点呼吸）</td><td>第 N 轮 · 阶段：执行</td><td>暂停目标</td></tr>
+      <tr><td>PAUSED + endReason=preempted</td><td><b>已让位</b></td><td class="warn">警示</td><td>「这句答完自动继续」</td><td>立即继续</td></tr>
+      <tr><td>PAUSED + stopped</td><td>已暂停</td><td class="warn">警示</td><td>「你手动停在这里，可以继续」</td><td>继续目标</td></tr>
+      <tr><td>PAUSED + budget / no-progress / blocked</td><td>已暂停</td><td class="warn">警示</td><td>对应停因一句（预算上限 / 连续无进展 / 受阻原因）</td><td>继续目标</td></tr>
+      <tr><td>stale=true</td><td>待恢复</td><td class="warn">警示</td><td>「执行中断，继续会先核对状态」</td><td>继续目标</td></tr>
+      <tr><td>VERIFYING / WAITING_*</td><td>核验中 / 等待中 / 待确认</td><td class="ok">主色</td><td>正在核验 / 等外部结果 / 有一项操作等你确认</td><td>暂停目标</td></tr>
+      <tr><td>FAILED</td><td><b>未完成</b></td><td class="danger">危险</td><td>失败原因一句 + 「继续不重置预算」</td><td>继续目标</td></tr>
+      <tr><td>ACHIEVED</td><td>已完成</td><td class="ok">成功</td><td>共 N 轮 · 证据 X 条</td><td>另起目标</td></tr>
+      <tr><td>CANCELLED</td><td><b>已取消</b></td><td class="danger">灰化</td><td>共跑 N 轮 · 历史与过程保留</td><td>重新设定目标</td></tr>
+    </tbody>
+  </table>
+
+  <h3 class="sub">3.2 四个动作的语义</h3>
+  <table class="tbl">
+    <thead><tr><th>动作</th><th>可用条件</th><th>后端行为</th><th>界面必须说清</th></tr></thead>
+    <tbody>
+      <tr><td>暂停</td><td>进行中 / 核验中 / 等待中</td><td>打断当前目标轮，转 PAUSED，endReason=stopped，进度全留</td><td>「已按你的要求停下；可以继续」。<b>手动暂停不会自动恢复</b></td></tr>
+      <tr><td>继续</td><td>已暂停 / 未完成 / 待恢复</td><td>转 RUNNING，预算不重置，调度器下一拍起轮</td><td>「从下一轮接着跑」；FAILED 时补一句「预算不会重置」</td></tr>
+      <tr><td>修改</td><td>进行中 / 已暂停 / 未完成</td><td>原文升版 + 强制重规划；在飞那一轮不受影响，下一轮按新原文</td><td>「第 N 版 · 下一轮生效 · 已跑 X 轮保留」</td></tr>
+      <tr><td>取消</td><td>所有非终态（含未完成）</td><td>打断当前轮 → CANCELLED，endReason=cancelled，过程账本保留</td><td>二次确认；「已跑轮次与过程都会保留」；消息流落终态卡</td></tr>
+      <tr><td>删除记录</td><td>仅终态</td><td>CANCELLED，endReason=cleared，界面与回显都不再出现</td><td>「只从界面移除，过程账本仍可按目标查询」</td></tr>
+    </tbody>
+  </table>
+  <div class="note-strip">
+    <svg class="n-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="8" cy="8" r="6"/><path d="M8 4.6v4.2M8 11.4v.6"/></svg>
+    <div>后端要补的最小语义差：<b>取消</b> 与 <b>删除记录</b> 现在都走 <code>clear</code>，需要按 <code>endReason = cancelled / cleared</code> 分开；<code>GET /session/{id}/goal</code> 对 <code>cancelled</code> 要回显、对 <code>cleared</code> 继续隐藏。否则「取消留痕」刷新一次就没了。</div>
+  </div>
+</section>
+
+<!-- ==================== 04 插话 ==================== -->
+<section class="sec" id="s4">
+  <div class="sec-head"><span class="sec-no">04</span><h2>插话链路：让位一轮，答完自动接续</h2></div>
+  <p class="lead">
+    后端其实已经写好了「用户优先」：用户开新一轮时，如果后台目标轮还在飞，目标会打断并转 PAUSED（endReason=preempted）；用户这一轮收尾后，<code>onUserTurnEnd</code> 会把目标自动接回 RUNNING。
+    <b>缺的是前端没有走这条门</b>——目标在跑时输入框把发送当成 steer，用户根本发不出这一轮。
+  </p>
+
+  <div class="flow">
+    <div class="flow-step"><div class="fs-no">STEP 1</div><strong>目标在跑</strong><p>目标是当前正在执行的那一轮，条子读「进行中 · 第 3 轮」。</p></div>
+    <div class="flow-step hi"><div class="fs-no">STEP 2</div><strong>你直接说一句</strong><p>不再入 steer 队列，按普通提问发送；带材料也照常。</p></div>
+    <div class="flow-step"><div class="fs-no">STEP 3</div><strong>目标让位</strong><p>后台目标轮被打断，转 PAUSED，停因 <code>preempted</code>；条子变「已让位」。</p></div>
+    <div class="flow-step"><div class="fs-no">STEP 4</div><strong>先答你</strong><p>你的这一轮正常流式回答；目标原地保留，不抢上下文。</p></div>
+    <div class="flow-step"><div class="fs-no">STEP 5</div><strong>自动接回</strong><p>你这一轮收尾后目标自动转回进行中，从下一轮接着跑。</p></div>
+  </div>
+
+  <h3 class="sub">4.1 三条判据，决定这句话是「插话」还是「普通提问」</h3>
+  <table class="tbl">
+    <thead><tr><th>目标此刻</th><th>输入框里的发送</th><th>目标后续</th><th>界面提示（必须可见）</th></tr></thead>
+    <tbody>
+      <tr><td>进行中（目标轮在跑）</td><td class="warn">让位提问（不进队列、不发 steer）</td><td>先暂停，答完自动继续</td><td>占位「插话：先回答你这句，目标随后自动继续」；发送键 title 同义</td></tr>
+      <tr><td>暂停 / 已让位（没有在跑的目标轮）</td><td>普通提问</td><td>保持暂停；<b>不自动恢复</b></td><td>条子第二行「目标已暂停，这一轮答完不会自动继续」</td></tr>
+      <tr><td>自己的用户轮在跑（与目标无关）</td><td>保持现有 steer 队列语义</td><td>与目标无关</td><td>沿用现有「插话」队列，不改</td></tr>
+    </tbody>
+  </table>
+
+  <div class="note-strip warn">
+    <svg class="n-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M8 3l5 9H3z"/><path d="M8 6.4v2.4M8 10.6v.4"/></svg>
+    <div><b>不要做「真 steer 进目标轮」</b>：那需要给后台目标轮登记 <code>TurnHandle</code>，并让框架把插话送进一个没有观众的后台轮。语义上也危险——用户的一句话会被当成目标轮的工具循环输入，而不是「先回答我」。本方案只走已存在的「让位 → 自动接续」链路，后端零改动。</div>
+  </div>
+
+  <h3 class="sub">4.2 让位与手动暂停必须长得不一样</h3>
+  <table class="tbl">
+    <thead><tr><th></th><th>已让位（preempted）</th><th>已暂停（stopped）</th></tr></thead>
+    <tbody>
+      <tr><td>起因</td><td>用户插话，系统自动让位</td><td>用户主动点了暂停</td></tr>
+      <tr><td>状态词</td><td class="warn">已让位</td><td class="warn">已暂停</td></tr>
+      <tr><td>第二行</td><td>「这句答完自动继续」</td><td>「你手动停在这里，可以继续」</td></tr>
+      <tr><td>主按钮</td><td>立即继续（想抢先恢复时点）</td><td>继续目标</td></tr>
+      <tr><td>后续</td><td>回答结束自动回「进行中」</td><td>不会自动恢复，等用户点继续</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ==================== 05 效果图 ==================== -->
+<section class="sec ui-scope" id="s5">
+  <div class="sec-head"><span class="sec-no">05</span><h2>效果图</h2></div>
+  <p class="lead">以下为建议稿，尺寸与间距按线上输入卡片同一套令牌（卡片内边距 12px、按钮高 28px、状态胶囊 20px、行距 8px）。</p>
+
+  <!-- 5.1 现状 vs 建议 -->
+  <h3 class="sub" id="s5-1">5.1 目标条：现状 vs 建议（PC）</h3>
+  <p class="sub-note">同样坐在输入卡片内部、正文之上；只把一行拆成三段，不新增外框。</p>
+  <div class="mock-scroll">
+    <div class="mock">
+      <div class="mk-bar"><div class="dots"><i></i><i></i><i></i></div><div class="mk-url">wenqu.local / chat</div><span class="mk-tag">现状</span></div>
+      <div class="mk-body mk-chat">
+        <div class="m-msg ai"><div class="ai-line"><span class="dim">第 2 轮做完了，接下来核对数据口径。</span></div></div>
+      </div>
+      <div class="m-composer">
+        <div class="composer-card">
+          <div class="goalbar-old">
+            <span class="gb-pill"><svg class="ico" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="2.2"/></svg>目标</span>
+            <span class="gb-old-obj">把 Q3 财报做成一份可对外发布的网页报告</span>
+            <span class="round">第 3 轮</span>
+            <span class="state run"><i></i>进行中</span>
+            <button class="iconbtn" title="暂停"><svg class="ico" viewBox="0 0 16 16"><path d="M6 3.5v9M10 3.5v9"/></svg></button>
+            <button class="iconbtn" title="编辑"><svg class="ico" viewBox="0 0 16 16"><path d="M10.5 2.5l3 3-8 8H2.5v-3z"/></svg></button>
+            <button class="iconbtn danger" title="删除"><svg class="ico" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
+          </div>
+          <div class="ci-box">
+            <div class="ci-text">输入问题，或 / 唤起命令…</div>
+            <div class="ci-foot"><span class="ci-tool">+</span><span class="ci-tool">@</span><span class="ci-send"><svg class="ico" viewBox="0 0 16 16"><path d="M8 12.5V4M4.6 7.2L8 3.8l3.4 3.4"/></svg></span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mock-scroll">
+    <div class="mock">
+      <div class="mk-bar"><div class="dots"><i></i><i></i><i></i></div><div class="mk-url">wenqu.local / chat</div><span class="mk-tag">建议稿</span></div>
+      <div class="mk-body mk-chat">
+        <div class="m-msg ai"><div class="ai-line"><span class="dim">第 2 轮做完了，接下来核对数据口径。</span></div></div>
+      </div>
+      <div class="m-composer">
+        <div class="composer-card">
+          <div class="goalbar">
+            <div class="gb-row1">
+              <span class="gb-pill"><svg class="ico" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="2.2"/></svg>目标</span>
+              <span class="gb-obj">把 Q3 财报做成一份可对外发布的网页报告</span>
+              <span class="gb-ver">v1</span>
+              <span class="state run"><i></i>进行中</span>
+            </div>
+            <div class="gb-row2">
+              <span class="gb-meta"><svg class="ico" viewBox="0 0 16 16"><path d="M2.8 8a5.2 5.2 0 1 0 10.4 0 5.2 5.2 0 0 0-10.4 0z"/><path d="M8 5v3.4l2 1.4"/></svg><b>第 3 轮</b></span>
+              <span class="gb-meta">已跑 4 分 12 秒</span>
+              <span class="budget"><span class="track"><i></i></span>预算 26%</span>
+              <span class="gb-reason">阶段：执行 · 正在核对数据口径</span>
+              <button class="gb-link">查看过程<svg class="ico" viewBox="0 0 16 16"><path d="M6 3.5l4.5 4.5L6 12.5"/></svg></button>
+            </div>
+            <div class="gb-row3">
+              <div class="gb-actions">
+                <button class="m-btn text">取消目标</button>
+                <button class="m-btn">修改目标</button>
+                <button class="m-btn primary"><svg class="ico" viewBox="0 0 16 16"><path d="M6 3.5v9M10 3.5v9"/></svg>暂停目标</button>
+              </div>
+            </div>
+          </div>
+          <div class="ci-box">
+            <div class="ci-text">输入问题，或 / 唤起命令…</div>
+            <div class="ci-foot"><span class="ci-tool">+</span><span class="ci-tool">@</span><span class="ci-send"><svg class="ico" viewBox="0 0 16 16"><path d="M8 12.5V4M4.6 7.2L8 3.8l3.4 3.4"/></svg></span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 5.2 运行中 -->
+  <h3 class="sub" id="s5-2">5.2 运行中：轮次、时间、预算一屏读完</h3>
+  <p class="sub-note">轮次与用时是常驻信息；token / 详细预算收进「查看过程」，条上只留一条细进度条。</p>
+  <div class="mock-scroll">
+    <div class="mock">
+      <div class="mk-bar"><div class="dots"><i></i><i></i><i></i></div><div class="mk-url">wenqu.local / chat</div><span class="mk-tag">进行中</span></div>
+      <div class="mk-body mk-chat">
+        <div class="m-msg user"><div class="bubble user">帮我盯一下，数据口径统一后再往下做。</div></div>
+        <div class="m-msg ai"><div class="ai-line">正在核对三张表的口径差异，先对齐口径再生成图表。<span class="dim">（第 3 轮）</span></div></div>
+      </div>
+      <div class="m-composer">
+        <div class="composer-card">
+          <div class="goalbar">
+            <div class="gb-row1">
+              <span class="gb-pill"><svg class="ico" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="2.2"/></svg>目标</span>
+              <span class="gb-obj">把 Q3 财报做成一份可对外发布的网页报告</span>
+              <span class="state run"><i></i>进行中</span>
+            </div>
+            <div class="gb-row2">
+              <span class="gb-meta"><b>第 3 轮</b></span>
+              <span class="gb-meta">已跑 4 分 12 秒</span>
+              <span class="budget"><span class="track"><i style="width:26%"></i></span>预算 26%</span>
+              <span class="gb-reason">阶段：执行</span>
+              <button class="gb-link">查看过程<svg class="ico" viewBox="0 0 16 16"><path d="M6 3.5l4.5 4.5L6 12.5"/></svg></button>
+            </div>
+            <div class="gb-row3"><div class="gb-actions">
+              <button class="m-btn text">取消目标</button>
+              <button class="m-btn">修改目标</button>
+              <button class="m-btn primary"><svg class="ico" viewBox="0 0 16 16"><path d="M6 3.5v9M10 3.5v9"/></svg>暂停目标</button>
+            </div></div>
+          </div>
+          <div class="ci-box">
+            <div class="ci-text">现在说话会先答你，目标随后自动继续…</div>
+            <div class="ci-foot"><span class="ci-tool">+</span><span class="ci-tool">@</span><span class="ci-send"><svg class="ico" viewBox="0 0 16 16"><path d="M8 12.5V4M4.6 7.2L8 3.8l3.4 3.4"/></svg></span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 5.3 已让位 -->
+  <h3 class="sub" id="s5-3">5.3 已让位：目标在跑时插话</h3>
+  <p class="sub-note">用户这句话按普通提问落地，目标转「已让位」；回答收尾后自动回「进行中」，无需手动继续。</p>
+  <div class="mock-scroll">
+    <div class="mock">
+      <div class="mk-bar"><div class="dots"><i></i><i></i><i></i></div><div class="mk-url">wenqu.local / chat</div><span class="mk-tag">已让位</span></div>
+      <div class="mk-body mk-chat">
+        <div class="m-msg user"><div class="bubble user">先停一下：把「对外发布」改成「内部评审版」。</div></div>
+        <div class="m-msg ai"><div class="ai-line">收到。这一轮先按内部评审版口径调整：去掉外链分享入口，标题改为「Q3 财报 · 内部评审」。<span class="dim">（目标已让位，回答结束后自动继续）</span></div></div>
+      </div>
+      <div class="m-composer">
+        <div class="composer-card">
+          <div class="goalbar">
+            <div class="gb-row1">
+              <span class="gb-pill"><svg class="ico" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="2.2"/></svg>目标</span>
+              <span class="gb-obj">把 Q3 财报做成一份可对外发布的网页报告</span>
+              <span class="state pause"><i></i>已让位</span>
+            </div>
+            <div class="gb-row2">
+              <span class="gb-meta"><b>第 3 轮</b></span>
+              <span class="gb-meta">已跑 4 分 12 秒</span>
+              <span class="gb-reason warn">这句答完自动继续</span>
+              <button class="gb-link">查看过程<svg class="ico" viewBox="0 0 16 16"><path d="M6 3.5l4.5 4.5L6 12.5"/></svg></button>
+            </div>
+            <div class="gb-row3"><div class="gb-actions">
+              <button class="m-btn text">取消目标</button>
+              <button class="m-btn">修改目标</button>
+              <button class="m-btn primary"><svg class="ico fill" viewBox="0 0 16 16"><path d="M5.2 3.6l7.2 4.4-7.2 4.4z"/></svg>立即继续</button>
+            </div></div>
+          </div>
+          <div class="ci-box">
+            <div class="ci-text">还想补充？直接说，目标会继续让位…</div>
+            <div class="ci-foot"><span class="ci-tool">+</span><span class="ci-tool">@</span><span class="ci-send"><svg class="ico" viewBox="0 0 16 16"><path d="M8 12.5V4M4.6 7.2L8 3.8l3.4 3.4"/></svg></span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 5.4 暂停 / 未完成 -->
+  <h3 class="sub" id="s5-4">5.4 暂停与未完成：停因说清，继续有边界</h3>
+  <p class="sub-note">同样是「继续目标」，手动暂停与预算耗尽必须给出不同的第二行；FAILED 要明确「预算不重置」。</p>
+  <div class="mock-scroll">
+    <div class="mock">
+      <div class="mk-bar"><div class="dots"><i></i><i></i><i></i></div><div class="mk-url">wenqu.local / chat</div><span class="mk-tag">两种停法</span></div>
+      <div class="mk-body">
+        <div class="composer-card" style="margin-bottom:18px">
+          <div class="goalbar" style="border-bottom:none;padding-bottom:0;margin-bottom:0">
+            <div class="gb-row1">
+              <span class="gb-pill"><svg class="ico" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="2.2"/></svg>目标</span>
+              <span class="gb-obj">把 Q3 财报做成一份可对外发布的网页报告</span>
+              <span class="state pause"><i></i>已暂停</span>
+            </div>
+            <div class="gb-row2">
+              <span class="gb-meta"><b>第 3 轮</b></span>
+              <span class="gb-reason">你手动停在这里，可以继续</span>
+              <button class="gb-link">查看过程<svg class="ico" viewBox="0 0 16 16"><path d="M6 3.5l4.5 4.5L6 12.5"/></svg></button>
+            </div>
+            <div class="gb-row3"><div class="gb-actions">
+              <button class="m-btn text">取消目标</button>
+              <button class="m-btn">修改目标</button>
+              <button class="m-btn primary"><svg class="ico fill" viewBox="0 0 16 16"><path d="M5.2 3.6l7.2 4.4-7.2 4.4z"/></svg>继续目标</button>
+            </div></div>
+          </div>
+        </div>
+
+        <div class="composer-card">
+          <div class="goalbar" style="border-bottom:none;padding-bottom:0;margin-bottom:0">
+            <div class="gb-row1">
+              <span class="gb-pill"><svg class="ico" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="2.2"/></svg>目标</span>
+              <span class="gb-obj">把 Q3 财报做成一份可对外发布的网页报告</span>
+              <span class="state end"><i></i>未完成</span>
+            </div>
+            <div class="gb-row2">
+              <span class="gb-meta"><b>第 8 轮</b></span>
+              <span class="budget low"><span class="track"><i style="width:100%"></i></span>预算 100%</span>
+              <span class="gb-reason warn">轮次预算已用完 · 继续不会重置预算</span>
+            </div>
+            <div class="gb-row3"><div class="gb-actions">
+              <button class="m-btn text">取消目标</button>
+              <button class="m-btn">修改目标</button>
+              <button class="m-btn primary"><svg class="ico fill" viewBox="0 0 16 16"><path d="M5.2 3.6l7.2 4.4-7.2 4.4z"/></svg>继续目标</button>
+            </div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 5.5 修改 -->
+  <h3 class="sub" id="s5-5">5.5 修改目标：升版、说清生效时点</h3>
+  <p class="sub-note">不弹层，就在条内长开；版本轨显示 v1 → v2，footer 明说「下一轮起生效 · 已跑轮次保留」。</p>
+  <div class="mock-scroll">
+    <div class="mock">
+      <div class="mk-bar"><div class="dots"><i></i><i></i><i></i></div><div class="mk-url">wenqu.local / chat</div><span class="mk-tag">修改中</span></div>
+      <div class="mk-body mk-chat">
+        <div class="m-msg ai"><div class="ai-line">已保存 v2：把发布对象改成内部评审版。<span class="dim">下一轮按新目标继续。</span></div></div>
+      </div>
+      <div class="m-composer">
+        <div class="composer-card">
+          <div class="goalbar" style="border-bottom:none">
+            <div class="gb-row1">
+              <span class="gb-pill"><svg class="ico" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="2.2"/></svg>目标</span>
+              <span class="gb-obj one">修改这件事要做到什么</span>
+              <span class="state run"><i></i>进行中</span>
+            </div>
+            <div class="gb-edit">
+              <textarea rows="3">把 Q3 财报做成一份内部评审用的网页报告：去掉外链分享入口，标题改为「Q3 财报 · 内部评审」，保留图表与数据来源。</textarea>
+              <div class="hint">
+                <span class="vrail"><span>v1</span><span class="arr">→</span><span class="on">v2</span></span>
+                <span>下一轮起按新目标执行 · 已跑的 <b>3 轮</b> 保留</span>
+                <span class="warn">正在跑的这一轮不受影响</span>
+              </div>
+              <div class="gb-edit-foot">
+                <span class="spacer"></span>
+                <button class="m-btn">取消</button>
+                <button class="m-btn primary">保存为新版</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 5.6 取消 -->
+  <h3 class="sub" id="s5-6">5.6 取消目标：先确认，再留痕</h3>
+  <p class="sub-note">确认浮层贴在目标条上方；确认后目标条撤下，消息流里落一张只读终态卡，刷新仍在。</p>
+  <div class="mock-scroll">
+    <div class="mock">
+      <div class="mk-bar"><div class="dots"><i></i><i></i><i></i></div><div class="mk-url">wenqu.local / chat</div><span class="mk-tag">确认 + 终态</span></div>
+      <div class="mk-body">
+        <div class="pop">
+          <div class="pop-head"><svg class="ico" viewBox="0 0 16 16"><path d="M8 3l5 9H3z"/><path d="M8 6.4v2.4M8 10.6v.4"/></svg>取消这条目标？</div>
+          <div class="pop-body">停止自动推进，已经跑出的 <b>3 轮</b>、正文与过程都会保留。之后可以在消息流里查看，也可以重新设定目标。</div>
+          <div class="pop-foot">
+            <button class="m-btn">继续推进</button>
+            <button class="m-btn danger">取消目标</button>
+          </div>
+          <i class="pop-arrow"></i>
+        </div>
+
+        <div class="m-msg user" style="margin-top:18px">
+          <div class="bubble user">把 Q3 财报做成一份可对外发布的网页报告 <span class="gd-chip">目标</span></div>
+        </div>
+        <div class="m-msg ai" style="justify-content:flex-end">
+          <div class="goal-done end">
+            <div class="gd-head"><svg class="ico" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="M4 4l8 8M12 4l-8 8"/></svg><span class="gd-title">目标已取消</span><span class="gd-meta">共 3 轮 · 11 分 20 秒</span></div>
+            <div class="gd-body">停在「核对数据口径」这一步。已经跑出的正文、产物与过程记录都保留。</div>
+            <div class="gd-foot">
+              <button class="btnlink">重新设定目标</button>
+              <button class="btnlink">查看过程</button>
+              <button class="btnlink mute">删除记录</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="m-composer">
+        <div class="composer-card">
+          <div class="ci-box" style="min-height:52px">
+            <div class="ci-text">写下这件事要做到什么，回车开始…</div>
+            <div class="ci-foot"><span class="ci-tool">+</span><span class="ci-tool">@</span><span class="ci-send"><svg class="ico" viewBox="0 0 16 16"><path d="M8 12.5V4M4.6 7.2L8 3.8l3.4 3.4"/></svg></span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 5.7 抽屉 -->
+  <h3 class="sub" id="s5-7">5.7 目标详情：版本、轮次、预算、结果同屏</h3>
+  <p class="sub-note">PC 右侧 430px 抽屉（H5 为全屏 sheet）；读的是按 goal_id 聚合的过程账本，不新造数据。</p>
+  <div class="mock-scroll">
+    <div class="mock split">
+      <div class="mk-chat-col">
+        <div class="mk-bar"><div class="dots"><i></i><i></i><i></i></div><div class="mk-url">wenqu.local / chat</div><span class="mk-tag">过程抽屉</span></div>
+        <div class="mk-body">
+          <div class="m-msg user"><div class="bubble user">把 Q3 财报做成一份可对外发布的网页报告</div></div>
+          <div class="m-msg ai"><div class="ai-line">已开始执行：先找齐三张表，再对齐口径。<span class="dim">（第 1 轮）</span></div></div>
+          <div class="m-msg ai"><div class="ai-line">口径已对齐，开始生成图表与结论。<span class="dim">（第 2 轮）</span></div></div>
+          <div class="m-msg ai"><div class="ai-line">正在核对数据口径…<span class="dim">（第 3 轮）</span></div></div>
+        </div>
+      </div>
+      <aside class="drawer">
+        <div class="dw-head">
+          <span class="dw-eyebrow">GOAL</span>
+          <span class="dw-title">目标过程</span>
+          <button class="dw-close"><svg class="ico" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
+        </div>
+        <div class="dw-body">
+          <div class="dw-state-row">
+            <span class="state run"><i></i>进行中</span>
+            <span class="round">第 3 轮</span>
+            <span class="gb-ver">v2</span>
+          </div>
+          <p class="dw-obj">把 Q3 财报做成一份内部评审用的网页报告：去掉外链分享入口，标题改为「Q3 财报 · 内部评审」。</p>
+
+          <div class="dw-sub">VERSIONS</div>
+          <div class="vrail"><span>v1</span><span class="arr">→</span><span class="on">v2</span></div>
+          <div style="font-size:10.5px;color:var(--m-faint);margin-top:5px">v2 从第 3 轮起生效；前 2 轮按 v1 执行并保留。</div>
+
+          <div class="dw-sub">BUDGET</div>
+          <div class="bar-line"><span class="lab">轮次</span><span class="track"><i style="width:25%"></i></span><span class="num">3 / 12 轮</span></div>
+          <div class="bar-line"><span class="lab">Token</span><span class="track"><i style="width:42%"></i></span><span class="num">4.2 / 10 万</span></div>
+          <div class="bar-line"><span class="lab">时间</span><span class="track"><i style="width:18%"></i></span><span class="num">11 / 60 分</span></div>
+
+          <div class="dw-sub">ROUNDS</div>
+          <div class="rounds">
+            <div class="round-row ok">
+              <span class="rr-dot">1</span>
+              <div class="rr-main">
+                <div class="rr-title">第 1 轮 · 找齐三张表 <span class="t">12 分 04 秒</span></div>
+                <div class="rr-desc">已定位利润表、资产负债表、现金流量表，写入工作区。</div>
+                <a class="rr-link">查看这次回答 ›</a>
+              </div>
+            </div>
+            <div class="round-row ok">
+              <span class="rr-dot">2</span>
+              <div class="rr-main">
+                <div class="rr-title">第 2 轮 · 对齐口径 <span class="t">8 分 40 秒</span></div>
+                <div class="rr-desc">统一币种与统计区间，图表草稿已生成。</div>
+                <a class="rr-link">查看这次回答 ›</a>
+              </div>
+            </div>
+            <div class="round-row run">
+              <span class="rr-dot">3</span>
+              <div class="rr-main">
+                <div class="rr-title">第 3 轮 · 核对数据 <span class="t">进行中</span></div>
+                <div class="rr-desc">正在核对图表与原始表的对账差异。</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="dw-sub">OUTCOME</div>
+          <div class="dw-outcome">还没有提交完成申请。目标会在证据齐备后自己停下，不需要你逐条验收。</div>
+        </div>
+        <div class="dw-foot">
+          <button class="m-btn danger">取消</button>
+          <button class="m-btn">修改</button>
+          <span class="spacer"></span>
+          <button class="m-btn primary">暂停目标</button>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <!-- 5.8 H5 -->
+  <h3 class="sub" id="s5-8">5.8 移动壳：两行目标条 + 操作 sheet</h3>
+  <p class="sub-note">窄屏不放四颗图标：第一行状态 + 原文 + 主行动，第二行元信息 + 「更多」；修改/取消/过程收进底部 sheet。</p>
+  <div class="phone">
+    <div class="ph-top">问渠 · 目标会话</div>
+    <div class="ph-body">
+      <div class="m-goalbar">
+        <div class="m-gb-row1">
+          <span class="m-gb-pill"><svg class="ico" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="2.2"/></svg>已让位</span>
+          <span class="m-gb-obj">把 Q3 财报做成一份可对外发布的网页报告</span>
+          <button class="m-gb-btn"><svg class="ico fill" viewBox="0 0 16 16"><path d="M5.2 3.6l7.2 4.4-7.2 4.4z"/></svg></button>
+        </div>
+        <div class="m-gb-row2">
+          <span>第 3 轮</span>
+          <span>·</span>
+          <span>这句答完自动继续</span>
+          <button class="more">更多</button>
+        </div>
+      </div>
+      <div class="m-sheet">
+        <div class="m-sheet-head">目标操作</div>
+        <div class="m-sheet-sub">暂停、修改与取消都保留已经跑出的内容</div>
+        <div class="m-opt"><svg class="ico" viewBox="0 0 16 16"><path d="M10.5 2.5l3 3-8 8H2.5v-3z"/></svg>修改目标<span class="sub">从下一轮生效</span></div>
+        <div class="m-opt"><svg class="ico" viewBox="0 0 16 16"><path d="M2.8 8a5.2 5.2 0 1 0 10.4 0 5.2 5.2 0 0 0-10.4 0z"/><path d="M8 5v3.4l2 1.4"/></svg>查看过程<span class="sub">3 轮 · 11 分</span></div>
+        <div class="m-opt danger"><svg class="ico" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="M4 4l8 8M12 4l-8 8"/></svg>取消目标<span class="sub">需确认</span></div>
+      </div>
+      <div class="m-sheet" style="margin-top:14px">
+        <div class="m-sheet-head">修改目标</div>
+        <div class="m-edit">
+          <textarea rows="3">把 Q3 财报做成一份内部评审用的网页报告：去掉外链分享入口，标题改为「Q3 财报 · 内部评审」。</textarea>
+          <div class="m-edit-hint">v1 → v2 · 下一轮起生效 · 已跑的 3 轮保留</div>
+          <div class="m-edit-foot"><button class="m-btn">取消</button><button class="m-btn primary">保存为新版</button></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 06 规则 ==================== -->
+<section class="sec" id="s6">
+  <div class="sec-head"><span class="sec-no">06</span><h2>交互规则与边界</h2></div>
+  <table class="tbl">
+    <thead><tr><th>场景</th><th>规则</th><th>为什么</th></tr></thead>
+    <tbody>
+      <tr><td>目标在跑时按 Enter</td><td>按普通提问发送，不进插话队列、不调 steer；目标先让位</td><td>目标轮未登记 TurnHandle，steer 必失败；且用户意图是「先听我说」</td></tr>
+      <tr><td>目标在跑时带附件 / 图片</td><td>同样走让位提问（不限制载荷）</td><td>带材料的插话本来就不能进当前轮，让位后自然成为普通一轮</td></tr>
+      <tr><td>自己的用户轮在跑</td><td>保持现有 steer 队列与「立即发送」，不动</td><td>这条链路已经跑通，改动风险与收益不成比例</td></tr>
+      <tr><td>目标暂停时发送</td><td>普通提问；目标保持暂停，不自动恢复</td><td>手动暂停是用户的刹车，不能被一次普通聊天悄悄撤销</td></tr>
+      <tr><td>暂停按钮</td><td>点击即停，不需要确认；正在跑的目标轮被打断，进度全留</td><td>暂停可逆，确认只会增加摩擦</td></tr>
+      <tr><td>取消目标</td><td>就地确认浮层；确认后落终态卡；刷新后仍在</td><td>不可逆的退出必须一次确认；留痕避免「东西丢了」的错觉</td></tr>
+      <tr><td>删除记录</td><td>只出现在终态卡；点后从界面与回显移除，过程账本仍可查</td><td>和「取消」分开：一个结束事情，一个清理界面</td></tr>
+      <tr><td>修改目标</td><td>进行中 / 暂停 / 未完成都可改；保存后升版，下一轮生效</td><td>在飞那一轮不受影响，避免半路改写正在执行的上下文</td></tr>
+      <tr><td>修改后仍暂停</td><td>保持暂停；点继续后按新目标跑</td><td>编辑不等于恢复，恢复必须显式</td></tr>
+      <tr><td>刷新 / 切会话</td><td>目标条与终态卡都由会话目标接口 + 消息回显重建；不靠内存</td><td>目标横跨多轮，内存态一丢就断线</td></tr>
+      <tr><td>多端同时看</td><td>goal_state 帧与 2.5s 轮询对账；动作按钮按自己那份视图判可用</td><td>已有总线与轮询，不新增同步机制</td></tr>
+      <tr><td>没有目标</td><td>不显示目标条；入口仍在输入区的「+ → 本轮模式 → 定为目标」与 <code>/goal</code></td><td>不新开顶级入口，保持现有发现路径</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ==================== 07 落地 ==================== -->
+<section class="sec" id="s7">
+  <div class="sec-head"><span class="sec-no">07</span><h2>落地要点：复用现有数据，只改呈现与两处语义</h2></div>
+  <p class="lead">
+    目标视图模型（goal_state 帧）已经带 <code>status / phase / stage / round / budget / endReason / blockedReason / stale / outcome / objectiveVersion</code>；
+    过程账本接口按 goal_id 聚合，前端只是没接。以下改动不含问答主线的发送、流式、审批。
+  </p>
+
+  <h3 class="sub">7.1 前端</h3>
+  <table class="tbl">
+    <thead><tr><th>文件</th><th>改动</th></tr></thead>
+    <tbody>
+      <tr><td>web/src/chat/projections.js</td><td>新增 <code>goalInterjectedOf</code>（PAUSED + endReason=preempted）、<code>goalBudgetLineOf</code>（轮次/用时/预算占比）、<code>goalVersionLineOf</code>（v1 → v2）、<code>goalCancelCopyOf</code>；状态词补「已让位 / 未完成 / 已取消」。</td></tr>
+      <tr><td>web/src/chat/useChatEngine.js</td><td><code>goalAct</code> 拆出 <code>cancel</code> 与 <code>clearRecord</code>；取消后不再 <code>setGoal(null)</code>，保留 CANCELLED 视图供终态卡渲染；提供 <code>goalRunning</code> / <code>goalInterjecting</code> 给输入区判发送语义。</td></tr>
+      <tr><td>web/src/chat/ChatInput.vue</td><td>新增 <code>goalInterject</code> 模式：<code>steerable=false</code>，发送键回普通发送；占位与 title 改成「插话：先回答你这句，目标随后自动继续」。</td></tr>
+      <tr><td>web/src/views/ChatPage.vue</td><td>目标条重排为三段；取消确认浮层；终态卡挂在目标指令那条回声下（按 goalCommand 的 goalId 认）；「查看过程」开 GoalViewer。</td></tr>
+      <tr><td>web/src/h5/MobileChatPage.vue</td><td>同样的两行条 + 操作 sheet（修改 / 过程 / 取消 / 删除记录），编辑沿用现有 BottomSheet，补版本与生效提示。</td></tr>
+      <tr><td>web/src/components/GoalCard.vue</td><td>移动壳「状态与来源」sheet 里的只读卡改用同一套状态词与终态文案；补「查看过程」入口。</td></tr>
+      <tr><td>web/src/components/GoalViewer.vue（新）</td><td>PC 430px 抽屉 / H5 全屏 sheet：版本轨、预算条、按轮时间线（跳转 turnId）、结果区、底部动作。</td></tr>
+      <tr><td>web/src/api.js</td><td>接 <code>getGoalEventsApi</code>（可带 afterId 增量）；会话目标回显保留 cancelled（与后端同时改）。</td></tr>
+    </tbody>
+  </table>
+
+  <h3 class="sub">7.2 后端（最小语义差）</h3>
+  <table class="tbl">
+    <thead><tr><th>改动</th><th>说明</th><th>优先级</th></tr></thead>
+    <tbody>
+      <tr><td>取消 vs 删除记录</td><td><code>GoalController.act</code> 增加 <code>cancel</code>：<code>clear</code> 内部按 <code>cancel / cleared</code> 写 endReason 与 Outcome 文案（「目标已取消」/「目标记录已删除」）。</td><td class="ok">P1</td></tr>
+      <tr><td>会话目标回显</td><td><code>GET /session/{id}/goal</code>：endReason=cancelled 的 CANCELLED 行要回显；cleared 继续返回 null。</td><td class="ok">P1</td></tr>
+      <tr><td>让位文案</td><td><code>GoalCopy.pausedHint("preempted")</code> 改为「这句答完自动继续」；前端状态词由 endReason 派生，不需要新列。</td><td class="ok">P2</td></tr>
+      <tr><td>未完成可修改</td><td><code>GoalService.edit</code> 目前只允许 CURRENT（不含 FAILED）。建议放行 FAILED：保存后自动 resume，语义是「改完接着跑」。</td><td class="warn">P2（待拍板）</td></tr>
+      <tr><td>取消补 outcome 事件</td><td><code>finish</code> 目前只 emitState，不 appendOutcome；取消时补一条 goal_outcome，过程抽屉才有结果行。</td><td class="warn">P3</td></tr>
+    </tbody>
+  </table>
+
+  <div class="note-strip">
+    <svg class="n-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="8" cy="8" r="6"/><path d="M3.4 8h9.2M8 3.4v9.2"/></svg>
+    <div><b>不做的事</b>：不改目标调度与租约；不给后台目标轮登记 TurnHandle；不新增目标事件表；不在消息流里为每轮目标插一条系统气泡（过程只在抽屉里看）。</div>
+  </div>
+</section>
+
+<!-- ==================== 08 实施 ==================== -->
+<section class="sec" id="s8">
+  <div class="sec-head"><span class="sec-no">08</span><h2>分阶段实施与验收</h2></div>
+
+  <table class="tbl">
+    <thead><tr><th>阶段</th><th>范围</th><th>交付</th><th>验收口径</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>P1 目标条重排</td>
+        <td>PC + H5 目标条三段式；状态词补「已让位 / 未完成 / 已取消」；取消确认 + 取消/删除分档</td>
+        <td>目标条与后端 cancel 语义</td>
+        <td>任何停法一眼能分清；取消必须经过确认；刷新后取消记录仍在</td>
+      </tr>
+      <tr>
+        <td>P2 插话链路</td>
+        <td>目标在跑时 Enter = 让位提问；「已让位」状态 + 自动接续提示；暂停时发送不自动恢复</td>
+        <td>输入区 + 引擎状态接线</td>
+        <td>目标在跑直接发一句话：不出现 steer 队列、不被退回输入框；回答结束目标自动回「进行中」；手动暂停后发消息目标保持暂停</td>
+      </tr>
+      <tr>
+        <td>P3 目标详情</td>
+        <td>GoalViewer 抽屉 / H5 sheet；版本轨、预算条、按轮时间线、结果区；轮次跳转 turnId</td>
+        <td>新组件 + goalEvents 接线</td>
+        <td>点「查看过程」能读到每一轮的摘要与结果；版本与生效轮次一致；点轮次能定位到那条回答</td>
+      </tr>
+      <tr>
+        <td>P4 终态留痕</td>
+        <td>消息流终态卡（已完成 / 已取消 / 未完成）；重新设定目标、查看过程、删除记录；完成态证据摘要</td>
+        <td>ChatPage / MobileChatPage 终态卡</td>
+        <td>达成或取消后目标不再凭空消失；刷新后终态卡仍在；删除记录后真正消失</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3 class="sub">验收清单</h3>
+  <ul class="bullets">
+    <li><b>状态一致性</b>：同一条目标在目标条、详情抽屉、终态卡、移动壳里说的是同一个词、同一个轮次、同一个停因。</li>
+    <li><b>动作可逆</b>：暂停 → 继续、修改 → 再改、取消 → 重新设定，三条回退路径都不断过程。</li>
+    <li><b>插话可用</b>：目标运行中发送不被队列拦截；答完自动继续；「已让位」与手动「已暂停」视觉可分。</li>
+    <li><b>刷新恢复</b>：目标运行中、已让位、已取消三种状态刷新后都能重建，且终态卡与过程入口都在。</li>
+    <li><b>主线零改动</b>：普通问答的发送、流式、停止、审批、steer 队列行为与改动前逐项一致。</li>
+    <li><b>间距对齐</b>：目标条三段行距 8px、按钮高 28px、状态胶囊高 20px、卡片内边距 12px，与输入卡片同一套令牌。</li>
+  </ul>
+</section>
+
+<!-- ==================== 09 待拍板 ==================== -->
+<section class="sec" id="s9">
+  <div class="sec-head"><span class="sec-no">09</span><h2>评审结论与待拍板项</h2></div>
+  <p class="lead">以下五项需要你拍板；每项都给了推荐项，按推荐项实施不需要再改数据结构。</p>
+
+  <div class="decisions">
+    <div class="decision">
+      <div class="dno">D1 · CANCEL VS DELETE</div>
+      <h4>「取消目标」与「删除记录」是否拆成两个动作？</h4>
+      <p>现在只有 clear，一击即消失。</p>
+      <div class="opts">
+        <div class="opt rec"><b>推荐</b>：拆。取消 = 结束并留痕；删除记录 = 仅终态可点，清界面。</div>
+        <div class="opt">备选：只保留取消，不提供删除记录。</div>
+      </div>
+    </div>
+    <div class="decision">
+      <div class="dno">D2 · INTERJECT SEMANTICS</div>
+      <h4>目标运行中插话，走「让位」还是「真 steer 进目标轮」？</h4>
+      <p>后者需要给后台目标轮登记 TurnHandle，且语义上会把用户的话塞进目标执行上下文。</p>
+      <div class="opts">
+        <div class="opt rec"><b>推荐</b>：让位一轮，答完自动继续；后端零改动。</div>
+        <div class="opt">备选：先只做「明确提示 + 禁用 steer」，插话仍要手动暂停。</div>
+      </div>
+    </div>
+    <div class="decision">
+      <div class="dno">D3 · EDIT ON FAILED</div>
+      <h4>「未完成」的目标允许直接修改吗？</h4>
+      <p>当前后端 edit 只允许 CURRENT，FAILED 必须先继续再改。</p>
+      <div class="opts">
+        <div class="opt rec"><b>推荐</b>：允许；保存后自动继续，省掉「先点继续再改」两步。</div>
+        <div class="opt">备选：保持现状，改按钮在 FAILED 置灰并提示先继续。</div>
+      </div>
+    </div>
+    <div class="decision">
+      <div class="dno">D4 · BUDGET VISIBILITY</div>
+      <h4>预算在条上显示多少？</h4>
+      <p>轮次是用户判断「还要多久」的主指标；token / 时间是运维指标。</p>
+      <div class="opts">
+        <div class="opt rec"><b>推荐</b>：条上只显轮次 + 细进度条；token / 时间放详情抽屉。</div>
+        <div class="opt">备选：条上同时显轮次与预算百分比（当前效果稿）。</div>
+      </div>
+    </div>
+    <div class="decision">
+      <div class="dno">D5 · TERMINAL CARD</div>
+      <h4>终态卡挂在哪？</h4>
+      <p>目标横跨多轮，不属于最后一颗气泡。</p>
+      <div class="opts">
+        <div class="opt rec"><b>推荐</b>：挂在「设为目标」那条用户回声下面，随会话历史重建。</div>
+        <div class="opt">备选：固定在消息流末尾，始终可见。</div>
+      </div>
+    </div>
+    <div class="decision">
+      <div class="dno">D6 · H5 ACTIONS</div>
+      <h4>移动端是否保留四颗图标？</h4>
+      <p>375px 下四颗 32px 图标 + 原文会挤成一团。</p>
+      <div class="opts">
+        <div class="opt rec"><b>推荐</b>：第一行只留主行动 + 「更多」，其余进底部 sheet。</div>
+        <div class="opt">备选：保留「暂停 / 编辑」两颗，取消与过程进 sheet。</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="note-strip" style="margin-top:18px">
+    <svg class="n-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3.2 8.4l3 3L12.8 4.8"/></svg>
+    <div>确认后按 P1 → P2 → P3 → P4 落地，每阶段单独可验收；<b>插话链路（P2）优先做</b>，因为它是当前唯一「用户想做的事做不到」的硬伤。</div>
+  </div>
+</section>
+
+</div>
+</body>
+</html>

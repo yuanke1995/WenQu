@@ -1508,6 +1508,8 @@ const GOAL_LIVE = ['QUEUED', 'RUNNING', 'PAUSED', 'VERIFYING', 'WAITING_APPROVAL
 const GOAL_VISIBLE = [...GOAL_LIVE, 'FAILED']
 /** 正在往前的几档：暂停/等待不算「在跑」，但都还是活目标 */
 const GOAL_MOVING = ['QUEUED', 'RUNNING', 'VERIFYING', 'WAITING_APPROVAL', 'WAITING_EVENT']
+/** 「已让位」不是独立状态，而是暂停的一种成因：用户插话/提问把后台轮挤开了，答完会自动接回 */
+const goalPreemptedOf = g => !!g && g.status === 'PAUSED' && g.endReason === 'preempted'
 
 const goalTerminalOf = g => !!g && GOAL_ENDED.includes(g.status)
 const goalBarVisibleOf = g => !!g && GOAL_VISIBLE.includes(g.status)
@@ -1515,7 +1517,7 @@ const goalPhraseOf = g => {
   const s = g && g.status
   if (g && g.phase === 'COMPLETION_CHECK') return '确认中的目标'
   if (GOAL_MOVING.includes(s)) return '进行中的目标'
-  if (s === 'PAUSED') return '已暂停的目标'
+  if (s === 'PAUSED') return goalPreemptedOf(g) ? '已让位的目标' : '已暂停的目标'
   if (s === 'ACHIEVED') return '已完成的目标'
   if (GOAL_ENDED.includes(s)) return '已结束的目标'
   return ''
@@ -1528,9 +1530,10 @@ const goalStateLabelOf = g => {
   if (s === 'WAITING_APPROVAL') return '待确认'
   if (s === 'WAITING_EVENT') return '等待中'
   if (s === 'QUEUED' || s === 'RUNNING') return '进行中'
-  if (s === 'PAUSED') return '已暂停'
+  if (s === 'PAUSED') return goalPreemptedOf(g) ? '已让位' : '已暂停'
   if (s === 'ACHIEVED') return '已完成'
-  if (GOAL_ENDED.includes(s)) return '已结束'
+  if (s === 'FAILED') return '未完成'
+  if (s === 'CANCELLED' || s === 'ENDED_INCOMPLETE') return '已取消'
   return ''
 }
 const goalStateClassOf = g => {
@@ -1539,7 +1542,8 @@ const goalStateClassOf = g => {
   if (GOAL_MOVING.includes(s)) return 'running'
   if (s === 'PAUSED') return 'paused'
   if (s === 'ACHIEVED') return 'achieved'
-  if (GOAL_ENDED.includes(s)) return 'ended'
+  if (s === 'FAILED') return 'failed'
+  if (s === 'CANCELLED' || s === 'ENDED_INCOMPLETE') return 'cancelled'
   return ''
 }
 /** 条子上那一行轮次：只说自动续跑已经跑到第几轮。
@@ -1567,19 +1571,55 @@ const goalBlockReasonOf = g => {
   if (reason === 'turn-failed' && g.blockedReason) return `这一轮没跑完：${String(g.blockedReason).trim()}`
   return ''
 }
-/** 摘要条的悬浮行：条子放不下的那些字（目标原文、轮次、后端给的那句提示、停因）一次给全 */
+/** 摘要条的悬浮行：条子放不下的那些字（目标原文、轮次、后端给的那句提示、等待原因、停因）一次给全 */
 const goalBarTitleOf = g => {
   if (!g) return ''
-  return [g.objective, goalRoundLineOf(g), g.hint, goalBlockReasonOf(g)].filter(Boolean).join('\n')
+  return [g.objective, goalRoundLineOf(g), g.hint, g.waitingReason, goalBlockReasonOf(g)].filter(Boolean).join('\n')
 }
-/** 触屏那一版：没有 hover，同一批数压成条子下面第二行小字（不许因为「放不下」就在移动端丢掉它） */
+/** 条子第二行那句话：先给「这句答完自动继续」这类提示，再说等待谁、最后说为什么停。
+ *  触屏与 PC 同一条判据——两处各拼一份，同一条目标就会在两端说出两句不同的话。 */
 const goalBarMetaOf = g => {
   if (!g) return ''
-  return [goalRoundLineOf(g), g.hint, goalBlockReasonOf(g)].filter(Boolean).join(' · ')
+  return [g.hint, g.waitingReason, goalBlockReasonOf(g)].filter(Boolean).join(' · ')
 }
 const goalCanPauseOf = g => !!g && GOAL_MOVING.includes(g.status)
 const goalCanResumeOf = g => !!g && (g.status === 'PAUSED' || g.status === 'FAILED' || (g.stale && GOAL_LIVE.includes(g.status)))
-const goalCanEditOf = g => !!g && GOAL_LIVE.includes(g.status)
+const goalCanEditOf = g => !!g && (GOAL_LIVE.includes(g.status) || g.status === 'FAILED')
+/** 取消：只要还在推进（含未完成）就能结束它并留痕；终态不再给这个动作 */
+const goalCanCancelOf = g => !!g && (GOAL_VISIBLE.includes(g.status) || g.status === 'QUEUED' || g.status === 'RUNNING')
+/** 删除记录：只有终态可删（取消与删除是两件事，见 docs/goal-mode-ux） */
+const goalCanClearRecordOf = g => !!g && GOAL_ENDED.includes(g.status)
+/** 目标原文版本：v1 是初版；改过一次后条子与终态卡都要说清当前读的是第几版 */
+const goalVersionLabelOf = g => {
+  if (!g) return ''
+  return 'v' + (Number(g.objectiveVersion) || 0) + 1
+}
+/** 进度细条：取后端预算百分比；没有预算口径时按轮次占比兜底，都没有就不画 */
+const goalProgressPercentOf = g => {
+  const b = g && g.budget
+  if (!b) return null
+  const pct = Number(b.percent)
+  return Number.isFinite(pct) ? Math.max(0, Math.min(100, Math.round(pct * 100))) : null
+}
+/** 终态卡挂在「设为目标」那条回声下：已完成/未完成/已取消都留一张，删除记录后由 sessionGoal=null 一并消失 */
+const goalTerminalCardOf = g => !!g && (g.status === 'ACHIEVED' || g.status === 'FAILED' || g.status === 'CANCELLED' || g.status === 'ENDED_INCOMPLETE') && !(g.status === 'CANCELLED' && g.endReason === 'cleared')
+/** 终态卡的标题词：与状态词同一套，不再另起一套「成功/失败」 */
+const goalTerminalTitleOf = g => {
+  const s = g && g.status
+  if (s === 'ACHIEVED') return '目标已完成'
+  if (s === 'FAILED') return '目标未完成'
+  if (s === 'CANCELLED' || s === 'ENDED_INCOMPLETE') return '目标已取消'
+  return ''
+}
+/** 终态卡下面那句：说清「留下了什么」，避免用户以为取消把东西也删了 */
+const goalTerminalNoteOf = g => {
+  const s = g && g.status
+  const rounds = Number(g && g.budget && g.budget.rounds) || Number(g && g.round) || 0
+  if (s === 'ACHIEVED') return rounds > 0 ? `共 ${rounds} 轮完成，过程与产物都保留` : '过程与产物都保留'
+  if (s === 'FAILED') return '停在未完成：改一下目标就能接着跑；删除记录只撤下这张卡'
+  if (s === 'CANCELLED' || s === 'ENDED_INCOMPLETE') return rounds > 0 ? `共 ${rounds} 轮后取消，历史与过程保留` : '已取消，历史与过程保留'
+  return ''
+}
 /** 完成申请的核验结果那一句：只在这份事实面上出现，两端（详情卡 / 回声悬浮）同一个出口 */
 const goalOutcomeLineOf = g => {
   const o = g && g.outcome
@@ -1588,6 +1628,7 @@ const goalOutcomeLineOf = g => {
     const n = (o.evidence || []).length
     return n > 0 ? `证据已核验（${n} 条）` : '已完成'
   }
+  if (o.state === 'CANCELLED') return o.reason === 'cleared' ? '记录已删除' : '已取消'
   if (o.remaining && o.remaining.length) return `未完成 ${o.remaining.length} 项`
   return ''
 }
@@ -1637,6 +1678,8 @@ export {
   snapshotVersion, applyVersion, verLocal, canSwitchPrev, canSwitchNext, verLabel,
   goalTerminalOf, goalBarVisibleOf, goalPhraseOf, goalStateLabelOf, goalStateClassOf,
   goalBlockReasonOf, goalBarTitleOf, goalBarMetaOf, goalRoundLineOf,
-  goalCanPauseOf, goalCanResumeOf, goalCanEditOf,
+  goalCanPauseOf, goalCanResumeOf, goalCanEditOf, goalCanCancelOf, goalCanClearRecordOf,
+  goalPreemptedOf, goalVersionLabelOf, goalProgressPercentOf,
+  goalTerminalCardOf, goalTerminalTitleOf, goalTerminalNoteOf,
   goalOutcomeLineOf, goalEchoStateOf, goalEchoTipOf
 }

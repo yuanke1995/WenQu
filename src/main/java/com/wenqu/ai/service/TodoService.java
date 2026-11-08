@@ -43,12 +43,12 @@ public class TodoService {
 
     private final SessionService sessionService;
 
-    /** 一条待办：content=要做的事；status=pending|doing|done */
+    /** 一条待办：content=要做的事；status=pending|doing|done|failed（failed=试过但放弃了，等用户决定重试或跳过） */
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record TodoItem(
             @ToolParam(description = "这一项要做的事：一句话、可验收的动作（如「核对共享范围的三种取值」），不要写成段落")
             String content,
-            @ToolParam(description = "状态：pending=还没开始，doing=正在做（同时只允许一项），done=已完成")
+            @ToolParam(description = "状态：pending=还没开始，doing=正在做（同时只允许一项），done=已完成，failed=试过但放弃（还要重试就保持 doing，别急着标 failed）")
             String status) {
     }
 
@@ -70,6 +70,8 @@ public class TodoService {
             + "用法：接到任务先写一份 pending 清单（≤" + MAX_ITEMS + " 项，每项一句话、可验收的动作）；"
             + "上方若有已批准执行计划，就把计划的每一条落成一项——只列要做的实事，别把「建这份清单」本身写成一项；"
             + "每开始一项就把它的 status 改成 doing、上一项改成 done——同时只允许一项 doing；"
+            + "某一步的工具反复失败、你决定不再重试时，把这一项标成 failed（界面会如实显示红叉）；"
+            + "只是暂时失败还要换个办法再试，就保持 doing，别急着标 failed；"
             + "全部做完后再写一次，把每一项都标成 done（清单不会自动消失，靠你收尾）。"
             + "中途改了计划也要用本工具把清单更新成新计划。")
     public String writeTodo(
@@ -103,7 +105,8 @@ public class TodoService {
                 notes.add("有条目过长，已截断（清单条目请写一句话）");
             }
             String status = it.status() == null ? "pending" : it.status().strip().toLowerCase();
-            if (!status.equals("pending") && !status.equals("doing") && !status.equals("done")) {
+            if (!status.equals("pending") && !status.equals("doing")
+                    && !status.equals("done") && !status.equals("failed")) {
                 notes.add("状态「" + it.status() + "」不认识，按 pending 处理");
                 status = "pending";
             }
@@ -159,13 +162,18 @@ public class TodoService {
     public String describe(Normalized n) {
         long done = n.items().stream().filter(i -> i.status().equals("done")).count();
         long doing = n.items().stream().filter(i -> i.status().equals("doing")).count();
+        long failed = n.items().stream().filter(i -> i.status().equals("failed")).count();
         StringBuilder sb = new StringBuilder();
         sb.append("任务清单已更新（共 ").append(n.items().size()).append(" 项：完成 ")
-                .append(done).append("、进行中 ").append(doing).append("、待办 ")
-                .append(n.items().size() - done - doing).append("）。\n");
+                .append(done).append("、进行中 ").append(doing);
+        if (failed > 0) sb.append("、失败 ").append(failed);
+        sb.append("、待办 ")
+                .append(n.items().size() - done - doing - failed).append("）。\n");
         for (TodoItem i : n.items()) {
-            sb.append(i.status().equals("done") ? "- [x] " : i.status().equals("doing") ? "- [>] " : "- [ ] ")
-                    .append(i.content()).append('\n');
+            String mark = i.status().equals("done") ? "- [x] "
+                    : i.status().equals("doing") ? "- [>] "
+                    : i.status().equals("failed") ? "- [!] " : "- [ ] ";
+            sb.append(mark).append(i.content()).append('\n');
         }
         if (!n.notes().isEmpty()) {
             sb.append("注意：").append(String.join("；", n.notes())).append('\n');

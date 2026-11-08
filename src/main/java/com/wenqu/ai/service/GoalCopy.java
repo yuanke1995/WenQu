@@ -37,8 +37,8 @@ public final class GoalCopy {
     /** 条子上「已暂停」那一档的一句人话（受阻原因另有一行，不混在这句里） */
     public static String pausedHint(String endReason) {
         if ("turn-failed".equals(endReason)) return "这一轮没有正常跑完，先停在这里；可以继续。";
-        if ("stopped".equals(endReason)) return "已按你的要求停下；可以继续。";
-        if ("preempted".equals(endReason)) return "你先说了别的，目标停在原地；可以继续。";
+        if ("stopped".equals(endReason)) return "已按你的要求停下；点「继续目标」才接着跑，直接提问不会自动继续。";
+        if ("preempted".equals(endReason)) return "这句答完自动继续。";
         if ("budget".equals(endReason)) return "已达到本次目标的预算上限，先停在这里；可以改目标或继续。";
         if ("no-progress".equals(endReason)) return "连续几轮没有实质进展，先停在这里；可以改目标或继续。";
         if ("verification-failed".equals(endReason)) return "连续提交的证据都没通过核验，先停在这里；可以改目标或继续。";

@@ -55,8 +55,9 @@ public class GoalController {
         }
     }
 
-    @Operation(summary = "目标动作", description = "pause=停止（可再继续）；resume=继续；"
-            + "edit=改目标原文（{objective}）；clear=删除（界面撤下，历史保留）。"
+    @Operation(summary = "目标动作", description = "pause=停止（可再继续）；resume=继续；edit=改目标原文（{objective}，未完成也可改，保存后自动继续）；"
+            + "cancel=取消（结束并留痕，终态卡可回看）；delete=删除记录（仅终态，界面不再回显）。"
+            + "clear 为旧客户端的兼容写法：活目标按取消、终态按删除处理。"
             + "完成由模型 goal_submit 提交证据、平台核验；不需要用户逐条勾选验收标准。")
     @Permission("chat:goal")
     @PostMapping("/goal/{goalId}")
@@ -70,7 +71,9 @@ public class GoalController {
                 case "pause" -> goalService.pause(goalId, uid, null);
                 case "resume" -> goalService.resume(goalId, uid, null);
                 case "edit", "update" -> goalService.edit(goalId, uid, str(body.get("objective")), null);
-                case "clear", "cancel", "delete" -> goalService.clear(goalId, uid, null);
+                case "cancel" -> goalService.cancel(goalId, uid, null);
+                case "delete", "clearRecord" -> goalService.deleteRecord(goalId, uid, null);
+                case "clear" -> goalService.clear(goalId, uid, null);
                 default -> throw new IllegalArgumentException("未知动作：" + action);
             };
             return ResultJson.ok(goalService.view(goal));
@@ -88,18 +91,23 @@ public class GoalController {
         return ResultJson.ok(goalService.pending(sessionId, RequestUser.uid()));
     }
 
-    @Operation(summary = "会话当前/最近目标", description = "右栏「目标」面板回显：当前/最近一条目标（读 DB）。"
-            + "已删除（CANCELLED）的目标不再回显——删了就不该在面板里又冒出来。")
+    @Operation(summary = "会话当前/最近目标", description = "会话目标回显：当前/最近一条目标（读 DB）。"
+            + "取消的目标仍回显（终态卡与过程回看要用）；删除记录（endReason=cleared）后才不再出现。")
     @Permission("chat:goal")
     @GetMapping("/session/{sessionId}/goal")
     public ResultJson<Map<String, Object>> sessionGoal(
             @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId) {
         Goal goal = goalService.latestGoal(sessionId);
-        if (goal == null || GoalService.CANCELLED.equals(goal.getStatus())) {
-            // 无目标是常态，Map.of 不接受 null 值会抛 NPE
+        // 无目标是常态，Map.of 不接受 null 值会抛 NPE
+        if (goal == null || clearedRecord(goal)) {
             return ResultJson.ok(Collections.singletonMap("goal", null));
         }
         return ResultJson.ok(goalService.view(goal));
+    }
+
+    /** 删除记录后不再回显：终态 CANCELLED 且 endReason=cleared（旧版 clear 的存量行也是这一档）。 */
+    private static boolean clearedRecord(Goal goal) {
+        return GoalService.CANCELLED.equals(goal.getStatus()) && "cleared".equals(goal.getEndReason());
     }
 
     @Operation(summary = "目标过程账本", description = "按 goal_id 聚合的事件（过程面板深链：一个目标覆盖多轮）；"

@@ -296,9 +296,12 @@ public class GoalService {
         String text = normalizeObjective(objective);
         synchronized (lockFor(goalId)) {
             goal = reload(goalId);
-            if (!CURRENT.contains(goal.getStatus())) {
+            // 未完成（FAILED）也允许直接改：用户最常见的动作就是「改一下再试」，
+            // 先逼他点一次继续再看原文，等于把一件事拆成两步。保存后自动继续。
+            if (!CURRENT.contains(goal.getStatus()) && !FAILED.equals(goal.getStatus())) {
                 throw new IllegalStateException("这条目标已经结束了，改不了");
             }
+            boolean revive = FAILED.equals(goal.getStatus());
             goal.setObjective(text);
             goal.setObjectiveVersion(goal.getObjectiveVersion() == null ? 1 : goal.getObjectiveVersion() + 1);
             GoalContinuation c = continuation(goal);
@@ -309,6 +312,18 @@ public class GoalService {
             c.setCompletionCheckCount(0);
             goal.setContinuationJson(c.toJson());
             // 不在请求线程里起轮：只把下一轮时间拨到「现在」，调度器一个节拍内接手。
+            if (revive) {
+                // 未完成的目标改完直接复活：清掉失败原因与旧结果，状态回到排队，
+                // 下一拍按新原文重跑（与 resume 同一套字段清理）。
+                goal.setStatus(RUNNING);
+                goal.setPhase(GoalPhase.QUEUED);
+                goal.setEndReason(null);
+                goal.setBlockedReason(null);
+                goal.setWaitingReason(null);
+                goal.setOutcomeJson(null);
+                goal.setErrorClass(null);
+                goal.setAttempt(0);
+            }
             if (ACTIVE.contains(goal.getStatus())) {
                 goal.setNextRunAt(LocalDateTime.now());
             }
@@ -319,23 +334,68 @@ public class GoalService {
         }
     }
 
-    /** 删除（DSH: clear）：目标从界面上撤下，历史与已跑出来的内容全部保留。 */
+    /** 取消（DSH: cancel）：结束这次推进并留痕——目标条收起，终态卡留在消息流里，
+     *  过程账本与历史内容全部可回看。与「删除记录」分开：取消不是抹掉。 */
+    public Goal cancel(String goalId, String uid, RunChannel channel) {
+        Goal goal = own(goalId, uid);
+        synchronized (lockFor(goalId)) {
+            goal = reload(goalId);
+            // 已完成/已取消没有「取消」可说；但 FAILED（未完成）仍算用户管着的活目标，
+            // 条子上给着「取消目标」就必须真的能取消——不能悄悄收到一条空操作。
+            if (!FAILED.equals(goal.getStatus()) && TERMINAL.contains(goal.getStatus())) {
+                return goal;
+            }
+            interruptRunningRound(goal);
+            finish(goal, CANCELLED, "cancelled", channel);
+            log.info("[GOAL] 目标已取消: goal={} 已跑 {} 轮", goalId, nz(goal.getTurnCounter()));
+            return goal;
+        }
+    }
+
+    /** 删除记录（DSH: delete）：只有终态可删；界面/回显一并消失，历史与已跑出来的内容仍留在会话里。 */
+    public Goal deleteRecord(String goalId, String uid, RunChannel channel) {
+        Goal goal = own(goalId, uid);
+        synchronized (lockFor(goalId)) {
+            goal = reload(goalId);
+            if (!TERMINAL.contains(goal.getStatus())) {
+                throw new IllegalStateException("目标还在推进：请先取消目标，再删除记录");
+            }
+            interruptRunningRound(goal);
+            finish(goal, CANCELLED, "cleared", channel);
+            log.info("[GOAL] 目标记录已删除: goal={}", goalId);
+            return goal;
+        }
+    }
+
+    /**
+     * 旧客户端的 {@code clear}：活目标按「取消」处理（不会误删正在推进的东西），
+     * 已结束的按「删除记录」处理。新界面请显式传 cancel / delete。
+     */
     public Goal clear(String goalId, String uid, RunChannel channel) {
         Goal goal = own(goalId, uid);
         synchronized (lockFor(goalId)) {
             goal = reload(goalId);
-            GoalRound running = roundMapper.runningOf(goalId);
-            if (running != null) interruptRunningGoalTurn(goal);
-            if (running != null) {
-                running.setStatus(GoalRound.INTERRUPTED);
-                running.setEndedAt(LocalDateTime.now());
-                roundMapper.updateById(running);
+            if (!TERMINAL.contains(goal.getStatus())) {
+                interruptRunningRound(goal);
+                finish(goal, CANCELLED, "cancelled", channel);
+                log.info("[GOAL] 目标已取消（兼容 clear）: goal={}", goalId);
+            } else {
+                interruptRunningRound(goal);
+                finish(goal, CANCELLED, "cleared", channel);
+                log.info("[GOAL] 目标记录已删除（兼容 clear）: goal={}", goalId);
             }
-            finish(goal, CANCELLED, "cleared", channel);
-            releaseLease(goal);
-            log.info("[GOAL] 目标已删除: goal={}", goalId);
             return goal;
         }
+    }
+
+    /** 结束前把在飞的那一轮收掉：打断执行、把轮标记为 INTERRUPTED（终态只写一次）。 */
+    private void interruptRunningRound(Goal goal) {
+        GoalRound running = roundMapper.runningOf(goal.getId());
+        if (running == null) return;
+        interruptRunningGoalTurn(goal);
+        running.setStatus(GoalRound.INTERRUPTED);
+        running.setEndedAt(LocalDateTime.now());
+        roundMapper.updateById(running);
     }
 
     // ==================== 调度器钩子 ====================
@@ -1060,7 +1120,10 @@ public class GoalService {
                             "facts", c.getFacts().size(),
                             "artifacts", c.getArtifacts().size(),
                             "remaining", c.getGaps().size(),
-                            "completionCheck", c.isCompletionCheck())));
+                            "completionCheck", c.isCompletionCheck(),
+                            // 过程抽屉按轮读的那句交付说明：没有它时间线只剩「第 N 轮」，
+                            // 用户点进来还是看不出这一轮做了什么。空串而不是 null（Map.of 不收 null）
+                            "summary", c.getLastSummary() == null ? "" : c.getLastSummary())));
         }
         return "已记录。";
     }
@@ -1843,7 +1906,7 @@ public class GoalService {
         }
     }
 
-    /** 用户删除：落终态、写 Outcome、释放租约。 */
+    /** 用户取消/删除：落终态、写 Outcome、释放租约。 */
     private void finish(Goal goal, String status, String endReason, RunChannel channel) {
         goal.setStatus(status);
         goal.setPhase(GoalPhase.DONE);
@@ -1851,9 +1914,12 @@ public class GoalService {
         goal.setEndedAt(LocalDateTime.now());
         goal.setNextRunAt(null);
         goal.setWaitingReason(null);
-        goal.setOutcomeJson(GoalOutcome.of("CANCELLED", endReason, "目标已删除").toJson());
+        String note = "cleared".equals(endReason) ? "目标记录已删除" : "目标已取消";
+        GoalOutcome outcome = GoalOutcome.of("CANCELLED", endReason, note);
+        goal.setOutcomeJson(outcome.toJson());
         goalMapper.updateById(goal);
         releaseLease(goal);
+        appendOutcome(goal, outcome);
         emitState(goal, channel);
         log.info("[GOAL] 目标终态: goal={} status={} reason={}", goal.getId(), status, endReason);
     }

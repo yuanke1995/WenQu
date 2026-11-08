@@ -1963,7 +1963,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             recording.toolCall(name, status, args, elapsed, beganAt, charged, result);
             try {
                 emit(channel, RunEventType.TOOL_STATUS,
-                        toolCard(recording.uid, name, status, elapsed, beganAt, charged, args, result, null));
+                        toolCard(recording.uid, name, status, elapsed, beganAt, charged, args, result, null,
+                                recording.hooks.step().index()));
             } catch (RuntimeException gone) {
                 log.info("[agentx] 待办终态帧没发出去（通道已收），落库那份仍在: session={} tool={}",
                         cmd.getSessionId(), name);
@@ -2411,6 +2412,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             // 落库的这份是刷新后重建工具卡的唯一依据，写裸名等于把中文名全押在前端那份手抄映射上
             displayNames.putDisplayFields(entry, uid, name);
             entry.put("status", status);
+            // 步骤归属随卡落库（取值时刻＝开工这一刻）：刷新后执行详情仍能把工具归到原步骤。
+            // 终态回填时不覆盖——那时清单可能已经推进到下一步，拿它盖会把这一步的工具挪到下一步去
+            int stepId = hooks.step().index();
+            if (stepId >= 0) entry.put("stepId", stepId);
             // 入参随卡片落库：前端刷新后的工具卡、咨询卡「被咨询那一位的名字」、
             // 以及暗截断对账里的「工具入参字符数」都读这一列（缺它等于三处一起退化）
             if (args != null && !args.isBlank()) entry.put("args", args);
@@ -3080,7 +3085,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 实时工具卡。发 "running" 会让前端把这张当终态卡 push 出去，随后的 done 又找不到可合并的
                 // start 卡再 push 一张——一次调用渲染成两张，其中停在 "running" 的那张显示为失败(❌)。
                 emit(channel, RunEventType.TOOL_STATUS,
-                        toolCard(recording.uid, recording.lastToolName, "start", 0L, beganAt, 0L, recording.lastToolInput, null, null));
+                        toolCard(recording.uid, recording.lastToolName, "start", 0L, beganAt, 0L, recording.lastToolInput, null, null,
+                                recording.hooks.step().index()));
             }
             case "tool/result" -> {
                 String name = toolNameOf(data.get("message"));
@@ -3107,7 +3113,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                         : Math.max(0L, System.currentTimeMillis() - beganAt - covered);
                 java.util.Map<String, Object> subChat = recording.toolCall(name, failed ? "error" : "done", args, elapsed, beganAt, charged, resultText);
                 emit(channel, RunEventType.TOOL_STATUS, toolCard(recording.uid, name, failed ? "error" : "done",
-                        elapsed, beganAt, charged, args, resultText, subChat));
+                        elapsed, beganAt, charged, args, resultText, subChat, recording.hooks.step().index()));
             }
             case "tool/decision" -> {
                 // 权限判定由框架说出（实测字段 decision=allowed|denied）：拒绝必须让用户看见，
@@ -4803,7 +4809,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 「从第一个操作到最后一个操作」的真实跨度；拿前端收到帧的本地时刻去减，接流/后台节流就会把跨度算歪。
      */
     private String toolCard(String uid, String name, String status, long elapsedMs, long startedAtMs, long waitedMs,
-                            String args, String result, java.util.Map<String, Object> subChat) {
+                            String args, String result, java.util.Map<String, Object> subChat, int stepId) {
         StringBuilder sb = new StringBuilder("{\"name\":\"").append(esc(name)).append("\"");
         String label = displayNames.label(uid, name);
         if (label != null) sb.append(",\"label\":\"").append(esc(label)).append("\"");
@@ -4811,6 +4817,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         if (hint != null) sb.append(",\"hint\":\"").append(esc(hint)).append("\"");
         sb.append(",\"status\":\"").append(status)
                 .append("\",\"elapsedMs\":").append(elapsedMs);
+        // 步骤归属：清单里当时唯一 doing 的那一项（-1=还没进到某一步，不写字段）。
+        // 执行详情靠它把工具与产物归到具体步骤；缺了这块，前端只能按调用顺序猜，串步是常态。
+        if (stepId >= 0) sb.append(",\"stepId\":").append(stepId);
         // 只在真有值时写：缺它 = 这一把没计时（前端不显示），写成 0 = 谎称这一把从 1970 年跑起 / 跑了 0 毫秒
         if (startedAtMs > 0L) sb.append(",\"startedAtMs\":").append(startedAtMs);
         if (waitedMs > 0L) sb.append(",\"waitedMs\":").append(waitedMs);

@@ -173,7 +173,9 @@ public class TodoBridge {
         return out;
     }
 
-    /** 问渠状态词 → 框架状态枚举（doing→in_progress、done→completed；其余归 pending） */
+    /** 问渠状态词 → 框架状态枚举（doing→in_progress、done→completed；其余归 pending）。
+     *  <p>{@code failed} 在框架里没有对应枚举（只有三态），归 pending 是有意的：它表示「这一步还欠着」，
+     *  下一轮模型看到的是待办（可重试）；用户看到的红叉由问渠那份 todo 文档自己带，不靠框架状态。 */
     static Task.State toFrameworkState(String wenquStatus) {
         String s = wenquStatus == null ? "" : wenquStatus.strip().toLowerCase();
         return switch (s) {
