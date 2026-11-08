@@ -129,9 +129,14 @@
                 <!-- 必填：checkbox 文字禁换行（行内空间紧张时"必填"会被压成竖排） -->
                 <a-checkbox v-model:checked="p.required" class="wf-req-cb" title="运行时此入参必填">必填</a-checkbox>
                 <button class="app-btn ghost small wf-row-del" @click="editConfig.inputs.splice(i, 1)">删</button>
+                <!-- 类型与说明（可选）：工作流挂为智能体工具时，入参 schema 由这两项生成；
+                     缺省 string、说明缺省用参数名——存量工作流不填这两项，行为零变化 -->
+                <a-select v-model:value="p.type" class="wf-row-type" :options="INPUT_TYPES"
+                          placeholder="类型" size="small" allow-clear title="挂为智能体工具时的入参类型" />
+                <a-input v-model:value="p.desc" placeholder="给模型看的参数说明（可选）" class="wf-row-desc" />
               </div>
               <button class="app-btn ghost small" @click="editConfig.inputs.push({ key: '', required: true })">+ 添加入参</button>
-              <div class="wf-hint">入参在点「运行」时填写；后续节点用 <code v-pre>{{start.参数名}}</code> 引用。</div>
+              <div class="wf-hint">入参在点「运行」时填写；后续节点用 <code v-pre>{{start.参数名}}</code> 引用。类型与说明供「挂为智能体工具」时生成参数 schema。</div>
             </template>
 
             <!-- end：出参映射 -->
@@ -707,6 +712,13 @@ const drawer = ref(false)
 const drawerTab = ref('config')
 const selectedId = ref('')
 const editConfig = ref({})
+
+// 入参类型（可选；挂为智能体工具时生成参数 schema 用，画布调试运行不区分类型）
+const INPUT_TYPES = [
+  { label: '字符串', value: 'string' },
+  { label: '数字', value: 'number' },
+  { label: '布尔', value: 'boolean' }
+]
 const kbOptions = ref([])
 const agentOptions = ref([])
 const runResult = ref(null)     // {status, outputs, error, traces, runId}
@@ -1924,7 +1936,9 @@ load()
   background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 4px;
   padding: 1px 6px; font-size: 11px; font-family: ui-monospace, Menlo, monospace;
 }
-.wf-rows { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.wf-rows { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; flex-wrap: wrap; }
+.wf-row-type { width: 88px; flex: none; }
+.wf-row-desc { flex: 1 1 160px; min-width: 0; }
 .wf-row-key { width: 110px; flex: none; }
 .wf-row-value { flex: 1; min-width: 0; }
 .wf-row-grow { flex: 1; min-width: 0; }

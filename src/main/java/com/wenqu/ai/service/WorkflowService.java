@@ -284,6 +284,7 @@ public class WorkflowService {
             WorkflowDsl dsl = parseDsl(dslText);
             List<String> errors = validator.validate(dsl);
             if (!errors.isEmpty()) throw new BizException("工作流校验未通过：" + String.join("；", errors));
+            checkSubagentAgentCycle(dsl, row.getId());
             assertCompilable(dsl);
             row.setDsl(dslText.trim());
         }
@@ -574,6 +575,7 @@ public class WorkflowService {
         WorkflowDsl dsl = parseDsl(row.getDsl());
         List<String> errors = validator.validate(dsl);
         if (!errors.isEmpty()) throw new BizException("工作流校验未通过，无法发布：" + String.join("；", errors));
+        checkSubagentAgentCycle(dsl, row.getId());
         assertCompilable(dsl);
         int version = nextVersion(row.getId());
         WorkflowVersion v = new WorkflowVersion();
@@ -644,6 +646,7 @@ public class WorkflowService {
         List<String> errors = validator.validate(dsl);
         if (!errors.isEmpty()) throw new BizException("版本 v" + targetVersion + " 的 DSL 已不符合当前校验规则，无法回滚："
                 + String.join("；", errors));
+        checkSubagentAgentCycle(dsl, row.getId());
         int version = nextVersion(row.getId());
         WorkflowVersion v = new WorkflowVersion();
         v.setId(UUID.randomUUID().toString());
@@ -751,6 +754,23 @@ public class WorkflowService {
      */
     public WorkflowRun runForAgent(String workflowId, Map<String, Object> inputs, Principal p,
                                      Consumer<String> tokenSink, Consumer<List<String>> imageSink) {
+        return runForAgent(workflowId, inputs, p, tokenSink, imageSink, 0);
+    }
+
+    /**
+     * 智能体对话触发（带工作流嵌套深度）：{@code wfDepth} 是本轮已处于的嵌套层数（0=顶层轮），
+     * 本次运行落在 {@code wfDepth+1} 层。超过 {@code WorkflowToolService.MAX_WF_DEPTH} 直接拒绝——
+     * 工作流的子智能体节点会再起完整一轮问答，那轮若再调工作流（工具路径或 chatflow 分派路径）
+     * 就形成 智能体→工作流→智能体→工作流 递归，这里是分派收口的那道闸（装配收口在工具族 provider）。
+     */
+    public WorkflowRun runForAgent(String workflowId, Map<String, Object> inputs, Principal p,
+                                     Consumer<String> tokenSink, Consumer<List<String>> imageSink, int wfDepth) {
+        if (wfDepth > com.wenqu.ai.service.workflowtool.WorkflowToolService.MAX_WF_DEPTH) {
+            throw new BizException("工作流嵌套过深（已连续 " + (wfDepth - 1) + " 层）：工作流的子智能体节点"
+                    + "与智能体的工作流工具/工作流绑定相互调用会形成递归，已按防环上限（"
+                    + com.wenqu.ai.service.workflowtool.WorkflowToolService.MAX_WF_DEPTH
+                    + " 层）截断，请检查相关配置");
+        }
         Workflow row = workflowMapper.selectById(workflowId);
         if (row == null) throw new BizException(404, "工作流不存在");
         if (!"published".equals(row.getStatus()) || row.getPublishedDsl() == null || row.getPublishedDsl().isBlank()) {
@@ -762,7 +782,7 @@ public class WorkflowService {
         }
         assertNoApprovalNode(parseDsl(row.getPublishedDsl()), "智能体对话");
         return execute(row, row.getPublishedDsl(), "agent", p.uid(), null, row.getPublishedVersion(),
-                "published", inputs, tokenSink, imageSink, p);
+                "published", inputs, tokenSink, imageSink, p, wfDepth);
     }
 
     /** 人工审核节点在无审批交互面的触发方式下 fail-loud（不静默自动放行） */
@@ -772,6 +792,29 @@ public class WorkflowService {
             if ("approval".equals(n.getType())) {
                 throw new BizException(triggerName + "不支持人工审核节点（节点「" + n.getId()
                         + "」）：审核需要人在回路的交互面，请在画布调试运行中处理，或从发布版本里移除该节点");
+            }
+        }
+    }
+
+    /**
+     * 编译闸前置（防环）：subagent 节点引用的智能体若<b>绑定了本工作流</b>，就是
+     * 智能体→工作流→智能体→工作流 的直接自环——保存/发布当场拦截并指名，不让「画得出、
+     * 跑起来互相递归到防环上限才报错」的问题留到运行时（复用编译闸前置先例 1c98ce4c 的口径）。
+     * 跨工作流的间接环由运行入口的嵌套深度上限兜住（{@link #runForAgent}），这里只拦
+     * 最直白、也最容易无意画出来的那一种。
+     */
+    private void checkSubagentAgentCycle(WorkflowDsl dsl, String selfWorkflowId) {
+        if (selfWorkflowId == null || selfWorkflowId.isBlank() || dsl.getNodes() == null) return;
+        for (WorkflowDsl.Node n : dsl.getNodes()) {
+            if (!"subagent".equals(n.getType()) || n.getConfig() == null) continue;
+            Object agentIdRaw = n.getConfig().get("agentId");
+            String agentId = agentIdRaw == null ? "" : String.valueOf(agentIdRaw).trim();
+            if (agentId.isEmpty()) continue;
+            com.wenqu.ai.model.Agent agent = agentService.get(agentId);
+            if (agent != null && selfWorkflowId.equals(agent.getWorkflowId())) {
+                throw new BizException("校验未通过：子智能体节点「" + n.getId() + "」引用的智能体「"
+                        + agent.getName() + "」已绑定本工作流——这会形成 智能体→工作流→智能体 的相互递归，"
+                        + "请换用别的智能体，或解绑该智能体的这条工作流");
             }
         }
     }
@@ -959,9 +1002,18 @@ public class WorkflowService {
                                   String apiKeyId, Integer version, String dslSource,
                                   Map<String, Object> inputs, Consumer<String> tokenSink,
                                   Consumer<List<String>> imageSink, Principal p) {
+        return execute(row, dslText, triggerType, triggeredBy, apiKeyId, version, dslSource,
+                inputs, tokenSink, imageSink, p, 0);
+    }
+
+    /** 全量重载：wfDepth 为本次运行所处的嵌套层（0=顶层；防环链深随 ctx 贯穿到子智能体节点，见 runForAgent） */
+    private WorkflowRun execute(Workflow row, String dslText, String triggerType, String triggeredBy,
+                                  String apiKeyId, Integer version, String dslSource,
+                                  Map<String, Object> inputs, Consumer<String> tokenSink,
+                                  Consumer<List<String>> imageSink, Principal p, int wfDepth) {
         WorkflowDsl dsl = parseDsl(dslText);
         WorkflowRun run = newRun(row, dslText, triggerType, triggeredBy, apiKeyId, version, dslSource, inputs);
-        WorkflowRunCtx ctx = newCtx(run.getId(), p, inputs, tokenSink, imageSink);
+        WorkflowRunCtx ctx = newCtx(run.getId(), p, inputs, tokenSink, imageSink, wfDepth);
         runMapper.insert(run);
         return runGraph(run, ctx, row, dsl);
     }
@@ -997,6 +1049,12 @@ public class WorkflowService {
     /** 建运行上下文（trace 增量回调由调用方按需安装，见 {@code ctx.setTraceSink}） */
     private WorkflowRunCtx newCtx(String runId, Principal p, Map<String, Object> inputs,
                                   Consumer<String> tokenSink, Consumer<List<String>> imageSink) {
+        return newCtx(runId, p, inputs, tokenSink, imageSink, 0);
+    }
+
+    /** 全量重载：wfDepth 随 ctx 贯穿（子智能体节点的问答轮据此继续计数防环，见 runForAgent） */
+    private WorkflowRunCtx newCtx(String runId, Principal p, Map<String, Object> inputs,
+                                  Consumer<String> tokenSink, Consumer<List<String>> imageSink, int wfDepth) {
         return new WorkflowRunCtx(runId, p.uid(), p.departmentId(), p.role(),
                 configService.currentOverrides(), userConfigService.overrides(p.uid()), inputs,
                 configService.getDouble("chat.temperature"),
@@ -1004,7 +1062,8 @@ public class WorkflowService {
                 tokenSink, imageSink,
                 configService.getInt("workflow.traceInputMaxChars", ConfigDefaults.WORKFLOW_TRACE_INPUT_MAX),
                 configService.getInt("workflow.traceOutputMaxChars", ConfigDefaults.WORKFLOW_TRACE_OUTPUT_MAX),
-                configService.getInt("workflow.traceErrorMaxChars", ConfigDefaults.WORKFLOW_TRACE_ERROR_MAX));
+                configService.getInt("workflow.traceErrorMaxChars", ConfigDefaults.WORKFLOW_TRACE_ERROR_MAX),
+                wfDepth);
     }
 
     /**

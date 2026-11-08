@@ -78,6 +78,13 @@
       ]
     },
     {
+      "key": "workflowTool",
+      "title": "工作流工具（已发布工作流挂载为对话工具）",
+      "sections": [
+        "总开关"
+      ]
+    },
+    {
       "key": "skills",
       "title": "技能",
       "sections": [
@@ -2884,6 +2891,20 @@
       "tier": 2,
       "note": "自宿主场景宿主 API 常在内网，保持开启；公网多租户部署建议关闭，防止借智能体探测内网。",
       "tips": "httpToolAllowPrivateNetwork"
+    },
+    {
+      "backendKey": "workflowTool.enabled",
+      "panel": "workflowTool",
+      "section": 0,
+      "group": "workflowTool",
+      "key": "enabled",
+      "path": "workflowTool.enabled",
+      "label": "总开关",
+      "type": "switch",
+      "def": true,
+      "vif": "tool.enabled",
+      "tier": 2,
+      "note": "开启后智能体可把已发布的工作流挂载为对话工具（智能体配置页勾选，≤8 个）。默认开不改变任何存量行为——没有配置工作流的智能体不会有任何工具。嵌套调用有 2 层防环上限。"
     },
     {
       "backendKey": "webSearch.provider",

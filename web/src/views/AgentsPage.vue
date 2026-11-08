@@ -330,6 +330,13 @@
                     工具名 = 工具集名_操作名；执行审批跟随「工具执行确认」档位；游客分享与 API Key 白名单外的通道不暴露
                   </div>
                 </div>
+                <!-- 工作流工具管理：同样挂在开关行下方，勾选已发布工作流 -->
+                <div v-if="form.toolWorkflow === '1'" class="ap-cap-pick">
+                  <WorkflowToolsEditor v-model="form.workflowTools" />
+                  <div class="ap-pick-empty" style="margin-top:4px">
+                    工具名 = wf_工作流名_短id；运行取该工作流当前发布版本的出参；嵌套调用有 2 层防环上限；游客分享与 API Key 白名单外的通道不暴露
+                  </div>
+                </div>
               </div>
 
               <div class="ap-advanced" :class="{ open: advOpen }">
@@ -758,6 +765,7 @@ import ModelSelect from '../components/ModelSelect.vue'
 import AgentAvatar from '../components/AgentAvatar.vue'
 import SkillContentModal from '../components/SkillContentModal.vue'
 import HttpToolsEditor from '../components/agent/HttpToolsEditor.vue'
+import WorkflowToolsEditor from '../components/agent/WorkflowToolsEditor.vue'
 import { ensureAuth, isAdminSync } from '../utils/auth'
 import { loadModelIndex } from '../utils/modelRef'
 import { locateField } from '../utils/fieldLocate'
@@ -798,7 +806,11 @@ const CAPS = [
   // HTTP 工具（OpenAPI 导入）：工具集是智能体自有配置（不是个人资产引用），开启后在本行下方管理
   { key: 'toolHttp', label: 'HTTP 工具', desc: '按 OpenAPI 导入宿主 API 工具集', icon: LinkOutlined,
     detail: '导入宿主项目的 OpenAPI 规格生成对话工具，模型可自主调用宿主业务 API（游客分享不暴露）',
-    kind: 'switch', path: ['httpTool', 'enabled'], gate: ['tool', 'enabled'] }
+    kind: 'switch', path: ['httpTool', 'enabled'], gate: ['tool', 'enabled'] },
+  // 工作流工具：把已发布工作流挂载为对话工具（智能体自有配置），开启后在本行下方勾选
+  { key: 'toolWorkflow', label: '工作流工具', desc: '把已发布工作流挂为对话工具', icon: PartitionOutlined,
+    detail: '勾选已发布的工作流（≤8 个），模型在对话中自主决定何时运行整条流程并取回出参（嵌套有 2 层防环上限；游客分享不暴露）',
+    kind: 'switch', path: ['workflowTool', 'enabled'], gate: ['tool', 'enabled'] }
 ]
 // 开关型三态：''=跟随全局 / '1'=开启 / '0'=关闭（对应后端 tool_* 的 1/0/null）
 // 多实例能力：跟随全局 / 指定（选「指定」才展开具体项多选）/ 不使用
@@ -1033,9 +1045,10 @@ const blankForm = () => ({
   icon: '', isBuiltin: 0,
   // 开关型：'' = 跟随全局 / '1' = 开启 / '0' = 关闭
   toolKnowledge: '', toolBuiltin: '', toolSkill: '', toolArtifact: '', toolMcp: '', toolWebsearch: '',
-  toolHttp: '',
-  // HTTP 工具集（数组，HttpToolsEditor 双向绑定；保存整包提交、后端归一+凭据加密）
+  toolHttp: '',  // HTTP 工具集（数组，HttpToolsEditor 双向绑定；保存整包提交、后端归一+凭据加密）
   httpTools: [],
+  toolWorkflow: '',  // 工作流工具集（数组，WorkflowToolsEditor 双向绑定；保存整包提交、后端归一校验）
+  workflowTools: [],
   // 目标模式（资源级二态）：1=开 0=关。平台级总闸已去掉，这一格是唯一判据；null 从旧数据来时按开处理
   goalEnabled: 1,
   // 有副作用工具（沙盒/MCP）执行审批：''=跟随档位（默认） auto=自动执行 ask=执行前确认 off=禁用
@@ -1760,7 +1773,9 @@ const openEdit = a => {
     toolWebsearch: triStr(a.toolWebsearch),
     toolHttp: triStr(a.toolHttp),
     // HTTP 工具集：回显是脱敏后的 JSON（auth.value 已清空），编辑保存时留空 = 沿用旧凭据
-    httpTools: parseHttpTools(a.httpTools),
+    httpTools: parseJsonArray(a.httpTools),
+    toolWorkflow: triStr(a.toolWorkflow),
+    workflowTools: parseJsonArray(a.workflowTools),
     // 目标模式：NULL/1=开，0=关（后端同口径）
     goalEnabled: a.goalEnabled === 0 ? 0 : 1,
     toolApprovalMode: a.toolApprovalMode || '',
@@ -1786,7 +1801,7 @@ const openEdit = a => {
 const closeEdit = () => { editing.value = false }
 
 /** HTTP 工具集 JSON 串 → 编辑器数组（坏数据当空配置，重新导入即可修复） */
-const parseHttpTools = s => {
+const parseJsonArray = s => {
   if (!s) return []
   try { const v = JSON.parse(s); return Array.isArray(v) ? v : [] } catch { return [] }
 }
@@ -1898,6 +1913,9 @@ const save = async () => {
     // HTTP 工具（v1 对外能力第一批）：整包提交工具集（auth.value 留空=沿用旧凭据，后端按 id 保留密文）
     toolHttp: tri(f.toolHttp),
     httpTools: f.httpTools || [],
+    // 工作流工具（v2 对外能力第二批）：整包提交工作流 id 数组，后端校验存在性/发布态
+    toolWorkflow: tri(f.toolWorkflow),
+    workflowTools: f.workflowTools || [],
     // 目标模式：二态始终带上（关掉后要能落 0；NULL 只留给旧数据）
     goalEnabled: f.goalEnabled === 0 ? 0 : 1,
     // 执行确认留空 → null = 跟随权限档位的建议值（只读调研→逐项确认、全自主→直接执行）

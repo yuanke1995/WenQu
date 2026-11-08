@@ -1095,6 +1095,9 @@ public class WorkflowEngine {
                             .sessionId(sessionId).question(prompt).userId(ctx.uid)
                             .userImages(List.of()).attachments(List.of()).skills(List.of())
                             .agentId(agentId).modelOverride(modelRef)
+                            // 防环链深：本次运行所处的嵌套层交给子轮——它再调工作流工具或被分派到
+                            // 绑定工作流时，运行入口据此拒绝超深嵌套（见 WorkflowService.runForAgent）
+                            .wfDepth(ctx.wfDepth)
                             // 子智能体节点身份进工作区轮次租约：占用展示与撞锁文案指名到节点用的智能体
                             .source(TurnLease.KIND_WORKFLOW).sourceName(agent.getName())
                             .build(), sink);

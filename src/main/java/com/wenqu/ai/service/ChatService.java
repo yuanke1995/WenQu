@@ -308,7 +308,8 @@ public class ChatService {
                 null,
                 // 同上：上传归属者（免登录分享时是访客）
                 chatAttachments.metasJson(attachments, cmd.uploadOwnerUid()),
-                (mentions == null || mentions.isEmpty()) ? null : com.alibaba.fastjson2.JSON.toJSONString(mentions));
+                (mentions == null || mentions.isEmpty()) ? null : com.alibaba.fastjson2.JSON.toJSONString(mentions),
+                cmd.getWfDepth());
     }
 
     /**

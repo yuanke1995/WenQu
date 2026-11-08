@@ -893,6 +893,9 @@ public class ConfigService {
         d.put("httpTool.enabled", "true");                // HTTP 工具总开关（需 tool.enabled 总闸开启）
         d.put("httpTool.timeoutMs", "10000");             // 工具集未单独配置时的默认超时(ms)
         d.put("httpTool.allowPrivateNetwork", "true");    // 允许工具集调用内网/环回地址（自宿主场景宿主 API 常在内网；公网多租户部署建议关，防借智能体探测内网）
+        // ---------- 工作流工具（已发布工作流挂载为对话工具；配置存智能体行 workflow_tools）----------
+        // 与 httpTool.enabled 同一理由默认开：没有配置工作流的智能体该族天然不挂，闸开着也无工具可出。
+        d.put("workflowTool.enabled", "true");            // 工作流工具总开关（需 tool.enabled 总闸开启）
         // 技能：内置随版本分发 + 用户自装（user-data/skills-users/{uid}）+ 助手在对话里沉淀到沙盒工作区。
         // 平台侧只剩两件事：哪些技能全平台不再用（skill.disabled），以及 URL 安装允许哪些来源域名。
         // 技能正文读取上限改为平台常量（SKILL_MAX_FILE_CHARS），不再作为设置项。

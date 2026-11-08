@@ -144,6 +144,14 @@ public final class ChatCommand {
      */
     final int subagentDepth;
     /**
+     * 本轮已处于的<b>工作流嵌套深度</b>（对外能力第二批·工作流当工具）：0 = 顶层轮；
+     * 1 = 工作流的子智能体节点起的这一轮；2 = 又一层。与 {@link #subagentDepth} 的分工：
+     * 那个数管「框架派遣分支」的递归，这个数管「智能体↔工作流」的相互调用递归——
+     * 工作流工具族的装配判据（到顶不挂）与工作流运行入口的 fail-loud 拒绝（
+     * {@code WorkflowService.runForAgent}）同源读它。默认 0：所有既有调用方行为逐字不变。
+     */
+    final int wfDepth;
+    /**
      * 父轮交代给这一支的上下文（继承父历史，对标 fork-in-process）：父轮问题 + 最近若干轮对话，
      * 字符预算已按深度裁剪。仅 {@link #subagentDepth} &gt; 0 时有值；null/空 = 不带。
      */

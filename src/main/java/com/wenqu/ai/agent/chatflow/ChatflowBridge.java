@@ -79,7 +79,7 @@ public class ChatflowBridge {
                                  Set<String> degradedCodes, Agent agent, boolean guestMode, boolean branchTurn,
                                  boolean regenerate,
                                  String replaceMessageId, String editVariantGroup, Agent delegatedAgent,
-                                 String attachmentsJson, String mentionsJson) {
+                                 String attachmentsJson, String mentionsJson, int wfDepth) {
         runtime.sendSseEvent(emitter, "plan", JSON.toJSONString(List.of("执行工作流")), sessionId);
         // 起表基准早帧：主链路那一帧在引擎路径上，工作流分支走不到那里。不补的表现为「秒表按本地
         // 按下回车起表、答完换成服务端墙钟时掉一段」（客户端钟还偏着时掉的更多）。只给时长不给绝对时刻。
@@ -119,6 +119,8 @@ public class ChatflowBridge {
             // 工作流也按服务端墙钟计时：done 与落库 tokens 用同一个数，前端不再拿本地钟对账。
             long prepMs = System.currentTimeMillis() - startTime;
             WorkflowRun run = workflowServiceProvider.getObject()
+                    // wfDepth+1：本轮已处于 wfDepth 层嵌套（0=顶层），本次工作流运行落在下一层——
+                    // 运行入口按防环上限拒绝超深（子智能体节点→绑定工作流的智能体→再调工作流的递归）
                     .runForAgent(agent.getWorkflowId(), inputs, p, token -> {
                         streamed.append(token);
                         runtime.sendSseEvent(emitter, "token", token, sessionId);
@@ -130,7 +132,7 @@ public class ChatflowBridge {
                         }
                         List<String> signed = imgs.stream().map(imageUrlSigner::signUrl).toList();
                         runtime.sendSseEvent(emitter, "image", JSON.toJSONString(signed), sessionId);
-                    });
+                    }, wfDepth + 1);
             if (!"success".equals(run.getStatus())) {
                 String reason = run.getError() == null || run.getError().isBlank()
                         ? "工作流运行未成功（状态 " + run.getStatus() + "）" : run.getError();

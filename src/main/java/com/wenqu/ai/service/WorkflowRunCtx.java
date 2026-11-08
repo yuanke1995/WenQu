@@ -22,6 +22,12 @@ public final class WorkflowRunCtx {
     final String uid;
     final String departmentId;
     final String role;
+    /**
+     * 本次运行所处的工作流嵌套层（0=顶层；1=工作流当工具被智能体调用、其子智能体轮以此继续计数）。
+     * 子智能体节点把它带进问答轮的 {@code ChatCommand.wfDepth}——那条轮再调工作流工具或被分派到
+     * 绑定工作流时，运行入口据此拒绝超深的嵌套（防环，见 WorkflowService.runForAgent）。
+     */
+    final int wfDepth;
     /** 本次运行 id（人工审核节点的 PENDING 记录以此关联归属） */
     final String runId;
     /** 触发线程的参数覆盖快照（节点线程内重放；见 ConfigService.currentOverrides 的跨线程口径） */
@@ -138,6 +144,16 @@ public final class WorkflowRunCtx {
                    Map<String, Object> inputs, double defaultTemperature, int maxSteps, Consumer<String> tokenSink,
                    Consumer<List<String>> imageSink,
                    int traceInputMax, int traceOutputMax, int traceErrorMax) {
+        this(runId, uid, departmentId, role, baseOverrides, baseUserOverrides, inputs, defaultTemperature,
+                maxSteps, tokenSink, imageSink, traceInputMax, traceOutputMax, traceErrorMax, 0);
+    }
+
+    /** 全量重载：wfDepth 为本次运行所处的嵌套层（0=顶层；防环链深，见 WorkflowService.runForAgent） */
+    WorkflowRunCtx(String runId, String uid, String departmentId, String role,
+                   Map<String, String> baseOverrides, Map<String, String> baseUserOverrides,
+                   Map<String, Object> inputs, double defaultTemperature, int maxSteps, Consumer<String> tokenSink,
+                   Consumer<List<String>> imageSink,
+                   int traceInputMax, int traceOutputMax, int traceErrorMax, int wfDepth) {
         this.runId = runId;
         this.uid = uid;
         this.departmentId = departmentId;
@@ -152,6 +168,7 @@ public final class WorkflowRunCtx {
         this.traceInputMax = Math.max(1, traceInputMax);
         this.traceOutputMax = Math.max(1, traceOutputMax);
         this.traceErrorMax = Math.max(1, traceErrorMax);
+        this.wfDepth = wfDepth;
     }
 
     /**

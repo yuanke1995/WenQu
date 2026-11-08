@@ -220,7 +220,7 @@ public class WenquAgentxTools {
                                        boolean sandboxEnabled,
                                        boolean mcpEnabled) {
         var mc = toolAssembly.mountContext(agentOf(cmd), cmd.getUserId(), cmd.isGuestMode(),
-                cmd.branchTurn(), onDegrade, policy, cmd.getGuestMcpServers());
+                cmd.branchTurn(), cmd.getWfDepth(), onDegrade, policy, cmd.getGuestMcpServers());
         List<Object> holders = new java.util.ArrayList<>(turnTools(cmd, slot));
         // 建实例时才能定下来的工具面：脚本子调用要用同一批回调，逐轮只换轮号/通道/台账。
         // 工具闭包里<b>只允许</b>捕获这个会话级槽位（slot），按轮的数据一律调用时现取——
@@ -398,7 +398,7 @@ public class WenquAgentxTools {
      */
     public java.util.Set<String> turnGroupedNames(ChatCommand cmd, ExecutionPolicy policy) {
         var mc = toolAssembly.mountContext(agentOf(cmd), cmd.getUserId(), cmd.isGuestMode(),
-                cmd.branchTurn(), (code, message) -> { }, policy, cmd.getGuestMcpServers());
+                cmd.branchTurn(), cmd.getWfDepth(), (code, message) -> { }, policy, cmd.getGuestMcpServers());
         java.util.Set<String> out = new java.util.LinkedHashSet<>();
         for (var family : GROUPED_FAMILIES) {
             for (var d : toolRegistry.ofFamily(family)) {
@@ -787,7 +787,7 @@ public class WenquAgentxTools {
     private boolean dispatchAllowed(ChatCommand cmd, ExecutionPolicy policy) {
         if (cmd.branchTurn() || cmd.isGuestMode()) return false;
         var mc = toolAssembly.mountContext(agentOf(cmd), cmd.getUserId(), cmd.isGuestMode(),
-                cmd.branchTurn(), (code, message) -> {
+                cmd.branchTurn(), cmd.getWfDepth(), (code, message) -> {
                 }, policy, cmd.getGuestMcpServers());
         if (!mc.masterOn() || mc.approvalOff() || (mc.branchTurn() && mc.approvalAsk())) return false;
         var p = mc.permissionPolicy();

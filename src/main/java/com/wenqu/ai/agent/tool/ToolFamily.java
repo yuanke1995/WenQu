@@ -30,6 +30,13 @@ public enum ToolFamily {
      * {@code ToolRegistry.requiresApproval} fail-closed 返回 true，与 MCP 同一兜底）。
      */
     HTTP_API("http_api", "HTTP 工具"),
+    /**
+     * 工作流工具（已发布工作流按智能体 {@code workflow_tools} 配置动态合入）。
+     * <p>与 HTTP_API 同口径：<b>刻意不受审批 off 档管辖</b>——工作流当工具的典型场景正是嵌入方
+     * 无人值守地调一条确定性流程；ask 档仍会逐次问（动态工具名未登记注册中心，
+     * {@code ToolRegistry.requiresApproval} fail-closed 返回 true，与 MCP / HTTP 同一兜底）。
+     */
+    WORKFLOW("workflow", "工作流"),
     /** 产物交付（模型生成的可下载文件） */
     ARTIFACT("artifact", "产物交付"),
     /** 技能（Skills 渐进披露的取回端，个人资产）；智能体级开关 tool_skill 控制它开不开 */

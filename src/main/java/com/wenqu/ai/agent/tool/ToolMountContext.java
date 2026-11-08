@@ -65,6 +65,17 @@ public interface ToolMountContext {
         return false;
     }
 
+    /**
+     * 本轮已处于的工作流嵌套深度（0 = 顶层轮；工作流当工具的防环判据）。
+     * <p>工作流的子智能体节点会以触发者身份起完整一轮问答，那轮若再调工作流工具（或它绑定了
+     * 另一条工作流被分派）就形成递归——深度随每次嵌套 +1，到
+     * {@code WorkflowToolService.MAX_WF_DEPTH} 后整族不再挂载（装配收口）且运行入口 fail-loud
+     * （分派收口），两道闸同源这一个常量。默认 0 = 所有既有调用方行为逐字不变。
+     */
+    default int turnWfDepth() {
+        return 0;
+    }
+
     /** 全局配置开关（tool.* / webSearch.* 等，键名取自 {@link ToolDescriptor#gateKey()}） */
     boolean gateOn(String gateKey);
 

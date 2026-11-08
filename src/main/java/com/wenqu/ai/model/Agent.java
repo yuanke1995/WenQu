@@ -95,6 +95,9 @@ public class Agent {
     /** HTTP 工具（OpenAPI 导入的宿主 API 工具集）：1=开 0=关 NULL=继承 */
     private Integer toolHttp;
 
+    /** 工作流工具（已发布工作流挂载为对话工具）：1=开 0=关 NULL=继承 */
+    private Integer toolWorkflow;
+
     /**
      * 目标模式开关（资源级）: 1=开 0=关 NULL=开。平台级总闸已去掉，这一格就是唯一判据。
      * <p>关=界面无入口、引擎不接目标上下文、续跑驱动不接管；与「任务上下文投影」已解耦
@@ -158,6 +161,13 @@ public class Agent {
      * 每轮由 {@code HttpApiToolProvider} 按它动态构建对话工具。NULL=未配置（该族无工具可挂）。
      */
     private String httpTools;
+
+    /**
+     * 工作流工具集（已发布工作流 id 的 JSON 数组，≤{@code WorkflowToolService.MAX_SELECTED} 个）：
+     * 每轮由 {@code WorkflowToolProvider} 按它动态构建对话工具（引用平台内资产而非外部规格，故只存
+     * id 不存快照——运行时读发布版本，回滚/重新发布对工具即时生效）。NULL=未配置（该族无工具可挂）。
+     */
+    private String workflowTools;
 
     /**
      * 是否子智能体：0=主智能体（可在对话页直接选用）；1=子智能体（不直接选用，供主智能体委派）。

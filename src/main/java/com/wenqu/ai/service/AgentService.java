@@ -81,6 +81,8 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
     private final com.wenqu.ai.agent.tool.ToolRegistry toolRegistry;
     /** HTTP 工具集：保存期归一化/凭据加密、回显脱敏（v1 对外能力第一批） */
     private final com.wenqu.ai.service.httptool.HttpToolService httpToolService;
+    /** 工作流工具集：保存期归一化（v2 对外能力第二批——工作流当工具） */
+    private final com.wenqu.ai.service.workflowtool.WorkflowToolService workflowToolService;
 
     /**
      * 配置快照字段白名单（有序：字段 → 中文名），只快照「调优内容」——改动才产生新版本的字段。
@@ -107,6 +109,8 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         m.put("toolWebsearch", "联网搜索");
         m.put("toolHttp", "HTTP 工具");
         m.put("httpTools", "HTTP 工具集");
+        m.put("toolWorkflow", "工作流工具");
+        m.put("workflowTools", "工作流工具集");
         m.put("toolApprovalMode", "工具审批模式");
         m.put("permissionPreset", "权限档位");
         m.put("toolDeny", "工具黑名单");
@@ -542,6 +546,8 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         if (b.containsKey("toolWebsearch")) uw.set(Agent::getToolWebsearch, a.getToolWebsearch());
         if (b.containsKey("toolHttp")) uw.set(Agent::getToolHttp, a.getToolHttp());
         if (b.containsKey("httpTools")) uw.set(Agent::getHttpTools, a.getHttpTools());
+        if (b.containsKey("toolWorkflow")) uw.set(Agent::getToolWorkflow, a.getToolWorkflow());
+        if (b.containsKey("workflowTools")) uw.set(Agent::getWorkflowTools, a.getWorkflowTools());
         // 工具执行审批三态（auto/ask/off；null=跟随权限档位的建议值）
         if (b.containsKey("toolApprovalMode")) uw.set(Agent::getToolApprovalMode, a.getToolApprovalMode());
         // 权限档位（P2；null=跟随平台默认档）
@@ -637,6 +643,11 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
             String prev = a.getHttpTools();
             a.setHttpTools(httpToolService.normalizeFromSave(body.get("httpTools"), prev));
         }
+        if (body.containsKey("toolWorkflow")) a.setToolWorkflow(toTri(body.get("toolWorkflow")));
+        // 工作流工具集：归一化+存在性/发布态校验（同上，先于 toolDeny 校验）
+        if (body.containsKey("workflowTools")) {
+            a.setWorkflowTools(workflowToolService.normalizeFromSave(body.get("workflowTools")));
+        }
         // 目标模式（资源级三态）：与任务态投影/候选要求工具同源判据，改它要重建常驻实例
         if (body.containsKey("goalEnabled")) a.setGoalEnabled(toTri(body.get("goalEnabled")));
         // 工具执行审批三态（auto/ask/off；null/空=跟随权限档位的建议值）
@@ -681,7 +692,8 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
                     if (names.contains(n)) continue;   // 重复项去重，不报错（同一条禁两次没有第二种语义）
                     if (toolRegistry.find(n).isEmpty()
                             && !com.wenqu.ai.agent.tool.ToolFamily.looksLikeMcpTool(n)
-                            && !httpToolService.opNames(a.getHttpTools()).contains(n)) {
+                            && !httpToolService.opNames(a.getHttpTools()).contains(n)
+                            && !workflowToolService.opNames(a.getWorkflowTools()).contains(n)) {
                         unknown.add(n);
                     }
                     names.add(n);
@@ -1041,6 +1053,8 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         uw.set(Agent::getToolWebsearch, asInt(cfg.get("toolWebsearch")));
         uw.set(Agent::getToolHttp, asInt(cfg.get("toolHttp")));
         uw.set(Agent::getHttpTools, raw(cfg.get("httpTools")));
+        uw.set(Agent::getToolWorkflow, asInt(cfg.get("toolWorkflow")));
+        uw.set(Agent::getWorkflowTools, raw(cfg.get("workflowTools")));
         uw.set(Agent::getToolApprovalMode, raw(cfg.get("toolApprovalMode")));
         uw.set(Agent::getPermissionPreset, raw(cfg.get("permissionPreset")));
         uw.set(Agent::getToolDeny, raw(cfg.get("toolDeny")));

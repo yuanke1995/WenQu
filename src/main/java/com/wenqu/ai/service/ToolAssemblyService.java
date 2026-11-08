@@ -63,7 +63,18 @@ public class ToolAssemblyService {
     public ToolMountContext mountContext(Agent agent, String userId, boolean guestMode,
                                          boolean branchTurn, BiConsumer<String, String> degradationSink,
                                          ExecutionPolicy turnPolicy) {
-        return mountContext(agent, userId, guestMode, branchTurn, degradationSink, turnPolicy, null);
+        return mountContext(agent, userId, guestMode, branchTurn, 0, degradationSink, turnPolicy, null);
+    }
+
+    /**
+     * 带工作流嵌套深度的重载（防环判据随 cmd 下传）：旧签名保留——非嵌套路径与
+     * 提示词侧的判据逐字不变。
+     */
+    public ToolMountContext mountContext(Agent agent, String userId, boolean guestMode,
+                                         boolean branchTurn, int wfDepth,
+                                         BiConsumer<String, String> degradationSink,
+                                         ExecutionPolicy turnPolicy) {
+        return mountContext(agent, userId, guestMode, branchTurn, wfDepth, degradationSink, turnPolicy, null);
     }
 
     /**
@@ -72,6 +83,14 @@ public class ToolAssemblyService {
      */
     public ToolMountContext mountContext(Agent agent, String userId, boolean guestMode,
                                          boolean branchTurn, BiConsumer<String, String> degradationSink,
+                                         ExecutionPolicy turnPolicy, java.util.Set<String> guestMcpServers) {
+        return mountContext(agent, userId, guestMode, branchTurn, 0, degradationSink, turnPolicy, guestMcpServers);
+    }
+
+    /** 全量重载：wfDepth 为本轮工作流嵌套深度（0=顶层；工作流工具族的防环判据）。 */
+    public ToolMountContext mountContext(Agent agent, String userId, boolean guestMode,
+                                         boolean branchTurn, int wfDepth,
+                                         BiConsumer<String, String> degradationSink,
                                          ExecutionPolicy turnPolicy, java.util.Set<String> guestMcpServers) {
         java.util.Set<String> guestAllow = guestMode && guestMcpServers != null
                 ? guestMcpServers : java.util.Set.of();
@@ -99,6 +118,11 @@ public class ToolAssemblyService {
             @Override
             public boolean branchTurn() {
                 return branchTurn;
+            }
+
+            @Override
+            public int turnWfDepth() {
+                return wfDepth;
             }
 
             @Override
@@ -184,6 +208,7 @@ public class ToolAssemblyService {
             case KNOWLEDGE -> agent.getToolKnowledge();
             case WEBSEARCH -> agent.getToolWebsearch();
             case HTTP_API -> agent.getToolHttp();
+            case WORKFLOW -> agent.getToolWorkflow();
             case ARTIFACT -> agent.getToolArtifact();
             case SKILL -> agent.getToolSkill();
             case SANDBOX -> null;   // 沙盒暂无智能体级列（c_ai_agent 未建 toolSandbox，见 SandboxTools 类注释）

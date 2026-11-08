@@ -379,6 +379,8 @@ CREATE TABLE IF NOT EXISTS `c_ai_agent` (
     `mcps`            VARCHAR(1000) DEFAULT NULL COMMENT 'MCP Server 范围: NULL=跟随全局 空串=不使用 逗号分隔=仅用这些',
     `builtin_tools`   VARCHAR(500)  DEFAULT NULL COMMENT '内置工具范围: NULL=跟随全局 空串=不使用 逗号分隔=仅用这些',
     `http_tools`      MEDIUMTEXT   DEFAULT NULL COMMENT 'HTTP 工具集(JSON 数组: 工具集配置+已解析操作; auth.value 为 JWE 密文; NULL=未配置。上限: 每智能体4个工具集/每集20操作; 审批跟随智能体 tool_approval_mode,动态工具名未登记注册中心按 fail-closed 需审批)',
+    `tool_workflow`   INT          DEFAULT NULL COMMENT '工作流工具: 1=开 0=关 NULL=继承（已发布工作流挂载为对话工具）',
+    `workflow_tools`  MEDIUMTEXT   DEFAULT NULL COMMENT '工作流工具集(JSON 数组: 已发布工作流 id, ≤8 个; NULL=未配置。运行时读发布版本; 嵌套深度上限 2 层防环: 工具族到顶不挂+运行入口 fail-loud 双闸)',
     `is_subagent`     INT           DEFAULT 0 COMMENT '是否子智能体: 0=主智能体（对话页可选） 1=子智能体（供主智能体委派）',
     `sub_agent_ids`   VARCHAR(1000) DEFAULT NULL COMMENT '主智能体可委派的子智能体ID: NULL/空=走默认多视角策略 逗号分隔=用这些',
     `subagent_mode`   VARCHAR(16)  DEFAULT NULL COMMENT '被当作子智能体咨询时怎么跑(P3a): digest=只并行检索+提炼要点(原有行为) full=跑完整问答管线(自己的知识库/工具/技能/沙盒/产物生效); NULL=跟随平台默认 agent.subagentMode',
