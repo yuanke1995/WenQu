@@ -43,6 +43,8 @@ public class TenantController {
     private final TenantService tenantService;
     private final TenantDiskInventory tenantInventory;
     private final com.wenqu.ai.service.TenantRequestService requestService;
+    private final com.wenqu.ai.service.TenantInviteService inviteService;
+    private final com.wenqu.ai.service.TenantOnboardingService onboardingService;
     private final AdminGuard adminGuard;
 
     @Operation(summary = "租户清单（管理）",
@@ -188,6 +190,87 @@ public class TenantController {
             throw new com.wenqu.ai.common.BizException("租户落点清单会摊出磁盘路径与库内行数，仅平台级管理员可查");
         }
         return ResultJson.ok(tenantInventory.of(id));
+    }
+
+    // ==================== P1 多租户生命周期：归档 / 品牌 / 邀请 / 首登引导 ====================
+
+    @Operation(summary = "归档租户", description = "归档=只读：成员不可登录、数据保留、可导出、可恢复；默认租户不能归档")
+    @Permission("tenant:manage")
+    @PostMapping("/{id}/archive")
+    public ResultJson archive(@PathVariable("id") String id, HttpServletRequest request) {
+        requirePlatform(request);
+        tenantService.setArchived(id, true);
+        return ResultJson.ok("已归档");
+    }
+
+    @Operation(summary = "恢复归档租户", description = "恢复为启用状态；成员即可重新登录")
+    @Permission("tenant:manage")
+    @PostMapping("/{id}/restore")
+    public ResultJson restore(@PathVariable("id") String id, HttpServletRequest request) {
+        requirePlatform(request);
+        tenantService.setArchived(id, false);
+        return ResultJson.ok("已恢复");
+    }
+
+    @Operation(summary = "更新租户品牌",
+            description = "{\"brandName\":\"\",\"brandLogo\":\"\",\"brandColor\":\"\",\"loginHint\":\"\"}；空串=恢复默认。仅平台级")
+    @Permission("tenant:manage")
+    @PostMapping("/{id}/brand")
+    public ResultJson updateBrand(@PathVariable("id") String id, @RequestBody Map<String, String> body,
+                                  HttpServletRequest request) {
+        requirePlatform(request);
+        tenantService.updateBrand(id,
+                body == null ? null : body.get("brandName"),
+                body == null ? null : body.get("brandLogo"),
+                body == null ? null : body.get("brandColor"),
+                body == null ? null : body.get("loginHint"));
+        return ResultJson.ok("已更新");
+    }
+
+    @Operation(summary = "生成租户邀请",
+            description = "{\"roleIds\":\"成员,知识库管理员\",\"deptId\":\"\",\"email\":\"\",\"maxUses\":1,\"expireDays\":7}；"
+                    + "返回 path=/join/{token}，明文 token 仅此一次")
+    @Permission("tenant:manage")
+    @PostMapping("/invites")
+    public ResultJson<Map<String, Object>> createInvite(@RequestBody(required = false) Map<String, Object> body) {
+        return ResultJson.ok(inviteService.create(
+                body == null ? null : String.valueOf(body.getOrDefault("roleIds", "")),
+                body == null ? null : String.valueOf(body.getOrDefault("deptId", "")),
+                body == null ? null : String.valueOf(body.getOrDefault("email", "")),
+                body == null ? null : intOf(body.get("maxUses")),
+                body == null ? null : intOf(body.get("expireDays"))), "已生成邀请链接");
+    }
+
+    @Operation(summary = "本租户在途邀请", description = "不返回 token 明文；过期/用尽在 status 里如实呈现")
+    @Permission("tenant:read")
+    @GetMapping("/invites")
+    public ResultJson<List<Map<String, Object>>> invites() {
+        return ResultJson.ok(inviteService.list());
+    }
+
+    @Operation(summary = "撤销邀请", description = "已用尽的链接也能撤销（仅挡未来的使用）")
+    @Permission("tenant:manage")
+    @PostMapping("/invites/{id}/revoke")
+    public ResultJson revokeInvite(@PathVariable("id") String id) {
+        inviteService.revoke(id);
+        return ResultJson.ok("已撤销");
+    }
+
+    @Operation(summary = "新租户首登引导状态",
+            description = "五项状态按真实数据计算：改密（审计）/ 建部门 / 邀请成员 / 绑定模型 / 建知识库。单租户部署 required=false")
+    @Permission("self:preference")
+    @GetMapping("/onboarding")
+    public ResultJson<Map<String, Object>> onboarding() {
+        return ResultJson.ok(onboardingService.status(com.wenqu.ai.util.RequestUser.uid()));
+    }
+
+    private static Integer intOf(Object v) {
+        if (v == null) return null;
+        try {
+            return Integer.parseInt(String.valueOf(v).trim());
+        } catch (Exception e) {
+            return null;
+        }
     }
 
 }

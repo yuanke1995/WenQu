@@ -93,6 +93,14 @@ public class UserController {
         return ResultJson.ok("密码已重置");
     }
 
+    @Operation(summary = "设置本人通知邮箱", description = "{\"email\":\"name@company.com\"}；空串=清除（不再接收邮件外发）")
+    @Permission("self:preference")
+    @PutMapping("/email")
+    public ResultJson updateEmail(@RequestBody Map<String, Object> body) {
+        orgService.updateEmail(com.wenqu.ai.util.RequestUser.uid(), str(body.get("email")));
+        return ResultJson.ok("已保存");
+    }
+
     @Operation(summary = "修改用户", description = "{\"username\":\"\",\"departmentId\":\"\",\"roles\":[\"user\",\"admin\"],\"status\":1|0}；roles 为角色集（manual 全量替换）")
     @Permission("user:write")
     @PutMapping("/{uid}")

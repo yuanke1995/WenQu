@@ -415,6 +415,8 @@
         <!-- 头像+昵称即「个人设置」入口（此前另有一个与头像语义重复的人形图标，折叠态还挤溢出） -->
         <a-tooltip :title="collapsed ? '个人设置（' + (userName || '未登录') + '）' : '个人设置'" placement="right">
           <button class="foot-user" @click="goProfile">
+            <span v-if="!collapsed && tenantPill" class="side-tenant"
+                  :class="{ plat: tenantPlat }" :title="tenantTitle">{{ tenantPill }}</span>
             <UserAvatar :avatar="userAvatar" :name="userName" :size="22" />
             <span v-if="!collapsed" class="user-name">{{ userName || '未登录' }}</span>
           </button>
@@ -524,6 +526,8 @@
       <NetBanner />
       <!-- 平台公告横幅（按租户发布，danger 级别常驻不可关）：与断网横幅同一层级——「平台要停机」是持续状态 -->
       <AnnouncementsBar />
+      <!-- 新租户首登引导（P1 · 3D）：只在 /chat、只对非 default 租户的管理员、五项全按真实数据判定 -->
+      <TenantOnboardingCard />
       <div class="main-body">
         <DesktopOnlyGuard v-if="isNarrow || mobileShell" :path="route.path">
           <router-view />
@@ -571,7 +575,7 @@ import { deleteSessionApi, logoutApi, renameSessionApi, pinSession, favoriteSess
 import { useNotifications, notifBucket, notifTarget } from '../chat/useNotifications'
 import NotificationList from '../components/notification/NotificationList.vue'
 import { themeState, toggleTheme } from '../utils/theme'
-import { authUser, ensureAuth, isAdminSync, clearAuth } from '../utils/auth'
+import { authUser, ensureAuth, isAdminSync, clearAuth, tenantStateSync } from '../utils/auth'
 import { localExecutorId, setLocalExecutorId } from '../utils/localExecutor'
 import { chatDone, chatReady, defaultReady, embeddingReady, pendingCount, refreshSetupGuide, setupGuide,
          advPendingCount } from '../utils/setupGuide'
@@ -582,6 +586,7 @@ import HelpFab from '../components/HelpFab.vue'
 import MobileTopBar from '../h5/MobileTopBar.vue'
 import NetBanner from '../components/NetBanner.vue'
 import AnnouncementsBar from '../components/AnnouncementsBar.vue'
+import TenantOnboardingCard from '../components/TenantOnboardingCard.vue'
 import MobileSessionSheet from '../h5/MobileSessionSheet.vue'
 import MobileNotifSheet from '../h5/MobileNotifSheet.vue'
 import DesktopOnlyGuard from '../h5/DesktopOnlyGuard.vue'
@@ -607,6 +612,25 @@ const userName = computed(() => {
 const userAvatar = computed(() => {
   const i = authUser.value
   return (i && i.avatar) || ''
+})
+/**
+ * 当前租户指示：单租户部署（default 且非平台管理员）不显示，避免给存量部署加噪音。
+ * 平台管理员恒显示（default 时标「平台」，非 default 时「租户名 · 平台」），
+ * 否则自己身处哪个租户这件事在界面上完全不可见。
+ */
+const tenantPill = computed(() => {
+  const t = tenantStateSync()
+  if (!t) return ''
+  if (t.superadmin) return t.isDefault ? '平台' : `${t.name} · 平台`
+  return t.isDefault ? '' : t.name
+})
+const tenantPlat = computed(() => Boolean(tenantStateSync() && tenantStateSync().superadmin))
+const tenantTitle = computed(() => {
+  const t = tenantStateSync()
+  if (!t) return ''
+  return t.superadmin
+    ? `当前租户：${t.name}（平台管理员，跨租户视图）`
+    : `当前租户：${t.name}`
 })
 
 // 侧边栏菜单：/auth/me 下发的菜单树（顶级渲染为导航项；子级预留，当前侧边栏一层平铺）
@@ -2226,6 +2250,14 @@ watch(() => route.fullPath, () => {
 }
 .foot-user:hover { background: var(--app-accent-weak); }
 .user-name { font-size: 12px; color: var(--app-text2); min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 当前租户指示：状态不是动作，安静一颗 pill；单租户部署不渲染（见 tenantPill） */
+.side-tenant {
+  flex: none; max-width: 92px; padding: 1px 6px; border-radius: 999px;
+  border: 1px solid var(--app-border); background: var(--app-panel-2);
+  color: var(--app-text2); font-size: 11px; line-height: 16px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.side-tenant.plat { color: var(--app-accent); border-color: var(--app-accent); }
 .pwd-err { margin: 4px 0 0; font-size: 12px; color: var(--app-danger); }
 
 /* .main 恒为纵向 flex 容器，.main-body 吃掉剩余高度。

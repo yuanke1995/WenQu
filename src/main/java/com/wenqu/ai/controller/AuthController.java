@@ -25,6 +25,14 @@ import java.util.Map;
 public class AuthController {
 
     private final AuthService authService;
+    private final com.wenqu.ai.service.TenantService tenantService;
+
+    @Operation(summary = "登录页租户品牌",
+            description = "免登录：?tenant= 或子域命中时返回该租户的品牌；不存在/停用/归档回落 default 且 available=false")
+    @GetMapping("/brand")
+    public ResultJson brand(@RequestParam(value = "tenant", required = false) String tenant) {
+        return ResultJson.ok(tenantService.brandOf(tenant));
+    }
 
     @Operation(summary = "是否首次运行", description = "{needsInitialize:true} 表示尚无任何已设密码的账号，前端应引导初始化管理员")
     @GetMapping("/first-run")

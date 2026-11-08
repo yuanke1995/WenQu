@@ -257,6 +257,7 @@ public class AuthService {
             m.put("uid", u.getUid());
             m.put("username", u.getUsername());
             m.put("avatar", u.getAvatar());
+            m.put("email", u.getEmail());
             m.put("role", userRoleService.primaryRole(u.getUid()));
             m.put("roles", userRoleService.rolesOf(u.getUid()));
             m.put("departmentId", u.getDepartmentId());

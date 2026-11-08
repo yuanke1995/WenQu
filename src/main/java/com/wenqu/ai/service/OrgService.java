@@ -306,6 +306,21 @@ public class OrgService {
      * 编辑用户（批次 5 多角色化）：{@code roles} 为角色集（manual 全量替换，idp 行不动）。
      * <p>{@code roleExpires} = {角色编码 → 到期时刻}，临时授权用（空 Map=全部永久）。
      */
+    /** 本人设置通知邮箱（空=清除）。只做基本格式校验，不做邮箱归属验证（本版没有验证码通道）。 */
+    public void updateEmail(String uid, String email) {
+        if (uid == null || uid.isBlank()) throw new BizException("未登录");
+        String e = trimOrNull(email);
+        if (e != null && (!e.contains("@") || e.contains(" ") || e.length() > 160)) {
+            throw new BizException("邮箱格式不正确");
+        }
+        User user = userMapper.selectById(uid);
+        if (user == null) throw new BizException("用户不存在");
+        // email 允许清空：MP 默认 NOT_NULL 策略会跳过 null，这里用显式 set
+        userMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<User>()
+                .eq(User::getUid, uid).set(User::getEmail, e));
+        audit.record("[AUDIT] 设置通知邮箱 uid={}", uid);
+    }
+
     public void updateUser(String uid, String username, String departmentId, List<String> roles, Integer status,
                            java.util.Map<String, java.time.LocalDateTime> roleExpires) {
         // 成员管理是平台动作（Phase 4）：判据与理由见 asPlatformIfSuper 的注释

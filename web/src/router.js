@@ -25,6 +25,8 @@ const routes = [
   { path: '/error', component: page(() => import('./views/HttpErrorPage.vue')), meta: { title: '出错了', public: true } },
   // 租户开通申请（Phase 4 刀三 · 自助开通）：免登录的公开表单，提交后仍需平台管理员批准
   { path: '/apply', component: page(() => import('./views/TenantApplyPage.vue')), meta: { title: '申请开通', public: true, pageFlow: true } },
+  // 租户邀请落地页（P1 · 3A）：token 即凭据，免登录注册后直接进入工作台
+  { path: '/join/:token', component: page(() => import('./views/JoinPage.vue')), meta: { title: '邀请注册', public: true, pageFlow: true } },
   // 本机执行器授权确认页：执行器在终端打印 /pair?code=XXXXXX，登录后确认即完成配对
   { path: '/pair', component: page(() => import('./views/PairDevicePage.vue')), meta: { title: '授权本机', pageFlow: true } },
   { path: '/chat', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/ChatPage.vue')) }] },

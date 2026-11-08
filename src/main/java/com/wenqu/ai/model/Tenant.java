@@ -40,6 +40,18 @@ public class Tenant {
     /** 备注：这个租户是谁、怎么开通的 */
     private String note;
 
+    /** 登录页展示名（空=用 name） */
+    private String brandName;
+
+    /** 登录页 logo 相对路径（空=问渠默认标） */
+    private String brandLogo;
+
+    /** 登录页主色（仅登录页按钮与细线，不改全站主题） */
+    private String brandColor;
+
+    /** 登录页副标题（空=默认欢迎语） */
+    private String loginHint;
+
     private LocalDateTime createTime;
 
     private LocalDateTime updateTime;

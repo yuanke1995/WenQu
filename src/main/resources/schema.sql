@@ -440,6 +440,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_user` (
     `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `uid`          VARCHAR(64)  NOT NULL COMMENT '用户标识（登录账号，与鉴权一致）',
     `username`     VARCHAR(100) DEFAULT NULL COMMENT '显示名称',
+    `email`        VARCHAR(160) DEFAULT NULL COMMENT '通知邮件地址（空=不接收邮件外发）',
     `department_id` VARCHAR(50) DEFAULT NULL COMMENT '所属部门ID（外键 c_ai_department.id，可空=未分配）',
     `status`       INT          DEFAULT 1 COMMENT '状态: 1=启用, 0=禁用',
     `password_hash` VARCHAR(255) DEFAULT NULL COMMENT '密码哈希（PBKDF2；空=未设置，不能本地登录）',
@@ -744,6 +745,25 @@ CREATE TABLE IF NOT EXISTS `c_ai_project_root` (
     UNIQUE KEY `uk_project_alias` (`project_id`, `alias`),
     KEY `idx_project` (`project_id`, `sort_no`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工作区源文件夹（用户本机上的真实目录）';
+
+-- 2026-11-08: 工作区事项清单（C2，轻量推进器）
+-- 一条事项 = 工作区里「要做什么」的一句话；去聊由前端带 ask 进聊天输入框，不自动发送。
+-- 只记归属与状态，不做权限边界；tenant_id 走行级过滤。
+CREATE TABLE IF NOT EXISTS `c_ai_project_item` (
+    `tenant_id`   VARCHAR(32)  NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户）',
+    `id`          VARCHAR(64)  NOT NULL COMMENT '主键ID (UUID)',
+    `uid`         VARCHAR(64)  NOT NULL COMMENT '归属用户（c_ai_user.uid）',
+    `project_id`  VARCHAR(64)  NOT NULL COMMENT '所属工作区（c_ai_project.id）',
+    `title`       VARCHAR(200) NOT NULL COMMENT '事项标题（清单里的一句话）',
+    `note`        TEXT         DEFAULT NULL COMMENT '补充说明（可空）',
+    `status`      VARCHAR(16)  NOT NULL DEFAULT 'open' COMMENT 'open=未完成 / doing=进行中 / done=已完成',
+    `session_id`  VARCHAR(64)  DEFAULT NULL COMMENT '最近关联会话（去聊落在哪条对话；空=新建对话）',
+    `sort_no`     INT          NOT NULL DEFAULT 0 COMMENT '展示顺序（0 起）',
+    `create_time` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `update_time` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_project_status` (`tenant_id`, `project_id`, `status`, `sort_no`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工作区事项清单（记下→去聊→勾掉）';
 
 CREATE TABLE IF NOT EXISTS `c_ai_executor` (
     `tenant_id`    VARCHAR(32)  NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户）',
@@ -1157,6 +1177,28 @@ CREATE TABLE IF NOT EXISTS `c_ai_notification` (
     KEY `idx_nt_uid_unread` (`uid`, `read_flag`),
     KEY `idx_nt_uid_dedup` (`uid`, `dedup_key`, `read_flag`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='站内通知（解析/工作流/网页源刷新等异步事件的用户可感知面；由 ScheduleCenter 按保留期定期清理）';
+
+-- 邮件外发投递台账（P1 通知外发）：站内通知落库后按规则投递，至少一次重试。
+-- 与 c_ai_webhook_delivery 同一口径；状态 skipped=按规则未发送（留痕便于排障）。
+CREATE TABLE IF NOT EXISTS `c_ai_mail_delivery` (
+    `tenant_id`       VARCHAR(32)  NOT NULL DEFAULT 'default' COMMENT '租户ID（本行归属的租户）',
+    `id`              VARCHAR(50)  NOT NULL COMMENT '主键ID',
+    `uid`             VARCHAR(64)  NOT NULL COMMENT '接收人',
+    `notification_id` VARCHAR(50)  DEFAULT NULL COMMENT '来源通知（聚合时为合并窗口内的首条）',
+    `notify_type`     VARCHAR(64)  DEFAULT NULL COMMENT '通知类型（聚合窗口与白名单判据）',
+    `dedup_key`       VARCHAR(64)  DEFAULT NULL COMMENT '来源通知去重键（同键聚合窗口内只发一封）',
+    `to_addr`         VARCHAR(160) NOT NULL COMMENT '收件地址',
+    `subject`         VARCHAR(240) NOT NULL COMMENT '邮件主题',
+    `status`          VARCHAR(16)  NOT NULL DEFAULT 'pending' COMMENT 'pending=待投递/success=已送达/exhausted=重试耗尽/skipped=按规则未发送',
+    `attempts`        INT          NOT NULL DEFAULT 0 COMMENT '已尝试次数（含首发）',
+    `next_retry_at`   DATETIME     DEFAULT NULL COMMENT '下次投递时刻（pending 行扫描判据）',
+    `last_error`      VARCHAR(500) DEFAULT NULL COMMENT '最近一次失败原因',
+    `create_time`     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_mail_pending` (`status`, `next_retry_at`),
+    KEY `idx_mail_uid_time` (`uid`, `create_time`),
+    KEY `idx_mail_type_time` (`notify_type`, `create_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='邮件外发投递台账（至少一次重试）';
 
 CREATE TABLE IF NOT EXISTS `c_ai_announcement` (
     `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
@@ -1678,9 +1720,13 @@ CREATE TABLE IF NOT EXISTS `c_ai_content_rule` (
 CREATE TABLE IF NOT EXISTS `c_ai_tenant` (
     `id`           VARCHAR(32)  NOT NULL COMMENT '租户标识（行内 tenant_id 的取值；default=单租户部署的那个租户）',
     `name`         VARCHAR(100) NOT NULL COMMENT '租户显示名',
-    `status`       INT          NOT NULL DEFAULT 1 COMMENT '1=启用 0=停用（停用后该租户成员无法登录）',
+    `status`       INT          NOT NULL DEFAULT 1 COMMENT '1=启用 0=停用（停用后该租户成员无法登录） 2=归档（只读、可导出、可恢复）',
     `contact`      VARCHAR(100) DEFAULT NULL COMMENT '联系人/对接人',
     `note`         VARCHAR(300) DEFAULT NULL COMMENT '备注：这个租户是谁、怎么开通的',
+    `brand_name`   VARCHAR(100) DEFAULT NULL COMMENT '登录页展示名（空=用 name）',
+    `brand_logo`   VARCHAR(200) DEFAULT NULL COMMENT '登录页 logo 相对路径（空=问渠默认标）',
+    `brand_color`  VARCHAR(20)  DEFAULT NULL COMMENT '登录页主色（仅登录页按钮与细线，不改全站主题）',
+    `login_hint`   VARCHAR(200) DEFAULT NULL COMMENT '登录页副标题（空=默认欢迎语）',
     `create_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP,
     `update_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (`id`)
@@ -1705,6 +1751,28 @@ CREATE TABLE IF NOT EXISTS `c_ai_tenant_request` (
     PRIMARY KEY (`id`),
     KEY `idx_tenant_request_status` (`status`, `create_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='租户开通申请（提交自助、开通人工批准）';
+
+-- 租户邀请（P1 多租户生命周期 · 3A）：一次性短链，注册落本租户。
+-- token 只存 SHA-256（明文只在生成时返回一次，与对外 API Key 同一口径）；
+-- 本表带 tenant_id 走行级过滤，不在 GLOBAL_TABLES 里。
+CREATE TABLE IF NOT EXISTS `c_ai_tenant_invite` (
+    `tenant_id`     VARCHAR(32)  NOT NULL DEFAULT 'default' COMMENT '租户ID（本行归属的租户）',
+    `id`            VARCHAR(50)  NOT NULL COMMENT '主键ID',
+    `token_hash`    CHAR(64)     NOT NULL COMMENT '邀请 token 的 SHA-256（明文只在生成时返回一次）',
+    `token_prefix`  VARCHAR(8)   NOT NULL COMMENT '前 8 位，列表辨识用',
+    `role_ids`      VARCHAR(500) DEFAULT NULL COMMENT '预选角色编码，逗号分隔；空=租户默认角色 user',
+    `dept_id`       VARCHAR(50)  DEFAULT NULL COMMENT '预选部门 id',
+    `email`         VARCHAR(160) DEFAULT NULL COMMENT '限定邮箱（空=不限定）',
+    `max_uses`      INT          NOT NULL DEFAULT 1 COMMENT '可用次数（0=不限）',
+    `used_count`    INT          NOT NULL DEFAULT 0 COMMENT '已用次数',
+    `expires_at`    DATETIME     NOT NULL COMMENT '到期时刻（默认 7 天，最长 30 天）',
+    `status`        VARCHAR(16)  NOT NULL DEFAULT 'active' COMMENT 'active=有效 revoked=已撤销 exhausted=已用尽 expired=已过期',
+    `created_by`    VARCHAR(64)  NOT NULL COMMENT '创建人 uid',
+    `create_time`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_invite_token` (`token_hash`),
+    KEY `idx_invite_tenant_status` (`tenant_id`, `status`, `expires_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='租户邀请（一次性短链，注册落本租户）';
 
 -- ====================================================================
 -- 2026-11-07 智能体评测与发布门禁（plan-agent-eval.md §5）

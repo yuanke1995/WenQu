@@ -34,6 +34,22 @@ export const isAdminSync = () => {
 /** 是否平台级（superadmin）：跨租户动作的入口判据（批准开通申请、跨租户审阅审计） */
 export const isSuperadminSync = () => Boolean(cached && cached.superadmin)
 
+/**
+ * 当前租户（/auth/me 随身份下发的同一份口径）。
+ * 单一真相源：顶栏/侧栏指示与页面判据都读这里，禁止各页自取。
+ * 未拉到身份时返回 null（调用方按「不知道」处理，别猜 default）。
+ */
+export function tenantStateSync () {
+  if (!cached) return null
+  const id = cached.tenant || 'default'
+  return {
+    id,
+    name: cached.tenantName || id,
+    isDefault: id === 'default',
+    superadmin: Boolean(cached.superadmin)
+  }
+}
+
 /** 当前用户可见菜单（会话内缓存；未拉取身份前为 null） */
 export const menusSync = () => (cached ? cached.menus : null)
 
@@ -59,11 +75,13 @@ export async function ensureAuth (force = false) {
       role: info.role || 'user',
       admin: Boolean(info.admin),
       superadmin: Boolean(info.superadmin),
+      tenant: info.tenant || 'default',
+      tenantName: info.tenantName || info.tenant || 'default',
       menus: Array.isArray(info.menus) ? info.menus : []
     }
     try { localStorage.setItem('ai_role', cached.admin ? 'admin' : 'user') } catch (e) { /* ignore */ }
   } catch (e) {
-    cached = { user: '', username: '', role: '', admin: false, superadmin: false, menus: [] }
+    cached = { user: '', username: '', role: '', admin: false, superadmin: false, tenant: '', tenantName: '', menus: [] }
   }
   authUser.value = cached
   return cached

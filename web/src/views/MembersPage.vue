@@ -47,9 +47,11 @@
           <a-select v-if="tab === 'users'" v-model:value="roleFilter" allow-clear size="small" class="mem-filter"
                     placeholder="全部角色" :options="roleFilterOptions" />
           <div class="mem-actions">
+            <button v-if="tab === 'users'" class="app-btn ghost mem-new" @click="inviteOpen = true"><MailOutlined /> 邀请成员</button>
             <button v-if="tab === 'users'" class="app-btn mem-new" @click="openUserCreate"><plus-outlined /> 新建用户</button>
-            <button v-if="tab === 'users'" class="app-btn ghost mem-new" @click="openTenantAdmin">租户管理<i v-if="multiTenant" class="mem-tenant-n">{{ tenants.length }}</i></button>
-            <button v-else class="app-btn mem-new" @click="openDeptCreate"><plus-outlined /> 新建部门</button>
+            <!-- 租户管理弹窗里的启停/开通申请都是平台级动作：租户管理员打开只会看到一排必 403 控件 -->
+            <button v-if="tab === 'users' && isSuper" class="app-btn ghost mem-new" @click="openTenantAdmin">租户管理<i class="mem-tenant-n">{{ tenants.length }}</i></button>
+            <button v-if="tab !== 'users'" class="app-btn mem-new" @click="openDeptCreate"><plus-outlined /> 新建部门</button>
           </div>
         </div>
 
@@ -81,7 +83,8 @@
                 </span>
               </template>
             </a-table-column>
-            <a-table-column v-if="multiTenant" title="租户" key="tenant" width="150">
+            <!-- 租户列只对平台级有意义（跨租户视图）；租户管理员只看得见本租户，列出来是噪音 -->
+            <a-table-column v-if="isSuper" title="租户" key="tenant" width="150">
               <template #default="{ record }">
                 <span class="mem-dept">{{ tenantName(record.tenantId) }}</span>
               </template>
@@ -229,7 +232,7 @@
             <button class="app-link-btn" @click="expiryOpen = false">收起</button>
           </div>
         </a-form-item>
-        <a-form-item v-if="multiTenant" label="所属租户">
+        <a-form-item v-if="isSuper" label="所属租户">
           <a-select v-model:value="userForm.tenantId" :options="tenantOptionsList" style="width:100%" />
           <div class="form-tip">只改这个账号属于哪个租户；他已产出的会话、知识库与工作流留在原租户。</div>
         </a-form-item>
@@ -322,6 +325,10 @@
       <div class="form-tip">新租户初始是空的：把成员的「所属租户」改过来，他们才开始在这个租户里各用各的数据。租户没有删除功能——要下线一个租户就停用它。</div>
     </a-modal>
 
+    <!-- 邀请成员（P1 · 3A）：一次性短链，注册落当前租户 -->
+    <InviteMemberModal v-model:open="inviteOpen" :roles="roles" :departments="departments"
+                       :tenant-name="inviteTenantName" @created="loadData(['users', 'tenants'], { force: true })" />
+
     <!-- 批准开通申请：标识可以改（申请人没填时必须在这里给一个） -->
     <a-modal v-model:open="approveModal.open" title="批准开通" :width="460"
              :confirm-loading="reqBusy" ok-text="批准并建账号" @ok="submitApprove">
@@ -388,8 +395,8 @@
 import { ref, reactive, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
-import { SearchOutlined, PlusOutlined, ApartmentOutlined } from '@ant-design/icons-vue'
-import { isSuperadminSync } from '../utils/auth'
+import { SearchOutlined, PlusOutlined, ApartmentOutlined, MailOutlined } from '@ant-design/icons-vue'
+import { isSuperadminSync, tenantStateSync } from '../utils/auth'
 import { listUsers, createUser, updateUser, deleteUser, resetUserPassword,
          listDepartments, createDepartment, updateDepartment, deleteDepartment,
          listRoleOptions, listIdentityProviders, unbindIdentity,
@@ -397,6 +404,7 @@ import { listUsers, createUser, updateUser, deleteUser, resetUserPassword,
          listTenantRequests, approveTenantRequest, rejectTenantRequest,
          getExpiringRoles } from '../api'
 import UserAvatar from '../components/UserAvatar.vue'
+import InviteMemberModal from '../components/InviteMemberModal.vue'
 import { onMounted } from 'vue'
 
 /* ==================== C1：临时授权到期（提醒 + 编辑口） ==================== */
@@ -614,8 +622,6 @@ watch(tab, t => loadData(TAB_DEPS[t]), { immediate: true })
 
 // ---------- 租户（Phase 4 多租户） ----------
 const defaultTenant = 'default'
-/** 只有一个租户时，界面上不出现租户列与改归属入口 */
-const multiTenant = computed(() => tenants.value.length > 1)
 const tenantOptionsList = computed(() => tenants.value
   .filter(t => t.status !== 0)
   .map(t => ({ value: t.id, label: `${t.name}（${t.id}）` })))
@@ -628,6 +634,12 @@ const tenantModal = ref(false)
 // ---------- 开通申请（Phase 4 刀三 · 自助开通）----------
 // 只有平台级看得到这一区：批准等于开一家新客户，租户管理员批准等于自己给自己开门
 const isSuper = computed(() => isSuperadminSync())
+// 邀请落「当前租户」：弹窗里把这句写清楚，避免平台管理员误以为邀请到了别家
+const inviteOpen = ref(false)
+const inviteTenantName = computed(() => {
+  const t = tenantStateSync()
+  return t ? t.name : '当前租户'
+})
 const requests = ref([])
 const reqLoading = ref(false)
 const reqBusy = ref(false)
@@ -765,7 +777,7 @@ async function saveUser () {
       : await createUser({ ...base, uid: String(f.uid).trim(), password: f.password })
     if (!r.success) { message.error(r.msg || '保存失败'); return }
     // 归属变更是另一个动作（只改账号归属，不动他已产出的资源），所以单独一步、单独报错
-    if (f.isEdit && multiTenant.value && f.tenantId && f.tenantId !== f.origTenant) {
+    if (f.isEdit && isSuper.value && f.tenantId && f.tenantId !== f.origTenant) {
       const mv = await moveMemberTenant(f.uid, f.tenantId)
       if (!mv.success) { message.error(mv.msg || '归属变更失败'); return }
       await loadData(['tenants'], { force: true })

@@ -25,6 +25,9 @@ public class User {
     /** 显示名称 */
     private String username;
 
+    /** 通知邮件地址（空=不接收邮件外发；成员管理可改，邀请注册时可填） */
+    private String email;
+
     /** 所属部门ID（c_ai_department.id，可空=未分配） */
     private String departmentId;
 

@@ -1,5 +1,5 @@
 <template>
-  <div class="login-wrap">
+  <div class="login-wrap" :style="tenantStyle">
     <!-- 底部活水波纹：通铺整幅页宽，把品牌叙事与表单连成一个场景（呼应品牌标的三道波线） -->
     <svg class="hero-waves" viewBox="0 0 1440 320" preserveAspectRatio="none" aria-hidden="true">
       <path class="w1" d="M0,160 C180,120 320,196 540,168 C760,140 900,96 1080,132 C1240,164 1360,180 1440,168 L1440,320 L0,320 Z" />
@@ -19,10 +19,11 @@
       <aside class="login-hero">
         <div class="hero-inner">
           <div class="hero-brand">
-            <BrandMark :size="44" />
+            <img v-if="brandLogo" :src="brandLogo" class="hero-logo" alt="" />
+            <BrandMark v-else :size="44" />
             <div>
-              <div class="hero-name">问渠</div>
-              <div class="hero-slogan">答案，自有源头 · Ask the source.</div>
+              <div class="hero-name">{{ brandName }}</div>
+              <div class="hero-slogan">{{ brandSlogan }}</div>
             </div>
           </div>
           <h1 class="hero-poem">问渠那得清如许？<br />为有源头活水来。</h1>
@@ -40,10 +41,11 @@
         <div class="login-card">
           <!-- 窄屏（品牌面板隐藏）时才显示的紧凑品牌行 -->
           <div class="login-brand">
-            <BrandMark :size="32" class="brand-mark" />
+            <img v-if="brandLogo" :src="brandLogo" class="brand-logo" alt="" />
+            <BrandMark v-else :size="32" class="brand-mark" />
             <div>
-              <div class="brand-name">问渠</div>
-              <div class="brand-slogan">答案，自有源头 · Ask the source.</div>
+              <div class="brand-name">{{ brandName }}</div>
+              <div class="brand-slogan">{{ brandSlogan }}</div>
             </div>
           </div>
 
@@ -98,7 +100,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
-import { getFirstRun, loginApi, initializeAdmin, getOidcConfig, getOidcLoginUrl } from '../api'
+import { getFirstRun, loginApi, initializeAdmin, getOidcConfig, getOidcLoginUrl, getTenantBrand } from '../api'
 import { setToken } from '../utils/auth'
 import { resetSessionStore } from './store'
 import BrandMark from '../components/BrandMark.vue'
@@ -122,7 +124,40 @@ const redirectTarget = computed(() => {
 const oidcProviders = ref([])
 const oidcLoading = ref('')
 
+// 租户品牌（P1 · 3B）：?tenant= 优先，其次子域；子域猜错时后端返回 default+available=false，前端保持现状
+const brand = ref(null)
+const brandName = computed(() => (brand.value && brand.value.brandName) || '问渠')
+const brandSlogan = computed(() => (brand.value && brand.value.loginHint) || '答案，自有源头 · Ask the source.')
+const brandLogo = computed(() => (brand.value && brand.value.brandLogo) || '')
+const tenantStyle = computed(() => {
+  const c = String((brand.value && brand.value.brandColor) || '')
+  return /^#[0-9a-fA-F]{6}$/.test(c) ? { '--app-accent': c, '--app-accent-hover': c } : {}
+})
+
+/** 子域取值：example.com 两段视为无子域；排除 www 与纯数字（IP 部署） */
+function tenantFromHost () {
+  try {
+    const parts = String(location.hostname || '').toLowerCase().split('.')
+    if (parts.length < 3) return ''
+    const first = parts[0]
+    if (first === 'www' || /^[0-9]+$/.test(first)) return ''
+    return /^[a-z0-9][a-z0-9_-]{1,31}$/.test(first) ? first : ''
+  } catch (e) { return '' }
+}
+
+async function loadTenantBrand () {
+  const candidate = String(route.query.tenant || '').trim().toLowerCase() || tenantFromHost()
+  try {
+    const r = await getTenantBrand(candidate)
+    const d = r && r.data
+    if (!d) return
+    // 没指定租户：用 default 的配置；指定了：只在后端确认该租户可用且就是它时才采用
+    if (!candidate || (d.available !== false && d.tenantId === candidate)) brand.value = d
+  } catch (e) { /* 品牌取不到不影响登录 */ }
+}
+
 onMounted(async () => {
+  loadTenantBrand()
   // 单点登录失败时后端会 302 回 /login?oidc_error=...，把原因直接摊开（比只回登录页更可诊断）
   const oe = String(route.query.oidc_error || '').trim()
   if (oe) error.value = oe
@@ -232,6 +267,8 @@ async function submit () {
 @keyframes hero-pulse { 0%, 100% { opacity: .85; } 50% { opacity: .45; } }
 .hero-inner { position: relative; z-index: 1; padding: 40px 0; }
 .hero-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 48px; }
+/* 租户品牌 logo：上传图按 44px 方框等比裁切，未配置时仍用问渠 BrandMark */
+.hero-logo { width: 44px; height: 44px; border-radius: 10px; object-fit: contain; flex: none; }
 .hero-name { font-size: 18px; font-weight: 600; letter-spacing: 2px; }
 .hero-slogan { font-size: 12px; color: var(--app-text3, var(--app-text3)); margin-top: 2px; }
 /* 诗句用衬线字：登录页是全站唯一「讲品牌故事」的地方，允许与界面正文的无衬线区分 */
@@ -284,6 +321,7 @@ html[data-theme='dark'] .login-card { box-shadow: 0 12px 36px rgba(0, 0, 0, .4);
 
 /* 紧凑品牌行：仅窄屏（品牌面板隐藏时）显示，宽屏与左侧面板重复 */
 .login-brand { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
+.brand-logo { width: 32px; height: 32px; border-radius: 8px; object-fit: contain; flex: none; }
 /* 品牌标 = BrandMark 组件（自带圆角与品牌渐变） */
 .brand-mark { flex: none; display: block; }
 .brand-name { font-size: 14px; font-weight: 500; }

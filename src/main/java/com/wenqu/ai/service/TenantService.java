@@ -94,6 +94,10 @@ public class TenantService {
             one.put("status", t.getStatus() == null ? 1 : t.getStatus());
             one.put("contact", t.getContact() == null ? "" : t.getContact());
             one.put("note", t.getNote() == null ? "" : t.getNote());
+            one.put("brandName", t.getBrandName() == null ? "" : t.getBrandName());
+            one.put("brandLogo", t.getBrandLogo() == null ? "" : t.getBrandLogo());
+            one.put("brandColor", t.getBrandColor() == null ? "" : t.getBrandColor());
+            one.put("loginHint", t.getLoginHint() == null ? "" : t.getLoginHint());
             one.put("members", counts.getOrDefault(t.getId(), 0L));
             one.put("createTime", t.getCreateTime() == null ? "" : t.getCreateTime().toString());
             out.add(one);
@@ -148,6 +152,23 @@ public class TenantService {
         tenantMapper.updateById(t);
         statusCache.remove(id);   // 本平台刚按下的那一下要立刻生效；别的副本最迟一分钟后跟上
         audit.record("[AUDIT] 租户启停 租户={} 状态={}", id, enabled ? "启用" : "停用");
+    }
+
+    /**
+     * 归档 / 恢复（P1 · 3C 清退）。
+     * <p>归档 = 状态 2：成员不可登录、数据只读、可导出、可恢复；彻底清除仍走运维脚本。
+     * 刻意不做「删除租户」按钮——行级隔离下删租户等于按归属删光它的全部数据。
+     */
+    public void setArchived(String id, boolean archived) {
+        if (TenantContext.DEFAULT_TENANT.equals(id)) {
+            throw new BizException("默认租户不能归档：单租户部署的全部数据都挂在它名下");
+        }
+        Tenant t = tenantMapper.selectById(id);
+        if (t == null) throw new BizException("租户不存在：" + id);
+        t.setStatus(archived ? 2 : 1);
+        tenantMapper.updateById(t);
+        statusCache.remove(id);
+        audit.record("[AUDIT] 租户{} 租户={}", archived ? "归档" : "恢复", id);
     }
 
     /**
@@ -283,6 +304,46 @@ public class TenantService {
         if (id == null || id.isBlank()) return TenantContext.DEFAULT_TENANT;
         Tenant t = tenantMapper.selectById(id);
         return t == null || t.getName() == null || t.getName().isBlank() ? id : t.getName();
+    }
+
+    /**
+     * 登录页品牌（P1 · 3B）：匿名单入口。
+     * <p>不存在 / 停用 / 归档的租户回落 {@code default} 的品牌——登录页不能因为一个错子域就打不开；
+     * 是否可用仍由登录口令校验后的 {@link #requireActive} 咬住。
+     */
+    public Map<String, Object> brandOf(String tenantId) {
+        String id = tenantId == null || tenantId.isBlank() ? TenantContext.DEFAULT_TENANT : tenantId.trim().toLowerCase();
+        Tenant t = tenantMapper.selectById(id);
+        boolean fallback = t == null || (t.getStatus() != null && t.getStatus() != 1);
+        if (fallback) {
+            id = TenantContext.DEFAULT_TENANT;
+            t = tenantMapper.selectById(id);
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("tenantId", id);
+        out.put("name", t == null || t.getName() == null ? "" : t.getName());
+        out.put("brandName", t == null || t.getBrandName() == null ? "" : t.getBrandName());
+        out.put("brandLogo", t == null || t.getBrandLogo() == null ? "" : t.getBrandLogo());
+        out.put("brandColor", t == null || t.getBrandColor() == null ? "" : t.getBrandColor());
+        out.put("loginHint", t == null || t.getLoginHint() == null ? "" : t.getLoginHint());
+        out.put("available", !fallback);
+        return out;
+    }
+
+    /** 更新租户品牌（平台级管理员；空串=恢复默认） */
+    public void updateBrand(String id, String brandName, String brandLogo, String brandColor, String loginHint) {
+        Tenant t = tenantMapper.selectById(id);
+        if (t == null) throw new BizException("租户不存在：" + id);
+        t.setBrandName(blankToNull(brandName));
+        t.setBrandLogo(blankToNull(brandLogo));
+        t.setBrandColor(blankToNull(brandColor));
+        t.setLoginHint(blankToNull(loginHint));
+        tenantMapper.updateById(t);
+        audit.record("[AUDIT] 更新租户品牌 租户={}", id);
+    }
+
+    private static String blankToNull(String s) {
+        return s == null || s.trim().isBlank() ? null : s.trim();
     }
 
     /** 归属变更或成员不存在时清缓存，避免改完一分钟看不到 */

@@ -22,13 +22,16 @@
                 <template v-if="column.key === 'id'"><code>{{ record.id }}</code></template>
                 <template v-else-if="column.key === 'status'">
                   <template v-if="superadmin">
-                    <a-switch :checked="record.status === 1" size="small"
-                              :disabled="record.id === 'default'"
-                              @change="v => onToggleTenant(record, v)" />
-                    <span v-if="record.id === 'default'" class="hint-inline">默认租户不可停用</span>
+                    <a-tag v-if="record.status === 2" color="orange">归档</a-tag>
+                    <template v-else>
+                      <a-switch :checked="record.status === 1" size="small"
+                                :disabled="record.id === 'default'"
+                                @change="v => onToggleTenant(record, v)" />
+                      <span v-if="record.id === 'default'" class="hint-inline">默认租户不可停用</span>
+                    </template>
                   </template>
-                  <a-tag v-else :color="record.status === 1 ? 'green' : 'red'">
-                    {{ record.status === 1 ? '启用' : '停用' }}
+                  <a-tag v-else :color="record.status === 1 ? 'green' : (record.status === 2 ? 'orange' : 'red')">
+                    {{ statusText(record.status) }}
                   </a-tag>
                 </template>
                 <template v-else-if="column.key === 'contact'">{{ record.contact || '—' }}</template>
@@ -37,9 +40,21 @@
                   <span class="tenant-note">{{ record.note || '—' }}</span>
                 </template>
                 <template v-else-if="column.key === 'action'">
-                  <a-space>
+                  <!-- 落点清单/归档/品牌都是平台级动作（后端 requirePlatform）：只给 superadmin -->
+                  <a-space v-if="superadmin">
                     <a-button type="link" size="small" @click="openInventory(record)">落点清单</a-button>
+                    <a-button type="link" size="small" @click="openBrand(record)">品牌</a-button>
+                    <a-popconfirm v-if="record.status === 2" title="恢复后该租户成员即可重新登录" ok-text="恢复"
+                                  cancel-text="取消" @confirm="doRestore(record)">
+                      <a-button type="link" size="small">恢复</a-button>
+                    </a-popconfirm>
+                    <a-popconfirm v-else-if="record.id !== 'default'"
+                                  title="归档后成员不可登录、数据只读；可导出、可随时恢复。彻底清除走运维脚本"
+                                  ok-text="归档" cancel-text="取消" @confirm="doArchive(record)">
+                      <a-button type="link" size="small" danger>归档</a-button>
+                    </a-popconfirm>
                   </a-space>
+                  <span v-else class="hint-inline">—</span>
                 </template>
               </template>
             </a-table>
@@ -101,6 +116,24 @@
         <a-form-item label="显示名" required><a-input v-model:value="createForm.name" placeholder="如 华章智造集团" /></a-form-item>
         <a-form-item label="联系人"><a-input v-model:value="createForm.contact" /></a-form-item>
         <a-form-item label="备注"><a-textarea v-model:value="createForm.note" :rows="2" placeholder="这个租户是谁、怎么开通的（审计要看）" /></a-form-item>
+      </a-form>
+    </a-modal>
+
+    <!-- 租户品牌（P1 · 3B）：登录页名称/logo/主色/副标题；空=恢复默认 -->
+    <a-modal v-model:open="brandOpen" title="租户品牌" :confirm-loading="saving" @ok="saveBrand">
+      <a-form layout="vertical" autocomplete="off">
+        <a-form-item label="登录页展示名" extra="留空=用租户显示名；单租户部署留空即与现状一致">
+          <a-input v-model:value="brandForm.brandName" :maxlength="100" placeholder="如 北辰科技" />
+        </a-form-item>
+        <a-form-item label="Logo 地址" extra="可填相对路径或 https 图片地址；留空=问渠默认标">
+          <a-input v-model:value="brandForm.brandLogo" :maxlength="200" placeholder="/ai/images/branding/xxx.png" />
+        </a-form-item>
+        <a-form-item label="登录页主色" extra="6 位十六进制色值，仅登录页生效；留空=默认蓝">
+          <a-input v-model:value="brandForm.brandColor" :maxlength="7" placeholder="#1f8a63" />
+        </a-form-item>
+        <a-form-item label="登录页副标题">
+          <a-input v-model:value="brandForm.loginHint" :maxlength="200" placeholder="留空=答案，自有源头 · Ask the source." />
+        </a-form-item>
       </a-form>
     </a-modal>
 
@@ -195,7 +228,8 @@ import { message } from 'ant-design-vue'
 import { PlusOutlined } from '@ant-design/icons-vue'
 import {
   listTenants, createTenant, setTenantStatus,
-  listTenantRequests, approveTenantRequest, rejectTenantRequest, getTenantInventory
+  listTenantRequests, approveTenantRequest, rejectTenantRequest, getTenantInventory,
+  archiveTenant, restoreTenant, updateTenantBrand
 } from '../api'
 import { isSuperadminSync } from '../utils/auth'
 
@@ -220,7 +254,7 @@ const tenantCols = [
   { title: '联系人', key: 'contact', dataIndex: 'contact', width: 110 },
   { title: '成员', key: 'members', dataIndex: 'members', width: 76 },
   { title: '备注', key: 'note', dataIndex: 'note', ellipsis: true },
-  { title: '操作', key: 'action', width: 110 }
+  { title: '操作', key: 'action', width: 260 }
 ]
 
 async function load () {
@@ -239,6 +273,59 @@ async function onToggleTenant (t, v) {
     if (r.success) { t.status = v ? 1 : 0; if (!v) message.success('已停用') }
     else message.error(r.msg || '操作失败')
   } catch (e) { message.error(e.message || '操作失败') }
+}
+
+const statusText = s => (s === 1 ? '启用' : (s === 2 ? '归档' : '停用'))
+
+async function doArchive (t) {
+  try {
+    const r = await archiveTenant(t.id)
+    if (!r.success) { message.error(r.msg || '归档失败'); return }
+    message.success('已归档')
+    await load()
+  } catch (e) { message.error(e.message || '归档失败') }
+}
+
+async function doRestore (t) {
+  try {
+    const r = await restoreTenant(t.id)
+    if (!r.success) { message.error(r.msg || '恢复失败'); return }
+    message.success('已恢复')
+    await load()
+  } catch (e) { message.error(e.message || '恢复失败') }
+}
+
+// ---------- 租户品牌（P1 · 3B） ----------
+const brandOpen = ref(false)
+const brandForm = ref({ id: '', brandName: '', brandLogo: '', brandColor: '', loginHint: '' })
+function openBrand (t) {
+  brandForm.value = {
+    id: t.id,
+    brandName: t.brandName || '',
+    brandLogo: t.brandLogo || '',
+    brandColor: t.brandColor || '',
+    loginHint: t.loginHint || ''
+  }
+  brandOpen.value = true
+}
+async function saveBrand () {
+  const f = brandForm.value
+  const c = (f.brandColor || '').trim()
+  if (c && !/^#[0-9a-fA-F]{6}$/.test(c)) { message.error('主色要填 6 位十六进制，如 #1f8a63'); return }
+  saving.value = true
+  try {
+    const r = await updateTenantBrand(f.id, {
+      brandName: f.brandName.trim(),
+      brandLogo: f.brandLogo.trim(),
+      brandColor: c,
+      loginHint: f.loginHint.trim()
+    })
+    if (!r.success) { message.error(r.msg || '保存失败'); return }
+    message.success('品牌已更新')
+    brandOpen.value = false
+    await load()
+  } catch (e) { message.error(e.message || '保存失败') }
+  finally { saving.value = false }
 }
 
 // ==================== 直开租户 ====================

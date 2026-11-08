@@ -89,6 +89,8 @@ public class SecurityConfig implements WebMvcConfigurer {
         if (isWorkflowWebhookEndpoint(method, path)) return true;
         // 租户开通申请：免登录的唯一写入端点（精确 POST）
         if (isTenantApplyEndpoint(method, path)) return true;
+        // 租户邀请落地页：token 即凭据（GET 预览 / POST 注册），按 IP 限流在控制器内
+        if (isJoinEndpoint(method, path)) return true;
         // 沙盒脚本回调：一次性运行凭据
         if (isSandboxCallbackEndpoint(method, path)) return true;
         // 本机执行器通道：执行器用设备令牌自证（Authorization: Bearer <device-token>），不走登录态
@@ -272,6 +274,8 @@ public class SecurityConfig implements WebMvcConfigurer {
         // 以 OpenAI SDK 语义调用智能体（model=智能体id）。资源级判定在端点内（智能体可见性），
         // 与 /v1/workflows 同层同口径；刻意不进 isKeyDeniedEndpoint——这个端点就是给 Key 用的。
         if (path.equals("/api/ai/v1/chat/completions")) return true;
+        // Responses API（P1 · OpenAI 端点补齐）：与 chat/completions 同层同口径，同样只给 API Key 用
+        if (path.equals("/api/ai/v1/responses")) return true;
         return false;
     }
 
@@ -401,6 +405,15 @@ public class SecurityConfig implements WebMvcConfigurer {
         return "POST".equalsIgnoreCase(method) && "/api/ai/tenant/apply".equals(path);
     }
 
+    /**
+     * 租户邀请落地页（P1 · 3A）：{@code /api/ai/join/{token}} 的 GET 预览与 POST 注册。
+     * <p>token 即凭据（32 字节高熵、只存哈希）；不按前缀通配，只放这一个两段路径。
+     */
+    private static boolean isJoinEndpoint(String method, String path) {
+        if (!("GET".equalsIgnoreCase(method) || "POST".equalsIgnoreCase(method))) return false;
+        return path.matches("/api/ai/join/[^/]+");
+    }
+
     private static boolean isShareGuestEndpoint(String path) {
         return path != null && path.startsWith("/api/ai/share/");
     }
@@ -477,6 +490,8 @@ public class SecurityConfig implements WebMvcConfigurer {
         if ("GET".equals(method) && path.equals("/api/ai/auth/saml/config")) return true;
         if ("GET".equals(method) && path.matches("/api/ai/auth/saml/login/[^/]+")) return true;
         if ("GET".equals(method) && path.equals("/api/ai/auth/first-run")) return true;
+        // 登录页品牌：登录前就要能取到（?tenant= 或子域），只回名称/logo/主色/副标题
+        if ("GET".equals(method) && path.equals("/api/ai/auth/brand")) return true;
         return "POST".equals(method) && (path.equals("/api/ai/auth/login")
                 || path.equals("/api/ai/auth/initialize")
                 || path.equals("/api/ai/auth/logout"));
@@ -547,6 +562,7 @@ public class SecurityConfig implements WebMvcConfigurer {
             if (!authenticated
                     && !isAuthBootstrapEndpoint(method, path) && !isShareGuestEndpoint(path)
                     && !isTenantApplyEndpoint(method, path)
+                    && !isJoinEndpoint(method, path)
                     && !isSandboxCallbackEndpoint(method, path)
                     && !isExecutorEndpoint(method, path)
                     && !isWorkflowWebhookEndpoint(method, path)) {
