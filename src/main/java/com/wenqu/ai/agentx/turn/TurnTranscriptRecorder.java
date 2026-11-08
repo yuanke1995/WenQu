@@ -11,8 +11,10 @@ import java.util.Map;
 /**
  * 一轮的显示投影：把正文、思考、过程、工具、插话、产物压成有序、自包含的 blocks。
  * <p>blocks 的每个文本块自带全文，不再用「字符区间 + 并行数组下标」表达交错；工具块按条目身份原地更新，
- * 位置固定在首次出现处。答案边界按 assistant 轮次判定：最后一条无工具轮为答案，无候选轮才退回末尾正文；
- * 前端不再自行推断。
+ * 位置固定在首次出现处。
+ * <p>正文是一条流：模型本轮写过的全部文字都按到达顺序进 text 块，工具调用只插入工具块、不切正文，
+ * 答案就是这些 text 块拼起来的整段（不按轮次、不按工具边界划分）。工具调用落在句子中间时，前后两半
+ * 在序列化后的正文里本就紧邻，拼起来是完整一句——不依赖句末标点，也不做任何位置推断。
  * <p>本类只做投影，不发送 SSE、不落库；调用方在收尾时取一次 JSON。
  */
 public final class TurnTranscriptRecorder {
@@ -22,16 +24,10 @@ public final class TurnTranscriptRecorder {
     private final List<Block> blocks = new ArrayList<>();
     /** 工具条目对象 → 块：同一条目后续更新只改块内容，不新增块、不移动位置。 */
     private final Map<Map<String, Object>, Block> toolBlocks = new IdentityHashMap<>();
-    /** 每次 assistant 消息落定时的块边界：轮内正文属于这一轮，hasToolCalls 决定它是不是过程。 */
-    private final List<RoundMark> rounds = new ArrayList<>();
 
     private Block openText;
     private Block openProcess;
     private Block openThink;
-    /** 收尾对账补进来的正文起点：只标记从这一段到末尾为答案（不把后续工具轮的正文算进来）。 */
-    private int tailFromBlock = -1;
-    /** 正文被整体替换（引用自检/回退）：轮次区间已失效，最终正文整体就是答案。 */
-    private boolean replacedBody;
     private int nextId = 1;
 
     public synchronized void textDelta(String delta) {
@@ -68,20 +64,9 @@ public final class TurnTranscriptRecorder {
         openThink = null;
     }
 
-    /**
-     * 一条 assistant 消息落定：此前产生的块属于这一轮。
-     * <p>{@code hasToolCalls=false} 且正文非空的最后一轮才是答案；这比「末尾连续正文」更接近 DSH 口径，
-     * 也能避免「工具轮末尾恰好有正文」被误判成答案。
-     */
-    public synchronized void assistantRound(boolean hasToolCalls) {
-        // 轮边界必须切断开口块：两轮连续正文若并成一块，轮次区间就分不开，后一轮会被误标成答案
-        flushText();
-        rounds.add(new RoundMark(blocks.size(), hasToolCalls));
-    }
-
     public synchronized void tool(Map<String, Object> entry) {
         if (entry == null) return;
-        openText = null;
+        // 只关思考/过程：工具是过程步骤，不切正文——下一段正文接着写在同一条流里
         openProcess = null;
         openThink = null;
         Block block = toolBlocks.get(entry);
@@ -155,7 +140,7 @@ public final class TurnTranscriptRecorder {
     public synchronized String toJson(String turnId, String body) {
         flushText();
         reconcileBody(body);
-        assignAnswerChannels(true);
+        markAnswerChannels();
         return serialize(turnId);
     }
 
@@ -165,7 +150,7 @@ public final class TurnTranscriptRecorder {
      * 的一个增量补成新块，随后流水线再追加一次，正文就重复了。blocks 自己就是当前时刻的真值。
      */
     public synchronized String snapshotJson(String turnId) {
-        assignAnswerChannels(false);
+        markAnswerChannels();
         return serialize(turnId);
     }
 
@@ -192,8 +177,6 @@ public final class TurnTranscriptRecorder {
 
     private void reconcileBody(String body) {
         String finalBody = body == null ? "" : body;
-        tailFromBlock = -1;
-        replacedBody = false;
         StringBuilder all = new StringBuilder();
         for (Block block : blocks) {
             if ("text".equals(block.kind)) all.append(block.text);
@@ -203,7 +186,6 @@ public final class TurnTranscriptRecorder {
         if (finalBody.startsWith(all.toString())) {
             String suffix = finalBody.substring(all.length());
             if (!suffix.isEmpty()) {
-                tailFromBlock = blocks.size();
                 Block block = add("text");
                 block.text.append(suffix);
             }
@@ -212,117 +194,16 @@ public final class TurnTranscriptRecorder {
 
         // 整体替换（引用自检/回退正文）：旧正文块作废，最终正文接在末尾；非文本块保留原位。
         blocks.removeIf(block -> "text".equals(block.kind));
-        replacedBody = true;
         if (!finalBody.isEmpty()) {
-            tailFromBlock = blocks.size();
             Block block = add("text");
             block.text.append(finalBody);
         }
     }
 
-    private void assignAnswerChannels(boolean finalize) {
+    /** 正文是一条流：全部非空文本块都是答案，不再按工具边界或 assistant 轮次切分归属。 */
+    private void markAnswerChannels() {
         for (Block block : blocks) {
-            if ("text".equals(block.kind)) block.channel = "narration";
-        }
-        if (finalize && replacedBody) {
-            for (Block block : blocks) {
-                if ("text".equals(block.kind) && !block.isBlank()) block.channel = "answer";
-            }
-            return;
-        }
-        // 快照时刻还没有终态答案边界：按当前末尾正文先标，接流方看到的与流中一致
-        if (finalize && !rounds.isEmpty()) {
-            int prevEnd = 0;
-            int candidateStart = -1;
-            int candidateEnd = -1;
-            for (RoundMark mark : rounds) {
-                int start = prevEnd;
-                int end = Math.min(mark.endBlock, blocks.size());
-                if (!mark.hasToolCalls && hasNonBlankText(start, end)) {
-                    candidateStart = start;
-                    candidateEnd = end;
-                }
-                prevEnd = end;
-            }
-            if (candidateStart >= 0) {
-                markAnswer(answerStartIncludingUnfinishedSentence(candidateStart, candidateEnd), candidateEnd);
-                if (tailFromBlock >= 0) markAnswer(tailFromBlock, blocks.size());
-                return;
-            }
-        }
-
-        // 没有轮次信息（旧路径/停在工具轮）：退回末尾连续正文，保证答案不为空
-        int runStart = -1;
-        for (int i = blocks.size() - 1; i >= 0; i--) {
-            Block block = blocks.get(i);
-            if ("artifact".equals(block.kind) || "notice".equals(block.kind)) continue;
-            if (!"text".equals(block.kind)) break;
-            if (!block.isBlank()) runStart = i;
-        }
-        if (runStart < 0) {
-            for (int i = blocks.size() - 1; i >= 0; i--) {
-                Block block = blocks.get(i);
-                if ("text".equals(block.kind) && !block.isBlank()) {
-                    runStart = i;
-                    break;
-                }
-            }
-        }
-        if (runStart < 0) return;
-        markAnswer(answerStartIncludingUnfinishedSentence(runStart, blocks.size()), blocks.size());
-    }
-
-    /**
-     * 答案起点往前挪：模型会在工具调用处把一句话劈成两段——工具前那半句
-     * （「我会先查一下最」）不以句末标点收尾，拿到结果后接着写「近 30 天…」。工具块会切断文本块，
-     * 前半句留在过程块、后半句成了答案开头，最终正文就从半句开始。
-     * <p>这里只认「中间只隔工具块」这一种形态：把那段没写完的正文一并并进答案，{@code answerText}
-     * 按答案段原样拼接，最终正文就回到完整一句；过程块里也不再残留前半句。
-     * 夹着思考/过程/插话的不合并——那不是一句话被工具劈开，归属不该改。
-     * <p>判据只看前一块的结尾是否有句末标点，不改写模型说过的字。
-     */
-    private int answerStartIncludingUnfinishedSentence(int start, int end) {
-        int first = -1;
-        for (int i = Math.max(0, start); i < Math.min(end, blocks.size()); i++) {
-            Block block = blocks.get(i);
-            if ("text".equals(block.kind) && !block.isBlank()) {
-                first = i;
-                break;
-            }
-        }
-        if (first < 0) return start;
-        for (int i = first - 1; i >= 0; i--) {
-            Block block = blocks.get(i);
-            if ("tool".equals(block.kind)) continue;
-            if (!"text".equals(block.kind) || block.isBlank()) return start;
-            return endsMidSentence(block) ? i : start;
-        }
-        return start;
-    }
-
-    /** 这一段正文是不是没写完：结尾没有句末标点。只认词尾（汉字/字母/数字）收尾的半句，
-     *  标题、代码块、列表这类结构性结尾不算——它们不接工具后那半句。 */
-    private static boolean endsMidSentence(Block block) {
-        String text = block.text.toString().stripTrailing();
-        if (text.isEmpty()) return false;
-        char last = text.charAt(text.length() - 1);
-        if ("。！？!?；;：:….．".indexOf(last) >= 0) return false;
-        if ("”’」』）)》】)]}>\"'`".indexOf(last) >= 0) return false;
-        return Character.isLetterOrDigit(last);
-    }
-
-    private boolean hasNonBlankText(int start, int end) {
-        for (int i = Math.max(0, start); i < Math.min(end, blocks.size()); i++) {
-            Block block = blocks.get(i);
-            if ("text".equals(block.kind) && !block.isBlank()) return true;
-        }
-        return false;
-    }
-
-    private void markAnswer(int start, int end) {
-        for (int i = Math.max(0, start); i < Math.min(end, blocks.size()); i++) {
-            Block block = blocks.get(i);
-            if ("text".equals(block.kind) && !block.isBlank()) block.channel = "answer";
+            if ("text".equals(block.kind)) block.channel = block.isBlank() ? null : "answer";
         }
     }
 
@@ -330,16 +211,6 @@ public final class TurnTranscriptRecorder {
         Block block = new Block("b" + nextId++, kind);
         blocks.add(block);
         return block;
-    }
-
-    private static final class RoundMark {
-        final int endBlock;
-        final boolean hasToolCalls;
-
-        RoundMark(int endBlock, boolean hasToolCalls) {
-            this.endBlock = endBlock;
-            this.hasToolCalls = hasToolCalls;
-        }
     }
 
     private static final class Block {

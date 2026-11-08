@@ -167,16 +167,14 @@
           <template #body="{ m, i }">
               <!-- 整轮用时那一条：它同时是过程块的开关。跑着的时候过程自动展开，答完收起只留正文 -->
               <TurnBar v-if="m.role === 'ai'" :m="m" />
-              <!-- 正文 / 过程分离（DSH 口径）：过程（中间正文、思考、工具、插话）全收在顶部过程块里；
-                   正文只渲染最终答案（turnAnswerText），永远连续，不再和过程交错。 -->
+              <!-- 正文 / 过程分离（统一正文流）：正文＝整段 content（turnAnswerText），工具调用只作过程步骤、
+                   不切正文；过程（思考/过程/工具/插话）全收在顶部过程块里，永远不插进正文。 -->
               <div v-if="m.role === 'ai'" class="md" :data-msg-index="i">
                 <div v-if="turnOpen(m) && turnProcessRows(m).length" class="tl-turn-process">
                 <template v-for="(seg, si) in turnProcessRows(m)" :key="si">
-                  <AnswerBody v-if="seg.kind === 'text'" class="tl-text tl-process-text" :content="m.content.slice(seg.from, seg.to)"
-                              :images="m.images" runnable :session-id="currentSessionId" :streaming="false" />
                   <!-- 思考段：这一轮模型在想什么，在过程块里占一行。只有正在长的那一段自动展开，其余折叠。
                        被过程簇收进去的那些不走这一支——它们落在帽体清单里所属那一步的展开详情内（见 projections 的 clusterLiveRows） -->
-                  <div v-else-if="seg.kind === 'think'" class="tl-think-block">
+                  <div v-if="seg.kind === 'think'" class="tl-think-block">
                     <button class="tl-think-head" type="button" @click="toggleThinkSeg(m, seg)">
                       <span class="tl-think-title" :class="{ running: thinkGrowing(m, seg) }">深度思考</span>
                       <caret-right-outlined class="tl-caret" :class="{ open: thinkSegOpen(m, seg) }" />
@@ -4822,14 +4820,10 @@ onMounted(async () => {
  * 过程与正文彻底分开：连续工具合并折叠组，卡片标题行亮出关键参数，展开看完整入参/输出。
  * 这一段只出现在顶部过程块里，不参与正文排版。 */
 .tool-status-list { margin-top: 8px; }
-/* 过程块里的中间正文：与最终答案区分开，读起来知道它是过程而不是结论 */
-.tl-text :deep(*:first-child) { margin-top: 0; }
-.tl-text :deep(*:last-child) { margin-bottom: 0; }
-/* 过程独白段（<process> 标签分流）：在过程块里自成一行，与最终答案分开 */
+/* 过程独白段（<process> 标签分流）：在过程块里自成一行，与正文分开 */
 .tl-process-block { margin: 2px 0; }
-/* 顶部过程块（DSH 口径）：过程与正文彻底分开，展开时整块出现在正文上方 */
+/* 顶部过程块（统一正文流）：过程与正文彻底分开，展开时整块出现在正文上方 */
 .tl-turn-process { margin: 2px 0 10px; }
-.tl-process-text { color: var(--app-text2); opacity: .82; font-size: 13.5px; }
 /* 插话段：用户在这一轮还在跑时补的那句，长在模型真听到它的那个位置。右对齐＋与用户气泡同一形状，
    一眼认得出是自己说的话；它属于过程，随过程块一起展开/收起。 */
 .tl-steer { display: flex; justify-content: flex-end; margin: 8px 0; }

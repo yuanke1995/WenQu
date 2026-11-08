@@ -5,6 +5,7 @@
  * 行为分支（按请求体内容判定，无需特殊 header）：
  * - messages 含 role=tool          → 第二轮：流式返回最终回答（走完工具调用闭环）
  * - 最后一条 user 消息含 [[ASK]]   → 第一轮：流式返回 askUser 工具调用（触发人在回路挂起）
+ * - 含 [[SPLIT]]                   → 半句 → 工具调用 → 后半句，验「正文一条流」（SPLIT_CHUNK_MS 可逐字慢放）
  * - stream=false                   → 非流式补全（派遣/委派路由的实体调用路径）
  * - 其余                           → 流式返回 TTFB_MS + CHUNKS×CHUNK_MS 的可控长回答
  *
@@ -107,6 +108,8 @@ const server = http.createServer(async (req, res) => {
     const wantsApproval = userText.includes('[[APPROVAL]]');
     const wantsLoop = userText.includes('[[LOOP]]');
     const wantsRich = userText.includes('[[RICHTEXT]]');
+    // 一句话被工具调用劈开：前半句 → 工具 → 后半句，用来验「正文一条流」不按工具边界切正文
+    const wantsSplit = userText.includes('[[SPLIT]]');
     // 已经调过哪些工具：按 assistant 消息里的 tool_calls 认（tool 结果消息本身不带名字）
     const calledTools = msgs.flatMap((m) => (m.tool_calls || []).map((t) => t.function?.name)).filter(Boolean);
 
@@ -118,6 +121,44 @@ const server = http.createServer(async (req, res) => {
         choices: [{ index: 0, message: { role: 'assistant', content: '{}\n' }, finish_reason: 'stop' }],
         usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 },
       }));
+      return;
+    }
+
+    // 半句→工具→后半句：模型在句子中间发起工具调用，工具不写正文，两半在 content 里紧邻。
+    // 用例拿来验正文一条流：答案＝整段 content（前半句＋后半句拼成完整一句），过程块只剩工具。
+    if (wantsSplit && !hasToolResult) {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+      chunk(res, id, model, { role: 'assistant' });
+      chunk(res, id, model, { content: '我先查一下最近' });
+      await sleep(120);
+      chunk(res, id, model, { tool_calls: [{
+        index: 0, id: 'call_mock_split_1', type: 'function',
+        function: { name: 'read_file', arguments: JSON.stringify({ path: 'README.md' }) },
+      }] });
+      await sleep(120);
+      chunk(res, id, model, {}, 'tool_calls');
+      res.write('data: [DONE]\n\n');
+      res.end();
+      return;
+    }
+    if (wantsSplit && hasToolResult) {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+      chunk(res, id, model, { role: 'assistant' });
+      // SPLIT_CHUNK_MS：逐字慢速下发后半句，用于在浏览器里观察「运行中」的连续正文
+      const tail = ' 30 天的记录，结论如下：一切正常。';
+      const gap = +process.env.SPLIT_CHUNK_MS || 0;
+      if (gap > 0) {
+        for (const ch of tail) {
+          chunk(res, id, model, { content: ch });
+          await sleep(gap);
+        }
+      } else {
+        chunk(res, id, model, { content: tail });
+        await sleep(120);
+      }
+      chunk(res, id, model, {}, 'stop');
+      res.write('data: [DONE]\n\n');
+      res.end();
       return;
     }
 

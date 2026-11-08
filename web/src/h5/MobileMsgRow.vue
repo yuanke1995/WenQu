@@ -92,16 +92,14 @@
         <!-- 整轮用时那一条：它同时是过程块的开关。跑着的时候过程自动展开，答完收起只留正文 -->
         <TurnBar :m="m" mobile />
 
-        <!-- 正文 / 过程分离（DSH 口径，与 PC 同构）：过程全部收在顶部过程块，正文只渲染最终答案 -->
+        <!-- 正文 / 过程分离（统一正文流，与 PC 同构）：正文＝整段 content，工具调用只作过程步骤、
+             不切正文；过程全部收在顶部过程块，永远不插进正文 -->
         <div class="md bubble-md" :data-msg-index="index">
           <div v-if="turnOpen(m) && turnProcessRows(m).length" class="tl-turn-process">
           <template v-for="(seg, si) in turnProcessRows(m)" :key="si">
-            <AnswerBody v-if="seg.kind === 'text'" class="tl-text tl-process-text" :content="m.content.slice(seg.from, seg.to)"
-                        :images="m.images" runnable :session-id="sessionId" :streaming="false"
-                        :viewer="false" @citation="onBodyCitation" @preview="onBodyPreview" />
             <!-- 思考段（簇外）：这一轮在想什么就长在哪一行，只有正在长的那一段自动展开。
                  被过程簇收进去的那些不走这一支——落在帽体清单里所属那一步的展开详情内（与 PC 同一份 clusterLiveRows） -->
-            <div v-else-if="seg.kind === 'think'" class="card think-card">
+            <div v-if="seg.kind === 'think'" class="card think-card">
               <button class="card-head" type="button" @click.stop="toggleThinkSeg(m, seg)">
                 <span class="card-title">深度思考</span>
                 <span v-if="thinkGrowing(m, seg)" class="spinner" aria-label="进行中"></span>
@@ -631,10 +629,8 @@ const onBodyPreview = (urls, index) => emit('preview', urls, index)
   border-radius: 4px 14px 14px 14px; padding: 10px 12px;
   font-size: 15px; line-height: 1.7; min-width: 0; overflow-wrap: anywhere;
 }
-.tl-text { min-width: 0; }
-/* 顶部过程块（DSH 口径）：过程与正文彻底分开，展开时整块出现在正文上方 */
+/* 顶部过程块（统一正文流）：过程与正文彻底分开，展开时整块出现在正文上方 */
 .tl-turn-process { margin: 0 0 10px; }
-.tl-process-text { color: var(--app-text2); opacity: .82; font-size: 13.5px; }
 /* 插话段：右对齐、与用户气泡同一形状；它属于过程，随过程块一起展开/收起 */
 .tl-steer { display: flex; justify-content: flex-end; margin: 8px 0; }
 .tl-steer-txt {

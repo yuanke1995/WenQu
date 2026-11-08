@@ -97,7 +97,7 @@ function sourceTitle (m) {
         <slot name="body-before" :m="m" :i="i" />
 
         <slot name="body" :m="m" :i="i">
-          <!-- 共用兜底正文（分享页）：与主对话页同一口径——正文只取最终答案（turnAnswerText），
+          <!-- 共用兜底正文（分享页）：与主对话页同一口径——正文＝整段 content（turnAnswerText），
                过程不对外展示；TurnBar 只报用时，不给过程展开三角。 -->
           <TurnBar v-if="m.role === 'ai' && !m.loading" :m="m" no-toggle />
           <!-- 提问走 literal：图片占位与引用角标都不替换——提问里的 [图片N] / [N] 是用户手打的

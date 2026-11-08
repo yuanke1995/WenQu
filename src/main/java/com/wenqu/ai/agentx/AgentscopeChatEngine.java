@@ -32,7 +32,6 @@ import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.TextBlock;
 import io.agentscope.core.message.ToolResultBlock;
 import io.agentscope.core.message.ToolResultState;
-import io.agentscope.core.message.ToolUseBlock;
 import io.agentscope.core.session.SessionEvent;
 import io.agentscope.core.session.SessionLog;
 import io.agentscope.core.session.SessionRecovery;
@@ -2502,11 +2501,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             transcript.processDelta(delta);
         }
 
-        /** 一条 assistant 消息落定：给 blocks 标轮次边界，收尾按「最后一条无工具轮」取答案。 */
-        void assistantRound(boolean hasToolCalls) {
-            transcript.assistantRound(hasToolCalls);
-        }
-
         String blocksJson(String turnId, String body) {
             return transcript.toJson(turnId, body);
         }
@@ -3207,34 +3201,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     }
 
     /**
-     * 一条 assistant 消息是否带了工具调用：框架的 {@code message/assistant} 载荷是 {@code {message: Msg}}，
-     * {@link Msg#getContentBlocks(Class)} 能直接看出 ToolUseBlock。取不到就按「无工具」处理——
-     * 收尾还有末尾正文兜底，不会把答案判丢。
-     */
-    static boolean assistantHasToolCalls(Object message) {
-        if (message instanceof Msg msg) {
-            return !msg.getContentBlocks(ToolUseBlock.class).isEmpty();
-        }
-        // Session Log 读回来的载荷是 Map（实测 content[].type=tool_use），不是内存里的 Msg
-        if (message instanceof Map<?, ?> msg && msg.get("content") instanceof List<?> blocks) {
-            for (Object block : blocks) {
-                if (block instanceof Map<?, ?> b && "tool_use".equals(String.valueOf(b.get("type")))) {
-                    return true;
-                }
-            }
-        }
-        // 少数恢复/重放路径会把 message 再序列化成字符串
-        if (message instanceof String s && !s.isBlank()) {
-            try {
-                return assistantHasToolCalls(com.alibaba.fastjson2.JSON.parse(s));
-            } catch (Exception ignored) {
-                return false;
-            }
-        }
-        return false;
-    }
-
-    /**
      * 框架 Session Log 的事件词汇 → 问渠前端事件名。
      * <p>刻意不发：{@code run/*}、{@code step/*}、{@code state/checkpoint}、{@code model/dispatch} 这些
      * 没有前端对应物的帧——前端对认不出的事件名会打 warn（{@code api.js:158}），不如不发。
@@ -3304,9 +3270,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                     }
                 }
             }
-            case "message/assistant" -> recording.assistantRound(assistantHasToolCalls(data.get("message")));
-            // run 终态那份输出：message/assistant 万一没被观察到，这一帧也能补上最后一轮边界
-            case "turn/output" -> recording.assistantRound(assistantHasToolCalls(data.get("message")));
             case "tool/requested" -> {
                 // 正式调用来了：早产卡状态收摊，后面不再发进度帧（前端收到本帧会把那张卡升级成正式卡）
                 recording.clearPreparing();
@@ -4007,8 +3970,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                         + (subagentTargets.isEmpty() ? "" : tools.dispatchDiscipline())
                         + PlanCopy.guidance()
                         + com.wenqu.ai.agent.chat.ArtifactPrompt.guidance()
-                        // 工具调用不得劈在句子中间：前半句留在过程块、后半句成答案开头，用户读到一句断话
-                        + com.wenqu.ai.agent.chat.ToolCallPrompt.guidance()
                         + com.wenqu.ai.memory.MemoryPrompts.replyDiscipline()
                         + com.wenqu.ai.agent.chat.RelatedPrompt.line())
                 // 问渠所有供应商都是 OpenAI 兼容网关（c_ai_provider.base_url 实测全是 compatible-mode）。

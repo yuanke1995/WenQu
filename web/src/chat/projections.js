@@ -231,15 +231,15 @@ const stepBriefOf = c => {
   const label = toolLabel(c.name, c.label)
   return brief ? label + ' · ' + brief : label
 }
-// ==================== 时间线（正文 / 过程分离，DSH 口径） ====================
+// ==================== 时间线（正文一条流，工具只作过程步骤） ====================
 // timeline 是事件段数组：
 //   {kind:'text', from, to}  → 指向 m.content 的切片区间（不复制文本，done 换正文时自动跟随）；
 //   {kind:'tool', tool}      → 引用 m.toolCalls 里的同一对象（done/error 原地改状态，卡片自动更新）；
 //   {kind:'think'/'process', from, to} → 分别指向 m.thinking / m.processText；
 //   {kind:'steer', text, messageId}    → 用户在本轮跑动中补的那句话。
-// 渲染只分两块：正文＝末尾那段连续正文（turnAnswerText），过程＝其余全部段（turnProcessRows）。
-// 过程块里不再做任何位置推断（半句连排/句中工具吸收/强句末切分都已退役）——工具在段之间就按段
-// 渲染，正文永远连续；实时与落库用同一份段数组，刷新前后一致。
+// 渲染只分两块：正文＝整段 content（turnAnswerText），过程＝思考/过程/工具段（turnProcessRows）。
+// 工具调用落在句子中间时，前后两半在 content 里本就紧邻，拼起来就是完整一句——不按工具边界切
+// 正文，也不做任何句末标点推断；实时与落库用同一份段数组，刷新前后一致。
 // 时间线随消息落库（正文区间 + 工具/产物下标），历史恢复由 restoreTimeline 重建；旧消息无 timeline
 // 时工具按终态清单成组，正文按整段。data-msg-index 挂在外层 .md 容器上，引用角标逻辑零改动。
 // 注：插话段同时是一条落库用户消息（sequence 排在回答之前）：历史回显时凡 messageId 已被某条时间线
@@ -770,94 +770,26 @@ const restoreTimeline = (m, segs) => {
 // 保持 ChatPage / ShareChatPage 的既有 import 路径不变。
 export { applyBlocks } from './blocks'
 
-// ==================== 完成态：正文 / 过程分离（DSH 口径） ====================
-/* DSH 的轮次模型：最终答案只取最后一轮「不含工具调用」的回复，之前的所有回复、思考与工具
- * 都属于过程。问渠的时间线没有 step 号，但同样的边界可以用段序列表示：
- *   - 答案 = 时间线末尾、最后一个非正文段（think/process/tool/steer）之后的**连续正文段**；
- *     收尾若停在工具/思考上（没有尾随正文），退回最后一段正文，保证答案不为空；
- *   - 过程 = 其余所有段（正文段按答案起点截断），按发生顺序渲染在顶部过程块里。
- * 这样前端不再做半句连排/句中工具吸收——正文永远是连续的，过程永远不会插进正文。 */
+// ==================== 正文 / 过程分离（统一正文流） ====================
+/* 正文＝整段 content；工具调用只作过程步骤，不切正文。
+ * 模型会在工具调用处把一句话劈成两段（「我会先查一下最」→ 工具 → 「近 30 天…」），
+ * 但工具不往 content 写字符，两半在 content 里本就紧邻，拼起来就是完整一句——
+ * 不按轮次、工具边界或句末标点推断答案起点，答案永远是 content 的全部。
+ * 过程＝思考/过程/工具段，按发生顺序聚簇渲染在过程块里，永远不插进正文。
+ * 运行中与落库用同一份段数组（后端给每个非空 text 段标 channel=answer），刷新前后一致。 */
 
-/** 答案在 m.content 里的区间；没有正文返回 null。 */
-const turnAnswerRange = m => {
-  const content = String((m && m.content) || '')
-  const len = content.length
-  if (!len) return null
-  const tl = Array.isArray(m && m.timeline) ? m.timeline : []
-  if (!tl.length) return { from: 0, to: len }
-  let from = null
-  for (let i = tl.length - 1; i >= 0; i--) {
-    const seg = tl[i]
-    if (!seg) continue
-    if (seg.kind === 'artifact') continue
-    if (seg.kind !== 'text') break
-    const f = Math.min(Number(seg.from) || 0, len)
-    const t = Math.min(Number(seg.to) || 0, len)
-    if (t > f && content.slice(f, t).trim()) from = f
-  }
-  if (from === null) {
-    // 收尾停在工具/思考上：退回最后一段非空正文，答案不能是空
-    for (let i = tl.length - 1; i >= 0; i--) {
-      const seg = tl[i]
-      if (!seg || seg.kind !== 'text') continue
-      const f = Math.min(Number(seg.from) || 0, len)
-      const t = Math.min(Number(seg.to) || 0, len)
-      if (t > f && content.slice(f, t).trim()) { from = f; break }
-    }
-  }
-  return from === null ? { from: 0, to: len } : { from, to: len }
-}
+const turnAnswerText = m => String((m && m.content) || '')
 
-/** 新消息的 blocks 投影带显式 channel：返回 answer 文本段；没有显式 channel 的消息走区间推断。
- *  用段数组而不是单一区间：答案段理论上连续，但这里不把「连续」当前提，避免多轮场景把后者算进答案。 */
-const explicitAnswerSegments = m => {
-  // 跑动中的一轮仍按实时末尾正文展示；终态切到服务端确定的 answer 通道，
-  // 避免快照之后新到的正文段没有 channel、被误收进过程。
-  if (!m || m.loading) return null
-  const tl = Array.isArray(m && m.timeline) ? m.timeline : []
-  if (!tl.some(seg => seg && seg.kind === 'text' && seg.channel)) return null
-  return tl.filter(seg => seg && seg.kind === 'text' && seg.channel === 'answer')
-}
-
-const turnAnswerText = m => {
-  const segments = explicitAnswerSegments(m)
-  if (segments) {
-    const content = String((m && m.content) || '')
-    return segments.map(seg => content.slice(
-      Math.min(Number(seg.from) || 0, content.length),
-      Math.min(Number(seg.to) || 0, content.length))).join('')
-  }
-  const r = turnAnswerRange(m)
-  return r ? String((m && m.content) || '').slice(r.from, r.to) : ''
-}
-
-/** 过程块：答案之前的正文 + 全部思考/过程/工具/插话，按时间线顺序聚簇。
- *  不做任何句子推断——工具在段之间就按段渲染，过程块本来就不参与正文排版。 */
+/** 过程块：时间线里的全部思考/过程/工具段，按发生顺序聚簇。
+ *  text 段一律属于正文流，不进过程块；不做任何句子推断。 */
 const turnProcessRows = m => {
-  const content = String((m && m.content) || '')
-  const explicit = explicitAnswerSegments(m)
-  const range = explicit ? null : turnAnswerRange(m)
-  const limit = range ? range.from : content.length
   const tl = Array.isArray(m && m.timeline) ? m.timeline : []
   const out = []
   let group = null
   const flushGroup = () => { if (group) { out.push(group); group = null } }
   for (const seg of tl) {
     if (!seg) continue
-    if (seg.kind === 'text') {
-      if (explicit) {
-        if (seg.channel === 'answer') continue
-        const f = Math.min(Number(seg.from) || 0, content.length)
-        const t = Math.min(Number(seg.to) || 0, content.length)
-        if (t > f && content.slice(f, t).trim()) { flushGroup(); out.push({ kind: 'text', from: f, to: t }) }
-        continue
-      }
-      const f = Math.min(Number(seg.from) || 0, limit)
-      const t = Math.min(Number(seg.to) || 0, limit)
-      if (t > f && content.slice(f, t).trim()) { flushGroup(); out.push({ kind: 'text', from: f, to: t }) }
-      continue
-    }
-    if (seg.kind === 'artifact') continue
+    if (seg.kind === 'text' || seg.kind === 'artifact') continue
     if (seg.kind === 'tool') {
       if (!seg.tool) continue
       if (!group) group = { kind: 'group', tools: [] }
