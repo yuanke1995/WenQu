@@ -170,6 +170,30 @@ public class Agent {
     private String workflowTools;
 
     /**
+     * 轮终回调地址（对外能力第二批）：非空时该智能体每轮结束向它 POST 签名结果
+     * （X-Wenqu-Event=agent.turn.finished；持久化重试，见 c_ai_webhook_delivery）。NULL=不回调。
+     */
+    private String callbackUrl;
+
+    /**
+     * 轮终回调签名密钥（JWE 密文；回显脱敏——getter 手写并 {@code @JsonIgnore}，密文不出服务端，
+     * 前端按 {@code callbackSecretSet} 显「已配置」；重新填写才更换，留空沿用旧值）。
+     * 空 = 只带事件头不带签名。
+     */
+    private String callbackSecret;
+
+    /** 回显脱敏：密文不进任何 API 响应（手写此 getter 压过 Lombok，注解才挂得到序列化点） */
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    public String getCallbackSecret() {
+        return callbackSecret;
+    }
+
+    /** 是否已配置回调签名密钥（前端徽标判据；与 HTTP 工具集凭据同一交互口径） */
+    public boolean isCallbackSecretSet() {
+        return callbackSecret != null && !callbackSecret.isBlank();
+    }
+
+    /**
      * 是否子智能体：0=主智能体（可在对话页直接选用）；1=子智能体（不直接选用，供主智能体委派）。
      * 子智能体说明：子智能体是同一张表里的一级智能体，只是用途不同。
      */

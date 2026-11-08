@@ -381,6 +381,8 @@ CREATE TABLE IF NOT EXISTS `c_ai_agent` (
     `http_tools`      MEDIUMTEXT   DEFAULT NULL COMMENT 'HTTP 工具集(JSON 数组: 工具集配置+已解析操作; auth.value 为 JWE 密文; NULL=未配置。上限: 每智能体4个工具集/每集20操作; 审批跟随智能体 tool_approval_mode,动态工具名未登记注册中心按 fail-closed 需审批)',
     `tool_workflow`   INT          DEFAULT NULL COMMENT '工作流工具: 1=开 0=关 NULL=继承（已发布工作流挂载为对话工具）',
     `workflow_tools`  MEDIUMTEXT   DEFAULT NULL COMMENT '工作流工具集(JSON 数组: 已发布工作流 id, ≤8 个; NULL=未配置。运行时读发布版本; 嵌套深度上限 2 层防环: 工具族到顶不挂+运行入口 fail-loud 双闸)',
+    `callback_url`    VARCHAR(512) DEFAULT NULL COMMENT '轮终回调地址(对外能力第二批): 非空时每轮结束 POST 签名结果(X-Wenqu-Event=agent.turn.finished, 持久化重试见 c_ai_webhook_delivery); NULL=不回调',
+    `callback_secret` VARCHAR(1024) DEFAULT NULL COMMENT '轮终回调签名密钥(JWE 密文, 回显脱敏, 值不变不重加密); 空=只带事件头不带签名',
     `is_subagent`     INT           DEFAULT 0 COMMENT '是否子智能体: 0=主智能体（对话页可选） 1=子智能体（供主智能体委派）',
     `sub_agent_ids`   VARCHAR(1000) DEFAULT NULL COMMENT '主智能体可委派的子智能体ID: NULL/空=走默认多视角策略 逗号分隔=用这些',
     `subagent_mode`   VARCHAR(16)  DEFAULT NULL COMMENT '被当作子智能体咨询时怎么跑(P3a): digest=只并行检索+提炼要点(原有行为) full=跑完整问答管线(自己的知识库/工具/技能/沙盒/产物生效); NULL=跟随平台默认 agent.subagentMode',
@@ -1797,3 +1799,25 @@ CREATE TABLE IF NOT EXISTS `c_ai_agent_eval_result` (
     KEY `idx_result_run` (`run_id`),
     KEY `idx_result_case` (`case_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='智能体评测逐条结果（失败原因与指标快照）';
+
+CREATE TABLE IF NOT EXISTS `c_ai_webhook_delivery` (
+    `tenant_id`     VARCHAR(32)  NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
+    `id`            VARCHAR(50)  NOT NULL COMMENT '主键ID',
+    `uid`           VARCHAR(64)  NOT NULL COMMENT '投递归属人（智能体主人；耗尽通知收件人）',
+    `agent_id`      VARCHAR(50)  DEFAULT NULL COMMENT '智能体ID',
+    `turn_id`       VARCHAR(64)  DEFAULT NULL COMMENT '触发投递的轮 id（接收方幂等键之一）',
+    `session_id`    VARCHAR(50)  DEFAULT NULL COMMENT '会话ID',
+    `event`         VARCHAR(64)  NOT NULL DEFAULT 'agent.turn.finished' COMMENT '事件名（X-Wenqu-Event 头同源）',
+    `url`           VARCHAR(512) NOT NULL COMMENT '回调地址（保存期已过 scheme+SSRF 校验）',
+    `payload`       MEDIUMTEXT   COMMENT '出站 JSON 原文（重试原样重发，同一笔投递内容恒定）',
+    `status`        VARCHAR(16)  NOT NULL DEFAULT 'pending' COMMENT 'pending=待投递/待重试 success=已送达 exhausted=重试耗尽',
+    `attempts`      INT          DEFAULT 0 COMMENT '已尝试次数（含首发）',
+    `next_retry_at` DATETIME     DEFAULT NULL COMMENT '下次重试时刻（pending 行扫描判据）',
+    `last_status`   INT          DEFAULT NULL COMMENT '最近一次对端应答码（传输失败为 NULL）',
+    `last_error`    VARCHAR(500) DEFAULT NULL COMMENT '最近一次失败原因',
+    `create_time`   DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `finish_time`   DATETIME     DEFAULT NULL COMMENT '终态时刻（success/exhausted）',
+    PRIMARY KEY (`id`),
+    KEY `idx_wh_status_retry` (`status`, `next_retry_at`),
+    KEY `idx_wh_uid` (`uid`, `create_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='智能体轮终 webhook 出站投递（至少一次语义，接收方按 turnId/messageId 幂等去重）';

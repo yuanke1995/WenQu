@@ -85,14 +85,6 @@ public class WorkflowService {
     private static final int SCHEDULE_SCAN_LIMIT = 20;
     /** 定时运行失败自动重试次数（计划：失败重试 1 次） */
     private static final int SCHEDULE_MAX_RETRY = 1;
-    /** 终态回调出站超时（ms） */
-    private static final int CALLBACK_TIMEOUT_MS = 10_000;
-
-    /** 回调出站客户端（复用一个实例；跟随常规重定向） */
-    private static final HttpClient CALLBACK_CLIENT = HttpClient.newBuilder()
-            .followRedirects(HttpClient.Redirect.NORMAL)
-            .connectTimeout(Duration.ofSeconds(5))
-            .build();
 
     /**
      * run 级执行线程池（M5 硬超时用）：把图调用从请求线程挪到独立线程，主线程带时限等待。
@@ -1836,23 +1828,9 @@ public class WorkflowService {
         }
     }
 
-    /** 回调地址校验：http/https + 过 SSRF（内网地址拒绝，与 http 节点同口径） */
+    /** 回调地址校验：收编到 {@code OutboundWebhook.assertUrl}（智能体轮终回调共用同一份口径） */
     private static void assertCallbackUrl(String url) {
-        URI uri;
-        try {
-            uri = URI.create(url.trim());
-        } catch (Exception e) {
-            throw new BizException("回调地址不是合法 URL");
-        }
-        String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase(Locale.ROOT);
-        if (!"http".equals(scheme) && !"https".equals(scheme)) {
-            throw new BizException("回调地址必须以 http:// 或 https:// 开头");
-        }
-        try {
-            SsrfGuard.requirePublicHost(uri);
-        } catch (Exception e) {
-            throw new BizException("回调地址不允许指向内网：" + e.getMessage());
-        }
+        com.wenqu.ai.util.OutboundWebhook.assertUrl(url);
     }
 
     /** 终态回调（仅 success/failed/timeout）：异步 POST，失败只告警、不影响运行收口 */
@@ -1878,33 +1856,17 @@ public class WorkflowService {
         ThreadPoolManager.execute(() -> postCallback(url, body, secret, run.getId()));
     }
 
-    /** 回调出站（HMAC-SHA256 签名头 X-Wenqu-Signature；10s 超时；失败只告警） */
+    /** 回调出站（收编到 OutboundWebhook：HMAC-SHA256 签名头 X-Wenqu-Signature；10s 超时；失败只告警） */
     private static void postCallback(String url, String body, String secret, String runId) {
-        try {
-            HttpRequest.Builder b = HttpRequest.newBuilder(URI.create(url))
-                    .timeout(Duration.ofMillis(CALLBACK_TIMEOUT_MS))
-                    .header("Content-Type", "application/json; charset=utf-8")
-                    .header("X-Wenqu-Event", "workflow.run.finished")
-                    .header("X-Wenqu-Run-Id", runId)
-                    .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8));
-            if (secret != null && !secret.isBlank()) {
-                b.header("X-Wenqu-Signature", "sha256=" + hmacSha256Hex(secret, body));
-            }
-            HttpResponse<String> resp = CALLBACK_CLIENT.send(b.build(), HttpResponse.BodyHandlers.ofString());
-            if (resp.statusCode() >= 300) {
-                log.warn("[WORKFLOW] 回调返回非 2xx：run={} status={} url={}", runId, resp.statusCode(), url);
-            } else {
-                log.info("[WORKFLOW] 回调成功：run={} url={}", runId, url);
-            }
-        } catch (Exception e) {
-            log.warn("[WORKFLOW] 回调失败（不影响运行）：run={} url={} err={}", runId, url, e.getMessage());
+        com.wenqu.ai.util.OutboundWebhook.Receipt r = com.wenqu.ai.util.OutboundWebhook.post(
+                url, "workflow.run.finished", Map.of("X-Wenqu-Run-Id", runId), secret, body);
+        if (r.error() != null) {
+            log.warn("[WORKFLOW] 回调失败（不影响运行）：run={} url={} err={}", runId, url, r.error());
+        } else if (r.status() >= 300) {
+            log.warn("[WORKFLOW] 回调返回非 2xx：run={} status={} url={}", runId, r.status(), url);
+        } else {
+            log.info("[WORKFLOW] 回调成功：run={} url={}", runId, url);
         }
-    }
-
-    private static String hmacSha256Hex(String secret, String body) throws Exception {
-        Mac mac = Mac.getInstance("HmacSHA256");
-        mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
-        return HexFormat.of().formatHex(mac.doFinal(body.getBytes(StandardCharsets.UTF_8)));
     }
 
     private static String asStr(Object o) {

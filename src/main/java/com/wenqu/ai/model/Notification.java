@@ -93,6 +93,8 @@ public class Notification {
     public static final String TYPE_AGENT_EVAL_DONE = "agentEval.done";
     /** 智能体评测回归失败（总预算用尽/执行异常） */
     public static final String TYPE_AGENT_EVAL_FAILED = "agentEval.failed";
+    /** 智能体轮终 webhook 重试耗尽（对外能力第二批）：接收方一直打不通，主人得知道结果没送达 */
+    public static final String TYPE_AGENT_WEBHOOK_FAILED = "agent.webhook.failed";
     /** 工具执行审批待决（ask 模式的有副作用工具挂起等人确认） */
     public static final String TYPE_TOOL_APPROVAL = "tool.approval";
     /** 智能体提问待决（askUser 结构化提问卡挂起等用户作答，超时/忽略都不替用户选） */

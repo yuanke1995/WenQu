@@ -244,6 +244,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 不能拿 {@code cmd.getUserId()}——续跑重建命令时那一位可能是字面量 {@code guest}。
      */
     private final com.wenqu.ai.service.TurnNotifyService turnNotify;
+    /** 智能体轮终 webhook 出站（对外能力第二批，旁路）：配置了回调地址的智能体每轮结束推送结果 */
+    private final com.wenqu.ai.service.webhook.AgentWebhookService agentWebhookService;
 
     /** 运行总线：后台续跑轮要登记上去，前端才能按 goal_turn 帧自动接流 */
     private final com.wenqu.ai.service.ChatRunBus chatRunBus;
@@ -368,6 +370,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                                com.wenqu.ai.service.contentsafety.ContentSafetyService contentSafety,
                                com.wenqu.ai.service.GoalService goalService,
                                com.wenqu.ai.service.TurnNotifyService turnNotify,
+                          com.wenqu.ai.service.webhook.AgentWebhookService agentWebhookService,
                                com.wenqu.ai.service.ChatRunBus chatRunBus,
                                com.wenqu.ai.service.McpToolLabelService mcpToolLabelService,
                                JournalRotation journalRotation,
@@ -400,6 +403,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         this.contentSafety = contentSafety;
         this.goalService = goalService;
         this.turnNotify = turnNotify;
+        this.agentWebhookService = agentWebhookService;
         this.chatRunBus = chatRunBus;
         this.journalRotation = journalRotation;
         this.knowledgeMapper = knowledgeMapper;
@@ -1799,6 +1803,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 开局就判不了也是「没跑成」：这一支不经过 finish（那一串收口变量压根没建起来），
         // 不补这一句，模型都解析不出来的轮次是通知面上唯一的空白——而它恰恰是最该喊人的那种
         turnNotify.onTurnSettled(cmd, null, 0L, 0, false, false, message, false, false);
+        // webhook 出站同步挂上（最小载荷）：开局即败的轮对宿主系统同样是「没结果」这一事实
+        agentWebhookService.onTurnFinished(cmd, null, "failed", message, "", null, Map.of(), List.of(), 0L);
     }
 
     /**
@@ -4600,6 +4606,16 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 .pendingSteers(pendingSteers)
                 .build());
         channel.emit(RunEventType.DONE, payload);
+        // 智能体轮终 webhook 出站（对外能力第二批，旁路）：配置了 callback_url 的智能体把本轮结果
+        // 签名推给宿主系统。挂在 done 发射之后——宿主收到的时机与屏幕上「答完了」一致。
+        // 状态口径：停/stall=stopped（用户侧行为，宿主同样该知道）、超时/预算耗尽=failed、
+        // 其余=completed；卡片还开着等人答的轮不算终态，不发。
+        if (!awaiting) {
+            String webhookStatus = (stopped || stalled) ? "stopped"
+                    : (timedOut || budget ? "failed" : "completed");
+            agentWebhookService.onTurnFinished(cmd, framedTurnId, webhookStatus, null,
+                    body, assistantMessageId, tokens, artifactItems, elapsedMs);
+        }
         // done 之后必须收通道：手写侧是 runChat 自己 completeEmitter，框架引擎原先漏了这一步，
         // 表现是帧都到了、连接却挂着直到看门狗 300s 超时截断（真机实测：done 在 01:20:32，
         // 通道 01:25:20 才被判超时），前端「这一轮结束」要等五分钟才落地

@@ -83,6 +83,8 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
     private final com.wenqu.ai.service.httptool.HttpToolService httpToolService;
     /** 工作流工具集：保存期归一化（v2 对外能力第二批——工作流当工具） */
     private final com.wenqu.ai.service.workflowtool.WorkflowToolService workflowToolService;
+    /** 配置加密（JWE）：轮终回调签名密钥落库前加密（v2 对外能力第二批——webhook 出站） */
+    private final com.wenqu.ai.service.ConfigCryptoService cryptoService;
 
     /**
      * 配置快照字段白名单（有序：字段 → 中文名），只快照「调优内容」——改动才产生新版本的字段。
@@ -111,6 +113,7 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         m.put("httpTools", "HTTP 工具集");
         m.put("toolWorkflow", "工作流工具");
         m.put("workflowTools", "工作流工具集");
+        m.put("callbackUrl", "轮终回调地址");
         m.put("toolApprovalMode", "工具审批模式");
         m.put("permissionPreset", "权限档位");
         m.put("toolDeny", "工具黑名单");
@@ -548,6 +551,8 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         if (b.containsKey("httpTools")) uw.set(Agent::getHttpTools, a.getHttpTools());
         if (b.containsKey("toolWorkflow")) uw.set(Agent::getToolWorkflow, a.getToolWorkflow());
         if (b.containsKey("workflowTools")) uw.set(Agent::getWorkflowTools, a.getWorkflowTools());
+        if (b.containsKey("callbackUrl")) uw.set(Agent::getCallbackUrl, a.getCallbackUrl());
+        if (b.containsKey("callbackSecret")) uw.set(Agent::getCallbackSecret, a.getCallbackSecret());
         // 工具执行审批三态（auto/ask/off；null=跟随权限档位的建议值）
         if (b.containsKey("toolApprovalMode")) uw.set(Agent::getToolApprovalMode, a.getToolApprovalMode());
         // 权限档位（P2；null=跟随平台默认档）
@@ -642,6 +647,17 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         if (body.containsKey("httpTools")) {
             String prev = a.getHttpTools();
             a.setHttpTools(httpToolService.normalizeFromSave(body.get("httpTools"), prev));
+        }
+        // 轮终回调（v2 对外能力第二批）：URL 保存期过 scheme+SSRF 校验（fail-loud）；
+        // 密钥留空=沿用旧密文（前端掩码回显），非空=新明文 JWE 加密——与 HTTP 工具凭据同一口径
+        if (body.containsKey("callbackUrl")) {
+            String u = asText(body.get("callbackUrl"), 512);
+            if (u != null && !u.isBlank()) com.wenqu.ai.util.OutboundWebhook.assertUrl(u);
+            a.setCallbackUrl(u == null || u.isBlank() ? null : u.trim());
+        }
+        if (body.containsKey("callbackSecret")) {
+            String s = body.get("callbackSecret") == null ? null : String.valueOf(body.get("callbackSecret"));
+            if (s != null && !s.isBlank()) a.setCallbackSecret(cryptoService.encrypt(s.trim()));
         }
         if (body.containsKey("toolWorkflow")) a.setToolWorkflow(toTri(body.get("toolWorkflow")));
         // 工作流工具集：归一化+存在性/发布态校验（同上，先于 toolDeny 校验）
@@ -1055,6 +1071,7 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         uw.set(Agent::getHttpTools, raw(cfg.get("httpTools")));
         uw.set(Agent::getToolWorkflow, asInt(cfg.get("toolWorkflow")));
         uw.set(Agent::getWorkflowTools, raw(cfg.get("workflowTools")));
+        uw.set(Agent::getCallbackUrl, raw(cfg.get("callbackUrl")));
         uw.set(Agent::getToolApprovalMode, raw(cfg.get("toolApprovalMode")));
         uw.set(Agent::getPermissionPreset, raw(cfg.get("permissionPreset")));
         uw.set(Agent::getToolDeny, raw(cfg.get("toolDeny")));

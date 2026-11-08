@@ -85,6 +85,14 @@
       ]
     },
     {
+      "key": "agentWebhook",
+      "title": "智能体轮终回调（webhook 出站）",
+      "sections": [
+        "总开关",
+        "重试"
+      ]
+    },
+    {
       "key": "skills",
       "title": "技能",
       "sections": [
@@ -2905,6 +2913,33 @@
       "vif": "tool.enabled",
       "tier": 2,
       "note": "开启后智能体可把已发布的工作流挂载为对话工具（智能体配置页勾选，≤8 个）。默认开不改变任何存量行为——没有配置工作流的智能体不会有任何工具。嵌套调用有 2 层防环上限。"
+    },
+    {
+      "backendKey": "agentWebhook.enabled",
+      "panel": "agentWebhook",
+      "section": 0,
+      "group": "agentWebhook",
+      "key": "enabled",
+      "path": "agentWebhook.enabled",
+      "label": "总开关",
+      "type": "switch",
+      "def": true,
+      "tier": 2,
+      "note": "开启后配置了「轮终回调」地址的智能体会在每轮结束时向该地址推送签名结果（带持久化重试）。默认开不改变任何存量行为——没有配置回调地址的智能体不会有任何出站。"
+    },
+    {
+      "backendKey": "agentWebhook.retryMax",
+      "panel": "agentWebhook",
+      "section": 1,
+      "group": "agentWebhook",
+      "key": "retryMax",
+      "path": "agentWebhook.retryMax",
+      "label": "重试次数上限",
+      "type": "number",
+      "def": 4,
+      "min": 0,
+      "max": 10,
+      "note": "首发失败后的重试次数（退避 60s/5min/30min/2h，超出按最后一档）。0=失败即耗尽。改的是下一次投递，已有 pending 行按落行时的排程走。"
     },
     {
       "backendKey": "webSearch.provider",

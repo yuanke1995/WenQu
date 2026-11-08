@@ -393,6 +393,14 @@
                       </div>
                       <div v-else class="ap-hint">不选则沿用系统的多视角并行检索。</div>
                     </div>
+                    <div class="ap-adv-field ap-adv-full">
+                      <label class="ap-field-label">轮终回调</label>
+                      <a-input v-model:value="form.callbackUrl" size="small" allow-clear
+                               placeholder="https://宿主系统.example.com/wenqu/callback（每轮结束 POST 结果）" />
+                      <a-input-password v-model:value="form.callbackSecret" size="small" class="ap-cb-secret"
+                                        :placeholder="form.callbackSecretSet ? '已配置（重新填写可更换，留空沿用）' : '签名密钥（可选，留空则不带签名头）'" />
+                      <div class="ap-hint">每轮结束向该地址 POST 签名结果（X-Wenqu-Event: agent.turn.finished，含回答与状态）；失败自动重试，持续失败会通知你。内网地址会被拒绝。</div>
+                    </div>
                     <div v-if="agentDefaultsError" class="ap-pick-empty ap-adv-full">
                       全局默认值加载失败 —— 上面的「跟随全局」没点名当前值 ——
                       <button type="button" class="app-btn ghost small" @click="loadAgentDefaults">重试</button>
@@ -1049,6 +1057,8 @@ const blankForm = () => ({
   httpTools: [],
   toolWorkflow: '',  // 工作流工具集（数组，WorkflowToolsEditor 双向绑定；保存整包提交、后端归一校验）
   workflowTools: [],
+  // 轮终回调（v2 对外能力第二批）：URL 明文；密钥不回显（callbackSecretSet 只表「已配置」）
+  callbackUrl: '', callbackSecret: '', callbackSecretSet: false,
   // 目标模式（资源级二态）：1=开 0=关。平台级总闸已去掉，这一格是唯一判据；null 从旧数据来时按开处理
   goalEnabled: 1,
   // 有副作用工具（沙盒/MCP）执行审批：''=跟随档位（默认） auto=自动执行 ask=执行前确认 off=禁用
@@ -1632,7 +1642,7 @@ const overrideCount = computed(() => {
   if (runMode.value === 'main' && (form.value.subAgentIds || []).length) n++
   return n
 })
-const advancedCount = computed(() => runMode.value === 'main' ? 6 : 5)
+const advancedCount = computed(() => runMode.value === 'main' ? 7 : 6)
 /** 一键把「能力 + 高级设置」恢复为跟随全局；资料范围与提示词不动 */
 const resetOverrides = () => {
   Modal.confirm({
@@ -1776,6 +1786,9 @@ const openEdit = a => {
     httpTools: parseJsonArray(a.httpTools),
     toolWorkflow: triStr(a.toolWorkflow),
     workflowTools: parseJsonArray(a.workflowTools),
+    callbackUrl: a.callbackUrl || '',
+    callbackSecret: '',
+    callbackSecretSet: !!a.callbackSecretSet,
     // 目标模式：NULL/1=开，0=关（后端同口径）
     goalEnabled: a.goalEnabled === 0 ? 0 : 1,
     toolApprovalMode: a.toolApprovalMode || '',
@@ -1916,6 +1929,9 @@ const save = async () => {
     // 工作流工具（v2 对外能力第二批）：整包提交工作流 id 数组，后端校验存在性/发布态
     toolWorkflow: tri(f.toolWorkflow),
     workflowTools: f.workflowTools || [],
+    // 轮终回调（v2 对外能力第二批）：密钥留空=沿用旧密文（后端按空跳过重加密）
+    callbackUrl: (f.callbackUrl || '').trim() || null,
+    callbackSecret: f.callbackSecret || '',
     // 目标模式：二态始终带上（关掉后要能落 0；NULL 只留给旧数据）
     goalEnabled: f.goalEnabled === 0 ? 0 : 1,
     // 执行确认留空 → null = 跟随权限档位的建议值（只读调研→逐项确认、全自主→直接执行）

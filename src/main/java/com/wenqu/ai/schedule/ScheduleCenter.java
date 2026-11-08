@@ -132,6 +132,7 @@ public class ScheduleCenter {
     private final ScheduleRunLogMapper scheduleRunLogMapper;
     /** 系统巡检：自动体检 + 历史报告清理（报告落库后由这里驱动） */
     private final com.wenqu.ai.service.OpsCheckupService opsCheckupService;
+    private final com.wenqu.ai.service.webhook.AgentWebhookService agentWebhookService;
 
     /** 仅负责计时（daemon，随 JVM 退出），任务体都在 ThreadPoolManager 里跑 */
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -159,7 +160,8 @@ public class ScheduleCenter {
                           com.wenqu.ai.agentx.JournalRotation journalRotation,
                           com.wenqu.ai.startup.OrphanTurnRunner orphanTurnRunner,
                           ScheduleRunLogMapper scheduleRunLogMapper,
-                          com.wenqu.ai.service.OpsCheckupService opsCheckupService) {
+                          com.wenqu.ai.service.OpsCheckupService opsCheckupService,
+                          com.wenqu.ai.service.webhook.AgentWebhookService agentWebhookService) {
         this.configService = configService;
         this.configSchemaService = configSchemaService;
         this.keywordIndexService = keywordIndexService;
@@ -182,6 +184,7 @@ public class ScheduleCenter {
         this.orphanTurnRunner = orphanTurnRunner;
         this.scheduleRunLogMapper = scheduleRunLogMapper;
         this.opsCheckupService = opsCheckupService;
+        this.agentWebhookService = agentWebhookService;
         this.auditService = auditService;
     }
 
@@ -447,6 +450,15 @@ public class ScheduleCenter {
                 () -> WF_SCHEDULE_SCAN_INTERVAL_MS,
                 () -> false,
                 () -> workflowService.tickSchedules());
+
+        // 智能体轮终 webhook 重试：扫描到期的 pending 投递行补发（60s/5min/30min/2h 退避，
+        // 耗尽置 exhausted 并通知智能体主人）。每次出站先落行再发，进程死在投递中途也由这里补发
+        // ——至少一次语义的兜底半边（首发半边在 AgentWebhookService.deliver）。
+        registerWork("智能体回调重试", "扫描到期的轮终 webhook 投递行并按退避补发，耗尽后通知归属人（agentWebhook.enabled 总开关之下）",
+                null,   // 内置节拍：不做成参数（退避间隔在 AgentWebhookService.RETRY_BACKOFF_MS）
+                () -> 60_000,
+                () -> false,
+                () -> agentWebhookService.sweepRetry());
 
         // P1 Trace 线上采样：差评必采 + 无引用/随机按配置数量入池（间隔 trace.samplingIntervalMs，默认每日；≤0 暂停）。
         // uk_qalog 唯一键兜底幂等，重复触发不产生重复样本
