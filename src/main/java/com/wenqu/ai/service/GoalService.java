@@ -367,27 +367,6 @@ public class GoalService {
         }
     }
 
-    /**
-     * 旧客户端的 {@code clear}：活目标按「取消」处理（不会误删正在推进的东西），
-     * 已结束的按「删除记录」处理。新界面请显式传 cancel / delete。
-     */
-    public Goal clear(String goalId, String uid, RunChannel channel) {
-        Goal goal = own(goalId, uid);
-        synchronized (lockFor(goalId)) {
-            goal = reload(goalId);
-            if (!TERMINAL.contains(goal.getStatus())) {
-                interruptRunningRound(goal);
-                finish(goal, CANCELLED, "cancelled", channel);
-                log.info("[GOAL] 目标已取消（兼容 clear）: goal={}", goalId);
-            } else {
-                interruptRunningRound(goal);
-                finish(goal, CANCELLED, "cleared", channel);
-                log.info("[GOAL] 目标记录已删除（兼容 clear）: goal={}", goalId);
-            }
-            return goal;
-        }
-    }
-
     /** 结束前把在飞的那一轮收掉：打断执行、把轮标记为 INTERRUPTED（终态只写一次）。 */
     private void interruptRunningRound(Goal goal) {
         GoalRound running = roundMapper.runningOf(goal.getId());
@@ -441,17 +420,17 @@ public class GoalService {
                 Goal fresh = reload(g.getId());
                 if (!ACTIVE.contains(fresh.getStatus()) || fresh.getNextRunAt() != null) continue;
                 if (fresh.getContinuationJson() == null || fresh.getContinuationJson().isBlank()) {
-                    // 升级前的存量目标没有续跑上下文：自动重跑等于让模型从零再猜一遍。
+                    // 缺续跑上下文时不能自动重跑：那等于让模型从零再猜一遍。
                     // 如实转「待恢复」，用户点继续时再从 objective 建 Continuation。
                     fresh.setStatus(PAUSED);
                     fresh.setPhase(GoalPhase.QUEUED);
                     fresh.setEndReason("orphaned");
-                    fresh.setBlockedReason("升级前的目标没有续跑上下文，已停下等确认");
+                    fresh.setBlockedReason("目标缺少续跑上下文，已停下等确认");
                     fresh.setErrorClass(GoalErrorClass.ORPHANED.name());
                     fresh.setNextRunAt(null);
                     goalMapper.updateById(fresh);
                     emitState(fresh, null);
-                    log.info("[GOAL] 存量目标缺续跑上下文，转待恢复: goal={}", fresh.getId());
+                    log.info("[GOAL] 目标缺续跑上下文，转待恢复: goal={}", fresh.getId());
                     continue;
                 }
                 fresh.setNextRunAt(LocalDateTime.now());

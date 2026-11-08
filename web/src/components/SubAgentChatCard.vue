@@ -61,13 +61,12 @@
       <AnswerBody class="sac-refs" :content="refLine" :sources="sources" :viewer="viewer"
                   @citation="e => $emit('citation', e)" @preview="e => $emit('preview', e)" />
     </div>
-    <!-- 产物：新数据带 url 可点预览/下载（与主对话产物同一入口）；旧消息只有文件名，如实只展示 -->
+    <!-- 产物：与主对话产物同一入口，点开预览/下载 -->
     <div v-if="v.artifacts.length" class="sac-line">
       <div class="sac-label">它交付的产物</div>
       <div class="sac-arts">
         <div v-for="(a, i) in v.artifacts" :key="i" class="sac-art-item">
-          <a v-if="a.url" class="sac-art-link" :href="resolveImg(a.url)" target="_blank" rel="noopener">{{ a.name }}</a>
-          <span v-else class="sac-art-plain">{{ a.name }}</span>
+          <a class="sac-art-link" :href="resolveImg(a.url)" target="_blank" rel="noopener">{{ a.name }}</a>
           <span v-if="a.size" class="sac-art-size">{{ fmtSize(a.size) }}</span>
         </div>
       </div>
@@ -198,7 +197,6 @@ const fmtSize = n => n >= 1048576 ? `${(n / 1048576).toFixed(1)}MB`
 .sac-arts { display: flex; flex-direction: column; gap: 2px; }
 .sac-art-item { display: flex; align-items: baseline; gap: 6px; font-size: 12.5px; }
 .sac-art-link { color: var(--app-accent); word-break: break-all; }
-.sac-art-plain { color: var(--app-text2); word-break: break-all; }
 .sac-art-size { flex: none; font-size: 11px; color: var(--app-text3); }
 /* 夹高只夹这一份正文：资料行与提问本来就短，不需要 */
 .sac-md.clipped { max-height: 260px; overflow: hidden; mask-image: linear-gradient(180deg, #000 72%, transparent); }

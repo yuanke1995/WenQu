@@ -176,6 +176,7 @@ public class ProjectFileService {
 
     private void addViewUrl(Map<String, Object> e, String projectId, String virtualPath, long size) {
         String ext = PreviewTypes.extOf(str(e.get("name")));
+        e.put("preview", PreviewTypes.kindOf(ext));
         if (PreviewTypes.viewContentType(ext) != null && PreviewTypes.viewCapError(ext, size) == null) {
             e.put("viewUrl", imageUrlSigner.signUrlRequired(VIEW_PATH_PREFIX + encodeViewToken(projectId, virtualPath)));
         }
@@ -184,6 +185,7 @@ public class ProjectFileService {
     /** 会话级本机目录的预览地址：token 首段是 {@code s}，openView 再按会话解析回执行器目录。 */
     private void addSessionViewUrl(Map<String, Object> e, String sessionId, String virtualPath, long size) {
         String ext = PreviewTypes.extOf(str(e.get("name")));
+        e.put("preview", PreviewTypes.kindOf(ext));
         if (PreviewTypes.viewContentType(ext) != null && PreviewTypes.viewCapError(ext, size) == null) {
             e.put("viewUrl", imageUrlSigner.signUrlRequired(
                     VIEW_PATH_PREFIX + encodeSessionViewToken(sessionId, virtualPath)));

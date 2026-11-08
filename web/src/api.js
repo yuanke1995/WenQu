@@ -1401,8 +1401,8 @@ export const startGoalApi = (sessionId, objective) =>
     body: JSON.stringify({ sessionId, objective })
   })
 
-/** 目标模式：目标动作。action=pause（停止）|resume（继续）|edit（改目标原文，带 objective）|clear（删除）。
- *  返回目标视图模型（摘要条/目标卡直接可用；clear 成功时可能没有返回值，前端按删除处理） */
+/** 目标模式：目标动作。action=pause（停止）|resume（继续）|edit（改目标原文，带 objective）|cancel（取消）|delete（删除记录）。
+ *  返回目标视图模型（摘要条/目标卡直接可用）。 */
 export const goalActionApi = (goalId, action, extra) =>
   request(`/chat/goal/${encodeURIComponent(goalId)}`, {
     method: 'POST',

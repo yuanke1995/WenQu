@@ -129,7 +129,7 @@ import ShareAskPanel from '../components/ShareAskPanel.vue'
 // 计划卡：模型进了计划模式就要等人裁决才继续，分享页此前同样没接，死锁形状与提问卡一致
 import SharePlanPanel from '../components/SharePlanPanel.vue'
 import { openImages } from '../chat/answerViewer'
-import { fmtSize, resumedStartAt, alignTick, applyBlocks } from '../chat/projections'
+import { fmtSize, alignTick, applyBlocks } from '../chat/projections'
 // 取材判定层与主聊天页同源（白名单/限额/被拒文案只有一份，改一处两页同时生效）
 import { MAX_IMAGES, MAX_FILES, MAX_FILE_MB, SUPPORTED_EXTS, REJECT, classifyIntake, rejectText,
          compressImage, pasteFilesOf, isLongPaste, pasteNameOf, isImageFile } from '../chat/intake'
@@ -642,9 +642,8 @@ function shareStreamHandlers (ai) {
         // 落库的消息 ID：评价与「重新生成」都要用它（服务端按它校验归属）
         if (p.messageId) ai.messageId = p.messageId
         // 整轮用时：与主对话页读同一个数（后端算好的墙钟），那条总览两页才说同一句话。
-        // 旧服务端没有 turnWallMs 时退回机器耗时；prepMs 只进悬停说明。
+        // prepMs 只进悬停说明。
         if (typeof p.turnWallMs === 'number') ai.turnMs = p.turnWallMs
-        else if (typeof p.elapsedMs === 'number') ai.turnMs = p.elapsedMs
         if (typeof p.prepMs === 'number') ai.turnPrepMs = p.prepMs
         if (typeof p.humanWaitMs === 'number') ai.humanWaitMs = p.humanWaitMs
       } catch (e) { /* 汇总解析失败：正文已在流式里累积完，不影响可读 */ }
@@ -792,16 +791,12 @@ async function attachRunning () {
       if (Array.isArray(snap.sources)) ai.sources = snap.sources
       // 游客快照只带 answer 块：接流时按它把正文收敛为答案
       if (snap.blocks && typeof snap.blocks === 'object') applyBlocks(ai, snap.blocks)
-      // 同主对话页：接上的这一轮按服务端已跑时长续表，不从 0 重新起跳。优先按墙钟接
-      //（含开轮前准备），旧服务端没有 wallMs 时退回机器耗时；基准只认第一份，重锚会让秒表往回跳。
-      if (typeof snap.wallMs === 'number') {
-        if (!ai.turnClockFromServer) {
-          ai.time = Date.now() - snap.wallMs
-          ai.turnClockFromServer = true
-          alignTick(ai.time)
-        }
-      } else {
-        ai.time = resumedStartAt(snap.elapsedMs, Date.now())
+      // 同主对话页：接上的这一轮按服务端已跑时长续表，不从 0 重新起跳。按墙钟接
+      //（含开轮前准备）；基准只认第一份，重锚会让秒表往回跳。
+      if (!ai.turnClockFromServer) {
+        ai.time = Date.now() - snap.wallMs
+        ai.turnClockFromServer = true
+        alignTick(ai.time)
       }
       if (typeof snap.prepMs === 'number') ai.turnPrepMs = snap.prepMs
       scrollBottom()

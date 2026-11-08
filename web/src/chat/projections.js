@@ -11,10 +11,8 @@ import { fmtTokens } from '../utils/token'
 import { PASTE_TEXT_BASE } from './intake'
 // 对话工具卡展示名的本地兜底：口径与后端一致——书面动宾短语写「它在干什么」
 // （检索知识库 / 读取技能正文 / 提交计划待批准），对象用站内已有名词，不用机制名与口语。
-// P1 seam 化之后**首选后端下发的名字**：工具卡与审批载荷都带 label/hint 字段（源自工具注册中心的
-// 描述符），下面的两张表退为兜底——历史消息里没有 label、免登录分享页的旧记录、以及 MCP 动态工具
-// 仍要靠本地映射。新增工具不再需要在这里补一行就能显示中文名（writeTodo 当时漏在清单里只有英文名，
-// 就是这个手抄机制的代价）。
+// **首选后端下发的名字**：工具卡与审批载荷都带 label/hint 字段（源自工具注册中心的描述符），
+// 下面的两张表只在载荷没带名字时用。新增工具不再需要在这里补一行就能显示中文名。
 const TOOL_LABELS = {
   searchKnowledge: '检索知识库',
   // AgentScope 框架引擎的知识检索工具（与上面 searchKnowledge 同一能力，工具名不同）
@@ -31,50 +29,7 @@ const TOOL_LABELS = {
   grep_files: '检索内容',
   glob_files: '按模式查找文件',
   list_files: '列出目录',
-  ls: '列出目录',
-  // ↓ 这一段是「历史消息」专用：框架引擎（AgentScope）早期把工具裸名当 label 下发，
-  // 那几轮消息已经按裸名落进库里了。后端现已改为随卡下发中文名（ToolRegistry → 框架工具表），
-  // 新消息不再走这里；留着是为了让刷新回来的老消息也读得懂。
-  // 措辞刻意与后端 ToolDescriptor.cardLabel / FrameworkToolLabels 保持一致——两份不一致时
-  // 表现是「同一张卡刷新前后换了个名字」，比少一条映射更难排查。
-  consultAgent: '委派助手咨询',
-  writeTodo: '更新任务清单',
-  run_code: '执行脚本',
-  // 框架原生的计划模式三把（agentscope-harness 的 PlanModeTools，不在问渠工具注册中心里）
-  plan_enter: '进入规划模式',
-  plan_write: '撰写执行计划',
-  plan_exit: '提交计划待批准',
-  // 框架原生的技能、记忆与子智能体工具（全框架化 P0/P3）：同样只在后端框架工具表里登记，
-  // 这张表只为已经按裸名落库的那几轮兜底。
-  load_skill_through_path: '读取技能正文',
-  skill_manage: '管理我的技能',
-  propose_skill: '创建技能草案',
-  memory_search: '检索长期记忆',
-  memory_get: '读取记忆内容',
-  memory_save: '写入长期记忆',
-  session_search: '检索历史会话',
-  session_list: '列出历史会话',
-  session_history: '读取历史会话',
-  agent_spawn: '委派助手执行',
-  agent_send: '向助手追加消息',
-  agent_list: '查看已派助手',
-  task_list: '查询后台任务',
-  task_output: '获取任务结果',
-  task_cancel: '取消后台任务',
-  wait_async_results: '等待后台结果',
-  // MCP：中文名由用户在「智能体 → MCP 外部工具」的工具清单里手工起名（落库并随卡下发，
-  // ToolDisplayNames 解析链第三档），这里**不再为新的 MCP 服务补条目**。下面这几条只是历史兜底——
-  // 早期消息按裸名落库、载荷里没有 label 字段，刷新回来仍要靠本地映射才读得懂。
-  // MCP（context7）：去前缀后按裸名匹配
-  resolve_library_id: '解析文档库',
-  query_docs: '检索官方文档',
-  // MCP（deepwiki）
-  read_wiki_structure: '浏览 Wiki 目录',
-  read_wiki_contents: '阅读 Wiki 内容',
-  ask_wiki_question: '向 Wiki 提问',
-  // deepwiki 私有模式 / 按需注册的工具，公网端点默认不出现，登记私有实例时才会命中
-  list_wiki_repos: '列出 Wiki 仓库',
-  generate_wiki: '生成代码 Wiki'
+  ls: '列出目录'
 }
 // 悬停一句话说明（这个工具到底在干什么；未收录的不显示 title）
 const TOOL_DESCS = {
@@ -91,37 +46,7 @@ const TOOL_DESCS = {
   grep_files: '按关键词在文件里搜，跨很多文件一起找',
   glob_files: '按文件名规律找文件，比如「所有 .md」',
   list_files: '列出某个目录下有哪些文件',
-  ls: '列出某个目录下的文件',
-  // 历史消息专用（同 TOOL_LABELS 里那一段的来由）：措辞与后端 cardHint 保持一致
-  consultAgent: '把这一小问交给职责对口的助手去查，它带着自己的知识库把结论与资料交回来',
-  writeTodo: '把要做的事列成清单，看得见总共几件、还剩几件',
-  run_code: '跑一段 Python：脚本可以自己循环取资料、批量处理，只把结果带回来',
-  plan_enter: '先只读地调研与设计方案，这期间不改任何东西',
-  plan_write: '把想好的方案写成计划，你点开就能看',
-  plan_exit: '计划写完了，请你过目；你同意后它才开始动手',
-  load_skill_through_path: '把某条技能的正文读出来，它照着那份做',
-  skill_manage: '新建、修改或删除你名下的技能',
-  propose_skill: '先起草一份技能给你过目，同意后才会留下',
-  memory_search: '在沉淀下来的记忆里按关键词找，看看以前记过什么',
-  memory_get: '把某一份记忆的具体内容读出来',
-  memory_save: '把这件事写进你的长期记忆，以后还能想起来',
-  session_search: '在以往的历史会话里按关键词搜',
-  session_list: '列出历史会话都有哪些',
-  session_history: '把某一次历史会话的往来读出来',
-  agent_spawn: '让一个子助手单独去完成这件事，做完把结果交回来',
-  agent_send: '往已经在跑的助手那儿再递一句话',
-  agent_list: '看看这一轮派出去的助手都有哪些在跑',
-  task_list: '看看派出去的任务跑到哪一步了',
-  task_output: '把后台任务跑出来的结果读回来',
-  task_cancel: '让一个还没跑完的后台任务停下来',
-  wait_async_results: '派出去的活还没回来，在这儿等一会儿',
-  resolve_library_id: '先确定要查阅哪个库的官方文档',
-  query_docs: '到对应库的官方文档里查找相关内容',
-  read_wiki_structure: '浏览开源仓库 Wiki 的目录结构',
-  read_wiki_contents: '阅读开源仓库 Wiki 的具体内容',
-  ask_wiki_question: '就开源仓库 Wiki 的内容提问并取回答案',
-  list_wiki_repos: '列出当前账号在 DeepWiki 上已建索引的仓库',
-  generate_wiki: '为指定仓库生成一份代码 Wiki 文档'
+  ls: '列出某个目录下的文件'
 }
 // ⚠️ 与 McpClientService 的 clientInfo name 对应。Spring AI 的 SyncMcpToolCallback 用
 // clientInfo.name 经 McpToolUtils.prefixedToolName → shorten() 生成前缀：非字母数字段丢弃、
@@ -130,10 +55,8 @@ const MCP_CLIENT_PREFIX = 'wen_qu'
 const bareToolName = n => n.startsWith(MCP_CLIENT_PREFIX) ? n.slice(MCP_CLIENT_PREFIX.length) : n
 const toolLabel = (n, label) => {
   // 后端下发的展示名优先（工具注册中心 → tool_status / approval 载荷），拿不到才用本地这份兜底。
-  // 但当它只是工具裸名时不算展示名——那会让英文裸名顶掉中文映射（一次调用全显示
+  // 但当它只是工具裸名时不算展示名——那会让英文裸名顶掉本地映射（一次调用全显示
   // search_knowledge/consultAgent…）。此时走本地映射。
-  // 框架引擎早前会把 name 原样当 label 下发，现已改为随卡下发中文名（ToolRegistry → FrameworkToolLabels）；
-  // 这个「裸名不算展示名」的判断仍然留着：库里的老消息按裸名落着，撤掉它那些消息就现出英文名了。
   if (label && label !== n && label !== bareToolName(n)) return label
   if (TOOL_LABELS[n]) return TOOL_LABELS[n]
   // MCP 工具记录名带 clientInfo 前缀：先去前缀再试一次映射，未映射的展示裸名
@@ -404,8 +327,8 @@ const toggleThinkSeg = (m, seg) => {
 }
 
 /** 有思考全文却没有就地段：在时间线头部补一整段。
- *  覆盖三种拿不到分段的数据——改动前落库的存量消息、正文被引用自检整体重建导致时间线作废、
- *  以及接流快照只给全文不给分段。退化成「思考在回答之前」这个旧位置，也不能整块看不见。 */
+ *  覆盖正文被引用自检整体重建导致时间线作废、以及接流快照只给全文不给分段。
+ *  退化成「思考在回答之前」这个位置，也不能整块看不见。 */
 const ensureThinkSegment = m => {
   if (!m || !m.thinking) return m
   const tl = Array.isArray(m.timeline) ? m.timeline : (m.timeline = [])
@@ -635,6 +558,10 @@ const durZh = ms => {
  *  本地只负责外推）；收尾后只读服务端那一份，历史没走过 done，只认 tokens 落库那份。
  *  两处都没有就返回 0、界面不报数：不拿工具跨度凑一个数出来，那是「跑了多久工具」不是
  *  「这一轮用了多久」，凑出来的数比空白更容易被当成事实读。 */
+// 气泡顶部只报一种数：从发出提问到答完的整轮墙钟（含开轮前准备与人在回路等待）。
+// 现场 done 写回的 turnMs 与历史落库的 tokens.turnWallMs 两处同源。报墙钟不报机器时间：
+// 屏幕上跳着的那一份本来就是墙钟，收尾改成机器时间会让数字在答完那一刻变小，刷新后更会直接
+// 换一本账（真机 6.0s → 3.3s）。
 const turnElapsedMs = m => {
   if (!m) return 0
   // 跑动中按整秒报：秒针的相位与服务端起表点天然错开（起表基准要等首帧才到，比秒针晚几百毫秒），
@@ -643,16 +570,10 @@ const turnElapsedMs = m => {
   if (m.loading) {
     return Math.floor(Math.max(0, nowTick.value - (Number(m.time) || nowTick.value)) / 1000) * 1000
   }
-  // 气泡顶部只报一种数：从发出提问到答完的整轮墙钟（含开轮前准备与人在回路等待）。
-  // 三处同源：现场 done 写回的 turnMs、历史落库的 tokens.turnWallMs、以及存量消息的
-  // 机器耗时 + 等待（老数据没有墙钟那一份）。报墙钟不报机器时间：屏幕上跳着的那一份本来就是
-  // 墙钟，收尾改成机器时间会让数字在答完那一刻变小，刷新后更会直接换一本账（真机 6.0s → 3.3s）。
-  const wall = Number(m.turnMs) || Number(m.tokens && m.tokens.turnWallMs) || 0
-  if (wall > 0) return wall
-  return (Number(m.tokens && m.tokens.turnElapsedMs) || 0) + turnWaitMs(m)
+  return Number(m.turnMs) || Number(m.tokens && m.tokens.turnWallMs) || 0
 }
 /** 其中开轮前那一段（限流/校验/会话补建/实例装配/日志对账）：不单独占一个数，
- *  但要在悬停里交代——否则用户会把准备时间全算到模型头上。存量消息没有这个键，返回 0。 */
+ *  但要在悬停里交代——否则用户会把准备时间全算到模型头上。 */
 const turnPrepMs = m => {
   if (!m) return 0
   return Number(m.turnPrepMs) || Number(m.tokens && m.tokens.turnPrepMs) || 0
@@ -784,10 +705,8 @@ const turnTitle = m => {
   return '从发出提问到答完一共 ' + durZh(ms) + (parts.length ? '，其中' + parts.join('、') : '')
 }
 
-// 历史消息的 processText 可能带前导换行（后端修复前落库的数据，每个 <process> 块标签后的换行
-// 原样入通道）：段的起点都是块边界（flush 锚点），显示时剥掉段首换行，免得灰字块顶部空一行；
-// 只动显示，不碰区间下标，段内的模型自身换行/空行照常保留。
-const procSlice = (m, seg) => (m.processText || '').slice(seg.from, seg.to).replace(/^[\n\r]+/, '')
+// 段的起点都是块边界（flush 锚点），显示时按区间取原文，不碰区间下标。
+const procSlice = (m, seg) => (m.processText || '').slice(seg.from, seg.to)
 
 // 工具段带下标 i：与后端落库口径一致（工具终态在 toolCalls 里的位置），
 // 实时态另存对象引用（status 原地更新，卡片自动从转圈变完成）
@@ -889,7 +808,7 @@ const turnAnswerRange = m => {
   return from === null ? { from: 0, to: len } : { from, to: len }
 }
 
-/** 新消息的 blocks 投影带显式 channel：返回 answer 文本段；旧消息返回 null 走区间推断。
+/** 新消息的 blocks 投影带显式 channel：返回 answer 文本段；没有显式 channel 的消息走区间推断。
  *  用段数组而不是单一区间：答案段理论上连续，但这里不把「连续」当前提，避免多轮场景把后者算进答案。 */
 const explicitAnswerSegments = m => {
   // 跑动中的一轮仍按实时末尾正文展示；终态切到服务端确定的 answer 通道，
@@ -964,7 +883,7 @@ const turnProcessRows = m => {
   }
   flushGroup()
   if (!out.length && m && Array.isArray(m.toolCalls) && m.toolCalls.length) {
-    // 历史恢复/正文重建回退：没有时间线可依，工具按终态清单成组展示
+    // 正文重建回退：没有时间线可依，工具按终态清单成组展示
     const tools = toolCallsView(m.toolCalls)
     if (tools.length) out.push({ kind: 'group', tools })
   }
@@ -1252,7 +1171,7 @@ const THINK_CAPS = {
  * 为什么按 id 与名称双路：历史消息只保证有 agentName（落库快照），实时流式轮才有 agentId；
  * 而「@ 提及的智能体作答」这类委派轮，agentId 指向被委派者、与列表项对得上，历史恢复时按名称也能命中。
  *
- * 查不到（智能体已被删除/不可见、旧消息只有名字对不上）返回 null —— AgentAvatar 缺省即默认机器人，
+ * 查不到（智能体已被删除/不可见、只有名称快照对不上）返回 null —— AgentAvatar 缺省即默认机器人，
  * 与改动前的写死 <robot-outlined> 表现一致，不出现空洞。
  */
 const agentBadgeOf = (agents, agentId, agentName) => {

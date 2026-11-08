@@ -1071,7 +1071,7 @@ const blankForm = () => ({
   // 轮终回调（v2 对外能力第二批）：URL 明文；密钥不回显（callbackSecretSet 只表「已配置」）
   callbackUrl: '', callbackSecret: '', callbackSecretSet: false,
   memoryMode: '',  // ''=跟随全局 / '1'=专属 / '2'=叠加（对外能力第二批·agent 级记忆）
-  // 目标模式（资源级二态）：1=开 0=关。平台级总闸已去掉，这一格是唯一判据；null 从旧数据来时按开处理
+  // 目标模式（资源级二态）：1=开 0=关。平台级总闸已去掉，这一格是唯一判据。
   goalEnabled: 1,
   // 有副作用工具（沙盒/MCP）执行审批：''=跟随档位（默认） auto=自动执行 ask=执行前确认 off=禁用
   toolApprovalMode: '',
@@ -1803,8 +1803,8 @@ const openEdit = a => {
     callbackSecret: '',
     callbackSecretSet: !!a.callbackSecretSet,
     memoryMode: a.memoryMode == null ? '' : String(a.memoryMode),
-    // 目标模式：NULL/1=开，0=关（后端同口径）
-    goalEnabled: a.goalEnabled === 0 ? 0 : 1,
+    // 目标模式：二态由服务端归一后下发（1/0）
+    goalEnabled: a.goalEnabled,
     toolApprovalMode: a.toolApprovalMode || '',
     permissionPreset: a.permissionPreset || null,
     toolDeny: splitList(a.toolDeny),
@@ -1948,8 +1948,8 @@ const save = async () => {
     callbackSecret: f.callbackSecret || '',
     // 记忆域（对外能力第二批）：'' → null=跟随全局；1/2 原样
     memoryMode: f.memoryMode === '' || f.memoryMode == null ? null : Number(f.memoryMode),
-    // 目标模式：二态始终带上（关掉后要能落 0；NULL 只留给旧数据）
-    goalEnabled: f.goalEnabled === 0 ? 0 : 1,
+    // 目标模式：二态始终带上（关掉后要能落 0）
+    goalEnabled: f.goalEnabled,
     // 执行确认留空 → null = 跟随权限档位的建议值（只读调研→逐项确认、全自主→直接执行）
     toolApprovalMode: f.toolApprovalMode || null,
     // 权限档位：留空 → null（= 跟随平台默认档，不是「关闭档位」）；必须始终带上这个键，

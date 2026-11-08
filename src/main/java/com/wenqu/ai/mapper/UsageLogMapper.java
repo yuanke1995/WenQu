@@ -53,13 +53,12 @@ public interface UsageLogMapper extends BaseMapper<UsageLog> {
     /**
      * 按用途（kind）聚合：回答之外的每一次辅助调用（深度思考、改写、压缩、引用自检、记忆提取、
      * 按需派遣、子智能体分支）都单独记账，这里就是它们的出口。
-     * <p>kind 为空按 chat 归：那是引入归属字段之前的存量行，不该变成一个「未知用途」桶让人以为有问题。
      */
-    @Select("<script>SELECT COALESCE(NULLIF(kind, ''), 'chat') AS k, SUM(total_tokens) AS t, COUNT(*) AS c "
+    @Select("<script>SELECT kind AS k, SUM(total_tokens) AS t, COUNT(*) AS c "
             + "FROM c_ai_usage_log "
             + "WHERE uid = #{uid} "
             + "<if test='since != null'>AND create_time &gt;= #{since}</if> "
-            + "GROUP BY k ORDER BY t DESC</script>")
+            + "GROUP BY kind ORDER BY t DESC</script>")
     List<Map<String, Object>> statKindTokens(@Param("uid") String uid,
                                              @Param("since") LocalDateTime since);
 
@@ -91,7 +90,7 @@ public interface UsageLogMapper extends BaseMapper<UsageLog> {
      *                 绑着租户」时生效，而模型出口的配额闸跑在框架的弹性线程上（没有绑定），
      *                 不传就等于拿<b>全平台用量</b>去比单租户的上限（真机 2026-10-29：default 租户
      *                 的成员被别家「月 2.00 百万」的规则按「已用 42.99 百万」拦下）。
-     * @param kinds  受限用途清单（空=全部）；kind 为空的存量行按 chat 归，与费用报表同一口径
+     * @param kinds  受限用途清单（空=全部）
      */
     @Select("<script>SELECT u.model AS model, SUM(u.prompt_tokens) AS p, SUM(u.completion_tokens) AS c "
             + "FROM c_ai_usage_log u "
@@ -99,7 +98,7 @@ public interface UsageLogMapper extends BaseMapper<UsageLog> {
             + "WHERE u.create_time &gt;= #{since} "
             + "<if test='uid != null'>AND u.uid = #{uid}</if> "
             + "<if test='tenantId != null'>AND u.tenant_id = #{tenantId}</if> "
-            + "<if test='kinds != null and kinds.size() > 0'>AND COALESCE(NULLIF(u.kind, ''), 'chat') "
+            + "<if test='kinds != null and kinds.size() > 0'>AND u.kind "
             + "IN <foreach item='k' collection='kinds' open='(' separator=',' close=')'>#{k}</foreach></if> "
             + "GROUP BY u.model</script>")
     List<Map<String, Object>> sumForQuota(@Param("uid") String uid,

@@ -330,26 +330,13 @@ public class AuditService {
     }
 
     /**
-     * 这行的内容哈希对不对——容忍 1 毫秒的时间戳表示差。
-     * <p>写侧现已把 ts 截到毫秒，但<b>存量行</b>是「哈希用截断值、库里存四舍五入值」留下的，
-     * 两者相差恰好 1ms；这不是内容被改，而是同一时刻的两种写法。判据放在这里而不是清库重算：
-     * 链的证据一旦落库就不再改写，为了让校验变绿去重算历史哈希，等于把「谁来认证过这件事」
-     * 变成「我现在算得出什么」——那是把审计账本擦成白纸上交差。
-     * <p>容忍的只有 ts：{@code detail}/{@code action} 等任一字段被改，±1ms 的三种算发都对不上，
-     * 照样报「内容被改写」。攻击者能挑的只是 1 毫秒的时间读数，挑不走他改的内容。
+     * 这行的内容哈希对不对。
+     * <p>写侧已把 ts 截到毫秒，与 DATETIME(3) 存值一致；修复前落库的行已在 2026-11-08 一次性
+     * 归一到哈希口径，因此这里直接比对即可。{@code detail}/{@code action} 等任一字段被改，
+     * 哈希都对不上。
      */
     private static boolean hashMatchesStored(AuditEvent row) {
-        LocalDateTime origin = row.getTs();
-        if (hash(row).equals(row.getRowHash())) return true;
-        for (int delta = 1; delta <= 2; delta++) {
-            row.setTs(origin.minusNanos(delta * 1_000_000L));
-            boolean hit = hash(row).equals(row.getRowHash());
-            row.setTs(origin.plusNanos(delta * 1_000_000L));
-            hit = hit || hash(row).equals(row.getRowHash());
-            row.setTs(origin);
-            if (hit) return true;
-        }
-        return false;
+        return hash(row).equals(row.getRowHash());
     }
 
     private static String hash(AuditEvent row) {
@@ -458,8 +445,7 @@ public class AuditService {
      * {@code tenant_id}），而 {@code chainAfter} 经 MyBatis 会被租户拦截器拼上租户条件——用请求线程
      * 的租户视图读，别家租户的那几行就「不存在」，于是每跨一次租户报一对「序号断裂 + 链头不接」。
      * 本机实测 38 条断点全是这么来的假信号（那些行都在，只是不属于 default）。
-     * <p>哈希比对容忍 1~2 毫秒的时间戳表示差（见 {@link #hashMatchesStored}）：写侧截断、库里四舍五入，
-     * 这条差在修复之前的存量行上必然存在，把它当成「内容被改写」会让合规出口永远是一片红。
+     * <p>哈希比对直接按库里的 ts 重算：写侧与落库都是毫秒口径，修复前的旧行已一次性归一到同一口径。
      */
     public List<Map<String, Object>> verify(int maxRowsPerReplica) {
         return com.wenqu.ai.util.TenantContext.asPlatform(() -> verifyChain(maxRowsPerReplica));

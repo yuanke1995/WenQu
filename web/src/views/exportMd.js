@@ -110,14 +110,8 @@ const sourceLine = (s, i) => s.origin === 'WEB'
 /** 落盘为 .md。移动端不一定吃得下这条路（见 h5/MobileRefSheet.vue 的导出双通道），故单独露出 */
 export const saveMd = built => { if (built) downloadMd(built.md, built.fileName) }
 
-/** 兼容字段：可能被解析成数组，也可能仍是后端 JSON 字符串（旧数据/异常路径） */
-const asArray = v => {
-  if (Array.isArray(v)) return v
-  if (typeof v === 'string' && v.trim()) {
-    try { const p = JSON.parse(v); return Array.isArray(p) ? p : [] } catch { return [] }
-  }
-  return []
-}
+/** 字段按数组读取；不是数组一律视为空 */
+const asArray = v => Array.isArray(v) ? v : []
 
 const mentionTypeLabel = t => t === 'kb' ? '知识库' : t === 'agent' ? '智能体' : '文档'
 

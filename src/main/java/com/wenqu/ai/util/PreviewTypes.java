@@ -8,15 +8,13 @@ import java.util.Set;
  * <p><b>为什么要有这个类</b>：产物与工作区文件两条路各自都有一份扩展名清单，一份错了就是「这个页面有预览按钮、
  * 那个页面没有」；前端 {@code utils/artifactView.js} 那一份管的是「拿回来之后怎么摆」（页面档 / 读字档 / 只下载），
  * 与本类的职责不同：<b>前端给了按钮而本类说发不出去</b>，用户点到的就是一张白页或一次下载。
- * 现在这条对账不靠人工——{@link #kindOf} 经接口下发 {@code preview}，前端只认它；那边那张扩展名表
- * 只兜没有该字段的历史数据。
+ * 现在这条对账不靠人工——{@link #kindOf} 经接口下发 {@code preview}，前端只认它，不再自备扩展名表。
  *
  * <p><b>写侧也从这里派生</b>：{@link #TEXT_ARTIFACT_EXTS} 是「模型能写出成文本产物的类型」，
  * {@link #FILE_DELIVERY_EXTS} 是「沙盒里能交付成文件的类型」，两张都由上面几档拼出来——
  * 以前各写一张，结果是 yaml/xml/ts 能预览却写不出来、沙盒交付还拒收代码文件。
  * 不变式：能写的必然能看（{@code TEXT_ARTIFACT_EXTS ⊆ READABLE_EXTS ∪ PAGE_EXTS}）。
- * <p>{@link #kindOf} 是「怎么预览」的唯一判据，经接口下发 {@code preview} 字段；前端只认它，
- * 自己那张扩展名表降为历史数据的兜底。
+ * <p>{@link #kindOf} 是「怎么预览」的唯一判据，经接口下发 {@code preview} 字段；前端只认它，不再自备扩展名表。
  *
  * <p><b>为什么不列 ico/avif</b>：{@link #sniffImageType} 认不出的图片类型会兜成 image/jpeg，
  * 发一个错的内容类型出去比不给预览按钮更糊弄人。要加就连带把嗅探表一起补，别只加一头。
@@ -57,8 +55,8 @@ public final class PreviewTypes {
             "json", "yaml", "yml", "xml", "toml", "ini", "conf", "properties",
             "py", "js", "mjs", "ts", "jsx", "tsx", "java", "go", "rs", "sql", "sh", "bash", "zsh",
             "css", "scss", "vue");
-    /** 压缩包类：交付支持 zip，其余为历史数据兜底 */
-    public static final Set<String> ARCHIVE_KIND_EXTS = Set.of("zip", "gz", "tar", "7z", "rar", "bz2");
+    /** 压缩包类：交付只支持 zip */
+    public static final Set<String> ARCHIVE_KIND_EXTS = Set.of("zip");
     /** 所有已归类的扩展名；「其他」筛选用它做补集 */
     public static final Set<String> ARTIFACT_KIND_EXTS = union(
             PAGE_EXTS, IMAGE_EXTS, SHEET_KIND_EXTS, DOC_KIND_EXTS, CODE_KIND_EXTS, ARCHIVE_KIND_EXTS);

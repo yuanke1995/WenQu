@@ -248,7 +248,7 @@
                 </div>
                 <div class="art-acts" @click.stop>
                   <a v-if="canPreview(r)" :href="resolveImg(r.url)" target="_blank" rel="noopener"
-                     data-pv :data-pv-name="r.filename" :data-pv-ext="artifactExt(r)"
+                     data-pv :data-pv-name="r.filename" :data-pv-ext="r.ext"
                      :data-pv-kind="previewKindOf(r)" :data-pv-size="r.size" :data-pv-id="r.id"
                      class="app-btn ghost small art-preview"
                      title="预览（按住 Ctrl 或中键开成新标签页）">
@@ -336,7 +336,7 @@
                 </div>
                 <div v-if="!selectionMode" class="art-card-acts" @click.stop>
                   <a v-if="canPreview(r)" :href="resolveImg(r.url)" target="_blank" rel="noopener"
-                     data-pv :data-pv-name="r.filename" :data-pv-ext="artifactExt(r)"
+                     data-pv :data-pv-name="r.filename" :data-pv-ext="r.ext"
                      :data-pv-kind="previewKindOf(r)" :data-pv-size="r.size" :data-pv-id="r.id"
                      class="art-card-act" title="预览"><eye-outlined /></a>
                   <a-dropdown :trigger="['click']" placement="bottomRight">
@@ -419,13 +419,13 @@ import {
   listArtifacts, listProjects, moveArtifactProject, moveArtifactsBatch, renameArtifact
 } from '../api'
 import { onImgError, resolveImg } from '../utils/markdown'
-import { artifactExt, canPreview, previewKindOf } from '../utils/artifactView'
+import { canPreview, previewKindOf } from '../utils/artifactView'
 import { projectOnThisComputer } from '../utils/localExecutor'
 import { copyText } from '../utils/clipboard'
 import MoveToWorkspaceModal from '../components/MoveToWorkspaceModal.vue'
 
 // ==================== 类型分组与图标 ====================
-// 判据以服务端下发的 kind 为准（扩展名清单只在后端 PreviewTypes 一处）；下面这张只是老接口的兜底。
+// 判据只认服务端下发的 kind（扩展名清单只在后端 PreviewTypes 一处）。
 const KIND_OPTIONS = [
   { key: 'all', label: '全部' },
   { key: 'page', label: '网页' },
@@ -445,25 +445,9 @@ const KIND_ICONS = {
   archive: FileZipOutlined,
   other: FileOutlined
 }
-const KIND_BY_EXT = {
-  html: 'page', htm: 'page',
-  png: 'image', jpg: 'image', jpeg: 'image', gif: 'image', webp: 'image', bmp: 'image', svg: 'image',
-  md: 'doc', markdown: 'doc', txt: 'doc', log: 'doc', pdf: 'doc', doc: 'doc', docx: 'doc', ppt: 'doc', pptx: 'doc',
-  csv: 'sheet', tsv: 'sheet', xlsx: 'sheet', xls: 'sheet', ods: 'sheet',
-  json: 'code', yaml: 'code', yml: 'code', xml: 'code', toml: 'code', ini: 'code', conf: 'code',
-  properties: 'code', py: 'code', js: 'code', mjs: 'code', ts: 'code', jsx: 'code', tsx: 'code',
-  java: 'code', go: 'code', rs: 'code', sql: 'code', sh: 'code', bash: 'code', zsh: 'code',
-  css: 'code', scss: 'code', vue: 'code',
-  zip: 'archive', gz: 'archive', tar: 'archive', '7z': 'archive', rar: 'archive', bz2: 'archive'
-}
-
-const kindOfRow = r => {
-  if (!r) return 'other'
-  if (r.kind && KIND_ICONS[r.kind]) return r.kind
-  return KIND_BY_EXT[artifactExt(r)] || 'other'
-}
+const kindOfRow = r => (r && r.kind && KIND_ICONS[r.kind]) ? r.kind : 'other'
 const kindIcon = r => KIND_ICONS[kindOfRow(r)] || FileOutlined
-const extOfRow = r => String(r.ext || artifactExt(r) || '').toUpperCase() || 'FILE'
+const extOfRow = r => String(r.ext || '').toUpperCase() || 'FILE'
 const baseName = name => {
   const s = String(name || '')
   const i = s.lastIndexOf('.')

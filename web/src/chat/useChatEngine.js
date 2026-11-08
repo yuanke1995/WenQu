@@ -1092,12 +1092,12 @@ const downloadDeliveryZip = async delivery => {
   }
 }
 
-/** 目标模式开不开：只认当前智能体那一格（goal_enabled：1/NULL=开，0=关）。
+/** 目标模式开不开：只认当前智能体那一格（服务端 AgentService 已归一成 1/0）。
  *  平台级总闸已去掉——判据与后端 GoalService.enabledFor 同源（引擎侧目标上下文注入也看它），
  *  界面露入口而引擎不再带目标上下文就是「教了用户一件没有的能力」那种漂移 */
 const goalModeOn = computed(() => {
   const a = currentAgent.value
-  return !a || a.goalEnabled === undefined || a.goalEnabled === null || Number(a.goalEnabled) === 1
+  return !a || Number(a.goalEnabled) === 1
 })
 
 /**
@@ -1852,8 +1852,8 @@ async function goalAct (action, extra) {
       return null
     }
     // 取消是「结束并留痕」：服务端回 CANCELLED，视图保留它（终态卡与过程回看要用）。
-    // 删除记录才是从界面上撤下——旧客户端的 clear 也按删除处理（它本来就是那个意思）。
-    if (action === 'delete' || action === 'clear' || action === 'clearRecord') setGoal(sid, null)
+    // 删除记录才是从界面上撤下。
+    if (action === 'delete') setGoal(sid, null)
     else if (r && r.data) setGoal(sid, { ...r.data })
     // 继续（以及改目标后仍在跑）都可能当场有新的一轮在飞：接流不等探测那一跳
     if (action === 'resume' || (action === 'edit' && goalsMap.value[sid]?.status === 'RUNNING')) {

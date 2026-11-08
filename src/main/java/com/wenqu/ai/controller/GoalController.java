@@ -57,7 +57,6 @@ public class GoalController {
 
     @Operation(summary = "目标动作", description = "pause=停止（可再继续）；resume=继续；edit=改目标原文（{objective}，未完成也可改，保存后自动继续）；"
             + "cancel=取消（结束并留痕，终态卡可回看）；delete=删除记录（仅终态，界面不再回显）。"
-            + "clear 为旧客户端的兼容写法：活目标按取消、终态按删除处理。"
             + "完成由模型 goal_submit 提交证据、平台核验；不需要用户逐条勾选验收标准。")
     @Permission("chat:goal")
     @PostMapping("/goal/{goalId}")
@@ -72,8 +71,7 @@ public class GoalController {
                 case "resume" -> goalService.resume(goalId, uid, null);
                 case "edit", "update" -> goalService.edit(goalId, uid, str(body.get("objective")), null);
                 case "cancel" -> goalService.cancel(goalId, uid, null);
-                case "delete", "clearRecord" -> goalService.deleteRecord(goalId, uid, null);
-                case "clear" -> goalService.clear(goalId, uid, null);
+                case "delete" -> goalService.deleteRecord(goalId, uid, null);
                 default -> throw new IllegalArgumentException("未知动作：" + action);
             };
             return ResultJson.ok(goalService.view(goal));
@@ -105,7 +103,7 @@ public class GoalController {
         return ResultJson.ok(goalService.view(goal));
     }
 
-    /** 删除记录后不再回显：终态 CANCELLED 且 endReason=cleared（旧版 clear 的存量行也是这一档）。 */
+    /** 删除记录后不再回显：终态 CANCELLED 且 endReason=cleared（delete 写这一档）。 */
     private static boolean clearedRecord(Goal goal) {
         return GoalService.CANCELLED.equals(goal.getStatus()) && "cleared".equals(goal.getEndReason());
     }

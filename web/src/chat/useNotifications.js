@@ -39,10 +39,9 @@ export const NOTIF_ICONS = {
   // 红叉会让人以为是 bug，实际是账户该充值了
   'ops.alert': CloseCircleFilled,
   'model.quota': ExclamationCircleFilled,
-  // 租户开通：申请要处理、已开通是回执；历史字面量 tenant-request 只做兜底显示
+  // 租户开通：申请要处理、已开通是回执
   'tenant.request': ExclamationCircleFilled,
   'tenant.approved': CheckCircleFilled,
-  'tenant-request': BellOutlined,
   'quota': ExclamationCircleFilled
 }
 const NOTIF_TONES = {
@@ -70,7 +69,6 @@ const NOTIF_TONES = {
   'model.quota': 'warn',
   'tenant.request': 'warn',
   'tenant.approved': 'ok',
-  'tenant-request': '',
   'quota': 'warn'
 }
 export const notifIcon = t => NOTIF_ICONS[t] || BellOutlined
@@ -106,23 +104,17 @@ export const NOTIF_LABELS = {
   // 租户两类拆开：申请要处理，已开通只是回执
   'tenant.request': '租户开通申请',
   'tenant.approved': '租户已开通',
-  'quota': '用量配额触顶',
-  // 历史字面量：旧数据仍能显示中文，但不再作为可筛选/可静音类型露出
-  'tenant-request': '租户开通'
+  'quota': '用量配额触顶'
 }
 export const notifLabel = t => NOTIF_LABELS[t] || t
 
-/** 历史遗留类型：只用于渲染旧行，不进类型筛选与个人设置开关 */
-export const NOTIF_LEGACY_TYPES = new Set(['tenant-request'])
-
 /** 全部通知类型（标签 + 图标 + 语义色），由上面三张表派生——不再在页面里各抄一份 */
 export const NOTIF_TYPES = Object.keys(NOTIF_LABELS)
-  .filter(t => !NOTIF_LEGACY_TYPES.has(t))
   .map(t => ({ type: t, label: NOTIF_LABELS[t], icon: notifIcon(t), tone: notifClass(t) }))
 
 // ==================== 语义桶：待处理 / 异常 / 完成 ====================
 // 与 NOTIF_LABELS 同为单一事实源：新增类型必须同时补标签与桶。
-// 顺序就是界面上的页签顺序；info 是兜底（历史 tenant-request、未知新类型），只进「全部」。
+// 顺序就是界面上的页签顺序；info 是兜底（未知新类型），只进「全部」。
 export const NOTIF_BUCKETS = {
   action: {
     label: '待处理',
@@ -203,7 +195,7 @@ export function notifTarget (n, { mobile = false } = {}) {
   if (n.refType === 'session' && n.refId) return { path: chatPath, query: { sid: n.refId } }
   if (n.refType === 'provider' && n.refId) return { path: '/agents', query: { tab: 'providers' } }
   if (n.refType === 'ops') return '/security'
-  if (n.refType === 'tenant-request' || n.type === 'tenant.request') {
+  if (n.type === 'tenant.request') {
     return { path: '/tenants', query: { tab: 'requests' } }
   }
   if (n.refType === 'tenant' || n.type === 'tenant.approved') {

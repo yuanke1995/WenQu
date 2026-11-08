@@ -17,7 +17,7 @@
  * 真签名地址，所以 Ctrl/中键点击仍开真标签，右键「链接另存为」也还灵。
  */
 import { artifactContent, projectFileContent, turnChangesDiff } from '../api'
-import { PV, artifactExt, hasViewportTiers, previewKindOf } from './artifactView'
+import { PV, artifactExt, hasViewportTiers } from './artifactView'
 import { copyCode, enhanceDiagrams, renderMd } from './markdown'
 
 // 视口档位：375 是最常见的手机逻辑宽度，768 竖屏平板，1440 桌面基准。刻意不含 1080——
@@ -505,7 +505,6 @@ if (typeof document !== 'undefined') {
     const d = a.dataset
     // 每轮文件改动的差异：messageId+index 寻址，不走扩展名判据
     if (d.pvChanges) {
-      if (!d.pvChanges) return
       e.preventDefault()
       openStage(a, {
         name: d.pvName || '改动差异',
@@ -522,13 +521,10 @@ if (typeof document !== 'undefined') {
       projectId: d.pvProject || '',
       path: d.pvPath || ''
     }
-    // 锚点上带的是同一份服务端判据；没有（老锚点/老数据）才回落到扩展名表
-    const told = d.pvKind
-    const kind = (told && Object.values(PV).includes(told))
-      ? told
-      : previewKindOf({ ext: d.pvExt, filename: src.name })
+    // 锚点上带的就是服务端判据；六个入口面都显式写 data-pv-kind，不再按扩展名回落
+    const kind = d.pvKind
     // 判据与按钮是同一次调用：v-if 说能预览、这里说不能，就是同一份东西两个页面不同表现
-    if (kind === PV.NONE) return
+    if (!kind || !Object.values(PV).includes(kind) || kind === PV.NONE) return
     e.preventDefault()
     openStage(a, src, kind)
   }, true)

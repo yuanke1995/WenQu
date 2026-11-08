@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.wenqu.ai.mapper.SessionShareMapper;
 import com.wenqu.ai.model.Session;
 import com.wenqu.ai.model.SessionShare;
+import com.wenqu.ai.util.PreviewTypes;
 import com.wenqu.ai.util.TurnBlocks;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -329,6 +330,7 @@ public class SessionShareService {
             Map<String, Object> one = new LinkedHashMap<>();
             one.put("seq", seqBase + i++);
             one.put("filename", filename);
+            one.put("preview", PreviewTypes.kindOf(PreviewTypes.extOf(filename)));
             if (a.get("size") != null) one.put("size", a.get("size"));
             if (a.get("description") != null) one.put("description", a.get("description"));
             out.add(one);

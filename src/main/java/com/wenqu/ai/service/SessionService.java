@@ -20,6 +20,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
+import com.wenqu.ai.util.PreviewTypes;
 import com.wenqu.ai.util.RequestUser;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -1017,9 +1018,7 @@ public class SessionService {
 
     /**
      * 合并 Redis 降级消息：仅追加标记了 mysqlPending 且尚未补写进 MySQL 的条目。
-     * 判定基准为 msgId（新格式降级消息自带全局唯一 ID）——已补写（msgId 已落库）跳过；
-     * 旧格式（无 msgId 的历史降级消息）退回 role+content+images 判重兜底。
-     * 相比纯文本判重，带 msgId 后"用户复读完全相同问题"的两次降级消息各自独立补写，不再误丢。
+     * 判定基准为 msgId（降级消息自带全局唯一 ID）——已补写（msgId 已落库）跳过。
      * 补写异步幂等执行（backfillInsert 按 msgId 判重，多副本并发合并同一批也不会重复插入）。
      */
     private List<Map<String, Object>> mergeRedisPending(String sessionId, List<Map<String, Object>> fromMysql) {
@@ -1031,31 +1030,22 @@ public class SessionService {
                     .collect(Collectors.toList());
             if (pending.isEmpty()) return fromMysql;
 
-            // MySQL 已有消息的 messageId 集合（toMessageMap 输出字段）与旧格式内容判重键
+            // MySQL 已有消息的 messageId 集合（toMessageMap 输出字段）
             Set<String> mysqlIds = fromMysql.stream()
                     .map(m -> m.get("messageId"))
                     .filter(Objects::nonNull)
                     .map(String::valueOf)
                     .collect(Collectors.toSet());
-            Set<String> contentKeys = fromMysql.stream()
-                    .map(m -> messageKey(m.get("role"), m.get("content"), m.get("images")))
-                    .collect(Collectors.toSet());
             List<Map<String, Object>> merged = new ArrayList<>(fromMysql);
             List<Map<String, Object>> toBackfill = new ArrayList<>();
             for (Map<String, Object> m : pending) {
                 String msgId = m.get("msgId") == null ? null : String.valueOf(m.get("msgId"));
-                if (msgId != null) {
-                    if (mysqlIds.contains(msgId)) continue; // 已补写：不重复展示/补写
-                    m.put("messageId", msgId);              // 展示侧暴露与 SSE done 一致的消息 ID
-                } else {
-                    // 旧格式降级消息：按内容判重（保持历史行为）
-                    String ck = messageKey(m.get("role"), m.get("content"), m.get("images"));
-                    if (contentKeys.contains(ck)) continue;
-                    contentKeys.add(ck);
-                }
+                if (msgId == null) continue;                 // 无 msgId 的旧格式降级消息不再支持
+                if (mysqlIds.contains(msgId)) continue;      // 已补写：不重复展示/补写
+                m.put("messageId", msgId);                   // 展示侧暴露与 SSE done 一致的消息 ID
                 merged.add(m);
                 toBackfill.add(m);
-                if (msgId != null) mysqlIds.add(msgId);
+                mysqlIds.add(msgId);
             }
             if (!toBackfill.isEmpty()) {
                 List<Map<String, Object>> need = toBackfill;
@@ -2038,7 +2028,16 @@ public class SessionService {
         }
         if (m.getArtifacts() != null && !m.getArtifacts().isBlank()) {
             try {
-                map.put("artifacts", JSON.parseArray(m.getArtifacts(), Map.class)); // 产物卡片（前端按需签名下载）
+                List<com.alibaba.fastjson2.JSONObject> arts =
+                        JSON.parseArray(m.getArtifacts(), com.alibaba.fastjson2.JSONObject.class); // 产物卡片（前端按需签名下载）
+                // 预览判据由服务端统一给出：落库的旧产物清单没有 preview 字段，这里按 ext/文件名补齐
+                for (com.alibaba.fastjson2.JSONObject a : arts) {
+                    if (a == null || a.containsKey("preview")) continue;
+                    String ext = a.get("ext") == null ? "" : String.valueOf(a.get("ext"));
+                    if (ext.isBlank()) ext = PreviewTypes.extOf(String.valueOf(a.get("filename")));
+                    a.put("preview", PreviewTypes.kindOf(ext));
+                }
+                map.put("artifacts", arts);
             } catch (Exception e) {
                 // artifacts 解析失败忽略
             }
