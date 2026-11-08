@@ -108,11 +108,13 @@ export function planChain (card) {
  * 计划批准后的执行进度：拿会话任务清单当数据源（清单本来就是这一轮的执行项）。
  * 只有「计划已批准 + 清单存在 + 清单属于这一轮」才返回进度；否则 null——
  * 卡片退回计划步骤预览，绝不按工具调用数去编造「第几步已完成」。
+ * 唯一例外：本轮的实时清单正在跑（running）时一律认它——此刻底部常驻清单展示的也是它，
+ * 卡内读数不能跑去对另一份快照，否则同屏两个进度数各说各话。
  */
 export function planExecProgress (card, todos, turnId, running, snapshot = null) {
   if (!card || card.status !== 'approved') return null
   const items = (todos && Array.isArray(todos.items)) ? todos.items : []
-  const matched = items.length && !(todos.turnId && turnId && todos.turnId !== turnId)
+  const matched = items.length && (!!running || !(todos.turnId && turnId && todos.turnId !== turnId))
   if (matched) {
     const mapped = items.map(i => ({
       text: String(i.content || ''),

@@ -47,21 +47,22 @@
 
       <div v-if="card.status !== 'rejected'" class="pc-body">
         <p v-if="outline.goal" class="pc-goal">{{ outline.goal }}</p>
-        <!-- 执行中/已完成：拿会话任务清单当步骤进度（清单本来就是这一轮的执行项）。
+        <!-- 执行中/已完成：拿会话任务清单当进度来源（清单本来就是这一轮的执行项），
+             但卡内只报「做到哪」——逐条明细只留一处：底部常驻清单（现在）+ 执行详情抽屉（全过程）。
              没有清单就退回计划步骤预览，绝不按工具调用数去编造「第几步已完成」。 -->
         <template v-if="progress">
-          <ol class="pc-steps pc-exec">
-            <li v-for="(it, pi) in shownProgress" :key="pi" :class="'is-' + it.status">
-              <span class="pc-st" :class="it.status">
-                <check-outlined v-if="it.status === 'done'" class="pc-st-ic" />
-                <close-outlined v-else-if="it.status === 'failed'" class="pc-st-ic" />
-                <loading-outlined v-else-if="it.status === 'doing' && progress.running" class="pc-st-ic" spin />
-              </span>
-              <span class="pc-step"><span class="pc-step-t">{{ it.text }}</span></span>
-            </li>
-          </ol>
-          <div v-if="progress.items.length > shownProgress.length" class="pc-more">
-            还有 {{ progress.items.length - shownProgress.length }} 项
+          <div class="pc-prog">
+            <span class="pc-bar" role="progressbar" :aria-valuemin="0" :aria-valuemax="progress.total"
+                  :aria-valuenow="progress.done"
+                  :aria-label="'本轮任务进度 ' + progress.done + '/' + progress.total">
+              <i v-for="(seg, si) in barSegs" :key="si" :class="'is-' + seg"></i>
+            </span>
+            <span class="pc-num"><b>{{ progress.done }}</b>/{{ progress.total }}</span>
+          </div>
+          <div v-if="nowRow" class="pc-now" :class="'is-' + nowRow.tone">
+            <span class="pc-now-dot"></span>
+            <span class="pc-now-lab">{{ nowRow.label }}</span>
+            <span class="pc-now-tx" :title="nowRow.text">{{ nowRow.text }}</span>
           </div>
         </template>
         <template v-else-if="outline.steps.length">
@@ -123,7 +124,7 @@
 
 <script setup>
 import { computed, nextTick, ref } from 'vue'
-import { OrderedListOutlined, UpOutlined, CaretRightOutlined, ArrowRightOutlined, CheckOutlined, CloseOutlined, LoadingOutlined } from '@ant-design/icons-vue'
+import { OrderedListOutlined, UpOutlined, CaretRightOutlined, ArrowRightOutlined } from '@ant-design/icons-vue'
 import { renderMd } from '../utils/markdown'
 import { planOutline, planStepCount } from '../chat/plan'
 import { planLineOpenOf, setPlanLineOpen } from '../chat/planUiState'
@@ -155,7 +156,24 @@ const expanded = computed(() => isLive.value || !!(props.progress && props.progr
 const outline = computed(() => planOutline(props.card.plan))
 const stepCount = computed(() => outline.value.steps.length || planStepCount(props.card.plan))
 const shownSteps = computed(() => outline.value.steps.slice(0, 3))
-const shownProgress = computed(() => (props.progress ? props.progress.items.slice(0, 5) : []))
+/** 进度条分段：一项一格，按状态定色（未开始留空、全靠轨道底色兜住） */
+const barSegs = computed(() => (props.progress ? props.progress.items.map(i => i.status || 'wait') : []))
+/** 「做到哪」单行：只报一件当前事实，不铺清单；没有可说的事实就整行不画 */
+const nowRow = computed(() => {
+  const p = props.progress
+  if (!p || !p.items.length) return null
+  const idxOf = s => p.items.findIndex(x => x.status === s)
+  const doing = idxOf('doing')
+  if (p.running && doing >= 0) return { tone: 'run', label: '现在在做', text: p.items[doing].text }
+  if (p.running) return { tone: 'run', label: '执行中', text: '准备下一步…' }
+  const failed = idxOf('failed')
+  if (failed >= 0) return { tone: 'failed', label: '第 ' + (failed + 1) + ' 步失败', text: p.items[failed].text }
+  if (p.total && p.done >= p.total) return { tone: 'done', label: '本轮完成', text: p.total + ' 项全部完成' }
+  // 跑到一半停住（用户停止/空转终止）：只报停在哪一步，不替模型编原因（原因在卡上方提示条）
+  const wait = idxOf('wait')
+  if (wait >= 0) return { tone: 'stopped', label: '停在第 ' + (wait + 1) + ' 步', text: p.items[wait].text }
+  return null
+})
 // 「进行第 3 步」按下标数第几个执行项；没有 doing 项时不报步号（不拿已完成数 +1 去猜）
 const doingStep = computed(() => {
   const i = props.progress ? props.progress.items.findIndex(x => x.status === 'doing') : -1
@@ -308,15 +326,30 @@ const toggleLine = async () => {
 .pc-steps li { display: flex; gap: 7px; align-items: flex-start; min-width: 0; }
 .pc-no { flex: none; width: 14px; height: 14px; margin-top: 2px; border-radius: 50%; background: var(--app-panel); border: 1px solid var(--app-warn-border); color: var(--app-warn-text); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 9px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
 .plan-card.plan-approved .pc-no, .plan-card.plan-superseded .pc-no, .plan-card.plan-rejected .pc-no { border-color: var(--app-border); color: var(--app-text3); }
-/* 执行进度：状态圆点替代步骤序号，一眼看出做到哪一步 */
-.pc-st { flex: none; width: 14px; height: 14px; margin-top: 2px; border-radius: 50%; border: 1px solid var(--app-border); background: var(--app-panel); display: flex; align-items: center; justify-content: center; }
-.pc-st.done { border-color: #cfe4d3; background: var(--app-ok-weak); color: var(--app-ok); }
-.pc-st.doing { border-color: var(--app-warn-border); background: #fffaf0; color: var(--app-warn-text); }
-.pc-st.failed { border-color: var(--app-danger, #cf1322); background: #fff1f0; color: var(--app-danger, #cf1322); }
-.pc-st-ic { font-size: 10px; }
-.pc-exec .pc-step-t { flex: 1; max-width: 100%; font-weight: 500; color: var(--app-text2); }
-.pc-exec li.is-done .pc-step-t { color: var(--app-text3); }
-.pc-exec li.is-failed .pc-step-t { color: var(--app-danger, #cf1322); }
+/* 执行进度：一条分段进度条替代逐条清单——明细只在底部常驻清单（现在）与执行详情抽屉（全过程），卡内不重复 */
+.pc-prog { display: flex; align-items: center; gap: 9px; margin-top: 8px; }
+.pc-bar { flex: 1; min-width: 0; height: 4px; border-radius: 999px; background: #eef0f3; display: flex; gap: 2px; overflow: hidden; }
+.pc-bar i { flex: 1; height: 100%; background: transparent; }
+.pc-bar i.is-done { background: var(--app-ok); }
+.pc-bar i.is-doing { background: #9db9f3; }
+.pc-bar i.is-failed { background: var(--app-danger, #cf1322); }
+.pc-num { flex: none; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-variant-numeric: tabular-nums; font-size: 11.5px; color: var(--app-text3); }
+.pc-num b { color: var(--app-text2); font-weight: 600; }
+/* 「做到哪」单行：浅底 + 圆点 + 状态词，长条目省略；停住/失败/完成换色，不另起一行说原因 */
+.pc-now { display: flex; align-items: flex-start; gap: 7px; margin-top: 7px; padding: 4px 7px; border-radius: 6px;
+  background: var(--app-accent-weak); font-size: 12px; line-height: 1.5; color: var(--app-text); }
+.pc-now-dot { flex: none; width: 6px; height: 6px; margin-top: 5px; border-radius: 50%; background: var(--app-accent); }
+.pc-now-lab { flex: none; font-size: 11px; font-weight: 500; color: var(--app-accent); }
+.pc-now-tx { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pc-now.is-stopped { background: var(--app-panel-2); }
+.pc-now.is-stopped .pc-now-dot { background: var(--app-text3); }
+.pc-now.is-stopped .pc-now-lab { color: var(--app-text3); }
+.pc-now.is-failed { background: var(--app-danger-weak); }
+.pc-now.is-failed .pc-now-dot { background: var(--app-danger, #cf1322); }
+.pc-now.is-failed .pc-now-lab { color: var(--app-danger, #cf1322); }
+.pc-now.is-done { background: var(--app-ok-weak); }
+.pc-now.is-done .pc-now-dot { background: var(--app-ok); }
+.pc-now.is-done .pc-now-lab { color: var(--app-ok); }
 .pc-step { flex: 1; min-width: 0; display: flex; flex-direction: row; align-items: baseline; gap: 6px; }
 .pc-step-t { flex: none; max-width: 62%; font-size: 12.5px; line-height: 1.5; font-weight: 500; color: var(--app-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pc-step-s { flex: 1; min-width: 0; font-size: 11px; line-height: 1.5; color: var(--app-text3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
