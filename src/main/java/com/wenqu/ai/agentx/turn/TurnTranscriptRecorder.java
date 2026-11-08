@@ -245,7 +245,7 @@ public final class TurnTranscriptRecorder {
                 prevEnd = end;
             }
             if (candidateStart >= 0) {
-                markAnswer(candidateStart, candidateEnd);
+                markAnswer(answerStartIncludingUnfinishedSentence(candidateStart, candidateEnd), candidateEnd);
                 if (tailFromBlock >= 0) markAnswer(tailFromBlock, blocks.size());
                 return;
             }
@@ -269,7 +269,46 @@ public final class TurnTranscriptRecorder {
             }
         }
         if (runStart < 0) return;
-        markAnswer(runStart, blocks.size());
+        markAnswer(answerStartIncludingUnfinishedSentence(runStart, blocks.size()), blocks.size());
+    }
+
+    /**
+     * 答案起点往前挪：模型会在工具调用处把一句话劈成两段——工具前那半句
+     * （「我会先查一下最」）不以句末标点收尾，拿到结果后接着写「近 30 天…」。工具块会切断文本块，
+     * 前半句留在过程块、后半句成了答案开头，最终正文就从半句开始。
+     * <p>这里只认「中间只隔工具块」这一种形态：把那段没写完的正文一并并进答案，{@code answerText}
+     * 按答案段原样拼接，最终正文就回到完整一句；过程块里也不再残留前半句。
+     * 夹着思考/过程/插话的不合并——那不是一句话被工具劈开，归属不该改。
+     * <p>判据只看前一块的结尾是否有句末标点，不改写模型说过的字。
+     */
+    private int answerStartIncludingUnfinishedSentence(int start, int end) {
+        int first = -1;
+        for (int i = Math.max(0, start); i < Math.min(end, blocks.size()); i++) {
+            Block block = blocks.get(i);
+            if ("text".equals(block.kind) && !block.isBlank()) {
+                first = i;
+                break;
+            }
+        }
+        if (first < 0) return start;
+        for (int i = first - 1; i >= 0; i--) {
+            Block block = blocks.get(i);
+            if ("tool".equals(block.kind)) continue;
+            if (!"text".equals(block.kind) || block.isBlank()) return start;
+            return endsMidSentence(block) ? i : start;
+        }
+        return start;
+    }
+
+    /** 这一段正文是不是没写完：结尾没有句末标点。只认词尾（汉字/字母/数字）收尾的半句，
+     *  标题、代码块、列表这类结构性结尾不算——它们不接工具后那半句。 */
+    private static boolean endsMidSentence(Block block) {
+        String text = block.text.toString().stripTrailing();
+        if (text.isEmpty()) return false;
+        char last = text.charAt(text.length() - 1);
+        if ("。！？!?；;：:….．".indexOf(last) >= 0) return false;
+        if ("”’」』）)》】)]}>\"'`".indexOf(last) >= 0) return false;
+        return Character.isLetterOrDigit(last);
     }
 
     private boolean hasNonBlankText(int start, int end) {
