@@ -107,6 +107,25 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      */
     private static final java.util.Set<String> CONSULT_CARD_TOOLS = java.util.Set.of("agent_spawn");
 
+    /**
+     * 早产工具卡：模型一边流式生成工具入参，界面一边就能看到「这一步在跑」。
+     * <p>框架只在 assistant 消息完整后才写 {@code tool/requested}。2026-11-08 实测一轮「做一个官网」：
+     * {@code presentArtifact} 的 33KB HTML 入参从第 4.7 秒开始生成、第 69.8 秒才完整，中间 65 秒
+     * 前端一个工具都没有（那一轮在界面上就是纯静默），而工具真正执行只用了 90ms。
+     * {@code model/chunk} 里带 {@code tool_use} 增量块（首块有 name/id，后续块是参数片段），
+     * 据此提前发一张 {@code tool_status start} 卡即可把这段静默变成可见的进行中。
+     * <p>短入参的检索类调用不值得闪一下：累计到这个字数、或生成超过这个毫秒数才发第一帧。
+     */
+    private static final int PREPARING_MIN_CHARS = 500;
+    private static final long PREPARING_MIN_MS = 600L;
+    /** 早产卡进度帧的最小间隔（字数只用于行尾摘要，不必逐块刷）。 */
+    private static final long PREPARING_EVERY_MS = 1500L;
+    /** 框架 OpenAI 适配层给「同一次调用的后续参数片段」占位的工具名（OpenAIResponseParser.FRAGMENT_PLACEHOLDER）。 */
+    private static final String PREPARING_FRAGMENT_NAME = "__fragment__";
+    /** 从入参前缀里捞一个能给用户看的摘要（文件名/路径/检索词/命令）；值还没生成完整时不命中。 */
+    private static final Pattern PARTIAL_ARG_BRIEF = Pattern.compile(
+            "\"(filename|filePath|path|dir|query|command)\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"");
+
     /** 一次从 Session Log 读多少条事件（框架的翻页上界，见 {@link #drain}）。 */
     private static final int DRAIN_PAGE = 200;
 
@@ -2085,6 +2104,67 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
          */
         private volatile boolean compactedThisTurn;
         private String lastToolInput = "";
+        // ---- 早产工具卡：模型还在流式生成 tool_use 入参时，先把「这一步在跑」亮出来 ----
+        // 只在内存里用、不落库：正式 tool/requested 到达后这张卡被前端原地升级，落库那份从一开始就是正式卡。
+        /** 当前正在生成入参的那次调用名（空=没有） */
+        private String preparingName = "";
+        /** 那次调用的 id（模型一步里并发点名同名工具时用它区分；空 id 只按名字走） */
+        private String preparingCallId = "";
+        private long preparingStartedAt;
+        private long preparingChars;
+        private long preparingLastFrameAt;
+        private boolean preparingShown;
+        /** 入参前缀（只留前 {@link #PREPARING_MIN_CHARS} 个字符，用来捞文件名这类摘要；不攒全文） */
+        private final StringBuilder preparingHead = new StringBuilder();
+
+        /** 一次 tool_use 增量累积后的进度；只为「该发帧」的那几拍产出。 */
+        record PreparingTick(String name, long chars, String brief, long startedAtMs) {}
+
+        /**
+         * 累积一次 {@code tool_use} 参数增量（首块带 name/id，后续块是 {@code __fragment__} 片段）。
+         * <p>返回 null = 这一拍不值得发帧（还没到门槛，或进度帧间隔没到）。
+         */
+        synchronized PreparingTick noteToolUseDelta(String name, String id, String content, long now) {
+            String name0 = name == null ? "" : name;
+            String id0 = id == null ? "" : id;
+            boolean named = !name0.isBlank() && !PREPARING_FRAGMENT_NAME.equals(name0);
+            // 新的一次调用：名字变了，或同名的另一把（id 不同）
+            boolean newCall = named && (!name0.equals(preparingName)
+                    || (!id0.isBlank() && !id0.equals(preparingCallId)));
+            if (newCall) {
+                preparingName = name0;
+                preparingCallId = id0;
+                preparingStartedAt = now;
+                preparingChars = 0L;
+                preparingLastFrameAt = 0L;
+                preparingShown = false;
+                preparingHead.setLength(0);
+            }
+            if (preparingName.isEmpty()) return null;
+            String piece = content == null ? "" : content;
+            preparingChars += piece.length();
+            if (preparingHead.length() < PREPARING_MIN_CHARS) {
+                preparingHead.append(piece, 0,
+                        Math.min(piece.length(), PREPARING_MIN_CHARS - preparingHead.length()));
+            }
+            boolean due = preparingShown
+                    ? (now - preparingLastFrameAt >= PREPARING_EVERY_MS)
+                    : (preparingChars >= PREPARING_MIN_CHARS || now - preparingStartedAt >= PREPARING_MIN_MS);
+            if (!due) return null;
+            preparingShown = true;
+            preparingLastFrameAt = now;
+            return new PreparingTick(preparingName, preparingChars,
+                    partialArgBrief(preparingHead.toString()), preparingStartedAt);
+        }
+
+        /** 正式 {@code tool/requested} 到了：早产状态收摊，后面的入参片段不再发进度帧。 */
+        synchronized void clearPreparing() {
+            preparingName = "";
+            preparingCallId = "";
+            preparingChars = 0L;
+            preparingShown = false;
+            preparingHead.setLength(0);
+        }
         /**
          * 每次调用的入参，按 {@link #toolCallKey} 配回<b>它自己那一次</b>调用。
          * <p>为什么不能共用 {@link #lastToolInput} 那一个字段：模型一步里可以同时点两把工具（框架并发派发），
@@ -3093,6 +3173,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                         // 过程独白（<process> 标签内）按增量实时下发 PROCESS：正文走 TOKEN，
                         // 过程另走一条通道，前端 onProcess 累积成「执行过程」灰字块。收尾帧在 finish() 里补齐。
                         if (!processFirst) emitProcess(channel, recording, parsed.process());
+                    } else if ("tool_use".equals(b.get("type"))) {
+                        // 入参还在流式生成：先把「这一步在跑」发给前端（见 PREPARING_MIN_CHARS 那段说明）。
+                        // 真正的 tool/requested 随后到达时，前端把同名早产卡升级成正式卡，不会再推第二张。
+                        noteToolUseDelta(channel, recording, b);
                     }
                 }
             }
@@ -3100,6 +3184,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             // run 终态那份输出：message/assistant 万一没被观察到，这一帧也能补上最后一轮边界
             case "turn/output" -> recording.assistantRound(assistantHasToolCalls(data.get("message")));
             case "tool/requested" -> {
+                // 正式调用来了：早产卡状态收摊，后面不再发进度帧（前端收到本帧会把那张卡升级成正式卡）
+                recording.clearPreparing();
                 // 调工具也是「这一段想完了」的信号：不在这儿收场，思考段会一直挂着转圈直到下一段正文出现，
                 // 而时间线里这段思考也会压到工具卡后面（区间是按关闭时刻写的，顺序即到达顺序）
                 closeThinkingFrame(channel, recording);
@@ -3135,6 +3221,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                                 recording.hooks.step().index()));
             }
             case "tool/result" -> {
+                // 兜底收摊：没有配上的 tool/requested 时（从游标中途接流）也别让早产进度帧继续发
+                recording.clearPreparing();
                 String name = toolNameOf(data.get("message"));
                 if (name.isBlank()) name = recording.lastToolName;
                 // 入参与耗时都按这一次调用取回：读共用那份就是「甲张卡的入参是乙次调用的参数」
@@ -4880,6 +4968,18 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      */
     private String toolCard(String uid, String name, String status, long elapsedMs, long startedAtMs, long waitedMs,
                             String args, String result, java.util.Map<String, Object> subChat, int stepId) {
+        return toolCard(uid, name, status, elapsedMs, startedAtMs, waitedMs, args, result, subChat, stepId,
+                false, 0L, null);
+    }
+
+    /**
+     * 工具卡载荷的完整版：在上一份的基础上多一组「早产进度」字段（{@code preparing/chars/brief}）。
+     * <p>{@code preparing=true} 表示这次调用还在生成入参、工具尚未开始执行；前端把这张卡渲染成进行中，
+     * 并在正式 {@code tool/requested} 帧到达时原地升级（不新增第二张卡）。
+     */
+    private String toolCard(String uid, String name, String status, long elapsedMs, long startedAtMs, long waitedMs,
+                            String args, String result, java.util.Map<String, Object> subChat, int stepId,
+                            boolean preparing, long chars, String brief) {
         StringBuilder sb = new StringBuilder("{\"name\":\"").append(esc(name)).append("\"");
         String label = displayNames.label(uid, name);
         if (label != null) sb.append(",\"label\":\"").append(esc(label)).append("\"");
@@ -4893,6 +4993,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 只在真有值时写：缺它 = 这一把没计时（前端不显示），写成 0 = 谎称这一把从 1970 年跑起 / 跑了 0 毫秒
         if (startedAtMs > 0L) sb.append(",\"startedAtMs\":").append(startedAtMs);
         if (waitedMs > 0L) sb.append(",\"waitedMs\":").append(waitedMs);
+        // 早产卡：这次调用还在生成入参（工具尚未执行），字数用于「正在生成 N 字」那一行摘要
+        if (preparing) {
+            sb.append(",\"preparing\":true");
+            if (chars > 0L) sb.append(",\"chars\":").append(chars);
+            if (brief != null && !brief.isBlank()) sb.append(",\"brief\":\"").append(esc(brief)).append("\"");
+        }
         // 入参随卡片下发：前端工具卡展开要显示「这把工具拿什么去做的」，缺它展开就是一张空卡。
         // 必须按字符串下发（和落库那份同形，见 Recording#toolCall）：前端读 args 的四处全是
         // JSON.parse(t.args)，裸拼对象会让流式时的标题行与入参段都成 [object Object]（刷新读落库那份却正常），
@@ -4954,6 +5060,48 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         s = com.wenqu.ai.util.UntrustedContent.displayText(s);
         if (s.isEmpty()) return null;
         return s.length() > 2000 ? s.substring(0, 2000) + "…（已截断）" : s;
+    }
+
+    /**
+     * 早产工具卡：把一次 {@code tool_use} 入参增量交给 {@link Recording#noteToolUseDelta}，
+     * 够门槛就发一帧 {@code tool_status start}（带 {@code preparing/chars/brief}）。
+     * <p>前端据 preparing 标记把这张卡渲染成「进行中」，正式 {@code tool/requested} 到达时原地升级，
+     * 所以这里不需要记卡、也不需要等工具真正开始执行。
+     */
+    private void noteToolUseDelta(RunChannel channel, Recording recording, Map<?, ?> block) {
+        Recording.PreparingTick tick = recording.noteToolUseDelta(
+                str(block.get("name")), str(block.get("id")), str(block.get("content")),
+                System.currentTimeMillis());
+        if (tick == null) return;
+        try {
+            emit(channel, RunEventType.TOOL_STATUS,
+                    toolCard(recording.uid, tick.name(), "start", 0L, tick.startedAtMs(), 0L,
+                            null, null, null, recording.hooks.step().index(),
+                            true, tick.chars(), tick.brief()));
+        } catch (RuntimeException gone) {
+            // 通道已收（用户切走/刷新）：这一帧发不出去不影响正文与工具结果，别让跟随循环因此收场
+            log.debug("[agentx] 早产工具卡帧没发出去（通道已收）: session={} tool={}",
+                    channel.sessionId(), tick.name());
+        }
+    }
+
+    /**
+     * 从流式入参前缀捞一个用户看得懂的摘要（文件名/路径/检索词/命令）。
+     * <p>只在值已经生成完整时命中：半截的 {@code "filename": "ind} 不会误报成 {@code ind}。
+     */
+    static String partialArgBrief(String raw) {
+        if (raw == null || raw.isBlank()) return null;
+        var m = PARTIAL_ARG_BRIEF.matcher(raw);
+        if (!m.find()) return null;
+        String v = m.group(2)
+                .replace("\\\"", "\"")
+                .replace("\\\\", "\\")
+                .replace("\\n", " ")
+                .replace("\\r", "")
+                .replace("\\t", " ")
+                .trim();
+        if (v.isEmpty()) return null;
+        return v.length() > 40 ? v.substring(0, 40) + "…" : v;
     }
 
     private static Object firstNonNull(Object a, Object b) {

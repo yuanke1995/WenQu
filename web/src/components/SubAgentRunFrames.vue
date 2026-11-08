@@ -129,6 +129,9 @@ const rows = computed(() => {
       let o = null
       try { o = JSON.parse(c) } catch { /* 载荷残缺：跳过，少一行比一行乱强 */ }
       if (!o || !o.name) continue
+      // 早产卡只是「入参还在生成」的进度帧：它和随后的 start/done 各画一行，一次调用会变三帧，
+      // 且那张 start 行永远停在转圈。抽屉只认正式起止。
+      if (o.preparing) continue
       const key = String(o.name) + '#' + (o.startedAtMs || 0)
       if (o.status === 'start') {
         if (starts.has(key)) continue

@@ -2302,6 +2302,24 @@ function retireAskCard (m) {
 }
 
 /**
+ * 早产工具卡收场：模型在流式生成入参时先建了卡，但这一轮结束时仍没等到正式的 tool/requested
+ * （入参被截断/被叫停/上游出错）——标成未执行并写一句原因，停掉那行永久转圈。
+ * <p>已经升级成正式卡的（preparing=false）一律不动：那是真调用，终态由 done/error 帧给。
+ */
+function settlePreparingCards (m, reason) {
+  if (!m || !Array.isArray(m.toolCalls)) return
+  for (const t of m.toolCalls) {
+    if (!t || !t.preparing) continue
+    t.preparing = false
+    delete t.chars
+    delete t.brief
+    t.status = 'error'
+    t.error = reason
+    t.result = reason
+  }
+}
+
+/**
  * 恢复出来的卡片挂到哪条气泡——按记录带的 turnId 认（一问一答共用一个 id，与 c_ai_message 同源）。
  * 此前一律挂「这台设备手上的那一轮」，于是更早一轮的待决卡会挂到最新的气泡上：
  * 用户答的是上一轮的题，屏幕上指的却是这一轮，裁决送得回去但看着是错的。
@@ -3304,6 +3322,40 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         if (t.status === 'start') {
           // askUser 的「进行中」由提问卡（m.ask）表达，不渲染通用工具卡——否则一问两卡
           if (t.name === 'askUser') return
+          if (t.preparing) {
+            // 早产卡：模型还在生成入参（后端从 model/chunk 的 tool_use 增量提前下发），
+            // 先把「这一步在跑」亮出来。进度帧就地更新同一张卡，正式 tool/requested 到达时升级，不推第二张。
+            const prep = [...msg.toolCalls].reverse().find(x => x.name === t.name && x.status === 'start' && x.preparing)
+            if (prep) {
+              prep.chars = Number(t.chars) || 0
+              if (t.brief) prep.brief = t.brief
+              if (t.label) prep.label = t.label
+              if (t.hint) prep.hint = t.hint
+              if (t.startedAtMs) prep.startedAtMs = t.startedAtMs
+            } else {
+              const rec = { ...t, preparing: true }
+              msg.toolCalls.push(rec)
+              pushTimelineTool(msg, rec)
+            }
+            ensureTick()
+            liveScroll()
+            return
+          }
+          // 正式卡：同名早产卡原地升级（补入参、摘掉进度字段）——否则一次调用会渲染成两张，
+          // 一张停在「生成中」永远转圈
+          const prep = [...msg.toolCalls].reverse().find(x => x.name === t.name && x.status === 'start' && x.preparing)
+          if (prep) {
+            prep.preparing = false
+            delete prep.chars
+            delete prep.brief
+            if (t.args) prep.args = t.args
+            if (t.startedAtMs) prep.startedAtMs = t.startedAtMs
+            if (t.label) prep.label = t.label
+            if (t.hint) prep.hint = t.hint
+            if (t.stepId != null) prep.stepId = t.stepId
+            liveScroll()
+            return
+          }
           // 幂等兜底：同一次调用可能被快照与增量各给一遍（后端按事件序号过滤，这里再守一道）。
           // 重复的 start 会多出一颗转圈卡片，要等 done 才被终态盖掉——刷新那一刻最容易撞见
           if (msg.toolCalls.some(x => x.status === 'start' && x.name === t.name && (x.args || '') === (t.args || ''))) return
@@ -3390,6 +3442,28 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
           }
           if (any) {
             const content = typeof o.content === 'string' ? o.content : JSON.stringify(o.content ?? '')
+            // 早产工具卡（preparing）只是「入参还在生成」的进度帧，不是这一步的正式起止：
+            // 进抽屉会与随后的 start/done 各画一行，一次调用变成三帧（start 行还永远停在转圈）
+            let preparing = false
+            if (o.type === 'tool_status') {
+              try {
+                const pc = typeof o.content === 'string' ? JSON.parse(o.content) : o.content
+                preparing = !!(pc && pc.preparing)
+              } catch (e) { /* 载荷残缺：当正式帧处理 */ }
+            }
+            if (preparing) {
+              // 进度仍要更新卡头那行「当前步骤」，但不进完整过程抽屉
+              const card = [...(Array.isArray(msg.toolCalls) ? msg.toolCalls : [])].reverse()
+                .find(x => isDispatchTool(x.name) && x.status === 'start' && consultNameOf(x) === o.agent)
+              if (card) {
+                try {
+                  const pc = typeof o.content === 'string' ? JSON.parse(o.content) : o.content
+                  card._live = stepBriefOf(pc)
+                  liveScroll()
+                } catch (e) { /* 忽略 */ }
+              }
+              return
+            }
             const key = (o.type || '') + '|' + content.slice(0, 200)
             any._frameKeys = any._frameKeys instanceof Set ? any._frameKeys : new Set()
             if (!any._frameKeys.has(key)) {
@@ -3560,6 +3634,9 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
           ensureThinkSegment(msg)
         }
       } catch (e) { /* 旧版/停止生成：无负载 */ }
+      // 早产卡收口：本轮结束仍没等到正式 tool/requested 的那张（入参没生成完/被叫停）——标成未执行，
+      // 别让答完之后还挂着一颗永久转圈、且写着「生成中」的行
+      settlePreparingCards(msg, '本轮已结束，这一步没有执行')
       msg.loading = false
       // 叫停那一轮：服务端确认停掉后把「⏹ 已停止本轮」补进正文（与落库那份同形）。
       // 上面那条 abort 可能先于 /chat/stop 的响应收尾，两边都调一次、由 endsWith 去重
@@ -3677,6 +3754,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       // （分类文案 + 重新生成 + 异常详情折叠，对齐主流产品的失败态；此前「😅+裸异常」写进气泡
       //  会冲掉半程内容，长回答生成到 90% 失败时全部丢失）
       flushNow()
+      settlePreparingCards(msg, '本轮中断，这一步没有执行')
       msg.loading = false
       msg.retrying = false
       // 这一轮已经断了，审批卡不会再有结果：撤掉，别留两颗必然点不动的按钮

@@ -982,6 +982,13 @@ const turnSteerRows = m => {
 const TOOL_BRIEF_KEYS = ['command', 'query', 'path', 'dir', 'filename', 'url', 'kbIds']
 const oneLine = (s, n) => { const x = String(s).replace(/\s+/g, ' ').trim(); return x.length > n ? x.slice(0, n) + '…' : x }
 const toolBrief = t => {
+  // 早产工具卡（后端在模型流式生成入参时就先建卡）：此刻还没有 args，只能报「正在生成多少字」。
+  // 文件名这类摘要由后端边生成边从入参前缀里捞（brief），捞到之前就只说正在生成。
+  if (t && t.preparing) {
+    const n = Number(t.chars) || 0
+    const state = n > 0 ? '正在生成 ' + n.toLocaleString() + ' 字' : '正在生成内容'
+    return t.brief ? oneLine(t.brief, 40) + ' · ' + state : state
+  }
   if (!t?.args) return ''
   let obj = null
   try { obj = JSON.parse(t.args) } catch (e) { return oneLine(t.args, 56) } // 非 JSON（MCP 兼容）：纯文本截断
@@ -1012,6 +1019,11 @@ const prettyIo = s => {
 const LIVE_TAIL_CHARS = 4000
 const liveOutput = t => {
   if (t.status === 'start') {
+    // 早产卡：这次调用还在生成入参，没有真正的输出可看，给一句可展开的进度说明
+    if (t.preparing) {
+      const n = Number(t.chars) || 0
+      return n > 0 ? '正在生成内容…（已写入 ' + n.toLocaleString() + ' 字）' : '正在生成内容…'
+    }
     // 运行中：只有前端本地累积的 liveOutput（不落库），后端的 result 此刻还没写
     if (!t.liveOutput) return ''
     return (t.outputTruncated ? '…（前面输出已省略）\n' : '') + t.liveOutput.slice(-LIVE_TAIL_CHARS)
