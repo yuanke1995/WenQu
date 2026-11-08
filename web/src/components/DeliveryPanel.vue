@@ -124,10 +124,22 @@ const fileKey = f => (f && (f.id || f.url || f.filename)) || ''
   background: var(--app-panel);
   overflow: hidden;
 }
-.dp-thumb .t-bar { height: 9px; padding: 0 3px; }
-.dp-thumb .t-bar i { width: 3px; height: 3px; }
+.dp-thumb .t-bar {
+  height: 9px; padding: 0 3px;
+  display: flex; align-items: center; gap: 2px;
+  background: var(--app-panel-2);
+  border-bottom: 1px solid var(--app-border);
+}
+.dp-thumb .t-bar i { width: 3px; height: 3px; border-radius: 50%; background: var(--app-border-2, #c9cfd8); }
 .dp-thumb .t-body { padding: 3px 4px; }
-.dp-thumb .t-body i { height: 3px; margin-bottom: 2px; }
+.dp-thumb .t-body i {
+  display: block; height: 3px; margin-bottom: 2px;
+  border-radius: 2px;
+  background: var(--app-panel-2);
+  border: 1px solid var(--app-border);
+}
+.dp-thumb .t-body .t-hi { background: var(--app-accent-weak); border-color: var(--app-accent-border); width: 45%; }
+.dp-thumb .t-body .w60 { width: 60%; }
 .dp-entry-main { min-width: 0; flex: 1; }
 .dp-entry-name { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dp-entry-sub { font-size: 10.5px; color: var(--app-text2); margin-top: 1px; }
