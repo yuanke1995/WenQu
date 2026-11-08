@@ -100,6 +100,11 @@ public class SandboxService {
         return sessionWorkspace != null && sessionWorkspace.pinnedLocal(sessionId);
     }
 
+    /** 已钉住的本机工作区根（只读库、不探测、不建目录）：提示词装配期用，不能有建目录副作用。 */
+    public String pinnedLocalWorkspaceRoot(String sessionId) {
+        return sessionWorkspace == null ? null : sessionWorkspace.pinnedLocalRoot(sessionId);
+    }
+
     /**
      * 工作区后端的实例键：框架实例把文件系统烤在 build 期，本机↔云端切换时必须重建。
      * 返回显式工作区标记（文件系统随工作区配置走，不在本方法判）、本机执行器+目录、或 cloud。

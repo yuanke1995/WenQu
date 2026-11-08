@@ -2809,6 +2809,30 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     }
 
     /**
+     * 本机执行器模式的真实执行环境说明。
+     * <p>框架的 WorkspaceContextMiddleware 会把工作区写成服务器状态目录（{@code /app/data/agentscope}），
+     * 并把 {@code ExecutorFilesystem} 当作沙盒容器渲染成「Sandbox root: /workspace」——这两个路径都在
+     * 服务器上，而 execute / 文件工具实际跑在用户电脑上。不纠正的话模型第一发就去 {@code ls} 这两个
+     * 不存在的路径，失败后又当成可重试，反复空转（线上 2026-11-08 实测）。
+     * <p>只读库取根目录（{@link com.wenqu.ai.service.SandboxService#pinnedLocalWorkspaceRoot}），
+     * 不在装配期建目录；不是本机后端就整段缺席。
+     */
+    private String localExecutorEnvironment(ChatCommand cmd) {
+        String root = sandboxService == null ? null
+                : sandboxService.pinnedLocalWorkspaceRoot(cmd.getSessionId());
+        if (root == null || root.isBlank()) return "";
+        return "\n## 执行环境（本机执行器，以此段为准）\n"
+                + "文件与命令工具都在用户自己的电脑上执行，不在服务器容器里。"
+                + "当前工作区根目录：" + root + "\n"
+                + "- `execute` 的 pwd 就是这个目录，相对路径都从这里解析；路径含空格/括号时要加引号。\n"
+                + "- 其它段落若把工作区写成 `/workspace` 或 `/app/data/agentscope`（服务器沙盒/框架状态目录），"
+                + "那些路径在这台电脑上不存在，不要用 execute / read_file 去读。\n"
+                + "- 交付产物用 presentArtifact（返回值即访问地址），不要在磁盘上找 artifacts 目录。\n"
+                + "- 复合命令的退出码由最后一条子命令决定：不要用 2>/dev/null 掩盖失败；"
+                + "可能不存在的目录单独探测或加 `|| true`。\n";
+    }
+
+    /**
      * 只记账不播报的通道：读历史事件时用它——事件照样进 {@link Recording}（工具卡、思考全文都要落库），
      * 但不再发一遍给观众。
      */
@@ -3760,6 +3784,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 路径喂给模型——不挂回去，计划卡就变成「它打算在沙盒里怎么写文件」的说明书
                 .sysPrompt(rolePrompt(binding.row()) + projectContext(cmd)
                         + workspaceMemory
+                        // 框架会把工作区渲染成服务器沙盒路径；本机执行器模式要补一段真话压住它
+                        + localExecutorEnvironment(cmd)
                         + (subagentTargets.isEmpty() ? "" : tools.dispatchDiscipline())
                         + PlanCopy.guidance()
                         + com.wenqu.ai.agent.chat.ArtifactPrompt.guidance()

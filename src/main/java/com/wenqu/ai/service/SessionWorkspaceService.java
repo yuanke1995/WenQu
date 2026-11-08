@@ -156,6 +156,12 @@ public class SessionWorkspaceService {
         return existingLocal(sessionId) != null;
     }
 
+    /** 已钉住的本机工作区根（只看库，不建目录）：提示词里要如实告诉模型它在哪台机器上跑。 */
+    public String pinnedLocalRoot(String sessionId) {
+        Workspace ws = existingLocal(sessionId);
+        return ws == null ? null : ws.rootPath();
+    }
+
     /**
      * 本机后端是否已就绪且执行器在线（不建目录）：问答链路的「文件系统可用」判据。
      * 与 {@link #resolve} 的区别是绝不产生副作用。
