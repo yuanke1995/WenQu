@@ -1450,7 +1450,7 @@ const goalCanResumeOf = g => !!g && (g.status === 'PAUSED' || g.status === 'FAIL
 const goalCanEditOf = g => !!g && (GOAL_LIVE.includes(g.status) || g.status === 'FAILED')
 /** 取消：只要还在推进（含未完成）就能结束它并留痕；终态不再给这个动作 */
 const goalCanCancelOf = g => !!g && (GOAL_VISIBLE.includes(g.status) || g.status === 'QUEUED' || g.status === 'RUNNING')
-/** 删除记录：只有终态可删（取消与删除是两件事，见 docs/goal-mode-ux） */
+/** 删除记录：只有终态可删（取消与删除是两件事，见 design/mockups/goal-mode-ux） */
 const goalCanClearRecordOf = g => !!g && GOAL_ENDED.includes(g.status)
 /** 目标原文版本：v1 是初版；改过一次后条子与终态卡都要说清当前读的是第几版 */
 const goalVersionLabelOf = g => {

@@ -1,0 +1,76 @@
+# 智能体评测与发布门禁 · 实施计划（P1 + P1.5 + 运行对比）
+
+## Context
+
+`design/mockups/agent-eval/agent-eval.html` 四场景效果图 + 已立项的 `design/plans/plan-agent-eval.md`（含拍板口径）。目标：把「改智能体靠感觉」变成「改完能回归、发布前有分数」——每个智能体一套评测集，跑真实问答流水线回归打分，列表看门禁状态，保存前弹门禁提示，两次运行对比看好坏。
+
+本次实施范围 = 效果图四场景全覆盖：**P1**（4 张表 + 套件/用例 CRUD + 会话采样 + 当前版本运行 + 结果详情 + 门禁状态）+ **P1.5**（保存前检查弹窗 + 站内通知 + 费用 kind）+ **运行对比**（本次 vs 任一历史成功运行，即效果图场景 03；不含 P2 的历史版本重测）。不做：历史版本 config override、工具期望评分、多轮评测、定时回归、评测集市场。
+
+## 勘察结论（关键复用点）
+
+| 能力 | 复用 | 位置 |
+|---|---|---|
+| 无头问答 | `createTempSession` + `CollectingSseEmitter` + `awaitDone` + `forgetSseChannel` + `deleteSession` | WorkflowEngine.java:1073-1127、ScheduledJobService.java:392-460 |
+| 只读评测 | `ChatCommand.source="eval"`（非 user → `interactiveTurn`=false → 需审批工具自动 DENY） | AgentscopeChatEngine.java:1847-1850 |
+| LLM 评判 | judgeAnswer 范式（temperature 0、严格 JSON、fail-loud） | RetrievalEvaluationService.java:987-1014 |
+| 引用召回 | 回答 sources 的 knowledgeId/docId ∩ 期望集合 | CollectingSseEmitter.donePayload() / c_ai_message.sources |
+| 版本 diff | `diffConfig`（VERSION_FIELDS 白名单逐字段） | AgentService.java:957-972 |
+| 费用 | 评判调用 `UsageAttr.hold(kind="eval")`（同步通道，runner 线程同线程调用成立）；作答调用照常走 chat 记账归用户 | UsageAttr.java |
+| 轮次标识 | `TurnLease` 加 `KIND_EVAL="eval"`，describe →「评测回归」 | TurnLease.java:22-40 |
+| 异步模式 | 专用有界池 + run 落表 + 3s 轮询（ScheduledJobService × EvaluationPage 混合） | — |
+| 采样 | c_ai_message（turn_id 连问答、sources 提期望引用）× c_ai_qa_feedback（rating=0 差评优先） | schema.sql:213-249, 277 |
+
+## 后端改动
+
+**1. `src/main/resources/schema.sql`** — 追加 4 表（tenant_id 开头、UUID 主键、注释横幅；**不进** GLOBAL_TABLES）：
+- `c_ai_agent_eval_suite`（uk agent_id，一期一智能体一套件；threshold_rate 默认 80、pass_score 默认 60）
+- `c_ai_agent_eval_case`（question、expected_knowledge_ids/doc_ids JSON、note/tags、source: manual/session/import、enabled）
+- `c_ai_agent_eval_run`（agent_version=运行时 versionCount 快照、trigger、status running/succeeded/failed/cancelled、total/passed/pass_rate/avg_score、avg_latency_ms/total_tokens、judge_model/answer_model、threshold_rate/pass_score 快照、error、started_at/finished_at、created_by）
+- `c_ai_agent_eval_result`（run_id/case_id、question/answer 截断 ≤8000、sources/tool_calls 截断、recall/faithfulness/relevance/score/passed、failure_reason、latency_ms/tokens）
+
+**2. 新文件**（单模块，包根 com.wenqu.ai）：
+- `model/` ×4 实体 + `mapper/` ×4 BaseMapper
+- `service/AgentEvalService.java`：套件/用例 CRUD、启动运行（每智能体 1 个 + 全局并发 2 闸门、maxCases 上限）、采样生成、门禁状态推导、对比聚合、设基线、取消、重启残留清理（ApplicationRunner：running→failed「服务重启，运行中断」）
+- `service/AgentEvalRunner.java`：专用 2 线程池；逐题 createTempSession→chat(source=eval, sourceName=智能体名)→awaitDone(单题超时)→forgetSseChannel→算引用召回→评判打分→写 result→finally 删临时会话；取消标记逐题检查 + ChatRunRuntime.stopTurn；完成发站内通知
+- `service/AgentEvalScorer.java`：召回计算、评判 prompt（问题+回答+引用片段，输出 {faithfulness, relevance, reason}，JSON fail-loud）、综合分 40/30/30（无期望引用 0/50/50）、通过判定（score≥pass_score 且有期望引用时命中≥1）、评判失败记 null 不判整次失败、failure_reason 人话化
+- `controller/AgentEvalController.java`：前缀 `/api/ai/agent-eval`，ResultJson + `@Permission("agentEval:read"/"agentEval:write")` + RequestUser.uid()，归属校验照 ScheduledJobController 口径（管理员按 AgentController.readable/canManage 同口径放行）。端点：GET /summary、GET/POST /agents/{agentId}/suite、POST /agents/{agentId}/cases（增删改批量）、POST /agents/{agentId}/cases/generate、POST /agents/{agentId}/runs、GET /agents/{agentId}/runs、GET /runs/{runId}、POST /runs/{runId}/cancel、POST /runs/{runId}/set-baseline、GET /agents/{agentId}/compare?runA=&runB=、GET/POST /agents/{agentId}/gate（POST 带表单 payload 供保存前 diff）
+
+**3. 既有文件小改**：
+- `service/AgentService.java`：暴露 `diffForGate(agentId, payloadMap)`（snapshot(a) 与 payload 合并后走既有 diffConfig，public 包装）；run 需要 `versionCount` 已 public
+- `service/TurnLease.java`：KIND_EVAL 常量 + describe 分支
+- `agent/chat/ChatCommand.java`：source javadoc 补 eval 值
+- `service/UsageStatsService.java`：kindLabel 加 `"eval" -> "评测"`
+- `model/Notification.java`：`TYPE_AGENTEVAL_DONE = "agentEval.done"`
+- `config/SecurityConfig.java`：isPublicUserEndpoint 加 `/api/ai/agent-eval` 前缀（照 /scheduled L233 惯例 + 注释说明归属校验在 Controller）；isKeyDeniedEndpoint 加 agent-eval（Key 不开放评测，防 Key 烧额度）
+- `startup/RbacSeedRunner.java`：BUILTIN_TAB_MENUS 加 `menu-agents-tab-eval`（"评测"、/agents?tab=eval、排序 70）；USER_MENUS 加同 id（按项补齐自动绑 user 角色）
+- `startup/ApiEndpointScanner.java`：MODULE_ZH 加 AgentEval→「智能体评测」；PERMISSION_ZH 加 agentEval:read/write；DEFAULT_MENUS 加 AgentEval→menu-agents-tab-eval
+- `service/ConfigService.java` defaults() + `config-schema.json`（panel maintenance / section 1 / group agentEval，带 tips 键）：8 个键 agentEval.enabled=true、gateMode=hint、thresholdRate=80、maxCases=30、concurrency=2、perCaseTimeoutMs=180000、runTimeoutMs=900000、judgeModel=空（空则回落 eval.judgeModel）
+
+## 前端改动
+
+- `web/src/api.js`：12 个封装（summary/suite/cases/generate/runs start+list/run detail/cancel/set-baseline/compare/gate GET+POST）
+- `web/src/views/AgentsHubPage.vue`：TAB_COMPONENTS 加 `eval: AgentEvalPage`
+- **`web/src/views/AgentEvalPage.vue`（新，主体）**：总览态（4 统计卡、质量概况条：门禁分布+近 6 周通过率 SVG+摘要、智能体门禁表格〔运行中行内进度+取消〕、底部最近回归/需要处理两卡、口径脚注）⇄ 详情态（route query `agent` 还原；概览 5 卡、近 6 次趋势 SVG、页内 Tab 本次结果/历史运行/评测集；结果表失败行展开失败原因/期望引用 vs 实际引用/评判摘要；评测集 Tab 含用例编辑+采样+门槛设置；运行确认弹窗〔条数/预计调用/费用〕；running 时 3s 轮询）。样式照 AuditLogPage 紧凑 a-table + app.css token
+- `web/src/components/agent/EvalCompareModal.vue`（新）：A/B 运行选择器、4 指标对照、逐题变化表（变好/变差/仅 B 失败筛选）、「把 A 设为基线」
+- `web/src/components/agent/EvalGateModal.vue`（新）：变更摘要列表 + 门禁状态 + 三按钮（取消/仍然保存/保存并运行回归）；block 模式下降级为禁止保存提示
+- `web/src/views/AgentsPage.vue`：编辑页头「历史版本」旁加「评测」按钮（跳 /agents?tab=eval&agent=id）；`save()` 在 payload 组装后（L1933）、saving 置位前插门禁钩子：POST gate-check → 无套件/无变更静默直存（**存量行为零变化**）；有变更未评测或低于门槛 → 弹 EvalGateModal；「保存并运行回归」= 先保存成功再 startRun 并跳详情
+- `web/src/chat/useNotifications.js`：agentEval.done 类型映射（若未知类型已优雅降级则不加）
+
+## RBAC 落点（G16 雷区，5 处已列全）
+
+@Permission 注解 → ApiEndpointScanner 自动登记 → SecurityConfig 白名单 → RbacUserRoleSeeder 对新库自动推导 user 角色授权点。**存量库**（user 角色已有授权行、seeder 整租户跳过）需在权限页为普通角色勾选 agentEval:read/write 一次——管理员不受影响，写入完工报告与账本。
+
+## 验证（第三道闸）
+
+1. `mvn -DskipTests compile`（IDEA 内置 maven 路径）→ 8091 jar + 临时 vite（VITE_PROXY_TARGET）自验栈，自签 JWT 直登；8090 IDEA 进程勿杀
+2. eval.judgeModel 配置测试通道模型（千问 token-plan 供应商，勿烧 deepseek/方舟 key）；空配置时验证「仅按引用命中计分」降级路径
+3. 按 plan §9 走查：建套件→采样→跑回归→结果/通过率；改提示词保存→「有变更未评测」→重跑恢复；hint 三按钮 + block 拒存；取消运行（cancelled、已完成保留、临时会话清零）；同智能体二次启动被拒；跨用户 404；重启残留 running→failed
+4. 回归面：智能体保存默认行为不变（无套件直存）、/evaluation 检索评估不受影响、用量统计出现「评测」、会话列表无 temp 泄漏
+5. iab 真机走查四场景（防过期合成帧，以 DOM 为准）
+
+## 提交与留痕
+
+- 产物提交：docs/agent-eval/（html+4png）+ .zcode/plans/plan-agent-eval.md（按 2026-11-07 留痕指令，只 add 产物路径）
+- 代码分批提交：后端 / 前端 / 文档账本，中文 conventional commit；提交后 `git show --stat` 核对防卷入并行 WIP
+- 账本回写：roadmap.md 活跃线加「智能体评测与发布门禁」条目 + 核销 Q4 §10「智能体评估集」遗留；plan-agent-eval.md 补实施记录（commit hash）
+- 收尾清理：验证用临时评测数据、临时会话、临时用户连 implicit 行一起清

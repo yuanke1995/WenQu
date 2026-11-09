@@ -1,6 +1,6 @@
 ---
 name: wenqu-dev
-description: 问渠三仓（wenqu / dynamic-form / dynamic-form-vue）开发规范——防回归三道闸、已知雷区清单、环境与验证栈速查、提交纪律、用户可见文案规范、路线图账本。凡在这三仓做任何开发（新功能、修 bug、重构、调样式）或问「某功能现状 / 接下来做什么」，动手前先走本技能：查影响面、查雷区、查账本，完工后回写。核心目标：做新功能不改烂已有功能。
+description: 问渠三仓（wenqu / dynamic-form / dynamic-form-vue）开发规范——防回归三道闸、已知雷区清单、环境与验证栈速查、提交纪律、用户可见文案规范、AI 生成文件落点、路线图账本。凡在这三仓做任何开发（新功能、修 bug、重构、调样式）、生成任何文件（效果图、方案、截图、脚本）或问「某功能现状 / 接下来做什么」，动手前先走本技能：查影响面、查雷区、查账本、定落点，完工后回写。核心目标：做新功能不改烂已有功能，产物不散落。
 ---
 
 # 问渠开发规范
@@ -21,7 +21,7 @@ description: 问渠三仓（wenqu / dynamic-form / dynamic-form-vue）开发规�
    - **例外（必须保留）**：仍在生效的契约（未下线客户端/外部调用方）、安全默认（NULL=关闭/拒绝）、审计链与数据完整性校验、业务 NULL 语义（如 NULL=开/继承）。
    - **删除任何兼容分支前，先查线上/本地存量数据是否仍触发**（表计数/哈希复算），不能只凭注释判断；确需保留的，注释写清触发条件与数据依据，并回写账本。
 4. **有没有人在做同一块？** 查 [references/roadmap.md](references/roadmap.md) 活跃线。并行会话很多，撞车先查——2026-10-06 一次审计里四节路线图已被并行会话做掉。
-5. **改造先出稿，确认再做**：涉及界面（UI/UX）改造且改动较大时，先出效果图；功能改造先出方案。效果图/方案经用户确认后才开始改代码，未确认前不动实现。
+5. **改造先出稿，确认再做**：涉及界面（UI/UX）改造且改动较大时，先出效果图；功能改造先出方案。效果图/方案经用户确认后才开始改代码，未确认前不动实现。产出一律落 `design/`（见「AI 生成文件落点」），不散落在根目录或临时目录。
 
 涉及具体技术域（建表/mapper、antdv 组件、设计器撤销、iframe、验证方法）时，先读 [references/hazards.md](references/hazards.md) 对应节——全部条目来自真实回归史，命中就把对应回归加进完工清单。
 
@@ -38,6 +38,7 @@ description: 问渠三仓（wenqu / dynamic-form / dynamic-form-vue）开发规�
 2. 集成边界（前后端契约、模型输出、文件解析）必须用真实数据验；单测全绿不代表真机不炸。
 3. 验证验的是**提交态**（git worktree / 干净 HEAD），不是混着并行 WIP 的工作区。
 4. iab 真机验收的坑（过期合成帧、rAF 饿死、teleport 定位器失灵）见 hazards.md「假绿」节。
+5. 自检文件落点：`git status --short` 里根目录无新条目，`??` 只出现在 `design/`（见「AI 生成文件落点」）。
 
 ## 环境速查
 
@@ -60,7 +61,7 @@ description: 问渠三仓（wenqu / dynamic-form / dynamic-form-vue）开发规�
 - 用户要求时才提交；直接 master；中文 conventional commit（`类型(范围): 描述`，细则见 CONTRIBUTING.md）。
 - **并行会话共用暂存区**：`git add` 会把别人未提交的 hunk 卷进来（真实发生过）。只提自己的 hunk 用 `git hash-object -w <file>` + `git update-index --cacheinfo`；整文件属于自己才整文件 add。
 - 提交后 **`git show --stat` 核对文件清单**——发现卷入，`git reset HEAD~1 -- <path>` + `--amend` 剥离。
-- 不入库：`src/test/`（约定）、`dumps/`、`docs/`、`.zcode/`（skills 例外，随仓走）。
+- 不入库：`src/test/java/**/manual/`、`dumps/`、可再生产物（`.trae/documents/`、`.trae-html-share-packages/`、`.playwright-mcp/`、`.screenshots/`、`preview/`、`.mockup/`）、`.zcode/`（skills 例外，随仓走）。`design/` 相反，随仓入库。
 
 ## 用户可见文案规范
 
@@ -93,13 +94,40 @@ description: 问渠三仓（wenqu / dynamic-form / dynamic-form-vue）开发规�
 - **平台侧服务不写「本地/自建/localhost」**：统一「平台内置XX服务」；「本地」仅限开发注释与部署方文档。
 - **提交前自检**：搜 `fail-loud|provisioner|embedding|topK|GraphRAG|DSL|cron|webhook|LLM`（前端 + `config-schema.json` + `BizException`），再搜单段 20 字以上可见长句；命中逐条判断是「约束」还是「旁注」。
 
+## AI 生成文件落点（强制）
+
+**生成任何文件前先定落点，再动手**：落点不在下表就先在本节登记，不许随手建目录或丢在根目录。
+
+| 生成物 | 落点 | 入库 |
+|---|---|---|
+| 效果图 HTML 原型 | `design/mockups/<线名>/<线名>.html` | 是 |
+| 效果图截图 / 资产 | `design/mockups/<线名>/assets/` | 是 |
+| 方案 / 实施计划 / 评审清单 / 效果图说明 | `design/plans/plan-<线名>.md` | 是 |
+| 一次性验证脚本、抓包、日志、临时导出 | 系统临时目录（`mktemp -d`），结束即删 | 否 |
+| 长期可复用脚本 | `scripts/`（按既有子目录分类） | 是 |
+| 测试夹具 / 回放样本 | `fixtures/` | 是 |
+| 运行时数据、日志、构建产物、私有配置 | 工具默认位置（`data/`、`data.ms/`、`logs/`、`target/`、`user-data/`、`config/application-local.yml`），不手动创建 | 否 |
+
+硬规则：
+
+1. **根目录不新增条目**：根下只允许已登记的代码/配置/部署目录（`src/`、`web/`、`config/`、`deploy/`、`scripts/`、`fixtures/`、`design/` 等）和标准运行时目录；新目录一律先登记再建。
+2. **成品与中间物分开**：`design/` 只放成品稿；调试截图、中间渲染、临时导出不进 `design/`。
+3. **一次性产物用完即删**，不留下「等以后清理」的垃圾。
+4. **生成后自检**：跑 `git status --short`，根目录不得出现新条目，`??` 只允许出现在 `design/` 内；命中就按上表挪走或删除。
+5. **命名对齐线名**：同一功能的方案、效果图、账本条目共用路线图「活跃线」的线名（kebab-case），一眼能对上。
+
+- 单文件原型可直接 `design/mockups/<线名>.html`；带 assets 的用子目录。
+- 新立项：方案与效果图分别落上面两处，账本「活跃线」指向这两个路径。
+- 迁移旧稿时同步修正引用路径（账本、代码注释里的 `docs/...`、`.zcode/plans/...`）。
+- 根目录冒出陌生目录：先查归属；可再生就删并加进 `.gitignore` 的「工具生成的临时产物」块，有留档价值就并入 `design/`，并同步更新本节。
+
 ## 路线图账本
 
 [references/roadmap.md](references/roadmap.md) 是开发路线的单一事实源（它存在的原因：路线图曾两度随 gitignored 目录散失、排期状态不明）：
 
 - **开工前**查「活跃线」：撞车检查 + 上下文（这条线为什么做、做到哪、有没有待拍板阻塞）。
 - **完工时**回写：条目补 commit hash + 日期；「待拍板」区落定一项转正一项。
-- **新立项**：计划文档放 `.zcode/plans/`（现有惯例），账本「活跃线」加一行指向它。
+- **新立项**：方案放 `design/plans/plan-<线名>.md`、效果图放 `design/mockups/<线名>/`（见上节），账本「活跃线」加一行指向它们。
 - 状态变化随手回写，不攒批。
 
 ## 与 CONTRIBUTING / 会话记忆的关系

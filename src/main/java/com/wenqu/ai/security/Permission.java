@@ -7,7 +7,7 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- * 端点的授权点归属声明（RBAC 升级方案批次 A，见 docs/rbac-upgrade-plan.md §2 / 附录 A）。
+ * 端点的授权点归属声明（RBAC 升级方案批次 A，见 design/plans/rbac-upgrade-plan.md §2 / 附录 A）。
  * <p>
  * 授权判定从「角色 → HTTP 端点」升级为「角色 → 授权点 → 端点」：角色绑定的是业务语义
  * （{@code kb:read} / {@code document:delete}），端点经本注解归属到唯一授权点。

@@ -1,0 +1,271 @@
+# 问渠 P0 必补收敛方案（六项）
+
+- 日期：2026-11-08
+- 状态：方案待拍板（§7 五项）；不等拍板部分见 §8 的 B0 批次
+- 范围：审计表中六项 P0；P1 五项见 `plan-p1-gaps.md`，多租户资源侧见 `plan-tenancy-real.md`
+- 原则：能执行的不写成方案；有取舍的才写成拍板点。执行类条目只给清单与验收口径
+
+## 0 总览
+
+| # | 审计条目 | 真缺口 | 要新设计？ | 前置 |
+|---|---|---|---|---|
+| 1 | 工作区五栏没落地 | 曾落地、后被主动退役；README/手册/账本仍在宣传五栏 | **要拍板**（恢复或校正口径） | 无 |
+| 2 | 多租户「刀一」P0 面 | 必 403 控件、无当前租户指示、游客行落 default | 已有方案，直接执行 | 无 |
+| 3 | bug 移交池 13 项 | 逐项根因未清 | 不要，转任务清单 | 无 |
+| 4 | 分享安全 P3/P4 | 游客轮次无费用上限；注入面未做全链清点 | **要小方案 + 拍板** | 拍板 2/5 |
+| 5 | 检索低分绝对门 | 绝对门误杀隐性问答；四处分域门重复实现 | **要机制方案 + 拍板** | 拍板 3 |
+| 6 | 测试地基 | CI 实际跑 0 测试；`src/test` 被整体 ignore | **要分期方案 + 拍板** | 拍板 4 |
+
+建议顺序：**B0 多租户刀一 + bug 池 → 分享安全 → 检索门 → 测试地基 → 工作区（按拍板结果）**。
+分享安全放前面是因为对外分享已上线，费用面是唯一还会持续产生真实成本的敞口。
+
+---
+
+## 1 工作区五栏：不是「没做」，是「做完又退役」
+
+### 1.1 事实链（先纠偏，避免按错误前提重做）
+
+- 2026-10-24 五栏确实落地过：`ae160f20` 做「工作区事项清单——记下→去聊→勾掉」；`12d8d433` 把「运行」升级为「动态」时间线并加会话最后一句；`20bf516a` 做「模板复制 +『接下来』建议条」（即 C2/C3/D）。
+- 2026-11-05 `a38a1568` 主动收敛：删除工作区约定、默认助手、绑定知识库、事项（`ProjectTodo`/`ProjectTodoService`）、约定留痕（`ProjectNoteLog`）、运行记录/工作流列表，工作区页改为「页头 + 左预览 + 右目录/记忆」。提交说明写明「工作区不再承担小而全的项目管理台」。
+- 当前代码即收敛后形态：`web/src/views/ProjectPage.vue:78-128` 预览、`:130-219` 目录/文件、`:221-239` 工作区记忆；无任何 Tab。
+- 但宣传口径没跟着改：`README.md:25`、`src/main/resources/manual/01-产品简介.md:25` 仍写「会话与自动化归集、动态时间线、事项清单、资料域绑定」；`.zcode/skills/wenqu-dev/references/roadmap.md:23` 仍把 C2/C3/D 列为工作区完整版的剩余项。
+
+**结论：这条 P0 的一半是文档/账本失真，另一半是「收敛后是否还要推进器」未拍板。** 直接按 README 恢复旧五栏等于推翻 11-05 的用户拍板，风险高于收益。
+
+### 1.2 两条路线
+
+| 路线 | 内容 | 代价 | 风险 |
+|---|---|---|---|
+| A 恢复五栏 | 重新加回 文件/会话/自动化/动态/事项 五栏，并把 C3/D 一起补 | 大；要恢复已删表与接口 | 与 `a38a1568` 的收敛意图冲突；旧「约定/默认助手/绑定知识库」已删，恢复不完整会二次失真 |
+| B 校正口径 + 轻量推进器（推荐） | README/手册/账本改成「目录 + 记忆」；会话/自动化归集仍由侧栏承担（`AppLayout.vue:225-245` 已有工作区分区）；C2/C3/D 重新立项为「工作区推进器」，不回到旧 Tab 大杂烩 | 小到中 | 需要产品确认「事项/模板」是否还要 |
+
+若选 B，**不建议恢复**：约定、默认助手、绑定知识库、文件写侧（上传/新建/移动/打包）、运行记录列——这些随 `a38a1568` 退役且理由成立。只重新设计「事项 + 进入即推进 + 模板」三件。
+
+### 1.3 若拍板选「恢复/重立 C2/C3/D」的最小设计
+
+**C2 事项清单**
+
+- 新表 `c_ai_project_item`（`tenant_id`、`project_id`、`id`、`title`、`note`、`status` open/doing/done、`session_id` 可空、`sort`、`created_by`、`create_time`、`update_time`；索引 `(tenant_id, project_id, status)`）。表含 `tenant_id` 走行级过滤，**不进** `GLOBAL_TABLES`。
+- 端点：`GET/POST /api/ai/project/{id}/items`、`PUT/DELETE /api/ai/project/{id}/items/{itemId}`；权限沿用工作区归属校验（不是权限边界）。
+- 前端：工作区右栏在「目录」「记忆」下新增「事项」卡（不恢复顶部五 Tab）；空态一行「记下这个工作区要做的事」。
+- 「去聊」：`ChatPage.vue:4630` 已有 `ask` 参数消费逻辑（退役遗留仍在），事项行点击带 `?sid=...&ask=事项标题` 进聊天，落输入框不自动发。
+
+**C3 进入即推进**
+
+- 规则而非新功能：进入工作区时若存在 `status!=done` 的事项，事项卡置顶并给「继续」；点击 = 打开最近关联会话（`session_id`）或新会话带 `ask`。
+- 不做自动改状态：状态只由用户勾选/对话内明确确认后变更，避免「编造进度」。验收口径与既有计划/目标模式的进度展示同源：**无真实数据不展示进度**。
+
+**D 模板**
+
+- 形态：新建工作区时 `fromProjectId` 复制「事项清单 + `MEMORY.md` 骨架 + 目录别名配置（不复制文件、不复制会话）」，与 `20bf516a` 的旧口径一致。
+- 不复制：约定、默认助手、绑定知识库、权限档位（已退役或不该继承）。
+
+### 1.4 验收
+
+- 路线 A/B 均要求：README、手册 01、手册 04、`roadmap.md` 四处口径一致，不再出现「宣传有、页面无」。
+- 若做 C2/C3/D：事项增删改查与勾选真机过；「去聊」不自动发送；进入工作区有未完成事项时置顶；模板创建不带文件/会话；刷新后事项不丢；单租户与多租户都过。
+
+---
+
+## 2 多租户「刀一」P0 面（执行，不再设计）
+
+直接按 `plan-tenancy-real.md` §2.1/§2.2 + `plan-p1-gaps.md` §1.2 执行。要点：
+
+- `TenantsPage.vue:41`「落点清单」按钮按 superadmin 身份显隐（后端 `TenantController.java:184-187` 本就 requirePlatform）。
+- `MembersPage.vue:51,264-271,316-321` 租户管理弹窗对租户管理员隐藏必 403 控件；租户列/归属下拉判据从「拉到租户数>1」改为身份判据（`MembersPage.vue:84-88,232-235`）。
+- 全站「当前租户」pill：`/auth/me` 已在 `ChatController.java:150-153` 下发 `tenant/tenantName`，`auth.js:55-63` 需缓存并消费；仅 `tenant!='default'` 或平台 superadmin 显示；superadmin 额外标「平台」。
+- 审计页接 `tenant=` 跨租户下拉，仅 superadmin 渲染（`AuditController.java:139-146` 已支持）。
+- 游客归属求真：`AgentShareService.resolveGuest` 与 `SessionShareService.resolvePublic` 拿到发布者后 `TenantContext.as(发布者租户)` 包住建会话/落消息/qa_log/台账段（`plan-tenancy-real.md` §2.2；`UsageLedgerService.java:92-96` 目前未绑定线程落 default）。
+
+**验收**：租户管理员走遍管理页零「看得见、点了炸」；平台管理员只多一个 pill；游客产生的会话/消息/台账 `tenant_id` = 发布者租户；单租户部署零变化；存量行不动。
+
+---
+
+## 3 bug 移交池 13 项（执行，不写方案）
+
+处理规则：
+
+- 逐项先写「复现步骤 + 期望 vs 实际」，再定根因，不做「先改再猜」。
+- 顺序：资金/数据正确性 → 挂死/超时 → 交互互斥 → 展示误标。
+- 代表项与验收口径：
+  - 0-token 误标：本轮有真实模型调用时台账必须有 token 或 `estimated=1`，不得 0 且无标记。
+  - 编辑重发互斥：并发双请求只允许一轮进入执行，另一轮明确拒绝或幂等返回。
+  - 审批超时绕 `finish`：超时路径必须走收尾（状态落终态、不留挂起行），重启不复活。
+- 每项修完回写 `roadmap.md` 的「bug 移交池」行（带 commit hash + 日期）。
+
+**验收**：13 项逐条关闭或明确降级为「不修 + 理由」；关闭项有复现用例（本地测试或脚本），不靠肉眼。
+
+---
+
+## 4 分享安全 P3/P4
+
+### 4.1 现状（代码事实）
+
+- 游客对话按**发布者身份**跑：`ShareController.java:321-328` 的 `userId=owner.getUid()`，`guestUid=visitorUid` 只影响工具面（`AgentscopeChatEngine.java:1342-1356`）。
+- 配额闸只在模型出口按 `uid` 判：`MeteredModel.java:121`、`DynamicOpenAiChatModel.java:89,173`；游客轮次消耗的是**发布者**配额，没有分享级上限。
+- 限流只有 IP 分钟桶：`ShareController.java:269`（chat 桶 10/分钟）与 `RateLimitService.java:173-184`（share-read 30/分钟）；`visitorId` 由客户端传入，可重置。
+- 台账租户落 default：`UsageLedgerService.java:92-96` 记账线程未绑租户即 default，游客行因此不进发布者租户结算。
+- 注入面已有基础：变量已进信封（`TurnPromptAssembler.java:183-198`）、工具输出统一信封（`SpringAiToolAdapter.java:177-193`、`AgentxNativeToolGuard.java:206-207`）、KB/网页/工作流知识节点均消毒（`KnowledgeRetrievalTool.java:278-299`、`WebSearchTools.java:267-284`、`WorkflowEngine.java:564-581`）。缺的是**游客可达通道的全链清点**与 fail-closed 策略，不是从零做防护。
+
+### 4.2 P3 费用面（设计）
+
+三层闸，全部 fail-closed：
+
+1. **分享级日预算**（发布者承担）：发布弹窗新增「游客每日上限」——次数与 token/费用二选一或都设；默认由平台配置 `share.guestDailyTurns` / `share.guestDailyTokens` 兜底，未配置也有默认值，不允许「无上限」。
+2. **访客级日预算**：Redis 计数键 `share:budget:{shareId}:day:{yyyyMMdd}:{visitorId}` 与 `...:ip:{ip}`，双向限次，防换 `visitorId` 刷。
+3. **归属与可见**：`UsageAttr` 增加 `shareId/visitorId`，由 `ChatCommand` 贯穿到模型出口；`c_ai_usage_log` 增两列（可空，存量零变化）+ `(share_id, create_time)` 索引；台账租户按 §2 的 `TenantContext.as(发布者租户)` 落戳。分享详情页显示「今日游客轮次/费用」，发布者能看见消耗。
+
+拒绝文案分层：超分享预算 → 「该分享今日游客额度已用完」；超发布者配额 → 沿用现有 429 文案（`UsageQuotaService.java:153-170`）。
+
+### 4.3 P4 注入面（设计）
+
+- **先清点再补洞**：列出游客可达的全部外部文本通道——KB 块、网页搜索、MCP 工具输出、自定义 HTTP 工具输出、工作流当工具输出、附件正文/OCR、图片描述、调用变量、宿主页数据字典。逐条确认已套 `UntrustedContent` 信封与 `DATA_RULE`，未套的补上；产出一张「通道 × 防护 × 证据」表并入方案附录。
+- **工具面 fail-closed**：游客轮次凡需要审批的工具一律自动拒绝（不弹卡给游客），工作流当工具默认不向游客暴露；`guestSafe` 标记按 `plan-p1-gaps.md` §5.2 的 B 档做静态扫描，不靠运行时猜。
+- **变量/数据字典**：已是信封，保持默认关（`AgentShare.java:72-77`）；发布者开启时页面明示「宿主页传入内容会进模型上下文」。
+- **验收**：构造「KB 块里写指令」「网页摘要里写指令」「HTTP 工具返回里写指令」「变量里写指令」四类注入样本，模型均按数据处理、不执行；游客审批工具直调 403；关闭变量时静默丢弃、开启超限 400。
+
+---
+
+## 5 检索低分绝对门
+
+### 5.1 现状
+
+- 绝对门 `retrieval.minContextScore=0.6`（重排分域）、`retrieval.minFusionScore=0.5`（融合分域）在四处重复实现：
+  - 检索工具 `KnowledgeRetrievalTool.java:234-251`
+  - 工作流检索节点 `WorkflowEngine.java:535-570,656-682`
+  - 联网搜索 `WebSearchTools.java:212-263`
+  - 子智能体咨询来源登记 `TurnSourceRegistry.java:171-205`
+- 2026-11-08 实证：问「引用的诗词是什么」，块内有引文无出处，重排只给 0.192，绝对门全杀；同块显式问法 0.999 过门。工作流检索节点因此 `count=0`。
+
+### 5.2 三种策略
+
+| 策略 | 规则 | 优点 | 问题 |
+|---|---|---|---|
+| A 纯相对门 | `gate = top1 × ratio`（如 0.5） | 不误杀低分域内的高分 | 无关块分数也可能彼此接近，噪声放大；0.192 top1 仍可能带进一批 |
+| B 保底 top-1（推荐） | 先按绝对门过滤；若全灭且有候选，**只保留 top-1**，并标记低置信 | 隐性问答不再空手；最多带进 1 条噪声 | 需在结果里显形「低置信」，不能静默 |
+| C 绝对门 OR 相对门 | 任一成立即保留 | 灵活 | 两套判据叠加，解释成本最高 |
+
+**推荐 B**：默认只保底 1 条，不按比例放开一批。配置：`retrieval.lowConfidencePolicy=off|top1`（默认 `top1`）、`retrieval.top1Floor`（默认 0.05，低于此分视为无相关内容）。重排不可用时不做保底（沿用融合门），避免把「重排坏了」演成「什么都搜到」。
+
+### 5.3 实现收口
+
+- 抽 `RetrievalGate`（纯函数）：输入 `List<Hit>`、重排是否生效、两档门值、策略；输出 `{kept, dropped, lowConfidence}`。
+- 四个调用点改为调用同一份；**禁止**再各写一遍过滤流。
+- 低置信必须在两处显形：工具返回文本前加一句「低置信度，仅 1 条，请谨慎引用」；`registrar.degrade("retrievalLowConfidenceTop1", ...)` 让前端可见降级。
+- 评估回放：`RetrievalEvaluationService.java:700-701` 已收集门参数，跑一次基线，确认 recall@k 不降、无关问题仍为 0 引用。
+
+### 5.4 验收
+
+- 事故查询（「引用的诗词是什么」）工具与工作流节点均返回 top-1 且带低置信标记。
+- 无关问题（如「今天天气」问知识库）仍不注册引用。
+- `lowConfidencePolicy=off` 行为与现在逐字节一致（可回滚）。
+- 四处调用点单测用同一组夹具，结果一致。
+
+---
+
+## 6 测试地基
+
+### 6.1 事实
+
+- `.gitignore:60-63` 整体忽略 `/src/test/`，注释写明「测试代码只留本地，不上远端仓库」；`git ls-files src/test` = 0。
+- 本地仅 5 个测试类：`ExecutionPolicyInheritanceTest`、`ResourceVisibilityScopeTest`、`RoleServicePermissionTest`、`ModelOutputParserTest`、`AgentxRepeatGuardTest`。
+- CI `ci.yml:20-21` 跑 `mvn -B verify`，但仓库里没有测试源码 → **CI 实际执行 0 个测试**；前端 `web/package.json` 无 test 脚本，CI 只 `vite build`。
+
+### 6.2 分期
+
+| 期 | 内容 | 产出 |
+|---|---|---|
+| T1 | 改约定：取消 `src/test` 整体忽略，改为只忽略手工/集成目录；先把 5 个已有测试入库；CI 保持 `mvn verify`（有测试即执行） | 仓库有测试、CI 真跑 |
+| T2 | 纯单元判定核：租户过滤/配额作用域、RBAC 并集与 deny 优先、`RetrievalGate`、`UntrustedContent`、计划/待办解析、分享访客 uid 推导 | 首批高风险判定核有回归网 |
+| T3 | 契约层（MockMvc）：游客 `/share/{token}/chat`（mock 引擎）、配额 429、RBAC 403、租户头/身份边界 | 接口行为不靠人工点 |
+| T4 | 前端纯模块测试：`web/src/chat/plan.js`、`projections.js`、`blocks.js` 等纯函数；不上组件 E2E | 前端投影不回归 |
+
+约束与坑：
+
+- 不引入 H2：`schema.sql` 是 MySQL 方言，H2 跑不通；DB 相关先 Mockito，必要时 Testcontainers（T4 以后再评估）。
+- 测试不依赖真实模型 key、不写真实库；外部调用一律 mock。
+- 每个测试类只测一个判定核，命名写清「行为 + 条件」，不测私有实现细节。
+
+### 6.3 验收
+
+- T1 后：`git ls-files src/test` ≥ 5，CI 日志可见测试数 > 0。
+- T2 后：`RetrievalGate`、租户/配额、RBAC、`UntrustedContent` 四组各 ≥ 5 个用例，失败即红灯。
+- T3 后：游客链路与配额闸有接口级测试，改公共过滤/拦截器时能拦住「改烂旧功能」。
+- 明确：CI 红灯必须阻断合并（不设 `continue-on-error`）。
+
+---
+
+## 7 拍板点（按影响排序）
+
+| # | 拍板点 | 选项 | 推荐 | 影响 |
+|---|---|---|---|---|
+| 1 | 工作区五栏 | A 恢复五栏 / B 校正文档 + 轻量推进器 | **B** | 决定是否推翻 `a38a1568` 的收敛 |
+| 2 | 游客费用谁承担 | 发布者承担 / 平台承担 / 按租户配额 | **发布者承担 + 平台默认上限兜底** | 决定 P3 预算归属与分享页文案 |
+| 3 | 检索保底策略 | 保底 top-1 / 纯相对门 / 不保底 | **保底 top-1** | 决定隐性问答能否召回，及噪声上限 |
+| 4 | 测试代码入库 | 取消整体 ignore / 继续不入库 | **取消整体 ignore（白名单子集）** | 推翻既有工程约定，需明确 |
+| 5 | 游客产生行的租户 | 发布者租户 / default | **发布者租户** | 决定按租户结算是否可信 |
+
+---
+
+## 8 批次
+
+| 批次 | 内容 | 前置 |
+|---|---|---|
+| B0（可立即开工） | 多租户刀一（§2）+ bug 池（§3） | 无 |
+| B1 | 分享安全 P3/P4（§4） | 拍板 2、5 |
+| B2 | 检索门（§5） | 拍板 3 |
+| B3 | 测试地基 T1→T2（§6） | 拍板 4 |
+| B4 | 工作区（§1，按拍板 1 结果） | 拍板 1 |
+| B5 | 测试地基 T3→T4 | B3 |
+
+每批完工按 `roadmap.md` 维护规则回写：状态、commit hash、日期、验收证据；文档口径（README/手册/账本）与代码同批改，杜绝再次「宣传有、页面无」。
+
+---
+
+## 9 落地记录（2026-11-08）
+
+已落地并通过验证：
+
+- §1 路线 B：`README.md`、`manual/01-产品简介.md`、`manual/04-工作区.md` 已改为真实口径（目录 + 事项 + 记忆 + 侧栏归集），删掉「五栏」与已退役的约定/默认助手/绑定知识库宣传。C2/C3/D 已按 §1.3 轻量重立：新表 `c_ai_project_item` + 事项增删改查 + 「去聊」预填/会话关联 + 模板复制（事项回 open、记忆骨架、目录别名，不带文件/会话）；约定/默认助手/绑定知识库/文件写侧仍保持退役。**运行时证据**：本地 8091 起后端（SchemaMigrator 报 81 张表），管理员令牌对 `POST/GET/PUT/DELETE /api/ai/project/{id}/items` 冒烟全过（建→列→勾 done→删）；模板复制冒烟：源工作区（1 目录 + 1 事项）→ 只传 `fromProjectId` 建副本 → 目录别名与事项（status=open）均复制；删工作区后事项行清零（删除清理已补）；`c_ai_project_item` 表与索引在开发库确认存在。
+- §2 多租户刀一：前端三处必 403 控件按 superadmin 收口 + 当前租户 pill；游客会话/消息/台账按发布者租户落行（`ShareController.inOwnerTenant`），台账线程无身份时按归属 uid 反查租户（`TenantContext.resolveFor`）。验证：`mvn clean test` 全绿、`npm run build` 通过。
+- §4 P3 费用面：新增 `ShareBudgetService`（分享级/访客级日轮次 + 分享级日 token，Redis 跨副本，Redis 故障 fail-closed）；`UsageAttr`/`ChatCommand` 贯穿 `shareId`，台账每笔模型调用累加 token。P4：逐通道复核见 §10，并补上「文档附件正文未套信封」这一真实缺口。
+- §5 检索门：新增 `RetrievalGate`（分域门 + 低分全灭保底 top-1 + 低置信显形），四处调用点收口；新增 `RetrievalGateTest` 6 例。
+- §6 T1/T2/T3 起步/T4：`.gitignore` 改为白名单（`src/test/java/**/manual/` 仍忽略）；5 个存量测试入库并修好过期构造；新增 `UsageLedgerTenantTest`、`ProjectItemServiceTest`、`ProjectItemControllerTest`（standalone MockMvc 契约层）、`ShareBudgetServiceTest`（额度/失败关闭）；前端新增 `web/test/plan.test.mjs`（Node 内置 test，零新依赖）并接入 CI `npm test`。验证：`mvn test`、`npm test`、`npm run build` 均通过。
+
+未完成 / 待办：
+
+- §3 bug 池已按用户口径关闭：11-04 原始 13 项清单找不到，不再追；三个代表项如后续再现再立单。
+- §5 评估回放已跑（硅基流动 BAAI/bge-reranker-v2-m3，25 条评估集）：
+  - `top1` 保底：recall@5 **0.722** / recall@10 **0.875** / recall@20 **0.889** / MRR **0.722** / hitRate **1.0**
+  - `off` 严格绝对门：同一组指标完全相同（0.722 / 0.875 / 0.889 / 0.722 / 1.0）
+  - 结论：top-1 保底在本评估集上不改 recall/MRR，只在该集未触发的「全灭」场景兜底；A/B 后配置已还原为 `top1`。
+  - 注意：2026-09 的历史基线（24 条、recall 1.0）对应另一版评估集，不可直接与本期 25 条横比；本期即为新基线。
+- T3 契约层目前覆盖工作区事项；分享游客链路、配额 429、RBAC 403 的 MockMvc 契约仍在后续批次。
+- 工作区事项/模板已落地，但「进入即推进」目前是「事项卡置顶 + 去聊预填」，没有做自动状态推断（按方案刻意不做）；如需更强的推进建议条，另起 UX。
+
+## 10 P4 注入面通道复核（2026-11-08）
+
+游客可达的外部文本通道与防护证据：
+
+| 通道 | 是否游客可达 | 防护 | 证据 |
+|---|---|---|---|
+| 知识库块 | 是（guestMode 知识检索） | `DATA_RULE` + 逐块 `envelope` + `sanitize` | `KnowledgeRetrievalTool.java:278-299` |
+| 工作流知识节点 | 是（guestSafe 工作流） | 同上 | `WorkflowEngine.java:564-581` |
+| 联网搜索摘要 | 是（游客工具白名单含检索） | `DATA_RULE` + 标题/站点/摘要消毒 + 信封 | `WebSearchTools.java:267-296` |
+| MCP 工具输出 | 是（发布者勾选 guest MCP） | 统一 `toolResult` 信封 | `SpringAiToolAdapter.java:177-193` |
+| 本机文件/命令输出 | 否（游客不挂沙盒/本机执行器） | `toolResult` 信封（防御纵深） | `AgentxNativeToolGuard.java:206-207` |
+| 调用变量 | 是（发布者显式开启） | 整个键值块 `envelope`，默认 fail-closed | `TurnPromptAssembler.java:176-198`；`AgentShare.java:72-77` |
+| 文档附件正文 | 是（发布者开启 guestFiles） | **本次补上**：`envelope("附件正文")` | `TurnPromptAssembler.java:147-155` |
+| @ 文档 / 历史引用 | @文档否（游客不带） | `envelope` / 原文；游客入口不传 | `TurnPromptAssembler.java:157-173` |
+| 记忆 MEMORY.md | 否（游客轮记忆闸关） | `toolResult` 信封 | `AgentscopeChatEngine.java:2985-3002` |
+| OpenAI 兼容 systemBrief | 否（需 API Key） | `toolResult` 信封 | `OpenAiCompatController.java:137` |
+| 需审批的工具 | 否 | 游客轮不挂（不静默等超时） | `ToolMountContext.java:185-188` |
+
+结论：本次复核发现并补上「文档附件正文未套信封」这一个真实缺口；其余通道已有防护。
+
+## 11 与既有方案的关系
+
+- `plan-p1-gaps.md`：P1 五项继续按原方案走；其 §5「工作流游客放行」等本方案 §4 拍板后再动。
+- `plan-tenancy-real.md`：§2.1/§2.2 被本方案 §2 直接引用执行；§2.3 供应商口径仍单列待拍板。
+- `plan-mcp-panel-upgrade.md`、`plan-agent-eval.md` 等不受影响。
+- 工作区历史提交 `ae160f20`/`12d8d433`/`20bf516a`/`a38a1568` 是本方案 §1 的唯一事实依据；若选路线 A，恢复设计以这些提交为底稿，但**不恢复已被证明是负担的约定/默认助手/绑定知识库/文件写侧**。
