@@ -280,7 +280,7 @@ const modelSwitchInfo = (m, i) => {
     if (prev.role !== 'ai') continue
     if (!prev.model) return null
     const fromLabel = modelLabelOf(prev.model)
-    return fromLabel === toLabel ? null : { toLabel }
+    return fromLabel === toLabel ? null : { fromLabel, toLabel }
   }
   return null
 }
@@ -525,7 +525,7 @@ const sessionArtifacts = computed(() => {
 })
 
 // ==================== 产物签名换发 ====================
-// 产物下载 URL 带 HMAC 签名，有效期 1 小时（images.authExpireSeconds）。SSE 下发与历史接口
+// 产物下载 URL 带 HMAC 签名，有效期固定 1 小时。SSE 下发与历史接口
 // 给的那份 URL「签好就不变」，页面开久后点下载必然 401「图片链接无效或已过期」——而同一文件在
 // 「我的产物」页正常，因为那个列表每次进页面都现场重签。这里在会话产物出现/切换时换一批新鲜签名，
 // 就地改写各消息里 artifact 的 url（保持对象引用不变，视图自动更新）。

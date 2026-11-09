@@ -830,8 +830,7 @@ const CAPS = [
   { key: 'toolWorkflow', group: '工具与扩展', label: '工作流工具', desc: '把已发布工作流挂为对话工具', icon: PartitionOutlined,
     detail: '勾选已发布的工作流（≤8 个），模型在对话中自主决定何时运行整条流程并取回出参（嵌套有 2 层防环上限；游客分享不暴露）',
     kind: 'switch', path: ['workflowTool', 'enabled'], gate: ['tool', 'enabled'] },
-  // 向用户提问（原「内置高频工具」行）：2026-11-06 纯计算内置 10 把物理退役（模型原生具备），
-  // ask_user 族只剩 askUser 一项，行语义从「指定哪几个」简化为开关三态；
+  // 向用户提问：ask_user 族只有 askUser 一项，配置面是一个三态开关；
   // 存量兼容见 effectiveAskUserTri（保存时恒清 builtinTools，见 save）
   { key: 'toolBuiltin', group: '执行与交付', label: '向用户提问', desc: '人在回路：回答中向你提出问题，答后继续', icon: QuestionCircleOutlined,
     detail: '提问卡（可多选的题会标出）；原「内置高频工具」族退役后仅剩此项',
@@ -882,10 +881,9 @@ const approvalOptions = computed(() => [
   { value: 'off', label: '禁用' }
 ])
 // 内置工具可选项**来自后端能力名册**（GET /agent/tool-catalog，工具注册中心的描述符）。
-// 这里以前手抄一张同名的表：后端每加一个 @Tool 就得同步改这里，漏改的表现是配置页里
-// 那个工具只剩英文名、或选了却不生效——中文名现在有唯一来源，这份复制删掉了。
-// 拉不到时不再退回旧常量（退回会让人以为名册就是这些），而是显式报错 + 重试入口。
-// ask_user 族退役后只剩 askUser 一项，配置面已把它简化为「向用户提问」开关行，名册仅供黑名单选项用。
+// 中文名有唯一来源，避免配置页里工具只剩英文名、或选了却不生效。
+// 拉不到时显式报错 + 重试入口，不退回写死的常量表（那会让人以为名册就是这些）。
+// ask_user 族只有 askUser 一项，配置面是「向用户提问」开关行，名册仅供黑名单选项用。
 
 // 图标可选集（与后端 c_ai_agent.icon 口径一致）：''=默认机器人图标；'wenqu'=问渠品牌标；其余 emoji 原样存库、原样渲染
 const ICON_OPTIONS = [
@@ -1033,7 +1031,7 @@ const skillDocEntry = computed(() => skillRaw.value.find(s => s.name === skillDo
 const mcpOptions = ref([])
 // 可委派的子智能体下拉（4.3：来自 /agent/sub，仅作为主智能体的委派候选，本身不参与对话）
 const subOptions = ref([])
-// 被委派时的执行方式（P3a）：两个值都是平台固定的形态，没有"管理员收紧"这类可用性变化，
+// 被委派时的执行方式：两个值都是平台固定的形态，没有"管理员收紧"这类可用性变化，
 // 所以不像权限档位那样拉端点——那端点存在是因为可选项会随上限变，这里不会。
 const BRANCH_MODE_LABELS = { digest: '交要点', full: '全循环' }
 const branchModeOptions = [
@@ -2022,10 +2020,6 @@ const save = async () => {
       const g = await agentEvalGateCheck(editingId.value, payload)
       if (g.success && g.data?.hasSuite) {
         const info = g.data
-        if (info.gateMode === 'block' && info.gate === 'below') {
-          message.error('门禁：该智能体当前评测低于门槛，保存被拒绝（管理员可在设置页调整 agentEval.gateMode）')
-          return
-        }
         if ((info.changes?.length || 0) > 0 || info.gate === 'below') {
           gateInfo.value = info
           gatePayload.value = payload
@@ -2439,8 +2433,8 @@ onMounted(async () => { })
 
 /* ==================== 公开发布弹窗 ====================
    结构：标题栏（智能体头像+名）→ 状态卡（总开关）→ 游客能力（模型 / MCP）→ 分发方式（Tab）→ 底部撤销。
-   此前是一列平铺的 pub-row，输入框把「复制」「打开」两个按钮挤成竖排单字；现改为
-   「代码块 + 右侧图标按钮」一行到底，按钮 flex:none 不再被压缩。 */
+   结构用「代码块 + 右侧图标按钮」一行到底，按钮 flex:none 不被压缩，
+   避免输入框把「复制」「打开」挤成竖排单字。 */
 .pub-title { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 600; }
 .pub-title-sub {
   font-size: 12px; font-weight: 400; color: var(--app-text3);

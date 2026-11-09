@@ -2,6 +2,7 @@ package com.wenqu.ai.parser;
 
 import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.config.AppProperties;
+import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.model.Chunk;
 import com.wenqu.ai.parser.ocr.OcrEngine;
 import com.wenqu.ai.parser.ocr.PageMarkdown;
@@ -25,7 +26,7 @@ import java.util.stream.Collectors;
  * 按 {@code parse.ocrEngine} 路由：
  * <ul>
  *   <li><b>none（默认）</b>：PDFTextStripper 纯文本抽取（按页合并 + 超长切分）；
- *       全文少于 {@code parse.ocrMinText} 判定扫描件（图片型 PDF）→ 逐页渲染 → 视觉模型 OCR（P0-4）。</li>
+ *       全文少于 {@code parse.ocrMinText} 判定扫描件（图片型 PDF）→ 逐页渲染 → 视觉模型 OCR。</li>
  *   <li><b>vision</b>：无视文本层，整份逐页渲染 → 视觉模型 OCR（{@link com.wenqu.ai.parser.ocr.VisionOcrEngine}）。</li>
  *   <li><b>pp_structure_v3 / mineru</b>：整份 PDF 发外部版面解析服务，换回带标题层级与表格结构的
  *       markdown 版面块（替代错位行序文本，缩小与 RAGFlow DeepDoc 的差距）。</li>
@@ -40,7 +41,7 @@ import java.util.stream.Collectors;
 public class PdfParser implements DocumentParser {
 
     /** 文本少于该长度判定为扫描件（图片型 PDF），触发 OCR；parse.ocrMinText 可调 */
-    private int ocrMinText() { return configService.getInt("parse.ocrMinText", 20); }
+    private int ocrMinText() { return configService.getInt("parse.ocrMinText", ConfigDefaults.PARSE_OCR_MIN_TEXT); }
 
     private final AppProperties properties;
     private final VisionService visionService;

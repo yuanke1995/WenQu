@@ -19,7 +19,7 @@ import java.time.LocalDateTime;
  *   <li>只快照「调优内容」（{@link com.wenqu.ai.service.AgentService#VERSION_FIELDS} 白名单），
  *       isDefault/manageable 等非调优元数据不进快照，回滚也不会动它们。</li>
  * </ul>
- * 保留份数可配（config: {@code agent.versionKeep}，默认 20），超出按版本号最小先删。
+ * 固定保留最近 20 份，超出按版本号最小先删。
  *
  * @author yuanke
  */

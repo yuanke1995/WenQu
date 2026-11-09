@@ -14,6 +14,7 @@ import com.wenqu.ai.agentx.turn.TurnPromptAssembler;
 import com.wenqu.ai.agentx.turn.TurnSessionGateway;
 import com.wenqu.ai.agentx.turn.TurnTranscriptRecorder;
 import com.wenqu.ai.config.AppProperties;
+import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.engine.ChatEngine;
 import com.wenqu.ai.engine.RunChannel;
 import com.wenqu.ai.engine.RunEvent;
@@ -136,7 +137,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 更长的线上兜着；反过来若把它压回 200ms，就把刚省下来的全量重读又请回来了。
      */
     // 权威回查间隔：tasks() 对每条历史命令各做一次从 head 倒走的全量 scan，万级事件日志上一次
-    // 秒级（2026-11-01 纸表轮实测把跟随循环拖成秒拍）。它只是租约过期/inbox 拒绝这类「不落事件」
+    // 秒级。它只是租约过期/inbox 拒绝这类「不落事件」
     // 状态的兜底，正常结算走镜像的 run/end，十秒级的兜底延迟没有可感知的后果。
     private static final long STATE_RECHECK_MS = 10_000L;
 
@@ -189,21 +190,20 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     private final TurnPromptAssembler promptAssembler;
     /**
      * 用户上传图片的落盘链路（data URL → 文件 + 回显 URL）。
-     * <p><b>为什么必须接回来</b>：手写推理循环退役时，本服务仅有的两个调用点跟着一起被删了，于是框架这条路上
-     * 图片两头都断——{@code appendMessage} 拿到的是原始 base64 data URL，而 {@code c_ai_message.images} 是
+     * <p><b>为什么必须有这一环</b>：{@code appendMessage} 拿到的是原始 base64 data URL，而 {@code c_ai_message.images} 是
      * {@code TEXT}(65535) 且库跑在 {@code STRICT_TRANS_TABLES} 下，一张 1280px JPEG 的 base64 约 270KB，
-     * 实测直接 {@code ERROR 1406 Data too long} 打断整轮；同时模型侧再没人把图片拼进本轮输入，图发了等于没发。
-     * 本服务（落盘 + 回显 URL + 保留原图 dataURL 供直发）与 {@code ScheduleCenter} 的清理任务本来就还在。
+     * 直接落库会 {@code ERROR 1406 Data too long} 打断整轮；模型侧也需要把图片拼进本轮输入，否则图发了等于没发。
+     * 本服务（落盘 + 回显 URL + 保留原图 dataURL 供直发）与 {@code ScheduleCenter} 的清理任务承担这件事。
      */
     private final com.wenqu.ai.service.UserImageService userImages;
     /** 关键词召回用的分词器（问答侧的关键词抽取，与技能无关）。 */
     private final com.wenqu.ai.service.KeywordExtractor keywordExtractor;
     private final com.wenqu.ai.service.ArtifactService artifactService;
 
-    /** 沙盒装配（全框架化 P1）：供 builder 侧 .abstractFilesystem(...) 取本轮的沙箱文件系统。 */
+    /** 沙盒装配：供 builder 侧 .abstractFilesystem(...) 取本轮的沙箱文件系统。 */
     private final com.wenqu.ai.service.SandboxService sandboxService;
 
-    /** 技能仓库（全框架化 P3）：无状态，按当轮 RuntimeContext 解析可见技能，故由 Spring 单例注入。 */
+    /** 技能仓库：无状态，按当轮 RuntimeContext 解析可见技能，故由 Spring 单例注入。 */
     private final com.wenqu.ai.skill.WenquSkillRepository skillRepository;
     /** 个人偏好（目前只取「自动提炼记忆」开关，见 memoryConfig）。 */
     private final com.wenqu.ai.service.OrgService orgService;
@@ -215,13 +215,13 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     private final com.wenqu.ai.service.QaLogService qaLog;
     /**
      * 框架模型出口的用量台账：主对话/子智能体/记忆提炼/上下文压缩都经 {@link MeteredModel} 记一行。
-     * <p>P3 换框架后原记账出口（{@code DynamicOpenAiChatModel}）只剩 Spring AI 侧，
+     * <p>原记账出口（{@code DynamicOpenAiChatModel}）只覆盖 Spring AI 侧，
      * 框架调用一笔都没进 {@code c_ai_usage_log}；不补这一层，记忆与压缩的成本完全不可见。
      */
     private final com.wenqu.ai.service.UsageLedgerService usageLedger;
-    /** 配额闸（Phase 2）：框架模型出口前判一次，与 Spring AI 那一路共用同一个服务与同一份判据 */
+    /** 配额闸：框架模型出口前判一次，与 Spring AI 那一路共用同一个服务与同一份判据 */
     private final com.wenqu.ai.service.UsageQuotaService quotaService;
-    /** 内容安全出口闸（Phase 3 · P12）：同样挂在模型出口，与 Spring AI 那一路共用一份判据 */
+    /** 内容安全出口闸：同样挂在模型出口，与 Spring AI 那一路共用一份判据 */
     private final com.wenqu.ai.service.contentsafety.ContentSafetyService contentSafety;
     /**
      * @ 文档提及的正文来源（文档表不存全文，解析产物就是知识块，按 chunkIndex 拼回）。
@@ -326,9 +326,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         synchronized (this) {
             if (cachedModelTransport != null) return cachedModelTransport;
             okhttp3.OkHttpClient client = new okhttp3.OkHttpClient.Builder()
-                    // 连接超时 8 秒：真机 2026-10-23 22:24 那一轮，第一次模型调用挂满 33.7 秒以
-                    // 「SSE/NDJSON stream failed: Operation timed out」收场，框架重试后第二次 5.8 秒
-                    // 就出了字——那 30 秒（框架默认）是一条已经死掉的连接在慢慢超时。
+                    // 连接超时 8 秒：框架默认的 30 秒是一条已经死掉的连接在慢慢超时，
+                    // 重试也得等满才出字，所以把连接这一截压到 8 秒。
                     .connectTimeout(java.time.Duration.ofSeconds(8))
                     .readTimeout(java.time.Duration.ofMinutes(5))
                     .writeTimeout(java.time.Duration.ofSeconds(30))
@@ -413,9 +412,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
 
     /**
      * 启动自检：框架会话状态存储的 Redis 必须在服务对外之前就位。
-     * <p>为什么要在启动时炸：会话状态没有第二落点（本地文件方案已退役）。等第一轮问答才发现
-     * Redis 不通，用户看到的是「模型答得像不认识我」——那正是 2026-10-21 事故的形态，
-     * 而真正的原因（状态存储不通）被埋在日志里。现在它变成一条启动失败，信息直指 Redis。
+     * <p>为什么要在启动时炸：会话状态没有第二落点，也没有本地文件兜底。等第一轮问答才发现
+     * Redis 不通，用户看到的是「模型答得像不认识我」，而真正的原因（状态存储不通）被埋在日志里；
+     * 启动时就失败能把信息直指 Redis。
      * <p><b>注意调用方</b>：本引擎是 {@link AgentxConfiguration} 构造器里 {@code new} 出来的，
      * 不归 Spring 管，{@code @PostConstruct} 不会执行——所以由装配处显式调本方法。
      */
@@ -442,12 +441,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     }
 
     /**
-     * 解析并缓存会话状态存储。<b>恒走 Redis</b>——本地文件方案已退役。
-     * <p>为什么必须换掉：框架的会话状态（对话上下文、待办、续跑游标）落在本地文件时，
-     * 容器一重建就全丢。线上因此出过一场事故（2026-10-21）：模型上一轮刚把数据列成表，
-     * 下一轮却说「没有相关数据」——因为那几轮的历史压根没进过 prompt，本轮它看到的只有
-     * 当前这一个问题，等价于每轮独立问答。
-     * <p>所以 Redis 是硬依赖：连不上就抛，<b>不静默退回本地实现</b>——静默退化正是事故的成因。
+     * 解析并缓存会话状态存储。<b>恒走 Redis</b>，没有本地文件兜底。
+     * <p>会话状态（对话上下文、待办、续跑游标）落在本地文件时，容器一重建就全丢：
+     * 下一轮只能看到当前这一个问题，等价于每轮独立问答。
+     * <p>所以 Redis 是硬依赖：连不上就抛，<b>不静默退回本地实现</b>。
      */
     private AgentStateStore stateStore() {
         if (stateStoreResolved) return cachedStateStore;
@@ -603,10 +600,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                     cmd.getSessionId(), ref, userImgs.size());
         }
 
-        // 问题先落库，且必须排在 sessions.open 之前：建实例会先装配沙盒，线上实测一次
-        // sandbox.start() 卡了 5 分半才失败；而侧栏只列「有消息的会话」——等建完再落库的话，
-        // 用户中途停止/刷新时这一问还没进库，整条会话会被当成空会话隐藏（2026-11-05 线上复现：
-        // 点了停止再刷新，1+1=? 那条会话从侧栏消失，5 分钟后才重新出现）。
+        // 问题先落库，且必须排在 sessions.open 之前：建实例会先装配沙盒，这一步可能卡很久；
+        // 而侧栏只列「有消息的会话」——等建完再落库的话，用户中途停止/刷新时这一问还没进库，
+        // 整条会话会被当成空会话隐藏。
         // 附件/@/#历史引用随用户消息一并持久化，刷新后回显不丢。
         String userMessageId = cmd.isRegenerate() || cmd.isFromSteer() ? null
                 : appendQuestion(cmd, turnId, userImgUrls);
@@ -1153,11 +1149,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         }
         // 框架撞步数上限时补的那条收尾正文要接回来：它走 SUMMARY 用途，被 translate() 那道
         // 「只透传 REASONING」的闸挡在流外（那道闸是为压缩摘要与记忆提炼加的，那两样确实不该进聊天流）。
-        // 不接的表现（真机 2026-10-23 21:04 那一轮）：正文停在半句「接下来做像素级复核…」，气泡照报
-        // 「已完成，用时 5 分 47 秒」，而它其实一步都没做完——沙盒里已经生成的文件也没机会交付出去。
-        // 只在<b>流里确有正文</b>时补：空正文那一支上面已经把这条收尾消息回退取走了（同一个
-        // ModelOutputParser 喂两遍还会把推荐芯片数成两份）。真机 2026-10-23 21:44 那一轮走的就是
-        // 空正文那一支——模型把整段收尾写成了工具调用文本，被 DSML 闸吞掉，正文只剩截断标记。
+        // 不接的表现：正文停在半句，气泡照报「已完成」，而它其实一步都没做完——沙盒里已经生成的
+        // 文件也没机会交付出去。只在<b>流里确有正文</b>时补：空正文那一支上面已经把这条收尾消息
+        // 回退取走了（同一个 ModelOutputParser 喂两遍还会把推荐芯片数成两份）。
         String wrapUp = maxIterationsWrapUp(session, historyBefore);
         boolean cutByMaxIters = wrapUp != null && !loop.stopped() && !loop.timedOut() && !loop.neverLaunched() && failure == null;
         if (cutByMaxIters && streamedBody) {
@@ -1723,10 +1717,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 猜名、对中文大模型常缺条目（{@code deepseek-v4.1-flash} 在框架的 OPENAI 表里就查不到）。
      * <p><b>返回 0 只有一种情况</b>：模型没登记窗口（或引用解析不出登记行）。这时调用方必须
      * <b>整个不调</b> {@code contextWindowSize}——该 setter 的判据是 {@code >= 0 即用显式值}，
-     * 把 0 塞进去等于向框架声明「窗口=0」，框架随即改用 64000 的兜底输入上限。真机 2026-10-25：
-     * 一台 1M 窗口的模型因此被压成「对话约 44K 就折一次上下文」，24 小时内自动压缩 7 次，
-     * 而界面上的容量条一直显示 2.8%。
-     * <p>窗口一律取模型登记上限。界面上的「上下文窗口档位」选择已整条退役（前端不再下发、会话行不再钉档），
+     * 把 0 塞进去等于向框架声明「窗口=0」，框架随即改用 64000 的兜底输入上限，
+     * 大窗口模型也会被压成很早就折一次上下文。
+     * <p>窗口一律取模型登记上限，界面不提供「上下文窗口档位」选择，
      * 因为「选小窗口」省下的只是压缩时机，代价是检索资料被提前折掉且界面看不出差别——
      * 用户要的是「带上更多资料」，那件事该由检索与压缩参数管，不该由一个窗口下拉框代答。
      */
@@ -1738,9 +1731,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
 
     /**
      * 模型登记的最大输出 token（作为 max_tokens 随请求下发）；未登记返回 0=不下发，交厂商默认。
-     * <p>为什么必须有这一刀：2026-10-03 老链路按行下发（f77ef04a），10-13 P6 迁移删 RagService
-     * 时能力丢失，此后单次补全上限一直是厂商默认——token-plan 那族实测 8192，模型把大产物内联进
-     * 工具参数时输出在参数中途被截断，框架只收到空参 {}（真机 2026-11-07 presentArtifact 空参案）。
+     * <p>为什么必须有这一刀：单次补全上限若只沿用厂商默认，模型把大产物内联进
+     * 工具参数时输出会在参数中途被截断，框架只收到空参 {}。
      * 口径与 {@link #modelContextWindow} 同源：登记什么下发什么，登记为空行为零变化。
      */
     private int modelMaxOutput(String modelRef) {
@@ -1752,14 +1744,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     /**
      * 本轮墙钟上限（秒），恒定取问答侧 SSE 超时：两套运行时共用一个天花板。
      * <p>框架（AgentScope）对单把工具有自带的 5 分钟硬超时（{@code ExecutionConfig.TOOL_DEFAULTS}，
-     * 不重试），不显式覆盖就会多一道没人知道的天花板——咨询子轮、沙盒长命令都会撞上去
-     * （实测：咨询跑满 5 分钟被判工具失败，父轮只收到一句 Tool execution timeout）。
+     * 不重试），不显式覆盖就会多一道没人知道的天花板——咨询子轮、沙盒长命令都会撞上去。
      * 工具超时跟着整轮超时走：SSE 调大时长工具不会被框架固定的 5 分钟砍掉。
      * <p>{@code chat.sseTimeoutMs} 填 0 说的是「整轮不截断」，<b>不是</b>「单条命令可以挂死」：那一档
      * 仍要一个有限值，否则 {@code max(30, 0/1000)} 会把每把工具压到 30 秒，放开限制反而变成最严的天花板。
-     * <p>此前这里是可配项（chat.agentscopeTurnTimeoutSeconds，0=沿用 SSE 超时），默认态两者同值，
-     * 属「框架已有限制、参数只留个默认就用不上的改口」，已取消——需要单独给框架引擎配墙钟的
-     * 场景不存在：整轮超时本来就是唯一该有的天花板。
+     * <p>整轮超时本来就是唯一该有的天花板，不需要再给框架引擎单配一份墙钟。
      */
     private int turnSeconds() {
         int ms = configService.getInt("chat.sseTimeoutMs", 0);
@@ -1773,16 +1762,14 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * {@code iter >= maxIters} 比较与拼日志，不参与加减。
      */
     private int maxItersForTurn() {
-        int v = configService.getInt("chat.agentscopeMaxIters", 0);
+        int v = ConfigDefaults.CHAT_AGENTSCOPE_MAX_ITERS;
         return v <= 0 ? Integer.MAX_VALUE : v;
     }
 
     /**
      * 本轮到目前为止花掉的「机器时间」：墙钟减去人在回路的等待，<b>含正挂在卡上的这一段</b>。
      * <p>少了在途那一段就是拿墙钟当机器预算用：{@code humanWaitMs} 只在待办清空时才累加，用户对着
-     * 计划卡读五分钟，循环下一跳算出来的机器时间就已经涨满 300s，整轮在人还没裁决时被静默收口
-     * （真机 2026-10-16 19:56:33：机器耗时 59790ms／人工等待 333422ms 的一轮在卡上被判跑完，
-     * 而 awaiting 让那一轮整条不落库，刷新后只剩第一句提问）。
+     * 计划卡读五分钟，循环下一跳算出来的机器时间就已经涨满 300s，整轮在人还没裁决时被静默收口。
      */
     private static long machineMs(long startedAt, long humanWaitMs, boolean waitingOnHuman, long waitBeganAt) {
         long now = System.currentTimeMillis();
@@ -2857,8 +2844,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 个人「自动提炼记忆」开关也是 build 期装配（memoryConfig 还是 disableMemoryHooks）：不并进
         // 指纹的话，关掉后要等下一次重建才停，与个人设置里「关掉后下一轮起才停」的说法不符。
         key = key + "|mem=" + orgService.memoryFlushEnabled(cmd.getUserId());
-        // 上下文窗口档并进指纹：它决定框架的压缩阈值与输入上限，烤死在实例里，不重建就等于改档位没改。
-        // 窗口现在恒等于模型登记上限（档位选择已退役），并进来是为了管理员改了登记值时这一轮就重建。
+        // 上下文窗口并进指纹：它决定框架的压缩阈值与输入上限，烤死在实例里。
+        // 窗口恒等于模型登记上限，并进来是为了管理员改了登记值时这一轮就重建。
         int contextWindow = modelContextWindow(modelRef);
         // 最大输出同理烤在实例里（作为 max_tokens 随请求下发），登记值改了也得重建才生效。
         int maxOutput = modelMaxOutput(modelRef);
@@ -3207,9 +3194,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      */
     private void translate(SessionEvent event, RunChannel channel, Recording recording) {
         // 事件幂等闸：同一轮可能有两条跟随路径（原跟随循环 + ensureFollowing 补位）各自从 Session Log
-        // 读事件喂进来，重投的那份若照收，正文就会被整段记录/重发两遍——2026-10-31 真机实测：42 组件
-        // 大表流式到 ~2 万字处补位循环接手，接缝并发喂同一把 ModelOutputParser（非线程安全）丢了
-        // 24 字（"showQuickJumper" 凭空消失），尾部 7980 字整段重投（逐字节对账 extra==body[20003..]）。
+        // 读事件喂进来，重投的那份若照收，正文就会被整段记录/重发两遍。
         // 框架事件自带轮内单调 seq，这里按「本轮已见 seq」跳过重投件：谁先到谁处理，后到的直接丢。
         if (!recording.firstDelivery(event.seq())) return;
         Map<String, Object> data = event.data() == null ? Map.of() : event.data();
@@ -3756,8 +3741,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * <p>进来的模型是 {@code auxModel}（关思考那一份，见 {@link #auxGenerateOptions}）：提炼一段
      * 记忆要的是把话记下来，不需要它先推理两千 token。
      *
-     * <p>容量只有一个旋钮 {@code memory.maxMdTokens}：consolidation 的提示词目标按它的 2/3
-     * 推导（默认 3000 → 2000），不再单列「目标上限」——两个数要人肉保证大小关系，配反了
+     * <p>容量上限固定 3000 token：consolidation 的提示词目标按它的 2/3
+     * 推导（3000 → 2000），不单列「目标上限」——两个数要人肉保证大小关系，配反了
      * 每次合并都会被裁。日账保留期同理沿用框架默认 90 天，不单独配置。
      */
     private io.agentscope.harness.agent.memory.MemoryConfig memoryConfig(
@@ -3765,10 +3750,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         io.agentscope.core.model.Model memoryModel = new MeteredModel(auxModel, usageLedger, quotaService, contentSafety,
                 com.wenqu.ai.util.UsageAttr.of(cmd.getUserId(), cmd.getSessionId(), null, "memory",
                         null, cmd.getShareId()), modelRef);
-        int maxMdTokens = Math.max(500, configService.getInt("memory.maxMdTokens",
-                com.wenqu.ai.config.ConfigDefaults.MEMORY_MAX_MD_TOKENS));
-        int minutes = configService.getInt("memory.flushThrottleMinutes",
-                com.wenqu.ai.config.ConfigDefaults.MEMORY_FLUSH_THROTTLE_MINUTES);
+        int maxMdTokens = Math.max(500, ConfigDefaults.MEMORY_MAX_MD_TOKENS);
+        int minutes = ConfigDefaults.MEMORY_FLUSH_THROTTLE_MINUTES;
         return io.agentscope.harness.agent.memory.MemoryConfig.builder()
                 .model(memoryModel)
                 .flushPrompt(com.wenqu.ai.memory.MemoryPrompts.flushPrompt())
@@ -4740,13 +4723,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             sessionService.setMessageChanges(assistantMessageId,
                     com.alibaba.fastjson2.JSON.toJSONString(turnChanges));
         }
-        // 警示条也要活过刷新：它此前只随 warn 帧下发一次，用户当场看见「沙盒写入未执行」，
-        // 刷新一次就等于没发生过——而这一轮确实被沙盒挡下过一次（与 degradations 那条同一个错法）
+        // 警示条也要活过刷新：只随 warn 帧下发的话，用户当场看见「沙盒写入未执行」，
+        // 刷新后就没了——而这一轮确实被沙盒挡下过一次（与 degradations 那条同一个错法）
         sessionService.saveMessageWarn(assistantMessageId, channel.lastWarn());
         // 降级条与警示条同一个错法：只随 done 帧下发一次，刷新后「本轮没咨询成其他助手」「模型换过路」
-        // 整块消失。手写引擎时代有四处补写（正常轮/半程轮/closeout），P6 退役自研那两刀把调用点删净了
-        // 却没在这里接回来——于是全仓只剩工作流轮那一条（ChatflowBridge），普通对话轮的降级条
-        // 一直是当场看得见、回头读不到。列在这里已定型：引用自检那道防线跑在落库之前。
+        // 整块消失。列在这里已定型：引用自检那道防线跑在落库之前。
         sessionService.persistDegradations(assistantMessageId, pool.degradations());
         // 问答台账：与手写侧 doOnComplete 同一处时机（半程轮不落台账，那是中断轮的收尾语义）。
         // 不接的表现为看板与「未命中问题」列表只统计到切换前那部分流量——分派切了运行时，
@@ -4805,9 +4786,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             agentWebhookService.onTurnFinished(cmd, framedTurnId, webhookStatus, null,
                     body, assistantMessageId, tokens, artifactItems, elapsedMs);
         }
-        // done 之后必须收通道：手写侧是 runChat 自己 completeEmitter，框架引擎原先漏了这一步，
-        // 表现是帧都到了、连接却挂着直到看门狗 300s 超时截断（真机实测：done 在 01:20:32，
-        // 通道 01:25:20 才被判超时），前端「这一轮结束」要等五分钟才落地
+        // done 之后必须收通道：手写侧是 runChat 自己 completeEmitter；不收的话帧都到了、
+        // 连接却挂着直到看门狗 300s 超时截断，前端「这一轮结束」要等五分钟才落地
         channel.complete();
     }
 

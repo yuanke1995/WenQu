@@ -849,7 +849,7 @@ public class RetrievalEvaluationService {
 
     /**
      * 启动答案级评测（异步执行，进度与结果经 {@link #answerEvalStatus()} 轮询）。
-     * 每条用例：检索 → 生成回答（eval.answerModel，空=复用评判模型）→ 评判模型一次调用打两维分。
+     * 每条用例：检索 → 生成回答（复用评判模型 eval.judgeModel）→ 评判模型一次调用打两维分。
      * 计费敏感：手动触发、用例数硬上限 {@value #ANSWER_EVAL_MAX_CASES}，不进自动体检。
      *
      * @return false = 已有评测在跑（前端提示稍后再试）
@@ -862,7 +862,7 @@ public class RetrievalEvaluationService {
         if (judgeModel == null || judgeModel.isBlank()) {
             throw new com.wenqu.ai.common.BizException("未配置评判模型 eval.judgeModel（设置页 · 定时任务 · 评估），答案级评测无法运行");
         }
-        String answerModelCfg = configService.get("eval.answerModel");
+        String answerModelCfg = configService.get("eval.judgeModel");
         final String answerModel = answerModelCfg == null || answerModelCfg.isBlank() ? judgeModel : answerModelCfg;
         List<EvalCase> cases = set.cases().subList(0,
                 Math.min(Math.min(Math.max(1, caseCount), ANSWER_EVAL_MAX_CASES), set.cases().size()));

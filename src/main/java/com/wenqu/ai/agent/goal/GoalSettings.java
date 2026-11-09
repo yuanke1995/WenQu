@@ -1,5 +1,6 @@
 package com.wenqu.ai.agent.goal;
 
+import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.service.ConfigService;
 import org.springframework.stereotype.Component;
 
@@ -47,7 +48,7 @@ public class GoalSettings {
 
     /** 一轮收尾到下一轮开跑之间的间隔（毫秒）。 */
     public long nextRoundDelayMs() {
-        return clamp(config.getLong("chat.goal.nextRoundDelayMs", 2_000L), 100L, 120_000L);
+        return clamp(ConfigDefaults.GOAL_NEXT_ROUND_DELAY_MS, 100L, 120_000L);
     }
 
     /** 上面的秒级形式：plusSeconds 用；向上取整，避免 1500ms 被截成 1s。 */
@@ -58,19 +59,19 @@ public class GoalSettings {
 
     /** 完成检查轮最多跑几次；0=不限制（默认）。 */
     public int maxCompletionChecks() {
-        int v = config.getInt("chat.goal.maxCompletionChecks", 0);
+        int v = ConfigDefaults.GOAL_MAX_COMPLETION_CHECKS;
         return v <= 0 ? UNLIMITED : clamp(v, 1, 10);
     }
 
     /** 连续完成申请未过 Verifier 的上限；0=不限制（默认）。 */
     public int maxVerifyFailures() {
-        int v = config.getInt("chat.goal.maxVerifyFailures", 0);
+        int v = ConfigDefaults.GOAL_MAX_VERIFY_FAILURES;
         return v <= 0 ? UNLIMITED : clamp(v, 1, 50);
     }
 
     /** 进程崩溃/租约过期后最多恢复几次。 */
     public int maxRecoveries() {
-        return clamp(config.getInt("chat.goal.maxRecoveries", 3), 0, 20);
+        return clamp(ConfigDefaults.GOAL_MAX_RECOVERIES, 0, 20);
     }
 
     // ==================== 预算与恢复 ====================
@@ -97,58 +98,58 @@ public class GoalSettings {
     }
 
     public int maxRetries() {
-        return clamp(config.getInt("chat.goal.maxRetries", 2), 0, 20);
+        return clamp(ConfigDefaults.GOAL_MAX_RETRIES, 0, 20);
     }
 
     /** 瞬时错误退避：base * 2^attempt，封顶 max。attempt 从 1 起。 */
     public long retryDelaySeconds(int attempt) {
-        long base = clamp(config.getLong("chat.goal.retryBaseSeconds", 15L), 1L, 3_600L);
-        long max = clamp(config.getLong("chat.goal.retryMaxSeconds", 120L), base, 86_400L);
+        long base = clamp(ConfigDefaults.GOAL_RETRY_BASE_SECONDS, 1L, 3_600L);
+        long max = clamp(ConfigDefaults.GOAL_RETRY_MAX_SECONDS, base, 86_400L);
         long delay = base * (1L << Math.min(4, Math.max(0, attempt)));
         return Math.min(max, delay);
     }
 
     /** 预算用到多少比例开始在 prompt 里要求收敛。 */
     public double softBudgetRatio() {
-        return clamp(config.getDouble("chat.goal.softBudgetRatio", 0.8), 0.1, 1.0);
+        return clamp(ConfigDefaults.GOAL_SOFT_BUDGET_RATIO, 0.1, 1.0);
     }
 
     // ==================== 调度 ====================
 
     public int claimBatch() {
-        return clamp(config.getInt("chat.goal.claimBatch", 5), 1, 100);
+        return clamp(ConfigDefaults.GOAL_CLAIM_BATCH, 1, 100);
     }
 
     public int workers() {
-        return clamp(config.getInt("chat.goal.workers", 4), 1, 64);
+        return clamp(ConfigDefaults.GOAL_WORKERS, 1, 64);
     }
 
     public long initialTickDelayMs() {
-        return clamp(config.getLong("chat.goal.initialTickDelayMs", 1_000L), 0L, 60_000L);
+        return clamp(ConfigDefaults.GOAL_INITIAL_TICK_DELAY_MS, 0L, 60_000L);
     }
 
     public long tickMs() {
-        return clamp(config.getLong("chat.goal.tickMs", 2_000L), 500L, 60_000L);
+        return clamp(ConfigDefaults.GOAL_TICK_MS, 500L, 60_000L);
     }
 
     public int leaseSeconds() {
-        return clamp(config.getInt("chat.goal.leaseSeconds", 300), 60, 3_600);
+        return clamp(ConfigDefaults.GOAL_LEASE_SECONDS, 60, 3_600);
     }
 
     public int heartbeatStaleSeconds() {
-        return clamp(config.getInt("chat.goal.heartbeatStaleSeconds", 90), 30, 600);
+        return clamp(ConfigDefaults.GOAL_HEARTBEAT_STALE_SECONDS, 30, 600);
     }
 
     /** 队列排太久/心跳停了多久后界面显示「待恢复」。 */
     public int staleGraceSeconds() {
-        return clamp(config.getInt("chat.goal.staleGraceSeconds", 90), 10, 3_600);
+        return clamp(ConfigDefaults.GOAL_STALE_GRACE_SECONDS, 10, 3_600);
     }
 
     // ==================== 核验 ====================
 
     /** file 证据是否要求宿主侧真实存在（默认 false：沙盒文件在容器里，宿主查不到）。 */
     public boolean verifyLocalFiles() {
-        return config.getBoolean("chat.goal.verifyLocalFiles", false);
+        return ConfigDefaults.GOAL_VERIFY_LOCAL_FILES;
     }
 
     private static int clamp(int v, int min, int max) {

@@ -25,8 +25,6 @@ import java.util.List;
 @Component
 public class KnowledgeRetrievalTool {
 
-    /** 单次工具调用返回的命中块上限（调用方也可用 topK 显式指定，这里兜底截断） */
-    private static final int MAX_HITS = 5;
     /** 单块 content 截断字符数（控制工具结果 token 量） */
     private static final int MAX_CONTENT_CHARS = 600;
     /** 悬浮/弹窗溯源摘要截断长度（注册进 sources 的 snippet） */
@@ -164,9 +162,8 @@ public class KnowledgeRetrievalTool {
         if (query == null || query.isBlank()) {
             return "查询关键词不能为空";
         }
-        // 上限取配置（tool.knowledgeRetrieval.maxHits，1~5；此前该键只在 ConfigService 播种、
-        // 从未被读取，等于设置页上一个改了不动的假开关）：默认与工具给模型的参数说明（1~5）一致
-        int cap = Math.max(1, Math.min(MAX_HITS, configService.getInt("tool.knowledgeRetrieval.maxHits", MAX_HITS)));
+        // 上限固定 5（TOOL_KNOWLEDGE_RETRIEVAL_MAX_HITS）：与工具给模型的参数说明（1~5）一致
+        int cap = Math.max(1, ConfigDefaults.TOOL_KNOWLEDGE_RETRIEVAL_MAX_HITS);
         int limit = topK == null ? cap : Math.max(1, Math.min(topK, cap));
         // 范围与主链路对齐：向量路按库界检索（kbIds），命中再按文档范围后过滤（docIds，含空集合 fail-closed）
         // 透传诊断：此前工具传 null，向量/关键词路失败与库门下推失败完全不可见，
@@ -317,16 +314,16 @@ public class KnowledgeRetrievalTool {
             sb.append("\n");
         }
         if (registrar != null) {
-            // 编号约定要说"全局"：旧措辞只讲"标注上述引用编号"，多轮检索下来模型会按自己的
-            // 答题结构把来源重编一套 1..N（2026-10-18 真机现场：31 条来源被重编成 16 个角标，
-            // 每个角标点开都是另一段资料）。这里把"跨结果持续有效、必须原样使用"写死在约定里。
+            // 编号约定要说"全局"：只讲"标注上述引用编号"，多轮检索下来模型会按自己的
+            // 答题结构把来源重编一套 1..N。
+            // 这里把"跨结果持续有效、必须原样使用"写死在约定里。
             sb.append("（回答中引用以上内容时，请在对应句子后用方括号标注上述引用编号，如 [3]。"
                     + "引用编号是本轮全局编号：同一次回答里多次检索结果中的编号连续有效、不会再变，"
                     + "必须原样使用各结果给出的编号，不得自行重新编号或另起一套；"
                     + "若要在回答中插入截图，只能使用上列「本段相关截图」中给出的 [图片N] 编号，"
                     + "没有列出的编号一律不要输出——不存在对应的图片）");
         }
-        // 检索-反思循环已随深度思考退役（2026-10）：不再注入「证据充分性自评」约束。
+        // 不再注入「证据充分性自评」约束。
         return sb.toString().trim();
     }
 }

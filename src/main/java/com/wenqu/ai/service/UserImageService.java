@@ -1,6 +1,7 @@
 package com.wenqu.ai.service;
 
 import com.wenqu.ai.config.AppProperties;
+import com.wenqu.ai.config.ConfigDefaults;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -30,44 +31,19 @@ import java.util.concurrent.TimeUnit;
 public class UserImageService {
 
     private final AppProperties properties;
-    private final ConfigService configService;
     private final ThreadPoolExecutor imageExecutor;
 
-    public UserImageService(AppProperties properties, ConfigService configService) {
+    public UserImageService(AppProperties properties) {
         this.properties = properties;
-        this.configService = configService;
-        // 用户图片并发处理（解码/落盘很快，并发上限留小防大图洪峰；vision.userImageConcurrency 可调，默认 2）。
+        // 用户图片并发处理（解码/落盘很快，并发上限留小防大图洪峰；固定为平台常量 2）。
         // 有界队列（20）+ 满即拒绝：避免大图洪峰无限积压
-        int concurrency = Math.max(1, configService.getInt("vision.userImageConcurrency", 2));
-        this.imageExecutor = new ThreadPoolExecutor(concurrency, concurrency, 0L, TimeUnit.MILLISECONDS,
+        this.imageExecutor = new ThreadPoolExecutor(ConfigDefaults.VISION_USER_IMAGE_CONCURRENCY,
+                ConfigDefaults.VISION_USER_IMAGE_CONCURRENCY, 0L, TimeUnit.MILLISECONDS,
                 new LinkedBlockingQueue<>(20), r -> {
             Thread t = new Thread(r, "user-image");
             t.setDaemon(true);
             return t;
         }, new ThreadPoolExecutor.AbortPolicy());
-    }
-
-    /** 并发数是运行时旋钮：改设置后直接调池大小，不必重启（池线程按任务现取，改小只影响后续排队） */
-    @jakarta.annotation.PostConstruct
-    void registerConcurrencyHotReload() {
-        configService.addChangeListener(changed -> {
-            if (changed != null && changed.contains("vision.userImageConcurrency")) syncImageConcurrency();
-        });
-    }
-
-    private void syncImageConcurrency() {
-        int want = Math.max(1, configService.getInt("vision.userImageConcurrency", 2));
-        int have = imageExecutor.getCorePoolSize();
-        if (want == have) return;
-        // 调大先改上限、调小先改核心，否则 core>max 会被 ThreadPoolExecutor 拒绝
-        if (want > have) {
-            imageExecutor.setMaximumPoolSize(want);
-            imageExecutor.setCorePoolSize(want);
-        } else {
-            imageExecutor.setCorePoolSize(want);
-            imageExecutor.setMaximumPoolSize(want);
-        }
-        log.info("[image] 用户图片并发已热调为 {}（原 {}，vision.userImageConcurrency）", want, have);
     }
 
     /**

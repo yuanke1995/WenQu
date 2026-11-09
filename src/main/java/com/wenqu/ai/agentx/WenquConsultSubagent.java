@@ -33,7 +33,7 @@ import java.util.function.Function;
  * <p>{@code interrupt()} 仍是空实现，但<b>不会留下孤儿</b>：框架的
  * {@code AgentSpawnTool.interruptAgent} 只对 {@code ReActAgent} 调用 {@code interrupt()}
  * （本类只实现 {@code Agent}，调用不到），所以真正的叫停放在
- * {@code SubAgentBranchRuntime}——它按 {@code agent.consultTimeoutMs} 与审批剩余预算收口，
+ * {@code SubAgentBranchRuntime}——它按平台固定 5 分钟咨询预算与审批剩余预算收口，
  * 且强制同步等待的截止时间留出余量，保证父轮报超时之前这一支已经停下。
  *
  * @author yuanke

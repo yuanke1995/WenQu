@@ -44,12 +44,6 @@ public class WebSearchTools {
     /** 工具名（与前端 TOOL_LABELS、装配处 sensitiveTools 判定保持一致；改名需同步） */
     public static final String TOOL_NAME = "webSearch";
 
-    /** 单条摘要截断字符数（控制工具结果 token 量，配置 webSearch.snippetChars） */
-    private static final int DEFAULT_SNIPPET_CHARS = 600;
-
-    /** 重排没跑成时的词面下限（配置 webSearch.fallbackMinOverlap；写 0 = 退回「整批发出不过滤」的旧行为） */
-    private static final double DEFAULT_FALLBACK_MIN_OVERLAP = 0.2;
-
     /**
      * 按本轮问题重排这批结果，返回「片段 → 相关度分」；重排实际没跑成时返回空表（调用方按兜底走）。
      */
@@ -259,8 +253,7 @@ public class WebSearchTools {
             // 重排没跑成（服务不可用，或这批一条都没拿到分）。此时原样发出去等于把引擎返回的
             // 首页/机场页当资料——法律这类场景「搜到垃圾」比「搜不到」更危险，所以按词面下限
             // 先剔掉明显不沾边的；下限写 0 = 退回旧行为（整批发出 + 一句没过滤）。
-            double floor = configService.getDouble("webSearch.fallbackMinOverlap",
-                    DEFAULT_FALLBACK_MIN_OVERLAP);
+            double floor = ConfigDefaults.WEB_SEARCH_FALLBACK_MIN_OVERLAP;
             log.warn("[WEB-SEARCH] 重排不可用（{}），本轮改用词面下限 {}",
                     unavailable == null ? "这批结果没有返回重排分" : unavailable, floor);
             if (floor > 0) {
@@ -287,7 +280,7 @@ public class WebSearchTools {
                     "联网结果与问题的语义匹配度偏低，仅保留最相关的 1 条作为低置信参考");
         }
 
-        int snippetChars = configService.getInt("webSearch.snippetChars", DEFAULT_SNIPPET_CHARS);
+        int snippetChars = ConfigDefaults.WEB_SEARCH_SNIPPET_CHARS;
         StringBuilder sb = new StringBuilder();
         // 联网摘要与知识库正文同为不可信数据：信封+数据声明与检索工具同口径（防网页内容埋指令）
         sb.append(com.wenqu.ai.util.UntrustedContent.DATA_RULE).append("\n\n");

@@ -160,7 +160,7 @@
           </div>
 
           <div class="foot-note">
-            <span>门禁判定：通过率 ≥ 套件门槛且无 0 分严重失败；新建套件默认门槛 {{ s.gateMode === 'block' ? '80%' : '80%' }}。</span>
+            <span>门禁判定：通过率 ≥ 套件门槛且无 0 分严重失败；新建套件默认不设门槛，门槛在套件设置里随时可调。</span>
             <span class="sp"></span>
             <span>评测默认只读，不执行需要人工确认的工具</span>
             <a class="link" @click="helpOpen = !helpOpen">查看评测口径</a>

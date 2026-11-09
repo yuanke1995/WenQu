@@ -46,7 +46,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *   → 租约(lease)过期或看门狗超时 → 自动回收回 queued（覆盖崩溃、卡死）
  * </pre>
  * 多线必须配合下游闸门（OCR 版面引擎、图片视觉、embedding），否则并发只是把任务堆在闸门门口排队：
- * OcrEngineGate 按引擎限并发、vision.concurrency 管图片描述、本类的 embedGate 管向量化。
+ * OcrEngineGate 按引擎限并发、图片描述并发为平台固定值、本类的 embedGate 管向量化。
  *
  * @author yuanke
  */
@@ -130,7 +130,7 @@ public class ParseQueueService {
         task.setKbId(kbId);
         task.setStatus(ParseTask.STATUS_QUEUED);
         task.setAttempt(0);
-        task.setMaxAttempt(Math.max(1, configService.getInt("parse.retryMaxAttempts", 10)));
+        task.setMaxAttempt(Math.max(1, ConfigDefaults.PARSE_RETRY_MAX_ATTEMPTS));
         task.setNextRunAt(LocalDateTime.now());
         task.setPriority(priority);
         task.setCreateTime(LocalDateTime.now());
@@ -365,7 +365,7 @@ public class ParseQueueService {
         Integer attempt = null;
         ParseTask t = parseTaskMapper.selectById(taskId);
         if (t != null) attempt = t.getAttempt();
-        int base = Math.max(1, configService.getInt("parse.retryBackoffSeconds", 5));
+        int base = Math.max(1, ConfigDefaults.PARSE_RETRY_BACKOFF_SECONDS);
         int n = (attempt == null || attempt < 1 ? 1 : attempt);
         long backoff = (long) base * (1L << Math.min(n - 1, 6));
         return (int) Math.min(MAX_BACKOFF_SEC, backoff);

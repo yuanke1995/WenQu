@@ -1,6 +1,7 @@
 package com.wenqu.ai.service;
 
 import com.wenqu.ai.agent.chat.ChatCommand;
+import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.model.Goal;
 import com.wenqu.ai.model.Notification;
 import com.wenqu.ai.model.Session;
@@ -37,7 +38,7 @@ import org.springframework.stereotype.Service;
  * ——目标刚刚达成时 {@code currentGoal} 已返回 null，那一轮仍属目标轮。
  * 失败不受这条限制：目标跑挂了是要人处理的事，由 {@code goal.failed} 说。
  *
- * <p><b>短轮不报完成</b>：阈值 {@code notification.turnMinSeconds}（默认 60 秒机器耗时，不含等人读卡的时间）。
+ * <p><b>短轮不报完成</b>：阈值固定 60 秒机器耗时（不含等人读卡的时间）。
  * 三秒答完的轮，答案当场就在屏幕上，多一条通知只是噪音；能跑到一分钟以上的轮，人大概率已经切走或锁屏。
  * 人还在屏幕前却收到一条长轮完成通知，代价是一行已读——远小于把「回来看看」这件事整体丢掉。
  *
@@ -249,7 +250,7 @@ public class TurnNotifyService {
 
     /** 报「跑完了」的最低机器耗时 */
     private long turnMinMs() {
-        return Math.max(0L, configService.getInt("notification.turnMinSeconds", 60)) * 1000L;
+        return Math.max(0L, ConfigDefaults.NOTIFICATION_TURN_MIN_SECONDS) * 1000L;
     }
 
     /**

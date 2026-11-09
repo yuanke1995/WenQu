@@ -1052,9 +1052,9 @@ public class WorkflowService {
                 configService.getDouble("chat.temperature"),
                 configService.getInt("workflow.maxSteps", ConfigDefaults.WORKFLOW_MAX_STEPS),
                 tokenSink, imageSink,
-                configService.getInt("workflow.traceInputMaxChars", ConfigDefaults.WORKFLOW_TRACE_INPUT_MAX),
-                configService.getInt("workflow.traceOutputMaxChars", ConfigDefaults.WORKFLOW_TRACE_OUTPUT_MAX),
-                configService.getInt("workflow.traceErrorMaxChars", ConfigDefaults.WORKFLOW_TRACE_ERROR_MAX),
+                ConfigDefaults.WORKFLOW_TRACE_INPUT_MAX,
+                ConfigDefaults.WORKFLOW_TRACE_OUTPUT_MAX,
+                ConfigDefaults.WORKFLOW_TRACE_ERROR_MAX,
                 wfDepth);
     }
 
@@ -1121,14 +1121,14 @@ public class WorkflowService {
                     System.currentTimeMillis() - ctx.t0);
             return finish(run, ctx, null);
         } catch (RunTimeoutException e) {
-            // M5：run 硬超时——落 timeout 终态（error 带原因与调参指引），执行线程已中断回收
+            // run 硬超时——落 timeout 终态（error 带原因与调参指引），执行线程已中断回收
             log.warn("[WORKFLOW] 运行超时：{}（{}）run={}：{} 秒", row.getName(), row.getId(), run.getId(), e.seconds);
             run.setStatus("timeout");
             writeCheckpoint(run, ctx);   // 中断前已完成的节点进检查点，支持从失败点续跑
             return finish(run, ctx, "运行超时（" + e.seconds + " 秒未跑完，workflow.runTimeoutSeconds，0=不限制）");
         } catch (BizException e) {
             log.warn("[WORKFLOW] 运行失败：{}（{}）run={}：{}", row.getName(), row.getId(), run.getId(), e.getMessage());
-            writeCheckpoint(run, ctx);   // M5 检查点：已完成的节点输出进快照（空则不写，无检查点可言）
+            writeCheckpoint(run, ctx);   // 检查点：已完成的节点输出进快照（空则不写，无检查点可言）
             return finish(run, ctx, e.getMessage());
         } catch (Exception e) {
             WorkflowSuspendException suspend = findSuspend(e);
@@ -1145,13 +1145,13 @@ public class WorkflowService {
             }
             Throwable cause = e.getCause() != null ? e.getCause() : e;
             log.warn("[WORKFLOW] 运行异常：{}（{}）run={}：{}", row.getName(), row.getId(), run.getId(), cause.toString());
-            writeCheckpoint(run, ctx);   // M5 检查点：同上（引擎层失败重试耗尽后的终态收口）
+            writeCheckpoint(run, ctx);   // 检查点：同上（引擎层失败重试耗尽后的终态收口）
             return finish(run, ctx, cause.getMessage() == null ? cause.getClass().getSimpleName() : cause.getMessage());
         }
     }
 
     /**
-     * M5 失败检查点：failed/timeout 收口前，把<b>已成功节点的全量输出</b>写进 run.state_snapshot
+     * 失败检查点：failed/timeout 收口前，把<b>已成功节点的全量输出</b>写进 run.state_snapshot
      * （挂起-快照-短路重放范式的失败场景复用）。快照为空（第一个节点都没跑成）时不写——
      * 没有可恢复的内容，续跑等价于重跑，前端不展示「续跑」入口。
      */
@@ -1235,9 +1235,9 @@ public class WorkflowService {
                 configService.getDouble("chat.temperature"),
                 configService.getInt("workflow.maxSteps", ConfigDefaults.WORKFLOW_MAX_STEPS),
                 null, null,
-                configService.getInt("workflow.traceInputMaxChars", ConfigDefaults.WORKFLOW_TRACE_INPUT_MAX),
-                configService.getInt("workflow.traceOutputMaxChars", ConfigDefaults.WORKFLOW_TRACE_OUTPUT_MAX),
-                configService.getInt("workflow.traceErrorMaxChars", ConfigDefaults.WORKFLOW_TRACE_ERROR_MAX));
+                ConfigDefaults.WORKFLOW_TRACE_INPUT_MAX,
+                ConfigDefaults.WORKFLOW_TRACE_OUTPUT_MAX,
+                ConfigDefaults.WORKFLOW_TRACE_ERROR_MAX);
         stream.beginRun(runId, RequestUser.uid());   // 续跑同样要在总线上（审批期间观众可能已经走光、或正等着接回来）
         installStreamSinks(runId, ctx);   // 续跑也边跑边亮（画布流未关时可见）
         // 快照回填：已完成节点输出短路回放；裁决传给审核节点路由
@@ -1315,9 +1315,9 @@ public class WorkflowService {
                 configService.getDouble("chat.temperature"),
                 configService.getInt("workflow.maxSteps", ConfigDefaults.WORKFLOW_MAX_STEPS),
                 null, null,
-                configService.getInt("workflow.traceInputMaxChars", ConfigDefaults.WORKFLOW_TRACE_INPUT_MAX),
-                configService.getInt("workflow.traceOutputMaxChars", ConfigDefaults.WORKFLOW_TRACE_OUTPUT_MAX),
-                configService.getInt("workflow.traceErrorMaxChars", ConfigDefaults.WORKFLOW_TRACE_ERROR_MAX));
+                ConfigDefaults.WORKFLOW_TRACE_INPUT_MAX,
+                ConfigDefaults.WORKFLOW_TRACE_OUTPUT_MAX,
+                ConfigDefaults.WORKFLOW_TRACE_ERROR_MAX);
         stream.beginRun(runId, RequestUser.uid());   // 续跑同样要在总线上（审批期间观众可能已经走光、或正等着接回来）
         installStreamSinks(runId, ctx);   // 续跑也边跑边亮（画布流未关时可见）
         // 快照回填：已完成节点输出短路回放；同时登记进 fullOutputs——本轮再失败时新检查点仍完整

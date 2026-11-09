@@ -1,6 +1,7 @@
 package com.wenqu.ai.controller;
 
 import com.wenqu.ai.common.BizException;
+import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.dto.ResultJson;
 import com.wenqu.ai.model.KnowledgeBase;
 import com.wenqu.ai.service.AuthService;
@@ -127,7 +128,19 @@ public class KnowledgeBaseController {
             String pv = userConfigService.personalValue(RequestUser.uid(), key);
             if (pv != null && !pv.isBlank()) return pv;
         }
-        return configService.get(key);
+        String v = configService.get(key);
+        if (v == null || v.isBlank()) {
+            // KB-override keys have no platform setting; fall back to constants
+            return switch (key) {
+                case "chunk.maxChunks" -> String.valueOf(ConfigDefaults.CHUNK_MAX_CHUNKS);
+                case "chunk.maxImages" -> String.valueOf(ConfigDefaults.CHUNK_MAX_IMAGES);
+                case "parse.childSize" -> String.valueOf(ConfigDefaults.PARSE_CHILD_SIZE);
+                case "parse.ocrMinText" -> String.valueOf(ConfigDefaults.PARSE_OCR_MIN_TEXT);
+                case "parse.ocrDpi" -> String.valueOf(ConfigDefaults.PARSE_OCR_DPI);
+                default -> v;
+            };
+        }
+        return v;
     }
 
     /**
@@ -144,7 +157,14 @@ public class KnowledgeBaseController {
         keys.addAll(DocumentService.PARSE_PARAM_KEYS);
         // 库级检索参数（阈值/两路权重/重排模型）：弹窗只展示这几项的问号文案
         keys.addAll(com.wenqu.ai.service.KbParamCodec.KEYS);
-        return ResultJson.ok(configSchemaService.tipsByKey(keys));
+        Map<String, String> out = new java.util.LinkedHashMap<>(configSchemaService.tipsByKey(keys));
+        // 平台层为固定常量的解析键没有 schema 字段定义，tipsByKey 解析不到——按映射直接取文案名
+        for (Map.Entry<String, String> e : DocumentService.PARSE_PARAM_TIPS.entrySet()) {
+            if (out.containsKey(e.getKey())) continue;
+            String text = configSchemaService.tipsOf(java.util.List.of(e.getValue())).get(e.getValue());
+            if (text != null && !text.isBlank()) out.put(e.getKey(), text);
+        }
+        return ResultJson.ok(out);
     }
 
     @Operation(summary = "知识库列表", description = "含每个库的文档数量；个人默认库（问渠）排最前；只返回自己创建的（含个人默认库），谁建归谁")

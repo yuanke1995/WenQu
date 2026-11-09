@@ -6,6 +6,7 @@ import com.interaso.webpush.VapidKeys;
 import com.interaso.webpush.WebPush;
 import com.interaso.webpush.WebPushService;
 import com.wenqu.ai.config.AppProperties;
+import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.mapper.WebPushSubscriptionMapper;
 import com.wenqu.ai.model.WebPushSubscription;
 import jakarta.annotation.PreDestroy;
@@ -356,7 +357,7 @@ public class WebPushNotifier {
 
     /** 载荷在推送服务上能等多久（秒）：过期就不该再弹——用户看到的「这一轮跑完了」必须是还没凉透的消息 */
     private int ttlSeconds() {
-        int v = configService.getInt("webpush.ttlSeconds", 86400);
+        int v = ConfigDefaults.WEBPUSH_TTL_SECONDS;
         return v <= 0 ? 86400 : v;
     }
 

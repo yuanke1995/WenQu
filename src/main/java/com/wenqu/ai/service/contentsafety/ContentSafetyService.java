@@ -1,6 +1,7 @@
 package com.wenqu.ai.service.contentsafety;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.mapper.ContentRuleMapper;
 import com.wenqu.ai.model.ContentRule;
 import com.wenqu.ai.service.AuditService;
@@ -48,7 +49,7 @@ public class ContentSafetyService {
     private static final long RULE_REFRESH_MS = 15_000;
     /**
      * 出口闸一次判定的回看窗口上限（字符）。跨块的命中靠「每次多带一段上一轮的尾巴一起判」收口；
-     * 尾巴取多长由 {@code contentSafety.outputHoldChars} 定，窗口上限只是兜住正则病态回溯的成本。
+     * 尾巴固定留 24 字，窗口上限只是兜住正则病态回溯的成本。
      */
     private static final int MAX_LOOKBACK = 512;
     /** 片段进审计的长度上限（合规要看得到证据，但不能把整篇违规文抄进审计表） */
@@ -189,9 +190,9 @@ public class ContentSafetyService {
         if (rules.isEmpty() && !remote) return OutputGate.noop();
         RemoteCheck remoteFn = remote ? seg -> remoteCheck(seg, "output", userId, sessionId) : null;
         return new OutputGate(rules, remoteFn, audit, userId, sessionId,
-                Math.max(0, configService.getInt("contentSafety.outputHoldChars", 24)),
-                Math.max(200, configService.getInt("contentSafety.remoteCheckChars", 400)),
-                Math.max(1000, configService.getInt("contentSafety.maxScanChars", 20000)),
+                Math.max(0, ConfigDefaults.CONTENT_SAFETY_OUTPUT_HOLD_CHARS),
+                Math.max(200, ConfigDefaults.CONTENT_SAFETY_REMOTE_CHECK_CHARS),
+                Math.max(1000, ConfigDefaults.CONTENT_SAFETY_MAX_SCAN_CHARS),
                 configService.getBoolean("contentSafety.scanThinking", true),
                 outputSuffix());
     }
@@ -635,7 +636,7 @@ public class ContentSafetyService {
         try {
             return p.check(new ContentSafetyProvider.SafetyRequest(cap(text), stage, userId, sessionId,
                     configService.get("contentSafety.baseUrl"), configService.get("contentSafety.apiKey"),
-                    configService.getInt("contentSafety.timeoutMs", 3000)));
+                    ConfigDefaults.CONTENT_SAFETY_TIMEOUT_MS));
         } catch (Exception e) {
             // 外部检查器宕机不放行违规内容的前提是「内置规则已经判过」；这一层只是追加的第二道闸，
             // 它挂了就在这一层失去一份保险，但整轮问答陪葬不是更好的合规结果。必须留痕。
@@ -652,7 +653,7 @@ public class ContentSafetyService {
     // ---------------------------------------------------------------- 小工具
 
     private String cap(String s) {
-        int max = Math.max(1000, configService.getInt("contentSafety.maxScanChars", 20000));
+        int max = Math.max(1000, ConfigDefaults.CONTENT_SAFETY_MAX_SCAN_CHARS);
         return s.length() <= max ? s : s.substring(0, max);
     }
 

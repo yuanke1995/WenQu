@@ -61,7 +61,7 @@ public class MemoryController {
         return ResultJson.ok(memoryService.saveMemoryMd(RequestUser.uid(), agentId, body.get("content")), "已保存");
     }
 
-    @Operation(summary = "按上限裁剪 MEMORY.md", description = "把 MEMORY.md 确定性裁剪到 memory.maxMdTokens 对应的字符预算")
+    @Operation(summary = "按上限裁剪 MEMORY.md", description = "把 MEMORY.md 确定性裁剪到容量上限（固定 3000 token）对应的字符预算")
     @Permission("self:memory")
     @PostMapping("/compact")
     public ResultJson compact(

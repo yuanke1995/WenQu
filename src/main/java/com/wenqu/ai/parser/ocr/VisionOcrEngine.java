@@ -1,5 +1,6 @@
 package com.wenqu.ai.parser.ocr;
 
+import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.service.ConfigService;
 import com.wenqu.ai.service.VisionService;
 import lombok.RequiredArgsConstructor;
@@ -60,7 +61,7 @@ public class VisionOcrEngine implements OcrEngine {
                                     com.wenqu.ai.parser.DocumentParser.ParseProgress progress) throws Exception {
         com.wenqu.ai.parser.DocumentParser.ParseProgress cb =
                 progress != null ? progress : (p, d) -> { };
-        int dpi = configService.getInt("parse.ocrDpi", 200);
+        int dpi = configService.getInt("parse.ocrDpi", ConfigDefaults.PARSE_OCR_DPI);
         List<PageMarkdown> pages = new ArrayList<>();
         try (PDDocument doc = Loader.loadPDF(pdf.toFile())) {
             PDFRenderer renderer = new PDFRenderer(doc);

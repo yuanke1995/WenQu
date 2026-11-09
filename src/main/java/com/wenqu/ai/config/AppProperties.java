@@ -150,7 +150,7 @@ public class AppProperties {
         private boolean enabled = true;
         /** 单张图片描述超时(ms)（RestClient 构建期读取，需重启生效；与 defaults()/schema 默认 30s 对齐） */
         private int timeoutMillis = 30000;
-        /** 图片描述并发度（设置页 vision.concurrency 可改，保存即生效） */
+        /** 图片描述并发度（平台固定 2） */
         private int concurrency = 2;
         /** 单张图片失败重试次数（syncProperties 回写，设置页保存即生效） */
         private int retryCount = 1;

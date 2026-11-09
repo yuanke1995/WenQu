@@ -204,7 +204,7 @@ public class ScheduleCenter {
     //   临时件（附件/临时目录/外溢原文/执行日志/聊天图片）——多留几天只占磁盘，删早了也能忍；
     //   过程记录（会话/事件账本/访客/通知/运行记录/旧日志）——排障与回溯的现场；
     //   用户资产（产物/会话归档）——删了用户真的找不回来，所以默认最长。
-    // 审计保留期单列（cleanup.auditRetentionDays）：合规留存的口径由制度定，不与这三档共用一个旋钮。
+    // 审计保留期单列，固定 365 天：合规留存的口径由制度定，不与这三档共用一个旋钮。
 
     /** 临时件保留天数（≤0 = 不清理） */
     private int tempFileRetentionDays() {
@@ -266,10 +266,9 @@ public class ScheduleCenter {
 
         // 检索质量自动体检：按线上参数跑评估集并与上期对比（间隔 eval.autoIntervalMs，默认每日；≤0 停用）。
         // 评估集为空自动跳过并记录（生成评估集后无需重启即生效）；下滑结论落在 eval.lastReport 供看板红绿灯
-        // 审计事件留存清理：与其余清理任务同节拍（cleanup.intervalMs），保留期
-        // cleanup.auditRetentionDays（默认 365 天，0=永久）。合规要的是「留够」而不是「永不清」，
-        // 天数由管理员设、清理动作固定跑——不跑就等于审计表无限长，最后没人敢查。
-        register("审计事件留存清理", "删除超过保留期的统一审计事件（保留期 cleanup.auditRetentionDays，0 = 永久保留）",
+        // 审计事件留存清理：与其余清理任务同节拍（cleanup.intervalMs），审计保留期固定 365 天。
+        // 合规要的是「留够」而不是「永不清」，清理动作固定跑——不跑就等于审计表无限长，最后没人敢查。
+        register("审计事件留存清理", "删除超过保留期的统一审计事件（保留期固定 365 天）",
                 "cleanup.intervalMs",
                 this::cleanupIntervalMs,
                 () -> false,

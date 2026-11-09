@@ -1,5 +1,6 @@
 package com.wenqu.ai.service;
 
+import com.wenqu.ai.config.ConfigDefaults;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -36,7 +37,7 @@ public class JvmProjectTurnGuard implements ProjectTurnGuard {
     public static final long DEFAULT_LEASE_TTL_MS = 2 * 60 * 60 * 1000L;
 
     private long ttlMs() {
-        long v = configService.getLong("project.turnGuard.leaseTtlMs", DEFAULT_LEASE_TTL_MS);
+        long v = ConfigDefaults.PROJECT_TURN_GUARD_LEASE_TTL_MS;
         return v > 0 ? v : DEFAULT_LEASE_TTL_MS;
     }
 

@@ -4,6 +4,7 @@ import com.wenqu.ai.agent.permission.ExecutionPolicy;
 import com.wenqu.ai.agent.permission.PermissionPolicyResolver;
 import com.wenqu.ai.agent.tool.ToolFamily;
 import com.wenqu.ai.agent.tool.ToolMountContext;
+import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.model.Agent;
 import org.springframework.stereotype.Service;
 
@@ -33,7 +34,7 @@ public class ToolAssemblyService {
     }
 
     /**
-     * 本轮的工具步数上限（{@code agent.maxToolSteps} > 全局 {@code agent.maxToolSteps}；0=不限制）。
+     * 本轮工具步数上限（助手自己设的优先；平台默认不限制，0=不限制）。
      * <p>与装配判据同源的理由相同：步数上限是「这一轮能干什么」的一部分。留在 {@code ChatService} 里
      * 就是并列的第二套运行时各数各的预算——框架侧漏接时表现为「同样的问题一边被截在一半」，
      * 而不是任何一条错误。
@@ -44,7 +45,7 @@ public class ToolAssemblyService {
      */
     public int maxToolSteps(Agent agent, int depth) {
         Integer v = agent == null ? null : agent.getMaxToolSteps();
-        int global = configService.getInt("agent.maxToolSteps", 0);
+        int global = ConfigDefaults.AGENT_MAX_TOOL_STEPS;
         int base = (v == null || v < 0) ? global : v;
         if (depth <= 0) return Math.max(0, base);
         if (v != null && v == 0 && global > 0) base = global;

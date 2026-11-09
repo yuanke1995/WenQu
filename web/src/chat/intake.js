@@ -8,7 +8,7 @@
 // 本模块**不 import antd、不碰 ref、不发请求**：只做判断与压缩，弹出提示与上传由调用方负责。
 // 这样它既能被登录态那条重交互管线用，也能被分享页那条轻量管线用，还能被单测直接调。
 
-/** 一次最多几张图（与后端 chat.maxImagesPerMessage 的默认 9 是两回事：前端刻意收得更紧，
+/** 一次最多几张图（平台单条消息图片上限是 20 张，前端刻意收得更紧：
  *  因为每张图都要压成 data URL 内联进请求体，5 张 1280px JPEG 已经是几百 KB 的量级） */
 export const MAX_IMAGES = 5
 /** 一次最多几个文档附件（与后端 chat.maxAttachmentsPerMessage 默认值一致） */

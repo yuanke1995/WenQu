@@ -4,6 +4,7 @@ import com.wenqu.ai.agent.chat.ChatCommand;
 import com.wenqu.ai.agent.permission.ExecutionPolicy;
 import com.wenqu.ai.agent.chat.ChatRunRuntime;
 import com.wenqu.ai.agent.context.RetrievalScopeService;
+import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.model.Agent;
 import com.wenqu.ai.service.AgentService;
 import com.wenqu.ai.service.ConfigService;
@@ -252,7 +253,7 @@ public class WenquAgentxTools {
 
             // 需要「本轮落点」的两族各自给出：联网的落点是本轮引用池、沙盒是档位与输出通道；
             // 其余族的主链路侧不读 per-call 上下文
-            // （实测 enrichments 只有 KNOWLEDGE/WEBSEARCH/SANDBOX 三条），可直接复用
+            // （框架的 enrichments 只有 KNOWLEDGE/WEBSEARCH/SANDBOX 三条），可直接复用
             if (family == com.wenqu.ai.agent.tool.ToolFamily.WEBSEARCH) {
                 mountFrom(provider, mc, holders, cmd, slot, rawCallbacks, mcpToolNames, policy, approvalCanAsk,
                         name -> Map.of(com.wenqu.ai.service.websearch.WebSearchTools.CTX_SINK,
@@ -540,7 +541,7 @@ public class WenquAgentxTools {
                     .userId(cmd.getUserId() == null || cmd.getUserId().isBlank() ? "guest" : cmd.getUserId())
                     .sessionId(cmd.getSessionId())
                     .build();
-            long subCallTimeoutMs = configService.getLong("tool.runcode.subCallTimeoutMs", 60_000L);
+            long subCallTimeoutMs = (long) ConfigDefaults.TOOL_RUNCODE_SUB_CALL_TIMEOUT_MS;
             for (String fwName : FRAMEWORK_SURFACE_TOOLS) {
                 var fwTool = scriptToolkit.getTool(fwName);
                 if (fwTool == null || !fwTool.isReadOnly()) continue;
@@ -669,12 +670,12 @@ public class WenquAgentxTools {
 
     /**
      * 可派遣的助手（派遣改由框架的 {@code agent_spawn} 驱使，问渠不再自己挂一把咨询工具）。
-     * <p>四样都按轮现算的口径没变：台账（同一位问两次不该再花一整条子轮）、分支执行器（子轮要的是
+     * <p>四样都按轮现算：台账（同一位问两次不该再花一整条子轮）、分支执行器（子轮要的是
      * 完整问答外壳）、引用登记（子轮查到的资料进<b>父轮</b>编号空间）、可见事件（「本轮咨询了谁」的
      * 徽标不能等整轮 done）。执行时从槽位现取当轮，闭包只捕获会话级的 slot——实例按会话常驻，
      * 把 pool/channel/hooks 捕进去就是「第二轮起写上一轮的池子」。
-     * <p>登记时机在建实例那一轮，与退役前的清单渲染时机同一个（{@code sysPrompt} 里那节也是 build 期
-     * 拼的），所以「改了勾选要不要等重建」这件事逐字不变。
+     * <p>登记时机在建实例那一轮，与清单渲染时机一致（{@code sysPrompt} 里那节也在 build 期拼），
+     * 所以改了勾选要等重建才生效。
      */
     public List<SubagentTarget> consultSubagentTargets(ChatCommand cmd, ExecutionPolicy policy,
                                                        AgentxTurnSlot slot) {
@@ -769,18 +770,18 @@ public class WenquAgentxTools {
     }
 
     /**
-     * 派遣这一族的装配判据（退役前分别长在三处，这里合成一处，别再让提示词与挂载各判一遍）：
+     * 派遣这一族的装配判据（提示词与挂载共用一份，不各判一遍）：
      * <ul>
      *   <li><b>分支轮不派</b>：被派出去的那一支里再挂派遣就是乘数扇出——一支派三支、每支再各派。
-     *       原为 {@code SubAgentToolProvider#exposes} 的 {@code !mc.branchTurn()}。</li>
+     *       按 {@code !mc.branchTurn()} 判定。</li>
      *   <li><b>游客不派</b>：免登录分享保留的是「这个被发布的智能体自己会答」的语义，让它经派遣读到
-     *       私有库与助手，等于把分享链接变成读别人资料的入口。原为描述符的 {@code guestAllowed=false}。</li>
+     *       私有库与助手，等于把分享链接变成读别人资料的入口。</li>
      *   <li><b>审批 off / 分支+ask 不派</b>：派遣起的是完整一轮问答（模型 token 与它自己的写盘能力都在
      *       里面），与沙盒、MCP 同族待遇；分支里挂上去只会等一张永远不会来的确认卡。
-     *       原由 {@code ToolFamily.SUBAGENT#blockedWhenApprovalOff} 承担，现落在这套权限档位上。</li>
+     *       由这套权限档位判定。</li>
      *   <li><b>只读档不派</b>：收窄发生在装配（模型看不见），而不是执行（点了被拒）——框架的档位闸
      *       {@code AgentxFrameworkToolGate} 对未登记的框架工具也按写类 fail-closed 拒一次，两处同一判据。</li>
-     *   <li><b>按名黑名单</b>：以前写的是 {@code consultAgent}，现在认框架的派遣工具名 {@code agent_spawn}
+     *   <li><b>按名黑名单</b>：认框架的派遣工具名 {@code agent_spawn}
      *       （设置页「平台禁用工具名单」与智能体级 deny 都按名生效）。</li>
      * </ul>
      */

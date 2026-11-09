@@ -1,6 +1,7 @@
 package com.wenqu.ai.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.wenqu.ai.config.ConfigDefaults;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -58,7 +59,7 @@ public class RedisProjectTurnGuard implements ProjectTurnGuard {
     }
 
     private long ttlMs() {
-        long v = configService.getLong("project.turnGuard.leaseTtlMs", JvmProjectTurnGuard.DEFAULT_LEASE_TTL_MS);
+        long v = ConfigDefaults.PROJECT_TURN_GUARD_LEASE_TTL_MS;
         return v > 0 ? v : JvmProjectTurnGuard.DEFAULT_LEASE_TTL_MS;
     }
 

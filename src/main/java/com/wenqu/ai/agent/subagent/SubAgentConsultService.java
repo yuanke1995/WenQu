@@ -170,14 +170,14 @@ public class SubAgentConsultService {
             log.info("[CONSULT] 本轮已咨询过 {} 的同一个问题，直接回上次回报（省一条子轮）", a.getName());
             return hit + "\n\n（提示：这个问题本轮已经问过这位助手，上面就是它的回报，不要再重复问。）";
         }
-        int cap = Math.max(1, configService.getInt("agent.consultMaxPerTurn", ConfigDefaults.AGENT_CONSULT_MAX_PER_TURN));
+        int cap = Math.max(1, ConfigDefaults.AGENT_CONSULT_MAX_PER_TURN);
         if (ledger.used() + 1 > cap) {
             log.info("[CONSULT] 本轮咨询已达上限 {}，拒绝对 {} 的咨询", cap, a.getName());
             return "本轮最多咨询 " + cap + " 位助手，额度已用完。请基于已拿到的资料作答。";
         }
         ledger.start();
 
-        long timeoutMs = Math.max(5_000, configService.getLong("agent.consultTimeoutMs"));
+        long timeoutMs = Math.max(5_000, (long) ConfigDefaults.AGENT_CONSULT_TIMEOUT_MS);
         long t0 = System.currentTimeMillis();
         BranchReport report;
         try {

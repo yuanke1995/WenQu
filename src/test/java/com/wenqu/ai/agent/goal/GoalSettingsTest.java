@@ -56,13 +56,12 @@ class GoalSettingsTest {
         v.put("chat.goal.maxTokens", "0");
         v.put("chat.goal.maxMs", "0");
         v.put("chat.goal.maxToolCalls", "0");
-        v.put("chat.goal.maxCompletionChecks", "0");
-        v.put("chat.goal.maxVerifyFailures", "0");
         GoalSettings s = settingsWith(v);
         assertThat(s.maxRounds()).isEqualTo(GoalSettings.UNLIMITED);
         assertThat(s.maxTokens()).isEqualTo(GoalSettings.UNLIMITED_LONG);
         assertThat(s.maxMs()).isEqualTo(GoalSettings.UNLIMITED_LONG);
         assertThat(s.maxToolCalls()).isEqualTo(GoalSettings.UNLIMITED);
+        // 完成检查/核验失败上限已固定为常量 0=不限制
         assertThat(s.maxCompletionChecks()).isEqualTo(GoalSettings.UNLIMITED);
         assertThat(s.maxVerifyFailures()).isEqualTo(GoalSettings.UNLIMITED);
     }
@@ -75,23 +74,15 @@ class GoalSettingsTest {
         v.put("chat.goal.maxTokens", "2000000");
         v.put("chat.goal.maxMs", "7200000");
         v.put("chat.goal.maxToolCalls", "400");
-        v.put("chat.goal.maxCompletionChecks", "2");
-        v.put("chat.goal.maxVerifyFailures", "5");
         GoalSettings s = settingsWith(v);
         assertThat(s.maxRounds()).isEqualTo(40);
         assertThat(s.maxTokens()).isEqualTo(2_000_000L);
         assertThat(s.maxMs()).isEqualTo(7_200_000L);
         assertThat(s.maxToolCalls()).isEqualTo(400);
-        assertThat(s.maxCompletionChecks()).isEqualTo(2);
-        assertThat(s.maxVerifyFailures()).isEqualTo(5);
 
         v.put("chat.goal.maxRounds", "99999");
         v.put("chat.goal.maxTokens", "99999999999");
-        v.put("chat.goal.maxCompletionChecks", "999");
-        v.put("chat.goal.maxVerifyFailures", "999");
         assertThat(s.maxRounds()).isEqualTo(5000);
         assertThat(s.maxTokens()).isEqualTo(100_000_000L);
-        assertThat(s.maxCompletionChecks()).isEqualTo(10);
-        assertThat(s.maxVerifyFailures()).isEqualTo(50);
     }
 }

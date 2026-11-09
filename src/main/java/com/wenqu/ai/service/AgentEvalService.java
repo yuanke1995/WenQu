@@ -5,6 +5,7 @@ import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wenqu.ai.common.BizException;
+import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.mapper.AgentEvalCaseMapper;
 import com.wenqu.ai.mapper.AgentEvalResultMapper;
 import com.wenqu.ai.mapper.AgentEvalRunMapper;
@@ -197,7 +198,7 @@ public class AgentEvalService {
      */
     public Map<String, Object> generateFromSessions(String agentId, JSONObject body) {
         AgentEvalSuite suite = mustSuite(agentId);
-        int maxCases = Math.max(1, configService.getInt("agentEval.maxCases", 200));
+        int maxCases = Math.max(1, ConfigDefaults.AGENT_EVAL_MAX_CASES);
         int count = Math.min(Math.max(1, body == null ? 10 : body.getIntValue("count", 10)), maxCases);
         boolean onlyBad = body != null && Boolean.TRUE.equals(body.getBoolean("onlyBad"));
 
@@ -288,16 +289,16 @@ public class AgentEvalService {
             cases = casesOf(suite.getId(), 1);
         }
         if (cases.isEmpty()) throw new BizException("评测集没有可运行的用例，先添加或启用用例");
-        int maxCases = Math.max(1, configService.getInt("agentEval.maxCases", 200));
+        int maxCases = ConfigDefaults.AGENT_EVAL_MAX_CASES;
         if (cases.size() > maxCases) {
-            throw new BizException("单次最多跑 " + maxCases + " 条（当前勾选 " + cases.size() + " 条），请减少勾选或调整 agentEval.maxCases");
+            throw new BizException("单次最多跑 " + maxCases + " 条（当前勾选 " + cases.size() + " 条），请减少勾选");
         }
         Long runningOfAgent = runMapper.selectCount(new LambdaQueryWrapper<AgentEvalRun>()
                 .eq(AgentEvalRun::getAgentId, agentId).eq(AgentEvalRun::getStatus, "running"));
         if (runningOfAgent != null && runningOfAgent > 0) {
             throw new BizException("该智能体已有评测在跑，等它结束或取消后再试");
         }
-        int concurrency = Math.max(1, configService.getInt("agentEval.concurrency", 2));
+        int concurrency = Math.max(1, ConfigDefaults.AGENT_EVAL_CONCURRENCY);
         Long runningGlobal = runMapper.selectCount(new LambdaQueryWrapper<AgentEvalRun>()
                 .eq(AgentEvalRun::getStatus, "running"));
         if (runningGlobal != null && runningGlobal >= concurrency) {
@@ -537,9 +538,7 @@ public class AgentEvalService {
         Map<String, Object> out = new LinkedHashMap<>();
         AgentEvalSuite suite = suiteOf(agentId);
         out.put("hasSuite", suite != null);
-        out.put("gateMode", configService.get("agentEval.gateMode") == null
-                || configService.get("agentEval.gateMode").isBlank()
-                ? "hint" : configService.get("agentEval.gateMode"));
+        out.put("gateMode", ConfigDefaults.AGENT_EVAL_GATE_MODE);
         out.put("thresholdRate", suite == null ? null : suite.getThresholdRate());
         int version = agentService.currentVersionNumber(agentId);
         out.put("agentVersion", version);
@@ -697,7 +696,7 @@ public class AgentEvalService {
         out.put("trend", trend);
         out.put("recentRuns", recent);
         out.put("todos", todos.size() > 5 ? todos.subList(0, 5) : todos);
-        out.put("gateMode", configService.get("agentEval.gateMode"));
+        out.put("gateMode", ConfigDefaults.AGENT_EVAL_GATE_MODE);
         return out;
     }
 

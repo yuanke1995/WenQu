@@ -5,6 +5,7 @@ import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import com.wenqu.ai.agent.chat.ChatCommand;
 import com.wenqu.ai.agent.chat.ChatRunRuntime;
+import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.mapper.AgentEvalResultMapper;
 import com.wenqu.ai.mapper.AgentEvalRunMapper;
 import com.wenqu.ai.model.AgentEvalCase;
@@ -33,7 +34,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * <ul>
  *   <li>每题 {@code kind=temp} 临时会话，跑完连同消息一起删（finally 兜底），结果表留存答案/引用/指标快照；</li>
  *   <li>专用 daemon 池（2 线程）= 全局并发上限，不占问答流水线线程池；每智能体 1 个运行在 Service 层闸；</li>
- *   <li>单题超时 {@code agentEval.perCaseTimeoutMs}、单次总预算 {@code agentEval.runTimeoutMs}；</li>
+ *   <li>单题超时 3 分钟、单次总预算 15 分钟（平台固定）；</li>
  *   <li>可取消：取消标记逐题检查 + 在跑那一题 {@code ChatRunRuntime#stopTurn} 叫停，已完成结果保留；</li>
  *   <li>评判模型调用以 {@code UsageAttr(kind=eval)} 入账（同步通道，runner 线程同线程调用成立）；
  *       作答调用照常走 chat 记账归触发用户。</li>
@@ -52,7 +53,6 @@ public class AgentEvalRunner {
     private final ChatRunRuntime chatRunRuntime;
     private final AgentEvalScorer scorer;
     private final NotificationService notificationService;
-    private final ConfigService configService;
 
     /** 运行注册表：runId → 取消标记 / 在跑会话 / 展示名（取消入口与执行体两端共用） */
     private final Map<String, RunCtx> active = new ConcurrentHashMap<>();
@@ -79,7 +79,7 @@ public class AgentEvalRunner {
     public AgentEvalRunner(AgentEvalRunMapper runMapper, AgentEvalResultMapper resultMapper,
                            SessionService sessionService, ChatService chatService,
                            ChatRunRuntime chatRunRuntime, AgentEvalScorer scorer,
-                           NotificationService notificationService, ConfigService configService) {
+                           NotificationService notificationService) {
         this.runMapper = runMapper;
         this.resultMapper = resultMapper;
         this.sessionService = sessionService;
@@ -87,7 +87,6 @@ public class AgentEvalRunner {
         this.chatRunRuntime = chatRunRuntime;
         this.scorer = scorer;
         this.notificationService = notificationService;
-        this.configService = configService;
     }
 
     // ==================== 对外 ====================
@@ -125,8 +124,8 @@ public class AgentEvalRunner {
 
     private void execute(AgentEvalRun run, AgentEvalSuite suite, List<AgentEvalCase> cases, RunCtx ctx) {
         String uid = run.getCreatedBy();
-        long perCaseTimeoutMs = Math.max(30_000, configService.getLong("agentEval.perCaseTimeoutMs", 180_000));
-        long runTimeoutMs = Math.max(perCaseTimeoutMs, configService.getLong("agentEval.runTimeoutMs", 900_000));
+        long perCaseTimeoutMs = Math.max(30_000, (long) ConfigDefaults.AGENT_EVAL_PER_CASE_TIMEOUT_MS);
+        long runTimeoutMs = Math.max(perCaseTimeoutMs, (long) ConfigDefaults.AGENT_EVAL_RUN_TIMEOUT_MS);
         long deadline = System.currentTimeMillis() + runTimeoutMs;
         int passed = 0;
         long latencySum = 0;

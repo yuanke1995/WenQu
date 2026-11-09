@@ -200,7 +200,7 @@ public class MemoryService {
     // ==================== 内部 ====================
 
     private int maxTokens() {
-        return Math.max(500, configService.getInt("memory.maxMdTokens", ConfigDefaults.MEMORY_MAX_MD_TOKENS));
+        return Math.max(500, ConfigDefaults.MEMORY_MAX_MD_TOKENS);
     }
 
     private static int maxChars(int maxTokens) {

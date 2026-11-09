@@ -1,6 +1,7 @@
 package com.wenqu.ai.service;
 
 import com.wenqu.ai.config.AppProperties;
+import com.wenqu.ai.config.ConfigDefaults;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -70,7 +71,7 @@ public class ImageUrlSigner {
     }
 
     private String doSignUrl(String url) {
-        long expire = Instant.now().getEpochSecond() + properties.getImages().getAuthExpireSeconds();
+        long expire = Instant.now().getEpochSecond() + ConfigDefaults.IMAGES_AUTH_EXPIRE_SECONDS;
         // 签名基准 = 纯路径（剥掉**整个** query）。必须是纯路径：拦截器验签时拿到的是
         // request.getRequestURI()，它按定义不含 query；若把业务参数也算进基准，带参文件
         // （…?v=2）的签名永远对不上拦截器的路径，直接 401。

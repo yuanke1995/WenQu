@@ -1,6 +1,7 @@
 package com.wenqu.ai.service;
 
 import com.alibaba.fastjson2.JSON;
+import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.mapper.AuditEventMapper;
 import com.wenqu.ai.model.AuditEvent;
 import com.wenqu.ai.service.ReplicaCoordination;
@@ -492,11 +493,10 @@ public class AuditService {
         return problems;
     }
 
-    /** 留存清理：删早于 {@code cleanup.auditRetentionDays} 的事件（≤0=永久保留）；分批删避免长事务锁表 */
+    /** 留存清理：删早于 365 天前的事件（保留期固定）；分批删避免长事务锁表 */
     public int purgeExpired() {
-        // 键名以 config-schema.json 为准：曾写成 audit.retentionDays（该键既不在 schema 也不在 defaults），
-        // 设置页改审计保留天数一直不生效、恒按兜底的 365 天跑
-        int days = configService.getInt("cleanup.auditRetentionDays", 365);
+        // 保留期是平台常量（ConfigDefaults.CLEANUP_AUDIT_RETENTION_DAYS），≤0 时不清理（永久保留）
+        // 键名须与 config-schema.json 一致，否则设置页改审计保留天数不生效、恒按兜底的 365 天跑
         if (days <= 0) return 0;
         LocalDateTime cutoff = LocalDateTime.now().minusDays(days);
         int total = 0;
@@ -507,7 +507,7 @@ public class AuditService {
             if (total > 5_000_000) break;   // 单次上限：真清不完说明留存期设得过短，交下次调度继续
         }
         if (total > 0) {
-            log.info("[AUDIT] 留存清理：删除 {} 条早于 {} 的审计事件（cleanup.auditRetentionDays={}）", total, cutoff, days);
+            log.info("[AUDIT] 留存清理：删除 {} 条早于 {} 的审计事件（保留期 {} 天）", total, cutoff, days);
         }
         return total;
     }

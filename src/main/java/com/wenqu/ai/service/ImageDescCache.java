@@ -1,5 +1,6 @@
 package com.wenqu.ai.service;
 
+import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.mapper.ImageDescMapper;
 import com.wenqu.ai.model.ImageDesc;
 import lombok.extern.slf4j.Slf4j;
@@ -18,7 +19,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * 生产级策略：
  * - 持久化：DB 表存储，重启不丢 → 重解析描述文本稳定 → 块级 diff 才能复用（跳过重新 embedding）
  * - 新鲜度：TTL 内命中直接返回并刷新命中时间；超 TTL 视为过期重新描述（自动换新，避免坏描述永久锁定）
- * - 重生成：bump vision.descCacheVersion → key 前缀变化 → 全部 miss 重新描述；旧版本行由 prune 回收
+ * - 重生成：版本号是平台常量（VISION_DESC_CACHE_VERSION），调整需改代码发版 → key 前缀变化 → 全部 miss 重新描述；旧版本行由 prune 回收
  * - 并发：ON DUPLICATE KEY UPDATE 原子 upsert，无重复行/无写撕裂
  * - 运维：GET/DELETE /api/ai/desc-cache 可查可清；prune 按写入节流自动执行
  */
@@ -26,23 +27,21 @@ import java.util.concurrent.atomic.AtomicInteger;
 @Component
 public class ImageDescCache {
 
-    private final ConfigService configService;
     private final ImageDescMapper descMapper;
     /** prune 节流：每 N 次写入才执行一次清理（避免每次写都扫表） */
     private static final int PRUNE_INTERVAL = 100;
     private final AtomicInteger writeCount = new AtomicInteger();
 
-    public ImageDescCache(ConfigService configService, ImageDescMapper descMapper) {
-        this.configService = configService;
+    public ImageDescCache(ImageDescMapper descMapper) {
         this.descMapper = descMapper;
     }
 
     private int version() {
-        return configService.getInt("vision.descCacheVersion", 1);
+        return Integer.parseInt(ConfigDefaults.VISION_DESC_CACHE_VERSION);
     }
 
     private int ttlDays() {
-        return configService.getInt("vision.descCacheTtlDays", 180);
+        return ConfigDefaults.VISION_DESC_CACHE_TTL_DAYS;
     }
 
     /** 缓存 key：v{版本}_{sha256(model+prompt+bytes)}；版本变化 → 前缀变化 → 全部 miss（强制重生成） */

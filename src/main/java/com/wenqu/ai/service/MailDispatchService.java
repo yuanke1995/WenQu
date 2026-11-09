@@ -3,6 +3,7 @@ package com.wenqu.ai.service;
 import com.alibaba.fastjson2.JSON;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.mapper.MailDeliveryMapper;
 import com.wenqu.ai.mapper.NotificationMapper;
 import com.wenqu.ai.mapper.UserConfigMapper;
@@ -230,7 +231,7 @@ public class MailDispatchService {
     }
 
     private boolean withinAggregateWindow(String uid, String type, String dedup) {
-        int min = Math.max(0, configService.getInt("notify.mail.minIntervalMs", 300_000));
+        int min = Math.max(0, ConfigDefaults.NOTIFY_MAIL_MIN_INTERVAL_MS);
         if (min <= 0) return false;
         LocalDateTime since = LocalDateTime.now().minusNanos(min * 1_000_000L);
         try {
@@ -470,7 +471,7 @@ public class MailDispatchService {
     }
 
     private int[] retryDelays() {
-        String raw = configService.get("notify.mail.retryDelaysSeconds");
+        String raw = ConfigDefaults.NOTIFY_MAIL_RETRY_DELAYS_SECONDS;
         if (raw == null || raw.isBlank()) raw = "60,300,900";
         List<Integer> out = new ArrayList<>();
         for (String s : raw.split(",")) {

@@ -53,12 +53,6 @@ public class JournalRotation {
 
     private static final Logger log = LoggerFactory.getLogger(JournalRotation.class);
 
-    /**
-     * 默认阈值（事件条数）。定这一档的依据就是上面那条实测曲线：12k 事件对应约 1.5 秒起轮税，
-     * 而这条会话里一个重活轮就产 8k 条——也就是大约一轮一转，界是硬的而不是「聊久了慢慢变慢」。
-     */
-    private static final int DEFAULT_ROTATE_EVENTS = 12_000;
-
     /** 搬走的那一代挂在 root 下的这个目录名，同时是清理任务的扫描根。 */
     private static final String ROTATED_DIR = "rotated";
 
@@ -96,7 +90,7 @@ public class JournalRotation {
      * @param agentId 框架侧的 agentId（拼日志路径用，必须与建实例时那份一致）
      */
     public void rotateIfNeeded(String userId, String sessionId, String agentId) {
-        int threshold = configService.getInt("chat.agentscopeJournalRotateEvents", DEFAULT_ROTATE_EVENTS);
+        int threshold = ConfigDefaults.CHAT_AGENTSCOPE_JOURNAL_ROTATE_EVENTS;
         if (threshold <= 0 || userId == null || userId.isBlank()
                 || sessionId == null || sessionId.isBlank() || agentId == null || agentId.isBlank()) {
             return;

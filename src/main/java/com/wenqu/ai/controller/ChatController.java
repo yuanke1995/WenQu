@@ -4,6 +4,7 @@ import com.alibaba.fastjson2.JSON;
 import com.wenqu.ai.agent.chat.ChatCommand;
 import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.config.AdminGuard;
+import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.dto.ChatRequest;
 import com.wenqu.ai.dto.ResultJson;
 import com.wenqu.ai.dto.SessionInfo;
@@ -174,10 +175,10 @@ public class ChatController {
         usageQuota.assertWithinBudget(RequestUser.SYSTEM.equals(userId) ? null : userId, "chat");
 
         String question = request.getQuestion().trim();
-        // 单条字数上限走配置（chat.maxQuestionChars），与游客分享链路同一把尺子：
-        // 原先这里写死 @Size(8000)，而集成方（表单设计器助手）每轮要把当前画布 schema 带上，
-        // 一张大表就超 8000 —— 写死的注解会让「配置调到 60000」在登录态/Key 这条路上根本不生效。
-        int maxQuestionChars = Math.max(200, configService.getInt("chat.maxQuestionChars", 200000));
+        // 单条字数上限固定 20 万字（CHAT_MAX_QUESTION_CHARS=200000），与游客分享链路同一把尺子：
+        // 集成方（表单设计器助手）每轮要把当前画布 schema 带上，一张大表就到数万至十万字量级，
+        // 上限定在 20 万字以容纳这种整份携带，同时挡住会吃爆内存的超大请求。
+        int maxQuestionChars = Math.max(200, ConfigDefaults.CHAT_MAX_QUESTION_CHARS);
         if (question.length() > maxQuestionChars) {
             throw new BizException("单条内容过长（最多 " + maxQuestionChars + " 字）");
         }
@@ -185,11 +186,11 @@ public class ChatController {
         // 聊天传图上限：数量与单张体积（防 base64 洪峰压垮解码/视觉处理；数据 URL 字符量≈体积×4/3）
         List<String> images = request.getImages();
         if (images != null && !images.isEmpty()) {
-            int maxImages = Math.max(1, configService.getInt("chat.maxImagesPerMessage", 20));
+            int maxImages = Math.max(1, ConfigDefaults.CHAT_MAX_IMAGES_PER_MESSAGE);
             if (images.size() > maxImages) {
                 throw new BizException("一次最多发送 " + maxImages + " 张图片");
             }
-            int maxImageMb = Math.max(1, configService.getInt("chat.maxImageMb", 50));
+            int maxImageMb = Math.max(1, ConfigDefaults.CHAT_MAX_IMAGE_MB);
             long maxBase64Chars = maxImageMb * 4L * 1024 * 1024 / 3; // base64 膨胀 4/3 后的字符量上限
             for (String img : images) {
                 int comma = img == null ? -1 : img.indexOf(',');

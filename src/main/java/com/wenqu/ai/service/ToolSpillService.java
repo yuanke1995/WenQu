@@ -34,17 +34,17 @@ import java.util.regex.Pattern;
  * 归属写在同名 {@code .json} 里，非本人一律查不到）。写失败退回原样截断——这是旁路，绝不影响问答。
  *
  * <p>占用的磁盘由两道治理收住：保留期（{@code cleanup.tempFileRetentionDays}，临时件档）删过期的，
- * 每人配额（{@code tool.spillMaxMbPerUser}）在写入后把该用户目录压回上限内、按落盘时间淘汰最旧的。
+ * 每人配额为平台常量（{@code TOOL_SPILL_MAX_MB_PER_USER}，默认 0=不限量）在写入后把该用户目录压回上限内、按落盘时间淘汰最旧的。
  * 被淘汰只影响「查看完整输出」能否读回原文，卡片上的预览与这一轮的结论不受影响。
  *
  * <p>读回侧的两句实话：一次最多给 {@value #MAX_READ_CHARS} 字符量级的<b>一段</b>（超出用 {@code next} 续读，
  * 见 {@link #read(String, String, int, int)}），检索走 {@link #search(String, String, String)}——
  * 它扫的是盘上那份<b>整份</b>原文，所以「那句报错在 300 万字的日志里」这种找法不依赖前端已经读到哪儿。
  *
- * <p>刻意不做（不是没做完）：
+ * <p>刻意不做：
  * <ul>
  *   <li><b>模型侧的输出上限不动</b>（沙盒那道帽、工具侧截断进上下文那一段）——那是上下文预算问题，
- *       归属「历史投影切换 / PTC」那条线，动它会改变模型看到的内容形状；本服务只管<b>给人看的那一份</b>；</li>
+ *       动它会改变模型看到的内容形状；本服务只管<b>给人看的那一份</b>；</li>
  *   <li>不落数据库：原文可能几 MB，进库会把消息表拖肥，磁盘 + 保留期清理更合适；</li>
  *   <li>不建倒排索引：一次扫描换一次「查那句报错」，量级够用（盘上有 4M 字符的落盘上限兜着）。</li>
  * </ul>
@@ -63,8 +63,6 @@ public class ToolSpillService {
     private static final int MAX_STORED_CHARS = 4 * 1024 * 1024;
     /** 读回给前端的体积上限：气泡里贴几 MB 文本浏览器会卡，超出按 outOfBand 说明 */
     private static final int MAX_READ_CHARS = 512 * 1024;
-    /** 每人配额默认值（MB）：与业务上传上限同一量级，够排障用又不至于让一个账号吃穿磁盘 */
-    private static final int DEFAULT_QUOTA_MB = 0;
 
     private final AppProperties properties;
     private final ConfigService configService;
@@ -361,7 +359,7 @@ public class ToolSpillService {
 
     /** 每人配额（MB）：0 或负数 = 不限量，与保留天数的「0 = 不清理」同一口径 */
     public int quotaMb() {
-        return configService.getInt("tool.spillMaxMbPerUser", DEFAULT_QUOTA_MB);
+        return ConfigDefaults.TOOL_SPILL_MAX_MB_PER_USER;
     }
 
     /**

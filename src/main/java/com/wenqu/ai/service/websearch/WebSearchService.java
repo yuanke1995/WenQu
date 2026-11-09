@@ -1,5 +1,6 @@
 package com.wenqu.ai.service.websearch;
 
+import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.service.ConfigService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -44,7 +45,7 @@ public class WebSearchService {
      * 执行一次搜索。
      *
      * @param query      搜索词
-     * @param maxResults 期望条数（null=用配置 webSearch.maxResults）
+     * @param maxResults 期望条数（null=平台固定 10）
      * @return 结果列表（已去空链接、已补站点名、已按条数截断）
      * @throws WebSearchException 未启用 / 缺配置 / 请求失败（fail-loud，不返回空列表充数）
      */
@@ -72,9 +73,9 @@ public class WebSearchService {
         if ((apiKey == null || apiKey.isBlank()) && !"generic".equalsIgnoreCase(provider.id())) {
             throw new WebSearchException("联网搜索未配置 API Key（webSearch.apiKey 为空，服务商 " + provider.id() + " 需要密钥）", true);
         }
-        int cap = configService.getInt("webSearch.maxResults", 10);
+        int cap = ConfigDefaults.WEB_SEARCH_MAX_RESULTS;
         int limit = maxResults == null ? cap : Math.max(1, Math.min(maxResults, cap));
-        int timeoutMs = configService.getInt("webSearch.timeoutMs", 30000);
+        int timeoutMs = ConfigDefaults.WEB_SEARCH_TIMEOUT_MS;
         String baseUrl = configService.get("webSearch.baseUrl");
         if (baseUrl != null && baseUrl.startsWith("http://")) {
             log.warn("[WEB-SEARCH] 服务地址使用 http，搜索词与密钥将以明文传输：{}", baseUrl);

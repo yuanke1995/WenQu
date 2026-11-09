@@ -38,13 +38,6 @@ export function applyServerSchema (payload) {
 export const isEngineField = f => Number(f.tier ?? 2) >= 3 || f.hidden === true
 
 /**
- * 已停用字段（schema 标 deprecated，note 以「【已停用】」开头）：后端已无读取点，
- * 键留在 fields 里只为提交/校验认账与回滚窗口——**任何时候都不该摆上设置页**，
- * 包括铺开工程参数时：排障的人面对一个「改了没人读」的旋钮只会绕远路。
- */
-export const isDeprecatedField = f => f.deprecated === true
-
-/**
  * 按面板取渲染块：分节标题与字段按顺序交织，自定义块由调用方插入。
  * @param form 传入时按 vif 过滤不可见字段——某节字段全被隐藏时标题一并隐藏
  *             （如 MCP「安全与限频」挂在「对外提供端点」开关下）
@@ -59,7 +52,7 @@ export function blocksOf (panel, form = null, showEngine = false) {
   // 也可能是尚未从后端到达的 key），崩在这里会连带整个设置页白屏并吞掉真实报错
   if (!p) return []
   const blocks = []
-  const keep = f => (!form || isVisible(f, form)) && !isDeprecatedField(f) && (showEngine || !isEngineField(f))
+  const keep = f => (!form || isVisible(f, form)) && (showEngine || !isEngineField(f))
   for (let i = 0; i < p.sections.length; i++) {
     const fs = FIELDS.filter(f => f.panel === panel && f.section === i && !f.groupedUnder && keep(f))
     if (!fs.length) continue

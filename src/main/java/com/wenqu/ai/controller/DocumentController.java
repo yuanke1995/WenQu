@@ -1,6 +1,7 @@
 package com.wenqu.ai.controller;
 
 import com.wenqu.ai.common.BizException;
+import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.service.AuditService;
 import com.wenqu.ai.dto.ResultJson;
 import com.wenqu.ai.service.ConfigService;
@@ -111,9 +112,9 @@ public class DocumentController {
         }
     }
 
-    /** 上传大小业务校验（DB 配置 upload.maxFileSize，保存即生效；multipart 物理上限由容器兜底） */
+    /** 上传大小业务校验（平台固定 256MB；multipart 物理上限由容器兜底） */
     private void checkUploadSize(MultipartFile file) {
-        long limit = configService.getLong("upload.maxFileSize");
+        long limit = ConfigDefaults.UPLOAD_MAX_FILE_SIZE_BYTES;
         if (limit > 0 && file.getSize() > limit) {
             throw new BizException("文件大小超过上限 " + fmtSize(limit) + "!");
         }

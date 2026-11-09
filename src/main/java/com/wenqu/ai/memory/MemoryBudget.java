@@ -13,7 +13,7 @@ import java.util.List;
  * 模型并不保证遵守——本机 admin 账号的 {@code MEMORY.md} 实测到 57 KB，而框架的注入预算按
  * {@code 字符数 / 4} 估算，超出部分会被 {@code WorkspaceContextMiddleware} 截掉，
  * 表现为「记了但想不起来」。这里在<b>写入落盘前</b>做一次硬裁剪，保证文件永远不超过
- * {@code memory.maxMdTokens} 对应的字符预算；面板的「按上限裁剪」与自适应写入共用同一实现。
+ * MEMORY.md 容量上限（固定 3000 token）对应的字符预算；面板的「按上限裁剪」与自适应写入共用同一实现。
  *
  * <p>裁剪策略：保留文档头与所有 {@code ##} 小节标题，从正文最长的节开始逐行删末尾，
  * 仍然超限才从后往前删整节；最后追加一行裁剪说明。它是确定性的，不调模型、不增加成本。
@@ -30,10 +30,7 @@ public final class MemoryBudget {
 
     /** 当前配置下 {@code MEMORY.md} 允许的最大字符数。 */
     public static int maxChars(ConfigService configService) {
-        int tokens = configService == null
-                ? ConfigDefaults.MEMORY_MAX_MD_TOKENS
-                : configService.getInt("memory.maxMdTokens", ConfigDefaults.MEMORY_MAX_MD_TOKENS);
-        return Math.max(500, tokens) * 4;
+        return Math.max(500, ConfigDefaults.MEMORY_MAX_MD_TOKENS) * 4;
     }
 
     /**

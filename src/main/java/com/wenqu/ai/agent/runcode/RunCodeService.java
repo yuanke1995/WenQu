@@ -1,5 +1,6 @@
 package com.wenqu.ai.agent.runcode;
 
+import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.sandbox.ProvisionerSandboxBackend;
 import com.wenqu.ai.service.ConfigService;
 import lombok.extern.slf4j.Slf4j;
@@ -64,8 +65,8 @@ public class RunCodeService {
                     + "）。请拆成几段依次运行，或先把处理逻辑写成文件再执行那个文件。");
         }
         int maxCalls = Math.max(1, configService.getInt("tool.runcode.maxSubCalls", 50));
-        int maxParallel = Math.max(1, configService.getInt("tool.runcode.maxParallel", 8));
-        int timeoutSeconds = Math.max(10, configService.getInt("tool.runcode.timeoutSeconds", 120));
+        int maxParallel = Math.max(1, ConfigDefaults.TOOL_RUNCODE_MAX_PARALLEL);
+        int timeoutSeconds = Math.max(10, ConfigDefaults.TOOL_RUNCODE_TIMEOUT_SECONDS);
         String base = callbackBase();
         if (base == null) {
             // 没配可达地址时不猜：猜出来的 URL 在容器里十有八九连不上，表现为每个子调用超时，

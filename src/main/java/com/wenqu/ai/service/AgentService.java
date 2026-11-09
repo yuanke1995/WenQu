@@ -8,6 +8,7 @@ import com.alibaba.fastjson2.JSONWriter;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.wenqu.ai.common.BizException;
+import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.mapper.AgentMapper;
 import com.wenqu.ai.mapper.AgentVersionMapper;
 import com.wenqu.ai.model.Agent;
@@ -129,9 +130,6 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         m.put("workflowId", "绑定工作流");
         VERSION_FIELDS = Collections.unmodifiableMap(m);
     }
-
-    /** 配置快照保留份数兜底（实际取 agent.versionKeep，设置页可调）；超出按版本号最小先删 */
-    private static final int VERSION_KEEP_DEFAULT = 20;
 
     /**
      * 启动时维护内置「问渠」智能体的全局唯一性：多于一个时保留「默认优先、创建最早」的一条，
@@ -401,7 +399,7 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
     public Map<String, Object> configDefaults() {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("agent.subagentMode", platformBranchMode().code());
-        out.put("agent.maxToolSteps", configService.get("agent.maxToolSteps"));
+        out.put("agent.maxToolSteps", String.valueOf(ConfigDefaults.AGENT_MAX_TOOL_STEPS));
         out.put("tool.enabled", configService.get("tool.enabled"));
         out.put("webSearch.enabled", configService.get("webSearch.enabled"));
         // 重排开关归智能体覆盖（场景性），原先只挂在 /kb/param-defaults 上；这里补一份，
@@ -557,9 +555,9 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         if (b.containsKey("memoryMode")) uw.set(Agent::getMemoryMode, a.getMemoryMode());
         // 工具执行审批三态（auto/ask/off；null=跟随权限档位的建议值）
         if (b.containsKey("toolApprovalMode")) uw.set(Agent::getToolApprovalMode, a.getToolApprovalMode());
-        // 权限档位（P2；null=跟随平台默认档）
+        // 权限档位（null=跟随平台默认档）
         if (b.containsKey("permissionPreset")) uw.set(Agent::getPermissionPreset, a.getPermissionPreset());
-        // 工具黑名单（P2；null/空=不禁用任何具体工具）
+        // 工具黑名单（null/空=不禁用任何具体工具）
         if (b.containsKey("toolDeny")) uw.set(Agent::getToolDeny, a.getToolDeny());
         // 单轮工具步数上限（null=继承全局）
         if (b.containsKey("maxToolSteps")) uw.set(Agent::getMaxToolSteps, a.getMaxToolSteps());
@@ -568,7 +566,7 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         if (b.containsKey("builtinTools")) uw.set(Agent::getBuiltinTools, a.getBuiltinTools());
         if (b.containsKey("isSubagent")) uw.set(Agent::getIsSubagent, a.getIsSubagent());
         if (b.containsKey("subAgentIds")) uw.set(Agent::getSubAgentIds, a.getSubAgentIds());
-        // 被咨询时的执行形态（P3a；null=跟随平台默认档）
+        // 被咨询时的执行形态（null=跟随平台默认档）
         if (b.containsKey("subagentMode")) uw.set(Agent::getSubagentMode, a.getSubagentMode());
         if (b.containsKey("isDefault")) uw.set(Agent::getIsDefault, a.getIsDefault());
         // M4：绑定的工作流（chatflow）；空串/null = 解绑（显式置空，NOT_NULL 策略下 updateById 不管）
@@ -684,7 +682,7 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
             String m = body.get("toolApprovalMode") == null ? null : String.valueOf(body.get("toolApprovalMode")).trim();
             a.setToolApprovalMode("auto".equals(m) || "ask".equals(m) || "off".equals(m) ? m : null);
         }
-        // 权限档位（P2）：null/空=跟随平台默认档；认不出的值直接拒绝——静默归 null 等于把「写错了的
+        // 权限档位：null/空=跟随平台默认档；认不出的值直接拒绝——静默归 null 等于把「写错了的
         // 全自主」变成「其实没设」，配置页上看着有值、跑的是平台默认，那种漂移没人能从界面上看出来
         if (body.containsKey("permissionPreset")) {
             String rawPreset = body.get("permissionPreset") == null
@@ -746,7 +744,7 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         if (body.containsKey("isSubagent")) a.setIsSubagent(toTri(body.get("isSubagent")));
         // 委派列表为空串/空时归一为 null（= 不启用委派，编排走原有多视角策略）
         if (body.containsKey("subAgentIds")) a.setSubAgentIds(asText(body.get("subAgentIds"), 1000));
-        // 被咨询时的执行形态（P3a）：null/空=跟随平台默认档 agent.subagentMode。
+        // 被咨询时的执行形态：null/空=跟随平台默认档 agent.subagentMode。
         // 认不出的值直接拒绝（与权限档位同口径）：写错的 "full" 静默归 null 会变成"其实跟着平台默认跑要点"，
         // 而用户以为这个助手能干活——配置页上看着有值、跑的是另一套，这种漂移从界面上看不出来。
         if (body.containsKey("subagentMode")) {
@@ -912,9 +910,9 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         return n == null ? 0 : n.intValue();
     }
 
-    /** 只保留最近 N 份（N 可配：agent.versionKeep，隐藏参数） */
+    /** 只保留最近 20 份（平台固定） */
     private void trimVersions(String agentId) {
-        int keep = Math.max(1, configService.getInt("agent.versionKeep", VERSION_KEEP_DEFAULT));
+        int keep = Math.max(1, ConfigDefaults.AGENT_VERSION_KEEP);
         List<AgentVersion> rows = versionMapper.selectList(new LambdaQueryWrapper<AgentVersion>()
                 .eq(AgentVersion::getAgentId, agentId)
                 .orderByDesc(AgentVersion::getVersion));

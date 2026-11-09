@@ -242,8 +242,7 @@ class SubAgentConsultServiceTest {
         @Test
         @DisplayName("达到上限后拒绝后续咨询")
         void capReached() {
-            // 上限设为 2
-            when(configService.getInt(eq("agent.consultMaxPerTurn"), anyInt())).thenReturn(2);
+            // 上限已固定为平台常量 3（ConfigDefaults.AGENT_CONSULT_MAX_PER_TURN）
             when(agentService.get("agent-zhibao")).thenReturn(targetAgent);
             when(agentService.get("agent-ops")).thenReturn(otherAgent);
             when(agentService.consultCandidates("self-agent-id"))
@@ -267,9 +266,18 @@ class SubAgentConsultServiceTest {
             when(agentService.consultCandidates("self-agent-id"))
                     .thenReturn(List.of(targetAgent, otherAgent, third));
             String r3 = service.consult(ledger, ctx(), runner, null, "agent-third", "Q3");
-            assertTrue(r3.contains("额度已用完") || r3.contains("最多咨询 2 位"),
-                    "第三次应该被预算挡住: " + r3);
-            verify(runner, times(2)).run(any());
+            assertFalse(r3.contains("额度已用完"), "第三次不该触顶: " + r3);
+            // 第四次触顶：换一个新助手，仍在候选里
+            Agent fourth = new Agent();
+            fourth.setId("agent-fourth");
+            fourth.setName("第四助手");
+            when(agentService.get("agent-fourth")).thenReturn(fourth);
+            when(agentService.consultCandidates("self-agent-id"))
+                    .thenReturn(List.of(targetAgent, otherAgent, third, fourth));
+            String r4 = service.consult(ledger, ctx(), runner, null, "agent-fourth", "Q4");
+            assertTrue(r4.contains("额度已用完") || r4.contains("最多咨询"),
+                    "第四次应该被预算挡住: " + r4);
+            verify(runner, times(3)).run(any());
         }
 
         @Test

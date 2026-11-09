@@ -77,7 +77,7 @@ public class EvaluationController {
         return ResultJson.ok(evalService.runAutoCheck());
     }
 
-    @Operation(summary = "启动答案级评测（异步）", description = "每条用例：检索 → 生成回答（eval.answerModel，空=复用评判模型）→ 评判模型打忠实度/相关性两维分。"
+    @Operation(summary = "启动答案级评测（异步）", description = "每条用例：检索 → 生成回答（复用评判模型 eval.judgeModel）→ 评判模型打忠实度/相关性两维分。"
             + "每条真实调用两次模型，手动触发、单次上限 50 条；进度与结果经 GET /eval/answer/report 轮询")
     @Permission("eval:write")
     @PostMapping("/answer/run")

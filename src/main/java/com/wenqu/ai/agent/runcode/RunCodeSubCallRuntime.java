@@ -9,6 +9,7 @@ import com.wenqu.ai.agent.tool.ToolInvocation;
 import com.wenqu.ai.agent.tool.ToolPipelineFactory;
 import com.wenqu.ai.agent.tool.ToolRegistry;
 import com.wenqu.ai.agent.tool.ToolTurnContext;
+import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.service.ChatRunBus;
 import com.wenqu.ai.service.ConfigService;
 import com.wenqu.ai.service.SandboxTools;
@@ -157,7 +158,7 @@ public class RunCodeSubCallRuntime {
 
             @Override
             public long subCallTimeoutMs() {
-                return Math.max(5_000L, configService.getLong("tool.runcode.subCallTimeoutMs", 60_000L));
+                return Math.max(5_000L, (long) ConfigDefaults.TOOL_RUNCODE_SUB_CALL_TIMEOUT_MS);
             }
 
             @Override
@@ -463,7 +464,7 @@ public class RunCodeSubCallRuntime {
         // 预算与并发上限：面板要能说出"这一次扇出离上限还有多远"，否则 12/50 和 12/12 看着一样
         fan.put("used", turn.board().subCallCount.get());
         fan.put("max", Math.max(1, configService.getInt("tool.runcode.maxSubCalls", 50)));
-        fan.put("parallel", Math.max(1, configService.getInt("tool.runcode.maxParallel", 8)));
+        fan.put("parallel", Math.max(1, ConfigDefaults.TOOL_RUNCODE_MAX_PARALLEL));
         if (delivered > 0) fan.put("delivered", delivered);
         return fan;
     }

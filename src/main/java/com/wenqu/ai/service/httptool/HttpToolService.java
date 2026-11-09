@@ -2,6 +2,7 @@ package com.wenqu.ai.service.httptool;
 
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
+import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.mapper.AgentMapper;
 import com.wenqu.ai.model.Agent;
 import com.wenqu.ai.service.ConfigCryptoService;
@@ -55,7 +56,7 @@ public class HttpToolService {
         }
         if (sets.isEmpty()) return new Mount(List.of(), null);
         boolean allowPrivate = configService.getBoolean("httpTool.allowPrivateNetwork", true);
-        int fallbackTimeout = configService.getInt("httpTool.timeoutMs", HttpToolModels.TIMEOUT_DEFAULT_MS);
+        int fallbackTimeout = ConfigDefaults.HTTP_TOOL_TIMEOUT_MS;
         List<ToolCallback> out = new ArrayList<>();
         for (HttpToolModels.HttpToolset set : sets) {
             if (set.getEnabled() != null && !set.getEnabled()) continue;

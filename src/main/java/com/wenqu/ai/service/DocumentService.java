@@ -1170,7 +1170,7 @@ public class DocumentService {
             // 不入库、不进指纹，因此邻块变动不会连锁改变本块指纹（chunk.overlap 可调，0=关闭）
             int overlap = configService.getInt("chunk.overlap", properties.getChunk().getOverlap());
             // 截断保护：超大文档只保留前 maxChunks 块（防止 embedding 调用数万次/解析失控）
-            int maxChunks = configService.getInt("chunk.maxChunks");
+            int maxChunks = configService.getInt("chunk.maxChunks", ConfigDefaults.CHUNK_MAX_CHUNKS);
             int truncatedChunks = 0;
             if (maxChunks > 0 && chunks.size() > maxChunks) {
                 // fail-loud：截断不再静默——计数入终态 desc（"截断保留前N/共M块"）
@@ -1529,14 +1529,26 @@ public class DocumentService {
     }
 
     /**
-     * 知识库解析参数白名单（与设置页"文档解析"暴露项一致 + 本库图片描述视觉模型）。
-     * <p>public：知识库新建表单的"默认值模板"端点需要按同一白名单取全局值（见 KnowledgeBaseController）。
+     * 知识库解析参数白名单（本库级覆盖项；平台默认值取设置页当前值或 ConfigDefaults 常量）。
+     * <p>public：知识库新建表单的"默认值模板"端点需要按同一白名单取生效默认值（见 KnowledgeBaseController）。
      */
     public static final Set<String> PARSE_PARAM_KEYS = Set.of(
             "chunk.maxSize", "chunk.overlap", "chunk.maxChunks", "chunk.maxImages",
             "chunk.structural", "chunk.structuralRatio", "chunk.headingDepth",
             "parse.qaEnabled", "parse.qaPerChunk", "parse.childEnabled", "parse.childSize",
             "parse.ocrEngine", "parse.ocrMinText", "parse.ocrDpi");
+
+    /**
+     * 白名单里平台层为固定常量的键 → schema tips 里的文案名：
+     * 这些参数只在库级开放，schema 字段清单里没有定义，问号文案按本映射直接取 tips 原文
+     * （见 KnowledgeBaseController.paramTips），避免两处解释漂移。
+     */
+    public static final Map<String, String> PARSE_PARAM_TIPS = Map.of(
+            "chunk.maxChunks", "maxChunks",
+            "chunk.maxImages", "maxImages",
+            "parse.childSize", "childSize",
+            "parse.ocrMinText", "ocrMinText",
+            "parse.ocrDpi", "ocrDpi");
 
     /** 知识库 parse_params 里的 visionRef（空=解析时跳过图片描述） */
     private String parseVisionRef(com.wenqu.ai.model.KnowledgeBase kb) {

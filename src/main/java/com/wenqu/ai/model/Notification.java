@@ -110,8 +110,8 @@ public class Notification {
      */
     public static final String TYPE_MODEL_QUOTA = "model.quota";
     /**
-     * 一轮对话跑完了（只给「跑得够久、人多半已经离开屏幕」的那类轮，见
-     * {@code notification.turnMinSeconds}）。短轮不发：答案当场就到了，再钉一条通知是刷屏。
+     * 一轮对话跑完了（只给「跑得够久、人多半已经离开屏幕」的那类轮，
+     * 耗时门槛固定 60 秒）。短轮不发：答案当场就到了，再钉一条通知是刷屏。
      */
     public static final String TYPE_CHAT_TURN_DONE = "chat.turn.done";
     /**

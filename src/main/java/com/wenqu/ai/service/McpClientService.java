@@ -3,6 +3,7 @@ package com.wenqu.ai.service;
 import com.alibaba.fastjson2.JSON;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wenqu.ai.common.BizException;
+import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.mapper.McpCallLogMapper;
 import com.wenqu.ai.mapper.UserMcpMapper;
 import com.wenqu.ai.model.UserMcp;
@@ -447,19 +448,19 @@ public class McpClientService {
      * 刷新时先补一次重连（只碰坏连接，代价与失败服务数成正比），再由 serverStatuses 正常出列表。
      * 只在用户点「刷新」时调用——进页面拉状态不重试，避免挂着几个死服务把首屏状态请求拖到超时。
      */
-    /** 上次巡检时刻（{@code mcp.patrolIntervalMs} 内部节流的判据） */
+    /** 上次巡检时刻（固定 5 分钟节流的判据） */
     private volatile long lastPatrolAt = 0;
 
     /**
-     * 定时健康巡检（P1 · MCP 面板升级 3.4）：把「远端挂掉却还显示已连接」的窗口收掉。
+     * 定时健康巡检：把「远端挂掉却还显示已连接」的窗口收掉。
      * <p>只碰非空闲池、只碰 connected 服务；远程 listTools 一律在锁外做，失败才在锁内翻红并接上
-     * 既有退避重试链。配置 0 = 关闭巡检。
+     * 既有退避重试链。巡检间隔固定 5 分钟。
      */
     @org.springframework.scheduling.annotation.Scheduled(fixedDelay = 60_000, initialDelay = 120_000)
     public void patrol() {
         int interval;
         try {
-            interval = configService.getInt("mcp.patrolIntervalMs", 300_000);
+            interval = ConfigDefaults.MCP_PATROL_INTERVAL_MS;
         } catch (Exception e) {
             return;
         }

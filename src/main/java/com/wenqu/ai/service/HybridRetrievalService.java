@@ -124,7 +124,7 @@ public class HybridRetrievalService {
         private boolean keywordFallback; // Meili 无命中回退 MySQL（仅调试面板展示，不扰用户）
         private boolean multiTimeout;    // 多路检索超时/失败 → 降级首路/仅用已完成结果
         private String lastError;
-        private int graphExpanded;       // P1：图扩展并入的块数（GraphRAG 开启的库才有值）
+        private int graphExpanded;       // 图扩展并入的块数（GraphRAG 开启的库才有值）
         private String aclPushdownError; // ACL 过滤条件下推失败（已退回事后过滤兜底，非越权但召回受损）
 
         void vectorFailed(String err) { this.vectorFailed = true; this.lastError = err; }
@@ -225,8 +225,8 @@ public class HybridRetrievalService {
         // 可见范围过滤（资源共享范围）：当前用户不可见的文档在向量/关键词两路统一剔除
         // 1. 向量召回（放大召回率；按目标知识库的向量模型分组逐库检索后合并）
         //    adaptiveTopK=true 时按「权限有效召回目标」补采（生产问答）；false 时严格按配置 topK 一次（评估/调试）
-        //    补采还受 retrieval.aclTopKSupplant 总闸约束：应急阀，管理员可在设置页关掉（见下方 KNN 成本说明）
-        boolean supplement = adaptiveTopK && configService.getBoolean("retrieval.aclTopKSupplant", true);
+        //    补采还受总闸约束（RETRIEVAL_ACL_TOPK_SUPPLANT，平台固定默认开）：补采顶掉尾部为平台固定行为（见下方 KNN 成本说明）
+        boolean supplement = adaptiveTopK && ConfigDefaults.RETRIEVAL_ACL_TOPK_SUPPLANT;
         List<Document> vectorDocs = supplement
                 ? vectorSearch(query, diag, kbIds, Math.max(1, configService.getInt("retrieval.vectorTopK", 15)), params)
                 : vectorSearch(query, diag, kbIds, 0, params);
@@ -423,7 +423,7 @@ public class HybridRetrievalService {
             // 合并：同一 knowledgeId 保留 score 最高者（跨 query 分数同体系可直接 max），
             // 并统计每块被几个子查询命中——多路共识是强相关信号：只被一路命中的块可能是某次
             // 改写的偶然召回，而多路都命中说明该块与问题的多个侧面都相关。
-            // 原 retrieval.multiConsensusBonus 已随深度思考退役；评测的多路近似沿用同一常量。
+            // 多路共识加分沿用与评测共用的常量。
             double consensusBonus = ConfigDefaults.RETRIEVAL_MULTI_CONSENSUS_BONUS;
             Map<String, Hit> merged = new LinkedHashMap<>();
             Map<String, Integer> hitByQueries = new HashMap<>();

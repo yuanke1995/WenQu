@@ -69,10 +69,10 @@ public class OpenAiCompatController {
 
     /** 临时会话的等待上限（整轮；含工具循环，对齐评测单题口径 300s） */
     private static final long TURN_TIMEOUT_MS = 300_000L;
-    /** 单条 message 内容上限（与 chat.maxQuestionChars 默认 200000 的量级口径一致，防止单请求吃爆内存） */
+    /** 单条 message 内容上限（与平台单条提问 20 万字上限同一量级，防止单请求吃爆内存） */
     private static final int MESSAGE_MAX_CHARS = 200_000;
     private static final int MESSAGES_MAX_COUNT = 64;
-    /** Function calling：单请求 tools 上限与 schema 总字节上限（P1 §3.4） */
+    /** Function calling：单请求 tools 上限与 schema 总字节上限 */
     private static final int TOOLS_MAX_COUNT = 32;
     private static final int TOOLS_MAX_SCHEMA_BYTES = 64 * 1024;
 

@@ -3,6 +3,7 @@ package com.wenqu.ai.service;
 import com.alibaba.fastjson2.JSON;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wenqu.ai.common.BizException;
+import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.mapper.AiDocumentMapper;
 import com.wenqu.ai.mapper.GraphEntityMapper;
 import com.wenqu.ai.mapper.GraphExtractMapper;
@@ -41,9 +42,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 /**
- * P1 GraphRAG（库级开关，默认关；MySQL 两表起步不上图数据库）：
+ * GraphRAG（库级开关，默认关；MySQL 两表起步不上图数据库）：
  * <ul>
- *   <li><b>抽取</b>：文档块落库后按批（graphrag.batchChunks）合并调 LLM 抽「主体-关系-客体」，
+ *   <li><b>抽取</b>：文档块落库后每批固定 3 块合并调 LLM 抽「主体-关系-客体」，
  *       仅收原文陈述；哈希增量（extract 账本 contentHash 一致即跳过）、失败不重试（成本闸）、
  *       每块条数上限（maxTriplesPerChunk）；重建/删除按 doc/chunk 对账清理；</li>
  *   <li><b>检索扩展</b>：主检索命中后做<b>一跳</b>图扩展——命中块内容匹配实体 → 取三元组 →
@@ -545,8 +546,8 @@ public class GraphRagService {
                 tripleMapper.delete(new LambdaQueryWrapper<GraphTriple>().eq(GraphTriple::getChunkId, r.getChunkId()));
             }
         }
-        int maxPerChunk = Math.max(1, configService.getInt("graphrag.maxTriplesPerChunk", 30));
-        int batchChunks = Math.max(1, configService.getInt("graphrag.batchChunks", 3));
+        int maxPerChunk = Math.max(1, ConfigDefaults.GRAPHRAG_MAX_TRIPLES_PER_CHUNK);
+        int batchChunks = Math.max(1, ConfigDefaults.GRAPHRAG_BATCH_CHUNKS);
         int extracted = 0;
         List<Knowledge> batch = new ArrayList<>();
         for (Knowledge chunk : chunks) {

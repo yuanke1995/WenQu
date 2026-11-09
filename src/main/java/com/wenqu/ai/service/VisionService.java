@@ -4,6 +4,7 @@ import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import com.wenqu.ai.config.AppProperties;
+import com.wenqu.ai.config.ConfigDefaults;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
@@ -29,7 +30,6 @@ public class VisionService {
     private final ConfigService configService;
     private final ModelRegistryService modelRegistryService;
     private final ImageDescCache imageDescCache;
-    private final SimpleClientHttpRequestFactory requestFactory;
     private final RestClient restClient;
 
     public VisionService(AppProperties properties, ConfigService configService,
@@ -40,8 +40,7 @@ public class VisionService {
         this.imageDescCache = imageDescCache;
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(10000);
-        factory.setReadTimeout(properties.getVision().getTimeoutMillis());
-        this.requestFactory = factory;
+        factory.setReadTimeout(ConfigDefaults.VISION_TIMEOUT_MILLIS);
         // 不设固定 baseUrl：每次调用按引用（visionRef → 供应商表）解析出网关，请求用绝对 URI
         this.restClient = RestClient.builder()
                 .requestFactory(factory)
@@ -49,24 +48,9 @@ public class VisionService {
     }
 
     /**
-     * vision.timeoutMillis 是运行时旋钮：SimpleClientHttpRequestFactory 每次请求现读超时，
-     * 改设置只需刷 factory，不必重启（旧写法在构建期固化，保存后一直按启动时的值跑）。
-     */
-    @jakarta.annotation.PostConstruct
-    void registerTimeoutHotReload() {
-        configService.addChangeListener(changed -> {
-            if (changed == null || !changed.contains("vision.timeoutMillis")) return;
-            int want = Math.max(1000, configService.getInt("vision.timeoutMillis",
-                    properties.getVision().getTimeoutMillis()));
-            requestFactory.setReadTimeout(want);
-            log.info("[vision] 图片描述读取超时已热更为 {}ms（vision.timeoutMillis）", want);
-        });
-    }
-
-    /**
      * 生成图片文字描述（使用配置的默认提示词）；任何失败返回 ""（降级，不中断主流程）。
      * 视觉模型取当前线程的解析期「图片描述」引用（{@link #startParseScope(String)}，文档内嵌图按库）；
-     * 未设置（无库上下文）时不描述图片——全局 vision.model 已退役，没有运行时兜底。
+     * 未设置（无库上下文）时不描述图片，没有运行时兜底。
      */
     public String describe(byte[] imageBytes, String ext) {
         return describe(imageBytes, ext, configService.get("vision.prompt"), DESC_REF.get());
@@ -87,7 +71,7 @@ public class VisionService {
 
     /**
      * 带引用的图片描述（内部）：ref 非空时解析该引用为视觉网关（解析期的知识库 visionRef）；
-     * 空/解析失败 → 跳过描述（全局 vision.model 已退役，无运行时兜底）。
+     * 空/解析失败 → 跳过描述（无运行时兜底）。
      * 先查内容寻址缓存（同图+同模型+同提示词直接复用上次结果，避免重解析重复调 VLM）；
      * 未命中调 VLM，成功写缓存。失败自动重试 retryCount 次（Ollama 偶发 500/超时）
      */
@@ -160,7 +144,7 @@ public class VisionService {
             }
         }
 
-        int retry = Math.max(0, properties.getVision().getRetryCount());
+        int retry = Math.max(0, ConfigDefaults.VISION_RETRY_COUNT);
         Exception lastErr = null;
         String result = "";
         for (int attempt = 0; attempt <= retry; attempt++) {
@@ -191,7 +175,7 @@ public class VisionService {
 
     /**
      * 路由解析：refOverride 非空时按引用取供应商网关；空/引用无效 → null（调用方跳过描述，
-     * 不再回落已退役的全局 vision.model）。
+     * 不再回落到全局兜底）。
      */
     private ModelRegistryService.ModelRoute routeFor(String refOverride) {
         if (refOverride == null || refOverride.isBlank()) return null;

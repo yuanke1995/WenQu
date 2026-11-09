@@ -3,6 +3,7 @@ package com.wenqu.ai.agent.subagent;
 import com.alibaba.fastjson2.JSON;
 import com.wenqu.ai.agent.chat.ChatCommand;
 import com.wenqu.ai.agent.chat.ChatRunRuntime;
+import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.service.ArtifactService;
 import com.wenqu.ai.service.ConfigService;
 import com.wenqu.ai.service.DocumentMetaCache;
@@ -92,14 +93,13 @@ public class SubAgentBranchRuntime {
 
     /**
      * 子助手强制同步等待秒数：框架 ctx（{@code FrameworkSessions}）与分支自身收口共用这一份。
-     * <p>取 max(子轮预算, 审批预算) + 60s，夹在 [60, 600]（框架上限）；配置
-     * {@code agent.spawnSyncTimeoutSeconds} &gt; 0 时以它为准。
+     * <p>同步等待上限为平台常量（{@code ConfigDefaults.AGENT_SPAWN_SYNC_TIMEOUT_SECONDS}，
+     * 0=自动：取 max(咨询预算, 审批预算) + 60s，夹在 [60, 600]（框架上限）。
      */
     public static int spawnSyncTimeoutSeconds(ConfigService configService) {
-        int configured = configService.getInt("agent.spawnSyncTimeoutSeconds",
-                com.wenqu.ai.config.ConfigDefaults.AGENT_SPAWN_SYNC_TIMEOUT_SECONDS);
+        int configured = ConfigDefaults.AGENT_SPAWN_SYNC_TIMEOUT_SECONDS;
         if (configured > 0) return Math.min(600, Math.max(30, configured));
-        long budget = Math.max(configService.getLong("agent.consultTimeoutMs", 300_000L),
+        long budget = Math.max((long) ConfigDefaults.AGENT_CONSULT_TIMEOUT_MS,
                 configService.getLong("chat.approvalTimeoutMs", 600_000L));
         return (int) Math.min(600L, Math.max(60L, budget / 1000L + 60L));
     }
@@ -220,8 +220,7 @@ public class SubAgentBranchRuntime {
                         .build(), sink);
                 // 强制同步时父轮会一直等到这里返回。分支必须在 force_sync 截止前收口（留 5s 让回报送达），
                 // 否则会出现「父轮报同步超时、子轮还在跑」的孤儿。没有开强制同步时不做这道硬截止。
-                long forceSyncMs = configService.getBoolean("agent.spawnForceSync",
-                        com.wenqu.ai.config.ConfigDefaults.AGENT_SPAWN_FORCE_SYNC)
+                long forceSyncMs = ConfigDefaults.AGENT_SPAWN_FORCE_SYNC
                         ? spawnSyncTimeoutSeconds(configService) * 1000L : 0L;
                 long hardDeadline = forceSyncMs > 0 ? start + forceSyncMs - 5_000L : Long.MAX_VALUE;
                 long firstWait = req.timeoutMs();

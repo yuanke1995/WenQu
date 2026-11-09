@@ -60,7 +60,7 @@ public class SessionLogArchive {
 
     /** 总开关（默认开）：保留策略随默认值出厂（keepDays=90 + 每日清理），盘占用有界；关闭即放弃正文之外的全部过程明细 */
     public boolean enabled() {
-        return configService.getBoolean("chat.sessionLogArchive.enabled");
+        return ConfigDefaults.CHAT_SESSION_LOG_ARCHIVE_ENABLED;
     }
 
     /**

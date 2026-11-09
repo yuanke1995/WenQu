@@ -60,7 +60,7 @@
               <a-tab-pane key="vision" tab="图片描述" />
             </a-tabs>
             <!-- 工具相关面板的合并入口：总开关与子工具 / 联网搜索 / 技能——
-                 避免左侧导航随工具面板膨胀；技能原本是导航里的独立分组，现在收进本页页签。
+                 避免左侧导航随工具面板膨胀；技能收进本页页签。
                  页签风格与「定时任务」一致（a-tabs），pane 留空只当页签条，
                  内容在下方按 toolTab 对应的 panel 字段渲染 -->
             <a-tabs v-if="current === 'tool'" v-model:activeKey="toolTab" class="sched-tabs">
@@ -82,8 +82,8 @@
             <a-form :label-col="{ span: 5 }" :wrapper-col="{ span: 18 }" @submit.prevent>
               <!-- 每个配置面板都按 schema 的分节折叠，默认全展开，点标题收起某一节。
                    「定时任务 → 参数配置」页签**只放不属于任何周期任务的参数**（其余 41 项在
-                   「运行状态」表格里就地调整，见那边的展开行）——两个页签曾各存一份同样的旋钮，
-                   49 项里 41 项重复，改一处要猜另一处是否跟着变，现在每个参数只有一个家。 -->
+                   「运行状态」表格里就地调整，见那边的展开行）——每个参数只有一个家，
+                   改一处不必猜另一处是否跟着变。 -->
               <a-alert v-if="isMaintConfig" type="info" show-icon
                        message="这里只放不属于任何定时任务的通用参数。某个任务自己的间隔与专属参数（保留期、并发、超时等），在「运行状态」页签展开对应任务就地调整。" />
               <!-- 整块与上方页签条之间留一条缝：页签条自身 margin-bottom 是 0，贴着会喘不过气 -->
@@ -126,7 +126,7 @@
                       <TimeoutPreset v-if="blk.type === 'timeoutPreset'" :form="form" />
 
                       <!-- 常规字段（SchemaField 全量复用：类型控件/条件显隐/参数说明）。
-                           MCP 的管理界面已迁到「智能体」页的个人 Tab；技能停用清单随本页「技能」页签一起渲染 -->
+                           MCP 的管理界面在「智能体」页的个人 Tab；技能停用清单随本页「技能」页签一起渲染 -->
                       <template v-else-if="blk.type === 'field'">
                         <SchemaField :field="blk.field" :form="form" :tips="TIPS" :options="fieldOptions(blk.field)"
                                      :source="sources[blk.field.backendKey]" :secret-hints="secretHints">
@@ -150,7 +150,7 @@
 
               <!-- 部署属性只读区：这几个键决定数据落在哪个目录/哪个 Redis 前缀下，改一次等于换一批数据
                    （目录不迁移 → 看上去像"数据消失"），所以不给输入框，只把当前生效值摊开给排障看。
-                   值来自后端 snapshot 的原始载荷，与字段定义无关：它们已从可编辑清单退役。 -->
+                   值来自后端 snapshot 的原始载荷，与字段定义无关：这些键只读展示，设置页不提供编辑入口。 -->
               <div v-if="deployRows.length" class="deploy-props">
                 <div class="deploy-props-title">部署属性（只读）</div>
                 <div class="deploy-props-hint key-dim">
@@ -589,7 +589,7 @@ import { getConfig, getConfigSchema, saveConfig, resetConfig,
 import SchemaField from '../components/SchemaField.vue'
 import IntervalEditor from '../components/IntervalEditor.vue'
 import TimeoutPreset from '../components/TimeoutPreset.vue'
-import { FIELDS, PANELS, TIPS, blocksOf, buildDefaultForm, readForm, writeForm, applyServerSchema, isEngineField, isDeprecatedField, isVisible } from '../configSchema'
+import { FIELDS, PANELS, TIPS, blocksOf, buildDefaultForm, readForm, writeForm, applyServerSchema, isEngineField, isVisible } from '../configSchema'
 import { locateField } from '../utils/fieldLocate'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -622,11 +622,10 @@ const activeFormPanel = computed(() => current.value === 'tool'
 
 /**
  * 全局分层概览（设置页顶部那条统计带）：全量字段按 tier 分三档，hidden 统一算进工程参数。
- * 已停用键（deprecated）不进统计：它们永远不渲染，算进「收起 N 项」会虚报一个摊开也见不到的数。
- * 数字直接从 FIELDS 现算，不写死——schema 一变（本版本加了 4 个键、收了 46 个）这里跟着变。
+ * 数字直接从 FIELDS 现算，不写死——schema 一变这里跟着变。
  */
 const tierStats = computed(() => {
-  const live = FIELDS.filter(f => !isDeprecatedField(f))
+  const live = FIELDS
   const total = live.length
   let must = 0, tuned = 0
   for (const f of live) {
@@ -648,7 +647,6 @@ const tierStats = computed(() => {
 const panelTierMap = computed(() => {
   const m = {}
   for (const f of FIELDS) {
-    if (isDeprecatedField(f)) continue
     const o = m[f.panel] || (m[f.panel] = { visible: 0, total: 0 })
     o.total++
     if (!isEngineField(f)) o.visible++
@@ -674,7 +672,7 @@ watch(showEngine, v => { try { localStorage.setItem(ENGINE_KEY, v ? '1' : '0') }
 /** 当前面板被工程参数收起的项数（开关文案与空态提示共用；镜像 cfgBlocks 的过滤口径） */
 const engineHiddenCount = computed(() => {
   let fs = FIELDS.filter(f => f.panel === activeFormPanel.value && isEngineField(f)
-    && !isDeprecatedField(f) && isVisible(f, form.value))
+    && isVisible(f, form.value))
   if (isMaintConfig.value) {
     const owned = taskOwnedKeys.value
     fs = fs.filter(f => !owned.has(f.backendKey))
@@ -795,10 +793,10 @@ const applyPanelDeepLink = raw => {
   if (host === 'retrieval') ragTab.value = key
   else if (host === 'tool') toolTab.value = key
   current.value = panel
-  // 全工程参数的面板（「调试设置」11 项都是 tier3）落点会是一片空白，看着像页面坏了：
+  // 全工程参数的面板（「调试设置」整组都是 tier3）落点会是一片空白，看着像页面坏了：
   // 这一组本来就没有常规参数，直接铺开
-  if (!FIELDS.some(f => f.panel === panel && !isEngineField(f) && !isDeprecatedField(f))
-    && FIELDS.some(f => f.panel === panel && isEngineField(f) && !isDeprecatedField(f))) showEngine.value = true
+  if (!FIELDS.some(f => f.panel === panel && !isEngineField(f))
+    && FIELDS.some(f => f.panel === panel && isEngineField(f))) showEngine.value = true
 }
 
 /**
@@ -811,7 +809,7 @@ const applyFieldDeepLink = async () => {
   const key = typeof route.query.fix === 'string' ? route.query.fix : ''
   if (!key) return
   const f = FIELDS.find(x => x.backendKey === key)
-  if (f && isEngineField(f) && !isDeprecatedField(f)) showEngine.value = true
+  if (f && isEngineField(f)) showEngine.value = true
   const title = fieldFoldTitle(f)
   if (title && closedFolds.value.includes(title)) toggleFold(title)
   await nextTick()
@@ -1454,7 +1452,7 @@ const cfgGroupsAll = computed(() => {
         const title = p.sections[i]
         if (present.has(title)) continue
         const fs = FIELDS.filter(f => f.panel === p.key && f.section === i && !f.groupedUnder
-          && !isDeprecatedField(f) && (!owned || !owned.has(f.backendKey)) && isVisible(f, form.value))
+          && (!owned || !owned.has(f.backendKey)) && isVisible(f, form.value))
         const engine = fs.filter(f => isEngineField(f))
         if (fs.length && engine.length === fs.length) {
           groups.push({ title, blocks: [], fields: [], engineOnly: engine.length })
@@ -1521,7 +1519,7 @@ watch(cfgKeyword, v => {
   if (!kw) return
   closedFolds.value = []
   if (!showEngine.value && FIELDS.some(f => f.panel === activeFormPanel.value && isEngineField(f)
-    && !isDeprecatedField(f) && isVisible(f, form.value)
+    && isVisible(f, form.value)
     && ((f.label || '').toLowerCase().includes(kw)
       || (f.backendKey || '').toLowerCase().includes(kw)))) showEngine.value = true
 })

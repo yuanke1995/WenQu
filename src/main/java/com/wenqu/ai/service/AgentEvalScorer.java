@@ -24,7 +24,7 @@ import java.util.Set;
  *   <li><b>综合分</b> = 召回×40% + 忠实×30% + 相关×30%（无期望引用按 0/50/50 归一）；</li>
  *   <li><b>通过</b> = 综合分 ≥ 套件通过分，且有期望引用时召回命中 ≥ 1 条。</li>
  * </ul>
- * 评判模型：{@code agentEval.judgeModel}，空则回落 {@code eval.judgeModel}；两者都空 = 跳过评判，
+ * 评判模型：{@code eval.judgeModel}；空 = 跳过评判，
  * 忠实度/相关性记 null，综合分只按引用召回折算（有期望引用时按命中比例×100，无期望引用记 null），
  * 由调用方在 failure_reason 标注「评判模型不可用」，不把整次运行判失败。
  *
@@ -53,9 +53,9 @@ public class AgentEvalScorer {
 
     // ==================== 评判模型 ====================
 
-    /** 评测评判模型：专用键优先，空回落检索评估的 eval.judgeModel；都空 = null（跳过评判） */
+    /** 评测评判模型取检索评估的 eval.judgeModel（空 = 跳过评判） */
     public String judgeModel() {
-        String m = configService.get("agentEval.judgeModel");
+        String m = configService.get("eval.judgeModel");
         if (m != null && !m.isBlank()) return m.trim();
         String fallback = configService.get("eval.judgeModel");
         return fallback == null || fallback.isBlank() ? null : fallback.trim();

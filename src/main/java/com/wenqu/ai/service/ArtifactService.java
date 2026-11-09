@@ -696,7 +696,7 @@ public class ArtifactService {
 
     /**
      * 按产物 id 批量换发**新鲜签名**的下载地址（对话页专用）。
-     * <p><b>为什么需要</b>：签名 URL 有效期 {@code images.authExpireSeconds} 只有 1 小时，
+     * <p><b>为什么需要</b>：签名 URL 有效期固定 1 小时（{@code IMAGES_AUTH_EXPIRE_SECONDS=3600}），
      * 而产物页每次进页面都调{@link #list} 现场重签、永远拿到新地址；对话页的卡片却用的是
      * SSE 下发 / 历史接口里那一份**签好就不变**的 URL —— 页面开着超过一小时后再点，
      * {@code ImageAuthInterceptor} 判 expire 过期直接 401，表现为「对话里的产物下载不下来」，

@@ -13,7 +13,7 @@ import java.util.Map;
  * <p>
  * 用 JDK 自带客户端而不是 Spring 的 RestClient，理由：工具是在模型调用线程里**同步阻塞**执行，
  * 需要按请求的精确超时（HttpRequest.timeout 逐请求设置），且不应受全局 HTTP 客户端配置影响。
- * 连接超时固定 10s（握手阶段），读取超时由调用方按 webSearch.timeoutMs 给。
+ * 连接超时固定 10s（握手阶段），读取超时由调用方按平台固定 30 秒给。
  */
 final class SearchHttp {
 

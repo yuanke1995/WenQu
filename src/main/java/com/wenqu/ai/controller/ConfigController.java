@@ -1,5 +1,6 @@
 package com.wenqu.ai.controller;
 
+import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.dto.ResultJson;
 import com.wenqu.ai.parser.DocumentParser;
 import com.wenqu.ai.service.ConfigService;
@@ -130,8 +131,8 @@ public class ConfigController {
     @GetMapping("/public")
     public ResultJson publicConfig() {
         Map<String, Object> upload = new LinkedHashMap<>();
-        // 业务上传上限（字节，来自 c_ai_config 的 upload.maxFileSize，保存即生效）
-        long maxBytes = configService.getLong("upload.maxFileSize");
+        // 业务上传上限固定 256MB（UPLOAD_MAX_FILE_SIZE_BYTES，字节）
+        long maxBytes = ConfigDefaults.UPLOAD_MAX_FILE_SIZE_BYTES;
         if (maxBytes <= 0) {
             maxBytes = 200L * 1024 * 1024;
         }
@@ -201,7 +202,7 @@ public class ConfigController {
                 body.get("apiKey"), body.get("model"), body.get("path")));
     }
 
-    /** 向量模型全量重嵌入已退役：向量模型归各知识库绑定，重嵌入随知识库编辑/切换向量模型按库触发 */
+    /** 向量模型不做全量重嵌入：向量模型归各知识库绑定，重嵌入随知识库编辑/切换向量模型按库触发 */
     @Operation(summary = "保存配置", description = "保存可编辑的模型配置项（vision.prompt、检索/解析参数等），保存即生效无需重启；*.apiKey 以 RSA 加密入库。业务模型已归属使用者：知识库绑定向量/解析视觉/检索重排模型，聊天模型走会话覆盖>个人默认。"
             + "提交里出现字段定义外的键时整笔拒绝（400 并点名该键），不会保存一半再返回成功")
     @Permission("config:manage")

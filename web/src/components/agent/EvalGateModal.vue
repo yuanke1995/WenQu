@@ -57,7 +57,7 @@
     </div>
 
     <div class="gate-foot">
-      <span class="mode-hint">门禁模式：{{ info?.gateMode === 'block' ? '阻断（低于门槛拒绝保存）' : '提示（管理员可配置阻断）' }}</span>
+      <span class="mode-hint">门禁模式：提示（低于门槛不阻断保存）</span>
       <span class="sp"></span>
       <template v-if="blocked">
         <a-button @click="emit('update:open', false)">知道了</a-button>

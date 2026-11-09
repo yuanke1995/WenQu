@@ -44,10 +44,10 @@ public final class WorkflowRunCtx {
     final Map<String, String> resolvedModels = new LinkedHashMap<>();
     /** 全局温度兜底（chat.temperature 在触发线程读好，节点内不再读 ThreadLocal 配置） */
     final double defaultTemperature;
-    /** 运行期最大步数（图迭代上限，对齐 agent.maxToolSteps 语义；M1 图无环，兜底防 M3 loop 回跳失控） */
+    /** 运行期最大步数（图迭代上限，对齐平台工具步数预算语义；兜底防 loop 节点回跳失控） */
     final int maxSteps;
     /**
-     * M4 对话型接入（智能体绑定）的 token 透传通道：非空时 llm 节点改走流式调用，
+     * 对话型接入（智能体绑定）的 token 透传通道：非空时 llm 节点改走流式调用，
      * 每个文本块即时交给它（由 ChatService 包装成 SSE token 事件推给前端），
      * 节点输出仍为完整文本——流式只是"边跑边看"，不改变节点语义。
      * 调试运行 / API 触发 / 恢复续跑为 null（无客户端可推，走非流式）。
@@ -132,8 +132,8 @@ public final class WorkflowRunCtx {
     final long t0 = System.currentTimeMillis();
 
     /**
-     * trace 摘要截断长度（第 4 期配置化：运行开始时从配置读好显式携带，节点线程不再读配置——
-     * 与 {@code defaultTemperature} 同款口径）。默认值见 {@code ConfigDefaults} 三常量（=历史硬编码值）。
+     * trace 摘要截断长度（运行开始时从配置读好显式携带，节点线程不再读配置——
+     * 与 {@code defaultTemperature} 同款口径）。默认值见 {@code ConfigDefaults} 三常量。
      */
     final int traceInputMax;
     final int traceOutputMax;

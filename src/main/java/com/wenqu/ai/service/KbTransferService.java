@@ -49,13 +49,13 @@ import java.util.zip.ZipOutputStream;
 @Service
 @RequiredArgsConstructor
 public class KbTransferService {
-    /** 统一审计事件（Phase 3）：同一份格式串派生日志与结构化事件，不再两处抄 */
+    /** 统一审计事件：同一份格式串派生日志与结构化事件，不再两处抄 */
     private final AuditService audit;
 
 
     private static final String MANIFEST = "manifest.json";
     private static final String FILES_DIR = "files/";
-    /** 单文档源文件打包上限（与 upload.maxFileSize 无关：导出读盘、导入走 MultipartFile 内存桥） */
+    /** 单文档源文件打包上限（与上传大小上限无关：导出读盘、导入走 MultipartFile 内存桥） */
     private static final long MAX_FILE_BYTES = 200L * 1024 * 1024;
     /** 单包文档数上限（防畸形包撑爆解析队列） */
     private static final int MAX_DOCS = 500;

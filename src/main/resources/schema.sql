@@ -1466,7 +1466,71 @@ DELETE FROM `c_ai_config` WHERE `config_key` IN (
     -- 个人默认助手取消（回落工作区默认→平台默认）、成员侧停用技能退场（skill.disabled 只留平台层，
     -- 故不进本清单）、个人执行上限退场（收紧只走 agent.permissionPreset.max）
     'retrieval.relatedCount', 'chat.sampleQuestionsEnabled', 'chat.sampleQuestions',
-    'agent.personalDefault', 'agent.permissionPreset.personalMax'
+    'agent.personalDefault', 'agent.permissionPreset.personalMax',
+    -- 2026-11 设置页参数退役批次：以下键不再作为可编辑参数（值固定为 ConfigDefaults 常量，读取点直取常量），
+    -- 库里旧行每次启动幂等删除
+    -- chat
+    'chat.turnResumeScanMs', 'chat.maxImagesPerMessage', 'chat.maxImageMb', 'chat.maxQuestionChars', 'chat.uploadRetentionHours', 'chat.uploadCleanupIntervalMs', 'chat.agentscopeMaxIters', 'chat.sessionLogArchive.enabled', 'chat.sessionLogArchive.keepDays', 'chat.sessionLogArchive.cleanupIntervalMs', 'chat.agentscopeJournalRotateEvents', 'chat.agentscopeJournalRotateKeepDays', 'chat.goal.nextRoundDelayMs', 'chat.goal.maxCompletionChecks', 'chat.goal.maxVerifyFailures', 'chat.goal.maxRetries', 'chat.goal.maxRecoveries', 'chat.goal.retryBaseSeconds', 'chat.goal.retryMaxSeconds', 'chat.goal.softBudgetRatio', 'chat.goal.claimBatch', 'chat.goal.workers', 'chat.goal.initialTickDelayMs', 'chat.goal.tickMs', 'chat.goal.leaseSeconds', 'chat.goal.heartbeatStaleSeconds', 'chat.goal.staleGraceSeconds', 'chat.goal.verifyLocalFiles', 'chat.scratchRetentionHours', 'chat.scratchCleanupIntervalMs', 'chat.asyncWorkspaceMax',
+    -- vision
+    'vision.concurrency', 'vision.userImageConcurrency', 'vision.timeoutMillis', 'vision.retryCount', 'vision.descCacheVersion', 'vision.descCacheTtlDays',
+    -- upload
+    'upload.maxFileSize',
+    -- chunk
+    'chunk.maxChunks', 'chunk.maxImages',
+    -- images
+    'images.maxWidth', 'images.quality', 'images.authExpireSeconds', 'images.chatCleanupIntervalMs', 'images.chatRetentionMillis',
+    -- parse
+    'parse.ocrMinText', 'parse.ocrDpi', 'parse.childSize', 'parse.queue.scanIntervalMs', 'parse.retryMaxAttempts', 'parse.retryBackoffSeconds',
+    -- keyword
+    'keyword.reconcileIntervalMs',
+    -- retrieval
+    'retrieval.aclTopKSupplant',
+    -- context
+    'context.maxBlocksPerDoc', 'context.maxBlocksPerKb',
+    -- tool
+    'tool.knowledgeRetrieval.maxHits', 'tool.spillCleanupIntervalMs', 'tool.spillMaxMbPerUser', 'tool.runcode.maxParallel', 'tool.runcode.timeoutSeconds', 'tool.runcode.subCallTimeoutMs',
+    -- eval
+    'eval.answerModel',
+    -- agentEval
+    'agentEval.gateMode', 'agentEval.thresholdRate', 'agentEval.maxCases', 'agentEval.concurrency', 'agentEval.perCaseTimeoutMs', 'agentEval.runTimeoutMs', 'agentEval.judgeModel',
+    -- cleanup
+    'cleanup.sessionCleanupIntervalMs', 'cleanup.sessionRetentionDays', 'cleanup.sessionEventRetentionDays', 'cleanup.auditRetentionDays', 'cleanup.toolSpillRetentionDays', 'cleanup.visitorIdleDays',
+    -- config
+    'config.reloadIntervalMs',
+    -- agent
+    'agent.maxToolSteps', 'agent.consultMaxPerTurn', 'agent.consultTimeoutMs', 'agent.spawnForceSync', 'agent.spawnSyncTimeoutSeconds', 'agent.versionKeep',
+    -- memory
+    'memory.flushThrottleMinutes', 'memory.maxMdTokens',
+    -- artifact
+    'artifact.retentionDays', 'artifact.cleanupIntervalMs',
+    -- scheduled
+    'scheduled.scanIntervalMs',
+    -- web
+    'web.refreshScanIntervalMs',
+    -- httpTool
+    'httpTool.timeoutMs',
+    -- webSearch
+    'webSearch.maxResults', 'webSearch.timeoutMs', 'webSearch.fallbackMinOverlap', 'webSearch.snippetChars',
+    -- sandbox
+    'sandbox.projectUploadMaxMb',
+    -- project
+    'project.turnGuard.leaseTtlMs',
+    -- schedule
+    'schedule.runLogRetentionDays', 'schedule.runLogCleanupIntervalMs',
+    -- workflow
+    'workflow.approvalReapIntervalMs', 'workflow.traceInputMaxChars', 'workflow.traceOutputMaxChars', 'workflow.traceErrorMaxChars', 'workflow.runLogRetentionDays', 'workflow.runCleanupIntervalMs', 'workflow.scheduleScanIntervalMs',
+    -- notification
+    'notification.turnMinSeconds', 'notification.retentionDays', 'notification.cleanupIntervalMs',
+    -- webpush
+    'webpush.ttlSeconds',
+    -- notify
+    'notify.mail.minIntervalMs', 'notify.mail.retryDelaysSeconds',
+    -- mcp
+    'mcp.patrolIntervalMs', 'mcp.server.timeoutMs',
+    -- graphrag
+    'graphrag.batchChunks', 'graphrag.maxTriplesPerChunk',
+    -- contentSafety
+    'contentSafety.timeoutMs', 'contentSafety.remoteCheckChars', 'contentSafety.outputHoldChars', 'contentSafety.maxScanChars'
 );
 -- 个人层遗留的模型引用键（parse.qaModel / graphrag.modelRef / memory.embeddingRef 曾允许个人覆盖；
 -- rerank.model 的个人设置入口已下线，存量值不再被 UserConfigService 装载）

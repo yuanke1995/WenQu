@@ -166,7 +166,7 @@ public class ArtifactController {
 
     /**
      * 按产物 id 批量换发新鲜签名地址（对话页下载用）。
-     * <p>产物签名有效期只有 1 小时（{@code images.authExpireSeconds}），对话页的卡片 URL
+     * <p>产物签名有效期固定 1 小时（{@code IMAGES_AUTH_EXPIRE_SECONDS=3600}），对话页的卡片 URL
      * 是SSE 下发 / 历史接口里那一份签好就不变的，页面开久后点下载必然 401；
      * 「我的产物」页因每次进页面都重新签而始终正常。渲染卡片前调本方法换一批新签名即可根治。
      * <p>入参是id 而非 url：避免开放「给任意路径签名」的能力（那会把产物鉴权降级成万能签名器，

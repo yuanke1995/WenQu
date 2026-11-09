@@ -1,7 +1,5 @@
 package com.wenqu.ai.agent.chat;
 
-// [保留] 问渠轮次台账 / 个性化提示词 —— AgentScope 框架不提供等价能力，框架引擎(agentx)与共享服务仍依赖此文件，勿当作已退役的控制流删除。
-
 import com.alibaba.fastjson2.JSON;
 import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.service.ConfigService;
@@ -131,20 +129,18 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
     // ==================== 库内 / 子智能体来源注册 ====================
 
     /**
-     * 被咨询方交回的资料<b>整批</b>登记进父轮引用表（P5 智能体咨询）。
+     * 被咨询方交回的资料<b>整批</b>登记进父轮引用表。
      * <p>子轮那份来源转成命中块后走与精确检索工具同一条注册路径续编号，于是父轮正文里的 [N]
      * 指得到真身、卡片也标得出来路。转不成命中块（缺 knowledgeId）的丢弃——调用方据此不提这一条，
      * 而不是给模型一个点开是空的角标。
      * <p><b>为什么必须在这里加门</b>：子轮的门是<b>子轮问题</b>的门（它的检索工具按它自己的提问
-     * 过滤过），父轮引用面板的门必须是<b>父轮问题</b>的门。修复前这里零门禁全量搬入——
-     * 2026-10-13「我想开发一个考勤系统」会话实测：主模型锚偏后咨询了智报平台手册智能体，
-     * 对方 15 步调研史（28 条报表手册块，重排分 0.98 是对它自己问题的分）原样进面板，
-     * 45 条引用里 35 条与考勤无关。同批块在主管线按用户问题重排后全部门掉（retrieved refs=0），
-     * 两条路标准不一才是病根。
+     * 过滤过），父轮引用面板的门必须是<b>父轮问题</b>的门。若直接全量搬入，子轮按自己问题筛出的
+     * 资料会原样进父轮面板，与父轮问题无关；同批块在主管线按用户问题重排后会被门掉，
+     * 两条路标准不一。
      * <p>门与配额和主管线上下文填充逐条同口径：按父轮问题批量重排（{@code rankForced}），
      * 重排分走 {@code retrieval.minContextScore}、未重排的融合分走 {@code retrieval.minFusionScore}，
-     * 重排实际执行过则窗口外尾部不借融合门入场；再叠单文档 {@code context.maxBlocksPerDoc}、
-     * 单库 {@code context.maxBlocksPerKb}（面板已有来源也占配额）与单次咨询总量
+     * 重排实际执行过则窗口外尾部不借融合门入场；再叠单文档块数配额（CONTEXT_MAX_BLOCKS_PER_DOC，
+     * 平台常量默认 0=不限制）、单库块数配额（CONTEXT_MAX_BLOCKS_PER_KB，同口径；面板已有来源也占配额）与单次咨询总量
      * {@code context.maxContextHits}。重排不可用时不臆造分数，按融合门 + 配额兜底（与主管线
      * 「重排不可用」同语义），并留 info 日志说明本轮未做相关度重排。
      *
@@ -180,8 +176,8 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
         if (gateResult.lowConfidence()) {
             log.info("[CONSULT] 父轮问题与咨询来源语义匹配偏低，按 top-1 保底登记 1 条（问题=\"{}\"）", question);
         }
-        int maxBlocksPerDoc = configService.getInt("context.maxBlocksPerDoc", 0);
-        int maxBlocksPerKb = configService.getInt("context.maxBlocksPerKb", 0);
+        int maxBlocksPerDoc = ConfigDefaults.CONTEXT_MAX_BLOCKS_PER_DOC;
+        int maxBlocksPerKb = ConfigDefaults.CONTEXT_MAX_BLOCKS_PER_KB;
         int maxPerConsult = Math.max(1, configService.getInt("context.maxContextHits", 8));
         Map<String, Integer> docCount = new HashMap<>();
         Map<String, Integer> kbCount = new HashMap<>();
@@ -627,9 +623,6 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
      * <p>子轮来源只有 {@code knowledgeId/docId/title/snippet/images/score} 这几项（重排分可选、
      * 有则带上供父轮二次过门与展示）；{@code chunkIndex}/{@code titlePath} 子轮没下发，置空即可——
      * 主链路只有相邻块合并用得到它们。
-     * <p>原先挂在 {@code SubAgentOrchestrator} 上，而那是 P5 之后已被 {@code consultAgent} 取代的
-     * 编排器（连同它的 StateGraph 一起成了孤儿）。这条映射是纯转换、与编排无关，且此处是唯一调用方，
-     * 故随编排器退役一并收归本类，避免为一个静态工具继续保留一个 1142 行的已死服务。
      *
      * @return 命中块；{@code knowledgeId} 缺失时返回 null（没有知识块身份的来源无法进引用编号体系）
      */

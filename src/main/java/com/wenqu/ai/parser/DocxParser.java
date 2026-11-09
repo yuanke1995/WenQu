@@ -1,6 +1,7 @@
 package com.wenqu.ai.parser;
 
 import com.wenqu.ai.config.AppProperties;
+import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.model.Chunk;
 import com.wenqu.ai.service.ConfigService;
 import com.wenqu.ai.service.VisionService;
@@ -87,7 +88,7 @@ public class DocxParser implements DocumentParser {
 
     /** 动态并发信号量：配置变更时重建（保存即生效）；以配置值判断而非 availablePermits，避免运行期误判 */
     private Semaphore visionSemaphore() {
-        int want = Math.max(1, configService.getInt("vision.concurrency"));
+        int want = Math.max(1, ConfigDefaults.VISION_CONCURRENCY);
         if (want != visionConcurrency) {
             synchronized (this) {
                 if (want != visionConcurrency) {
@@ -426,7 +427,7 @@ public class DocxParser implements DocumentParser {
         }
 
         // 数量上限截断（防图片爆炸导致视觉描述数小时；配置保存即生效）
-        int maxImages = configService.getInt("chunk.maxImages");
+        int maxImages = configService.getInt("chunk.maxImages", ConfigDefaults.CHUNK_MAX_IMAGES);
         if (maxImages > 0 && imageCount[0] >= maxImages) {
             if (imageCount[0] == maxImages) {
                 log.warn("[{}] 图片数量达到上限 {}，后续图片不再提取描述", docId, maxImages);
@@ -442,7 +443,7 @@ public class DocxParser implements DocumentParser {
             try {
                 // 双图策略：压缩图只进内存供视觉模型识别（不落盘）；原图落盘用于回答/知识库展示（保持清晰）
                 ImageCompressor.CompressedImage ci = ImageCompressor.compress(data.getData(), ext,
-                        properties.getImages().getMaxWidth(), properties.getImages().getQuality());
+                        ConfigDefaults.IMAGES_MAX_WIDTH, ConfigDefaults.IMAGES_QUALITY);
                 // 内容寻址文件名（sha256 原图字节）：同图跨重解析 URL 稳定 → 块 images 列表稳定 → 块级 diff 可复用；变更图生成新文件
                 String url = persistImage(data.getData(), ext, docId, sha256Hex(data.getData()));
                 // 并发限流（动态信号量，保存即生效）
@@ -521,7 +522,7 @@ public class DocxParser implements DocumentParser {
      */
     private int countImages(XWPFDocument document) {
         int total = 0;
-        int maxImages = configService.getInt("chunk.maxImages");
+        int maxImages = configService.getInt("chunk.maxImages", ConfigDefaults.CHUNK_MAX_IMAGES);
         Set<Long> seen = new HashSet<>();
         outer:
         for (IBodyElement element : document.getBodyElements()) {
@@ -560,7 +561,7 @@ public class DocxParser implements DocumentParser {
                     ? p.getFileName().toString().substring(p.getFileName().toString().lastIndexOf('.') + 1).toLowerCase()
                     : "png";
             ImageCompressor.CompressedImage ci = ImageCompressor.compress(bytes, ext,
-                    properties.getImages().getMaxWidth(), properties.getImages().getQuality());
+                    ConfigDefaults.IMAGES_MAX_WIDTH, ConfigDefaults.IMAGES_QUALITY);
             return visionService.describe(ci.bytes(), ci.ext());
         } catch (Exception e) {
             log.warn("[ImageDescBackfill] 图片描述补齐失败 url={}: {}", url, e.getMessage());

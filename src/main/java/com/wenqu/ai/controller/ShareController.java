@@ -3,6 +3,7 @@ package com.wenqu.ai.controller;
 import com.wenqu.ai.agent.chat.ChatCommand;
 import com.wenqu.ai.service.AuditService;
 import com.wenqu.ai.common.BizException;
+import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.dto.ChatRequest;
 import com.wenqu.ai.dto.ResultJson;
 import com.wenqu.ai.dto.ShareChatRequest;
@@ -100,21 +101,14 @@ public class ShareController {
     private final com.wenqu.ai.agent.hitl.HitlDecisionService hitl;
     private final com.wenqu.ai.agentx.FrameworkSessions frameworkSessions;
 
-    /**
-     * 单条提问长度上限（防滥用口径，默认与对话页同量级）。
-     * 配置键 chat.maxQuestionChars，保存即生效——表单设计助手这类分享每轮要把整份
-     * 设计 schema 回传（几万字起步），8000 会把第二轮起全部拒掉，发布方按需调大。
-     */
-    private static final int DEFAULT_MAX_QUESTION_CHARS = 200000;
-
     private int maxQuestionChars() {
-        return Math.max(200, configService.getInt("chat.maxQuestionChars", DEFAULT_MAX_QUESTION_CHARS));
+        return Math.max(200, ConfigDefaults.CHAT_MAX_QUESTION_CHARS);
     }
 
     /**
      * 在资源归属人的租户里跑一段：游客请求没有身份，未绑定时租户拦截器不拼谓词（读全平台）、
      * 插入按 DB 默认落 default。按发布者租户显式绑定后，读写的租户口径与登录态一致。
-     * 取不到归属（脏数据/成员被删）时不强行绑定——退回未绑定态，与修前行为一致，不阻断访问。
+     * 取不到归属（脏数据/成员被删）时不强行绑定——退回未绑定态，不阻断访问。
      */
     private <T> T inOwnerTenant(String uid, java.util.function.Supplier<T> body) {
         String tenant = uid == null || uid.isBlank() ? null : tenantService.tenantOf(uid);
@@ -444,12 +438,12 @@ public class ShareController {
 
     /** 本轮发图数量上限（与登录态同一配置键：两处各写一个默认值迟早对不上） */
     private int maxImagesPerMessage() {
-        return Math.max(1, configService.getInt("chat.maxImagesPerMessage", 20));
+        return Math.max(1, ConfigDefaults.CHAT_MAX_IMAGES_PER_MESSAGE);
     }
 
     /** 单张图片体积上限（MB） */
     private int maxImageMb() {
-        return Math.max(1, configService.getInt("chat.maxImageMb", 50));
+        return Math.max(1, ConfigDefaults.CHAT_MAX_IMAGE_MB);
     }
 
     /** 本轮附件数量上限 */
