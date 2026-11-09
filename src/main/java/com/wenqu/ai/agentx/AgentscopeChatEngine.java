@@ -4936,7 +4936,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             Map<String, Object> tokens = usageOf(session, historyBefore, pool, contextWindow);
             // 还没有任何一次模型回包带 usage：此刻报不出占用，等下一跳（空表发出去只会让前端清空预览）
             if (tokens.isEmpty()) return;
-            channel.emit(RunEventType.USAGE, com.alibaba.fastjson2.JSON.toJSONString(tokens));
+            channel.emit(RunEvent.of(RunEventType.USAGE, com.alibaba.fastjson2.JSON.toJSONString(tokens), false));
         } catch (Exception e) {
             log.warn("[USAGE] 流式用量帧发不出来，容量圆环要等本轮收尾: session={}, {}",
                     cmd.getSessionId(), e.toString());

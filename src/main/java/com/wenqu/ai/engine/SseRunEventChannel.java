@@ -43,7 +43,7 @@ public final class SseRunEventChannel implements RunChannel {
         if (event.type() == RunEventType.WARN) {
             lastWarn = event.content();
         }
-        return runtime.sendSseEvent(emitter, event.type().sseName(), event.content(), sessionId);
+        return runtime.sendSseEvent(emitter, event.type().sseName(), event.content(), sessionId, event.ledger());
     }
 
     @Override

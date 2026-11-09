@@ -532,25 +532,43 @@ public class ChatRunRuntime {
      * 失败只记日志不抛错（fail-loud），调用方在关键发送点按返回值短路后续 LLM/检索开销。
      */
     public boolean sendSseEvent(SseEmitter emitter, String type, String content, String sessionId) {
-        return sendSseEvent(emitter, type, content, sessionId, null, null);
+        return sendSseEvent(emitter, type, content, sessionId, null, null, true);
     }
 
     /**
-     * SSE 发送（带<b>显式</b>轮次身份）。
+     * SSE 发送（带账本开关，无显式轮次身份）。RunChannel 调用方专用——从 TurnHandle 自行取 turnId/userId。
+     */
+    public boolean sendSseEvent(SseEmitter emitter, String type, String content, String sessionId, boolean ledger) {
+        return sendSseEvent(emitter, type, content, sessionId, null, null, ledger);
+    }
+
+    /**
+     * SSE 发送（带<b>显式</b>轮次身份 + 账本开关）。
      * <p>后两个参数只在「这一轮还没登记把手」的收束句上需要：并发拒绝、工作区占用、流水线繁忙都发生在
      * {@code TurnRegistry.registerHandle} 之前，其中并发那一句会话上挂着的还是<b>另一轮</b>的把手——
      * 照把手记账会把拒绝塞进正在跑的那一轮的过程里，不记就成了按谁都查不到的孤儿行（两个读口都按
      * user_id 过滤）。两头都不对，所以由调用方把这一轮的身份递过来。传 null 即按把手归属（正常轮次）。
+     * <p>{@code ledger}=false 时即使 type 在白名单里也不落账本——给流式中间帧（如 usage 每 4 秒一条的
+     * 容量快照）用，只让终态快照落盘一份，避免账本被高频增量淹没。
      */
     public boolean sendSseEvent(SseEmitter emitter, String type, String content, String sessionId,
                                 String ledgerUserId, String ledgerTurnId) {
+        return sendSseEvent(emitter, type, content, sessionId, ledgerUserId, ledgerTurnId, true);
+    }
+
+    /**
+     * SSE 发送（完整签名：轮次身份 + 账本开关）。
+     */
+    public boolean sendSseEvent(SseEmitter emitter, String type, String content, String sessionId,
+                                String ledgerUserId, String ledgerTurnId, boolean ledger) {
         // 账本按「事件是否发生」记，不按「是否送达」记：断线转后台续跑的那一轮，恰恰是最需要事后回放的
         // 过程（卡片、编排、裁决都在那一刻之后产生，而通道已经没了）。只收结构性事件
         // （{@link #LEDGER_SSE_TYPES}）——token/thinking/plan_delta 这类增量与心跳没有超出消息表的信息量。
+        // 调用方显式传 ledger=false 时即使 type 在白名单里也跳过（流式中间帧专用）。
         TurnHandle handle = ownHandle(emitter, sessionId);
         String turnId = ledgerTurnId != null ? ledgerTurnId : handle == null ? null : handle.turnId();
         boolean toolLedger = TOOL_STATUS_SSE_TYPE.equals(type);
-        if (LEDGER_SSE_TYPES.contains(type) || toolLedger) {
+        if (ledger && (LEDGER_SSE_TYPES.contains(type) || toolLedger)) {
             String ledgerType = toolLedger ? "tool" : type;
             String ledgerPayload = toolLedger ? toolLedgerPayload(content) : content;
             if (ledgerPayload != null) {
