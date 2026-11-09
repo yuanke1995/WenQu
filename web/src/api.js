@@ -1524,9 +1524,9 @@ export const setDocumentTags = (id, tags) =>
   request(`/document/${encodeURIComponent(id)}/tags?tags=${encodeURIComponent(tags)}`, { method: 'PUT' })
 /** 知识库健康度：按库聚合文档态分布/块规模/未向量化 + 全局索引漂移信号（仅管理员，只读） */
 export const documentHealth = () => request('/document/health', { timeout: 60000 })
-/** 启动答案级评测（异步）：每条用例检索→生成回答→评判模型打忠实度/相关性；进度与结果用 answerEvalReport 轮询 */
-export const runAnswerEval = caseCount =>
-  request('/eval/answer/run', { method: 'POST', body: JSON.stringify({ caseCount }), timeout: 60000 })
+/** 启动答案级评测（异步）：每条用例检索→生成回答→评判模型打忠实度/相关性；caseIds 可只测坏题 */
+export const runAnswerEval = (caseCount, caseIds) =>
+  request('/eval/answer/run', { method: 'POST', body: JSON.stringify({ caseCount, caseIds }), timeout: 60000 })
 /** 答案级评测进度与最近报告（running=true 时按 progress 展示；report 含逐条得分与问题说明，history 为最近 10 期摘要） */
 export const answerEvalReport = () => request('/eval/answer/report')
 // ==================== 回收站（软删保留内容：恢复 / 彻底删除 / 清空） ====================
@@ -1818,9 +1818,9 @@ export const rollbackDocument = (id, version) =>
 export const debugRetrieval = question =>
   request('/debug/retrieval', { method: 'POST', body: JSON.stringify({ question }) })
 
-/** 检索评估：从历史问答回放生成评估集 */
-export const evalGenerate = maxCases =>
-  request('/eval/generate', { method: 'POST', body: JSON.stringify({ maxCases }) })
+/** 检索评估：从历史问答回放生成评估集（scopeKbId 非空时只保留该知识库的期望块） */
+export const evalGenerate = (maxCases, scopeKbId) =>
+  request('/eval/generate', { method: 'POST', body: JSON.stringify({ maxCases, scopeKbId }) })
 
 /** 检索评估：读取当前评估集 */
 export const getEvalSet = () => request('/eval/set')
@@ -1834,6 +1834,59 @@ export const getEvalLastReport = () => request('/eval/last-report')
 
 /** 检索评估：立即自动体检（按线上参数全量跑，耗时数十秒） */
 export const runEvalAutoCheck = () => request('/eval/run-auto', { method: 'POST', timeout: 300000 })
+
+// ==================== 检索评估（新版资源型端点） ====================
+/** 总览：健康度、最近运行、趋势、待处理题、评估集质量、自动体检与灰度应用状态 */
+export const getEvalOverview = scopeKbId =>
+  request('/eval/overview' + (scopeKbId ? `?scopeKbId=${encodeURIComponent(scopeKbId)}` : ''))
+/** 评估集历史版本 */
+export const listEvalSets = () => request('/eval/sets')
+/** 用例列表：filter=all|miss|low|stale|unverified|verified|disabled，keyword 搜索问题/期望块标题 */
+export const getEvalCases = ({ setId, filter = 'all', keyword = '', page = 1, size = 20 } = {}) => {
+  const qs = new URLSearchParams({ filter, keyword, page: String(page), size: String(size) })
+  if (setId) qs.set('setId', setId)
+  return request('/eval/cases?' + qs.toString())
+}
+export const createEvalCase = body =>
+  request('/eval/cases', { method: 'POST', body: JSON.stringify(body) })
+export const updateEvalCase = (id, body) =>
+  request(`/eval/cases/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(body) })
+export const deleteEvalCase = id =>
+  request(`/eval/cases/${encodeURIComponent(id)}`, { method: 'DELETE' })
+export const importEvalCases = cases =>
+  request('/eval/cases/import', { method: 'POST', body: JSON.stringify({ cases }) })
+export const exportEvalCases = setId =>
+  request('/eval/cases/export' + (setId ? `?setId=${encodeURIComponent(setId)}` : ''))
+/** 启动异步实验：body={setId?,caseIds?,groups,kList,includeJudge}，返回 runId 后轮询 getEvalRun */
+export const startEvalRun = body =>
+  request('/eval/runs', { method: 'POST', body: JSON.stringify(body), timeout: 60000 })
+export const listEvalRuns = (page = 1, size = 20, setId) => {
+  const qs = new URLSearchParams({ page: String(page), size: String(size) })
+  if (setId) qs.set('setId', setId)
+  return request('/eval/runs?' + qs.toString())
+}
+export const getEvalRun = id => request(`/eval/runs/${encodeURIComponent(id)}`)
+export const getEvalRunResults = (id, group, page = 1, size = 100) => {
+  const qs = new URLSearchParams({ page: String(page), size: String(size) })
+  if (group) qs.set('group', group)
+  return request(`/eval/runs/${encodeURIComponent(id)}/results?` + qs.toString())
+}
+export const cancelEvalRun = id =>
+  request(`/eval/runs/${encodeURIComponent(id)}/cancel`, { method: 'POST' })
+export const setEvalBaseline = id =>
+  request(`/eval/runs/${encodeURIComponent(id)}/baseline`, { method: 'POST' })
+export const compareEvalRuns = (id, base, group) => {
+  const qs = new URLSearchParams({ base })
+  if (group) qs.set('group', group)
+  return request(`/eval/runs/${encodeURIComponent(id)}/compare?` + qs.toString())
+}
+export const exportEvalRun = (id, format = 'csv') =>
+  request(`/eval/runs/${encodeURIComponent(id)}/export?format=${encodeURIComponent(format)}`)
+/** 应用参数组（灰度观察，下滑自动回滚） */
+export const applyEvalGroup = (runId, groupName) =>
+  request('/eval/apply', { method: 'POST', body: JSON.stringify({ runId, groupName }) })
+export const getEvalApplyStatus = () => request('/eval/apply/status')
+export const rollbackEvalApply = () => request('/eval/apply/rollback', { method: 'POST' })
 
 /** 身份与权限：返回 { user, admin }——admin=true 时前端展示文档/看板/评估/设置等管理入口 */
 export const getAuthMe = () => request('/auth/me')

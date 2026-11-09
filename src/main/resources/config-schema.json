@@ -1230,6 +1230,24 @@
       "tier": 3
     },
     {
+      "backendKey": "eval.applyObserveHours",
+      "panel": "maintenance",
+      "section": 1,
+      "group": "eval",
+      "key": "applyObserveHours",
+      "path": "eval.applyObserveHours",
+      "label": "灰度观察期(小时)",
+      "type": "number",
+      "tips": "evalApplyObserveHours",
+      "def": 24,
+      "min": 1,
+      "max": 720,
+      "step": 1,
+      "width": 200,
+      "note": "应用参数组后的观察期；期间核心指标跌幅超过阈值会自动回滚",
+      "tier": 3
+    },
+    {
       "backendKey": "agentEval.enabled",
       "panel": "maintenance",
       "section": 1,
@@ -2805,6 +2823,7 @@
     "rlEnabled": "接口限流总闸；Redis 不可用时自动放行",
     "evalAutoIntervalMs": "自动体检周期（默认每天）；≤0=暂停",
     "evalAutoThresholdPct": "指标跌幅超过该比例判退化；调小更灵敏",
+    "evalApplyObserveHours": "参数组应用后的观察期（默认 24 小时）；期间指标明显下滑自动回滚",
     "evalJudgeModel": "体检评判模型；留空复用当前问答模型",
     "evalJudgeEnabled": "用模型给体检答案打分；默认关，开启后按评估集规模计费",
     "agentEvalEnabled": "智能体「评测」页签总开关；关闭后端点全部拒绝",

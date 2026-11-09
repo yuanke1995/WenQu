@@ -1791,6 +1791,11 @@ CREATE TABLE IF NOT EXISTS `c_ai_tenant` (
     `brand_logo`   VARCHAR(200) DEFAULT NULL COMMENT '登录页 logo 相对路径（空=问渠默认标）',
     `brand_color`  VARCHAR(20)  DEFAULT NULL COMMENT '登录页主色（仅登录页按钮与细线，不改全站主题）',
     `login_hint`   VARCHAR(200) DEFAULT NULL COMMENT '登录页副标题（空=默认欢迎语）',
+    `plan`         VARCHAR(20)  NOT NULL DEFAULT 'standard' COMMENT '套餐：trial=试用 standard=标准 dedicated=专属',
+    `domain`       VARCHAR(190) DEFAULT NULL COMMENT '企业域名（SSO 与自动开通白名单用）',
+    `sso_requested` INT         NOT NULL DEFAULT 0 COMMENT '1=开通申请时勾选了需要单点登录，待配置',
+    `archive_time` DATETIME     DEFAULT NULL COMMENT '归档时刻（审计与恢复提示）',
+    `archive_by`   VARCHAR(64)  DEFAULT NULL COMMENT '归档操作人',
     `create_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP,
     `update_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (`id`)
@@ -1805,16 +1810,48 @@ CREATE TABLE IF NOT EXISTS `c_ai_tenant_request` (
     `contact_name`  VARCHAR(60)  DEFAULT NULL COMMENT '联系人',
     `contact_email` VARCHAR(160) NOT NULL COMMENT '联系邮箱（校验格式；唯一性只用于拦重复提交）',
     `purpose`       VARCHAR(500) NOT NULL COMMENT '用途说明：审批要看这条',
+    `scale`         VARCHAR(20)  DEFAULT NULL COMMENT '团队规模：1-50/51-200/201-1000/1000+',
+    `domain`        VARCHAR(190) DEFAULT NULL COMMENT '企业域名（SSO / 自动开通白名单）',
+    `sso_requested` INT          NOT NULL DEFAULT 0 COMMENT '1=申请时勾选需要单点登录',
+    `materials`     TEXT         DEFAULT NULL COMMENT '企业认证材料 JSON：[{name,url,size}]',
+    `resubmit_of`   VARCHAR(50)  DEFAULT NULL COMMENT '由哪一单驳回后重新提交',
     `status`        VARCHAR(20)  NOT NULL DEFAULT 'pending' COMMENT 'pending=待审 approved=已开通 rejected=已驳回',
     `opened_tenant` VARCHAR(32)  DEFAULT NULL COMMENT '批准后开出的租户标识（审批结果，不是行归属）',
     `admin_uid`     VARCHAR(64)  DEFAULT NULL COMMENT '批准时建出的首位管理员账号（口令不落库）',
     `reviewer`      VARCHAR(64)  DEFAULT NULL COMMENT '审批人',
     `review_note`   VARCHAR(500) DEFAULT NULL COMMENT '驳回/批准说明',
+    `reviewed_at`   DATETIME     DEFAULT NULL COMMENT '审批完成时刻（SLA 计算）',
+    `delivered_at`  DATETIME     DEFAULT NULL COMMENT '凭据送达时刻',
+    `reminded_at`   DATETIME     DEFAULT NULL COMMENT '最近一次 SLA 提醒时刻（防重复催办）',
     `create_time`   DATETIME     DEFAULT CURRENT_TIMESTAMP,
     `update_time`   DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (`id`),
     KEY `idx_tenant_request_status` (`status`, `create_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='租户开通申请（提交自助、开通人工批准）';
+
+-- 邀请式开通（P2）：平台先发邀请，客户凭一次性链接补齐机构与管理员信息，接受即开通。
+-- 与「自助申请」方向相反：这一单已被平台预批准，不再进入审批队列。
+-- 表无 tenant_id（开通前还没有归属），在 WenquTenantLineHandler 的平台全局表清单里豁免。
+CREATE TABLE IF NOT EXISTS `c_ai_tenant_open_invite` (
+    `id`            VARCHAR(50)  NOT NULL COMMENT '主键ID',
+    `token_hash`    CHAR(64)     NOT NULL COMMENT '邀请 token 的 SHA-256（明文只在生成时返回一次）',
+    `token_prefix`  VARCHAR(8)   NOT NULL COMMENT '前 8 位，列表辨识用',
+    `org_name`      VARCHAR(80)  DEFAULT NULL COMMENT '预填机构名称（空=客户自填）',
+    `desired_id`    VARCHAR(32)  DEFAULT NULL COMMENT '预填租户标识（空=客户自填）',
+    `contact_name`  VARCHAR(60)  DEFAULT NULL COMMENT '预填联系人',
+    `contact_email` VARCHAR(160) NOT NULL COMMENT '限定联系邮箱（空=不限定）',
+    `note`          VARCHAR(300) DEFAULT NULL COMMENT '给客户的说明',
+    `max_uses`      INT          NOT NULL DEFAULT 1 COMMENT '可用次数（0=不限）',
+    `used_count`    INT          NOT NULL DEFAULT 0 COMMENT '已用次数',
+    `expires_at`    DATETIME     NOT NULL COMMENT '到期时刻',
+    `status`        VARCHAR(16)  NOT NULL DEFAULT 'active' COMMENT 'active=有效 revoked=已撤销 exhausted=已用尽 expired=已过期',
+    `opened_tenant` VARCHAR(32)  DEFAULT NULL COMMENT '接受后开出的租户标识',
+    `created_by`    VARCHAR(64)  NOT NULL COMMENT '创建人 uid',
+    `create_time`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_open_invite_token` (`token_hash`),
+    KEY `idx_open_invite_status` (`status`, `expires_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='邀请式开通（平台预批准，客户接受即开通）';
 
 -- 租户邀请（P1 多租户生命周期 · 3A）：一次性短链，注册落本租户。
 -- token 只存 SHA-256（明文只在生成时返回一次，与对外 API Key 同一口径）；
@@ -1933,6 +1970,102 @@ CREATE TABLE IF NOT EXISTS `c_ai_agent_eval_result` (
     KEY `idx_result_run` (`run_id`),
     KEY `idx_result_case` (`case_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='智能体评测逐条结果（失败原因与指标快照）';
+
+-- ==================== 检索评估（评估集 / 用例 / 运行 / 逐题结果） ====================
+-- 与智能体评测（c_ai_agent_eval_*）同构：套件→用例→运行→逐条结果。
+-- 检索评估的「套件」是按版本演进的评估集；运行绑定评估集版本与参数快照，历史可回看、可对比。
+
+CREATE TABLE IF NOT EXISTS `c_ai_retrieval_eval_set` (
+    `tenant_id`        VARCHAR(32)  NOT NULL DEFAULT 'default' COMMENT '租户ID',
+    `id`               VARCHAR(50)  NOT NULL COMMENT '主键ID',
+    `name`             VARCHAR(100) DEFAULT NULL COMMENT '评估集名称（NULL=默认评估集）',
+    `version`          INT          NOT NULL DEFAULT 1 COMMENT '版本号（同一范围递增）',
+    `scope_kb_id`      VARCHAR(50)  DEFAULT NULL COMMENT '知识库范围（NULL=全库；按库独立评估集）',
+    `generated_at`     DATETIME     DEFAULT NULL COMMENT '评估集生成时刻（回放快照）',
+    `source`           VARCHAR(16)  NOT NULL DEFAULT 'generated' COMMENT '来源: generated=历史问答回放 import=文件导入 manual=手工',
+    `stale_expected`   INT          DEFAULT 0 COMMENT '生成时剔除的失效期望块数',
+    `baseline_run_id`  VARCHAR(50)  DEFAULT NULL COMMENT '基线运行ID（历史对比锚点）',
+    `note`             VARCHAR(500) DEFAULT NULL COMMENT '备注',
+    `created_by`       VARCHAR(64)  DEFAULT NULL COMMENT '创建人 uid',
+    `create_time`      DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    `update_time`      DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_rset_scope` (`scope_kb_id`, `create_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='检索评估集（按版本演进，运行引用版本快照）';
+
+CREATE TABLE IF NOT EXISTS `c_ai_retrieval_eval_case` (
+    `tenant_id`              VARCHAR(32)  NOT NULL DEFAULT 'default' COMMENT '租户ID',
+    `id`                     VARCHAR(50)  NOT NULL COMMENT '主键ID',
+    `set_id`                 VARCHAR(50)  NOT NULL COMMENT '所属评估集ID',
+    `question`               VARCHAR(2000) NOT NULL COMMENT '问题',
+    `expected_knowledge_ids` TEXT         DEFAULT NULL COMMENT '期望知识块ID（JSON数组；NULL=无期望）',
+    `expected_doc_ids`       TEXT         DEFAULT NULL COMMENT '期望文档ID（JSON数组；与知识块任一命中即算召回）',
+    `note`                   VARCHAR(500) DEFAULT NULL COMMENT '备注/考察点',
+    `tags`                   VARCHAR(500) DEFAULT NULL COMMENT '标签（JSON数组；分群指标用）',
+    `source`                 VARCHAR(16)  NOT NULL DEFAULT 'manual' COMMENT '来源: session=历史引用 feedback=差评回流 manual=手工 import=导入',
+    `human_verified`         INT          DEFAULT 0 COMMENT '人工确认: 1=已确认 0=仅弱监督',
+    `enabled`                INT          DEFAULT 1 COMMENT '是否启用: 1=参与评估 0=停用',
+    `create_time`            DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    `update_time`            DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_rcase_set` (`set_id`, `enabled`),
+    KEY `idx_rcase_question` (`question`(191))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='检索评估用例（问题 + 期望知识块/文档）';
+
+CREATE TABLE IF NOT EXISTS `c_ai_retrieval_eval_run` (
+    `tenant_id`        VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID',
+    `id`               VARCHAR(50)   NOT NULL COMMENT '主键ID',
+    `set_id`           VARCHAR(50)   NOT NULL COMMENT '评估集ID',
+    `set_version`      INT           DEFAULT NULL COMMENT '运行时评估集版本快照',
+    `trigger_kind`     VARCHAR(16)   NOT NULL DEFAULT 'manual' COMMENT '触发方式: manual/scheduled',
+    `status`           VARCHAR(20)   NOT NULL DEFAULT 'running' COMMENT 'running/succeeded/partial/failed/cancelled',
+    `total`            INT           DEFAULT 0 COMMENT '计划执行条数（组数×用例数）',
+    `done`             INT           DEFAULT 0 COMMENT '已完成条数（进度兜底）',
+    `k_list`           VARCHAR(100)  DEFAULT NULL COMMENT 'K 值列表（JSON数组，如 [5,10,20]）',
+    `params_id`        VARCHAR(64)   DEFAULT NULL COMMENT '参数组指纹（SHA-256 前16位）',
+    `groups_json`      MEDIUMTEXT    DEFAULT NULL COMMENT '参数组摘要（含各自指标/CI/分群）',
+    `metrics_json`     TEXT          DEFAULT NULL COMMENT '基线组指标（列表/趋势用）',
+    `segments_json`    MEDIUMTEXT    DEFAULT NULL COMMENT '分群指标（按标签/知识库）',
+    `stale_expected`   INT           DEFAULT 0 COMMENT '运行前剔除的失效期望块数',
+    `timed_out_groups` VARCHAR(500)  DEFAULT NULL COMMENT '超时组名（JSON数组）',
+    `warning`          VARCHAR(1000) DEFAULT NULL COMMENT '非致命提示（超时/失效/跳过）',
+    `error`            VARCHAR(1000) DEFAULT NULL COMMENT '失败原因',
+    `baseline_run_id`  VARCHAR(50)   DEFAULT NULL COMMENT '对比基线运行ID快照',
+    `judge_model`      VARCHAR(190)  DEFAULT NULL COMMENT '评判模型快照',
+    `elapsed_ms`       BIGINT        DEFAULT NULL COMMENT '总耗时（毫秒）',
+    `started_at`       DATETIME      DEFAULT NULL COMMENT '开始时刻',
+    `finished_at`      DATETIME      DEFAULT NULL COMMENT '结束时刻',
+    `created_by`       VARCHAR(64)   DEFAULT NULL COMMENT '触发人 uid',
+    `create_time`      DATETIME      DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_rrun_set` (`set_id`, `status`, `create_time`),
+    KEY `idx_rrun_created` (`created_by`, `create_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='检索评估运行（一次实验一行，含参数与指标快照）';
+
+CREATE TABLE IF NOT EXISTS `c_ai_retrieval_eval_result` (
+    `tenant_id`      VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID',
+    `id`             VARCHAR(50)   NOT NULL COMMENT '主键ID',
+    `run_id`         VARCHAR(50)   NOT NULL COMMENT '所属运行ID',
+    `group_name`     VARCHAR(100)  DEFAULT NULL COMMENT '参数组名',
+    `group_mode`     VARCHAR(16)   DEFAULT NULL COMMENT 'normal/multi',
+    `case_id`        VARCHAR(50)   DEFAULT NULL COMMENT '用例ID（用例删除后仍保留快照）',
+    `question`       VARCHAR(2000) DEFAULT NULL COMMENT '问题快照',
+    `expected_ids`   TEXT          DEFAULT NULL COMMENT '期望知识块ID快照（JSON数组）',
+    `hits_json`      TEXT          DEFAULT NULL COMMENT '命中快照（JSON数组，含 knowledgeId/title/score）',
+    `recall_json`    VARCHAR(500)  DEFAULT NULL COMMENT 'recall@k 快照（JSON对象）',
+    `mrr`            DOUBLE        DEFAULT NULL COMMENT 'MRR（0-1）',
+    `first_rank`     INT           DEFAULT 0 COMMENT '首个期望块的排名（0=未命中）',
+    `expected_count` INT           DEFAULT 0 COMMENT '期望块数',
+    `hit_count`      INT           DEFAULT 0 COMMENT '命中数',
+    `judge_covered`  INT           DEFAULT NULL COMMENT '充分性评判: 1=资料足以回答 0=不足 NULL=未评',
+    `judge_note`     VARCHAR(500)  DEFAULT NULL COMMENT '评判说明',
+    `error`          VARCHAR(500)  DEFAULT NULL COMMENT '单题失败原因',
+    `latency_ms`     BIGINT        DEFAULT NULL COMMENT '单题耗时（毫秒）',
+    `create_time`    DATETIME      DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_rresult_run` (`run_id`, `group_name`),
+    KEY `idx_rresult_case` (`case_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='检索评估逐题结果（每组每题一行，失败原因与命中快照）';
 
 CREATE TABLE IF NOT EXISTS `c_ai_webhook_delivery` (
     `tenant_id`     VARCHAR(32)  NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',

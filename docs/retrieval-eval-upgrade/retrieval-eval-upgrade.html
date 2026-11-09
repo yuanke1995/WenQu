@@ -1,0 +1,1447 @@
+<!-- 检索评估 UI/UX 与功能升级方案 + 高保真效果图 -->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>检索评估：UI/UX 与功能升级方案</title>
+<style>
+:root{
+  --bg:#f7f8fa; --panel:#ffffff; --panel2:#fafbfc; --panel3:#f2f4f7;
+  --rule:#e6e9ed; --rule2:#d8dde3;
+  --ink:#1f2329; --muted:#5f6570; --faint:#98a0aa;
+  --accent:#2e6be6; --accent-hover:#1f5bd8; --accent-weak:#eef2f7; --accent-border:#bcd0f7;
+  --ok:#3b8f4e; --ok-weak:#eaf5ec; --ok-border:#cbe6d1;
+  --warn:#c77c14; --warn-weak:#faf3e6; --warn-border:#f0dfb6; --warn-text:#a3691b;
+  --danger:#d4552e; --danger-weak:#fff2f0; --danger-border:#ffccc7; --danger-text:#cf1322;
+  --code-bg:#f6f8fa;
+  --radius:8px; --shadow:0 1px 2px rgba(31,35,41,.04);
+  --font:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--ink);font-family:var(--font);font-size:14.5px;line-height:1.7;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1280px;margin:0 auto;padding:48px 24px 72px}
+code{font-family:var(--mono);font-size:.86em;background:var(--code-bg);border:1px solid var(--rule);border-radius:4px;padding:.5px 5px;color:var(--ink)}
+
+/* ==================== 文档 ==================== */
+.masthead{margin-bottom:42px}
+.mast-kicker{font-size:12.5px;font-weight:700;letter-spacing:.1em;color:var(--accent);margin-bottom:12px}
+.masthead h1{font-size:30px;font-weight:700;letter-spacing:-.01em;line-height:1.35;margin-bottom:12px}
+.masthead h1 em{font-style:normal;color:var(--accent)}
+.mast-sub{color:var(--muted);font-size:15px;max-width:860px}
+.mast-meta{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}
+.meta-chip{font-size:12.5px;color:var(--muted);background:var(--panel);border:1px solid var(--rule);border-radius:999px;padding:4px 12px}
+.meta-chip b{color:var(--ink);font-weight:600}
+.claim{margin-top:22px;border-left:3px solid var(--accent);background:var(--accent-weak);border-radius:0 8px 8px 0;padding:12px 18px;font-size:14px;color:var(--muted)}
+.claim b{color:var(--ink)}
+section{margin-bottom:52px}
+.sec-h{display:flex;align-items:baseline;gap:12px;margin-bottom:6px}
+.sec-no{font-size:12.5px;font-weight:700;color:var(--accent);letter-spacing:.08em;font-family:var(--mono)}
+.sec-h h2{font-size:21px;font-weight:700;letter-spacing:-.01em}
+.sec-lead{color:var(--muted);font-size:14px;margin-bottom:20px;max-width:900px}
+.sec-lead b{color:var(--ink)}
+
+.prob-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.prob{background:var(--panel);border:1px solid var(--rule);border-radius:var(--radius);padding:16px 18px;box-shadow:var(--shadow)}
+.prob-n{display:inline-flex;width:22px;height:22px;border-radius:50%;background:var(--warn-weak);border:1px solid var(--warn-border);color:var(--warn);font-size:12px;font-weight:700;align-items:center;justify-content:center;margin-bottom:10px;font-family:var(--mono)}
+.prob h3{font-size:14.5px;font-weight:700;margin-bottom:6px}
+.prob p{font-size:12.8px;color:var(--muted);line-height:1.65}
+.prob code{font-size:11.5px}
+
+.prin-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.prin{background:var(--panel);border:1px solid var(--rule);border-radius:var(--radius);padding:16px 18px;box-shadow:var(--shadow)}
+.prin-i{width:30px;height:30px;border-radius:8px;background:var(--accent-weak);border:1px solid var(--accent-border);color:var(--accent);display:flex;align-items:center;justify-content:center;margin-bottom:12px;font-size:14px}
+.prin h3{font-size:14px;font-weight:700;margin-bottom:5px}
+.prin p{font-size:12.5px;color:var(--muted);line-height:1.6}
+
+.ba{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.ba-panel{background:var(--panel);border:1px solid var(--rule);border-radius:10px;padding:16px 18px;box-shadow:var(--shadow)}
+.ba-h{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;margin-bottom:12px}
+.ba-tag{font-size:11px;font-weight:700;border-radius:4px;padding:2px 8px}
+.ba-tag.now{background:var(--warn-weak);color:var(--warn);border:1px solid var(--warn-border)}
+.ba-tag.new{background:var(--accent-weak);color:var(--accent);border:1px solid var(--accent-border)}
+.flow{display:flex;flex-direction:column;gap:0}
+.fl{position:relative;border:1px solid var(--rule);border-radius:6px;padding:8px 10px;background:var(--panel2);font-size:12px;color:var(--muted)}
+.fl b{color:var(--ink);font-weight:600}
+.fl.new{border-color:var(--accent-border);background:#f6f9ff}
+.fl.warn{border-color:var(--warn-border);background:#fdf9f0}
+.fl .fl-badge{position:absolute;top:-7px;right:8px;font-size:10px;background:var(--accent);color:#fff;border-radius:999px;padding:0 7px;line-height:15px}
+.arrow{height:14px;display:flex;align-items:center;justify-content:center;color:var(--rule2);font-size:11px}
+.fl-split{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.mini-note{font-size:11.5px;color:var(--faint);margin-top:10px;line-height:1.6}
+
+.ftable{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--rule);border-radius:10px;overflow:hidden;font-size:12.8px}
+.ftable th{background:var(--panel2);text-align:left;font-size:11.5px;font-weight:600;color:var(--muted);padding:10px 12px;border-bottom:1px solid var(--rule);white-space:nowrap}
+.ftable td{padding:10px 12px;border-bottom:1px solid var(--rule);color:var(--muted);vertical-align:top}
+.ftable tr:last-child td{border-bottom:none}
+.ftable td b{color:var(--ink);font-weight:600}
+.ftable tr:hover td{background:#fcfdff}
+.col-pri{width:64px}
+.p0,.p1,.p2{font-size:10.5px;font-weight:700;border-radius:4px;padding:1px 7px;display:inline-block;font-family:var(--mono)}
+.p0{background:var(--accent);color:#fff}
+.p1{background:var(--accent-weak);color:var(--accent);border:1px solid var(--accent-border)}
+.p2{background:var(--panel2);color:var(--faint);border:1px solid var(--rule)}
+
+.inter-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.inter{background:var(--panel);border:1px solid var(--rule);border-radius:10px;padding:16px 18px;box-shadow:var(--shadow)}
+.inter h3{font-size:14px;font-weight:700;margin-bottom:4px}
+.inter p{font-size:12.5px;color:var(--muted);line-height:1.6;margin-bottom:12px}
+.inter-flow{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);flex-wrap:wrap}
+.if-box{border:1px solid var(--rule2);background:var(--panel2);border-radius:5px;padding:3px 8px;white-space:nowrap}
+.if-box.accent{border-color:var(--accent-border);background:var(--accent-weak);color:var(--accent);font-weight:600}
+.if-arrow{color:var(--rule2)}
+
+.impl{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.impl-card{background:var(--panel);border:1px solid var(--rule);border-radius:10px;padding:16px 18px;box-shadow:var(--shadow)}
+.impl-card h3{font-size:13.5px;font-weight:700;margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.impl-card h3::before{content:'';width:3px;height:14px;border-radius:2px;background:var(--accent)}
+.comp-list{display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--muted)}
+.comp-list code{font-size:11.5px}
+pre.json{background:#f8fafc;border:1px solid var(--rule);border-radius:8px;padding:12px 14px;font-family:var(--mono);font-size:11.5px;line-height:1.6;color:#3d4653;overflow-x:auto}
+pre.json .k{color:#2e6be6}
+pre.json .s{color:#3b8f4e}
+pre.json .n{color:#c77c14}
+.check{display:flex;flex-direction:column;gap:7px;font-size:12.5px;color:var(--muted)}
+.check div{display:flex;gap:8px;align-items:flex-start}
+.check i{width:15px;height:15px;border-radius:50%;background:var(--ok-weak);color:var(--ok);font-style:normal;font-size:10px;display:flex;align-items:center;justify-content:center;flex:none;margin-top:3px}
+.foot-note{font-size:11.5px;color:var(--faint);border-top:1px solid var(--rule);padding-top:16px;line-height:1.8}
+.foot-note code{font-size:11px}
+
+/* ==================== 效果图外框 ==================== */
+.shot-head{display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap}
+.shot-title{font-size:13px;font-weight:700}
+.shot-note{font-size:12px;color:var(--faint)}
+.pin-toggle{margin-left:auto;display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--muted);cursor:pointer;user-select:none}
+.pin-toggle input{accent-color:var(--accent);cursor:pointer}
+.browser{border:1px solid var(--rule2);border-radius:12px;overflow:hidden;background:var(--panel);box-shadow:0 10px 34px rgba(31,35,41,.09)}
+.browser-bar{display:flex;align-items:center;gap:10px;background:#f1f3f6;border-bottom:1px solid var(--rule2);padding:9px 14px}
+.dots{display:flex;gap:6px}
+.dots i{width:10px;height:10px;border-radius:50%;background:#d9dde3;display:block}
+.dots i:nth-child(1){background:#f0b6ab}.dots i:nth-child(2){background:#f3d9a4}.dots i:nth-child(3){background:#b8ddc0}
+.urlbar{flex:1;max-width:560px;background:#fff;border:1px solid var(--rule);border-radius:6px;font-size:11.5px;color:var(--faint);padding:3px 10px;font-family:var(--mono)}
+.browser-tag{margin-left:auto;font-size:10.5px;color:var(--accent);background:var(--accent-weak);border:1px solid var(--accent-border);border-radius:999px;padding:1px 9px}
+
+.app-shell{position:relative;display:grid;grid-template-columns:178px minmax(0,1fr);background:var(--bg);overflow:hidden}
+.side{background:#fbfcfd;border-right:1px solid var(--rule);padding:12px 10px;display:flex;flex-direction:column;font-size:12px;min-height:100%}
+.side-brand{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;padding:2px 6px 12px}
+.brand-logo{width:22px;height:22px;border-radius:6px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700}
+.side-new{display:flex;align-items:center;gap:6px;border:1px solid var(--rule2);border-radius:6px;padding:5px 9px;color:var(--muted);margin-bottom:12px;background:#fff}
+.side-grp{font-size:10.5px;color:var(--faint);letter-spacing:.06em;padding:8px 8px 4px}
+.nav-item{padding:6px 9px;border-radius:6px;color:var(--muted);display:flex;align-items:center;gap:7px;margin-bottom:1px}
+.nav-item .ico{width:13px;height:13px;border:1.4px solid currentColor;border-radius:3px;opacity:.55;flex:none}
+.nav-item.active{background:var(--accent-weak);color:var(--accent);font-weight:600}
+.side-foot{margin-top:auto;border-top:1px solid var(--rule);padding:10px 6px 0;font-size:11.5px;color:var(--muted)}
+.side-user{display:flex;align-items:center;gap:7px}
+.avatar{width:24px;height:24px;border-radius:50%;background:#dfe6f3;color:#42618f;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700}
+
+.main{display:flex;flex-direction:column;min-width:0;font-size:12px}
+.p-head{background:#fff;border-bottom:1px solid var(--rule);padding:11px 16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.p-title{font-size:14px;font-weight:600}
+.p-sub{font-size:11.5px;color:var(--faint)}
+.p-acts{margin-left:auto;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.btn{border:none;cursor:pointer;font-family:var(--font);font-size:11.5px;border-radius:6px;padding:5px 11px;background:var(--accent);color:#fff}
+.btn.ghost{background:#fff;color:var(--muted);border:1px solid var(--rule2)}
+.btn.ghost:hover{color:var(--accent);border-color:var(--accent);background:var(--accent-weak)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.pill{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;padding:2px 8px;border-radius:999px;font-weight:500;white-space:nowrap}
+.pill::before{content:'';width:5px;height:5px;border-radius:50%;background:currentColor}
+.pill.ok{color:var(--ok);background:var(--ok-weak)}
+.pill.warn{color:var(--warn);background:var(--warn-weak)}
+.pill.err{color:var(--danger);background:var(--danger-weak)}
+.pill.blue{color:var(--accent);background:var(--accent-weak)}
+.pill.grey{color:var(--muted);background:var(--panel3)}
+.tabs{display:flex;gap:20px;padding:0 16px;background:#fff;border-bottom:1px solid var(--rule);overflow-x:auto}
+.tab{position:relative;padding:9px 1px;font-size:12.5px;color:var(--muted);cursor:pointer;display:flex;align-items:center;gap:5px;border-bottom:2px solid transparent;margin-bottom:-1px;white-space:nowrap}
+.tab:hover{color:var(--accent)}
+.tab.on{color:var(--accent);font-weight:600;border-bottom-color:var(--accent)}
+.tab-badge{font-size:10px;line-height:15px;padding:0 5px;border-radius:999px;background:var(--danger-weak);color:var(--danger);font-weight:700}
+.tab-badge.blue{background:var(--accent-weak);color:var(--accent)}
+.p-body{padding:12px 16px 16px;background:var(--bg)}
+.pane{display:none}
+.pane.on{display:block;animation:fade .18s ease}
+@keyframes fade{from{opacity:.35;transform:translateY(2px)}to{opacity:1;transform:none}}
+
+.d-card{position:relative;background:#fff;border:1px solid var(--rule);border-radius:8px;padding:11px 13px}
+.d-card-h{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;margin-bottom:9px;min-height:18px}
+.d-card-h .sub{font-size:10.5px;color:var(--faint);font-weight:400}
+.d-card-h .more{margin-left:auto;font-size:11px;color:var(--accent);font-weight:400;cursor:pointer}
+.d-card-h .more:hover{text-decoration:underline}
+.delta{font-size:10.5px;font-weight:600;font-variant-numeric:tabular-nums}
+.delta.up{color:var(--ok)}.delta.down{color:var(--danger)}.delta.flat{color:var(--faint);font-weight:500}
+.up{color:var(--ok)}.down{color:var(--danger)}.flat{color:var(--faint)}
+
+.kpi-row{display:grid;grid-template-columns:278px repeat(4,minmax(0,1fr));gap:10px}
+.health-wrap{display:flex;align-items:center;gap:12px}
+.ring{flex:none;width:72px;height:72px}
+.health-score{font-size:25px;font-weight:600;letter-spacing:-.02em;line-height:1.1}
+.health-score span{font-size:11px;color:var(--faint);font-weight:400;letter-spacing:0}
+.health-line{display:flex;align-items:center;gap:8px;margin-top:5px;flex-wrap:wrap}
+.health-parts{display:flex;flex-wrap:wrap;gap:3px 9px;font-size:10.5px;color:var(--faint);margin-top:8px;padding-top:7px;border-top:1px dashed var(--rule)}
+.health-parts b{color:var(--muted);font-weight:600}
+.metric{display:flex;flex-direction:column;justify-content:space-between;min-height:108px}
+.m-label{font-size:11px;color:var(--faint)}
+.m-row{display:flex;align-items:baseline;gap:7px;margin-top:3px}
+.m-num{font-size:23px;font-weight:600;letter-spacing:-.02em;line-height:1.15;font-variant-numeric:tabular-nums}
+.m-unit{font-size:12px;color:var(--faint);font-weight:400;margin-left:1px}
+.m-foot{display:flex;align-items:flex-end;justify-content:space-between;gap:8px;margin-top:8px}
+.spark{width:86px;height:26px;display:block;flex:none}
+.m-hint{font-size:10px;color:var(--faint);text-align:right;line-height:1.35}
+
+.banner{display:flex;align-items:center;gap:9px;padding:8px 12px;border:1px solid var(--warn-border);background:var(--warn-weak);border-radius:8px;font-size:11.5px;color:var(--warn-text);margin-bottom:10px;flex-wrap:wrap}
+.banner .b-acts{margin-left:auto;display:flex;gap:6px}
+.banner code{background:#fff;border-color:var(--warn-border);font-size:10.5px}
+
+.chart-row{display:grid;grid-template-columns:minmax(0,2.05fr) minmax(0,1fr);gap:10px;margin-top:10px}
+.chart{width:100%}
+.chart svg{width:100%;height:auto;display:block}
+.legend{display:flex;align-items:center;gap:12px;margin-left:auto;font-size:10.5px;color:var(--muted);font-weight:400;flex-wrap:wrap}
+.legend i{width:8px;height:8px;border-radius:2px;display:inline-block;margin-right:4px}
+.trend-foot{display:flex;align-items:center;gap:8px;margin-top:7px;font-size:10.5px;color:var(--faint);flex-wrap:wrap}
+.trend-foot .sp{flex:1}
+
+.donut-flex{display:flex;align-items:center;gap:12px}
+.donut{width:92px;height:92px;flex:none}
+.lg-list{flex:1;min-width:0;display:flex;flex-direction:column;gap:7px}
+.lg-row{display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--muted)}
+.lg-row .dot{width:8px;height:8px;border-radius:2px;flex:none}
+.lg-row b{margin-left:auto;color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums}
+.lg-t{color:var(--ink)}
+.lg-s{font-size:10px;color:var(--faint)}
+
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+.issue-row{display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px dashed var(--rule);font-size:11.5px}
+.issue-row:last-child{border-bottom:none}
+.issue-main{flex:1;min-width:0}
+.issue-t{color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.issue-s{font-size:10.5px;color:var(--faint);margin-top:1px}
+.mini-btn{font-family:var(--font);font-size:10.5px;padding:3px 9px;border-radius:6px;border:1px solid var(--accent-border);color:var(--accent);background:#fff;cursor:pointer;white-space:nowrap}
+.mini-btn:hover{background:var(--accent-weak)}
+.mini-btn.ghost{border-color:var(--rule2);color:var(--muted)}
+.mini-btn.ghost:hover{color:var(--accent);border-color:var(--accent);background:var(--accent-weak)}
+.mini-btn.danger{color:var(--danger);border-color:var(--danger-border)}
+.mini-btn.danger:hover{background:var(--danger-weak)}
+.progress{display:flex;align-items:center;gap:8px;font-size:10.5px;color:var(--muted)}
+.progress .track{width:110px;height:6px;border-radius:3px;background:#f0f2f5;overflow:hidden}
+.progress .track i{display:block;height:100%;background:var(--accent);border-radius:3px;transition:width .2s}
+
+/* 通用表 */
+.t-table{border:1px solid var(--rule);border-radius:6px;overflow:hidden;background:#fff}
+.t-row{display:grid;gap:8px;align-items:center;padding:8px 10px;border-bottom:1px solid #f1f3f5;font-size:11.5px;color:var(--muted)}
+.t-row:last-child{border-bottom:none}
+.t-row:hover{background:#fcfdff}
+.t-row.head{background:var(--panel2);font-size:10.5px;color:var(--faint);cursor:default;font-weight:500}
+.t-row.head:hover{background:var(--panel2)}
+.t-q{color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.t-muted{color:var(--faint);font-size:10.5px}
+.t-num{font-variant-numeric:tabular-nums;text-align:right}
+.tag{display:inline-block;font-size:10px;border:1px solid var(--rule);border-radius:4px;padding:0 5px;color:var(--muted);background:var(--panel2);white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis;vertical-align:middle}
+.tag.blue{color:var(--accent);background:var(--accent-weak);border-color:var(--accent-border)}
+.tag.ok{color:var(--ok);background:var(--ok-weak);border-color:var(--ok-border)}
+.tag.warn{color:var(--warn);background:var(--warn-weak);border-color:var(--warn-border)}
+.tag.err{color:var(--danger);background:var(--danger-weak);border-color:var(--danger-border)}
+.tag.grey{color:var(--muted);background:var(--panel3);border-color:var(--rule2)}
+.src{font-size:10px;padding:1px 6px;border-radius:4px;flex:none;white-space:nowrap}
+.src.hist{color:var(--muted);background:var(--panel3);border:1px solid var(--rule2)}
+.src.bad{color:var(--danger-text);background:var(--danger-weak);border:1px solid var(--danger-border)}
+.src.manual{color:var(--accent);background:var(--accent-weak);border:1px solid var(--accent-border)}
+
+/* 评估集 */
+.fbar{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:9px}
+.chip-filter{font-size:10.5px;color:var(--muted);background:#fff;border:1px solid var(--rule);border-radius:999px;padding:2px 9px;cursor:pointer;font-family:var(--font);white-space:nowrap}
+.chip-filter.on{color:var(--accent);border-color:var(--accent-border);background:var(--accent-weak);font-weight:600}
+.search{flex:1;min-width:150px;max-width:230px;font-size:11px;padding:4px 10px;border:1px solid var(--rule2);border-radius:6px;color:var(--faint);background:#fff}
+.set-strip{display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--panel2);border:1px dashed var(--rule2);border-radius:6px;font-size:10.5px;color:var(--faint);margin-bottom:9px;flex-wrap:wrap}
+.set-strip b{color:var(--muted);font-weight:600}
+.case-row{grid-template-columns:16px minmax(0,1.5fr) minmax(0,1.2fr) 70px 76px 74px 68px}
+.case-row .tags{display:flex;gap:3px;flex-wrap:wrap;overflow:hidden;max-height:34px}
+.ck{width:11px;height:11px;border:1.4px solid var(--rule2);border-radius:3px;display:inline-block;background:#fff}
+.ck.on{background:var(--accent);border-color:var(--accent);position:relative}
+.ck.on::after{content:'';position:absolute;left:2px;top:.5px;width:5px;height:3px;border-left:1.5px solid #fff;border-bottom:1.5px solid #fff;transform:rotate(-45deg)}
+.pager{display:flex;align-items:center;gap:6px;justify-content:flex-end;margin-top:8px;font-size:10.5px;color:var(--faint)}
+.pager b{color:var(--muted);font-weight:600}
+
+/* 调参实验 */
+.exp-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:9px 11px;background:#fff;border:1px solid var(--rule);border-radius:8px;margin-bottom:10px}
+.exp-bar .lab{font-size:10.5px;color:var(--faint)}
+.seg{display:flex;border:1px solid var(--rule2);border-radius:6px;overflow:hidden;background:#fff}
+.seg button{border:none;background:none;font-family:var(--font);font-size:11px;color:var(--muted);padding:3px 9px;cursor:pointer;border-left:1px solid var(--rule)}
+.seg button:first-child{border-left:none}
+.seg button.on{background:var(--accent);color:#fff;font-weight:600}
+.switch{width:24px;height:14px;border-radius:999px;background:var(--accent);position:relative;display:inline-block;flex:none}
+.switch::after{content:'';position:absolute;width:10px;height:10px;border-radius:50%;background:#fff;top:2px;right:2px}
+.exp-meta{margin-left:auto;font-size:10.5px;color:var(--faint);white-space:nowrap}
+.group-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px}
+.g-card{position:relative;background:#fff;border:1px solid var(--rule);border-radius:8px;padding:10px 11px;display:flex;flex-direction:column;min-height:150px}
+.g-card.base{border-color:var(--accent-border);background:#fbfdff}
+.g-card.best{border-color:var(--ok-border);box-shadow:0 0 0 2px var(--ok-weak)}
+.g-h{display:flex;align-items:center;gap:6px;font-size:11.5px;font-weight:600;margin-bottom:7px}
+.g-h .g-badge{font-size:9.5px;padding:0 5px;border-radius:4px;background:var(--accent-weak);color:var(--accent);border:1px solid var(--accent-border);font-weight:500}
+.g-h .g-badge.ok{background:var(--ok-weak);color:var(--ok);border-color:var(--ok-border)}
+.g-h .g-more{margin-left:auto;color:var(--faint);font-size:13px;cursor:pointer;line-height:1}
+.g-params{display:grid;grid-template-columns:1fr 1fr;gap:3px 8px;font-size:10.5px;color:var(--faint);margin-bottom:7px}
+.g-params b{color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums}
+.g-diff{font-size:10px;color:var(--warn-text);background:var(--warn-weak);border:1px solid var(--warn-border);border-radius:4px;padding:3px 6px;margin-bottom:8px;line-height:1.5}
+.g-diff.none{color:var(--faint);background:var(--panel2);border-color:var(--rule)}
+.g-foot{margin-top:auto;display:flex;gap:5px;align-items:center;font-size:10px;color:var(--faint)}
+.g-add{border:1px dashed var(--rule2);background:transparent;border-radius:8px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:var(--faint);font-size:11px;min-height:150px;cursor:pointer}
+.g-add:hover{border-color:var(--accent-border);color:var(--accent);background:var(--accent-weak)}
+.g-add .plus{font-size:20px;line-height:1}
+.run-row{display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap}
+.run-row .run-note{font-size:10.5px;color:var(--faint)}
+.conclusion{position:relative;display:flex;gap:9px;align-items:flex-start;padding:9px 12px;border:1px solid var(--accent-border);background:#f6f9ff;border-radius:8px;font-size:11.5px;color:var(--muted);margin-top:10px}
+.conclusion b{color:var(--ink)}
+.conclusion .c-acts{margin-left:auto;display:flex;gap:6px;flex:none}
+.res-row{grid-template-columns:minmax(0,1.1fr) 58px 62px 62px 58px 60px 62px 70px 72px}
+.res-row.best{background:#fbfefc}
+.res-row.best .t-q{color:var(--ok);font-weight:600}
+.diff-strip{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:9px;font-size:10.5px;color:var(--faint)}
+.diff-row{display:grid;grid-template-columns:minmax(0,1fr) 88px 64px;gap:8px;align-items:center;padding:6px 0;border-bottom:1px dashed var(--rule);font-size:11px}
+.diff-row:last-child{border-bottom:none}
+.rank-old{color:var(--faint);font-size:10.5px}
+.rank-new{font-weight:600;font-variant-numeric:tabular-nums}
+.rank-new.up{color:var(--ok)}
+.rank-new.down{color:var(--danger)}
+.rank-new.flat{color:var(--faint);font-weight:400}
+
+/* 答案质量 */
+.score-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:10px}
+.score-box{background:#fff;border:1px solid var(--rule);border-radius:8px;padding:10px 12px}
+.score-box .lab{font-size:10.5px;color:var(--faint)}
+.score-box .num{font-size:24px;font-weight:600;letter-spacing:-.02em;line-height:1.2;margin-top:2px;font-variant-numeric:tabular-nums}
+.score-box .num.good{color:var(--ok)}
+.score-box .num.mid{color:var(--warn)}
+.score-box .num.bad{color:var(--danger)}
+.score-box .num.dim{color:var(--muted);font-size:20px}
+.score-box .foot{font-size:10px;color:var(--faint);margin-top:2px}
+.ans-row{grid-template-columns:minmax(0,1.5fr) 54px 62px 62px minmax(0,1.2fr) 20px}
+.ans-expand{background:var(--panel2);border-top:1px dashed var(--rule);padding:8px 10px;font-size:11px;color:var(--muted);line-height:1.6}
+.ans-expand b{color:var(--ink)}
+.hist-chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;font-size:10.5px;color:var(--faint)}
+.hist-chips span{background:var(--panel2);border:1px solid var(--rule);border-radius:999px;padding:2px 8px}
+
+/* 历史 */
+.hist-row{grid-template-columns:104px 62px 52px minmax(0,1.1fr) 58px 52px 56px 92px 82px}
+.hist-row .ops{display:flex;gap:6px}
+.hist-row .ops a{color:var(--accent);font-size:10.5px;cursor:pointer}
+.hist-row .ops a:hover{text-decoration:underline}
+.metric-seg{display:flex;gap:5px;flex-wrap:wrap}
+.hist-note{display:flex;gap:8px;align-items:flex-start;margin-top:9px;padding:8px 10px;border:1px dashed var(--rule2);border-radius:6px;font-size:10.5px;color:var(--faint);line-height:1.6}
+.hist-note b{color:var(--muted)}
+
+/* 标注针 */
+.pin{position:absolute;top:-7px;right:-7px;width:19px;height:19px;border-radius:50%;background:#1f2329;color:#fff;font-size:10.5px;font-weight:700;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(0,0,0,.2);z-index:3;font-family:var(--mono);cursor:help}
+.pins-off .pin{display:none}
+.anno{display:grid;grid-template-columns:1fr 1fr;gap:10px 22px;margin-top:14px;background:var(--panel);border:1px solid var(--rule);border-radius:10px;padding:16px 18px}
+.anno-item{display:flex;gap:9px;font-size:12px;color:var(--muted);line-height:1.55}
+.anno-n{width:19px;height:19px;border-radius:50%;background:#1f2329;color:#fff;font-size:10.5px;font-weight:700;display:flex;align-items:center;justify-content:center;flex:none;margin-top:2px;font-family:var(--mono)}
+.anno-item b{color:var(--ink);font-weight:600}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(10px);background:#1f2329;color:#fff;font-size:11.5px;padding:6px 14px;border-radius:999px;opacity:0;transition:.2s;z-index:50;pointer-events:none;white-space:nowrap}
+.toast.show{opacity:.94;transform:translateX(-50%)}
+
+@media (max-width:1180px){
+  .kpi-row{grid-template-columns:1fr 1fr 1fr}
+  .kpi-row .d-card:first-child{grid-column:span 3}
+  .chart-row,.two-col,.inter-grid,.impl,.ba,.prin-grid,.score-grid{grid-template-columns:1fr}
+  .prob-grid{grid-template-columns:1fr 1fr}
+  .anno{grid-template-columns:1fr}
+  .group-grid{grid-template-columns:1fr 1fr}
+}
+@media (max-width:900px){
+  .side{display:none}
+  .app-shell{grid-template-columns:1fr}
+  .prob-grid{grid-template-columns:1fr}
+  .group-grid{grid-template-columns:1fr}
+  .case-row{grid-template-columns:16px minmax(0,1fr) 70px 74px}
+  .case-row > :nth-child(3),.case-row > :nth-child(4){display:none}
+  .res-row{grid-template-columns:minmax(0,1fr) 58px 62px 62px 70px}
+  .res-row > :nth-child(2),.res-row > :nth-child(6),.res-row > :nth-child(7),.res-row > :nth-child(8){display:none}
+  .hist-row{grid-template-columns:90px minmax(0,1fr) 58px 80px}
+  .hist-row > :nth-child(2),.hist-row > :nth-child(3),.hist-row > :nth-child(5),.hist-row > :nth-child(6),.hist-row > :nth-child(7){display:none}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ==================== 封面 ==================== -->
+  <header class="masthead">
+    <div class="mast-kicker">问渠 · 管理台改版提案</div>
+    <h1>检索评估：从「参数试跑表单」到<em>「检索质量实验台」</em></h1>
+    <p class="mast-sub">
+      把评估集、参数对比、答案质量与自动体检串成一条「发现问题 → 提出假设 → 跑实验 → 应用 → 回归」的闭环。
+      视觉沿用现有 <code>--app-*</code> token 与 ant-design-vue，不引入新框架；先解决「看不见、留不住、比不了」三件事。
+    </p>
+    <div class="mast-meta">
+      <span class="meta-chip">现状 <b>1 页平铺 · 0 张趋势图 · 结果不落库</b></span>
+      <span class="meta-chip">目标 <b>首屏判断 + 实验化对比</b></span>
+      <span class="meta-chip">改动 <b>前端重排 + 4 张表 / 6 组接口</b></span>
+      <span class="meta-chip">兼容 <b>浅色 / 深色 / 1080 宽 / 只读角色</b></span>
+    </div>
+    <div class="claim">
+      <b>设计主张：</b>评估页不是「参数填表页」，而是检索质量的实验台。每一次运行都必须能回答：
+      <b>基线是什么？改了什么？哪几题变好、哪几题变差？能不能应用到线上？</b>
+    </div>
+  </header>
+
+  <!-- ==================== 01 效果图 ==================== -->
+  <section id="shot">
+    <div class="sec-h"><span class="sec-no">01</span><h2>效果图（可交互）</h2></div>
+    <p class="sec-lead">
+      依次点击五个页签查看改版后的完整信息架构；在「评估集」里可用筛选与搜索过滤用例；在「调参实验」里点「运行实验」查看进度模拟。
+      图中数据为示意数据，标注 1–8 对应下方改动说明。
+    </p>
+
+    <div class="shot-head">
+      <span class="shot-title">桌面端 · 1280px · 浅色主题</span>
+      <span class="shot-note">纯静态 HTML，无外部依赖</span>
+      <label class="pin-toggle"><input type="checkbox" id="pinToggle" checked> 显示标注</label>
+    </div>
+
+    <div class="browser">
+      <div class="browser-bar">
+        <span class="dots"><i></i><i></i><i></i></span>
+        <div class="urlbar">localhost:5800/evaluation</div>
+        <span class="browser-tag">效果图</span>
+      </div>
+
+      <div class="app-shell">
+        <!-- 侧栏（缩略） -->
+        <aside class="side">
+          <div class="side-brand"><span class="brand-logo">问</span>问渠</div>
+          <div class="side-new">＋ 新建对话</div>
+          <div class="side-grp">工作区</div>
+          <div class="nav-item"><span class="ico"></span>智能体</div>
+          <div class="nav-item"><span class="ico"></span>市场</div>
+          <div class="nav-item"><span class="ico"></span>知识库</div>
+          <div class="nav-item"><span class="ico"></span>我的产物</div>
+          <div class="side-grp">管理</div>
+          <div class="nav-item"><span class="ico"></span>数据看板</div>
+          <div class="nav-item active"><span class="ico"></span>检索评估</div>
+          <div class="nav-item"><span class="ico"></span>成员管理</div>
+          <div class="nav-item"><span class="ico"></span>系统设置</div>
+          <div class="side-foot">
+            <div class="side-user"><span class="avatar">管</span><div>平台管理员</div></div>
+          </div>
+        </aside>
+
+        <!-- 主区 -->
+        <main class="main">
+          <div class="p-head">
+            <div>
+              <div class="p-title">检索评估</div>
+              <div class="p-sub">评估集 · 调参实验 · 答案质量 · 自动体检</div>
+            </div>
+            <div class="p-acts">
+              <span class="pill ok">自动体检正常 · 下次 03:00</span>
+              <button class="btn ghost">导出报告</button>
+              <span style="position:relative">
+                <span class="pin" title="首屏先给结论，体检入口常驻">1</span>
+                <button class="btn">立即体检</button>
+              </span>
+            </div>
+          </div>
+
+          <div class="tabs">
+            <div class="tab on" data-tab="overview">总览</div>
+            <div class="tab" data-tab="cases">评估集 <span class="tab-badge" title="2 个期望块失效">2</span></div>
+            <div class="tab" data-tab="lab">调参实验 <span class="tab-badge blue">3</span></div>
+            <div class="tab" data-tab="answer">答案质量</div>
+            <div class="tab" data-tab="history">历史趋势</div>
+          </div>
+
+          <div class="p-body">
+
+            <!-- ========== 总览 ========== -->
+            <div class="pane on" data-pane="overview">
+
+              <div class="banner">
+                <span class="pill warn">参数已变更</span>
+                <span>线上参数在上次体检后改过：<code>retrieval.vecThreshold</code> 0.30 → 0.35。当前红绿灯读的是旧测量，建议重新体检。</span>
+                <span class="b-acts"><button class="mini-btn">重新体检</button><button class="mini-btn ghost">查看差异</button></span>
+                <span class="pin" title="后端已返回的漂移/超时/失效状态，必须在页面显性化">3</span>
+              </div>
+
+              <div class="kpi-row">
+                <div class="d-card">
+                  <span class="pin" title="首屏先给结论：健康度由 4 项指标加权">1</span>
+                  <div class="d-card-h">检索健康度 <span class="sub">4 项加权</span></div>
+                  <div class="health-wrap">
+                    <svg class="ring" viewBox="0 0 80 80">
+                      <circle cx="40" cy="40" r="31" fill="none" stroke="#eef1f5" stroke-width="7"/>
+                      <circle cx="40" cy="40" r="31" fill="none" stroke="#3b8f4e" stroke-width="7"
+                              stroke-linecap="round" stroke-dasharray="163.6 195" transform="rotate(-90 40 40)"/>
+                    </svg>
+                    <div>
+                      <div class="health-score">84<span> / 100</span></div>
+                      <div class="health-line"><span class="pill ok">良好</span><span class="delta up">▲ 1.2</span></div>
+                      <div class="t-muted" style="margin-top:4px">今天 03:00 · 自动体检</div>
+                    </div>
+                  </div>
+                  <div class="health-parts">
+                    <span>recall@5 <b>82</b></span><span>MRR <b>68</b></span><span>命中 <b>94</b></span><span>评估集 <b>92</b></span>
+                  </div>
+                </div>
+
+                <div class="d-card metric">
+                  <span class="pin" title="每个指标带环比与迷你趋势，点击下钻">2</span>
+                  <div class="m-label">recall@5</div>
+                  <div class="m-row"><div class="m-num">0.82</div><span class="delta up">▲ 0.03</span></div>
+                  <div class="m-foot">
+                    <svg class="spark" viewBox="0 0 86 26" preserveAspectRatio="none">
+                      <polyline points="0,20 12,19 24,21 36,16 48,17 60,13 72,14 86,8" fill="none" stroke="#2e6be6" stroke-width="1.6"/>
+                    </svg>
+                    <span class="m-hint">上期 0.79<br>25 条</span>
+                  </div>
+                </div>
+
+                <div class="d-card metric">
+                  <div class="m-label">MRR</div>
+                  <div class="m-row"><div class="m-num">0.68</div><span class="delta up">▲ 0.02</span></div>
+                  <div class="m-foot">
+                    <svg class="spark" viewBox="0 0 86 26" preserveAspectRatio="none">
+                      <polyline points="0,19 12,18 24,20 36,15 48,16 60,12 72,13 86,9" fill="none" stroke="#2e6be6" stroke-width="1.6"/>
+                    </svg>
+                    <span class="m-hint">上期 0.66<br>首位排名</span>
+                  </div>
+                </div>
+
+                <div class="d-card metric">
+                  <div class="m-label">命中率</div>
+                  <div class="m-row"><div class="m-num">94<i class="m-unit">%</i></div><span class="delta up">▲ 1pt</span></div>
+                  <div class="m-foot">
+                    <svg class="spark" viewBox="0 0 86 26" preserveAspectRatio="none">
+                      <polyline points="0,17 12,17 24,18 36,14 48,15 60,11 72,12 86,8" fill="none" stroke="#2e6be6" stroke-width="1.6"/>
+                    </svg>
+                    <span class="m-hint">上期 93%<br>无完全落空</span>
+                  </div>
+                </div>
+
+                <div class="d-card metric">
+                  <div class="m-label">答案充分率</div>
+                  <div class="m-row"><div class="m-num">79<i class="m-unit">%</i></div><span class="delta down">▼ 2pt</span></div>
+                  <div class="m-foot">
+                    <svg class="spark" viewBox="0 0 86 26" preserveAspectRatio="none">
+                      <polyline points="0,9 12,10 24,9 36,12 48,11 60,13 72,14 86,15" fill="none" stroke="#c77c14" stroke-width="1.6"/>
+                    </svg>
+                    <span class="m-hint">上期 81%<br>评判判定</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="chart-row">
+                <div class="d-card">
+                  <div class="d-card-h">近 13 次体检
+                    <span class="sub">纵轴为归一化指标</span>
+                    <span class="legend">
+                      <span><i style="background:#2e6be6"></i>recall@5</span>
+                      <span><i style="background:#8fb3ef"></i>MRR</span>
+                      <span><i style="background:#c9a25a"></i>命中率</span>
+                    </span>
+                  </div>
+                  <div class="chart">
+                    <svg viewBox="0 0 660 176" preserveAspectRatio="none">
+                      <g stroke="#eef1f5" stroke-width="1">
+                        <line x1="0" y1="20" x2="660" y2="20"/><line x1="0" y1="55" x2="660" y2="55"/>
+                        <line x1="0" y1="90" x2="660" y2="90"/><line x1="0" y1="125" x2="660" y2="125"/>
+                        <line x1="0" y1="160" x2="660" y2="160"/>
+                      </g>
+                      <g font-size="9" fill="#98a0aa">
+                        <text x="0" y="14">1.0</text><text x="0" y="49">0.9</text><text x="0" y="84">0.8</text>
+                        <text x="0" y="119">0.7</text><text x="0" y="154">0.6</text>
+                      </g>
+                      <polygon points="0,74 56,70 112,80 168,66 224,69 280,60 336,63 392,52 448,55 504,44 560,47 616,38 660,34 660,160 0,160"
+                               fill="#2e6be6" opacity=".07"/>
+                      <polyline points="0,74 56,70 112,80 168,66 224,69 280,60 336,63 392,52 448,55 504,44 560,47 616,38 660,34"
+                                fill="none" stroke="#2e6be6" stroke-width="2"/>
+                      <polyline points="0,92 56,89 112,95 168,86 224,88 280,80 336,83 392,74 448,77 504,68 560,70 616,62 660,58"
+                                fill="none" stroke="#8fb3ef" stroke-width="1.6"/>
+                      <polyline points="0,52 56,49 112,57 168,46 224,48 280,42 336,44 392,35 448,38 504,30 560,32 616,24 660,21"
+                                fill="none" stroke="#c9a25a" stroke-width="1.4" stroke-dasharray="4 3"/>
+                      <g fill="#98a0aa" font-size="9">
+                        <text x="0" y="173">10-24</text><text x="112" y="173">10-28</text>
+                        <text x="224" y="173">11-01</text><text x="336" y="173">11-04</text>
+                        <text x="448" y="173">11-06</text><text x="560" y="173">11-08</text>
+                      </g>
+                    </svg>
+                  </div>
+                  <div class="trend-foot">
+                    <span>11-01 曾下滑 -8%（已标记为待复盘）</span>
+                    <span class="sp"></span>
+                    <a class="more" style="color:var(--accent);cursor:pointer">查看完整趋势 →</a>
+                  </div>
+                </div>
+
+                <div class="d-card">
+                  <div class="d-card-h">评估集质量 <span class="sub">25 条用例</span></div>
+                  <div class="donut-flex">
+                    <svg class="donut" viewBox="0 0 80 80">
+                      <circle cx="40" cy="40" r="31" fill="none" stroke="#eef1f5" stroke-width="9"/>
+                      <circle cx="40" cy="40" r="31" fill="none" stroke="#3b8f4e" stroke-width="9"
+                              stroke-dasharray="62.3 194.8" stroke-dashoffset="0" transform="rotate(-90 40 40)"/>
+                      <circle cx="40" cy="40" r="31" fill="none" stroke="#8fb3ef" stroke-width="9"
+                              stroke-dasharray="116.9 194.8" stroke-dashoffset="-62.3" transform="rotate(-90 40 40)"/>
+                      <circle cx="40" cy="40" r="31" fill="none" stroke="#c77c14" stroke-width="9"
+                              stroke-dasharray="15.6 194.8" stroke-dashoffset="-179.2" transform="rotate(-90 40 40)"/>
+                      <text x="40" y="38" text-anchor="middle" font-size="16" font-weight="600" fill="#1f2329">25</text>
+                      <text x="40" y="52" text-anchor="middle" font-size="8" fill="#98a0aa">条用例</text>
+                    </svg>
+                    <div class="lg-list">
+                      <div class="lg-row"><span class="dot" style="background:#3b8f4e"></span><span class="lg-t">人工确认</span><b>8</b></div>
+                      <div class="lg-row"><span class="dot" style="background:#8fb3ef"></span><span class="lg-t">仅弱监督</span><b>15</b></div>
+                      <div class="lg-row"><span class="dot" style="background:#c77c14"></span><span class="lg-t">期望块失效</span><b>2</b></div>
+                      <div class="lg-s">来自历史引用，标签不代表绝对正确</div>
+                    </div>
+                  </div>
+                  <div class="trend-foot" style="margin-top:10px">
+                    <span>7 条待人工确认</span><span class="sp"></span>
+                    <a class="more" style="color:var(--accent);cursor:pointer">去校验 →</a>
+                  </div>
+                </div>
+              </div>
+
+              <div class="two-col">
+                <div class="d-card">
+                  <div class="d-card-h">需要处理 <span class="sub">本次体检 · 5 项</span>
+                    <span class="more">全部 →</span>
+                  </div>
+                  <div class="issue-row">
+                    <span class="tag err">落空</span>
+                    <div class="issue-main">
+                      <div class="issue-t">差旅报销标准是多少？</div>
+                      <div class="issue-s">期望 2 块 · 命中 0 · 可能缺块或标签错误</div>
+                    </div>
+                    <button class="mini-btn">看题目</button>
+                    <button class="mini-btn ghost">补知识块</button>
+                  </div>
+                  <div class="issue-row">
+                    <span class="tag err">落空</span>
+                    <div class="issue-main">
+                      <div class="issue-t">文档删除后，向量还会保留吗？</div>
+                      <div class="issue-s">期望 1 块 · 命中 0 · 期望块已失效</div>
+                    </div>
+                    <button class="mini-btn">看题目</button>
+                    <button class="mini-btn ghost">修复标签</button>
+                  </div>
+                  <div class="issue-row">
+                    <span class="tag warn">偏低</span>
+                    <div class="issue-main">
+                      <div class="issue-t">子表电话号码列如何添加验证规则？</div>
+                      <div class="issue-s">recall@5 0.75 · 1 条期望块排在第 7 位</div>
+                    </div>
+                    <button class="mini-btn">看明细</button>
+                    <button class="mini-btn ghost">加入调参</button>
+                  </div>
+                  <div class="issue-row">
+                    <span class="tag grey">待确认</span>
+                    <div class="issue-main">
+                      <div class="issue-t">7 条用例仅有弱监督标签</div>
+                      <div class="issue-s">未人工确认，建议逐条校验期望块</div>
+                    </div>
+                    <button class="mini-btn">去校验</button>
+                  </div>
+                  <div class="trend-foot" style="margin-top:6px">
+                    <span>本周闭环 2 / 5</span>
+                    <span class="progress"><span class="track"><i style="width:40%"></i></span>40%</span>
+                  </div>
+                </div>
+
+                <div class="d-card">
+                  <div class="d-card-h">最近运行 <span class="sub">手动与自动同列</span>
+                    <span class="more">全部运行 →</span>
+                  </div>
+                  <div class="t-table">
+                    <div class="t-row head" style="grid-template-columns:86px 52px minmax(0,1fr) 54px 58px">
+                      <span>时间</span><span>触发</span><span>范围</span><span>recall@5</span><span>状态</span>
+                    </div>
+                    <div class="t-row" style="grid-template-columns:86px 52px minmax(0,1fr) 54px 58px">
+                      <span>11-08 03:00</span><span class="tag grey">自动</span><span class="t-q">当前配置 · 25 条</span>
+                      <span class="t-num">0.82</span><span><span class="pill ok">正常</span></span>
+                    </div>
+                    <div class="t-row" style="grid-template-columns:86px 52px minmax(0,1fr) 54px 58px">
+                      <span>11-07 18:20</span><span class="tag blue">手动</span><span class="t-q">3 组对比 · 25 条</span>
+                      <span class="t-num">0.79</span><span><span class="pill ok">正常</span></span>
+                    </div>
+                    <div class="t-row" style="grid-template-columns:86px 52px minmax(0,1fr) 54px 58px">
+                      <span>11-01 03:00</span><span class="tag grey">自动</span><span class="t-q">当前配置 · 25 条</span>
+                      <span class="t-num">0.71</span><span><span class="pill err">下滑</span></span>
+                    </div>
+                    <div class="t-row" style="grid-template-columns:86px 52px minmax(0,1fr) 54px 58px">
+                      <span>10-30 10:12</span><span class="tag blue">手动</span><span class="t-q">改阈值后 · 25 条</span>
+                      <span class="t-num">0.82</span><span><span class="pill grey">不可比</span></span>
+                    </div>
+                  </div>
+                  <div class="trend-foot" style="margin-top:8px">
+                    <span>指标口径：recall@k / MRR / 命中率 / 答案充分率</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- ========== 评估集 ========== -->
+            <div class="pane" data-pane="cases">
+              <div class="set-strip">
+                <b>25 条用例</b><span>·</span><span>63 个期望块</span><span>·</span><span>生成于 2026-10-24 15:53</span>
+                <span>·</span><span>版本 v1</span>
+                <span style="margin-left:auto">已同步至数据库 · 自动保存</span>
+                <span class="pin" title="评估集从本地 JSON 升级为可管理资产">4</span>
+              </div>
+              <div class="fbar">
+                <button class="chip-filter on" data-filter="all">全部 25</button>
+                <button class="chip-filter" data-filter="miss">完全落空 2</button>
+                <button class="chip-filter" data-filter="low">低相关 3</button>
+                <button class="chip-filter" data-filter="stale">期望失效 2</button>
+                <button class="chip-filter" data-filter="unverified">待确认 7</button>
+                <input class="search" id="caseSearch" placeholder="搜索问题 / 期望知识块…">
+                <span style="margin-left:auto"></span>
+                <button class="mini-btn ghost">导入</button>
+                <button class="mini-btn ghost">导出</button>
+                <button class="mini-btn">新建用例</button>
+              </div>
+
+              <div class="t-table">
+                <div class="t-row head case-row">
+                  <span></span><span>问题</span><span>期望知识块（标题）</span><span>来源</span><span>质量</span><span>最近 recall@5</span><span>操作</span>
+                </div>
+                <div class="t-row case-row" data-state="ok unverified">
+                  <span class="ck on"></span>
+                  <span class="t-q">我又加了一列身份证列，用于上传身份证，怎么限制文件格式和大小？</span>
+                  <span class="tags"><span class="tag">附件上传 · 格式与大小限制</span><span class="tag">表单字段校验说明</span><span class="tag">+1</span></span>
+                  <span><span class="src hist">历史引用</span></span>
+                  <span><span class="tag warn">待确认</span></span>
+                  <span class="t-num">1.00</span>
+                  <span><a style="color:var(--accent);font-size:10.5px">编辑</a></span>
+                </div>
+                <div class="t-row case-row" data-state="low unverified">
+                  <span class="ck on"></span>
+                  <span class="t-q">我做了一个子表，给电话号码列添加验证规则，验证手机号怎么做？</span>
+                  <span class="tags"><span class="tag">子表字段 · 验证规则</span><span class="tag">正则与格式校验</span><span class="tag">+2</span></span>
+                  <span><span class="src hist">历史引用</span></span>
+                  <span><span class="tag warn">待确认</span></span>
+                  <span class="t-num" style="color:var(--warn)">0.75</span>
+                  <span><a style="color:var(--accent);font-size:10.5px">编辑</a></span>
+                </div>
+                <div class="t-row case-row" data-state="miss">
+                  <span class="ck"></span>
+                  <span class="t-q">差旅报销标准是多少？住宿和交通分别怎么算？</span>
+                  <span class="tags"><span class="tag">差旅报销标准 v3</span><span class="tag">住宿与交通额度</span></span>
+                  <span><span class="src bad">差评回流</span></span>
+                  <span><span class="tag ok">已确认</span></span>
+                  <span class="t-num" style="color:var(--danger)">0.00</span>
+                  <span><a style="color:var(--accent);font-size:10.5px">编辑</a></span>
+                </div>
+                <div class="t-row case-row" data-state="miss stale">
+                  <span class="ck"></span>
+                  <span class="t-q">知识库文档删除后，向量和索引还会保留吗？</span>
+                  <span class="tags"><span class="tag err">期望块已失效</span><span class="tag">+0</span></span>
+                  <span><span class="src hist">历史引用</span></span>
+                  <span><span class="tag err">失效</span></span>
+                  <span class="t-num">—</span>
+                  <span><a style="color:var(--accent);font-size:10.5px">修复</a></span>
+                </div>
+                <div class="t-row case-row" data-state="unverified ok">
+                  <span class="ck"></span>
+                  <span class="t-q">管理员如何给整个部门批量授权？</span>
+                  <span class="tags"><span class="tag">RBAC · 部门授权</span><span class="tag">批量成员管理</span><span class="tag">+1</span></span>
+                  <span><span class="src manual">手工</span></span>
+                  <span><span class="tag warn">待确认</span></span>
+                  <span class="t-num">0.67</span>
+                  <span><a style="color:var(--accent);font-size:10.5px">编辑</a></span>
+                </div>
+                <div class="t-row case-row" data-state="ok">
+                  <span class="ck"></span>
+                  <span class="t-q">API 调用返回 401，应该按什么顺序排查？</span>
+                  <span class="tags"><span class="tag">API Key 鉴权</span><span class="tag">401 排查清单</span></span>
+                  <span><span class="src manual">手工</span></span>
+                  <span><span class="tag ok">已确认</span></span>
+                  <span class="t-num">1.00</span>
+                  <span><a style="color:var(--accent);font-size:10.5px">编辑</a></span>
+                </div>
+              </div>
+              <div class="pager"><span>已选 2 条</span><button class="mini-btn">运行所选</button><span>·</span><b>1</b><span>/ 5</span></div>
+              <div class="trend-foot" style="margin-top:8px">
+                <span>期望块由知识库联表返回标题与文档，不再只显示 ID；失效标签可在表格内直接修复，不再手改 JSON。</span>
+              </div>
+            </div>
+
+            <!-- ========== 调参实验 ========== -->
+            <div class="pane" data-pane="lab">
+              <div class="exp-bar">
+                <span class="lab">用例范围</span>
+                <span class="seg"><button class="on">全量 25</button><button>仅落空 2</button><button>选中 12</button></span>
+                <span class="lab" style="margin-left:8px">K 值</span>
+                <span style="display:inline-flex;gap:4px">
+                  <span class="tag blue">5</span><span class="tag blue">10</span><span class="tag blue">20</span>
+                </span>
+                <span class="lab" style="margin-left:8px">重排</span>
+                <span class="switch"></span>
+                <span class="exp-meta">3 组 × 25 条 ≈ 35s · 参数覆盖仅本次实验</span>
+                <span class="pin" title="参数组从并列表单变成基线 + 挑战组实验卡">5</span>
+              </div>
+
+              <div class="group-grid">
+                <div class="g-card base">
+                  <div class="g-h">当前配置 <span class="g-badge">基线</span></div>
+                  <div class="g-params">
+                    <span>向量权重 <b>0.60</b></span><span>关键词权重 <b>0.40</b></span>
+                    <span>向量阈值 <b>0.30</b></span><span>关键词上限 <b>20</b></span>
+                    <span>召回条数 <b>15</b></span><span>重排 <b>开</b></span>
+                  </div>
+                  <div class="g-diff none">跟随线上配置 · 不可删除</div>
+                  <div class="g-foot"><span>单路 normal</span><span style="margin-left:auto">25 条</span></div>
+                </div>
+
+                <div class="g-card">
+                  <div class="g-h">关键词优先 <span class="g-badge">挑战 A</span><span class="g-more">···</span></div>
+                  <div class="g-params">
+                    <span>向量权重 <b>0.30</b></span><span>关键词权重 <b>0.70</b></span>
+                    <span>向量阈值 <b>0.30</b></span><span>关键词上限 <b>20</b></span>
+                    <span>召回条数 <b>15</b></span><span>重排 <b>开</b></span>
+                  </div>
+                  <div class="g-diff">较基线：向量 0.60 → 0.30 · 关键词 0.40 → 0.70</div>
+                  <div class="g-foot"><span>单路 normal</span><span style="margin-left:auto"><a style="color:var(--accent);cursor:pointer">复制</a> · <a style="color:var(--faint);cursor:pointer">停用</a></span></div>
+                </div>
+
+                <div class="g-card best">
+                  <div class="g-h">向量 + 重排 <span class="g-badge ok">挑战 B · 最佳</span><span class="g-more">···</span></div>
+                  <div class="g-params">
+                    <span>向量权重 <b>0.70</b></span><span>关键词权重 <b>0.30</b></span>
+                    <span>向量阈值 <b>0.30</b></span><span>关键词上限 <b>20</b></span>
+                    <span>召回条数 <b>15</b></span><span>重排 <b>开</b></span>
+                  </div>
+                  <div class="g-diff">较基线：向量 0.60 → 0.70 · 关键词 0.40 → 0.30</div>
+                  <div class="g-foot"><span>单路 normal</span><span style="margin-left:auto"><a style="color:var(--accent);cursor:pointer">复制</a> · <a style="color:var(--faint);cursor:pointer">停用</a></span></div>
+                </div>
+
+                <div class="g-add">
+                  <span class="plus">＋</span>
+                  <span>添加参数组</span>
+                  <span class="t-muted">预设：关键词优先 / 向量优先 / 向量+重排 / 多路</span>
+                  <span class="t-muted">最多 8 组</span>
+                </div>
+              </div>
+
+              <div class="run-row">
+                <button class="btn" id="runExp">运行实验</button>
+                <span class="run-note">上次运行 11-07 18:20 · 耗时 32s · 3 组</span>
+                <span class="progress" id="expProgress" style="display:none"><span class="track"><i style="width:0%"></i></span><span id="expPct">0%</span></span>
+              </div>
+
+              <div class="conclusion">
+                <span class="pin" title="运行后有进度、可取消；超时与失效状态可见">6</span>
+                <div>
+                  <b>结论：「向量 + 重排」在 recall@5（+0.04）、MRR（+0.06）与命中率（+1.0pt）上均优于基线</b>，
+                  未发现明显退化；建议应用到线上后观察 24 小时，再回到历史趋势确认没有回退。
+                </div>
+                <span class="c-acts"><button class="mini-btn">应用此组</button><button class="mini-btn ghost">对比明细</button></span>
+              </div>
+
+              <div class="t-table" style="margin-top:9px">
+                <div class="t-row head res-row">
+                  <span>参数组</span><span>模式</span><span>recall@5</span><span>recall@10</span><span>MRR</span><span>命中率</span><span>充分率</span><span>较基线</span><span>操作</span>
+                </div>
+                <div class="t-row res-row">
+                  <span class="t-q">当前配置（基线）</span><span class="t-muted">normal</span>
+                  <span class="t-num">0.82</span><span class="t-num">0.91</span><span class="t-num">0.68</span><span class="t-num">94%</span><span class="t-num">79%</span>
+                  <span class="t-muted">—</span><span><span class="tag grey">基线</span></span>
+                </div>
+                <div class="t-row res-row">
+                  <span class="t-q">关键词优先</span><span class="t-muted">normal</span>
+                  <span class="t-num">0.80</span><span class="t-num">0.90</span><span class="t-num">0.65</span><span class="t-num">92%</span><span class="t-num">77%</span>
+                  <span class="t-num down">-0.02</span><span><a style="color:var(--accent);font-size:10.5px">应用</a></span>
+                </div>
+                <div class="t-row res-row best">
+                  <span class="t-q">向量 + 重排</span><span class="t-muted">normal</span>
+                  <span class="t-num">0.86</span><span class="t-num">0.93</span><span class="t-num">0.74</span><span class="t-num">96%</span><span class="t-num">84%</span>
+                  <span class="t-num up">+0.04</span><span><a style="color:var(--accent);font-size:10.5px">应用</a></span>
+                </div>
+                <div class="t-row res-row">
+                  <span class="t-q">多路模拟</span><span class="t-muted">multi</span>
+                  <span class="t-num">0.84</span><span class="t-num">0.92</span><span class="t-num">0.71</span><span class="t-num">95%</span><span class="t-num">82%</span>
+                  <span class="t-num up">+0.02</span><span><a style="color:var(--accent);font-size:10.5px">应用</a></span>
+                </div>
+              </div>
+
+              <div class="diff-strip">
+                <span class="tag ok">改善 4</span><span class="tag err">退化 1</span><span class="tag grey">未变 20</span>
+                <span>·</span><span>2 个失效期望块已剔除</span><span>·</span><span>1 组超时已重试</span><span>·</span><span>0 条跳过</span>
+                <span style="margin-left:auto"><a style="color:var(--accent);cursor:pointer">查看全部逐题差量 →</a></span>
+              </div>
+
+              <div class="two-col" style="grid-template-columns:1.3fr 1fr">
+                <div class="d-card">
+                  <div class="d-card-h">逐题差量 <span class="sub">基线 → 向量 + 重排 · 失败优先</span></div>
+                  <div class="diff-row">
+                    <span class="t-q">差旅报销标准是多少？</span>
+                    <span class="rank-old">未命中 → <span class="rank-new up">#3</span></span>
+                    <span><span class="tag ok">改善</span></span>
+                  </div>
+                  <div class="diff-row">
+                    <span class="t-q">表单字段校验怎么配置？</span>
+                    <span class="rank-old">#2 → <span class="rank-new up">#1</span></span>
+                    <span><span class="tag ok">改善</span></span>
+                  </div>
+                  <div class="diff-row">
+                    <span class="t-q">子表电话号码列如何添加验证规则？</span>
+                    <span class="rank-old">#3 → <span class="rank-new down">#5</span></span>
+                    <span><span class="tag err">退化</span></span>
+                  </div>
+                  <div class="diff-row">
+                    <span class="t-q">文档删除后，向量还会保留吗？</span>
+                    <span class="rank-old">未命中 → <span class="rank-new flat">未命中</span></span>
+                    <span><span class="tag grey">仍落空</span></span>
+                  </div>
+                </div>
+                <div class="d-card">
+                  <div class="d-card-h">运行健康 <span class="sub">本次实验</span></div>
+                  <div class="issue-row"><span class="tag ok">通过</span><div class="issue-main"><div class="issue-t">3 组全部返回</div><div class="issue-s">最慢组 18.4s · 总耗时 32s</div></div></div>
+                  <div class="issue-row"><span class="tag warn">提示</span><div class="issue-main"><div class="issue-t">2 个期望块已失效</div><div class="issue-s">已剔除并计入评估集质量，不参与 recall</div></div><button class="mini-btn">去修复</button></div>
+                  <div class="issue-row"><span class="tag grey">口径</span><div class="issue-main"><div class="issue-t">参数覆盖仅本次实验</div><div class="issue-s">应用后才会写入线上配置</div></div></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- ========== 答案质量 ========== -->
+            <div class="pane" data-pane="answer">
+              <div class="exp-bar">
+                <span class="lab">用例来源</span>
+                <span class="seg"><button class="on">仅检索落空 2</button><button>全量 25</button><button>选中 12</button></span>
+                <span class="lab" style="margin-left:8px">数量</span>
+                <span class="seg"><button class="on">10</button><button>25</button><button>50</button></span>
+                <span class="lab" style="margin-left:8px">评判模型</span>
+                <span class="tag blue">gpt-4o-mini</span>
+                <span class="exp-meta">预计 20 次调用 · 约 ¥0.42 · 上限 50 条</span>
+                <span class="pin" title="答案评测与检索落空题联动，费用前置">7</span>
+              </div>
+              <div class="run-row" style="margin-top:0">
+                <button class="btn">运行答案评测</button>
+                <span class="run-note">逐条检索 → 生成回答 → 评判忠实度 / 相关性；每条 2 次模型调用</span>
+                <span class="progress" style="margin-left:auto"><span class="track"><i style="width:100%"></i></span><span>已完成 10 / 10</span></span>
+              </div>
+
+              <div class="score-grid">
+                <div class="score-box"><div class="lab">忠实度均分</div><div class="num good">86</div><div class="foot">较上期 ▲ 2</div></div>
+                <div class="score-box"><div class="lab">相关性均分</div><div class="num good">91</div><div class="foot">较上期 ▲ 2</div></div>
+                <div class="score-box"><div class="lab">检索落空</div><div class="num bad">2</div><div class="foot">已从坏题开始评测</div></div>
+                <div class="score-box"><div class="lab">覆盖题目</div><div class="num dim">10 / 10</div><div class="foot">10:42 · 耗时 28s</div></div>
+              </div>
+
+              <div class="t-table" style="margin-top:10px">
+                <div class="t-row head ans-row">
+                  <span>问题</span><span>证据</span><span>忠实度</span><span>相关性</span><span>问题说明</span><span></span>
+                </div>
+                <div class="t-row ans-row">
+                  <span class="t-q">差旅报销标准是多少？</span><span class="t-num">0 块</span>
+                  <span class="t-muted">—</span><span class="t-muted">—</span>
+                  <span class="t-muted">检索无命中，无法作答</span><span class="t-muted">▾</span>
+                </div>
+                <div class="t-row ans-row">
+                  <span class="t-q">子表电话号码列如何添加验证规则？</span><span class="t-num">8 块</span>
+                  <span class="t-num" style="color:var(--ok)">92</span><span class="t-num" style="color:var(--ok)">88</span>
+                  <span class="t-muted">无</span><span class="t-muted">▾</span>
+                </div>
+                <div class="t-row ans-row">
+                  <span class="t-q">知识库文档删除后，向量还会保留吗？</span><span class="t-num">8 块</span>
+                  <span class="t-num" style="color:var(--danger)">58</span><span class="t-num" style="color:var(--ok)">90</span>
+                  <span class="t-muted">回答补充了资料未提及的清理周期</span><span class="t-muted">▾</span>
+                </div>
+                <div class="t-row ans-row">
+                  <span class="t-q">管理员如何给整个部门批量授权？</span><span class="t-num">8 块</span>
+                  <span class="t-num" style="color:var(--warn)">74</span><span class="t-num" style="color:var(--ok)">93</span>
+                  <span class="t-muted">步骤顺序与文档不一致</span><span class="t-muted">▾</span>
+                </div>
+              </div>
+              <div class="ans-expand" style="margin-top:8px;border:1px solid var(--rule);border-radius:6px">
+                <b>展开项示意：</b>回答全文 + 证据块列表 + 评判理由。无命中题目直接给「检索问题」而不是「模型问题」，避免误判。
+              </div>
+              <div class="hist-chips">
+                <span>历史评测</span><span>11-08 10:42：忠实 86 / 相关 91（10 条）</span><span>11-01 09:18：忠实 84 / 相关 89（10 条）</span><span>10-25 16:05：忠实 81 / 相关 87（10 条）</span>
+              </div>
+            </div>
+
+            <!-- ========== 历史趋势 ========== -->
+            <div class="pane" data-pane="history">
+              <div class="exp-bar">
+                <span class="lab">指标</span>
+                <span class="seg"><button class="on">recall@5</button><button>MRR</button><button>命中率</button><button>充分率</button></span>
+                <span class="lab" style="margin-left:8px">基线</span>
+                <span class="tag blue">11-07 手动 · 当前配置</span>
+                <span class="exp-meta">近 90 天 · 保留 200 次运行</span>
+                <span class="pin" title="运行历史持久化：趋势、基线、跨次对比与导出">8</span>
+              </div>
+
+              <div class="d-card">
+                <div class="d-card-h">recall@5 趋势 <span class="sub">13 次运行 · 1 次下滑 · 1 次不可比</span>
+                  <span class="legend"><span><i style="background:#2e6be6"></i>recall@5</span><span><i style="background:#c77c14"></i>阈值 0.75</span></span>
+                </div>
+                <div class="chart">
+                  <svg viewBox="0 0 660 150" preserveAspectRatio="none">
+                    <g stroke="#eef1f5" stroke-width="1">
+                      <line x1="0" y1="18" x2="660" y2="18"/><line x1="0" y1="55" x2="660" y2="55"/><line x1="0" y1="92" x2="660" y2="92"/><line x1="0" y1="129" x2="660" y2="129"/>
+                    </g>
+                    <line x1="0" y1="74" x2="660" y2="74" stroke="#c77c14" stroke-width="1" stroke-dasharray="4 3" opacity=".55"/>
+                    <polygon points="0,70 50,66 100,76 150,62 200,65 250,56 300,58 350,48 400,51 450,40 500,43 550,34 600,36 660,28 660,150 0,150"
+                             fill="#2e6be6" opacity=".07"/>
+                    <polyline points="0,70 50,66 100,76 150,62 200,65 250,56 300,58 350,48 400,51 450,40 500,43 550,34 600,36 660,28"
+                              fill="none" stroke="#2e6be6" stroke-width="2"/>
+                    <g fill="#2e6be6">
+                      <circle cx="0" cy="70" r="2.6"/><circle cx="100" cy="76" r="2.6"/><circle cx="200" cy="65" r="2.6"/>
+                      <circle cx="300" cy="58" r="2.6"/><circle cx="400" cy="51" r="2.6"/><circle cx="500" cy="43" r="2.6"/>
+                      <circle cx="600" cy="36" r="2.6"/><circle cx="660" cy="28" r="2.6"/>
+                    </g>
+                    <g fill="#98a0aa" font-size="9">
+                      <text x="0" y="145">10-24</text><text x="150" y="145">10-30</text><text x="300" y="145">11-04</text>
+                      <text x="450" y="145">11-06</text><text x="600" y="145">11-08</text>
+                    </g>
+                  </svg>
+                </div>
+              </div>
+
+              <div class="t-table" style="margin-top:10px">
+                <div class="t-row head hist-row">
+                  <span>时间</span><span>触发</span><span>评估集</span><span>参数指纹</span><span>recall@5</span><span>MRR</span><span>命中率</span><span>状态</span><span>操作</span>
+                </div>
+                <div class="t-row hist-row">
+                  <span>11-08 03:00</span><span class="tag grey">自动</span><span class="t-muted">v1</span>
+                  <span class="tag grey" style="max-width:150px">vec .6 / kw .4 / thr .3</span>
+                  <span class="t-num">0.82</span><span class="t-num">0.68</span><span class="t-num">94%</span>
+                  <span><span class="pill ok">正常</span></span>
+                  <span class="ops"><a>查看</a><a>设基线</a></span>
+                </div>
+                <div class="t-row hist-row">
+                  <span>11-07 18:20</span><span class="tag blue">手动</span><span class="t-muted">v1</span>
+                  <span class="tag blue" style="max-width:150px">3 组 · 基线 vec .6</span>
+                  <span class="t-num">0.79</span><span class="t-num">0.66</span><span class="t-num">93%</span>
+                  <span><span class="pill ok">正常</span></span>
+                  <span class="ops"><a>查看</a><a>对比</a></span>
+                </div>
+                <div class="t-row hist-row">
+                  <span>11-01 03:00</span><span class="tag grey">自动</span><span class="t-muted">v1</span>
+                  <span class="tag grey" style="max-width:150px">vec .6 / kw .4 / thr .3</span>
+                  <span class="t-num">0.71</span><span class="t-num">0.60</span><span class="t-num">88%</span>
+                  <span><span class="pill err">下滑 -8%</span></span>
+                  <span class="ops"><a>查看</a><a>复盘</a></span>
+                </div>
+                <div class="t-row hist-row">
+                  <span>10-30 10:12</span><span class="tag blue">手动</span><span class="t-muted">v1</span>
+                  <span class="tag warn" style="max-width:150px">阈值 0.3 → 0.35</span>
+                  <span class="t-num">0.82</span><span class="t-num">0.68</span><span class="t-num">94%</span>
+                  <span><span class="pill grey">不可比</span></span>
+                  <span class="ops"><a>查看</a></span>
+                </div>
+                <div class="t-row hist-row">
+                  <span>10-24 15:53</span><span class="tag blue">手动</span><span class="t-muted">v1</span>
+                  <span class="tag grey" style="max-width:150px">基线初始化</span>
+                  <span class="t-num">0.80</span><span class="t-num">0.67</span><span class="t-num">92%</span>
+                  <span><span class="pill blue">新基线</span></span>
+                  <span class="ops"><a>查看</a></span>
+                </div>
+              </div>
+
+              <div class="hist-note">
+                <b>护栏：</b>评估集变更、期望标签失效、检索参数变更时，本期自动记为「新基线」而不是「下滑」，
+                避免把换了尺子读成质量坍塌。自动体检与手动实验共用同一套判定。
+              </div>
+            </div>
+
+          </div>
+        </main>
+        <div class="toast" id="toast">实验完成：3 组 · 25 条 · 耗时 32s</div>
+      </div>
+    </div>
+
+    <div class="anno">
+      <div class="anno-item"><span class="anno-n">1</span><div><b>首屏先给结论。</b>自动体检与手动体检合流，健康度、上次运行、参数漂移和体检入口一屏可见，不再要求先填参数。</div></div>
+      <div class="anno-item"><span class="anno-n">2</span><div><b>指标带环比与趋势。</b>recall@5 / MRR / 命中率 / 答案充分率四张卡都带「较上期」和迷你趋势，点击可下钻。</div></div>
+      <div class="anno-item"><span class="anno-n">3</span><div><b>隐藏状态显性化。</b>超时组、失效期望块、被跳过用例、参数漂移原本后端已返回、界面未展示，现在全部露出。</div></div>
+      <div class="anno-item"><span class="anno-n">4</span><div><b>评估集变成可管理资产。</b>搜索、筛选、编辑、导入导出、人工确认与标签修复都在表格里完成，不再手改 JSON。</div></div>
+      <div class="anno-item"><span class="anno-n">5</span><div><b>参数组变成实验卡。</b>基线 + 挑战组并排，直接显示与当前配置的差异；支持复制、停用、预估耗时。</div></div>
+      <div class="anno-item"><span class="anno-n">6</span><div><b>结果先给结论，再给证据。</b>自动生成结论，指标表带相对基线差值与最佳组标记，逐题差量失败优先。</div></div>
+      <div class="anno-item"><span class="anno-n">7</span><div><b>答案评测与坏题联动。</b>可只测检索落空/低分题；调用次数与费用前置，避免每次固定测前 N 条。</div></div>
+      <div class="anno-item"><span class="anno-n">8</span><div><b>运行历史可回看。</b>每次运行落库，支持趋势、基线、跨次对比与导出，刷新页面不再丢结果。</div></div>
+    </div>
+  </section>
+
+  <!-- ==================== 02 现状诊断 ==================== -->
+  <section>
+    <div class="sec-h"><span class="sec-no">02</span><h2>现状诊断：六个具体问题</h2></div>
+    <p class="sec-lead">
+      基于当前 <code>EvaluationPage.vue</code>、<code>RetrievalEvaluationService.java</code> 与截图。问题不在「没有能力」，
+      而在<b>能力没有被组织成可判断、可复用、可追溯的工作流</b>。
+    </p>
+    <div class="prob-grid">
+      <div class="prob">
+        <div class="prob-n">01</div>
+        <h3>首屏是配置，不是结论</h3>
+        <p>页面第一眼是 K 值、权重、阈值和参数组；「怎么用（三步）」默认折叠，真正的第一步「生成评估集」藏在右上角。截图为 0 条用例时，体检/运行按钮灰置，用户没有下一步可点。</p>
+      </div>
+      <div class="prob">
+        <div class="prob-n">02</div>
+        <h3>关键状态被吞掉</h3>
+        <p>后端已返回 <code>timedOutGroups</code>（超时组）、<code>staleExpected</code>（失效期望标签）、<code>paramsStale</code>（参数漂移）与全失效跳过数，当前页面均未渲染。用户会把「少跑了一组」或「标签失效」误读成质量变化。</p>
+      </div>
+      <div class="prob">
+        <div class="prob-n">03</div>
+        <h3>结果留不住，历史比不了</h3>
+        <p>对比结果只存在组件 <code>ref</code> 里，刷新即失；自动体检只保留最近一期 <code>eval.lastReport</code>；答案评测历史存在 config 键里且只有 10 期。没有趋势、基线、跨次逐题对比。</p>
+      </div>
+      <div class="prob">
+        <div class="prob-n">04</div>
+        <h3>评估集不可管理，存储也脆弱</h3>
+        <p>评估集是本地文件 <code>data/eval/retrieval-eval.json</code>，只能整体重生成或手改 JSON。仓库内已有 25 条评估集，截图却显示 0 条——工作目录/容器/多实例不同就会「消失」。没有题目列表、增删改、导入导出、人工确认与标签修复。</p>
+      </div>
+      <div class="prob">
+        <div class="prob-n">05</div>
+        <h3>实验设计缺失</h3>
+        <p>参数组只是并列表单：看不到「与当前配置差在哪」，不能复制/停用；没有历史基线，也没有「改善/退化」的逐题差量。更关键的是上限不一致：生成允许 500 条，运行却硬限 100 条且前端不传 <code>caseIds</code>，超过 100 条直接报错。</p>
+      </div>
+      <div class="prob">
+        <div class="prob-n">06</div>
+        <h3>分析浅、闭环断</h3>
+        <p>逐题明细藏在两层折叠里，没有搜索、失败优先或跨组对比；期望块只显示 ID，无法判断标签对错。答案评测与检索评测分成两张卡、各取前 N 条；自动体检结论只在看板出现，页面与告警之间没有处置入口。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== 03 设计原则 ==================== -->
+  <section>
+    <div class="sec-h"><span class="sec-no">03</span><h2>设计原则</h2></div>
+    <p class="sec-lead">四条原则决定后面的所有取舍。</p>
+    <div class="prin-grid">
+      <div class="prin">
+        <div class="prin-i">◔</div>
+        <h3>先结论，后参数</h3>
+        <p>先用健康度、环比和待处理项回答「现在好不好」，再把参数编辑器放到第二层。没有结论的配置页只会让人反复试错。</p>
+      </div>
+      <div class="prin">
+        <div class="prin-i">⇄</div>
+        <h3>实验而非表单</h3>
+        <p>固定基线、一次只改一组变量、给出逐题差量与结论。参数组不是「填数字」，而是可复制、可停用、可比对的实验对象。</p>
+      </div>
+      <div class="prin">
+        <div class="prin-i">▾</div>
+        <h3>失败优先</h3>
+        <p>默认先看落空、低相关和退化题，而不是平均值。平均值掩盖长尾，评估的价值在于定位「哪几题坏了」。</p>
+      </div>
+      <div class="prin">
+        <div class="prin-i">⌁</div>
+        <h3>证据可追溯</h3>
+        <p>每次运行都绑定评估集版本、参数指纹、触发方式与逐题结果。能被回看、对比、导出，才配叫「基线」。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== 04 信息架构 ==================== -->
+  <section>
+    <div class="sec-h"><span class="sec-no">04</span><h2>信息架构：前后对比</h2></div>
+    <p class="sec-lead">页签从「没有页签」变成五个明确工作面；配置与结果不再互相遮挡。</p>
+    <div class="ba">
+      <div class="ba-panel">
+        <div class="ba-h"><span class="ba-tag now">现状</span>一页纵向平铺</div>
+        <div class="flow">
+          <div class="fl">页头：<b>0 条用例</b> + 重新生成评估集</div>
+          <div class="arrow">↓</div>
+          <div class="fl warn">折叠的「怎么用（三步）」</div>
+          <div class="arrow">↓</div>
+          <div class="fl">运行配置：K 值 / 每次最多 / 参数组表单</div>
+          <div class="arrow">↓</div>
+          <div class="fl">一键体检 / 运行对比评估（同步等待）</div>
+          <div class="arrow">↓</div>
+          <div class="fl">弃用断言 + 对比结论 + 指标表</div>
+          <div class="arrow">↓</div>
+          <div class="fl">两层折叠的逐题明细</div>
+          <div class="arrow">↓</div>
+          <div class="fl warn">答案质量评测（独立卡片，固定前 N 条）</div>
+          <div class="mini-note">结果只在本次内存里；自动体检、历史、评估集管理都不在这个页面。</div>
+        </div>
+      </div>
+
+      <div class="ba-panel">
+        <div class="ba-h"><span class="ba-tag new">改版</span>五个工作面 + 常驻状态</div>
+        <div class="flow">
+          <div class="fl new">页头：<b>自动体检状态 / 立即体检 / 导出</b><span class="fl-badge">新</span></div>
+          <div class="arrow">↓</div>
+          <div class="fl new"><b>总览</b>：健康度 + 4 指标 + 趋势 + 待处理</div>
+          <div class="arrow">↓</div>
+          <div class="fl new"><b>评估集</b>：搜索 / 筛选 / 编辑 / 导入导出 / 人工确认<span class="fl-badge">新</span></div>
+          <div class="arrow">↓</div>
+          <div class="fl new"><b>调参实验</b>：基线 vs 挑战组 + 逐题差量 + 应用<span class="fl-badge">新</span></div>
+          <div class="arrow">↓</div>
+          <div class="fl new"><b>答案质量</b>：只测坏题 + 费用前置 + 历史</div>
+          <div class="arrow">↓</div>
+          <div class="fl new"><b>历史趋势</b>：运行记录 / 基线 / 跨次对比 / 导出<span class="fl-badge">新</span></div>
+          <div class="mini-note">每次运行绑定评估集版本与参数指纹；自动体检、手动实验共用同一套记录。</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== 05 功能清单 ==================== -->
+  <section>
+    <div class="sec-h"><span class="sec-no">05</span><h2>功能升级清单</h2></div>
+    <p class="sec-lead">
+      P0 是「首屏能判断 + 坏题能定位」，大部分可复用现有接口；P1 补齐持久化、异步与评估集管理；
+      P2 是统计与运营增强。<b>不建议一次全做</b>，按 P0 → P1 → P2 分批交付。
+    </p>
+    <table class="ftable">
+      <thead>
+        <tr><th class="col-pri">优先级</th><th>模块</th><th>升级项</th><th>说明与价值</th><th>依赖</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><span class="p0">P0</span></td><td><b>全局</b></td><td>五页签重构</td><td>总览 / 评估集 / 调参实验 / 答案质量 / 历史趋势，配置与结果分层，减少滚动与误点</td><td>前端</td></tr>
+        <tr><td><span class="p0">P0</span></td><td><b>总览</b></td><td>健康度 + 4 指标卡</td><td>首屏先给红黄绿结论与环比；recall@5 / MRR / 命中率 / 答案充分率带迷你趋势</td><td>前端 + 现有结果</td></tr>
+        <tr><td><span class="p0">P0</span></td><td><b>总览</b></td><td>自动体检报告上屏</td><td>复用 <code>/eval/last-report</code>，展示上次体检、参数漂移提示与「立即体检」；与看板红绿灯同源</td><td><code>/eval/last-report</code></td></tr>
+        <tr><td><span class="p0">P0</span></td><td><b>总览</b></td><td>待处理清单</td><td>落空 / 低相关 / 期望失效 / 待确认四类聚合，动作就近：看题、补块、修标签、加入调参</td><td>前端聚合</td></tr>
+        <tr><td><span class="p0">P0</span></td><td><b>全局</b></td><td>隐藏状态显性化</td><td>渲染 <code>timedOutGroups</code>、<code>staleExpected</code>、跳过用例与参数漂移；评估结果页不再「静默少跑」</td><td>现有返回字段</td></tr>
+        <tr><td><span class="p0">P0</span></td><td><b>评估集</b></td><td>只读用例表</td><td>搜索 + 按落空/低相关/失效/待确认筛选；期望块显示标题与文档，不再只有 ID；支持选中后运行</td><td>现有 <code>/eval/set</code> + 小改联表</td></tr>
+        <tr><td><span class="p0">P0</span></td><td><b>调参</b></td><td>实验卡与差异</td><td>基线 + 挑战组并排；显示与当前配置的差异；复制、停用、预估耗时；修正 500 / 100 上限口径</td><td>前端 + 现有 <code>/eval/run</code></td></tr>
+        <tr><td><span class="p0">P0</span></td><td><b>结果</b></td><td>结论 + 失败优先差量</td><td>自动结论、最佳组标记、指标差值、逐题改善/退化/仍落空；一键应用与二次确认</td><td>前端</td></tr>
+        <tr><td><span class="p0">P0</span></td><td><b>答案质量</b></td><td>坏题联动与费用前置</td><td>来源可选「仅检索落空 / 全量 / 选中」；展示模型、调用次数、预估费用；默认从坏题开始</td><td>现有 <code>/eval/answer/*</code> + <code>caseIds</code></td></tr>
+        <tr><td><span class="p0">P0</span></td><td><b>空态</b></td><td>三步引导</td><td>0 条用例时首屏给「生成 25 条 → 体检 → 看落空」的引导与一键生成，不再只留灰按钮</td><td>前端</td></tr>
+        <tr><td><span class="p0">P0</span></td><td><b>权限</b></td><td>只读模式</td><td><code>eval:read</code> 用户隐藏生成/运行/应用/编辑，只保留查看与导出</td><td>现有权限</td></tr>
+
+        <tr><td><span class="p1">P1</span></td><td><b>历史</b></td><td>运行持久化 + 趋势</td><td>手动/自动运行落库，记录评估集版本、参数指纹、指标与逐题结果；支持趋势、基线、跨次对比</td><td>新增 4 张表</td></tr>
+        <tr><td><span class="p1">P1</span></td><td><b>运行</b></td><td>异步 + 进度 + 取消</td><td>大评估集/多组不再阻塞请求；按组展示进度，可取消，超时组可单独重试</td><td>复用 <code>evalPool</code></td></tr>
+        <tr><td><span class="p1">P1</span></td><td><b>评估集</b></td><td>CRUD + 人工确认</td><td>新增/编辑/停用/删除用例；期望块选择器；来源与质量标记；导入导出 JSON/CSV</td><td>新增接口</td></tr>
+        <tr><td><span class="p1">P1</span></td><td><b>结果</b></td><td>跨次逐题 diff</td><td>两次运行之间：改善 / 退化 / 新增落空 / 修复；支持设基线与「较基线」视图</td><td>运行记录</td></tr>
+        <tr><td><span class="p1">P1</span></td><td><b>结果</b></td><td>逐题充分率</td><td>把手动实验也接入评判模型，逐题给出「资料是否足以回答」，补 recall 的盲区</td><td><code>judgeCoverage</code> 复用</td></tr>
+        <tr><td><span class="p1">P1</span></td><td><b>答案</b></td><td>按 caseIds 选择 + 趋势</td><td>修正「永远取前 N 条」；历史从 10 期扩展到可查询；与检索题共用 case 详情</td><td>接口扩展</td></tr>
+        <tr><td><span class="p1">P1</span></td><td><b>导出</b></td><td>报告导出 / 分享</td><td>当前筛选态导出 CSV / Markdown；复制带评估集版本与运行 ID 的链接</td><td>前端 + 后端</td></tr>
+
+        <tr><td><span class="p2">P2</span></td><td><b>统计</b></td><td>置信区间与最小样本</td><td>小样本变化提示「不显著」；bootstrap 置信区间，避免 25 条样本上的 ±0.02 被过度解读</td><td>后端</td></tr>
+        <tr><td><span class="p2">P2</span></td><td><b>分群</b></td><td>按知识库/文档类型/问题类型切片</td><td>定位「哪个库、哪类问题」在退化，而不是只看全局均分</td><td>标签体系</td></tr>
+        <tr><td><span class="p2">P2</span></td><td><b>评估集</b></td><td>质量分与标注队列</td><td>问题去重/聚类、标签覆盖率、人工确认进度；弱监督标签的质量分</td><td>后端</td></tr>
+        <tr><td><span class="p2">P2</span></td><td><b>自动化</b></td><td>定时实验与自动基线</td><td>定时跑挑战组、下滑通知飞书/通知中心、基线自动锁定；已有自动体检基础</td><td>ScheduleCenter</td></tr>
+        <tr><td><span class="p2">P2</span></td><td><b>发布</b></td><td>灰度应用与回滚</td><td>参数应用后先影子运行，24 小时无回退再正式生效；异常自动回滚</td><td>配置中心</td></tr>
+        <tr><td><span class="p2">P2</span></td><td><b>多租户</b></td><td>按库/租户独立评估集</td><td>不同知识库各自维护评估集与基线，避免全局评估互相稀释</td><td>租户模型</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ==================== 06 关键交互 ==================== -->
+  <section>
+    <div class="sec-h"><span class="sec-no">06</span><h2>三条关键交互</h2></div>
+    <p class="sec-lead">改版后最常走的三条路径，点击次数都压到 3 次以内。</p>
+    <div class="inter-grid">
+      <div class="inter">
+        <h3>① 空态 → 首次体检</h3>
+        <p>0 条用例时不再给灰按钮：一键生成 25 条（可先预览）→ 立即体检 → 直接落到落空题清单。</p>
+        <div class="inter-flow">
+          <span class="if-box">空态引导</span><span class="if-arrow">→</span>
+          <span class="if-box accent">生成评估集</span><span class="if-arrow">→</span>
+          <span class="if-box">体检</span><span class="if-arrow">→</span>
+          <span class="if-box">落空题</span>
+        </div>
+      </div>
+      <div class="inter">
+        <h3>② 落空题 → 调参与应用</h3>
+        <p>筛出落空/低相关题 → 选中 → 生成挑战组 → 运行实验 → 看逐题差量 → 应用最佳组。</p>
+        <div class="inter-flow">
+          <span class="if-box">落空题</span><span class="if-arrow">→</span>
+          <span class="if-box accent">建挑战组</span><span class="if-arrow">→</span>
+          <span class="if-box">运行实验</span><span class="if-arrow">→</span>
+          <span class="if-box">逐题差量</span><span class="if-arrow">→</span>
+          <span class="if-box">应用</span>
+        </div>
+      </div>
+      <div class="inter">
+        <h3>③ 告警 → 处置 → 复测</h3>
+        <p>自动体检下滑推送到通知/看板 → 总览定位差异题 → 补知识块或修标签 → 重新体检 → 历史趋势确认。</p>
+        <div class="inter-flow">
+          <span class="if-box">下滑告警</span><span class="if-arrow">→</span>
+          <span class="if-box accent">总览待处理</span><span class="if-arrow">→</span>
+          <span class="if-box">补块 / 修标签</span><span class="if-arrow">→</span>
+          <span class="if-box">复测</span><span class="if-arrow">→</span>
+          <span class="if-box">趋势</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== 07 落地 ==================== -->
+  <section>
+    <div class="sec-h"><span class="sec-no">07</span><h2>落地建议</h2></div>
+    <p class="sec-lead">
+      不换技术选型：前端拆组件、复用 <code>app.css</code> token 与 ant-design-vue；后端按智能体评测的成熟结构补 4 张表，
+      把「文件 + 内存 + config」三处状态收口到数据库。
+    </p>
+
+    <div class="impl">
+      <div class="impl-card">
+        <h3>前端：按工作面拆组件</h3>
+        <div class="comp-list">
+          <div><code>EvaluationPage.vue</code> 壳：页头 / 页签 / 权限与全局状态</div>
+          <div><code>eval/EvalOverview.vue</code> 健康度、指标卡、趋势、待处理</div>
+          <div><code>eval/EvalCaseTable.vue</code> 用例表、筛选、编辑、导入导出</div>
+          <div><code>eval/EvalExperiment.vue</code> 实验卡、运行、结论与逐题差量</div>
+          <div><code>eval/EvalAnswerPanel.vue</code> 答案评测配置、进度与报告</div>
+          <div><code>eval/EvalHistory.vue</code> 运行历史、基线、跨次对比</div>
+          <div><code>eval/useEval.js</code> 统一加载/运行/轮询/对比，避免各卡片重复请求</div>
+          <div>复用 <code>a-table</code> / <code>a-drawer</code> / <code>a-collapse</code>；趋势用现有 ECharts 或轻量 SVG</div>
+        </div>
+      </div>
+
+      <div class="impl-card">
+        <h3>后端：4 张表 + 6 组接口</h3>
+        <div class="comp-list">
+          <div><code>c_ai_retrieval_eval_set</code> 评估集：名称 / 版本 / 生成时间 / 来源 / 创建人</div>
+          <div><code>c_ai_retrieval_eval_case</code> 用例：问题 / 期望块 / 来源 / 质量 / 启用 / 备注</div>
+          <div><code>c_ai_retrieval_eval_run</code> 运行：触发方式 / 评估集版本 / 参数指纹 / 指标 / 状态</div>
+          <div><code>c_ai_retrieval_eval_result</code> 逐题：组名 / 命中 / recall / MRR / 耗时 / 错误</div>
+          <div>结构对齐现有 <code>c_ai_agent_eval_*</code>，少造新范式</div>
+          <div>旧文件 <code>data/eval/retrieval-eval.json</code> 在首次启动时一次性导入</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="impl" style="margin-top:12px">
+      <div class="impl-card">
+        <h3>接口清单（新增 / 扩展）</h3>
+        <div class="comp-list">
+          <div><code>GET /eval/overview</code> 健康度 + 上次体检 + 待处理计数</div>
+          <div><code>GET /eval/cases</code> 分页/筛选/联表标题；<code>POST/PATCH/DELETE /eval/cases</code></div>
+          <div><code>POST /eval/cases/import</code> · <code>GET /eval/cases/export</code></div>
+          <div><code>POST /eval/run/async</code> · <code>GET /eval/run/status</code> · <code>POST /eval/run/cancel</code></div>
+          <div><code>GET /eval/runs</code> · <code>GET /eval/runs/{id}</code> · <code>POST /eval/runs/{id}/baseline</code></div>
+          <div><code>GET /eval/runs/{id}/compare?base=</code> 跨次逐题 diff</div>
+          <div>答案评测扩展 <code>caseIds</code>；保留现有 <code>/eval/run</code> 兼容</div>
+        </div>
+      </div>
+
+      <div class="impl-card">
+        <h3>关键数据形态</h3>
+        <pre class="json">{
+  <span class="k">"runId"</span>: <span class="s">"r_20261108_0300"</span>,
+  <span class="k">"evalSetId"</span>: <span class="s">"v1|2026-10-24 15:53|25"</span>,
+  <span class="k">"paramsId"</span>: <span class="s">"vecW=.70|kwW=.30|thr=.30|topK=15|rerank=1"</span>,
+  <span class="k">"trigger"</span>: <span class="s">"manual|scheduled"</span>,
+  <span class="k">"metrics"</span>: { <span class="k">"recall@5"</span>: <span class="n">0.86</span>, <span class="k">"MRR"</span>: <span class="n">0.74</span>, <span class="k">"hitRate"</span>: <span class="n">0.96</span> },
+  <span class="k">"staleExpected"</span>: <span class="n">2</span>, <span class="k">"timedOutGroups"</span>: [],
+  <span class="k">"groups"</span>: [{ <span class="k">"name"</span>: <span class="s">"向量+重排"</span>, <span class="k">"cases"</span>: <span class="s">"…逐题摘要…"</span> }]
+}</pre>
+      </div>
+    </div>
+
+    <div class="impl" style="margin-top:12px">
+      <div class="impl-card">
+        <h3>分批交付</h3>
+        <div class="check">
+          <div><i>1</i><span><b>阶段一（P0，纯前端为主）：</b>五页签、总览健康度、隐藏状态、评估集只读表、实验卡与逐题差量、答案评测坏题联动、空态引导。可直接复用现有接口点亮。</span></div>
+          <div><i>2</i><span><b>阶段二（P1，持久化）：</b>4 张表 + 运行历史/趋势/跨次对比 + 异步运行与取消 + 评估集 CRUD/导入导出 + 旧 JSON 导入。</span></div>
+          <div><i>3</i><span><b>阶段三（P2，增强）：</b>置信区间、分群指标、评估集质量分、定时实验与通知、灰度应用与回滚、多租户评估集。</span></div>
+        </div>
+      </div>
+      <div class="impl-card">
+        <h3>验收口径</h3>
+        <div class="check">
+          <div><i>✓</i><span>空态下首次进入，10 秒内能看到「生成评估集」并可一键执行；体检路径不超过 3 次点击。</span></div>
+          <div><i>✓</i><span>超时组、失效期望块、跳过用例、参数漂移四类状态 100% 在界面可见，不再依赖日志。</span></div>
+          <div><i>✓</i><span>任意一次运行可回看、可设基线、可与另一次运行做逐题对比并导出。</span></div>
+          <div><i>✓</i><span>评估集 500 条、8 组参数时，运行不再因前端不传 <code>caseIds</code> 直接报「超过 100 条」。</span></div>
+          <div><i>✓</i><span>只读角色看不到生成/运行/应用/编辑；所有写操作有二次确认。</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="impl" style="margin-top:12px">
+      <div class="impl-card">
+        <h3>风险与边界</h3>
+        <div class="comp-list">
+          <div><b>弱监督偏差：</b>评估集来自「当时引用的块」，不等于唯一正确答案。界面必须持续提示，并提供人工确认与「允许同文档任一块命中」的选项。</div>
+          <div><b>小样本波动：</b>25 条上的 ±0.02 可能只是噪声。P2 前先用「改善/退化题数」辅助判断，避免只看均分。</div>
+          <div><b>评判模型漂移：</b>忠实度/相关性会随模型版本变化。运行记录必须快照评判模型与提示词版本。</div>
+          <div><b>重排成本：</b>勾选重排会真实调用外部服务。实验前展示预计调用次数与费用，默认不勾选。</div>
+          <div><b>历史数据量：</b>逐题结果保留 90 天或最近 200 次运行，超期归档，避免表无限增长。</div>
+        </div>
+      </div>
+      <div class="impl-card">
+        <h3>与现有能力的关系</h3>
+        <div class="comp-list">
+          <div><b>保留：</b><code>/eval/generate</code>、<code>/eval/run</code>、<code>/eval/run-auto</code>、<code>/eval/last-report</code>、<code>/eval/answer/*</code> 与权限 <code>eval:read/write</code>。</div>
+          <div><b>复用：</b><code>RetrievalEvaluationService</code> 的存活校验、弃用断言、多路检索、评判与线程局部参数覆盖。</div>
+          <div><b>替换：</b>本地 JSON 作为唯一存储；改为 DB 主存储 + 文件导入导出兼容。</div>
+          <div><b>对齐：</b>智能体评测的「运行 → 基线 → 对比」交互与表结构；看板的体检红绿灯继续读 <code>eval.lastReport</code>。</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="foot-note" style="margin-top:22px">
+      参考实现：
+      <code>web/src/views/EvaluationPage.vue</code>（当前页面）、
+      <code>src/main/java/com/wenqu/ai/service/RetrievalEvaluationService.java</code>（评估集/运行/体检/答案评测）、
+      <code>src/main/java/com/wenqu/ai/controller/EvaluationController.java</code>（接口）、
+      <code>src/main/resources/schema.sql</code> 中的 <code>c_ai_agent_eval_*</code>（可对齐的结构）、
+      <code>web/src/views/DashboardPage.vue</code>（体检红绿灯消费方）。
+      效果图中指标与用例为示意数据；现状诊断中的上限不一致、状态未渲染、文件存储等问题均可在上述代码中复核。
+    </div>
+  </section>
+
+</div>
+
+<script>
+// 页签切换
+document.querySelectorAll('.tab[data-tab]').forEach(tab => {
+  tab.addEventListener('click', () => {
+    const key = tab.dataset.tab
+    document.querySelectorAll('.tab[data-tab]').forEach(t => t.classList.toggle('on', t === tab))
+    document.querySelectorAll('.pane[data-pane]').forEach(p => p.classList.toggle('on', p.dataset.pane === key))
+  })
+})
+
+// 标注开关
+const pinToggle = document.getElementById('pinToggle')
+if (pinToggle) {
+  pinToggle.addEventListener('change', () => {
+    document.querySelector('.browser').classList.toggle('pins-off', !pinToggle.checked)
+  })
+}
+
+// 评估集筛选
+let activeFilter = 'all'
+const applyCaseFilter = () => {
+  const q = (document.getElementById('caseSearch')?.value || '').trim()
+  document.querySelectorAll('.case-row[data-state]').forEach(row => {
+    const states = (row.dataset.state || '').split(/\s+/)
+    const matchFilter = activeFilter === 'all' || states.includes(activeFilter)
+    const matchQuery = !q || row.textContent.includes(q)
+    row.style.display = matchFilter && matchQuery ? '' : 'none'
+  })
+}
+document.querySelectorAll('.chip-filter').forEach(chip => {
+  chip.addEventListener('click', () => {
+    document.querySelectorAll('.chip-filter').forEach(c => c.classList.toggle('on', c === chip))
+    activeFilter = chip.dataset.filter || 'all'
+    applyCaseFilter()
+  })
+})
+document.getElementById('caseSearch')?.addEventListener('input', applyCaseFilter)
+
+// 运行实验：进度模拟
+const runExp = document.getElementById('runExp')
+const expProgress = document.getElementById('expProgress')
+const expPct = document.getElementById('expPct')
+const toast = document.getElementById('toast')
+runExp?.addEventListener('click', () => {
+  if (runExp.disabled) return
+  runExp.disabled = true
+  runExp.textContent = '运行中…'
+  expProgress.style.display = ''
+  let pct = 0
+  const fill = expProgress.querySelector('.track i')
+  const timer = setInterval(() => {
+    pct = Math.min(100, pct + 8)
+    fill.style.width = pct + '%'
+    expPct.textContent = pct + '%'
+    if (pct >= 100) {
+      clearInterval(timer)
+      runExp.disabled = false
+      runExp.textContent = '重新运行'
+      toast.classList.add('show')
+      setTimeout(() => toast.classList.remove('show'), 2600)
+    }
+  }, 140)
+})
+</script>
+</body>
+</html>

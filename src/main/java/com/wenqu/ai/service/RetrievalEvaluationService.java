@@ -55,7 +55,7 @@ public class RetrievalEvaluationService {
     public record EvalParams(String name, String mode,
                              Double vectorWeight, Double keywordWeight,
                              Double vecThreshold, Integer keywordLimit, Integer topK,
-                             Boolean rerankEnabled) {
+                             Boolean rerankEnabled, String lowConfidencePolicy, Double top1Floor) {
         /** 转 ConfigService 线程局部 override map（null 项跳过） */
         public Map<String, String> toOverrides() {
             Map<String, String> m = new LinkedHashMap<>();
@@ -65,6 +65,8 @@ public class RetrievalEvaluationService {
             if (keywordLimit != null) m.put("retrieval.keywordLimit", String.valueOf(keywordLimit));
             if (topK != null) m.put("retrieval.vectorTopK", String.valueOf(topK));
             if (rerankEnabled != null) m.put("rerank.enabled", String.valueOf(rerankEnabled));
+            if (lowConfidencePolicy != null) m.put("retrieval.lowConfidencePolicy", lowConfidencePolicy);
+            if (top1Floor != null) m.put("retrieval.top1Floor", String.valueOf(top1Floor));
             return m;
         }
     }
@@ -72,7 +74,8 @@ public class RetrievalEvaluationService {
     public record HitInfo(String knowledgeId, String docId, String title, double score) {}
 
     public record CaseResult(String id, String question, List<String> expected,
-                             List<HitInfo> hits, Map<String, Double> recallAtK, double mrr) {}
+                             List<HitInfo> hits, Map<String, Double> recallAtK, double mrr,
+                             int firstRank, Map<String, Integer> hitRanks) {}
 
     public record GroupResult(String name, String mode, EvalParams params,
                               Map<String, Double> metrics, List<CaseResult> cases) {}
@@ -99,6 +102,8 @@ public class RetrievalEvaluationService {
     /** 站内通知：自动体检下滑预警（eval.decline）广播给管理员级账号。旁路语义 */
     private final NotificationService notificationService;
     private final UserRoleService userRoleService;
+    private final RetrievalEvalCatalogService catalogService;
+    private final RetrievalEvalApplyService applyService;
 
     /** 评估执行线程池（daemon；每组参数一个任务，线程局部 override 不污染主线程） */
     private final ExecutorService evalPool = Executors.newFixedThreadPool(4, r -> {
@@ -113,7 +118,9 @@ public class RetrievalEvaluationService {
                                       AiDocumentMapper documentMapper, UserMapper userMapper,
                                       AppProperties properties, ChatClient chatClient,
                                       NotificationService notificationService,
-                                      UserRoleService userRoleService) {
+                                      UserRoleService userRoleService,
+                                      RetrievalEvalCatalogService catalogService,
+                                      RetrievalEvalApplyService applyService) {
         this.retrievalService = retrievalService;
         this.configService = configService;
         this.keywordExtractor = keywordExtractor;
@@ -126,6 +133,8 @@ public class RetrievalEvaluationService {
         this.chatClient = chatClient;
         this.notificationService = notificationService;
         this.userRoleService = userRoleService;
+        this.catalogService = catalogService;
+        this.applyService = applyService;
     }
 
     @jakarta.annotation.PreDestroy
@@ -143,62 +152,10 @@ public class RetrievalEvaluationService {
         return evalDir().resolve("retrieval-eval.json");
     }
 
-    /** 从历史问答（c_ai_message.sources 含 knowledgeId）回放生成评估集 */
-    public synchronized EvalSet generate(int maxCases) {
-        int limit = Math.min(Math.max(1, maxCases), 500);
-        // 取最近 N 条带引用的 assistant 消息（逻辑删除由 @TableLogic 自动过滤）
-        List<Message> assistants = messageMapper.selectList(new LambdaQueryWrapper<Message>()
-                .eq(Message::getRole, "assistant")
-                .isNotNull(Message::getSources)
-                .ne(Message::getSources, "")
-                .orderByDesc(Message::getCreateTime)
-                .last("LIMIT " + limit));
-        if (assistants.isEmpty()) return new EvalSet(1, now(), List.of(), 0);
-
-        // 按 session 预取 user 消息，避免逐条查库
-        Set<String> sessionIds = assistants.stream().map(Message::getSessionId).collect(Collectors.toSet());
-        List<Message> userMsgs = messageMapper.selectList(new LambdaQueryWrapper<Message>()
-                .eq(Message::getRole, "user")
-                .in(Message::getSessionId, sessionIds)
-                .orderByAsc(Message::getSequence));
-        Map<String, List<Message>> bySession = userMsgs.stream()
-                .collect(Collectors.groupingBy(Message::getSessionId));
-
-        // 批量校验 expected 知识块仍存在（文档删除/重解析后旧 ID 失效，会让 recall 永远到不了 1，生成时剔除并计数）
-        Set<String> candidateIds = new HashSet<>();
-        for (Message a : assistants) candidateIds.addAll(extractKnowledgeIds(a.getSources()));
-        Set<String> existingIds = loadExistingKnowledgeIds(candidateIds);
-
-        List<EvalCase> cases = new ArrayList<>();
-        Set<String> seenQuestions = new HashSet<>();
-        int seq = 0;
-        int stale = 0;
-        for (Message a : assistants) {
-            // 该 assistant 消息之前的最近一条 user 消息
-            List<Message> users = bySession.getOrDefault(a.getSessionId(), List.of());
-            Message prevUser = null;
-            for (Message u : users) {
-                if (u.getSequence() != null && a.getSequence() != null && u.getSequence() < a.getSequence()) {
-                    prevUser = u;
-                }
-            }
-            if (prevUser == null || prevUser.getContent() == null || prevUser.getContent().isBlank()) continue;
-            String question = prevUser.getContent().trim();
-            List<String> expected = extractKnowledgeIds(a.getSources());
-            List<String> valid = expected.stream().filter(existingIds::contains).distinct().toList();
-            stale += expected.size() - valid.size();
-            if (valid.isEmpty() || !seenQuestions.add(question)) continue;
-            cases.add(new EvalCase("c" + (++seq), truncate(question, 200), valid, ""));
-        }
-        EvalSet set = new EvalSet(1, now(), cases, stale);
-        try {
-            Files.createDirectories(evalDir());
-            Files.writeString(evalFile(), JSON.toJSONString(set, JSONWriter.Feature.PrettyFormat), StandardCharsets.UTF_8);
-        } catch (IOException e) {
-            log.warn("[Eval] 评估集写盘失败: {}", e.getMessage());
-        }
-        log.info("[Eval] 评估集生成 {} 条（取自 {} 条引用消息，剔除失效期望块 {} 个）", cases.size(), assistants.size(), stale);
-        return set;
+    /** 从历史问答回放生成评估集（落 DB，按版本演进）。 */
+    public EvalSet generate(int maxCases) {
+        catalogService.generate(maxCases, null);
+        return load();
     }
 
     /** 批量查询仍存在的知识块 ID（评估集期望标签的存在性校验，分批避免 IN 列表过大） */
@@ -235,69 +192,28 @@ public class RetrievalEvaluationService {
         return ids;
     }
 
-    /** 读取评估集（文件不存在返回空集） */
+    /** 读取当前评估集（DB 首版；无评估集返回空集）。 */
     public EvalSet load() {
         try {
-            if (Files.exists(evalFile())) {
-                String json = Files.readString(evalFile(), StandardCharsets.UTF_8);
-                JSONObject o = JSON.parseObject(json);
-                if (o == null) return new EvalSet(1, "", List.of(), 0);
-                List<EvalCase> cases = new ArrayList<>();
-                JSONArray arr = o.getJSONArray("cases");
-                if (arr != null) {
-                    for (int i = 0; i < arr.size(); i++) {
-                        JSONObject c = arr.getJSONObject(i);
-                        cases.add(new EvalCase(
-                                c.getString("id"),
-                                c.getString("question"),
-                                c.getJSONArray("expectedKnowledgeIds") == null ? List.of()
-                                        : c.getJSONArray("expectedKnowledgeIds").toJavaList(String.class),
-                                c.getString("note")));
-                    }
-                }
-                return new EvalSet(o.getIntValue("version", 1), o.getString("generatedAt"), cases,
-                        o.getIntValue("staleExpected", 0));
-            }
+            com.wenqu.ai.model.RetrievalEvalSet set = catalogService.activeSetOrImport(null);
+            if (set == null) return new EvalSet(1, "", List.of(), 0);
+            List<EvalCase> cases = catalogService.casesOf(set.getId(), 1).stream()
+                    .map(c -> new EvalCase(c.getId(), c.getQuestion(),
+                            catalogService.parseIds(c.getExpectedKnowledgeIds()), c.getNote()))
+                    .toList();
+            String generatedAt = set.getGeneratedAt() == null ? ""
+                    : set.getGeneratedAt().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+            return new EvalSet(set.getVersion() == null ? 1 : set.getVersion(), generatedAt, cases,
+                    set.getStaleExpected() == null ? 0 : set.getStaleExpected());
         } catch (Exception e) {
             log.warn("[Eval] 评估集读取失败: {}", e.getMessage());
+            return new EvalSet(1, "", List.of(), 0);
         }
-        return new EvalSet(1, "", List.of(), 0);
     }
 
-    /**
-     * 追加单条评估 case（差评回流：问题 → 引用过的知识块）。
-     * synchronized：与 generate 串行化避免写盘互踩；按 question 去重；失效期望块自动剔除。
-     *
-     * @return added=false 表示已存在相同问题（幂等）
-     */
-    public synchronized Map<String, Object> addCase(String question, List<String> knowledgeIds) {
-        String q0 = question == null ? "" : question.trim();
-        if (q0.isEmpty()) throw new com.wenqu.ai.common.BizException("问题不能为空");
-        final String q = q0.length() > 200 ? q0.substring(0, 200) : q0;
-
-        EvalSet set = load();
-        if (set.cases().stream().anyMatch(c -> q.equals(c.question()))) {
-            return Map.of("added", false, "reason", "评估集已存在相同问题");
-        }
-        List<String> expected = knowledgeIds == null ? List.of()
-                : knowledgeIds.stream().filter(loadExistingKnowledgeIds(new HashSet<>(knowledgeIds))::contains).distinct().toList();
-        int maxSeq = set.cases().stream()
-                .mapToInt(c -> {
-                    try { return Integer.parseInt(c.id().replaceFirst("^c", "")); }
-                    catch (Exception e) { return 0; }
-                }).max().orElse(0);
-        List<EvalCase> cases = new ArrayList<>(set.cases());
-        cases.add(new EvalCase("c" + (maxSeq + 1), q, expected, "差评回流"));
-        try {
-            Files.createDirectories(evalDir());
-            Files.writeString(evalFile(), JSON.toJSONString(
-                    new EvalSet(set.version(), now(), cases, set.staleExpected()),
-                    JSONWriter.Feature.PrettyFormat), StandardCharsets.UTF_8);
-        } catch (IOException e) {
-            throw new com.wenqu.ai.common.BizException("评估集写盘失败: " + e.getMessage());
-        }
-        log.info("[Eval] 差评回流追加 case：question=[{}] expected={}（失效剔除 {}）", q, expected.size(), knowledgeIds == null ? 0 : knowledgeIds.size() - expected.size());
-        return Map.of("added", true, "expected", expected.size());
+    /** 差评回流：追加单条用例（DB，按问题去重）。 */
+    public Map<String, Object> addCase(String question, List<String> knowledgeIds) {
+        return catalogService.addCase(question, knowledgeIds);
     }
 
     // ==================== 运行评估 ====================
@@ -332,7 +248,7 @@ public class RetrievalEvaluationService {
         }
         List<Integer> ks = kList == null || kList.isEmpty() ? List.of(5, 10, 20) : kList.stream().distinct().sorted().toList();
         List<EvalParams> gs = groups == null || groups.isEmpty()
-                ? List.of(new EvalParams("当前配置", "normal", null, null, null, null, null, null))
+                ? List.of(new EvalParams("当前配置", "normal", null, null, null, null, null, null, null, null))
                 : groups;
 
         // 期望块存活校验（与 generate 时口径一致）：文档删除/重解析后旧 ID 失效，
@@ -354,7 +270,7 @@ public class RetrievalEvaluationService {
                 try {
                     RequestUser.set(evalUid, evalDept, evalRole); // 评测身份落执行线程（ThreadLocal 不跨线程传递）
                     configService.putOverrides(g.toOverrides());
-                    return runGroup(g, liveCases, ks, deprecatedIds, violations);
+                    return runGroup(g, liveCases, ks, deprecatedIds, violations, () -> false, null);
                 } finally {
                     configService.clearOverride();
                     RequestUser.clear();
@@ -392,7 +308,7 @@ public class RetrievalEvaluationService {
      * 若不剔除会让 recall 永久 <1 被误报"下滑"。失效标签剔除、全失效的 case 跳过不参与指标。
      * 校验整体异常时回退原始列表（宁多跑不丢样本）。
      */
-    private Revalidated revalidateExpected(List<EvalCase> cases) {
+    public Revalidated revalidateExpected(List<EvalCase> cases) {
         int stale = 0;
         int skipped = 0;
         try {
@@ -422,10 +338,17 @@ public class RetrievalEvaluationService {
         }
     }
 
-    private GroupResult runGroup(EvalParams params, List<EvalCase> cases, List<Integer> ks,
-                                 Set<String> deprecatedIds, List<String> violations) {
+    /**
+     * 跑一个参数组。cancelled 在每个 case 之间检查（异步运行取消用）；
+     * onCase 用于逐题落库/推进度，传 null 表示只聚合结果。
+     */
+    public GroupResult runGroup(EvalParams params, List<EvalCase> cases, List<Integer> ks,
+                                Set<String> deprecatedIds, List<String> violations,
+                                java.util.function.BooleanSupplier cancelled,
+                                java.util.function.Consumer<CaseResult> onCase) {
         List<CaseResult> caseResults = new ArrayList<>();
         for (EvalCase c : cases) {
+            if ((cancelled != null && cancelled.getAsBoolean()) || Thread.currentThread().isInterrupted()) break;
             List<HitInfo> hits = searchHits(c.question(), params.mode());
             // 弃用断言：命中里出现已弃用文档的知识块 → violation
             for (HitInfo h : hits) {
@@ -433,7 +356,9 @@ public class RetrievalEvaluationService {
                     violations.add(c.id() + "(" + truncate(c.question(), 30) + ") 命中已弃用知识块 " + h.knowledgeId());
                 }
             }
-            caseResults.add(computeCase(c, hits, ks));
+            CaseResult result = computeCase(c, hits, ks);
+            caseResults.add(result);
+            if (onCase != null) onCase.accept(result);
         }
         return new GroupResult(params.name(), params.mode(), params, computeMetrics(caseResults, ks), caseResults);
     }
@@ -500,13 +425,19 @@ public class RetrievalEvaluationService {
             recallAtK.put("recall@" + k, expected.isEmpty() ? 1.0 : (double) hit / expected.size());
         }
         double mrr = 0;
+        int firstRank = 0;
+        Map<String, Integer> hitRanks = new LinkedHashMap<>();
         for (int i = 0; i < hits.size(); i++) {
-            if (expected.contains(hits.get(i).knowledgeId())) {
-                mrr = 1.0 / (i + 1);
-                break;
+            String kid = hits.get(i).knowledgeId();
+            if (!expected.contains(kid)) continue;
+            hitRanks.putIfAbsent(kid, i + 1);
+            if (firstRank == 0) {
+                firstRank = i + 1;
+                mrr = 1.0 / firstRank;
             }
         }
-        return new CaseResult(c.id(), c.question(), c.expectedKnowledgeIds(), hits, recallAtK, mrr);
+        return new CaseResult(c.id(), c.question(), c.expectedKnowledgeIds(), hits, recallAtK, mrr,
+                firstRank, hitRanks);
     }
 
     private Map<String, Double> computeMetrics(List<CaseResult> caseResults, List<Integer> ks) {
@@ -524,7 +455,7 @@ public class RetrievalEvaluationService {
     }
 
     /** 已弃用文档（status=1）的知识块 ID 集合 */
-    private Set<String> loadDeprecatedKnowledgeIds() {
+    public Set<String> loadDeprecatedKnowledgeIds() {
         try {
             List<AiDocument> deprecated = documentMapper.selectList(new LambdaQueryWrapper<AiDocument>()
                     .eq(AiDocument::getStatus, 1));
@@ -661,6 +592,11 @@ public class RetrievalEvaluationService {
         }
         report.put("elapsedMs", System.currentTimeMillis() - start);
         configService.putInternal("eval.lastReport", JSON.toJSONString(report));
+        try {
+            applyService.observe(report);
+        } catch (Exception e) {
+            log.debug("[Eval] 灰度应用观察失败（不影响体检）: {}", e.getMessage());
+        }
         // 下滑预警：广播给管理员级账号（体检无人值守跑，红黄灯不在眼前——通知是可感知面；
         // 旁路调用，create/createForAdmins 内部已全捕获，失败不影响体检收口）
         if ("decline".equals(report.get("status"))) {
@@ -770,7 +706,7 @@ public class RetrievalEvaluationService {
      * 单 case 单次调用（temperature=0）；检索无命中按"不足以回答"计（退化检索正是该指标要暴露的）；失败的单 case 跳过不计。
      * 返回 null 表示无法计算（空集/未配置评判模型/全部失败）。
      */
-    private Double judgeCoverage(List<EvalCase> cases) {
+    public Double judgeCoverage(List<EvalCase> cases) {
         if (cases.isEmpty()) return null;
         int covered = 0;
         int judged = 0;
@@ -852,7 +788,15 @@ public class RetrievalEvaluationService {
      *
      * @return false = 已有评测在跑（前端提示稍后再试）
      */
-    public synchronized boolean startAnswerEval(int caseCount) {
+    public boolean startAnswerEval(int caseCount) {
+        return startAnswerEval(caseCount, null);
+    }
+
+    /**
+     * 启动答案级评测；caseIds 非空时只评测所选用例（前端从检索落空/低分题带入），
+     * 避免「永远只测前 N 条」。
+     */
+    public synchronized boolean startAnswerEval(int caseCount, List<String> caseIds) {
         if (answerRun.get() != null && !answerRun.get().finished) return false;
         EvalSet set = load();
         if (set.cases().isEmpty()) throw new com.wenqu.ai.common.BizException("评估集为空，请先生成评估集");
@@ -862,8 +806,11 @@ public class RetrievalEvaluationService {
         }
         String answerModelCfg = configService.get("eval.judgeModel");
         final String answerModel = answerModelCfg == null || answerModelCfg.isBlank() ? judgeModel : answerModelCfg;
-        List<EvalCase> cases = set.cases().subList(0,
-                Math.min(Math.min(Math.max(1, caseCount), ANSWER_EVAL_MAX_CASES), set.cases().size()));
+        List<EvalCase> selected = caseIds == null || caseIds.isEmpty() ? set.cases()
+                : set.cases().stream().filter(c -> caseIds.contains(c.id())).toList();
+        if (selected.isEmpty()) throw new com.wenqu.ai.common.BizException("所选用例不存在或已停用");
+        List<EvalCase> cases = selected.subList(0,
+                Math.min(Math.min(Math.max(1, caseCount), ANSWER_EVAL_MAX_CASES), selected.size()));
         // 触发时刻解析执行身份：检索可见性与生产问答同源（同 run() 的坑——评测线程无登录态，私有库整库消失）
         final String uid = RequestUser.uid();
         final User u = com.wenqu.ai.util.RequestUser.SYSTEM.equals(uid) ? null : userMapper.selectById(uid);
@@ -1029,7 +976,7 @@ public class RetrievalEvaluationService {
             summary.put("answerModel", report.answerModel());
             summary.put("elapsedMs", report.elapsedMs());
             history.add(0, summary);
-            while (history.size() > 10) history.remove(history.size() - 1);
+            while (history.size() > 30) history.remove(history.size() - 1);
             configService.putInternal("eval.answerHistory", history.toJSONString());
         } catch (Exception e) {
             log.warn("[Eval] 答案评测报告写盘失败: {}", e.getMessage());

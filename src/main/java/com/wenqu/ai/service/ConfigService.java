@@ -786,6 +786,7 @@ public class ConfigService {
         d.put("eval.judgeModel", "");              // 评判用独立模型（留空=跳过 LLM 自动评判）
         d.put("eval.autoIntervalMs", "86400000");  // 自动体检周期(ms，≤0=暂停)
         d.put("eval.autoThresholdPct", "10");      // 退化判定：指标相对跌幅百分比阈值
+        d.put("eval.applyObserveHours", "24");     // 参数组灰度应用后的观察期（小时，期间下滑自动回滚）
         // 智能体评测与发布门禁（plan-agent-eval.md §6.5）：与检索评估 eval.* 是两条线，键前缀区分
         d.put("agentEval.enabled", "true");        // 总开关（关=评测端点全部拒绝，门禁查询按「未评测」处理）
         // 定时任务（schedule 包读取；≤0=暂停对应任务）

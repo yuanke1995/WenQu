@@ -89,6 +89,10 @@ public class Notification {
     public static final String TYPE_SCHEDULE_FAILED = "schedule.failed";
     /** 检索评估自动体检下滑预警（收件人为管理员级账号） */
     public static final String TYPE_EVAL_DECLINE = "eval.decline";
+    /** 检索评估手动/定时运行完成 */
+    public static final String TYPE_EVAL_DONE = "eval.done";
+    /** 检索评估运行失败 */
+    public static final String TYPE_EVAL_FAILED = "eval.failed";
     /** 智能体评测回归完成/取消（与检索评估 eval.* 是两条线，前缀区分） */
     public static final String TYPE_AGENT_EVAL_DONE = "agentEval.done";
     /** 智能体评测回归失败（总预算用尽/执行异常） */

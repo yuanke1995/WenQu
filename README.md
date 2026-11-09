@@ -379,7 +379,7 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 ### 运营闭环与质控（`/dashboard` · `/evaluation` · `/agents?tab=eval`）
 
 - **数据看板**四个页签：**总览**（问答总数、无命中率、有引用标注率、反馈满意率；检索质量自动体检；热门问题与无命中问题 TOP10；差评样本可加入评估集或补知识块；知识库缺口汇总可直接入库）、**执行 Trace**（按对话 / 工作流、时间、引用、评分与关键词筛选，详情抽屉回放）、**采样池**（差评必采 + 无引用 / 随机入池，待标注样本可回流评测集或忽略）、**费用**
-- **检索评估**：从历史问答引用回放生成评估集 → 多参数组（单路 / 多路，预设关键词优先 / 向量优先 / 向量+重排 / 多路，也可自定义权重、阈值与 topK）对比 **recall@k / MRR / 命中率** → 一键体检、一键把最优组应用到线上配置；期望块存活校验防止「内容漂移误报下滑」；另提供**答案质量评测**（按评判模型给出忠实度与相关性均分，逐条附问题说明）
+- **检索评估**：评估集落库并按版本演进（历史问答引用回放 / 导入 / 手工维护，逐条人工确认与失效标签修复）→ 多参数组（单路 / 多路，预设关键词优先 / 向量优先 / 向量+重排 / 多路，可自定义权重、阈值、topK、低置信策略与重排）**异步实验**对比 **recall@k / MRR / 命中率 / 答案充分率**，结果逐题落库、可取消、可回看；运行历史支持趋势、基线、跨次逐题对比、置信区间与按标签/知识库分群；「应用此组」进入 24 小时灰度观察，核心指标明显下滑自动回滚；另提供**答案质量评测**（只测检索落空/低分题，按评判模型给出忠实度与相关性均分，逐条附问题说明），评估集为空/失效期望块/参数漂移/超时组均在页面显性提示
 - **智能体评测与发布门禁**（`/agents?tab=eval`）：按智能体建评测套件与用例，可从历史会话采样（差评优先、自动带入当时引用作为期望），也可手写期望知识块 / 文档；支持批量增删改、启动回归、取消运行、设为基线、两次运行逐用例 A/B 对比；门禁五态（未评测 / 有变更未评测 / 运行中 / 通过 / 低于门槛）在智能体列表与编辑器同源显示，保存前检查会列出本次改动与门禁结论；评测默认只读，需人工确认的副作用工具自动拒绝
 - **检索调试**：`POST /api/ai/debug/retrieval` 分步展示检索词元 / 关键词 / 向量 / 合并 / 重排 / 最终结果；问答页每条回答的「更多」菜单可直接打开「检索调试（为什么这么答）」，并受「调试设置 → 检索调试入口」统一门控（同时管回答区的归属徽标、路由提示与降级提示）
 - **反馈闭环**：问答日志 + 赞 / 踩反馈 + 看板聚合 + 采样回流评测集，形成「发现问题 → 评估 → 优化 → 验证」闭环
@@ -473,7 +473,7 @@ docker compose up -d          # 自包含：redis-stack + meilisearch + 内置 M
 | `GET /api/ai/document/{id}/versions`、`/recycle`、`POST /recycle/purge\|batch/restore\|batch/purge`、`PUT /{id}/status\|refresh-config\|tags`、`DELETE /{id}` | 版本历史 / 回收站及批量处置 / 启停用 / 网页自动刷新配置 / 标签 / 删除（进回收站） |
 | `GET /api/ai/knowledge/list?docId=`、`/knowledge/search`、`/knowledge/{id}`、`/knowledge/unmatched`、`POST /knowledge`、`PUT /knowledge/{id}`、`/{id}/status`、`DELETE /{id}` | 知识块预览（切片列表 / 结构导图）/ 跨文档搜索 / 详情 / 无命中问题 / 手动建块 / 编辑（自动重向量化）/ 启停用 / 删除 |
 | `POST /api/ai/debug/retrieval` | 检索链路分步调试 |
-| `GET /api/ai/eval/set`、`/last-report`、`/answer/report`、`POST /eval/generate\|case\|run\|run-auto\|answer/run` | 检索评估集与体检报告 / 逐条答案质量评测 / 生成评估集 / 加用例 / 参数组对比 / 自动体检 / 答案质量评测 |
+| `GET /api/ai/eval/overview`、`/sets`、`/set`、`/cases`、`/runs`、`/runs/{id}`、`/runs/{id}/results`、`/runs/{id}/compare`、`/runs/{id}/export`、`/apply/status`、`/last-report`、`/answer/report`；`POST /eval/generate`、`/case(s)`、`/cases/import`、`/runs`、`/runs/{id}/cancel`、`/runs/{id}/baseline`、`/apply`、`/apply/rollback`、`/run-auto`、`/answer/run`；`PATCH/DELETE /eval/cases/{id}` | 检索评估总览 / 评估集版本与用例管理 / 异步参数组实验、历史、基线、跨次对比与导出 / 灰度应用与回滚 / 自动体检 / 答案质量评测 |
 | `POST /api/ai/graph/{kbId}/build`、`GET /graph/{kbId}/status\|view\|triples\|search\|entity/{id}\|neighbor/{id}\|chunk/{id}`、`DELETE /graph/{kbId}` | GraphRAG 构建、状态、图谱视图、三元组与实体查询、按块溯源、清空 |
 | `GET /api/ai/search-index/stats`、`POST /search-index/reindex`、`DELETE /search-index` | 关键词索引状态 / 全量重建 / 清空 |
 | `GET /api/ai/desc-cache/stats`、`POST /desc-cache/prune`、`DELETE /desc-cache` | 图片描述缓存运维 |
@@ -683,7 +683,7 @@ spring:
 | 聊天图片目录清理 | `images.chatCleanupIntervalMs`(1d) | 删除超过 `images.chatRetentionMillis`（7 天）的用户聊天图片 |
 | 聊天附件超期清理 | `chat.uploadCleanupIntervalMs`(1h) | 删除超过 `chat.uploadRetentionHours`（24 小时，0=不清理）的会话附件 |
 | 工具外溢原文清理 | `tool.spillCleanupIntervalMs`(1h) | 删除超过 `cleanup.toolSpillRetentionDays`（7 天，0=不清理）的工具大输出留存原文 |
-| 检索评估自动体检 | `eval.autoIntervalMs`(1d) | 按线上参数跑评估集并与上期对比，下滑写预警结论供看板红绿灯；评估集为空自动跳过 |
+| 检索评估自动体检 | `eval.autoIntervalMs`(1d) | 按线上参数跑评估集、落一条 scheduled 运行历史并与上期对比，下滑写预警结论供看板红绿灯；灰度应用观察期内下滑自动回滚（观察期 `eval.applyObserveHours`，默认 24h）；评估集为空自动跳过 |
 | 系统巡检 | `ops.checkupIntervalMs` | 按节拍全面体检并把报告落库；失败时给管理员发站内通知，手动巡检不受间隔限制 |
 | 巡检报告清理 | `ops.checkupRetentionDays` | 删除超过保留期的巡检历史报告（0=永久保留） |
 | 智能体回调重试 | 内置节拍（退避 60s / 5min / 30min / 2h） | 扫描到期的轮终 Webhook 投递行并补发；耗尽后通知智能体主人（`agentWebhook.enabled` 总开关之下） |

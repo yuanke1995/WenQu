@@ -105,7 +105,7 @@ public class ScheduleCenter {
     private final ConfigSchemaService configSchemaService;
     private final KeywordIndexService keywordIndexService;
     private final UserImageService userImageService;
-    private final RetrievalEvaluationService evalService;
+    private final com.wenqu.ai.service.RetrievalEvalRunService retrievalEvalRunService;
     private final SessionService sessionService;
     private final ArtifactService artifactService;
     /** 会话事件账本的超期清理（挂在「过期会话/消息清理」同一周期上） */
@@ -141,7 +141,8 @@ public class ScheduleCenter {
     public ScheduleCenter(ConfigService configService, ConfigSchemaService configSchemaService,
                           com.wenqu.ai.service.AuditService auditService,
                           KeywordIndexService keywordIndexService,
-                          UserImageService userImageService, RetrievalEvaluationService evalService,
+                          UserImageService userImageService,
+                          com.wenqu.ai.service.RetrievalEvalRunService retrievalEvalRunService,
                           SessionService sessionService, ArtifactService artifactService,
                           com.wenqu.ai.service.SessionEventService sessionEventService,
                           ScheduledJobService scheduledJobService,
@@ -163,7 +164,7 @@ public class ScheduleCenter {
         this.configSchemaService = configSchemaService;
         this.keywordIndexService = keywordIndexService;
         this.userImageService = userImageService;
-        this.evalService = evalService;
+        this.retrievalEvalRunService = retrievalEvalRunService;
         this.sessionService = sessionService;
         this.artifactService = artifactService;
         this.sessionEventService = sessionEventService;
@@ -293,7 +294,7 @@ public class ScheduleCenter {
                 "eval.autoIntervalMs",
                 () -> configService.getInt("eval.autoIntervalMs", 86_400_000),
                 () -> false,
-                () -> evalService.runAutoCheck());
+                () -> retrievalEvalRunService.runScheduledCheck());
         // 配置缓存兜底刷新：Redis 订阅断线期间错过的变更由周期全量重读补齐（内置节拍 5 分钟）。
         // 不做成参数：正常路径走广播即时生效，这个补偿轮没有「调快一点」的收益，暂停它只在订阅
         // 恰好断线时才有代价——把它做成可暂停的旋钮，等于给运维留一个能安静关掉自愈的开关。
