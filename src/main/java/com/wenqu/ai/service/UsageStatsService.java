@@ -316,6 +316,7 @@ public class UsageStatsService {
         Map<String, long[]> tenantTok = new LinkedHashMap<>();
         Map<String, double[]> tenantCost = new HashMap<>();
         Map<String, Long> unpricedByRef = new LinkedHashMap<>();   // 未计价的完整引用 -> tokens
+        Map<String, Double> dailyCost = new LinkedHashMap<>();      // 每日费用（看板趋势）
         for (Map<String, Object> row : rows) {
             String model = row.get("model") == null ? UNKNOWN_LABEL : String.valueOf(row.get("model"));
             String uid = row.get("uid") == null ? "" : String.valueOf(row.get("uid"));
@@ -325,6 +326,8 @@ public class UsageStatsService {
             if (price != null) {
                 cost = p / 1_000_000.0 * price[0].doubleValue() + c / 1_000_000.0 * price[1].doubleValue();
                 total += cost;
+                String day = row.get("d") == null ? "" : String.valueOf(row.get("d"));
+                if (!day.isBlank()) dailyCost.merge(day, cost, Double::sum);
             } else {
                 unpricedTokens += t;
                 unpricedByRef.merge(model, t, Long::sum);
@@ -471,9 +474,21 @@ public class UsageStatsService {
                 .toList()
                 : List.of();
 
+        // 每日费用趋势（缺日补零）：与表格同源（台账 × 登记单价），不另做一套口径
+        List<Map<String, Object>> costTrend = new ArrayList<>();
+        for (int i = 0; i < r; i++) {
+            LocalDate d = today.minusDays(r - 1L - i);
+            String key = d.toString();
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("date", key);
+            item.put("cost", round2(dailyCost.getOrDefault(key, 0.0)));
+            costTrend.add(item);
+        }
+
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("byDepartment", byDept);
         out.put("byTenant", byTenant);
+        out.put("trend", costTrend);
         out.put("crossTenant", crossTenant);
         out.put("range", r);
         out.put("total", round2(total));

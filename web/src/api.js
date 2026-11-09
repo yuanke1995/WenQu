@@ -1635,8 +1635,17 @@ export const submitFeedback = (messageId, rating, feedbackText) =>
     body: JSON.stringify({ messageId, rating, feedbackText: feedbackText || null })
   })
 
-/** 看板统计 */
-export const getAnalytics = () => request('/analytics/summary')
+/** 看板统计（range=7/30/90；0=全部）：指标 + 上期对比 + 每日趋势 + 健康度 */
+export const getAnalytics = (range = 30) => request(`/analytics/summary?range=${range}`)
+
+/** 待办闭环队列：差评 / 知识缺口 / 待标注三源合一（含计数与本周已闭环） */
+export const getDashboardActions = (range = 30) => request(`/analytics/actions?range=${range}`)
+
+/** 看板阈值告警（近 7 天无命中率 / 满意率 + 最近体检状态） */
+export const getDashboardAlerts = () => request('/analytics/alerts')
+
+/** 执行记录指标条：总执行 / 成功率 / P95 / 无引用占比 + 每日趋势 */
+export const getTraceOverview = (days = 7) => request(`/trace/overview?days=${days}`)
 
 /** 差评样本列表（反馈回流：问题/回答摘要/反馈说明/引用块） */
 export const getBadCases = () => request('/analytics/badcases')
@@ -1681,55 +1690,6 @@ export const moveMemberTenant = (uid, tenantId) =>
 /** 租户落点清单（备份与恢复用）：库表行数 / 磁盘目录 / Redis 键形态，仅平台级可看 */
 export const getTenantInventory = id =>
   request(`/tenant/${encodeURIComponent(id)}/inventory`)
-
-/* ==================== 租户功能完善（P0–P2） ==================== */
-/** 工作区标识可用性（免登录，边输边校验） */
-export const checkTenantId = desiredId =>
-  request(`/tenant/availability?desiredId=${encodeURIComponent(desiredId || '')}`)
-/** 申请进度查询（免登录，编号 + 邮箱双因子） */
-export const getTenantRequestStatus = (id, email) =>
-  request(`/tenant/requests/status?id=${encodeURIComponent(id)}&email=${encodeURIComponent(email)}`)
-/** 驳回后重新申请预填 */
-export const getTenantResubmitPreview = (id, email) =>
-  request(`/tenant/requests/resubmit?id=${encodeURIComponent(id)}&email=${encodeURIComponent(email)}`)
-/** 待审申请数量（侧栏角标） */
-export const getTenantPendingCount = () => request('/tenant/requests/pending-count')
-/** 重发凭据 / 重置首位管理员口令 */
-export const deliverTenantRequest = (id, resetPassword = false) =>
-  request(`/tenant/requests/${encodeURIComponent(id)}/deliver`, {
-    method: 'POST', body: JSON.stringify({ resetPassword: !!resetPassword })
-  })
-/** 平台概览（指标卡） */
-export const getTenantOverview = () => request('/tenant/overview')
-/** 租户详情（平台级或本租户管理员） */
-export const getTenantDetail = id => request(`/tenant/${encodeURIComponent(id)}`)
-/** 租户用量与套餐上限 */
-export const getTenantUsage = id => request(`/tenant/${encodeURIComponent(id)}/usage`)
-/** 套餐与企业域名 */
-export const updateTenantPlan = (id, plan, domain) =>
-  request(`/tenant/${encodeURIComponent(id)}/plan`, {
-    method: 'POST', body: JSON.stringify({ plan, domain: domain || '' })
-  })
-/** 申请材料上传（免登录）：返回 {name,path,url,size} */
-export const uploadTenantMaterial = (file, onProgress) => {
-  const fd = new FormData()
-  fd.append('file', file)
-  return upload('/tenant/materials', fd, onProgress)
-}
-/** 自动开通设置 */
-export const getTenantAutoApprove = () => request('/tenant/auto-approve')
-export const saveTenantAutoApprove = body =>
-  request('/tenant/auto-approve', { method: 'POST', body: JSON.stringify(body || {}) })
-/** 开通邀请（平台预批准，客户接受即开通） */
-export const createTenantOpenInvite = body =>
-  request('/tenant/open-invites', { method: 'POST', body: JSON.stringify(body || {}) })
-export const listTenantOpenInvites = () => request('/tenant/open-invites')
-export const revokeTenantOpenInvite = id =>
-  request(`/tenant/open-invites/${encodeURIComponent(id)}/revoke`, { method: 'POST', body: '{}' })
-export const previewTenantOpenInvite = token =>
-  request(`/tenant/open-invites/preview?token=${encodeURIComponent(token)}`)
-export const acceptTenantOpenInvite = body =>
-  request('/tenant/open-invites/accept', { method: 'POST', body: JSON.stringify(body || {}) })
 
 // ==================== 运维保障：系统巡检 / 会话治理 / 平台公告 ====================
 /** 立即巡检：MySQL/Redis/关键词引擎/磁盘/审计链/供应商/登录安全态势，overall 取最差项，报告落库 */

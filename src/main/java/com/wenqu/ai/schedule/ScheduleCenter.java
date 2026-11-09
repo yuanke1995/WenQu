@@ -130,6 +130,8 @@ public class ScheduleCenter {
     /** 系统巡检：自动体检 + 历史报告清理（报告落库后由这里驱动） */
     private final com.wenqu.ai.service.OpsCheckupService opsCheckupService;
     private final com.wenqu.ai.service.webhook.AgentWebhookService agentWebhookService;
+    /** 数据看板：阈值告警与周报（P2 运营增强，只读聚合 + 站内通知） */
+    private final com.wenqu.ai.service.DashboardService dashboardService;
 
     /** 仅负责计时（daemon，随 JVM 退出），任务体都在 ThreadPoolManager 里跑 */
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -159,7 +161,8 @@ public class ScheduleCenter {
                           com.wenqu.ai.startup.OrphanTurnRunner orphanTurnRunner,
                           ScheduleRunLogMapper scheduleRunLogMapper,
                           com.wenqu.ai.service.OpsCheckupService opsCheckupService,
-                          com.wenqu.ai.service.webhook.AgentWebhookService agentWebhookService) {
+                          com.wenqu.ai.service.webhook.AgentWebhookService agentWebhookService,
+                          com.wenqu.ai.service.DashboardService dashboardService) {
         this.configService = configService;
         this.configSchemaService = configSchemaService;
         this.keywordIndexService = keywordIndexService;
@@ -183,6 +186,7 @@ public class ScheduleCenter {
         this.scheduleRunLogMapper = scheduleRunLogMapper;
         this.opsCheckupService = opsCheckupService;
         this.agentWebhookService = agentWebhookService;
+        this.dashboardService = dashboardService;
         this.auditService = auditService;
     }
 
@@ -295,6 +299,21 @@ public class ScheduleCenter {
                 () -> configService.getInt("eval.autoIntervalMs", 86_400_000),
                 () -> false,
                 () -> retrievalEvalRunService.runScheduledCheck());
+
+        // 数据看板阈值告警：无命中率 / 满意率越过阈值时给管理员发站内通知（同类未读合并，不刷屏）。
+        // 间隔可配（dashboard.alertIntervalMs，默认 6 小时；≤0=暂停），阈值见 dashboard.noHitAlertRate / likeAlertRate
+        register("数据看板阈值告警", "近 7 天无命中率或满意率越过阈值时给管理员发站内通知（间隔 dashboard.alertIntervalMs，≤0=暂停）",
+                "dashboard.alertIntervalMs",
+                () -> configService.getInt("dashboard.alertIntervalMs", ConfigDefaults.DASHBOARD_ALERT_INTERVAL_MS),
+                () -> false,
+                () -> dashboardService.checkAlertsAndNotify());
+        // 数据看板周报：每周一一份「健康度 + 待办 + 费用」摘要。任务按日检查、只在周一且当天未发时发送，
+        // 避免「重启后周期漂移」把周报发到周三；间隔 dashboard.weeklyReportIntervalMs（≤0=暂停）
+        register("数据看板周报", "每周一给管理员发一份健康度、待办闭环与费用摘要（每天检查一次；dashboard.weeklyReportIntervalMs≤0=暂停）",
+                "dashboard.weeklyReportIntervalMs",
+                () -> configService.getInt("dashboard.weeklyReportIntervalMs", ConfigDefaults.DASHBOARD_WEEKLY_INTERVAL_MS),
+                () -> true,   // 启动即检查一次：周一重启也能补上当天周报
+                () -> dashboardService.sendWeeklyReportIfDue());
         // 配置缓存兜底刷新：Redis 订阅断线期间错过的变更由周期全量重读补齐（内置节拍 5 分钟）。
         // 不做成参数：正常路径走广播即时生效，这个补偿轮没有「调快一点」的收益，暂停它只在订阅
         // 恰好断线时才有代价——把它做成可暂停的旋钮，等于给运维留一个能安静关掉自愈的开关。

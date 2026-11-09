@@ -138,7 +138,8 @@
         "工作流运行治理（步数 / 超时 / 记录清理）",
         "站内通知（铃铛，异步事件可感知面）",
         "智能体配置版本（快照保留份数）",
-        "系统巡检（安全与运维：巡检频率 / 报告保留 / 失败告警）"
+        "系统巡检（安全与运维：巡检频率 / 报告保留 / 失败告警）",
+        "数据看板（阈值告警 / 周报）"
       ]
     },
     {
@@ -2020,6 +2021,85 @@
       "tier": 3
     },
     {
+      "backendKey": "dashboard.alertIntervalMs",
+      "panel": "maintenance",
+      "section": 15,
+      "group": "dashboard",
+      "key": "alertIntervalMs",
+      "path": "dashboard.alertIntervalMs",
+      "label": "看板告警检查周期(ms)",
+      "type": "number",
+      "tips": "dashboardAlertInterval",
+      "def": 21600000,
+      "min": 0,
+      "step": 3600000,
+      "width": 220,
+      "note": "近 7 天无命中率/满意率越过阈值时给管理员发站内通知（默认 6 小时；≤0=暂停）",
+      "tier": 3,
+      "presets": [
+        [3600000, "1 小时"],
+        [21600000, "6 小时"],
+        [86400000, "每天"]
+      ]
+    },
+    {
+      "backendKey": "dashboard.noHitAlertRate",
+      "panel": "maintenance",
+      "section": 15,
+      "group": "dashboard",
+      "key": "noHitAlertRate",
+      "path": "dashboard.noHitAlertRate",
+      "label": "无命中率告警阈值(%)",
+      "type": "number",
+      "tips": "dashboardNoHitAlertRate",
+      "def": 15,
+      "min": 1,
+      "max": 100,
+      "step": 1,
+      "width": 200,
+      "note": "近 7 天无命中率高于该值即预警；样本少于 20 条不报（比例没有意义）",
+      "tier": 3
+    },
+    {
+      "backendKey": "dashboard.likeAlertRate",
+      "panel": "maintenance",
+      "section": 15,
+      "group": "dashboard",
+      "key": "likeAlertRate",
+      "path": "dashboard.likeAlertRate",
+      "label": "满意率告警阈值(%)",
+      "type": "number",
+      "tips": "dashboardLikeAlertRate",
+      "def": 80,
+      "min": 1,
+      "max": 100,
+      "step": 1,
+      "width": 200,
+      "note": "近 7 天反馈满意率低于该值即预警；反馈少于 10 条不报",
+      "tier": 3
+    },
+    {
+      "backendKey": "dashboard.weeklyReportIntervalMs",
+      "panel": "maintenance",
+      "section": 15,
+      "group": "dashboard",
+      "key": "weeklyReportIntervalMs",
+      "path": "dashboard.weeklyReportIntervalMs",
+      "label": "周报检查周期(ms)",
+      "type": "number",
+      "tips": "dashboardWeeklyReportInterval",
+      "def": 86400000,
+      "min": 0,
+      "step": 3600000,
+      "width": 220,
+      "note": "每周一发送一份「健康度 + 待办 + 费用」摘要；默认每天检查一次（≤0=暂停）",
+      "tier": 3,
+      "presets": [
+        [3600000, "1 小时"],
+        [86400000, "每天"]
+      ]
+    },
+    {
       "backendKey": "webpush.enabled",
       "panel": "maintenance",
       "section": 12,
@@ -2782,6 +2862,10 @@
     }
   ],
   "tips": {
+    "dashboardAlertInterval": "看板阈值告警多久检查一次；同类未读通知会合并，不会刷屏",
+    "dashboardNoHitAlertRate": "近 7 天无命中率高于该值时预警；样本不足 20 条不报，避免小样本误报",
+    "dashboardLikeAlertRate": "近 7 天反馈满意率低于该值时预警；反馈不足 10 条不报",
+    "dashboardWeeklyReportInterval": "周报检查周期；只在周一发送，没有问答数据时自动跳过，不发空报",
     "visionPrompt": "图片描述的要求；影响检索与配图准确性",
     "maxChunks": "单文档最大知识块数（0=不限）；超出部分不入库",
     "maxImages": "单文档最多描述图片数（0=不限）；防止解析过慢",
@@ -2935,6 +3019,10 @@
     "artifact.cleanupIntervalMs": "产物超期清理任务间隔(ms，≤0=暂停)",
     "eval.autoIntervalMs": "检索评估自动体检周期(ms，≤0=暂停)",
     "eval.judgeEnabled": "自动体检的模型评判开关(默认关，避免评估集大时产生模型费用)",
+    "dashboard.alertIntervalMs": "看板阈值告警检查周期(ms，≤0=暂停)",
+    "dashboard.noHitAlertRate": "近 7 天无命中率告警阈值(%)",
+    "dashboard.likeAlertRate": "近 7 天反馈满意率告警阈值(%)",
+    "dashboard.weeklyReportIntervalMs": "看板周报周期(ms，≤0=暂停)",
     "cleanup.sessionCleanupIntervalMs": "过期会话/消息物理清理任务间隔(ms，≤0=暂停)",
     "cleanup.sessionRetentionDays": "会话保留天数(即软删后的撤销窗口天数)",
     "config.reloadIntervalMs": "多副本配置同步兜底间隔（毫秒）；≤0=暂停",

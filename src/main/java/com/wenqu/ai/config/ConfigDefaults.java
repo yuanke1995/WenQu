@@ -132,6 +132,17 @@ public final class ConfigDefaults {
     public static final int OPS_CHECKUP_INTERVAL_MS = 3_600_000;
     /** ops.checkupRetentionDays：巡检报告保留天数（0 = 永久保留） */
     public static final int OPS_CHECKUP_RETENTION_DAYS = 90;
+
+    // ---- 数据看板（阈值告警 / 周报） ----
+
+    /** dashboard.alertIntervalMs：看板阈值告警检查间隔（默认 6 小时；≤0 = 暂停） */
+    public static final int DASHBOARD_ALERT_INTERVAL_MS = 21_600_000;
+    /** dashboard.noHitAlertRate：近 7 天无命中率告警阈值（%） */
+    public static final int DASHBOARD_NO_HIT_ALERT_RATE = 15;
+    /** dashboard.likeAlertRate：近 7 天反馈满意率告警阈值（%） */
+    public static final int DASHBOARD_LIKE_ALERT_RATE = 80;
+    /** dashboard.weeklyReportIntervalMs：周报检查间隔（默认每天检查；实际只在周一发送；≤0 = 暂停） */
+    public static final int DASHBOARD_WEEKLY_INTERVAL_MS = 86_400_000;
     /** ops.checkupAlertEnabled：巡检出现 fail 时是否给管理员发站内通知 */
     public static final boolean OPS_CHECKUP_ALERT_ENABLED = true;
 

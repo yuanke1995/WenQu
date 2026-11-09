@@ -32,6 +32,7 @@ import com.wenqu.ai.security.Permission;
 public class TraceController {
 
     private final TraceService traceService;
+    private final com.wenqu.ai.service.DashboardService dashboardService;
 
     @Operation(summary = "执行列表", description = "kind=chat 对话 / workflow 工作流（两类各自分页）。"
             + "筛选：keyword 关键词、hasCitation 有无引用（对话）、rating 评分 1/0（对话）、days 最近 N 天（0=不限）、agentId 智能体")
@@ -97,10 +98,19 @@ public class TraceController {
         return ResultJson.ok(traceService.sampleDaily());
     }
 
-    @Operation(summary = "采样池概览", description = "各状态计数 + 最近入池时间（看板小卡数据源）")
+    @Operation(summary = "采样池概览", description = "各状态计数 + 最近入池时间（看板小卡与漏斗数据源）")
     @Permission("trace:read")
     @GetMapping("/stats")
     public ResultJson stats() {
         return ResultJson.ok(traceService.stats());
+    }
+
+    @Operation(summary = "执行记录指标条",
+            description = "按最近 N 天聚合：总执行 / 成功率 / P95 耗时 / 无引用占比，以及每日趋势（对话量、工作流量、成功率）")
+    @Permission("trace:read")
+    @GetMapping("/overview")
+    public ResultJson overview(
+            @RequestParam(value = "days", defaultValue = "7") Integer days) {
+        return ResultJson.ok(dashboardService.traceOverview(days));
     }
 }

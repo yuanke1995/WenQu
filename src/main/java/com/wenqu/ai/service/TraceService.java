@@ -304,6 +304,7 @@ public class TraceService {
         for (TraceSample t : pg.getRecords()) {
             Map<String, Object> r = new LinkedHashMap<>();
             r.put("id", t.getId());
+            r.put("qaLogId", t.getQaLogId());
             r.put("source", t.getSource());
             r.put("status", t.getStatus());
             r.put("note", t.getNote());
@@ -356,7 +357,7 @@ public class TraceService {
         return Map.of("dismissed", true);
     }
 
-    /** 池子概览（看板小卡）：各状态计数 + 最近入池时间 */
+    /** 池子概览（看板小卡）：各状态计数 + 最近入池时间 + 已进入体检的样本数 */
     public Map<String, Object> stats() {
         Map<String, Object> out = new LinkedHashMap<>();
         for (String st : List.of("pending", "labeled", "dismissed")) {
@@ -366,7 +367,28 @@ public class TraceService {
         TraceSample latest = sampleMapper.selectOne(new LambdaQueryWrapper<TraceSample>()
                 .orderByDesc(TraceSample::getCreatedAt).last("LIMIT 1"));
         out.put("lastSampledAt", latest == null ? null : latest.getCreatedAt());
+        out.put("inCheckup", inCheckupCount());
         return out;
+    }
+
+    /**
+     * 漏斗最后一格「已进入体检对比」：回流的样本在最近一次体检跑之前就已标注，
+     * 才算真正参与了这一轮对比（之后标注的只会等下一轮）。没有体检报告时为 0，如实展示。
+     */
+    private long inCheckupCount() {
+        try {
+            Map<String, Object> report = evalService.lastAutoReport();
+            Object runTime = report == null ? null : report.get("runTime");
+            if (runTime == null) return 0;
+            LocalDateTime at = LocalDateTime.parse(String.valueOf(runTime),
+                    java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+            return sampleMapper.selectCount(new LambdaQueryWrapper<TraceSample>()
+                    .eq(TraceSample::getStatus, "labeled")
+                    .le(TraceSample::getLabeledAt, at));
+        } catch (Exception e) {
+            log.debug("[TRACE] 统计已参与体检样本失败: {}", e.getMessage());
+            return 0;
+        }
     }
 
     // --------------------------------------------------------------------------------------------------

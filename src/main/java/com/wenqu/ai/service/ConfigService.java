@@ -943,6 +943,11 @@ public class ConfigService {
         d.put("trace.turnIdBackfill", "false");             // 一次性补账开关：默认关（开着等于每次重启都扫一遍历史消息）
         d.put("trace.sampleRandomDaily", "20");            // 每日随机采样条数（温和策略；0=不采）
         d.put("trace.sampleNoHitDaily", "10");             // 每日无引用采样条数（0=不采）；差评恒为必采
+        // 数据看板（P2）：阈值告警与周报（ScheduleCenter 读间隔；≤0=暂停）
+        d.put("dashboard.alertIntervalMs", String.valueOf(ConfigDefaults.DASHBOARD_ALERT_INTERVAL_MS));
+        d.put("dashboard.noHitAlertRate", String.valueOf(ConfigDefaults.DASHBOARD_NO_HIT_ALERT_RATE));
+        d.put("dashboard.likeAlertRate", String.valueOf(ConfigDefaults.DASHBOARD_LIKE_ALERT_RATE));
+        d.put("dashboard.weeklyReportIntervalMs", String.valueOf(ConfigDefaults.DASHBOARD_WEEKLY_INTERVAL_MS));
         d.put("graphrag.expandTopK", "5");                 // 检索时图扩展并入的块数上限（0=不扩展）
         // 用户长期记忆（跨会话个性化）
         d.put("memory.enabled", "true");                   // 总开关：关掉后全平台问答不再自动提炼记忆（已沉淀的仍会注入）

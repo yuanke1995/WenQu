@@ -136,4 +136,8 @@ public class Notification {
     public static final String TYPE_TENANT_APPROVED = "tenant.approved";
     /** 用量配额/预算触顶（收件人为管理员；quota 为存量类型值，不改名以免历史行失联） */
     public static final String TYPE_USAGE_QUOTA = "quota";
+    /** 数据看板阈值告警（无命中率偏高 / 满意率偏低；收件人为管理员，按告警项去重） */
+    public static final String TYPE_DASHBOARD_ALERT = "dashboard.alert";
+    /** 数据看板周报（每周一份质量 + 待办摘要；收件人为管理员） */
+    public static final String TYPE_DASHBOARD_WEEKLY = "dashboard.weekly";
 }

@@ -42,7 +42,10 @@ export const NOTIF_ICONS = {
   // 租户开通：申请要处理、已开通是回执
   'tenant.request': ExclamationCircleFilled,
   'tenant.approved': CheckCircleFilled,
-  'quota': ExclamationCircleFilled
+  'quota': ExclamationCircleFilled,
+  // 数据看板：阈值告警要人看，周报是定期回执
+  'dashboard.alert': ExclamationCircleFilled,
+  'dashboard.weekly': CheckCircleFilled
 }
 const NOTIF_TONES = {
   'parse.done': 'ok',
@@ -69,7 +72,9 @@ const NOTIF_TONES = {
   'model.quota': 'warn',
   'tenant.request': 'warn',
   'tenant.approved': 'ok',
-  'quota': 'warn'
+  'quota': 'warn',
+  'dashboard.alert': 'warn',
+  'dashboard.weekly': 'ok'
 }
 export const notifIcon = t => NOTIF_ICONS[t] || BellOutlined
 export const notifClass = t => NOTIF_TONES[t] || ''
@@ -104,7 +109,9 @@ export const NOTIF_LABELS = {
   // 租户两类拆开：申请要处理，已开通只是回执
   'tenant.request': '租户开通申请',
   'tenant.approved': '租户已开通',
-  'quota': '用量配额触顶'
+  'quota': '用量配额触顶',
+  'dashboard.alert': '看板预警',
+  'dashboard.weekly': '看板周报'
 }
 export const notifLabel = t => NOTIF_LABELS[t] || t
 
@@ -127,12 +134,12 @@ export const NOTIF_BUCKETS = {
     tone: 'err',
     types: ['parse.failed', 'parse.batch.failed', 'workflow.failed', 'workflow.timeout',
             'web.refresh.failed', 'schedule.failed', 'eval.decline', 'chat.turn.failed',
-            'goal.failed', 'ops.alert']
+            'goal.failed', 'ops.alert', 'dashboard.alert']
   },
   done: {
     label: '完成',
     tone: 'ok',
-    types: ['parse.done', 'schedule.done', 'chat.turn.done', 'goal.achieved', 'tenant.approved']
+    types: ['parse.done', 'schedule.done', 'chat.turn.done', 'goal.achieved', 'tenant.approved', 'dashboard.weekly']
   }
 }
 export const NOTIF_BUCKET_ORDER = ['action', 'alert', 'done']
@@ -195,6 +202,7 @@ export function notifTarget (n, { mobile = false } = {}) {
   if (n.refType === 'session' && n.refId) return { path: chatPath, query: { sid: n.refId } }
   if (n.refType === 'provider' && n.refId) return { path: '/agents', query: { tab: 'providers' } }
   if (n.refType === 'ops') return '/security'
+  if (n.refType === 'dashboard') return { path: '/dashboard', query: { tab: 'overview' } }
   if (n.type === 'tenant.request') {
     return { path: '/tenants', query: { tab: 'requests' } }
   }
