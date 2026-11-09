@@ -1,0 +1,380 @@
+# 问渠问答事件模型与引擎拆分清单
+
+> 状态：P0–P5 本地已落地并全量回归通过（2026-11-06，120 条单测 / 15 份真跑夹具 / 桌面+移动端+存量行 DOM）；验收还剩 5 项，全部需要现网授权（部署新 jar + 跑真轮）；P6 退役未启动
+> 日期：2026-11-06
+> 来源标记：`[业务确认]` 已有明确业务口径；`[我的建议]` 本次设计建议；`[平台先例]` 复用仓库已有机制；`[待验证]` 需真机或契约测试确认
+
+## 0. 结论
+
+现有分层没有整体推倒的必要：`ChatEngine` 接缝、`RunChannel`、`ChatRunBus` 的序号/快照/断线接流都可以继续用。真正要改的是两件事：
+
+1. **把“显示语义”从输出末端挪到单一写入口**：正文/过程/思考/工具/产物/插话由服务端在事件发生时就定好，前端不再用“末尾连续正文”反推答案。
+2. **把 5180 行的 `AgentscopeChatEngine` 按轮次生命周期拆开**：提示词组装、会话接续、跟随循环、人在回路、收尾落库各自成类，先拆接缝再谈拆类。
+
+本稿先给事件模型，再给可勾选的拆分清单。
+
+---
+
+## 1. 现状锚点
+
+| 现象 | 当前机制 | 结构原因 | 证据 |
+|---|---|---|---|
+| 正文/过程反复回归 | 落库 `timeline` 存字符区间与并行数组下标；前端 `turnAnswerRange` 取“末尾连续正文”当答案 | 答案边界不是事件事实，是渲染层推断 | `web/src/chat/projections.js:879`、`AgentscopeChatEngine.java:2553` |
+| 刷新后工具卡沉底/错位 | `timeline` 的 text 区间指向 `content`，tool/artifact 段指向并行数组下标 | 三份并行数组靠下标对齐，任何一份变化都会错位 | `Message.java:69`、`restoreTimeline` `projections.js:842` |
+| 引用自检改正文后时间线作废 | `timelineJson` 用 `body.startsWith(answerText)` 判断；不成立就丢掉所有 text 段 | 文本被整体替换，区间失效；只能整段丢弃 | `AgentscopeChatEngine.java:2588` |
+| 过程独白刷新后不可见 | `process_text` 落库了，但服务端 `timeline` 从未写过 process 段（只有 text/think/tool/steer） | 过程没有成为时间线的一等段，历史渲染没有可依据的区间 | `AgentscopeChatEngine.java` 仅 4 处 `timeline.add`，无 process/artifact |
+| 95 B 空壳产物 | 产物在 `presentArtifact` 出口做文案校验，属于交付前最后一道 | 产物不是事件流里的一等对象，没有在“产生时”定型 | 提交 `16f27413`；`ArtifactService` |
+| 终态标注靠字面量匹配 | 前端抄了 `STOP_SUFFIX`/`BUDGET_SUFFIX` 等整串文案，`endsWith` 判断终态 | 终态不是结构化事件，是正文尾部的一段文本 | `projections.js:742-757` |
+| 分享页与主对话不一致 | 分享页 `mapHistory` 丢掉 `timeline/processText/thinking/toolCalls`，只取末尾正文 | 没有共享的显示投影，只有各端各写一套 | `ShareChatPage.vue:240`、`ChatThread.vue:99` |
+| 工作流轮与主引擎终态不一致 | `ChatflowBridge` 自己拼 done、自己落库，无 timeline/toolCalls/artifacts | 终态载荷没有单一构造点 | `ChatflowBridge.java:137-190` |
+| 改一个字段要加一层重载 | `SessionService.appendMessage` 十几层链式重载 | 消息写入没有参数对象 | `SessionService.java:1137-1300` |
+
+结论：问题不在“用了 SSE”或“用了中间件”，而在**显示状态有多个事实来源**，且**答案边界由渲染层推断**。
+
+---
+
+## 2. 事件模型
+
+### 2.1 三层，单一写入口
+
+```
+AgentScope SessionLog
+  │  drain/translate（已有）
+  ▼
+TurnTranscriptRecorder（新增，本轮唯一写入口）
+  ├─ 事件层：沿用 RunEvent/RunEventType，SSE 事件名与信封不变
+  ├─ 投影层：blocks（有序、自包含、无偏移/下标）
+  └─ 轮次层：round.finished（内部事件，不上 SSE）
+        │
+        ├─ 实时：RunChannel → ChatRunBus（seq/快照/断线接流，已有）
+        ├─ 落库：c_ai_message.blocks + 旧列双写
+        └─ 审计：c_ai_session_event（结构性事件，已有）
+```
+
+三条硬边界：
+
+- **只有 `TurnTranscriptRecorder` 能决定显示归属**（answer / narration / process / think / tool / artifact / steer / notice）。
+- **只有它能分配和改写 blocks**；引擎、解析器、工作流桥接层只能提交语义事件。
+- **前端只消费 blocks**；没有 blocks 的存量消息才走旧 timeline 兜底。
+
+`[我的建议]` 不新建第二套事件总线。`ChatRunBus` 已经有轮内 `seq`、快照、镜像和跨副本扇出，直接复用。`[平台先例]`
+
+### 2.2 事件信封
+
+保持现有信封不变，避免断前端契约：
+
+```json
+{"type":"token","content":"...","sessionId":"...","seq":123,"pos":4567}
+```
+
+约定：
+
+- `type`：沿用 `RunEventType` 的 31 个 SSE 事件名，不改名、不删名。`[平台先例]`
+- `content`：按事件类型定义载荷 schema（见 2.3），不再出现“有时是纯文本、有时是 JSON 串、有时是转义后的 JSON”这种隐式约定。
+- `seq`：由 `ChatRunBus.bump` 分配，作为断线接流与去重游标。`[平台先例]`
+- `pos`：仅 token/process 这类逐字增量需要绝对下标；blocks 落地后，新客户端可以不再依赖它。
+
+内部事件（`round.finished`、`message.replaced`）不进入 `RunEventType`，只进 `TurnTranscriptRecorder`，避免破坏“枚举 ↔ api.js ↔ SSE 三处对账”。
+
+### 2.3 事件词汇与载荷
+
+下表只列会影响显示的事件；goal/todo/usage 等状态型事件保持现状。
+
+| SSE 事件 | 语义 | content schema | 进入 blocks |
+|---|---|---|---|
+| `turn_start` | 本轮起表 | `{startedAt,prepMs,userMessageId,agentId,model}` | 否 |
+| `token` | 正文增量 | `{round,text}` 或纯文本 | `text`（channel 待轮末判定） |
+| `thinking` | 思考增量 | `{round,text}` | `think` |
+| `thinking_done` | 本段思考收尾 | `{round,text}` | `think` 收尾 |
+| `process` | 过程独白增量 | `{round,text}` | `process` |
+| `tool_status` | 工具起止 | `{callId,name,displayName,status,startedAtMs,elapsedMs,waitedMs,args,result?,error?,subChat?}` | `tool` |
+| `tool_output` | 工具输出增量 | `{callId,chunk}` | `tool.result` 增量 |
+| `artifact` | 产物交付 | `{artifactId,url,filename,size,description}` | `artifact` |
+| `steer` | 插话被模型听到 | `{messageId,text,round}` | `steer` |
+| `warn` / `error` | 警示/失败 | `{code,message,phase?}` | `notice` |
+| `plan` / `plan_delta` / `plan_approval` / `plan_cancelled` / `plan_superseded` | 计划卡 | 保持现状（整份/增量/裁决） | 否（消息级 `plan` 列） |
+| `approval_required` / `ask_user` | 人在回路 | 保持现状 | 否 |
+| `retrieved` / `usage` / `compact_state` | 状态型 | 保持现状 | 否（消息级列/镜像是状态） |
+| `image` | 配图清单 | 保持现状 | 否（消息级 `images`） |
+| `agent_delegated` / `agent_consulted` / `subagent_step` / `runcode_progress` | 编排/子代理 | 保持现状 | 否（工具卡可带 subChat） |
+| `turn_start` / `snapshot` / `done` | 生命周期 | 见 2.6 | 否 |
+
+内部事件：
+
+| 内部事件 | 触发点 | 作用 |
+|---|---|---|
+| `round.finished` | 框架 `message/assistant` 或 `turn/output` | `{round,hasToolCalls,toolCallIds,finishReason}`，用于判定答案边界 |
+| `message.replaced` | 引用自检/完整性替换 | `{scope:"answer",text}`，直接替换 answer block，不再让区间失效 |
+
+`[待验证]` `message/assistant` 是否严格按“一次模型回复一轮”落日志。已从 `agentscope-core-2.1.0-BETA1` 字节码确认 `SessionRecorder.observe` 对每条 assistant `Msg` 记 `message/assistant`，`turn/output` 携带 `resultJson`；仍需真机用一轮“工具→正文”验证轮号与 `hasToolCalls` 对齐。
+
+### 2.4 显示块 blocks
+
+持久化形态，替换 `timeline` 的偏移/下标模型：
+
+```json
+{
+  "v": 1,
+  "turnId": "t_...",
+  "answerFromRound": 3,
+  "blocks": [
+    {"id":"b1","kind":"think","round":1,"text":"..."},
+    {"id":"b2","kind":"text","round":1,"channel":"narration","text":"我先查一下资料。"},
+    {"id":"b3","kind":"tool","callId":"call_1","name":"search_knowledge","displayName":"检索知识库","status":"done","startedAtMs":1730000000000,"elapsedMs":812,"waitedMs":0,"args":{"query":"..."},"result":"..."},
+    {"id":"b4","kind":"process","round":1,"text":"..."},
+    {"id":"b5","kind":"artifact","artifactId":"a_1","url":"/files/...","filename":"index.html","size":12034,"description":"..."},
+    {"id":"b6","kind":"steer","messageId":"m_...","text":"顺便看一下旧版","round":2},
+    {"id":"b7","kind":"text","round":3,"channel":"answer","text":"最终回答……"},
+    {"id":"b8","kind":"notice","tone":"stopped","text":"已停止本轮，以上为已生成的部分"}
+  ]
+}
+```
+
+块类型：
+
+| kind | 关键字段 | 说明 |
+|---|---|---|
+| `text` | `round,channel(answer\|narration),text` | 正文自包含，不再存 `from/to` |
+| `think` | `round,text` | 深度思考 |
+| `process` | `round,text` | `<process>` 过程独白 |
+| `tool` | `callId,name,status,args,result/error,startedAtMs,elapsedMs,waitedMs` | 工具卡，按 `callId` 更新，不按下标 |
+| `artifact` | `artifactId,url,filename,size,description` | 通过校验后才允许入块 |
+| `steer` | `messageId,text,round` | 插话留痕，位置即“模型听到”的位置 |
+| `notice` | `tone,text` | 停止/截断/预算/空转/压缩等终态提示，替代正文尾标。**双写窗口内先并存**：尾标仍写进 `content`（旧客户端只读正文），notice 作为结构化原因随 blocks 落库；P6 停写尾标时前端改渲染这一块，不再 `endsWith` 整串文案 |
+
+设计点：
+
+- **无偏移**：引用自检改正文时替换 `text.text` 即可，不再丢段。`[我的建议]`
+- **无并行数组下标**：工具/产物块自带完整对象，`toolCalls`/`artifacts` 旧列由 blocks 反推。`[我的建议]`
+- **顺序即数组顺序**：工具、产物、插话按首次出现顺序插入；工具终态原地更新，不移动位置。`[我的建议]`
+- **notice 结构化**：前端不再抄 `STOP_SUFFIX` 等整串文案做 `endsWith`。`[我的建议]`
+
+### 2.5 答案边界规则
+
+服务端在 `round.finished` 上一次性判定，规则与 DSH 的“最后一轮无工具回复才是答案”对齐：
+
+1. 候选答案轮 = 最后一个 `hasToolCalls == false` 且正文非空的轮。
+2. 该轮所有 `text` 块记 `channel=answer`；其余轮记 `narration`。
+3. 没有候选轮（停在工具/思考/叫停）时，退回最后一个正文非空的轮，记 `answer`，同时补 `notice`。
+4. 用户停止、预算耗尽、空转终止、失败轮：仍按第 3 条保底，`notice.tone` 区分原因。
+5. 引用自检替换正文：只替换 answer 块的 `text`，不改边界。
+
+前端动作：
+
+- 答案 = 所有 `channel=answer` 的 text 块按序拼接。
+- 过程 = 其余块按序渲染；工具簇头文案可以继续在前端算（纯视觉分组），但**不得再改内容归属和顺序**。
+- 分享页 = 只取 answer 块 + notice，过程不对外；与主对话页同一投影。`[我的建议]`
+- 游客流/公开历史走 `TurnBlocks.answerOnly`：只外发 answer 文本块，工具入参、过程独白、思考不出公开面；公开历史的 `content` 也收敛为答案正文。`[我的建议]`
+
+### 2.6 落库与终态
+
+新增：
+
+- `c_ai_message.blocks` `MEDIUMTEXT`：上面的 JSON。`[我的建议]`
+- `done` 载荷新增 `blocks`（与 `finalContent` 同源）；`snapshot` 新增 `blocks`；历史接口原样返回。`[我的建议]`
+
+保留一个发布周期的双写：
+
+| 旧列 | 新来源 | 兼容策略 |
+|---|---|---|
+| `content` | 所有 text 块（含 narration） | 继续写，旧客户端与旧分享页用 |
+| `thinking` | think 块拼接 | 继续写 |
+| `process_text` | process 块拼接 | 继续写 |
+| `timeline` | 由 blocks 机械反推的旧区间/下标 | 继续写，仅旧客户端读 |
+| `tool_calls` | tool 块映射 | 继续写 |
+| `artifacts` | artifact 块映射 | 继续写 |
+| `warn_msg` / `fail_msg` | notice 块 | 继续写 |
+| `related` / `sources` / `tokens` / `plan` / `changes` | 状态型字段 | 不动 |
+
+存量消息**不回填 blocks**。没有 blocks 的行继续走现有 `timeline` 兜底；保留到会话保留期自然淘汰。`[我的建议]`
+
+### 2.7 明确不做
+
+- 不存 token/thinking 的逐字增量到数据库；增量仍只走 SSE。`[平台先例]`
+- 不改 SSE 事件名与信封，不在这一轮重构里动前端契约。`[我的建议]`
+- 不新建事件总线，不替换 AgentScope SessionLog/Redis 状态。
+- 不让 `ChatflowBridge` 继续自己拼 done；工作流轮也必须走同一 `TurnTranscriptRecorder` 与同一终态构造点。
+- 不在这一轮改分享页“只展示答案”的产品口径，只换数据来源。`[业务确认]`（现状口径保持）
+
+---
+
+## 3. 拆分清单
+
+### 3.1 目标模块
+
+```
+agentx/
+  AgentscopeChatEngine        编排入口（目标 < 900 行）
+  turn/
+    TurnTranscriptRecorder    事件 → blocks / 答案边界 / 快照 / 旧列投影
+    TurnPromptAssembler       系统提示词 / 用户上下文 / @ 引用 / 技能 / 图片
+    TurnPersistence           blocks + 旧列落库；消息写入参数对象
+    TurnCloseout              用量、产物结算、终态载荷、QA 日志、通道收尾
+    TurnFollowLoop            drain / 镜像 / 预算 / 空转 / 人在回路等待
+    TurnSessionGateway        框架会话开轮/接续/恢复/待办/任务
+    InteractionCoordinator    计划、审批、提问三张卡的状态机与超时
+  output/
+    ModelOutputParser         <related>/<process> 流式解析，输出语义增量
+  util/
+    TurnBlocks                分享视图裁剪：只留 answer 文本块
+```
+
+依赖方向：`AgentscopeChatEngine → turn/*`；`turn/* → output/*`；`TurnCloseout → TurnPersistence → TurnTranscriptRecorder`。不允许反向依赖，不允许 `output` 碰 SSE 或数据库。
+
+### 3.2 逐项清单
+
+完成度按“可验收的实现”计，当前全部为 0%；设计稿完成度 100%。
+
+| # | 项 | 方式 | 依赖 | 风险 | 完整度 | 验收 |
+|---|---|---|---|---|---|---|
+| A0 | 事件契约与夹具 | 冻结 31 个 SSE 名与载荷 schema；录 10 轮真实事件序列做 golden fixture（含工具、过程、引用替换、停止、工作流） | 无 | 低 | 65%：事件名三处对账已落（枚举 ↔ `api.js` ↔ 服务端字面量）；真实夹具待采集 | `RunEventType` ↔ `api.js` ↔ 服务端 `sendSseEvent` 字面量对账测试通过；fixture 可重放 |
+| A | `ModelOutputParser` | 已抽到 `agentx/output`：保留扣留逻辑，`feed/finish` 返回 `{text,process}` 增量；引擎只在 text 分支消费 Delta，不再轮询累计长度；无生产消费者的 `body()` 已删除 | A0 | 低 | 100% | 10 条基线用例通过（含逐字符喂入、跨块标签、DSML、文档块） |
+| B | `TurnTranscriptRecorder` | 已新增 `agentx/turn`：正文/思考/过程/工具/插话/产物成块；工具按条目身份原地更新；答案按轮次切分、无候选退回末尾正文；最终正文与流不一致时保留工具块、只替换正文块 | A0 | 中 | 90%：投影、落库、done/snapshot 曝光已接 | 15 条投影用例通过；双写等价与快照重建待真机 |
+| C | 答案边界 | 已消费框架 `message/assistant`/`turn/output`：按 `hasToolCalls` 切轮，最后一条无工具轮为答案；Session Log 的 Map/String 载荷与内存 Msg 三种形状都认；无候选轮退回末尾正文 | B | 中 | 90%：规则与单测已落；真机轮次分布待验 | 工具→正文、纯正文、停在工具、叫停、引用替换五类用例答案归属正确 |
+| D | `TurnPersistence` | 已用 `MessageWrite` 替换 14 层 `appendMessage` 重载：7 个调用点全部收敛，blocks 随 INSERT 原子落库，Redis 降级与 backfill 同步映射 | B | 中 | 90%：单写口与字段映射已核；真机落库行对比待 E2E | 全部调用点收敛到一处；落库行逐字段对比通过 |
+| J | 前端切 blocks | `blocks.js` 纯投影：有 `blocks` 走 blocks，无则旧 timeline；答案直接消费服务端 answer 通道，`turnAnswerText/turnProcessRows` 已按 channel 分流 | C | 中 | 90%：构建与纯函数用例通过；浏览器 E2E 待真机 | 主对话/分享/移动端三端一致；实时流不回归 |
+| E | `TurnCloseout` | 已抽出 `TurnDonePayload`：主链路与工作流分支的 done 都由这一处构造（`extras` 只挂分支独有键 workflowRun/委派归属）；工作流补齐 `turnWallMs/elapsedMs/prepMs/model/thinking`，并同步写进落库 `tokens` | C,D | 中高 | 90%：两处共用已收口，5 条载荷用例通过；产物/变更结算仍在引擎收尾段 | done 键位与旧版一致；停止/失败/预算/空转四类终态通过 |
+| F | `InteractionCoordinator` | 已抽出 `TurnInteractionCoordinator`：卡类型、三档预算、等待累计、超时决策、超时文案、计划裁决与弃卡终态；等待台账的 begin/end I/O 与弃卡发帧循环留在引擎（那是通道与框架 respond，不是决策） | B | 高 | 100%（本地口径）：状态机纯策略 6 条用例 + 真跑五类——提问作答、提问超时未作答、计划批准/拒绝/取代、**工具审批（同轮两次=第二次确认）**、**审批超时**（warn + `notice#timeout` + 工具卡 error） | 批准、拒绝、超时、第二次确认、计划取代五类场景通过 |
+| G | `TurnSessionGateway` | 已包住任务定位、恢复中断会话、遗留轮归档、积压作废与空转复查守卫；`openForContinuation` 的整轮装配经核**决定留在引擎**（见 3.4 末行） | B | 高 | 70%：接续/恢复的判据已收口 3 条用例；装配按决策不再搬 | 断线重连、后台续跑、恢复中断轮通过 |
+| H | `TurnFollowLoop` | 已抽出 while 主循环骨架：顺序、状态迁移与退出判定在 `run(RunContext, Hooks)`，全部 I/O 由引擎 `FollowHooks` 注入；搬移中改正空转判据的反转 | F,G | 很高 | 85%：主循环与 afterSettled 已落，17 条用例；真机 E2E 与降到 900 行未达 | 现网 E2E 全量回归；引擎入口降到 900 行以内 |
+| I | `TurnPromptAssembler` | 已抽出提示词/上下文装配：附件、@ 引用、# 历史引用、指定技能、多模态消息；代码原样搬迁 | A0 | 低中 | 80%：装配已搬出，3 条纯逻辑用例；逐字 prompt 快照待真机 | 改造前后 system/user prompt 快照逐字相等 |
+| J | 前端切 blocks | `useChatEngine` 历史映射：有 `blocks` 走 blocks，无则旧 timeline；答案/过程按 2.5 渲染 | C | 中 | 0% | 主对话/分享/移动端三端一致；实时流不回归 |
+| K | 工作流轮对齐 | `ChatflowBridge` 产出单 answer block + 同构 done；无过程块 | J | 低 | 100%：落库与 done 已接 | 工作流问答历史/分享与主链路同形 |
+| M | 分享视图裁剪 | `TurnBlocks`：游客 done/snapshot/publicHistory 只外发 answer 文本块，公开历史 content 收敛为答案 | C | 低 | 100%：三处已接，5 条用例通过 | 游客拿不到工具入参/过程/思考；分享页显示答案 |
+| L | 旧机制退役 | 停止双写 `timeline`/`process_text`；删除前端 `turnAnswerRange` 等推断；保留旧行兜底到保留期 | J,K | 低 | 0% | 新消息无旧列仍可完整渲染；旧消息不回归 |
+
+### 3.3 实施顺序
+
+| 阶段 | 内容 | 可独立上线 | 完成度 |
+|---|---|---|---|
+| P0 | A0 契约 + 夹具 | 是 | 65%（事件名三处对账已落，反向验过有牙；真实夹具待采集） |
+| P1 | A 解析器 | 是 | 100%（10 条用例通过） |
+| P2 | B 记录器 + 双写 | 是（不改前端） | 70%（投影与落库已接，done/snapshot 曝光待 P3） |
+| P3 | C 答案边界 + J 前端切换 | 是（按 blocks 存在性灰度） | 90%（轮次规则、显式 channel、三种载荷形状已落；真机 E2E 待补） |
+| P4 | D 持久化 + E 收尾 + K 工作流 | 是 | 90%（D/K/M 已落；E 主链路与工作流 done 已共用一处构造） |
+| P5 | F/G/H/I 引擎拆类 | 分步，每步独立回归 | 80%（F/G/H/I 的判据与 while 主循环骨架已落；开轮整轮装配与弃卡发帧循环按 3.4 决策留在引擎，入口行数远未达 900 行目标） |
+| P6 | L 旧机制退役 | 依赖前两阶段稳定 | 0% |
+
+当前落地（2026-11-06）：
+
+- `[x]` `RunEventContractTest`：三条对账 —— 枚举 ↔ `web/src/api.js` 事件表、枚举名唯一且小写下划线、服务端字面量发帧名必须来自枚举（3 条通过；把 `turn_start` 改成假名后确实判红）。
+- `[x]` P1：`RelatedStreamFilter` → `agentx/output/ModelOutputParser`，引擎改为消费 `{text,process}` 增量；`ModelOutputParserTest` 10 条通过。
+- `[x]` P2：`agentx/turn/TurnTranscriptRecorder`，正文/思考/过程/工具/插话/产物成块；`c_ai_message.blocks` 列、启动迁移、历史映射与收尾双写已接；15 条投影用例通过。
+- `[x]` P3 后端：`done`/`snapshot` 下发 blocks；前端 `blocks.js` 纯投影接入历史、done、snapshot、分享页；`npm run build` 与纯函数用例通过；快照与正文追加同锁，避免重复补段。
+- `[x]` P3 答案边界：按 `message/assistant`/`turn/output` 的 `hasToolCalls` 切轮，最后一条无工具轮为答案；Session Log 的 Map/String 与内存 Msg 三种载荷都认；无候选轮退回末尾正文；前端直接按 answer 通道分流。
+- `[x]` P4-D：`MessageWrite` 单写口；blocks 随消息 INSERT 原子落库；Redis 降级与 backfill 同步带 blocks 与旧列。
+- `[x]` P4-E：`TurnDonePayload` 收口 done 构造，工作流分支改为同一处（`extras` 只带 workflowRun/委派归属）。工作流此前既不发 `turn_start` 早帧、done 也没有 `turnWallMs/elapsedMs/prepMs`，落库 `tokens` 同样没有——症状是「秒表按本地钟跑着有数，答完那一刻服务端读数缺失、界面不报数，刷新后也没有」。现补早帧并把服务端墙钟同时写进 done 与 `tokens.turnWallMs/turnPrepMs`，现场与刷新读同一个数。5 条载荷用例通过。
+- `[x]` P5-F：`TurnInteractionCoordinator` 收口卡类型/三档预算/等待累计/超时决策/计划裁决/弃卡终态；6 条用例通过。
+- `[x]` P5-G：`TurnSessionGateway` 收口任务定位、恢复残留、遗留轮归档与积压作废；3 条守卫用例通过。
+- `[x]` P5-I：`TurnPromptAssembler` 搬出附件/@/#/技能/多模态装配；3 条纯逻辑用例通过；引擎 4880 行（仍远未到 900 行目标，见 3.4 决策）。
+- `[x]` P5-H：`TurnFollowLoop` 收口五个运行状态、游标/播报基准、预算/空转守卫、afterSettled（迟到待办/新任务/镜像复查）与 while 主循环骨架；引擎以 `FollowHooks` 注入全部 I/O，收尾状态一律回读 `loop.*`。搬移时抓到一处真实反转：空转判据把「未结算」当 `settled` 传入，导致 `stalled && !settled` 恒假、空转只能靠整轮预算兜底；已按原实现语义改正并补反向用例（恰好答完的那轮不记中断）。主循环 9 条 + 状态 4 条 + 结算 4 条通过。
+- `[x]` P4 切片：工作流轮落库与 done 产出单 answer block，与主链路同形；游客 done/snapshot/公开历史只外发 answer 块。
+- `[x]` P2 终态原因入块：中断轮（停止/等待超时/预算/空转）在 blocks 里补 `notice{tone,text}`，`toneOf` 与尾标共用同一判据顺序；前端适配器明确不重复拼尾标（node 实跑逐字符核对）。
+- `[x]` P2 体积对账：`TurnBlocksSizeTest` 用投影层同数据实测 blocks 与旧列之和的倍数（典型 1.066×、长轮 1.009×），并按「差额只由块数解释」立上限。
+- `[x]` 本地真跑回放：`scripts/loadtest/blocks-e2e.mjs`（配 `mock-gateway.mjs` + 8091 本地栈）跑四档默认 + 三档可选用例并逐案比对「SSE done 载荷 ↔ 落库行 ↔ `blocks.js` 重建 ↔ 免登录分享页」四份，夹具写 `fixtures/chat-events/<case>.json`。2026-11-06 实测默认四档 4/4 一致（budget 档另用长回答网关单独跑过 1/1）：`plain`（纯正文轮）、`ask`（askUser 挂起→作答→工具卡→答后正文轮）、`stop`（停止）、`budget`（预算截断，需长回答网关 + `BUDGET_MS`）、`resume`（第 3 个 token 处断流再接回）、`detach`（双路接流：停止后旁观收尾、发起者收 done）、`asktimeout`（提问卡没人答，60s 地板）、`artifact`（真调 `presentArtifact`：产物块/artifacts 列/分享裁剪）、`workflow`（现场建最小工作流并绑定智能体：done 形状与计时三处同源）、`plan`（计划卡批准，`PLAN_CASE=reject|supersede` 切换拒绝/继续对话）、`approval`（同轮两次工具审批，`APPROVAL_CASE=timeout` 切超时）。同时抓到三个真问题：停止与看门狗截断丢 done（已修）、mock 网关只认最后一条 user 消息里的 `[[ASK]]`（框架把 `<HARNESS_CONTEXT>` 放在最后，B 阶段的人在回路一直没真挂起，已修）、mock 的 askUser 入参还是旧的 `questions[]` 结构（按当前 schema 必被校验拒绝，已修）。
+
+验证：后端全量 **120** 条用例通过（本改造 80 条：契约 3 + 解析器 12 + 投影 18 + 体积 2 + 轮次判据 5 + 分享裁剪 6 + done 载荷 5 + 交互状态机 6 + 会话恢复守卫 3 + 提示词装配 3 + 跟随循环状态 4 + 结算复查 4 + 主循环 9）；`npm run build` 通过；离线回放门 24 份夹具（14 本地 mock + 7 现网脱敏 + 3 真模型轮，其中 6 份 events 与行同源）全一致；本地真跑 15 份夹具（plain/ask/stop/resume/budget/detach/stall/artifact/workflow/plan×3/approval×2/richtext）。
+本地遗留：`src/test` 里的 `GoalFlowTest` 写的是**租约驱动之前**的目标引擎口（`onTurnEnd`/`continueAfterTurn`/`MAX_GOAL_ROUNDS` 都已不存在，现口径是 `claimReady`/`runClaimed`/`onRoundSettled` + `GoalTurnDriver`），它让测试编译整体失败。按它重写目标用例属于目标模块的另一件事，不夹进本改造；跑全量时先 `mv` 走、跑完原样放回。
+- `[x]` 现网部署（2026-11-06 19:22）：jar 热替换 + 前端静态同版；启动日志 `[SchemaMigrator] 自动补列完成: c_ai_message.blocks = MEDIUMTEXT`；容器 healthy，`/ai/actuator/health` 与首页 200，重启后除一条百度统计坏 cookie 外无报错。回滚备份 `~/app.jar.bak.20261106-191921`、`~/web.bak.20261106-191921.tgz`。
+
+现网验收（jar 已部署、真轮已在跑）：
+
+- `[x]` 现网真模型页面渲染（2026-11-06 20:00，已登录现网域名）：真实会话里引用角标、图片（签名 URL）、
+  「已剔除 N 处与引用内容不匹配的引用标注」「搜索 4 个关键词，参考 5 段资料」、每轮用时条（21.5s/19.4s/58.2s）、
+  产物卡（`form.json`/`.md` 预览下载）、旁白与「接下来可以」都正常；分享页 390 只出答案+引用+产物、无工具卡/过程。
+  另有本地回放同版构建的桌面 1440/移动 390 证据（`chat-blocks-rollout.md` §3.3），线上 `index-BZCmEtda.js` 与本地 dist sha256 相同。
+- `[x]` 真实模型工作流轮（2026-11-06 20:10，本机真实供应商）：`MODEL_REF`/`FIXTURE_PREFIX` 跑 `CASES=workflow`，
+  `done.blocks` 恰 `text:answer`、`workflowRun.status=success`（4674ms）、`turnWallMs = tokens.turnWallMs = 4892`；
+  夹具 `realmodel-workflow.json` 的 **events 与落库行同源**（12 帧），脱敏后进离线门。
+- `[x]` 真实模型夹具（计划里的 10 轮已到）：`fixtures/` 7 份现网脱敏轮（含 23 块/9 工具/2 产物长轮、停止轮；其中 3 份 **events 与落库行同源**：检索轮 116 帧、产物轮 316 帧、纯答轮 41 帧）+ 3 份真模型轮（plain/stop/workflow，events 同源），共 24 份带 blocks 过离线门。
+- `[x]` 现网真轮采帧（2026-11-06 20:04/20:07，已登录页面内 fetch，token 不出浏览器）：纯答轮
+  `turn_start → turn_start → token×5 → usage → done`，`done.turnWallMs = tokens.turnWallMs = 1790`，恰一块 `text:answer`；
+  停止轮 `turn_start×2 → tool_status×4 → image×2 → retrieved×2 → token×80 → usage → retrieved → done`，
+  blocks 为 `tool, tool, text:answer, notice#stopped, text:answer`，`turnWallMs = 7816`，末段以 `⏹ 已停止本轮` 收尾，
+  落库行对账通过（1.10×）。两次一次性会话核对完即删。**P6 注意**：notice 位于尾标正文块之前，P6 之前不能把 notice 渲染上去，否则与尾标重复。
+  本地真模型另跑出工具轮（`tool_status`×16 + `retrieved`）与空转轮（`notice#stalled` + 叙述块）。
+- `[x]` 落库逐行对比（2026-11-06 19:35 现网真轮）：`scripts/loadtest/check-prod-rows.mjs` 把只读导出的行喂给 `applyBlocks`，六项判据全过——正文逐字符、工具卡键序无关、产物文件名、notice 枚举、answer 块边界（非空且全在最后一个工具块之后）、双写齐全；blocks 体积 1.02×。改造前后同一轮无法对比（旧版没有 blocks 列），可比的是「同一行 blocks ↔ 旧列」与「旧行无 blocks 走 timeline 兜底」（后者本地已验）。
+- `[x]` **提问卡超时没人答**（F 场景之一）本地验通（2026-11-06，8091 栈）：把 `chat.askTimeoutMs` 设到地板 60000 后跑 `[[ASK]]` 且不作答，整轮 64.5s 走完 `ask_user → warn「未作答继续」→ 工具卡收口 → 答后正文 → done`，落库有 blocks。两个坑记在这：① 该键**地板 60000ms**，压到 1.5s 会被配置接口以 `400 chat.askTimeoutMs 需 ≥ 60000` 拒掉；② 当时我的脚本没看 `success:false`，一路按「配置已生效」推断，才误判成「引擎叫不醒」——写配置一律要校验返回。
+- `[x]` 计划卡三条支路（2026-11-06 本地真跑，mock 连发 `plan_write → plan_exit`）：批准 → `done.planRecord.status=approved` + 版本链 1 版 + 正文继续；拒绝 → 流里 `plan_cancelled`、`done.planCancelled=true`、记录 `rejected`；继续对话 → `plan_superseded`、`done.planSuperseded=true`、记录 `superseded`、**正文为空**（被取代那一轮按设计留空）。三者的块形态都是 `tool, tool[, text]`。
+- `[x]` 工具审批（2026-11-06 本地真跑，靠 `webSearch.requireApproval` 这个唯一受控入口）：
+  - **第二次确认**：同轮连发两次 `webSearch`，两次 `approval_required` 各批一次 → 两张工具卡都 `done`，答后正文在；
+  - **审批超时**：把 `chat.approvalTimeoutMs` 压到地板 60s、不作答 → `warn「确认等待超时，本轮未继续执行该工具」` + `done.blocks` 里 `notice#timeout` + 工具卡 `status=error`。
+  - 注意：`write_file` 这类聊天档工具**不受** `toolApprovalMode=ask` 管辖（试过，直接执行），能触发审批卡的只有联网搜索这类「有副作用」工具。
+- `[ ]` P6 旧机制退役：上面几项过完、双写窗口跑满一个发布周期后再动。
+
+`[x]` 四项拍板写回本稿。
+
+### 3.5 代码收口审计（2026-11-06）
+
+改造完成后按「有没有悬空引用 / 有没有漏接的写入点」反过来查了一遍（不新增代码，只核对）：
+
+| 检查 | 方法 | 结果 |
+|---|---|---|
+| 已删类/方法残留 | 全仓 grep `RelatedStreamFilter` / `saveMessageBlocks` / `appendMessageWithTurn` | 0 命中 |
+| 消息写入单口 | grep `appendMessage(` | 1 处定义 + **7 个调用点**，全部 `MessageWrite.builder()` |
+| 双写是否同一次写 | 看助手落库那一次 `MessageWrite` | 同时 `.timeline(recording.timelineJson(...))` 与 `.blocks(blocksJson)` |
+| 实体/映射 | `Message.blocks` 字段 + `MessageMapper extends BaseMapper` | 自动映射，无 XML 覆盖；无 `exist=false` |
+| 落库四触点 | `SessionService` grep `blocks` | Redis 降级写入(1187)、MySQL 写入 + 2M 守卫(1240/1281)、历史接口解析成对象(2083)、降级补写回灌(2261) 四处都在 |
+| 前端接点 | grep `applyBlocks` | 历史映射、snapshot、done、分享页 4 处；`projections.js` 再导出保持旧 import 路径 |
+| 事件契约 | `RunEventContractTest`（3 条） | 枚举 ↔ api.js ↔ 服务端字面量发帧名三处对齐（假名反向验过会红） |
+| 回归 | `mvn test` + 真跑回放 | 120 条单测全绿；15 份夹具用例全过 |
+| 离线回放门 | `scripts/loadtest/check-fixtures.mjs` | 13 份带 blocks 的夹具：正文逐字符、工具卡（键序无关）、产物 filename、notice tone 四处一致；改坏一份会 exit 1（已反向验过） |
+
+结论：改造没有留下悬空引用；显示投影的写入只有一处、旧列与新列同一次写；四个落库触点和四个前端接点都接上了。
+
+原则：P0-P4 只改显示与落库，不改推理循环；P5 才动引擎结构。每一步都能单独回滚。
+
+### 3.4 风险与回滚
+
+| 风险 | 影响 | 处置 |
+|---|---|---|
+| `message/assistant` 轮次假设不成立 | 答案边界错误 | P0 先真机验证；不成立则退回 `turn/output` + 工具计数，规则不变 |
+| blocks JSON 撑大消息行 | 落库/查询变慢 | 双写期实测单行体积；文本总量与 `content+process_text` 同量级，不接受重复存全文 |
+| 新前端与旧消息混用 | 历史渲染分叉 | 以“行内是否有 blocks”分支，不靠配置开关；旧行走旧路径 |
+| 工作流轮没有过程数据 | 显示空过程 | 单 answer block + notice，不伪造过程 |
+| 引擎拆类引入并发/续跑回归 | 线上轮次丢失 | P5 每步单独回归；先拆纯函数（提示词/解析），最后拆循环 |
+| 把 `openForContinuation` 整轮装配搬进 `TurnSessionGateway` | 续跑/恢复断链，收益只是行数 | **不搬**（2026-11-06 决定）：那段装配要同时握模型解析、通道、引用池、把手、绑定、沙盒、`buildAgent`、三张档位闸与 Recording，搬过去等于造一个注入十几个服务的假门面，而 `TurnSessionGateway` 的价值恰恰是「只包住会话读写判据」。引擎入口降到 900 行是**另一件事**（装配与收尾本身要重做），不由本事件模型改造顺带完成 |
+
+---
+
+## 4. 验收清单
+
+- `[x]` 31 个 SSE 事件名三处对账通过：`RunEventType` ↔ `web/src/api.js` 的 `CHAT_EVENT_CB` 逐名相等，且服务端所有按字面量发帧的调用（`sendSseEvent`/`sendFrame`/`SseEmitter.event().name`）都用枚举里已有的名字（拼错即判红，已用假名反向验过）。
+- `[ ]` 10 轮 golden fixture 的 blocks、旧列、done 载荷全部通过。
+- `[x]` 工具→正文轮：答案只含最后一轮正文，前一轮正文进过程。`TurnTranscriptRecorderTest`「正文—工具—正文：最后一段正文是答案，前一段是过程」＋`AssistantRoundTest`「工具轮里的正文是过程，最后一条无工具轮才是答案」「无工具轮之后又有工具轮：答案区间只取那一段」；前端只消费 `channel`，不再自己反推。
+- `[x]` 引用自检替换正文：answer 块原地替换，timeline 不再整条作废。「正文被整体替换：旧正文块作废，工具块保留，最终正文接在末尾」「正文只追加后缀：保留原有分段，后缀单独成块」「整体替换正文：轮次区间失效，最终正文整体是答案」。
+- `[x]` 工具卡/产物卡在实时、刷新、分享、移动端位置一致（2026-11-06 本地）：`ask` 轮实时出提问卡与工具卡、`artifact` 轮产物卡在正文之后且签名链接可下载、刷新走同一条 `restoreTimeline`/`applyBlocks`、分享页不出工具卡（产物卡按旧列展示）、390px 移动端无横向溢出。
+  - `[x]` 数据面：`ask` 用例实测工具块与 `tool_calls` 列逐字段相等（键序无关比较），块序为「工具卡 → 答后正文」，分享页只剩答案文本；停止/预算两轮的正文块与 notice 序也对上。
+  - `[x]` 渲染面（桌面，2026-11-06 本地 5801 + 8091 + mock）：工具卡长在「过程簇」里（`已调用工具` 下 `向用户提问 / 压测提问`），正文是独立连续的 `.md.tl-answer`，位置在过程之后；耗时条悬浮明细把「准备 <1s、模型与工具 3.4s、等你答题 15.2s」拆开报。
+  - `[x]` 产物卡（桌面，2026-11-06）：mock 走 `[[ARTIFACT]]` 真调 `presentArtifact`，页面出现 `blocks-demo.html / 227 B / 预览 / 下载`，链接是带 `expire+sig` 的签名地址，直取回 **200 text/html 227B** 的完整文件（不是 95B 空壳）。blocks 序为 `tool, text, artifact`，`artifacts` 列与产物块 filename 一致。
+  - 说明：分享页也显示产物卡，但来源是公开历史里的 `artifacts` 字段（`{seq,filename,size,description}`，不含 url），不是 blocks——产物属交付物、不是过程，双写期继续走旧列；要收成「只有答案」是产品口径问题，不在本改造范围。
+  - `[x]` 移动端（2026-11-06，390×844 真渲染）：用 Playwright 缓存里的 Chromium 走 CDP 设视口，主对话与分享页 `innerWidth=scrollWidth=bodyWidth=390`（无横向滚动），正文/`⏹ 已停止本轮`/输入框都在；脚本 `scripts/mac/check-mobile-layout.mjs`（Node 20 `--experimental-websocket`，不装新依赖）。
+- `[x]` 95 B 产物场景：`presentArtifact` 在 `contentRejection` 非空时**直接 return**，`artifactService.write`（登记 `c_ai_artifact`）与 `publish("artifact", …)` 都在其后——所以被拒产物既没有产物行、也没有 `artifact` 事件，自然进不了 blocks 与消息行。校验本身 5 条用例覆盖（引用句/裸文件名/纯文本 HTML/正常 HTML/超长正文）。
+- `[x]` 叫停/预算/空转/失败：notice 块与终态原因正确，刷新后仍可见。
+  - `[x]` 数据面：中断那一轮的 blocks 里多一条 `{"kind":"notice","tone":stopped|budget|stalled|timeout|truncated,"text":…}`，随消息行落库、随 done/snapshot/历史下发；`toneOf` 与正文尾标同一判据顺序（stopped > budget > stalled > timeout > 截断兜底）。投影 18 条 + 裁剪 6 条用例覆盖。
+  - `[x]` 真跑面（2026-11-06 本地 8091 栈 + mock 网关）：`stop` / `budget` / `stall` 三条支路都实测到 **done 带 blocks**：`text, notice#stopped|budget|stalled, text`，落库/前端重建/分享三方逐字符一致。
+  - `[x]` 空转：mock 用同一把 `read_file` 同一入参连发，先触发重复调用闸（`检测到模型重复调用同一工具，已拦下这一步`），连续 5 次无新信息后引擎终止——warn + `notice#stalled` + 尾标 `⏹ 连续多步没有产生新信息…`，7 张工具卡全部保留。
+  - 说明：**失败轮（模型/上游报错）走的是 error 卡片，不产生 notice**——`toneOf` 的取值只有 stopped/budget/stalled/timeout/truncated；`§2.5` 第 4 条里「失败轮也补 notice」当前口径是「error 卡片承担终态」，若要统一需要单独决定。
+  - `[x]` 修掉一处真缺口：停止与看门狗截断原先都**当场 complete**，客户端一帧 done 都收不到（只有半截正文 + 一句 warn），blocks 要等刷新才看得见。现改为「发起者这一路留给引擎发完 done」——`ChatRunBus.finish(sessionId, keepOpen)` 只对发起者留缝、别的标签/设备照旧立刻收尾；引擎走不到收口时由 90s 兜底定时器关（中断是协作式的，在途模型调用要跑完，本地实测 16s，几秒的宽限根本等不到）。
+  - `[ ]` 渲染面（P6）：双写窗口内正文尾标继续写进 `content`，前端 `applyBlocks` 明确**不**把 notice 再拼一遍（实测重建出的 content 与列值逐字符相等），屏上看到的还是那句尾标；把渲染切到 notice、停写尾标属 P6。
+  - `[x]` 另一半（双路接流）也验过了：第二路走 `/chat/resume` 拿到带 blocks 的快照（`text/answer` 一块），点停止后 **914ms 内**被服务端关掉；发起者同一时刻还在，停止后 **145ms** 收到 `done`（带 `notice#stopped`）。即「旁观立刻收尾、发起者仍拿终态」两边都成立。
+- `[x]` 工作流轮：主对话、历史、分享与主链路同形（2026-11-06 本地真跑）：现场建一条 `start→llm→end` 最小工作流并发布、绑到智能体，跑一轮——done 键位与主链路一致（`finalContent…blocks/artifacts`）+ 自身 `workflowRun{workflowId,version,runId,status,durationMs}`；`blocks` 恰为一块 `text:answer`；`done.turnWallMs=2868` 与落库 `tokens.turnWallMs=2868` **逐毫秒相等**、`prepMs=238`；分享页只出文本块。
+- `[x]` 断线重连：快照 + blocks 能完整重建，无重复/缺口。
+  - `[x]` 数据面（本地真跑）：`resume` 用例在第 3 个 token 处主动断流，再走 `/chat/resume` 取快照——快照里 `blocks` 只有一块 `text`、按块重建出的正文 32 字是落库终稿（56 字）的**严格前缀**，没有重复补段也没有缺口；终稿与快照同源。
+  - `[x]` 桌面 DOM：断开后重连的会话在浏览器里能正常回显（会话列表点开即可，历史与 blocks 同源）；「接流瞬时帧」在 DOM 层的动画/滚动位置属于移动端那批未验项。
+  - `[ ]` 浏览器接流重放（快照帧按普通事件重放后的 DOM）仍属浏览器 E2E。
+- `[x]` 存量消息（`blocks IS NULL`）不回归（2026-11-06 本地真跑）：取一行 15:38 的旧助手消息（`timeline=[{kind:tool,i:0},{kind:text,0..40}]` + `tool_calls` 有 write_file），在浏览器打开——过程簇按旧 `timeline` 重建（「已调用工具 → 写入文件 → tier2-check.txt」），正文一段、只出现一次。走的是 `restoreTimeline` 兜底，没有因 blocks 改造丢掉旧数据。
+- `[x]` 思考/过程/正文/推荐块四路分流（2026-11-06 本地真跑，`richtext` 夹具）：mock 发 `reasoning_content` + `<process>…</process>` + 正文 + `<related>…</related>`——think 块 14 字、process 块**一块**、正文 `这是最终答案。`、`content` 列无标签、`related` 解析出两枚推荐。
+- `[x]` 修掉一处真 bug：**过程与正文挤在同一个 delta 时，引擎固定先发正文再发过程**，过程块被劈成两截（夹具里表现为 `process"正在" / text / process"核对引用编号。"`）。给 `ModelOutputParser.Delta` 加了 `processFirst`（按本 delta 内首次出现定序），引擎按它先发先到的那个；解析器补了 2 条顺序用例（过程在前 / 正文在前），全量 120 条通过。
+- `[x]` 单条消息 blocks 体积不超过 `content+thinking+process_text+tool_calls+artifacts` 之和的 1.1 倍：投影层同数据实测典型轮 13 块 6750B→7193B＝1.066×（每块包装 34B），长轮（20 次工具＋大正文）67261B→67877B＝1.009×；`TurnBlocksSizeTest` 两条守住 1.1× 并按块数封顶差额（出现第二份全文时按块数解释不住）。真机逐行体积对比仍待 P6 前的线上采样。
+
+## 5. 已拍板（2026-11-06）
+
+四项按建议默认值执行，不再作为开放选项：
+
+1. **blocks 存 `c_ai_message.blocks` 列**，不新建表。理由：与消息行原子写入、历史读取只读一行；查询需求由 `c_ai_session_event` 账本承担。
+2. **实时正文保持现状**：流中文本仍按正文显示，`done`/`snapshot` 下发 blocks 后按 answer/narration 重排；不在流中提前改归属。
+3. **分享页只展示答案与 notice**，不展示过程；数据源改为 answer 块，产品口径不变。
+4. **旧列双写一个发布周期**：`content`、`thinking`、`process_text`、`timeline`、`tool_calls`、`artifacts` 继续写，供旧客户端与存量消息兜底；下个周期再评估停写。
+
+对应改动点：2.6 的 `blocks` 列、2.5 的实时/收尾边界、2.5 的分享页口径、2.6 的双写表。
