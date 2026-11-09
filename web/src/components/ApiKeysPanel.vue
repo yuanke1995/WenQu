@@ -34,7 +34,7 @@
     </div>
 
     <a-table v-else :data-source="filteredKeys" :columns="keyCols" size="small" row-key="id"
-             :pagination="false" table-layout="fixed" :scroll="{ x: 1010 }">
+             :pagination="false" table-layout="fixed" :scroll="{ x: 946 }">
       <template #bodyCell="{ column, record }">
         <template v-if="column.key === 'name'">
           <span class="key-name-wrap">
@@ -184,7 +184,7 @@
           </a-tooltip>
         </div>
         <a-table :data-source="auditRows" :columns="auditCols" size="small" row-key="id" :pagination="false"
-                 :loading="auditLoading" table-layout="fixed" :scroll="{ x: 900 }">
+                 :loading="auditLoading" table-layout="fixed" :scroll="{ x: 908 }">
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'time'">
               <span class="key-dim">{{ fmtTs(record.createdAt) }}</span>
@@ -321,16 +321,20 @@ const keys = ref([])
 const keysLoading = ref(false)
 // 列宽只能走 :columns + table-layout="fixed"：写成 <a-table-column width="..."> 不进 colgroup，
 // 浏览器按内容排宽——点「眼睛」回显 48 字明文时 Key 列被撑到 500px，其余列挤成竖排两行字，行高翻三倍。
+// scroll.x 必须 ≥ 固定列宽总和（850）+ 名称列保底（96）：定宽列之和超过 scroll.x 时，
+// fixed 布局会把没写宽度的名称列压成 0px（列整个消失），滚动条行程也对不上实际内容宽。
+// 列宽按内容实测收紧（Key 密文态约 200px）：留太宽会在 Key 列里空出一大片，
+// 总宽超过卡片宽度还会平白多出横向滚动条。
 // 「代表账号」列不展示：服务端把 actAsUid 恒写成签发人，列表又只返回本人建的 Key，每行都是同一个 uid。
 const keyCols = [
   { title: '名称', key: 'name', ellipsis: true },
-  { title: 'Key', key: 'prefix', width: 380 },
-  { title: '启用', key: 'status', width: 54 },
-  { title: 'MCP 入口', key: 'mcp', width: 84 },
-  { title: '最近使用', key: 'lastUsed', width: 130 },
-  { title: '近30天用量', key: 'usage30d', width: 130 },
-  { title: '创建时间', key: 'created', width: 90 },
-  { title: '有效期', key: 'expire', width: 90 },
+  { title: 'Key', key: 'prefix', width: 230 },
+  { title: '启用', key: 'status', width: 50 },
+  { title: 'MCP 入口', key: 'mcp', width: 76 },
+  { title: '最近使用', key: 'lastUsed', width: 128 },
+  { title: '近30天用量', key: 'usage30d', width: 110 },
+  { title: '创建时间', key: 'created', width: 86 },
+  { title: '有效期', key: 'expire', width: 86 },
   { title: '操作', key: 'act', width: 84 }
 ]
 const auditCols = [
@@ -358,23 +362,27 @@ const router = useRouter()
 
 /** 明文回显：id → 明文（点眼睛拉一次后记忆，再点隐藏只藏显示不动请求）；revealingId 是请求中的行 */
 const revealed = ref({})
+/** 点复制取到的明文：只缓存不显示——行不会被 48 字明文撑开换行，再点一次还能同步写剪贴板（保住用户手势） */
+const plainCache = ref({})
 const revealingId = ref('')
 const copiedKeyId = ref('')
-const ensureRevealed = async rec => {
-  if (revealed.value[rec.id]) return revealed.value[rec.id]
+const fetchPlain = async rec => {
   revealingId.value = rec.id
   try {
     const r = await revealApiKey(rec.id)
-    if (r.success && r.data?.apiKey) {
-      revealed.value = { ...revealed.value, [rec.id]: r.data.apiKey }
-      return r.data.apiKey
-    }
+    if (r.success && r.data?.apiKey) return r.data.apiKey
     message.error(r.msg || '明文回显失败')
     return ''
   } catch (e) {
     message.error(e.message || '明文回显失败')
     return ''
   } finally { revealingId.value = '' }
+}
+const ensureRevealed = async rec => {
+  if (revealed.value[rec.id]) return revealed.value[rec.id]
+  const plain = await fetchPlain(rec)
+  if (plain) revealed.value = { ...revealed.value, [rec.id]: plain }
+  return plain
 }
 const toggleReveal = async rec => {
   if (revealed.value[rec.id]) {
@@ -387,9 +395,13 @@ const toggleReveal = async rec => {
 }
 const copyKey = rec => {
   // 明文已在手时同步发起写入：await 过一轮网络就把用户手势丢了，Safari 那类浏览器会直接拒绝剪贴板写入
-  const cached = revealed.value[rec.id]
+  const cached = revealed.value[rec.id] || plainCache.value[rec.id]
   if (cached) return writePlain(rec, cached, true)
-  ensureRevealed(rec).then(plain => plain && writePlain(rec, plain, false))
+  fetchPlain(rec).then(plain => {
+    if (!plain) return
+    plainCache.value = { ...plainCache.value, [rec.id]: plain }
+    writePlain(rec, plain, false)
+  })
 }
 const writePlain = async (rec, plain, hadPlain) => {
   const ok = await writeClipboard(plain)
@@ -602,6 +614,10 @@ onMounted(loadKeys)
 
 <style scoped>
 /* 自 SettingsPage 迁出（2026-11-02）：键值面板专属样式随组件走；app-* 全局类来自 app.css */
+/* 窄窗口下 Key 表要横向滚动：macOS 悬浮式滚动条会直接画在最后一行上，
+   给滚动容器留底部空间，滚动条落在留白里，行内容不再被拦腰盖住 */
+.akp :deep(.ant-table-content),
+.akp :deep(.ant-table-body) { padding-bottom: 10px; }
 .key-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
 .key-bar-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .key-bar-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; flex: none; }
@@ -620,12 +636,13 @@ onMounted(loadKeys)
 .key-name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .key-tag { font-size: 11px; flex: none; line-height: 18px; }
 .key-prefix { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 22px; color: var(--app-text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* 明文整串都要看得见：不截断，在格内换行（67 字约 484px，列宽 436 装不下一行） */
+/* 明文整串都要看得见：不截断，在格内换行（48 字约 345px，列宽 230 装不下一行） */
 .key-prefix.plain { color: var(--app-text); white-space: normal; word-break: break-all; overflow: visible; text-overflow: clip; }
 /* Key 单元格：密文态 + 眼睛/复制（回显是敏感动作，图标做小、悬停才有着色） */
-/* flex（非 inline-flex）+ min-width:0：明文 48 字不换行，只有让 code 能缩到内容以下才会截断而不是撑开整列 */
+/* flex 0 1 auto + min-width:0：code 不撑满整列（否则图标被推到列尾、中间空一大片），
+   明文超长时又能缩到内容以下换行，而不是把整列顶宽 */
 .key-cell { display: flex; align-items: flex-start; gap: 2px; min-width: 0; }
-.key-cell .key-prefix { flex: 1 1 auto; min-width: 0; }
+.key-cell .key-prefix { flex: 0 1 auto; min-width: 0; }
 .key-mini {
   border: none; background: transparent; color: var(--app-text3); cursor: pointer;
   width: 22px; height: 22px; border-radius: 5px; flex: none; padding: 0;
