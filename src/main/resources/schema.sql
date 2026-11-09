@@ -265,6 +265,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_qa_log` (
     `answer_summary`  VARCHAR(1000) DEFAULT NULL COMMENT '回答摘要(前500字)',
     `hit_doc_ids`     VARCHAR(1000) DEFAULT NULL COMMENT '命中文档ID列表(逗号分隔)',
     `has_citation`    INT          DEFAULT 0 COMMENT '是否有引用标注',
+    `retrieval_attempted` INT      DEFAULT NULL COMMENT '本轮是否调用过知识检索: 1=调用过(含零命中),0=未调用,NULL=存量未记录',
     `elapsed_ms`      INT          DEFAULT 0 COMMENT '回答耗时(ms)',
     `message_id`      VARCHAR(50)  DEFAULT NULL COMMENT 'P1：本轮回答消息ID（trace 详情还原 toolCalls/sources/tokens 的关联键；NULL=无关联）',
     `agent_id`        VARCHAR(50)  DEFAULT NULL COMMENT 'P1：本轮生效智能体ID（trace 按智能体筛选；未用智能体为 NULL）',

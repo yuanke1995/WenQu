@@ -4713,7 +4713,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         if (persist && realAnswer) {
             qaLog.logAsync(cmd.getSessionId(), cmd.getQuestion(), body,
                     pool.sources().stream().map(x -> String.valueOf(x.get("docId"))).toList(),
-                    !pool.sources().isEmpty(), elapsedMs,
+                    !pool.sources().isEmpty(), pool.retrievalAttempted() || !pool.sources().isEmpty(),
+                    elapsedMs,
                     cmd.isDeepThink(), assistantMessageId, cmd.getAgentId());
         }
         // 载荷用 JSONObject 序列化，不手工拼字符串：控制字符与非法转义序列会让整包失去合法性，

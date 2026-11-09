@@ -39,8 +39,8 @@ public class QaLogService {
      * 的关联键，agentId 支撑按智能体筛选。存量行为 NULL，详情按摘要视图降级展示。
      */
     public void logAsync(String sessionId, String question, String answer,
-                         List<String> hitDocIds, boolean hasCitation, long elapsedMs,
-                         boolean deepThink, String messageId, String agentId) {
+                         List<String> hitDocIds, boolean hasCitation, boolean retrievalAttempted,
+                         long elapsedMs, boolean deepThink, String messageId, String agentId) {
         ThreadPoolManager.execute(() -> {
             try {
                 QaLog log = new QaLog();
@@ -50,6 +50,7 @@ public class QaLogService {
                 log.setHitDocIds(hitDocIds == null || hitDocIds.isEmpty()
                         ? null : hitDocIds.stream().distinct().collect(Collectors.joining(",")));
                 log.setHasCitation(hasCitation ? 1 : 0);
+                log.setRetrievalAttempted(retrievalAttempted ? 1 : 0);
                 log.setDeepThink(deepThink ? 1 : 0);
                 log.setElapsedMs((int) Math.min(elapsedMs, Integer.MAX_VALUE));
                 log.setMessageId(messageId);

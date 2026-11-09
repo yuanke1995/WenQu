@@ -85,6 +85,24 @@ public interface QaLogMapper extends BaseMapper<QaLog> {
                                                     @Param("until") LocalDateTime until,
                                                     @Param("limit") int limit);
 
+    /**
+     * 区间知识缺口 TOP N：只统计本轮真调过检索却没命中的问题。
+     * <p>与 {@link #noHitQuestionsBetween} 的差别只在 {@code retrieval_attempted = 1}——
+     * 未挂知识库的纯角色智能体、模型没调检索工具的闲聊轮、工作流轮次都不算缺口。
+     */
+    @Select("<script>SELECT question, COUNT(*) AS cnt, MAX(created_at) AS latest FROM c_ai_qa_log" +
+            " <where>" +
+            " <if test='from != null'>created_at &gt;= #{from}</if>" +
+            " <if test='until != null'>AND created_at &lt; #{until}</if>" +
+            " AND (hit_doc_ids IS NULL OR hit_doc_ids = '')" +
+            " AND retrieval_attempted = 1" +
+            " AND question IS NOT NULL AND question &lt;&gt; ''" +
+            " </where>" +
+            " GROUP BY question ORDER BY cnt DESC LIMIT #{limit}</script>")
+    List<Map<String, Object>> gapQuestionsBetween(@Param("from") LocalDateTime from,
+                                                  @Param("until") LocalDateTime until,
+                                                  @Param("limit") int limit);
+
     /** 区间按天聚合（趋势图；缺失日期由服务层补零） */
     @Select("<script>SELECT DATE_FORMAT(created_at, '%Y-%m-%d') AS d, COUNT(*) AS total," +
             " COALESCE(SUM(CASE WHEN hit_doc_ids IS NULL OR hit_doc_ids = '' THEN 1 ELSE 0 END), 0) AS no_hit," +
@@ -110,12 +128,13 @@ public interface QaLogMapper extends BaseMapper<QaLog> {
                                  @Param("until") LocalDateTime until,
                                  @Param("limit") int limit);
 
-    /** 区间无命中问题去重计数（待办队列「知识缺口」计数，不是 TOP 条数） */
+    /** 区间无命中问题去重计数（待办队列「知识缺口」计数，不是 TOP 条数；只认真调过检索的轮次） */
     @Select("<script>SELECT COUNT(DISTINCT question) AS c FROM c_ai_qa_log" +
             " <where>" +
             " <if test='from != null'>created_at &gt;= #{from}</if>" +
             " <if test='until != null'>AND created_at &lt; #{until}</if>" +
             " AND (hit_doc_ids IS NULL OR hit_doc_ids = '')" +
+            " AND retrieval_attempted = 1" +
             " AND question IS NOT NULL AND question &lt;&gt; ''" +
             " </where></script>")
     long distinctNoHitBetween(@Param("from") LocalDateTime from,

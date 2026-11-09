@@ -15,6 +15,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * 框架引擎这一轮的引用池：一条 {@code [1..N]} 编号空间、来源清单与图片编号体系。
@@ -34,6 +35,8 @@ public final class WenquSourcePool {
     private final Map<Integer, String> imgDescIndex = new LinkedHashMap<>();
     private final List<Map<String, String>> degradations = new ArrayList<>();
     private final Set<String> degradedCodes = new HashSet<>();
+    /** 本轮是否真的调用过知识检索工具（零命中也算）——知识缺口只认这一种轮次 */
+    private final AtomicBoolean retrievalAttempted = new AtomicBoolean(false);
 
     public WenquSourcePool(ChatRunRuntime runtime, ConfigService configService, RerankService rerankService,
                            ImageUrlSigner imageUrlSigner, String sessionId, String question, SseEmitter emitter,
@@ -46,6 +49,16 @@ public final class WenquSourcePool {
         // 手写侧是在 ChatService 里给 st.refs.docMetaCache 赋值；框架这条自己 new 引用池，不注入就恒为 null，
         // TurnSourceRegistry 的兜底被 `docMetaCache != null` 跳过 → 来源面板一律「来源文档不可用」。
         this.registry.docMetaCache = docMetaCache;
+    }
+
+    /** 标记本轮调用过知识检索（由检索工具入口调用，零命中也算调过）。 */
+    public void markRetrievalAttempted() {
+        retrievalAttempted.set(true);
+    }
+
+    /** 本轮是否调用过知识检索：知识缺口统计只看这一种轮次。 */
+    public boolean retrievalAttempted() {
+        return retrievalAttempted.get();
     }
 
     /** 知识检索工具的落点：命中块注册进本轮 sources 续编引用编号，工具文本改【引用N】提示。 */

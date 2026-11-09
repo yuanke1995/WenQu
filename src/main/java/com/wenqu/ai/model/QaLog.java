@@ -32,6 +32,13 @@ public class QaLog {
     /** 是否有引用标注 */
     private Integer hasCitation;
 
+    /**
+     * 本轮是否调用过知识检索：1=调用过（含零命中），0=未调用，NULL=存量未记录。
+     * <p>「知识缺口」只认调用过检索却没命中的轮次——未挂知识库的纯角色智能体、
+     * 模型没调检索工具的闲聊轮、工作流轮次，都不该被算成缺口。
+     */
+    private Integer retrievalAttempted;
+
     /** 深度思考是否生效（1=是 0=否；按生效模型的思考能力归一后的结果） */
     private Integer deepThink;
 

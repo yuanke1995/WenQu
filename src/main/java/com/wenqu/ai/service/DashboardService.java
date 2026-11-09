@@ -243,8 +243,8 @@ public class DashboardService {
             rows.add(row);
         }
 
-        // ② 知识缺口（区间内无命中问题）
-        for (Map<String, Object> gap : qaLogMapper.noHitQuestionsBetween(from, null, TOP_LIMIT)) {
+        // ② 知识缺口（区间内真调过检索但无命中的问题）
+        for (Map<String, Object> gap : qaLogMapper.gapQuestionsBetween(from, null, TOP_LIMIT)) {
             Map<String, Object> row = actionRow("gap", gap.get("question"), timeOf(gap.get("latest")));
             long cnt = num(gap.get("cnt"));
             row.put("count", cnt);
