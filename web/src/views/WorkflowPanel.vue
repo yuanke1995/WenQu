@@ -10,7 +10,6 @@
       <span class="head-count">
         共 <b>{{ totalCount }}</b> 个 · 已发布 <b>{{ publishedCount }}</b> · 草稿 <b>{{ draftCount }}</b>
       </span>
-      <span class="head-hint-plain" title="把「检索 → LLM → 条件 → 输出」画成一张图">把「检索 → LLM → 条件 → 输出」画成一张图</span>
       <!-- M5 模板库与导入导出：模板选用即创建；导入吃导出的 JSON 文件；导出下载 DSL -->
       <button class="app-btn" style="margin-left:auto" @click="openTemplates">
         <appstore-outlined /> 模板库
@@ -167,7 +166,7 @@
           <span class="wf-meta">只运行<strong>已发布版本</strong>；草稿变更不生效</span>
         </div>
         <div class="auto-row">
-          <span class="auto-label">cron</span>
+          <span class="auto-label">定时规则</span>
           <a-input v-model:value="autoForm.cron" placeholder="分 时 日 月 周，如 0 9 * * 1-5 表示工作日 9 点" allow-clear />
         </div>
         <div class="auto-row">
@@ -175,7 +174,6 @@
           <a-input v-model:value="autoForm.timezone" placeholder="Asia/Shanghai" allow-clear />
         </div>
         <div v-if="autoNextRunAt" class="wf-meta auto-hint">下次执行：{{ fmtTime(autoNextRunAt) }}</div>
-        <div v-else-if="autoForm.scheduleEnabled" class="wf-meta auto-hint">保存后按 cron 计算下次执行时刻</div>
       </div>
       <div class="auto-block">
         <div class="auto-block-title">运行终态回调</div>
@@ -377,7 +375,7 @@ const doBatchExport = async () => {
     for (const id of selected.value) {
       const r = await exportWorkflow(id)
       const wf = (r && r.data) || {}
-      if (!wf.dsl) { message.error(`「${wf.name || id}」没有 DSL 可导出，已中止`); return }
+      if (!wf.dsl) { message.error(`「${wf.name || id}」没有工作流定义可导出，已中止`); return }
       items.push({ name: wf.name, description: wf.description, dsl: JSON.parse(wf.dsl) })
     }
     const payload = {
@@ -503,7 +501,7 @@ const doRollback = async v => {
   const row = versionRow.value
   Modal.confirm({
     title: `回滚到 v${v.version}？`,
-    content: '会以该版本的 DSL 发布为新版本（版本号递增），当前已发布版本不受影响、仍可回滚回来。',
+    content: '会以该版本的定义发布为新版本（版本号递增），当前已发布版本不受影响、仍可回滚回来。',
     okText: '回滚', cancelText: '取消',
     onOk: async () => {
       busyId.value = row.id
@@ -617,7 +615,7 @@ const saveAutomation = async () => {
     if (autoForm.value.webhookResetToken) body.webhookResetToken = true
     const r = await saveWorkflowAutomation(autoRow.value.id, body)
     if (r && r.success) {
-      message.success(autoForm.value.webhookResetToken ? '自动化配置已保存（webhook 令牌已重置）' : '自动化配置已保存')
+      message.success(autoForm.value.webhookResetToken ? '自动化配置已保存（回调令牌已重置）' : '自动化配置已保存')
       autoModal.value = false
       await load()
     } else {
@@ -652,7 +650,7 @@ const summary = dslText => {
   try {
     const d = JSON.parse(dslText)
     return `${(d.nodes || []).length} 节点 / ${(d.edges || []).length} 边`
-  } catch (e) { return 'DSL 解析失败' }
+  } catch (e) { return '工作流定义解析失败' }
 }
 
 // ---- M5 模板库 / 导入 / 导出 ----
@@ -710,7 +708,7 @@ const doImport = async ev => {
     const dsl = parsed && parsed.dsl ? parsed.dsl : parsed
     const name = (parsed && typeof parsed.name === 'string' && parsed.name.trim()) || '导入的工作流'
     if (!dsl || !Array.isArray(dsl.nodes)) {
-      message.error('文件里没有可识别的 DSL（缺少 nodes 字段）')
+      message.error('文件里没有可识别的工作流定义（缺少 nodes 字段）')
       return
     }
     const r = await importWorkflow({
@@ -723,7 +721,7 @@ const doImport = async ev => {
       await load()
       openEditor(r.data.id)
     } else {
-      message.error((r && r.msg) || '导入失败：DSL 校验未通过')
+      message.error((r && r.msg) || '导入失败：工作流定义校验未通过')
     }
   } catch (e) {
     message.error('导入失败：' + (e.message || '（不是合法 JSON 文件）'))
@@ -736,7 +734,7 @@ const importMany = async (items, fileName) => {
   const failed = []
   for (const item of items) {
     if (!item || !item.dsl || !Array.isArray(item.dsl.nodes)) {
-      failed.push(`「${(item && item.name) || '未命名'}」：没有可识别的 DSL（缺少 nodes 字段）`)
+      failed.push(`「${(item && item.name) || '未命名'}」：没有可识别的工作流定义（缺少 nodes 字段）`)
       continue
     }
     try {
@@ -765,7 +763,7 @@ const doExport = async row => {
   try {
     const r = await exportWorkflow(row.id)
     const wf = (r && r.data) || {}
-    if (!wf.dsl) { message.error('该工作流没有 DSL 可导出'); return }
+    if (!wf.dsl) { message.error('该工作流没有定义可导出'); return }
     const payload = {
       exportedFrom: 'wenqu-workflow',
       exportedAt: new Date().toISOString(),

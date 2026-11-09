@@ -2,7 +2,7 @@
   <div class="app-page">
     <div class="app-page-head">
       <h3 class="app-page-title">成员管理</h3>
-      <span class="head-hint-plain">管理账号、部门与角色归属；角色能做什么在「权限管理」里配置</span>
+      <span class="head-hint-plain">管理账号、部门与角色</span>
     </div>
 
     <!-- C1：临时授权到期提醒（未来 7 天内到期的角色绑定；无则不渲染） -->
@@ -95,7 +95,7 @@
                   <span v-for="(it, i) in record.identities" :key="i" class="mem-oidc">
                     <span class="mem-oidc-name">{{ providerName(it.providerId) }}</span>
                     <code class="mem-oidc-sub" :title="it.externalId">{{ it.externalId }}</code>
-                    <a-popconfirm :title="`解绑「${providerName(it.providerId)}」后该用户须重新走对应认证源登录才能再次绑定`"
+                    <a-popconfirm :title="`解绑「${providerName(it.providerId)}」后需重新走该认证源登录才能再绑定`"
                                   ok-text="解绑" cancel-text="取消"
                                   @confirm="unbind(record.uid, it.providerId)">
                       <button class="app-link-btn danger mem-oidc-x" :aria-label="`解绑 ${providerName(it.providerId)}`">×</button>
@@ -228,20 +228,20 @@
               <button v-if="(userForm.roleExpires || {})[c]" class="app-link-btn"
                       @click="setExpiry(c, null)">改回永久</button>
             </div>
-            <div class="form-tip">填了就是临期，到期当天自动回收、无需回来改；留空 = 永久有效。</div>
+            <div class="form-tip">到期自动回收；留空 = 永久</div>
             <button class="app-link-btn" @click="expiryOpen = false">收起</button>
           </div>
         </a-form-item>
         <a-form-item v-if="isSuper" label="所属租户">
           <a-select v-model:value="userForm.tenantId" :options="tenantOptionsList" style="width:100%" />
-          <div class="form-tip">只改这个账号属于哪个租户；他已产出的会话、知识库与工作流留在原租户。</div>
+          <div class="form-tip">只改所属租户，已有数据留在原租户</div>
         </a-form-item>
         <a-form-item v-if="userForm.isEdit" label="状态">
           <a-radio-group v-model:value="userForm.status" button-style="solid" size="small">
             <a-radio-button :value="1">启用</a-radio-button>
             <a-radio-button :value="0">禁用</a-radio-button>
           </a-radio-group>
-          <div class="form-tip">禁用后该用户不再具备部门与管理员身份权益。</div>
+          <div class="form-tip">禁用后不再有部门与管理员权益</div>
         </a-form-item>
       </a-form>
     </a-modal>
@@ -322,7 +322,7 @@
         <a-input v-model:value="tenantForm.contact" size="small" placeholder="联系人（可选）" style="width:140px" />
         <button class="app-btn mem-new" :disabled="tenantBusy" @click="doCreateTenant">{{ tenantBusy ? '开通中…' : '开通租户' }}</button>
       </div>
-      <div class="form-tip">新租户初始是空的：把成员的「所属租户」改过来，他们才开始在这个租户里各用各的数据。租户没有删除功能——要下线一个租户就停用它。</div>
+      <div class="form-tip">新租户为空；租户不能删除，只能停用</div>
     </a-modal>
 
     <!-- 邀请成员：一次性短链，注册落当前租户 -->

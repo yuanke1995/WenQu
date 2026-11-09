@@ -4,7 +4,7 @@
       <div class="wq-label">从现有工作区复制（可选）</div>
       <a-select v-model:value="templateId" allow-clear :options="templateOptions" style="width:100%"
                 placeholder="不复制：空白工作区" />
-      <div class="wq-hint">复制事项清单与工作区记忆骨架；不复制文件、会话与产物。</div>
+      <div class="wq-hint">复制清单与记忆，不含文件、会话与产物</div>
 
       <div class="wq-label wq-label-row">
         <span>源文件夹</span>
@@ -33,7 +33,7 @@
       <div v-else-if="!executor.online" class="wq-hint">
         「{{ executor.name }}」的执行器不在线：去那台电脑的终端确认 wenqu-agent 正在运行
       </div>
-      <div v-else class="wq-hint">文件夹会绑定到「{{ executor.name }}」（这台电脑）</div>
+      <div v-else class="wq-hint">绑定到「{{ executor.name }}」</div>
 
       <div class="wq-label">工作区名称</div>
       <a-input v-model:value="name" :maxlength="60" placeholder="输入名称…" />

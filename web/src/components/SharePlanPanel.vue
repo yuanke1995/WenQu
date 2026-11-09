@@ -28,7 +28,7 @@
     </div>
 
     <div class="sp-foot">
-      <span class="sp-hint">退回重出会在同一轮里再出一版计划；继续对话则本版作废、把你的意见当作一条新消息发出。</span>
+      <span class="sp-hint">退回会在同一轮再出一版；继续对话则本版作废</span>
       <span class="sp-actions">
         <button class="sp-btn" type="button" :disabled="locked" @click="resolve({ approved: false })">拒绝</button>
         <button class="sp-btn" type="button" :disabled="locked || !opinion.trim()" @click="resolve({ supersede: true, plan: opinion.trim() })">继续对话</button>

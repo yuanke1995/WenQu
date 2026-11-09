@@ -274,7 +274,7 @@ public class WorkflowToolService {
     /** publishedDsl 的最小视图（只取 start 节点的 inputs 列表；解析失败抛 BizException 由调用方兜） */
     private static WorkflowDslView parseDslView(String dslText) {
         com.alibaba.fastjson2.JSONObject root = JSON.parseObject(dslText);
-        if (root == null) throw new com.wenqu.ai.common.BizException("DSL 为空");
+        if (root == null) throw new com.wenqu.ai.common.BizException("工作流定义为空");
         com.alibaba.fastjson2.JSONArray nodes = root.getJSONArray("nodes");
         List<Map<String, Object>> inputs = new ArrayList<>();
         if (nodes != null) {

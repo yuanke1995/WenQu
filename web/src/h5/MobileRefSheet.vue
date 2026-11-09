@@ -171,7 +171,7 @@
             <span v-else class="rs-bg-unknown">认不出来源，停不了</span>
           </div>
         </div>
-        <div class="rs-act-tip">停掉它会连同它起走的全部子进程一起结束，占用的端口随之释放</div>
+        <div class="rs-act-tip">停止会一并结束子进程并释放端口</div>
       </template>
 
       <!-- ---- 目标（与 PC 摘要条同一份 sessionGoal，同一个 GoalCard 组件；PC 右栏不单列目标卡） ----
@@ -201,7 +201,7 @@
             <button class="rs-act" type="button" @click="saveBuilt"><download-outlined class="rs-ic" /><span>保存文件</span></button>
             <button class="rs-act" type="button" @click="copyBuilt"><copy-outlined class="rs-ic" /><span>复制全文</span></button>
           </div>
-          <div class="rs-act-tip">全文 {{ builtSize }} · {{ built.fileName }}；保存文件无反应时用「复制全文」粘贴到备忘录</div>
+          <div class="rs-act-tip">全文 {{ builtSize }} · {{ built.fileName }}</div>
         </template>
       <template v-if="shareOpen">
         <div v-if="shareBusy" class="rs-empty">正在读取…</div>
@@ -221,7 +221,7 @@
         <button v-else class="rs-act wide" type="button" @click="genShare">
           <share-alt-outlined class="rs-ic" /><span>生成分享链接</span>
         </button>
-        <div class="rs-act-tip">链接展示的是会话最新内容而非快照——后续聊到敏感内容时，分享页也会跟着变。</div>
+        <div class="rs-act-tip">分享页跟随会话最新内容，不是快照</div>
       </template>
     </div>
   </BottomSheet>

@@ -4,7 +4,7 @@
     <div class="metric-grid">
       <div class="app-card metric"><div class="metric-label">在册成员</div><div class="metric-num">{{ statText(stats.total) }}</div><div class="metric-sub">含禁用账号</div></div>
       <div class="app-card metric"><div class="metric-label">锁定中</div><div class="metric-num warn">{{ statText(stats.locked) }}</div><div class="metric-sub">连续失败触发 · 重置密码可解锁</div></div>
-      <div class="app-card metric"><div class="metric-label">今日登录</div><div class="metric-num">{{ statText(stats.today) }}</div><div class="metric-sub">按最近登录时间统计</div></div>
+      <div class="app-card metric"><div class="metric-label">今日登录</div><div class="metric-num">{{ statText(stats.today) }}</div></div>
       <div class="app-card metric"><div class="metric-label">30 天未登录</div><div class="metric-num">{{ statText(stats.inactive) }}</div><div class="metric-sub">含从未登录</div></div>
     </div>
 
@@ -12,7 +12,7 @@
     <div v-if="hasRisk" class="app-note warn session-note">
       <span class="session-note-ic">!</span>
       <div class="session-note-text">
-        <b>{{ statText(stats.locked) }} 个账号处于锁定态</b>，{{ statText(stats.fail) }} 个连续失败 ≥3 次，{{ statText(stats.inactive) }} 个 30 天未登录。建议先核对离职名单再处置。
+        <b>{{ statText(stats.locked) }} 个账号处于锁定态</b>，{{ statText(stats.fail) }} 个连续失败 ≥3 次，{{ statText(stats.inactive) }} 个 30 天未登录。
       </div>
       <button class="app-link-btn" type="button" @click="focusRisk">仅看锁定中</button>
     </div>

@@ -212,7 +212,7 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
             Agent seed = new Agent();
             seed.setName(BUILTIN_NAME);
             seed.setIcon(BUILTIN_ICON);
-            seed.setDescription("问渠内置的系统默认智能体：开箱即用，全员可用；仅管理员级可配置。");
+            seed.setDescription("系统内置，全员可用");
             seed.setIsBuiltin(1);
             seed.setSystemPrompt(BUILTIN_SYSTEM_PROMPT);
             clearDefault(null); // 播种行尚未落库，无自身可排除

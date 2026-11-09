@@ -30,7 +30,7 @@
             <a class="ta-login" href="/login">已有账号？去登录</a>
           </div>
         </a-form>
-        <p class="ta-note">提交后不会立刻开通：批准由平台管理员人工完成，因为开通意味着建出一个能看见本机构全部数据的管理员账号。</p>
+        <p class="ta-note">提交后由平台管理员人工开通。</p>
       </template>
 
       <template v-else>

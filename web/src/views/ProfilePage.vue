@@ -5,7 +5,7 @@
     <div class="app-page-head">
       <div class="pf-page-head">
         <h1 class="app-page-title">个人设置</h1>
-        <p class="pf-page-sub">管理头像昵称、模型与通知偏好，以及记忆、分享和密钥。</p>
+        <p class="pf-page-sub">头像、偏好、记忆与密钥。</p>
       </div>
     </div>
     <div class="pf-body">
@@ -26,7 +26,6 @@
         <div v-if="current === 'profile'" class="app-card pf-card">
           <div class="pf-panel-head">
             <h2 class="app-card-title">个人资料</h2>
-            <p class="pf-panel-sub">头像和昵称会显示在侧栏、会话与成员列表中，修改后立即同步。</p>
           </div>
 
           <!-- 头像：点预览或「上传图片」都能换图；上传图片与选图标互斥，两者都为空则显示昵称首字 -->
@@ -47,7 +46,7 @@
                   {{ avatarIsImage ? '清除图片' : '恢复昵称首字' }}
                 </button>
               </div>
-              <p class="pf-sub-hint">支持 PNG / JPEG / GIF / WebP，单张不超过 2MB，上传后立即生效。</p>
+              <p class="pf-sub-hint">PNG / JPEG / GIF / WebP，≤2MB</p>
             </div>
             <input ref="avatarFileEl" type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden
                    :disabled="avatarSaving" @change="onAvatarFile" />
@@ -72,7 +71,7 @@
             <div class="pf-section-head">
               <div>
                 <label class="pf-label" for="pf-nickname">昵称</label>
-                <p class="pf-sub-hint">仅用于展示，不影响登录账号；最多 100 个字符。</p>
+                <p class="pf-sub-hint">仅展示用，最多 100 字</p>
               </div>
               <span class="pf-meta-right">
                 <span v-if="nickDirty" class="pf-dirty">未保存</span>
@@ -119,7 +118,6 @@
         <div v-else-if="current === 'notify'" class="app-card pf-card">
           <div class="pf-panel-head">
             <h2 class="app-card-title">通知与推送</h2>
-            <p class="pf-panel-sub">这里管两件事：哪些事值得通知你，以及通知要不要跳出浏览器、成为手机或系统上的那条横幅。</p>
           </div>
 
           <div class="pf-field">
@@ -175,7 +173,6 @@
               </div>
             </div>
             <div class="np-foot">
-              <span class="pf-sub-hint">改完点「保存」才生效。系统级推送同样尊重这份清单——被关掉的类不会弹横幅。</span>
               <button class="app-btn small" type="button" :disabled="muteSaving || !muteDirty" @click="saveMutes">保存</button>
             </div>
           </div>
@@ -201,8 +198,8 @@
 
           <div class="pf-field">
             <div class="pf-field-head"><span class="pf-label">说明</span></div>
-            <p class="pf-sub-hint">静音只影响新产生的通知；已经收到的仍留在通知中心。通知保留期由管理员在「系统设置 → 清理与保留」统一配置。</p>
-            <p class="pf-sub-hint">浏览器系统通知需要 https 或 localhost；iPhone / iPad 需先把本站安装到主屏幕，Safari 标签页里不支持。</p>
+            <p class="pf-sub-hint">只影响新通知；保留期由管理员配置</p>
+            <p class="pf-sub-hint">需 https 或 localhost；iPhone 需先添加到主屏幕</p>
           </div>
         </div>
 
@@ -235,7 +232,7 @@
           <div class="mem-auto-row" style="display:flex;align-items:flex-start;gap:12px">
             <div class="mem-auto-text">
               <div class="mem-auto-title">自动提炼记忆</div>
-              <p class="pf-sub-hint">关掉后问答不再往长期记忆里添新条目；已经记下的仍会在后续问答中被提起。</p>
+              <p class="pf-sub-hint">关掉后不再记录新内容</p>
             </div>
             <a-switch :checked="memAutoEnabled" :loading="memAutoSaving" @change="toggleMemAuto" />
           </div>
@@ -273,7 +270,7 @@
                   </template>
                 </div>
               </template>
-              <p v-else class="mem-view-empty">（还没有沉淀任何记忆。问答几轮后，助手会把值得记住的内容写到这里。）</p>
+              <p v-else class="mem-view-empty">还没有沉淀任何记忆</p>
             </div>
 
             <!-- 编辑态：结构化编辑（默认）+ 原文编辑（高级）。改动只在本地，保存后才落盘 -->
@@ -384,7 +381,7 @@
         <div v-else-if="current === 'security'" class="app-card pf-card">
           <div class="pf-panel-head">
             <h2 class="app-card-title">账号安全</h2>
-            <p class="pf-panel-sub">修改登录密码。修改成功后当前登录会失效，需要用新密码重新登录。</p>
+            <p class="pf-panel-sub">改完需用新密码重新登录</p>
           </div>
           <a-form layout="vertical" class="pf-form">
             <a-form-item label="当前密码" required>
@@ -424,7 +421,7 @@
             <div v-if="!shares.length" class="mem-empty">
               <div class="mem-empty-ico">🔗</div>
               <p class="mem-empty-title">还没有分享过任何会话</p>
-              <p class="pf-sub-hint">在对话页顶栏点「分享这段对话」即可生成只读链接。</p>
+              <p class="pf-sub-hint">在对话页顶栏生成只读链接</p>
             </div>
             <div v-else class="shm-list">
               <div v-for="s in shares" :key="s.sessionId" class="shm-item"
@@ -447,7 +444,7 @@
                   <div v-if="s.enabled" class="shm-link">
                     <span class="shm-url">{{ shareUrlOf(s.token) }}</span>
                   </div>
-                  <div v-if="s.orphaned" class="shm-note">这条链接已打不开（会话已删除）。停用后超保留期自动清理，也可在此立即清除。</div>
+                  <div v-if="s.orphaned" class="shm-note">会话已删除，链接失效</div>
                 </div>
                 <div class="shm-acts">
                   <template v-if="s.enabled">
@@ -544,8 +541,8 @@ watch(current, () => nextTick(() => {
 const PANELS = {
   chat: {
     field: 'defaultModel', title: '默认模型',
-    hint: '会话未选定模型时，用这个模型回答；会话已选定模型时沿用会话的选择。选择后立即生效，没有单独的保存按钮。',
-    tail: '清空（选「不设默认」）后，每次对话需手动选择模型。对话上传的图片能否被理解，取决于模型是否支持读图（不支持就换个能读图的模型重试）；入库文档的图片描述用知识库绑定的视觉模型。'
+    hint: '会话未选模型时使用；选择后立即生效。',
+    tail: '清空后每次对话需手动选模型；图片需模型支持读图。'
   }
 }
 const panelMeta = computed(() => PANELS[current.value] || PANELS.chat)

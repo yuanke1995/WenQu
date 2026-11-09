@@ -235,7 +235,6 @@
         <span>合计 <b>{{ fmtTokens(kbStatTokens) }}</b> tokens</span>
         <span>平均 <b>{{ kbFilteredList.length ? Math.round(kbStatTokens / kbFilteredList.length) : 0 }}</b></span>
         <span v-if="kbNoVector" class="kb-stat-warn">未向量化 {{ kbNoVector }} 块</span>
-        <span v-if="kbView === 'list'" class="kb-stat-tip">点行展开完整内容</span>
       </div>
       <a-spin :spinning="kbLoading">
         <!-- 结构导图（3.3 知识导图 / 3.5 文件元数据导图）：按 titlePath 聚合成章节树，
@@ -243,7 +242,6 @@
         <div v-if="kbView === 'tree'" class="kb-tree">
           <div class="kb-tree-head">
             <span>章节结构</span>
-            <span class="kb-tree-tip">块数 / tokens / 图片 · 点击章节名筛选切片</span>
           </div>
           <div class="kb-tree-body">
             <div v-for="r in kbTreeRows" :key="r.path" class="kb-tree-row" :style="{ paddingLeft: (r.depth * 16 + 4) + 'px' }">
@@ -455,7 +453,7 @@
         <span>开启后按周期重新抓网重建</span>
       </div>
       <template v-if="refreshDraft.enabled">
-        <div class="modal-note">刷新周期（cron 5 段：分 时 日 月 周）</div>
+        <div class="modal-note">刷新周期（5 段：分 时 日 月 周）</div>
         <a-input v-model:value="refreshDraft.cron" placeholder="0 3 * * *" />
         <div class="modal-note">下次刷新：{{ refreshDraft.nextAt || '—' }}</div>
       </template>
@@ -1195,11 +1193,11 @@ function rowMenu (d) {
   if (d.status === 0) items.push({ key: 'versions', label: '版本历史' })
   if (d.status === 0 || d.status === 3) {
     items.push({ key: 'reparse', label: '重新解析', disabled: reparsingId.value === d.id,
-                 tip: '复用源文件重新解析+向量化，适用于文档内容更新后重新入库' })
+                 tip: '重新解析并向量化源文件' })
   }
   if (d.status === 0) {
     items.push({ key: 'backfill', label: '补图片描述', disabled: backfillingId.value === d.id,
-                 tip: '对解析时未描述成功的图片后台补描述并回写知识块（重新向量化+索引同步）' })
+                 tip: '后台补描述图片并回写知识块' })
   }
   const n = docTags(d).length
   items.push({ key: 'tags', label: n ? `标签（${n}）` : '标签' })

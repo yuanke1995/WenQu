@@ -984,7 +984,7 @@
         </div>
         <div v-if="!slashFiltered.length" class="mention-empty">没有匹配的命令</div>
         </div>
-        <div class="mention-foot">↑↓ 选择 · Enter 确认 · Esc 关闭　|　计划、目标可跟一句任务</div>
+        <div class="mention-foot">↑↓ 选择 · Enter 确认 · Esc 关闭</div>
         </div>
         <!-- # 历史引用面板（敲 # 唤起）：勾选本会话历史问答，随本轮请求前置给模型 -->
         <div v-if="histOpen" class="mention-panel">
@@ -1009,7 +1009,7 @@
         {{ histPool.length ? '没有匹配的历史问答' : '本会话还没有可引用的历史问答' }}
         </div>
         </div>
-        <div class="mention-foot">↑↓ 选择 · Enter 确认 · Esc 关闭　|　# 勾选的历史问答作为本轮上下文带给模型（只对本轮生效，最多 10 条）</div>
+        <div class="mention-foot">↑↓ 选择 · Enter 确认 · Esc 关闭　|　# 引用历史问答（仅本轮，最多 10 条）</div>
         </div>
         <!-- 「+」面板（分层菜单）：输入框唯一的候选面板。两个入口同一块面板——
         点「+」先出一级轻菜单（上传文件/图片一击直达，引用/历史/命令进二级列表），
@@ -1076,7 +1076,7 @@
         <AgentAvatar class="mention-ava-agent" :agent="a" :size="22" />
         <div class="mention-text">
         <span class="mention-name">{{ a.name }}</span>
-        <span class="mention-desc">{{ a.desc || '本轮会向这位助手咨询' }}</span>
+        <span v-if="a.desc" class="mention-desc">{{ a.desc }}</span>
         </div>
         <check-outlined v-if="isAddMentioned('agent', a.id)" class="mention-check" />
         </div>
@@ -1190,14 +1190,13 @@
           <div class="agent-menu">
           <div class="agent-menu-head">
           <span>选择智能体</span>
-          <span class="agent-menu-hint">选一位来答这一问 · 换人立即生效，不必新建会话</span>
+          <span class="agent-menu-hint">本轮生效</span>
           </div>
           <div class="agent-menu-list">
           <div v-if="!hasDefaultAgent" class="agent-mi" :class="{ active: !currentAgentId }" @click="pickAgent('')">
           <span class="agent-mi-ava"><robot-outlined /></span>
           <div class="agent-mi-text">
           <span class="agent-mi-name">默认（全局配置）</span>
-          <span class="agent-mi-desc">沿用系统设置里的模型、提示词与能力开关</span>
           </div>
           <check-outlined v-if="!currentAgentId" class="agent-mi-check" />
           </div>
@@ -1379,7 +1378,7 @@
            认不出哪份是成品；折成树之后行内只剩文件名，腾出的位置给大小。 -->
       <div v-if="sandboxFiles.length || sandboxErr || sandboxLoading" class="rp-card">
         <div class="rp-label">{{ sessionWorkspace && (sessionWorkspace.isLocal || sessionWorkspace.wsEffective === 'local') ? '本机文件' : '会话文件' }} · {{ sandboxCount }} 个{{ sandboxBytes ? ' · ' + sbSize(sandboxBytes) : '' }}</div>
-        <div v-if="sandboxLocalOffline" class="rp-sb-hint">本机执行器离线，这里显示的是云端沙盒文件；本机上的旧文件要等执行器在线后才能看到</div>
+        <div v-if="sandboxLocalOffline" class="rp-sb-hint">本机执行器离线，暂显示云端沙盒文件</div>
         <div v-if="sandboxLoading" class="rp-sb-hint">正在读取目录…</div>
         <div v-else-if="sandboxErr" class="rp-sb-err">
           <span>{{ sandboxErr }}</span>
@@ -1417,7 +1416,7 @@
             <span v-else class="rp-sb-taken" title="已存为产物"><check-outlined /></span>
           </div>
         </template>
-        <div v-if="sandboxRest" class="rp-sb-hint">目录里另有 {{ sandboxRest }} 个文件没列出（这里只列最新 {{ sandboxFiles.length }} 个）</div>
+        <div v-if="sandboxRest" class="rp-sb-hint">另有 {{ sandboxRest }} 个文件未列出（仅显示最新 {{ sandboxFiles.length }} 个）</div>
       </div>
       <!-- 沙盒后台进程：让它「把写好的前后端跑起来自己看效果」时，起的是 npm run dev 这类<b>不会自己退</b>
            的进程；而沙盒那条执行到点只是「不再等它」，进程照旧活着、端口照旧占着，界面上却什么都看不见。
@@ -1582,7 +1581,6 @@
       <template #title>
         <div class="csum-head">
           <span class="csum-title">早期对话摘要</span>
-          <span class="csum-sub">后续回答里的「更早的对话」就按这一份带入</span>
         </div>
       </template>
       <div class="csum-stats">
@@ -1599,7 +1597,7 @@
       <!-- 摘要正文本身是模型给的条目化 Markdown：按 Markdown 渲染，别用 pre 把 - 和 # 原样摊出来 -->
       <div class="md csum-md" v-html="renderMd(compactSummary ? compactSummary.text : '')"></div>
       <div class="csum-foot">
-        <span class="csum-tip">完整问答仍保留在会话中，往上翻可回看；每次压缩都会把更早的对话并入这一份。</span>
+        <span class="csum-tip">完整问答仍保留，可往上回看</span>
         <div class="csum-acts">
           <button class="app-btn ghost small" type="button" @click="csumInstrOpen = !csumInstrOpen">
             <edit-outlined /> 带要求重新压缩
@@ -1711,7 +1709,7 @@
                 <compress-outlined />
                 <span>{{ compacting ? '压缩中…' : '压缩上下文' }}</span>
               </button>
-              <div v-if="loading && !compacting" class="ctxcap-tip">正在生成回答，等本轮结束后再压缩</div>
+              <div v-if="loading && !compacting" class="ctxcap-tip">本轮结束后可压缩</div>
             </div>
           </template>
           <div v-else class="ctxcap-empty">该模型未登记上下文窗口，请在「模型供应商」里声明</div>
@@ -2565,10 +2563,10 @@ const slashCommands = computed(() => [
     run: () => compactContext() },
   { key: 'act-plan', cmd: 'plan', aliases: ['计划'], icon: OrderedListOutlined, noGate: true, args: true,
     name: planModeOn.value ? '关闭计划' : '计划',
-    desc: '这一轮先产出执行计划；可跟任务（/计划 任务），直接生成计划',
+    desc: '先出计划，可跟任务',
     run: args => runPlanCommand(args) },
   ...(goalEntryVisible.value ? [{ key: 'act-goal', cmd: 'goal', aliases: ['目标'], icon: AimOutlined, noGate: true, args: true,
-    name: '目标', desc: '进入目标模式（再发一条即开始）；也可直接跟目标原文',
+    name: '目标', desc: '进入目标模式',
     run: args => {
       const task = String(args || '').trim()
       if (task) { startGoalNow(task); return }
@@ -4031,7 +4029,7 @@ const chipOf = key => {
     if (!h) return null
     return {
       kind: 'hist', icon: 'hist', name: histChipLabel(h) || h.messageId,
-      title: '该条历史问答会作为本轮上下文带给模型', delTitle: '移除该引用', messageId: h.messageId
+      title: '作为本轮上下文带给模型', delTitle: '移除该引用', messageId: h.messageId
     }
   }
   return null

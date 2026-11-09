@@ -50,7 +50,6 @@
       <template v-else>
         <div v-if="caps.locked" class="ms-row static">
           <span class="ms-name">恒思考</span>
-          <span class="ms-sub">强度由管理员在模型库登记</span>
         </div>
         <template v-else>
           <button class="ms-row" type="button" :disabled="loading" @click="toggleThink">
@@ -74,7 +73,6 @@
         <span class="ms-name">压缩上下文</span>
         <span class="ms-sub">{{ compacting ? '压缩中…' : '早期对话并入摘要' }}</span>
       </button>
-      <div class="ms-note">把较早的对话压缩成摘要，为后续提问腾出空间；完整记录仍可在会话中回看（PC 端也可用 /compact 命令）</div>
     </div>
   </BottomSheet>
 </template>

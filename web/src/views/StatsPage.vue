@@ -25,7 +25,7 @@
       <div v-if="quotaRows.length" class="app-card">
         <div class="app-card-title">
           我的配额
-          <span class="card-sub">按周期现算；到额后新问答会被拦下，历史压缩这类辅助调用不拦</span>
+          <span class="card-sub">按周期算；到额只拦新问答</span>
         </div>
         <div v-for="q in quotaRows" :key="q.scope + q.period" class="quota-row">
           <span class="quota-scope">{{ q.scopeName }}</span>
@@ -100,7 +100,7 @@
         <!-- 模型用量（环形图） -->
         <div class="app-card chart-card">
           <div class="app-card-title">模型用量
-            <span v-if="hasUnrecorded" class="card-sub">「未记录」为模型字段上线前的历史消息；新回答起按实际模型统计</span>
+            <span v-if="hasUnrecorded" class="card-sub">「未记录」= 字段上线前的历史消息</span>
           </div>
           <div v-if="modelRows.length" class="donut-flex">
             <div ref="pieEl" class="chart donut"></div>
@@ -122,7 +122,7 @@
       <!-- ==================== 按用途占比 ==================== -->
       <div v-if="kindRows.length" class="app-card kind-card">
         <div class="app-card-title">这些用量花在什么地方
-          <span class="card-sub">一次回答背后还有记忆提炼、历史压缩、引用自检、子智能体分支等辅助调用——它们没有对应的消息，所以单独列出来才看得见</span>
+          <span class="card-sub">记忆提炼、压缩等辅助调用，没有对应消息</span>
         </div>
         <div class="kind-grid">
           <div v-for="k in kindRows" :key="k.kind" class="kind-row">

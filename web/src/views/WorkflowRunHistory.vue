@@ -6,7 +6,6 @@
     <div class="app-page-head">
       <button class="app-btn ghost small" @click="$emit('back')"><arrow-left-outlined /> 返回</button>
       <h1 class="app-page-title">运行历史{{ name ? ' · ' + name : '' }}</h1>
-      <span class="head-hint-plain" title="每次运行锁定当时的 DSL 快照；点开单条可看节点级输入输出与耗时">每次运行锁定当时的 DSL 快照；点开单条可看节点级输入输出与耗时</span>
       <button class="app-btn ghost small" style="margin-left:auto" :disabled="loading" @click="load">
         <reload-outlined /> 刷新
       </button>
@@ -16,7 +15,7 @@
       <a-spin :spinning="loading">
         <div v-if="!runs.length" class="app-card wf-empty">
           <p class="wf-empty-title">还没有运行记录</p>
-          <p class="head-hint-plain">在画布里点「运行」调试一次，这里就会留下完整的节点 trace</p>
+          <p class="head-hint-plain">在画布里点「运行」调试一次，这里会留下完整的节点记录</p>
         </div>
 
         <div v-else class="wf-runs">
@@ -27,7 +26,7 @@
               <a-tag v-if="x.version != null" color="blue">v{{ x.version }}</a-tag>
               <span class="wf-meta">{{ fmtTime(x.startedAt) }}</span>
               <span class="wf-meta">{{ x.durationMs != null ? fmtMs(x.durationMs) : '' }}</span>
-              <a class="wf-run-link">节点 trace →</a>
+              <a class="wf-run-link">节点记录 →</a>
             </div>
             <div v-if="x.error" class="wf-run-err">{{ x.error }}</div>
           </div>
@@ -68,7 +67,7 @@
         <div class="wf-block"><div class="wf-block-label">入参</div><pre class="wf-pre">{{ pretty(detail.inputs) }}</pre></div>
         <div class="wf-block"><div class="wf-block-label">出参</div><pre class="wf-pre">{{ pretty(detail.outputs) }}</pre></div>
         <div class="wf-block">
-          <div class="wf-block-label wf-trace-label">节点 trace（{{ traces.length }}）<span v-if="hasParallel" class="wf-par-hint">· {{ traceGroups.filter(g => g.parallel).length }} 段并行</span>
+          <div class="wf-block-label wf-trace-label">节点记录（{{ traces.length }}）<span v-if="hasParallel" class="wf-par-hint">· {{ traceGroups.filter(g => g.parallel).length }} 段并行</span>
             <button v-if="ganttReady" class="wf-gantt-toggle" @click="ganttOpen = !ganttShown">{{ ganttShown ? '收起时间轴' : '时间轴' }}</button>
           </div>
           <!-- 甘特时间轴：每节点一条状态色横杠按 [startMs, startMs+elapsedMs] 定位，并行一目了然（点击滚到下方条目） -->
@@ -104,7 +103,7 @@
                     <span class="wf-trace-name">{{ w.t.nodeId }}<span class="wf-meta">（{{ w.t.type }}）</span></span>
                     <a-tag :color="runColor(w.t.status)" class="wf-tl-tag">{{ runLabel(w.t.status) }}</a-tag>
                     <span class="wf-meta">{{ w.t.elapsedMs != null ? w.t.elapsedMs + ' ms' : '' }}</span>
-                    <span v-if="w.t.completionTokens != null" class="wf-meta">out {{ w.t.completionTokens }} tok</span>
+                    <span v-if="w.t.completionTokens != null" class="wf-meta">输出 {{ w.t.completionTokens }} tokens</span>
                     <span class="wf-trace-toggle">{{ w.t._open ? '收起' : '展开' }}</span>
                   </div>
                   <div v-if="w.t.error" class="wf-run-err">{{ w.t.error }}</div>

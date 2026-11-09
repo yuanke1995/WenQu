@@ -136,7 +136,7 @@
           </a-table>
           <div v-if="!menuRows.length" class="pg-empty">没有匹配的菜单</div>
         </a-spin>
-        <div class="pg-foot-tip">拖拽仅在同级内生效；隐藏父级会使其页内 Tab 失去宿主，操作前会点名受影响的 Tab。</div>
+        <div class="pg-foot-tip">拖拽仅同级生效；隐藏父级会一并影响其 Tab</div>
       </div>
 
       <!-- ==================== 接口 ==================== -->
@@ -338,7 +338,7 @@
         </a-form-item>
         <a-form-item label="排序">
           <a-input-number v-model:value="menuForm.sort" :min="0" :max="9999" style="width:100%" />
-          <div class="form-tip">数字小的排前面；也可以直接拖拽列表行调整同级顺序。</div>
+          <div class="form-tip">数字小的排前，也可拖拽调整</div>
         </a-form-item>
       </a-form>
     </a-modal>
@@ -354,7 +354,7 @@
         <a-form-item label="接口路径">
           <a-input v-model:value="apiForm.path" :disabled="apiForm.builtin"
                    placeholder="以 /api/ 开头；占位符用 {id}，如 /api/ai/agent/{id}" />
-          <div v-if="apiForm.builtin" class="form-tip">扫描登记的接口以代码为准，方法与路径不可改。</div>
+          <div v-if="apiForm.builtin" class="form-tip">扫描登记的接口以代码为准</div>
         </a-form-item>
         <a-form-item label="名称">
           <a-input v-model:value="apiForm.name" :maxlength="100" placeholder="展示用名称（可选）" />
@@ -367,7 +367,7 @@
                          :tree-data="menuSelectTree" :field-names="{ label: 'name', value: 'id', children: 'children' }"
                          allow-clear tree-default-expand-all :max-tag-count="4" style="width:100%"
                          placeholder="不选择 = 归入「其他接口」分组" />
-          <div class="form-tip">归属决定权限配置页里接口挂在哪个菜单下（可多归属），不影响鉴权。</div>
+          <div class="form-tip">决定接口挂在哪个菜单下，不影响鉴权</div>
         </a-form-item>
       </a-form>
     </a-modal>
@@ -391,7 +391,6 @@
         <a-form-item label="角色编码">
           <a-input v-model:value="roleForm.code" :disabled="roleForm.isEdit"
                    placeholder="小写字母开头，如 editor（建后不可修改）" />
-          <div class="form-tip">即用户身上的角色值（成员建档时选择）。</div>
         </a-form-item>
         <a-form-item label="角色名称">
           <a-input v-model:value="roleForm.name" :maxlength="50" placeholder="如 内容编辑" />
@@ -401,14 +400,14 @@
         </a-form-item>
         <a-form-item label="管理员级">
           <a-switch v-model:checked="roleAdmin" :disabled="!!roleForm.builtin" checked-children="是" un-checked-children="否" />
-          <div class="form-tip">管理员级角色默认拥有全部动作，只需在权限配置里设置禁止项。</div>
+          <div class="form-tip">管理员级默认拥有全部动作</div>
         </a-form-item>
         <a-form-item v-if="!roleForm.builtin" label="状态">
           <a-radio-group v-model:value="roleForm.status" button-style="solid" size="small">
             <a-radio-button :value="1">启用</a-radio-button>
             <a-radio-button :value="0">停用</a-radio-button>
           </a-radio-group>
-          <div class="form-tip">停用后该角色仅保留问答白名单能力，绑定全部失效。</div>
+          <div class="form-tip">停用后只剩问答白名单能力</div>
         </a-form-item>
         <a-form-item label="数据范围">
           <a-select v-model:value="roleForm.scopeType" style="width:100%"
@@ -417,7 +416,7 @@
                       { label: '本部门创建的可读', value: 'department' },
                       { label: '本部门及下级部门创建的可读', value: 'department_and_children' },
                       { label: '全部资源可读（只读口径）', value: 'all' }]" />
-          <div class="form-tip">范围只授予「看」（READ），管理权仍在创建者手里。</div>
+          <div class="form-tip">范围只授予查看权</div>
         </a-form-item>
         <a-form-item v-if="roleForm.scopeType.startsWith('department')" label="生效部门">
           <a-select v-model:value="roleForm.scopeDepartmentId" :options="scopeDeptOptions" allow-clear

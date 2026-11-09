@@ -33,7 +33,7 @@
           </span>
           <span class="join-expire">邀请有效期至 {{ expireText }}</span>
         </div>
-        <p v-if="brand.emailBound" class="join-hint">该邀请限定了邮箱；本版不校验邮箱归属，持有链接即可注册。</p>
+        <p v-if="brand.emailBound" class="join-hint">限定了邮箱，但持有链接即可注册。</p>
 
         <a-form layout="vertical" class="join-form" @submit.prevent="submit">
           <a-form-item label="登录账号" required>

@@ -5,7 +5,6 @@
       <!-- 页名与 Tab 名重复，标题仅保留给读屏器（sr-only），视觉上从统计起头 -->
       <h1 class="app-page-title sr-only">模型供应商</h1>
       <span class="head-count">共 <b>{{ list.length }}</b> 个供应商 · 已启用 <b>{{ enabledCount }}</b> · 模型 <b>{{ modelTotal }}</b> 个</span>
-      <span class="head-hint-plain" title="OpenAI 兼容网关统一管理：新建供应商 → 拉取模型 → 按类型登记">OpenAI 兼容网关统一管理：新建供应商 → 拉取模型 → 按类型登记</span>
       <button class="app-btn" style="margin-left:auto" @click="openCreate">
         <plus-outlined /> 新建供应商
       </button>
@@ -84,7 +83,6 @@
         </div>
         <div v-else-if="!loading" class="app-card pv-empty">
           <div class="pv-empty-title">还没有供应商</div>
-          <div class="pv-empty-desc">新建一个 OpenAI 兼容网关（DeepSeek / 智谱GLM / 通义百炼 / Kimi / Ollama 自托管服务等），登记 API Key 后即可远程拉取模型列表。</div>
         </div>
       </a-spin>
     </div>
@@ -104,7 +102,7 @@
               <ProviderIcon :icon="k.key" :name="form.name || k.name" :tooltip="k.name" :size="20" />
             </button>
           </div>
-          <div class="pv-hint">留空自动按名称生成徽标；点上方图标选内置品牌；没有的品牌可把官方 logo 图放到图床，贴图片 URL。</div>
+          <div class="pv-hint">留空按名称生成；也可贴图片 URL</div>
           <a-input v-model:value="iconUrl" placeholder="自定义图片 URL（可留空，http(s)://…）" style="margin-top:6px" />
         </a-form-item>
         <a-form-item label="网关地址" required>
@@ -157,7 +155,7 @@
           <cloud-download-outlined /> {{ fetching ? '拉取中…' : '从服务拉取' }}
         </button>
         <button class="app-btn" @click="openModelAdd">添加模型</button>
-        <span class="pv-hint" style="margin-left:auto">拉取/添加后自动分类并预填，点「编辑」细调每个模型；保存后生效</span>
+        <span class="pv-hint" style="margin-left:auto">保存后生效</span>
       </div>
 
       <!-- 拉取候选：搜索 + 按行添加（类型在下方表格可改，无需勾选） -->
@@ -237,7 +235,7 @@
         <button class="app-btn primary" :disabled="savingModels" @click="saveModels">
           {{ savingModels ? '保存中…' : `保存（${models.filter(m => m.modelId && m.modelId.trim() && m.enabled !== false).length} 个启用）` }}
         </button>
-        <span class="pv-hint">未登记启用的模型不会出现在各处模型选择器中</span>
+        <span class="pv-hint">未启用的模型不会出现在选择器中</span>
       </div>
     </a-modal>
 
@@ -470,7 +468,7 @@
                   </table>
                 </div>
               </template>
-              <div v-else class="pm-hint">向量 / 重排 / OCR / 语音是能力型类型，无需配置对话能力。</div>
+              <div v-else class="pm-hint">该类型无需配置对话能力</div>
             </a-collapse-panel>
           </a-collapse>
         </div>
@@ -524,7 +522,6 @@
             <button class="app-link-btn" :disabled="reEnabling" @click="reEnableFromRefs">
               重新启用「{{ refsProvider?.name }}」
             </button>
-            <span class="pv-refs-foot-hint">来不及逐处改，就先让它恢复可用。</span>
           </div>
         </template>
       </a-spin>

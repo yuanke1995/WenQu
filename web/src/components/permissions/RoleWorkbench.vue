@@ -86,7 +86,7 @@
           <div class="rw-sec"><b>数据范围</b><button class="app-link-btn" @click="$emit('edit-role', activeRole)">修改</button></div>
           <div class="app-card" style="padding:12px 14px">
             <span class="app-pill blue">{{ scopeText }}</span>
-            <p class="rw-tip">范围只授予「看」（READ），管理权仍在创建者手里；生效部门为 {{ scope.departmentId || '成员自己的部门' }}。</p>
+            <p class="rw-tip">范围只授予查看权；生效部门：{{ scope.departmentId || '成员自己的部门' }}。</p>
           </div>
         </div>
 

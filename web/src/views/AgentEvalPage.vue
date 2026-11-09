@@ -4,7 +4,6 @@
     <template v-if="!currentAgentId">
       <div class="app-page-head">
         <h3 class="app-page-title">智能体评测</h3>
-        <span class="head-hint">用真实问题回归配置改动，发布前知道变好还是变坏</span>
         <a-input v-model:value="kw" size="small" class="kw" placeholder="搜索智能体" allow-clear>
           <template #prefix><search-outlined class="ic" /></template>
         </a-input>

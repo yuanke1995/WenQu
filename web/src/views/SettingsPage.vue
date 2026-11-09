@@ -3,7 +3,6 @@
     <div class="app-page-head">
       <h3 class="app-page-title">系统设置</h3>
       <span v-if="dirtyCount" class="dirty-hint">有 {{ dirtyCount }} 项已修改未保存</span>
-      <button v-else class="head-hint-plain">修改后点右侧保存生效，悬停参数旁 ? 查看说明</button>
       <button class="app-btn" style="margin-left:auto" :disabled="!dirtyCount" :class="{ dis: !dirtyCount }" @click="save">
         <save-outlined /> 保存配置{{ dirtyCount ? `（${dirtyCount} 项改动）` : '' }}
       </button>
@@ -172,13 +171,13 @@
                     {{ mailTestBusy ? '发送中…' : '发送测试邮件' }}
                   </button>
                   <button class="app-btn ghost" @click="openMailLog">查看投递记录</button>
-                  <span class="mail-ops-hint">测试邮件发到你个人资料里的邮箱；失败原因会直接显示。</span>
+                  <span class="mail-ops-hint">发到你个人资料里的邮箱</span>
                 </div>
                 <div v-if="mailTestResult" class="mail-ops-result" :class="mailTestResult.ok ? 'ok' : 'bad'">
                   {{ mailTestResult.text }}
                 </div>
                 <a-modal v-model:open="mailLogOpen" title="邮件投递记录" :footer="null" width="760">
-                  <div class="mail-log-hint">最近 50 条（含按规则未发送的 skipped，便于排障）</div>
+                  <div class="mail-log-hint">最近 50 条（含 skipped）</div>
                   <a-table :data-source="mailLogs" :loading="mailLogLoading" size="small" :pagination="false"
                            row-key="id" :columns="mailLogCols" :scroll="{ y: 380 }">
                     <template #bodyCell="{ column, record }">
@@ -376,7 +375,7 @@
                       </template>
                       <template v-else>
                         <span>
-                          <span class="audit-chip" :class="diag.schemaReady ? 'pass' : 'fail'">{{ diag.schemaReady ? '库门字段就绪' : '库门字段缺失' }}</span>
+                          <span class="audit-chip" :class="diag.schemaReady ? 'pass' : 'fail'">{{ diag.schemaReady ? '配置字段就绪' : '配置字段缺失' }}</span>
                           <span class="key-dim" style="margin-left:8px">
                             索引 <code>{{ diag.index }}</code> · 向量 {{ diag.indexedDocs < 0 ? '—' : diag.indexedDocs }} 条 · 抽样带 kbId 标签 {{ diag.docsWithKbIdSampled < 0 ? '—' : diag.docsWithKbIdSampled }} 条
                           </span>

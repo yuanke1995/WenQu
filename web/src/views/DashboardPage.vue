@@ -2,7 +2,7 @@
   <div class="app-page">
     <div class="app-page-head">
       <h3 class="app-page-title">数据看板</h3>
-      <span class="head-stat">问答质量、执行 Trace 与知识回流闭环</span>
+      <span class="head-stat">问答质量、执行记录与知识回流闭环</span>
       <button class="app-btn ghost" style="margin-left:auto" :disabled="analyticsLoading" @click="reloadAll">刷新</button>
     </div>
 
@@ -26,7 +26,7 @@
           <!-- 检索质量自动体检 -->
           <div class="app-card" style="margin-top:14px">
             <div class="app-card-title">检索质量自动体检
-              <span class="card-sub">定时按线上参数跑评估集，指标较上期下滑即预警</span>
+              <span class="card-sub">定期跑评估集，下滑即预警</span>
               <button class="app-btn ghost" style="margin-left:auto" :disabled="checkLoading" @click="doAutoCheck">立即体检</button>
             </div>
             <a-spin :spinning="checkLoading">
@@ -95,7 +95,7 @@
         </a-tab-pane>
 
         <!-- ============ 执行 Trace（对话 + 工作流统一视图） ============ -->
-        <a-tab-pane key="trace" tab="执行 Trace">
+        <a-tab-pane key="trace" tab="执行记录">
           <div class="app-card">
             <div class="trace-filters">
               <a-select v-model:value="traceKind" style="width: 110px" :options="[{ value: 'chat', label: '对话' }, { value: 'workflow', label: '工作流' }]" @change="loadTraces" />
@@ -153,7 +153,6 @@
           </div>
           <div class="app-card">
             <div class="app-card-title">待标注样本
-              <span class="card-sub">差评必采 + 无引用/随机按配置入池；标注「期望命中的知识块」后回流评测集</span>
               <a-select v-model:value="poolStatus" style="width: 110px; margin-left:auto"
                         :options="[{ value: 'pending', label: '待标注' }, { value: 'labeled', label: '已回流' }, { value: 'dismissed', label: '已忽略' }]"
                         @change="loadPool" />
@@ -212,7 +211,7 @@
           </div>
           <!-- 只在真摊开多家时出现：单租户部署里这张表永远只有一行，等于把「本租户」再说一遍 -->
           <div v-if="cost.crossTenant && (cost.byTenant || []).length > 1" class="app-card">
-            <div class="app-card-title">按租户结算<span class="card-sub">跨租户台账汇总；每个租户一行，费用按现行单价现算</span></div>
+            <div class="app-card-title">按租户结算<span class="card-sub">跨租户汇总，按现行单价现算</span></div>
             <a-table :data-source="cost.byTenant || []" :columns="costTenantCols" size="small"
                      row-key="tenantId" :loading="costLoading" :pagination="costPager"
                      :locale="{ emptyText: '该时间范围内没有用量' }">
@@ -232,7 +231,7 @@
               </a-table>
             </div>
             <div class="app-card">
-              <div class="app-card-title">按模型<span class="card-sub">计价口径：输入/输出单价分开（元/百万 tokens）</span></div>
+              <div class="app-card-title">按模型<span class="card-sub">输入/输出单价分开（元/百万 tokens）</span></div>
               <a-table :data-source="cost.byModel || []" :columns="costModelCols" size="small" row-key="model"
                        :loading="costLoading" :pagination="costPager" :locale="{ emptyText: '该时间范围内没有用量' }">
                 <template #bodyCell="{ column, record }">
@@ -242,7 +241,7 @@
             </div>
           </div>
           <div class="app-card">
-            <div class="app-card-title">按部门<span class="card-sub">成员归属部门汇总；未归部门（含系统调用）单列一条</span></div>
+            <div class="app-card-title">按部门<span class="card-sub">按部门汇总；未归属单列</span></div>
             <a-table :data-source="cost.byDepartment || []" :columns="costDeptCols" size="small"
                      :row-key="r => r.departmentId || 'none'" :loading="costLoading" :pagination="costPager"
                      :locale="{ emptyText: '该时间范围内没有用量' }">
@@ -254,7 +253,7 @@
           <div class="app-card">
             <div class="app-card-title">
               配额与预算
-              <span class="card-sub">上限管「谁最多能花多少」；用量按台账现算，与上面三张表同源</span>
+              <span class="card-sub">上限按台账现算</span>
               <button class="app-link-btn" style="margin-left:auto" @click="openQuota()">新建配额</button>
             </div>
             <a-table :data-source="quotas" :columns="quotaCols" size="small" row-key="id"
@@ -320,11 +319,10 @@
           </a-form-item>
           <a-form-item label="费用上限（元，留空＝不按金额限）">
             <a-input-number v-model:value="quotaForm.costLimit" :min="0" :step="1" style="width:100%" />
-            <div class="metric-sub">金额只累计已登记单价的模型；未配单价的模型不进金额口径（token 口径照算）。</div>
+            <div class="metric-sub">未配单价的模型不计金额（token 照算）。</div>
           </a-form-item>
           <a-form-item label="到额处理">
             <a-switch v-model:checked="quotaForm.enforce" checked-children="熔断" un-checked-children="只告警" />
-            <span class="metric-sub" style="margin-left:8px">新策略建议先「只告警」跑一个周期，确认拦得对再熔断。</span>
           </a-form-item>
           <a-form-item label="备注（为什么设这条）">
             <a-input v-model:value="quotaForm.remark" :maxlength="200" placeholder="如：外部合作账号只给 200 万/月" />
@@ -355,7 +353,7 @@
                   <pre v-if="(detail.message.toolCalls || []).length" class="dt-pre">{{ JSON.stringify(detail.message.toolCalls, null, 2) }}</pre>
                 </div>
               </template>
-              <div v-else class="dt-block"><div class="dt-label">全过程</div><div class="dt-meta">该记录早于 trace 关联键上线（无 message_id），只有摘要视图。</div></div>
+              <div v-else class="dt-block"><div class="dt-label">全过程</div><div class="dt-meta">该记录较早，只有摘要视图。</div></div>
               <div v-if="detail.feedback" class="dt-block">
                 <div class="dt-label">用户反馈</div>
                 <pre class="dt-pre">{{ detail.feedback.rating === 1 ? '👍 好评' : '👎 差评' }}{{ detail.feedback.text ? '：' + detail.feedback.text : '' }}</pre>
@@ -381,7 +379,7 @@
               <div class="dt-block"><div class="dt-label">入参</div><pre class="dt-pre">{{ prettyJson(detail.run?.inputs) }}</pre></div>
               <div class="dt-block"><div class="dt-label">出参</div><pre class="dt-pre">{{ prettyJson(detail.run?.outputs) }}</pre></div>
               <div class="dt-block">
-                <div class="dt-label">节点 trace（{{ wfTraces.length }}）</div>
+                <div class="dt-label">节点记录（{{ wfTraces.length }}）</div>
                 <div v-for="(t, i) in wfTraces" :key="i" class="wf-trace" @click="t._open = !t._open">
                   <div class="wf-trace-head">
                     <a-tag :color="{ success: 'green', failed: 'red', waiting: 'orange' }[t.status] || 'red'">{{ t.status }}</a-tag>
@@ -878,28 +876,28 @@ const loadCost = async () => {
 }
 const costUserCols = [
   { title: '用户', dataIndex: 'name', key: 'name' },
-  { title: '输入 tok', dataIndex: 'promptTokens', key: 'promptTokens', width: 96, align: 'right', customRender: ({ text }) => fmtTokensCompact(text) },
-  { title: '输出 tok', dataIndex: 'completionTokens', key: 'completionTokens', width: 96, align: 'right', customRender: ({ text }) => fmtTokensCompact(text) },
+  { title: '输入 tokens', dataIndex: 'promptTokens', key: 'promptTokens', width: 96, align: 'right', customRender: ({ text }) => fmtTokensCompact(text) },
+  { title: '输出 tokens', dataIndex: 'completionTokens', key: 'completionTokens', width: 96, align: 'right', customRender: ({ text }) => fmtTokensCompact(text) },
   { title: '费用', key: 'cost', width: 110, align: 'right' }
 ]
 const costDeptCols = [
   { title: '部门', dataIndex: 'name', key: 'name' },
-  { title: '输入 tok', dataIndex: 'promptTokens', key: 'promptTokens', width: 96, align: 'right', customRender: ({ text }) => fmtTokensCompact(text) },
-  { title: '输出 tok', dataIndex: 'completionTokens', key: 'completionTokens', width: 96, align: 'right', customRender: ({ text }) => fmtTokensCompact(text) },
+  { title: '输入 tokens', dataIndex: 'promptTokens', key: 'promptTokens', width: 96, align: 'right', customRender: ({ text }) => fmtTokensCompact(text) },
+  { title: '输出 tokens', dataIndex: 'completionTokens', key: 'completionTokens', width: 96, align: 'right', customRender: ({ text }) => fmtTokensCompact(text) },
   { title: '费用', key: 'cost', width: 110, align: 'right' }
 ]
 const costTenantCols = [
   { title: '租户', dataIndex: 'name', key: 'name' },
   { title: '标识', dataIndex: 'tenantId', key: 'tenantId', width: 110 },
   { title: '成员', dataIndex: 'members', key: 'members', width: 72, align: 'right' },
-  { title: '输入 tok', dataIndex: 'promptTokens', key: 'promptTokens', width: 96, align: 'right', customRender: ({ text }) => fmtTokensCompact(text) },
-  { title: '输出 tok', dataIndex: 'completionTokens', key: 'completionTokens', width: 96, align: 'right', customRender: ({ text }) => fmtTokensCompact(text) },
+  { title: '输入 tokens', dataIndex: 'promptTokens', key: 'promptTokens', width: 96, align: 'right', customRender: ({ text }) => fmtTokensCompact(text) },
+  { title: '输出 tokens', dataIndex: 'completionTokens', key: 'completionTokens', width: 96, align: 'right', customRender: ({ text }) => fmtTokensCompact(text) },
   { title: '费用', key: 'cost', width: 110, align: 'right' }
 ]
 const costModelCols = [
   { title: '模型', dataIndex: 'label', key: 'label' },
-  { title: '输入 tok', dataIndex: 'promptTokens', key: 'promptTokens', width: 96, align: 'right', customRender: ({ text }) => fmtTokensCompact(text) },
-  { title: '输出 tok', dataIndex: 'completionTokens', key: 'completionTokens', width: 96, align: 'right', customRender: ({ text }) => fmtTokensCompact(text) },
+  { title: '输入 tokens', dataIndex: 'promptTokens', key: 'promptTokens', width: 96, align: 'right', customRender: ({ text }) => fmtTokensCompact(text) },
+  { title: '输出 tokens', dataIndex: 'completionTokens', key: 'completionTokens', width: 96, align: 'right', customRender: ({ text }) => fmtTokensCompact(text) },
   { title: '费用', key: 'cost', width: 110, align: 'right' }
 ]
 /** 费用（元）：null=无可计费用；小额保留分位 */

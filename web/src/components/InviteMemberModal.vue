@@ -47,7 +47,7 @@
           <code>{{ inviteUrl }}</code>
           <a-button size="small" type="primary" @click="copyLink">复制链接</a-button>
         </div>
-        <div class="im-tip">复制后直接发给对方；关闭弹窗后无法再次查看明文链接。</div>
+        <div class="im-tip">关闭后无法再次查看明文链接。</div>
       </div>
       <div class="im-actions">
         <a-button @click="created = false">再生成一条</a-button>

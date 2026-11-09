@@ -42,7 +42,7 @@
           <button class="rd-btn" type="button" @click="saveBuilt"><download-outlined /><span>保存文件</span></button>
           <button class="rd-btn" type="button" @click="copyBuilt"><copy-outlined /><span>复制全文</span></button>
         </div>
-        <div class="rd-tip">全文 {{ builtSize }} · {{ built.fileName }}；保存文件无反应时用「复制全文」</div>
+        <div class="rd-tip">全文 {{ builtSize }} · {{ built.fileName }}；保存无反应时用「复制全文」</div>
       </template>
 
       <button v-if="canAddEval" class="rd-btn" type="button" @click="addToEval">
@@ -59,7 +59,7 @@
       <button class="rd-btn danger" type="button" @click="doDelete">
         <delete-outlined /><span>删除本轮对话</span>
       </button>
-      <div class="rd-tip">删除本轮 = 这条回答连同它对应的提问一起删除（不可恢复）。</div>
+      <div class="rd-tip">本轮问答一起删除，不可恢复</div>
     </div>
   </BottomSheet>
 </template>

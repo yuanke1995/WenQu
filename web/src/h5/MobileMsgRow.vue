@@ -304,7 +304,7 @@
         <!-- 错误卡：保留半程内容，给分类文案 + 重新生成 -->
         <div v-if="m.errorCard" class="err-card" :class="{ net: m.errorCard.kind === 'interrupted' }">
           <div class="err-head"><close-circle-outlined /> {{ errorBrief(m.errorCard.message, m.errorCard.kind) }}</div>
-          <div v-if="m.errorCard.kind === 'interrupted'" class="err-tip">已生成的部分已保存。重新生成会重跑本轮并重新计费。</div>
+          <div v-if="m.errorCard.kind === 'interrupted'" class="err-tip">重新生成会重跑本轮并重新计费。</div>
           <button class="btn-ghost" @click.stop="$emit('retry', index)"><redo-outlined /> 重新生成</button>
         </div>
 

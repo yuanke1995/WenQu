@@ -31,7 +31,7 @@
       </div>
     </a-spin>
 
-    <div class="rmp-tip">认证源授予的角色只读，需在认证源的组映射里调整。</div>
+    <div class="rmp-tip">认证源授予的角色需在源里调整。</div>
   </div>
 </template>
 

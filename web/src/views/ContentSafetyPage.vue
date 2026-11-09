@@ -162,7 +162,7 @@ const patternHint = computed(() => form.value.matchType === 'regex'
     <div class="cs-head">
       <h1 class="app-page-title">内容安全规则</h1>
       <span class="app-pill muted plain">共 {{ rows.length }} 条</span>
-      <span class="head-hint-plain">定「拦什么字」；闸门开关、外部检查服务与文案在「系统设置 → 内容安全」</span>
+      <span class="head-hint-plain">这里定拦什么字；开关与文案在「系统设置 → 内容安全」</span>
     </div>
     <div class="app-list-bar">
       <a-input v-model:value="keyword" allow-clear size="small" class="cs-search" placeholder="搜索规则名 / 匹配内容 / 依据">
@@ -221,8 +221,7 @@ const patternHint = computed(() => form.value.matchType === 'regex'
     </div>
 
     <div class="app-list-foot">
-      出口闸命中只能<b>当场截断</b>回答（已经流到屏幕上的字收不回来），所以新规则建议先选「只告警」跑一段，
-      在「权限管理 → 审计事件」里看清命中面，再改「拦下」。每条规则的判定顺序按「排序」升序，先命中的那条说话。
+      出口闸命中只能<b>当场截断</b>回答（已经流到屏幕上的字收不回来）。每条规则按「排序」升序判定，先命中的那条说话。
     </div>
 
     <!-- 编辑弹窗（表单与全系统同一形态：a-form 纵排） -->
@@ -253,7 +252,6 @@ const patternHint = computed(() => form.value.matchType === 'regex'
         </a-form-item>
         <a-form-item label="匹配内容">
           <a-textarea v-model:value="form.pattern" :rows="3" :placeholder="patternHint" />
-          <div class="cs-meta">改完可以先用「试跑规则」验一次，别靠真发一句话去猜。</div>
         </a-form-item>
         <a-form-item label="排序">
           <a-input-number v-model:value="form.priority" :min="0" :max="9999" style="width:120px" />

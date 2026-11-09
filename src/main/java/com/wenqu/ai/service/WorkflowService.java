@@ -389,12 +389,12 @@ public class WorkflowService {
 
     /** DSL 解析（JSON 语法错误包装成用户可读提示，fastjson2 的 offset 信息保留） */
     private WorkflowDsl parseDsl(String dslText) {
-        if (dslText == null || dslText.isBlank()) throw new BizException("DSL 不能为空");
-        if (dslText.length() > MAX_DSL_CHARS) throw new BizException("DSL 超过体积上限（512KB）");
+        if (dslText == null || dslText.isBlank()) throw new BizException("工作流定义不能为空");
+        if (dslText.length() > MAX_DSL_CHARS) throw new BizException("工作流定义超过体积上限（512KB）");
         try {
             return WorkflowDsl.parse(dslText);
         } catch (Exception e) {
-            throw new BizException("DSL 不是合法 JSON：" + e.getMessage());
+            throw new BizException("工作流定义不是合法 JSON：" + e.getMessage());
         }
     }
 
@@ -636,7 +636,7 @@ public class WorkflowService {
         if (target == null) throw new BizException(404, "版本 v" + targetVersion + " 不存在");
         WorkflowDsl dsl = parseDsl(target.getDsl());
         List<String> errors = validator.validate(dsl);
-        if (!errors.isEmpty()) throw new BizException("版本 v" + targetVersion + " 的 DSL 已不符合当前校验规则，无法回滚："
+        if (!errors.isEmpty()) throw new BizException("版本 v" + targetVersion + " 的工作流定义已不符合当前校验规则，无法回滚："
                 + String.join("；", errors));
         checkSubagentAgentCycle(dsl, row.getId());
         int version = nextVersion(row.getId());
@@ -1570,7 +1570,7 @@ public class WorkflowService {
         String cron = asStr(body.get("cron"));
         String timezone = body.containsKey("timezone") ? asStr(body.get("timezone")) : null;
         if (enabled && (cron == null || cron.isBlank())) {
-            throw new BizException("启用定时触发前请填写 cron 表达式");
+            throw new BizException("启用定时触发前请填写定时规则");
         }
         String tz = timezone == null || timezone.isBlank()
                 ? (row.getScheduleTimezone() == null ? DEFAULT_SCHEDULE_ZONE : row.getScheduleTimezone())

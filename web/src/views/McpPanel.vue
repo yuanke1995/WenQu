@@ -12,7 +12,6 @@
       </span>
       <span class="head-divider"></span>
       <button class="head-stats" type="button" title="查看近 7 天调用明细" @click="openStats">{{ statsSummary }}</button>
-      <span class="head-hint-plain" title="外部 MCP 工具会自动注册给模型，与内置工具一样可被调用">外部 MCP 工具会自动注册给模型，与内置工具一样可被调用</span>
       <!-- 页头右侧一组（对齐智能体 Tab）：搜索 + 刷新 + 重连 + 添加 + 批量区（分隔线独立成区） -->
       <div class="head-r">
         <a-input v-model:value="keyword" class="head-search" size="small" allow-clear placeholder="搜索名称或地址">
@@ -157,7 +156,7 @@
               </div>
             </div>
             <div class="mcp-fail-foot">
-              <span class="mcp-retry-hint">失败后会自动按退避间隔重试（30 秒 → 10 分钟）</span>
+              <span class="mcp-retry-hint">失败按 30 秒 → 10 分钟退避重试</span>
               <span class="mcp-fail-ops">
                 <button class="app-btn ghost small" :disabled="!s.enabled || !!reconnectingId"
                         @click="reconnectServer(s)">重连</button>

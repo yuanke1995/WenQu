@@ -50,7 +50,7 @@
         <span class="pj-state" :class="{ on: form.memoryIsolated === 1 }">
           {{ form.memoryIsolated === 1 ? '已开启' : '未开启' }}
         </span>
-        <a-tooltip title="开启后，这个工作区里的对话不带入也不写入个人记忆（新开轮次生效）。上下文只来自目录里的文件和这里的工作区记忆，两边互不干扰。">
+        <a-tooltip title="对话不带入也不写入个人记忆（新轮次生效）">
           <question-circle-outlined class="pj-help" />
         </a-tooltip>
         <a-switch size="small" :checked="form.memoryIsolated === 1" :loading="isoSaving" @change="saveMemoryIsolated" />
@@ -95,7 +95,7 @@
               <div v-if="!previewEntry" class="pj-pv-empty">
                 <file-text-outlined class="pj-pv-empty-ic" />
                 <div>从右侧目录选一个文件，预览会出现在这里</div>
-                <div class="pj-pv-sub">图片、PDF、Markdown、代码直接看；其他类型可下载</div>
+                <div class="pj-pv-sub">图片 / PDF / Markdown / 代码可预览，其他可下载</div>
               </div>
               <a-spin v-else :spinning="previewLoading">
                 <div v-if="previewEditing" class="pj-pv-editor">

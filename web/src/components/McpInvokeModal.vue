@@ -14,7 +14,7 @@
             <div class="iv-label">入参（JSON）</div>
             <a-textarea v-model:value="argsText" class="iv-json" :rows="7" spellcheck="false"
                         placeholder='{ "metric": "dau" }' />
-            <div class="iv-hint">JSON 格式会在本地校验，不合法不会发请求</div>
+            <div class="iv-hint">本地校验 JSON，不合法不发请求</div>
           </div>
           <div>
             <div class="iv-label">参数说明</div>

@@ -359,7 +359,7 @@
           </div>
         </div>
         <div class="m-planp-foot">
-          <span class="m-planp-hint">默认同一轮内按意见升版（不新增气泡）；「转到对话修改」才把意见变成新消息；不处理会超时并停止本轮</span>
+          <span class="m-planp-hint">不处理会超时并停止本轮</span>
           <span class="m-planp-actions">
             <button class="m-rec-btn ghost" type="button" :disabled="curPlanCard.busy"
                     @click="stop()">停止本轮</button>
@@ -502,7 +502,7 @@
       </div>
       <!-- 摘要正文本身是模型给的条目化 Markdown：按 Markdown 渲染，别用 pre 把 - 和 # 原样摊出来 -->
       <div class="md m-csum-md" v-html="renderMd(compactSummary ? compactSummary.text : '')"></div>
-      <div class="m-csum-tip">完整问答仍保留在会话中，往上翻可回看；每次压缩都会把更早的对话并入这一份。</div>
+      <div class="m-csum-tip">完整问答仍保留，可往上回看</div>
       <div class="m-csum-acts">
         <button class="app-btn ghost small" type="button" @click="csumInstrOpen = !csumInstrOpen">
           <edit-outlined /> 带要求重新压缩

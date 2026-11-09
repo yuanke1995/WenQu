@@ -4,7 +4,7 @@
       <div class="head-title">
         <h1 class="app-page-title">服务账号</h1>
         <span class="app-pill muted plain">共 {{ accounts.length }} 个</span>
-        <span class="head-hint-plain">给外部系统用的非人类身份：请求头带 <code>X-Service-Token</code>，权限走角色，不能登录网页</span>
+        <span class="head-hint-plain">给外部系统用的非人类身份：请求头带 <code>X-Service-Token</code>，不能登录网页</span>
       </div>
       <div class="head-acts">
         <button class="app-btn" @click="openCreate"><plus-outlined /> 新建服务账号</button>
@@ -98,7 +98,7 @@
         <a-form-item v-if="!form.id" label="角色" required>
           <a-select v-model:value="form.roles" mode="multiple" style="width:100%"
                     placeholder="至少选一个，否则它什么都调不动" :options="roleOptions" />
-          <div class="form-tip">能调用哪些接口完全由角色决定；一个都不选时它只能通过身份校验、任何端点都会 403。</div>
+          <div class="form-tip">接口权限由角色决定；不选角色则一律 403</div>
         </a-form-item>
         <a-form-item label="到期时间">
           <a-date-picker v-model:value="form.expireAt" show-time value-format="YYYY-MM-DDTHH:mm:ss"

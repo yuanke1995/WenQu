@@ -273,8 +273,8 @@ function renderFromData(data, focus) {
     backgroundColor: 'transparent',
     tooltip: {
       formatter: p => p.dataType === 'edge'
-        ? `<b>${p.data.source}</b> —【${p.data.predicate}】→ <b>${p.data.target}</b><br/><span style="color:#999">点节点查看三元组与来源块</span>`
-        : `<b>${p.name}</b><br/><span style="color:#999">点击查看该实体的三元组与来源块</span>`
+        ? `<b>${p.data.source}</b> —【${p.data.predicate}】→ <b>${p.data.target}</b><br/><span style="color:#999">点节点查看关系与来源块</span>`
+        : `<b>${p.name}</b><br/><span style="color:#999">点击查看关系与来源块</span>`
     },
     series: [{
       type: 'graph', layout: 'force', roam: true, draggable: true, cursor: 'grab',

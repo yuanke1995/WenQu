@@ -75,18 +75,18 @@ const form = ref({ type: 'skill', ref: '', summary: '', description: '', tags: '
 const typeMeta = computed(() => ({
   skill: {
     label: '技能', placeholder: '选择要上架的技能（仅列出你自己安装的）',
-    detailHint: '什么场景用它、怎么用、有什么前置要求（Markdown）。安装的人在详情页看到。',
-    hint: '上架的是<b>当前内容的快照</b>：之后你改了自己的技能，市场不会自动跟着变——重新上架一次即可。装过的人是否看到「有更新」由内容变化自动判定，与版本号无关。'
+    detailHint: '使用场景、用法与前置要求（Markdown），详情页可见。',
+    hint: '上架内容快照；改动后需重新上架。更新提示按内容变化自动判定。'
   },
   agent: {
     label: '智能体', placeholder: '选择要上架的智能体（仅列出你可管理的）',
-    detailHint: '这个助手是干什么的、适合谁用、有什么前置条件（Markdown）。安装的人在详情页看到。',
-    hint: '上架<b>配置快照</b>（人设/知识范围/工具开关/技能与 MCP 引用）；绑定了工作流时连同工作流一起带上。别人安装=fork 成他自己的智能体，引用按他的权限自动裁剪并逐项提示。<b>子智能体委派关系不随模板走</b>。'
+    detailHint: '用途、适用人群与前置条件（Markdown），详情页可见。',
+    hint: '上架<b>配置快照</b>（人设/知识范围/工具/技能与 MCP）；安装即 fork，子智能体委派不带。'
   },
   workflow: {
     label: '工作流', placeholder: '选择要上架的工作流（仅列出你可管理的）',
     detailHint: '这个流程解决什么问题、输入输出是什么（Markdown）。安装的人在详情页看到。',
-    hint: '上架<b>当前画布的 DSL 快照</b>；别人安装=复制一份成为他的草稿，与你的原稿互不影响。'
+    hint: '上架<b>当前画布的快照</b>；别人安装=复制一份成为他的草稿，与你的原稿互不影响。'
   }
 })[form.value.type] || {})
 const typeHint = computed(() => typeMeta.value.hint || '')

@@ -3,7 +3,6 @@
     <div class="app-page-head">
       <!-- 页名与 Tab 名重复，标题仅保留给读屏器（sr-only），视觉上从说明文字起头 -->
       <h1 class="app-page-title sr-only">定时任务</h1>
-      <span class="head-hint-plain" title="到点自动用「智能体 + 指令」跑一次完整问答，结果落进该任务的专属会话">到点自动用「智能体 + 指令」跑一次完整问答，结果落进该任务的专属会话</span>
       <button class="app-btn" style="margin-left:auto" @click="openCreate">
         <plus-outlined /> 新建任务
       </button>
@@ -37,7 +36,7 @@
               <a-tag :color="r.enabled ? 'green' : 'default'">{{ r.enabled ? '已启用' : '已停用' }}</a-tag>
               <a-tag v-if="r.lastRun" :color="runColor(r.lastRun.status)">{{ runLabel(r.lastRun.status) }}</a-tag>
               <span v-if="r.agentName" class="sched-meta">智能体：{{ r.agentName }}</span>
-              <span class="sched-meta">cron：{{ r.cron }}（{{ r.timezone }}）</span>
+              <span class="sched-meta">规则：{{ r.cron }}（{{ r.timezone }}）</span>
               <span class="sched-meta">
                 下次：{{ r.enabled ? (r.nextRunAt ? fmt(r.nextRunAt) : '—') : '已停用' }}
                 <template v-if="r.enabled && r.nextRunAt">（{{ humanNext(r.nextRunAt) }}）</template>
@@ -95,7 +94,7 @@
         </a-form-item>
         <a-form-item label="深度思考">
           <a-switch v-model:checked="form.deepThink" />
-          <span class="sched-hint" style="margin-left:8px">开启后每轮先思考再检索（更慢，适合需要拆解的复杂问题）</span>
+          <span class="sched-hint" style="margin-left:8px">先思考再检索（更慢）</span>
         </a-form-item>
         <a-form-item label="启用">
           <a-switch v-model:checked="form.enabled" />

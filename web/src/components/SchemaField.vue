@@ -179,19 +179,19 @@ const srcTag = computed(() => {
   const s = props.source
   if (!s) return null
   if (s.invalid) {
-    return { text: '值有问题', color: 'error', tip: '库里这行的值用不了：' + s.invalid + '。生效的就是库里这个值，与界面写的可能不一样 — 重新填一次并保存即可修正。' }
+    return { text: '值有问题', color: 'error', tip: '值不可用：' + s.invalid + '。生效的仍是库里这个值，重填保存即可。' }
   }
   if (s.source === 'CODE_DEFAULT') {
-    return { text: '出厂默认', color: 'warning', tip: '配置表里没有这一行，此刻生效的是代码默认值；在这里改一次就会写入配置表。' }
+    return { text: '出厂默认', color: 'warning', tip: '配置表无此行，当前用代码默认值；改一次即入库。' }
   }
   if (s.source === 'UNREGISTERED') {
-    return { text: '无处取值', color: 'error', tip: '字段定义、默认值清单与配置表三处都没有这一项，读到的是空值 — 这条配置实际不生效。' }
+    return { text: '无处取值', color: 'error', tip: '三处都没有此项，读到空值，配置不生效。' }
   }
   if (s.source === 'USER_OVERRIDE') {
-    return { text: '个人覆盖', color: 'blue', tip: '这一项正被成员的个人设置覆盖，全局值对他不生效。' }
+    return { text: '个人覆盖', color: 'blue', tip: '被个人设置覆盖，全局值对他不生效。' }
   }
   if (s.source === 'EVAL_OVERRIDE') {
-    return { text: '评估覆盖', color: 'purple', tip: '检索评估的参数对比正在临时改写这一项，跑完即清。' }
+    return { text: '评估覆盖', color: 'purple', tip: '评估对比临时改写，跑完即清。' }
   }
   return null
 })

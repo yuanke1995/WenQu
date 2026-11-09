@@ -3,7 +3,7 @@
     <div class="onb-head">
       <div>
         <div class="onb-title">欢迎来到 {{ tenantName }}</div>
-        <div class="onb-sub">完成这几步，团队就能开始用了 · 已完成 {{ completed }} / {{ total }}</div>
+        <div class="onb-sub">完成这几步即可开始使用 · {{ completed }} / {{ total }}</div>
       </div>
       <button class="onb-dismiss" type="button" @click="dismiss">不再提示</button>
     </div>

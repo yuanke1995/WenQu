@@ -73,7 +73,6 @@
       </button>
       <router-link class="dp-btn ghost" to="/artifacts">在产物页查看</router-link>
     </div>
-    <div class="dp-tip">ZIP 只打包这一包文件；单件动作在每行右侧（触屏常驻）。</div>
   </div>
 </template>
 

@@ -2,7 +2,7 @@
   <div class="app-page">
     <div class="app-page-head">
       <h3 class="app-page-title">知识库</h3>
-      <span class="head-hint-plain" title="文档的容器：检索按库隔离，向量/检索/解析参数随库">文档的容器：检索按库隔离，向量/检索/解析参数随库</span>
+      <span class="head-hint-plain" title="文档的容器：检索按库隔离，向量/检索/解析参数随库">文档的容器，检索按库隔离</span>
       <button v-if="!mobileShell" class="app-btn" style="margin-left:auto" @click="openCreate">
         <plus-outlined /> 新建知识库
       </button>
@@ -23,7 +23,7 @@
               <span class="kb-name">{{ kb.name }}</span>
               <!-- 混合权限（库内文档分属不同可见范围）：同库内无权文档会在检索后剔除时占用召回名额，
                    建议分库根治。默认不显示，鼠标悬停说明原因。 -->
-              <a-tooltip v-if="kb.mixedScope" title="库内文档分属不同可见范围：其他人可能搜不全这个库里的内容。建议把不同可见范围的文档拆成多个知识库。">
+              <a-tooltip v-if="kb.mixedScope" title="库内文档可见范围不一致，建议拆库">
                 <a-tag color="orange" class="kb-mixed-tag"
                        :style="(kb.isDefault === 1 || kb.builtin === 1) ? '' : 'margin-left:auto'">建议分库</a-tag>
               </a-tooltip>
@@ -34,7 +34,7 @@
             <div class="kb-card-meta">
               <span :class="{ 'kb-zero': !kb.docCount }">{{ kb.docCount }} 个文档</span>
               <span class="kb-meta-sep">·</span>
-              <span v-if="kb.embeddingRef" :title="kb.embeddingRef">{{ modelRefInfo(kb.embeddingRef)?.displayName || '自定义向量模型' }}</span>
+              <span v-if="kb.embeddingRef">{{ modelRefInfo(kb.embeddingRef)?.displayName || '自定义向量模型' }}</span>
               <span v-else class="kb-warn">未绑定向量模型</span>
               <span class="kb-meta-sep">·</span>
               <span v-if="kb.queryParams" class="kb-params" title="库级检索参数已覆盖全局">检索已自定义</span>

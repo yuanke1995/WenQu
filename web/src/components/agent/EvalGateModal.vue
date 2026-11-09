@@ -30,7 +30,7 @@
         <span class="ico">!</span>
         <div>
           <div class="t">低于门槛</div>
-          <div class="s">通过率 {{ pct(info.lastRun?.passRate) }} 低于门槛 {{ pct(info.thresholdRate) }}{{ blocked ? '；门禁模式为阻断，本次保存被拒绝' : '；本次保存仍被允许，建议先修复再发布' }}。</div>
+          <div class="s">通过率 {{ pct(info.lastRun?.passRate) }} 低于门槛 {{ pct(info.thresholdRate) }}{{ blocked ? '；门禁模式为阻断，本次保存被拒绝' : '；本次保存仍被允许' }}。</div>
         </div>
       </div>
 

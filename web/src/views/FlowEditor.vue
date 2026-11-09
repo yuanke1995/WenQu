@@ -50,7 +50,7 @@
             <span class="wf-palette-name">{{ TYPE_META[t].label }}</span>
           </div>
         </template>
-        <div class="wf-palette-hint">拖拽或点击添加；删除选中后按 Delete；右键节点 / 连线 / 画布有快捷菜单。</div>
+        <div class="wf-palette-hint">拖拽或点击添加；Delete 删除；右键有菜单</div>
       </div>
 
       <!-- 画布（网格吸附 16px：节点落点整齐；右下角小地图 + 缩放控件） -->
@@ -136,7 +136,7 @@
                 <a-input v-model:value="p.desc" placeholder="给模型看的参数说明（可选）" class="wf-row-desc" />
               </div>
               <button class="app-btn ghost small" @click="editConfig.inputs.push({ key: '', required: true })">+ 添加入参</button>
-              <div class="wf-hint">入参在点「运行」时填写；后续节点用 <code v-pre>{{start.参数名}}</code> 引用。类型与说明供「挂为智能体工具」时生成参数 schema。</div>
+              <div class="wf-hint">运行时填写；下游用 <code v-pre>{{start.参数名}}</code> 引用</div>
             </template>
 
             <!-- end：出参映射 -->
@@ -149,7 +149,7 @@
                 <button class="app-btn ghost small wf-row-del" @click="editConfig.outputs.splice(i, 1)">删</button>
               </div>
               <button class="app-btn ghost small" @click="editConfig.outputs.push({ key: '', value: '' })">+ 添加出参</button>
-              <div class="wf-hint">值可写变量引用 <code v-pre>{{nodeId.key}}</code> 或固定文本；对话型绑定取名为 <code>answer</code> 的出参作回答。</div>
+              <div class="wf-hint">可写变量 <code v-pre>{{nodeId.key}}</code> 或固定文本</div>
             </template>
 
             <!-- llm -->
@@ -172,7 +172,7 @@
               <div class="wf-form-item"><label>超时（秒，留空默认 600；到时按节点失败终止）</label>
                 <a-input-number v-model:value="editConfig.timeoutSeconds" :min="1" :max="3600" style="width: 140px" />
               </div>
-              <div class="wf-hint">后续节点用 <code>{{ LBB + selected.id + '.answer' + RBB }}</code> 引用本节点的回答。</div>
+              <div class="wf-hint">下游用 <code>{{ LBB + selected.id + '.answer' + RBB }}</code> 引用本节点回答。</div>
             </template>
 
             <!-- retrieval -->
@@ -187,15 +187,15 @@
                 <a-select v-model:value="editConfig.kbIds" mode="multiple" style="width: 100%" allow-clear
                           placeholder="全部知识库" :options="kbOptions" />
               </div>
-              <div class="wf-form-item"><label>topK（召回条数）</label>
+              <div class="wf-form-item"><label>召回条数</label>
                 <a-input-number v-model:value="editConfig.topK" :min="1" :max="20" style="width: 140px" />
               </div>
               <div class="wf-form-item"><label>低分过滤 minScore</label>
                 <a-input-number v-model:value="editConfig.minScore" :min="0" :max="2" :step="0.05" style="width: 180px"
                                 :placeholder="minScorePh" />
-                <div class="wf-hint">排序分（重排分，未启用重排时为融合分）低于它的块不进结果也不占 topK 名额。</div>
+                <div class="wf-hint">低于此分的块不入结果，也不占召回名额</div>
               </div>
-              <div class="wf-hint"><code>text</code> 是可直接拼进 prompt 的拼接文本；<code>chunks</code> 保留结构（标题/路径/得分），<code>count</code> 是命中数。</div>
+              <div class="wf-hint"><code>text</code> 是可直接拼进提示词的拼接文本；<code>chunks</code> 保留结构（标题/路径/得分），<code>count</code> 是命中数。</div>
             </template>
 
             <!-- kb_write -->
@@ -215,7 +215,7 @@
                 <a-select v-if="refGroups.length" class="wf-ref-pick" size="small" :value="null"
                           :options="refGroups" show-search option-filter-prop="label"
                           placeholder="+ 插入上游引用（选节点 · 输出键）" @change="v => insertRef('docId', v, ' ')" />
-                <div class="wf-hint">更新只替换内容并重新解析，文档身份与归属不变（不支持网页型文档）。</div>
+                <div class="wf-hint">只换内容并重新解析（不含网页文档）。</div>
               </div>
               <div class="wf-form-item"><label>文档标题（支持 <code v-pre>{{nodeId.key}}</code> 引用）</label>
                 <a-input v-model:value="editConfig.title" :disabled="editConfig.mode === 'update'"
@@ -231,7 +231,7 @@
                           :options="refGroups" show-search option-filter-prop="label"
                           placeholder="+ 插入上游引用（选节点 · 输出键）" @change="v => insertRef('content', '\n' + v)" />
               </div>
-              <div class="wf-hint">提交后<b>异步解析入库</b>（运行不等待解析完成）；输出 <code>docId</code> 可供下游节点引用。</div>
+              <div class="wf-hint">异步解析入库；输出 <code>docId</code> 供下游引用。</div>
             </template>
 
             <!-- condition -->
@@ -306,7 +306,7 @@
                 <a-checkbox v-model:checked="editConfig.render">用无头浏览器执行 JS 后取内容</a-checkbox>
                 <div class="wf-hint" style="margin-top:4px">前端渲染页面（抓到的只有"启用 JavaScript"壳）勾选此项；需沙盒开启，且超时下限 30s。注意：目标站反爬（如百度安全验证）仍会拦截。</div>
               </div>
-              <div class="wf-hint">响应体进 state 时截断 2 万字符（trace 同步截断）；渲染模式输出渲染后 DOM，预截 3 万字符。</div>
+              <div class="wf-hint">state 截断 2 万字符，渲染模式截 3 万。</div>
             </template>
 
             <!-- code -->
@@ -344,7 +344,7 @@
                 <ModelSelect v-model="editConfig.modelRef" type="chat" width="100%" inherit-label="跟随个人默认模型"
                              inherit-resolve="personalDefault" />
               </div>
-              <div class="wf-hint">复用该智能体完整问答管线（知识库范围/工具/技能原样生效），回答全文在 <code>answer</code>。</div>
+              <div class="wf-hint">复用完整问答管线，回答在 <code>answer</code>。</div>
             </template>
 
             <!-- approval -->
@@ -395,12 +395,12 @@
                           :options="refGroups" show-search option-filter-prop="label"
                           placeholder="+ 插入上游引用（选节点 · 输出键）" @change="v => insertRef('template', v, '\n')" />
               </div>
-              <div class="wf-hint">渲染结果在 <code>text</code>，多视角汇总后接 LLM 或直接作答都行。</div>
+              <div class="wf-hint">结果在 <code>text</code>，可接模型或直接作答。</div>
             </template>
 
             <!-- skill（第 3 期）：技能全文注入下游上下文 -->
             <template v-else-if="selected.data.nodeType === 'skill'">
-              <div class="wf-form-item"><label>技能（可多选，全文注入下游 LLM 上下文）</label>
+              <div class="wf-form-item"><label>技能（可多选，全文注入下游模型上下文）</label>
                 <a-select v-model:value="editConfig.skills" mode="multiple" size="small" style="width:100%"
                           :options="skillOptions" show-search option-filter-prop="label"
                           placeholder="选择你名下的技能（不含已停用的）" />
@@ -437,7 +437,7 @@
           </div>
           <!-- M5 节点级失败重试：所有执行型节点通用（start/end 无执行体不显示）；0=不重试 -->
           <div v-if="selected && !['start', 'end'].includes(selected.data.nodeType)" class="wf-retry-row">
-            <span class="wf-hint" style="margin:0">失败重试：节点执行失败自动重试（LLM 网关抖动、HTTP 超时等瞬时故障），每次重试记录在运行 trace 里</span>
+            <span class="wf-hint" style="margin:0">失败自动重试，记录在运行记录里</span>
             <a-input-number v-model:value="editConfig.retries" :min="0" :max="3" :step="1" style="width: 150px"
                             placeholder="0" addon-before="重试" />
           </div>
@@ -470,8 +470,8 @@
             <div class="wf-trace-meta">
               <a-tag :color="traceTagColor(nodeTrace.status)">{{ traceTagText(nodeTrace.status) }}</a-tag>
               <span>耗时 {{ fmtMs(nodeTrace.elapsedMs) }}</span>
-              <span v-if="nodeTrace.promptTokens != null">入 {{ nodeTrace.promptTokens }} tok</span>
-              <span v-if="nodeTrace.completionTokens != null">出 {{ nodeTrace.completionTokens }} tok</span>
+              <span v-if="nodeTrace.promptTokens != null">入 {{ nodeTrace.promptTokens }} tokens</span>
+              <span v-if="nodeTrace.completionTokens != null">出 {{ nodeTrace.completionTokens }} tokens</span>
             </div>
             <div v-if="nodeTrace.error" class="wf-trace-error">{{ nodeTrace.error }}</div>
             <div v-if="nodeTrace.input && Object.keys(nodeTrace.input).length" class="wf-trace-block">
@@ -554,7 +554,7 @@
               <span class="wf-history-meta">{{ r.triggerType === 'manual' ? '手动' : r.triggerType }}</span>
               <span class="wf-history-meta">{{ fmtTime(r.startedAt) }}</span>
               <span class="wf-history-meta">{{ r.durationMs != null ? fmtMs(r.durationMs) : '' }}</span>
-              <a class="wf-history-link">查看节点 trace →</a>
+              <a class="wf-history-link">查看节点记录 →</a>
             </div>
             <div v-if="r.error" class="wf-trace-error">{{ r.error }}</div>
           </div>
@@ -658,7 +658,7 @@ const minimapColor = n => colorOf(n?.data?.nodeType)
 const TYPE_META = {
   start: { label: '开始', icon: '▶', color: '#52c41a', brief: '工作流入口，声明本轮可用的入参', out: ['入参键'] },
   end: { label: '结束', icon: '■', color: '#8c8c8c', brief: '工作流出口，映射最终出参', out: [] },
-  llm: { label: 'LLM 调用', icon: '✦', color: '#7c5cff', brief: '把 prompt 发给对话模型，拿回答', out: ['answer'] },
+  llm: { label: '模型调用', icon: '✦', color: '#7c5cff', brief: '把提示词发给模型，拿回答', out: ['answer'] },
   retrieval: { label: '知识检索', icon: '⌕', color: '#1677ff', brief: '按检索词在知识库里召回片段', out: ['chunks', 'text', 'count'] },
   condition: { label: '条件分支', icon: '⑂', color: '#fa8c16', brief: '按表达式命中分支，走不同路径', out: ['route'] },
   http: { label: 'HTTP 请求', icon: '⇄', color: '#13c2c2', brief: '调公网接口取数据（逐跳 SSRF 校验）', out: ['status', 'body', 'contentType'] },
@@ -667,7 +667,7 @@ const TYPE_META = {
   approval: { label: '人工审核', icon: '✋', color: '#d4380d', brief: '挂起等人拍板，批准/拒绝各走一支', out: ['route'] },
   loop: { label: '循环', icon: '↻', color: '#d4b106', brief: '按分支回跳重跑，最多 maxLoops 轮', out: ['route', 'loopCount'] },
   template: { label: '模板转换', icon: '✎', color: '#08979c', brief: '把多路上游输出拼成一段文本', out: ['text'] },
-  skill: { label: '技能', icon: '📘', color: '#c41d7f', brief: '把所选技能全文注入下游 LLM 上下文', out: ['text', 'skills'] },
+  skill: { label: '技能', icon: '📘', color: '#c41d7f', brief: '把所选技能全文注入下游模型上下文', out: ['text', 'skills'] },
   mcp: { label: 'MCP 工具', icon: '🔌', color: '#1d39c4', brief: '调用你名下 MCP 服务里的某个工具', out: ['result', 'server', 'tool'] },
   kb_write: { label: '知识写入', icon: '⇧', color: '#389e0d', brief: '把上游文本提交进知识库（异步解析入库）', out: ['docId', 'fileName', 'status'] }
 }

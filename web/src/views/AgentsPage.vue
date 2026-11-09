@@ -6,7 +6,6 @@
         <!-- 页名与 Tab 名重复，标题仅保留给读屏器（sr-only），视觉上从统计起头 -->
         <h1 class="app-page-title sr-only">智能体</h1>
         <span class="ap-count">共 <b>{{ agents.length }}</b> 个</span>
-        <span class="head-hint-plain" title="一个智能体就是一组对话预设：写好角色提示词、圈定知识库范围、按需开启能力；模型在对话页选择，这一轮问答就按它走">一组对话预设：角色提示词、知识库范围与能力开关</span>
         <div class="ap-head-r">
           <a-input v-model:value="keyword" class="ap-search" size="small" allow-clear placeholder="搜索名称或描述">
             <template #prefix><search-outlined class="ap-search-ic" /></template>
@@ -147,7 +146,6 @@
             <section class="app-card">
               <div class="ap-sec-head">
                 <h2 class="app-card-title"><apartment-outlined class="ap-sec-ic" />运行方式</h2>
-                <span class="ap-hint">决定这个助手怎么被使用</span>
               </div>
               <a-segmented v-model:value="runMode" :options="runModeOptions" class="ap-mode-seg" @change="onRunModeChange" />
               <p class="ap-hint ap-mode-note">{{ runModeHint }}</p>
@@ -209,14 +207,13 @@
                   <label class="ap-field-label">名称</label>
                   <a-input v-model:value="form.name" :maxlength="200" :disabled="form.isBuiltin === 1"
                            placeholder="如：合同审查助手 / 运维排障 / 产品 FAQ" />
-                  <div v-if="form.isBuiltin === 1" class="ap-hint">内置「问渠」是系统默认角色：名称、用途与图标随产品固定。</div>
+                  <div v-if="form.isBuiltin === 1" class="ap-hint">名称、用途与图标随产品固定。</div>
                 </div>
               </div>
 
               <a-form-item label="描述" class="ap-field">
                 <a-textarea v-model:value="form.description" :maxlength="500" :rows="2"
                             placeholder="写清职责范围与典型问题（如：负责《操作手册》的界面操作与表单填写问题）" />
-                <div class="ap-hint">主智能体按名称 + 描述决定把问题交给谁，职责互不重叠更不容易派错。</div>
               </a-form-item>
               <div v-if="runMode !== 'workflow'" class="ap-field ap-field-last">
                 <div class="ap-prompt-head">
@@ -234,7 +231,7 @@
                           placeholder="填写后完全替换全局系统提示词；留空沿用全局" class="ap-md-editor" />
                 <MdPreview v-else editor-id="ap-system-prompt-view" :model-value="form.systemPrompt"
                            :theme="mdTheme" class="ap-md-editor ap-md-preview" />
-                <div class="ap-hint">提示词通常是 markdown（如 npm run spec 生成的组件契约）；分屏里右侧实时预览，⌘S 直接保存。</div>
+                <div class="ap-hint">支持 Markdown，⌘S 保存</div>
               </div>
               <div v-else class="ap-hint ap-field">
                 工作流模式下不使用系统提示词；切回问答助手后这份内容仍在。
@@ -263,15 +260,15 @@
                   <a-select v-model:value="form.knowledgeBaseIds" mode="multiple" :options="kbOptions" allow-clear
                             show-search option-filter-prop="label" :max-tag-count="6" style="width:100%"
                             placeholder="选择允许检索的知识库" />
-                  <div class="ap-hint">已选 {{ form.knowledgeBaseIds.length }} 个知识库；一个都不选则检索不到任何内容。</div>
+                  <div class="ap-hint">已选 {{ form.knowledgeBaseIds.length }} 个；不选则检索不到内容</div>
                   <a-select v-model:value="form.knowledgeTags" mode="tags" :max-tag-count="8" allow-clear
                             style="width:100%;margin-top:8px" placeholder="检索标签收窄（可选）：如 部门A、合同——只检索打了这些标签的文档" />
-                  <div class="ap-hint">按文档标签进一步收窄：标签在「知识库」文档列表给文档打，这里填了则只召回带其中任一标签的文档；留空=不过滤。</div>
+                  <div class="ap-hint">按标签收窄，留空不过滤</div>
                 </div>
                 <div v-else-if="scopeMode === 'none'" class="ap-hint">
                   纯角色智能体：完全不查资料，仅凭系统提示词与对话上下文作答；对话中手动 @ 的文档仍会被参考。
                 </div>
-                <div v-else class="ap-hint">可以检索全部知识库；具体召回阈值与权重由每个知识库自己的设置决定。</div>
+                <div v-else class="ap-hint">检索全部知识库，阈值与权重随库。</div>
               </template>
             </section>
 
@@ -368,17 +365,17 @@
                   <a-select v-model:value="form.permissionPreset" :options="presetOptions" allow-clear
                             size="small" :placeholder="presetPlaceholder" style="width:100%" />
                   <div v-if="presetError" class="ap-pick-empty">权限档位名册加载失败 —— <button type="button" class="app-btn ghost small" @click="loadPermissionPresets">重试</button></div>
-                  <div v-else class="ap-hint">{{ presetHint() || '只读调研 / 常规 / 全自主；平台上限由管理员控制。' }}</div>
+                  <div v-else class="ap-hint">{{ presetHint() || '只读调研 / 常规 / 全自主' }}</div>
                 </div>
                 <div class="ap-adv-field">
                   <label class="ap-field-label">工具执行确认</label>
                   <a-select v-model:value="form.toolApprovalMode" :options="approvalOptions" size="small" style="width:100%" />
-                  <div class="ap-hint">「跟随档位」= 用上面那一档的建议值，也可单独覆盖。</div>
+                  <div class="ap-hint">默认跟随档位，也可单独覆盖。</div>
                 </div>
                 <div class="ap-adv-field">
                   <label class="ap-field-label">记忆域</label>
                   <a-select v-model:value="form.memoryMode" :options="memoryModeOptions" size="small" style="width:100%" />
-                  <div class="ap-hint">专属=这个助手有自己独立的长期记忆；叠加=独立记忆之外再把用户级记忆只读打底。</div>
+                  <div class="ap-hint">专属=独立记忆；叠加=再加用户级记忆</div>
                 </div>
                 <div v-if="runMode === 'main'" class="ap-adv-field">
                   <label class="ap-field-label">子智能体委派</label>
@@ -391,7 +388,7 @@
                       <partition-outlined /> 转成工作流
                     </button>
                   </div>
-                  <div v-else class="ap-hint">不选则沿用系统的多视角并行检索。</div>
+                  <div v-else class="ap-hint">不选则用系统多视角检索。</div>
                 </div>
               </div>
               <details class="ap-adv-more" :open="advOpen" @toggle="advOpen = $event.target.open">
@@ -407,18 +404,18 @@
                                 size="small" style="width:100%" :max-tag-count="6"
                                 placeholder="不禁用任何工具（可下拉选，或直接输入外部工具名）" />
                       <div v-if="toolCatalogError" class="ap-pick-empty">工具名册加载失败 —— <button type="button" class="app-btn ghost small" @click="loadToolCatalog">重试</button></div>
-                      <div v-else class="ap-hint">只写要去掉的一两个工具名，其余照旧；与能力里的「指定」不冲突。</div>
+                      <div v-else class="ap-hint">只写要禁用的工具名，其余照旧。</div>
                     </div>
                     <div class="ap-adv-field">
                       <label class="ap-field-label">单轮工具步数</label>
                       <a-input-number v-model:value="form.maxToolSteps" :min="0" :max="1000" :step="1" size="small"
                                       style="width:100%" :placeholder="maxToolStepsPh" />
-                      <div class="ap-hint">留空即按系统默认值走；0 = 不限制。</div>
+                      <div class="ap-hint">留空跟随默认，0 = 不限</div>
                     </div>
                     <div class="ap-adv-field">
                       <label class="ap-field-label">检索重排</label>
                       <a-select v-model:value="form.qpRerank" :options="rerankOptions" size="small" style="width:100%" />
-                      <div class="ap-hint">低延迟场景可关；阈值与权重归知识库。</div>
+                      <div class="ap-hint">低延迟可关；阈值归知识库</div>
                     </div>
                     <div class="ap-adv-field ap-adv-full">
                       <label class="ap-field-label">轮终回调</label>
@@ -426,7 +423,7 @@
                                placeholder="https://宿主系统.example.com/wenqu/callback（每轮结束 POST 结果）" />
                       <a-input-password v-model:value="form.callbackSecret" size="small" class="ap-cb-secret" autocomplete="new-password"
                                         :placeholder="form.callbackSecretSet ? '已配置（重新填写可更换，留空沿用）' : '签名密钥（可选，留空则不带签名头）'" />
-                      <div class="ap-hint">每轮结束向该地址 POST 签名结果（X-Wenqu-Event: agent.turn.finished，含回答与状态）；失败自动重试，持续失败会通知你。内网地址会被拒绝。</div>
+                      <div class="ap-hint">每轮结束 POST 签名结果；失败自动重试，内网地址会被拒绝</div>
                     </div>
                     <div v-if="agentDefaultsError" class="ap-pick-empty ap-adv-full">
                       系统默认值加载失败 —— 上面的「跟随系统」没点名当前值 ——
@@ -503,7 +500,7 @@
             </div>
           </div>
         </div>
-        <div v-else-if="!verLoading" class="ap-ver-none">暂无历史版本：保存一次配置后即产生第一条版本记录。</div>
+        <div v-else-if="!verLoading" class="ap-ver-none">暂无历史版本</div>
       </a-spin>
     </a-drawer>
 
@@ -549,7 +546,7 @@
           <a-switch v-model:checked="pubMcpEnabled" :disabled="!pubEnabled" size="small" @change="savePublish" />
           <div class="pub-switch-t">
             <div class="pub-switch-label">开放 MCP 端点</div>
-            <div class="pub-switch-d">开启后同一个 token 兼作 MCP 凭据，Claude / Cursor 等客户端可直连，并可挑选对游客开放的 MCP 工具</div>
+            <div class="pub-switch-d">开启后同一条链接兼作 MCP 凭据，Claude / Cursor 等客户端可直连，并可挑选对游客开放的 MCP 工具</div>
             <!-- 游客 MCP 授权名单：挂在端点开关之下（从属关系一眼可见），端点关着时不出现。
                  勾选项=智能体配置里实际绑定的 MCP 服务（指定模式列它绑的、
                  跟随全局列全部已启用），与运行期「游客名单 ∩ 智能体具体项选择」的装配口径一致 -->
@@ -618,7 +615,7 @@
           <a-switch v-model:checked="pubVariables" :disabled="!pubEnabled" size="small" @change="savePublish" />
           <div class="pub-switch-t">
             <div class="pub-switch-label">允许调用变量</div>
-            <div class="pub-switch-d">嵌入网页可随每次提问传入业务上下文（如当前用户、单号），注入本轮作答参考；关闭时传入的变量被忽略</div>
+            <div class="pub-switch-d">传入的变量注入本轮作答；关闭时忽略</div>
           </div>
         </div>
         <div v-if="!pubEnabled" class="pub-warn">
@@ -643,7 +640,7 @@
                         @click="copyText(shareUrl, '链接已复制')"><copy-outlined /></button>
               </div>
             </div>
-            <div class="pub-hint">发给任何人即可免登录对话。游客检索知识库按你的可见范围执行。</div>
+            <div class="pub-hint">免登录对话；检索按你的可见范围</div>
           </a-tab-pane>
 
           <a-tab-pane key="iframe" tab="嵌入网页">
@@ -656,7 +653,6 @@
                 <span>高</span>
                 <a-input-number v-model:value="pubFrameH" :min="360" :max="1000" :step="20" size="small" />
               </label>
-              <span class="pub-size-hint">改尺寸会同步进下面的代码，复制走即可</span>
             </div>
             <div class="pub-code-box">
               <pre class="pub-code block">{{ iframeSnippet }}</pre>
@@ -665,7 +661,7 @@
                         @click="copyText(iframeSnippet, '嵌入代码已复制')"><copy-outlined /></button>
               </div>
             </div>
-            <div class="pub-hint">粘贴到任意网页。游客能力收窄：沙盒 / 产物 / MCP / 技能执行不对访客暴露。</div>
+            <div class="pub-hint">游客不暴露沙盒 / 产物 / MCP / 技能</div>
           </a-tab-pane>
 
           <a-tab-pane key="mcp" tab="MCP 端点">
@@ -694,7 +690,7 @@
             <div v-else class="pub-placeholder">
               <ApiOutlined />
               <div>尚未开放 MCP 端点</div>
-              <div class="pub-hint">在「游客能力」里打开开关后，这里会给出可直接粘贴的端点地址与配置文件。</div>
+              <div class="pub-hint">打开「游客能力」后给出端点与配置</div>
             </div>
           </a-tab-pane>
         </a-tabs>
@@ -706,7 +702,7 @@
         <div class="pub-placeholder">
           <link-outlined />
           <div>链接已随分享停用而失效</div>
-          <div class="pub-hint">token 已保留，重新开启上面的总开关即恢复访问，链接不变。</div>
+          <div class="pub-hint">重新开启总开关即恢复，链接不变。</div>
         </div>
       </div>
 
@@ -824,11 +820,11 @@ const CAPS = [
     gate: ['tool', 'enabled'] },
   // HTTP 工具（OpenAPI 导入）：工具集是智能体自有配置（不是个人资产引用），开启后在本行下方管理
   { key: 'toolHttp', group: '工具与扩展', label: 'HTTP 工具', desc: '按 OpenAPI 导入宿主 API 工具集', icon: LinkOutlined,
-    detail: '导入宿主项目的 OpenAPI 规格生成对话工具，模型可自主调用宿主业务 API（游客分享不暴露）',
+    detail: '导入 OpenAPI 生成工具，模型可自主调用（游客不暴露）',
     kind: 'switch', path: ['httpTool', 'enabled'], gate: ['tool', 'enabled'] },
   // 工作流工具：把已发布工作流挂载为对话工具（智能体自有配置），开启后在本行下方勾选
   { key: 'toolWorkflow', group: '工具与扩展', label: '工作流工具', desc: '把已发布工作流挂为对话工具', icon: PartitionOutlined,
-    detail: '勾选已发布的工作流（≤8 个），模型在对话中自主决定何时运行整条流程并取回出参（嵌套有 2 层防环上限；游客分享不暴露）',
+    detail: '已发布工作流（≤8 个），模型按需运行；嵌套上限 2 层，游客不暴露',
     kind: 'switch', path: ['workflowTool', 'enabled'], gate: ['tool', 'enabled'] },
   // 向用户提问：ask_user 族只有 askUser 一项，配置面是一个三态开关；
   // 存量兼容见 effectiveAskUserTri（保存时恒清 builtinTools，见 save）

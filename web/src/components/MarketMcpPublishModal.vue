@@ -3,7 +3,6 @@
        目录只下发地址与传输类型，永不收凭据；测试连接复用 MCP 页的 /mcp/probe（不落配置）。 -->
   <a-modal :open="open" :title="editItem ? '编辑 MCP 目录条目' : '新增 MCP 目录条目'" :footer="null"
            :width="640" destroy-on-close @cancel="$emit('update:open', false)">
-    <p class="mk-modal-sub">面向全员展示；安装即复制到对方自己的 MCP 服务列表</p>
     <a-form layout="vertical">
       <a-form-item label="名称" required>
         <a-input v-model:value="form.name" :maxlength="40" show-count placeholder="如：DeepWiki MCP"
@@ -16,7 +15,7 @@
       </a-form-item>
       <a-form-item label="服务地址" required>
         <a-input v-model:value="form.url" placeholder="https://mcp.example.com/mcp" />
-        <p class="mk-form-hint">仅 http(s) 地址；地址错误会直接导致安装后连接失败</p>
+        <p class="mk-form-hint">仅 http(s) 地址</p>
       </a-form-item>
       <a-form-item label="传输类型">
         <a-radio-group v-model:value="form.mcpType">
@@ -39,14 +38,14 @@
       <a-checkbox v-model:checked="form.requiresAuth" class="mk-auth-check">
         该服务需要认证请求头
       </a-checkbox>
-      <p class="mk-form-hint mk-auth-hint">安装后由用户自行补充；目录不保存任何凭据</p>
+      <p class="mk-form-hint mk-auth-hint">安装后由用户补充；目录不存凭据</p>
       <p v-if="probeResult" class="mk-probe" :class="probeResult.available ? 'ok' : 'bad'">
         {{ probeResult.available
           ? '连接正常，提供 ' + (probeResult.toolCount ?? 0) + ' 个工具'
           : '连接失败：' + (probeResult.error || '原因未知') }}
       </p>
     </a-form>
-    <p class="mk-form-hint">目录不含请求头与凭据。编辑条目只影响后续安装：已安装用户的服务配置不会被改写（安装即复制）。</p>
+    <p class="mk-form-hint">编辑只影响后续安装，已安装的不会被改写</p>
     <div class="key-modal-foot">
       <button class="app-btn ghost" :disabled="probing || !form.url" @click="testConn">
         {{ probing ? '测试中…' : '测试连接' }}

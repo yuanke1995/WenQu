@@ -1,6 +1,6 @@
 ---
 name: wenqu-dev
-description: 问渠三仓（wenqu / dynamic-form / dynamic-form-vue）开发规范——防回归三道闸、已知雷区清单、环境与验证栈速查、提交纪律、路线图账本。凡在这三仓做任何开发（新功能、修 bug、重构、调样式）或问「某功能现状 / 接下来做什么」，动手前先走本技能：查影响面、查雷区、查账本，完工后回写。核心目标：做新功能不改烂已有功能。
+description: 问渠三仓（wenqu / dynamic-form / dynamic-form-vue）开发规范——防回归三道闸、已知雷区清单、环境与验证栈速查、提交纪律、用户可见文案规范、路线图账本。凡在这三仓做任何开发（新功能、修 bug、重构、调样式）或问「某功能现状 / 接下来做什么」，动手前先走本技能：查影响面、查雷区、查账本，完工后回写。核心目标：做新功能不改烂已有功能。
 ---
 
 # 问渠开发规范
@@ -61,7 +61,37 @@ description: 问渠三仓（wenqu / dynamic-form / dynamic-form-vue）开发规�
 - **并行会话共用暂存区**：`git add` 会把别人未提交的 hunk 卷进来（真实发生过）。只提自己的 hunk 用 `git hash-object -w <file>` + `git update-index --cacheinfo`；整文件属于自己才整文件 add。
 - 提交后 **`git show --stat` 核对文件清单**——发现卷入，`git reset HEAD~1 -- <path>` + `--amend` 剥离。
 - 不入库：`src/test/`（约定）、`dumps/`、`docs/`、`.zcode/`（skills 例外，随仓走）。
-- 用户可见文案禁「本地/自建/localhost」指平台侧服务，统一「平台内置XX服务」；「本地」仅限开发注释与部署方文档。
+
+## 用户可见文案规范
+
+界面上的字只服务「不出错」，不承担教学。改文案按下述口径：
+
+- **不写解释型旁注**：解释这是什么、为什么这样设计、建议怎么用、在哪显示、默认值怎么继承——一律删。判定标准：删掉后用户仍能正确操作。只保留四类：
+  1. 硬约束：格式、数量上限、不可恢复、不可修改；
+  2. 失败与安全警告：会丢数据、解析失败、链接即凭据；
+  3. 状态与结果：加载中 / 已停止 / 失败原因；
+  4. 不写会选错的语义：`留空=跟随默认`、`0=不限`、`不选则检索不到内容`。
+- **用户可见文案禁用开发术语**，一律换日常说法：
+
+  | 术语 | 用户侧说法 |
+  |---|---|
+  | fail-loud / fail-closed | 直接报错 / 默认拒绝，不静默跳过 |
+  | trace | 执行记录、节点记录 |
+  | topK | 召回条数 |
+  | embedding | 向量化 |
+  | provisioner | 沙盒服务 |
+  | cron | 定时规则 |
+  | DSL | 工作流定义、画布快照 |
+  | RAG / GraphRAG | 检索设置 / 知识图谱 |
+  | webhook | 外部回调 |
+  | schema | 配置字段 |
+  | LLM / system prompt | 模型 / 系统提示词 |
+  | tok | tokens |
+
+  代码注释、README、对外对接文档（ApiDocsPage）不受此限；接口路径等字段值原样保留。
+- **落点要一起改**：前端 `hint/desc/sub/tip/note/foot` 与 `title/tooltip/placeholder`、toast/弹窗；`config-schema.json` 的 `title/note/tips/editable`（设置页问号说明）；后端 `BizException` 等会弹给用户的报错。
+- **平台侧服务不写「本地/自建/localhost」**：统一「平台内置XX服务」；「本地」仅限开发注释与部署方文档。
+- **提交前自检**：搜 `fail-loud|provisioner|embedding|topK|GraphRAG|DSL|cron|webhook|LLM`（前端 + `config-schema.json` + `BizException`），再搜单段 20 字以上可见长句；命中逐条判断是「约束」还是「旁注」。
 
 ## 路线图账本
 

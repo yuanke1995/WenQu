@@ -16,11 +16,10 @@
         <!-- 默认库恒为问渠品牌标（后端同样强制），直接不给改；官方内置库图标随版本同步固定 -->
         <div v-if="isDefaultKb" class="kb-icon-locked">
           <KbIcon :kb="{ icon: 'wenqu', isDefault: 1 }" :size="26" />
-          <span class="kb-hint">「{{ props.kb.name || '默认知识库' }}」为默认库，固定使用问渠品牌标，不可修改</span>
+          <span class="kb-hint">「{{ props.kb.name || '默认知识库' }}」为默认库，固定使用问渠品牌标</span>
         </div>
         <div v-else-if="isBuiltin" class="kb-icon-locked">
           <KbIcon :kb="props.kb" :size="26" />
-          <span class="kb-hint">官方内置库图标随版本自动同步，不可修改</span>
         </div>
         <template v-else>
           <div class="kb-icon-pick">
@@ -31,7 +30,6 @@
               <KbIcon :kb="{ icon: opt.value, isDefault: 0 }" :size="22" />
             </button>
           </div>
-          <div class="kb-hint" style="margin-top:4px">展示在知识库列表卡片上；不选即默认库图标。</div>
         </template>
       </a-form-item>
       <a-form-item label="描述">
@@ -43,7 +41,7 @@
       <a-form-item label="向量模型" required data-fix="embeddingRef">
         <ModelSelect v-model="form.embeddingRef" type="embedding"
                      :width="320" :admin-tip-visible="true" />
-        <div class="kb-hint">必选：本库文档按此模型向量化与检索（不同模型的向量空间不兼容，无法跨模型混用）；换模型会自动按库重嵌入，期间该库检索降级关键词路。</div>
+        <div class="kb-hint">必选；不同模型的向量不可混用，换模型会自动重嵌入</div>
         <div v-if="isBuiltin" class="kb-hint">
           当前供应商额度不足时，在这里换成一个能用的向量模型即可救活本库；改完点「保存」会按库重嵌入已有文档。
         </div>
@@ -51,10 +49,6 @@
 
       <!-- 高级参数：默认收起（小白不改就能用），每个字段的问号里有"这是什么/什么时候才需要调" -->
       <a-divider class="kb-divider" plain>高级参数（可选）</a-divider>
-      <div class="kb-hint" style="margin:0 0 4px">
-        检索与解析参数默认继承系统推荐值，<b>不改就能用</b>。仅当问答效果不理想（答非所问、该搜到的资料没搜到）时，
-        再展开对应一组、按字段后问号里的说明微调。
-      </div>
       <a-collapse v-model:activeKey="advActive" ghost class="kb-adv">
         <a-collapse-panel key="q">
           <template #header>
@@ -77,9 +71,7 @@
             </a-form-item>
           </div>
           <div class="kb-hint" style="margin:2px 0 0">
-            这里只管本库的「召回池」：阈值与两路权重<b>按库生效</b>（同一轮跨库检索时各取各的）。
-            召回量（向量 topK / 关键词上限）在系统设置统一配置；<b>是否启用重排</b>由系统设置与智能体决定，本库只负责用哪个重排模型。
-            新建库按当前生效默认值预填（保存即固化）；清空某项 = 跟随系统全局默认（管理员在「系统设置」修改，改后自动生效）。
+            阈值与两路权重<b>按库生效</b>；召回量与是否重排由系统设置决定。清空某项 = 跟随系统默认。
           </div>
         </a-collapse-panel>
         <a-collapse-panel key="p">
@@ -139,9 +131,8 @@
             </a-form-item>
           </div>
           <div class="kb-hint" style="margin:6px 0 0">
-            改解析参数后需重新解析文档才生效（不自动重解析全库）。扫描件/图片型 PDF 需绑定「扫描件 OCR 模型」——
-            <span class="kb-warn">两者都空时这类文档解析会失败</span>；纯文本 PDF 用「纯文本层」最快，
-            表格/版式复杂的大文档再选 MinerU / PP 版面引擎（较慢，约 10s/页）。
+            改解析参数需重新解析文档才生效。扫描件 PDF 须绑定「扫描件 OCR 模型」，
+            <span class="kb-warn">两者都空时会解析失败</span>；纯文本用「纯文本层」，复杂版式再选 MinerU / PP。
           </div>
         </a-collapse-panel>
       </a-collapse>
@@ -156,14 +147,13 @@
           <a-switch v-model:checked="form.graphEnabled" />
         </div>
         <div class="kb-hint" style="margin-top:4px">
-          GraphRAG：开启后新解析的文档自动抽「实体-关系」三元组，检索时一跳图扩展（跨文档多跳问答）；已有文档点列表页「构建图谱」回溯。
+          开启后新文档自动抽三元组，检索时图扩展；旧文档可在列表点「构建图谱」。
         </div>
       </a-form-item>
       <a-form-item v-if="!isBuiltin && form.graphEnabled" label="图谱抽取模型" data-fix="graphModelRef">
         <ModelSelect v-model="form.graphModelRef" type="chat" width="320" inherit-label="跟随库主默认聊天模型" />
         <div class="kb-hint" style="margin-top:4px">
-          本库抽三元组用的聊天模型（抽取消耗的 token 记在所选模型上）。
-          留空则用库主在个人设置里选的默认聊天模型；两者都没有 = 不抽取（开启时会被拦下）。
+          抽取用的聊天模型；留空用库主默认，都没有则不抽取。
         </div>
       </a-form-item>
     </a-form>

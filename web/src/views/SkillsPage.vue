@@ -106,7 +106,7 @@
                       placeholder="# 做法&#10;&#10;1. 先读 references/guide.md&#10;2. 按口径汇总，输出表格" />
         </a-form-item>
       </a-form>
-      <p class="skill-form-hint">只写 Markdown 正文即可，frontmatter（name / description）由平台自动补；技能名之后不可修改。</p>
+      <p class="skill-form-hint">只写 Markdown 正文；技能名创建后不可修改。</p>
       <div class="key-modal-foot">
         <button class="app-btn ghost" @click="createOpen = false">取消</button>
         <button class="app-btn" :disabled="creating" @click="submitCreate">{{ creating ? '创建中…' : '创建' }}</button>
@@ -224,7 +224,7 @@
           <a-textarea v-model:value="editForm.content" :rows="18" class="key-code-area" />
         </a-form-item>
       </a-form>
-      <p class="skill-form-hint">可以改正文与 frontmatter 的 description；<b>name 必须保持「{{ editForm.name }}」</b>，改名会打断智能体上的技能引用。</p>
+      <p class="skill-form-hint">正文与描述可改；<b>技能名必须保持「{{ editForm.name }}」</b>，改名会打断引用。</p>
       <div class="key-modal-foot">
         <button class="app-btn ghost" @click="editOpen = false">取消</button>
         <button class="app-btn" :disabled="saving" @click="submitEdit">{{ saving ? '保存中…' : '保存' }}</button>

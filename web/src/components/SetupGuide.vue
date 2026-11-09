@@ -23,7 +23,7 @@
       <span class="sg-badge" :class="{ ok: defaultReady }">{{ defaultReady ? '✓' : '2' }}</span>
       <div class="sg-main">
         <div class="sg-title">选择默认聊天模型</div>
-        <div class="sg-desc">智能体未指定、会话未手动选择时使用；失效引用视为未设置</div>
+        <div class="sg-desc">智能体未指定时使用</div>
         <div class="sg-action">
           <template v-if="chatReady">
             <ModelSelect ref="msRef" :model-value="setupGuide.defaultModel" type="chat" width="100%"
@@ -40,7 +40,7 @@
       <span class="sg-badge" :class="{ ok: embeddingReady }">{{ embeddingReady ? '✓' : '3' }}</span>
       <div class="sg-main">
         <div class="sg-title">添加向量模型<span class="sg-use">知识库</span></div>
-        <div class="sg-desc">建知识库需要：登记至少一个「向量」模型，用于文档入库与检索</div>
+        <div class="sg-desc">需先登记一个「向量」模型</div>
         <div class="sg-action">
           <span v-if="embeddingReady" class="sg-done-text">已登记向量模型</span>
           <template v-else>
@@ -50,8 +50,6 @@
         </div>
       </div>
     </div>
-
-    <div class="sg-note">模型供应商与模型由各成员自行配置，随时可在「个人设置」修改。</div>
   </div>
 </template>
 

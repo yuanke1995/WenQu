@@ -66,7 +66,7 @@
             <span class="pv-chip" :class="{ cur: isCurrent }">
               {{ isCurrent ? (card.status === 'pending' ? '当前待确认版' : '当前版') : '历史版本 · 只读' }}
             </span>
-            <span v-if="isHistorical" class="pv-meta-note">历史版本不会被批准；需要改的话请回到当前版</span>
+            <span v-if="isHistorical" class="pv-meta-note">历史版本不可批准，请回当前版</span>
           </div>
 
           <div v-if="v.feedback" class="pv-fb">
@@ -133,7 +133,7 @@
                 <span class="pv-adjust-st">已送达</span>
                 <span class="pv-adjust-t">{{ a.text }}</span>
               </div>
-              <p class="pv-adjusts-note">插话只影响还没执行的部分，不会改动计划正文；已完成的步骤不会重做。</p>
+              <p class="pv-adjusts-note">只影响未执行部分，已完成的不重做。</p>
             </div>
 
             <ol v-if="exec.steps.length" class="pv-tl">
@@ -209,7 +209,7 @@
                         :placeholder="'写清楚要改什么，例如：图表用环形图，不要柱状图'"
                         :disabled="busy" @keydown.esc.stop="opinionOpen = false"></textarea>
               <div class="pv-opinion-foot">
-                <span class="pv-hint">同一轮内按意见升到 v{{ chain.length + 1 }}，消息流不新增气泡</span>
+                <span class="pv-hint">同一轮内升到 v{{ chain.length + 1 }}</span>
                 <div class="pv-acts">
                   <button type="button" class="pv-btn ghost" :disabled="busy" @click="opinionOpen = false">取消</button>
                   <button type="button" class="pv-btn ghost" :disabled="busy || !opinion.trim()"
@@ -221,7 +221,7 @@
               </div>
             </div>
             <div v-else class="pv-foot-row">
-              <span class="pv-hint">{{ restored ? '这张计划是恢复的，本设备接不上原来那一轮：意见会作为新消息发出' : '确认后按此版执行；批准后要调整，直接在输入框继续说' }}</span>
+              <span class="pv-hint">{{ restored ? '恢复的计划接不上原轮次，意见作为新消息发出' : '确认后按此版执行；批准后可继续调整' }}</span>
               <div class="pv-acts">
                 <button type="button" class="pv-btn ghost" @click="emit('close')">{{ restored ? '关闭' : '退出计划' }}</button>
                 <button type="button" :class="['pv-btn', restored ? 'primary' : 'warn']" :disabled="busy"

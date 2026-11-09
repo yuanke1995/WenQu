@@ -25,10 +25,10 @@
 
       <div class="sc-foot">
         <template v-if="entry.source === 'workspace'">
-          <p class="sc-hint">这条存在本会话的沙盒工作区里，随会话走。要改它或不再用它，直接在对话里说一声。</p>
+          <p class="sc-hint">这条存在本会话的沙盒工作区里，随会话走。</p>
         </template>
         <template v-else-if="entry.source === 'user'">
-          <p class="sc-hint">这是你自己安装的技能，可在「智能体 → 技能」里编辑、停用或删除。</p>
+          <p class="sc-hint">这是你自己安装的技能。</p>
         </template>
         <template v-else-if="entry.platformDisabled">
           <p class="sc-hint">这条已由平台统一停用。本轮仍可在输入框里点名用它一次。</p>

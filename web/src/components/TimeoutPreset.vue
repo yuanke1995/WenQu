@@ -41,7 +41,7 @@ const TIERS = [
     key: 'standard',
     label: '标准',
     v: { sseTimeoutMs: 300000, approvalTimeoutMs: 120000, askTimeoutMs: 600000, planTimeoutMs: 600000 },
-    hint: '日常问答与轻智能体；与历史默认一致，升级后不动就是这一档。'
+    hint: '日常问答与轻智能体'
   },
   {
     key: 'long',
@@ -53,7 +53,7 @@ const TIERS = [
     key: 'unattended',
     label: '无人值守',
     v: { sseTimeoutMs: 1800000, approvalTimeoutMs: 600000, askTimeoutMs: 3600000, planTimeoutMs: 3600000 },
-    hint: '挂机跑长流程；没人答的卡片最多等一小时再按「未作答」继续。'
+    hint: '挂机跑长流程；卡片最多等一小时'
   }
 ]
 
@@ -75,7 +75,7 @@ const fmt = ms => {
 
 const nowText = computed(() => FIELDS.map(([k, label]) => `${label} ${fmt(Number(chat.value[k]))}`).join(' · '))
 
-const customHint = computed(() => `当前是自定义组合：${nowText.value}。四项互不约束，单项改完容易和其余三项打架，建议先选一档再微调。`)
+const customHint = computed(() => `当前是自定义组合：${nowText.value}。`)
 
 const onPick = e => {
   const tier = TIERS.find(t => t.key === e?.target?.value)

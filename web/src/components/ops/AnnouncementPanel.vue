@@ -8,7 +8,6 @@
 
     <section class="app-card ann-card-list">
       <div class="app-list-bar ann-toolbar">
-        <span class="ann-hint">停机窗口 / 升级 / 新功能通知：发布前可预览横幅，支持定时上下线与按部门/角色定向。</span>
         <span class="app-list-spacer"></span>
         <button class="app-btn" type="button" @click="openEditor(null)">发布公告</button>
       </div>
@@ -124,7 +123,7 @@
                            value-format="YYYY-MM-DD HH:mm:ss" placeholder="直到手动下线" allow-clear style="width:100%" />
           </div>
         </div>
-        <div class="editor-tip">开始时间空 = 发布时间起；结束时间空 = 直到手动下线。窗口外成员侧不会下发。</div>
+        <div class="editor-tip">留空 = 立即开始 / 手动下线；窗口外不会下发。</div>
       </div>
 
       <template #footer>

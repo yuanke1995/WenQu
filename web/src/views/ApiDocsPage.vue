@@ -9,7 +9,7 @@
   <div class="app-page">
     <div class="app-page-head">
       <h3 class="app-page-title">对接文档</h3>
-      <span class="head-hint-plain">外部系统通过 API Key 接入问渠：问答接口 / 工作流触发 / MCP 入口 —— 怎么用、有什么能力、接哪些，都在这一页</span>
+      <span class="head-hint-plain">外部系统接入说明：问答 / 工作流 / MCP</span>
     </div>
     <div class="app-page-body">
       <div class="doc-body">

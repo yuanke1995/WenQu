@@ -216,7 +216,7 @@ watch([rows, chain, dropped], () => nextTick(measureTableY))
         </a-table>
       </div>
     </section>
-    <div class="app-list-foot">留存期在「系统设置 → 运维」的「审计事件保留天数」里设（默认 365 天，0 = 永久保留）</div>
+    <div class="app-list-foot">留存期在「系统设置 → 运维」设置（0 = 永久）</div>
   </div>
 </template>
 

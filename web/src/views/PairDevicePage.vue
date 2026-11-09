@@ -26,7 +26,7 @@
       <div v-else-if="state === 'approved'" class="pd-ok">
         <CheckCircleFilled class="pd-ok-icon" />
         <div class="pd-ok-t">已授权</div>
-        <p class="pd-desc">可以回到终端继续了。若这不是你本人发起的，请在这台电脑的授权清单里撤销它。</p>
+        <p class="pd-desc">若不是你本人发起，请在这台电脑的授权清单里撤销。</p>
       </div>
 
       <p v-if="error" class="pd-err">{{ error }}</p>

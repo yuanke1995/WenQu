@@ -485,15 +485,15 @@ public class ScheduledJobService {
     /** 校验 cron 与 timezone：**必须 5 段**（分 时 日 月 周）——与平台版口径一致（不接受含秒写法） */
     public static void validateCron(String cron, String timezone) {
         String c = normalizeCron(cron);
-        if (c.isEmpty()) throw new BizException("cron 表达式不能为空");
+        if (c.isEmpty()) throw new BizException("定时规则不能为空");
         if (c.split(" ").length != 5) {
-            throw new BizException("cron 需为 5 段（分 时 日 月 周），如 0 9 * * 1-5 表示工作日 9 点");
+            throw new BizException("定时规则需为 5 段（分 时 日 月 周），如 0 9 * * 1-5 表示工作日 9 点");
         }
         try {
             CronExpression.parse(SPRING_SECONDS_PREFIX + c);
         } catch (IllegalArgumentException e) {
             // 不把 Spring 的内部报错（含补位后的 6 段写法）透给用户，避免"我写的是 5 段它却说 6 段"
-            throw new BizException("cron 表达式不合法（写法：分 时 日 月 周），如 0 9 * * 1-5 表示工作日 9 点");
+            throw new BizException("定时规则不合法（写法：分 时 日 月 周），如 0 9 * * 1-5 表示工作日 9 点");
         }
         zoneOf(timezone);
     }

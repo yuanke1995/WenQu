@@ -50,7 +50,7 @@
         @delete="removeOne"
       />
 
-      <p class="nt-tip">只显示最近 50 条，点开直达可以处理的位置</p>
+      <p class="nt-tip">最近 50 条</p>
     </div>
   </BottomSheet>
 </template>

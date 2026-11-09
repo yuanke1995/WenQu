@@ -22,9 +22,9 @@
         </div>
         <div v-show="helpOpen" class="help-body">
           <ol>
-            <li><b>生成评估集</b>：点右上「重新生成评估集」——自动从真实问答记录提取（问题 + 回答引用过的知识块为期望答案），存 <code>data/eval/retrieval-eval.json</code> 可手工编辑；问答里的差评案例也会自动补充进来。</li>
-            <li><b>一键体检</b>：用当前配置跑一遍评估集，直接告诉你检索健不健康、哪几题落空——不需要理解任何参数。</li>
-            <li><b>对比调优</b>：点「+ 添加参数组」选预设（关键词优先/向量优先/向量+重排/多路）或自定义，跑完看对比结论；更好的组点「应用此组」直接写入配置并生效，不用去设置页手抄。</li>
+            <li><b>生成评估集</b>：点右上「重新生成评估集」，从真实问答提取问题与期望知识块，存 <code>data/eval/retrieval-eval.json</code> 可手工编辑；差评案例自动补充。</li>
+            <li><b>一键体检</b>：用当前配置跑一遍评估集，直接告诉你检索健不健康、哪几题落空。</li>
+            <li><b>对比调优</b>：点「+ 添加参数组」选预设（关键词优先/向量优先/向量+重排/多路）或自定义，跑完看对比结论；更好的组点「应用此组」直接写入配置并生效。</li>
           </ol>
           <div class="help-metrics">
             指标含义：recall@K = 期望内容排进前 K 名的比例（找得全不全）；MRR = 第一条期望内容排名的倒数（排得靠不靠前，0.5 以上算不错）；命中率 = 没有完全落空的题占比。评估集来自"当时回答引用过的块"（弱监督），<b>看相对变化比看绝对值有意义</b>。
@@ -39,7 +39,7 @@
       <!-- 运行配置与参数组 -->
       <div class="app-card" style="margin-top:14px">
         <div class="app-card-title">运行配置
-          <span class="card-sub">参数留空 = 不覆盖（空输入框的灰色占位就是设置页当前值）；multi 多路 = 模拟深度思考的拆子问题合并检索；重排开关打开会真实调用重排服务</span>
+          <span class="card-sub">留空 = 不覆盖；multi = 拆子问题合并检索；重排会真实调用</span>
         </div>
 
         <div class="cfg-row">
@@ -48,7 +48,7 @@
           <span class="cfg-sub">评估位次（recall@k）</span>
           <span class="cfg-label" style="margin-left:18px">每次最多</span>
           <a-input-number v-model:value="maxCases" :min="1" :max="500" style="width:88px" />
-          <span class="cfg-sub">条用例（评估集存 data/eval/retrieval-eval.json，可手动编辑）</span>
+          <span class="cfg-sub">条用例（存 data/eval/retrieval-eval.json）</span>
         </div>
 
         <div v-for="(g, gi) in groups" :key="gi" class="group-box">
@@ -66,7 +66,7 @@
             <span class="p-item"><span class="p-label">关键词权重</span><a-input-number v-model:value="g.keywordWeight" :step="0.05" :placeholder="cur('retrieval.keywordWeight')" style="width:90px" /></span>
             <span class="p-item"><span class="p-label">向量阈值</span><a-input-number v-model:value="g.vecThreshold" :step="0.05" :placeholder="cur('retrieval.vecThreshold')" style="width:90px" /></span>
             <span class="p-item"><span class="p-label">关键词上限</span><a-input-number v-model:value="g.keywordLimit" :min="1" :placeholder="cur('retrieval.keywordLimit')" style="width:90px" /></span>
-            <span class="p-item"><span class="p-label">topK</span><a-input-number v-model:value="g.topK" :min="1" :placeholder="cur('retrieval.vectorTopK')" style="width:90px" /></span>
+            <span class="p-item"><span class="p-label">召回条数</span><a-input-number v-model:value="g.topK" :min="1" :placeholder="cur('retrieval.vectorTopK')" style="width:90px" /></span>
             <span class="p-item"><span class="p-label">重排</span>
               <a-switch :checked="g.rerankEnabled ?? cur('rerank.enabled') === 'true'"
                         title="未手动拨动 = 跟随线上当前配置；拨动后为该组显式覆盖"
@@ -114,7 +114,7 @@
 
         <div class="app-card" style="margin-top:14px">
           <div class="app-card-title">对比结果
-            <span class="card-sub">非基线组的 ↑↓ 为相对第一组的差值（绿升红降）；「应用此组」直接写入线上配置并生效</span>
+            <span class="card-sub">↑↓ 为相对第一组的差值；「应用此组」写入线上配置</span>
           </div>
           <a-table size="small" row-key="name" :data-source="result.groups" :pagination="false" :columns="metricsColumns" />
 
@@ -147,12 +147,12 @@
            每条两次真实模型调用（生成+评判）计费敏感：手动触发、单次上限 50 条、异步跑（3s 轮询进度） -->
       <div class="app-card" style="margin-top:14px">
         <div class="app-card-title">答案质量评测
-          <span class="card-sub">检索指标只看「找得到」，这里测「答得对不对」：逐条用例检索 → 真实生成回答 → 评判模型打分。每条用例 2 次模型调用（生成 + 评判），按用例数计费</span>
+          <span class="card-sub">逐条检索 → 真实生成 → 评判打分；每条 2 次模型调用，按用例计费</span>
         </div>
         <div class="cfg-row">
           <span class="cfg-label">用例数</span>
           <a-input-number v-model:value="answerCaseCount" :min="1" :max="50" style="width:88px" />
-          <span class="cfg-sub">上限 50；生成/评判模型在 设置 · 定时任务 · 评估 里配置（生成模型留空复用评判模型）</span>
+          <span class="cfg-sub">上限 50；生成/评判模型在「设置 → 定时任务 → 评估」配置</span>
           <button class="app-btn" style="margin-left:auto" :disabled="answerRunning || generating" @click="startAnswerEval">
             {{ answerRunning ? `评测中 ${answerProgress.done}/${answerProgress.total}…` : '运行答案评测' }}
           </button>
@@ -164,7 +164,7 @@
           <div class="answer-scores">
             <div class="score-box">
               <div class="score-num" :class="scoreLevel(answerReport.avgFaithfulness)">{{ pctText(answerReport.avgFaithfulness) }}</div>
-              <div class="score-label">忠实度均分<span class="score-tip" title="回答的事实性陈述是否都有检索资料依据（编造=低分，如实说未覆盖不算）">?</span></div>
+              <div class="score-label">忠实度均分<span class="score-tip" title="事实陈述是否有资料依据">?</span></div>
             </div>
             <div class="score-box">
               <div class="score-num" :class="scoreLevel(answerReport.avgRelevance)">{{ pctText(answerReport.avgRelevance) }}</div>

@@ -19,7 +19,7 @@
             <div class="hero-meta">
               上次巡检 <b>{{ fmtTime(report.at) }}</b> · 耗时 {{ report.tookMs || 0 }}ms · {{ triggerText }}
             </div>
-            <div class="hero-meta-sub">自动巡检按配置节拍执行（可在「系统设置 → 定时任务」调整）</div>
+            <div class="hero-meta-sub">自动巡检（节拍在「设置 → 定时任务」）</div>
           </div>
         </div>
         <div class="hero-kpis">

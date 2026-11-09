@@ -11,7 +11,7 @@
       <template #title>
         <div class="help-drawer-title">
           <span class="help-drawer-name">帮助中心</span>
-          <span class="help-drawer-hint">官方使用手册（随版本自动同步）；也可以在对话里直接提问，答案会从本手册检索并带引用</span>
+          <span class="help-drawer-hint">官方手册，随版本同步</span>
         </div>
       </template>
       <HelpCenter />

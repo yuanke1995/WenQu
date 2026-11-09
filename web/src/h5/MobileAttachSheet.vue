@@ -15,7 +15,7 @@
           <ordered-list-outlined class="as-ic" />
           <span class="as-main">
             <span class="as-name">计划模式</span>
-            <span class="as-desc">这一轮先出计划，你批准后才开始回答（发出去就取消）</span>
+            <span class="as-desc">先出计划，批准后再回答</span>
           </span>
           <span class="as-sw" :class="{ on: planModeOn }" aria-hidden="true" />
         </button>
@@ -23,7 +23,7 @@
           <aim-outlined class="as-ic" />
           <span class="as-main">
             <span class="as-name">定为目标</span>
-            <span class="as-desc">把输入框这句交出去开跑；助手会自己往下推进，随时可以在上面那条停掉</span>
+            <span class="as-desc">自动续跑，可随时停止</span>
           </span>
         </button>
       </div>
@@ -36,7 +36,7 @@
 
       <!-- ==================== 技能 ==================== -->
       <template v-if="tab === 'skill'">
-        <div class="as-hint">选用的技能对本轮生效，下一轮自动取消（一次最多 3 个）；点「正文」看这条到底写了什么</div>
+        <div class="as-hint">仅本轮生效，最多 3 个</div>
         <div v-if="!skillList.length" class="as-empty">暂无可用技能</div>
         <div v-for="s in skillList" :key="s.name" class="as-row" :class="{ on: pickedSkills.includes(s.name) }">
           <button class="as-hit" type="button" :disabled="s.selectable === false" @click="toggleSkill(s.name)">
@@ -84,12 +84,12 @@
           </button>
           <div v-if="!listLen" class="as-empty">没有可引用的{{ mentionTab === 'kb' ? '知识库' : (mentionTab === 'doc' ? '文档' : '智能体') }}</div>
         </template>
-        <div class="as-hint">引用只对本轮生效：知识库收窄检索范围，文档整篇带入上下文，智能体本轮强制咨询它</div>
+        <div class="as-hint">引用仅本轮生效</div>
       </template>
 
       <!-- ==================== 历史(#) ==================== -->
       <template v-else-if="tab === 'hist'">
-        <div class="as-hint">勾选本会话中的历史问答，把它们作为本轮回答的上下文（最多 10 条）</div>
+        <div class="as-hint">作为本轮上下文（最多 10 条）</div>
         <input v-model="histQuery" class="as-filter" type="search" placeholder="筛选…" enterkeyhint="search" />
         <button v-for="hm in histCandidates" :key="hm.messageId" class="as-row" :class="{ on: isHistPicked(hm.messageId) }"
                 type="button" @click="toggleHistoryRef(hm)">
@@ -102,14 +102,14 @@
 
       <!-- ==================== 附件 ==================== -->
       <template v-else>
-        <div class="as-hint">支持 PDF / Word / Excel / PPT 与文本、代码文件；单个不超过 15MB（一次最多 5 个）</div>
+        <div class="as-hint">PDF / Word / Excel / PPT / 文本 / 代码，单个 ≤15MB，最多 5 个</div>
         <button class="as-row" type="button" @click="fileInput && fileInput.click()">
           <paper-clip-outlined class="as-ic" />
-          <span class="as-main"><span class="as-name">选择文件</span><span class="as-desc">上传后随本轮提问一起发送</span></span>
+          <span class="as-main"><span class="as-name">选择文件</span></span>
         </button>
         <button class="as-row" type="button" @click="imgInput && imgInput.click()">
           <picture-outlined class="as-ic" />
-          <span class="as-main"><span class="as-name">选择图片</span><span class="as-desc">压缩后随本轮提问（支持多选，最多 5 张）</span></span>
+          <span class="as-main"><span class="as-name">选择图片</span><span class="as-desc">随本轮发送，最多 5 张</span></span>
         </button>
         <template v-if="pendingFiles.length">
           <div class="as-section">已选附件</div>

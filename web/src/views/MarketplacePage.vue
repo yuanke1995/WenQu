@@ -188,7 +188,7 @@
         </div>
 
         <div class="key-modal-foot">
-          <span v-if="detail.itemType === 'mcp'" class="mk-foot-note">安装即复制：目录后续修改不会覆盖你的服务配置。</span>
+          <span v-if="detail.itemType === 'mcp'" class="mk-foot-note">安装即复制，目录修改不影响已安装。</span>
           <button v-if="detail.itemType !== 'mcp'" class="app-btn ghost" @click="download(detail)">下载物品包</button>
           <!-- MCP：按四态分流（与卡片同口径）；非 MCP 走原有安装流（作者也能装：上架后自己装一遍验证是常事） -->
           <template v-if="detail.itemType === 'mcp' && detail.online">
