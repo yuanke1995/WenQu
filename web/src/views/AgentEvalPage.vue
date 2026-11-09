@@ -1045,12 +1045,12 @@ onUnmounted(() => {
 
 /* ---- 统计卡 ---- */
 .stat-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 12px; }
-.stat { height: 76px; padding: 12px 16px; display: flex; flex-direction: column; justify-content: center; gap: 4px; }
-.stat .lab { font-size: 11px; color: var(--app-text3); }
-.stat .val { font-size: 20px; font-weight: 600; letter-spacing: -.01em; color: var(--app-text); }
+.stat { height: 92px; padding: 13px 18px; display: flex; flex-direction: column; justify-content: center; gap: 5px; }
+.stat .lab { font-size: 11px; line-height: 1.3; color: var(--app-text3); }
+.stat .val { font-size: 20px; line-height: 1.25; font-weight: 600; letter-spacing: -.01em; color: var(--app-text); }
 .stat .val em { font-style: normal; font-size: 12px; font-weight: 500; color: var(--app-text3); margin-left: 4px; }
 .stat .val.danger { color: var(--app-danger); }
-.stat .sub { font-size: 11px; color: var(--app-text3); }
+.stat .sub { font-size: 11px; line-height: 1.3; color: var(--app-text3); }
 .stat .sub.good { color: var(--app-ok); }
 .stat .sub.bad { color: var(--app-danger); }
 
