@@ -52,6 +52,21 @@ public class Tenant {
     /** 登录页副标题（空=默认欢迎语） */
     private String loginHint;
 
+    /** 套餐：trial=试用 standard=标准 dedicated=专属 */
+    private String plan;
+
+    /** 企业域名（SSO 与自动开通白名单用） */
+    private String domain;
+
+    /** 1=开通申请时勾选了需要单点登录，待配置 */
+    private Integer ssoRequested;
+
+    /** 归档时刻 */
+    private LocalDateTime archiveTime;
+
+    /** 归档操作人 */
+    private String archiveBy;
+
     private LocalDateTime createTime;
 
     private LocalDateTime updateTime;

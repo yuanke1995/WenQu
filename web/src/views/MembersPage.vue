@@ -49,8 +49,8 @@
           <div class="mem-actions">
             <button v-if="tab === 'users'" class="app-btn ghost mem-new" @click="inviteOpen = true"><MailOutlined /> 邀请成员</button>
             <button v-if="tab === 'users'" class="app-btn mem-new" @click="openUserCreate"><plus-outlined /> 新建用户</button>
-            <!-- 租户管理弹窗里的启停/开通申请都是平台级动作：租户管理员打开只会看到一排必 403 控件 -->
-            <button v-if="tab === 'users' && isSuper" class="app-btn ghost mem-new" @click="openTenantAdmin">租户管理<i class="mem-tenant-n">{{ tenants.length }}</i></button>
+            <!-- 租户相关动作已收口到「租户与开通」：这里只保留跳转，不在成员页复制第二套 -->
+            <router-link v-if="tab === 'users' && isSuper" to="/tenants" class="app-btn ghost mem-new">租户与开通</router-link>
             <button v-if="tab !== 'users'" class="app-btn mem-new" @click="openDeptCreate"><plus-outlined /> 新建部门</button>
           </div>
         </div>
@@ -246,116 +246,9 @@
       </a-form>
     </a-modal>
 
-    <!-- 租户管理弹窗：清单 + 开通 + 启停。刻意没有「删除租户」——那等于按归属批量删数据 -->
-    <a-modal v-model:open="tenantModal" title="租户管理" :width="680" :footer="null">
-      <a-table :data-source="tenants" :row-key="r => r.id" size="small" :pagination="false">
-        <a-table-column title="租户" key="t" min-width="200">
-          <template #default="{ record }">
-            <div class="mem-tenant-name">{{ record.name }}</div>
-            <code class="mem-tenant-id">{{ record.id }}</code>
-          </template>
-        </a-table-column>
-        <a-table-column title="成员" dataIndex="members" width="70" />
-        <a-table-column title="联系人" dataIndex="contact" width="120" />
-        <a-table-column title="状态" key="status" width="90">
-          <template #default="{ record }">
-            <span class="app-pill" :class="record.status === 0 ? 'warn' : 'ok'">{{ record.status === 0 ? '已停用' : '启用' }}</span>
-          </template>
-        </a-table-column>
-        <a-table-column title="操作" key="action" width="90">
-          <template #default="{ record }">
-            <a-popconfirm v-if="record.status === 0" title="重新启用后该租户成员即可登录" ok-text="启用" cancel-text="取消"
-                          @confirm="doTenantStatus(record, true)">
-              <button class="app-link-btn">启用</button>
-            </a-popconfirm>
-            <a-popconfirm v-else-if="record.id !== 'default'" title="停用后该租户成员无法登录，数据一律保留" ok-text="停用" cancel-text="取消"
-                          @confirm="doTenantStatus(record, false)">
-              <button class="app-link-btn danger">停用</button>
-            </a-popconfirm>
-            <span v-else class="mem-none">—</span>
-          </template>
-        </a-table-column>
-      </a-table>
-      <div v-if="isSuper" class="mem-req">
-        <div class="mem-req-head">
-          开通申请
-          <span class="card-sub">来自公开页 /apply</span>
-          <span v-if="pendingCount" class="mem-req-n">{{ pendingCount }} 待处理</span>
-        </div>
-        <a-spin :spinning="reqLoading">
-          <a-table v-if="requests.length" :data-source="requests" :row-key="r => r.id" size="small"
-                   :pagination="false" :columns="reqCols">
-            <template #bodyCell="{ column, record }">
-              <template v-if="column.key === 'org'">
-                <div class="mem-tenant-name">{{ record.orgName }}</div>
-                <code class="mem-tenant-id">{{ record.desiredId || '（未填标识）' }}</code>
-                <!-- 用途摊成第三行而不是单开一列：弹窗只有 680px，再切一列出来「用途」会被挤成一竖条 -->
-                <div class="mem-req-purpose" :title="record.purpose">{{ record.purpose }}</div>
-              </template>
-              <template v-else-if="column.key === 'who'">
-                <div>{{ record.contactName || '（未填联系人）' }}</div>
-                <div class="mem-dept">{{ record.contactEmail }}</div>
-              </template>
-              <template v-else-if="column.key === 'status'">
-                <span class="app-pill" :class="record.status === 'pending' ? 'warn' : (record.status === 'approved' ? 'ok' : '')">
-                  {{ record.statusLabel }}
-                </span>
-                <div v-if="record.status !== 'pending'" class="mem-dept">
-                  {{ record.openedTenant || '—' }}{{ record.adminUid ? ' · ' + record.adminUid : '' }}
-                </div>
-              </template>
-              <template v-else-if="column.key === 'action'">
-                <a-space v-if="record.status === 'pending'">
-                  <button class="app-link-btn" @click="doApprove(record)">批准开通</button>
-                  <button class="app-link-btn danger" @click="doReject(record)">驳回</button>
-                </a-space>
-                <span v-else class="mem-none">—</span>
-              </template>
-            </template>
-          </a-table>
-          <div v-else class="mem-none">还没有人提交过开通申请。</div>
-        </a-spin>
-      </div>
-      <div class="mem-tenant-new">
-        <a-input v-model:value="tenantForm.id" size="small" placeholder="租户标识（小写字母数字-_）" style="width:200px" />
-        <a-input v-model:value="tenantForm.name" size="small" placeholder="显示名" style="width:160px" />
-        <a-input v-model:value="tenantForm.contact" size="small" placeholder="联系人（可选）" style="width:140px" />
-        <button class="app-btn mem-new" :disabled="tenantBusy" @click="doCreateTenant">{{ tenantBusy ? '开通中…' : '开通租户' }}</button>
-      </div>
-      <div class="form-tip">新租户为空；租户不能删除，只能停用</div>
-    </a-modal>
-
     <!-- 邀请成员：一次性短链，注册落当前租户 -->
     <InviteMemberModal v-model:open="inviteOpen" :roles="roles" :departments="departments"
                        :tenant-name="inviteTenantName" @created="loadData(['users', 'tenants'], { force: true })" />
-
-    <!-- 批准开通申请：标识可以改（申请人没填时必须在这里给一个） -->
-    <a-modal v-model:open="approveModal.open" title="批准开通" :width="460"
-             :confirm-loading="reqBusy" ok-text="批准并建账号" @ok="submitApprove">
-      <p class="mem-req-tip">将为「{{ approveModal.orgName }}」开通租户，并建出首位管理员账号
-        <code class="mem-tenant-id">{{ (approveModal.tenantId || '') + '-admin' }}</code>。</p>
-      <a-form layout="vertical">
-        <a-form-item label="租户标识" required extra="小写字母、数字、- 或 _，2-32 位；它同时是数据归属的标识">
-          <a-input v-model:value="approveModal.tenantId" :maxlength="32" placeholder="例如 mingde" />
-        </a-form-item>
-      </a-form>
-    </a-modal>
-
-    <a-modal v-model:open="rejectModal.open" title="驳回开通申请" :width="460" ok-text="驳回" @ok="submitReject">
-      <p class="mem-req-tip">驳回不会动任何数据，只是把这一单结掉。</p>
-      <a-textarea v-model:value="rejectModal.note" :rows="3" :maxlength="500" placeholder="说明为什么驳回（会记在审批日志里）" />
-    </a-modal>
-
-    <!-- 口令只在这一次出现：库里只有哈希，关掉这个弹窗就再也查不到 -->
-    <a-modal v-model:open="issued.open" title="已开通" :width="520" ok-text="我已记下" :cancel-text="null" @ok="issued.open = false">
-      <p class="mem-req-tip">租户 <b>{{ issued.tenantId }}</b> 已开通，首位管理员账号：</p>
-      <a-form layout="vertical">
-        <a-form-item label="登录账号"><a-input :value="issued.adminUid" readonly /></a-form-item>
-        <a-form-item label="初始口令" extra="只显示这一次；请要求对方首次登录后立刻改密">
-          <a-input :value="issued.password" readonly />
-        </a-form-item>
-      </a-form>
-    </a-modal>
 
     <!-- 部门弹窗 -->
     <a-modal v-model:open="deptModal" :title="deptForm.id ? '编辑部门' : '新建部门'" :width="440"
@@ -400,8 +293,7 @@ import { isSuperadminSync, tenantStateSync } from '../utils/auth'
 import { listUsers, createUser, updateUser, deleteUser, resetUserPassword,
          listDepartments, createDepartment, updateDepartment, deleteDepartment,
          listRoleOptions, listIdentityProviders, unbindIdentity,
-         listTenants, createTenant, setTenantStatus, moveMemberTenant,
-         listTenantRequests, approveTenantRequest, rejectTenantRequest,
+         listTenants, moveMemberTenant,
          getExpiringRoles } from '../api'
 import UserAvatar from '../components/UserAvatar.vue'
 import InviteMemberModal from '../components/InviteMemberModal.vue'
@@ -629,10 +521,6 @@ function tenantName (id) {
   const t = tenants.value.find(x => x.id === (id || defaultTenant))
   return t ? t.name : (id || defaultTenant)
 }
-const tenantModal = ref(false)
-
-// ---------- 开通申请----------
-// 只有平台级看得到这一区：批准等于开一家新客户，租户管理员批准等于自己给自己开门
 const isSuper = computed(() => isSuperadminSync())
 // 邀请落「当前租户」：弹窗里把这句写清楚，避免平台管理员误以为邀请到了别家
 const inviteOpen = ref(false)
@@ -640,90 +528,6 @@ const inviteTenantName = computed(() => {
   const t = tenantStateSync()
   return t ? t.name : '当前租户'
 })
-const requests = ref([])
-const reqLoading = ref(false)
-const reqBusy = ref(false)
-const approveModal = ref({ open: false, id: '', orgName: '', tenantId: '' })
-const rejectModal = ref({ open: false, id: '', orgName: '', note: '' })
-const issued = ref({ open: false, tenantId: '', adminUid: '', password: '' })
-const pendingCount = computed(() => requests.value.filter(r => r.status === 'pending').length)
-const reqCols = [
-  { title: '机构', key: 'org' },
-  { title: '联系人', key: 'who', width: 168 },
-  { title: '状态', key: 'status', width: 104 },
-  { title: '操作', key: 'action', width: 132 }
-]
-
-async function loadRequests () {
-  if (!isSuper.value) return
-  reqLoading.value = true
-  try {
-    const r = await listTenantRequests()
-    requests.value = (r && r.success && r.data) || []
-  } catch (e) {
-    message.error('开通申请读取失败：' + (e.message || e))
-  } finally {
-    reqLoading.value = false
-  }
-}
-
-function doApprove (row) {
-  approveModal.value = { open: true, id: row.id, orgName: row.orgName, tenantId: row.desiredId || '' }
-}
-
-async function submitApprove () {
-  const f = approveModal.value
-  const tid = (f.tenantId || '').trim().toLowerCase()
-  if (!tid) { message.warning('要给一个租户标识'); return }
-  reqBusy.value = true
-  try {
-    const r = await approveTenantRequest(f.id, tid)
-    if (!r || !r.success) { message.error((r && r.msg) || '批准失败'); return }
-    approveModal.value.open = false
-    issued.value = { open: true, tenantId: r.data.tenantId, adminUid: r.data.adminUid, password: r.data.password }
-    await Promise.all([loadRequests(), loadTenants()])
-  } catch (e) {
-    message.error('批准失败：' + (e.message || e))
-  } finally {
-    reqBusy.value = false
-  }
-}
-
-function doReject (row) {
-  rejectModal.value = { open: true, id: row.id, orgName: row.orgName, note: '' }
-}
-
-async function submitReject () {
-  const f = rejectModal.value
-  const r = await rejectTenantRequest(f.id, f.note.trim())
-  if (!r || !r.success) { message.error((r && r.msg) || '驳回失败'); return }
-  rejectModal.value.open = false
-  message.success('已驳回')
-  await loadRequests()
-}
-const tenantForm = ref({ id: '', name: '', contact: '' })
-const tenantBusy = ref(false)
-function openTenantAdmin () { tenantForm.value = { id: '', name: '', contact: '' }; tenantModal.value = true; loadRequests() }
-async function doCreateTenant () {
-  const f = tenantForm.value
-  if (!f.id.trim() || !f.name.trim()) { message.warning('要填租户标识与显示名'); return }
-  tenantBusy.value = true
-  try {
-    const r = await createTenant({ id: f.id.trim().toLowerCase(), name: f.name.trim(), contact: f.contact.trim() })
-    if (!r.success) { message.error(r.msg || '开通失败'); return }
-    message.success('已开通租户')
-    await loadData(['tenants'], { force: true })
-    tenantForm.value = { id: '', name: '', contact: '' }
-  } catch (e) { message.error(e.message || '开通失败') } finally { tenantBusy.value = false }
-}
-async function doTenantStatus (t, enabled) {
-  try {
-    const r = await setTenantStatus(t.id, enabled)
-    if (!r.success) { message.error(r.msg || '操作失败'); return }
-    if (!enabled) message.success('已停用')
-    await loadData(['tenants'], { force: true })
-  } catch (e) { message.error(e.message || '操作失败') }
-}
 
 // ---------- 用户 ----------
 const userModal = ref(false)

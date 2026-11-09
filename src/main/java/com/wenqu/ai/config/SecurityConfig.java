@@ -444,9 +444,23 @@ public class SecurityConfig implements WebMvcConfigurer {
      * 租户开通申请：免登录的唯一<b>写入</b>端点，只此一条路径，不给前缀。
      * <p>它免的是登录门禁，不是所有约束：控制器里不读任何用户态数据、按 IP 限流、
      * 字段全量校验，且提交后只是待审记录——真正的开通动作在平台级管理员手里。
+     * <p>同一族里还有三个只读辅助端点（标识可用性 / 进度查询 / 重提预填）、
+     * 材料上传与邀请式开通的预览/接受；全部按精确路径枚举，不做前缀放行。
      */
     private static boolean isTenantApplyEndpoint(String method, String path) {
-        return "POST".equalsIgnoreCase(method) && "/api/ai/tenant/apply".equals(path);
+        if (path == null) return false;
+        if ("POST".equalsIgnoreCase(method)) {
+            return "/api/ai/tenant/apply".equals(path)
+                    || "/api/ai/tenant/materials".equals(path)
+                    || "/api/ai/tenant/open-invites/accept".equals(path);
+        }
+        if ("GET".equalsIgnoreCase(method)) {
+            return "/api/ai/tenant/availability".equals(path)
+                    || "/api/ai/tenant/requests/status".equals(path)
+                    || "/api/ai/tenant/requests/resubmit".equals(path)
+                    || "/api/ai/tenant/open-invites/preview".equals(path);
+        }
+        return false;
     }
 
     /**

@@ -42,6 +42,8 @@ public class WenquTenantLineHandler implements TenantLineHandler {
             "c_ai_tenant",
             // 开通申请发生在「还没有租户」的时候：给它编一个归属等于把「谁申请的」写成假值
             "c_ai_tenant_request",
+            // 邀请式开通同样发生在开通之前，且是平台级动作
+            "c_ai_tenant_open_invite",
             // 角色域四张表按租户隔离（c_ai_role/c_ai_role_menu/c_ai_role_permission/
             // c_ai_role_data_scope 已移出全局名单——菜单与接口定义仍全局共享，租户只分叉角色层）
             "c_ai_menu", "c_ai_menu_api", "c_ai_api",

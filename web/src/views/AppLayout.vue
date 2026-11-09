@@ -84,6 +84,7 @@
                   :class="{ active: isActive(m.path) }" @click="router.push(m.path)" :title="menuTitle(m)">
             <component :is="iconOf(m.icon)" />
             <span v-if="!collapsed">{{ m.name }}</span>
+            <span v-if="!collapsed && m.path === '/tenants' && tenantPending > 0" class="nav-pending-badge">{{ tenantPending }}</span>
             <span v-if="!collapsed && menuPending(m)" class="app-pill nav-pending">待配置</span>
             <i v-if="menuPending(m)" class="nav-dot"></i>
           </button>
@@ -574,11 +575,11 @@ import { PlusOutlined, MessageOutlined, RobotOutlined, FolderOutlined, BarChartO
 import { deleteSessionApi, logoutApi, renameSessionApi, pinSession, favoriteSession, batchDeleteSessionsApi,
          getMyMenuLayout, saveMyMenuLayout, setNewSessionProject,
          updateProject, deleteProject, createProject, setProjectStatus,
-         listProjects, moveSessionProject, openProjectFolder, listExecutors } from '../api'
+         listProjects, moveSessionProject, openProjectFolder, listExecutors, getTenantPendingCount } from '../api'
 import { useNotifications, notifBucket, notifTarget } from '../chat/useNotifications'
 import NotificationList from '../components/notification/NotificationList.vue'
 import { themeState, toggleTheme } from '../utils/theme'
-import { authUser, ensureAuth, isAdminSync, clearAuth, tenantStateSync } from '../utils/auth'
+import { authUser, ensureAuth, isAdminSync, isSuperadminSync, clearAuth, tenantStateSync } from '../utils/auth'
 import { localExecutorId, setLocalExecutorId } from '../utils/localExecutor'
 import { chatDone, chatReady, defaultReady, embeddingReady, pendingCount, refreshSetupGuide, setupGuide,
          advPendingCount } from '../utils/setupGuide'
@@ -1781,6 +1782,19 @@ const goNotifCenter = () => {
   })
 }
 const goNotifSettings = () => { notifOpen.value = false; router.push('/profile?panel=notify') }
+
+// 侧栏「租户与开通」待审角标：只对平台级拉取；60s 一轮，处理完回到列表页也会被下一轮纠正
+const tenantPending = ref(0)
+let tenantPendingTimer = null
+async function refreshTenantPending () {
+  if (!isSuperadminSync()) return
+  try {
+    const r = await getTenantPendingCount()
+    if (r && r.success) tenantPending.value = (r.data && r.data.count) || 0
+  } catch (e) { /* 角标失败不影响导航 */ }
+}
+onUnmounted(() => { if (tenantPendingTimer) clearInterval(tenantPendingTimer) })
+
 onMounted(async () => {
   // 先挂跨页签订阅再拉列表：拉取在途的那几百毫秒里，别的页签改了一次列表不该就这次刷新丢掉
   startSessionTabSync()
@@ -1788,6 +1802,8 @@ onMounted(async () => {
   isAdmin.value = Boolean(info && info.admin)
   // 侧栏只渲染 sidebar + group；tab 由宿主页（AgentsHubPage 等）按 parentId 取用，hidden 纯权限容器
   navMenus.value = sidebarMenusOf(info && info.menus)
+  refreshTenantPending()
+  tenantPendingTimer = setInterval(refreshTenantPending, 60_000)
   loadSessions()
   loadTasks(true)  // 「任务」分区 + 会话行时钟标记（与工作区取数并行，不互相阻塞）
   startProcBadgePoll()  // 会话行的「还背着沙盒进程」标记：60s 一轮，没有活容器时后端一次网络都不发
@@ -1964,6 +1980,11 @@ watch(() => route.fullPath, () => {
 }
 .nav-item:hover { background: var(--app-accent-weak); color: var(--app-text); }
 .nav-item.active { background: var(--app-accent-weak); color: var(--app-text); font-weight: 500; }
+/* 租户待审角标：红色计数，跟在「租户与开通」后面；折叠态隐藏 */
+.nav-pending-badge {
+  margin-left: auto; flex: none; font-size: 10px; line-height: 16px;
+  padding: 0 6px; border-radius: 9px; background: var(--app-danger); color: #fff;
+}
 
 /* ==================== 新手配置引导：菜单 tag + 折叠圆点 + 侧栏入口 ==================== */
 /* 展开态行尾琥珀 pill（复用 .app-pill 形态，配色走主题变量以兼容暗色） */

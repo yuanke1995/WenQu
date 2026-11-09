@@ -175,6 +175,34 @@ public class MailDispatchService {
     }
 
     /**
+     * 面向任意收件人的外发（租户开通回执/结果用）。
+     *
+     * <p>这条通道刻意<b>不走个人通知偏好</b>：申请人还没有账号，也不存在「他勾选过邮件提醒」这件事。
+     * 是否允许外发只由 SMTP 总闸决定；失败只记日志并返回 false，调用方用站内结果兜底。
+     * 调用方应放在异步线程里（见 TenantRequestService），避免 SMTP 慢连接拖住申请提交。
+     */
+    public boolean sendTo(String to, String subject, String html) {
+        if (to == null || to.isBlank()) return false;
+        if (!enabled()) {
+            log.info("[MAIL] 邮件总闸未开启，跳过外发 to={} subject={}", to, subject);
+            return false;
+        }
+        SmtpConfig cfg = smtp();
+        if (cfg.host == null || cfg.host.isBlank()) {
+            log.info("[MAIL] SMTP 主机未配置，跳过外发 to={} subject={}", to, subject);
+            return false;
+        }
+        try {
+            doSend(cfg, to.trim(), subject, html);
+            log.info("[MAIL] 已外发 to={} subject={}", to, subject);
+            return true;
+        } catch (Exception e) {
+            log.warn("[MAIL] 外发失败 to={} subject={}: {}", to, subject, rootMessage(e));
+            return false;
+        }
+    }
+
+    /**
      * 后台投递：每 30 秒扫一批到期的 pending 行。
      * <p>多副本并存时同一行可能被两个副本同时取到——SMTP 是幂等的「再发一次」，
      * 相比引入分布式租约，这里接受极少量重复（通知类邮件重复一次无实质损害）。

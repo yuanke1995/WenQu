@@ -90,6 +90,14 @@
 
           <p v-if="error" class="login-err">{{ error }}</p>
           <p v-if="isInit" class="login-hint">系统尚无可用账号，创建后即以此账号登录；登录账号创建后不可修改。密码至少 6 位。</p>
+
+          <!-- 申请入口：放在登录动作之后，不与「登录」争主按钮；一次点击到 /apply -->
+          <div v-if="!isInit" class="login-alt">
+            <span>还没有独立工作区？</span>
+            <router-link to="/apply">申请开通</router-link>
+            <span class="login-alt-sep">·</span>
+            <router-link to="/apply/status">查询进度</router-link>
+          </div>
         </div>
       </main>
     </div>
@@ -352,6 +360,15 @@ html[data-theme='dark'] .login-title::after {
 }
 .login-err { color: var(--app-danger, var(--app-danger)); font-size: 12px; margin: 10px 0 0; }
 .login-hint { color: var(--app-text3, var(--app-text3)); font-size: 11px; margin: 10px 0 0; line-height: 1.6; }
+.login-alt {
+  margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--app-border, #e6e9ed);
+  display: flex; align-items: center; justify-content: center; gap: 6px; flex-wrap: wrap;
+  font-size: 12px; color: var(--app-text2, #5f6570);
+}
+.login-alt a { color: var(--app-accent, #2e6be6); text-decoration: none; }
+.login-alt a:hover { text-decoration: underline; }
+.login-alt-sep { color: var(--app-text3, #98a0aa); }
+
 
 /* ==================== 响应式 ==================== */
 /* 窄于 1200px：左侧品牌文字与居中卡片会重叠，整栏收起，卡片内恢复紧凑品牌行 */

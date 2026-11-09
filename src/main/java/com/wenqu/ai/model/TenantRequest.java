@@ -41,6 +41,21 @@ public class TenantRequest {
     /** 用途说明：要解决什么问题、大概多少人 */
     private String purpose;
 
+    /** 团队规模：1-50 / 51-200 / 201-1000 / 1000+ */
+    private String scale;
+
+    /** 企业域名（SSO / 自动开通白名单） */
+    private String domain;
+
+    /** 1=申请时勾选需要单点登录 */
+    private Integer ssoRequested;
+
+    /** 企业认证材料 JSON：[{name,url,size}] */
+    private String materials;
+
+    /** 由哪一单驳回后重新提交 */
+    private String resubmitOf;
+
     /** pending=待审 approved=已开通 rejected=已驳回 */
     private String status;
 
@@ -54,6 +69,15 @@ public class TenantRequest {
     private String reviewer;
 
     private String reviewNote;
+
+    /** 审批完成时刻（SLA 计算） */
+    private LocalDateTime reviewedAt;
+
+    /** 凭据送达时刻 */
+    private LocalDateTime deliveredAt;
+
+    /** 最近一次 SLA 提醒时刻（防重复催办） */
+    private LocalDateTime remindedAt;
 
     private LocalDateTime createTime;
 

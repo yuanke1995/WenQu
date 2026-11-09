@@ -18,6 +18,7 @@
         <p class="join-desc">{{ error }}</p>
         <div class="join-actions">
           <a class="join-link" href="/login">返回登录</a>
+          <a class="join-link" href="/apply">申请开通独立工作区</a>
         </div>
       </template>
 

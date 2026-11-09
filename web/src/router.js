@@ -25,6 +25,10 @@ const routes = [
   { path: '/error', component: page(() => import('./views/HttpErrorPage.vue')), meta: { title: '出错了', public: true } },
   // 租户开通申请（自助开通）：免登录的公开表单，提交后仍需平台管理员批准
   { path: '/apply', component: page(() => import('./views/TenantApplyPage.vue')), meta: { title: '申请开通', public: true, pageFlow: true } },
+  // 申请进度查询：编号 + 提交邮箱双因子，免登录
+  { path: '/apply/status', component: page(() => import('./views/TenantApplyStatusPage.vue')), meta: { title: '查询开通进度', public: true, pageFlow: true } },
+  // 邀请式开通：平台预批准，客户凭一次性链接补齐信息即开通
+  { path: '/open/:token', component: page(() => import('./views/TenantOpenInvitePage.vue')), meta: { title: '开通工作区', public: true, pageFlow: true } },
   // 租户邀请落地页：token 即凭据，免登录注册后直接进入工作台
   { path: '/join/:token', component: page(() => import('./views/JoinPage.vue')), meta: { title: '邀请注册', public: true, pageFlow: true } },
   // 本机执行器授权确认页：执行器在终端打印 /pair?code=XXXXXX，登录后确认即完成配对
