@@ -72,9 +72,9 @@ public class WebSearchService {
         if ((apiKey == null || apiKey.isBlank()) && !"generic".equalsIgnoreCase(provider.id())) {
             throw new WebSearchException("联网搜索未配置 API Key（webSearch.apiKey 为空，服务商 " + provider.id() + " 需要密钥）", true);
         }
-        int cap = configService.getInt("webSearch.maxResults", 5);
+        int cap = configService.getInt("webSearch.maxResults", 10);
         int limit = maxResults == null ? cap : Math.max(1, Math.min(maxResults, cap));
-        int timeoutMs = configService.getInt("webSearch.timeoutMs", 8000);
+        int timeoutMs = configService.getInt("webSearch.timeoutMs", 30000);
         String baseUrl = configService.get("webSearch.baseUrl");
         if (baseUrl != null && baseUrl.startsWith("http://")) {
             log.warn("[WEB-SEARCH] 服务地址使用 http，搜索词与密钥将以明文传输：{}", baseUrl);

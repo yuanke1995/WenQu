@@ -17,8 +17,8 @@ import org.springframework.stereotype.Component;
 @Component
 public class GoalSettings {
 
-    /** 轮次预算默认值（设置页可改）。 */
-    public static final int DEFAULT_MAX_ROUNDS = 40;
+    /** 轮次预算默认值（设置页可改）；0=不限制。 */
+    public static final int DEFAULT_MAX_ROUNDS = 0;
 
     /**
      * 四项硬预算共用的「不限制」哨兵（设置页填 0 得到它）。
@@ -56,14 +56,16 @@ public class GoalSettings {
         return (int) Math.max(1L, (ms + 999L) / 1000L);
     }
 
-    /** 完成检查轮最多跑几次。 */
+    /** 完成检查轮最多跑几次；0=不限制（默认）。 */
     public int maxCompletionChecks() {
-        return clamp(config.getInt("chat.goal.maxCompletionChecks", 2), 1, 10);
+        int v = config.getInt("chat.goal.maxCompletionChecks", 0);
+        return v <= 0 ? UNLIMITED : clamp(v, 1, 10);
     }
 
-    /** 连续完成申请未过 Verifier 的上限。 */
+    /** 连续完成申请未过 Verifier 的上限；0=不限制（默认）。 */
     public int maxVerifyFailures() {
-        return clamp(config.getInt("chat.goal.maxVerifyFailures", 5), 1, 50);
+        int v = config.getInt("chat.goal.maxVerifyFailures", 0);
+        return v <= 0 ? UNLIMITED : clamp(v, 1, 50);
     }
 
     /** 进程崩溃/租约过期后最多恢复几次。 */
@@ -78,19 +80,19 @@ public class GoalSettings {
      * 2147483647，出参那道「哨兵翻回 0」认的是 Long.MAX_VALUE，翻不动就印给界面一个天文数字。
      */
     public long maxTokens() {
-        long v = config.getLong("chat.goal.maxTokens", 2_000_000L);
+        long v = config.getLong("chat.goal.maxTokens", 0L);
         return v <= 0 ? UNLIMITED_LONG : Math.min(v, 100_000_000L);
     }
 
     /** 机器耗时预算（毫秒）：0=不限制。 */
     public long maxMs() {
-        long v = config.getLong("chat.goal.maxMs", 7_200_000L);
+        long v = config.getLong("chat.goal.maxMs", 0L);
         return v <= 0 ? UNLIMITED_LONG : Math.min(v, 604_800_000L);
     }
 
     /** 工具调用预算：0=不限制。 */
     public int maxToolCalls() {
-        int v = config.getInt("chat.goal.maxToolCalls", 400);
+        int v = config.getInt("chat.goal.maxToolCalls", 0);
         return v <= 0 ? UNLIMITED : Math.min(v, 1_000_000);
     }
 

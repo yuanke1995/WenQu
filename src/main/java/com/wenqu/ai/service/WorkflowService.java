@@ -1176,7 +1176,7 @@ public class WorkflowService {
      * 0 = 不限制（直接同步调用，不多付一次线程切换）。
      */
     private Optional<com.alibaba.cloud.ai.graph.OverAllState> invokeGraph(CompiledGraph compiled) throws Exception {
-        int timeoutSeconds = configService.getInt("workflow.runTimeoutSeconds", 600);
+        int timeoutSeconds = configService.getInt("workflow.runTimeoutSeconds", 0);
         if (timeoutSeconds <= 0) {
             return compiled.invoke(Map.of());
         }

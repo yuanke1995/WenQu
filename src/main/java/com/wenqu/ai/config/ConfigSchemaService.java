@@ -168,6 +168,55 @@ public class ConfigSchemaService {
         return java.util.Set.copyOf(byKey.keySet());
     }
 
+    /** 面板 key 集合（设置页分组；恢复默认按面板解析用） */
+    public java.util.Set<String> panelKeys() {
+        java.util.Set<String> out = new java.util.HashSet<>();
+        for (JSONObject j : rawFields) {
+            String p = j.getString("panel");
+            if (p != null && !p.isBlank()) out.add(p);
+        }
+        return out;
+    }
+
+    /** 指定面板下登记的全部 backendKey（含 hidden；面板不存在返回空表） */
+    public java.util.List<String> keysOfPanel(String panel) {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        if (panel == null) return out;
+        for (JSONObject j : rawFields) {
+            if (panel.equals(j.getString("panel"))) {
+                String bk = j.getString("backendKey");
+                if (bk != null && !bk.isBlank()) out.add(bk);
+            }
+        }
+        return out;
+    }
+
+    /**
+     * schema 表单默认值折算到存储层口径：number 乘 factor（如 upload.maxFileSize 表单 MB → 字节），
+     * switch 出 "true"/"false"；未登记 def 或非数值/开关类型返回 null。
+     * <p>用途：启动对账比对 schema def 与 {@code ConfigService.defaults()} 是否同值——
+     * 两层不一致时「恢复默认」按钮会把运行时权威值洗成另一个数。
+     */
+    public String defStoredValue(String key) {
+        for (JSONObject j : rawFields) {
+            if (!key.equals(j.getString("backendKey"))) continue;
+            String type = j.getString("type");
+            if ("switch".equals(type)) {
+                Boolean d = j.getBoolean("def");
+                return d == null ? null : String.valueOf(d);
+            }
+            if (!"number".equals(type)) return null;
+            java.math.BigDecimal d = j.getBigDecimal("def");
+            if (d == null) return null;
+            java.math.BigDecimal factor = j.getBigDecimal("factor");
+            if (factor != null && factor.compareTo(java.math.BigDecimal.ZERO) != 0) {
+                d = d.multiply(factor);
+            }
+            return d.stripTrailingZeros().toPlainString();
+        }
+        return null;
+    }
+
     /**
      * 「默认开」的开关键清单（type=switch 且 def=true）。
      * <p>用途只有一个：启动自检。这类键若既没有配置行、也没在 {@code ConfigService.defaults()} 登记默认值，

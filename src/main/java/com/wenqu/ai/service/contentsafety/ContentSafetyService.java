@@ -88,7 +88,7 @@ public class ContentSafetyService {
 
     /** 总开关（关掉即两道闸都不判，规则表与页面照常在） */
     public boolean enabled() {
-        return configService.getBoolean("contentSafety.enabled", true);
+        return configService.getBoolean("contentSafety.enabled", false);
     }
 
     /** 输出侧是否有任何 block 规则或外部闸在跑：没有就走零开销的直通路径 */

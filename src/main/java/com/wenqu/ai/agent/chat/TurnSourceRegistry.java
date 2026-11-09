@@ -180,8 +180,8 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
         if (gateResult.lowConfidence()) {
             log.info("[CONSULT] 父轮问题与咨询来源语义匹配偏低，按 top-1 保底登记 1 条（问题=\"{}\"）", question);
         }
-        int maxBlocksPerDoc = configService.getInt("context.maxBlocksPerDoc", 3);
-        int maxBlocksPerKb = configService.getInt("context.maxBlocksPerKb", 4);
+        int maxBlocksPerDoc = configService.getInt("context.maxBlocksPerDoc", 0);
+        int maxBlocksPerKb = configService.getInt("context.maxBlocksPerKb", 0);
         int maxPerConsult = Math.max(1, configService.getInt("context.maxContextHits", 8));
         Map<String, Integer> docCount = new HashMap<>();
         Map<String, Integer> kbCount = new HashMap<>();
@@ -557,7 +557,7 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
      */
     @Override
     public boolean tryConsumeQuota() {
-        int max = configService.getInt("webSearch.maxCallsPerTurn", 2);
+        int max = configService.getInt("webSearch.maxCallsPerTurn", 0);
         if (max <= 0) return true; // 0=不限制
         return webSearchCalls.incrementAndGet() <= max;
     }

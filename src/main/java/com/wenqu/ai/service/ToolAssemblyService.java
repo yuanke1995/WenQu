@@ -44,7 +44,7 @@ public class ToolAssemblyService {
      */
     public int maxToolSteps(Agent agent, int depth) {
         Integer v = agent == null ? null : agent.getMaxToolSteps();
-        int global = configService.getInt("agent.maxToolSteps", 15);
+        int global = configService.getInt("agent.maxToolSteps", 0);
         int base = (v == null || v < 0) ? global : v;
         if (depth <= 0) return Math.max(0, base);
         if (v != null && v == 0 && global > 0) base = global;

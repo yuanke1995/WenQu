@@ -394,7 +394,7 @@ public class SandboxService {
 
     /** 每用户沙盒租约：超过 sandbox.maxPerUser 时循环回收该用户最久未用的连接，给当前作用域腾位。 */
     private void ensureUserLease(String uid, String currentScope) {
-        int max = configService.getInt("sandbox.maxPerUser", 2);
+        int max = configService.getInt("sandbox.maxPerUser", 0);
         if (max <= 0) return;
         int count = provider.connectionsOf(uid).size();
         if (count < max) return;
@@ -451,7 +451,7 @@ public class SandboxService {
         if (sessionId == null || sessionId.isBlank() || uid == null || uid.isBlank()) return;
         String key = sessionId + "|" + uid;
         if (!provisioning.add(key)) return;
-        int max = Math.max(1, configService.getInt("chat.asyncWorkspaceMax", 2));
+        int max = Math.max(1, configService.getInt("chat.asyncWorkspaceMax", 10));
         if (provisionInFlight.incrementAndGet() > max) {
             provisionInFlight.decrementAndGet();
             provisioning.remove(key);

@@ -100,7 +100,7 @@ public class SubAgentBranchRuntime {
                 com.wenqu.ai.config.ConfigDefaults.AGENT_SPAWN_SYNC_TIMEOUT_SECONDS);
         if (configured > 0) return Math.min(600, Math.max(30, configured));
         long budget = Math.max(configService.getLong("agent.consultTimeoutMs", 300_000L),
-                configService.getLong("chat.approvalTimeoutMs", 120_000L));
+                configService.getLong("chat.approvalTimeoutMs", 600_000L));
         return (int) Math.min(600L, Math.max(60L, budget / 1000L + 60L));
     }
 

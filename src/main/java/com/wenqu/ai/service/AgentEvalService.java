@@ -197,7 +197,7 @@ public class AgentEvalService {
      */
     public Map<String, Object> generateFromSessions(String agentId, JSONObject body) {
         AgentEvalSuite suite = mustSuite(agentId);
-        int maxCases = Math.max(1, configService.getInt("agentEval.maxCases", 30));
+        int maxCases = Math.max(1, configService.getInt("agentEval.maxCases", 200));
         int count = Math.min(Math.max(1, body == null ? 10 : body.getIntValue("count", 10)), maxCases);
         boolean onlyBad = body != null && Boolean.TRUE.equals(body.getBoolean("onlyBad"));
 
@@ -288,7 +288,7 @@ public class AgentEvalService {
             cases = casesOf(suite.getId(), 1);
         }
         if (cases.isEmpty()) throw new BizException("评测集没有可运行的用例，先添加或启用用例");
-        int maxCases = Math.max(1, configService.getInt("agentEval.maxCases", 30));
+        int maxCases = Math.max(1, configService.getInt("agentEval.maxCases", 200));
         if (cases.size() > maxCases) {
             throw new BizException("单次最多跑 " + maxCases + " 条（当前勾选 " + cases.size() + " 条），请减少勾选或调整 agentEval.maxCases");
         }

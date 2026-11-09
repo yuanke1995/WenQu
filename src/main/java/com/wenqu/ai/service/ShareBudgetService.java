@@ -31,9 +31,9 @@ import java.time.LocalDate;
 public class ShareBudgetService {
 
     private static final String PREFIX = "wenqu:share-budget:";
-    private static final int DEFAULT_DAILY_TURNS = 200;
-    private static final int DEFAULT_DAILY_TURNS_PER_VISITOR = 20;
-    private static final long DEFAULT_DAILY_TOKENS = 2_000_000L;
+    private static final int DEFAULT_DAILY_TURNS = 0;
+    private static final int DEFAULT_DAILY_TURNS_PER_VISITOR = 0;
+    private static final long DEFAULT_DAILY_TOKENS = 0L;
 
     private final StringRedisTemplate redisTemplate;
     private final ConfigService configService;

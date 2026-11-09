@@ -37,7 +37,7 @@ public final class HttpToolModels {
     public static final int MODEL_RESULT_CHARS = 16 * 1024;
     public static final int TIMEOUT_MIN_MS = 1000;
     public static final int TIMEOUT_MAX_MS = 60000;
-    public static final int TIMEOUT_DEFAULT_MS = 10000;
+    public static final int TIMEOUT_DEFAULT_MS = 60000;
 
     /** 允许导出为对话工具的方法（CONNECT/TRACE 这类对「智能体调宿主 API」没有意义的直接不收） */
     public static final Set<String> METHODS = Set.of("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD");

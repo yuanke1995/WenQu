@@ -1087,7 +1087,7 @@ public class WorkflowEngine {
             if (agent == null) {
                 throw new BizException("节点「" + n.getId() + "」智能体不存在或对当前用户不可见");
             }
-            int timeoutMs = withReplay(ctx, () -> Math.max(30_000, configService.getInt("workflow.subagentTimeoutMs", 180_000)));
+            int timeoutMs = withReplay(ctx, () -> Math.max(30_000, configService.getInt("workflow.subagentTimeoutMs", 3_600_000)));
             String sessionId = sessionService.createTempSession(ctx.uid);
             // 工作流挂工作区：运行期临时会话也归到该工作区（产物由 session 反推 project，跑完删会话不影响产物归属）
             if (ctx.projectId != null && !ctx.projectId.isBlank()) {

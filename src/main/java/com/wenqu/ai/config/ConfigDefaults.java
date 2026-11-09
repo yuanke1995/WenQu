@@ -48,10 +48,10 @@ public final class ConfigDefaults {
 
     // ---- 工作流 ----
 
-    /** workflow.maxSteps：单次运行最大图步数（StateGraph recursionLimit） */
-    public static final int WORKFLOW_MAX_STEPS = 50;
-    /** workflow.runQueueCapacity：异步运行排队容量（队列满即拒绝） */
-    public static final int WORKFLOW_RUN_QUEUE_CAPACITY = 50;
+    /** workflow.maxSteps：单次运行最大图步数（StateGraph recursionLimit；默认取 schema 上限，实际不拦截） */
+    public static final int WORKFLOW_MAX_STEPS = 1000;
+    /** workflow.runQueueCapacity：异步运行排队容量（队列满即拒绝；默认放宽到 schema 上限） */
+    public static final int WORKFLOW_RUN_QUEUE_CAPACITY = 1000;
     /** workflow.traceInputMaxChars：节点 trace 输入摘要截断长度（默认=历史硬编码值，行为零变化） */
     public static final int WORKFLOW_TRACE_INPUT_MAX = 400;
     /** workflow.traceOutputMaxChars：节点 trace 输出摘要截断长度 */

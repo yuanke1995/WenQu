@@ -177,7 +177,7 @@ public class ChatController {
         // 单条字数上限走配置（chat.maxQuestionChars），与游客分享链路同一把尺子：
         // 原先这里写死 @Size(8000)，而集成方（表单设计器助手）每轮要把当前画布 schema 带上，
         // 一张大表就超 8000 —— 写死的注解会让「配置调到 60000」在登录态/Key 这条路上根本不生效。
-        int maxQuestionChars = Math.max(200, configService.getInt("chat.maxQuestionChars", 8000));
+        int maxQuestionChars = Math.max(200, configService.getInt("chat.maxQuestionChars", 200000));
         if (question.length() > maxQuestionChars) {
             throw new BizException("单条内容过长（最多 " + maxQuestionChars + " 字）");
         }
@@ -185,11 +185,11 @@ public class ChatController {
         // 聊天传图上限：数量与单张体积（防 base64 洪峰压垮解码/视觉处理；数据 URL 字符量≈体积×4/3）
         List<String> images = request.getImages();
         if (images != null && !images.isEmpty()) {
-            int maxImages = Math.max(1, configService.getInt("chat.maxImagesPerMessage", 9));
+            int maxImages = Math.max(1, configService.getInt("chat.maxImagesPerMessage", 20));
             if (images.size() > maxImages) {
                 throw new BizException("一次最多发送 " + maxImages + " 张图片");
             }
-            int maxImageMb = Math.max(1, configService.getInt("chat.maxImageMb", 10));
+            int maxImageMb = Math.max(1, configService.getInt("chat.maxImageMb", 50));
             long maxBase64Chars = maxImageMb * 4L * 1024 * 1024 / 3; // base64 膨胀 4/3 后的字符量上限
             for (String img : images) {
                 int comma = img == null ? -1 : img.indexOf(',');

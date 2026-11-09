@@ -130,7 +130,7 @@ public class ParseQueueService {
         task.setKbId(kbId);
         task.setStatus(ParseTask.STATUS_QUEUED);
         task.setAttempt(0);
-        task.setMaxAttempt(Math.max(1, configService.getInt("parse.retryMaxAttempts", 3)));
+        task.setMaxAttempt(Math.max(1, configService.getInt("parse.retryMaxAttempts", 10)));
         task.setNextRunAt(LocalDateTime.now());
         task.setPriority(priority);
         task.setCreateTime(LocalDateTime.now());
@@ -450,7 +450,7 @@ public class ParseQueueService {
     }
 
     public long taskTimeoutMillis() {
-        return Math.max(60_000, configService.getInt("parse.taskTimeoutMs", 20 * 60_000));
+        return Math.max(60_000, configService.getInt("parse.taskTimeoutMs", 30 * 60_000));
     }
 
     /** 队列统计（全平台口径：入队日志/背压等内部用） */
@@ -501,7 +501,7 @@ public class ParseQueueService {
      * 旧实现是「先收下、队列满、删记录、报繁忙」——丢数据；现在是「早拒绝、不丢数据」。
      */
     public int capacity() {
-        return Math.max(50, configService.getInt("parse.queue.capacity", 500));
+        return Math.max(50, configService.getInt("parse.queue.capacity", 5000));
     }
 
     /** 是否因队列过满而应拒绝新上传 */

@@ -1084,7 +1084,7 @@ public class WenquAgentxTools {
 
         @Override
         public long approvalTimeoutMs() {
-            return configService.getInt("chat.approvalTimeoutMs", 120000);
+            return configService.getInt("chat.approvalTimeoutMs", 600000);
         }
 
         @Override

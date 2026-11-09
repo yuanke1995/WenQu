@@ -545,7 +545,7 @@ public class GraphRagService {
                 tripleMapper.delete(new LambdaQueryWrapper<GraphTriple>().eq(GraphTriple::getChunkId, r.getChunkId()));
             }
         }
-        int maxPerChunk = Math.max(1, configService.getInt("graphrag.maxTriplesPerChunk", 10));
+        int maxPerChunk = Math.max(1, configService.getInt("graphrag.maxTriplesPerChunk", 30));
         int batchChunks = Math.max(1, configService.getInt("graphrag.batchChunks", 3));
         int extracted = 0;
         List<Knowledge> batch = new ArrayList<>();

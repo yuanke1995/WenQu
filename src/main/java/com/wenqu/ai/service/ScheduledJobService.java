@@ -140,7 +140,7 @@ public class ScheduledJobService {
     }
 
     public Map<String, Object> create(String uid, Map<String, Object> body) {
-        int max = configService.getInt("scheduled.maxPerUser", 20);
+        int max = configService.getInt("scheduled.maxPerUser", 0);
         long mine = jobMapper.selectCount(new LambdaQueryWrapper<ScheduledJob>()
                 .eq(ScheduledJob::getUid, uid).eq(ScheduledJob::getDeleted, 0));
         if (max > 0 && mine >= max) {
@@ -422,7 +422,7 @@ public class ScheduledJobService {
             run.setSessionId(sessionId);
             runMapper.updateById(run);
 
-            int timeoutMs = Math.max(30_000, configService.getInt("scheduled.timeoutMs", 300_000));
+            int timeoutMs = Math.max(30_000, configService.getInt("scheduled.timeoutMs", 3_600_000));
             CollectingSseEmitter sink = new CollectingSseEmitter();
             try {
                 chatService.chat(ChatCommand.builder()

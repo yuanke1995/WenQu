@@ -188,7 +188,7 @@ public class ProvisionerSandboxProvider {
 
     /** 单条命令的默认超时（秒，对应 SANDBOX_EXEC_TIMEOUT_SECONDS）。 */
     public int commandTimeoutSeconds() {
-        return configService.getInt("sandbox.commandTimeoutSeconds", 180);
+        return configService.getInt("sandbox.commandTimeoutSeconds", 900);
     }
 
     /** 单次命令输出上限（字节，对应 SANDBOX_MAX_OUTPUT_BYTES；超出按字节截断并标记 truncated）。 */

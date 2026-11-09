@@ -1826,8 +1826,9 @@ const openEdit = a => {
     callbackSecret: '',
     callbackSecretSet: !!a.callbackSecretSet,
     memoryMode: a.memoryMode == null ? '' : String(a.memoryMode),
-    // 目标模式：二态由服务端归一后下发（1/0）
-    goalEnabled: a.goalEnabled,
+    // 目标模式：库里 NULL=开（schema 默认），/agent/list 原样下发可空——这里归一成 1/0，
+    // 否则 null 既不等于 1 也不等于 0，开/关两档都不亮（没回显）
+    goalEnabled: a.goalEnabled === 0 ? 0 : 1,
     toolApprovalMode: a.toolApprovalMode || '',
     permissionPreset: a.permissionPreset || null,
     toolDeny: splitList(a.toolDeny),

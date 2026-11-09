@@ -95,6 +95,8 @@ public class ConfigService {
         // 参数收敛的值迁移**必须在 ensureDefaults() 之前**：新键一旦被告知默认值灌进库，
         // 「有行」就不再等于「管理员设过」，幂等哨兵与迁移都会失灵。
         migrateMergedRetentionAndCadence();
+        // 放宽默认值迁移同样必须在 ensureDefaults() 之前（理由同上：有行 ≠ 管理员设过）
+        migrateRelaxedLimits();
         // 缺失的默认项自动补入（存量升级场景：新增 key 自动注入，不覆盖已有配置）
         ensureDefaults();
         reload();
@@ -131,15 +133,18 @@ public class ConfigService {
             List<String> noRow = (List<String>) r.get("defaultsWithoutRow");
             @SuppressWarnings("unchecked")
             List<String> badRows = (List<String>) r.get("invalidStoredValues");
-            if (onlyDefined.isEmpty() && noRow.isEmpty() && badRows.isEmpty()) {
+            @SuppressWarnings("unchecked")
+            List<String> defDrift = (List<String>) r.get("relaxedDefMismatch");
+            if (onlyDefined.isEmpty() && noRow.isEmpty() && badRows.isEmpty() && defDrift.isEmpty()) {
                 log.info("[Config][对账] 字段定义、默认值清单与库里三处一致（活跃键 {} 个）", r.get("liveKeys"));
                 return;
             }
-            log.warn("[Config][对账] 配置三处清单有错位（定义有而默认无 {} 个 / 默认有而库里无行 {} 个 / 存量值不合定义 {} 个）"
-                            + "；前者会让界面回显永远默认，中者通常是被退役键清理名单误杀，后者的生效值与界面写的不一样。"
-                            + " 明细 definedOnly={} noRow={} badRows={}（全量见 GET /api/ai/config/trace）",
-                    onlyDefined.size(), noRow.size(), badRows.size(),
-                    head(onlyDefined), head(noRow), head(badRows));
+            log.warn("[Config][对账] 配置三处清单有错位（定义有而默认无 {} 个 / 默认有而库里无行 {} 个 / 存量值不合定义 {} 个 / 放宽键 schema 与默认表不同值 {} 个）"
+                            + "；前者会让界面回显永远默认，中者通常是被退役键清理名单误杀，后者的生效值与界面写的不一样，"
+                            + "末项意味着「恢复默认」会把运行时默认洗成另一个数。"
+                            + " 明细 definedOnly={} noRow={} badRows={} defDrift={}（全量见 GET /api/ai/config/trace）",
+                    onlyDefined.size(), noRow.size(), badRows.size(), defDrift.size(),
+                    head(onlyDefined), head(noRow), head(badRows), head(defDrift));
         } catch (Exception e) {
             log.warn("[Config][对账] 配置三处清单对账失败（不影响启动）: {}", e.toString());
         }
@@ -178,11 +183,29 @@ public class ConfigService {
         java.util.Collections.sort(onlyDefined);
         java.util.Collections.sort(noRow);
         java.util.Collections.sort(badRows);
+        // 判据四：放宽批次键的 schema def（×factor 折算存储口径）vs defaults() 字面量。
+        // 只圈本批清单而不全量比对：defaults() 里大量键来自 yml/env（部署者有意覆盖），
+        // 全量比对会把正常的环境覆盖报成错位，把真错位淹掉。
+        List<String> defDrift = new ArrayList<>();
+        for (String[] pair : RELAXED_OLD_DEFAULTS) {
+            String key = pair[0];
+            String defV = schema.defStoredValue(key);
+            String seed = seeds.get(key);
+            if (defV == null || seed == null) continue;
+            boolean same;
+            try {
+                same = Double.parseDouble(defV) == Double.parseDouble(seed);
+            } catch (NumberFormatException e) {
+                same = defV.equals(seed);
+            }
+            if (!same) defDrift.add(key + "(schema=" + defV + ", defaults=" + seed + ")");
+        }
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("liveKeys", seeds.size());
         out.put("definedNotInDefaults", onlyDefined);
         out.put("defaultsWithoutRow", noRow);
         out.put("invalidStoredValues", badRows);
+        out.put("relaxedDefMismatch", defDrift);
         return out;
     }
 
@@ -408,6 +431,87 @@ public class ConfigService {
         return c == null ? null : c.getConfigValue();
     }
 
+    /**
+     * 2026-11「限制性参数默认放开」批次：键 → 旧出厂默认值（存储层口径）。
+     * <p>新值不在这里登记——迁移与判据四都直接取 {@link #defaults()}，两层永远同源。
+     * 清单与 {@code config-schema.json} 的 def 修订一一对应（A 类 0/false、B1 两键、B2 取上限、share 游客额度）。
+     */
+    private static final List<String[]> RELAXED_OLD_DEFAULTS = List.of(
+            new String[]{"chat.goal.maxRounds", "40"},
+            new String[]{"chat.goal.maxTokens", "2000000"},
+            new String[]{"chat.goal.maxMs", "7200000"},
+            new String[]{"chat.goal.maxToolCalls", "400"},
+            new String[]{"chat.goal.maxCompletionChecks", "2"},
+            new String[]{"chat.goal.maxVerifyFailures", "5"},
+            new String[]{"ratelimit.enabled", "true"},
+            new String[]{"contentSafety.enabled", "true"},
+            new String[]{"agent.maxToolSteps", "15"},
+            new String[]{"webSearch.maxCallsPerTurn", "2"},
+            new String[]{"webSearch.maxResults", "5"},
+            new String[]{"webSearch.timeoutMs", "8000"},
+            new String[]{"scheduled.maxPerUser", "20"},
+            new String[]{"scheduled.timeoutMs", "300000"},
+            new String[]{"sandbox.maxPerUser", "2"},
+            new String[]{"sandbox.projectUploadMaxMb", "100"},
+            new String[]{"sandbox.commandTimeoutSeconds", "180"},
+            new String[]{"tool.spillMaxMbPerUser", "200"},
+            new String[]{"context.maxBlocksPerDoc", "3"},
+            new String[]{"context.maxBlocksPerKb", "4"},
+            new String[]{"chat.sseTimeoutMs", "300000"},
+            new String[]{"chat.modelStallTimeoutMs", "60000"},
+            new String[]{"chat.agentscopeMaxIters", "12"},
+            new String[]{"chat.approvalTimeoutMs", "120000"},
+            new String[]{"chat.askTimeoutMs", "600000"},
+            new String[]{"chat.planTimeoutMs", "600000"},
+            new String[]{"chat.asyncWorkspaceMax", "2"},
+            new String[]{"chat.maxImagesPerMessage", "9"},
+            new String[]{"chat.maxImageMb", "10"},
+            new String[]{"chat.maxQuestionChars", "8000"},
+            new String[]{"upload.maxFileSize", "209715200"},
+            new String[]{"parse.queue.capacity", "500"},
+            new String[]{"parse.taskTimeoutMs", "1200000"},
+            new String[]{"parse.retryMaxAttempts", "3"},
+            new String[]{"httpTool.timeoutMs", "10000"},
+            new String[]{"workflow.runTimeoutSeconds", "600"},
+            new String[]{"workflow.subagentTimeoutMs", "180000"},
+            new String[]{"workflow.maxSteps", "50"},
+            new String[]{"workflow.runQueueCapacity", "50"},
+            new String[]{"agentEval.maxCases", "30"},
+            new String[]{"agentEval.thresholdRate", "80"},
+            new String[]{"graphrag.maxTriplesPerChunk", "10"},
+            new String[]{"share.guestDailyTurns", "200"},
+            new String[]{"share.guestDailyTurnsPerVisitor", "20"},
+            new String[]{"share.guestDailyTokens", "2000000"});
+
+    /**
+     * 放宽默认值的存量迁移：只把<b>仍等于旧出厂默认</b>的行改写为新默认（{@link #RELAXED_OLD_DEFAULTS}），
+     * 管理员自定义过的值原样保留。二次启动行值已不再匹配旧默认 ⇒ 天然幂等，无需哨兵键。
+     * <p>新装库没有行，直接由 {@link #ensureDefaults()} 灌新默认，不受本方法影响。
+     */
+    private void migrateRelaxedLimits() {
+        Map<String, String> defs = defaults();
+        List<String> migrated = new ArrayList<>();
+        for (String[] pair : RELAXED_OLD_DEFAULTS) {
+            String key = pair[0];
+            String newVal = defs.get(key);
+            if (newVal == null || newVal.equals(pair[1])) continue;
+            try {
+                Config c = configMapper.selectById(key);
+                if (c == null || c.getConfigValue() == null) continue;
+                if (!pair[1].equals(c.getConfigValue().trim())) continue;
+                c.setConfigValue(newVal);
+                configMapper.updateById(c);
+                migrated.add(key + ": " + pair[1] + "→" + newVal);
+            } catch (Exception e) {
+                log.warn("[Config][放宽] {} 迁移失败（{}），仍按库里现值运行", key, e.getMessage());
+            }
+        }
+        if (!migrated.isEmpty()) {
+            log.info("[Config][放宽] 限制性参数默认放开：{} 个键仍是旧出厂值的行已改写为新默认（管理员自定义值不动）: {}",
+                    migrated.size(), migrated);
+        }
+    }
+
     /** 单位归一：毫秒↔小时↔天。换算到「更大单位」时向上取整——保留期宁可多留一天，不可少留一天。 */
     private static long toUnit(long v, MergeUnit from, MergeUnit to) {
         if (from == to) {
@@ -543,13 +647,13 @@ public class ConfigService {
         // 目标模式（2026-10-22）：与 GoalSettings 的默认值/钳制范围同源；schema 已挂「目标模式」面板。
         // 为什么必须在这里登记：snapshot() 只遍历 defaults()，漏登记的表单能保存但重开读不回，
         // 表现就是「改了没生效」。20 个键一一对应 GoalSettings 的 getter。
-        d.put("chat.goal.maxRounds", "40");
+        d.put("chat.goal.maxRounds", "0");
         d.put("chat.goal.nextRoundDelayMs", "2000");
-        d.put("chat.goal.maxCompletionChecks", "2");
-        d.put("chat.goal.maxVerifyFailures", "5");
-        d.put("chat.goal.maxTokens", "2000000");
-        d.put("chat.goal.maxMs", "7200000");
-        d.put("chat.goal.maxToolCalls", "400");
+        d.put("chat.goal.maxCompletionChecks", "0");
+        d.put("chat.goal.maxVerifyFailures", "0");
+        d.put("chat.goal.maxTokens", "0");
+        d.put("chat.goal.maxMs", "0");
+        d.put("chat.goal.maxToolCalls", "0");
         d.put("chat.goal.maxRetries", "2");
         d.put("chat.goal.maxRecoveries", "3");
         d.put("chat.goal.retryBaseSeconds", "15");
@@ -577,7 +681,7 @@ public class ConfigService {
         d.put("chat.toolDescriptionCompact", "true");       // 工具说明精简：把每把工具的说明压到一句话再发给模型（工具能力/参数/执行不变；默认开，关掉恢复完整说明）
         d.put("chat.profileAuto", "true");                  // 聊天档/工作区档自动分流：关掉=所有轮次都走工作区（旧行为，用于回滚）
         d.put("chat.asyncWorkspaceUpgrade", "false");       // 隐式会话文件/执行意图异步升级：首轮聊天档不阻塞，后台建沙盒，下一轮切工作区；默认关
-        d.put("chat.asyncWorkspaceMax", "2");               // 异步升级全局在飞上限；超出直接本轮聊天档，不占问答 attach 池
+        d.put("chat.asyncWorkspaceMax", "10");               // 异步升级全局在飞上限；超出直接本轮聊天档，不占问答 attach 池
         d.put("chat.mcpEnabled", "false");                  // 聊天档是否挂 MCP 外部工具：默认关（纯问答不等外部连接）；开时仍受 mcp.turnWaitMs 有界等待
         d.put("chat.prefixStabilizer", "true");             // 前缀稳定器：把 system prompt 里的会话/容器 id 换成稳定占位，换供应商前缀缓存；关掉即恢复原样
         d.put("chat.scratchRetentionHours", "72");          // 聊天档宿主临时目录保留小时数（0=不清理；删除按目录最后修改时间判定）
@@ -598,7 +702,7 @@ public class ConfigService {
         // 在问渠受管数据目录之外（容器里等于丢）
         d.put("chat.agentscopeStateDir", env("AI_AGENTSCOPE_STATE_DIR",
                 System.getProperty("user.dir") + "/user-data/agentscope"));
-        d.put("chat.agentscopeMaxIters", "12");            // 框架引擎单轮推理步数上限（ReAct 循环；框架默认 10，问渠显式 12）
+        d.put("chat.agentscopeMaxIters", "0");            // 框架引擎单轮推理步数上限（ReAct 循环；0=不封顶，默认不限）
         // chat.agentscopeMaxContextTokens 已取消（2026-10-18）：该键原以为能控制框架的压缩阈值，
         // 实测框架里 .maxContextTokens(...) 是 WorkspaceContextMiddleware 的「工作区材料注入预算」
         // （AGENTS.md/MEMORY.md/knowledge 注入上限，框架默认 8000），不是压缩阈值；压缩阈值由
@@ -636,7 +740,7 @@ public class ConfigService {
         // 2026-10-25 按条数触发那道线已在 compactionConfig() 里显式关掉（只按窗口推的 token 线触发），
         // 这一格仍不留配置口：要恢复按条数触发是改代码，不是改设置
         // 工具大输出留存默认开启；本机工作区是例外——工作区文件原文不落服务端磁盘。
-        d.put("tool.spillMaxMbPerUser", "200");             // 每人留存原文的磁盘配额(MB)，0=不限量；超出按落盘时间淘汰最旧几份
+        d.put("tool.spillMaxMbPerUser", "0");             // 每人留存原文的磁盘配额(MB)，0=不限量；超出按落盘时间淘汰最旧几份
         d.put("tool.spillLocalWorkspace", "false");         // true=本机工作区的工具原文也外溢落盘（默认不落）
         // 留存的两条治理参数都要进 defaults()：snapshot() 只回显这里登记过的键，
         // 漏登记的表现是设置页改完重开仍显示表单默认值（看着像「改了没生效」，实际库里已生效）
@@ -667,7 +771,7 @@ public class ConfigService {
         d.put("chunk.structural", String.valueOf(properties.getChunk().isStructural()));
         d.put("chunk.structuralRatio", String.valueOf(properties.getChunk().getStructuralRatio()));
         d.put("parse.embedRetryCount", String.valueOf(ConfigDefaults.PARSE_EMBED_RETRY_COUNT));                 // M10：向量化批次失败自动重试次数
-        d.put("upload.maxFileSize", String.valueOf(200L * 1024 * 1024));  // 业务上传上限（字节），默认 200MB
+        d.put("upload.maxFileSize", String.valueOf(256L * 1024 * 1024));  // 业务上传上限（字节），默认 256MB（与 spring multipart 物理顶对齐）
         d.put("retrieval.vectorWeight", String.valueOf(properties.getRetrieval().getVectorWeight()));
         d.put("retrieval.keywordWeight", String.valueOf(properties.getRetrieval().getKeywordWeight()));
         d.put("rerank.enabled", String.valueOf(properties.getRetrieval().getRerank().isEnabled()));
@@ -693,9 +797,9 @@ public class ConfigService {
         // context.snippetWindowChars / dedup* / adjacentMerge* 已退役（2026-10）：唯一读点是已删除的
         // RetrievalPipeline，问答实际走 search_knowledge 工具；设置页不再展示这些点了不生效的旋钮。
         d.put("context.maxContextHits", String.valueOf(properties.getContext().getMaxContextHits()));
-        d.put("context.maxBlocksPerDoc", "3");             // 单文档块数配额（0=不限制；@ 引用块豁免）
+        d.put("context.maxBlocksPerDoc", "0");             // 单文档块数配额（0=不限制；@ 引用块豁免）
         // P5 解绑后主检索覆盖使用者全部可见库，没有每库配额就会被"块多且词面泛"的那个库占满名额
-        d.put("context.maxBlocksPerKb", "4");              // 单知识库块数配额（0=不限制；@ 引用块与库取不到的块豁免）
+        d.put("context.maxBlocksPerKb", "0");              // 单知识库块数配额（0=不限制；@ 引用块与库取不到的块豁免）
         // deepReasoning.* 已退役（2026-10）：思考强度由对话页按模型选择，框架引擎只透传模型方言，
         // 旧「思考流 → <search> 检索计划 → 多路检索」整组配置无任何读取点，连同 AppProperties 类一并删除。
         // 读点共用默认值的 key：defaults() 与读点 fallback 共用 ConfigDefaults 常量（改默认值只改常量一处）
@@ -707,9 +811,9 @@ public class ConfigService {
         d.put("retrieval.lowConfidencePolicy", ConfigDefaults.RETRIEVAL_LOW_CONFIDENCE_POLICY); // 低分全灭时是否保底 top-1（top1/off；默认 top1）
         d.put("retrieval.top1Floor", String.valueOf(ConfigDefaults.RETRIEVAL_TOP1_FLOOR)); // 保底条目的最低分
         // 分享游客日额度（P3 费用面第一层）：0/负=关闭该层；访客级防换 visitorId 刷
-        d.put("share.guestDailyTurns", "200");              // 每条分享每日游客轮次上限
-        d.put("share.guestDailyTurnsPerVisitor", "20");     // 每访客每条分享每日轮次上限
-        d.put("share.guestDailyTokens", "2000000");          // 每条分享每日游客 token 上限（台账累加，下一轮前拦）
+        d.put("share.guestDailyTurns", "0");              // 每条分享每日游客轮次上限
+        d.put("share.guestDailyTurnsPerVisitor", "0");     // 每访客每条分享每日轮次上限
+        d.put("share.guestDailyTokens", "0");          // 每条分享每日游客 token 上限（台账累加，下一轮前拦）
         // retrieval.queryRewriteEnabled 已退役（2026-10）：多轮查询改写实现已随手写运行时删除，
         // 框架/检索链路没有第二个读取点；存量行由 schema.sql 清理。
         d.put("retrieval.aclTopKSupplant", "true");        // 权限补采是否顶掉原 topK 尾部（2026-10-20 补 schema 字段：此前 defaults 登记了但设置页没有这一行，改了无法回显、PUT 还会被整笔拒）
@@ -733,11 +837,11 @@ public class ConfigService {
         d.put("keyword.reconcileOnStartup", "false");
         // 解析行为参数
         d.put("parse.concurrency", "3");                   // 文档解析 worker 并发数（队列worker 数；下游 OCR/视觉/embedding 另有闸门限流）
-        d.put("parse.queue.capacity", "500");              // 解析队列容量：排队满则上传直接拒（不再是"收下再丢解析任务"）
+        d.put("parse.queue.capacity", "5000");              // 解析队列容量：排队满则上传直接拒（不再是"收下再丢解析任务"）
         d.put("parse.queue.scanIntervalMs", "5000");       // 解析队列扫描间隔（≤0 暂停：解析不再自动执行）
-        d.put("parse.taskTimeoutMs", "1200000");           // 单个解析任务总超时（超时中断线程；租约随后回收，崩溃也能自愈）
+        d.put("parse.taskTimeoutMs", "1800000");           // 单个解析任务总超时（超时中断线程；租约随后回收，崩溃也能自愈）
         d.put("parse.taskLeaseSeconds", "0");              // 任务租约时长(秒)；0=按 taskTimeoutMs+300 自动算
-        d.put("parse.retryMaxAttempts", "3");              // 解析失败最大尝试次数（超过转终态 dead，不再退避）
+        d.put("parse.retryMaxAttempts", "10");              // 解析失败最大尝试次数（超过转终态 dead，不再退避）
         d.put("parse.retryBackoffSeconds", "5");           // 解析失败退避基数(秒)：第 n 次等 base×2^(n-1)（封顶 300s）
         d.put("parse.embedConcurrency", String.valueOf(ConfigDefaults.PARSE_EMBED_CONCURRENCY));              // 向量化并发闸（多文档并行解析时防打爆 embedding 服务）
         d.put("parse.ocrGateConcurrency", "1");            // 版面引擎并发闸：自托管单实例服务一次只吃一份，默认守住 1
@@ -758,11 +862,11 @@ public class ConfigService {
         // chat.userSystemPrompt（附加指令）已退役：见上方 chat.systemPrompt 注释
         // 深度思考默认偏好（personal；个人设置可改，前端据此决定新模型默认开/关，按模型的手动记忆仍存浏览器）
         d.put("chat.pipelineThreads", "8");                // 问答流水线线程数（重活不占 Tomcat 请求线程）
-        d.put("chat.approvalTimeoutMs", "120000");         // 工具执行审批等待上限(ms)：超时按拒绝处理（阻塞工具线程，必须有界）
-        d.put("chat.planTimeoutMs", "600000");             // 计划模式：计划批准等待上限(ms)（人工等待不计入整轮预算）；超时按未批准终止本轮
-        d.put("chat.sseTimeoutMs", "300000");              // H4：问答 SSE 超时(ms)
-        d.put("chat.askTimeoutMs", "600000");              // 人在回路提问卡等待上限(ms)（2026-10-09 补：schema 早已声明，defaults 漏登记 → 设置页改了回显不出）
-        d.put("chat.modelStallTimeoutMs", "60000");         // 单次模型调用的静默判死上限(ms)：0=不判（框架默认 5 分钟），见 AgentscopeChatEngine.modelExecutionConfig
+        d.put("chat.approvalTimeoutMs", "600000");         // 工具执行审批等待上限(ms)：超时按拒绝处理（阻塞工具线程，必须有界）
+        d.put("chat.planTimeoutMs", "3600000");             // 计划模式：计划批准等待上限(ms)（人工等待不计入整轮预算）；超时按未批准终止本轮
+        d.put("chat.sseTimeoutMs", "0");              // H4：问答 SSE 超时(ms)
+        d.put("chat.askTimeoutMs", "3600000");              // 人在回路提问卡等待上限(ms)（2026-10-09 补：schema 早已声明，defaults 漏登记 → 设置页改了回显不出）
+        d.put("chat.modelStallTimeoutMs", "0");         // 单次模型调用的静默判死上限(ms)：0=不判（框架默认 5 分钟），见 AgentscopeChatEngine.modelExecutionConfig
         d.put("chat.turnResumeScanMs", "120000");           // 长任务接续扫描间隔(ms)：0=暂停（见 ScheduleCenter 与 OrphanTurnRunner）
         d.put("chat.turnResumeWindowMinutes", "60");        // 接续窗口(分钟)：只接窗口内没答完的轮
         // 目标模式（Goal Mode）已无任何平台参数（2026-10-22 对齐 DSH）：
@@ -787,8 +891,8 @@ public class ConfigService {
         // 智能体评测与发布门禁（plan-agent-eval.md §6.5）：与检索评估 eval.* 是两条线，键前缀区分
         d.put("agentEval.enabled", "true");        // 总开关（关=评测端点全部拒绝，门禁查询按「未评测」处理）
         d.put("agentEval.gateMode", "hint");       // 保存前门禁：hint=提示可继续 / block=低于门槛禁止保存（第一期仅提示级）
-        d.put("agentEval.thresholdRate", "80");    // 新建套件的默认通过率门槛（百分比）
-        d.put("agentEval.maxCases", "30");         // 单次运行条数上限（每条=1 次作答+1 次评判，账单敏感）
+        d.put("agentEval.thresholdRate", "0");    // 新建套件的默认通过率门槛（百分比）
+        d.put("agentEval.maxCases", "200");         // 单次运行条数上限（每条=1 次作答+1 次评判，账单敏感）
         d.put("agentEval.concurrency", "2");       // 全局同时在跑的评测运行数（执行器线程池同宽）
         d.put("agentEval.perCaseTimeoutMs", "180000"); // 单题超时(ms)；超时按该题失败记，不中断整次运行
         d.put("agentEval.runTimeoutMs", "900000"); // 单次运行总预算(ms)，超出记 failed，已完成结果保留
@@ -818,8 +922,8 @@ public class ConfigService {
         d.put("schedule.runLogRetentionDays", "7");            // 定时任务执行日志保留天数（超期物理删除）
         d.put("schedule.runLogCleanupIntervalMs", "86400000"); // 任务执行日志清理间隔(ms，≤0=暂停)
         d.put("scheduled.enabled", "true");                    // 定时执行智能体总开关
-        d.put("scheduled.maxPerUser", "20");                   // 每人定时任务数上限（0=不限）
-        d.put("scheduled.timeoutMs", "300000");                // 单次执行超时(ms)
+        d.put("scheduled.maxPerUser", "0");                   // 每人定时任务数上限（0=不限）
+        d.put("scheduled.timeoutMs", "3600000");                // 单次执行超时(ms)
         d.put("scheduled.scanIntervalMs", "30000");            // 到期扫描间隔(ms，≤0=暂停扫描)
         d.put("web.refreshEnabled", "true");                   // 网页源定时刷新总开关（仅 file_type=url 且文档开启 autoRefresh 才刷新）
         d.put("web.refreshScanIntervalMs", "60000");           // 网页源到期扫描间隔(ms，≤0=暂停扫描)
@@ -838,11 +942,11 @@ public class ConfigService {
         d.put("imageFilter.minHits", String.valueOf(properties.getImages().getImageFilter().getMinHits()));
         d.put("imageFilter.preContextChars", String.valueOf(properties.getImages().getImageFilter().getPreContextChars()));
         // 原先写死在消费方代码里的行为参数（直读 configService，保存即生效）
-        d.put("chat.maxImagesPerMessage", "9");
-        d.put("chat.maxImageMb", "10");
+        d.put("chat.maxImagesPerMessage", "20");
+        d.put("chat.maxImageMb", "50");
         // 单条提问字数上限（ShareController 读取点）：默认防滥用口径；表单设计助手等
         // 每轮要整份 schema 回传的分享按需调大，消息落 c_ai_message.content（MEDIUMTEXT）
-        d.put("chat.maxQuestionChars", "8000");
+        d.put("chat.maxQuestionChars", "200000");
         // 聊天附件：上传换 fileId 落盘，超保留期由 ScheduleCenter 清理（0=不清理）
         d.put("chat.uploadRetentionHours", "24");
         d.put("chat.uploadCleanupIntervalMs", "3600000");
@@ -855,7 +959,7 @@ public class ConfigService {
         d.put("parse.ocrTimeoutMs", env("OCR_TIMEOUT_MS", String.valueOf(ConfigDefaults.PARSE_OCR_TIMEOUT_MS))); // 版面引擎单次调用超时(ms)
         d.put("ratelimit.windowSeconds", "60");
         // 内容安全网关（Phase 3 · P12）：两道闸共用一份规则表（c_ai_content_rule），这里只放闸门参数
-        d.put("contentSafety.enabled", "true");
+        d.put("contentSafety.enabled", "false");
         d.put("contentSafety.provider", "local");
         d.put("contentSafety.baseUrl", "");
         d.put("contentSafety.apiKey", "");
@@ -888,9 +992,9 @@ public class ConfigService {
         d.put("webSearch.provider", "tavily");            // 服务商：tavily / bocha / generic（自建 SearXNG）
         d.put("webSearch.baseUrl", "");                   // 服务地址（留空用服务商默认；generic 必填，如 http://127.0.0.1:8888）
         d.put("webSearch.apiKey", "");                    // 服务 Key（RSA 密文入库；generic 自建可留空）
-        d.put("webSearch.maxResults", "5");               // 单次搜索返回条数上限(1~10)
-        d.put("webSearch.maxCallsPerTurn", "2");          // 单轮搜索次数上限（防模型反复搜烧配额；0=不限制）
-        d.put("webSearch.timeoutMs", "8000");             // 单次请求超时(ms)
+        d.put("webSearch.maxResults", "10");               // 单次搜索返回条数上限(1~10)
+        d.put("webSearch.maxCallsPerTurn", "0");          // 单轮搜索次数上限（防模型反复搜烧配额；0=不限制）
+        d.put("webSearch.timeoutMs", "30000");             // 单次请求超时(ms)
         d.put("webSearch.fallbackMinOverlap", "0.2");     // 重排不可用时的词面下限(0=整批发出不过滤)，判据见 WebSearchTools.lexicalOverlap
         d.put("webSearch.snippetChars", "600");           // 单条摘要截断字符数（控制工具结果 token 量）
         d.put("webSearch.requireApproval", "true");       // 是否纳入"有副作用工具"：true=受智能体 toolApprovalMode=ask 管辖。默认开：联网是唯一会向外部第三方发请求、可能对用户计费的能力，让模型自主决定花谁的钱不该是默认态
@@ -898,7 +1002,7 @@ public class ConfigService {
         // enabled 默认开不改变任何存量行为：没有配置工具集的智能体该族天然不挂（闸开着也无工具可出），
         // 与 webSearch「默认关」的理由（不配置必失败）正好相反——这里不配置就没有任何调用发生。
         d.put("httpTool.enabled", "true");                // HTTP 工具总开关（需 tool.enabled 总闸开启）
-        d.put("httpTool.timeoutMs", "10000");             // 工具集未单独配置时的默认超时(ms)
+        d.put("httpTool.timeoutMs", "60000");             // 工具集未单独配置时的默认超时(ms)
         d.put("httpTool.allowPrivateNetwork", "true");    // 允许工具集调用内网/环回地址（自宿主场景宿主 API 常在内网；公网多租户部署建议关，防借智能体探测内网）
         // ---------- 工作流工具（已发布工作流挂载为对话工具；配置存智能体行 workflow_tools）----------
         // 与 httpTool.enabled 同一理由默认开：没有配置工作流的智能体该族天然不挂，闸开着也无工具可出。
@@ -926,12 +1030,12 @@ public class ConfigService {
         d.put("sandbox.provisionerUrl", env("SANDBOX_PROVISIONER_URL", "http://127.0.0.1:8002"));
         d.put("sandbox.token", env("SANDBOX_PROVISIONER_TOKEN", ""));
         d.put("sandbox.virtualPathPrefix", env("SANDBOX_VIRTUAL_PATH_PREFIX", "/home/gem/user-data"));
-        d.put("sandbox.commandTimeoutSeconds", "180");            // 单条命令超时（秒）
+        d.put("sandbox.commandTimeoutSeconds", "900");            // 单条命令超时（秒）
         d.put("sandbox.maxOutputBytes", "262144");                // 单条命令输出上限（字节）
         d.put("sandbox.keepaliveIntervalSeconds", "30");          // keepalive 间隔（秒，≤0 关闭）
         d.put("sandbox.deleteTimeoutSeconds", "120");             // 删除沙盒的超时（秒）
         d.put("sandbox.idleReleaseMinutes", "60");                // 空闲多久回收沙盒（分钟，0=不回收）
-        d.put("sandbox.maxPerUser", "2");                         // 每个用户最多持有几个沙盒连接；超出按 LRU 回收最久未用（0=不限）
+        d.put("sandbox.maxPerUser", "0");                         // 每个用户最多持有几个沙盒连接；超出按 LRU 回收最久未用（0=不限）
         d.put("workspace.sessionLocal", "true");                  // 隐式会话工作区走本机执行器（本地目录）；执行器离线时退回云端沙盒
         d.put("workspace.sessionRootBase", "WenQu/workspaces");   // 会话目录根（执行器工作根下的相对路径）
         d.put("sandbox.userScope", "false");                      // 无工作区会话按用户级共享沙盒（热池/热复用）；默认关，保持会话级作用域
@@ -953,7 +1057,7 @@ public class ConfigService {
         d.put("sandbox.userDataHostDir", System.getProperty("user.dir") + "/user-data");
         // 工作区页往目录里上传文件的单文件上限（MB）。服务端代码再钳到 256：
         // spring 的 multipart 上限是 256MB，写更大只会让请求在容器那一层变成一句没有原因的失败。
-        d.put("sandbox.projectUploadMaxMb", "100");
+        d.put("sandbox.projectUploadMaxMb", "256");
         // 只进过 config-schema、没进 defaults，库里便一直没有这一行：设置页永远回显默认值，
         // 改了实际生效却看着像没生效。与 schema 的 def、JvmProjectTurnGuard.DEFAULT_LEASE_TTL_MS 三处同值
         d.put("project.turnGuard.leaseTtlMs", "7200000");
@@ -976,14 +1080,14 @@ public class ConfigService {
         // + digest/full 双形态 + autoRoute 模型路由）。P5 把派遣换成 consultAgent（agent-as-tool、模型
         // 自主发起）后，该编排器连同这组键的读取点一起归零，编排器本体已删除，键不再登记——
         // 留着只会让设置页显示一套点了不生效的开关，而「配了没生效」正是用户最难自行归因的故障。
-        d.put("agent.maxToolSteps", "15");                 // 单轮工具调用步数上限（智能体可覆盖；0=不限制）
+        d.put("agent.maxToolSteps", "0");                 // 单轮工具调用步数上限（智能体可覆盖；0=不限制）
         // ---------- 子智能体分支的执行形态（P3a）----------
         // 默认 digest = 引入本档之前的行为逐字相同（只并行检索 + 一次短调用提炼要点，不跑工具循环）。
         // full 那一档才是"分支里真有一个完整智能体在跑"，按子智能体逐个开，代价是每支都等于一轮问答。
         d.put("agent.subagentMode", "digest");             // 平台默认档（子智能体没自己选时用它）
         d.put("workflow.maxSteps", String.valueOf(ConfigDefaults.WORKFLOW_MAX_STEPS));                  // 工作流单次运行的最大图步数（StateGraph recursionLimit；M3 loop 回跳也受此闸）
-        d.put("workflow.subagentTimeoutMs", "180000");     // 工作流子智能体节点等待回答的超时（ms，下限 30s）
-        d.put("workflow.runTimeoutSeconds", "600");        // M5：工作流单次运行硬超时（秒，0=不限制；超时按 timeout 终态收口，防长管线占死执行线程）
+        d.put("workflow.subagentTimeoutMs", "3600000");     // 工作流子智能体节点等待回答的超时（ms，下限 30s）
+        d.put("workflow.runTimeoutSeconds", "0");        // M5：工作流单次运行硬超时（秒，0=不限制；超时按 timeout 终态收口，防长管线占死执行线程）
         d.put("workflow.runLogRetentionDays", "30");       // 工作流运行记录保留天数（含 DSL 快照与节点 trace 大字段；超期由「工作流运行记录清理」任务物理删除）
         d.put("workflow.runCleanupIntervalMs", "86400000"); // 工作流运行记录清理间隔（ms，默认每日；≤0 暂停）
         d.put("workflow.scheduleScanIntervalMs", "30000");  // 工作流定时触发扫描间隔（ms，默认 30s；≤0 暂停「工作流定时触发」任务）
@@ -1022,7 +1126,7 @@ public class ConfigService {
         d.put("trace.sampleNoHitDaily", "10");             // P1：每日无引用采样条数（0=不采）；差评恒为必采
         // graphrag.modelRef 已退役（2026-10）：GraphRAG 抽取回落库主个人默认聊天模型（User.defaultModel），
         // 不再单独配置——存量个人键行成为孤儿数据（无读取方）。
-        d.put("graphrag.maxTriplesPerChunk", "10");        // P1：单个知识块抽取三元组上限（成本闸）
+        d.put("graphrag.maxTriplesPerChunk", "30");        // P1：单个知识块抽取三元组上限（成本闸）
         d.put("graphrag.batchChunks", "3");                // P1：合并批抽取的块数（3~5 平衡 token 与归属粒度）
         d.put("graphrag.expandTopK", "5");                 // P1：检索时图扩展并入的块数上限（0=不扩展）
         // 用户长期记忆（跨会话个性化）
@@ -1545,16 +1649,28 @@ public class ConfigService {
      *   <li>keyword.engine 不触发索引联动（恢复 mysql 后关键词走 MySQL LIKE，Meili 索引可留待后续重建）。</li>
      * </ul>
      *
-     * @param groups 待恢复分组（chat/vision/chunk/parse/upload/retrieval/rerank/keyword/context/ratelimit）
+     * @param groups 待恢复分组：优先按 schema 面板 key 解析（goal/contentSafety/tool/sandbox 等 21 个面板
+     *               此前不在硬编码白名单里，面板上的「恢复本组默认」必然 400）；不命中面板时回退旧的
+     *               backendKey 首段前缀语义（parse/rerank/keyword 这类历史分组名）
      * @return 实际恢复的键值
      */
     public Map<String, String> resetDefaults(Collection<String> groups) {
-        Set<String> allowed = new HashSet<>(List.of(
+        Set<String> panelKeys = schema.panelKeys();
+        Set<String> legacyPrefixes = new HashSet<>(List.of(
                 "chat", "vision", "chunk", "parse", "upload", "retrieval", "rerank",
                 "keyword", "context", "ratelimit"));
+        Set<String> targetKeys = new HashSet<>();
+        Set<String> targetPrefixes = new HashSet<>();
         Set<String> targets = new HashSet<>();
         for (String g : groups) {
-            if (g == null || g.isBlank() || !allowed.contains(g)) {
+            if (g == null || g.isBlank()) {
+                throw new IllegalArgumentException("请至少指定一个分组");
+            }
+            if (panelKeys.contains(g)) {
+                targetKeys.addAll(schema.keysOfPanel(g));
+            } else if (legacyPrefixes.contains(g)) {
+                targetPrefixes.add(g);
+            } else {
                 throw new IllegalArgumentException("不支持恢复默认的分组: " + g);
             }
             targets.add(g);
@@ -1568,7 +1684,8 @@ public class ConfigService {
         for (Map.Entry<String, String> e : defs.entrySet()) {
             String k = e.getKey();
             int dot = k.indexOf('.');
-            if (dot <= 0 || !targets.contains(k.substring(0, dot))) continue;
+            boolean hit = targetKeys.contains(k) || (dot > 0 && targetPrefixes.contains(k.substring(0, dot)));
+            if (!hit) continue;
             if (isSensitiveKey(k) || schema.isPersonalOnly(k)) continue; // 密钥不随"恢复默认"清空；个人专属键无全局槽位
             String v = e.getValue();
             try {

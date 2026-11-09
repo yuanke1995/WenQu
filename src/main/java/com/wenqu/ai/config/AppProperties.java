@@ -108,8 +108,8 @@ public class AppProperties {
 
     @Data
     public static class Ratelimit {
-        /** 接口限流总开关（Redis 固定窗口，按用户/IP；Redis 不可用自动放行） */
-        private boolean enabled = true;
+        /** 接口限流总开关（Redis 固定窗口，按用户/IP；Redis 不可用自动放行）；默认关，公网部署建议显式开启 */
+        private boolean enabled = false;
         /** 问答限频：次/分钟/用户（0=不限） */
         private int chatPerMinute = 10;
         /** 上传限频：次/分钟/用户（0=不限） */

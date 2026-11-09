@@ -147,7 +147,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     private static final int UNLIMITED_TOOL_SECONDS = 7200;
 
     /** 单次模型调用的静默上限默认值（毫秒），见 {@link #modelExecutionConfig}。 */
-    private static final int MODEL_STALL_TIMEOUT_MS_DEFAULT = 60_000;
+    private static final int MODEL_STALL_TIMEOUT_MS_DEFAULT = 0;
     /** 主链一次调用的尝试次数（含首次）：与框架 MODEL_DEFAULTS 同数，只是把静默上限收下来。 */
     private static final int MODEL_MAX_ATTEMPTS = 3;
     /** 辅助调用（记忆提炼／上下文压缩）的尝试次数：慢一次没人等，不值得再烧一整段静默。 */
@@ -1762,7 +1762,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 场景不存在：整轮超时本来就是唯一该有的天花板。
      */
     private int turnSeconds() {
-        int ms = configService.getInt("chat.sseTimeoutMs", 300000);
+        int ms = configService.getInt("chat.sseTimeoutMs", 0);
         return ms <= 0 ? UNLIMITED_TOOL_SECONDS : Math.max(30, ms / 1000);
     }
 
@@ -1773,7 +1773,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * {@code iter >= maxIters} 比较与拼日志，不参与加减。
      */
     private int maxItersForTurn() {
-        int v = configService.getInt("chat.agentscopeMaxIters", 12);
+        int v = configService.getInt("chat.agentscopeMaxIters", 0);
         return v <= 0 ? Integer.MAX_VALUE : v;
     }
 
@@ -1894,9 +1894,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      */
     private long pendingBudgetMs(PendingKind kind) {
         return switch (kind) {
-            case PLAN -> configService.getLong("chat.planTimeoutMs", 600000L);
-            case ASK -> configService.getLong("chat.askTimeoutMs", 600000L);
-            case APPROVAL -> configService.getLong("chat.approvalTimeoutMs", 120000L);
+            case PLAN -> configService.getLong("chat.planTimeoutMs", 3600000L);
+            case ASK -> configService.getLong("chat.askTimeoutMs", 3600000L);
+            case APPROVAL -> configService.getLong("chat.approvalTimeoutMs", 600000L);
         };
     }
 
@@ -3509,7 +3509,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 String planText = PlanCopy.stripInternalPaths(rawPlan, planInternalRoots());
                 planCard.put("planApprovalId", entry.getKey());
                 planCard.put("plan", planText);
-                planCard.put("timeoutMs", configService.getInt("chat.planTimeoutMs", 600000));
+                planCard.put("timeoutMs", configService.getInt("chat.planTimeoutMs", 3600000));
                 // 血缘随 plan_approval 一起下发：这张新计划是基于哪一版旧计划、带过来多少执行进度。
                 // 断线接流/换设备时没有原始 userMsg，只能靠帧自身带；待批卡则从 request_args 里取同一份。
                 if (cmd.getPlanBaseId() != null && !cmd.getPlanBaseId().isBlank()) {
@@ -3563,7 +3563,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             approvalCard.put("approvalId", entry.getKey());
             approvalCard.put("tool", tool);
             approvalCard.put("args", args);
-            approvalCard.put("timeoutMs", configService.getInt("chat.approvalTimeoutMs", 120000));
+            approvalCard.put("timeoutMs", configService.getInt("chat.approvalTimeoutMs", 600000));
             displayNames.putDisplayFields(approvalCard, cmd.getUserId(), tool);
             // 工具表没收过这个名字（MCP 动态工具常见）：补一句说明，让用户至少知道这张卡在问什么，
             // 而不是光秃秃一个英文名——但绝不拿工具名冒充展示名（前端会把它当「后端认真取过」）
@@ -4448,7 +4448,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         String outcome = sessions.peekPlanOutcome(sessionKey);
         String revisionFeedback = sessions.peekPlanFeedback(sessionKey);
         boolean revising = sessions.isPlanRevising(sessionKey);
-        long timeoutMs = configService.getInt("chat.planTimeoutMs", 600000);
+        long timeoutMs = configService.getInt("chat.planTimeoutMs", 3600000);
         java.util.List<Map<String, Object>> all = recording.planVersionsCopy();
         String draft = recording.planDraftText();
 

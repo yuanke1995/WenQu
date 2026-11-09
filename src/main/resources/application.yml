@@ -133,7 +133,7 @@ ai-app:
     expire-minutes: 30
   # 接口限流（Redis 固定窗口，按用户/IP；Redis 不可用自动放行）
   ratelimit:
-    enabled: ${AI_RATELIMIT_ENABLED:true}
+    enabled: ${AI_RATELIMIT_ENABLED:false}
     chat-per-minute: ${AI_RATELIMIT_CHAT:10}
     upload-per-minute: ${AI_RATELIMIT_UPLOAD:10}
   # 文档图片提取

@@ -105,7 +105,7 @@ public class ShareController {
      * 配置键 chat.maxQuestionChars，保存即生效——表单设计助手这类分享每轮要把整份
      * 设计 schema 回传（几万字起步），8000 会把第二轮起全部拒掉，发布方按需调大。
      */
-    private static final int DEFAULT_MAX_QUESTION_CHARS = 8000;
+    private static final int DEFAULT_MAX_QUESTION_CHARS = 200000;
 
     private int maxQuestionChars() {
         return Math.max(200, configService.getInt("chat.maxQuestionChars", DEFAULT_MAX_QUESTION_CHARS));
@@ -444,12 +444,12 @@ public class ShareController {
 
     /** 本轮发图数量上限（与登录态同一配置键：两处各写一个默认值迟早对不上） */
     private int maxImagesPerMessage() {
-        return Math.max(1, configService.getInt("chat.maxImagesPerMessage", 9));
+        return Math.max(1, configService.getInt("chat.maxImagesPerMessage", 20));
     }
 
     /** 单张图片体积上限（MB） */
     private int maxImageMb() {
-        return Math.max(1, configService.getInt("chat.maxImageMb", 10));
+        return Math.max(1, configService.getInt("chat.maxImageMb", 50));
     }
 
     /** 本轮附件数量上限 */

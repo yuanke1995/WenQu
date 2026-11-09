@@ -64,7 +64,7 @@ public class ToolSpillService {
     /** 读回给前端的体积上限：气泡里贴几 MB 文本浏览器会卡，超出按 outOfBand 说明 */
     private static final int MAX_READ_CHARS = 512 * 1024;
     /** 每人配额默认值（MB）：与业务上传上限同一量级，够排障用又不至于让一个账号吃穿磁盘 */
-    private static final int DEFAULT_QUOTA_MB = 200;
+    private static final int DEFAULT_QUOTA_MB = 0;
 
     private final AppProperties properties;
     private final ConfigService configService;
