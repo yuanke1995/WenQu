@@ -65,3 +65,5 @@ config/application-local.yml
 /skill-projections/
 /web/scripts/
 /.wenqu/
+/docs/自**.csv
+/docs/自**.tsv
