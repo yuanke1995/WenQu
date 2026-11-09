@@ -1,0 +1,1690 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>问渠 · Agent-as-Tool 交互 Demo — 主 Agent 派遣 / 工作流工具 / HTTP API 工具</title>
+<style>
+/* ================================================================
+   问渠设计令牌
+================================================================ */
+:root {
+  --bg: #f4f6f9;
+  --bg2: #ffffff;
+  --bg3: #fafbfc;
+  --ink: #1f2329;
+  --muted: #5f6570;
+  --faint: #98a0aa;
+  --rule: #e6e9ed;
+  --rule2: #d8dde3;
+  --accent: #2e6be6;
+  --accent-weak: #eef2f7;
+  --accent-border: #bcd0f7;
+  --ok: #3b8f4e;
+  --ok-weak: #eaf5ec;
+  --warn: #a3691b;
+  --warn-weak: #faf3e6;
+  --danger: #cf1322;
+  --danger-weak: #fff2f0;
+  --violet: #7c3aed;
+  --violet-weak: #f5f3ff;
+  --teal: #0d9488;
+  --teal-weak: #ecfdf5;
+  --code: #f0f2f5;
+  --radius: 10px;
+  --radius-lg: 14px;
+  --shadow: 0 18px 50px rgba(16, 24, 40, .12);
+  --shadow-sm: 0 2px 8px rgba(16, 24, 40, .06);
+  --shadow-md: 0 6px 20px rgba(16, 24, 40, .08);
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+          'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+button { font-family: var(--font); cursor: pointer; }
+
+/* ================================================================
+   页面骨架
+================================================================ */
+.app {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+.sidebar {
+  width: 340px;
+  flex-shrink: 0;
+  background: var(--bg2);
+  border-right: 1px solid var(--rule);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.sidebar-head {
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid var(--rule);
+}
+.sidebar-head h1 {
+  font-size: 15px;
+  margin: 0 0 2px;
+  font-weight: 600;
+}
+.sidebar-head .sub {
+  font-size: 11.5px;
+  color: var(--faint);
+  font-family: var(--mono);
+  letter-spacing: .04em;
+}
+.sidebar-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px 16px 24px;
+}
+.side-section {
+  margin-bottom: 18px;
+}
+.side-section h3 {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--faint);
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  margin: 0 0 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--rule);
+}
+
+/* ----------------------------------------------------------------
+   Agent 卡片（选择主 agent / 勾选子 agent）
+---------------------------------------------------------------- */
+.agent-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--rule);
+  margin-bottom: 8px;
+  background: var(--bg3);
+  cursor: pointer;
+  transition: all .15s;
+}
+.agent-row:hover {
+  border-color: var(--accent-border);
+  background: var(--accent-weak);
+}
+.agent-row.selected {
+  border-color: var(--accent);
+  background: var(--accent-weak);
+  box-shadow: 0 0 0 3px rgba(46, 107, 230, .12);
+}
+.agent-row.disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+.agent-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.agent-avatar.main { background: var(--accent); color: #fff; }
+.agent-avatar.sub { background: var(--violet-weak); color: var(--violet); }
+.agent-avatar.sub2 { background: var(--teal-weak); color: var(--teal); }
+.agent-avatar.sub3 { background: var(--warn-weak); color: var(--warn); }
+.agent-info { flex: 1; min-width: 0; }
+.agent-info .name {
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 2px;
+}
+.agent-info .desc {
+  font-size: 11.5px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-checkbox {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+
+/* ----------------------------------------------------------------
+   工具挂载区（工作流 / HTTP API）
+---------------------------------------------------------------- */
+.tool-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.tool-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  background: var(--bg3);
+  border: 1px solid var(--rule);
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+  transition: all .12s;
+}
+.tool-chip:hover {
+  border-color: var(--accent-border);
+  color: var(--ink);
+}
+.tool-chip.on {
+  background: var(--violet-weak);
+  border-color: #c4b5fd;
+  color: var(--violet);
+}
+.tool-chip .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--faint);
+}
+.tool-chip.on .dot { background: var(--violet); }
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-family: var(--mono);
+  background: var(--ok-weak);
+  color: var(--ok);
+}
+.status-badge.guest { background: var(--warn-weak); color: var(--warn); }
+.status-badge.off { background: var(--code); color: var(--faint); }
+
+/* ================================================================
+   聊天主区
+================================================================ */
+.main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* 顶栏 */
+.chat-topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--rule);
+}
+.agent-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.agent-pill .avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.agent-pill .name {
+  font-weight: 500;
+  font-size: 13px;
+}
+.agent-pill .role {
+  font-size: 11px;
+  color: var(--faint);
+}
+.spacer { flex: 1; }
+
+/* Subagent 药丸 */
+.subagent-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 10px;
+  font-size: 12px;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  user-select: none;
+}
+.subagent-pill:hover {
+  color: var(--ink);
+  background: var(--accent-weak);
+}
+.subagent-pill .ic { font-size: 14px; }
+.subagent-pill .count { font-weight: 500; color: var(--ink); font-variant-numeric: tabular-nums; }
+.subagent-pill .sep { color: var(--rule2); }
+.subagent-pill .running { color: var(--accent); font-variant-numeric: tabular-nums; }
+.subagent-pill .dur { color: var(--accent); font-variant-numeric: tabular-nums; }
+
+/* 消息区 */
+.chat-area {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 28px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* 用户消息 */
+.msg-user {
+  display: flex;
+  justify-content: flex-end;
+}
+.msg-user .bubble {
+  max-width: 68%;
+  padding: 12px 16px;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 14px 14px 4px 14px;
+  font-size: 14px;
+  box-shadow: var(--shadow-sm);
+}
+
+/* AI 消息 */
+.msg-ai {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.msg-ai .avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.msg-ai .content {
+  flex: 1;
+  min-width: 0;
+}
+.msg-ai .answer {
+  background: var(--bg2);
+  padding: 14px 18px;
+  border-radius: 4px 14px 14px 14px;
+  border: 1px solid var(--rule);
+  box-shadow: var(--shadow-sm);
+  font-size: 14px;
+  line-height: 1.75;
+}
+.msg-ai .answer p { margin: 0 0 10px; }
+.msg-ai .answer p:last-child { margin-bottom: 0; }
+.msg-ai .answer .ref {
+  color: var(--accent);
+  font-size: 12px;
+  font-family: var(--mono);
+}
+
+/* 打字光标 */
+.typing-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 14px;
+  background: var(--ink);
+  margin-left: 2px;
+  animation: blink 1s step-end infinite;
+  vertical-align: middle;
+}
+@keyframes blink {
+  50% { opacity: 0; }
+}
+
+/* Subagent 卡片 */
+.subagent-card {
+  margin-top: 12px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--bg2);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+}
+.subagent-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: var(--violet-weak);
+  border-bottom: 1px solid var(--rule);
+}
+.subagent-card-head.running { background: var(--accent-weak); }
+.subagent-card-head.failed { background: var(--danger-weak); }
+.subagent-card-head .ic { font-size: 14px; }
+.subagent-card-head.running .ic {
+  animation: spin 1.2s linear infinite;
+  color: var(--accent);
+}
+.subagent-card-head.done .ic { color: var(--ok); }
+.subagent-card-head.failed .ic { color: var(--danger); }
+@keyframes spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
+.subagent-card-head .label {
+  font-size: 12.5px;
+  font-weight: 500;
+}
+.subagent-card-head .task {
+  font-size: 11.5px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+.subagent-card-head .meta {
+  font-size: 11px;
+  font-family: var(--mono);
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+.subagent-card-head.done .meta { color: var(--ok); }
+.subagent-card-head.failed .meta { color: var(--danger); }
+
+.subagent-card-body {
+  padding: 14px;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.subagent-card-body.answer-empty {
+  color: var(--faint);
+  font-style: italic;
+}
+
+/* 子 agent 卡片里的逐步步骤（干活视角） */
+.work-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin-top: 10px;
+  border-top: 1px dashed var(--rule);
+  padding-top: 10px;
+}
+.work-step {
+  display: flex;
+  gap: 8px;
+  font-size: 11.5px;
+  padding: 4px 0;
+  align-items: center;
+}
+.work-step .w-ic {
+  width: 14px;
+  height: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 11px;
+}
+.work-step .w-ic.done { color: var(--ok); }
+.work-step .w-ic.error { color: var(--danger); }
+.work-step .w-ic.running {
+  animation: spin 1s linear infinite;
+  color: var(--accent);
+}
+.work-step .w-label {
+  flex: 1;
+  color: var(--muted);
+}
+.work-step .w-ic.done + .w-label { color: var(--ink); }
+.work-step .w-ms {
+  font-family: var(--mono);
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 子 agent 卡片里的引用 */
+.sources-row {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--rule);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.source-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  font-size: 11px;
+  font-family: var(--mono);
+  background: var(--bg3);
+  border-radius: 999px;
+  border: 1px solid var(--rule);
+}
+.source-chip .num {
+  color: var(--accent);
+  font-weight: 500;
+}
+.source-chip .title {
+  font-family: var(--font);
+  color: var(--muted);
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 子 agent 卡片里的产物 */
+.artifacts-row {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--rule);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.artifact-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  font-size: 11px;
+  background: var(--teal-weak);
+  border: 1px solid var(--teal);
+  border-radius: 6px;
+  color: var(--teal);
+}
+
+/* 工作流工具卡 */
+.tool-card {
+  margin-top: 12px;
+  border: 1px solid var(--violet);
+  border-radius: var(--radius);
+  background: var(--violet-weak);
+  padding: 10px 14px;
+  box-shadow: var(--shadow-sm);
+}
+.tool-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.tool-card-head .tool-tag {
+  font-size: 10.5px;
+  font-family: var(--mono);
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--violet);
+  color: #fff;
+}
+.tool-card-head .tool-name {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--violet);
+}
+.tool-card-head .tool-status {
+  margin-left: auto;
+  font-size: 11px;
+  font-family: var(--mono);
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(124, 58, 237, .15);
+  color: var(--violet);
+}
+.tool-card-body {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* Source 行（主回答底部引用来源） */
+.sources-footer {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid var(--rule);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.source-foot-chip {
+  font-size: 11px;
+  color: var(--muted);
+  padding: 2px 0;
+}
+.source-foot-chip .num {
+  color: var(--accent);
+  font-family: var(--mono);
+  font-weight: 500;
+  margin-right: 4px;
+}
+
+/* ----------------------------------------------------------------
+   输入区
+---------------------------------------------------------------- */
+.input-area {
+  padding: 16px 24px 20px;
+  background: var(--bg2);
+  border-top: 1px solid var(--rule);
+}
+.input-wrapper {
+  border: 1px solid var(--rule2);
+  border-radius: 16px;
+  padding: 12px 16px;
+  background: var(--bg);
+  transition: border-color .15s, box-shadow .15s;
+}
+.input-wrapper:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px rgba(46, 107, 230, .08);
+}
+.input-textarea {
+  width: 100%;
+  min-height: 36px;
+  max-height: 160px;
+  resize: none;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--ink);
+}
+.input-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+.input-btn-send {
+  margin-left: auto;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  padding: 8px 18px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  transition: all .15s;
+}
+.input-btn-send:hover { background: #1f58d4; }
+.input-btn-send:disabled {
+  background: var(--faint);
+  cursor: not-allowed;
+}
+.input-quick {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--bg3);
+  border: 1px solid var(--rule);
+  color: var(--muted);
+  cursor: pointer;
+  transition: all .12s;
+}
+.input-quick:hover {
+  border-color: var(--accent-border);
+  color: var(--accent);
+}
+
+/* ----------------------------------------------------------------
+   空态
+---------------------------------------------------------------- */
+.empty-state {
+  text-align: center;
+  padding: 80px 40px;
+  color: var(--faint);
+}
+.empty-state .icon { font-size: 48px; margin-bottom: 16px; opacity: .5; }
+.empty-state h2 {
+  font-size: 16px;
+  color: var(--muted);
+  margin: 0 0 8px;
+  font-weight: 500;
+}
+.empty-state p {
+  font-size: 13px;
+  margin: 0;
+}
+
+/* ----------------------------------------------------------------
+   Demo 场景选择器（顶栏左侧 tab）
+---------------------------------------------------------------- */
+.scenario-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 6px 6px 0;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--rule);
+  overflow-x: auto;
+}
+.scenario-tab {
+  padding: 8px 14px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--muted);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all .15s;
+}
+.scenario-tab:hover { color: var(--ink); }
+.scenario-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+/* ----------------------------------------------------------------
+   提示徽章（浮动 tooltip 风格）
+---------------------------------------------------------------- */
+.hint-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  font-size: 11px;
+  background: var(--teal-weak);
+  border: 1px solid var(--teal);
+  border-radius: 999px;
+  color: var(--teal);
+  font-weight: 500;
+}
+
+/* 动画：卡片滑入 */
+@keyframes slideIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.anim-in { animation: slideIn .25s ease-out; }
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ============================================================
+       左侧：Agent-as-Tool 配置面板
+  ============================================================ -->
+  <aside class="sidebar">
+    <div class="sidebar-head">
+      <h1>Agent-as-Tool · Demo</h1>
+      <div class="sub">可选主 Agent 派遣子助手 / 挂工作流 / 挂 HTTP API</div>
+    </div>
+
+    <div class="sidebar-body">
+
+      <!-- 主 Agent 选择 -->
+      <div class="side-section">
+        <h3>主 Agent（当前对话角色）</h3>
+        <div id="mainAgentList"></div>
+      </div>
+
+      <!-- 可派遣子 Agent -->
+      <div class="side-section">
+        <h3>可派遣的子 Agent（勾选启用）</h3>
+        <div id="subAgentList"></div>
+      </div>
+
+      <!-- 工作流工具 -->
+      <div class="side-section">
+        <h3>工作流工具（挂上后 Agent 可以调）</h3>
+        <div class="tool-chip-row" id="wfToolList"></div>
+      </div>
+
+      <!-- HTTP API 工具 -->
+      <div class="side-section">
+        <h3>HTTP API 工具（按 OpenAPI 导入的宿主接口）</h3>
+        <div class="tool-chip-row" id="httpToolList"></div>
+      </div>
+
+      <!-- 状态提示 -->
+      <div class="side-section">
+        <h3>当前配置状态</h3>
+        <div id="configStatus" style="font-size:12.5px; color: var(--muted); line-height:1.8;"></div>
+      </div>
+
+    </div>
+  </aside>
+
+  <!-- ============================================================
+       右侧：聊天区
+  ============================================================ -->
+  <section class="main">
+
+    <!-- 顶栏 -->
+    <div class="scenario-tabs">
+      <button class="scenario-tab active" data-scenario="full">完整场景：派遣 + 工作流</button>
+      <button class="scenario-tab" data-scenario="dispatch-only">只派遣</button>
+      <button class="scenario-tab" data-scenario="wf-only">只工作流</button>
+      <button class="scenario-tab" data-scenario="guest">游客体验（只读档）</button>
+    </div>
+
+    <div class="chat-topbar">
+      <div class="agent-pill">
+        <div class="avatar" id="topAvatar">产</div>
+        <div>
+          <div class="name" id="topName">产品分析师</div>
+          <div class="role" id="topRole">可派遣 3 位助手 · 挂 1 个工作流 · 挂 2 个 HTTP API</div>
+        </div>
+      </div>
+      <div class="spacer"></div>
+      <!-- Subagent 药丸 -->
+      <button class="subagent-pill" id="subagentPill" style="display:none;">
+        <span class="ic">⬢</span>
+        <span class="count" id="subagentCount">0</span>
+        <span class="sep" id="subagentSep" style="display:none;">·</span>
+        <span class="running" id="subagentRunning" style="display:none;">在跑 0</span>
+        <span class="dur" id="subagentDur" style="display:none;"></span>
+      </button>
+    </div>
+
+    <!-- 消息区 -->
+    <div class="chat-area" id="chatArea">
+      <div class="empty-state" id="emptyState">
+        <div class="icon">💬</div>
+        <h2>试试问一个跨领域的问题</h2>
+        <p>主 Agent 会自己判断是否需要派遣子助手来查资料，或者调用工作流 / HTTP API。</p>
+      </div>
+    </div>
+
+    <!-- 输入区 -->
+    <div class="input-area">
+      <div class="input-wrapper">
+        <textarea class="input-textarea" id="chatInput" rows="1" placeholder="向「产品分析师」提问..."></textarea>
+        <div class="input-row">
+          <div style="display:flex; gap:6px;">
+            <button class="input-quick" data-q="帮我看一下最近 3 个月的营收情况，同时对比竞品的公开数据">📊 营收 + 竞品</button>
+            <button class="input-quick" data-q="跑一遍订单同步工作流，然后生成一份状态报告">⚙️ 调工作流</button>
+            <button class="input-quick" data-q="查一下运维日志，最近 1 小时有没有异常">🔧 运维排障</button>
+          </div>
+          <button class="input-btn-send" id="sendBtn">
+            <span>发送</span>
+            <span>➤</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script>
+/* ================================================================
+   Demo 数据：Agent / 子 Agent / 工作流 / HTTP API
+================================================================ */
+const MAIN_AGENTS = [
+  { id: 'product', name: '产品分析师', initial: '产', desc: '跨领域综合分析与产品决策',
+    subagents: ['data-analyst', 'market-research', 'ops-engineer'],
+    workflows: ['wf-order-sync'], httpApis: ['http-user', 'http-order'] },
+  { id: 'ops', name: '运维排障员', initial: '运', desc: '服务器监控、日志排查、故障定位',
+    subagents: ['data-analyst', 'ops-engineer'],
+    workflows: ['wf-incident'], httpApis: ['http-metrics', 'http-log'] },
+  { id: 'market', name: '市场研究员', initial: '市', desc: '竞品调研、行业分析、舆情监测',
+    subagents: ['market-research', 'product'],
+    workflows: ['wf-newsletter'], httpApis: ['http-sentiment'] },
+];
+
+const SUB_AGENTS = [
+  { id: 'data-analyst', name: '数据分析师', initial: '数', role: 'sub',
+    desc: '从业务数据库取数、做趋势分析、出可视化' },
+  { id: 'market-research', name: '竞品研究员', initial: '竞', role: 'sub2',
+    desc: '联网搜索竞品公开资料、整理行业对比表' },
+  { id: 'ops-engineer', name: '运维助手', initial: '运', role: 'sub3',
+    desc: '查服务器指标、读日志、定位异常根因' },
+];
+
+const WF_TOOLS = [
+  { id: 'wf-order-sync', name: '订单同步工作流', desc: '跨系统拉取订单并对账' },
+  { id: 'wf-incident', name: '故障自动处理', desc: '触发告警 → 拉日志 → 生成处理报告' },
+  { id: 'wf-newsletter', name: '行业周刊', desc: '每周自动汇总行业动态生成报告' },
+];
+
+const HTTP_TOOLS = [
+  { id: 'http-user', name: '用户 API', desc: '查询用户注册数据与活跃情况' },
+  { id: 'http-order', name: '订单 API', desc: '查订单状态、拉订单明细' },
+  { id: 'http-metrics', name: '监控 API', desc: '拉服务器 CPU/内存/延迟指标' },
+  { id: 'http-log', name: '日志 API', desc: '按关键词搜最近日志' },
+  { id: 'http-sentiment', name: '舆情 API', desc: '社交媒体情感分析' },
+];
+
+/* ================================================================
+   场景预设：点击顶栏 tab 切换
+================================================================ */
+const SCENARIOS = {
+  'full': {
+    label: '完整场景',
+    mainAgent: 'product',
+    checkedSubs: ['data-analyst', 'market-research'],
+    checkedWfs: ['wf-order-sync'],
+    checkedHttp: ['http-user', 'http-order'],
+    guest: false,
+  },
+  'dispatch-only': {
+    label: '只派遣',
+    mainAgent: 'product',
+    checkedSubs: ['data-analyst', 'market-research', 'ops-engineer'],
+    checkedWfs: [],
+    checkedHttp: [],
+    guest: false,
+  },
+  'wf-only': {
+    label: '只工作流',
+    mainAgent: 'ops',
+    checkedSubs: [],
+    checkedWfs: ['wf-incident'],
+    checkedHttp: ['http-metrics', 'http-log'],
+    guest: false,
+  },
+  'guest': {
+    label: '游客（只读档）',
+    mainAgent: 'product',
+    checkedSubs: [],        // 游客不能派遣
+    checkedWfs: [],          // 游客不能挂工作流
+    checkedHttp: [],         // 游客也不能挂 HTTP
+    guest: true,
+  },
+};
+
+/* ================================================================
+   运行时状态
+================================================================ */
+const state = {
+  mainAgentId: 'product',
+  checkedSubs: new Set(['data-analyst', 'market-research']),
+  checkedWfs: new Set(['wf-order-sync']),
+  checkedHttp: new Set(['http-user', 'http-order']),
+  guest: false,
+  subagentRuns: [],   // [{ id, name, task, status, elapsedMs, steps, sources, answer, artifacts }]
+  runStartTick: 0,
+  runningTickHandle: null,
+};
+
+/* ================================================================
+   渲染：左侧面板
+================================================================ */
+function renderSidebar() {
+  // 主 Agent
+  const mainEl = document.getElementById('mainAgentList');
+  mainEl.innerHTML = MAIN_AGENTS.map(a => `
+    <div class="agent-row ${a.id === state.mainAgentId ? 'selected' : ''}"
+         data-main="${a.id}">
+      <div class="agent-avatar main">${a.initial}</div>
+      <div class="agent-info">
+        <div class="name">${a.name}</div>
+        <div class="desc">${a.desc}</div>
+      </div>
+    </div>
+  `).join('');
+  mainEl.querySelectorAll('[data-main]').forEach(el => {
+    el.onclick = () => {
+      state.mainAgentId = el.dataset.main;
+      // 自动勾选主 Agent 关联的子 Agent / 工具
+      const main = MAIN_AGENTS.find(m => m.id === state.mainAgentId);
+      state.checkedSubs = new Set(main.subagents.slice(0, 2));
+      state.checkedWfs = new Set(main.workflows);
+      state.checkedHttp = new Set(main.httpApis.slice(0, 2));
+      renderAll();
+    };
+  });
+
+  // 子 Agent（可勾选）
+  const subEl = document.getElementById('subAgentList');
+  const main = MAIN_AGENTS.find(m => m.id === state.mainAgentId);
+  // 游客模式不显示子 Agent 面板（或禁用）
+  if (state.guest) {
+    subEl.innerHTML = `<div style="font-size:12.5px; color: var(--faint); padding:10px; background: var(--warn-weak); border-radius: var(--radius); border:1px solid var(--warn-border);">
+      🔒 游客分享会话：主 Agent 不会派遣子助手（私有知识库边界）
+    </div>`;
+  } else {
+    subEl.innerHTML = SUB_AGENTS.map(a => {
+      const allowed = main.subagents.includes(a.id);
+      const checked = state.checkedSubs.has(a.id);
+      return `
+        <label class="agent-row ${checked ? 'selected' : ''} ${!allowed ? 'disabled' : ''}">
+          <input type="checkbox" class="agent-checkbox"
+                 data-sub="${a.id}"
+                 ${checked ? 'checked' : ''}
+                 ${!allowed ? 'disabled' : ''}>
+          <div class="agent-avatar ${a.role}">${a.initial}</div>
+          <div class="agent-info">
+            <div class="name">${a.name}</div>
+            <div class="desc">${a.desc}</div>
+          </div>
+        </label>
+      `;
+    }).join('');
+    subEl.querySelectorAll('[data-sub]').forEach(cb => {
+      cb.onchange = () => {
+        if (cb.checked) state.checkedSubs.add(cb.dataset.sub);
+        else state.checkedSubs.delete(cb.dataset.sub);
+        updateConfigStatus();
+      };
+    });
+  }
+
+  // 工作流工具
+  const wfEl = document.getElementById('wfToolList');
+  if (state.guest) {
+    wfEl.innerHTML = `<span class="status-badge guest">🔒 游客不可用</span>`;
+  } else {
+    wfEl.innerHTML = WF_TOOLS.map(w => `
+      <div class="tool-chip ${state.checkedWfs.has(w.id) ? 'on' : ''}" data-wf="${w.id}" title="${w.desc}">
+        <span class="dot"></span> ${w.name}
+      </div>
+    `).join('');
+    wfEl.querySelectorAll('[data-wf]').forEach(el => {
+      el.onclick = () => {
+        const id = el.dataset.wf;
+        if (state.checkedWfs.has(id)) state.checkedWfs.delete(id);
+        else state.checkedWfs.add(id);
+        el.classList.toggle('on');
+        updateConfigStatus();
+      };
+    });
+  }
+
+  // HTTP API 工具
+  const httpEl = document.getElementById('httpToolList');
+  if (state.guest) {
+    httpEl.innerHTML = `<span class="status-badge guest">🔒 游客不可用</span>`;
+  } else {
+    httpEl.innerHTML = HTTP_TOOLS.map(h => `
+      <div class="tool-chip ${state.checkedHttp.has(h.id) ? 'on' : ''}" data-http="${h.id}" title="${h.desc}">
+        <span class="dot"></span> ${h.name}
+      </div>
+    `).join('');
+    httpEl.querySelectorAll('[data-http]').forEach(el => {
+      el.onclick = () => {
+        const id = el.dataset.http;
+        if (state.checkedHttp.has(id)) state.checkedHttp.delete(id);
+        else state.checkedHttp.add(id);
+        el.classList.toggle('on');
+        updateConfigStatus();
+      };
+    });
+  }
+
+  updateConfigStatus();
+}
+
+function updateConfigStatus() {
+  const main = MAIN_AGENTS.find(m => m.id === state.mainAgentId);
+  const statusEl = document.getElementById('configStatus');
+  let html = '';
+  if (state.guest) {
+    html += `<span class="status-badge guest">👤 游客模式</span><br>`;
+    html += '只读档：不派遣、不挂工作流、不挂 HTTP API。';
+  } else {
+    html += `<span class="status-badge">✅ 就绪</span><br>`;
+    html += `派遣助手 <b>${state.checkedSubs.size}</b> 位：
+      ${state.checkedSubs.size ? [...state.checkedSubs].map(id => SUB_AGENTS.find(s => s.id === id)?.name).join('、') : '未启用'}<br>`;
+    html += `工作流工具 <b>${state.checkedWfs.size}</b> 个：
+      ${state.checkedWfs.size ? [...state.checkedWfs].map(id => WF_TOOLS.find(w => w.id === id)?.name).join('、') : '未挂载'}<br>`;
+    html += `HTTP API 工具 <b>${state.checkedHttp.size}</b> 个：
+      ${state.checkedHttp.size ? [...state.checkedHttp].map(id => HTTP_TOOLS.find(h => h.id === id)?.name).join('、') : '未挂载'}`;
+  }
+  statusEl.innerHTML = html;
+
+  // 更新顶栏
+  document.getElementById('topAvatar').textContent = main.initial;
+  document.getElementById('topName').textContent = main.name;
+  const parts = [];
+  if (!state.guest) {
+    if (state.checkedSubs.size) parts.push(`可派遣 ${state.checkedSubs.size} 位助手`);
+    if (state.checkedWfs.size) parts.push(`挂 ${state.checkedWfs.size} 个工作流`);
+    if (state.checkedHttp.size) parts.push(`挂 ${state.checkedHttp.size} 个 HTTP API`);
+  } else {
+    parts.push('游客模式 · 只读档');
+  }
+  document.getElementById('topRole').textContent = parts.join(' · ') || '默认配置';
+}
+
+function renderAll() {
+  renderSidebar();
+}
+
+/* ================================================================
+   Subagent 药丸（顶栏）
+================================================================ */
+function updateSubagentPill() {
+  const pill = document.getElementById('subagentPill');
+  if (!state.subagentRuns.length) {
+    pill.style.display = 'none';
+    return;
+  }
+  pill.style.display = '';
+  const running = state.subagentRuns.filter(r => r.status === 'running').length;
+  document.getElementById('subagentCount').textContent = state.subagentRuns.length;
+  const sep = document.getElementById('subagentSep');
+  const runEl = document.getElementById('subagentRunning');
+  const durEl = document.getElementById('subagentDur');
+  if (running > 0) {
+    sep.style.display = '';
+    runEl.style.display = '';
+    runEl.textContent = `在跑 ${running}`;
+    // 最长那个跑了多久
+    const lead = state.subagentRuns
+      .filter(r => r.status === 'running')
+      .reduce((a, b) => ((a?.startTick || 0) > (b.startTick || 0) ? a : b), null);
+    if (lead) {
+      durEl.style.display = '';
+      const ms = Date.now() - lead.startTick;
+      durEl.textContent = (ms / 1000).toFixed(1) + 's';
+    } else {
+      durEl.style.display = 'none';
+    }
+  } else {
+    sep.style.display = 'none';
+    runEl.style.display = 'none';
+    durEl.style.display = 'none';
+  }
+}
+
+/* ================================================================
+   聊天区：渲染已有消息
+================================================================ */
+const chatMessages = [];  // [{ role, html, subagentCards?: [], toolCards?: [] }]
+
+function renderChat() {
+  const area = document.getElementById('chatArea');
+  document.getElementById('emptyState').style.display = chatMessages.length ? 'none' : '';
+  area.innerHTML = chatMessages.map(m => m.html).join('');
+  area.scrollTop = area.scrollHeight;
+}
+
+/* ================================================================
+   模拟对话：主 Agent 流式回答 + 子 Agent 卡片逐步出现
+================================================================ */
+async function sendQuestion(question) {
+  if (!question.trim()) return;
+  // 禁用输入
+  const sendBtn = document.getElementById('sendBtn');
+  const input = document.getElementById('chatInput');
+  sendBtn.disabled = true;
+  input.disabled = true;
+
+  const main = MAIN_AGENTS.find(m => m.id === state.mainAgentId);
+
+  // 1. 用户消息
+  chatMessages.push({
+    role: 'user',
+    html: `<div class="msg-user anim-in"><div class="bubble">${escapeHtml(question)}</div></div>`
+  });
+  renderChat();
+
+  // 2. AI 消息占位（带打字光标）
+  const aiMsgKey = chatMessages.length;
+  chatMessages.push({
+    role: 'ai',
+    html: `<div class="msg-ai anim-in" data-ai="${aiMsgKey}">
+      <div class="avatar">${main.initial}</div>
+      <div class="content">
+        <div class="answer"><span class="typing-cursor"></span></div>
+      </div>
+    </div>`
+  });
+  renderChat();
+
+  // 3. 用哪个 agent、要不要派子 agent、要不要调工具
+  const dispatchPlan = planDispatch(question);
+  state.subagentRuns = [];
+  state.runStartTick = Date.now();
+  startPillTick();
+
+  // 4. 先"思考"一下
+  await sleep(600);
+
+  // 5. 如果要派子 agent，先展示"派遣中"然后逐步填充
+  const subagentCardsHtml = [];
+  for (const task of dispatchPlan.subagentTasks) {
+    const card = await spawnSubagent(task);
+    subagentCardsHtml.push(card);
+  }
+
+  // 6. 如果要调工作流
+  const toolCardsHtml = [];
+  for (const wfId of dispatchPlan.workflowCalls) {
+    const card = await callWorkflowTool(wfId);
+    toolCardsHtml.push(card);
+  }
+
+  // 7. 综合回答（流式打字效果）
+  const finalAnswer = buildFinalAnswer(dispatchPlan, question);
+  chatMessages[aiMsgKey].html = buildAIMsgHtml(main.initial, finalAnswer, subagentCardsHtml, toolCardsHtml);
+  renderChat();
+  await typeWriter(aiMsgKey, finalAnswer);
+
+  // 收尾
+  stopPillTick();
+  state.subagentRuns = [];
+  updateSubagentPill();
+  sendBtn.disabled = false;
+  input.disabled = false;
+  input.focus();
+  input.value = '';
+}
+
+function buildAIMsgHtml(initial, answer, subs, tools) {
+  return `<div class="msg-ai anim-in">
+    <div class="avatar">${initial}</div>
+    <div class="content">
+      <div class="answer"></div>
+      ${tools.join('\n')}
+      ${subs.join('\n')}
+    </div>
+  </div>`;
+}
+
+async function typeWriter(aiMsgKey, answer) {
+  const area = document.getElementById('chatArea');
+  const answerBox = area.querySelectorAll('.msg-ai .answer')[aiMsgKey];
+  if (!answerBox) return;
+  answerBox.innerHTML = '';
+  const cursor = document.createElement('span');
+  cursor.className = 'typing-cursor';
+  answerBox.appendChild(cursor);
+  for (let i = 0; i < answer.length; i++) {
+    cursor.insertAdjacentText('beforebegin', answer[i]);
+    if (i % 3 === 0) await sleep(6);
+  }
+  cursor.remove();
+  // 底部引用来源
+  const sources = extractSources(answer);
+  if (sources.length) {
+    const foot = document.createElement('div');
+    foot.className = 'sources-footer';
+    foot.innerHTML = sources.map(s =>
+      `<span class="source-foot-chip"><span class="num">[${s.ref}]</span>${s.title}</span>`
+    ).join('');
+    answerBox.after(foot);
+  }
+}
+
+/* ================================================================
+   派遣决策（模拟 LLM 路由）
+================================================================ */
+function planDispatch(question) {
+  const main = MAIN_AGENTS.find(m => m.id === state.mainAgentId);
+  const plan = { subagentTasks: [], workflowCalls: [] };
+
+  if (state.guest) {
+    // 游客不派遣、不调工具，直接自己答
+    return plan;
+  }
+
+  const lower = question.toLowerCase();
+
+  // 关键字路由
+  if (main.id === 'product') {
+    if (/营收|收入|用户|数据|趋势|报表|对比/.test(lower) && state.checkedSubs.has('data-analyst')) {
+      plan.subagentTasks.push({
+        agentId: 'data-analyst',
+        question: extractDataQuestion(question),
+        answer: buildDataAnswer(),
+        sources: buildDataSources(),
+        steps: [
+          { n: 'search_knowledge', l: '检索知识库', s: 'done', ms: 420 },
+          { n: 'wf_order_sync_query', l: '调「订单同步工作流」', s: 'done', ms: 1280 },
+          { n: 'presentArtifact', l: '生成分析报告', s: 'done', ms: 610 },
+        ],
+        elapsedMs: 2310,
+      });
+    }
+    if (/竞品|行业|公开|舆情/.test(lower) && state.checkedSubs.has('market-research')) {
+      plan.subagentTasks.push({
+        agentId: 'market-research',
+        question: extractMarketQuestion(question),
+        answer: buildMarketAnswer(),
+        sources: buildMarketSources(),
+        steps: [
+          { n: 'webSearch', l: '联网搜索竞品公开信息', s: 'done', ms: 2100 },
+          { n: 'webSearch', l: '搜索行业分析报告', s: 'done', ms: 1800 },
+          { n: 'deliver_artifact', l: '交付竞品对比表', s: 'done', ms: 90 },
+        ],
+        artifacts: ['竞品对比.csv'],
+        elapsedMs: 4200,
+      });
+    }
+    if (state.checkedWfs.has('wf-order-sync')) {
+      plan.workflowCalls.push('wf-order-sync');
+    }
+  }
+  if (main.id === 'ops') {
+    if (/日志|异常|报错|监控|指标|故障|排障|服务器/.test(lower)) {
+      if (state.checkedSubs.has('ops-engineer')) {
+        plan.subagentTasks.push({
+          agentId: 'ops-engineer',
+          question: question,
+          answer: buildOpsAnswer(),
+          sources: buildOpsSources(),
+          steps: [
+            { n: 'http_metrics', l: '调「监控 API」拉指标', s: 'done', ms: 320 },
+            { n: 'http_log', l: '调「日志 API」搜关键词', s: 'done', ms: 890 },
+            { n: 'run_code', l: '执行脚本聚合异常频次', s: 'done', ms: 430 },
+          ],
+          elapsedMs: 1640,
+        });
+      }
+      if (state.checkedWfs.has('wf-incident')) {
+        plan.workflowCalls.push('wf-incident');
+      }
+    }
+  }
+
+  // 兜底：至少调一个已勾选的子 agent
+  if (!plan.subagentTasks.length && state.checkedSubs.size) {
+    const firstSub = [...state.checkedSubs][0];
+    plan.subagentTasks.push({
+      agentId: firstSub,
+      question: question,
+      answer: buildGenericSubAnswer(firstSub),
+      sources: [],
+      steps: [{ n: 'search_knowledge', l: '检索知识库', s: 'done', ms: 380 }],
+      elapsedMs: 650,
+    });
+  }
+
+  return plan;
+}
+
+function extractDataQuestion(q) { return q.length > 40 ? q.slice(0, 40) + '...' : q; }
+function extractMarketQuestion(q) { return q; }
+
+/* ================================================================
+   派遣子 agent：动画 + 卡片逐步填充
+================================================================ */
+async function spawnSubagent(task) {
+  const agent = SUB_AGENTS.find(a => a.id === task.agentId);
+  if (!agent) return '';
+
+  // 注册运行
+  const run = {
+    id: Math.random().toString(36).slice(2, 8),
+    name: agent.name,
+    initial: agent.initial,
+    task: task.question,
+    status: 'running',
+    startTick: Date.now(),
+    elapsedMs: 0,
+    steps: [],
+  };
+  state.subagentRuns.push(run);
+  updateSubagentPill();
+
+  // 渲染占位卡片
+  const cardHtml = `
+    <div class="subagent-card anim-in" data-run="${run.id}">
+      <div class="subagent-card-head running">
+        <span class="ic">↻</span>
+        <span class="label">派遣「${agent.name}」去查</span>
+        <span class="task">${escapeHtml(task.question)}</span>
+        <span class="meta" data-meta="${run.id}">跑了 0.0s</span>
+      </div>
+      <div class="subagent-card-body answer-empty">正在派 ${agent.name} 起一条子轮...</div>
+    </div>`;
+
+  // 插入到 AI 消息末尾
+  const aiMsg = document.querySelector('.msg-ai:last-of-type .content');
+  if (aiMsg) {
+    const tmp = document.createElement('div');
+    tmp.innerHTML = cardHtml;
+    aiMsg.appendChild(tmp.firstElementChild);
+  }
+
+  // 逐步填充步骤（动画效果）
+  await sleep(800);
+  for (const step of task.steps) {
+    run.steps.push(step);
+    run.elapsedMs += step.ms;
+    appendStepToCard(run.id, step);
+    await sleep(300 + Math.random() * 200);
+  }
+
+  // 收口
+  run.status = 'done';
+  run.elapsedMs = task.elapsedMs;
+
+  // 更新卡片 head 与 body
+  updateCardHead(run.id, 'done', run.elapsedMs);
+  updateCardBody(run.id, task.answer, task.sources || [], task.artifacts || []);
+  updateSubagentPill();
+
+  // 返回最终 HTML 给 AI 消息（后续重渲染用）
+  return cardHtmlFinal(agent, task, run);
+}
+
+function cardHtmlFinal(agent, task, run) {
+  const stepsHtml = task.steps.map(s => `
+    <div class="work-step">
+      <span class="w-ic ${s.s}">${s.s === 'done' ? '✓' : s.s === 'error' ? '✗' : '↻'}</span>
+      <span class="w-label">${s.l}</span>
+      <span class="w-ms">${s.ms}ms</span>
+    </div>`).join('');
+  const sourcesHtml = (task.sources || []).length ? `
+    <div class="sources-row">
+      ${task.sources.map(s => `<span class="source-chip"><span class="num">[${s.ref}]</span><span class="title">${s.title}</span></span>`).join('')}
+    </div>` : '';
+  const artifactsHtml = (task.artifacts || []).length ? `
+    <div class="artifacts-row">
+      ${task.artifacts.map(a => `<span class="artifact-chip">📎 ${a}</span>`).join('')}
+    </div>` : '';
+  return `
+    <div class="subagent-card anim-in">
+      <div class="subagent-card-head done">
+        <span class="ic">✓</span>
+        <span class="label">「${agent.name}」的回报</span>
+        <span class="task">${escapeHtml(task.question)}</span>
+        <span class="meta">✓ ${(task.elapsedMs / 1000).toFixed(1)}s · ${task.steps.length} 步工具</span>
+      </div>
+      <div class="subagent-card-body">
+        ${task.answer}
+        <div class="work-steps">${stepsHtml}</div>
+        ${sourcesHtml}
+        ${artifactsHtml}
+      </div>
+    </div>`;
+}
+
+function appendStepToCard(runId, step) {
+  const card = document.querySelector(`[data-run="${runId}"] .subagent-card-body`);
+  if (!card) return;
+  if (card.classList.contains('answer-empty')) {
+    card.classList.remove('answer-empty');
+    card.innerHTML = '<div class="work-steps"></div>';
+  }
+  const ws = card.querySelector('.work-steps');
+  if (!ws) return;
+  const div = document.createElement('div');
+  div.className = 'work-step';
+  div.innerHTML = `
+    <span class="w-ic running">↻</span>
+    <span class="w-label">${step.l}</span>
+    <span class="w-ms">${step.ms}ms</span>`;
+  ws.appendChild(div);
+  // 跑 300ms 后变 done
+  setTimeout(() => {
+    const ic = div.querySelector('.w-ic');
+    if (ic) {
+      ic.classList.remove('running');
+      ic.classList.add(step.s);
+      ic.textContent = step.s === 'done' ? '✓' : step.s === 'error' ? '✗' : '↻';
+    }
+  }, 300);
+}
+
+function updateCardHead(runId, status, elapsedMs) {
+  const head = document.querySelector(`[data-run="${runId}"] .subagent-card-head`);
+  if (!head) return;
+  head.classList.remove('running', 'done', 'failed');
+  head.classList.add(status);
+  const ic = head.querySelector('.ic');
+  ic.textContent = status === 'done' ? '✓' : status === 'failed' ? '✗' : '↻';
+  const meta = head.querySelector('.meta');
+  meta.textContent = status === 'done' ?
+    `✓ ${(elapsedMs / 1000).toFixed(1)}s · 已完成` :
+    `✗ 失败 ${(elapsedMs / 1000).toFixed(1)}s`;
+}
+
+function updateCardBody(runId, answer, sources, artifacts) {
+  const body = document.querySelector(`[data-run="${runId}"] .subagent-card-body`);
+  if (!body) return;
+  body.classList.remove('answer-empty');
+  body.innerHTML = `<div style="margin-bottom:10px;">${answer}</div>
+    ${sources.length ? `<div class="sources-row">${sources.map(s =>
+      `<span class="source-chip"><span class="num">[${s.ref}]</span><span class="title">${s.title}</span></span>`).join('')}</div>` : ''}
+    ${artifacts.length ? `<div class="artifacts-row">${artifacts.map(a =>
+      `<span class="artifact-chip">📎 ${a}</span>`).join('')}</div>` : ''}`;
+}
+
+/* ================================================================
+   工作流工具：模拟调用
+================================================================ */
+async function callWorkflowTool(wfId) {
+  const wf = WF_TOOLS.find(w => w.id === wfId);
+  if (!wf) return '';
+  // 渲染占位工具卡
+  const html = `
+    <div class="tool-card anim-in">
+      <div class="tool-card-head">
+        <span class="tool-tag">WORKFLOW</span>
+        <span class="tool-name">wf_${wf.name.replace(/\s+/g, '_')}</span>
+        <span class="tool-status">运行中</span>
+      </div>
+      <div class="tool-card-body">正在执行「${wf.name}」（耗时约 4-6 秒）...</div>
+    </div>`;
+  const aiMsg = document.querySelector('.msg-ai:last-of-type .content');
+  if (aiMsg) {
+    const tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    aiMsg.appendChild(tmp.firstElementChild);
+  }
+
+  await sleep(1500);
+
+  // 更新状态为完成
+  const lastToolCard = document.querySelector('.msg-ai:last-of-type .tool-card:last-of-type');
+  if (lastToolCard) {
+    const status = lastToolCard.querySelector('.tool-status');
+    const body = lastToolCard.querySelector('.tool-card-body');
+    status.textContent = 'success · 5.2s';
+    status.style.background = 'rgba(59, 143, 78, .15)';
+    status.style.color = 'var(--ok)';
+    body.innerHTML = `✅ 「${wf.name}」执行完成（v3，耗时 5.2s）。出参：<code style="font-family:var(--mono); background:var(--bg3); padding:2px 6px; border-radius:3px;">{"records":1247,"status":"ok"}</code>`;
+  }
+
+  return html;  // 占位，后续 AI 重渲染时会忽略
+}
+
+/* ================================================================
+   回答素材
+================================================================ */
+function buildFinalAnswer(plan, question) {
+  const main = MAIN_AGENTS.find(m => m.id === state.mainAgentId);
+  if (state.guest || (!plan.subagentTasks.length && !plan.workflowCalls.length)) {
+    // 游客或未派遣：自己答（模拟检索 + 综合）
+    return `我来基于已有资料帮你分析一下。\n\n`
+      + `这个问题涉及${extractTopics(question)}，我查阅了相关文档与历史数据，给出以下结论：\n\n`
+      + `核心要点 1：... [1]\n`
+      + `核心要点 2：... [2]\n`
+      + `核心要点 3：... [3]\n\n`
+      + `——以上回答基于我当前能访问的知识库。`;
+  }
+
+  // 有派遣有调用：综合各方回报
+  const subsText = plan.subagentTasks.map(t => {
+    const agent = SUB_AGENTS.find(a => a.id === t.agentId);
+    return `「${agent.name}」查到：${t.answer.replace(/[【】]/g, '').trim()}`;
+  }).join('；');
+
+  const wfText = plan.workflowCalls.length
+    ? `同时调用了 ${plan.workflowCalls.map(id => WF_TOOLS.find(w => w.id === id)?.name).join('、')}。`
+    : '';
+
+  return `根据${plan.subagentTasks.length} 位助手的回报${wfText}，我来综合回答：\n\n`
+    + subsText + '\n\n'
+    + `综合来看，${main.id === 'product'
+        ? '建议优先关注数据层面的趋势变化，同时留意竞品的公开动态——两者叠加才能判断是行业整体还是自身运营的问题。'
+        : main.id === 'ops'
+        ? '主要异常集中在 [time] 的 X 模块，建议优先排查该时间窗口附近的变更记录。'
+        : '整体态势如上述助手所述。'}\n\n`
+    + `关键依据：[1] 财报相关资料、[2] 竞品公开报道、[3] 内部运维日志汇总。`;
+}
+
+function extractTopics(q) {
+  if (/营收|收入/.test(q)) return '营收数据';
+  if (/竞品|行业/.test(q)) return '竞品与行业';
+  if (/日志|异常|故障/.test(q)) return '运维监控';
+  if (/用户|活跃/.test(q)) return '用户指标';
+  return '多个方面';
+}
+
+function buildDataAnswer() {
+  return `【数据分析师】从近 3 个月数据看：
+• 营收环比 +12.4%，同比 +34%
+• 订单量环比 +8.1%，客单价环比 +4.0%
+• 活跃用户环比 +6.8%，新客留存率环比 +2.3pp
+• 结构上 SaaS 订阅占比从 38% 提升到 46%（高毛利贡献）
+
+详细数据表已整理成 CSV 产物。`;
+}
+function buildDataSources() {
+  return [
+    { ref: 1, title: '2026 Q3 财报 · 营收趋势' },
+    { ref: 2, title: '用户行为分析月报' },
+    { ref: 3, title: 'SaaS 订阅数据看板' },
+  ];
+}
+
+function buildMarketAnswer() {
+  return `【竞品研究员】联网搜索结果：
+• 竞品 A 上季度发布了 v4 版本，主打实时协作
+• 竞品 B 本月完成 D 轮融资（2.8 亿），方向是 AI Agent 编排
+• 行业报告普遍预测 Agent 编排市场 2027 年达 8.7 亿美元
+• 我们的差异化：专注垂直领域深度而非通用能力
+
+详细对比表已交付为 CSV 产物。`;
+}
+function buildMarketSources() {
+  return [
+    { ref: 4, title: '竞品 A 官方新闻稿（2026-10）' },
+    { ref: 5, title: '行业分析报告 · Agent 编排赛道' },
+    { ref: 6, title: '竞品 B 融资公告（TechCrunch）' },
+  ];
+}
+
+function buildOpsAnswer() {
+  return `【运维助手】异常根因定位：
+• 最近 1 小时 ERROR 日志 27 条，主要集中在订单服务的第 3 个分片
+• 监控指标显示该分片 CPU 从 0.4 → 持续 1.2
+• 根因：10:32 上线的 X 版本引入了 N+1 查询
+• 临时缓解：回滚到 v2.3.12，已在 10:47 生效
+• 建议：下周对 v2.4 版本加全量回归测试`;
+}
+function buildOpsSources() {
+  return [
+    { ref: 7, title: '监控面板 · 订单分片 3 指标' },
+    { ref: 8, title: '日志汇总 · ERROR 2026-11-09 10:00-11:00' },
+  ];
+}
+
+function buildGenericSubAnswer(agentId) {
+  const a = SUB_AGENTS.find(s => s.id === agentId);
+  return `【${a.name}】基于已有的知识库资料，我对这个问题的回答是：...（占位，取决于具体问题）`;
+}
+
+function extractSources(text) {
+  const out = [];
+  const re = /\[(\d+)\]\s*[《【]?([^》】\n]+)[》】]?/g;
+  let m;
+  const seen = new Set();
+  while ((m = re.exec(text)) && out.length < 8) {
+    const num = parseInt(m[1]);
+    if (seen.has(num)) continue;
+    seen.add(num);
+    out.push({ ref: num, title: m[2].trim() });
+  }
+  return out;
+}
+
+/* ================================================================
+   工具
+================================================================ */
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  })[c]);
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+function startPillTick() {
+  if (state.runningTickHandle) return;
+  state.runStartTick = Date.now();
+  state.runningTickHandle = setInterval(updateSubagentPill, 500);
+}
+function stopPillTick() {
+  if (state.runningTickHandle) {
+    clearInterval(state.runningTickHandle);
+    state.runningTickHandle = null;
+  }
+}
+
+/* ================================================================
+   事件绑定
+================================================================ */
+document.getElementById('sendBtn').onclick = () => {
+  const input = document.getElementById('chatInput');
+  sendQuestion(input.value.trim());
+};
+document.getElementById('chatInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    document.getElementById('sendBtn').click();
+  }
+});
+document.querySelectorAll('.input-quick').forEach(btn => {
+  btn.onclick = () => {
+    document.getElementById('chatInput').value = btn.dataset.q;
+    document.getElementById('sendBtn').click();
+  };
+});
+document.querySelectorAll('.scenario-tab').forEach(tab => {
+  tab.onclick = () => {
+    document.querySelectorAll('.scenario-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    const s = SCENARIOS[tab.dataset.scenario];
+    state.mainAgentId = s.mainAgent;
+    state.checkedSubs = new Set(s.checkedSubs);
+    state.checkedWfs = new Set(s.checkedWfs);
+    state.checkedHttp = new Set(s.checkedHttp);
+    state.guest = s.guest;
+    // 清空聊天
+    chatMessages.length = 0;
+    document.getElementById('chatArea').innerHTML = '';
+    renderAll();
+  };
+});
+
+// 自动调整 textarea 高度
+document.getElementById('chatInput').addEventListener('input', function() {
+  this.style.height = 'auto';
+  this.style.height = Math.min(160, this.scrollHeight) + 'px';
+});
+
+// 初始化
+renderAll();
+</script>
+</body>
+</html>
