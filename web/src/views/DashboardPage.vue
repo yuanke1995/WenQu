@@ -636,7 +636,33 @@
                 </div>
                 <div class="dt-block">
                   <div class="dt-label">工具调用（{{ (detail.message.toolCalls || []).length }}）· Token（{{ detail.message.tokens?.total || 0 }}）</div>
-                  <pre v-if="(detail.message.toolCalls || []).length" class="dt-pre">{{ JSON.stringify(detail.message.toolCalls, null, 2) }}</pre>
+                  <div v-for="(t, i) in detail.message.toolCalls" :key="i" class="dt-tool">
+                    <div class="dt-tool-head" @click="t._open = !t._open">
+                      <span class="dt-tool-name">{{ t.label || t.name }}</span>
+                      <span v-if="t.label && t.label !== t.name" class="dt-meta">{{ t.name }}</span>
+                      <a-tag :color="toolStatusColor(t.status)">{{ toolStatusLabel(t.status) }}</a-tag>
+                      <span v-if="t.elapsedMs != null" class="dt-meta">{{ t.elapsedMs }} ms</span>
+                      <span class="dt-meta dt-tool-toggle">{{ t._open ? '收起' : '展开' }}</span>
+                    </div>
+                    <div v-if="t._open" class="dt-tool-body">
+                      <div v-if="t.hint" class="dt-tool-hint">{{ t.hint }}</div>
+                      <template v-if="toolArgFields(t).length">
+                        <div class="dt-io-label">入参</div>
+                        <div v-for="f in toolArgFields(t)" :key="f.key" class="dt-arg">
+                          <div class="dt-arg-key">{{ f.key }}</div>
+                          <pre class="dt-pre dt-arg-val">{{ toolArgText(t, f) }}</pre>
+                          <a v-if="f.truncated" class="dt-arg-more" @click.stop="toggleArg(t, f.key)">
+                            {{ toolArgOpen(t, f.key) ? '收起' : `展开全部（${f.total} 字）` }}
+                          </a>
+                        </div>
+                      </template>
+                      <template v-if="t.result">
+                        <div class="dt-io-label">输出</div>
+                        <pre class="dt-pre">{{ t.result }}</pre>
+                      </template>
+                    </div>
+                  </div>
+                  <div v-if="!(detail.message.toolCalls || []).length" class="dt-meta">本轮没有工具调用</div>
                 </div>
               </template>
               <div v-else class="dt-block"><div class="dt-label">全过程</div><div class="dt-meta">该记录较早，只有摘要视图。</div></div>
@@ -1185,6 +1211,35 @@ const wfStatusColor = s => ({ running: 'processing', success: 'green', failed: '
 const prettyJson = s => {
   try { return JSON.stringify(JSON.parse(s), null, 2) } catch (e) { return s || '（无）' }
 }
+
+// 工具调用：一条一行摘要，点开看入参/输出；单个字段超长先折叠（产物正文可达几万字），按需展开。
+// 后端已把落库/下发的超长字段折成 2000 字预览，这里再兜一层：老记录里仍有整份原文。
+const ARG_FIELD_PREVIEW = 400
+const toolStatusLabel = s => ({ start: '进行中', preparing: '生成中', done: '完成', error: '失败', denied: '已拒绝', waiting: '待批准' }[s] || s || '完成')
+const toolStatusColor = s => ({ start: 'processing', preparing: 'processing', done: 'green', error: 'red', denied: 'orange', waiting: 'orange' }[s] || 'default')
+const toolArgFields = t => {
+  if (t._fields) return t._fields
+  const fields = []
+  let obj
+  try { obj = JSON.parse(t.args) } catch (e) { obj = undefined }
+  if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+    for (const [key, v] of Object.entries(obj)) {
+      const text = typeof v === 'string' ? v : JSON.stringify(v, null, 2)
+      if (text == null || text === '') continue
+      fields.push({ key, text, total: text.length, truncated: text.length > ARG_FIELD_PREVIEW })
+    }
+  } else {
+    const text = String(t.args)
+    fields.push({ key: '原始入参', text, total: text.length, truncated: text.length > ARG_FIELD_PREVIEW })
+  }
+  t._fields = fields
+  return fields
+}
+const toolArgOpen = (t, key) => !!(t._argOpen && t._argOpen[key])
+const toggleArg = (t, key) => { t._argOpen = { ...(t._argOpen || {}), [key]: !toolArgOpen(t, key) } }
+const toolArgText = (t, f) => f.truncated && !toolArgOpen(t, f.key)
+  ? f.text.slice(0, ARG_FIELD_PREVIEW) + '…（已折叠，点下方展开）'
+  : f.text
 
 // ==================================================================================================
 // 采样标注
@@ -2145,13 +2200,19 @@ const fmtTokensCompact = n => {
 .f-num { font-size: 21px; font-weight: 600; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
 .f-label { font-size: 10.5px; color: var(--app-text3); margin-top: 1px; }
 .f-pct { font-size: 10px; color: var(--app-text2); margin-top: 3px; }
-.sample-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.sample-card { border: 1px solid var(--app-border); border-radius: 8px; padding: 10px 12px; background: var(--app-panel); }
+.sample-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.sample-card { min-width: 0; border: 1px solid var(--app-border); border-radius: 8px; padding: 10px 12px; background: var(--app-panel); }
 .sample-card:hover { border-color: var(--app-accent-border); }
-.sample-top { display: flex; align-items: center; gap: 7px; margin-bottom: 5px; }
-.sample-q { font-size: 12px; font-weight: 600; color: var(--app-text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sample-top { display: flex; align-items: center; gap: 7px; margin-bottom: 5px; min-width: 0; }
+.sample-q { flex: 1 1 auto; font-size: 12px; font-weight: 600; color: var(--app-text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sample-time { margin-left: auto; font-size: 10px; color: var(--app-text3); flex: none; }
-.sample-a { font-size: 11px; color: var(--app-text2); line-height: 1.55; height: 34px; overflow: hidden; margin-bottom: 7px; }
+/* 长问题/长 URL 不换行会撑爆网格轨道（两列里第二列被挤出视口且横滚被隐藏）：
+   卡片补 min-width:0，摘要按两行截断并允许 URL 内换行。 */
+.sample-a {
+  font-size: 11px; color: var(--app-text2); line-height: 1.55; margin-bottom: 7px;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  overflow: hidden; overflow-wrap: anywhere;
+}
 .sample-foot { display: flex; align-items: center; gap: 8px; }
 .sample-note { font-size: 10px; color: var(--app-text3); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sample-acts { margin-left: auto; display: flex; gap: 10px; flex: none; }
@@ -2199,6 +2260,19 @@ const fmtTokensCompact = n => {
 .dt-source-name { font-size: 13px; }
 .dt-kv { display: flex; align-items: center; gap: 10px; font-size: 13px; padding: 2px 0; }
 .dt-kv > span { color: var(--app-text3); font-size: 12px; width: 48px; flex: none; }
+.dt-tool { border: 1px solid var(--app-border); border-radius: 6px; margin-bottom: 8px; overflow: hidden; }
+.dt-tool:last-child { margin-bottom: 0; }
+.dt-tool-head { display: flex; align-items: center; gap: 8px; padding: 6px 10px; cursor: pointer; background: var(--app-panel-2, #fafbfc); }
+.dt-tool-name { font-size: 13px; font-weight: 500; }
+.dt-tool-toggle { margin-left: auto; }
+.dt-tool-body { padding: 0 10px 10px; }
+.dt-tool-hint { font-size: 12px; color: var(--app-text3); margin-bottom: 6px; }
+.dt-io-label { font-size: 12px; color: var(--app-text3); margin: 8px 0 4px; }
+.dt-arg { margin-bottom: 8px; }
+.dt-arg:last-child { margin-bottom: 0; }
+.dt-arg-key { font-size: 12px; color: var(--app-text2); margin-bottom: 3px; font-family: ui-monospace, Menlo, monospace; }
+.dt-arg-val { max-height: 180px; }
+.dt-arg-more { display: inline-block; margin-top: 3px; font-size: 12px; color: var(--app-accent); cursor: pointer; }
 .wf-trace { border-top: 1px dashed var(--app-border); padding: 6px 0; }
 .wf-trace-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; cursor: pointer; }
 .wf-trace-name { font-size: 13px; font-weight: 500; font-family: ui-monospace, Menlo, monospace; }
@@ -2207,7 +2281,8 @@ const fmtTokensCompact = n => {
 @media (max-width: 1200px) {
   .kpi-row { grid-template-columns: 1fr 1fr 1fr; }
   .health-card { grid-column: span 3; }
-  .chart-row, .two-col, .cost-grid, .cost-grid2, .sample-grid { grid-template-columns: 1fr; }
+  .chart-row, .two-col, .cost-grid, .cost-grid2 { grid-template-columns: 1fr; }
+  .sample-grid { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 900px) {
   .stat-strip { grid-template-columns: 1fr 1fr; }

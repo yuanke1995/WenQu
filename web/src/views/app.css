@@ -341,4 +341,32 @@ html[data-enter='push'] .app-root {
 }
 @media (prefers-reduced-motion: reduce) {
   html[data-enter='push'] .app-root { animation: none; }
+  html[data-leave='pull'] .app-root { animation: none; }
+}
+
+/* ==================== 工作台 → 登录：以品牌标为圆心后退 ====================
+ * 由 authTransition.js 在退出登录时把 data-leave="pull" 挂到 <html>，
+ * 与遮罩的「反向收镜」同向：工作台缩向品牌标并失焦，登录页随后对焦落位。 */
+/* 缩放/失焦先走，透明度留到最后 40% 才收——否则工作台在第一帧就化没了，
+   收镜只剩一层空画布 */
+@keyframes wq-app-recede {
+  from { transform: none; filter: none; }
+  to   { transform: scale(.94); filter: blur(10px); }
+}
+@keyframes wq-app-recede-fade {
+  0%, 60% { opacity: 1; }
+  100% { opacity: 0; }
+}
+html[data-leave='pull'] .app-root {
+  /* 与登录页右上角的源头圆点对齐（.hero-dot：top 45 + 16 / right 61 + 16） */
+  transform-origin: calc(100% - 77px) 61px;
+  animation:
+    wq-app-recede .44s cubic-bezier(.22, 1, .36, 1) both,
+    wq-app-recede-fade .44s linear both;
+  will-change: transform, filter, opacity;
+}
+@media (max-width: 768px) {
+  html[data-leave='pull'] .app-root {
+    transform-origin: calc(100% - 24px) calc(var(--sat, 0px) + 24px);
+  }
 }

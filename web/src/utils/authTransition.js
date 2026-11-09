@@ -1,12 +1,11 @@
-// ==================== 登录 ⇄ 工作台 过渡（从品牌标推镜）====================
+// ==================== 登录 ⇄ 工作台 过渡（从品牌标收放）====================
 // 登录页与工作台本是两套独立页面，路由一切就是硬切。这里在两者之间的唯一一道
-// 边界上盖一层全屏遮罩，并把「登录 → 工作台」做成一次以品牌标为圆心的推镜：
-//   · 推镜（约 0.52s）：源头圆点在品牌标处亮起，三道涟漪与三道活水线散开，
-//     品牌标胀开成「门」；登录页以品牌标为圆心放大失焦，卡片带一点前景视差。
-//   · 换页：画布在推镜末尾铺满，路由在这一帧完成，看不到硬切。
-//   · 落位（约 0.66s）：遮罩整体退去，工作台从 1.06 倍景深外对上焦
-//     （动画定义在 app.css，经 html[data-enter='push'] 触发）。
-// 只在「登录 → 工作台」出现；站内跳转、首次进入、公开分享页都不触发。
+// 边界上盖一层全屏遮罩，并做成同一个镜头的两个方向：
+//   · 登录 → 工作台（in）：以品牌标为圆心推镜——源头圆点亮起，三道涟漪与活水线
+//     散开，品牌标胀开成「门」，登录页放大失焦；换页后工作台从景深外落位。
+//   · 工作台 → 登录（out）：同一套元素的逆放——工作台后退失焦，涟漪收拢、
+//     品牌门缩回原点、光井收束；换页后登录页从失焦中对焦落位。
+// 只在「登录 ⇄ 工作台」这道边界上出现；站内跳转、首次进入、公开分享页都不触发。
 import { reactive } from 'vue'
 
 export const authVeil = reactive({
@@ -23,7 +22,7 @@ const REDUCED = typeof window !== 'undefined' && window.matchMedia &&
   window.matchMedia('(prefers-reduced-motion: reduce)').matches
 export const VEIL_MS = REDUCED
   ? { cover: { in: 60, out: 60 }, reveal: { in: 60, out: 60 } }
-  : { cover: { in: 480, out: 320 }, reveal: { in: 480, out: 460 } }
+  : { cover: { in: 480, out: 400 }, reveal: { in: 480, out: 460 } }
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
 
@@ -68,25 +67,26 @@ function clearVars () {
   root.style.removeProperty('--wq-card-y')
 }
 
-/** 盖住整屏：导航前调用，先跑完推镜再放行路由 */
+/** 盖住整屏：导航前调用，先跑完收放动作再放行路由 */
 export async function coverAuthVeil (mode = 'in') {
   gen++
   authVeil.mode = mode
   authVeil.phase = 'cover'
   authVeil.visible = true
   stopEnter()
-  applyAnchor()
-  if (mode === 'in') document.documentElement.dataset.leave = 'push'
-  else delete document.documentElement.dataset.leave
+  // 推镜的圆心取自品牌标；收镜的落点是登录页右上角的源头圆点，位置写在 AuthVeil 样式里
+  if (mode === 'in') applyAnchor()
+  // in：登录页以品牌标为圆心前推；out：工作台以源头圆点为圆心后退
+  document.documentElement.dataset.leave = mode === 'in' ? 'push' : 'pull'
   await wait(VEIL_MS.cover[mode])
 }
 
-/** 揭开遮罩：新页面已挂载后调用；进入工作台的那一次同时触发落位 */
+/** 揭开遮罩：新页面已挂载后调用；in 触发工作台落位，out 触发登录页对焦 */
 export async function revealAuthVeil () {
   if (!authVeil.visible || authVeil.phase === 'reveal') return
   const my = gen
   authVeil.phase = 'reveal'
-  if (authVeil.mode === 'in' && !REDUCED) startEnter()
+  if (!REDUCED) startEnter(authVeil.mode === 'in' ? 'push' : 'land')
   await wait(VEIL_MS.reveal[authVeil.mode])
   if (my !== gen) return           // 期间又起了新过渡：交给新一代收尾
   authVeil.visible = false
@@ -95,12 +95,12 @@ export async function revealAuthVeil () {
   clearVars()
 }
 
-// 工作台落位：属性挂在 <html> 上，app.css 据此给 .app-root 挂动画。
-// 落位动画 .66s，760ms 后摘属性足够覆盖（摘除只是解除选择器，动画已结束并
+// 落位/对焦：属性挂在 <html> 上，app.css（push）与 LoginPage.vue（land）据此挂动画。
+// 最长一支 .66s，760ms 后摘属性足够覆盖（摘除只是解除选择器，动画已结束并
 // fill: both，不会闪回）。
-function startEnter () {
+function startEnter (kind) {
   const root = document.documentElement
-  root.dataset.enter = 'push'
+  root.dataset.enter = kind
   clearTimeout(enterTimer)
   enterTimer = setTimeout(stopEnter, 760)
 }

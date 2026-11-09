@@ -2049,6 +2049,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         private final java.util.List<java.util.Map<String, Object>> toolCalls =
                 java.util.Collections.synchronizedList(new java.util.ArrayList<>());
         /**
+         * 本轮工具入参的<b>原文</b>长度合计（折叠展示之前）。
+         * <p>入参落库/下发前会把超长字段折成预览（见 {@link #toolArgsForDisplay}），而「暗截断对账」判的是
+         * 模型这一轮到底生成了多少字——读折叠后的那一份，会把「写文件」这类正常轮误判成内容丢失。
+         */
+        private long toolArgRawChars;
+        /**
          * 本轮「有没有前进」的账（工具结果喂它）：连续无进展由引擎收口，见 {@link AgentxTurnProgress}。
          * 与工具卡同一份结果文本，避免两处各判一次「这步算不算白做」。
          */
@@ -2566,9 +2572,14 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             // 终态回填时不覆盖——那时清单可能已经推进到下一步，拿它盖会把这一步的工具挪到下一步去
             int stepId = hooks.step().index();
             if (stepId >= 0) entry.put("stepId", stepId);
-            // 入参随卡片落库：前端刷新后的工具卡、咨询卡「被咨询那一位的名字」、
-            // 以及暗截断对账里的「工具入参字符数」都读这一列（缺它等于三处一起退化）
-            if (args != null && !args.isBlank()) entry.put("args", args);
+            // 入参随卡片落库：前端刷新后的工具卡与咨询卡「被咨询那一位的名字」都读这一列（缺它两处一起退化）。
+            // 超长字段在这里折成预览：整份文件正文（presentArtifact/write_file 的 content）原样进库，
+            // 只会把消息行和每次刷新的历史回显一起撑肥，而完整正文本来就在产物库/沙箱文件里。
+            // 原文长度单独计入 toolArgRawChars——暗截断对账要的是模型生成了多少字，不能读折叠后的这份。
+            if (args != null && !args.isBlank()) {
+                toolArgRawChars += args.length();
+                entry.put("args", toolArgsForDisplay(args));
+            }
             // 输出与入参同一条规则：只在有内容时写，且与 SSE 帧同一个键名（前端读 t.result）
             if (result != null && !result.isBlank()) entry.put("result", result);
             // 耗时与开始时刻同样落库：只靠 SSE 那一帧带 elapsedMs，刷新后每张卡都没有数，
@@ -2646,6 +2657,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
 
         java.util.List<java.util.Map<String, Object>> toolCallList() {
             return toolCalls;
+        }
+
+        /** 本轮工具入参原文字符数（不受展示折叠影响），供暗截断对账使用。 */
+        long toolArgRawChars() {
+            return toolArgRawChars;
         }
 
         /**
@@ -4608,12 +4624,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 「已交代」必须算上思考字符与工具入参——前者漏了就是轮轮误报（deepseek 系恒思考），
         // 后者漏了会把「写文件动辄几百 token」的正常轮判成内容丢失。
         long finalOutput = tokens.get("finalOutput") instanceof Number n ? n.longValue() : 0;
-        int toolArgChars = 0;
-        for (java.util.Map<String, Object> rec : recording.toolCallList()) {
-            Object args = rec.get("args");
-            if (args != null) toolArgChars += String.valueOf(args).length();
-        }
-        int accounted = body.length() + recording.thinking.length() + toolArgChars;
+        // 读原文长度而不是 rec.get("args")：入参落库前已折成预览，读那一份会把写文件的轮次判成内容丢失
+        int toolArgChars = (int) Math.min(Integer.MAX_VALUE, recording.toolArgRawChars());
+        int accounted = (int) Math.min(Integer.MAX_VALUE,
+                (long) body.length() + recording.thinking.length() + toolArgChars);
         if (!stopped && !timedOut && !budget && !stalled && !tokens.isEmpty()
                 && com.wenqu.ai.agent.chat.TurnRecorder.looksLikeOutputLost(finalOutput, accounted, true)) {
             pool.registrar().degrade("outputLost", "模型本轮生成 " + finalOutput
@@ -5100,6 +5114,51 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 "timeoutMs", pendingBudgetMs(PendingKind.ASK)));
     }
 
+    /** 工具入参在展示（落库 + SSE）里的单字段上限：超过就折成预览 + 省略字数。 */
+    private static final int TOOL_ARG_PREVIEW_CHARS = 2000;
+
+    /**
+     * 工具入参的展示形态：超长字符串字段折成「前 2000 字 + 已省略 N 字」，其余原样。
+     * <p>触发点是文件类工具：{@code presentArtifact} / {@code write_file} 的 {@code content} 是整份正文
+     * （几万字的 HTML 报告很常见），原样回放会同时撑肥消息行、每帧 SSE 与历史回显，界面上则是一屏转义源码。
+     * 完整正文仍在产物库/沙箱文件里，展示层只需要交代「这一步写了什么」。
+     * <p>折叠只改字符串值、保持 JSON 结构：前端读 args 的 {@code JSON.parse} 与入参摘要都不受影响。
+     */
+    static String toolArgsForDisplay(String args) {
+        if (args == null || args.length() <= TOOL_ARG_PREVIEW_CHARS) return args;
+        Object parsed;
+        try {
+            parsed = com.alibaba.fastjson2.JSON.parse(args);
+        } catch (Exception e) {
+            return clipArgText(args); // 不是 JSON（MCP 兼容的纯文本入参）：按整段折
+        }
+        if (!(parsed instanceof java.util.Map) && !(parsed instanceof java.util.List)) return clipArgText(args);
+        return com.alibaba.fastjson2.JSON.toJSONString(trimLongArgText(parsed));
+    }
+
+    private static Object trimLongArgText(Object v) {
+        if (v instanceof String s) {
+            return s.length() <= TOOL_ARG_PREVIEW_CHARS ? s : clipArgText(s);
+        }
+        if (v instanceof java.util.Map<?, ?> m) {
+            java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
+            for (java.util.Map.Entry<?, ?> e : m.entrySet()) {
+                out.put(String.valueOf(e.getKey()), trimLongArgText(e.getValue()));
+            }
+            return out;
+        }
+        if (v instanceof java.util.List<?> l) {
+            java.util.List<Object> out = new java.util.ArrayList<>(l.size());
+            for (Object o : l) out.add(trimLongArgText(o));
+            return out;
+        }
+        return v;
+    }
+
+    private static String clipArgText(String s) {
+        return s.substring(0, TOOL_ARG_PREVIEW_CHARS) + "…（已省略 " + (s.length() - TOOL_ARG_PREVIEW_CHARS) + " 字）";
+    }
+
     /**
      * 工具卡载荷（{@code tool_status} 实时帧与落库那份同源，字段形状一致）。
      *
@@ -5148,7 +5207,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 必须按字符串下发（和落库那份同形，见 Recording#toolCall）：前端读 args 的四处全是
         // JSON.parse(t.args)，裸拼对象会让流式时的标题行与入参段都成 [object Object]（刷新读落库那份却正常），
         // 还顺带废掉「同一次 start 只建一张卡」的入参比对（两个对象永不 ===）
-        if (args != null && !args.isBlank()) sb.append(",\"args\":").append(com.alibaba.fastjson2.JSON.toJSONString(args));
+        // 与落库那份同一把尺：超长字段折成预览，否则整份文件正文会随每一帧 SSE 重发一遍
+        if (args != null && !args.isBlank()) {
+            sb.append(",\"args\":").append(com.alibaba.fastjson2.JSON.toJSONString(toolArgsForDisplay(args)));
+        }
         // 输出（截断）：展开卡的「输出」段读它；缺了只剩入参，看不到工具到底返回了什么
         if (result != null && !result.isBlank()) sb.append(",\"result\":").append(com.alibaba.fastjson2.JSON.toJSONString(result));
         // 咨询卡（子智能体/取数助手等）的终态一问一答：直播与刷新同一份 subChat（落库那份同源），

@@ -11,7 +11,7 @@
          出现在 H5 里（横屏时它还会以常驻栏形态直接摊在左侧）。 -->
     <aside v-if="!mobileShell" class="side" :class="{ collapsed: collapsed && !isNarrow, open: sideOpen }">
       <div class="side-logo">
-        <BrandMark v-if="!collapsed" :size="24" />
+        <BrandMark v-if="!collapsed" :size="24" data-brand-anchor />
         <span v-if="!collapsed" class="logo-name">问渠</span>
         <!-- 侧栏的「形态操作」组：编辑 + 折叠，用容器整体靠右（.side-logo-ops margin-left:auto）。
              必须成组包起来，而不是各自 margin-left:auto —— 后者只推走了折叠按钮，
@@ -42,7 +42,7 @@
           </button>
           <button class="app-icon-btn fold" :class="{ 'slot-hidden': navEditing && !collapsed }"
                   :title="collapsed ? '展开侧边栏' : '折叠侧边栏'" @click="toggleFold">
-            <BrandMark v-if="collapsed" :size="24" />
+            <BrandMark v-if="collapsed" :size="24" data-brand-anchor />
             <menu-fold-outlined v-else />
           </button>
         </div>

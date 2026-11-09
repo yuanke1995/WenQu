@@ -402,6 +402,18 @@ html[data-leave='push'] .login-card {
 @media (prefers-reduced-motion: reduce) {
   html[data-leave='push'] .login-wrap,
   html[data-leave='push'] .login-card { animation: none; }
+  html[data-enter='land'] .login-wrap { animation: none; }
+}
+
+/* ==================== 工作台 → 登录：从失焦中对焦落位 ====================
+   与遮罩的反向收镜接续：工作台缩回品牌标后，登录页从一层薄雾里对上焦。 */
+html[data-enter='land'] .login-wrap {
+  animation: wq-login-land .56s cubic-bezier(.16, 1, .3, 1) both;
+  will-change: transform, filter, opacity;
+}
+@keyframes wq-login-land {
+  from { transform: scale(1.045); filter: blur(9px); opacity: 0; }
+  to   { transform: none; filter: none; opacity: 1; }
 }
 
 /* ==================== 响应式 ==================== */
