@@ -128,12 +128,14 @@ public class SchemaMigrator implements ApplicationRunner {
         }
         int tenantFixed = normalizeTenantColumns();
         int scopeRenamed = migrateQuotaScope();
+        int mcpLabelFixed = migrateMcpToolLabelKeys();
         int retiredDropped = dropRetiredColumns(tables);
-        log.info("[SchemaMigrator] schema 演进检查完成：{} 张表，补列 {} 个，补索引 {} 个{}{}{}",
+        log.info("[SchemaMigrator] schema 演进检查完成：{} 张表，补列 {} 个，补索引 {} 个{}{}{}{}",
                 tables.size(), addedCols, addedIdx,
                 autoIndex ? "" : "（索引自动补齐已关闭）",
                 tenantFixed > 0 ? "，租户列归一 " + tenantFixed + " 张表" : "",
                 scopeRenamed > 0 ? "，配额作用域改名 " + scopeRenamed + " 条" : "",
+                mcpLabelFixed > 0 ? "，MCP 中文名旧前缀键归一 " + mcpLabelFixed + " 行" : "",
                 retiredDropped > 0 ? "，退役列删除 " + retiredDropped + " 个" : "");
     }
 
@@ -239,6 +241,71 @@ public class SchemaMigrator implements ApplicationRunner {
                     ex.getMessage());
             return 0;
         }
+    }
+
+    /**
+     * MCP 工具中文名的旧前缀键归一（2026-11-09）。
+     * <p>Spring AI 挂载名前缀从直拼的 {@code wen_qu}（{@code wen_qusql_query}）换成了现行的
+     * {@code w_q_}（{@code w_q_sql_query}）。{@code c_ai_user_mcp.tool_labels} 的存储契约一直是
+     * <b>裸工具名</b>（见 schema.sql 列注释），但旧代码按旧前缀剥键，按挂载名存进来的条目就带着
+     * {@code wen_qu*} 的键落库——读写代码不再兼容旧格式之后，这批键永远查不到（工具卡现英文裸名）。
+     * 这里把旧键一次性剥回裸名：与既有裸名条目撞键时<b>裸名条目优先</b>；没动的条目
+     * （含旧 LLM 翻译格式的对象值）原样保留；{@code w_q_} 开头的键不动——那是合法裸名，
+     * 外部 server 真可能有这么起名的工具。数据归一后，{@code McpToolLabelService#stripPrefix}
+     * 与前端 {@code projections.js#bareToolName} 都只留现行前缀这一条规则。
+     */
+    private int migrateMcpToolLabelKeys() {
+        List<Map<String, Object>> rows;
+        try {
+            rows = jdbcTemplate.queryForList(
+                    "select id, tool_labels from c_ai_user_mcp "
+                            + "where tool_labels is not null and tool_labels <> '' and tool_labels like '%wen_qu%'");
+        } catch (Exception ex) {
+            log.warn("[SchemaMigrator] 查询 MCP 工具中文名失败（跳过旧键归一）: {}", ex.getMessage());
+            return 0;
+        }
+        int fixed = 0;
+        for (Map<String, Object> row : rows) {
+            String id = String.valueOf(row.get("id"));
+            try {
+                com.alibaba.fastjson2.JSONObject root =
+                        com.alibaba.fastjson2.JSON.parseObject(String.valueOf(row.get("tool_labels")));
+                Object itemsObj = root == null ? null : root.get("items");
+                if (!(itemsObj instanceof Map<?, ?> items)) continue;
+                Map<String, Object> out = new LinkedHashMap<>();
+                boolean changed = false;
+                // 第一遍：非旧键原样入（撞键时裸名条目赢）；第二遍：旧键剥前缀补进
+                for (Map.Entry<?, ?> e : items.entrySet()) {
+                    if (e.getKey() == null) continue;
+                    String key = String.valueOf(e.getKey());
+                    if (legacyMcpPrefixLen(key) < 0) out.put(key, e.getValue());
+                    else changed = true;
+                }
+                for (Map.Entry<?, ?> e : items.entrySet()) {
+                    if (e.getKey() == null) continue;
+                    String key = String.valueOf(e.getKey());
+                    int len = legacyMcpPrefixLen(key);
+                    if (len < 0) continue;
+                    out.putIfAbsent(key.substring(len), e.getValue());
+                }
+                if (!changed) continue;
+                String json = com.alibaba.fastjson2.JSON.toJSONString(
+                        Map.of("items", out), com.alibaba.fastjson2.JSONWriter.Feature.WriteMapNullValue);
+                jdbcTemplate.update("update c_ai_user_mcp set tool_labels = ? where id = ?", json, id);
+                fixed++;
+                log.info("[SchemaMigrator] MCP 中文名旧前缀键已归一: id={}", id);
+            } catch (Exception ex) {
+                log.warn("[SchemaMigrator] MCP 中文名旧键归一失败 id={}（请手工处理）: {}", id, ex.getMessage());
+            }
+        }
+        return fixed;
+    }
+
+    /** 历史挂载名前缀（直拼的 wen_qu / 带尾下划线的 wen_qu_）长度；不是旧格式返回 -1 */
+    private static int legacyMcpPrefixLen(String key) {
+        if (key.startsWith("wen_qu_")) return 7;
+        if (key.startsWith("wen_qu") && key.length() > 6) return 6;
+        return -1;
     }
 
     /** 查表现有列；表不存在返回 null */

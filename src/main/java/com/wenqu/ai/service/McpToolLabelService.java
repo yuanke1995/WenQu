@@ -60,7 +60,7 @@ public class McpToolLabelService {
      *
      * @param uid      归属用户（MCP 是个人资产，名字按归属隔离）
      * @param toolName 工具卡上记录的名字——通常是带 clientInfo 前缀的挂载名
-     *                 （Spring AI {@code prefixedToolName} 无分隔符直拼：{@code wen_qusql_query}），
+     *                 （现行前缀 {@code w_q_}：{@code w_q_sql_query}），
      *                 也可以就是裸名；先按原样查、再剥前缀查
      */
     public String label(String uid, String toolName) {
@@ -154,12 +154,13 @@ public class McpToolLabelService {
 
     /**
      * 剥 clientInfo 前缀，还原 server 侧的裸工具名。
-     * <p>前缀规则已反编译 spring-ai-mcp 1.1.8 核实：{@code prefixedToolName} 把
-     * {@code clientInfo.name}（"wen-qu"）格式化成 {@code wen_qu} 后<b>无分隔符直拼</b>裸名
-     * （{@code wen_qusql_query}）。与前端 {@code projections.js#bareToolName} 同一条规则。
+     * <p>只认现行前缀 {@code w_q_}（带尾下划线直拼裸名，{@code w_q_sql_query}）。
+     * 历史值 {@code wen_qu}（无分隔符直拼）<b>不在这兼容</b>：2026-11-09 起由
+     * {@code SchemaMigrator#migrateMcpToolLabelKeys} 启动时把库里旧前缀键一次性归一成裸名，
+     * 数据归一后读写两侧都只留这一条规则。与前端 {@code projections.js#bareToolName} 同一条规则。
      */
     static String stripPrefix(String name) {
-        if (name.startsWith("wen_qu") && name.length() > 6) return name.substring(6);
+        if (name.startsWith("w_q_")) return name.substring(4);
         return null;
     }
 }

@@ -49,9 +49,10 @@ const TOOL_DESCS = {
   ls: '列出某个目录下的文件'
 }
 // ⚠️ 与 McpClientService 的 clientInfo name 对应。Spring AI 的 SyncMcpToolCallback 用
-// clientInfo.name 经 McpToolUtils.prefixedToolName → shorten() 生成前缀：非字母数字段丢弃、
-// 小写、用_ 连接、无分隔符。clientInfo.name="wen-qu" ⇒ 前缀 "wen_qu"（2026-10-05 反编译 1.1.8 核实）。
-const MCP_CLIENT_PREFIX = 'wen_qu'
+// clientInfo.name 经 McpToolUtils.prefixedToolName → shorten() 生成前缀。只认现行前缀 "w_q_"
+// （w_q_sql_query）；历史值 "wen_qu" 不做兼容——库里的旧前缀键已由 SchemaMigrator 启动时
+// 归一成裸名，与后端 McpToolLabelService#stripPrefix 同一条规则（2026-11-09）。
+const MCP_CLIENT_PREFIX = 'w_q_'
 const bareToolName = n => n.startsWith(MCP_CLIENT_PREFIX) ? n.slice(MCP_CLIENT_PREFIX.length) : n
 const toolLabel = (n, label) => {
   // 后端下发的展示名优先（工具注册中心 → tool_status / approval 载荷），拿不到才用本地这份兜底。
