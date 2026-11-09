@@ -38,6 +38,8 @@ import { THINK_CAPS, REASONING_LEVELS, THINK_LEVEL_ON, levelLabel,
          turnSteerRows,
          rememberAgents, isDispatchTool, consultNameOf, stepBriefOf, TURN_STOP_SUFFIX, applyBlocks } from './projections'
 import { planExecProgress, planAdjustsOf, planVersionOf, planStepCount } from './plan'
+// 裁决完卡片立刻让铃铛角标重算（后端会把已处理的待办通知收敛为已读），不等 30s 轮询
+import { emitNotifChanged } from './useNotifications'
 import { planReplannedAtOf, setPlanReplanned } from './planUiState'
 
 export function useChatEngine (hooks = {}) {
@@ -1664,6 +1666,7 @@ async function resolveApproval (m, card, approved) {
       a.busy = false
       return
     }
+    emitNotifChanged('chat')
     if (m && Array.isArray(m.approvals)) m.approvals = m.approvals.filter(x => x.id !== a.id)
     if (background) pollRestoredAnswer(currentSessionId.value)
     else hooks.scrollSoft?.()
@@ -1990,6 +1993,7 @@ async function submitPlanApproval (m, action) {
       if (c.restored) { m.planCard = null; stopRestoredPoll(); switchSession(currentSessionId.value) }
       return
     }
+    emitNotifChanged('chat')
     if (approved) {
       c.status = 'approved'
       if (c.restored) {
@@ -2029,6 +2033,7 @@ async function revisePlanInPlace (m, text) {
       c.pendingFeedback = ''
       return false
     }
+    emitNotifChanged('chat')
     c.revising = true
     c.revisingStarted = false
     c.deadline = 0                      // 旧一版的倒计时到此为止；新稿的 plan_approval 会带新的 timeoutMs
@@ -2066,6 +2071,7 @@ async function continuePlanConversation (m, text) {
   try {
     const r = await supersedePlanApproval(c.id, q)
     if (r && r.success === false) { message.warning(r.msg || '提交失败'); c.busy = false; return }
+    emitNotifChanged('chat')
   } catch (e) {
     message.error(e.message || '提交失败')
     c.busy = false
@@ -2762,6 +2768,7 @@ async function askSubmitAll (m) {
       if (a.restored) { retireAskCard(m); stopRestoredPoll(); switchSession(currentSessionId.value) }
       return
     }
+    emitNotifChanged('chat')
     a.answered = true
     if (a.restored) {
       // 本设备没有这一轮的流，终态事件不会来撤卡：自己撤下面板、把气泡交给后台生成并轮询取回
@@ -2790,6 +2797,7 @@ async function ignoreAsk (m) {
       if (a.restored) { retireAskCard(m); stopRestoredPoll(); switchSession(currentSessionId.value) }
       return
     }
+    emitNotifChanged('chat')
     if (a.restored) {
       retireAskCard(m)
       pollRestoredAnswer(currentSessionId.value)

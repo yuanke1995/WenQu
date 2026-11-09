@@ -419,6 +419,7 @@ public class NotificationService {
 
     /** 各类型未读计数（铃铛/通知中心的筛选角标用）；返回 {类型: 未读数} */
     public Map<String, Long> countsByType(String uid) {
+        autoReadResolvedPending(uid);
         Map<String, Long> out = new java.util.LinkedHashMap<>();
         List<Notification> rows = notificationMapper.selectList(new LambdaQueryWrapper<Notification>()
                 .eq(Notification::getUid, uid).eq(Notification::getReadFlag, 0));
@@ -442,8 +443,32 @@ public class NotificationService {
         return notificationMapper.delete(w);
     }
 
+    /** 待处理类通知：底层记录裁决后自动收敛为已读的类型（与 {@link #enrichActionable} 同一批） */
+    private static final List<String> PENDING_AUTO_READ_TYPES = List.of(
+            Notification.TYPE_TOOL_APPROVAL, Notification.TYPE_TOOL_ASK, Notification.TYPE_PLAN_APPROVAL,
+            Notification.TYPE_WORKFLOW_APPROVAL, Notification.TYPE_TENANT_REQUEST);
+
+    /**
+     * 把「底层已处理但仍未读」的待办通知置已读（与列表的 {@link #enrichActionable} 同一口径）。
+     * <p>未读数轮询必须先过这一道：否则批准/答复/驳回之后，红标要等用户点开通知列表才消失——
+     * 角标与待处理状态各说各话，就是「通知红标不联动」的报法。待处理未读通常只有几条，代价可控。
+     */
+    private void autoReadResolvedPending(String uid) {
+        try {
+            List<Notification> rows = notificationMapper.selectList(new LambdaQueryWrapper<Notification>()
+                    .eq(Notification::getUid, uid)
+                    .eq(Notification::getReadFlag, 0)
+                    .in(Notification::getType, PENDING_AUTO_READ_TYPES));
+            if (!rows.isEmpty()) enrichActionable(rows);
+        } catch (Exception e) {
+            // 收敛失败不影响计数本身：本次按原样返回，下次轮询再试
+            log.warn("[NOTIFY] 待处理通知自动收敛失败 uid={}: {}", uid, e.getMessage());
+        }
+    }
+
     /** 未读数（铃铛 Badge 轮询用；只数自己的） */
     public long unreadCount(String uid) {
+        autoReadResolvedPending(uid);
         return notificationMapper.selectCount(new LambdaQueryWrapper<Notification>()
                 .eq(Notification::getUid, uid)
                 .eq(Notification::getReadFlag, 0));
