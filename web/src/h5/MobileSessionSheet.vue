@@ -140,6 +140,7 @@ import UserAvatar from '../components/UserAvatar.vue'
 import { sessionStore, loadSessions, loadSpaceMore, reloadSpace, NO_SPACE_KEY, resetSessionStore } from '../views/store'
 import { pinSession, favoriteSession, renameSessionApi, logoutApi, deleteSessionApi, listProjects, moveSessionProject } from '../api'
 import { authUser, clearAuth } from '../utils/auth'
+import { clearDraft } from './composerDraft'
 import { themeState, toggleTheme } from '../utils/theme'
 import { exportSessionMarkdown } from '../views/exportMd'
 
@@ -331,6 +332,8 @@ const doDelete = () => {
     okText: '删除', okType: 'danger', cancelText: '取消',
     onOk: async () => {
       menuFor.value = null
+      // 会话没了，它的本机草稿也不该再留在设备上
+      clearDraft(s.id)
       if (engine) {
         // 走引擎的删除（当前会话被删时它会自动落到最近会话/新建并同步 URL，与 PC 侧栏同一路径）
         await engine.handleDeleteSession(s.id).catch(() => {})

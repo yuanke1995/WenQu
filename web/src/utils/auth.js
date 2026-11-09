@@ -4,6 +4,7 @@
 // 前端经 /auth/me 回显缓存；/auth/me 同时下发当前角色可见的侧边栏菜单树（menus）。
 import { ref } from 'vue'
 import { getAuthMe } from '../api'
+import { clearAllDrafts } from '../h5/composerDraft'
 
 const TOKEN_KEY = 'ai_token'
 let cached = null // { user, username, role, admin, superadmin, menus } | null（会话内缓存，失效后由 ensureAuth 重拉）
@@ -24,6 +25,8 @@ export function clearAuth () {
   setToken('')
   cached = null
   try { localStorage.removeItem('ai_role') } catch (e) { /* ignore */ }
+  // 退出/令牌失效同时清掉本机输入草稿：共享设备上换人登录不该看到上一个人没发出去的话
+  clearAllDrafts()
 }
 
 export const isAdminSync = () => {

@@ -107,9 +107,13 @@
           <paper-clip-outlined class="as-ic" />
           <span class="as-main"><span class="as-name">选择文件</span></span>
         </button>
+        <button class="as-row" type="button" @click="camInput && camInput.click()">
+          <camera-outlined class="as-ic" />
+          <span class="as-main"><span class="as-name">拍照</span><span class="as-desc">打开相机拍一张，随本轮发送</span></span>
+        </button>
         <button class="as-row" type="button" @click="imgInput && imgInput.click()">
           <picture-outlined class="as-ic" />
-          <span class="as-main"><span class="as-name">选择图片</span><span class="as-desc">随本轮发送，最多 5 张</span></span>
+          <span class="as-main"><span class="as-name">从相册选择</span><span class="as-desc">随本轮发送，最多 5 张</span></span>
         </button>
         <template v-if="pendingFiles.length">
           <div class="as-section">已选附件</div>
@@ -134,6 +138,10 @@
         <input ref="fileInput" type="file" multiple style="display:none" @change="onFile" />
         <!-- accept 列出的这四个是能进 canvas 压缩通道、真能随问发送的格式（与个人设置页头像同口径）。 -->
         <input ref="imgInput" type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple style="display:none" @change="onImg" />
+        <!-- 拍照：capture=environment 让系统直接开后置相机（拍白板/文档的主场景）。
+             accept 放宽到 image/*：相机产出的是 JPEG/HEIC，iOS 上更宽的 accept 才不会退回相册；
+             不支持 capture 的浏览器（桌面、部分应用内浏览器）自动退回系统选择器，不算断头路。 -->
+        <input ref="camInput" type="file" accept="image/*" capture="environment" style="display:none" @change="onImg" />
       </template>
     </div>
 
@@ -147,7 +155,7 @@
 import { computed, inject, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import { CheckOutlined, DatabaseOutlined, FileTextOutlined, RobotOutlined, PaperClipOutlined, PictureOutlined,
-  OrderedListOutlined, AimOutlined } from '@ant-design/icons-vue'
+  OrderedListOutlined, AimOutlined, CameraOutlined } from '@ant-design/icons-vue'
 import BottomSheet from './BottomSheet.vue'
 import { fmtSize, histItemTitle } from '../chat/projections'
 
@@ -205,6 +213,7 @@ const listLen = computed(() => mentionTab.value === 'kb' ? mentionKbFiltered.val
 // 附件选择：与主输入框同一条管线（图片压缩为 dataURL、文件先上传换 fileId）
 const fileInput = ref(null)
 const imgInput = ref(null)
+const camInput = ref(null)
 const MAX_MB = 15
 const onFile = e => {
   const files = Array.from(e.target.files || [])

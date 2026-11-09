@@ -21,7 +21,7 @@ import { initTheme } from './utils/theme'
 // 且要在首次渲染前就位，否则首帧会拿到过期的视口高度。
 import { installKeyboardInset } from './h5/keyboard'
 // PWA 安装提示：必须在顶层就接住 beforeinstallprompt（事件在页面加载后不久就可能触发）
-import { registerPwa } from './h5/pwa'
+import { registerPwa, watchSwUpdate } from './h5/pwa'
 // 产物/工作区文件的预览台：本行只为装它那两个 document 级委托（预览入口 + 正文复制按钮）
 import './utils/previewStage'
 import { watchPushMessages } from './utils/webpush'
@@ -72,10 +72,14 @@ registerPwa()
 // dev 不注册：vite 的资源 URL 不带 hash，SW 会缓存开发期模块、干扰热更新（改代码不生效的经典坑）。
 // 注册失败只记日志：无 SW 时功能完全可用（只是少了安装能力与二次访问的资源缓存）。
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  // 必须在注册之前取：首次安装后 SW 的 claim 不是「更新」，不该弹「新版本已就绪」
+  const hadController = !!navigator.serviceWorker.controller
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch(e => {
-      console.warn('[pwa] Service Worker 注册失败（不影响使用）', e)
-    })
+    navigator.serviceWorker.register('/sw.js')
+      .then(reg => watchSwUpdate(reg, hadController))
+      .catch(e => {
+        console.warn('[pwa] Service Worker 注册失败（不影响使用）', e)
+      })
   })
 }
 

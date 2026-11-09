@@ -15,11 +15,16 @@ export default defineConfig({
   build: {
     rollupOptions: {
       output: {
-        // 稳定的 vendor 分块：业务代码迭代不打断框架/组件库的浏览器缓存。
-        // antd 块只含 tree-shake 后真正被引用的部分（约 34 个组件族）。
-        manualChunks: {
-          'vue-vendor': ['vue', 'vue-router'],
-          'antd-vendor': ['ant-design-vue', '@ant-design/icons-vue']
+        // 分块只固定框架层（vue/vue-router）：业务迭代不打断它们的浏览器缓存。
+        //
+        // 刻意不再把 antd / icons 整体并进一个 vendor 块。此前那样做时，所有懒加载页面
+        // 用到的 34 个组件族被合并进同一块，而入口（App.vue 的 ConfigProvider、若干共享
+        // utils 的 message）只要碰一个 antd API，index.html 就会 modulepreload 整块——
+        // H5 首屏因此多下载 344KB gz 的用不上的组件。现在交给 rollup 按真实引用关系拆：
+        // 入口只含它真正 import 的 antd 模块，其余随各自路由 chunk 首次用到时才下载。
+        manualChunks (id) {
+          if (!id.includes('node_modules')) return
+          if (/node_modules\/(@vue|vue|vue-router|@vueuse)\//.test(id)) return 'vue-vendor'
         }
       }
     }

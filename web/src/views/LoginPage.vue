@@ -431,11 +431,10 @@ html[data-enter='land'] .login-wrap {
    宽屏 --app-vh 不存在 → 回落 100dvh。 */
 @media (max-width: 768px) {
   .login-wrap { height: 100vh; height: var(--app-vh, 100dvh); }
-  /* 键盘弹起后容器被压缩，若保持 margin:auto 的垂直居中会把卡片顶到视口外，
-     因此用顶部对齐 + margin:auto 0 0（仍水平居中，垂直靠上），
-     再给底部留出键盘高度，滚动时卡片始终可达 */
-  .login-pane { padding: 16px 14px; align-items: flex-start; }
-  .login-card { margin: auto 0 0; padding: 22px 18px 18px; }
+  /* 键盘弹起后容器高度收缩，卡片高于可视区时 auto 外边距自动归零 → 顶对齐并可滚动；
+     键盘收起、空间充足时回到垂直居中，避免上半个屏幕全空。 */
+  .login-pane { padding: 16px 14px; }
+  .login-card { margin: auto; padding: 22px 18px 18px; }
   /* 主题切换圆点：宽屏锚在页面右上角（right:61px 呼应内容框位置），
      窄屏下这个距离是按宽屏调的，会飘到不合适的位置 —— 收到常规边距并让出刘海 */
   .hero-dot { top: calc(8px + var(--sat, 0px)); right: 8px; }

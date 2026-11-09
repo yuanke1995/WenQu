@@ -61,3 +61,42 @@ export async function promptInstall () {
     return true
   } catch (e) { return false }
 }
+
+// ==================== 新版本就绪 ====================
+// sw.js 的 install 里已经 skipWaiting、activate 里 clients.claim，所以新版本会很快接管。
+// 但**当前页面**跑的还是旧 JS：提示一次「新版本已就绪」，由用户自己点刷新。
+// 不自动刷新是刻意的——正在生成的回答会被整页重载打断。
+export const updateReady = ref(false)
+// 同一次页面生命周期里点过「稍后」就不再打扰；新版本下一次接管/刷新后自然重来
+let updateDismissed = false
+
+/**
+ * 接住「新 SW 装好、且当前页面本来就在旧 SW 控制下」这一档。
+ * hadController 必须在注册前取：首次安装（无 controller）时 SW 的 claim 不是更新，不该提示。
+ * 只提示一次：同一版本重复触发 updatefound 不再把人从回答里拽出来。
+ */
+export function watchSwUpdate (reg, hadController) {
+  if (!reg) return
+  const flagIfReady = worker => {
+    if (!worker) return
+    const done = () => {
+      if (worker.state === 'installed' && hadController && !updateDismissed) updateReady.value = true
+    }
+    if (worker.state === 'installed') done()
+    else worker.addEventListener('statechange', done)
+  }
+  reg.addEventListener('updatefound', () => flagIfReady(reg.installing))
+  // 页面打开时可能已经装好、正等着接管（用户上次点了「稍后」又刷新过页面）
+  flagIfReady(reg.waiting || reg.installing)
+}
+
+/** 稍后再说：本次页面生命周期内不再出现（不自动刷新，也不催第二次） */
+export function dismissUpdate () {
+  updateDismissed = true
+  updateReady.value = false
+}
+
+/** 换到新版：重新取 HTML（HTML 不被 SW 缓存）与新的 hash 资源 */
+export function applyUpdate () {
+  try { window.location.reload() } catch (e) { /* 极端环境下无法重载：保持页面可用 */ }
+}

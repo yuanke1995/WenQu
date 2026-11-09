@@ -35,6 +35,14 @@
     <!-- 连通性：本机断网与服务器不通分开说一行（/m/chat 不经工作台外壳，这里自己挂一份） -->
     <NetBanner />
 
+    <!-- 新版本已就绪：Service Worker 装好新资源后提示一次（见 h5/pwa.js）。
+         不自动刷新——生成中的回答会被打断；用户自己决定什么时候换到新版 -->
+    <div v-if="swUpdateReady" class="m-update" role="status">
+      <span class="m-update-t">新版本已就绪</span>
+      <button class="m-update-go" type="button" @click="applySwUpdate">刷新</button>
+      <button class="m-update-x" type="button" title="稍后" aria-label="稍后" @click="dismissSwUpdate">×</button>
+    </div>
+
     <!-- 会话内查找：移动壳没有 Ctrl+F，入口在顶栏。行作为 flex:none 插在消息流之上——
          不用 fixed 是刻意的：keyboard.js 已把容器高写成 --app-vh（已扣软键盘），
          键盘弹起时容器自然收缩，查找条不会被盖住也不会悬浮错位。 -->
@@ -389,7 +397,7 @@
           :placeholder="goalTurnStreaming ? '插话：先回答你这句，目标随后自动继续' : '问点什么？'"
           enterkeyhint="enter"
           @paste="onComposerPaste"
-          @input="autosize"
+          @input="onComposerInput"
         ></textarea>
         <div class="m-tools">
           <button class="m-tool" type="button" title="模型与思考" @click="modelOpen = true">
@@ -463,11 +471,16 @@
     </BottomSheet>
 
     <!-- ==================== 图片查看 ==================== -->
+    <!-- 手势挂在整层上（含黑边）：双指缩放 1–4x、双击 1x↔2x、放大后拖动、1x 左右滑切换、下滑关闭。
+         pointerdown 时排掉按钮，否则左右那两颗切图钮会被当成滑动起点 -->
     <Teleport to="body">
-      <div v-if="preview.list.length" class="m-lightbox" @click="closePreview">
-        <img :src="preview.list[preview.idx]" class="m-lightbox-img" alt="图片" @click.stop />
-        <button v-if="preview.list.length > 1" class="m-lb-nav prev" type="button" @click.stop="preview.idx = (preview.idx + preview.list.length - 1) % preview.list.length">‹</button>
-        <button v-if="preview.list.length > 1" class="m-lb-nav next" type="button" @click.stop="preview.idx = (preview.idx + 1) % preview.list.length">›</button>
+      <div v-if="preview.list.length" class="m-lightbox" @click="onLightboxClick"
+           @pointerdown="lbDown" @pointermove="lbMove" @pointerup="lbUp" @pointercancel="lbUp">
+        <img ref="lbImgEl" :src="preview.list[preview.idx]" class="m-lightbox-img"
+             :class="{ dragging: lbDragging }" :style="lbImgStyle" alt="图片" @click.stop />
+        <div v-if="lbScale > 1.01" class="m-lb-zoom">{{ lbScale.toFixed(1) }}×</div>
+        <button v-if="preview.list.length > 1" class="m-lb-nav prev" type="button" @click.stop="lbNav(-1)">‹</button>
+        <button v-if="preview.list.length > 1" class="m-lb-nav next" type="button" @click.stop="lbNav(1)">›</button>
         <button class="m-lb-close" type="button" title="关闭" @click="closePreview">×</button>
         <div v-if="preview.list.length > 1" class="m-lb-count">{{ preview.idx + 1 }} / {{ preview.list.length }}</div>
       </div>
@@ -625,6 +638,9 @@ import { fmtTokens } from '../utils/token'
 import { copyText } from '../utils/clipboard'
 import { preferMobileShell } from './mobile'
 import { addSheet, removeSheet } from './sheetStack'
+import { setDraftUser, readDraft, saveDraft, flushDraft, clearDraft } from './composerDraft'
+import { updateReady as swUpdateReady, applyUpdate as applySwUpdate, dismissUpdate as dismissSwUpdate } from './pwa'
+import { authUser } from '../utils/auth'
 import { startSessionTabSync, stopSessionTabSync } from '../views/store'
 import BottomSheet from './BottomSheet.vue'
 import MobileMsgRow from './MobileMsgRow.vue'
@@ -1048,6 +1064,51 @@ const mentionNames = computed(() => pendingMentions.value.map(m => m.name || m.i
 // 必须排在引擎解构之后：text 是那里的 const，提前引用会撞暂时性死区、整个 setup 直接抛错。
 watch(text, () => nextTick(autosize))
 
+// ==================== 输入草稿（本机持久化，见 h5/composerDraft.js） ====================
+// 只在「人真的打了字」这一路落盘（@input），程序改值（引擎清框、插话取回、编辑重发）不是草稿。
+// typedBySid 记每个会话最后一次键盘输入的内容：切会话时用它把引擎 settleSteerOnLeave 拼进
+// 输入框的那句「上一会话没发出的插话」剥出来，不能让它跟着旧会话的草稿一起被换掉。
+const typedBySid = new Map()
+const draftSid = () => currentSessionId.value || ''
+const draftUidOf = u => (u && (u.user || u.username)) || 'anon'
+watch(authUser, u => setDraftUser(draftUidOf(u)), { immediate: true })
+
+const onComposerInput = () => {
+  autosize()
+  const sid = draftSid()
+  typedBySid.set(sid, text.value)
+  saveDraft(sid, text.value)
+}
+
+// 文本变空＝发出去了/被清空：对应草稿删掉。非空的变化不在这里落盘（见 onComposerInput），
+// 所以程序性恢复草稿不会被误记成「用户输入」。
+watch(text, v => {
+  if (v.trim()) return
+  const sid = draftSid()
+  typedBySid.set(sid, '')
+  clearDraft(sid)
+})
+
+watch(currentSessionId, (sid, prev) => {
+  // 先把防抖窗口里的最后一次输入写进旧会话，再换到目标会话的草稿
+  flushDraft()
+  const left = String(text.value || '')
+  const typed = typedBySid.get(prev || '') || ''
+  // left 里除了用户打的字，还可能有引擎刚拼进去的未发插话：按「输入框文本优先、队列条目不动」
+  // 的规则，只把属于用户输入的那段扣掉，剩下的原样搬到新会话输入框
+  let recovered = left
+  if (typed) {
+    if (left === typed) recovered = ''
+    else if (left.startsWith(typed)) recovered = left.slice(typed.length).trim()
+    else if (left.includes(typed)) recovered = left.replace(typed, '').trim()
+  }
+  const stored = readDraft(sid || '')
+  const next = [recovered, stored].filter(Boolean).join('\n')
+  typedBySid.set(sid || '', next)
+  if (next !== text.value) text.value = next
+  if (recovered) saveDraft(sid || '', next)
+})
+
 // ==================== 目标模式（移动壳） ====================
 // 一句话创建：输入框有正文就直接建目标并开跑（PC 是按钮/命令取正文，同一条口径）。
 // 建目标只有「这件事要做到什么」这一件事，没有验收标准草案要审——建完就往下跑。
@@ -1189,6 +1250,154 @@ const activeIdx = ref(null)
 const preview = reactive({ list: [], idx: 0 })
 const openPreview = (list, idx) => { preview.list = list || []; preview.idx = idx || 0 }
 const closePreview = () => { preview.list = []; preview.idx = 0 }
+
+// ==================== 图片查看手势 ====================
+// 手机上要能看清截图/表格：双指缩放 1–4x、双击 1x↔2x、放大后单指拖动、1x 左右滑切换、下滑关闭。
+// 用 Pointer Events（不是 touch）：同一套数学在触屏与鼠标下都只算一遍；PC 宽屏进不到这个壳。
+// 返回键先复位缩放再关闭：放大看细节时误触返回不该直接把整个查看层收掉。
+const LB_MAX = 4
+const lbImgEl = ref(null)
+const lbScale = ref(1)
+const lbTx = ref(0)
+const lbTy = ref(0)
+const lbDragging = ref(false)
+const lbImgStyle = computed(() => ({
+  transform: `translate3d(${lbTx.value}px, ${lbTy.value}px, 0) scale(${lbScale.value})`
+}))
+const lbPtrs = new Map()
+let lbPinch = null
+let lbSingle = null
+let lbSuppressClick = false
+let lbLastTap = { t: 0, x: 0, y: 0 }
+const lbZoomed = () => lbScale.value > 1.01
+const lbResetZoom = () => { lbScale.value = 1; lbTx.value = 0; lbTy.value = 0 }
+/** 放大后拖动不出图：offsetWidth/Height 是不含 transform 的布局盒，按当前倍率换算可拖范围 */
+function lbClamp (tx, ty, scale) {
+  const el = lbImgEl.value
+  if (!el) return { x: tx, y: ty }
+  const maxX = Math.max(0, (el.offsetWidth * scale - window.innerWidth) / 2)
+  const maxY = Math.max(0, (el.offsetHeight * scale - window.innerHeight) / 2)
+  return { x: Math.min(maxX, Math.max(-maxX, tx)), y: Math.min(maxY, Math.max(-maxY, ty)) }
+}
+function lbDown (e) {
+  // 切图/关闭钮不是滑动起点，否则点它们会先被当成一次手势
+  if (e.target && e.target.closest && e.target.closest('button')) return
+  if (e.pointerType === 'mouse' && e.button !== 0) return
+  lbPtrs.set(e.pointerId, { x: e.clientX, y: e.clientY })
+  lbDragging.value = true
+  lbSuppressClick = false
+  try { e.currentTarget.setPointerCapture(e.pointerId) } catch (err) { /* 无捕获也能收到层内移动 */ }
+  if (lbPtrs.size === 1) {
+    lbPinch = null
+    lbSingle = { x: e.clientX, y: e.clientY, t: Date.now(), moved: false, tx: lbTx.value, ty: lbTy.value }
+  } else if (lbPtrs.size === 2) {
+    lbSingle = null
+    const [a, b] = [...lbPtrs.values()]
+    lbPinch = {
+      dist: Math.hypot(a.x - b.x, a.y - b.y) || 1,
+      scale: lbScale.value,
+      mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+      tx: lbTx.value, ty: lbTy.value
+    }
+  }
+}
+function lbMove (e) {
+  const p = lbPtrs.get(e.pointerId)
+  if (!p) return
+  p.x = e.clientX; p.y = e.clientY
+  if (lbPinch && lbPtrs.size >= 2) {
+    const [a, b] = [...lbPtrs.values()]
+    const dist = Math.hypot(a.x - b.x, a.y - b.y) || 1
+    const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }
+    const g = lbPinch
+    const scale = Math.min(LB_MAX, Math.max(1, g.scale * dist / g.dist))
+    if (scale <= 1.01) lbResetZoom()
+    else {
+      // 以双指中点为锚：缩放前后，指尖下那一点停在原处；双指整体位移同时换算成拖动
+      const fx = g.mid.x - window.innerWidth / 2
+      const fy = g.mid.y - window.innerHeight / 2
+      const c = lbClamp(
+        fx - (fx - g.tx) * (scale / g.scale) + (mid.x - g.mid.x),
+        fy - (fy - g.ty) * (scale / g.scale) + (mid.y - g.mid.y), scale)
+      lbScale.value = scale
+      lbTx.value = c.x
+      lbTy.value = c.y
+    }
+    lbSuppressClick = true
+    return
+  }
+  if (!lbSingle) return
+  const dx = e.clientX - lbSingle.x
+  const dy = e.clientY - lbSingle.y
+  if (Math.hypot(dx, dy) > 6) { lbSingle.moved = true; lbSuppressClick = true }
+  if (lbZoomed()) {
+    const c = lbClamp(lbSingle.tx + dx, lbSingle.ty + dy, lbScale.value)
+    lbTx.value = c.x; lbTy.value = c.y
+  } else if (Math.abs(dx) >= Math.abs(dy)) {
+    lbTx.value = dx
+  } else if (dy > 0) {
+    lbTy.value = dy
+  }
+}
+function lbUp (e) {
+  if (!lbPtrs.has(e.pointerId)) return
+  lbPtrs.delete(e.pointerId)
+  try { e.currentTarget.releasePointerCapture(e.pointerId) } catch (err) { /* 系统已收回 */ }
+  // 双指松开一指：别把剩下那根当成一次新的点按
+  if (lbPinch && lbPtrs.size === 1) {
+    const r = [...lbPtrs.values()][0]
+    lbPinch = null
+    lbSingle = { x: r.x, y: r.y, t: Date.now(), moved: true, tx: lbTx.value, ty: lbTy.value }
+    return
+  }
+  if (lbPtrs.size) return
+  lbDragging.value = false
+  const single = lbSingle
+  lbPinch = null
+  lbSingle = null
+  if (!single) return
+  const dx = lbTx.value
+  const dy = lbTy.value
+  if (!single.moved && Date.now() - single.t < 250) {
+    // 双击：命中同一点两次（300ms/30px 内）→ 1x↔2x；只点一次不当双击
+    const now = Date.now()
+    const last = lbLastTap
+    if (now - last.t < 300 && Math.hypot(e.clientX - last.x, e.clientY - last.y) < 30) {
+      lbLastTap = { t: 0, x: 0, y: 0 }
+      if (lbZoomed()) lbResetZoom()
+      else lbZoomTo(e.clientX, e.clientY)
+    } else {
+      lbLastTap = { t: now, x: e.clientX, y: e.clientY }
+    }
+    return
+  }
+  if (lbZoomed()) return
+  // 1x：左右滑切图（60px 阈值，横向占优），下滑关闭；都不满足就弹回
+  if (Math.abs(dx) > Math.abs(dy) * 1.2 && Math.abs(dx) > 60) lbNav(dx < 0 ? 1 : -1)
+  else if (dy > 80 && Math.abs(dy) > Math.abs(dx) * 1.2) { lbResetZoom(); closePreview() }
+  else { lbTx.value = 0; lbTy.value = 0 }
+}
+function lbZoomTo (x, y) {
+  const scale = 2
+  const fx = x - window.innerWidth / 2
+  const fy = y - window.innerHeight / 2
+  const c = lbClamp(fx * (1 - scale), fy * (1 - scale), scale)
+  lbScale.value = scale
+  lbTx.value = c.x
+  lbTy.value = c.y
+}
+function lbNav (dir) {
+  if (preview.list.length < 2) return
+  lbResetZoom()
+  preview.idx = (preview.idx + dir + preview.list.length) % preview.list.length
+}
+/** 点黑边关闭；刚做过手势的那一下 click 要吞掉，否则一滑就直接把自己关了 */
+const onLightboxClick = () => {
+  if (lbSuppressClick) { lbSuppressClick = false; return }
+  closePreview()
+}
+// 返回键：放大态先复位，再按一次才关（与 sheetStack 的结算顺序一致）
+const lbBack = () => { if (lbZoomed()) lbResetZoom(); else closePreview() }
 
 // 输入框粘贴：文件与图片挂成待发送附件，整段长文本转成「粘贴的文本」附件（短粘贴照常内联，可继续编辑）
 const onComposerPaste = e => { if (takePastedFiles(e)) return; takePastedText(e) }
@@ -1385,9 +1594,16 @@ watch(messages, () => {
 // 保证「后开的在上面」与「后开的先关」是同一个顺序——事件 sheet 里点图就是这种叠法。
 let lbToken = 0
 watch(() => preview.list.length, n => {
-  if (n && !lbToken) lbToken = addSheet(closePreview, 1300)
+  if (n && !lbToken) lbToken = addSheet(lbBack, 1300)
   else if (!n && lbToken) { removeSheet(lbToken); lbToken = 0 }
+  // 关闭/换一批图：缩放与手势状态一并归零，下次打开不能继承上一次的倍率与拖动位置
+  if (!n) {
+    lbResetZoom()
+    lbPtrs.clear(); lbPinch = null; lbSingle = null; lbDragging.value = false; lbSuppressClick = false
+    lbLastTap = { t: 0, x: 0, y: 0 }
+  }
 })
+watch(() => preview.idx, () => lbResetZoom())
 let editToken = 0
 watch(() => edit.open, v => {
   if (v && !editToken) editToken = addSheet(closeEdit, 1250)
@@ -1496,6 +1712,24 @@ onUnmounted(() => {
 }
 .m-bar-t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 70%; }
 .m-bar-caret { font-size: 11px; color: var(--app-text3); }
+
+/* ---- 新版本提示（SW 更新就绪）---- */
+/* 与顶栏同宽的窄条：只说「已就绪」和一颗刷新，不弹窗、不自动刷新，生成中的回答不被打断 */
+.m-update {
+  flex: none; display: flex; align-items: center; gap: 8px;
+  width: var(--m-col); margin-inline: auto; box-sizing: border-box;
+  padding: 8px 12px; background: var(--app-accent-weak);
+  border-bottom: 1px solid var(--app-accent-border);
+}
+.m-update-t { flex: 1; min-width: 0; font-size: 13px; color: var(--app-accent); font-weight: 500; }
+.m-update-go {
+  flex: none; min-height: 32px; padding: 0 12px; border: none; border-radius: 8px;
+  background: var(--app-accent); color: #fff; font-size: 13px; touch-action: manipulation;
+}
+.m-update-x {
+  flex: none; width: 32px; height: 32px; border: none; border-radius: 8px;
+  background: transparent; color: var(--app-accent); font-size: 18px; touch-action: manipulation;
+}
 
 /* ---- 会话内查找条 ---- */
 .m-find {
@@ -1881,8 +2115,23 @@ onUnmounted(() => {
 .m-lightbox {
   position: fixed; inset: 0; z-index: 1300; background: rgba(0, 0, 0, .9);
   display: flex; align-items: center; justify-content: center;
+  /* 缩放/滑动全部由 pointer 手势接管：不让浏览器再插手滚动与双击放大 */
+  touch-action: none;
 }
-.m-lightbox-img { max-width: 96vw; max-height: 86vh; border-radius: 4px; }
+.m-lightbox-img {
+  max-width: 96vw; max-height: 86vh; border-radius: 4px;
+  /* 松手/双击复位时补一段过渡；拖动中加 .dragging 关掉，手指才跟得上 */
+  transition: transform .18s ease-out;
+  will-change: transform;
+  user-select: none; -webkit-user-drag: none;
+}
+.m-lightbox-img.dragging { transition: none; }
+/* 放大倍率：只在放大态出现，让用户知道现在看到的是几倍（也是「怎么退回 1x」的心理出口） */
+.m-lb-zoom {
+  position: fixed; top: calc(14px + var(--sat, 0px)); left: 50%; transform: translateX(-50%);
+  color: rgba(255, 255, 255, .85); font-size: 12px; font-weight: 600;
+  background: rgba(255, 255, 255, .14); border-radius: 999px; padding: 3px 10px; pointer-events: none;
+}
 .m-lb-close { position: fixed; top: calc(10px + var(--sat, 0px)); right: 12px; width: 40px; height: 40px; border: none; border-radius: 50%; background: rgba(255, 255, 255, .14); color: #fff; font-size: 22px; touch-action: manipulation; }
 .m-lb-nav { position: fixed; top: 50%; transform: translateY(-50%); width: 44px; height: 44px; border: 1px solid rgba(255, 255, 255, .35); border-radius: 50%; background: rgba(0, 0, 0, .4); color: #fff; font-size: 24px; touch-action: manipulation; }
 .m-lb-nav.prev { left: 10px; }
