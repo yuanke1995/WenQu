@@ -1,0 +1,1644 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>问渠 WenQu · 产品与技术设计书</title>
+<meta name="description" content="问渠 WenQu AI 智能体工作台：产品设计书、技术架构设计书与架构图集">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Ccircle cx='20' cy='20' r='20' fill='%231b3d36'/%3E%3Cpath d='M20 7c3 4.2 5 7.3 5 10a5 5 0 0 1-10 0c0-2.7 2-5.8 5-10z' fill='%23e8f1ec'/%3E%3C/svg%3E">
+<style>
+:root{
+  --paper:#f8f7f3;
+  --paper-2:#f2f0e9;
+  --card:#ffffff;
+  --ink:#16211f;
+  --ink-2:#2e3d39;
+  --muted:#5f6d69;
+  --faint:#8a9692;
+  --line:#dcd8cc;
+  --line-2:#e9e6dd;
+  --celadon:#2e7d70;
+  --celadon-deep:#175a50;
+  --celadon-soft:#e7f0ec;
+  --celadon-line:#9fc2b8;
+  --amber:#b07a2c;
+  --amber-soft:#f7eddd;
+  --amber-line:#dcc29a;
+  --slate:#41525a;
+  --danger:#b0452f;
+  --font:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC",sans-serif;
+  --serif:"Songti SC","Noto Serif SC","Source Han Serif SC","STSong",Georgia,serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,"JetBrains Mono",monospace;
+  --shadow:0 1px 2px rgba(22,33,31,.04),0 10px 30px rgba(22,33,31,.04);
+  --radius:10px;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:24px}
+body{
+  margin:0;background:var(--paper);color:var(--ink);
+  font-family:var(--font);font-size:15px;line-height:1.78;
+  -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+}
+a{color:var(--celadon-deep);text-decoration:none}
+a:hover{text-decoration:underline}
+::selection{background:#cfe4dc;color:var(--ink)}
+
+/* 顶部阅读进度 */
+.progress{position:fixed;top:0;left:0;height:3px;width:0;z-index:200;
+  background:linear-gradient(90deg,var(--celadon),var(--amber));transition:width .1s linear}
+
+/* 布局 */
+.shell{display:grid;grid-template-columns:272px minmax(0,1fr);min-height:100vh}
+.sidebar{
+  position:sticky;top:0;height:100vh;overflow-y:auto;z-index:50;
+  background:var(--paper-2);border-right:1px solid var(--line);
+  padding:26px 18px 44px;
+}
+.sidebar::-webkit-scrollbar{width:6px}
+.sidebar::-webkit-scrollbar-thumb{background:#cfcabd;border-radius:3px}
+.brand{padding:0 8px 20px;border-bottom:1px solid var(--line);margin-bottom:18px}
+.brand-mark{display:flex;align-items:center;gap:10px}
+.brand-glyph{width:34px;height:34px;flex:0 0 34px}
+.brand-name{font-family:var(--serif);font-size:20px;font-weight:700;letter-spacing:.04em;line-height:1.1}
+.brand-en{font-size:10.5px;letter-spacing:.22em;color:var(--faint);text-transform:uppercase;margin-top:2px}
+.brand-doc{font-size:11.5px;color:var(--muted);margin-top:12px;line-height:1.6}
+.nav-group{margin:18px 0 6px}
+.nav-group-title{font-size:10.5px;font-weight:700;letter-spacing:.16em;color:var(--faint);
+  text-transform:uppercase;padding:0 10px;margin-bottom:7px}
+.nav a{
+  display:flex;align-items:baseline;gap:9px;padding:5.5px 10px;border-radius:6px;
+  color:var(--ink-2);font-size:13px;line-height:1.45;border-left:2px solid transparent;
+}
+.nav a:hover{background:#eae7dd;text-decoration:none}
+.nav a .no{font-family:var(--mono);font-size:10.5px;color:var(--faint);min-width:22px}
+.nav a.active{background:#e2ece7;color:var(--celadon-deep);font-weight:600;border-left-color:var(--celadon)}
+.nav a.active .no{color:var(--celadon)}
+.side-foot{margin-top:26px;padding:14px 10px 0;border-top:1px solid var(--line);
+  font-size:11px;color:var(--faint);line-height:1.7}
+
+.main{min-width:0}
+.doc{max-width:1010px;margin:0 auto;padding:0 56px 120px}
+
+/* 封面 */
+.hero{position:relative;overflow:hidden;background:
+  radial-gradient(120% 120% at 80% -10%,#1d4a42 0%,#0e2925 45%,#0a1d1a 100%);
+  color:#f3f4ee;padding:76px 0 62px}
+.hero::after{content:"";position:absolute;inset:0;pointer-events:none;
+  background:repeating-linear-gradient(115deg,rgba(255,255,255,.028) 0 1px,transparent 1px 9px);
+  mask-image:linear-gradient(to bottom,rgba(0,0,0,.7),transparent 85%)}
+.hero-inner{position:relative;z-index:1;max-width:1010px;margin:0 auto;padding:0 56px;box-sizing:border-box}
+.hero-kicker{display:flex;align-items:center;gap:10px;font-size:11.5px;letter-spacing:.2em;
+  color:#a9c9c0;text-transform:uppercase;margin-bottom:22px}
+.hero-kicker::before{content:"";width:26px;height:1px;background:#6e9d90}
+.hero h1{font-family:var(--serif);font-size:54px;line-height:1.16;font-weight:700;
+  letter-spacing:.02em;margin:0 0 6px}
+.hero h1 span{color:#a8cfc2;font-size:26px;letter-spacing:.12em;margin-left:12px;font-weight:400}
+.hero-sub{font-size:17px;color:#c4d6d0;margin:14px 0 0;max-width:760px;line-height:1.75}
+.hero-quote{font-family:var(--serif);font-size:13.5px;color:#8fb3a8;margin-top:22px;letter-spacing:.06em}
+.hero-meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:30px}
+.hero-meta span{font-size:11.5px;color:#b9cdc7;border:1px solid rgba(255,255,255,.16);
+  border-radius:999px;padding:4px 12px;background:rgba(255,255,255,.04)}
+.hero-meta b{color:#eef4f0;font-weight:600}
+.hero-wave{position:absolute;right:-40px;bottom:-30px;width:560px;opacity:.5;z-index:0}
+
+/* 正文排版 */
+.part{margin-top:64px;padding-top:8px}
+.part-head{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;
+  border-bottom:2px solid var(--ink);padding-bottom:14px;margin-bottom:34px}
+.part-head .t{display:flex;align-items:baseline;gap:14px}
+.part-no{font-family:var(--mono);font-size:12px;letter-spacing:.14em;color:var(--amber);font-weight:700}
+.part-head h2{font-family:var(--serif);font-size:30px;margin:0;letter-spacing:.02em;line-height:1.2}
+.part-head .en{font-size:11px;letter-spacing:.18em;color:var(--faint);text-transform:uppercase;
+  white-space:nowrap;padding-bottom:6px}
+.sec{margin:46px 0 18px;display:flex;align-items:baseline;gap:12px;scroll-margin-top:20px}
+.sec .no{font-family:var(--mono);font-size:11.5px;color:var(--celadon);font-weight:700;letter-spacing:.08em}
+.sec h3{font-family:var(--serif);font-size:21.5px;margin:0;letter-spacing:.015em;line-height:1.35}
+.lead{font-size:15px;color:var(--muted);margin:0 0 20px;max-width:880px}
+.lead b{color:var(--ink);font-weight:600}
+p{margin:0 0 14px}
+h4{font-size:15px;margin:26px 0 10px;letter-spacing:.01em}
+h4 .tag{font-family:var(--mono);font-size:11px;color:var(--faint);font-weight:400;margin-left:8px}
+strong{font-weight:600}
+code{font-family:var(--mono);font-size:12.5px;background:#efece3;border:1px solid var(--line-2);
+  border-radius:4px;padding:1px 5px;color:#33433e}
+ul,ol{margin:0 0 16px;padding-left:20px}
+li{margin:5px 0}
+li::marker{color:var(--celadon)}
+.small{font-size:12.5px;color:var(--muted)}
+
+/* 摘要 */
+.summary{margin-top:-1px;padding-top:40px}
+.statement{font-family:var(--serif);font-size:25px;line-height:1.65;letter-spacing:.01em;
+  max-width:900px;margin:0 0 30px}
+.statement em{font-style:normal;color:var(--celadon-deep);box-shadow:inset 0 -10px 0 #d8e9e2}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:26px 0 34px}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:18px 18px 15px;box-shadow:var(--shadow)}
+.stat .n{font-family:var(--serif);font-size:30px;line-height:1.1;color:var(--celadon-deep);font-weight:700}
+.stat .n small{font-size:13px;font-family:var(--font);color:var(--muted);font-weight:500;margin-left:3px}
+.stat .l{font-size:12px;color:var(--muted);margin-top:6px}
+.takeaways{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.take{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:18px;box-shadow:var(--shadow)}
+.take .k{font-family:var(--mono);font-size:10.5px;color:var(--amber);letter-spacing:.12em;font-weight:700;margin-bottom:8px}
+.take h4{margin:0 0 6px;font-size:14.5px}
+.take p{font-size:12.8px;color:var(--muted);margin:0;line-height:1.7}
+
+/* 卡片与表格 */
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.grid-4{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+  padding:18px 20px;box-shadow:var(--shadow)}
+.card .k{font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;color:var(--celadon);
+  font-weight:700;margin-bottom:7px}
+.card h4{margin:0 0 7px;font-size:15px}
+.card p{font-size:13px;color:var(--muted);margin:0 0 8px;line-height:1.72}
+.card ul{margin:0;padding-left:17px}
+.card li{font-size:12.7px;color:var(--muted);margin:3px 0;line-height:1.65}
+.card li b{color:var(--ink-2);font-weight:600}
+
+table{width:100%;border-collapse:collapse;margin:14px 0 22px;font-size:13px;
+  background:var(--card);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+th,td{text-align:left;padding:10px 13px;border-bottom:1px solid var(--line-2);vertical-align:top;line-height:1.65}
+th{background:#efece3;font-size:11.5px;letter-spacing:.05em;color:var(--ink-2);font-weight:700;white-space:nowrap}
+tbody tr:last-child td{border-bottom:none}
+tbody tr:hover{background:#fbfaf6}
+td b{font-weight:600}
+td code{font-size:11.5px}
+.table-wrap{overflow-x:auto;margin:14px 0 22px}
+.table-wrap table{margin:0;min-width:640px}
+
+.note{border-left:3px solid var(--celadon);background:var(--celadon-soft);
+  border-radius:0 8px 8px 0;padding:12px 18px;margin:18px 0;font-size:13px;color:#3f514c}
+.note b{color:var(--ink)}
+.note.warn{border-left-color:var(--amber);background:var(--amber-soft);color:#584a34}
+.note .t{font-weight:700;color:var(--ink);display:block;margin-bottom:2px;font-size:12px;letter-spacing:.06em}
+
+/* 图 */
+.fig{background:var(--card);border:1px solid var(--line);border-radius:12px;
+  padding:20px 20px 14px;margin:20px 0 24px;box-shadow:var(--shadow)}
+.fig-head{display:flex;align-items:baseline;justify-content:space-between;gap:16px;margin-bottom:12px}
+.fig-no{font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;color:var(--amber);font-weight:700}
+.fig-title{font-size:14px;font-weight:600;color:var(--ink)}
+.fig-cap{font-size:11.8px;color:var(--faint);margin-top:8px;line-height:1.6}
+.dg{width:100%;height:auto;display:block;font-family:var(--font)}
+.dg text{font-size:12.5px;fill:#1d2b27}
+.dg .h{font-size:13.5px;font-weight:700}
+.dg .sm{font-size:10.8px;fill:#68766f}
+.dg .xs{font-size:9.8px;fill:#7b8882}
+.dg .mono{font-family:var(--mono);font-size:10.5px;fill:#55635e}
+.dg .box{fill:#fff;stroke:#d8d4c7;stroke-width:1}
+.dg .soft{fill:#f4f6f2;stroke:#d7ddd5;stroke-width:1}
+.dg .green{fill:#e7f0eb;stroke:#9bc0b4;stroke-width:1}
+.dg .deep{fill:#1b3d36;stroke:#1b3d36;stroke-width:1}
+.dg .amber{fill:#f8efdf;stroke:#dcc29a;stroke-width:1}
+.dg .slate{fill:#eef0f1;stroke:#c6cfd2;stroke-width:1}
+.dg .dt{fill:#f4f7f4}
+.dg .dm{fill:#a7c7bc}
+.dg .arrow{stroke:#9aa8a2;stroke-width:1.4;fill:none}
+.dg .arrow-g{stroke:#7aa89a;stroke-width:1.5;fill:none}
+.dg .arrow-a{stroke:#c39a5e;stroke-width:1.5;fill:none}
+.dg .dash{stroke:#b7c4be;stroke-width:1.2;fill:none;stroke-dasharray:5 4}
+.dg .lane{fill:#faf9f4;stroke:#e5e2d7;stroke-width:1}
+.dg .band{fill:#fbfaf6;stroke:#e3dfd3;stroke-width:1}
+.fig-split{display:grid;grid-template-columns:1.05fr .95fr;gap:22px;align-items:center}
+
+/* 时间线 */
+.timeline{position:relative;margin:24px 0 8px;padding-left:22px}
+.timeline::before{content:"";position:absolute;left:5px;top:6px;bottom:6px;width:1px;background:var(--line)}
+.tl{position:relative;margin-bottom:18px}
+.tl::before{content:"";position:absolute;left:-21px;top:7px;width:9px;height:9px;border-radius:50%;
+  background:var(--card);border:2px solid var(--celadon)}
+.tl.done::before{background:var(--celadon)}
+.tl .when{font-family:var(--mono);font-size:10.5px;color:var(--amber);letter-spacing:.08em;font-weight:700}
+.tl h4{margin:2px 0 3px;font-size:14.5px}
+.tl p{font-size:12.8px;color:var(--muted);margin:0}
+
+.footer{margin-top:70px;padding-top:22px;border-top:1px solid var(--line);
+  display:flex;justify-content:space-between;gap:20px;font-size:11.5px;color:var(--faint)}
+.top-link{position:fixed;right:26px;bottom:26px;width:40px;height:40px;border-radius:50%;
+  background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:center;
+  box-shadow:0 6px 18px rgba(22,33,31,.2);opacity:0;pointer-events:none;transition:.2s;z-index:90}
+.top-link.show{opacity:.92;pointer-events:auto}
+.top-link:hover{text-decoration:none;background:var(--celadon-deep)}
+
+/* 响应式 */
+@media(max-width:1120px){
+  .shell{grid-template-columns:232px minmax(0,1fr)}
+  .doc{padding:0 36px 100px}
+  .hero{padding:60px 36px 52px}
+  .hero h1{font-size:44px}
+  .grid-4,.stats{grid-template-columns:repeat(2,1fr)}
+}
+@media(max-width:860px){
+  .shell{display:block}
+  .sidebar{position:sticky;top:0;height:auto;max-height:none;border-right:none;
+    border-bottom:1px solid var(--line);padding:14px 16px}
+  .brand{display:flex;align-items:center;justify-content:space-between;padding:0 0 10px;margin-bottom:10px}
+  .brand-doc,.side-foot{display:none}
+  .nav{display:flex;gap:4px;overflow-x:auto;padding-bottom:4px;
+    -webkit-overflow-scrolling:touch;scrollbar-width:none;
+    mask-image:linear-gradient(to right,#000 90%,transparent)}
+  .nav::-webkit-scrollbar{display:none}
+  .nav-group{display:contents}
+  .nav-group-title{display:none}
+  .nav a{white-space:nowrap;border-left:none;border-bottom:2px solid transparent;padding:5px 9px}
+  .nav a.active{border-left:none;border-bottom-color:var(--celadon)}
+  .nav a .no{display:none}
+  .doc{padding:0 22px 80px}
+  .hero{padding:44px 0 38px}
+  .hero-inner{padding:0 22px}
+  .hero-kicker{font-size:10.5px;letter-spacing:.14em}
+  .hero h1{font-size:36px}
+  .hero h1 span{display:block;margin:6px 0 0;font-size:18px}
+  .hero-sub{font-size:15px}
+  .hero-wave{display:none}
+  .grid-2,.grid-3,.takeaways,.fig-split{grid-template-columns:1fr}
+  .part-head{display:block}
+  .part-head .en{margin-top:6px}
+  .statement{font-size:21px}
+  .sec h3{font-size:19px}
+}
+@media print{
+  @page{size:A4 landscape;margin:14mm}
+  .sidebar,.progress,.top-link{display:none!important}
+  .shell{display:block}
+  body{background:#fff;font-size:11pt}
+  .hero{background:#0e2925!important;color:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .doc{max-width:none;padding:0 4mm}
+  .part{page-break-before:always}
+  .fig,.card,.take,table{page-break-inside:avoid}
+  .table-wrap{overflow:visible}
+  .table-wrap table{min-width:0}
+  a{color:inherit;text-decoration:none}
+}
+</style>
+</head>
+<body>
+<div class="progress" id="progress"></div>
+
+<!-- 全局箭头定义 -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <marker id="arw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#9aa8a2"/>
+    </marker>
+    <marker id="arw-g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#7aa89a"/>
+    </marker>
+    <marker id="arw-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#c39a5e"/>
+    </marker>
+  </defs>
+</svg>
+
+<div class="shell">
+  <!-- 侧栏 -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">
+        <svg class="brand-glyph" viewBox="0 0 40 40" aria-hidden="true">
+          <circle cx="20" cy="20" r="18.5" fill="#1b3d36"/>
+          <path d="M7 23c4.5-3.2 9-3.2 13.5 0s9 3.2 13.5 0" fill="none" stroke="#a9cfc2" stroke-width="1.7" stroke-linecap="round"/>
+          <path d="M7 28c4.5-3.2 9-3.2 13.5 0s9 3.2 13.5 0" fill="none" stroke="#6f9f92" stroke-width="1.4" stroke-linecap="round"/>
+          <path d="M20 7.5c3 4.2 5 7.3 5 10a5 5 0 0 1-10 0c0-2.7 2-5.8 5-10z" fill="#e8f1ec"/>
+        </svg>
+        <div>
+          <div class="brand-name">问渠</div>
+          <div class="brand-en">WenQu</div>
+        </div>
+      </div>
+      <div class="brand-doc">产品与技术设计书<br>2026 年 11 月 · v1.0</div>
+    </div>
+
+    <nav class="nav" aria-label="文档目录">
+      <div class="nav-group">
+        <div class="nav-group-title">概览</div>
+        <a href="#summary"><span class="no">00</span>执行摘要</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-title">第一部分 · 产品设计</div>
+        <a href="#p1"><span class="no">1.1</span>定位与价值主张</a>
+        <a href="#p2"><span class="no">1.2</span>角色与典型场景</a>
+        <a href="#p3"><span class="no">1.3</span>能力全景</a>
+        <a href="#p4"><span class="no">1.4</span>核心用户旅程</a>
+        <a href="#p5"><span class="no">1.5</span>体验设计原则</a>
+        <a href="#p6"><span class="no">1.6</span>终端形态与交付</a>
+        <a href="#p7"><span class="no">1.7</span>产品边界</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-title">第二部分 · 技术架构</div>
+        <a href="#a1"><span class="no">2.1</span>目标与设计原则</a>
+        <a href="#a2"><span class="no">2.2</span>系统分层架构</a>
+        <a href="#a3"><span class="no">2.3</span>技术选型与取舍</a>
+        <a href="#a4"><span class="no">2.4</span>双引擎编排</a>
+        <a href="#a5"><span class="no">2.5</span>问答与检索管线</a>
+        <a href="#a6"><span class="no">2.6</span>长任务执行模型</a>
+        <a href="#a7"><span class="no">2.7</span>工作流引擎</a>
+        <a href="#a8"><span class="no">2.8</span>数据模型</a>
+        <a href="#a9"><span class="no">2.9</span>安全与多租户</a>
+        <a href="#a10"><span class="no">2.10</span>部署拓扑</a>
+        <a href="#a11"><span class="no">2.11</span>可观测性与运维</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-title">第三部分 · 架构图集</div>
+        <a href="#g1"><span class="no">3.1</span>系统上下文</a>
+        <a href="#g2"><span class="no">3.2</span>部署拓扑图</a>
+        <a href="#g3"><span class="no">3.3</span>数据模型全景</a>
+        <a href="#g4"><span class="no">3.4</span>图索引</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-title">第四部分 · 演进与附录</div>
+        <a href="#r1"><span class="no">4.1</span>演进路线</a>
+        <a href="#r2"><span class="no">4.2</span>术语表</a>
+        <a href="#r3"><span class="no">4.3</span>能力与接口速查</a>
+      </div>
+    </nav>
+    <div class="side-foot">
+      本文档面向方案汇报与技术评审。<br>
+      数据与接口口径以当前版本为准。
+    </div>
+  </aside>
+
+  <!-- 主区 -->
+  <main class="main">
+    <header class="hero">
+      <svg class="hero-wave" viewBox="0 0 600 300" aria-hidden="true">
+        <g fill="none" stroke="#8fbfae" stroke-width="1">
+          <path d="M-20 210c70-42 140-42 210 0s140 42 210 0 140-42 210 0" opacity=".45"/>
+          <path d="M-20 236c70-42 140-42 210 0s140 42 210 0 140-42 210 0" opacity=".3"/>
+          <path d="M-20 262c70-42 140-42 210 0s140 42 210 0 140-42 210 0" opacity=".18"/>
+          <path d="M-20 288c70-42 140-42 210 0s140 42 210 0 140-42 210 0" opacity=".1"/>
+        </g>
+      </svg>
+      <div class="hero-inner">
+        <div class="hero-kicker">Product &amp; Architecture Design Document</div>
+        <h1>问渠<span>WenQu</span></h1>
+        <p class="hero-sub">以智能体为核心的 AI 工作台。把大模型、知识库、工具与执行环境组织成一条可治理、可溯源、可交付的完整链路。</p>
+        <div class="hero-quote">问渠那得清如许，为有源头活水来。—— 答案，自有源头。</div>
+        <div class="hero-meta">
+          <span>文档版本 <b>v1.0</b></span>
+          <span>更新 <b>2026.11</b></span>
+          <span>用途 <b>方案汇报 / 技术评审</b></span>
+          <span>形态 <b>私有化部署</b></span>
+          <span>技术栈 <b>Java 17 · Spring Boot 3.5 · Vue 3</b></span>
+        </div>
+      </div>
+    </header>
+
+    <div class="doc">
+
+      <!-- ================= 执行摘要 ================= -->
+      <section class="summary" id="summary">
+        <div class="part-head">
+          <div class="t"><span class="part-no">00</span><h2>执行摘要</h2></div>
+          <div class="en">Executive Summary</div>
+        </div>
+
+        <p class="statement">企业 AI 的瓶颈早已不在模型本身，而在<em>最后一公里</em>：知识是否可信、工具是否可用、权限是否收得住、过程是否可审计、结果是否能交付。</p>
+        <p class="lead">问渠把这条“最后一公里”做成产品：以对话为入口、以智能体为组织单位、以知识为事实源、以产物为交付物、以治理为底座。它不是又一个聊天框，而是一套可以放进企业内网、交给真实业务使用的智能体工作台。</p>
+
+        <div class="stats">
+          <div class="stat"><div class="n">86<small>张</small></div><div class="l">业务数据表，覆盖对话、知识、智能体、工作流与治理</div></div>
+          <div class="stat"><div class="n">500+</div><div class="l">REST / SSE 接口，57 个控制器统一鉴权与租户边界</div></div>
+          <div class="stat"><div class="n">13<small>类</small></div><div class="l">工作流节点，DSL 唯一真源，节点级 Trace 回放</div></div>
+          <div class="stat"><div class="n">8<small>类</small></div><div class="l">模型可跨厂商热切换：聊天 / 视觉 / 向量 / 重排 / OCR 等</div></div>
+        </div>
+
+        <div class="takeaways">
+          <div class="take">
+            <div class="k">判断一</div>
+            <h4>长任务必须可控</h4>
+            <p>计划模式与目标模式把“一句话交给 AI”拆成可确认、可插话、可暂停、可核验的过程，并用四项硬预算防止失控。</p>
+          </div>
+          <div class="take">
+            <div class="k">判断二</div>
+            <h4>答案必须可溯源</h4>
+            <p>知识库、联网搜索与外部工具共用一套引用编号，低置信结果显式标注而不是伪装成确定答案。</p>
+          </div>
+          <div class="take">
+            <div class="k">判断三</div>
+            <h4>开放必须可治理</h4>
+            <p>MCP 双向、OpenAI 兼容端点、工作流 API 与 Webhook 都能对外，但统一受租户、配额、审批与审计约束。</p>
+          </div>
+        </div>
+
+        <div class="note">
+          <span class="t">文档结构</span>
+          第一部分从产品视角说明定位、角色、能力与体验原则；第二部分从工程视角说明分层、双引擎、检索管线、长任务、数据与安全；第三部分给出可直接用于汇报的整页架构图；第四部分为演进方向、术语与接口速查。
+        </div>
+      </section>
+
+      <!-- ================= 第一部分 产品设计 ================= -->
+      <section class="part" id="part1">
+        <div class="part-head">
+          <div class="t"><span class="part-no">PART I</span><h2>产品设计书</h2></div>
+          <div class="en">Product Design</div>
+        </div>
+
+        <!-- 1.1 -->
+        <div class="sec" id="p1"><span class="no">1.1</span><h3>定位与价值主张</h3></div>
+        <p class="lead"><b>问渠是一款以智能体为核心的 AI 工作台，面向私有化部署。</b>它把大模型、知识库与工具统一组织与编排，覆盖“智能对话 → 知识检索 → 工具执行 → 产物交付 → 对外能力开放”的完整链路。</p>
+
+        <div class="grid-3">
+          <div class="card">
+            <div class="k">PRODUCT FORM</div>
+            <h4>智能体优先</h4>
+            <p>以智能体（人设 / 知识范围 / 工具集）为能力组织单位，而不是以单次问答为中心。</p>
+            <ul><li>会话级不锁定，随时切换</li><li>按需委派给职责对口的助手</li><li>可发布为分享页与 MCP 端点</li></ul>
+          </div>
+          <div class="card">
+            <div class="k">WORK MODEL</div>
+            <h4>长任务可控</h4>
+            <p>计划卡只放目标与前三步，完整计划与版本轨进右侧抽屉；目标模式自动续跑并逐条核验证据。</p>
+            <ul><li>执行中可带意见调整</li><li>插话让位后自动接续</li><li>四项硬预算兜住边界</li></ul>
+          </div>
+          <div class="card">
+            <div class="k">TRUST</div>
+            <h4>答案可溯源</h4>
+            <p>混合检索、引用溯源与位置级原图展示，让每个结论都能回到源头。</p>
+            <ul><li>知识 / 搜索 / 工具共用编号</li><li>低分全灭保留最相关块并标注</li><li>父子分块与 GraphRAG 扩展</li></ul>
+          </div>
+          <div class="card">
+            <div class="k">ECOSYSTEM</div>
+            <h4>开放互联</h4>
+            <p>既能接入外部工具，也能把自己发布为别人可调用的能力。</p>
+            <ul><li>MCP 双向：Client + Server</li><li>OpenAI 兼容 Chat / Responses</li><li>工作流 API、Webhook、轮终回调</li></ul>
+          </div>
+          <div class="card">
+            <div class="k">GOVERNANCE</div>
+            <h4>生产就绪</h4>
+            <p>多租户、企业身份、RBAC、配额、内容安全、审计链与巡检，构成可用可管的底座。</p>
+            <ul><li>OIDC / SAML / SCIM / LDAP</li><li>密钥加密与哈希签发</li><li>哈希链审计与合规导出</li></ul>
+          </div>
+          <div class="card">
+            <div class="k">DELIVERY</div>
+            <h4>产物即交付</h4>
+            <p>回答不止于文字：文件、网页、图表、数据集以交付卡聚合，可预览、下载与归档。</p>
+            <ul><li>交付包 ZIP 一键下载</li><li>网页多视口预览</li><li>产物页统一管理与移动</li></ul>
+          </div>
+        </div>
+
+        <div class="note">
+          <span class="t">一句话定位</span>
+          问渠不是“接入大模型的聊天页面”，而是<b>把模型能力变成企业可管理、可审计、可复用的生产力资产</b>的工作台。
+        </div>
+
+        <!-- 1.2 -->
+        <div class="sec" id="p2"><span class="no">1.2</span><h3>角色与典型场景</h3></div>
+        <p class="lead">产品围绕五类角色设计。每类角色只看到与自身职责相关的入口与数据，权限与租户边界在服务端强制生效。</p>
+
+        <div class="table-wrap">
+        <table>
+          <thead><tr><th>角色</th><th>核心关注</th><th>典型场景</th><th>产品回应</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><b>平台管理员</b></td>
+              <td>部署、租户、安全、成本</td>
+              <td>开通租户、接入企业身份、控制模型与工具开关、处理安全事件</td>
+              <td>多租户生命周期、认证源、RBAC、推理配额、内容安全、巡检与审计</td>
+            </tr>
+            <tr>
+              <td><b>知识运营</b></td>
+              <td>知识资产的质量与覆盖</td>
+              <td>导入文档、修正分块、处理无命中问题、评估检索效果</td>
+              <td>多格式解析、GraphRAG、知识块编辑、检索评估、缺口回流</td>
+            </tr>
+            <tr>
+              <td><b>业务用户</b></td>
+              <td>快速得到可信答案与可用交付物</td>
+              <td>问制度、查资料、写方案、做数据分析并导出结果</td>
+              <td>对话与引用、计划 / 目标模式、工具执行、产物交付卡</td>
+            </tr>
+            <tr>
+              <td><b>智能体开发者</b></td>
+              <td>搭建、调试、发布与迭代</td>
+              <td>配置人设与工具、编排工作流、跑评测、发布到市场</td>
+              <td>智能体配置与版本回滚、可视化工作流、评测门禁、市场分发</td>
+            </tr>
+            <tr>
+              <td><b>外部系统</b></td>
+              <td>低摩擦集成与稳定契约</td>
+              <td>把问答能力嵌进业务系统，或把外部工具接进问渠</td>
+              <td>OpenAI 兼容端点、MCP 双向、工作流 API / Webhook</td>
+            </tr>
+          </tbody>
+        </table>
+        </div>
+
+        <!-- 1.3 -->
+        <div class="sec" id="p3"><span class="no">1.3</span><h3>能力全景</h3></div>
+        <p class="lead">五个能力域共同构成产品主体。它们共享同一套身份、权限、计量与审计，而不是五个彼此割裂的模块。</p>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="k">01 · CONVERSATION</div>
+            <h4>对话与长任务</h4>
+            <ul>
+              <li><b>流式与续接：</b>SSE 逐段下发，停止留痕，断线后可接回同一轮</li>
+              <li><b>运行中插话：</b>下一次模型调用前生效，未赶上则本轮结束补发</li>
+              <li><b>引用溯源：</b>句末角标回到知识块全文与关联截图</li>
+              <li><b>深度思考：</b>五档强度，思考与工具统一收进过程块</li>
+              <li><b>上下文管理：</b>容量圆环、用量去向、自动 / 手动压缩</li>
+              <li><b>多模态：</b>图片理解、文档正文抽取、粘贴与拖拽</li>
+              <li><b>计划 / 目标模式：</b>先规划后执行，或一句话自动续跑</li>
+              <li><b>人在回路：</b>工具审批、智能体提问、计划确认三类卡片</li>
+            </ul>
+          </div>
+          <div class="card">
+            <div class="k">02 · KNOWLEDGE</div>
+            <h4>知识与检索</h4>
+            <ul>
+              <li><b>多格式解析：</b>docx / pdf / xlsx / ppt / txt / md / csv，扫描件 OCR</li>
+              <li><b>网页导入：</b>批量 URL、正文提取、定时自动刷新</li>
+              <li><b>混合检索：</b>向量召回 + 中文分词词面，双路融合</li>
+              <li><b>质量闸门：</b>融合门与重排门；低分全灭保留 Top-1 并标注低置信</li>
+              <li><b>GraphRAG：</b>三元组抽取与一跳图扩展，实体可溯源</li>
+              <li><b>文档治理：</b>版本回滚、增量重解析、回收站、跨库移动</li>
+              <li><b>知识块：</b>切片列表与结构导图，单块编辑即重向量化</li>
+              <li><b>引擎可切换：</b>默认零依赖，亦可切换中文分词关键词引擎</li>
+            </ul>
+          </div>
+          <div class="card">
+            <div class="k">03 · AGENTS</div>
+            <h4>智能体与工具</h4>
+            <ul>
+              <li><b>可配置：</b>人设、知识范围、能力开关、权限档位、记忆域</li>
+              <li><b>按需委派：</b>跨主题问题派给职责对口的助手，两种执行形态</li>
+              <li><b>工具生态：</b>MCP、OpenAPI 导入的 HTTP 工具、工作流工具、技能</li>
+              <li><b>三级记忆：</b>用户级 / 专属 / 叠加，平台总闸可收口</li>
+              <li><b>发布：</b>免登录分享页、iframe 嵌入、MCP 端点</li>
+              <li><b>治理：</b>配置版本与回滚、工具审批、轮终回调、评测门禁</li>
+              <li><b>调度：</b>cron 或固定间隔执行，同任务串行防重叠</li>
+              <li><b>市场：</b>技能、应用模板、工作流在团队内分发，安装即复制</li>
+            </ul>
+          </div>
+          <div class="card">
+            <div class="k">04 · WORKFLOW</div>
+            <h4>工作流与开放能力</h4>
+            <ul>
+              <li><b>DSL 唯一真源：</b>画布只是编辑器，引擎只按 DSL 执行</li>
+              <li><b>13 类节点：</b>模型、检索、HTTP、代码、条件、审核、循环、技能、MCP 等</li>
+              <li><b>可视化编排：</b>拖拽、右键菜单、连线校验、节点级 Trace 回放</li>
+              <li><b>版本：</b>草稿、发布快照、回滚，运行锁定当时 DSL</li>
+              <li><b>触发：</b>手动、定时、API、Webhook、知识事件、chatflow</li>
+              <li><b>开放：</b>OpenAI 兼容端点、工作流 API、终态回调</li>
+              <li><b>游客放行：</b>只读节点集可对分享页开放，其余一律拒绝</li>
+              <li><b>治理：</b>超时、图步数、并发、排队、保留期均可配</li>
+            </ul>
+          </div>
+          <div class="card">
+            <div class="k">05 · GOVERNANCE</div>
+            <h4>治理与运维</h4>
+            <ul>
+              <li><b>多租户：</b>开通、启停、归档恢复、邀请注册、首登引导</li>
+              <li><b>企业身份：</b>OIDC / SAML / SCIM / LDAP，组到角色映射</li>
+              <li><b>权限：</b>菜单与接口两级 RBAC，后端默认拒绝</li>
+              <li><b>密钥：</b>模型 Key、工具凭据、认证源密钥加密入库</li>
+              <li><b>配额：</b>平台 / 部门 / 成员三档，按日或按月</li>
+              <li><b>内容安全：</b>输入与输出双闸，拦截或告警</li>
+              <li><b>审计：</b>哈希链、合规导出、链校验</li>
+              <li><b>运维：</b>系统巡检、公告、会话治理、费用看板</li>
+            </ul>
+          </div>
+          <div class="card">
+            <div class="k">06 · QUALITY</div>
+            <h4>运营与质控闭环</h4>
+            <ul>
+              <li><b>看板：</b>问答量、无命中率、引用率、满意率</li>
+              <li><b>Trace：</b>按对话或工作流筛选并回放执行过程</li>
+              <li><b>采样池：</b>差评必采，待标注样本回流评测集</li>
+              <li><b>检索评估：</b>多参数组异步实验，recall@k / MRR 对比</li>
+              <li><b>智能体评测：</b>套件、回归、基线、A/B 对比</li>
+              <li><b>发布门禁：</b>五态结论，保存前检查</li>
+              <li><b>答案质量：</b>忠实度与相关性评分</li>
+              <li><b>费用：</b>按用户与按模型的区间费用视图</li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- 1.4 -->
+        <div class="sec" id="p4"><span class="no">1.4</span><h3>核心用户旅程</h3></div>
+        <p class="lead">所有能力最终收敛到一条主旅程：用户提出意图，系统理解并规划，检索与调用工具，完成推理与执行，交付可核验的结果，并沉淀为可复用的资产。</p>
+
+        <figure class="fig">
+          <div class="fig-head"><div><span class="fig-no">图 1-1</span> <span class="fig-title">核心用户旅程与贯穿能力</span></div></div>
+          <svg class="dg" viewBox="0 0 1000 330" role="img" aria-label="核心用户旅程流程图">
+            <rect x="24" y="34" width="952" height="34" rx="17" class="band"/>
+            <text x="500" y="56" text-anchor="middle" class="sm">过程留痕 · 权限档位 · 预算控制 · 计量与审计（贯穿全旅程）</text>
+
+            <g>
+              <rect x="30" y="110" width="140" height="62" rx="8" class="green"/>
+              <text x="100" y="136" text-anchor="middle" class="h">提问</text>
+              <text x="100" y="155" text-anchor="middle" class="sm">自然语言 · 多模态</text>
+
+              <rect x="190" y="110" width="140" height="62" rx="8" class="box"/>
+              <text x="260" y="136" text-anchor="middle" class="h">理解与规划</text>
+              <text x="260" y="155" text-anchor="middle" class="sm">意图 · 档位 · 计划</text>
+
+              <rect x="350" y="110" width="140" height="62" rx="8" class="box"/>
+              <text x="420" y="136" text-anchor="middle" class="h">检索与工具</text>
+              <text x="420" y="155" text-anchor="middle" class="sm">知识 · MCP · HTTP</text>
+
+              <rect x="510" y="110" width="140" height="62" rx="8" class="box"/>
+              <text x="580" y="136" text-anchor="middle" class="h">推理与执行</text>
+              <text x="580" y="155" text-anchor="middle" class="sm">流式生成 · 沙盒</text>
+
+              <rect x="670" y="110" width="140" height="62" rx="8" class="box"/>
+              <text x="740" y="136" text-anchor="middle" class="h">交付与核验</text>
+              <text x="740" y="155" text-anchor="middle" class="sm">引用 · 产物 · 证据</text>
+
+              <rect x="830" y="110" width="140" height="62" rx="8" class="green"/>
+              <text x="900" y="136" text-anchor="middle" class="h">沉淀与开放</text>
+              <text x="900" y="155" text-anchor="middle" class="sm">记忆 · 评测 · 发布</text>
+            </g>
+
+            <line x1="170" y1="141" x2="186" y2="141" class="arrow-g" marker-end="url(#arw-g)"/>
+            <line x1="330" y1="141" x2="346" y2="141" class="arrow-g" marker-end="url(#arw-g)"/>
+            <line x1="490" y1="141" x2="506" y2="141" class="arrow-g" marker-end="url(#arw-g)"/>
+            <line x1="650" y1="141" x2="666" y2="141" class="arrow-g" marker-end="url(#arw-g)"/>
+            <line x1="810" y1="141" x2="826" y2="141" class="arrow-g" marker-end="url(#arw-g)"/>
+
+            <g>
+              <rect x="190" y="202" width="140" height="30" rx="15" class="amber"/>
+              <text x="260" y="222" text-anchor="middle" class="xs">计划 / 目标 / 深度思考</text>
+              <rect x="510" y="202" width="140" height="30" rx="15" class="amber"/>
+              <text x="580" y="222" text-anchor="middle" class="xs">审批 / 提问 / 插话</text>
+              <rect x="670" y="202" width="140" height="30" rx="15" class="amber"/>
+              <text x="740" y="222" text-anchor="middle" class="xs">低置信标注 / ZIP</text>
+              <rect x="830" y="202" width="140" height="30" rx="15" class="amber"/>
+              <text x="900" y="222" text-anchor="middle" class="xs">MCP / OpenAI / Webhook</text>
+            </g>
+
+            <path d="M260 232 L260 262 L900 262 L900 232" fill="none" class="dash"/>
+            <text x="580" y="294" text-anchor="middle" class="sm">每一次执行都留下可回放的过程、可复核的引用与可计量的消耗</text>
+          </svg>
+          <figcaption class="fig-cap">主旅程之外，计划模式与目标模式是可选的“控制面”：它们让长任务从一次性问答变成可管理的过程。</figcaption>
+        </figure>
+
+        <div class="grid-3">
+          <div class="card">
+            <div class="k">SCENARIO 01</div>
+            <h4>可信问答</h4>
+            <p>“这份制度里试用期是多久？”系统命中多个知识块，答案句末给出编号角标，点开即可看到原文与截图；若命中分偏低，会明确标注低置信。</p>
+          </div>
+          <div class="card">
+            <div class="k">SCENARIO 02</div>
+            <h4>长任务交付</h4>
+            <p>“把这三份报表合并并生成分析网页。”目标模式自动续跑，过程中需要审批时弹出卡片，完成后逐条核验产物与命令退出码。</p>
+          </div>
+          <div class="card">
+            <div class="k">SCENARIO 03</div>
+            <h4>对外能力开放</h4>
+            <p>把智能体发布为 MCP 端点，或通过 OpenAI 兼容接口接入业务系统；所有调用受 API Key、租户、配额与审计统一约束。</p>
+          </div>
+        </div>
+
+        <!-- 1.5 -->
+        <div class="sec" id="p5"><span class="no">1.5</span><h3>体验设计原则</h3></div>
+        <p class="lead">面对“AI 给出的结果是否可信”这一根本问题，问渠用四条体验原则约束设计，而不是靠提示词或文案修饰。</p>
+
+        <div class="grid-4">
+          <div class="card">
+            <div class="k">PRINCIPLE 01</div>
+            <h4>过程可见</h4>
+            <p>思考、工具、产物分段呈现，完成后折叠为一行总览，展开是逐步骤执行清单。</p>
+          </div>
+          <div class="card">
+            <div class="k">PRINCIPLE 02</div>
+            <h4>结果可核</h4>
+            <p>引用编号统一，来源可回到原文；低置信、降级与未过滤都明确说出来。</p>
+          </div>
+          <div class="card">
+            <div class="k">PRINCIPLE 03</div>
+            <h4>任务可控</h4>
+            <p>长任务可暂停、继续、取消与插话；关键副作用执行前必须确认。</p>
+          </div>
+          <div class="card">
+            <div class="k">PRINCIPLE 04</div>
+            <h4>权限可收</h4>
+            <p>会话级权限档位、平台上限、工具黑名单与租户边界层层收口。</p>
+          </div>
+        </div>
+
+        <p style="margin-top:18px">在信息层级上采用<b>渐进披露</b>：计划卡只放目标与前三步，完整计划进抽屉；技能先给清单，需要时才读正文；工具大输出整份留存，卡上只给摘要。用户先看到结论，再按需下钻。</p>
+
+        <!-- 1.6 -->
+        <div class="sec" id="p6"><span class="no">1.6</span><h3>终端形态与交付方式</h3></div>
+        <p class="lead">同一套业务契约支撑多种终端与对外形态。界面可以不同，引用、审批、权限与审计的口径保持一致。</p>
+
+        <div class="table-wrap">
+        <table>
+          <thead><tr><th>形态</th><th>入口</th><th>适合场景</th><th>边界与约束</th></tr></thead>
+          <tbody>
+            <tr><td><b>电脑端工作台</b></td><td><code>/chat</code>、<code>/project/{id}</code></td><td>日常问答、长任务、工作区文件处理</td><td>完整功能；工作区文件由用户电脑上的执行器读写</td></tr>
+            <tr><td><b>移动端</b></td><td><code>/m/chat</code></td><td>触屏窄屏、随时随地提问与审批</td><td>三张人在回路卡片与 PC 同契约；状态与来源收进 sheet</td></tr>
+            <tr><td><b>免登录分享页</b></td><td><code>/s/{token}</code>、<code>/shared/{token}</code></td><td>对外演示、客户试用、只读会话分享</td><td>游客额度闸；只读工作流白名单；超限返回 429</td></tr>
+            <tr><td><b>嵌入式页面</b></td><td>iframe</td><td>把问答嵌进业务系统或门户</td><td>分享级权限；不暴露管理能力</td></tr>
+            <tr><td><b>MCP 端点</b></td><td><code>/ai/mcp/{token}</code>、<code>/ai/mcp</code></td><td>接入 Claude Desktop、Cursor 等客户端</td><td>令牌即凭据；平台入口需 API Key 且开启 MCP</td></tr>
+            <tr><td><b>OpenAI 兼容</b></td><td><code>/api/ai/v1/chat/completions</code>、<code>/responses</code></td><td>业务系统按标准协议接入</td><td>真增量流式；只读工具映射；权限固定为问答链路</td></tr>
+            <tr><td><b>工作流 API</b></td><td><code>/api/ai/v1/workflows/{id}/run</code></td><td>把编排好的流程作为服务调用</td><td>只跑已发布版本；含人工审核节点一律拒绝</td></tr>
+            <tr><td><b>Webhook 回调</b></td><td>智能体轮终 / 工作流终态</td><td>结果回写宿主系统</td><td>HMAC 签名、持久重试、耗尽告警</td></tr>
+          </tbody>
+        </table>
+        </div>
+
+        <!-- 1.7 -->
+        <div class="sec" id="p7"><span class="no">1.7</span><h3>产品边界</h3></div>
+        <p class="lead">明确“不做什么”与“做什么”同样重要。以下边界是产品设计的一部分，不是临时限制。</p>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="k">NOT DOING</div>
+            <h4>刻意不做</h4>
+            <ul>
+              <li><b>不训练基座模型：</b>专注模型之上的编排、知识与工具链路</li>
+              <li><b>不做通用网盘：</b>工作区文件留在用户电脑，服务端不存副本</li>
+              <li><b>不提供租户物理删除：</b>以下线与归档代替，避免误删整租户数据</li>
+              <li><b>不承诺无人值守：</b>高副作用动作保留确认与审批</li>
+              <li><b>显式降级：</b>可替换组件不可用时明确标注降级，关键能力不可用时直接失败，不伪装成正常结果</li>
+            </ul>
+          </div>
+          <div class="card">
+            <div class="k">DOING</div>
+            <h4>坚持做</h4>
+            <ul>
+              <li><b>私有化优先：</b>数据、索引、会话状态都可留在企业内网</li>
+              <li><b>单一事实源：</b>工作流 DSL、配置 schema、权限树都只有一份权威定义</li>
+              <li><b>显式失败：</b>配置缺失、工具不可用、检索无结果都给出可行动的说明</li>
+              <li><b>可回滚：</b>智能体配置、工作流版本、文档版本都保留历史</li>
+              <li><b>可计量：</b>每一轮 token、费用与工具调用都可追溯</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= 第二部分 技术架构 ================= -->
+      <section class="part" id="part2">
+        <div class="part-head">
+          <div class="t"><span class="part-no">PART II</span><h2>技术架构设计书</h2></div>
+          <div class="en">Technical Architecture</div>
+        </div>
+
+        <!-- 2.1 -->
+        <div class="sec" id="a1"><span class="no">2.1</span><h3>目标与设计原则</h3></div>
+        <p class="lead">架构围绕六个质量属性展开：<b>可私有化、可扩展、可审计、可降级、可移植、可运维</b>。原则不是口号，每一条都对应明确的实现约束。</p>
+
+        <div class="table-wrap">
+        <table>
+          <thead><tr><th>原则</th><th>含义</th><th>落地约束</th></tr></thead>
+          <tbody>
+            <tr><td><b>单一事实源</b></td><td>同一语义只有一个权威定义</td><td>工作流以 JSON DSL 为唯一真源；配置以 schema 为唯一来源；权限树菜单与接口同源</td></tr>
+            <tr><td><b>显式失败</b></td><td>不可用就说不可用，不静默猜测</td><td>关键密钥缺失启动失败；模型引用无效拒绝发问；工具不可用明确报错</td></tr>
+            <tr><td><b>边界收口</b></td><td>能力开放，但权限与配额始终生效</td><td>所有对外入口共用 API Key、租户、限流、审计；副作用工具默认需审批</td></tr>
+            <tr><td><b>状态分层</b></td><td>无状态应用 + 外置会话与索引</td><td>应用可水平扩展；会话状态、向量索引、分布式锁放 Redis；业务数据放 MySQL</td></tr>
+            <tr><td><b>可回滚</b></td><td>变更必须能退回上一稳定态</td><td>工作流按版本快照运行；智能体配置有版本轨；文档支持版本回滚</td></tr>
+            <tr><td><b>可观测</b></td><td>关键链路都留下证据</td><td>运行 Trace、用量台账、审计链、巡检报告、通知与告警</td></tr>
+          </tbody>
+        </table>
+        </div>
+
+        <!-- 2.2 -->
+        <div class="sec" id="a2"><span class="no">2.2</span><h3>系统分层架构</h3></div>
+        <p class="lead">系统分为接入、编排、领域、基础设施与运行支撑五层。安全、租户、审计与配额作为横向能力贯穿所有层，而不是某一个模块的附属功能。</p>
+
+        <figure class="fig">
+          <div class="fig-head"><div><span class="fig-no">图 2-1</span> <span class="fig-title">系统分层架构</span></div></div>
+          <svg class="dg" viewBox="0 0 1000 610" role="img" aria-label="系统分层架构图">
+            <!-- 接入层 -->
+            <rect x="100" y="26" width="770" height="90" rx="8" class="band"/>
+            <text x="112" y="46" class="xs">接入层 · ACCESS</text>
+            <g>
+              <rect x="112" y="56" width="116" height="34" rx="6" class="box"/><text x="170" y="78" text-anchor="middle" class="sm">电脑端工作台</text>
+              <rect x="236" y="56" width="116" height="34" rx="6" class="box"/><text x="294" y="78" text-anchor="middle" class="sm">移动端</text>
+              <rect x="360" y="56" width="116" height="34" rx="6" class="box"/><text x="418" y="78" text-anchor="middle" class="sm">免登录分享</text>
+              <rect x="484" y="56" width="116" height="34" rx="6" class="box"/><text x="542" y="78" text-anchor="middle" class="sm">开放 API</text>
+              <rect x="608" y="56" width="116" height="34" rx="6" class="box"/><text x="666" y="78" text-anchor="middle" class="sm">MCP 端点</text>
+              <rect x="732" y="56" width="126" height="34" rx="6" class="box"/><text x="795" y="78" text-anchor="middle" class="sm">Webhook</text>
+            </g>
+            <text x="54" y="74" text-anchor="middle" class="h">接入</text>
+
+            <!-- 编排层 -->
+            <rect x="100" y="128" width="770" height="100" rx="8" class="band"/>
+            <text x="112" y="148" class="xs">编排层 · ORCHESTRATION</text>
+            <g>
+              <rect x="112" y="158" width="140" height="52" rx="6" class="green"/><text x="182" y="180" text-anchor="middle" class="sm">对话编排</text><text x="182" y="197" text-anchor="middle" class="xs">流式 · 插话 · 续接</text>
+              <rect x="264" y="158" width="140" height="52" rx="6" class="green"/><text x="334" y="180" text-anchor="middle" class="sm">计划 / 目标</text><text x="334" y="197" text-anchor="middle" class="xs">预算 · 证据核验</text>
+              <rect x="416" y="158" width="140" height="52" rx="6" class="green"/><text x="486" y="180" text-anchor="middle" class="sm">工作流引擎</text><text x="486" y="197" text-anchor="middle" class="xs">DSL → StateGraph</text>
+              <rect x="568" y="158" width="140" height="52" rx="6" class="green"/><text x="638" y="180" text-anchor="middle" class="sm">工具网关</text><text x="638" y="197" text-anchor="middle" class="xs">MCP · HTTP · 沙盒</text>
+              <rect x="720" y="158" width="138" height="52" rx="6" class="green"/><text x="789" y="180" text-anchor="middle" class="sm">人在回路</text><text x="789" y="197" text-anchor="middle" class="xs">审批 · 提问 · 确认</text>
+            </g>
+            <text x="54" y="182" text-anchor="middle" class="h">编排</text>
+
+            <!-- 领域层 -->
+            <rect x="100" y="240" width="770" height="120" rx="8" class="band"/>
+            <text x="112" y="260" class="xs">领域层 · DOMAIN SERVICES</text>
+            <g>
+              <rect x="112" y="270" width="116" height="34" rx="6" class="box"/><text x="170" y="292" text-anchor="middle" class="sm">检索与知识</text>
+              <rect x="236" y="270" width="116" height="34" rx="6" class="box"/><text x="294" y="292" text-anchor="middle" class="sm">模型与路由</text>
+              <rect x="360" y="270" width="116" height="34" rx="6" class="box"/><text x="418" y="292" text-anchor="middle" class="sm">智能体与市场</text>
+              <rect x="484" y="270" width="116" height="34" rx="6" class="box"/><text x="542" y="292" text-anchor="middle" class="sm">评测与采样</text>
+              <rect x="608" y="270" width="116" height="34" rx="6" class="box"/><text x="666" y="292" text-anchor="middle" class="sm">租户与身份</text>
+              <rect x="732" y="270" width="126" height="34" rx="6" class="box"/><text x="795" y="292" text-anchor="middle" class="sm">权限与审计</text>
+              <rect x="112" y="312" width="116" height="34" rx="6" class="box"/><text x="170" y="334" text-anchor="middle" class="sm">通知与邮件</text>
+              <rect x="236" y="312" width="116" height="34" rx="6" class="box"/><text x="294" y="334" text-anchor="middle" class="sm">调度中心</text>
+              <rect x="360" y="312" width="116" height="34" rx="6" class="box"/><text x="418" y="334" text-anchor="middle" class="sm">计量与配额</text>
+              <rect x="484" y="312" width="116" height="34" rx="6" class="box"/><text x="542" y="334" text-anchor="middle" class="sm">内容安全</text>
+              <rect x="608" y="312" width="116" height="34" rx="6" class="box"/><text x="666" y="334" text-anchor="middle" class="sm">配置中心</text>
+              <rect x="732" y="312" width="126" height="34" rx="6" class="box"/><text x="795" y="334" text-anchor="middle" class="sm">技能与文档解析</text>
+            </g>
+            <text x="54" y="304" text-anchor="middle" class="h">领域</text>
+
+            <!-- 基础设施层 -->
+            <rect x="100" y="372" width="770" height="100" rx="8" class="band"/>
+            <text x="112" y="392" class="xs">基础设施适配层 · INFRASTRUCTURE</text>
+            <g>
+              <rect x="112" y="402" width="116" height="52" rx="6" class="slate"/><text x="170" y="424" text-anchor="middle" class="sm">MySQL</text><text x="170" y="441" text-anchor="middle" class="xs">业务数据</text>
+              <rect x="236" y="402" width="116" height="52" rx="6" class="slate"/><text x="294" y="424" text-anchor="middle" class="sm">Redis Stack</text><text x="294" y="441" text-anchor="middle" class="xs">向量 · 会话 · 锁</text>
+              <rect x="360" y="402" width="116" height="52" rx="6" class="slate"/><text x="418" y="424" text-anchor="middle" class="sm">关键词引擎</text><text x="418" y="441" text-anchor="middle" class="xs">可选 · 可降级</text>
+              <rect x="484" y="402" width="116" height="52" rx="6" class="slate"/><text x="542" y="424" text-anchor="middle" class="sm">沙盒集群</text><text x="542" y="441" text-anchor="middle" class="xs">隔离执行</text>
+              <rect x="608" y="402" width="116" height="52" rx="6" class="slate"/><text x="666" y="424" text-anchor="middle" class="sm">模型网关</text><text x="666" y="441" text-anchor="middle" class="xs">OpenAI 兼容</text>
+              <rect x="732" y="402" width="126" height="52" rx="6" class="slate"/><text x="795" y="424" text-anchor="middle" class="sm">邮件 / 推送</text><text x="795" y="441" text-anchor="middle" class="xs">SMTP · Web Push</text>
+            </g>
+            <text x="54" y="436" text-anchor="middle" class="h">适配</text>
+
+            <!-- 支撑层 -->
+            <rect x="100" y="484" width="770" height="58" rx="8" class="band"/>
+            <text x="112" y="504" class="xs">运行支撑 · RUNTIME</text>
+            <g>
+              <rect x="112" y="514" width="174" height="20" rx="4" class="soft"/><text x="199" y="528" text-anchor="middle" class="xs">配置热更新 · 启动自检</text>
+              <rect x="298" y="514" width="174" height="20" rx="4" class="soft"/><text x="385" y="528" text-anchor="middle" class="xs">Trace · 用量台账</text>
+              <rect x="484" y="514" width="174" height="20" rx="4" class="soft"/><text x="571" y="528" text-anchor="middle" class="xs">巡检 · 告警</text>
+              <rect x="670" y="514" width="188" height="20" rx="4" class="soft"/><text x="764" y="528" text-anchor="middle" class="xs">日志 · 指标 · 健康检查</text>
+            </g>
+            <text x="54" y="518" text-anchor="middle" class="h">支撑</text>
+
+            <!-- 横向能力 -->
+            <rect x="886" y="26" width="92" height="516" rx="8" class="amber"/>
+            <text x="932" y="52" text-anchor="middle" class="xs">横向能力</text>
+            <g>
+              <rect x="896" y="70" width="72" height="56" rx="5" class="box"/><text x="932" y="94" text-anchor="middle" class="sm">安全</text><text x="932" y="110" text-anchor="middle" class="xs">认证 / 密钥</text>
+              <rect x="896" y="142" width="72" height="56" rx="5" class="box"/><text x="932" y="166" text-anchor="middle" class="sm">租户</text><text x="932" y="182" text-anchor="middle" class="xs">行级隔离</text>
+              <rect x="896" y="214" width="72" height="56" rx="5" class="box"/><text x="932" y="238" text-anchor="middle" class="sm">审计</text><text x="932" y="254" text-anchor="middle" class="xs">哈希链</text>
+              <rect x="896" y="286" width="72" height="56" rx="5" class="box"/><text x="932" y="310" text-anchor="middle" class="sm">配额</text><text x="932" y="326" text-anchor="middle" class="xs">三级限流</text>
+              <rect x="896" y="358" width="72" height="56" rx="5" class="box"/><text x="932" y="382" text-anchor="middle" class="sm">计量</text><text x="932" y="398" text-anchor="middle" class="xs">token / 费用</text>
+              <rect x="896" y="430" width="72" height="56" rx="5" class="box"/><text x="932" y="454" text-anchor="middle" class="sm">可观测</text><text x="932" y="470" text-anchor="middle" class="xs">Trace / 巡检</text>
+            </g>
+            <text x="500" y="584" text-anchor="middle" class="sm">上层只依赖抽象能力，具体供应商、存储与执行环境可替换</text>
+          </svg>
+          <figcaption class="fig-cap">分层的关键不是“有几层”，而是依赖方向单一：接入只调编排，编排只调领域，领域通过适配层访问外部系统。</figcaption>
+        </figure>
+
+        <!-- 2.3 -->
+        <div class="sec" id="a3"><span class="no">2.3</span><h3>技术选型与取舍</h3></div>
+        <p class="lead">选型遵循“成熟、可私有化、可替换”三个标准。每一项选择都伴随明确的权衡，而不是追求最新。</p>
+
+        <div class="table-wrap">
+        <table>
+          <thead><tr><th>维度</th><th>选择</th><th>理由</th><th>权衡</th></tr></thead>
+          <tbody>
+            <tr><td>后端运行时</td><td>Java 17 + Spring Boot 3.5</td><td>企业内网成熟、生态完整、长期可维护</td><td>启动与内存开销高于轻量语言</td></tr>
+            <tr><td>智能体引擎</td><td>AgentScope Harness 会话引擎</td><td>推理循环、工具派发、上下文压缩、续跑由框架统一接管</td><td>领域能力需经适配层注入，存在学习成本</td></tr>
+            <tr><td>工作流引擎</td><td>Spring AI Alibaba Graph（StateGraph）</td><td>显式图执行、条件边、检查点与续跑能力完整</td><td>与智能体会话引擎互相独立，需明确边界</td></tr>
+            <tr><td>向量存储</td><td>Redis Stack（RediSearch）</td><td>向量、会话状态、锁与限频一套基础设施解决</td><td>硬依赖 Redis；容量规划需单独评估</td></tr>
+            <tr><td>关键词检索</td><td>默认 MySQL，可选 Meilisearch</td><td>零依赖开箱可用；规模上来后可切换中文分词引擎</td><td>两套引擎需保持索引一致与可回退</td></tr>
+            <tr><td>关系数据库</td><td>MySQL 8 协议兼容库</td><td>部署普遍、运维熟悉、无数据库专有逻辑</td><td>复杂检索能力有限，需应用层补足</td></tr>
+            <tr><td>前端</td><td>Vue 3 + Vite + Ant Design Vue + Vue Flow</td><td>组件成熟、画布生态可用、按页分包</td><td>重交互页面需自绘组件保证一致性</td></tr>
+            <tr><td>文档解析</td><td>POI / PDFBox / jsoup / 中文分词</td><td>覆盖主流办公格式与网页正文，可离线运行</td><td>扫描件依赖 OCR 服务，质量受源文件影响</td></tr>
+            <tr><td>部署</td><td>Docker Compose / 容器编排</td><td>私有化交付简单，依赖版本可控</td><td>大规模集群需额外接入编排与监控体系</td></tr>
+          </tbody>
+        </table>
+        </div>
+
+        <!-- 2.4 -->
+        <div class="sec" id="a4"><span class="no">2.4</span><h3>双引擎编排：会话与工作流各司其职</h3></div>
+        <p class="lead">问渠内部有两套执行引擎：<b>会话引擎</b>负责长会话中的推理、工具与人在回路；<b>工作流引擎</b>负责显式图的确定性执行。两者共享能力，但不共享状态。</p>
+
+        <figure class="fig">
+          <div class="fig-head"><div><span class="fig-no">图 2-2</span> <span class="fig-title">双引擎分工与共享能力</span></div></div>
+          <svg class="dg" viewBox="0 0 1000 430" role="img" aria-label="双引擎架构图">
+            <rect x="24" y="26" width="452" height="286" rx="10" class="green"/>
+            <text x="44" y="52" class="h">会话引擎 · AgentScope</text>
+            <text x="44" y="70" class="xs">面向长会话、开放式任务与人在回路</text>
+            <g>
+              <rect x="44" y="84" width="198" height="38" rx="6" class="box"/><text x="143" y="108" text-anchor="middle" class="sm">推理循环与工具派发</text>
+              <rect x="258" y="84" width="198" height="38" rx="6" class="box"/><text x="357" y="108" text-anchor="middle" class="sm">会话状态与续跑</text>
+              <rect x="44" y="132" width="198" height="38" rx="6" class="box"/><text x="143" y="156" text-anchor="middle" class="sm">上下文压缩与预算</text>
+              <rect x="258" y="132" width="198" height="38" rx="6" class="box"/><text x="357" y="156" text-anchor="middle" class="sm">计划 / 目标模式</text>
+              <rect x="44" y="180" width="198" height="38" rx="6" class="box"/><text x="143" y="204" text-anchor="middle" class="sm">子智能体委派</text>
+              <rect x="258" y="180" width="198" height="38" rx="6" class="box"/><text x="357" y="204" text-anchor="middle" class="sm">权限档位与审批</text>
+              <rect x="44" y="228" width="198" height="38" rx="6" class="box"/><text x="143" y="252" text-anchor="middle" class="sm">过程事件与断线恢复</text>
+              <rect x="258" y="228" width="198" height="38" rx="6" class="box"/><text x="357" y="252" text-anchor="middle" class="sm">记忆注入</text>
+            </g>
+            <text x="250" y="292" text-anchor="middle" class="xs">特点：状态长、路径开放、可随时介入</text>
+
+            <rect x="524" y="26" width="452" height="286" rx="10" class="amber"/>
+            <text x="544" y="52" class="h">工作流引擎 · StateGraph</text>
+            <text x="544" y="70" class="xs">面向显式编排、确定性执行与可回放</text>
+            <g>
+              <rect x="544" y="84" width="198" height="38" rx="6" class="box"/><text x="643" y="108" text-anchor="middle" class="sm">DSL 结构校验</text>
+              <rect x="758" y="84" width="198" height="38" rx="6" class="box"/><text x="857" y="108" text-anchor="middle" class="sm">节点装配与条件边</text>
+              <rect x="544" y="132" width="198" height="38" rx="6" class="box"/><text x="643" y="156" text-anchor="middle" class="sm">检查点与续跑</text>
+              <rect x="758" y="132" width="198" height="38" rx="6" class="box"/><text x="857" y="156" text-anchor="middle" class="sm">人工审核挂起</text>
+              <rect x="544" y="180" width="198" height="38" rx="6" class="box"/><text x="643" y="204" text-anchor="middle" class="sm">循环与回边闸</text>
+              <rect x="758" y="180" width="198" height="38" rx="6" class="box"/><text x="857" y="204" text-anchor="middle" class="sm">节点级 Trace</text>
+              <rect x="544" y="228" width="198" height="38" rx="6" class="box"/><text x="643" y="252" text-anchor="middle" class="sm">版本快照与回滚</text>
+              <rect x="758" y="228" width="198" height="38" rx="6" class="box"/><text x="857" y="252" text-anchor="middle" class="sm">多种触发入口</text>
+            </g>
+            <text x="750" y="292" text-anchor="middle" class="xs">特点：路径显式、可审计、可精确重放</text>
+
+            <line x1="500" y1="34" x2="500" y2="304" class="dash"/>
+            <text x="500" y="322" text-anchor="middle" class="xs">状态边界</text>
+
+            <rect x="24" y="342" width="952" height="66" rx="8" class="band"/>
+            <text x="44" y="366" class="xs">共享能力层 · 两套引擎复用同一套基础设施</text>
+            <g>
+              <rect x="44" y="374" width="140" height="22" rx="4" class="soft"/><text x="114" y="389" text-anchor="middle" class="xs">模型网关与路由</text>
+              <rect x="196" y="374" width="140" height="22" rx="4" class="soft"/><text x="266" y="389" text-anchor="middle" class="xs">混合检索</text>
+              <rect x="348" y="374" width="140" height="22" rx="4" class="soft"/><text x="418" y="389" text-anchor="middle" class="xs">工具与沙盒</text>
+              <rect x="500" y="374" width="140" height="22" rx="4" class="soft"/><text x="570" y="389" text-anchor="middle" class="xs">计量与配额</text>
+              <rect x="652" y="374" width="140" height="22" rx="4" class="soft"/><text x="722" y="389" text-anchor="middle" class="xs">审计与通知</text>
+              <rect x="804" y="374" width="152" height="22" rx="4" class="soft"/><text x="880" y="389" text-anchor="middle" class="xs">存储与配置</text>
+            </g>
+            <line x1="250" y1="312" x2="250" y2="340" class="arrow-g" marker-end="url(#arw-g)"/>
+            <line x1="750" y1="312" x2="750" y2="340" class="arrow-a" marker-end="url(#arw-a)"/>
+          </svg>
+          <figcaption class="fig-cap">为什么分成两套：对话是“长会话 + 开放式决策”，工作流是“显式图 + 确定性执行”。强行合并会让两边都变差。</figcaption>
+        </figure>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="k">SESSION ENGINE</div>
+            <h4>会话引擎适合什么</h4>
+            <p>需求边界不清、需要多轮澄清、工具选择依赖模型判断、随时可能插入人工意见的长任务。</p>
+            <ul><li>日常问答与知识检索</li><li>计划 / 目标模式的长任务</li><li>子智能体按需委派</li><li>断线续接与运行中插话</li></ul>
+          </div>
+          <div class="card">
+            <div class="k">WORKFLOW ENGINE</div>
+            <h4>工作流引擎适合什么</h4>
+            <p>步骤固定、需要审核、需要精确回放与版本管理的业务流程，或需要被外部系统稳定触发的自动化。</p>
+            <ul><li>多步骤数据加工与报表</li><li>带人工审核的审批流</li><li>定时任务与事件触发</li><li>对外提供稳定 API</li></ul>
+          </div>
+        </div>
+
+        <!-- 2.5 -->
+        <div class="sec" id="a5"><span class="no">2.5</span><h3>问答与检索管线</h3></div>
+        <p class="lead">一次问答不是“把问题丢给模型”，而是一条有明确质量闸门的管线：召回、融合、重排、组装、生成、工具执行、出口检查与计量。</p>
+
+        <figure class="fig">
+          <div class="fig-head"><div><span class="fig-no">图 2-3</span> <span class="fig-title">问答与检索管线</span></div></div>
+          <svg class="dg" viewBox="0 0 1000 600" role="img" aria-label="问答与检索管线图">
+            <!-- 行 1 -->
+            <g>
+              <rect x="34" y="54" width="212" height="58" rx="7" class="green"/><text x="140" y="80" text-anchor="middle" class="h">提问</text><text x="140" y="98" text-anchor="middle" class="xs">文本 · 图片 · 文件</text>
+              <rect x="282" y="54" width="212" height="58" rx="7" class="box"/><text x="388" y="80" text-anchor="middle" class="h">意图与档位路由</text><text x="388" y="98" text-anchor="middle" class="xs">聊天 / 工作区 / 分享</text>
+              <rect x="530" y="54" width="212" height="58" rx="7" class="box"/><text x="636" y="80" text-anchor="middle" class="h">检索规划</text><text x="636" y="98" text-anchor="middle" class="xs">范围 · 查询改写</text>
+              <rect x="778" y="54" width="188" height="58" rx="7" class="box"/><text x="872" y="80" text-anchor="middle" class="h">混合召回</text><text x="872" y="98" text-anchor="middle" class="xs">向量 + 关键词</text>
+            </g>
+            <line x1="246" y1="83" x2="278" y2="83" class="arrow-g" marker-end="url(#arw-g)"/>
+            <line x1="494" y1="83" x2="526" y2="83" class="arrow-g" marker-end="url(#arw-g)"/>
+            <line x1="742" y1="83" x2="774" y2="83" class="arrow-g" marker-end="url(#arw-g)"/>
+
+            <!-- 行 2 右到左 -->
+            <g>
+              <rect x="754" y="224" width="212" height="58" rx="7" class="box"/><text x="860" y="250" text-anchor="middle" class="h">分路融合</text><text x="860" y="268" text-anchor="middle" class="xs">归一化 · 双命中加分</text>
+              <rect x="506" y="224" width="212" height="58" rx="7" class="box"/><text x="612" y="250" text-anchor="middle" class="h">重排</text><text x="612" y="268" text-anchor="middle" class="xs">语义相关度排序</text>
+              <rect x="258" y="224" width="212" height="58" rx="7" class="box"/><text x="364" y="250" text-anchor="middle" class="h">质量闸门</text><text x="364" y="268" text-anchor="middle" class="xs">融合门 / 重排门</text>
+              <rect x="34" y="224" width="188" height="58" rx="7" class="amber"/><text x="128" y="250" text-anchor="middle" class="h">低置信保底</text><text x="128" y="268" text-anchor="middle" class="xs">保留 Top-1 并标注</text>
+            </g>
+            <path d="M872 112 L872 188 L860 188 L860 220" class="arrow-g" marker-end="url(#arw-g)"/>
+            <line x1="754" y1="253" x2="722" y2="253" class="arrow" marker-end="url(#arw)"/>
+            <line x1="506" y1="253" x2="474" y2="253" class="arrow" marker-end="url(#arw)"/>
+            <line x1="258" y1="253" x2="226" y2="253" class="arrow" marker-end="url(#arw)"/>
+
+            <!-- 行 3 左到右 -->
+            <g>
+              <rect x="34" y="394" width="212" height="58" rx="7" class="box"/><text x="140" y="420" text-anchor="middle" class="h">上下文组装</text><text x="140" y="438" text-anchor="middle" class="xs">父子块 · 配额 · 编号</text>
+              <rect x="282" y="394" width="212" height="58" rx="7" class="green"/><text x="388" y="420" text-anchor="middle" class="h">流式生成</text><text x="388" y="438" text-anchor="middle" class="xs">思考强度 · 工具并行</text>
+              <rect x="530" y="394" width="212" height="58" rx="7" class="box"/><text x="636" y="420" text-anchor="middle" class="h">工具执行</text><text x="636" y="438" text-anchor="middle" class="xs">沙盒 · MCP · HTTP</text>
+              <rect x="778" y="394" width="188" height="58" rx="7" class="box"/><text x="872" y="420" text-anchor="middle" class="h">出口安全闸</text><text x="872" y="438" text-anchor="middle" class="xs">压尾放行 · 命中截断</text>
+            </g>
+            <path d="M128 282 L128 348 L140 348 L140 390" class="arrow" marker-end="url(#arw)"/>
+            <line x1="246" y1="423" x2="278" y2="423" class="arrow-g" marker-end="url(#arw-g)"/>
+            <line x1="494" y1="423" x2="526" y2="423" class="arrow" marker-end="url(#arw)"/>
+            <line x1="742" y1="423" x2="774" y2="423" class="arrow" marker-end="url(#arw)"/>
+
+            <g>
+              <rect x="34" y="500" width="932" height="62" rx="8" class="band"/>
+              <text x="54" y="523" class="xs">收尾 · 全链路留痕</text>
+              <rect x="54" y="532" width="200" height="20" rx="4" class="soft"/><text x="154" y="546" text-anchor="middle" class="xs">引用与产物回填</text>
+              <rect x="266" y="532" width="200" height="20" rx="4" class="soft"/><text x="366" y="546" text-anchor="middle" class="xs">token 与费用计量</text>
+              <rect x="478" y="532" width="200" height="20" rx="4" class="soft"/><text x="578" y="546" text-anchor="middle" class="xs">过程事件落账</text>
+              <rect x="690" y="532" width="256" height="20" rx="4" class="soft"/><text x="818" y="546" text-anchor="middle" class="xs">审计与质量采样</text>
+            </g>
+            <path d="M872 452 L872 496" class="arrow" marker-end="url(#arw)"/>
+
+            <text x="364" y="313" text-anchor="middle" class="xs">融合门 0.5 · 重排门 0.6</text>
+            <text x="128" y="210" text-anchor="middle" class="xs">重排异常时不启用保底</text>
+          </svg>
+          <figcaption class="fig-cap">质量闸门的意义：宁可明确告知“没有足够依据”，也不把低相关片段包装成确定答案。</figcaption>
+        </figure>
+
+        <h4>关键机制<span class="tag">WHY IT MATTERS</span></h4>
+        <ul>
+          <li><b>统一引用编号：</b>知识库、联网搜索与外部工具返回共用一套 <code>[N]</code> 编号，避免多来源各说各话。</li>
+          <li><b>双门控制：</b>融合门 0.5 与重排门 0.6 分别作用于不同阶段；重排执行过后，未经重排的候选不得经融合阈值进入上下文。</li>
+          <li><b>低置信保底：</b>低分全灭时保留唯一最高分块并显式标注，避免“隐性问答”被绝对阈值全部误杀；重排链路异常时不做保底。</li>
+          <li><b>档位分流：</b>聊天档不启沙盒，工作区档对接本机执行器，分享档只读；同一套管线按场景裁剪工具面。</li>
+          <li><b>出口压尾：</b>内容安全在流式生成时压住尾部若干字符再放行，命中拦截即截断并追加提示。</li>
+        </ul>
+        <div class="note">
+          <span class="t">性能基线</span>
+          简单问答在云上真实模型环境的整轮耗时实测约 <b>1.4–1.6 秒</b>；同一会话的后续轮次通常在 1 秒以内。长任务耗时主要取决于工具与人工审批，而非模型首包。
+        </div>
+
+        <!-- 2.6 -->
+        <div class="sec" id="a6"><span class="no">2.6</span><h3>长任务执行模型</h3></div>
+        <p class="lead">长任务被建模为两种可控模式：<b>计划模式</b>先出计划再执行，<b>目标模式</b>用一句话入队并自动续跑。两者都不是“让模型一直跑到结束”，而是有状态、有预算、有介入点的过程。</p>
+
+        <figure class="fig">
+          <div class="fig-head"><div><span class="fig-no">图 2-4</span> <span class="fig-title">计划模式与目标模式状态流转</span></div></div>
+          <svg class="dg" viewBox="0 0 1000 470" role="img" aria-label="长任务状态流转图">
+            <rect x="26" y="26" width="948" height="178" rx="10" class="lane"/>
+            <text x="44" y="50" class="h">计划模式</text>
+            <text x="126" y="50" class="xs">先确认，再执行；同一轮内按意见升版</text>
+            <g>
+              <rect x="44" y="82" width="168" height="52" rx="7" class="box"/><text x="128" y="104" text-anchor="middle" class="sm">规划中</text><text x="128" y="121" text-anchor="middle" class="xs">目标 + 前三步</text>
+              <rect x="278" y="82" width="168" height="52" rx="7" class="amber"/><text x="362" y="104" text-anchor="middle" class="sm">待确认</text><text x="362" y="121" text-anchor="middle" class="xs">确认 / 提意见 / 取消</text>
+              <rect x="512" y="82" width="168" height="52" rx="7" class="green"/><text x="596" y="104" text-anchor="middle" class="sm">执行中</text><text x="596" y="121" text-anchor="middle" class="xs">可插话 · 可调整</text>
+              <rect x="746" y="82" width="168" height="52" rx="7" class="box"/><text x="830" y="104" text-anchor="middle" class="sm">完成 / 取消</text><text x="830" y="121" text-anchor="middle" class="xs">卡与产物保留</text>
+            </g>
+            <line x1="212" y1="108" x2="274" y2="108" class="arrow-g" marker-end="url(#arw-g)"/>
+            <line x1="446" y1="108" x2="508" y2="108" class="arrow-g" marker-end="url(#arw-g)"/>
+            <line x1="680" y1="108" x2="742" y2="108" class="arrow-g" marker-end="url(#arw-g)"/>
+            <path d="M596 82 C596 62 440 62 400 78" class="dash" marker-end="url(#arw)"/>
+            <text x="500" y="56" text-anchor="middle" class="xs">按意见升版 · 保留血缘</text>
+            <text x="362" y="160" class="xs">挂起有倒计时</text>
+            <text x="596" y="160" class="xs">步骤级进度以任务清单为准</text>
+
+            <rect x="26" y="226" width="948" height="178" rx="10" class="lane"/>
+            <text x="44" y="250" class="h">目标模式</text>
+            <text x="126" y="250" class="xs">一句话入队，自动续跑；插话让位后接续</text>
+            <g>
+              <rect x="44" y="282" width="132" height="52" rx="7" class="box"/><text x="110" y="304" text-anchor="middle" class="sm">入队</text><text x="110" y="321" text-anchor="middle" class="xs">目标原文</text>
+              <rect x="206" y="282" width="132" height="52" rx="7" class="green"/><text x="272" y="304" text-anchor="middle" class="sm">运行</text><text x="272" y="321" text-anchor="middle" class="xs">轮次推进</text>
+              <rect x="368" y="282" width="132" height="52" rx="7" class="amber"/><text x="434" y="304" text-anchor="middle" class="sm">暂停 / 让位</text><text x="434" y="321" text-anchor="middle" class="xs">用户插话或预算</text>
+              <rect x="530" y="282" width="132" height="52" rx="7" class="box"/><text x="596" y="304" text-anchor="middle" class="sm">续跑</text><text x="596" y="321" text-anchor="middle" class="xs">当前轮结束接续</text>
+              <rect x="692" y="282" width="132" height="52" rx="7" class="box"/><text x="758" y="304" text-anchor="middle" class="sm">证据核验</text><text x="758" y="321" text-anchor="middle" class="xs">结构 · 环境 · 退出码</text>
+              <rect x="854" y="282" width="96" height="52" rx="7" class="box"/><text x="902" y="304" text-anchor="middle" class="sm">完成</text><text x="902" y="321" text-anchor="middle" class="xs">终态卡留痕</text>
+            </g>
+            <line x1="176" y1="308" x2="202" y2="308" class="arrow-g" marker-end="url(#arw-g)"/>
+            <line x1="338" y1="308" x2="364" y2="308" class="arrow-a" marker-end="url(#arw-a)"/>
+            <line x1="500" y1="308" x2="526" y2="308" class="arrow" marker-end="url(#arw)"/>
+            <line x1="662" y1="308" x2="688" y2="308" class="arrow" marker-end="url(#arw)"/>
+            <line x1="824" y1="308" x2="850" y2="308" class="arrow-g" marker-end="url(#arw-g)"/>
+            <path d="M434 334 L434 366 L272 366 L272 338" class="dash" marker-end="url(#arw)"/>
+            <text x="353" y="386" text-anchor="middle" class="xs">无法自行解决时转“已暂停”并写明原因</text>
+
+            <text x="500" y="438" text-anchor="middle" class="sm">四项硬预算：轮数 40 · 工具调用 400 次 · token 200 万 · 机器时长 2 小时（0 表示不限）</text>
+          </svg>
+          <figcaption class="fig-cap">两种模式共享同一套“过程可见、证据可核、预算可控”的底座，区别只在由谁决定下一步：用户确认或系统续跑。</figcaption>
+        </figure>
+
+        <div class="table-wrap">
+        <table>
+          <thead><tr><th>机制</th><th>计划模式</th><th>目标模式</th></tr></thead>
+          <tbody>
+            <tr><td>启动方式</td><td>本轮显式开启</td><td>输入一句话目标即入队</td></tr>
+            <tr><td>推进方式</td><td>用户确认后执行</td><td>系统自动续跑</td></tr>
+            <tr><td>用户介入</td><td>提意见升版、取消、执行中插话</td><td>暂停、继续、修改原文、取消、插话让位</td></tr>
+            <tr><td>完成判定</td><td>步骤执行完</td><td>提交证据并逐条核验通过</td></tr>
+            <tr><td>失败处理</td><td>保留当前卡与已执行记录</td><td>转“已暂停”并写明原因</td></tr>
+            <tr><td>留痕</td><td>版本轨、步骤级 diff、产物</td><td>终态卡、轮次记录、证据清单</td></tr>
+          </tbody>
+        </table>
+        </div>
+
+        <!-- 2.7 -->
+        <div class="sec" id="a7"><span class="no">2.7</span><h3>工作流引擎</h3></div>
+        <p class="lead">工作流的核心不是画布，而是<b>DSL 作为唯一事实源</b>：画布负责编辑，校验器负责拦截，编译器负责翻译，引擎只按已发布的 DSL 快照执行。</p>
+
+        <figure class="fig">
+          <div class="fig-head"><div><span class="fig-no">图 2-5</span> <span class="fig-title">DSL 到 StateGraph 的执行链路</span></div></div>
+          <svg class="dg" viewBox="0 0 1000 420" role="img" aria-label="工作流执行链路图">
+            <g>
+              <rect x="34" y="40" width="196" height="62" rx="7" class="green"/><text x="132" y="66" text-anchor="middle" class="h">DSL（JSON）</text><text x="132" y="85" text-anchor="middle" class="xs">节点 · 边 · 变量 · 坐标</text>
+              <rect x="278" y="40" width="196" height="62" rx="7" class="box"/><text x="376" y="66" text-anchor="middle" class="h">结构校验</text><text x="376" y="85" text-anchor="middle" class="xs">数量 · 连线 · 分支完整性</text>
+              <rect x="522" y="40" width="196" height="62" rx="7" class="box"/><text x="620" y="66" text-anchor="middle" class="h">编译为 StateGraph</text><text x="620" y="85" text-anchor="middle" class="xs">节点装配 · 条件边 · 回边闸</text>
+              <rect x="766" y="40" width="200" height="62" rx="7" class="green"/><text x="866" y="66" text-anchor="middle" class="h">运行（锁定快照）</text><text x="866" y="85" text-anchor="middle" class="xs">检查点 · 续跑 · Trace</text>
+            </g>
+            <line x1="234" y1="71" x2="274" y2="71" class="arrow-g" marker-end="url(#arw-g)"/>
+            <line x1="478" y1="71" x2="518" y2="71" class="arrow-g" marker-end="url(#arw-g)"/>
+            <line x1="722" y1="71" x2="762" y2="71" class="arrow-g" marker-end="url(#arw-g)"/>
+
+            <text x="34" y="144" class="xs">13 类节点 · 按用途分组</text>
+            <g>
+              <rect x="34" y="156" width="176" height="80" rx="7" class="band"/><text x="48" y="176" class="sm">流程</text><text x="48" y="197" class="xs">开始 / 结束</text><text x="48" y="215" class="xs">模板转换</text>
+              <rect x="224" y="156" width="176" height="80" rx="7" class="band"/><text x="238" y="176" class="sm">模型</text><text x="238" y="197" class="xs">LLM 调用</text><text x="238" y="215" class="xs">子智能体</text>
+              <rect x="414" y="156" width="176" height="80" rx="7" class="band"/><text x="428" y="176" class="sm">数据</text><text x="428" y="197" class="xs">知识检索 / HTTP</text><text x="428" y="215" class="xs">代码执行</text>
+              <rect x="604" y="156" width="176" height="80" rx="7" class="band"/><text x="618" y="176" class="sm">控制</text><text x="618" y="197" class="xs">条件分支</text><text x="618" y="215" class="xs">循环 / 人工审核</text>
+              <rect x="794" y="156" width="172" height="80" rx="7" class="band"/><text x="808" y="176" class="sm">生态</text><text x="808" y="197" class="xs">技能</text><text x="808" y="215" class="xs">MCP 工具</text>
+            </g>
+
+            <text x="34" y="280" class="xs">触发入口</text>
+            <g>
+              <rect x="34" y="292" width="140" height="30" rx="15" class="soft"/><text x="104" y="312" text-anchor="middle" class="xs">画布手动</text>
+              <rect x="186" y="292" width="140" height="30" rx="15" class="soft"/><text x="256" y="312" text-anchor="middle" class="xs">定时 cron</text>
+              <rect x="338" y="292" width="140" height="30" rx="15" class="soft"/><text x="408" y="312" text-anchor="middle" class="xs">API 调用</text>
+              <rect x="490" y="292" width="140" height="30" rx="15" class="soft"/><text x="560" y="312" text-anchor="middle" class="xs">Webhook</text>
+              <rect x="642" y="292" width="140" height="30" rx="15" class="soft"/><text x="712" y="312" text-anchor="middle" class="xs">知识事件</text>
+              <rect x="794" y="292" width="172" height="30" rx="15" class="soft"/><text x="880" y="312" text-anchor="middle" class="xs">chatflow 绑定</text>
+            </g>
+
+            <rect x="34" y="348" width="932" height="46" rx="7" class="amber"/>
+            <text x="500" y="376" text-anchor="middle" class="xs">版本：草稿可改 · 发布冻结快照 · 回滚再发一版；运行永远读当时快照，改画布不影响已跑的 run</text>
+          </svg>
+          <figcaption class="fig-cap">校验前置的意义：把“画得出、存得进、跑时才炸”的问题拦在保存或发布当场，并给出可操作的修正指引。</figcaption>
+        </figure>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="k">NODE SAFETY</div>
+            <h4>节点级安全约束</h4>
+            <ul>
+              <li><b>HTTP 请求：</b>逐跳公网校验，读取上限 2MB</li>
+              <li><b>代码执行：</b>Python / Node 走隔离沙盒，非 0 退出码失败</li>
+              <li><b>条件分支：</b>受限表达式求值，禁用类型引用与构造器</li>
+              <li><b>人工审核：</b>挂起 → 裁决 → 按检查点续跑，已完成节点短路回放</li>
+              <li><b>循环：</b>最大圈数在编译期与运行期双重约束</li>
+              <li><b>游客：</b>只读节点集白名单，其余节点一律拒绝</li>
+            </ul>
+          </div>
+          <div class="card">
+            <div class="k">RUN GOVERNANCE</div>
+            <h4>运行治理</h4>
+            <ul>
+              <li>单次运行超时与最大图步数可配</li>
+              <li>并发上限与排队容量可配</li>
+              <li>运行记录保留期可配</li>
+              <li>终态回调带 HMAC 签名，不指向内网</li>
+              <li>运行历史支持节点级 Trace 与甘特时间轴</li>
+              <li>批量发布、下线、导出、删除与模板复用</li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- 2.8 -->
+        <div class="sec" id="a8"><span class="no">2.8</span><h3>数据模型</h3></div>
+        <p class="lead">86 张业务表按八个域归组。核心业务表带归属列，租户键按域覆盖；逻辑删除统一，审计独立成链。<b>完整全景见图 3-3。</b></p>
+
+        <div class="table-wrap">
+        <table>
+          <thead><tr><th>域</th><th>核心表</th><th>关系要点</th></tr></thead>
+          <tbody>
+            <tr><td><b>身份与租户</b></td><td>租户、用户、部门、角色、用户角色、邀请</td><td>用户归属租户与部门；角色绑定菜单与接口；租户停用只挡登录</td></tr>
+            <tr><td><b>知识资产</b></td><td>知识库、文档、知识块、子块、图谱、文档版本</td><td>库 → 文档 → 块三级；向量与关键词索引按块维护；图谱三元组可回溯来源块</td></tr>
+            <tr><td><b>对话与运行</b></td><td>会话、消息、会话事件、目标、目标轮次、审批、产物</td><td>会话 → 消息 → 事件账本；目标与轮次绑定；产物挂消息与会话</td></tr>
+            <tr><td><b>智能体与调度</b></td><td>智能体、配置版本、分享、定时任务、个人 MCP、工作区</td><td>配置每次保存生成版本；分享与 MCP 端点挂智能体；定时任务落专属会话</td></tr>
+            <tr><td><b>工作流</b></td><td>工作流、版本、运行、调度运行、回调投递、市场条目</td><td>运行锁定 DSL 快照；版本可回滚；市场安装生成独立副本</td></tr>
+            <tr><td><b>评测与质量</b></td><td>问答日志、反馈、Trace 采样、检索评估、智能体评测</td><td>问答日志关联反馈与采样；评测运行逐题落结果；基线与 A/B 对比</td></tr>
+            <tr><td><b>治理与安全</b></td><td>审计事件、配置、配额、菜单、接口、认证源、服务账号</td><td>审计按哈希链串联；菜单与接口同树；配额三档作用于用户与部门</td></tr>
+            <tr><td><b>开放与通知</b></td><td>API Key、通知、邮件投递、Web Push、MCP 调用日志、用量</td><td>Key 只存哈希；投递台账至少一次重试；用量按轮次与用途记账</td></tr>
+          </tbody>
+        </table>
+        </div>
+
+        <!-- 2.9 -->
+        <div class="sec" id="a9"><span class="no">2.9</span><h3>安全与多租户架构</h3></div>
+        <p class="lead">安全不是一道门，而是五层纵深：<b>身份 → 授权 → 数据 → 运行 → 审计</b>。任何一层单独失效，都不足以让越权发生。</p>
+
+        <div class="table-wrap">
+        <table>
+          <thead><tr><th>层</th><th>控制点</th><th>实现要点</th></tr></thead>
+          <tbody>
+            <tr><td><b>身份</b></td><td>本地账号、OIDC、SAML 2.0、SCIM 2.0、LDAP、服务账号</td><td>密码 PBKDF2 + 失败锁定；<code>(provider, sub)</code> 复合唯一防账号漂移；认证源密钥加密入库</td></tr>
+            <tr><td><b>授权</b></td><td>角色-菜单 + 角色-接口两级 RBAC</td><td>后端默认拒绝；未授权接口数量直接告警；资源按创建者与租户行级隔离</td></tr>
+            <tr><td><b>数据</b></td><td>密钥、令牌、签名 URL</td><td>模型 Key / 工具凭据 / 认证源密钥 RSA 加密；对外令牌只存 SHA-256；图片与产物走 HMAC 签名 URL</td></tr>
+            <tr><td><b>运行</b></td><td>限流、配额、内容安全、沙盒、审批</td><td>固定窗口限流超限 429；推理配额三档；输入输出双闸；隔离容器执行；副作用工具可设确认</td></tr>
+            <tr><td><b>审计</b></td><td>统一事件与哈希链</td><td>登录、配置、租户、成员、密钥、内容安全、运维动作全量记录；CSV 合规导出与链校验</td></tr>
+          </tbody>
+        </table>
+        </div>
+
+        <div class="grid-3">
+          <div class="card">
+            <div class="k">TENANCY</div>
+            <h4>租户隔离</h4>
+            <p>租户键贯穿数据行、RBAC 快照、配额、限流、审计与备份。租户管理员只能看到自己一行，平台级动作仅平台管理员可执行。</p>
+          </div>
+          <div class="card">
+            <div class="k">SESSION</div>
+            <h4>会话治理</h4>
+            <p>强制下线通过会话代数 +1 实现，已签发令牌当场失效；改密、重置密码与离职踢出走同一机制。</p>
+          </div>
+          <div class="card">
+            <div class="k">SANDBOX</div>
+            <h4>执行隔离</h4>
+            <p>命令与文件读写发生在隔离容器；路径逐段校验并按真实路径比对前缀；越界写入直接拒绝。</p>
+          </div>
+        </div>
+
+        <!-- 2.10 -->
+        <div class="sec" id="a10"><span class="no">2.10</span><h3>部署拓扑</h3></div>
+        <p class="lead">标准部署为单机容器栈，也可按需拆分。应用本身无状态，会话状态与向量索引外置，因此可以水平扩展。<b>完整拓扑见图 3-2。</b></p>
+
+        <div class="table-wrap">
+        <table>
+          <thead><tr><th>组件</th><th>角色</th><th>端口 / 依赖</th><th>扩展方式</th></tr></thead>
+          <tbody>
+            <tr><td><b>Nginx</b></td><td>统一入口、TLS 终止、静态资源与反向代理</td><td>80 / 443 → app:8090</td><td>多实例 + 负载均衡</td></tr>
+            <tr><td><b>应用服务</b></td><td>REST / SSE、编排、领域服务</td><td>8090；依赖 MySQL、Redis</td><td>无状态多副本，需共享会话与卷</td></tr>
+            <tr><td><b>MySQL 8</b></td><td>业务数据与审计</td><td>3306；字符集 utf8mb4</td><td>主从 / 云数据库</td></tr>
+            <tr><td><b>Redis Stack</b></td><td>向量索引、会话状态、锁、限频、分享额度</td><td>6379；硬依赖，不可用则启动失败</td><td>集群或托管实例</td></tr>
+            <tr><td><b>关键词引擎</b></td><td>中文分词与相关度检索（可选）</td><td>7700；不可用时回退 MySQL</td><td>独立扩容</td></tr>
+            <tr><td><b>沙盒 provisioner</b></td><td>按需创建隔离容器并调度命令与文件</td><td>8002；需要 Docker</td><td>多节点池化</td></tr>
+            <tr><td><b>浏览器服务</b></td><td>公网页面访问与操作（可选）</td><td>内网 MCP 端口</td><td>独立实例</td></tr>
+            <tr><td><b>模型网关</b></td><td>OpenAI 兼容供应商接入</td><td>出网 HTTPS</td><td>按供应商与配额分流</td></tr>
+          </tbody>
+        </table>
+        </div>
+
+        <div class="note warn">
+          <span class="t">多副本注意</span>
+          应用副本之间必须共享同一套 JWT 密钥、VAPID 密钥、数据目录与会话存储；定时调度通过“先推进下次执行时间”保证单实例执行，避免重复触发。
+        </div>
+
+        <!-- 2.11 -->
+        <div class="sec" id="a11"><span class="no">2.11</span><h3>可观测性与运维</h3></div>
+        <p class="lead">运维视角只回答三个问题：<b>现在好不好、谁在做什么、出了事能不能追</b>。对应的产品化能力是巡检、审计与 Trace。</p>
+
+        <div class="table-wrap">
+        <table>
+          <thead><tr><th>信号</th><th>来源</th><th>用途</th></tr></thead>
+          <tbody>
+            <tr><td><b>系统巡检</b></td><td>数据库、Redis、关键词引擎、磁盘、审计链、模型供应商、登录安全、工具闸</td><td>逐项给出当前值、结论与处置建议；总评取最差项；历史趋势与失败告警</td></tr>
+            <tr><td><b>审计事件</b></td><td>登录、配置、租户、成员、密钥、内容安全、运维动作</td><td>分页查询、跨租户审阅、CSV 导出、哈希链校验</td></tr>
+            <tr><td><b>用量台账</b></td><td>每轮 token、费用、API Key、用途分项</td><td>个人统计、管理员费用视图、配额执行依据</td></tr>
+            <tr><td><b>运行 Trace</b></td><td>对话轮次与工作流节点</td><td>筛选、回放、失败定位、差评采样</td></tr>
+            <tr><td><b>质量指标</b></td><td>无命中率、引用率、满意率、recall@k、MRR、忠实度</td><td>检索评估、智能体回归、发布门禁</td></tr>
+            <tr><td><b>通知告警</b></td><td>巡检失败、额度异常、投递耗尽、工作流失败</td><td>站内通知、邮件、Web Push，支持按类型静音</td></tr>
+          </tbody>
+        </table>
+        </div>
+      </section>
+
+      <!-- ================= 第三部分 架构图集 ================= -->
+      <section class="part" id="part3">
+        <div class="part-head">
+          <div class="t"><span class="part-no">PART III</span><h2>架构图集</h2></div>
+          <div class="en">Architecture Atlas</div>
+        </div>
+        <p class="lead">以下三张整页图可直接用于汇报、评审与方案附件。图后附表索引，便于按主题定位。</p>
+
+        <!-- 3.1 -->
+        <div class="sec" id="g1"><span class="no">3.1</span><h3>系统上下文图</h3></div>
+        <p class="lead">从外部视角看，问渠位于用户、外部系统与基础设施之间。虚线内为平台信任边界，跨边界的每一次交互都经过身份、权限与审计。</p>
+
+        <figure class="fig">
+          <div class="fig-head"><div><span class="fig-no">图 3-1</span> <span class="fig-title">系统上下文（C4 Level 1）</span></div></div>
+          <svg class="dg" viewBox="0 100 1000 540" role="img" aria-label="系统上下文图">
+            <rect x="300" y="150" width="410" height="445" rx="14" fill="none" class="dash"/>
+            <text x="314" y="170" class="xs">平台信任边界</text>
+
+            <rect x="330" y="190" width="350" height="250" rx="12" class="deep"/>
+            <text x="505" y="222" text-anchor="middle" class="h dt">问渠 WenQu</text>
+            <text x="505" y="242" text-anchor="middle" class="dm">AI 智能体工作台</text>
+            <g>
+              <rect x="352" y="262" width="140" height="30" rx="5" fill="#2a4f47" stroke="#3f6b60"/><text x="422" y="282" text-anchor="middle" class="xs" fill="#d6e6e0">对话与长任务</text>
+              <rect x="504" y="262" width="154" height="30" rx="5" fill="#2a4f47" stroke="#3f6b60"/><text x="581" y="282" text-anchor="middle" class="xs" fill="#d6e6e0">知识检索与图谱</text>
+              <rect x="352" y="304" width="140" height="30" rx="5" fill="#2a4f47" stroke="#3f6b60"/><text x="422" y="324" text-anchor="middle" class="xs" fill="#d6e6e0">智能体与工具</text>
+              <rect x="504" y="304" width="154" height="30" rx="5" fill="#2a4f47" stroke="#3f6b60"/><text x="581" y="324" text-anchor="middle" class="xs" fill="#d6e6e0">工作流与开放</text>
+              <rect x="352" y="346" width="306" height="30" rx="5" fill="#2a4f47" stroke="#3f6b60"/><text x="505" y="366" text-anchor="middle" class="xs" fill="#d6e6e0">治理：租户 · 权限 · 配额 · 内容安全 · 审计</text>
+            </g>
+            <text x="505" y="406" text-anchor="middle" class="dm">私有化部署 · 数据与索引留在内网</text>
+
+            <rect x="40" y="120" width="180" height="64" rx="8" class="green"/>
+            <text x="130" y="146" text-anchor="middle" class="h">业务用户</text>
+            <text x="130" y="165" text-anchor="middle" class="xs">提问 · 审批 · 使用产物</text>
+            <rect x="40" y="214" width="180" height="64" rx="8" class="green"/>
+            <text x="130" y="240" text-anchor="middle" class="h">平台管理员</text>
+            <text x="130" y="259" text-anchor="middle" class="xs">租户 · 权限 · 巡检</text>
+            <rect x="40" y="308" width="180" height="64" rx="8" class="green"/>
+            <text x="130" y="334" text-anchor="middle" class="h">外部系统</text>
+            <text x="130" y="353" text-anchor="middle" class="xs">API · Webhook · MCP</text>
+
+            <line x1="220" y1="152" x2="326" y2="230" class="arrow-g" marker-end="url(#arw-g)"/>
+            <line x1="220" y1="246" x2="326" y2="280" class="arrow-g" marker-end="url(#arw-g)"/>
+            <line x1="220" y1="340" x2="326" y2="350" class="arrow-g" marker-end="url(#arw-g)"/>
+            <text x="268" y="196" text-anchor="middle" class="xs">HTTPS</text>
+            <text x="268" y="300" text-anchor="middle" class="xs">API Key</text>
+
+            <rect x="770" y="90" width="190" height="62" rx="8" class="amber"/>
+            <text x="865" y="115" text-anchor="middle" class="h">模型供应商</text>
+            <text x="865" y="134" text-anchor="middle" class="xs">对话 · 向量 · 重排 · OCR</text>
+            <rect x="770" y="180" width="190" height="62" rx="8" class="amber"/>
+            <text x="865" y="205" text-anchor="middle" class="h">企业身份源</text>
+            <text x="865" y="224" text-anchor="middle" class="xs">OIDC / SAML / LDAP / SCIM</text>
+            <rect x="770" y="270" width="190" height="62" rx="8" class="amber"/>
+            <text x="865" y="295" text-anchor="middle" class="h">通知通道</text>
+            <text x="865" y="314" text-anchor="middle" class="xs">SMTP · Web Push</text>
+            <rect x="770" y="360" width="190" height="62" rx="8" class="amber"/>
+            <text x="865" y="385" text-anchor="middle" class="h">隔离执行环境</text>
+            <text x="865" y="404" text-anchor="middle" class="xs">沙盒容器 · 浏览器</text>
+
+            <line x1="684" y1="250" x2="766" y2="122" class="arrow-a" marker-end="url(#arw-a)"/>
+            <line x1="684" y1="270" x2="766" y2="212" class="arrow" marker-end="url(#arw)"/>
+            <line x1="684" y1="330" x2="766" y2="300" class="arrow" marker-end="url(#arw)"/>
+            <line x1="684" y1="370" x2="766" y2="390" class="arrow" marker-end="url(#arw)"/>
+
+            <rect x="330" y="520" width="350" height="62" rx="8" class="slate"/>
+            <text x="505" y="545" text-anchor="middle" class="h">数据与索引</text>
+            <text x="505" y="564" text-anchor="middle" class="xs">MySQL · Redis Stack · 关键词引擎</text>
+            <line x1="505" y1="442" x2="505" y2="516" class="arrow" marker-end="url(#arw)"/>
+            <text x="560" y="484" class="xs">读写 · 向量检索 · 状态</text>
+
+            <text x="505" y="612" text-anchor="middle" class="sm">跨边界交互统一经过身份认证、权限判定、配额与审计；不因入口不同而放宽</text>
+          </svg>
+          <figcaption class="fig-cap">对外汇报时建议强调：平台自身不保存用户工作区文件；模型、身份与通知都作为可替换的外部依赖接入。</figcaption>
+        </figure>
+
+        <!-- 3.2 -->
+        <div class="sec" id="g2"><span class="no">3.2</span><h3>部署拓扑图</h3></div>
+        <p class="lead">标准拓扑是单机容器栈：入口、应用、数据与执行环境分离，按需拆分。可选组件缺失时对应能力明确显示未连接，不静默降级。</p>
+
+        <figure class="fig">
+          <div class="fig-head"><div><span class="fig-no">图 3-2</span> <span class="fig-title">生产部署拓扑</span></div></div>
+          <svg class="dg" viewBox="0 0 1000 650" role="img" aria-label="部署拓扑图">
+            <rect x="26" y="24" width="948" height="618" rx="14" fill="none" class="dash"/>
+            <text x="40" y="44" class="xs">企业内网 / 私有云</text>
+
+            <rect x="390" y="56" width="220" height="48" rx="8" class="green"/>
+            <text x="500" y="85" text-anchor="middle" class="h">用户与外部系统</text>
+
+            <rect x="380" y="140" width="240" height="54" rx="8" class="deep"/>
+            <text x="500" y="164" text-anchor="middle" class="h dt">Nginx</text>
+            <text x="500" y="182" text-anchor="middle" class="dm">80 / 443 · TLS · 静态资源</text>
+            <line x1="500" y1="104" x2="500" y2="136" class="arrow-g" marker-end="url(#arw-g)"/>
+
+            <g>
+              <rect x="250" y="230" width="150" height="58" rx="8" class="green"/><text x="325" y="254" text-anchor="middle" class="sm">应用副本 1</text><text x="325" y="272" text-anchor="middle" class="xs">无状态</text>
+              <rect x="425" y="230" width="150" height="58" rx="8" class="green"/><text x="500" y="254" text-anchor="middle" class="sm">应用副本 2</text><text x="500" y="272" text-anchor="middle" class="xs">无状态</text>
+              <rect x="600" y="230" width="150" height="58" rx="8" class="green"/><text x="675" y="254" text-anchor="middle" class="sm">应用副本 N</text><text x="675" y="272" text-anchor="middle" class="xs">水平扩展</text>
+            </g>
+            <path d="M500 194 L500 210 L325 210 L325 226" class="arrow-g" marker-end="url(#arw-g)"/>
+            <path d="M500 194 L500 226" class="arrow-g" marker-end="url(#arw-g)"/>
+            <path d="M500 194 L500 210 L675 210 L675 226" class="arrow-g" marker-end="url(#arw-g)"/>
+            <rect x="812" y="238" width="150" height="56" rx="6" class="soft"/>
+            <text x="887" y="258" text-anchor="middle" class="xs">多副本共享一致</text>
+            <text x="887" y="274" text-anchor="middle" class="xs">JWT / VAPID 密钥</text>
+            <text x="887" y="289" text-anchor="middle" class="xs">数据目录 · 会话存储</text>
+
+            <rect x="80" y="360" width="170" height="60" rx="8" class="slate"/><text x="165" y="385" text-anchor="middle" class="h">MySQL 8</text><text x="165" y="404" text-anchor="middle" class="xs">业务数据 · 审计</text>
+            <rect x="270" y="360" width="170" height="60" rx="8" class="slate"/><text x="355" y="385" text-anchor="middle" class="h">Redis Stack</text><text x="355" y="404" text-anchor="middle" class="xs">向量 · 会话 · 锁</text>
+            <rect x="460" y="360" width="170" height="60" rx="8" class="slate"/><text x="545" y="385" text-anchor="middle" class="h">关键词引擎</text><text x="545" y="404" text-anchor="middle" class="xs">可选 · 可回退</text>
+            <rect x="650" y="360" width="150" height="60" rx="8" class="amber"/><text x="725" y="385" text-anchor="middle" class="h">provisioner</text><text x="725" y="404" text-anchor="middle" class="xs">8002</text>
+            <rect x="820" y="360" width="140" height="60" rx="8" class="slate"/><text x="890" y="385" text-anchor="middle" class="h">浏览器服务</text><text x="890" y="404" text-anchor="middle" class="xs">可选</text>
+
+            <line x1="325" y1="288" x2="185" y2="356" class="arrow" marker-end="url(#arw)"/>
+            <line x1="420" y1="288" x2="365" y2="356" class="arrow" marker-end="url(#arw)"/>
+            <line x1="560" y1="288" x2="548" y2="356" class="arrow" marker-end="url(#arw)"/>
+            <line x1="620" y1="288" x2="700" y2="356" class="arrow" marker-end="url(#arw)"/>
+            <line x1="690" y1="288" x2="860" y2="356" class="arrow" marker-end="url(#arw)"/>
+
+            <rect x="650" y="470" width="180" height="56" rx="8" class="amber"/><text x="740" y="494" text-anchor="middle" class="sm">沙盒容器池</text><text x="740" y="512" text-anchor="middle" class="xs">命令 · 文件 · 脚本</text>
+            <line x1="725" y1="420" x2="725" y2="466" class="arrow-a" marker-end="url(#arw-a)"/>
+
+            <rect x="80" y="470" width="520" height="56" rx="8" class="band"/>
+            <text x="96" y="492" class="xs">共享持久卷</text>
+            <text x="96" y="512" class="xs">应用数据 · 产物 · 个人记忆 · 工作区沙盒卷 · 用户技能 · 日志</text>
+
+            <rect x="80" y="560" width="750" height="46" rx="8" class="soft"/>
+            <text x="96" y="587" class="xs">出网依赖：模型供应商网关（HTTPS）· 邮件 SMTP · Web Push；均可按企业网络策略代理或替换</text>
+
+            <text x="500" y="630" text-anchor="middle" class="sm">关键约束：Redis 为硬依赖；应用无状态，但多副本必须共享密钥、卷与会话存储</text>
+          </svg>
+          <figcaption class="fig-cap">小规模可用单机栈；规模上来后先拆分 MySQL 与 Redis，再横向扩展应用副本，最后把沙盒与浏览器服务独立成池。</figcaption>
+        </figure>
+
+        <!-- 3.3 -->
+        <div class="sec" id="g3"><span class="no">3.3</span><h3>数据模型全景</h3></div>
+        <p class="lead">下表按八个域展示核心表及其归属关系。核心业务表带归属列，租户键按域覆盖；删除采用逻辑删除，审计事件独立成链。</p>
+
+        <figure class="fig">
+          <div class="fig-head"><div><span class="fig-no">图 3-3</span> <span class="fig-title">业务数据模型（按域归组）</span></div></div>
+          <svg class="dg" viewBox="0 0 1000 700" role="img" aria-label="数据模型分域图">
+            <g>
+              <rect x="30" y="30" width="450" height="140" rx="9" class="green"/>
+              <text x="46" y="54" class="h">身份与租户</text>
+              <text x="46" y="76" class="mono">c_ai_tenant · c_ai_user · c_ai_department</text>
+              <text x="46" y="96" class="mono">c_ai_role · c_ai_user_role · c_ai_tenant_invite</text>
+              <text x="46" y="116" class="mono">c_ai_identity_provider · c_ai_group_role_mapping</text>
+              <text x="46" y="142" class="xs">用户归属租户与部门；角色绑定菜单与接口</text>
+              <text x="46" y="160" class="xs">认证源密钥加密；复合唯一键防账号漂移</text>
+
+              <rect x="520" y="30" width="450" height="140" rx="9" class="amber"/>
+              <text x="536" y="54" class="h">知识资产</text>
+              <text x="536" y="76" class="mono">c_ai_knowledge_base · c_ai_document · c_ai_document_version</text>
+              <text x="536" y="96" class="mono">c_ai_knowledge · c_ai_knowledge_child · c_ai_knowledge_qa</text>
+              <text x="536" y="116" class="mono">c_ai_graph_entity · c_ai_graph_triple · c_ai_graph_extract</text>
+              <text x="536" y="142" class="xs">库 → 文档 → 块三级；向量与词面索引按块维护</text>
+              <text x="536" y="160" class="xs">图谱三元组可回溯来源块</text>
+
+              <rect x="30" y="196" width="450" height="140" rx="9" class="slate"/>
+              <text x="46" y="220" class="h">对话与运行</text>
+              <text x="46" y="242" class="mono">c_ai_session · c_ai_message · c_ai_session_event</text>
+              <text x="46" y="262" class="mono">c_ai_goal · c_ai_goal_round · c_ai_goal_evidence</text>
+              <text x="46" y="282" class="mono">c_ai_tool_approval · c_ai_artifact · c_ai_session_share</text>
+              <text x="46" y="308" class="xs">会话 → 消息 → 事件账本；目标与轮次绑定</text>
+              <text x="46" y="326" class="xs">产物挂消息与会话；审批与提问卡片落库</text>
+
+              <rect x="520" y="196" width="450" height="140" rx="9" class="box"/>
+              <text x="536" y="220" class="h">智能体与调度</text>
+              <text x="536" y="242" class="mono">c_ai_agent · c_ai_agent_version · c_ai_agent_share</text>
+              <text x="536" y="262" class="mono">c_ai_scheduled_job · c_ai_scheduled_run · c_ai_user_mcp</text>
+              <text x="536" y="282" class="mono">c_ai_project · c_ai_project_root · c_ai_project_item</text>
+              <text x="536" y="308" class="xs">每次保存生成配置版本；分享与 MCP 端点挂智能体</text>
+              <text x="536" y="326" class="xs">定时任务结果落专属会话</text>
+
+              <rect x="30" y="362" width="450" height="140" rx="9" class="box"/>
+              <text x="46" y="386" class="h">工作流与分发</text>
+              <text x="46" y="408" class="mono">c_ai_workflow · c_ai_workflow_version · c_ai_workflow_run</text>
+              <text x="46" y="428" class="mono">c_ai_schedule_run · c_ai_webhook_delivery · c_ai_market_item</text>
+              <text x="46" y="448" class="mono">c_ai_market_install · c_ai_menu · c_ai_menu_api</text>
+              <text x="46" y="474" class="xs">运行锁定 DSL 快照；版本可回滚</text>
+              <text x="46" y="492" class="xs">市场安装生成独立副本，作者改版不影响已装</text>
+
+              <rect x="520" y="362" width="450" height="140" rx="9" class="green"/>
+              <text x="536" y="386" class="h">评测与质量</text>
+              <text x="536" y="408" class="mono">c_ai_qa_log · c_ai_qa_feedback · c_ai_trace_sample</text>
+              <text x="536" y="428" class="mono">c_ai_retrieval_eval_set · c_ai_retrieval_eval_case</text>
+              <text x="536" y="448" class="mono">c_ai_retrieval_eval_run · c_ai_agent_eval_suite/case</text>
+              <text x="536" y="474" class="xs">问答日志关联反馈与采样；评测逐题落结果</text>
+              <text x="536" y="492" class="xs">基线与 A/B 对比支撑发布门禁</text>
+
+              <rect x="30" y="528" width="450" height="140" rx="9" class="amber"/>
+              <text x="46" y="552" class="h">治理与安全</text>
+              <text x="46" y="574" class="mono">c_ai_audit_event · c_ai_config · c_ai_quota</text>
+              <text x="46" y="594" class="mono">c_ai_permission · c_ai_role_menu · c_ai_role_permission</text>
+              <text x="46" y="614" class="mono">c_ai_content_rule · c_ai_ops_checkup_report · c_ai_credential</text>
+              <text x="46" y="640" class="xs">审计按哈希链串联；菜单与接口同树</text>
+              <text x="46" y="658" class="xs">配额三档作用于用户与部门</text>
+
+              <rect x="520" y="528" width="450" height="140" rx="9" class="slate"/>
+              <text x="536" y="552" class="h">开放与通知</text>
+              <text x="536" y="574" class="mono">c_ai_api_key · c_ai_service_account · c_ai_notification</text>
+              <text x="536" y="594" class="mono">c_ai_mail_delivery · c_ai_webpush_subscription</text>
+              <text x="536" y="614" class="mono">c_ai_mcp_call_log · c_ai_usage_log · c_ai_announcement</text>
+              <text x="536" y="640" class="xs">Key 只存哈希；投递台账至少一次重试</text>
+              <text x="536" y="658" class="xs">用量按轮次与用途记账，支撑费用视图</text>
+            </g>
+            <text x="500" y="690" text-anchor="middle" class="xs">通用列：归属人 · 逻辑删除 · 创建与更新时间；租户键按域覆盖</text>
+          </svg>
+          <figcaption class="fig-cap">对外汇报时可只讲八个域及其关系；表名与字段级细节留在技术附录，避免信息过载。</figcaption>
+        </figure>
+
+        <!-- 3.4 -->
+        <div class="sec" id="g4"><span class="no">3.4</span><h3>图索引</h3></div>
+        <div class="table-wrap">
+        <table>
+          <thead><tr><th>编号</th><th>图名</th><th>所在章节</th><th>汇报用途</th></tr></thead>
+          <tbody>
+            <tr><td>图 1-1</td><td>核心用户旅程与贯穿能力</td><td><a href="#p4">1.4</a></td><td>讲清产品闭环与用户价值</td></tr>
+            <tr><td>图 2-1</td><td>系统分层架构</td><td><a href="#a2">2.2</a></td><td>讲清依赖方向与横向能力</td></tr>
+            <tr><td>图 2-2</td><td>双引擎分工与共享能力</td><td><a href="#a4">2.4</a></td><td>讲清为什么不是“一个万能引擎”</td></tr>
+            <tr><td>图 2-3</td><td>问答与检索管线</td><td><a href="#a5">2.5</a></td><td>讲清质量闸门与可溯源</td></tr>
+            <tr><td>图 2-4</td><td>长任务状态流转</td><td><a href="#a6">2.6</a></td><td>讲清可控性与预算边界</td></tr>
+            <tr><td>图 2-5</td><td>工作流执行链路</td><td><a href="#a7">2.7</a></td><td>讲清 DSL 唯一真源与版本</td></tr>
+            <tr><td>图 3-1</td><td>系统上下文</td><td><a href="#g1">3.1</a></td><td>对外汇报首页图</td></tr>
+            <tr><td>图 3-2</td><td>生产部署拓扑</td><td><a href="#g2">3.2</a></td><td>讲清私有化与扩展方式</td></tr>
+            <tr><td>图 3-3</td><td>业务数据模型</td><td><a href="#g3">3.3</a></td><td>讲清数据资产与治理边界</td></tr>
+          </tbody>
+        </table>
+        </div>
+      </section>
+
+      <!-- ================= 第四部分 演进与附录 ================= -->
+      <section class="part" id="part4">
+        <div class="part-head">
+          <div class="t"><span class="part-no">PART IV</span><h2>演进与附录</h2></div>
+          <div class="en">Roadmap &amp; Appendix</div>
+        </div>
+
+        <!-- 4.1 -->
+        <div class="sec" id="r1"><span class="no">4.1</span><h3>演进路线</h3></div>
+        <p class="lead">问渠的演进遵循“先把链路做通，再把质量做稳，最后把生态做开”的顺序。以下为对外可披露的能力方向，不构成交付承诺。</p>
+
+        <div class="timeline">
+          <div class="tl done">
+            <div class="when">已交付 · 能力基线</div>
+            <h4>完整链路与治理底座</h4>
+            <p>对话与长任务、知识库与混合检索、智能体与工具、工作流与开放接入、多租户与企业身份、RBAC 与审计、评测与发布门禁均已落地。</p>
+          </div>
+          <div class="tl">
+            <div class="when">近期</div>
+            <h4>质量与开放深化</h4>
+            <p>检索与评测闭环继续打磨；开放端点补齐更完整的工具调用能力；工作流模板与市场分发扩展；多副本部署与容量治理完善。</p>
+          </div>
+          <div class="tl">
+            <div class="when">中期</div>
+            <h4>协作与知识治理</h4>
+            <p>智能体协作与工作区能力完整化；知识治理与图谱进一步结合；成本、配额与部门级运营视图精细化。</p>
+          </div>
+          <div class="tl">
+            <div class="when">长期</div>
+            <h4>企业级智能体平台</h4>
+            <p>从“个人助手”走向“组织级智能体网络”：能力可组合、可复用、可度量，并在统一治理下持续演进。</p>
+          </div>
+        </div>
+
+        <!-- 4.2 -->
+        <div class="sec" id="r2"><span class="no">4.2</span><h3>术语表</h3></div>
+        <div class="table-wrap">
+        <table>
+          <thead><tr><th>术语</th><th>含义</th></tr></thead>
+          <tbody>
+            <tr><td><b>智能体</b></td><td>由人设、知识范围、工具集与治理参数组成的能力单元，可被对话、委派、定时执行或对外发布。</td></tr>
+            <tr><td><b>计划模式</b></td><td>先产出执行计划并等待确认，再按步骤执行；支持同轮按意见升版与执行中调整。</td></tr>
+            <tr><td><b>目标模式</b></td><td>用一句话设定目标后人机协作自动续跑，直到提交证据并通过核验，或转人工暂停。</td></tr>
+            <tr><td><b>混合检索</b></td><td>向量召回与关键词召回并行，经融合、重排与质量闸门后进入上下文。</td></tr>
+            <tr><td><b>GraphRAG</b></td><td>从文档抽取实体与关系，检索命中后做图扩展，补充关联事实并保留来源。</td></tr>
+            <tr><td><b>MCP</b></td><td>模型上下文协议。问渠既可作为客户端接入外部工具，也可作为服务端对外提供能力。</td></tr>
+            <tr><td><b>工作流 DSL</b></td><td>描述节点、边、变量与坐标的 JSON 定义，是工作流的唯一事实源。</td></tr>
+            <tr><td><b>人在回路</b></td><td>在关键节点插入人工确认、审批或提问，未处理时不自动继续。</td></tr>
+            <tr><td><b>产物</b></td><td>助手交付的文件、网页、图表或数据集，可预览、下载、归档与移动。</td></tr>
+            <tr><td><b>门禁</b></td><td>智能体保存或发布前的评测结论状态，用于阻止质量回退。</td></tr>
+            <tr><td><b>租户</b></td><td>平台内的独立组织边界，数据、权限、配额与审计均按租户隔离。</td></tr>
+            <tr><td><b>哈希链审计</b></td><td>每条审计事件携带前序哈希，任何篡改都会导致链校验失败。</td></tr>
+          </tbody>
+        </table>
+        </div>
+
+        <!-- 4.3 -->
+        <div class="sec" id="r3"><span class="no">4.3</span><h3>能力与接口速查</h3></div>
+        <p class="lead">对外集成优先使用标准协议；内部界面使用同一套 REST / SSE 契约。完整接口清单以运行时接口文档为准。</p>
+
+        <div class="table-wrap">
+        <table>
+          <thead><tr><th>能力域</th><th>关键能力</th><th>对外入口</th></tr></thead>
+          <tbody>
+            <tr><td><b>对话</b></td><td>流式回答、停止、续接、插话、引用</td><td><code>/api/ai/chat</code>（SSE）· <code>/api/ai/chat/resume</code></td></tr>
+            <tr><td><b>知识</b></td><td>知识库、文档解析、知识块、检索调试</td><td><code>/api/ai/knowledge</code> · <code>/api/ai/document</code> · <code>/api/ai/debug/retrieval</code></td></tr>
+            <tr><td><b>智能体</b></td><td>配置、版本、分享、定时、评测</td><td><code>/api/ai/agent</code> · <code>/s/{token}</code></td></tr>
+            <tr><td><b>工作流</b></td><td>编排、发布、运行、Trace、模板</td><td><code>/api/ai/workflow</code> · <code>/api/ai/v1/workflows/{id}/run</code></td></tr>
+            <tr><td><b>MCP</b></td><td>接入外部工具、对外发布能力</td><td><code>/api/ai/mcp</code> · <code>/ai/mcp/{token}</code> · <code>/ai/mcp</code></td></tr>
+            <tr><td><b>OpenAI 兼容</b></td><td>Chat Completions、Responses、只读工具调用</td><td><code>/api/ai/v1/chat/completions</code> · <code>/api/ai/v1/responses</code></td></tr>
+            <tr><td><b>事件回调</b></td><td>智能体轮终、工作流终态</td><td>配置回调地址 + HMAC 签名密钥</td></tr>
+            <tr><td><b>治理</b></td><td>租户、成员、权限、审计、巡检</td><td><code>/api/ai/tenant</code> · <code>/api/ai/permission</code> · <code>/api/ai/audit</code></td></tr>
+            <tr><td><b>运维</b></td><td>健康检查、指标、定时任务状态</td><td><code>/ai/actuator/health</code></td></tr>
+          </tbody>
+        </table>
+        </div>
+
+        <div class="note">
+          <span class="t">使用建议</span>
+          对外汇报建议按“系统上下文 → 核心旅程 → 分层架构 → 双引擎 → 部署拓扑”的顺序讲；技术评审则从“质量属性 → 检索管线 → 长任务 → 安全”切入，图 3-1 与图 2-3 是最常被追问的两张。
+        </div>
+
+        <div class="footer">
+          <div>问渠 WenQu · 产品与技术设计书 · v1.0 · 2026.11</div>
+          <div>Ask the source. 答案，自有源头。</div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+</div>
+
+<a href="#summary" class="top-link" id="topLink" aria-label="返回顶部">
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+    <path d="M8 13V3M8 3L3.5 7.5M8 3l4.5 4.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>
+</a>
+
+<script>
+(function(){
+  var progress = document.getElementById('progress');
+  var topLink = document.getElementById('topLink');
+  var navLinks = Array.prototype.slice.call(document.querySelectorAll('.nav a'));
+  var sections = navLinks.map(function(a){ return document.querySelector(a.getAttribute('href')); });
+  var ticking = false;
+
+  function onScroll(){
+    if (ticking) return;
+    ticking = true;
+    requestAnimationFrame(function(){
+      var h = document.documentElement;
+      var max = h.scrollHeight - h.clientHeight;
+      var y = window.scrollY || h.scrollTop;
+      progress.style.width = (max > 0 ? (y / max * 100) : 0) + '%';
+      if (y > 500) topLink.classList.add('show'); else topLink.classList.remove('show');
+
+      var active = 0;
+      for (var i = 0; i < sections.length; i++){
+        if (sections[i] && sections[i].getBoundingClientRect().top <= 120) active = i;
+      }
+      navLinks.forEach(function(a, i){ a.classList.toggle('active', i === active); });
+      ticking = false;
+    });
+  }
+  window.addEventListener('scroll', onScroll, { passive: true });
+  window.addEventListener('resize', onScroll);
+  onScroll();
+})();
+</script>
+</body>
+</html>
