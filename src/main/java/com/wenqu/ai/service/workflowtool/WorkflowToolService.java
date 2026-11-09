@@ -89,7 +89,7 @@ public class WorkflowToolService {
     }
 
     /**
-     * 游客放行（P1 · B 档）：{@code guest=true} 时只挂「只读工作流」——节点全部落在
+     * 游客放行：{@code guest=true} 时只挂「只读工作流」——节点全部落在
      * start/end/llm/retrieval/condition/loop/template 之内。含代码执行、HTTP、MCP、知识写入、
      * 人工审核、子智能体、技能注入的一律不挂；执行入口还会再校验一次（fail-closed）。
      */

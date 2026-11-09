@@ -58,8 +58,7 @@
          会话加载时由引擎按待答记录重建底部答题面板；答复后问答记录以工具卡形态留在气泡里。 -->
 
     <main ref="box" class="m-list" @scroll.passive="onScroll">
-      <!-- 历史没取回来：这是一次失败，不是「这个会话还没有消息」。以前这里只有一颗顶栏小圆点
-           闪一下就没了，界面接着把欢迎页画给用户看——用户以为会话被清空了，实际是请求挂了。
+      <!-- 历史没取回来：这是一次失败，不是「这个会话还没有消息」。
            错误卡占住空态的位置，给出原因和重试出口。 -->
       <div v-if="historyError" class="m-herr" role="alert">
         <exclamation-circle-outlined class="mhe-ic" />
@@ -397,9 +396,8 @@
             <thunderbolt-outlined :class="{ 'm-tool-on': deepThinkOn }" />
             <span class="m-tool-text">{{ effectiveModelLabel }}</span>
           </button>
-          <!-- 工具条只留这两颗：模型名要占位，「+」是唯一的收口入口。计划/目标两颗药丸原先把这一排
-               撑到 360px 固定宽（药丸缩不动，见 .m-tool 的 min-width），360px 屏上送出键直接画到卡外，
-               现在收进「+」的「本轮模式」区，开启态改由输入框上方那颗 chip 说话。 -->
+          <!-- 工具条只留这两颗：模型名要占位，「+」是唯一的收口入口。计划/目标收进「+」的
+               「本轮模式」区，开启态由输入框上方那颗 chip 提示，避免窄屏把送出键挤出卡外。 -->
           <button class="m-tool" type="button" title="添加：模式 / 技能 / 引用 / 历史 / 附件" aria-label="添加：模式 / 技能 / 引用 / 历史 / 附件" @click="attachOpen = true">
             <plus-circle-outlined />
           </button>
@@ -456,8 +454,8 @@
         </a>
         <div v-if="src.loading" class="m-src-tip">正在读取原文…</div>
         <div v-if="src.snippet" class="m-src-snippet">{{ src.snippet }}</div>
-        <!-- 原文配图按 PC 同口径内联回正文：先给无编号的 [图片] 补上序号，再让 renderMd 按下标还原。
-             此前是把图单独排在正文上方 + 正文里留「[图片1]」四个字，读者对不上是哪张。 -->
+        <!-- 原文配图按 PC 同口径内联回正文：先给无编号的 [图片] 补上序号，再让 renderMd 按下标还原，
+             让配图与正文里的编号对得上。 -->
         <div v-if="src.content" class="md m-src-content"
              v-html="renderMd(prepKnowledgeContent(src.content, src.images), src.images)" />
         <div v-if="!src.loading && !src.content && !src.snippet" class="m-src-tip">该来源没有可展示的内容</div>
@@ -768,7 +766,6 @@ const {
   goalEditing, goalEdit, goalEditBusy, goalEditSaveable,
   startGoalInlineEdit, saveGoalEdit,
   // 任务清单：快照与「何时露/怎么计数」全吃引擎那一份，本页只留折叠开关。
-  // 此前移动壳对 sessionTodos 零命中——数据两端都挂，渲染处只有 PC 一份
   sessionTodos, todoSummary, todoBarVisible,
   // 这一会话的历史有没有取回来（与「取回来了、就是空的」是两条判据，见引擎 historyError 注释）
   historyError, retryHistory,
@@ -1521,7 +1518,7 @@ onUnmounted(() => {
 .mf-btn:disabled { color: var(--app-text3); opacity: .5; }
 .mf-btn:active { background: var(--app-accent-weak); color: var(--app-accent); }
 
-/* ---- 计划确认栏的按钮（m-rec-btn 原先是审批横幅的按钮样式，横幅下线后由计划面板继续用）---- */
+/* ---- 计划确认栏的按钮 ---- */
 .m-rec-btn {
   min-height: 36px; padding: 0 14px; border: 1px solid var(--app-border); border-radius: 9px;
   background: var(--app-panel); color: var(--app-text2); font-size: 13px; touch-action: manipulation;
@@ -1703,8 +1700,8 @@ onUnmounted(() => {
   box-shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 8px 20px -10px rgba(16, 24, 40, .10);
 }
 .m-gb-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
-/* 状态药丸是只读的：状态词由引擎那一份给出，颜色只表达「在跑 / 停住」，不接受点按
-   （验收、收尾这些裁决动作已经退役，别把状态显示做成按钮） */
+/* 状态药丸是只读的：状态词由引擎那一份给出，颜色只表达「在跑 / 停住」，不接受点按，
+   别把状态显示做成按钮 */
 .m-gb-pill {
   flex: none; display: inline-flex; align-items: center; gap: 4px;
   font-size: 11.5px; line-height: 1; padding: 4px 8px; border-radius: 999px;
@@ -1850,8 +1847,7 @@ onUnmounted(() => {
 }
 .m-tools { display: flex; align-items: center; gap: 6px; padding: 2px 0 0; }
 /* min-width:0 是这一排不溢出的唯一保证：药丸里的文字是 nowrap，不写这条则 flex-shrink 整个失效
-   （每颗都按全文宽占位），max-width 与省略号沦为摆设。实测四颗药丸固定要 360px，
-   360px 屏上送出键画到输入卡外 29px、390px 屏上仍溢 8px。 */
+   （每颗都按全文宽占位），max-width 与省略号沦为摆设，窄屏上送出键会被挤出输入卡。 */
 .m-tool {
   display: inline-flex; align-items: center; gap: 5px; min-height: 36px; padding: 0 10px;
   border: 1px solid var(--app-border); border-radius: 999px; background: var(--app-panel);
@@ -1924,15 +1920,14 @@ onUnmounted(() => {
 .m-fb-ok:disabled { background: var(--app-accent-disabled); }
 
 /* ==================== 触屏热区补齐 ====================
-   这些控件此前 24–42px，手指点不准；但**视觉尺寸一律不动**——把框改大会把同一排挤爆
-   （工具条那一排曾因 .m-tool 缺 min-width:0 把发送键画到卡外过）。所以只加一层透明伪元素
+   这些控件的视觉尺寸**一律不动**——把框改大会把同一排挤爆。所以只加一层透明伪元素
    把命中区补到 44：手指打的是这块透明区域，看起来还是原来那颗小钮。
    两档分开，不能一刀切：
    - 孤立或左右留白的钮 → 双向补（发送、图片查看关闭、回到底部）；
    - 密集成排的钮（顶栏六颗、目标条四颗、提问卡翻页 ‹ ›、查找条上下颗）→ **只补高度**。
      横向对扩会互相挡点击：后渲染的那颗的透明区会盖住前一颗的外侧半区，点上去没反应。
    chip 的 × 单独处理：向右扩，向左只让出 8px，否则会盖住同一颗 chip 上的图片预览入口。
-   真机判据用 elementFromPoint 逐颗量——getBoundingClientRect 是布局盒，量不出命中区。 */
+   判据用 elementFromPoint 逐颗量——getBoundingClientRect 是布局盒，量不出命中区。 */
 .m-bar-btn, .m-bar-title, .mf-btn, .m-chip-del, .m-tool, .m-send, .m-gb-btn,
 .m-askp-page-btn, .m-lb-close, .m-rec-btn, .m-jump { position: relative; }
 .m-bar-btn::after, .m-bar-title::after, .mf-btn::after, .m-tool::after,

@@ -51,7 +51,7 @@ import java.util.regex.Pattern;
 @Service
 @RequiredArgsConstructor
 public class RoleService {
-    /** 统一审计事件（Phase 3）：同一份格式串派生日志与结构化事件，不再两处抄 */
+    /** 统一审计事件：同一份格式串派生日志与结构化事件，不再两处抄 */
     private final AuditService audit;
 
 
@@ -83,13 +83,13 @@ public class RoleService {
 
     private final AntPathMatcher pathMatcher = new AntPathMatcher();
 
-    // ==================== 缓存（批次 F2：按租户键控） ====================
+    // ==================== 缓存（按租户键控） ====================
 
     /**
-     * 每租户一份角色快照（批次 F2）：角色/绑定全部按租户隔离后，判定热路径必须按
+     * 每租户一份角色快照：角色/绑定全部按租户隔离后，判定热路径必须按
      * {@code TenantContext} 键控取各自的快照，否则 A 租户能读到 B 租户的角色定义（直接越权源）。
      * 键规则：平台视图（asPlatform）与未绑定线程（启动任务/调度器）共用 {@link #PLATFORM_KEY}
-     * ——这两类线程本来就跨租户遍历，快照不做租户过滤（与租户化前的全局口径一致）；
+     * ——这两类线程本来就跨租户遍历，快照不做租户过滤；
      * 绑定态请求按租户各建各的。表小（每租户 ≤几十行），整份重建成本可忽略。
      */
     private record Snap(Map<String, Role> roles,
@@ -191,9 +191,9 @@ public class RoleService {
         }
     }
 
-    // ==================== 授权点判定（批次 A / 方案 §8 M2 双跑） ====================
+    // ==================== 授权点判定 ====================
 
-    /** 角色的授权点绑定：allow 集 + deny 行（deny → 是否豁免；exempt=true 只压本角色，方案 D3） */
+    /** 角色的授权点绑定：allow 集 + deny 行（deny → 是否豁免；exempt=true 只压本角色） */
     private record RolePermBinding(Set<String> allows, Map<String, Boolean> denies) {
     }
 
@@ -263,7 +263,7 @@ public class RoleService {
     }
 
     /**
-     * 授权点直查（B3 收口：控制器内 adminGuard.isAdmin() 的替代判定入口）。
+     * 授权点直查（控制器内 adminGuard.isAdmin() 的替代判定入口）。
      * 语义与端点判定一致：全局 deny 压过一切；管理员级 = 全量 allow（仍受 deny）；
      * 其余角色按 allow 并集（exempt deny 只压本角色）。
      */
@@ -463,7 +463,7 @@ public class RoleService {
 
     // ==================== 角色 CRUD ====================
 
-    /** 角色列表（内置在前，其余按编码排序；平台视图混排多租户时带 tenantId 供前端标注，批次 F4） */
+    /** 角色列表（内置在前，其余按编码排序；平台视图混排多租户时带 tenantId 供前端标注） */
     public List<Role> list() {
         List<Role> out = roleMapper.selectList(new LambdaQueryWrapper<Role>()
                 .orderByDesc(Role::getBuiltin)
@@ -555,7 +555,7 @@ public class RoleService {
         if (r == null) throw new BizException("角色不存在");
         if (r.getBuiltin() != null && r.getBuiltin() == 1) throw new BizException("内置角色不可删除");
         // 占用计数走 c_ai_user_role（多角色模型）；直接依赖 Mapper 而非 UserRoleService，避免服务环依赖
-        // 过期行不占位（批次 C1）：到期即失效的临时授权不该把角色钉成「删不掉」
+        // 过期行不占位：到期即失效的临时授权不该把角色钉成「删不掉」
         Long used = userRoleMapper.selectCount(
                 activeRoleRows().eq(com.wenqu.ai.model.UserRole::getRoleCode, code));
         if (used != null && used > 0) {
@@ -655,7 +655,7 @@ public class RoleService {
         return rolePermissionMapper.denyRowsOfRole(code);
     }
 
-    // ==================== 反查（批次 D-1/D-2） ====================
+    // ==================== 反查 ====================
 
     /** 各角色成员数（角色列表出参用；一次全量，表小） */
     public Map<String, Long> memberCountsByRole() {
@@ -667,9 +667,9 @@ public class RoleService {
     }
 
     /**
-     * 未过期的角色行条件（批次 C1）：到期行既不给权限，也不算「这个角色还有人」。
+     * 未过期的角色行条件：到期行既不给权限，也不算「这个角色还有人」。
      * <p>反查/守门口径必须与判定同侧——{@code delete(code)} 的占用数、成员徽标、最后一名管理员
-     * 保护原来都数原始行，一条已过期的管理员授权会同时骗过这三处：界面说角色删不掉、
+     * 保护按原始行算的话，一条已过期的管理员授权会同时骗过这三处：界面说角色删不掉、
      * 徽标说还有人挂着、并且挡住下一次管理员调整说「不能删最后一个」。
      */
     static LambdaQueryWrapper<com.wenqu.ai.model.UserRole> activeRoleRows() {
@@ -790,7 +790,7 @@ public class RoleService {
         return out;
     }
 
-    // ==================== 数据范围（批次 C2） ====================
+    // ==================== 数据范围 ====================
 
     /** 某角色的数据范围（无行=own，谁建归谁） */
     public com.wenqu.ai.model.RoleDataScope dataScopeOf(String code) {

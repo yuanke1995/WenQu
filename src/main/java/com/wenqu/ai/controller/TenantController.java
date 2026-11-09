@@ -23,7 +23,7 @@ import java.util.Map;
 import com.wenqu.ai.security.Permission;
 
 /**
- * 租户注册与成员归属（Phase 4 · P9）。
+ * 租户注册与成员归属。
  *
  * <p>只有管理员可用，且都是<b>平台级</b>动作：开通/停用租户、把成员挪到某个租户。
  * 成员列表本身仍是「成员管理」那一个入口（按登录者的租户过滤），这里不另开一份人名单。
@@ -164,7 +164,7 @@ public class TenantController {
 
     /**
      * 平台级租户动作（直开/启停/划人）的判据：只挡 isAdmin 等于把别家客户交给别家管理员摆布——
-     * 实测租户甲管理员能停掉租户乙、能把租户乙的成员划归自己（2026-10-28 本地真机复现），
+     * 租户甲管理员能停掉租户乙、能把租户乙的成员划归自己，
      * 故与「批准开通申请」同款判据：必须是平台级管理员。
      */
     private void requirePlatform(HttpServletRequest request) {
@@ -192,7 +192,7 @@ public class TenantController {
         return ResultJson.ok(tenantInventory.of(id));
     }
 
-    // ==================== P1 多租户生命周期：归档 / 品牌 / 邀请 / 首登引导 ====================
+    // ==================== 多租户生命周期：归档 / 品牌 / 邀请 / 首登引导 ====================
 
     @Operation(summary = "归档租户", description = "归档=只读：成员不可登录、数据保留、可导出、可恢复；默认租户不能归档")
     @Permission("tenant:manage")

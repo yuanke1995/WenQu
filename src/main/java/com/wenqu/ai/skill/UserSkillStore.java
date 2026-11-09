@@ -82,13 +82,13 @@ import java.util.zip.ZipOutputStream;
  */
 @Service
 public class UserSkillStore {
-    /** 统一审计事件（Phase 3）：同一份格式串派生日志与结构化事件，不再两处抄 */
+    /** 统一审计事件：同一份格式串派生日志与结构化事件，不再两处抄 */
     private final AuditService audit;
 
 
     private static final Logger log = LoggerFactory.getLogger(UserSkillStore.class);
 
-    /** 技能名白名单：汉字、字母、数字、下划线、连字符（与旧实现同一口径，排除路径字符）。 */
+    /** 技能名白名单：汉字、字母、数字、下划线、连字符（排除路径字符）。 */
     private static final Pattern NAME_OK = Pattern.compile("[\\p{IsHan}A-Za-z0-9_-]{1,64}");
     private static final Pattern YAML_PLAIN = Pattern.compile("[\\p{IsHan}A-Za-z0-9 _.,/()\\-]+");
     private static final String SKILL_FILE = "SKILL.md";

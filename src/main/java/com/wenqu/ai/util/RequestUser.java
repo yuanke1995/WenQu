@@ -99,10 +99,8 @@ public final class RequestUser {
      * <p>
      * <b>为什么需要</b>：本类用<b>裸 {@link ThreadLocal}</b>，只在装载它的线程可见。工作区里凡是
      * 「换线程执行用户态逻辑」的地方都会丢失身份并回落 {@link #SYSTEM}，而 SYSTEM 不是真实用户——
-     * 检索层会判它「什么都读不到」，于是<b>在主链路明明召回到、换个线程就恒空</b>（线上实测：
-     * {@code searchKnowledge} 在 {@code boundedElastic-*} 工具线程里回落 SYSTEM → 库门永假 → 融合召回 0）。
-     * 同一坑已踩多次（{@code SubAgentOrchestrator} 分支检索也为此打了局部补丁），故在此提供
-     * 通用快照/恢复，由调用点在<b>线程切换之前</b>捕获、切换之后恢复。
+     * 检索层会判它「什么都读不到」，于是<b>在主链路明明召回到、换个线程就恒空</b>。
+     * 故在此提供通用快照/恢复，由调用点在<b>线程切换之前</b>捕获、切换之后恢复。
      */
     public record Snapshot(String uid, String departmentId, String role, List<String> roles) {
     }

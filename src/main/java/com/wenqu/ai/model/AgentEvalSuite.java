@@ -8,7 +8,7 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 /**
- * 智能体评测套件（评测集设置）：一个智能体一套（uk agent_id，一期不做多套件选择成本）。
+ * 智能体评测套件（评测集设置）：一个智能体一套（uk agent_id）。
  * <p>
  * 门槛与通过分是<b>门禁判定口径</b>：通过率 ≥ thresholdRate 且无 0 分严重失败 → 达标。
  * 每次运行把当刻的门槛/通过分快照进 run 行——事后改设置不影响历史口径。
@@ -22,7 +22,7 @@ public class AgentEvalSuite {
     @TableId(type = IdType.ASSIGN_UUID)
     private String id;
 
-    /** 智能体 ID（一期一智能体一套件） */
+    /** 智能体 ID（一个智能体一套件） */
     private String agentId;
 
     /** 套件名（NULL = 前端按「默认评测集」展示） */

@@ -19,7 +19,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 
 /**
- * 租户注册与归属（Phase 4 · P9）。
+ * 租户注册与归属。
  *
  * <p>三件事：保证 {@code default} 租户永远在（单租户部署也走同一套，不留「无租户」这条第二路径）；
  * 给管理端开通/停用租户；把成员挪到某个租户。
@@ -120,14 +120,14 @@ public class TenantService {
         t.setNote(note == null || note.isBlank() ? null : note.trim());
         t.setStatus(1);
         tenantMapper.insert(t);
-        // 批次 F3：新租户开通即种入角色域（内置三件套 + user 基础菜单 + 受限管理员预设）——
+        // 新租户开通即种入角色域（内置三件套 + user 基础菜单 + 受限管理员预设）——
         // 不种的话该租户用户一登录就是零角色（角色表按租户过滤，default 套里的角色看不见）
         try {
             rbacSeedRunner.seedTenantRoles(t.getId(), java.util.Set.of());
         } catch (Exception e) {
             log.warn("[TENANT] 租户 {} 的角色种子失败（可在权限页手工补建）: {}", t.getId(), e.getMessage());
         }
-        // 词表按租户各一份（Phase 4），所以新租户一开就给它登记首批只告警示例：
+        // 词表按租户各一份，所以新租户一开就给它登记首批只告警示例：
         // 空表的新租户看不出闸门在不在跑，管理员只能靠真发一句话去猜。失败不阻断开通——
         // 规则随时能在界面上补，租户开不出来才是事故。
         try {
@@ -155,7 +155,7 @@ public class TenantService {
     }
 
     /**
-     * 归档 / 恢复（P1 · 3C 清退）。
+     * 归档 / 恢复。
      * <p>归档 = 状态 2：成员不可登录、数据只读、可导出、可恢复；彻底清除仍走运维脚本。
      * 刻意不做「删除租户」按钮——行级隔离下删租户等于按归属删光它的全部数据。
      */
@@ -307,7 +307,7 @@ public class TenantService {
     }
 
     /**
-     * 登录页品牌（P1 · 3B）：匿名单入口。
+     * 登录页品牌：匿名单入口。
      * <p>不存在 / 停用 / 归档的租户回落 {@code default} 的品牌——登录页不能因为一个错子域就打不开；
      * 是否可用仍由登录口令校验后的 {@link #requireActive} 咬住。
      */

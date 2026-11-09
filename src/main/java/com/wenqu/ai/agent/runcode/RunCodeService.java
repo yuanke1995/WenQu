@@ -11,7 +11,7 @@ import java.util.UUID;
 import java.util.function.Consumer;
 
 /**
- * {@code run_code} 的执行侧（P3b 第一刀：Python 一条语言）。
+ * {@code run_code} 的执行侧（Python 一条语言）。
  * <p>
  * 这件事的形态与 DeepSeek Harness 不同，差别全部来自"代码不在本进程"：
  * <ol>
@@ -105,7 +105,7 @@ public class RunCodeService {
                 out.append("退出码 ").append(resp.exitCode).append("（脚本可能未跑完）\n");
             }
             // 「没拿到退出码」只有两种可能：沙盒压根没通，或追踪到点放弃、命令还在容器里跑。
-            // 这两件事以前只写在给模型的中文句子里，工具记录照样落成绿色对勾——现在分成字段给卡片。
+            // 这两种情况要作为字段交给卡片，而不是只写进给模型的中文句子——否则工具记录会落成绿色成功态。
             boolean timedOut = !resp.infraError && resp.exitCode == null;
             String stdout = nvl(resp.output);
             out.append(stdout.isBlank()
@@ -147,8 +147,7 @@ public class RunCodeService {
 
     /**
      * 容器可达的平台地址。
-     * <p>沙盒容器各自挂在自己的 bridge 网络上，默认路由到宿主是通的（本机实测
-     * {@code host.docker.internal} 可解析且能打到 8090）；生产环境的网络拓扑不同，
+     * <p>沙盒容器各自挂在自己的 bridge 网络上，默认路由到宿主是通的；生产环境的网络拓扑不同，
      * 所以这一项必须显式配置而不是写死。留空 = 不提供子调用（见 {@link #run}）。
      */
     private String callbackBase() {
@@ -173,8 +172,8 @@ public class RunCodeService {
 
     /**
      * 一次运行的结果：正文给模型看，其余字段给卡片看。
-     * <p>把「超时 / 沙盒不可用 / 退出码非 0」做成字段而不是句子：这三件事以前只体现在给模型的中文里，
-     * 工具记录一律落成成功态——「脚本没跑完」和「跑完了但没输出」在界面上长得一样；
+     * <p>把「超时 / 沙盒不可用 / 退出码非 0」做成字段而不是句子：只写进给模型的中文里，
+     * 工具记录会一律落成成功态——「脚本没跑完」和「跑完了但没输出」在界面上长得一样；
      * 而靠 {@code startsWith("沙盒不可用")} 反推，改一次文案就静默失效。
      */
     public record Outcome(String text, Integer exit, boolean infra, boolean timedOut,

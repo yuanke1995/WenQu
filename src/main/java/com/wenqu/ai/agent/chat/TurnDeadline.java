@@ -1,6 +1,6 @@
 package com.wenqu.ai.agent.chat;
 
-// [保留] 问渠轮次台账 / 个性化提示词 —— AgentScope 框架不提供等价能力，框架引擎(agentx)与共享服务仍依赖此文件，勿当作已退役的控制流删除。
+// 问渠轮次台账 / 个性化提示词 —— AgentScope 框架不提供等价能力，框架引擎(agentx)与共享服务仍依赖此文件。
 
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -9,9 +9,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 本轮耗时台账：整轮预算只计<b>机器</b>时间，人在回路的等待从中扣除。
- * <p>P6 刀 0 自 {@code ChatService} 提出顶层（原先是它的私有 static 嵌套类）。
  * <p>背景：askUser 提问卡单卡允许等 chat.askTimeoutMs（默认 10 分钟）、工具审批 120s，而容器级 SSE
- * 超时是<b>从请求开始一路走到头的墙钟</b>且不可续期（Spring 在 async 启动后禁止改 timeout，实测发心跳
+ * 超时是<b>从请求开始一路走到头的墙钟</b>且不可续期（Spring 在 async 启动后禁止改 timeout，发心跳
  * 也不复位）。于是「用户慢慢答完第二张卡」必然在答题途中被掐断：提问线程被中断、askId 落库改成 TIMEOUT，
  * 用户点提交收到「提问不存在、已回答或已超时」。现 emitter 不设容器超时（见 ChatController），
  * 截断判定改由本台账 + 问答侧的整轮看门狗负责。
@@ -25,7 +24,7 @@ public final class TurnDeadline {
     /** 已结束的人在回路等待累计（提问卡 + 工具审批阻塞时长），不计入预算 */
     public final AtomicLong humanWaitMs = new AtomicLong();
     /** 进行中的等待：计数 + 起点。必须<b>边等边扣</b>——等完再补记的话，看门狗在用户答题那几分钟里
-     *  看到的还是整段墙钟，照样把正在作答的轮次掐了（2026-10-07 复测实测到） */
+     *  看到的还是整段墙钟，照样把正在作答的轮次掐了 */
     public final AtomicInteger openWaits = new AtomicInteger();
     public volatile long waitBegin;
     /** 只截断一次：到点后并发 tick 不重复发 warn/complete */

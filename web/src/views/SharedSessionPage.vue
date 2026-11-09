@@ -114,7 +114,7 @@ onMounted(async () => {
     info.value = r?.data || { title: '', messages: [] }
   } catch (e) {
     // 分享不存在/已停用：与智能体分享页同口径——整页跳独立 401 页（原因经 ?msg= 带过去），
-    // 不再在本页留一个错误态（error ref 与配套样式随之退役）
+    // 不再在本页留一个错误态
     router.replace({ path: '/error', query: { code: '401', msg: e.message || '分享链接无效或已停止访问' } })
     return
   } finally {
@@ -141,7 +141,7 @@ onMounted(async () => {
 .sh-row.user { justify-content: flex-end; }
 .sh-bubble { font-size: 14px; line-height: 1.75; }
 .sh-bubble.user {
-  /* 88% 只给用户气泡（长问句留出左侧留白）。曾经写在 .sh-bubble 上，
+  /* 88% 只给用户气泡（长问句留出左侧留白）。若写在 .sh-bubble 上，
      把 AI 卡也一并卡到 88% —— 用户气泡贴右、回答卡却短一截，右边缘对不齐。 */
   max-width: 88%;
   background: var(--app-accent); color: #fff; padding: 9px 13px; border-radius: 12px 12px 2px 12px;

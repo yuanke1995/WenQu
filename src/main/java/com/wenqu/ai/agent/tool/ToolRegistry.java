@@ -16,7 +16,7 @@ import java.util.function.Predicate;
 
 /**
  * 工具注册中心：所有族声明的 {@link ToolDescriptor} 在这里汇总成一份，供挂载决策、审批判定、
- * 卡片命名与管理清单共同读取（P1 seam 化的「单一真源」落点）。
+ * 卡片命名与管理清单共同读取（「单一真源」落点）。
  * <p>
  * 与运行期插件加载无关：本类只在启动期收集编译期存在的 {@link ToolFamilyProvider} bean。
  * <p>
@@ -164,7 +164,6 @@ public class ToolRegistry {
      * <p><b>未登记的工具一律要</b>（fail-closed）：外部 MCP server 的工具名前缀来自用户自己起的
      * clientInfo 名（可以是 context7、可以是任意串），靠命名规律去认「这是外部工具」迟早漏——
      * 漏一次的结果是有副作用的工具跳过审批，这比多问用户一次严重得多。
-     * 与迁移前「MCP 回调逐个加入 sensitiveTools」的口径等价（那份名单本来就是全量外部工具）。
      */
     public boolean requiresApproval(String name, Predicate<String> configOn) {
         ToolDescriptor d = byName.get(name);

@@ -1,6 +1,6 @@
 <script setup>
 /**
- * 内容安全规则（Phase 3 · P12）：定「拦什么字」。
+ * 内容安全规则：定「拦什么字」。
  * 闸门本身的开关、外部检查服务与文案在「系统设置 → 内容安全」，这里只管规则清单与试跑。
  * 挂在「权限管理 → 内容安全」页签下（与认证源、审计事件同侧，都是治理数据）。
  */
@@ -225,7 +225,7 @@ const patternHint = computed(() => form.value.matchType === 'regex'
       在「权限管理 → 审计事件」里看清命中面，再改「拦下」。每条规则的判定顺序按「排序」升序，先命中的那条说话。
     </div>
 
-    <!-- 编辑弹窗（表单与全系统同一形态：a-form 纵排，不再用本页自定义的横排 label） -->
+    <!-- 编辑弹窗（表单与全系统同一形态：a-form 纵排） -->
     <a-modal v-model:open="editOpen" :title="form.id ? '编辑规则' : '新建规则'" width="640px"
              :confirm-loading="saving" ok-text="保存" cancel-text="取消" @ok="save">
       <a-form layout="vertical" style="margin-top:4px">

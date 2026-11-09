@@ -11,14 +11,6 @@ import java.time.LocalDateTime;
 /**
  * 工作流定义：DSL（JSON）是唯一真源——节点/边/变量引用/画布坐标都在其中，
  * 前端画布只是编辑器，执行引擎只认 DSL。对标 Dify Workflow / Coze 工作流。
- * <p>
- * 分期边界（排班计划 2026-09-29）：
- * <ul>
- *   <li>M0：本表 + DSL 校验/编译骨架，管理接口 CRUD + 校验；</li>
- *   <li>M1：引擎五核心节点可执行 + 运行记录（{@link WorkflowRun}）；</li>
- *   <li>M2：VueFlow 画布编辑器；</li>
- *   <li>M4：发布语义（status=published + 快照回滚）、智能体绑定、API 触发、共享范围启用。</li>
- * </ul>
  *
  * @author yuanke
  */
@@ -41,10 +33,10 @@ public class Workflow {
     /** 工作流 DSL（JSON：version/nodes/edges，画布坐标存 position） */
     private String dsl;
 
-    /** 状态: draft=草稿 published=已发布（M4 启用发布语义） */
+    /** 状态: draft=草稿 published=已发布 */
     private String status;
 
-    // ---- M4：发布与版本 ----
+    // ---- 发布与版本 ----
     /** 已发布版本锁定的 DSL（发布时从 dsl 拷贝；草稿继续改不影响已发布行为；未发布为 NULL） */
     private String publishedDsl;
     /** 当前发布版本号（对应 c_ai_workflow_version.version；未发布为 NULL） */

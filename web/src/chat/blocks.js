@@ -21,8 +21,8 @@ export const applyBlocks = (m, payload) => {
       content += text
       timeline.push({ kind: 'text', from, to: content.length, channel: b.channel || '' })
     } else if (b.kind === 'notice') {
-      // 双写窗口内终尾标仍在正文里（旧客户端只读 content），这里不再拼第二遍。
-      // 块本身随 m.blocks 留在页面上，P6 停写尾标后改由它渲染，不再靠整串文案 endsWith。
+      // 终尾标随正文落在 content 里，notice 块不重复拼第二遍。
+      // 完整块留在 m.blocks 上供页面取用。
       continue
     } else if (b.kind === 'think') {
       const text = typeof b.text === 'string' ? b.text : ''

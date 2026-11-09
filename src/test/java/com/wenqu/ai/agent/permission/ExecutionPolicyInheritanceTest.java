@@ -6,8 +6,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * 审批档位继承语义：显式 &gt; 继承 &gt; 预设。
- * <p>这次线上事故的根因就是「子助手未设置却落到预设 ask，与父轮 auto 不一致」，
- * 这三组断言把修复后的优先级钉住。
+ * <p>钉住「子助手未设置档位时按继承取父轮档位，而不是落到预设 ask」这一语义。
  */
 class ExecutionPolicyInheritanceTest {
 

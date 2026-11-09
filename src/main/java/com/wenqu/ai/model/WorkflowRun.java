@@ -12,7 +12,7 @@ import java.time.LocalDateTime;
  * 改画布不影响历史运行的可回放性（对齐 Coze 的 run 语义）。
  * <p>
  * {@code nodeTraces} 是节点级 trace（JSON 数组：nodeId/type/status/输入输出摘要/耗时），
- * 是 M1 调试运行与后续 Trace 运营闭环（P1 另一件）的共同地基。
+ * 是调试运行与后续 Trace 运营闭环的共同地基。
  *
  * @author yuanke
  */
@@ -50,13 +50,13 @@ public class WorkflowRun {
     /** 人工审核挂起时的执行快照（已完成节点全量输出 + 挂起节点；恢复时短路重放用，终态运行置空） */
     private String stateSnapshot;
 
-    /** M4：本次运行基于的发布版本号（NULL = 草稿调试运行） */
+    /** 本次运行基于的发布版本号（NULL = 草稿调试运行） */
     private Integer version;
 
-    /** M4：本次运行用的 DSL 来源: draft=草稿 published=已发布版本 */
+    /** 本次运行用的 DSL 来源: draft=草稿 published=已发布版本 */
     private String dslSource;
 
-    /** M4：API 触发所用的 Key id（人工/智能体触发为 NULL） */
+    /** API 触发所用的 Key id（人工/智能体触发为 NULL） */
     private String apiKeyId;
 
     /** 失败原因（截断 1000 字符） */

@@ -3,10 +3,9 @@ package com.wenqu.ai.agent.permission;
 // [保留] 问渠权限与沙箱模型 —— 框架引擎(AgentxPermissions/WenquAgentxTools)与共享服务仍依赖，勿删。
 
 /**
- * 沙盒执行档位（P2 权限档位的第一根旋钮；声明顺序即能力递增，{@link #rank()} 依赖它）。
+ * 沙盒执行档位（声明顺序即能力递增，{@link #rank()} 依赖它）。
  * <p>
- * 为什么要有这一档：迁移前沙盒只有一种形态——「可写 {@code sandbox.virtualPathPrefix}」，
- * 而且是<b>会话级固定</b>的：同一容器一旦建起来，这一轮想收紧也收不了（provisioner 的 create 请求
+ * 为什么要有这一档：沙盒容器是<b>会话级固定</b>的：同一容器一旦建起来，这一轮想收紧也收不了（provisioner 的 create 请求
  * 只有 sandbox_id/thread_id/uid/env/workdir 六个字段，没有任何档位入口）。于是「让智能体去调研一圈，
  * 别改任何东西」这种诉求只能靠提示词恳求模型，而提示词恳求不是约束。
  * <p>

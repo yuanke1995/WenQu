@@ -67,7 +67,7 @@ public class ScheduledJobService {
     private static final int ANSWER_PREVIEW = 1000;
     /**
      * Spring 的 {@link CronExpression} **只接受 6 段**（含秒），而用户与平台版口径都是标准 5 段
-     * （分 时 日 月 周）⇒ 解析前补一个秒位。冒烟实测：直接喂 5 段会抛
+     * （分 时 日 月 周）⇒ 解析前补一个秒位。直接喂 5 段会抛
      * "Cron expression must consist of 6 fields"。
      */
     private static final String SPRING_SECONDS_PREFIX = "0 ";

@@ -20,16 +20,15 @@ import reactor.core.publisher.Flux;
  * {@code pending} 缓冲，落盘发生在 {@code record()/checkpoint()/flush()} 上——{@code SessionModels}
  * 在 {@code model/end} 才 record，{@code ReActAgent#saveStateToSession} 在整次调用结束才 checkpoint。
  * 而问渠的观众跟的是<b>落盘后</b>的 {@code SessionLog}（那是唯一能跨线程、能被迟到观众接回的通道），
- * 于是可见粒度＝一次模型调用。真机实测的产物就是用户报的那句「一下粘贴出几百个字」：
- * 500 字的回答只落 3 次屏（93 → 346 → 566 字），相邻 token 帧最大间隔 1.03 秒。
+ * 于是可见粒度＝一次模型调用。
  *
  * <p><b>为什么挂在这里</b>：{@link MiddlewareBase#onModelCall} 是唯一既能包住原始模型调用事件流、
  * 又拿得到<b>本轮</b> {@link SessionRecorder} 的位置（{@code SessionRecorder.from(ctx)} 读的就是这个
  * per-call 上下文；{@code AgentSession} 自己不暴露任何实时流）。事件每过一条，距上次落盘超过
  * {@link #MIN_INTERVAL_MS} 就落一次盘。
  *
- * <p><b>为什么同步 {@code flushNow} 而不是异步 {@code flush}</b>：这不是风格选择，实测出来的——
- * 走 {@code flush()}（框架自己把它丢到共享 {@code boundedElastic}）时，落盘动作排在别人后面，
+ * <p><b>为什么同步 {@code flushNow} 而不是异步 {@code flush}</b>：走 {@code flush()}
+ * （框架自己把它丢到共享 {@code boundedElastic}）时，落盘动作排在别人后面，
  * 500 字仍只落 2-3 次屏；当场调用它，一次 2-4ms（提交 5-16 条事件），同一题落屏变成 9 次、
  * 每档约 53 字、最大间隔 0.41 秒。代价是这段时间里 {@code append} 会等这把锁——占空比约 2%。
  *

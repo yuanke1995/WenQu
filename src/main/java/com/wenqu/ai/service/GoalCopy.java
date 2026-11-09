@@ -6,7 +6,7 @@ package com.wenqu.ai.service;
  * <p>纪律：<b>只讲用户结果，不写内部机制</b>——禁止出现 TASK_STATE / scope / verifier / revision /
  * 框架名。续跑提示词也走这里：正文不写沙盒路径、工具名、命令。
  *
- * <p>2026-10-22 任务运行时之后：正式收尾走 {@code goal_submit} 工具（带证据），平台由
+ * <p>正式收尾走 {@code goal_submit} 工具（带证据），平台由
  * {@code GoalVerifier} 核验后才算完成；下面两个标记保留为<b>兼容入口</b>——模型没调工具时，
  * 标记只生成一份「完成申请」，不会直接改终态。
  */

@@ -43,9 +43,9 @@ import java.util.Set;
 @Service
 public class ConfigService {
 
-    // 可编辑白名单与参数分层（原 EDITABLE / TIER 两张 Map）已收敛到 classpath:config-schema.json，
+    // 可编辑白名单与参数分层收敛到 classpath:config-schema.json，
     // 由 ConfigSchemaService 提供 isEditable() / tier() / help() / validate()（字段定义单一来源）。
-    // MCP Server 已下沉为个人资产（c_ai_user_mcp），平台层面只剩 tool.enabled 总开关。
+    // MCP Server 归个人资产（c_ai_user_mcp），平台层面只剩 tool.enabled 总开关。
 
     private final ConfigMapper configMapper;
     private final AppProperties properties;
@@ -115,8 +115,8 @@ public class ConfigService {
      * <ol>
      *   <li><b>定义里有、defaults 里没有</b>：保存能落库，但 {@code snapshot()} 遍历 defaults 取不到值
      *       ⇒ 界面永远显示出厂默认，脏检测也比不出改动；</li>
-     *   <li><b>defaults 里有、库里没有行</b>：{@link #ensureDefaults()} 本该补齐，缺了通常是被
-     *       {@code schema.sql} 那份退役键清理名单误杀；</li>
+     *   <li><b>defaults 里有、库里没有行</b>：{@link #ensureDefaults()} 本该补齐，缺了通常是
+     *       {@code schema.sql} 的清理名单与 defaults 不一致；</li>
      *   <li><b>库里那行的值不合定义</b>：只能来自直接改库或历史迁移——保存路径上的校验与读侧诊断共用同一个
      *       {@code ConfigSchemaService.validate}，这里把它对存量行的结论摊出来，不留「界面写着 5、实际生效 99999」。</li>
      * </ol>
@@ -226,8 +226,7 @@ public class ConfigService {
     /**
      * 启动自检：schema 里声明「默认开」的开关（type=switch + def=true）有没有落点。
      * <p>为什么查这个：这类键若既无配置行、也未在 {@link #defaults()} 登记，读到的就是关——
-     * 设置页写着开、行为是关，而且不报错（{@code chat.resumeEnabled} 上线时就是这么整条静默不生效，
-     * 排查时最先怀疑的是代码而不是配置读取）。ensureDefaults 会把 defaults() 的键全部灌成配置行，
+     * 设置页写着开、行为是关，而且不报错。ensureDefaults 会把 defaults() 的键全部灌成配置行，
      * 所以「无配置行」等价于「两处都没登记」。
      * <p>只告警、不自动补一行：补行会把「忘了登记」变成「这是管理员设的值」，掩盖问题而不是暴露它。
      */
@@ -427,7 +426,7 @@ public class ConfigService {
     }
 
     /**
-     * 2026-11「限制性参数默认放开」批次：键 → 旧出厂默认值（存储层口径）。
+     * 放宽默认值迁移用的旧出厂默认值表：键 → 旧出厂默认值（存储层口径）。
      * <p>新值不在这里登记——迁移与判据四都直接取 {@link #defaults()}，两层永远同源。
      * 清单与 {@code config-schema.json} 的 def 修订一一对应（A 类 0/false、B1 两键、B2 取上限、share 游客额度）。
      */
@@ -659,9 +658,8 @@ public class ConfigService {
         d.put("chat.mcpEnabled", "false");                  // 聊天档是否挂 MCP 外部工具：默认关（纯问答不等外部连接）；开时仍受 mcp.turnWaitMs 有界等待
         d.put("chat.prefixStabilizer", "true");             // 前缀稳定器：把 system prompt 里的会话/容器 id 换成稳定占位，换供应商前缀缓存；关掉即恢复原样
         d.put("chat.scratchDir", "user-data/chat-scratch"); // 聊天档宿主临时目录；相对路径按应用工作目录解析。多副本必须指向共享卷
-        // 断线重连接流：默认开，且不露在设置页——关掉它没有任何收益（刷新/换设备就丢一轮），
-        // 不该出现在管理员的日常旋钮里（schema 已移除该字段）。
-        // 这里继续登记=保留配置行与默认值，排障时可直接改库/env 回滚；
+        // 断线重连接流恒开，不露在设置页：刷新/换设备要接回在飞的那一轮，关掉没有任何收益。
+        // 配置行与默认值仍登记，排障时可直接改库/env 关闭；
         // 与调用方 getBoolean("chat.resumeEnabled", true) 的形参默认值互为双保险：
         // 空值必须短路（Boolean.parseBoolean("") 返回 false 且不抛异常，兜底链走不到第二级，
         // 「默认开的开关」在键未入库时静默变关）。
@@ -709,7 +707,7 @@ public class ConfigService {
         d.put("chunk.overlap", String.valueOf(properties.getChunk().getOverlap()));
         d.put("chunk.structural", String.valueOf(properties.getChunk().isStructural()));
         d.put("chunk.structuralRatio", String.valueOf(properties.getChunk().getStructuralRatio()));
-        d.put("parse.embedRetryCount", String.valueOf(ConfigDefaults.PARSE_EMBED_RETRY_COUNT));                 // M10：向量化批次失败自动重试次数
+        d.put("parse.embedRetryCount", String.valueOf(ConfigDefaults.PARSE_EMBED_RETRY_COUNT));                 // 向量化批次失败自动重试次数
         d.put("retrieval.vectorWeight", String.valueOf(properties.getRetrieval().getVectorWeight()));
         d.put("retrieval.keywordWeight", String.valueOf(properties.getRetrieval().getKeywordWeight()));
         d.put("rerank.enabled", String.valueOf(properties.getRetrieval().getRerank().isEnabled()));
@@ -860,11 +858,11 @@ public class ConfigService {
         // ---------- 工作流工具（已发布工作流挂载为对话工具；配置存智能体行 workflow_tools）----------
         // 与 httpTool.enabled 同一理由默认开：没有配置工作流的智能体该族天然不挂，闸开着也无工具可出。
         d.put("workflowTool.enabled", "true");            // 工作流工具总开关（需 tool.enabled 总闸开启）
-        d.put("agentWebhook.enabled", "true");
-        d.put("agentMemory.enabled", "true");
-        // 开放 API 跨域白名单：空=不回 CORS 头（现状零变化）；
+        d.put("agentWebhook.enabled", "true");          // 智能体轮终 webhook 出站总开关（关=不再外推；已有 pending 行由扫描按原排程走完或就地耗尽）
+        d.put("agentMemory.enabled", "true");           // 智能体级记忆总闸（关=全部智能体按用户级记忆走，memory_mode 失效）
+        // 开放 API 跨域白名单：空=不回 CORS 头；
         // 逗号分隔，如 "https://hr.example.com,https://crm.example.com"。只作用于 /api/ai/v1/**。
-        d.put("apiOpen.allowedOrigins", "");             // 智能体级记忆总闸（关=全部智能体按用户级记忆走，memory_mode 失效）            // 智能体轮终 webhook 出站总开关（关=不再外推；已有 pending 行由扫描按原排程走完或就地耗尽）
+        d.put("apiOpen.allowedOrigins", "");
         // 技能：内置随版本分发 + 用户自装（user-data/skills-users/{uid}）+ 助手在对话里沉淀到沙盒工作区。
         // 平台侧只剩两件事：哪些技能全平台不再用（skill.disabled），以及 URL 安装允许哪些来源域名。
         // 技能正文读取上限是平台常量（SKILL_MAX_FILE_CHARS），不作为设置项。
@@ -919,9 +917,9 @@ public class ConfigService {
         // 默认 digest = 引入本档之前的行为逐字相同（只并行检索 + 一次短调用提炼要点，不跑工具循环）。
         // full 那一档才是"分支里真有一个完整智能体在跑"，按子智能体逐个开，代价是每支都等于一轮问答。
         d.put("agent.subagentMode", "digest");             // 平台默认档（子智能体没自己选时用它）
-        d.put("workflow.maxSteps", String.valueOf(ConfigDefaults.WORKFLOW_MAX_STEPS));                  // 工作流单次运行的最大图步数（StateGraph recursionLimit；M3 loop 回跳也受此闸）
+        d.put("workflow.maxSteps", String.valueOf(ConfigDefaults.WORKFLOW_MAX_STEPS));                  // 工作流单次运行的最大图步数（StateGraph recursionLimit；循环回跳也受此闸）
         d.put("workflow.subagentTimeoutMs", "3600000");     // 工作流子智能体节点等待回答的超时（ms，下限 30s）
-        d.put("workflow.runTimeoutSeconds", "0");        // M5：工作流单次运行硬超时（秒，0=不限制；超时按 timeout 终态收口，防长管线占死执行线程）
+        d.put("workflow.runTimeoutSeconds", "0");        // 工作流单次运行硬超时（秒，0=不限制；超时按 timeout 终态收口，防长管线占死执行线程）
         d.put("workflow.eventTriggerEnabled", "true");     // 工作流事件触发总闸（kb.docIndexed 源；异常时一键停用，不用改代码/重启）
         d.put("notification.turnEnabled", "true");           // 问答轮次与目标的站内通知总闸（平台级）：个人想收哪几类走个人静音偏好
         d.put("notification.dedupWindow", "1440");          // 同类通知合并窗口(分钟)：同目标重复发生的同类通知合并为一条，0=关闭合并
@@ -1135,7 +1133,7 @@ public class ConfigService {
         return resolveChain(key, null);
     }
 
-    /** 一个键此刻由哪一层说话（Phase 3b · P10：分层可追溯） */
+    /** 一个键此刻由哪一层说话（分层可追溯） */
     public enum Layer {
         /** 评估/参数对比用的线程内临时覆盖（最高，跑完即清） */
         EVAL_OVERRIDE,
@@ -1225,8 +1223,8 @@ public class ConfigService {
             // 读取本身异常（解密/覆盖层出错）按缺失处理，照样走兜底链
         }
         // 空值必须在解析**之前**短路：Boolean.parseBoolean("") 返回 false 且不抛异常，兜底链永远走不到
-        // 第二级——「默认开的开关」在键未入库时会静默变成关（chat.resumeEnabled 就是这么整条特性没生效，
-        // 当时只能靠把它登记进 defaults() 绕开）。数值解析抛异常才落到兜底，效果相同，故统一在此处理。
+        // 第二级——「默认开的开关」在键未入库时会静默变成关。
+        // 数值解析抛异常才落到兜底，效果相同，故统一在此处理。
         if (raw != null && !raw.isBlank()) {
             try {
                 return parser.apply(raw.trim());
@@ -1312,8 +1310,7 @@ public class ConfigService {
     public Map<String, String> update(Map<String, Map<String, String>> groups) {
         Map<String, String> updates = new HashMap<>();
         // 不认识项的清单：必须在任何写入之前整笔拒绝，不能丢弃后继续——
-        // 原先只把不认识的键静默扔掉，接口照样返回"配置已保存并生效"，库里一个字没改
-        // （实测 rerank.maxHits 改了没反应，据此做的 A/B 结论全是错的）。
+        // 否则接口会返回"配置已保存并生效"而库里一个字没改。
         // 个人配置侧（UserConfigService.save）已是拒绝口径，管理端对齐同一行为。
         Set<String> unknownKeys = new LinkedHashSet<>();
         if (groups != null) {
@@ -1335,7 +1332,7 @@ public class ConfigService {
                     + "（可能是页面版本过旧，或该项已改名/取消）。请刷新设置页后重试");
         }
         // 掩码回写保护：快照对敏感项脱敏为 "****后4位"，仍可能有客户端把掩码原样回传
-        // （设置页已改为不回填、留空不提交）；掩码值（**** 开头）一律跳过更新，
+        // （设置页不回填、留空不提交）；掩码值（**** 开头）一律跳过更新，
         // 避免覆盖库中真实 key（真实 master key 不可能以 **** 开头）
         updates.entrySet().removeIf(kv ->
                 isSensitiveKey(kv.getKey()) && kv.getValue() != null && kv.getValue().startsWith("****"));
@@ -1351,9 +1348,8 @@ public class ConfigService {
         }
 
         // ---------- schema 驱动校验（类型 / 范围 / 枚举 / 布尔）----------
-        // 规则全部来自 classpath:config-schema.json（与下发前端渲染的是同一份定义）。此前按前缀分组
-        // 手写的校验清单已删除：其中 20 条对应的键早已退出可编辑白名单（死校验），其余 43 条的约束
-        // 均已被 schema 覆盖且不更松。窗口与输出的跨字段一致性归模型管理登记时校验（窗口已无全局兜底）。
+        // 规则全部来自 classpath:config-schema.json（与下发前端渲染的是同一份定义）。
+        // 窗口与输出的跨字段一致性归模型管理登记时校验（窗口已无全局兜底）。
         for (Map.Entry<String, String> kv : updates.entrySet()) {
             String err = schema.validate(kv.getKey(), kv.getValue());
             if (err != null) throw new IllegalArgumentException(err);
@@ -1374,9 +1370,6 @@ public class ConfigService {
                         + "），请先启动 Meilisearch（docker compose 或本地）再切换");
             }
         }
-
-        // 视觉网关地址校验已移除：vision.baseUrl 不在可编辑白名单、也无运行时读取点
-        // （视觉网关来自供应商表），保留这段只会校验一个永远不会被消费的键
 
         // 值真的变了才通知（前端保存总是提交当前值；不能把「点了一次保存」当成配置变更）
         Set<String> changedKeys = new LinkedHashSet<>();
@@ -1444,9 +1437,8 @@ public class ConfigService {
      *   <li>keyword.engine 不触发索引联动（恢复 mysql 后关键词走 MySQL LIKE，Meili 索引可留待后续重建）。</li>
      * </ul>
      *
-     * @param groups 待恢复分组：优先按 schema 面板 key 解析（goal/contentSafety/tool/sandbox 等 21 个面板
-     *               此前不在硬编码白名单里，面板上的「恢复本组默认」必然 400）；不命中面板时回退旧的
-     *               backendKey 首段前缀语义（parse/rerank/keyword 这类历史分组名）
+     * @param groups 待恢复分组：优先按 schema 面板 key 解析（goal/contentSafety/tool/sandbox 等面板）；
+     *               不命中面板时回退 backendKey 首段前缀语义（parse/rerank/keyword 这类分组名）
      * @return 实际恢复的键值
      */
     public Map<String, String> resetDefaults(Collection<String> groups) {
@@ -1552,7 +1544,7 @@ public class ConfigService {
     public Map<String, Object> snapshot() {
         Map<String, Object> result = new LinkedHashMap<>();
         // 分组由 defaults() 的键前缀自动派生：不再手写组名数组——漏一个前缀该组就永远回显不出来
-        // （历史上 images / session / cleanup / eval / cache 就是这么漏掉的）。defaults() 只求值一次。
+        // defaults() 只求值一次。
         Map<String, String> defs = defaults();
         Set<String> groups = new LinkedHashSet<>();
         for (String k : defs.keySet()) {
@@ -1574,7 +1566,7 @@ public class ConfigService {
                 one.put("value", value);
                 one.put("editable", schema.isEditable(d.getKey()));
                 one.put("tier", schema.tier(d.getKey()));
-                // 分层可追溯（P10）：设置页据此标出「这项此刻由谁决定」——库里没行的出厂默认，
+                // 分层可追溯：设置页据此标出「这项此刻由谁决定」——库里没行的出厂默认，
                 // 正是「schema 有、defaults 无」那类静默错位唯一的界面线索
                 one.put("source", r.layer().name());
                 one.put("invalid", r.invalid());

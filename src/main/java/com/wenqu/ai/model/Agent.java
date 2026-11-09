@@ -9,7 +9,7 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 /**
- * AI 智能体配置表（P3：4.1 Agent 配置——模型/知识库/工具/提示词）。
+ * AI 智能体配置表（模型 / 知识库 / 工具 / 提示词）。
  * <p>
  * 智能体 = 一个可调用的预设：把「模型 / 系统提示词 / 知识库范围 / 工具开关」打包成命名配置，
  * 用户在对话页下拉切换；选中后该轮问答按智能体覆盖全局配置（未填的维度继承全局）。
@@ -99,7 +99,7 @@ public class Agent {
     private Integer toolWorkflow;
 
     /**
-     * 记忆域（对外能力第二批·agent 级记忆）：NULL/0=跟随全局（用户级记忆，现状行为）、
+     * 记忆域（agent 级记忆）：NULL/0=跟随全局（用户级记忆，现状行为）、
      * 1=专属（记忆根换 {uid}/agents/{agentId}，不再注入全局记忆）、
      * 2=叠加（专属根活跃写 + 用户全局 MEMORY.md 只读注入）。
      * 注意 2 是合法值，不能用 toTri 解析（它把非零归一成 1）。
@@ -108,8 +108,8 @@ public class Agent {
 
     /**
      * 目标模式开关（资源级）: 1=开 0=关 NULL=开。平台级总闸已去掉，这一格就是唯一判据。
-     * <p>关=界面无入口、引擎不接目标上下文、续跑驱动不接管；与「任务上下文投影」已解耦
-     * （2026-10-22 对齐 DSH 后目标不再借框架的任务/验收投影，改由 GoalService 自己带给模型）。
+     * <p>关=界面无入口、引擎不接目标上下文、续跑驱动不接管；与「任务上下文投影」解耦，
+     * 目标上下文由 GoalService 自己带给模型，不借框架的任务/验收投影。
      */
     private Integer goalEnabled;
 
@@ -123,7 +123,7 @@ public class Agent {
     private String toolApprovalMode;
 
     /**
-     * 权限档位（P2）：把「沙盒能干什么」与「要不要逐项确认」两根旋钮捆成一个具名预设。
+     * 权限档位：把「沙盒能干什么」与「要不要逐项确认」两根旋钮捆成一个具名预设。
      * {@code research}=只读调研 {@code standard}=常规（默认）{@code autonomous}=全自主。
      * <p>NULL=跟随平台默认档（{@code agent.permissionPreset.default}）；选得比平台上限
      * （{@code agent.permissionPreset.max}）高时，本轮按上限执行并在过程面板给出降级提示。
@@ -134,7 +134,7 @@ public class Agent {
     private String permissionPreset;
 
     /**
-     * 工具黑名单（P2）：逗号分隔的<b>工具名</b>，本轮这些工具不进模型的工具表、被调到也拒。
+     * 工具黑名单：逗号分隔的<b>工具名</b>，本轮这些工具不进模型的工具表、被调到也拒。
      * <p>与族级三态、具体项白名单的分工：三态管「这一族开不开」，白名单管「只用这几个」，
      * 本字段管「其余照旧、只把点名那几个拿掉」。只有后者能表达"跟随全局挂上来的那些里去掉某一个"——
      * 用白名单表达同一件事要手抄一份全量名单，平台新增工具时那份名单不会自动跟上。
@@ -178,7 +178,7 @@ public class Agent {
     private String workflowTools;
 
     /**
-     * 轮终回调地址（对外能力第二批）：非空时该智能体每轮结束向它 POST 签名结果
+     * 轮终回调地址：非空时该智能体每轮结束向它 POST 签名结果
      * （X-Wenqu-Event=agent.turn.finished；持久化重试，见 c_ai_webhook_delivery）。NULL=不回调。
      */
     private String callbackUrl;
@@ -240,7 +240,7 @@ public class Agent {
     }
 
     /**
-     * M4：绑定的工作流 ID（chatflow 语义）。非空时该智能体的回答<b>由工作流产出</b>——
+     * 绑定的工作流 ID（chatflow 语义）。非空时该智能体的回答<b>由工作流产出</b>——
      * 会话每轮把用户问题送进图（start 节点入参），end 节点的出参即回答；
      * 智能体自带的人设/知识库/工具配置在该模式下<b>不参与</b>（逻辑由工作流定义）。
      * 跑的是工作流的<b>已发布版本</b>（绑定与运行时都会校验，未发布 fail-loud）。

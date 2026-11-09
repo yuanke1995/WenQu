@@ -29,7 +29,7 @@ import java.util.Map;
 /**
  * SCIM 2.0 入站端点（RFC 7644，供 Entra/Okta 等 IdP 推送用户与组）。
  * <p>
- * 路径挂 {@code /api/ai/scim/v2/**}——刻意不在 {@code /api/ai/auth/} 前缀下（P7 后 auth 前缀
+ * 路径挂 {@code /api/ai/scim/v2/**}——刻意不在 {@code /api/ai/auth/} 前缀下（auth 前缀
  * 只做精确枚举）；鉴权不走登录令牌：整条拦截链对本路径豁免，由 {@link ScimService#authenticate}
  * 在每个入口用独立 Bearer（认证源 config.bearerToken）强校验，认不出即 401。
  * 响应是 SCIM JSON（不是本系统的 ResultJson 包装），状态码按 RFC 7644（201/200/204/400/404/409）。

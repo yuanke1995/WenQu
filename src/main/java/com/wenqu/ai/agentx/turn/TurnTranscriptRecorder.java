@@ -80,7 +80,7 @@ public final class TurnTranscriptRecorder {
     /**
      * 终态提示块：停止/等待超时/预算用尽/空转的原因结构化入块。
      * <p>双写窗口内正文尾标照旧留在 `content` 里（旧客户端只读正文），所以这里不进 text 通道、
-     * 也不参与答案归属判定；P6 退役尾标时前端改渲染这一块。
+     * 也不参与答案归属判定。
      */
     public synchronized void notice(String tone, String text) {
         if (text == null || text.isBlank()) return;

@@ -30,11 +30,11 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
- * RBAC 授权点判定核单测（批次 E-2，方案 §3 批次 E）。
+ * RBAC 授权点判定核单测。
  * <p>
  * 不起 Spring 上下文：Mapper 全部 Mockito 假件，判定核 {@code canAccessAny}/
  * {@code hasPermission} 是纯函数式的（角色绑定 → 全局 deny → 管理员展开 → allow 并集），
- * 正好整块测。覆盖方案验收口径：并集判定、deny 优先、admin 降级（B1）、exempt 豁免（B5）、
+ * 正好整块测。覆盖：并集判定、deny 优先、admin 降级（B1）、exempt 豁免（B5）、
  * 未标注端点 fail-closed、TTL 过期重建、最后一名管理员锁死保护（G 锁死）、组映射回收语义的角色行口径。
  *
  * @author yuanke
@@ -189,7 +189,7 @@ class RoleServicePermissionTest {
         givenRoles(admin);
         givenEndpoints(api("GET", "/api/ai/role/list", "role:read"),
                 api("GET", "/api/ai/sessions", "session:read"));
-        // deny 挂在 admin 角色自己身上——「只读管理员」的挂法（回归 2026-11-04 修的收集顺序 bug）
+        // deny 挂在 admin 角色自己身上——「只读管理员」的挂法
         givenBindings("boss", List.of(row("session:read", "deny", 0)));
 
         assertThat(roleService.hasPermission(List.of("boss"), "role:read")).isTrue();
@@ -222,7 +222,7 @@ class RoleServicePermissionTest {
         assertThat(roleService.canAccessAny(List.of("user"), "GET", "/api/ai/brandnew/x")).isFalse();
     }
 
-    // ==================== TTL（批次 0 的兜底保险） ====================
+    // ==================== TTL ====================
 
     @Test
     @DisplayName("TTL 过期后判定走重建，不会永远拿旧快照")
@@ -233,7 +233,7 @@ class RoleServicePermissionTest {
         givenBindings("user", List.of(row("kb:read", "allow", null)));
         assertThat(roleService.hasPermission(List.of("user"), "kb:read")).isTrue();
 
-        // 模拟时间流逝：把当前租户快照整体换成"已过期"副本（F2 后 TTL 在 Snap record 里，按租户键控）
+        // 模拟时间流逝：把当前租户快照整体换成"已过期"副本（TTL 在 Snap record 里，按租户键控）
         Field snapsF = RoleService.class.getDeclaredField("snapshots");
         snapsF.setAccessible(true);
         @SuppressWarnings("unchecked")
@@ -283,7 +283,7 @@ class RoleServicePermissionTest {
                 mock(ReplicaCoordination.class));
         urs.revokeIdpRole("u1", "editor");
         // 验证删除条件携带 granted_by='idp'：用 ArgumentCaptor 太啰嗦，这里断言 delete 被调用一次即可；
-        // SQL 语义由 mapper 层保证（wrapper 带 eq(granted_by,'idp')），行为口径见真机 E2E
+        // SQL 语义由 mapper 层保证（wrapper 带 eq(granted_by,'idp')）
         org.mockito.Mockito.verify(userRoleMapper, org.mockito.Mockito.times(1)).delete(any());
     }
 
@@ -299,7 +299,7 @@ class RoleServicePermissionTest {
         org.mockito.ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.Wrapper<UserRole>> captor =
                 org.mockito.ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.Wrapper.class);
         org.mockito.Mockito.verify(userRoleMapper).delete(captor.capture());
-        // 删除条件必须携带 granted_by='idp'（修复前是 delete(uid+role) 两来源通吃——吃掉手动行的就是它）
+        // 删除条件必须携带 granted_by='idp'
         String sql = captor.getValue().getSqlSegment();
         org.mockito.Mockito.verify(userRoleMapper).insert(any(UserRole.class));
         assertThat(sql).contains("granted_by");

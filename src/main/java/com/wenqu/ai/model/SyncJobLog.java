@@ -20,7 +20,7 @@ public class SyncJobLog {
     @TableId(type = IdType.INPUT)
     private String id;
 
-    /** 租户ID（Phase4 启用，当前 NULL） */
+    /** 租户ID（当前 NULL） */
     private String tenantId;
 
     /** 来源类型：scim | ldap | saml | oidc */

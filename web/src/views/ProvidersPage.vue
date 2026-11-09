@@ -1111,7 +1111,7 @@ const savingModels = ref(false)
 let rowSeq = 0
 
 // 表格只做速览：模型名（含展示名副行）/ 类型 / 能力 / 窗口输出，配置进「编辑模型配置」弹窗
-// 窗口列宽度按最宽单值（如 1M / 977K）预留，窄了会折行（区间登记已退役，列里只会是单值或「未声明」）
+// 窗口列宽度按最宽单值（如 1M / 977K）预留，窄了会折行（列里只会是单值或「未声明」）
 const modelCols = [
   { title: '模型名', key: 'modelId' },
   { title: '类型', key: 'modelType', width: 112 },
@@ -1144,7 +1144,7 @@ const editSourceKey = ref('')
 /** 编辑副本的档位集合（勾选项，与 record.reasoningLevels 数组同步） */
 const editLevels = ref([])
 /** 打开弹窗时的表单快照：关闭（X/Esc/取消）时对比，有改动先确认再丢弃——
- *  修改过的值静默丢失会表现为「配置老是不生效」（2026-10-23） */
+ *  修改过的值静默丢失会表现为「配置老是不生效」 */
 const editBaseline = ref('')
 const editSnapshot = () => editForm.value
   ? JSON.stringify([editForm.value, [...(editLevels.value || [])]])
@@ -1534,7 +1534,7 @@ const openModels = async p => {
       thinkingParsed: m.thinking || 'auto',         // 解析结果（auto 已按模型名判定，速览标签用）
       visionCapable: m.visionCapable == null ? 'auto' : String(m.visionCapable),
       visionResolved: !!m.visionResolved,           // 图片能力解析结果（速览标签用）
-      toolCapableResolved: m.toolCapableResolved !== false,  // 工具能力解析结果（P5：登记值未填=放行，这里回显实际结论）
+      toolCapableResolved: m.toolCapableResolved !== false,  // 工具能力解析结果（登记值未填=放行，这里回显实际结论）
       toolCapable: m.toolCapable == null ? 'auto' : String(m.toolCapable),
       reasoningLevels: Array.isArray(m.reasoningLevels) ? [...m.reasoningLevels] : [],
       defaultReasoningLevel: m.defaultReasoningLevel || null,
@@ -1662,7 +1662,7 @@ const saveModels = async () => {
       reasoningParams: visionApplies(m) ? paramsPayload(m) : null,
       contextWindow: m.contextWindow || null,
       maxOutput: m.maxOutput || null,
-      // 单价/备注必须随全量同步带上：缺了会被后端归一为未配置，每次保存把单价清空（2026-10-23）
+      // 单价/备注必须随全量同步带上：缺了会被后端归一为未配置，每次保存把单价清空
       inputPrice: m.inputPrice ?? null,
       outputPrice: m.outputPrice ?? null,
       remark: m.remark ?? null,
@@ -1732,7 +1732,7 @@ onMounted(async () => {
 }
 .pv-models { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 4px; }
 .pv-type-tag { font-size: 11px; line-height: 20px; margin-inline-end: 0; }
-/* 单元格内一组 tag：flex 换行 + gap，纵向不压叠（原先 inline-block 换行会重叠） */
+/* 单元格内一组 tag：flex 换行 + gap，纵向不压叠 */
 .pv-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 .pv-none { color: var(--app-text3, var(--app-text3)); font-size: 12px; }
 .pv-remark { margin-top: 6px; font-size: 12px; color: var(--app-text3, var(--app-text3)); }

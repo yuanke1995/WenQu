@@ -12,7 +12,7 @@ import java.time.LocalDateTime;
  * <p>
  * 上传只做「登记」：落盘 + 建文档记录 + 插一行本表，随即返回；
  * 真正的解析由 {@link com.wenqu.ai.service.ParseQueueService} 定时扫描抢占后执行。
- * 任务持久化而不是丢进内存线程池，目的是队列拥塞时**不丢任务**（旧实现队列满会直接删掉已建好的文档记录）。
+ * 任务持久化而不是丢进内存线程池，目的是队列拥塞时**不丢任务**。
  * <p>
  * 状态机：queued(0) ──抢占──▶ running(1) ──成功/终态──▶ succeeded(2) / dead(4)
  * running(1) ──失败可重试──▶ retryable(3) ──退避到 next_run_at──▶ queued(0)

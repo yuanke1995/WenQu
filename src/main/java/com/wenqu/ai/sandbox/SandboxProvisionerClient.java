@@ -38,8 +38,8 @@ public class SandboxProvisionerClient {
         this.authHeader = "Bearer " + token;
         // 显式固定 HTTP/1.1：JDK HttpClient 默认 HTTP/2，对明文 http:// 会发 h2c 升级请求（Upgrade 头），
         // 而 provisioner（uvicorn）不支持 h2c——uvicorn 拒绝升级请求时会**丢弃请求 body**，
-        // FastAPI 便报 422 {"loc":["body"],"msg":"Field required"}（2026-09-27 实测踩坑，见日志
-        // "Unsupported upgrade request"）。httpx 蓝本不受影响（httpx 默认就是 HTTP/1.1）。
+        // FastAPI 便报 422 {"loc":["body"],"msg":"Field required"}。
+        // httpx 蓝本不受影响（httpx 默认就是 HTTP/1.1）。
         this.http = HttpClient.newBuilder()
                 .version(HttpClient.Version.HTTP_1_1)
                 .connectTimeout(Duration.ofSeconds(10))
@@ -54,9 +54,9 @@ public class SandboxProvisionerClient {
             builder.timeout(requestTimeout);
         }
         // 必须在这里应用 HTTP 方法：JDK HttpClient 的 builder **默认是 GET**。
-        // 此前 method 参数被无视 ⇒ touch() 实际发的是 GET（provisioner 没有 GET /touch 路由 ⇒ 恒 404，
-        // keepalive 一直静默失效）、delete() 实际发的也是 GET（provisioner 的 GET 路由是 discover ⇒ 返回 200，
-        // 客户端以为删成功了，沙盒其实还在——容器一直泄漏）。create() 自己再 .POST(...) 覆盖，不受影响。
+        // 不应用方法就会一律发 GET：touch() 落到 404、keepalive 静默失效，
+        // delete() 落到 discover 的 200，
+        // 客户端以为删成功、沙盒其实还在（容器泄漏）。create() 自己再 .POST(...) 覆盖，不受影响。
         if ("GET".equals(method)) {
             builder.GET();
         } else {
@@ -94,10 +94,9 @@ public class SandboxProvisionerClient {
                             .header("Content-Type", "application/json")
                             .POST(HttpRequest.BodyPublishers.ofString(body.toJSONString()))
                             // 创建必须有上界：provisioner 侧建容器要等健康检查（最长 300s），
-                            // 而此前这里传 null（无请求超时）⇒ provisioner 一旦卡住，这个调用会**永久**
-                            // 占住一个 Tomcat 线程，重试还会在同一把 scope 锁上叠加阻塞
-                            // （2026-10-17 真机：provisioner 整体无响应，接口 120s 不返回，jstack 抓到线程停在
-                            //  本方法第 90 行的 send）。取 330s = provisioner 的 300s 健康上限 + 余量。
+                            // 不设请求超时的话，provisioner 一旦卡住，这个调用会**永久**
+                            // 占住一个 Tomcat 线程，重试还会在同一把 scope 锁上叠加阻塞。
+                            // 取 330s = provisioner 的 300s 健康上限 + 余量。
                             .timeout(CREATE_TIMEOUT)
                             .build(),
                     HttpResponse.BodyHandlers.ofString());

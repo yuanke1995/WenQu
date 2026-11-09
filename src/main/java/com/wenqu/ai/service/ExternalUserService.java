@@ -16,7 +16,7 @@ import java.util.regex.Pattern;
 
 /**
  * 外部账号落位：把「外部身份（OIDC sub / SAML NameID / …）」落到本地账号，OIDC 与 SAML
- * 登录共用同一套语义（原为 OidcService 私有逻辑，SAML 接入时抽出）：
+ * 登录共用同一套语义：
  * <ol>
  *   <li>已绑定（providerId + externalId 命中 {@code c_ai_user_identity}）→ 直接登录；</li>
  *   <li>{@code useRawUsername} 且外部用户名对应的账号存在 → 绑定后登录
@@ -32,7 +32,7 @@ import java.util.regex.Pattern;
 @Service
 @RequiredArgsConstructor
 public class ExternalUserService {
-    /** 统一审计事件（Phase 3）：同一份格式串派生日志与结构化事件，不再两处抄 */
+    /** 统一审计事件：同一份格式串派生日志与结构化事件，不再两处抄 */
     private final AuditService audit;
 
 
@@ -164,13 +164,13 @@ public class ExternalUserService {
     }
 
     /**
-     * 把外部落位逻辑跑在<b>认证源自己的租户</b>里（Phase 4 多租户）。
+     * 把外部落位逻辑跑在<b>认证源自己的租户</b>里（多租户）。
      * <p>登录/同步线程上还没有已登录身份 ⇒ 线程没绑租户，而「未绑定」在租户拦截器里等于「不过滤」。
      * 那时按外部用户名去认领既有账号，会跨租户捞到别家的同名账号直接放行；建出来的新档也会落进
      * 默认租户——认证源明明属于 acme，人却成了 default 的成员。这两个都不是「少一条数据」级别的错，
      * 所以判据放在唯一入口上，而不是散在各协议里。
      * <p>认证源行自身的 {@code tenant_id} 用平台视图读（当前线程可能正绑着别的租户）。
-     * 取不到租户（老库里 providerId 已不存在）时按原样跑，行为与本次改造前一致。
+     * 取不到租户（老库里 providerId 已不存在）时按原样跑。
      */
     public <T> T inProviderTenant(String providerId, java.util.function.Supplier<T> body) {
         String tenant = providerTenant(providerId);

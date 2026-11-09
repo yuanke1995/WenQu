@@ -12,8 +12,7 @@ import java.util.Map;
  * 容器侧只看到一个 HTTP 端点与一份由 {@link ToolStubRenderer} 生成的客户端。
  * <p>
  * 实现方是 {@code ChatService}（本轮唯一知道 raw 回调、身份快照与 TurnState 的地方）。
- * 刻意按轮回传而不是静态单例——P1 删掉的那对 {@code setSourceRegistrar/setSink} 就是因为跨轮共享
- * 会串号，这里同理会串。
+ * 刻意按轮回传而不是静态单例：静态单例跨轮共享会串号，
  *
  * @author yuanke
  */

@@ -31,7 +31,7 @@ import com.wenqu.ai.security.Permission;
 /**
  * 知识块管理（预览/搜索/编辑/删除）以及无命中问题查询。
  * <p>
- * 归属口径（2026-10，谁建归谁）：知识块随文档——文档<b>可读</b>（未配置共享跟随所属库）才能列块与
+ * 归属口径（谁建归谁）：知识块随文档——文档<b>可读</b>（未配置共享跟随所属库）才能列块与
  * 被搜索命中，文档<b>可管理</b>（创建者/被授权人/管理员级）才能改块删块；无归属文档的块仅管理员级可及。
  * {@code /knowledge/unmatched}（无命中分析）与 {@code POST /knowledge}（手动补块）仍仅管理员，
  * 由 SecurityConfig 白名单拦截。
@@ -44,7 +44,7 @@ import com.wenqu.ai.security.Permission;
 @RequiredArgsConstructor
 @Tag(name = "知识库", description = "无命中问题查询、知识块预览、跨文档搜索、手动创建知识块")
 public class KnowledgeController {
-    /** 统一审计事件（Phase 3）：同一份格式串派生日志与结构化事件，不再两处抄 */
+    /** 统一审计事件：同一份格式串派生日志与结构化事件，不再两处抄 */
     private final AuditService audit;
 
 
@@ -123,7 +123,7 @@ public class KnowledgeController {
                     m.put("title", k.getTitle());
                     m.put("chunkIndex", k.getChunkIndex());
                     m.put("titlePath", k.getTitlePath());
-                    m.put("vectorId", k.getVectorId());   // M11：空 = 未向量化（前端角标）
+                    m.put("vectorId", k.getVectorId());   // 空 = 未向量化（前端角标）
                     m.put("status", k.getStatus());       // 块级启停用：0=生效, 1=停用
                     m.put("content", k.getContent());
                     m.put("images", k.getImages() != null && !k.getImages().isBlank()
@@ -250,7 +250,7 @@ public class KnowledgeController {
             throw new BizException("内容不能为空");
         }
 
-        // H3：docId 存在性校验（填了无效 docId 会导致检索 inSql 排除、知识块入死区）
+        // docId 存在性校验（填了无效 docId 会导致检索 inSql 排除、知识块入死区）
         if (docId != null && !docId.isBlank()) {
             Long cnt = documentMapper.selectCount(new LambdaQueryWrapper<AiDocument>()
                     .eq(AiDocument::getId, docId).eq(AiDocument::getStatus, 0));
@@ -265,7 +265,7 @@ public class KnowledgeController {
         k.setStatus(0);
         k.setDocId(docId != null && !docId.isBlank() ? docId : null);
         k.setContentHash(documentService.contentHash(title, content));
-        // 先入库，再生成向量（M11 fail-loud：向量化失败要在响应中显式告知，不再静默"已创建"）
+        // 先入库，再生成向量（fail-loud：向量化失败要在响应中显式告知，不再静默"已创建"）
         knowledgeMapper.insert(k);
         boolean embedded = documentService.embedAndStore(k, k.getContent());
         if (!embedded) {

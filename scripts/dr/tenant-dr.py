@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""问渠 WenQu · 按租户备份与恢复（Phase 4 刀三 · DR）
+"""问渠 WenQu · 按租户备份与恢复（DR）
 
 为什么按租户而不是整库：多租户部署里「客户 X 要恢复上周三的状态」是真实请求，
 而整库回滚会把别家客户一起倒回去。租户的隔离是行级归属（全表 tenant_id），
@@ -215,7 +215,7 @@ def cmd_backup(be, db, args):
     # 结构单独导一份：库里可能有退役设计留下的列（实体已不映射），
     # 只按 schema.sql 建表会让 --complete-insert 的 INSERT 找不到列
     # 结构单独放 structure/ 目录：它和逐表数据文件同放一个目录会被恢复时的通配一起吞掉，
-    # 那份 DDL 带着 DROP TABLE，跑在数据之后等于把刚灌进去的行抹平（真机踩过）
+    # 那份 DDL 带着 DROP TABLE，跑在数据之后等于把刚灌进去的行抹平
     with open(bundle / "structure" / "ddl.sql", "w", encoding="utf-8") as f:
         env0 = dict(os.environ)
         if db.password:
@@ -343,8 +343,7 @@ def cmd_restore(db, args):
 
     print("恢复租户 %s ← %s" % (tenant, args.from_dir))
     if args.skip_db:
-        # --skip-db 原先只管「不灌行」，建库与装结构那两步照跑——结果是把上一步刚灌好的表
-        # 连同数据一起抹平（实测：verify 当场报 37 张表全 0）。只解文件时什么都不该动库。
+        # --skip-db 只解文件时什么都不该动库：建库与装结构会抹掉刚灌好的表和数据。
         print("  --skip-db：不动数据库（不建库、不装结构、不灌行），只处理盘上目录")
     elif fresh:
         print("目标库 %s 与来源库不同：按新库建库并先装 schema.sql" % into)

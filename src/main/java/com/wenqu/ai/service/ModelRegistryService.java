@@ -40,7 +40,7 @@ import java.util.regex.Pattern;
  * 所有存模型的位置（agent.model / 用户偏好 / 会话覆盖 / KB 绑定等）统一用 {@code {providerId}/{modelId}}
  * 引用格式；解析时按第一段 providerId 查本表得到网关（baseUrl/apiKey/路径），第二段起为原样模型名
  * （兼容 OpenRouter 等模型名自带斜杠的网关）。<b>无兜底</b>：引用解析不出（providerId 不存在或非引用
- * 格式）一律返回 null，由调用方 fail-loud 引导配置——全局 chat.* 与 embedding.* 网关兜底已移除，
+ * 格式）一律返回 null，由调用方 fail-loud 引导配置——没有全局 chat.* / embedding.* 网关兜底，
  * 知识库必须绑定可解析的供应商引用，遗留裸模型名需在知识库管理中重新绑定。
  * <p>
  * <h3>路由与缓存</h3>
@@ -92,8 +92,8 @@ public class ModelRegistryService {
 
     /**
      * 注册中心内存快照：列表与查询索引一次构建、单次 volatile 发布——读方拿到的是同版本数据，
-     * 不会出现「列表已换、索引未换」的撕裂读。索引兑现了启动全量加载的价值：原先每次路由解析、
-     * 能力判定都线性扫全平台登记（模型多了以后每条消息要扫几遍），现为 O(1)。
+     * 不会出现「列表已换、索引未换」的撕裂读。索引让路由解析与能力判定都走 O(1) 查询，
+     * 不必每次线性扫全平台登记。
      */
     private record Snapshot(List<Provider> providers,
                             List<ModelInfo> models,
@@ -141,10 +141,9 @@ public class ModelRegistryService {
     }
 
     /**
-     * 迁移完成后的兜底重载：@PostConstruct 早于所有 ApplicationRunner，而 SchemaMigrator 要到
+     * 启动完成后的兜底重载：@PostConstruct 早于所有 ApplicationRunner，而 SchemaMigrator 要到
      * runner 阶段才补列/删列——首启带新列的版本时，上面那次 selectList 会撞 Unknown column 把快照
-     * 留成空的（2026-11-05 线上表现为「供应商 0 个」，只有下一次任意变更才恢复）。
-     * ApplicationReadyEvent 在所有 runner 之后触发，此时列已补齐，重读一遍即自愈。
+     * 留成空的。ApplicationReadyEvent 在所有 runner 之后触发，此时列已补齐，重读一遍即自愈。
      */
     @EventListener(ApplicationReadyEvent.class)
     public void reloadAfterStartup() {
@@ -196,8 +195,7 @@ public class ModelRegistryService {
     /** 本地变更后：重载缓存 + 广播其他实例（Redis 异常不影响保存结果） */
     private void changed() {
         // 事务未提交就刷新/广播 = 把旧数据当新数据装进缓存：本实例订阅自己那条广播后另开连接重读，
-        // 读不到未提交的插入，快照被打回保存前的样子（实测 19:08 新登记的模型在界面上凭空消失，
-        // 直到下一次任意变更才回来）。事务里改挂到提交之后。
+        // 读不到未提交的插入，快照会被打回保存前的样子。事务里改挂到提交之后。
         if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
             org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
                     new org.springframework.transaction.support.TransactionSynchronization() {
@@ -242,7 +240,7 @@ public class ModelRegistryService {
     /**
      * 聊天模型路由：仅按引用解析（会话覆盖 / 个人默认均为 {@code {providerId}/{modelId}} 格式）。
      * 值为空 / 非引用 / 供应商不存在 → null，由调用方 fail-loud 引导配置
-     * （全局 chat.* 网关兜底已移除——遗留裸模型名不再有可用网关）。
+     * （没有全局 chat.* 网关兜底，遗留裸模型名无可用网关）。
      */
     public ModelRoute chatRoute(String modelValue) {
         return resolveReference(modelValue);
@@ -266,9 +264,8 @@ public class ModelRegistryService {
      *  ＞ 个人设置默认（personalOnly，问答线程装载个人值）
      *  ＞ **平台默认 rerank.platformRef**（管理员登记，非 personalOnly，全平台兜底）
      *  ＞ 空（回落 rerank.baseUrl；未配置则重排不可用）。
-     *  平台层是 2026-10-04 补的：重排模型历来只认归属人（库级或个人），任何一处没配就等于没有重排，
-     *  相关分门随之从重排门（0.6）退化到融合分门（minFusionScore，默认 0.5），词面重叠的无关块更容易
-     *  进上下文与引用面板（实测 222 条带引用消息仅 9 条拿到重排分）。平台层让"没重排"从默认态变成异常态。 */
+     *  平台默认层覆盖「归属人未配重排」的情形：不配时重排门（0.6）会退化到融合分门
+     *  （minFusionScore，默认 0.5），词面重叠的无关块更容易进上下文与引用面板。 */
     public ModelRoute rerankRoute() {
         String model = nz(configService.get("rerank.model"));
         ModelRoute r = resolveReference(model);
@@ -323,8 +320,8 @@ public class ModelRegistryService {
     // ==================== 归属（谁建归谁）与可用性 ====================
 
     /**
-     * 该供应商是否对请求者可见可用：仅归属人本人（数据按 userId 隔离，任何角色不再有全量运维视角；
-     * 2026-10-02 起管理员级也不例外——管理员建的供应商归管理员本人）。
+     * 该供应商是否对请求者可见可用：仅归属人本人（数据按 userId 隔离，任何角色都没有全量运维视角；
+     * 管理员建的供应商也归管理员本人）。
      */
     public boolean canUse(Provider p, String uid, String role) {
         if (p == null) return false;
@@ -361,8 +358,8 @@ public class ModelRegistryService {
     /**
      * 引用不可用的原因（界面按此出文案，不再各拼一遍）。
      * <p>为什么要有这一份：`resolveReference` 只看供应商行在不在册，`assertUsable` 只判归属，
-     * 「停用供应商」「从模型库删掉这个模型」在问答链上都不构成失效——历史写进会话覆盖/个人默认的引用串
-     * 会照样发请求，用户读到的是上游 401 而不是「你选的模型已经不能用了」（真机 sbx-3，2026-10-15 19:33）。
+     * 「停用供应商」「从模型库删掉这个模型」在问答链上都不构成失效——会话覆盖/个人默认里已存的引用串
+     * 会照样发请求，用户读到的是上游 401 而不是「你选的模型已经不能用了」。
      */
     public static final String ISSUE_NOT_CONFIGURED = "notConfigured";
     public static final String ISSUE_PROVIDER_GONE = "providerGone";
@@ -612,7 +609,7 @@ public class ModelRegistryService {
             m.put("visionResolved", visionCapable(mi));
             // 工具能力也回显解析结果：登记值默认是"未填=chat/omni 一律放行"，
             // 管理员看不见"这个模型实际会不会被下发 tools"，私有化网关不认 function calling 时
-            // 只能从整轮失败反推（P5 §六）
+            // 只能从整轮失败反推
             m.put("toolCapableResolved", toolCapable(mi));
             m.put("thinkingRaw", mi.getThinking());
             // 思考强度：支持档位数组 + 默认档位（编辑弹窗回显；无档位=只支持思考开关）
@@ -672,7 +669,7 @@ public class ModelRegistryService {
 
 
     // ==================== 思考强度档位（厂商方言映射） ====================
-    // 2026 年调研（各厂商官方文档实证）：国产主力几乎全部支持 OpenAI 兼容的 reasoning_effort，
+    // 国产主力几乎全部支持 OpenAI 兼容的 reasoning_effort，
     // 差异只在「档位取值的收敛规则」与「是否需要额外的开关字段」。
 
     /** 思考强度档位（按推理预算由弱到强；max 为各家上限档） */
@@ -689,7 +686,7 @@ public class ModelRegistryService {
 
     /**
      * 档位 → reasoning_effort 的收敛表（每家只认自己那几个值，多传的会被静默忽略或报错）。
-     * <p>依据各厂商 2026 官方文档的映射表：
+     * <p>依据各厂商官方文档的映射表：
      * <ul>
      *   <li>OpenAI o 系 / gpt-5：low/medium/high（官方无 xhigh/max）</li>
      *   <li>DeepSeek V4：low/high/max，medium→high、xhigh→high</li>
@@ -882,7 +879,7 @@ public class ModelRegistryService {
      * 走 OpenAiChatOptions 的原生 setter。原因是 ChatCompletionRequest 同时有原生
      * {@code reasoningEffort} 组件与 {@code extraBody}，若把同名键放进 extraBody，
      * Spring AI 会把它写进两处，序列化出<重复字段>——DeepSeek 直接返回
-     * 422 "duplicate field reasoning_effort"（实测抓包确认）。
+     * 422 "duplicate field reasoning_effort"。
      * <ul>
      *   <li>level 空 / 引用无效 / 模型无档位登记 → 空 Map（不强指定，由网关默认决定）</li>
      *   <li>方言 NONE（该网关无强度语义）→ 空 Map，且调用方应登记 fail-loud 提示，
@@ -931,8 +928,7 @@ public class ModelRegistryService {
     /**
      * 思考关闭的请求体增量（与 {@link #reasoningExtraBody} 对称，「能关就关」的辅助调用用）：
      * 摘要/改写这类不需要推理的调用里，思考 token 与正文共享 max_tokens，默认开思考的模型
-     * （DeepSeek V3/V4、GLM-5、豆包 Seed 等）会把输出预算花在推理上，正文返回空——实测
-     * 摘要调用 completion 恒等于 max_tokens 上限而内容为空，就是被推理吃光的。
+     * （DeepSeek V3/V4、GLM-5、豆包 Seed 等）会把输出预算花在推理上，正文返回空。
      * <p>返回空 Map = <b>关不掉或不敢关</b>：恒思考模型（R1/QwQ 等）没有关闭开关，发关闭字段
      * 多半被网关拒绝；未识别方言与 OpenAI 系同理不下发未知字段（宁可多给输出预算，也不冒 400 风险）。
      */
@@ -943,7 +939,7 @@ public class ModelRegistryService {
         if (!THINK_SWITCHABLE.equals(resolveThinking(mi))) return Map.of();
         return switch (dialectOf(mi)) {
             case QWEN -> Map.of("enable_thinking", false);
-            // GLM（Ark，如 glm-5-3-flash-260828）实测拒绝 thinking.type=disabled：
+            // GLM（Ark，如 glm-5-3-flash-260828）不接受 thinking.type=disabled：
             // 返回 400 InvalidParameter「thinking.type `disabled` is not supported by this model」——
             // 它只认 enabled，不带即不思考。所以 GLM 的「关」= 不下发该字段（落到 default），
             // 别把它和 DeepSeek/豆包/Kimi 归为一类发 disabled，否则引用自检等辅助调用全被 400 打断。
@@ -1152,7 +1148,7 @@ public class ModelRegistryService {
      * 形成删不掉又说不清的僵局。
      * <p>
      * 引用集合来自 {@link ModelReferenceScanner}（与「额度不足」「停用后引导」给用户看的
-     * 「谁在用我」完全同一份口径）——原先此处内联一份计数逻辑，导致出现「删时被拦、却找不到地方改」的矛盾。
+     * 「谁在用我」完全同一份口径）。
      */
     public void deleteProvider(String id, ModelReferenceScanner referenceScanner) {
         Provider p = providerMapper.selectById(id);

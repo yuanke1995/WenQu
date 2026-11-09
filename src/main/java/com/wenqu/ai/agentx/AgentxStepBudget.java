@@ -28,8 +28,7 @@ import java.util.function.Function;
  * <b>工具调用次数</b>——一轮里模型可以一次要 5 把工具，两者不同口径。问渠那条闸同时也是账单闸
  * （失控循环会把整轮 token 预算花光），框架没有等价配置，只能在 {@code onActing} 里数。
  * <p><b>放行即记账</b>：判过就占一步，与手写侧「审批被拒的那一步同样计入预算」保持同一时序。
- * 计数点与判定点一分家，「拒掉算不算用掉一步」就变成两处代码各自的理解——迁移时实测过上限 15
- * 步的会话实际跑了三十几次工具调用。
+ * 计数点与判定点一分家，「拒掉算不算用掉一步」就变成两处代码各自的理解。
  * <p>实例按会话常驻（{@code FrameworkSessions}），预算按<b>轮</b>算，所以每轮开始必须由引擎
  * {@link #beginTurn} 归零；不归零就是上一轮的步数吃掉这一轮的预算。
  */
@@ -41,8 +40,8 @@ public final class AgentxStepBudget implements MiddlewareBase {
 
     /**
      * 只剩最后一步时插给模型的那句（走框架 steer，下一次调模型前生效）。
-     * <p>为什么要插：真机 2026-10-23 那一轮做好的 20.7 KB 看板页就是这么烂在盘上的——
-     * 步数上限掐在最后一步，模型没有机会调交付，而它不会知道「下一步就是最后一步」。
+     * <p>为什么要插：步数上限掐在最后一步时，模型没有机会调交付，
+     * 也不会知道「下一步就是最后一步」。
      */
     public static final String WRAP_UP_HINT =
             "本轮工具调用只剩最后一步。如果已经做出需要交给用户的文件，请用这一步交付"
@@ -134,7 +133,7 @@ public final class AgentxStepBudget implements MiddlewareBase {
      */
     Allocation allocate(List<ToolUseBlock> calls, int limit) {
         // 只剩最后一步：先插一句再切分。不插的话模型只知道「下一步被拒了」，
-        // 而它本来可以把这一步留给交付——真机丢的那份产物就是这么丢的。
+        // 而它本来可以把这一步留给交付。
         if (!lastStepNoted && limit > 0 && taken == limit - 1) {
             lastStepNoted = true;
             onLastStep.accept(WRAP_UP_HINT);

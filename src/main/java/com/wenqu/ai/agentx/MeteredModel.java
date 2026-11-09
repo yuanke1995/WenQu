@@ -18,16 +18,15 @@ import java.util.Map;
 /**
  * 框架模型出口的记账装饰器：一次 {@code stream} 订阅记一行用量台账。
  *
- * <p>为什么需要它：P3 之后问答主链路与记忆/压缩的辅助调用都直接走
+ * <p>为什么需要它：问答主链路与记忆/压缩的辅助调用都直接走
  * {@link io.agentscope.extensions.model.openai.OpenAIChatModel}，绕过了
- * {@code DynamicOpenAiChatModel} 这个原记账出口——本机库 {@code kind=memory} 最后一条停在
- * 框架引擎上线前，用量页的「长期记忆提取」一直是 0。
+ * {@code DynamicOpenAiChatModel} 这一层记账出口，故在这里按订阅补记用量台账。
  *
  * <p>按调用类型各包一层：主对话 {@code chat}、子智能体 {@code subagent}、记忆提炼 {@code memory}、
  * 上下文压缩 {@code compress}。归属沿用 {@link UsageAttr}，与既有台账同一套 uid/session 口径。
  *
  * <p>只记最后一次带 usage 的响应：OpenAI 兼容网关通常只在流末块给 usage；若某些网关每块都给，
- * 以最后一块为准比逐块累加安全（后者在本项目曾把流式用量记成数倍）。
+ * 以最后一块为准比逐块累加安全。
  */
 public final class MeteredModel implements Model {
 
@@ -35,9 +34,9 @@ public final class MeteredModel implements Model {
     private final UsageLedgerService ledger;
     private final UsageAttr.Attr attr;
     private final String modelRef;
-    /** 配额闸（Phase 2）：与 Spring AI 那一路同一个判据，两处共用 {@link UsageQuotaService} 一份实现 */
+    /** 配额闸：与 Spring AI 那一路同一个判据，两处共用 {@link UsageQuotaService} 一份实现 */
     private final com.wenqu.ai.service.UsageQuotaService quota;
-    /** 内容安全出口闸（Phase 3 · P12）：与 Spring AI 那一路同一个判据，同挂模型出口 */
+    /** 内容安全出口闸：与 Spring AI 那一路同一个判据，同挂模型出口 */
     private final com.wenqu.ai.service.contentsafety.ContentSafetyService safety;
     /**
      * 以「流出过内容、但整条流没有末块」收场的调用次数（断流计数）。
@@ -183,7 +182,7 @@ public final class MeteredModel implements Model {
                         }
                         // 取消兜底（与 DynamicOpenAiChatModel 同一口径）：网关的 usage 只随流末块下发，
                         // ESC 停止/断开/护栏截断后永远收不到，但已下发内容供应商照单计费——
-                        // 不记就是台账与账单的缺口（框架这一路此前整段漏记，实测取消一轮台账 0 行）。
+                        // 不记就是台账与账单的缺口。
                         // 只在真的收到过输出时估算；报错路径不估算（网关 5xx 通常不计费）。
                         if (signal == reactor.core.publisher.SignalType.CANCEL && gotOutput[0]) {
                             ledger.recordEstimated(attr, modelRef,
@@ -193,9 +192,9 @@ public final class MeteredModel implements Model {
                         // 断流留痕：这条流走到头了，却从没出现过带 finishReason/usage 的末块，
                         // 也不是取消或报错——那就是「网关把连接直接收了」的样子。框架在这一刻看到的是
                         // 一个正常完成的 Flux，于是那一跑以「回答完了」收场，屏幕上没有任何一处说得清
-                        // 「这只是半截」（真机 2026-10-29 假上游复现：半句正文 + done + fail_msg 为 NULL）。
+                        // 「这只是半截」。
                         // 判据不挂 gotOutput：流式块经框架解析后 content 块可能为空（正文由事件日志那份
-                        // 原始 chunk 渲染），实测两轮都不置位——只有「见过末块没有」这一条靠得住。
+                        // 原始 chunk 渲染），gotOutput 未必置位——只有「见过末块没有」这一条靠得住。
                         // 这里只计数、不改写流：怎么说、说给谁由问答侧收尾决定
                         // （见 AgentscopeChatEngine 的 UPSTREAM_STREAM_CUT）。
                         if (signal == reactor.core.publisher.SignalType.ON_COMPLETE

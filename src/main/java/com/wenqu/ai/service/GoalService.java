@@ -38,7 +38,7 @@ import java.util.concurrent.locks.ReentrantLock;
 /**
  * 目标模式的任务运行时（问渠这一侧的全部「目标」控制面）。
  *
- * <p>与旧版的分工差异（2026-10-22 重构）：
+ * <p>职责分工：
  * <ul>
  *   <li><b>调度分离</b>：状态迁移不再由「轮终回调直接起下一轮」驱动。{@link #claimReady} 由
  *       {@code GoalScheduler} 周期调用，用 DB 租约条件更新抢到唯一执行权；引擎只负责跑一轮，
@@ -1679,7 +1679,7 @@ public class GoalService {
 
     // ==================== 内部：杂项 ====================
 
-    /** 老行归一（只读内存，不写库）：上一版的中间态与终态映射到新状态机。 */
+    /** 老行归一（只读内存，不写库）：把历史的中间态与终态映射到当前状态机。 */
     private static Goal normalize(Goal goal) {
         if (goal == null) return null;
         String s = goal.getStatus();

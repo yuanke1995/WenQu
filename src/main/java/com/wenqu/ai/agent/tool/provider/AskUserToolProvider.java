@@ -14,7 +14,7 @@ import java.util.List;
 /**
  * 内置工具族：只剩 askUser（人在回路）。
  * <p>
- * 2026-11-06 物理退役了纯计算 10 把——那些能力模型原生具备，常驻只占 schema；
+ * 纯计算类能力模型原生具备、常驻只占 schema，故不保留；
  * 本族保留 askUser，因为它是「人在回路」的真实产品能力，不是模型能自给的。
  * <p>
  * guestAllowed=true 照旧：免登录分享会话仍把内置项留给访客（配合知识检索）。
@@ -43,7 +43,7 @@ public class AskUserToolProvider implements ToolFamilyProvider {
     @Override
     public List<ToolDescriptor> descriptors() {
         return List.of(
-                // 提问卡是「人在回路」那一件：分支轮（P3a）没有观众，等不到答复，故带 viewerRequired
+                // 提问卡是「人在回路」那一件：分支轮没有观众，等不到答复，故带 viewerRequired
                 desc("askUser", "向用户提问（人在回路）", "向用户提问", "向你提出问题（可多选的题会标出），点选或输入答案后继续回答", true));
     }
 

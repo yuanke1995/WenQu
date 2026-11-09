@@ -40,8 +40,8 @@ import com.wenqu.ai.security.Permission;
  * 技能（Skills）：清单 / 正文审阅 / 用户自助安装与管理。
  *
  * <h3>为什么既有只读端点，也有写端点</h3>
- * 全框架化 P3 一度把写入整体交给模型的 {@code skill_manage} 工具，平台只剩只读清单——
- * 结果是「用户不能自己装技能」，而框架工具写的技能又只在当前会话可见。这里补回用户侧写入口，
+ * 写入不能只交给模型的 {@code skill_manage} 工具：那样写的技能只在当前会话可见，
+ * 用户也无法自己安装。这里提供用户侧写入口，
  * 但落点换成 {@link UserSkillStore}（{@code user-data/skills-users/{uid}/}）：
  * <ul>
  *   <li>跨会话、跨工作区、不依赖沙箱；</li>

@@ -126,7 +126,7 @@ public class AgentEvalScorer {
         // 评判是辅助调用：能关思考就关（思考与正文共享 max_tokens，默认开思考的模型会把输出
         // 预算花在推理上、正文本空——压缩/摘要同一条坑，修法同 reasoningOffBody）。
         // 恒思考族关不掉，就放宽 maxTokens 给推理留余量；开关族也要 300——200 会被较长的
-        // issue 截成半截 JSON（真机踩过：{"faithfulness": 60, 后戛然而止）。
+        // issue 截成半截 JSON。
         OpenAiChatOptions.Builder opts = OpenAiChatOptions.builder().model(model).temperature(0.0);
         java.util.Map<String, Object> off = modelRegistry.reasoningOffBody(model);
         if (!off.isEmpty()) {

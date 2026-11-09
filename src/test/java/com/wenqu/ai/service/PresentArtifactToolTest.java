@@ -7,9 +7,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * 产物工具的内容校验：引用句与非 HTML 网页必须在下库前拒绝。
- * <p>
- * 2026-11-06 线上实例：模型把官网写进沙盒后，presentArtifact 的 content 只传了
- * 「见 index.html（单文件网页，…）」，落库成 95 B 产物且返回成功，用户点开只有一句废话。
  */
 class PresentArtifactToolTest {
 

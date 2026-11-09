@@ -17,16 +17,14 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * MCP 工具中文名的读写与解析（「工具生态层」的展示名来源）。
  *
- * <p><b>为什么改成手工维护</b>：问渠自己的工具中文名登记在 {@code ToolRegistry}，框架原生工具在
+ * <p><b>为什么用手工维护</b>：问渠自己的工具中文名登记在 {@code ToolRegistry}，框架原生工具在
  * {@code FrameworkToolLabels}——MCP 动态工具两边都管不着，名字由第三方 server 决定。
- * 曾试过连接成功后让 LLM 批量译一遍，但同一个工具每次给的叫法都不一样（「列出文档目录」/「列出文档主题」、
- * 「查看仓库文档」/「查看文档内容」），质量不可控，遂改回手工：用户在「智能体 → MCP 外部工具」
- * 的工具清单里逐条起中文名，没起名的工具就展示原名。
+ * 由用户在「智能体 → MCP 外部工具」的工具清单里逐条起中文名（LLM 自动翻译的叫法
+ * 每次都不一样，质量不可控），没起名的工具就展示原名。
  *
  * <p><b>存储格式</b>：{@code c_ai_user_mcp.tool_labels} ＝
- * {@code {"items":{"裸工具名":"中文名"}}}。历史版本写入过
- * {@code {"fp":…,"items":{名:{label,hint}}}}（LLM 自动翻译），解析时<b>只认字符串值</b>，
- * 旧格式条目一律忽略——它们不是用户确认过的名字。
+ * {@code {"items":{"裸工具名":"中文名"}}}。解析时<b>只认字符串值</b>，
+ * 其他形态的条目一律忽略——它们不是用户确认过的名字。
  *
  * <p><b>调用纪律</b>：{@link #lookup} 带按 uid 的短 TTL 内存缓存（工具卡每步都查，不能每步打一次 DB），
  * {@link #save} 写完立刻让该用户的缓存失效，本实例上即时可见。
@@ -155,9 +153,7 @@ public class McpToolLabelService {
     /**
      * 剥 clientInfo 前缀，还原 server 侧的裸工具名。
      * <p>只认现行前缀 {@code w_q_}（带尾下划线直拼裸名，{@code w_q_sql_query}）。
-     * 历史值 {@code wen_qu}（无分隔符直拼）<b>不在这兼容</b>：2026-11-09 起由
-     * {@code SchemaMigrator#migrateMcpToolLabelKeys} 启动时把库里旧前缀键一次性归一成裸名，
-     * 数据归一后读写两侧都只留这一条规则。与前端 {@code projections.js#bareToolName} 同一条规则。
+     * 与前端 {@code projections.js#bareToolName} 同一条规则。
      */
     static String stripPrefix(String name) {
         if (name.startsWith("w_q_")) return name.substring(4);

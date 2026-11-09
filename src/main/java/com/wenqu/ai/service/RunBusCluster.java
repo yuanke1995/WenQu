@@ -19,7 +19,7 @@ import java.util.function.BiConsumer;
 import java.util.function.Function;
 
 /**
- * 运行总线的<b>跨副本层</b>（Phase 0 · P1）：把「这一轮在哪个副本上跑」「此刻还有哪些观众、分别在哪些副本」
+ * 运行总线的<b>跨副本层</b>：把「这一轮在哪个副本上跑」「此刻还有哪些观众、分别在哪些副本」
  * 「事件帧」「给远端观众的权威快照」「叫停指令」这五件事搬到 Redis。
  *
  * <p>切分口径：{@code SseEmitter} 是一条 socket，搬不走——观众连在哪个副本，扇出就必须发生在那个副本。

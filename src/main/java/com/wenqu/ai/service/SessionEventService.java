@@ -25,7 +25,7 @@ import java.util.Set;
  * 会话事件账本（结构性事件的旁路写入）。
  * <p>
  * 为什么要单独一张表：一轮问答的真实执行是「检索 → 工具若干步 → 人在回路裁决 → 生成 → 终态」，
- * 而这些过程此前只活在两条地方——SSE 流（断开即蒸发）和助手消息里的 JSON blob（只有终态快照，
+ * 而这些过程只活在两条地方——SSE 流（断开即蒸发）和助手消息里的 JSON blob（只有终态快照，
  * 没有先后与耗时口径）。有了按写入顺序可枚举的事件行，停止/断线重连/过程回放才有共同的底座可挂。
  * <p>
  * 边界（刻意的）：<b>只服务回放与审计，不进模型输入</b>；正文与 token/thinking/plan_delta 这类
@@ -40,7 +40,7 @@ public class SessionEventService {
 
     /** 载荷摘要上限（与审批入参同量级：审计够用，又不至于让账本行比消息本身还大） */
     private static final int PAYLOAD_MAX = 4000;
-    /** 大载荷上限：仅「子智能体运行过程」一类的整段帧流用（列已升 MEDIUMTEXT） */
+    /** 大载荷上限：仅「子智能体运行过程」一类的整段帧流用（列是 MEDIUMTEXT） */
     private static final int PAYLOAD_MAX_LARGE = 200_000;
 
     private final SessionEventMapper sessionEventMapper;
@@ -49,7 +49,7 @@ public class SessionEventService {
 
     /**
      * 记一条事件。<b>写失败绝不影响问答</b>：吞掉异常只留一行 warn（与产物、站内通知那类旁路同口径）。
-     * <p>开关 {@code trace.sessionEventEnabled} 默认开；关掉后一行都不写，行为回到有账本之前。
+     * <p>开关 {@code trace.sessionEventEnabled} 默认开；关掉后一行都不写。
      */
     public Long append(String sessionId, String userId, String turnId, String type, String payload) {
         return append(sessionId, userId, turnId, null, type, payload);
@@ -101,7 +101,7 @@ public class SessionEventService {
     /**
      * 读一个会话最近的事件（过程回放的取数）：按写入顺序<b>倒序</b>取，调用方再自行分组/翻正。
      * <p>归属只认 {@code user_id}——账本按人隔离，别人的会话查不到（连「有没有事件」都不告诉）。
-     * 一期这张表只写不读，界面上「这一轮怎么跑出来的」只能靠通知与产物倒推；有了读口才能做回放。
+     * 界面上「这一轮怎么跑出来的」由这个读口做回放。
      */
     public java.util.List<SessionEvent> listRecent(String sessionId, String userId, int limit) {
         if (sessionId == null || sessionId.isBlank() || userId == null || userId.isBlank()) {
@@ -213,7 +213,7 @@ public class SessionEventService {
 
     /**
      * 启动时按开关跑一次存量轮身份回填（默认关——见 {@code trace.turnIdBackfill} 的说明）。
-     * <p>为什么是启动跑而不是随时点：这件事只针对「账本上线之前」那批消息，是一次性的补账动作，
+     * <p>为什么是启动跑而不是随时点：这件事只针对没有轮身份的那批历史消息，是一次性的补账动作，
      * 不值得为它做一个带权限的运维端点；开关关掉后重启即不再扫。
      */
     @EventListener(ApplicationReadyEvent.class)
@@ -230,13 +230,13 @@ public class SessionEventService {
     }
 
     /**
-     * 给<b>账本上线之前</b>的历史消息补轮身份（{@code c_ai_message.turn_id} 为 NULL 的那些行）。
+     * 给历史消息补轮身份（{@code c_ai_message.turn_id} 为 NULL 的那些行）。
      * <p>能锚定的只有事件行的 {@code (turn_id, created_at)}——账本不存消息 id，也不存问题原文，
      * 所以判据收紧成「一个轮窗口里恰好只对上一问一答」：窗口内出现第二条问题或第二条回答就整窗跳过
      * （一问多答的重新生成、编辑重发、一轮多问都会撞出二义）。<b>挂错轮比不挂更坏</b>：
      * 那时用户点「看这一轮的过程」看到的是别的轮的账本，回放功能最难查的错就是这个——界面上什么都不缺。
-     * <p>可补的量本来就小：账本自 2026-10-09 才开写，消息行的 turn_id 列 10-10 上线，
-     * 两者的交集还要没被 30 天保留期清掉。这也是它默认关、而不是做成长期任务的原因。
+     * <p>可补的量本来就小：账本与带 turn_id 的消息行交集有限，还要没被 30 天保留期清掉。
+     * 这也是它默认关、而不是做成长期任务的原因。
      *
      * @param dryRun       true=只统计不写库（先看清能补多少）
      * @param sessionLimit 最多处理几个会话（0=默认 500，上限 5000）

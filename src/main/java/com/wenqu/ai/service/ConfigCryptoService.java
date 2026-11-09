@@ -34,8 +34,8 @@ public class ConfigCryptoService {
     public static final String PREFIX = "JWE:";
 
     /**
-     * 旧版密文标记：JWE 改造前的分块 RSA 形态（{@code RSA:v2…}）。那一代的读取器已退役，
-     * 当前版本<b>解不出真值</b>——本常量只用于「识别这仍是密文」，不是「能读它」。
+     * 旧版密文标记：分块 RSA 形态（{@code RSA:v2…}）。当前版本<b>解不出真值</b>，
+     * 本常量只用于「识别这仍是密文」，不是「能读它」。
      */
     public static final String LEGACY_PREFIX = "RSA:";
 
@@ -54,8 +54,7 @@ public class ConfigCryptoService {
      * 这个值是否仍是密文形态（{@value #PREFIX} 或旧版 {@value #LEGACY_PREFIX} 开头）。
      * <p><b>用途是「识别读不了」，不是「能读」</b>：旧 RSA 密文被明文迁移再封一层 JWE 后，
      * 当前版本永远解不出真值，拿去调网关只会 401。用它把这类行挡在「明文待迁移」之外，
-     * 否则 token 本体会被套进两层密文——v2 私钥退场后彻底解不开
-     * （2026-10-27 真机：sandbox.token 被套成 {@code RSA:v2} 套 JWE，运行时 401）。
+     * 否则 token 本体会被套进两层密文、彻底解不开。
      */
     public boolean looksLikeCiphertext(String value) {
         return value != null && (isEncrypted(value) || value.startsWith(LEGACY_PREFIX));

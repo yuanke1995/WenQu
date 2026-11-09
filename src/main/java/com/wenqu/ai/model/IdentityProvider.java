@@ -23,7 +23,7 @@ public class IdentityProvider {
     @TableId(type = IdType.INPUT)
     private String id;
 
-    /** 租户ID（Phase4 启用，当前 NULL） */
+    /** 租户ID（当前 NULL） */
     private String tenantId;
 
     /** 协议类型：oidc | saml | ldap | scim */

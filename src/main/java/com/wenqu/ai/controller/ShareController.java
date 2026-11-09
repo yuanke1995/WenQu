@@ -61,7 +61,7 @@ import java.util.Map;
 @RequiredArgsConstructor
 @Tag(name = "智能体公开分享", description = "游客免登录与指定智能体对话（/s/{token}）")
 public class ShareController {
-    /** 统一审计事件（Phase 3）：同一份格式串派生日志与结构化事件，不再两处抄 */
+    /** 统一审计事件：同一份格式串派生日志与结构化事件，不再两处抄 */
     private final AuditService audit;
 
 
@@ -75,11 +75,11 @@ public class ShareController {
      * 归属口径只在这里定一次，读写都包在 {@code TenantContext.as(发布者租户)} 里。
      */
     private final com.wenqu.ai.service.TenantService tenantService;
-    /** 游客日额度闸（P3 费用面第一层）：分享级 + 访客级轮次上限，跨副本 Redis 计数 */
+    /** 游客日额度闸（费用面第一层）：分享级 + 访客级轮次上限，跨副本 Redis 计数 */
     private final com.wenqu.ai.service.ShareBudgetService shareBudgetService;
 
     /**
-     * 轮次控制与存活（P6 刀 2）。免登录分享页也要能问「这一轮还在跑吗」、能接回正在跑的流、
+     * 轮次控制与存活。免登录分享页也要能问「这一轮还在跑吗」、能接回正在跑的流、
      * 能叫停——这三件事与「谁在答这一问」无关，归轮次运行时。
      */
     private final com.wenqu.ai.agent.chat.ChatRunRuntime runtime;
@@ -93,7 +93,7 @@ public class ShareController {
     private final QaLogService qaLogService;
 
     /**
-     * 人在回路提问卡。免登录链路此前<b>没有</b>作答端点：智能体一发 ask_user，
+     * 人在回路提问卡：免登录链路要有自己的作答端点，否则智能体一发 ask_user，
      * 服务端就持续 keepalive 等一个永远不来的答案，分享页读起来是「卡住了」。
      * 登录态那条 {@code /api/ai/ask-user/{id}} 按 uid 比对归属，而游客轮的 DB 行记的是
      * <b>发布者</b> uid（检索与默认模型按发布者装载），游客 uid 过不去——所以必须另开口子。
@@ -171,7 +171,7 @@ public class ShareController {
      *
      * <p><b>为什么不复用产物列表里的签名 URL</b>：产物走 {@code /ai/artifacts/**} 静态映射 +
      * expire+sig 拦截器，签名默认只有 1 小时，而分享链接可以挂几个月——把签名 URL 写进分享页，
-     * 等于给出一批"当天能下、隔天全 401"的死链。改成每次下载凭 token 重新解析并现场返回，
+     * 等于给出一批"当天能下、隔天全 401"的死链。所以每次下载都凭 token 重新解析并现场返回，
      * 让链接有效期与分享有效期一致（都只由 enabled 决定）。
      *
      * <p>入参只有会话内序号 {@code seq}，没有路径：产物归属校验、序号→文件的映射、
@@ -682,17 +682,14 @@ public class ShareController {
 
     /**
      * 游客裁决计划卡（人在回路）。
-     * <p><b>注意：这一条在当前配置下打不到</b>，是留着兜底的第二道闸，不是现网缺陷的修复。
+     * <p><b>注意：这一条在当前配置下打不到</b>，作为兜底的第二道闸保留。
      * 游客轮有两道独立拦截让计划卡发不出来：
      * <ol>
      *   <li>{@code ShareChatRequest} 没有 {@code planMode} 字段——游客开不了计划开关；</li>
-     *   <li>模型自己调 {@code plan_enter} 会被只读档当场拦掉（实测回执：「当前是只读…plan_enter 会修改
-     *       沙盒里的文件或状态，因此本轮不执行」）。游客被 {@code PermissionPolicyResolver} 硬钉在
-     *       {@code RESEARCH}（{@code READ_ONLY}），这道拦截不会随平台上限放开而消失。</li>
+     *   <li>模型自己调 {@code plan_enter} 会被只读档当场拦掉。游客被 {@code PermissionPolicyResolver}
+     *       硬钉在 {@code RESEARCH}（{@code READ_ONLY}），这道拦截不会随平台上限放开而消失。</li>
      * </ol>
-     * <p>那为什么还留这条：分享页原先没接 {@code onPlanApproval}，卡片一旦到达就是
-     * 「服务端等裁决、页面永不出 done」的死锁——和提问卡那条同形、且已证实真实可达的死锁同一个形状。
-     * 装配面与档位哪天动一处，这个形状就会从"够不到"变成"卡死用户"。留着它换的是这个确定性。
+     * <p>保留它是为了防止卡片一旦到达就出现「服务端等裁决、页面永不出 done」的死锁。
      * <p>只走框架通道、不回落 {@code hitl.resolvePlanApproval}（游客 uid 不匹配），也不靠 resume 兜底。
      */
     @Operation(summary = "游客裁决计划卡", description = "批准（{approved:true,plan:可选编辑后全文}）/ "
@@ -750,7 +747,7 @@ public class ShareController {
 
     /**
      * 客户端 IP：统一收口到 {@link com.wenqu.ai.util.ClientIp}。
-     * 旧口径「XFF 首段优先」是客户端可伪造的——伪造 XFF 即可无限轮换限流身份并污染审计 IP。
+     * 按 XFF 首段优先取 IP 是客户端可伪造的——伪造 XFF 即可无限轮换限流身份并污染审计 IP。
      */
     private String clientIp(HttpServletRequest request) {
         return com.wenqu.ai.util.ClientIp.of(request);

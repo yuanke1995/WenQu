@@ -34,7 +34,7 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 
 /**
- * P1 Trace 与运营闭环（Coze Loop 模式）：
+ * Trace 与运营闭环（Coze Loop 模式）：
  * <ul>
  *   <li><b>统一执行 trace</b>：对话型（qa_log + 回答消息全过程 + 反馈）与工作流型（run 节点级 trace）
  *       一个口径看——列表同构、详情按类型展开；这是把散在看板/会话/运行历史三处的执行记录聚成一处；</li>
@@ -45,8 +45,8 @@ import java.util.stream.Collectors;
  * 归属口径：trace 视图是<b>运营功能</b>（对标 Coze Loop），端点不进普通用户白名单——RBAC 下管理员直通、
  * 普通角色默认 403，工作流 run 详情也不做逐条归属校验（运营视角看全部，与看板统计同权限面）。
  * <p>
- * 数据边界（如实）：message_id/agent_id 两列上线后才有值，存量 qa_log 行为 NULL——
- * 详情按「摘要视图」降级展示（不带全过程），采样池只收 <b>有 message_id 关联</b>的新日志。
+ * 数据边界（如实）：部分日志的 message_id/agent_id 为空——详情对这类行按「摘要视图」降级展示
+ * （不带全过程），采样池只收 <b>有 message_id 关联</b>的日志。
  *
  * @author yuanke
  */

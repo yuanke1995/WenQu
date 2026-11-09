@@ -1,7 +1,7 @@
 /**
  * blocks 端到端回放核对（配 mock 网关 + 8091 本地栈；与 loadtest.mjs 同一套起法）。
  *
- * 覆盖三件事，都是改造验收清单里「只靠单测证不了」的部分：
+ * 覆盖三件单测证不了的事：
  *   1. 真跑一轮：SSE 事件流 → 服务端落库的 blocks/旧列，两边内容逐字符一致；
  *   2. 前端纯函数 `web/src/chat/blocks.js` 拿落库的 blocks 重建视图，重建出的 content
  *      必须与历史接口返回的 content 逐字符相等（现场与刷新同一本账）；
@@ -480,7 +480,6 @@ async function main() {
 
   // ── asktimeout：提问卡没人答，按「未作答」继续而不是收轮 ─────────
   // 默认不跑（要 60s 起步）：`chat.askTimeoutMs` 有 ≥60000 的地板，压到 1.5s 会被配置接口以 400 拒掉。
-  // 2026-11-06 实测：60s 那一档整轮 64.5s 走完 ask_user → warn(未作答) → 工具卡收口 → 答后正文 → done。
   if (!want('asktimeout')) {
     // 未点名
   } else if (!process.env.ASKTIMEOUT_CASE) {
@@ -743,7 +742,7 @@ async function main() {
       writeFixture(mode === 'approve' ? 'approval' : 'approvaltimeout', { events, row, guest: null })
       // 用完还原联网搜索（本地栈别留下一个默认关掉被打开的状态）
       // 还原成平台默认值而不是 before：本用例自己必须先打开联网搜索，
-      // 若上一次运行没收干净，before 读到的就已经是 true（2026-11-06 踩过）。
+      // 若上一次运行没收干净，before 读到的就已经是 true。
       await putConfig(admin, {
         webSearch: { enabled: 'false', provider: 'tavily', baseUrl: '' },
         chat: { approvalTimeoutMs: '120000' },

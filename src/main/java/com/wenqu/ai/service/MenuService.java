@@ -36,7 +36,7 @@ import java.util.Set;
 @Service
 @RequiredArgsConstructor
 public class MenuService {
-    /** 统一审计事件（Phase 3）：同一份格式串派生日志与结构化事件，不再两处抄 */
+    /** 统一审计事件：同一份格式串派生日志与结构化事件，不再两处抄 */
     private final AuditService audit;
 
 
@@ -214,7 +214,7 @@ public class MenuService {
      * 范围同样只取 sidebar/group 顶级项 —— tab 由宿主页渲染、hidden 是纯权限容器，两者不进侧栏。
      * <p>
      * 返回的是<b>只含平铺字段的新节点</b>，不带 children：抽屉是开关清单，读到 children
-     * 只会让「智能体」带着 6 个 Tab 子节点进响应（实测普通用户响应里就有）。直接复用
+     * 只会让「智能体」带着 6 个 Tab 子节点进响应。直接复用
      * visibleMenusFor 的节点会把子树一起带出去，故逐字段重建。
      */
     public List<Map<String, Object>> adjustableSidebarMenus(String uid) {
@@ -390,7 +390,7 @@ public class MenuService {
     }
 
     /**
-     * 渲染位置归一：空值回落 sidebar（存量行/未传时保持历史行为），非法值 fail-loud。
+     * 渲染位置归一：空值回落 sidebar（空值或存量行按默认），非法值 fail-loud。
      * 取值即前端渲染分支的枚举，多一个错别字就多一个「菜单静默消失」的悬案，必须当场报错。
      */
     private static String normalizeRenderAs(String renderAs) {

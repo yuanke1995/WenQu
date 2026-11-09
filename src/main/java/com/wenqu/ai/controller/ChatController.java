@@ -53,8 +53,8 @@ public class ChatController {
 
     private final ChatService chatService;
     /**
-     * 人在回路裁决（P6 刀 1 自 ChatService 抽族）：三张卡——工具执行审批、askUser 提问、执行计划批准——
-     * 的裁决提交与跨设备恢复都走这里。问答运行时不再代管卡片，本控制器也就不再向它要卡片。
+     * 人在回路裁决：三张卡——工具执行审批、askUser 提问、执行计划批准——
+     * 的裁决提交与跨设备恢复都走这里。问答运行时不代管卡片，本控制器也不向它要卡片。
      */
     private final com.wenqu.ai.agent.hitl.HitlDecisionService hitl;
     private final com.wenqu.ai.agentx.FrameworkSessions frameworkSessions;
@@ -62,10 +62,10 @@ public class ChatController {
     private final com.wenqu.ai.service.TodoBridge todoBridge;
     /** 历史轮次的任务清单（账本 type=todo 留痕）：旧计划刷新后要能读回它那一轮的 N/M */
     private final com.wenqu.ai.service.SessionEventService sessionEvents;
-    /** 计划血缘（B+）：把上一版已批准计划与那一轮执行进度拼进重新计划的提示词 */
+    /** 计划血缘：把上一版已批准计划与那一轮执行进度拼进重新计划的提示词 */
     private final com.wenqu.ai.service.PlanLineageService planLineage;
     /**
-     * 轮次控制与存活（P6 刀 2）：「停止本轮」「运行中插话」「有没有一轮在跑」「接流回来」
+     * 轮次控制与存活：「停止本轮」「运行中插话」「有没有一轮在跑」「接流回来」
      * 这四个入口都在它那里——它们问的是这一轮的通道与生死，不是这一轮怎么把答案生成出来。
      */
     private final com.wenqu.ai.agent.chat.ChatRunRuntime runtime;
@@ -78,14 +78,14 @@ public class ChatController {
     private final com.wenqu.ai.mapper.MessageMapper messageMapper;
     private final ConfigService configService;
     private final RateLimitService rateLimitService;
-    /** 配额预检（Phase 2）：到额就在入口拒，不给用户一条「转了半天才报错」的流 */
+    /** 配额预检：到额就在入口拒，不给用户一条「转了半天才报错」的流 */
     private final com.wenqu.ai.service.UsageQuotaService usageQuota;
 
     /** 每轮文件改动：逐文件差异按需取（内容由本机执行器现算，服务端不留缓存） */
     private final com.wenqu.ai.service.ProjectTurnChangesService turnChanges;
-    /** 内容安全输入闸（Phase 3 · P12）：插话也是一句用户打进来的话，走同一道闸 */
+    /** 内容安全输入闸：插话也是一句用户打进来的话，走同一道闸 */
     private final com.wenqu.ai.service.contentsafety.ContentSafetyService contentSafety;
-    /** 租户（Phase 4 · P9）：只用于在 /auth/me 里说一句「现在看的是哪个租户的数据」 */
+    /** 租户：只用于在 /auth/me 里说一句「现在看的是哪个租户的数据」 */
     private final com.wenqu.ai.service.TenantService tenantService;
     private final QaLogService qaLogService;
     private final AdminGuard adminGuard;
@@ -135,7 +135,7 @@ public class ChatController {
 
     /**
      * 当前身份与权限（普通用户问答 UI 据此隐藏/显示管理入口；白名单端点，无需管理员即可调用）。
-     * 2026-09-26 RBAC：响应追加 {@code menus}（当前角色可见的侧边栏菜单树，前端动态渲染导航）；
+     * 响应追加 {@code menus}（当前角色可见的侧边栏菜单树，前端动态渲染导航）；
      * {@code admin} 按管理员级角色判定（含自定义 admin_flag=1 角色）。
      */
     @Operation(summary = "当前身份与权限", description = "返回当前登录用户（uid/username/role/departmentId）、是否管理员（admin）"
@@ -144,7 +144,7 @@ public class ChatController {
     public ResultJson authMe(HttpServletRequest httpRequest) {
         Map<String, Object> me = authService.currentUser(RequestUser.uid(), adminGuard.isAdmin(httpRequest));
         me.put("menus", menuService.menusForUser(RequestUser.uid()));
-        // 租户（Phase 4）：随身份一起给，界面据此说一句「现在看的是哪个租户的数据」。
+        // 租户：随身份一起给，界面据此说一句「现在看的是哪个租户的数据」。
         // 刻意不另开 /tenant/mine 端点——那会多一处要给所有角色授权的面，而它说的还是同一件事
         String tenant = com.wenqu.ai.util.TenantContext.current();
         if (tenant == null || tenant.isBlank()) tenant = com.wenqu.ai.util.TenantContext.DEFAULT_TENANT;
@@ -164,7 +164,7 @@ public class ChatController {
     @PostMapping("/chat")
     public SseEmitter chat(@RequestBody @Valid ChatRequest request, HttpServletRequest httpRequest) {
         // 气泡顶部报的是「从发出提问到答完」的墙钟：起表点必须早于限流、校验、会话补建与实例装配，
-        // 否则刷新后读库里那份机器耗时，数字会凭空变小（实测 6.0s → 3.3s）。
+        // 否则刷新后读库里那份机器耗时，数字会凭空变小。
         long receivedAtMs = System.currentTimeMillis();
         String userId = RequestUser.uid();
         // 按用户限频（SYSTEM 落到 IP 维度）
@@ -247,13 +247,13 @@ public class ChatController {
         }
         rejectApiKeyForWorkspaceSession(httpRequest, sessionId);
 
-        // 重新计划血缘（B+）：只对计划模式生效。归属/状态不满足时 resolve 返回 null——
+        // 重新计划血缘：只对计划模式生效。归属/状态不满足时 resolve 返回 null——
         // 这张旧卡可能来自被清理的会话，重新计划本身仍要能跑，只是不带上一版上下文与血缘标。
         final com.wenqu.ai.service.PlanLineageService.Resolved planBase = request.isPlanMode()
                 ? planLineage.resolve(sessionId, userId, request.getPlanBaseId())
                 : null;
 
-        // 同步段这几道校验都是「一句话还没发出去就被挡下」，抛 400。以前挡下就什么都不留：
+        // 同步段这几道校验都是「一句话还没发出去就被挡下」，抛 400：
         // 用户那句提问是当场打出去的，刷一下页面连问带错一起消失，读到的就成了「软件吞了我一句话」。
         // 400 的语义照旧（前端 toast 与错误卡都认它），只在抛之前补一笔留痕。
         final List<ChatRequest.Mention> mentions;
@@ -396,7 +396,7 @@ public class ChatController {
                 normalized.setName(doc.getFileName());
                 normalized.setKbId(doc.getKbId() == null ? kbService.defaultId(RequestUser.uid()) : doc.getKbId());
             } else if ("agent".equals(type)) {
-                // @ 智能体（P5：本轮强制咨询它）：get() 内含可读校验（共享范围外按不存在处理，
+                // @ 智能体（本轮强制咨询它）：get() 内含可读校验（共享范围外按不存在处理，
                 // 不泄露存在性）。子智能体同样可以被 @ ——@ 不再是"换它来作答"而是"派它去查"，
                 // 而子智能体恰恰是挂得最规整的那一份资料域。它仍然不能当问答角色（对话页下拉照旧剔除）。
                 var a = agentService.get(id);
@@ -489,7 +489,7 @@ public class ChatController {
             return ResultJson.error("缺少会话 ID 或插话内容");
         }
         rejectApiKeyForWorkspaceSession(httpRequest, sessionId.trim());
-        // 插话同样过输入闸（Phase 3 · P12）：它是用户当场打的一句话，与发问同一身份，不该成为闸外的旁路
+        // 插话同样过输入闸：它是用户当场打的一句话，与发问同一身份，不该成为闸外的旁路
         String refused = contentSafety.checkInput(com.wenqu.ai.util.RequestUser.uid(), sessionId, text);
         if (refused != null) return ResultJson.error(refused);
         String messageId = runtime.steerTurn(sessionId.trim(), com.wenqu.ai.util.RequestUser.uid(), text);
@@ -637,7 +637,7 @@ public class ChatController {
 
     /**
      * 框架提问卡送回答给模型的文本。
-     * <p>此前这里是 {@code String.valueOf(answers)}：Java 的 {@code List.toString()} 会把中括号连同
+     * <p>不能用 {@code String.valueOf(answers)}：Java 的 {@code List.toString()} 会把中括号连同
      * 逗号一起交给模型（用户选「火锅」，模型读到 {@code [火锅]}）。多题按与问题下标对齐的 JSON 数组送
      * ——与问答侧 {@code HitlDecisionService#buildCombinedAnswer} 同形，问答记录卡才拆得出每题答复。
      * <p>整题空提交（没选就点了提交）送一句「用户未回答这一题…」，而不是送空串：那句前缀是

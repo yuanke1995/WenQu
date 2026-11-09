@@ -7,8 +7,8 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 /**
- * 角色数据范围（批次 C2，方案 docs/rbac-upgrade-plan.md §2/§3 批次 C）：
- * 角色自带数据范围——资源侧不再有"共享给谁"入口（share_config 已退役），
+ * 角色数据范围：
+ * 角色自带数据范围——资源侧不再有"共享给谁"入口，
  * 用户能看什么由其角色集合推导。判定 = 角色数据范围 ∪ 创建者（创建者恒 MANAGE）。
  *
  * @author yuanke

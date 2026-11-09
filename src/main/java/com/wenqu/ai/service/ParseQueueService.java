@@ -31,10 +31,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /**
  * 文档解析持久化任务队列。
  * <p>
- * **为什么必须有这张表**：旧实现把解析任务丢进 `fixed(2) + 有界队列(50) + 默认 AbortPolicy` 的线程池，
- * 队列一满就 Rejected → 代码**删掉已经 INSERT 的文档记录**并告诉用户"解析队列繁忙，请稍后再试"。
- * 批量上传时第 51 个及之后的文件就这样被静默丢弃（用户看到的"多个解析失败"多半是它）。
- * 任务不落盘，就只能在拥塞时丢任务；任务落盘，队列可以随便排、重启也不丢、失败还能退避重试。
+ * **为什么必须有这张表**：任务落盘后队列可以随便排、重启也不丢、失败还能退避重试；
+ * 不落盘就只能在拥塞时丢掉解析任务。
  * <p>
  * 链路（与 Sidekiq / Celery / Hangfire 同构，Dify / Coze / FastGPT 的索引队列也是这个形态）：
  * <pre>
@@ -199,8 +197,8 @@ public class ParseQueueService {
      * 扫描器主体（由 ScheduleCenter 定时调用）：回收租约 → 抢占 → 投池。
      *
      * @return 本轮抢占投递的任务数（0=空跑，调用方据此免落执行日志）
-     * <p>扫描异常刻意上抛（此前就地吞掉只留 WARN 行）：交给 ScheduleCenter 落失败行 + 下轮节拍重试——
-     * 调度侧已改为"空跑不记"，就地吞掉会让 DB 故障在执行日志里毫无痕迹。
+     * <p>扫描异常刻意上抛：交给 ScheduleCenter 落失败行 + 下轮节拍重试——
+     * 就地吞掉（调度侧"空跑不记"）会让 DB 故障在执行日志里毫无痕迹。
      */
     public int scan() {
         if (!scanning.compareAndSet(false, true)) return 0;   // 上一轮未结束跳过（防重叠）
@@ -498,7 +496,6 @@ public class ParseQueueService {
 
     /**
      * 队列容量（parse.queue.capacity）：超过则上传直接拒绝并让前端等待，而不是先收下再悄悄丢解析任务。
-     * 旧实现是「先收下、队列满、删记录、报繁忙」——丢数据；现在是「早拒绝、不丢数据」。
      */
     public int capacity() {
         return Math.max(50, configService.getInt("parse.queue.capacity", 5000));
@@ -528,7 +525,7 @@ public class ParseQueueService {
                 WORKER_ID, concurrency(), leaseSeconds(), capacity());
     }
 
-    /** 停机：停止接新任务，等 worker 池里在跑的解析自然收尾（旧实现只 shutdown 不 await，靠"重启一律判失败"擦屁股） */
+    /** 停机：停止接新任务，等 worker 池里在跑的解析自然收尾 */
     @PreDestroy
     void shutdown() {
         watchdog.shutdownNow();

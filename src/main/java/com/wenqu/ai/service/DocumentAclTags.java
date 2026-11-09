@@ -12,7 +12,7 @@ import java.util.Set;
 /**
  * 检索期<b>库级</b>可见性下推（<b>刻意只管库门，文档级 ACL 不在此</b>）。
  *
- * <p><b>为什么只保留库门（2026-10-05 架构决策，此前是全量 ACL 标签下推）</b>：
+ * <p><b>为什么只保留库门</b>：
  * 早绑定方案把文档 ACL 烘焙进向量 metadata（aclGlobal/aclDept/aclUser），检索期下推过滤。
  * 实际运行后确认它<b>不成立</b>，三条硬理由：
  * <ol>
@@ -20,7 +20,7 @@ import java.util.Set;
  *       的事后过滤（安全底线不能只压在索引上）。于是早绑定付出了全部写入侧复杂度，
  *       却一点 DB 成本都没省——而晚绑定查的是 {@code WHERE id IN (命中块)}，走主键索引、亚毫秒级。</li>
  *   <li><b>制造两处真相</b>：同一份权限配置被写入侧（{@code bake}）与检索侧
- *       （事后过滤的文档级判定）各解析一次。本次踩的「OR 门里没有标签=永不可见」
+ *       （事后过滤的文档级判定）各解析一次。「OR 门里没有标签=永不可见」
  *       正是两处口径不一致的直接后果——晚绑定下这类 bug 从根上不存在。</li>
  *   <li><b>变更传播缺失即越权</b>：改权限配置不重写向量标签，索引里的权限快照即陈旧；
  *       早绑定要成立必须补齐「权限变更 → 重写索引」链路，而它涉及 6 处写入点 + QA/子块向量，
@@ -50,7 +50,7 @@ public class DocumentAclTags {
     /**
      * 往向量 metadata 写入库门字段 {@code kbId}（检索期 {@code kbId IN (可见库)} 下推用）。
      *
-     * <p><b>只写库门，不写文档级 ACL</b>（2026-10-05 晚绑定改造）：文档级 ACL 改为检索期
+     * <p><b>只写库门，不写文档级 ACL</b>：文档级 ACL 在检索期
      * 按命中块实时查 MySQL 判定（{@code HybridRetrievalService.loadVisibleDocIdsOfHits}），
      * 权限真相只留 {@code ResourceVisibilityService} 一处，改共享范围<b>无需重写向量</b>。
      *
@@ -83,7 +83,7 @@ public class DocumentAclTags {
 
     /**
      * 向量索引 schema 声明的 metadata 字段。
-     * <p><b>刻意不再包含 aclGlobal/aclDept/aclUser</b>：文档级 ACL 已回到晚绑定（见类注释）。
+     * <p><b>刻意不再包含 aclGlobal/aclDept/aclUser</b>：文档级 ACL 走晚绑定（见类注释）。
      * 字段名不可改——已在库的索引 schema 按这些名字建过，改名等于全部索引失效。
      */
     public static final List<org.springframework.ai.vectorstore.redis.RedisVectorStore.MetadataField> METADATA_FIELDS =

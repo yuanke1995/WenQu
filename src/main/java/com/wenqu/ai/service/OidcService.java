@@ -35,8 +35,8 @@ import java.util.regex.Pattern;
 /**
  * 单点登录（OIDC 授权码流程）—— 多认证源（多 IdP）版本。
  * <p>
- * 与平台版 {@code backend/package/yuxi/services/oidc_service.py} 同构；配置来源从原先的
- * {@code c_ai_config} 扁平键改为 {@code c_ai_oidc_provider} 表（每行一个认证源，照模型供应商形态：
+ * 与平台版 {@code backend/package/yuxi/services/oidc_service.py} 同构；配置统一存
+ * {@code c_ai_oidc_provider} 表（每行一个认证源，照模型供应商形态：
  * client_secret 逐行 RSA 加密）。登录入口按 state 携带的 providerId 路由；回调 URL 保持不变
  * （多个 client 在各自 IdP 登记同一回调地址即可）。
  * <p>
@@ -49,7 +49,7 @@ import java.util.regex.Pattern;
 @Service
 @RequiredArgsConstructor
 public class OidcService {
-    /** 统一审计事件（Phase 3）：同一份格式串派生日志与结构化事件，不再两处抄 */
+    /** 统一审计事件：同一份格式串派生日志与结构化事件，不再两处抄 */
     private final AuditService audit;
 
 

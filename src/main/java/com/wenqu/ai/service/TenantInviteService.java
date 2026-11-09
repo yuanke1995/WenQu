@@ -28,7 +28,7 @@ import java.util.UUID;
 import java.util.regex.Pattern;
 
 /**
- * 租户邀请（P1 多租户生命周期 · 3A）。
+ * 租户邀请。
  *
  * <p>一次性短链：管理员生成链接 → 对方匿名打开 → 填账号密码即落本租户。
  * token 只存 SHA-256，明文只在生成时返回一次（与对外 API Key 同一口径）。

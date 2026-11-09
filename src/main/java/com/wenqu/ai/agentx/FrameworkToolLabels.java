@@ -41,9 +41,8 @@ public final class FrameworkToolLabels {
             Map.entry(PlanModeToolsNames.ENTER, "进入规划模式"),
             Map.entry(PlanModeToolsNames.WRITE, "撰写执行计划"),
             Map.entry(PlanModeToolsNames.EXIT, "提交计划待批准"),
-            // 全框架化 P1：沙箱与文件系统改由框架提供后，这七把也走本表。
-            // 问渠侧同名工具已退役（见 SandboxToolProvider#descriptors），模型看到的工具名不变，
-            // 但执行方换成框架 FilesystemTool / ShellExecuteTool，卡片文案得跟上，否则界面上
+            // 沙箱与文件系统这七把由框架提供，也走本表：模型看到的工具名不变，
+            // 执行方是框架 FilesystemTool / ShellExecuteTool，卡片文案得跟上，否则界面上
             // 会退回前端自己的英文名映射。
             Map.entry(FilesystemToolNames.READ_FILE, "读取文件"),
             Map.entry(FilesystemToolNames.WRITE_FILE, "写入文件"),
@@ -52,7 +51,7 @@ public final class FrameworkToolLabels {
             Map.entry(FilesystemToolNames.GLOB_FILES, "按模式查找文件"),
             Map.entry(FilesystemToolNames.LIST_FILES, "列出目录"),
             Map.entry(FilesystemToolNames.EXECUTE, "执行命令"),
-            // 全框架化 P3：技能与记忆也换成框架工具面后，这十一把同样只露裸名。
+            // 技能与记忆这十一把同样只露裸名。
             // 技能那三把是每次用技能都会露面的一把（load_skill_through_path），漏它的表现
             // 就是界面上出现一个没人看得懂的英文函数名。
             Map.entry("load_skill_through_path", "读取技能正文"),
@@ -65,7 +64,7 @@ public final class FrameworkToolLabels {
             Map.entry("session_list", "列出历史会话"),
             Map.entry("session_history", "读取历史会话"),
             Map.entry("deliver_artifact", "交付产物"),
-            // 子智能体已改为框架接管（全框架化 P0）：派活、催话、取结果这六把都在卡上露面。
+            // 子智能体的派活、催话、取结果这六把都在卡上露面。
             Map.entry("agent_spawn", "委派助手执行"),
             Map.entry("agent_send", "向助手追加消息"),
             Map.entry("agent_list", "查看已派助手"),
@@ -73,7 +72,7 @@ public final class FrameworkToolLabels {
             Map.entry("task_output", "获取任务结果"),
             Map.entry("task_cancel", "取消后台任务"),
             Map.entry("wait_async_results", "等待后台结果"),
-            // 目标模式的控制工具（2026-10-22 任务运行时）：模型每轮都会用，卡片上不能是英文裸名。
+            // 目标模式的控制工具：模型每轮都会用，卡片上不能是英文裸名。
             Map.entry("goal_note", "记录目标进展"),
             Map.entry("goal_submit", "提交目标完成申请"));
 

@@ -32,13 +32,11 @@ public class User {
     private String departmentId;
 
     /**
-     * 所属租户（Phase 4 多租户；空按 {@code default} 处理——存量行加列时由数据库默认值回填）。
+     * 所属租户（空按 {@code default} 处理）。
      * <p>它决定这个账号登录后能看到哪些行：请求线程装载身份时绑定，
      * 谓词由 {@code WenquTenantLineHandler} 拼在 SQL 上，业务代码不各自判。
      */
     private String tenantId;
-
-    // 单角色列已退役 → c_ai_user_role（多角色，granted_by 区分 manual/idp；判定见 UserRoleService）
 
     /** 状态: 1=启用, 0=禁用 */
     private Integer status;
@@ -71,11 +69,6 @@ public class User {
 
     /** 用户级长期记忆自动提炼开关（个人设置「我的记忆」页可改）: 1=开, 0=关；null 视为开（历史行为兜底口径） */
     private Integer memoryEnabled;
-
-    // 个人默认重排模型已退役（重排归知识库检索设置；存量库该列无害保留）
-    // 个人默认视觉模型已下线（聊天图片理解只看模型能力位，见 ChatService；存量库该列无害保留）
-    // role / oidcSub / oidcProvider 已随统一身份模型退役（2026-10-26）：
-    // 角色 → UserRole（c_ai_user_role 多角色），外部身份 → UserIdentity（c_ai_user_identity 多认证源绑定）
 
     /** 用户头像：空=昵称首字；emoji 字符=表情头像；以 / 开头=上传图片 URL（/ai/images/avatar/...）。
      *  清空（回落昵称首字）需将列置 null，故更新走 LambdaUpdateWrapper 字符串 set，绕过 MP 默认 NOT_NULL 跳过 null 的策略 */

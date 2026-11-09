@@ -35,7 +35,7 @@ public class ModelInfo {
     /**
      * 可空配置列统一 updateStrategy=ALWAYS：saveModels 是全量同步语义，「清空」必须能落库。
      * 默认 NOT_NULL 策略会跳过 null 字段——用户清空窗口/单价/档位后保存，DB 保留旧值，
-     * 表现为「配置改了老是不生效」（2026-10-23）。
+     * 表现为「配置改了老是不生效」。
      */
     @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private String displayName;

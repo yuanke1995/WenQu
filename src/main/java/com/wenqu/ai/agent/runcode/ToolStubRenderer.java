@@ -9,7 +9,7 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * 由本轮工具描述符生成沙盒侧的 Python 客户端（P3b 的「descriptor → stub」那一步）。
+ * 由本轮工具描述符生成沙盒侧的 Python 客户端。
  * <p>
  * DeepSeek Harness 生成的是 TS {@code .d.ts}（宿主同进程，运行时是 Node）；问渠的代码跑在
  * provisioner 容器里，镜像内的解释器是 python3，所以这里生成一个可直接 import 的模块，
@@ -33,8 +33,7 @@ public class ToolStubRenderer {
 
     /**
      * Python 关键字：工具入参叫 {@code from}／{@code to}／{@code lambda} 是完全可能的
-     * （单位换算工具真有 from/to 这两个参数，本机实测生成的模块因此整份语法错，
-     * 而现象只是"脚本 import 失败"，看着像回调或凭据坏了）。
+     * （这类名字会让生成的模块整份语法错，而现象只是"脚本 import 失败"）。
      * <p>处理方式是把形参改名（加下划线）但**键名保持原样**下发：工具侧看到的还是 from，
      * 脚本里写的是 from_。改名而不是跳过，是因为跳过会让这个工具在脚本里整个不可用。
      */
@@ -359,10 +358,8 @@ public class ToolStubRenderer {
     /**
      * 一个工具一个便捷函数：成功返回文本、失败抛 {@code ToolError}。
      * <p><b>生成的形参一律可选</b>（必填项只写进 docstring），漏传时由工具自己的校验给出"缺哪个参数"，
-     * 而不是在 Python 签名层就抛 {@code TypeError}。差别不是洁癖：真机上模型按工具描述写
-     * {@code wq.searchKnowledge(q)}，签名要求它连 topK 一起传，于是整段脚本在 {@code ThreadPoolExecutor}
-     * 里炸掉、一行 print 都没有——报错从"少了什么参数"变成"脚本没输出"，模型只能猜。
-     * 现在可选参数不传就不下发，必填项交给工具原样的校验文案，失败信息始终是工具那一层的话。
+     * 而不是在 Python 签名层就抛 {@code TypeError}：可选参数不传就不下发，必填项交给工具原样的校验文案，
+     * 失败信息始终是工具那一层的话，模型不会只看到"脚本没输出"。
      */
     private void appendToolFunction(StringBuilder out, RunCodeBridge.Spec s, Set<String> defined) {
         if (s == null || s.name() == null || s.name().isBlank()) return;

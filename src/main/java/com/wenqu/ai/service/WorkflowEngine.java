@@ -39,17 +39,13 @@ import java.util.function.Function;
 /**
  * 工作流执行引擎：DSL → StateGraph 的<b>唯一翻译层</b>（上游 API 变动只改这里）。
  * <p>
- * <b>分期口径（排班计划 2026-09-29）</b>：
+ * <b>节点要点</b>：
  * <ul>
- *   <li>M0：结构校验 + 编译骨架；</li>
- *   <li>M1：llm / retrieval / condition 真实节点 + 运行 + trace（未注册键默认 REPLACE、
- *       addConditionalEdges 形态两项已源码取证 + 实测关闭）；</li>
- *   <li>M2：VueFlow 画布（前端，后端零改动）；</li>
- *   <li>M3（当前）：节点补全——http / code / subagent / approval / loop / template。
- *       approval 采用<b>挂起-快照-短路重放</b>方案：节点落 PENDING 审批记录后抛
+ *   <li>approval 采用<b>挂起-快照-短路重放</b>方案：节点落 PENDING 审批记录后抛
  *       {@link WorkflowSuspendException}，run 落 waiting_approval + 状态快照；
  *       审批接口按快照恢复（已完成节点短路回放，仅挂起节点及其下游真正执行），
- *       不依赖框架 checkpoint。loop 节点打破 DAG 限制：校验器只放行<b>源自 loop 节点</b>的回跳边，
+ *       不依赖框架 checkpoint；</li>
+ *   <li>loop 节点打破 DAG 限制：校验器只放行<b>源自 loop 节点</b>的回跳边，
  *       运行期 loopCount 计数 + maxSteps 双闸。</li>
  * </ul>
  * <p>
@@ -88,7 +84,7 @@ public class WorkflowEngine {
             java.util.regex.Pattern.compile("\\{\\{\\s*([A-Za-z0-9_-]+)\\.([A-Za-z0-9_]+)\\s*\\}\\}");
 
     /**
-     * 凭据引用语法（第 3 期）：{@code {{credential:名称}}}——http 节点的 URL / 请求头 / 请求体里可用，
+     * 凭据引用语法：{@code {{credential:名称}}}——http 节点的 URL / 请求头 / 请求体里可用，
      * 执行时按归属人解密替换为明文。刻意与 {@link #VAR_REF} 的「node.key」形态区分（冒号非点），
      * 因此不会混进变量引用的输入快照，也不会被误当作节点输出引用。
      */
@@ -120,7 +116,7 @@ public class WorkflowEngine {
     private final com.wenqu.ai.mapper.SessionMapper sessionMapper;
     private final com.wenqu.ai.mapper.ToolApprovalMapper toolApprovalMapper;
     private final RerankService rerankService;
-    /** 技能读取（全框架化 P3）：改走框架技能仓库，按当前 uid 解析可见技能。 */
+    /** 技能读取：走框架技能仓库，按当前 uid 解析可见技能。 */
     private final com.wenqu.ai.skill.WenquSkillRepository skillRepository;
     private final McpClientService mcpClientService;
     private final CredentialService credentialService;
@@ -167,8 +163,7 @@ public class WorkflowEngine {
     }
 
     /**
-     * 当前可编译执行的节点类型（M3 起 11 类全量开放；第 3 期补 skill / mcp 两类生态节点；
-     * start/end 虚实各半见 buildGraph）。
+     * 当前可编译执行的节点类型（start/end 虚实各半见 buildGraph）。
      */
     public static final List<String> EXECUTABLE = List.of(
             "start", "end", "llm", "retrieval", "condition",
@@ -270,7 +265,7 @@ public class WorkflowEngine {
     }
 
     /**
-     * 节点包装层：恢复短路 + 计时 + trace + 失败重试（M5） + 输出键加节点前缀进 state。
+     * 节点包装层：恢复短路 + 计时 + trace + 失败重试 + 输出键加节点前缀进 state。
      * <ul>
      *   <li><b>恢复短路</b>：resumeOutputs 含该节点（上次运行的快照）→ 直接回放输出，不执行节点体——
      *       人工审核恢复与失败检查点续跑时已完成节点零成本续跑；</li>
@@ -286,7 +281,7 @@ public class WorkflowEngine {
                 return namespace(n.getId(), ctx.resumeOutputs.get(n.getId()));
             }
             long t0 = System.currentTimeMillis();
-            // 第 4 期并发可视化：节点开始事件（重试不重复回调；挂起/短路重放的节点不回调——它们不是"开始"）
+            // 并发可视化：节点开始事件（重试不重复回调；挂起/短路重放的节点不回调——它们不是"开始"）
             if (ctx != null) ctx.nodeStart(n.getId(), n.getType());
             Map<String, Object> inputSnapshot = ctx == null ? Map.of() : inputSnapshot(n, ctx, state);
             int attempts = cfgInt(n, "retries", 0, 0, 3) + 1;
@@ -394,7 +389,7 @@ public class WorkflowEngine {
      * 显式 internalToolExecutionEnabled(false)：chatClient 挂了 ToolCall Advisor，裸调用会抛；
      * 工作流节点是确定性的单步执行，不触发工具调用。
      * <p>
-     * M4 对话型接入：ctx.tokenSink 非空时改走<b>流式</b>调用，每个文本块即时交给 sink（由调用方推给前端），
+     * 对话型接入：ctx.tokenSink 非空时改走<b>流式</b>调用，每个文本块即时交给 sink（由调用方推给前端），
      * 节点输出仍是完整文本——流式只影响"边跑边看"，不改变节点语义与下游引用。
      */
     private Function<OverAllState, NodeOut> llmBody(WorkflowDsl.Node n, WorkflowRunCtx ctx) {
@@ -532,9 +527,9 @@ public class WorkflowEngine {
      * 知识库检索节点：query 模板渲染 → 混合检索（kbIds 限定库界，null=全局）→ 低分门过滤 → 取前 topK。
      * 输出 chunks（结构化列表）/ text（拼接文本，直接可拼 prompt）/ count。
      * <p>
-     * M5 低分门：config.minScore 声明则用它，未声明跟随全局 {@code retrieval.minContextScore}
+     * 低分门：config.minScore 声明则用它，未声明跟随全局 {@code retrieval.minContextScore}
      * （与主问答管线同键同语义：排序分 = 重排分??融合分，低于阈值的块不进结果也不占 topK 名额；
-     * 0 = 不过滤）。此前工作流检索全量吐块、该门只在主链路生效——就是排班 M1 记的那笔账。
+     * 0 = 不过滤）。
      */
     private Function<OverAllState, NodeOut> retrievalBody(WorkflowDsl.Node n, WorkflowRunCtx ctx) {
         return state -> {
@@ -704,7 +699,7 @@ public class WorkflowEngine {
         return ids.isEmpty() ? null : ids;
     }
 
-    // ---- M3：条件路由（condition 原语义 + loop 计数闸共用一个节点体）----
+    // ----条件路由（condition 原语义 + loop 计数闸共用一个节点体）----
 
     /**
      * 路由节点体：按 config.branches 声明序求值，首个命中的分支键写进 state（wf:&lt;id&gt;.route），
@@ -777,12 +772,12 @@ public class WorkflowEngine {
         return out;
     }
 
-    // ---- M3：http ----
+    // ----http ----
 
     private static final int MAX_REDIRECT_HOPS = 5;
     private static final int MAX_HTTP_BODY_BYTES = 2 * 1024 * 1024;   // 响应体读取上限（超限拒绝，防拖垮实例）
     private static final int HTTP_BODY_STATE_CHARS = 20_000;         // 进 state 的正文截断（trace 同）
-    /** SPA 壳判定：原始 HTML 超过该长度必有真实内容，不再做特征匹配（壳实测 1~3KB，如百度汉语壳 1580B） */
+    /** SPA 壳判定：原始 HTML 超过该长度必有真实内容，不再做特征匹配 */
     private static final int SPA_SHELL_MAX_CHARS = 4_096;
 
     /**
@@ -989,7 +984,7 @@ public class WorkflowEngine {
             }
             // SPA 壳检测：前端渲染页面的 HTTP 原始响应只有挂载点空壳 + 「启用 JavaScript」提示，
             // 正文要等浏览器执行 JS 后由接口拉取——纯 HTTP 抓取永远拿不到。抓到壳就 fail-loud 指明
-            // 能力边界，不把壳文本喂给下游 LLM 产出「无法总结」式回答（2026-10-01 百度汉语实测）。
+            // 能力边界，不把壳文本喂给下游 LLM 产出「无法总结」式回答。
             if (isSpaShell(bodyText, contentType)) {
                 throw new BizException("节点「" + n.getId() + "」抓到的是前端渲染（SPA）页面壳，正文需浏览器执行 JavaScript 才存在，"
                         + "HTTP 抓取拿不到（" + secrets.redact(url) + "）。可在节点配置开启「渲染抓取（SPA 页面）」改走沙盒无头浏览器执行 JS，"
@@ -1001,10 +996,10 @@ public class WorkflowEngine {
             trace.put("status", status);
             trace.put("contentType", contentType);
             trace.put("bodyChars", bodyText.length());
-            // 响应体同样要脱敏（2026-10-02 实测修复）：出站请求头解的是明文，而回显型服务
+            // 响应体同样要脱敏：出站请求头解的是明文，而回显型服务
             // （httpbin /get、各类调试代理）会把收到的请求头原样写回响应体——不脱敏则凭据明文
             // 经 body 进 state → end 节点 outputs → 前端/run 记录/trace 全链路可见，
-            // 违反「第 3 期凭据明文不出现在任何 trace/日志/前端返回」的验收口径。
+            // 违反「凭据明文不出现在任何 trace/日志/前端返回」的验收口径。
             String stateBody = bodyText.length() > HTTP_BODY_STATE_CHARS
                     ? bodyText.substring(0, HTTP_BODY_STATE_CHARS) + "…（已截断，全长 " + bodyText.length() + " 字符）"
                     : bodyText;
@@ -1013,7 +1008,7 @@ public class WorkflowEngine {
         };
     }
 
-    // ---- M3：code ----
+    // ----code ----
 
     /**
      * 代码执行节点：Python/Node，走 Docker 沙盒（scope=workflow+uid，跨运行复用同一容器）。
@@ -1052,7 +1047,7 @@ public class WorkflowEngine {
                 ProvisionerSandboxBackend backend = sandboxService.backend("workflow", ctx.uid);
                 // putFile（覆盖语义、不受 user-data 可写根限制、失败抛异常）而非 write()：
                 // write() 会把 /tmp 拒在客户端（可写根守卫），错误返回值若被忽略
-                // 就变成执行期 python can't open file（exit=2，2026-09-30 实测踩坑）
+                // 就变成执行期 python can't open file（exit=2）
                 backend.putFile(file, code);
                 backend.putFile(CODE_INPUTS_PATH, inputsJson);
                 return backend.execute(cmd, timeoutSeconds);
@@ -1071,7 +1066,7 @@ public class WorkflowEngine {
         };
     }
 
-    // ---- M3：subagent ----
+    // ----subagent ----
 
     /**
      * 子智能体节点：委派指定智能体作答——复用 ChatService.chat 全管线（智能体的知识库范围/
@@ -1137,7 +1132,7 @@ public class WorkflowEngine {
         };
     }
 
-    // ---- M3：approval ----
+    // ----approval ----
 
     /**
      * 人工审核节点（挂起-快照-短路重放）：
@@ -1181,7 +1176,7 @@ public class WorkflowEngine {
         };
     }
 
-    // ---- M3：template ----
+    // ----template ----
 
     /** 模板/变量聚合节点：多路输出拼 prompt——纯文本渲染，输出 {text}（多视角并行的汇总场景） */
     private Function<OverAllState, NodeOut> templateBody(WorkflowDsl.Node n, WorkflowRunCtx ctx) {
@@ -1191,7 +1186,7 @@ public class WorkflowEngine {
         };
     }
 
-    // ---- 第 4 期：kb_write（知识写入，与 retrieval 成读→加工→写回闭环） ----
+    // ---- kb_write（知识写入，与 retrieval 成读→加工→写回闭环） ----
 
     /**
      * 知识写入节点：把上游文本提交进知识库（走 {@link DocumentService#ingestText} 全套入库管线）。
@@ -1241,7 +1236,7 @@ public class WorkflowEngine {
         return 0;
     }
 
-    // ---- 第 3 期：skill / mcp（生态节点） ----
+    // ---- skill / mcp（生态节点） ----
 
     /**
      * 技能节点：把所选技能的<b>全文</b>注入下游上下文（与聊天「+」菜单里点名技能同一约定，
@@ -1296,12 +1291,12 @@ public class WorkflowEngine {
      * 内部按归属过滤），非本人/未启用的服务拿不到工具 → fail-loud，不静默降级。
      * 输出 {@code result}（工具返回文本）与 {@code server}/{@code tool} 便于下游与 trace 追溯。
      * <p>
-     * <b>工具名按裸名匹配（源码取证，2026-10-02 实测）</b>：{@code SyncMcpToolCallback} 有两个名字——
+     * <b>工具名按裸名匹配</b>：{@code SyncMcpToolCallback} 有两个名字——
      * {@code getToolDefinition().name()} 返回<b>带前缀</b>的 {@code prefixedToolName}，前缀由
      * {@code McpToolUtils.prefixedToolName(clientInfo.name, clientInfo.title, toolName)} 生成，
      * 吃的是<b>客户端自己声明的 info</b>（我们连接时填的），不是服务名；而 {@code getOriginalToolName()}
      * 才是 MCP server 报的裸名。用户在画布里按 /status 下拉选到的、库里 {@code c_ai_user_mcp} 记的、
-     * 智能体工具清单展示的都是裸名（context7 实测裸名 {@code resolve-library-id}），所以这里必须按裸名匹配——
+     * 智能体工具清单展示的都是裸名，所以这里必须按裸名匹配——
      * 拿带前缀名比对会让每个真实工具都「找不到」，且错误文案把人引向「服务未启用」的错误方向。
      * 兜底：非 MCP 来源的 ToolCallback 没有 {@code getOriginalToolName}，退回按前缀名匹配。
      */
@@ -1332,13 +1327,12 @@ public class WorkflowEngine {
             trace.put("tool", tool);
             trace.put("args", args);
             trace.put("result", result);
-            // 显式声明本节点走的是聊天守卫链之外的直调路径（P1 收口判据要求旁路可见，见
-            // docs/agent-runtime-gap-2026q4.md §三 P1）。这里刻意**不**接 ChatService 那条守卫链：
+            // 显式声明本节点走的是聊天守卫链之外的直调路径。这里刻意**不**接 ChatService 那条守卫链：
             // ①画布的审批是独立的 approval 节点（挂起-快照-重放），把「按工具逐个问人」的聊天审批
             //    套上来会让每个 MCP 节点都等一张没人点的卡，等于打断在跑的画布；
             // ②留痕已由 node_traces 承担（args/result 全量入库），账本那张表是会话轮次维度的，
             //    与工作流 run 维度不同源。
-            // P2 的权限档位要作用到画布时，接入口在这里（而不是往 call 上再叠 if）。
+            // 权限档位要作用到画布时，接入口在这里（而不是往 call 上再叠 if）。
             trace.put("guardBypass", "chat-guard-chain");
             return new NodeOut(Map.of("result", result, "server", server, "tool", tool), null, null, trace);
         };
@@ -1419,7 +1413,7 @@ public class WorkflowEngine {
     // --------------------------------------------------------------------------------------------------
 
     /**
-     * 单次 http 节点执行的凭据解析器（第 3 期）：把 {@code {{credential:名称}}} 换成明文，
+     * 单次 http 节点执行的凭据解析器：把 {@code {{credential:名称}}} 换成明文，
      * 并记住本次用到的明文，用于 trace 与报错的脱敏出口。
      * <p>
      * 明文只活在这个对象里（节点执行结束即可回收），不写入 state、不进 trace、不打日志；

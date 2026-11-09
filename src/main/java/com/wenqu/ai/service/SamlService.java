@@ -53,7 +53,7 @@ import java.util.Map;
 @Service
 @RequiredArgsConstructor
 public class SamlService {
-    /** 统一审计事件（Phase 3）：同一份格式串派生日志与结构化事件，不再两处抄 */
+    /** 统一审计事件：同一份格式串派生日志与结构化事件，不再两处抄 */
     private final AuditService audit;
 
 
@@ -67,7 +67,7 @@ public class SamlService {
 
     private final ObjectMapper json = new ObjectMapper();
 
-    /** 前端回调路由（复用 OIDC 的回调页；批次 5 前端统一改名 /auth/sso/callback） */
+    /** 前端回调路由（复用 OIDC 的回调页） */
     public static final String FRONTEND_CALLBACK_PATH = "/auth/oidc/callback";
     /** 前端登录页路径（失败跳回；错误参数沿用 oidc_error，前端同一处展示） */
     public static final String FRONTEND_LOGIN_PATH = "/login";

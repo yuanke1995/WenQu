@@ -28,13 +28,13 @@ import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.function.Function;
 
 /**
- * 按 {@code (userId, sessionId)} 持有框架会话（方案 §6 风险3 的最终形态：AgentSession 原生接管轮次）。
- * <p>为什么要常驻而不是「每请求建一个用完就关」：文档与实测都确认，待办持久化（{@code pending()}）、
+ * 按 {@code (userId, sessionId)} 持有框架会话（由 AgentSession 原生接管轮次）。
+ * <p>为什么要常驻而不是「每请求建一个用完就关」：待办持久化（{@code pending()}）、
  * 答复后续跑（{@code respond} 自动接续原任务与工具调用，应用不必拼工具 ID）、断线按游标读增量事件
  * 这几件事挂在 {@code AgentSession} 上，而它必须活到后台执行结束。用完即关的实例等于把这些能力又丢掉。
  * <p>与 per-user 模型覆盖的冲突这样解：实例按「会话本轮使用的模型引用」键控，
- * <b>模型换了就重建实例并接管同一条会话</b>——Phase 0 已实测换一个全新实例、沿用同一
- * {@code (userId, sessionId)} 能读到完整历史并接着答，所以接续不靠实例永生，靠框架的会话存储。
+ * <b>模型换了就重建实例并接管同一条会话</b>——沿用同一 {@code (userId, sessionId)} 能读到完整历史并接着答，
+ * 所以接续不靠实例永生，靠框架的会话存储。
  * <p>待办的归属同时落 {@code c_ai_tool_approval}，所以进程重启后还能从表里取回 {@code (userId, sessionId,
  * turnId)} 重建实例接回那一张卡（{@link ResumeHandler#resume}）——唤醒句柄在 {@link AgentSession} 上、
  * 随进程没了，但状态在框架的 stateStore 里，缺的只是「把实例按归属重建回来」这一步。
@@ -64,7 +64,7 @@ public class FrameworkSessions {
      * <p>为什么要传下去：装配超时后 {@code openLocked} 只是不挂 {@code SandboxContext}，
      * 可框架建实例时 {@code WorkspaceManager.validate()} 还会对 workspace 做一次 {@code exists()}，
      * 而那份 AbstractFilesystem 是 {@code buildAgent} 另外装配的沙盒文件系统；沙盒还没建好时
-     * 这个 exists 正好卡在仍在进行的 create 上（实测 33 秒，provisioner 恢复才放行）。
+     * 这个 exists 正好卡在仍在进行的 create 上。
      * 所以引擎要按这个标记决定「本轮是否把沙盒文件系统交给框架」——没装上就退回本地文件系统。
      */
     private final Map<String, Boolean> sandboxAttached = new ConcurrentHashMap<>();
@@ -90,7 +90,7 @@ public class FrameworkSessions {
     private final Map<String, MeteredModel> chatModels = new ConcurrentHashMap<>();
 
     /**
-     * 框架工具的档位闸（全框架化 P1）。形态与 {@link #stepBudgets} 相同：
+     * 框架工具的档位闸。形态与 {@link #stepBudgets} 相同：
      * 闸随实例常驻，登记后由引擎在开轮时更新当前轮标签。
      */
     private final Map<String, AgentxFrameworkToolGate> frameworkToolGates = new ConcurrentHashMap<>();
@@ -129,18 +129,18 @@ public class FrameworkSessions {
     /**
      * 待办的持久化落点（同一张 {@code c_ai_tool_approval}）。
      * <p>不落这一行的后果是用户看得见的具体问题：<b>刷新页面后框架引擎的确认卡/提问卡/计划卡取不回来</b>
-     * ——三个 {@code /*&#47;pending} 恢复端点都是按这张表列的，手写运行时有、框架原先没有。
+     * ——三个 {@code /*&#47;pending} 恢复端点都是按这张表列的。
      */
     private final com.wenqu.ai.agent.hitl.HitlDecisionService hitl;
 
     /**
-     * 沙盒装配（框架化P1）：按官网「自管沙箱实例」的 {@code externalSandbox} 模式，
+     * 沙盒装配：按官网「自管沙箱实例」的 {@code externalSandbox} 模式，
      * 在建会话实例时把本轮沙盒上下文挂进 {@link RuntimeContext}——框架的 {@code SandboxLifecycleMiddleware}
      * 从这里取到沙箱，只在 call 期间借用，call 结束只 stop() 不 shutdown()。
      */
     private final com.wenqu.ai.service.SandboxService sandboxService;
 
-    /** 跨副本协调（Phase 0 · P2）：实例租约、跟随位互斥、人在回路答复转投 */
+    /** 跨副本协调：实例租约、跟随位互斥、人在回路答复转投 */
     private final AgentxCluster cluster;
 
     public FrameworkSessions(
@@ -190,7 +190,7 @@ public class FrameworkSessions {
          * 答复已经送进框架会话，但这一轮没有活着的跟随者——补起一个把它跟到收尾并落库。
          * <p>为什么要它：跟随循环有墙钟上限（{@code chat.sseTimeoutMs}），到点就退；退了之后卡片仍可答复，
          * 框架也会重新起一轮执行，但没有人在那儿读事件、也没有人落库，用户看到的就是一次「已批准」
-         * 加上一件什么都没发生的事（真机实测：续跑跑完了、正文却没落库）。
+         * 加上一件什么都没发生的事。
          *
          * @param recover  这是不是进程中断后的接续轮：恢复轮要先封存上一进程残留的会话写者、
          *                 把未决工具标成未知，否则框架的收件箱会一直等那个已经不存在的 writer
@@ -339,9 +339,9 @@ public class FrameworkSessions {
             log.info("[agentx] 子助手强制同步等待：{}s（session={}；超时后由 interrupt 真停分支）",
                     syncSeconds, cmd.getSessionId());
         }
-        // 沙盒上下文（框架化 P1）：挂上后框架的文件工具与 ShellExecuteTool 才有沙箱可用。
+        // 沙盒上下文：挂上后框架的文件工具与 ShellExecuteTool 才有沙箱可用。
         // 取不到时返回 null（沙盒不可用 / 无会话），此时本轮不挂框架沙箱，
-        // 形态与 P1 之前一致——模型退回无沙箱工具，而不是整轮失败。
+        // 模型退回无沙箱工具，而不是整轮失败。
         boolean sandboxOk = false;
         if (attachSandbox && sandboxService != null) {
             String uid = cmd.getUserId();
@@ -349,7 +349,7 @@ public class FrameworkSessions {
             if (uid != null && !uid.isBlank() && sessionId != null && !sessionId.isBlank()) {
                 try {
                     // 有界装配：只等 10 秒。沙盒装配（建容器）挂在开轮路径上，基础设施一慢
-                    // 整轮就一个字节都出不来（2026-11-05 线上 5 分半空屏）；超时本轮退回无沙盒形态，
+                    // 整轮就一个字节都出不来；超时本轮退回无沙盒形态，
                     // 装配继续在后台跑完、下一轮命中。
                     io.agentscope.harness.agent.sandbox.SandboxContext sandboxCtx =
                             sandboxService.frameworkSandboxContextBounded(sessionId, uid, /* unrestrictedWrites */ false);
@@ -409,8 +409,7 @@ public class FrameworkSessions {
      * 框架的技能工具组由它自己按技能激活，整份覆盖会把那些一并关掉。
      *
      * <p><b>写不动时选哪一头</b>：框架拒这次状态写入（事件日志有未结算的工具调用、或快照已过期）时，
-     * 这一轮沿用旧面并<b>说出来</b>——与改造前的形态同源（那时工具面本来就冻结在建实例那一轮），
-     * 而不是静默少一道闸，也不是把整轮打挂。
+     * 这一轮沿用旧面并<b>说出来</b>，而不是静默少一道闸，也不是把整轮打挂。
      *
      * @param allowed 本轮按老装配判据允许的注册名（{@code WenquAgentxTools#turnGroupedNames}）
      * @param policy  本轮执行档位：框架那几把沙盒工具没有描述符，只能按档位与按名黑名单判
@@ -516,7 +515,7 @@ public class FrameworkSessions {
      * 取这条会话当前进程里的框架实例（目标同步/验收要往<b>活状态</b>上写）。
      * <p>与 {@link #peek} 的分工：那个给「会话在不在本进程」用，这个给「要改框架状态」用——
      * 写活状态唯一的入口是实例上的 {@code updateAgentState}，{@code session.inspect()} 那份
-     * 快照改完即丢（见 {@code TodoBridge} 类注释同一事故）。
+     * 快照改完即丢。
      *
      * @return null=这条会话当前不在本进程（重启过/从未在本进程答过）：调用方按「下一轮开跑前
      *         再同步」处理，不报错——框架侧写本来就是每轮覆盖写，不缺这一笔
@@ -670,8 +669,8 @@ public class FrameworkSessions {
      * 等会话空闲再投递一次裁决。
      * <p>为什么需要等：框架的 {@code AgentSession.respond} 要求会话空闲（{@code requireIdle}）。
      * 同一会话并行挂着多张待办时，用户先批一张、子轮立刻开跑，紧接着批第二张就会撞上
-     * 「Wait for the current execution to stop」——线上实测点了两张挨着的审批卡，
-     * 第二张直接 500。这里在繁忙时短暂重试：执行通常只是在跑上一步的工具，几秒内就会回到等人状态。
+     * 「Wait for the current execution to stop」而失败。这里在繁忙时短暂重试：执行通常只是在跑上一步的工具，
+     * 几秒内就会回到等人状态。
      * <p>超时仍繁忙就抛回给调用方，由它返回「稍后重试」而不是把卡片作废（待办行保持 PENDING）。
      */
     private static AgentSession.Task respondWhenIdle(java.util.function.Supplier<AgentSession.Task> call) {
@@ -936,9 +935,8 @@ public class FrameworkSessions {
     private final java.util.Map<String, String> compactRequests = new ConcurrentHashMap<>();
 
     /**
-     * 手动 /compact 在框架引擎下的<b>就地压缩</b>（全框架化 P4）。
-     * <p>结论修正（2026-10-18）：此前注释说「框架没有把已有会话就地压一次的入口」是<b>错的</b>——
-     * 框架自己在 {@code HarnessAgent#forceCompactAndRetry} 里就是这么用的：
+     * 手动 /compact 在框架引擎下的<b>就地压缩</b>。
+     * <p>框架自己在 {@code HarnessAgent#forceCompactAndRetry} 里就是这么用的：
      * 取 state 上下文 → {@code ConversationCompactor.compactIfNeeded(forceConfig)} → 写回
      * {@code state.contextMutable()}。而更规范的写回口是 {@code ReActAgent#updateAgentState}
      * （native 模式走 {@code SessionStateAccess.update}，拿 writer lease、判 pending/uncertain
@@ -1251,7 +1249,7 @@ public class FrameworkSessions {
     }
 
     /**
-     * 登记这条会话的框架工具档位闸（全框架化 P1）。
+     * 登记这条会话的框架工具档位闸。
      *
      * <p>与 {@link #noteStepBudget} 同一形态：middleware 只能在 build 期挂载，
      * 而闸的状态（当前轮标签）要按轮更新，所以实例随会话常驻、这里只做登记。
@@ -1285,12 +1283,12 @@ public class FrameworkSessions {
 
     /**
      * 把这句话插进此刻正在跑的那一轮（框架原生 steer，运行中插话）。
-     * <p><b>为什么这条能保底而旧那条不能</b>：框架只在「真的有在跑的 run 且写租约还活着」时收货
+     * <p><b>为什么这条能保底</b>：框架只在「真的有在跑的 run 且写租约还活着」时收货
      * （{@code SessionRecorder} 每秒续租，长工具调用期间也算活着），收下之后它在<b>下一次调模型之前</b>
      * 被写进会话上下文并记一条 {@code inbox/applied}；而这一轮没读到这句就<b>不收尾</b>
      * （{@code ReActAgent#settleSession} → {@code SessionExecution#continueOrClose}）。
-     * 问渠原先靠「把插话附在自家工具结果尾部」送达，框架引擎的模型直调工具不走那条守卫链，
-     * 于是那句话只进历史不进模型——这里换成框架自己的通道，收据号留给收尾对账。
+     * 插话必须走框架自己的通道：框架引擎的模型直调工具不经过把插话附在工具结果尾部的守卫链，
+     * 否则那句话只进历史不进模型；收据号留给收尾对账。
      *
      * @return 框架的收据号（{@code InputReceipt.inputId}，与 {@code inbox/applied} 里那些 commandId 同源）；
      *         null=这一轮不收插话：进程内没有这条会话的实例（工作流轮、重启后还没在本机答过）、

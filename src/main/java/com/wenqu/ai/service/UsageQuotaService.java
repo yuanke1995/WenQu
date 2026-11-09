@@ -28,7 +28,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 推理配额与预算（Phase 2 计量计费与配额，docs/enterprise-upgrade-plan.md §4.2）。
+ * 推理配额与预算。
  *
  * <p><b>账从哪来</b>：用量唯一的事实源是 {@code c_ai_usage_log}，金额按 {@code c_ai_model} 的现行单价现算。
  * 配额检查<b>不在 Redis 另存一份累加计数</b>——那样等于同一笔钱有两条账：Redis 被清、被换实例、
@@ -50,7 +50,7 @@ import java.util.concurrent.ConcurrentHashMap;
 @Slf4j
 @Service
 public class UsageQuotaService {
-    /** 统一审计事件（Phase 3）：同一份格式串派生日志与结构化事件，不再两处抄 */
+    /** 统一审计事件：同一份格式串派生日志与结构化事件，不再两处抄 */
     private final AuditService audit;
 
 
@@ -70,7 +70,7 @@ public class UsageQuotaService {
     private final StringRedisTemplate redis;
 
     /**
-     * 配额行缓存按<b>租户</b>分桶（Phase 4）。
+     * 配额行缓存按<b>租户</b>分桶。
      * <p>那条查询本身由租户拦截器过滤，共用一份全局缓存就把它变成「谁先读到算谁的」：
      * A 租户的管理员保存过预算后，60 秒内 B 租户的成员会看见、也会被那条规则拦住。
      * 未绑定的线程单独占一格（读到的是全平台行），不与任何租户的格子互相污染。
@@ -195,8 +195,7 @@ public class UsageQuotaService {
             case "tenant" -> {
                 // 双保险：缓存已按租户分格，这里再认一次规则自己的归属。
                 // <b>线程没绑租户时不能放行所有租户的规则</b>——那等于拿别家上限判本轮这一笔，
-                // 而聚合出来的又确实是别家/全平台的用量（真机 2026-10-29：default 租户的成员
-                // 被 stsoft 的「月 2.00 百万」按「已用 42.99 百万」拦下，两句数字谁也对不上）。
+                // 而聚合出来的又确实是别家/全平台的用量，两句数字对不上。
                 // 配额闸跑在框架模型出口的弹性线程上，那里天生没有请求线程的租户上下文，
                 // 所以按「这次调用是谁的」来定：线程绑租户优先，取不到就查这个成员的租户。
                 String bound = com.wenqu.ai.util.TenantContext.current();

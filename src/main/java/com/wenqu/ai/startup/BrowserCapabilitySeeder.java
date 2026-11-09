@@ -29,7 +29,7 @@ import java.util.UUID;
  * 固定主键让「存在即跳过」是一个稳定判据，重启、改配置、升级都不会长出第二条。
  *
  * <p><b>为什么只补缺、不覆盖</b>：地址、启停、工具中文名都是管理员可改的运维参数；每次启动
- * 写回去会踩本工程已经踩过的「管理员配置每次重启被清零」（见 schema.sql 退役清理段的记录）。
+ * 写回去会把管理员改过的配置清掉。
  * 代价是默认地址改了也不会自动跟——由发布说明与手册承担，不拿数据正确性换省事。
  *
  * <p>顺序在 {@code @Order(0)} 的 SchemaMigrator 之后：它负责给存量库补 {@code scope} 列。
@@ -160,7 +160,7 @@ public class BrowserCapabilitySeeder implements ApplicationRunner {
             Agent existing = agentMapper.selectById(id);
             if (existing != null) {
                 // 被委派时必须跑完整管线：默认 digest 档只做并行检索与提炼，工具根本不会挂上，
-                // 真机现象是主助手把它派出去后，它回答「我这台环境里没有可用的浏览器」。
+                // 表现是主助手把它派出去后，它回答「我这台环境里没有可用的浏览器」。
                 // 提示词 likewise 是预置能力的一部分（写明 localBrowserOpen 的正确顺序），随版本归一，
                 // 否则存量行停留在旧提示词，模型会继续去点地址栏。与内置问渠的图标/用途归一同理。
                 boolean needMode = !"full".equals(existing.getSubagentMode());

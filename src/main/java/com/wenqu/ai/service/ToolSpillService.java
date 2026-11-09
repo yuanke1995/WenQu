@@ -25,7 +25,7 @@ import java.util.regex.Pattern;
  * 工具大输出的<b>外溢存储</b>（spill）：展示层不再「截断即丢」。
  *
  * <p>要解决的问题：一条工具结果（沙盒 {@code execute} 的输出、{@code read_file} 读到的整份文件、
- * MCP 返回的一大坨 JSON）远比能塞进气泡的量多。此前超过 8KB 就直接砍尾——卡片上写着结果、
+ * MCP 返回的一大坨 JSON）远比能塞进气泡的量多。直接砍尾的话——卡片上写着结果、
  * 尾部却什么都没有，用户既不知道少了多少，也没地方去看剩下的部分；排查「智能体为什么这么答」时
  * 这份原文恰恰是唯一证据。
  *
@@ -263,7 +263,7 @@ public class ToolSpillService {
         int want = Math.max(1, Math.min(startLine, 1_000_000_000));
         int take = Math.max(1, Math.min(count <= 0 ? 200 : count, MAX_WINDOW_LINES));
         // 上文行数不能顶穿窗口本身：只要 6 行时留 20 行上文，窗口就整个落在命中行<b>之前</b>，
-        // 点命中跳过去看到的是隔壁几行而不是那一行（2026-10-12 真机抓到，探针用 50 行没覆盖到这条）
+        // 点命中跳过去看到的是隔壁几行而不是那一行
         int before = Math.min(CONTEXT_BEFORE_LINES, (take - 1) / 2);
         int from = Math.max(1, want - before);
         int to = from + take - 1;
@@ -315,9 +315,8 @@ public class ToolSpillService {
                     for (Path f : files.toList()) {
                         String name = f.getFileName().toString();
                         if (name.endsWith(".json")) {
-                            // 孤儿元信息：此前删除把 meta 拼成了「x.txt.json」，而写的是「x.json」——
-                            // 也就是说保留期清理一直在留孤儿。原文没了一份 json 就没有任何读口，
-                            // 这里顺手把旧账一次结清（新的删除已由 deleteWithMeta 走对名字）
+                            // 孤儿元信息：meta 文件名与原文不配套（如「x.txt.json」对应不到写出的「x.json」），
+                            // 这类残留没有对应原文，也就没有任何读口，清理时一并删掉
                             if (isOrphanMeta(f)) orphanMeta.add(f);
                             continue;
                         }
@@ -350,7 +349,7 @@ public class ToolSpillService {
         return removed;
     }
 
-    /** meta 有没有对应的原文：没有就是历史删除漏下的孤儿 */
+    /** meta 有没有对应的原文：没有就是孤儿 */
     private static boolean isOrphanMeta(Path metaFile) {
         String name = metaFile.getFileName().toString();
         Path txt = metaFile.resolveSibling(name.substring(0, name.length() - ".json".length()) + ".txt");
@@ -403,7 +402,7 @@ public class ToolSpillService {
         }
     }
 
-    /** 原文与同名元信息一起删。meta 是「同一个 basename 换 .json 后缀」，不是 {@code x.txt.json} */
+    /** 原文与同名元信息一起删。meta 是「同一个 basename 换 .json 后缀」 */
     private static void deleteWithMeta(Path file) throws java.io.IOException {
         Files.deleteIfExists(file);
         Files.deleteIfExists(metaOf(file));

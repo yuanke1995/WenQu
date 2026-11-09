@@ -38,9 +38,8 @@ public class PresentArtifactTool {
      */
     public static final String CTX_USER_ID = "userId";
 
-    /** 「见 xxx.html」这类引用句只可能出现在短内容里；正文产物超过这个长度就不再按引用判。
-     * 2026-11-06 实测：模型把官网写进沙盒后，content 只传了「见 index.html（……）」，
-     * 工具照字面落库成 95 B 产物，还回了「已生成产物」——用户点开只看到一句废话。 */
+    /** 「见 xxx.html」这类引用句只可能出现在短内容里；正文产物超过这个长度就不再按引用判，
+     * 避免工具把一句引用照字面落库成产物、还回「已生成产物」。 */
     private static final int POINTER_MAX_CHARS = 200;
 
     /** 文件引用句：以「见/详见/请见/参见/see」开头并点名一个受支持扩展名的文件 */

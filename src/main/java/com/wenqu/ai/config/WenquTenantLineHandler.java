@@ -11,7 +11,7 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * 租户行级过滤判据（Phase 4 · P9），交给 MyBatis-Plus 的 {@code TenantLineInnerInterceptor} 用——
+ * 租户行级过滤判据，交给 MyBatis-Plus 的 {@code TenantLineInnerInterceptor} 用——
  * 谓词由框架拼在 SQL 上，业务代码不写 {@code tenant_id = ?}，写了两处就会漂。
  *
  * <p><b>哪些表不参与过滤</b>（刻意如此，不是漏配）：
@@ -40,9 +40,9 @@ public class WenquTenantLineHandler implements TenantLineHandler {
     /** 平台全局表：不加租户谓词，也不要求有 tenant_id 列 */
     private static final Set<String> GLOBAL_TABLES = Set.of(
             "c_ai_tenant",
-            // 开通申请发生在「还没有租户」的时候（Phase 4 刀三）：给它编一个归属等于把「谁申请的」写成假值
+            // 开通申请发生在「还没有租户」的时候：给它编一个归属等于把「谁申请的」写成假值
             "c_ai_tenant_request",
-            // 批次 F：角色域四张表按租户隔离（c_ai_role/c_ai_role_menu/c_ai_role_permission/
+            // 角色域四张表按租户隔离（c_ai_role/c_ai_role_menu/c_ai_role_permission/
             // c_ai_role_data_scope 已移出全局名单——菜单与接口定义仍全局共享，租户只分叉角色层）
             "c_ai_menu", "c_ai_menu_api", "c_ai_api",
             // 授权点目录（批次 A）：授权点定义是代码注解的投影，平台全局——角色域的绑定表

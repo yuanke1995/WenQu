@@ -1,17 +1,15 @@
 package com.wenqu.ai.agent.tool;
 
 /**
- * 本轮的工具装配上下文（P1 seam 的 Provider 侧入参）。
+ * 本轮的工具装配上下文（Provider 侧入参）。
  * <p>
  * 与 {@link ToolTurnContext} 的分工：那份是「工具已经要执行了，本轮状态给执行层」，本份是
  * 「还没决定挂什么，本轮条件给各族自己判」。分成两个是因为二者的信息面完全不同——装配期要读
  * 智能体配置与开关，执行期要读引用列表与 SSE 落点，合成一份就会变成又一个 86 字段的
  * TurnState 影子。
  * <p>
- * 为什么要让各族自己判：迁移前「哪个开关控制哪族挂不挂、游客给不给」整份抄在
- * 问答侧的装配 if 链里，并且为免登录分享会话又整份复制了一遍
- * （知识检索与内置工具各出现两次）。判据分散的后果不是难看，而是改一处忘另一处：
- * 收紧了常规分支的开关，游客分支照旧放行。
+ * 为什么要让各族自己判：判据若分散在问答侧的装配 if 链里、又为免登录分享会话复制
+ * 一遍，改一处就会忘另一处：收紧了常规分支的开关，游客分支照旧放行。
  *
  * @author yuanke
  */
@@ -56,8 +54,8 @@ public interface ToolMountContext {
     }
 
     /**
-     * 本轮是不是<b>子智能体分支</b>（P3a 全循环：父轮派出去、跑在一条临时会话里的那一轮）。
-     * <p>默认 false = 用户在对话里直接发起的轮，行为与引入本字段之前逐字相同。它为的是把一件
+     * 本轮是不是<b>子智能体分支</b>（父轮派出去、跑在一条临时会话里的那一轮）。
+     * <p>默认 false = 用户在对话里直接发起的轮。它为的是把一件
      * 只有分支才有的事实说清楚：<b>没有人在看那条会话</b>，所以「要等人点」的能力在分支里
      * 不是不能用，是会把这一支挂到超时——于是装配时就不该给它。
      */
@@ -101,7 +99,7 @@ public interface ToolMountContext {
     java.util.Set<String> agentSelection(ToolFamily family);
 
     /**
-     * 三态判据：智能体显式设了 1/0 就用它，否则落到全局开关（与迁移前 {@code toolOn} 同语义）；
+     * 三态判据：智能体显式设了 1/0 就用它，否则落到全局开关；
      * 总闸关着时恒为否（见 {@link #masterOn()}）。
      */
     default boolean gateOnFor(ToolFamily family, String gateKey) {
@@ -114,8 +112,8 @@ public interface ToolMountContext {
 
     /**
      * 该工具对本轮请求方是否可见：免登录分享会话只允许描述符显式声明 {@code guestAllowed} 的能力。
-     * <p>游客的收窄口径从「装配处再抄一份分支」变成「描述符上的一个字段」——这条差别要在收紧开关时
-     * 才显形：以前只改常规分支，游客分支照旧放行。
+     * <p>游客的收窄口径是「描述符上的一个字段」，装配与游客分支读同一份判据——
+     * 收紧开关时两处一起生效，不会出现只改常规分支、游客分支照旧放行。
      */
     default boolean visibleToThisTurn(ToolDescriptor descriptor) {
         return !guestMode() || (descriptor != null && descriptor.guestAllowed());
@@ -123,7 +121,7 @@ public interface ToolMountContext {
 
     /**
      * 本族是否在「工具执行确认=off」档下被整族禁掉（沙盒与 MCP 是，联网搜索刻意不是）。
-     * <p>迁移前这条写在装配处两处 {@code !approvalOff &&} 上，看着像两个 if，其实是同一条平台策略
+     * <p>这是同一条平台策略，看着像两个 if，其实
      * 作用在两个族上——策略归属见 {@link ToolFamily#blockedWhenApprovalOff()}。
      */
     default boolean approvalPolicyAllows(ToolFamily family) {
@@ -143,8 +141,8 @@ public interface ToolMountContext {
     }
 
     /**
-     * 本轮的权限档位策略（P2）。
-     * <p>默认 null = 本轮没有档位判定，装配不做能力面裁剪（保持迁移前形态）。问答侧从
+     * 本轮的权限档位策略。
+     * <p>默认 null = 本轮没有档位判定，装配不做能力面裁剪。问答侧从
      * {@code PermissionPolicyResolver} 取值后填这里，于是「挂不挂」与「执行时被不被拒」读同一份策略。
      */
     default com.wenqu.ai.agent.permission.ExecutionPolicy permissionPolicy() {
@@ -174,7 +172,7 @@ public interface ToolMountContext {
 
     /**
      * 这件工具本轮开不开——<b>跨族判据的唯一汇聚点</b>，装配与提示词两侧都问它。
-     * <p>落在这一层而不是各族的 {@code exposes} 里，理由与 P2 那条黑名单相同：判据按族写就迟早
+     * <p>落在这一层而不是各族的 {@code exposes} 里，理由与按名黑名单相同：判据按族写就迟早
      * 漏掉没重写 {@code exposes} 的那几族（检索族还因「反思轮强制暴露」直接 {@code ||} 掉了默认实现）。
      * <p>分支轮（{@link #branchTurn()}）不收 {@code viewerRequired} 的工具：提问卡在没人看的临时会话里
      * 只会把这一支挂到超时，任务清单写进去也没有人读——与其挂上去等一件永远不会发生的事，

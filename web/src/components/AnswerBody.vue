@@ -11,7 +11,7 @@
 // ==================== 回答正文（主聊天页 / 分享页共用）====================
 // 只负责「把一段 markdown 渲染出来 + 把点击/悬浮交给查看器」。
 // 图片、引用角标、代码复制、沙盒运行按钮的**行为**都在 chat/answerViewer.js 与 AnswerViewerHost.vue，
-// 所以新增一种正文内交互不必在聊天页和分享页各补一遍——分享页此前看不到图与引用，就是少了这层共用。
+// 所以新增一种正文内交互不必在聊天页和分享页各补一遍。
 import { computed, nextTick, ref, watch } from 'vue'
 import { renderMd, enhanceDiagrams, reattachCharts } from '../utils/markdown'
 import { handleBodyClick, handleBodyHover, scheduleCloseRefTip } from '../chat/answerViewer'
@@ -41,7 +41,7 @@ const props = defineProps({
   /**
    * `[N]` 角标是否可交互（悬浮卡 + 点开来源详情）。
    * 只读会话分享页要置 false：那条链接刻意只外发文档名/章节，不外发知识块原文，
-   * 点开只能得到一个空弹窗和一句误导说明——不如让角标保持纯上标（与改动前一致）。
+   * 点开只能得到一个空弹窗和一句误导说明——不如让角标保持纯上标。
    */
   citations: { type: Boolean, default: true },
   /**
@@ -80,7 +80,7 @@ const onHover = e => { if (props.viewer && props.citations) handleBodyHover(e, p
 // 用户能看着图在回答中途长出来；只有 mermaid 因「半截必失败」延迟到流结束（enhanceDiagrams
 // 的 streaming 开关内部处理）。流式 content 每 120ms 刷一帧、每帧 v-html 整棵重建（data-done
 // 随之丢失 → 已画过的图也会重画），所以流式路径按 300ms 节流；流结束边沿落掉节流立即画最终版。
-// 历史消息 streaming 恒 false，直接走立即路径（与旧行为一致）。
+// 历史消息 streaming 恒 false，直接走立即路径。
 const ENHANCE_GAP = 300
 let enhanceLast = 0
 let enhanceTimer = null

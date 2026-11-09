@@ -22,7 +22,7 @@ import org.springframework.stereotype.Service;
  * <p>保留原样：沙盒身份派生（{@link #sandboxIdForThread} / {@link #sandboxKey}）、连接缓存与 keepalive
  * （threadLocks / connections / lastTouchAt / touchIfNeeded）、运行时作用域获取与释放（get / release / shutdown）。
  *
- * <h3>移植时改掉的三处（都是环境差异，不是功能取舍）</h3>
+ * <h3>与蓝本的三处差异（都是环境差异，不是功能取舍）</h3>
  * <ul>
  *   <li><b>配置来源</b>：新栈读环境变量（{@code SANDBOX_PROVISIONER_URL} / {@code SANDBOX_PROVISIONER_TOKEN} /
  *       {@code SANDBOX_PROVISIONER_DELETE_TIMEOUT_SECONDS} / {@code SANDBOX_KEEPALIVE_INTERVAL_SECONDS}）；
@@ -84,8 +84,8 @@ public class ProvisionerSandboxProvider {
 
     /**
      * provisioner 客户端（懒构建）。
-     * <p>对应参考实现构造期建 client；本工程改成懒构建，一是让配置改动无需重启，二是让「没启用沙盒就不校验 token」
-     * 成为可能（见类注释的 token 校验时机）。
+     * <p>懒构建一是让配置改动无需重启，二是让「没启用沙盒就不校验 token」成为可能
+     * （见类注释的 token 校验时机）。
      */
     private SandboxProvisionerClient client() {
         String url = provisionerUrl();
@@ -315,8 +315,7 @@ public class ProvisionerSandboxProvider {
                 : SandboxPaths.normalizeWorkdirPath(workdirPath);
         String cacheKey = sandboxKey(uid, threadId);
         // 装配已超时、后台 create 还没回来的作用域：本轮任何「取/建沙盒」的调用一律当场失败，
-        // 不要再去抢那把 scope 锁——锁正被后台 create 持有，等它就是又一次长静默
-        //（2026-11-05：开轮等了 10 秒放弃后，框架建实例时的 exists() 又撞上去，干等 33 秒）。
+        // 不要再去抢那把 scope 锁——锁正被后台 create 持有，等它就是又一次长静默。
         if (createIfMissing && assemblyPending.contains(cacheKey)) {
             throw new SandboxProvisionerException(
                     "sandbox is still being created; skip sandbox access for this turn");

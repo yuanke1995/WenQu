@@ -8,7 +8,7 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 /**
- * 邮件外发投递台账（P1 通知外发）。
+ * 邮件外发投递台账。
  * <p>与 {@code c_ai_webhook_delivery} 同一口径：pending → success / exhausted，至少一次重试。
  * 额外多一个 skipped：按规则未发送（总闸开但个人未勾选、无邮箱、聚合窗口内），留痕便于排障。
  *

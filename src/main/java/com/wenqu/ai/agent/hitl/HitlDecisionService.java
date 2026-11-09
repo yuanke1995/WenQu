@@ -23,19 +23,19 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
 /**
- * 人在回路裁决服务（P6 刀 1，自 {@code ChatService} 抽出）。
+ * 人在回路裁决服务。
  * <p>三张卡共用同一套「挂起—恢复」管道：内存 future 阻塞着等人的那根线程 + c_ai_tool_approval 里一条
  * PENDING 记录（卡片的权威源）+ SSE 卡片（只触达正开着页面的人）+ 站内通知（人不在页面时的可感知面，
  * 由问答运行时发起，不在本类）。本类只管前两件：<b>谁的哪张卡还挂在等、裁决怎么落终态、
  * 刷新或换设备后怎么把它捞回来</b>。
  * <p>SSE 下发与阻塞等待仍在运行时里（它们持有本轮的 emitter 与计时），因为通道是「这一轮」的出口，
  * 不是卡片的内容。
- * <p><b>为什么登记表是实例字段而不是 static</b>（此前是 static final）：静态 Map 让任何代码都能绕过
- * 方法签名往本轮状态上伸手，正是 P6 要避免的那种跨类共享可变口袋；收成实例字段后唯一的持有者就是本类，
+ * <p><b>为什么登记表是实例字段而不是 static</b>：静态 Map 让任何代码都能绕过
+ * 方法签名往本轮状态上伸手，会形成跨类共享的可变口袋；收成实例字段后唯一的持有者就是本类，
  * 外面只能经 {@code openX} / {@code resolveX} / {@code terminateSessionWaits} 进来。
  * 语义等价：Spring 单例 + 本类只被这一个 bean 实例化，static 与实例字段在这里指向同一张表。
- * <p><b>一条不能破的顺序（有真机事故，2026-10-12）</b>：卡片落终态必须在掐流之前。见
- * {@link #terminateSessionWaits}。这条约束原本是靠调用方记住两个方法的先后，现在收进一个方法内部。
+ * <p><b>一条不能破的顺序</b>：卡片落终态必须在掐流之前。见
+ * {@link #terminateSessionWaits}。两个方法的先后由本类在一个方法内部保证。
  *
  * @author yuanke
  */
@@ -168,13 +168,13 @@ public class HitlDecisionService {
     }
 
     /**
-     * 为<b>框架引擎</b>的待办落一条同表记录（P3/人在回路平移）：卡片要能在刷新/换设备后经
+     * 为<b>框架引擎</b>的待办落一条同表记录：卡片要能在刷新/换设备后经
      * {@code /tool-approval/pending}、{@code /ask-user/pending}、{@code /plan-approval/pending} 取回。
      * <p>刻意只做「落这一行」：不建 future、不注册内存唤醒句柄——框架那侧的等待与接续执行归
      * {@code AgentSession}（pending/respond 是一等公民），这里要的只是同一份持久化与审计形状。
      * <p>已存在同 id 就原样返回（幂等：待办每轮会被复查多次，重复 insert 会撞主键）。
      *
-     * @param toolName 确认类填工具名；提问类填 {@code askUser}；计划卡填 {@code planApproval}（与手写侧同词）
+     * @param toolName 确认类填工具名；提问类填 {@code askUser}；计划卡填 {@code planApproval}
      */
     public void recordFrameworkPending(String id, String sessionId, String userId, String turnId,
                                        String toolName, String requestArgs) {
@@ -328,11 +328,10 @@ public class HitlDecisionService {
      * 这一轮不再往下跑了：先把挂在人身上的卡片落成终态，再解开还在阻塞的等待。
      * <p><b>顺序不能倒</b>：{@code disposeSafe()} 会中断那根正阻塞在 {@code future.get()} 上的工具线程，
      * 它走的是 {@code InterruptedException} 分支——既不落库、其 {@code finally} 还要把挂起项从表里摘掉。
-     * 放在掐流之后就变成对着空表落库，记录照旧停在 PENDING（2026-10-12 真机抓到：叫停返回成功，
-     * 而 {@code /tool-approval/pending} 仍把那条当待批，日志里先出「审批未通过 outcome=CANCELLED」再出解开）。
+     * 放在掐流之后就变成对着空表落库，记录照旧停在 PENDING。
      * <p>落库都带「非 PENDING 即拒绝」的幂等闸，所以流水线线程随后那一次 TIMEOUT 写入自然落空，先到先得。
      * <p>不解开 future 的话，流水线线程会一直挂在 {@code future.get(timeout)} 上、会话互斥要等超时才释放
-     * ——「停了还不能马上问下一句」。以前只解 future 不落库：{@code complete(false)} / {@code complete(reject())}
+     * ——「停了还不能马上问下一句」。只解 future 不落库的话：{@code complete(false)} / {@code complete(reject())}
      * 让等待处的 {@code TimeoutException} 分支变成不可达，那条记录就一直停在 PENDING，审计看不出这一轮是谁停的。
      * <p>提问卡的答案留空：没答就是没答，不代答（与超时不代答同一条口径）。
      *
@@ -551,9 +550,7 @@ public class HitlDecisionService {
 
     /**
      * 启动期清理遗留 PENDING（进程重启后内存态丢失，DB 中超时未裁决的记录置 TIMEOUT，避免审计永久挂起）。
-     * <p><b>必须按卡种分窗口</b>：三张卡的等待预算差 5 倍（工具审批 120s，提问卡与计划卡各 10 分钟），
-     * 而这一段原先拿 {@code approvalTimeoutMs} 一刀切全部行——重启一次就把还有 8 分钟寿命的提问卡
-     * 提前判成 TIMEOUT，用户刷新回来看到一张已经作废的卡，答了只得到「这次作答没能送达」。
+     * <p><b>必须按卡种分窗口</b>：三张卡的等待预算差 5 倍（工具审批 120s，提问卡与计划卡各 10 分钟）。
      */
     @jakarta.annotation.PostConstruct
     public void purgeStaleApprovals() {
@@ -977,7 +974,7 @@ public class HitlDecisionService {
             item.put("turnId", last.getTurnId() == null ? "" : last.getTurnId());
             item.put("plan", versions.get(versions.size() - 1).get("plan"));
             item.put("versions", versions);
-            // 重新计划血缘（B+）：待批准的新计划也带来源，刷新后卡头的「调整自 vN」不必等批准落库才出现
+            // 重新计划血缘：待批准的新计划也带来源，刷新后卡头的「调整自 vN」不必等批准落库才出现
             try {
                 JSONObject args = JSON.parseObject(last.getRequestArgs());
                 if (args != null && args.getString("planBaseId") != null) {

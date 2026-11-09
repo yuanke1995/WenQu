@@ -28,7 +28,7 @@ import java.util.Map;
 import com.wenqu.ai.security.Permission;
 
 /**
- * 知识库接口：**用户可自建自管**（2026-09-26 从"仅管理员"放开）。
+ * 知识库接口：**用户可自建自管**。
  * <p>
  * 数据隔离口径（{@link ResourceVisibilityService}）——谁建归谁：
  * <ul>
@@ -118,9 +118,9 @@ public class KnowledgeBaseController {
 
     /**
      * 参数对请求者的「生效默认值」：personal 键取本人个人值（未设回落全局）；
-     * personalOnly 键（重排模型已归库级绑定，个人设置入口已下线）同样取本人个人值——
+     * personalOnly 键（重排模型归库级绑定，无个人设置入口）同样取本人个人值——
      * 未设即空（personalOnly 无全局层，{@link ConfigService#get} 对其恒返回空，回落分支只为类型统一）。
-     * 存量个人值（入口下线前写入的）与检索链路的个人层同源，预填/展示与其一致：
+     * 个人值与检索链路的个人层同源，预填/展示与其一致：
      * 预填全局旧值会把个人默认"固化"成库级覆盖，反而覆盖掉用户自己的设置。
      */
     private String effectiveDefault(String key) {

@@ -8,7 +8,7 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 /**
- * 租户（Phase 4 · P9）。
+ * 租户。
  *
  * <p>只有注册信息，没有配置项：租户的隔离是<b>行级归属</b>（全表 {@code tenant_id}），
  * 不是独立实例、不是独立库。平台参数（供应商、模型、菜单与角色定义）仍是平台级共享，

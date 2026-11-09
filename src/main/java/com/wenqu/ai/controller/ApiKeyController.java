@@ -22,7 +22,7 @@ import java.util.Map;
 import com.wenqu.ai.security.Permission;
 
 /**
- * API Key 管理接口（个人资产，2026-11-02 下放自服务）：签发 / 列表 / 编辑 / 启停 / 删除 / 明文回显。
+ * API Key 管理接口（个人资产）：签发 / 列表 / 编辑 / 启停 / 删除 / 明文回显。
  *
  * <p><b>谁能用</b>：全部登录用户（端点在 SecurityConfig 问答白名单内）；能看见/管到哪些 Key 由
  * {@code ResourceVisibilityService} 判定——谁建归谁（只看得到自己签发的）。本控制器同时在
@@ -51,7 +51,7 @@ public class ApiKeyController {
     @GetMapping("/list")
     public ResultJson list() {
         java.util.List<?> rows = apiKeyService.list();
-        // 近 30 天按 Key 用量小计（对外能力第二批：OpenAI 兼容端点的计量归属在此显形；
+        // 近 30 天按 Key 用量小计（OpenAI 兼容端点的计量归属在此显形；
         // 聚合失败不挡列表——小计是增强信息，缺了只少一列）
         java.util.Map<String, java.util.Map<String, Object>> usage = new java.util.LinkedHashMap<>();
         try {

@@ -24,7 +24,7 @@ import java.util.Map;
 import com.wenqu.ai.security.Permission;
 
 /**
- * 智能体配置接口：**用户可自建自管**（2026-09-26 从"仅管理员"放开）。
+ * 智能体配置接口：**用户可自建自管**。
  * <p>
  * 数据隔离口径（{@link ResourceVisibilityService}）——谁建归谁，按 userId 隔离：
  * <ul>
@@ -50,16 +50,15 @@ public class AgentController {
     private final com.wenqu.ai.service.McpClientService mcpClientService;
     /** 工具注册中心的对外读口（能力名册）：智能体配置页的工具可选项从这里来，不再前端手抄 */
     private final com.wenqu.ai.service.ToolInventoryService toolInventoryService;
-    /** 权限档位（P2）名册：配置页的档位选项与「管理员有没有放开这一档」从这里来，不在前端抄第二份 */
+    /** 权限档位名册：配置页的档位选项与「管理员有没有放开这一档」从这里来，不在前端抄第二份 */
     private final com.wenqu.ai.agent.permission.PermissionPolicyResolver permissionPolicyResolver;
-    /** HTTP 工具集（v1 对外能力第一批）：导入预览的解析口 */
+    /** HTTP 工具集：导入预览的解析口 */
     private final com.wenqu.ai.service.httptool.HttpToolService httpToolService;
 
     /**
      * 当前用户能否管理该智能体（谁建归谁：创建者；内置「问渠」为管理员级可配置）。
-     * <p>统一委托 {@link AgentService#manageable}，与写路径 {@code ensureManageable} 同一入口——此处此前自带一份
-     * 判定，与服务层口径不一致：内置行在服务层被 {@link ResourceVisibilityService} 判 NONE，列表的
-     * {@code manageable} 字段却按另一套算，前端据此把管理员本可编辑的内置行收起了编辑入口。</p>
+     * <p>统一委托 {@link AgentService#manageable}，与写路径 {@code ensureManageable} 同一入口，
+     * 避免列表的 {@code manageable} 字段与服务层口径不一致。</p>
      */
     private boolean canManage(com.wenqu.ai.model.Agent a) {
         return agentService.manageable(a);
@@ -141,7 +140,7 @@ public class AgentController {
     }
 
     /**
-     * 权限档位名册（P2，智能体配置页的档位选项从这里来）。
+     * 权限档位名册（智能体配置页的档位选项从这里来）。
      * <p>与 {@code /tool-catalog} 同一条访问控制：路径落在 {@code SecurityConfig.isAgentSelfEndpoint}
      * 已放行的「一段路径」分支里，不新增规则。
      * <p>为什么由后端下发而不是前端写死三个档位：档位列表要随平台上限变化（管理员收紧后哪些档可选），
@@ -361,7 +360,7 @@ public class AgentController {
             modelRegistryService.assertUsable(modelRef, RequestUser.uid(), RequestUser.role());
         }
         // 允许游客发图却不校验模型视觉能力：不拦，因为「跟随个人默认模型」这一档在发布时解析不到具体模型，
-        // 拦了会把正确配置也挡在门外。改为发布弹窗就地提示（前端按 ModelSelect 选中的模型给警示），
+        // 拦了会把正确配置也挡在门外。因此发布弹窗就地提示（前端按 ModelSelect 选中的模型给警示），
         // 把判断留给最清楚自己用哪个模型的人
         var share = agentShareService.publish(id,
                 new AgentShareService.PublishSpec(enabled, mcpEnabled, guestImages, guestFiles, modelRef,

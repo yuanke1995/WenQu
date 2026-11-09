@@ -61,7 +61,7 @@ public class WorkflowToolProvider implements ToolFamilyProvider {
 
         WorkflowToolService.Mount mount;
         try {
-            // 游客放行（P1 · B 档）：只挂只读工作流；副作用工作流在 service 内过滤，执行口再校验一次
+            // 游客放行：只挂只读工作流；副作用工作流在 service 内过滤，执行口再校验一次
             mount = workflowToolService.mount(mc.agentId(), mc.userId(), mc.turnWfDepth(), mc.guestMode());
         } catch (Exception e) {
             log.warn("[WF-TOOL] 装配失败（跳过，不影响问答）agent={}: {}", mc.agentId(), e.getMessage());

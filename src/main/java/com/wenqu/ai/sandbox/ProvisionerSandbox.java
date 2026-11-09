@@ -11,7 +11,7 @@ import java.util.Objects;
 /**
  * 框架 {@link Sandbox} 的问渠实现 —— 把「问渠 provisioner 管理的沙盒」包装成框架认识的自管沙箱。
  *
- * <p><b>定位</b>：全框架化迁移（P1）的适配层。框架的
+ * <p><b>定位</b>：适配层。框架的
  * {@code io.agentscope.harness.agent.filesystem.sandbox.BaseSandboxFilesystem} 以
  * {@code execute} 为主数据面（框架注释：*"This class provides default implementations for all
  * {@code AbstractFilesystem} methods by delegating to shell commands via execute()"*），
@@ -110,7 +110,7 @@ public class ProvisionerSandbox implements Sandbox {
     /**
      * 工作区快照 —— <b>刻意不实现真实语义</b>。
      *
-     * <p>问渠的持久化由 provisioner bind 宿主目录承担（容器销毁文件仍在，已实测），
+     * <p>问渠的持久化由 provisioner bind 宿主目录承担（容器销毁后文件仍在宿主目录），
      * 不是框架这种 tar 快照。这里返回空流而不是打包全量，避免每次 call 结束多传一次大 tar。
      * {@link #hydrateWorkspace(InputStream)} 同理为空实现。
      *

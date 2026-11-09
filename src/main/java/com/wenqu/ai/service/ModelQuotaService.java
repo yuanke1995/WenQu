@@ -142,7 +142,7 @@ public class ModelQuotaService {
     private void notifyOwner(Provider p, String modelId, String cause) {
         String owner = p.getOwnerUid();
         if (owner == null || owner.isBlank()) {
-            // 无主行（历史遗留）：发给管理员，至少有人能看到
+            // 无主行：发给管理员，至少有人能看到
             notificationService.createForAdmins(Notification.TYPE_MODEL_QUOTA,
                     "模型供应商「" + p.getName() + "」额度不足",
                     "该供应商无归属人（历史数据），请在模型供应商页处理。" + causeSuffix(modelId, cause),

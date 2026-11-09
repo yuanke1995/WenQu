@@ -9,7 +9,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 /**
- * 推理配额与预算上限（Phase 2 计量计费）。
+ * 推理配额与预算上限。
  * <p>
  * 只存<b>上限</b>：用量本身以 {@code c_ai_usage_log} 为唯一事实源，金额按 {@code c_ai_model}
  * 登记的单价现算（单价改了历史费用跟着重算，这是既有报表口径，配额不另存一份快照）。
@@ -17,7 +17,7 @@ import java.time.LocalDateTime;
  * 三档作用域各自独立成行（同作用域同周期唯一）：一个成员可以同时受「本租户月预算 + 本部门日配额 +
  * 个人月配额」三道闸，哪一道先到就按哪一道说清楚——报「你超额」却不说是哪条规则，是没法追问的。
  *
- * <p>作用域是 {@code tenant}（本租户全体）而不是"全平台"：配额行本身按租户归属（Phase 4 行级隔离），
+ * <p>作用域是 {@code tenant}（本租户全体）而不是"全平台"：配额行本身按租户归属，
  * 一条规则管不到别的租户；要给某个客户设上限，就在那个租户里设，或由平台级管理员逐租户设。
  *
  * @author yuanke
@@ -29,7 +29,7 @@ public class Quota {
     @TableId(type = IdType.ASSIGN_UUID)
     private String id;
 
-    /** 租户 ID（Phase 4 多租户启用，当前为空） */
+    /** 租户 ID（当前为空） */
     private String tenantId;
 
     /** 作用域：tenant=本租户全体 / department=某部门 / user=某成员 */

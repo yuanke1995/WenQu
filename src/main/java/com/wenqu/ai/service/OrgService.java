@@ -34,7 +34,7 @@ import java.util.UUID;
 @Service
 @RequiredArgsConstructor
 public class OrgService {
-    /** 统一审计事件（Phase 3）：同一份格式串派生日志与结构化事件，不再两处抄 */
+    /** 统一审计事件：同一份格式串派生日志与结构化事件，不再两处抄 */
     private final AuditService audit;
 
 
@@ -60,7 +60,7 @@ public class OrgService {
     // ==================== 部门 ====================
 
     /**
-     * 成员管理类写操作在 superadmin 下走平台视图（Phase 4 多租户）。
+     * 成员管理类写操作在 superadmin 下走平台视图。
      * <p>两个原因，第二个更要命：
      * <ol>
      *   <li>成员名单对 superadmin 是跨租户摊开的，写侧仍按本租户过滤就会出现「看得见、点保存说用户不存在」；</li>
@@ -169,7 +169,6 @@ public class OrgService {
             }
             m.put("roleSources", roleSources);
             // 身份来源（统一身份表）：成员管理「单点登录」列与解绑判定的数据源
-            // （旧 oidc_sub/oidc_provider 两列不再写入，批次 2 起新绑定只落这里）
             List<java.util.Map<String, Object>> ids = new java.util.ArrayList<>();
             for (var i : identityService.listOf(u.getUid())) {
                 ids.add(java.util.Map.of("providerId", (Object) i.getProviderId(),
@@ -272,7 +271,7 @@ public class OrgService {
 
     /** 新建用户（必须设置初始密码，否则无法登录；角色须为角色表中启用的角色；落多角色表） */
     public User createUser(String uid, String username, String departmentId, List<String> roles, String password) {
-        // 成员管理是平台动作（Phase 4）：判据与理由见 asPlatformIfSuper 的注释
+        // 成员管理是平台动作：判据与理由见 asPlatformIfSuper 的注释
         return asPlatformIfSuper(() -> createUserScoped(uid, username, departmentId, roles, password));
     }
 
@@ -303,7 +302,7 @@ public class OrgService {
     }
 
     /**
-     * 编辑用户（批次 5 多角色化）：{@code roles} 为角色集（manual 全量替换，idp 行不动）。
+     * 编辑用户：{@code roles} 为角色集（manual 全量替换，idp 行不动）。
      * <p>{@code roleExpires} = {角色编码 → 到期时刻}，临时授权用（空 Map=全部永久）。
      */
     /** 本人设置通知邮箱（空=清除）。只做基本格式校验，不做邮箱归属验证（本版没有验证码通道）。 */
@@ -323,7 +322,7 @@ public class OrgService {
 
     public void updateUser(String uid, String username, String departmentId, List<String> roles, Integer status,
                            java.util.Map<String, java.time.LocalDateTime> roleExpires) {
-        // 成员管理是平台动作（Phase 4）：判据与理由见 asPlatformIfSuper 的注释
+        // 成员管理是平台动作：判据与理由见 asPlatformIfSuper 的注释
         asPlatformIfSuperVoid(() -> updateUserScoped(uid, username, departmentId, roles, status,
                 roleExpires == null ? java.util.Map.of() : roleExpires));
     }
@@ -363,7 +362,7 @@ public class OrgService {
     }
 
     public void deleteUser(String uid) {
-        // 成员管理是平台动作（Phase 4）：判据与理由见 asPlatformIfSuper 的注释
+        // 成员管理是平台动作：判据与理由见 asPlatformIfSuper 的注释
         asPlatformIfSuperVoid(() -> deleteUserScoped(uid));
     }
 
@@ -394,7 +393,7 @@ public class OrgService {
      * 解绑后须重新走对应 IdP 登录才能再次绑定。
      */
     public void unbindOidc(String uid) {
-        // 成员管理是平台动作（Phase 4）：判据与理由见 asPlatformIfSuper 的注释
+        // 成员管理是平台动作：判据与理由见 asPlatformIfSuper 的注释
         asPlatformIfSuperVoid(() -> unbindOidcScoped(uid));
     }
 
@@ -410,7 +409,7 @@ public class OrgService {
      * 解绑后须重新走对应认证源登录才能再次绑定。
      */
     public void unbindIdentity(String uid, String providerId) {
-        // 成员管理是平台动作（Phase 4）：判据与理由见 asPlatformIfSuper 的注释
+        // 成员管理是平台动作：判据与理由见 asPlatformIfSuper 的注释
         asPlatformIfSuperVoid(() -> unbindIdentityScoped(uid, providerId));
     }
 
@@ -426,7 +425,7 @@ public class OrgService {
 
     /**
      * 个人偏好读取：个人默认聊天模型（引用，空=未设默认）+ 可用聊天模型清单。
-     * 个人默认重排/视觉模型已退役（重排归知识库检索设置；聊天图片理解只看模型能力位）。
+     * 个人偏好不含重排/视觉模型（重排归知识库检索设置；聊天图片理解只看模型能力位）。
      */
     public java.util.Map<String, Object> getPreference(String uid, String role) {
         User u = userMapper.selectById(uid);
@@ -448,7 +447,7 @@ public class OrgService {
      * 设置个人偏好（多槽位，字段缺省(null)=不修改，空串=清除）：
      * 个人默认模型校验引用有效、对本人可用（平台级 + 自己登记的个人级）、且登记类型与槽位一致（防选到不可用模型）。
      * memoryEnabled=用户级长期记忆自动提炼开关（Boolean，null=不修改）。
-     * 向量不提供个人默认（向量空间与索引一一对应，归知识库）；重排/视觉个人默认已退役
+     * 向量不提供个人默认（向量空间与索引一一对应，归知识库）；重排/视觉也不提供个人默认
      * （重排归知识库检索设置；聊天图片理解只看模型能力位，见 ChatService）。
      */
     public void setPreference(String uid, String chatRef, Boolean memoryEnabled) {

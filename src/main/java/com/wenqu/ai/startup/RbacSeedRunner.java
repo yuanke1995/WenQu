@@ -30,12 +30,10 @@ import java.util.stream.Collectors;
  *   <li>user 角色基础菜单 → <b>按项补齐</b>对话/智能体/知识库/我的产物/使用统计；
  *       admin/superadmin 为管理员级，无需绑定即见全部。</li>
  * </ul>
- * <p><b>基础菜单为何不是「全空才灌」</b>（2026-10-04 修）：c_ai_role_menu 是纯关系表，
- * 「漏绑」与「管理员主动解绑」在数据上无法区分，若沿用全空守卫，存量库只要存在任意一条绑定
- * （最典型：本类曾为 menu-stats 单开一条补绑分支）就永远补不上剩余项——
- * 现象是新部署/升级环境的普通用户侧边栏<b>缺「智能体」入口</b>，而管理员级走
- * {@code allowed=null} 全量可见故完全不显现。故改为按项补齐。</p>
- * <p>该改动的代价（已知取舍，非 bug）：管理员手动解绑基础菜单后，重启会被重新绑回。
+ * <p><b>基础菜单为何按项补齐</b>：c_ai_role_menu 是纯关系表，「漏绑」与「管理员主动解绑」
+ * 在数据上无法区分；若按「表空才灌」，库中只要存在任意一条绑定就永远补不上剩余项——
+ * 普通用户侧边栏会缺菜单入口，而管理员级走 {@code allowed=null} 全量可见故完全不显现。</p>
+ * <p>代价（已知取舍，非 bug）：管理员手动解绑基础菜单后，重启会被重新绑回。
  * 两种错的代价不对等——漏绑使功能对所有人不可用，回置只是每次重启重做一次。
  * 需永久隐藏某菜单请用菜单自身的 {@code visible=0} 或停用该角色，不依赖这张关系表。</p>
  * 刻意不用 schema.sql 灌种子：spring.sql.init 每次启动都执行，INSERT IGNORE 语义会把
@@ -62,7 +60,7 @@ public class RbacSeedRunner implements ApplicationRunner {
     private static final List<String[]> BUILTIN_MENUS = List.of(
             new String[]{"menu-chat", "对话", "MessageOutlined", "/chat", "10", "0"},
             new String[]{"menu-agents", "智能体", "RobotOutlined", "/agents", "20", "1"},
-            // 市场（技能市场 v1）：发现/安装同事上架的技能，或把自己的技能上架——与技能同为个人资产口径
+            // 市场（技能市场）：发现/安装同事上架的技能，或把自己的技能上架——与技能同为个人资产口径
             new String[]{"menu-market", "市场", "AppstoreOutlined", "/market", "25", "1"},
             new String[]{"menu-knowledge", "知识库", "DatabaseOutlined", "/knowledge", "30", "1"},
             new String[]{"menu-artifacts", "我的产物", "FileTextOutlined", "/artifacts", "35", "1"},
@@ -76,11 +74,11 @@ public class RbacSeedRunner implements ApplicationRunner {
             new String[]{"menu-settings", "系统设置", "SettingOutlined", "/settings", "80", "1"}
     );
 
-    /** 挂「权限管理」下的页签：认证源（批次 5）、审计事件（Phase 3 P11）、内容安全（Phase 3 P12）。 */
+    /** 挂「权限管理」下的页签：认证源、审计事件、内容安全。 */
     private static final String[] IDENTITY_TAB_MENU =
             {"menu-identity-providers", "认证源", "/permissions?tab=identity", "15", "menu-permissions"};
 
-    /** 挂「安全与运维」下的页签：审计事件（Phase 3 P11，2026-11 从权限管理迁入） */
+    /** 挂「安全与运维」下的页签：审计事件 */
     private static final String[] AUDIT_TAB_MENU =
             {"menu-audit-events", "审计事件", "/security?tab=audit", "40", "menu-security"};
 
@@ -88,8 +86,7 @@ public class RbacSeedRunner implements ApplicationRunner {
             {"menu-content-safety", "内容安全", "/permissions?tab=content", "80", "menu-permissions"};
 
     /**
-     * 服务账号（批次 C3）：机器身份的管理面板，挂在「认证源」旁边——同一层「谁能调用」的授权对象。
-     * 后端（建号/轮换/删除）2026-11-02 就到位了，一直没有界面入口，等于只能靠 REST 调；
+     * 服务账号：机器身份的管理面板，挂在「认证源」旁边——同一层「谁能调用」的授权对象。
      * 排序 25 让它紧跟认证源（15）、在审计事件之前。
      */
     private static final String[] SERVICE_ACCOUNT_TAB_MENU =
@@ -98,16 +95,14 @@ public class RbacSeedRunner implements ApplicationRunner {
     /**
      * 内置 Tab 菜单（renderAs=tab）：id / 名称 / path / 排序 / 父菜单。
      * <p>
-     * 2026-10-08 把「智能体工作台」硬编码的 6 个页内 Tab 收编进菜单表 —— Tab 变成真菜单后，
-     * 每个可独立授权（此前一个 menu-agents 绑定 = 6 个 Tab 全有或全无），顺序与增减也由数据驱动。
+     * 把页内 Tab 收编进菜单表：每个 Tab 可独立授权，顺序与增减也由数据驱动。
      * 组件映射（tabKey → Vue 组件）仍在宿主页组件里：菜单管「有哪些/叫什么/什么顺序」，
      * 代码管「渲染成什么」，两者职责不同，不要试图把组件类名塞进菜单表。
-     * <p>path 存完整跳转 {@code /agents?tab=key} —— 与 sidebar 型「path=点击后去哪」语义完全一致；
-     * 宿主页从 path 的 query 解析 tabKey 映射组件。URL 与既有链接（/agents?tab=skills）零变化。
-     * icon 留空（Tab 条本就是纯文字）。
-     * <p>2026-10-24 起这张表也是「一个独立管理页并入他页 Tab」的落点：独立页收编为宿主页的
-     * 页内 Tab。并入后它仍是独立菜单行，故接口归属（{@code c_ai_menu_api}）
-     * 与角色授权粒度不变——只是渲染位置从侧栏换成了页签。
+     * <p>path 存完整跳转 {@code /agents?tab=key} —— 与 sidebar 型「path=点击后去哪」语义一致；
+     * 宿主页从 path 的 query 解析 tabKey 映射组件。icon 留空（Tab 条本就是纯文字）。
+     * <p>这张表也是「一个独立管理页并入他页 Tab」的落点：独立页收编为宿主页的页内 Tab 后
+     * 仍是独立菜单行，接口归属（{@code c_ai_menu_api}）与角色授权粒度都按独立菜单行处理
+     * ——只是渲染位置从侧栏换成了页签。
      * <p><b>「可单独授权」管的是宿主页里这个页签出不出现，不管进不进得了宿主页</b>：路由守卫按
      * {@code menuHasPath} 精确匹配菜单 path 与路由 path，而 tab 型存的是 {@code /permissions?tab=identity}
      * 带查询串的那一份，对不上 {@code /permissions}。故只勾 Tab 不勾宿主菜单的角色仍会被挡在门外——
@@ -128,20 +123,19 @@ public class RbacSeedRunner implements ApplicationRunner {
     );
 
     /**
-     * 已退役的内置菜单：入口已迁移或被统一入口取代，种子清单剔除后存量库需按 id 连行清理
+     * 种子清单已剔除的内置菜单：存量库需按 id 连行清理
      * （菜单 + 角色绑定 + 接口归属），否则老库仍会显示。
      * <p>
      * {@code menu-help}：帮助中心 → 前端右下角全局悬浮按钮（HelpFab.vue）。
-     * {@code menu-oidc-providers}：OIDC 专属管理页（「单点登录」Tab）→ 2026-10-27 由
-     * 「认证源」统一页签取代（OIDC/SAML/SCIM/LDAP 四类一起管，同一份数据），不做兼容。
+     * {@code menu-oidc-providers}：OIDC 专属管理页（「单点登录」Tab）→ 由「认证源」统一页签取代
+     * （OIDC/SAML/SCIM/LDAP 四类一起管，同一份数据），不做兼容。
      */
     private static final List<String> RETIRED_MENUS = List.of("menu-help", "menu-oidc-providers");
 
     /** user 角色默认可见的内置菜单 id（个人资产类与问答类一致，默认对所有人开放） */
     private static final List<String> USER_MENUS =
             List.of("menu-chat", "menu-agents", "menu-market", "menu-knowledge", "menu-artifacts", "menu-stats",
-                    // 智能体的 7 个 Tab：拆分前「能进智能体 = 6 个 Tab 全有」，拆分后按项绑定保持行为不变
-                    // （2026-11-07 增第 7 个「评测」Tab：菜单全员可见；存量库的接口授权点需在权限页补勾一次）
+                    // 智能体的 7 个 Tab：按项绑定，进智能体即默认可见
                     "menu-agents-tab-providers", "menu-agents-tab-agents", "menu-agents-tab-skills",
                     "menu-agents-tab-mcp", "menu-agents-tab-workflow", "menu-agents-tab-scheduled",
                     "menu-agents-tab-eval");
@@ -198,10 +192,7 @@ public class RbacSeedRunner implements ApplicationRunner {
             m.setCreateTime(now);
             menuMapper.insert(m);
             menuAdded++;
-            // 存量库升级：使用统计是个人资产类页面（与「我的产物」同类），随 USER_MENUS
-            // 一并按项补绑（原为此处一条独立分支，只服务 menu-stats 一项，是同一个
-            // 「全空才灌」缺陷的两次犯——它的副作用正是让存量库先有了一条绑定，
-            // 使下方基础菜单补齐永远空跑）。
+            // 使用统计是个人资产类页面（与「我的产物」同类），随 USER_MENUS 一并按项补绑。
         }
         if (menuAdded > 0) {
             seeded = true;
@@ -230,11 +221,10 @@ public class RbacSeedRunner implements ApplicationRunner {
             seeded = true;
             log.info("[RbacSeed] 已补齐 {} 个内置 Tab 菜单", tabAdded);
         }
-        // 审计事件页签从「权限管理」迁到「安全与运维」：内置 Tab 行只在缺失时插入，
-        // 存量库那一行仍是旧 path/parent；这里做一次幂等同步（只改结构两列，不删角色绑定）。
+        // 内置 Tab 行只在缺失时插入，存量库那一行可能仍是旧 path/parent；
+        // 这里做一次幂等同步（只改结构两列，不删角色绑定）。
         if (syncBuiltinTab(AUDIT_TAB_MENU)) seeded = true;
-        // user 角色基础菜单：按项补齐（此前是「全空才灌」，见方法注释）。
-        // 已绑定的项不重复写，故对管理员的既有绑定零影响。
+        // user 角色基础菜单：按项补齐。已绑定的项不重复写，故对管理员的既有绑定零影响。
         Set<String> userMenuIds = new HashSet<>(roleMenuMapper.menuIdsOfRole("user"));
         List<String> userMenuAdded = USER_MENUS.stream().filter(userMenuIds::add).collect(Collectors.toList());
         if (!userMenuAdded.isEmpty()) {
@@ -242,7 +232,7 @@ public class RbacSeedRunner implements ApplicationRunner {
             roleService.invalidateCaches();
             log.info("[RbacSeed] 已为 user 角色补绑基础菜单 {}", userMenuAdded);
         }
-        // 批次 F3：角色按租户各一套——遍历现存租户（default 恒在）逐租户种角色/绑定/预设。
+        // 角色按租户各一套——遍历现存租户（default 恒在）逐租户种角色/绑定/预设。
         // 菜单是全局共享的（上面种一次），角色域在租户上下文内写入，tenant_id 由插件按当前上下文盖戳。
         Set<String> existingMenuIdsFinal = existingMenuIds;
         for (String tenantId : distinctTenants()) {
@@ -293,7 +283,7 @@ public class RbacSeedRunner implements ApplicationRunner {
     }
 
     /**
-     * 单租户角色种子（批次 F3）：内置三件套（该租户没有才建）+ user 基础菜单绑定 + 受限管理员预设。
+     * 单租户角色种子：内置三件套（该租户没有才建）+ user 基础菜单绑定 + 受限管理员预设。
      * 幂等：绑定按项补齐、角色按 id 查缺，管理员在权限页的调整不被启动逻辑恢复。
      *
      * @return 是否发生了写入（供外层决定是否失效缓存）
@@ -338,9 +328,9 @@ public class RbacSeedRunner implements ApplicationRunner {
     }
 
     /**
-     * 受限管理员预设（批次 B4）：「只读管理员」「运维管理员」。
+     * 受限管理员预设：「只读管理员」「运维管理员」。
      * 授权点集合是数据不是代码——管理员可在权限页随时调整；种子只负责首次建角色。
-     * 均为非管理员级（admin_flag=0）：判定按授权点走，不再依赖 admin_flag 直通（B1 降级）。
+     * 均为非管理员级（admin_flag=0）：判定按授权点走，不再依赖 admin_flag 直通。
      */
     private void seedRestrictedAdmins(Set<String> validMenuIds) {
         // 只读管理员：全部「只读型」授权点（名下端点全为 GET）+ 个人资产 self 点；

@@ -30,9 +30,9 @@ import java.util.stream.Collectors;
  * 按登录用户聚合出统计卡（累计/峰值 Token、最长聊天时长、连续天数）、Token 活动热力图、
  * 每日×模型趋势与模型用量占比。
  * <p>
- * 数据源在变动：此前直接读助手消息的 tokens JSON，只覆盖主链路最后那一轮用量，与供应商
+ * 直接读助手消息的 tokens JSON 只覆盖主链路最后那一轮用量，与供应商
  * 账单差数倍（工具调用循环每轮都是真实请求，记忆提取/智能体分派等旁路调用同样烧 token）。
- * 现在所有推理请求在 {@link DynamicOpenAiChatModel} 出口统一记账，这里只读台账——
+ * 所有推理请求在 {@link DynamicOpenAiChatModel} 出口统一记账，这里只读台账——
  * 于是「页面看到的数字 = 供应商账单里属于你的部分」。
  * <p>
  * 设计口径：
@@ -207,7 +207,7 @@ public class UsageStatsService {
         // ---- 按用途占比（近 N 日）：把"回答本身"与"为回答做的辅助调用"分开看 ----
         // 为什么值得单独一栏：这些开销在对话里没有对应对象（用户看不到一条消息等于它们），却常占总量
         // 两三成；有了这一栏，"我今天怎么花了这么多"才有可回答的形状，子智能体分支与脚本扇出的
-        // 成本归属也查得到（以前只落在库里的 kind 列，没有任何出口）。
+        // 成本归属也查得到（不再只落在库里的 kind 列）。
         List<Map<String, Object>> kinds = new ArrayList<>();
         for (Map<String, Object> row : usageLogMapper.statKindTokens(userId,
                 today.minusDays(r - 1L).atStartOfDay())) {
@@ -349,7 +349,7 @@ public class UsageStatsService {
             if (cost != null) tenantCost.merge(tenantId, new double[]{cost}, (a, b) -> new double[]{a[0] + b[0]});
         }
 
-        // 未计价清单按展示名合并：同一个模型名曾散在几百个已删供应商下（压测遗留），逐个列等于没信息量；
+        // 未计价清单按展示名合并：同一个模型名散在多个供应商下时，逐个列等于没信息量；
         // 而「供应商已删/台账没记模型」的引用登记不到单价，混进清单里只会教用户去做一件做不到的事，
         // 所以拆成 unregistered* 两个计数，由前端单独说明一句。
         Map<String, long[]> unpricedByLabel = new LinkedHashMap<>();   // label -> {tokens, 引用数}
@@ -435,7 +435,7 @@ public class UsageStatsService {
                                 ((Number) m.get("tokens")).longValue()).reversed()))
                 .toList();
 
-        // 按租户结算（Phase 4）：只有平台视图摊开的是多租户台账时才有意义，成员数取实时归属名单
+        // 按租户结算：只有平台视图摊开的是多租户台账时才有意义，成员数取实时归属名单
         Map<String, Long> tenantMembers = new HashMap<>();
         Map<String, String> tenantNames = new HashMap<>();
         if (crossTenant) {

@@ -8,7 +8,7 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 /**
- * 统一审计事件（Phase 3 · P11）。
+ * 统一审计事件。
  * <p>
  * 一条＝一次「谁对什么做了什么」。{@code prev_hash}/{@code row_hash} 构成<b>同副本内按 seq 排序的
  * SHA-256 哈希链</b>：改一行、删一行、插一行都会让该副本从那一处起的链验证失败

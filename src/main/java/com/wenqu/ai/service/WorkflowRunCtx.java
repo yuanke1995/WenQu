@@ -72,7 +72,7 @@ public final class WorkflowRunCtx {
      */
     final Consumer<List<String>> imageSink;
 
-    // ---- M3：人工审核的挂起/恢复（快照短路重放方案） ----
+    // ---- 人工审核的挂起/恢复（快照短路重放方案） ----
     /**
      * 恢复执行时各节点上次运行的<b>全量</b>输出（nodeId → 裸键输出 map；截断前的原值）。
      * 包装层发现某节点有历史输出即短路返回（不再执行节点体）——已完成节点零成本续跑，
@@ -87,10 +87,10 @@ public final class WorkflowRunCtx {
      */
     final Map<String, Map<String, Object>> fullOutputs = new LinkedHashMap<>();
 
-    /** 节点 trace（完成序；同步串行图无并发写，并行图(M3)再上锁） */
+    /** 节点 trace（完成序；同步串行图无并发写，并行图再上锁） */
     final List<Map<String, Object>> traces = new ArrayList<>();
     /**
-     * 节点 trace 增量回调（第 2 期：实时进度）。非空时每写一条 trace 立即回调一次，
+     * 节点 trace 增量回调（实时进度）。非空时每写一条 trace 立即回调一次，
      * 由运行流服务转成 SSE 事件推给前端——画布"边跑边亮"不依赖跑完后的批量回放。
      * 同步/异步调试运行之外（API、智能体、定时）为 null。
      */
@@ -102,7 +102,7 @@ public final class WorkflowRunCtx {
     }
 
     /**
-     * 节点开始回调（第 4 期并发可视化）：节点真正开始执行前回调一次（重试不重复回调；
+     * 节点开始回调（并发可视化）：节点真正开始执行前回调一次（重试不重复回调；
      * 短路重放的节点不算"开始"）。只进实时流（SSE node_start 事件），<b>不落库不进快照</b>——
      * 进行中状态仅对实时观众有意义，历史回放按完成态 trace 渲染，语义不变。
      */

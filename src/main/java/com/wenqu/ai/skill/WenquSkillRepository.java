@@ -20,7 +20,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /**
- * 问渠的技能仓库（全框架化 P3 + 用户自装技能）——三路合并交给框架。
+ * 问渠的技能仓库（含用户自装技能）——三路合并交给框架。
  *
  * <h3>三层来源（优先级递增）</h3>
  * <ol>
@@ -87,7 +87,7 @@ public class WenquSkillRepository implements RuntimeContextSkillRepository {
     /**
      * 内置技能根：显式配置优先，否则取 {@code user-data/skills-builtin}——那份由
      * {@link BuiltinSkillSeeder} 从 classpath 落盘。
-     * <p>这里曾经直接拼 {@code user.dir/src/main/resources/skills}：源码树路径在容器里不存在
+     * <p>不能用 {@code user.dir/src/main/resources/skills} 这类源码树路径：容器里不存在
      * （运行阶段只有 {@code app.jar}），内置技能会静默变成空列表。
      */
     public static Path resolveBuiltinRoot(String configuredDir) {
@@ -280,7 +280,7 @@ public class WenquSkillRepository implements RuntimeContextSkillRepository {
 
     @Override
     public boolean save(List<AgentSkill> skills, boolean overwrite) {
-        // 迁移后用户侧增删改由框架 skill_manage 工具走文件系统；
+        // 用户侧增删改由框架 skill_manage 工具走文件系统；
         // 这里不接数据库，也不擅自决定写哪个目录（那属于 runtime 分支）。
         throw new UnsupportedOperationException(
                 "wenqu skill repository is read-only in this build; "
@@ -324,9 +324,8 @@ public class WenquSkillRepository implements RuntimeContextSkillRepository {
 
     /**
      * 技能目录解析缓存。框架的 {@code getAllSkills(RuntimeContext)} 每轮问答都会走
-     * {@code catalog}，此前每次都 {@code new FileSystemSkillRepository} 并全量扫描 +
-     * 解析 frontmatter（内置 + 用户两个目录；线上容器实测每轮稳定两行
-     * 「FileSystemSkillRepository initialized」日志、数百毫秒）。技能目录的变化频率
+     * {@code catalog}，每次都 {@code new FileSystemSkillRepository} 会全量扫描 +
+     * 解析 frontmatter（内置 + 用户两个目录，数百毫秒）。技能目录的变化频率
      * 是「天级」（管理员装/停、用户装包），配 15s TTL：解析成本归零，装新技能最迟
      * 15s 生效（管理页写路径还会主动失效，见 {@link #invalidate}）。
      */

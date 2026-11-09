@@ -10,7 +10,7 @@ import java.time.Duration;
 import java.time.LocalDate;
 
 /**
- * 分享游客额度闸（P3 费用面第一层）。
+ * 分享游客额度闸（费用面第一层）。
  *
  * <p>游客轮次的模型调用由发布者承担（{@code ShareController} 以发布者 uid 装载身份），
  * 已有成员/部门/租户配额兜住「一个人能烧多少」，但分享链接是对外匿名入口——

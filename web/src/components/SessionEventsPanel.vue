@@ -296,7 +296,7 @@ function framesOf (e) {
   } catch { return [] }
 }
 
-// ---------- P1：单轮筛选 / 本地搜索 ----------
+// ---------- 单轮筛选 / 本地搜索 ----------
 const FILTERS = [
   { key: 'all', label: '全部' },
   { key: 'tool', label: '工具' },
@@ -326,7 +326,7 @@ function visibleNodes (t) {
   })
 }
 
-// ---------- P2：复制 Markdown / 导出原始 JSON ----------
+// ---------- 复制 Markdown / 导出原始 JSON ----------
 function processMarkdown () {
   const lines = []
   for (const t of turns.value) {

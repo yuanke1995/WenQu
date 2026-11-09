@@ -11,9 +11,8 @@ import java.util.Map;
 /**
  * 历史文本共享读取面。
  *
- * <p><b>自动/手动压缩已交 AgentScope</b>：框架的 {@code CompactionMiddleware} 按模型窗口推导阈值并滚动压缩，
- * 手动 /compact 走 {@code FrameworkSessions#compactNow}。问渠侧原来那套「预算装配 + 滚动摘要 +
- * context.historyCompress/compressRatio/compressTimeoutMs」的读写点已全部删除，不再保留第二套压缩口径。
+ * <p><b>自动/手动压缩都走 AgentScope</b>：框架的 {@code CompactionMiddleware} 按模型窗口推导阈值并滚动压缩，
+ * 手动 /compact 走 {@code FrameworkSessions#compactNow}；只有这一套压缩口径。
  *
  * <p>本类只剩两个仍被非问答链路使用的只读工具：
  * <ul>

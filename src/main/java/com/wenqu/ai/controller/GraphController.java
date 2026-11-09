@@ -15,7 +15,7 @@ import org.springframework.web.bind.annotation.RestController;
 import com.wenqu.ai.security.Permission;
 
 /**
- * GraphRAG 管理端点（P1）：构建 / 状态 / 三元组浏览 / 清图。
+ * GraphRAG 管理端点：构建 / 状态 / 三元组浏览 / 清图。
  * <p>
  * 权限：管理员功能（不进普通用户白名单，RBAC fail-closed）；开关在知识库编辑页（库管理者可改），
  * 构建与清图影响全库图谱数据，收敛到管理员面。

@@ -257,8 +257,7 @@ class SubAgentConsultServiceTest {
             assertFalse(r1.contains("额度已用完"), "第一次不该触顶: " + r1);
             String r2 = service.consult(ledger, ctx(), runner, null, "agent-ops", "Q2");
             assertFalse(r2.contains("额度已用完"), "第二次不该触顶: " + r2);
-            // 第三次换了个不存在的助手走拦截前，但缓存已不命中，会先检查额度
-            // 这里换一个新助手，但仍在候选里
+            // 第三个助手仍在候选里，额度未触顶
             Agent third = new Agent();
             third.setId("agent-third");
             third.setName("第三助手");

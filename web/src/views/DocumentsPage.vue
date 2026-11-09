@@ -56,7 +56,7 @@
       </div>
     </a-modal>
 
-    <!-- 上传文档：选文件 + 描述一个弹窗内完成（描述原先孤在顶栏，对下一次上传生效，语义不明） -->
+    <!-- 上传文档：选文件 + 描述一个弹窗内完成 -->
     <a-modal v-model:open="uploadVisible" title="上传文档" :confirm-loading="uploading" :width="560" ok-text="开始上传" @ok="submitUpload">
       <a-upload-dragger :before-upload="collectPendingFile" :show-upload-list="false"
                         :accept="'.' + uploadCfg.allowedExts.join(',.')" multiple :disabled="uploading">
@@ -197,7 +197,7 @@
         </a-popconfirm>
         <button class="app-link-btn" @click="recycleSelected = []">取消选择</button>
       </div>
-      <!-- 列宽走 :columns 声明：a-table-column 上的 width 不进 colgroup（实测四列等分、文件名折三行） -->
+      <!-- 列宽走 :columns 声明：a-table-column 上的 width 不进 colgroup -->
       <a-table :data-source="recycleRows" :columns="recycleCols" size="small" row-key="id"
                :loading="recycleLoading" table-layout="fixed"
                :row-selection="{ selectedRowKeys: recycleSelected, onChange: keys => recycleSelected = keys, columnWidth: 44 }"
@@ -324,7 +324,7 @@
       </a-spin>
     </a-modal>
 
-    <!-- 知识块编辑弹窗：Markdown 工具栏快捷插入 + 左写右看实时预览 + [图片N] 点选插入 + 未保存关闭提醒（与旧版同功能） -->
+    <!-- 知识块编辑弹窗：Markdown 工具栏快捷插入 + 左写右看实时预览 + [图片N] 点选插入 + 未保存关闭提醒 -->
     <a-modal :open="kbEditVisible" title="编辑知识块" :footer="null" :width="900" :keyboard="!kbImgUrl" @cancel="closeKbEdit">
       <a-form layout="vertical">
         <a-form-item label="标题"><a-input v-model:value="kbEditForm.title" :maxlength="200" placeholder="知识块标题" /></a-form-item>
@@ -1246,7 +1246,7 @@ const imgCountOf = r => {
   } catch (e) { return 0 }
 }
 // 章节路径唯一口径：后端只在标题层级≥2 时才写 titlePath（单层标题/MinerU h1 平铺时为空），
-// 此时树回退用 title 当路径——建树与点章节名过滤必须同源，否则点过去永远匹配不上（历史 bug）
+// 此时树回退用 title 当路径——建树与点章节名过滤必须同源，否则点过去永远匹配不上
 const normPath = r => String(r.titlePath || r.title || '未分类')
     .split('>').map(s => s.trim()).filter(Boolean).join(' > ')
 const kbTreeRows = computed(() => {
@@ -1707,7 +1707,7 @@ const fmtTime = t => {
 .col-check { width: 26px; flex: none; }
 .col-name { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; }
 /* 归属列要能读完「库名（文档数）」：常态 220px；行宽不够时先由本列让（可缩到 132px），
-   而不是把文件名挤没——下拉已改成按内容自适应宽，让了也不会读不到候选库名。 */
+   而不是把文件名挤没——下拉按内容自适应宽，让了也不会读不到候选库名。 */
 .col-kb { flex: 0 1 220px; min-width: 132px; }
 .file-ic {
   width: 34px; height: 24px; border-radius: 5px; font-size: 9px; font-weight: 500; flex: none;
@@ -1849,7 +1849,7 @@ const fmtTime = t => {
 </style>
 
 <style scoped>
-/* ==================== 窄屏适配（此前列宽全固定 ≈850px + 名称列，≤768 名称列被挤没） ====================
+/* ==================== 窄屏适配 ====================
    低优列按屏宽逐级隐藏，保住「文件名 + 状态 + 操作」这条主线；隐藏比挤压可读。 */
 @media (max-width: 900px) {
   .col-kb, .col-time { display: none; }

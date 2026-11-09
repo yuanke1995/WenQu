@@ -41,7 +41,7 @@ public interface ParseTaskMapper extends BaseMapper<ParseTask> {
             + "from c_ai_parse_task where worker = #{worker} and status = 1 order by start_time asc")
     List<ParseTask> selectMine(@Param("worker") String worker);
 
-    /** 租约回收：把 lease 已过期的 running 任务收回 queued（覆盖进程崩溃/线程卡死，取代旧版"重启一律判失败"） */
+    /** 租约回收：把 lease 已过期的 running 任务收回 queued（覆盖进程崩溃/线程卡死） */
     @Update("update c_ai_parse_task set status = 0, lease_until = null, worker = null, "
             + "next_run_at = now() where status = 1 and lease_until is not null and lease_until <= now()")
     int revokeExpiredLeases();

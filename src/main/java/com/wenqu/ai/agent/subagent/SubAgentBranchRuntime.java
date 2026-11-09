@@ -24,12 +24,12 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * 子智能体分支的簿记（P6 刀 3b，自 {@code ChatService} 抽出）：派一支、收一支的回报、
+ * 子智能体分支的簿记：派一支、收一支的回报、
  * 把子轮用过的引用与图片回填进父轮编号表、给下一层准备继承用的父轮上下文。
  * <p><b>「跑一整轮」仍然是交进来的函数</b>（{@link TurnRunner}）。分支是一条完整的问答轮，
- * 而流水线还在问答服务里（刀 5 才搬进门面）——注入进来就是运行时候选之间的一根环。
- * 这也是卡里拦路点 2 的真正判据：<b>一族能不能做成 bean，看它要不要回头调用问答入口</b>；
- * 子调用通道（刀 3a）不需要，所以它是 bean；这一族需要，所以只有簿记搬得动。
+ * 而流水线还在问答服务里——注入进来就是运行时候选之间的一根环。
+ * 一族能不能做成 bean，看它要不要回头调用问答入口；子调用通道不需要，所以它是 bean；
+ * 这一族需要，所以只有簿记搬得动。
  * <p>回填为什么要在这里做而不能在编排处做：编排那一刻父轮的编号还没定稿，先编必撞号。
  * 范围外的那几块只摘编号不注册——库范围是能力边界，不能因为「分支跑在另一个会话里」绕过去。
  *
@@ -53,14 +53,13 @@ public class SubAgentBranchRuntime {
     private final com.wenqu.ai.agent.hitl.HitlDecisionService hitl;
     private final com.wenqu.ai.service.SessionEventService sessionEventService;
 
-    /** 运行视角（2026-11-07）：随账本落库的关键帧类型。tool_output 只直播不落库——终态工具卡已带 result。 */
+    /** 运行视角：随账本落库的关键帧类型。tool_output 只直播不落库——终态工具卡已带 result。 */
     private static final Set<String> RUN_FRAME_TYPES = Set.of(
             "tool_status", "retrieved", "artifact", "warn", "approval_required", "ask_user");
     /**
      * 帧缓冲上限（条数）：回放要的是「哪一步干了什么」，不是流水账全文。帧内容<b>不设上限</b>——
      * 帧与直播同源（toolCard 那份，result 在源头已按平台口径截到 2000 字符），这里若再按字符砍一刀，
-     * 会把转义串拦腰砍断，落进账本的帧就成了非法 JSON（2026-11-08 线上实证：done 帧砍残后
-     * 前端解析失败整帧丢弃，start 行永远转圈）。整包超限由 {@code writeRunLedger} 的闸兜住——
+     * 会把转义串拦腰砍断，落进账本的帧就成了非法 JSON。整包超限由 {@code writeRunLedger} 的闸兜住——
      * 只整帧丢弃、不砍半截。
      */
     private static final int RUN_FRAME_MAX = 240;
@@ -125,14 +124,13 @@ public class SubAgentBranchRuntime {
             // 直播那份靠同一条转发流（subagent_step），两处同源，天然同构。
             List<Map<String, Object>> workSteps = java.util.Collections.synchronizedList(new ArrayList<>());
             java.util.Set<String> seenStepKeys = java.util.Collections.synchronizedSet(new java.util.HashSet<>());
-            // 分支的实时过程（P3a 刀2）：那一支在父轮卡片上原本只有「跑了 N 步工具」这个事后计数，
-            // 一支跑两三分钟时用户对着一个静止的数字等。这里把它自己那几路过程事件原样转给父轮通道，
+            // 分支的实时过程：父轮卡片只靠「跑了 N 步工具」这个事后计数，一支跑两三分钟时用户
+            // 对着一个静止的数字等；这里把它自己那几路过程事件原样转给父轮通道，
             // 事件名换成 subagent_step、带上分支序号，前端归到对应那一行下面（不重组协议、不改内容）。
-            // 只转不发完就没了：这份实时步骤不落库，刷新后看到的仍是步数与回报全文
-            // （终态步骤清单 2026-10-25 起随 subChat.steps 落库，见上）。
+            // 实时步骤不落库，刷新后看到的仍是步数与回报全文（终态步骤清单随 subChat.steps 落库）。
             final int branchIndex = Math.max(0, req.branchIndex());
             final boolean[] first = {false};
-            // 运行视角的回放采集（2026-11-07）：转发过来的关键帧顺手留一份，收束时随账本整批落一条。
+            // 运行视角的回放采集：转发过来的关键帧顺手留一份，收束时随账本整批落一条。
             // 同一帧可能经两条路各到一遍（SSE 直发 + 总线扇出，与 workSteps 同款雷），按类型+内容前缀去重。
             List<Map<String, Object>> runFrames = java.util.Collections.synchronizedList(new ArrayList<>());
             java.util.Set<String> seenRunKeys = java.util.Collections.synchronizedSet(new java.util.HashSet<>());
@@ -170,7 +168,7 @@ public class SubAgentBranchRuntime {
                 }
                 // 干活视角采步：只认终态帧（start 那张卡在前端直播里自己会转圈）；
                 // toolCard 载荷不带 denied，被挡下的区分靠 done 载荷那一步的对齐（见下）。
-                // 同一次调用的帧可能经两条路各到一遍（SSE 直发 + 总线扇出，真机实测成对出现）——
+                // 同一次调用的帧可能经两条路各到一遍（SSE 直发 + 总线扇出）——
                 // 按 name+startedAtMs 去重，同一把工具只进时间线一次
                 if ("tool_status".equals(type) && workSteps.size() < BranchReport.MAX_STEPS) {
                     try {
@@ -272,8 +270,7 @@ public class SubAgentBranchRuntime {
                 int steps = 0;
                 try {
                     // done 的 content 在 runtime.sendSseEvent 里是被当**字符串**再序列化一次的（外层 {"content":"{...}"}），
-                    // 所以这里要解两层：直接 parseObject 会在内层引号处报 illegal input（真机实测踩到，
-                    // 表现是引用与工具步数静默为 0，只有日志能看出来）
+                    // 所以这里要解两层：直接 parseObject 会在内层引号处报 illegal input。
                     Object parsed = sink.donePayload() == null ? null : com.alibaba.fastjson2.JSON.parse(sink.donePayload());
                     if (parsed instanceof String s) parsed = com.alibaba.fastjson2.JSON.parse(s);
                     com.alibaba.fastjson2.JSONObject done = parsed instanceof com.alibaba.fastjson2.JSONObject o ? o : null;
@@ -369,7 +366,7 @@ public class SubAgentBranchRuntime {
     }
 
     /**
-     * 运行视角的落库（2026-11-07）：这一支的关键帧流随收束写一条 {@code type=subagent} 账本事件，
+     * 运行视角的落库：这一支的关键帧流随收束写一条 {@code type=subagent} 账本事件，
      * 挂<b>父会话与父轮</b>——刷新/换设备后卡片上的「完整过程」从它懒取回放（与 subChat 快照互补：
      * 那份是≤20 步的摘要，这份是关键帧全量）。旁路纪律与账本一致：写失败只留一行 warn，不碰回报；
      * 成功且零帧（digest 支没有过程可看）不写，避免每轮多一条空行。

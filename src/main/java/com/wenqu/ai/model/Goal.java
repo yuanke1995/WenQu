@@ -76,7 +76,7 @@ public class Goal {
     @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private String blockedReason;
 
-    // ==================== 任务运行时（2026-10-22） ====================
+    // ==================== 任务运行时 ====================
 
     /**
      * 内部阶段：QUEUED / EXECUTING / VERIFYING / WAITING_APPROVAL / WAITING_EVENT / RECOVERING / DONE。

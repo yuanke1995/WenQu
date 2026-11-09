@@ -5,9 +5,9 @@ import jakarta.servlet.http.HttpServletRequest;
 /**
  * 客户端 IP 解析（限流身份与审计 IP 共用的唯一出处）。
  * <p>
- * 安全口径（2026-11-01 收口）：X-Forwarded-For 是<b>客户端可任意伪造</b>的请求头——即便 nginx
+ * 安全口径：X-Forwarded-For 是<b>客户端可任意伪造</b>的请求头——即便 nginx
  * 用 {@code $proxy_add_x_forwarded_for} 追加了真实 IP，客户端自塞的首段仍原样留在链头。
- * 旧口径「无脑取首段」等于让限流身份与审计 IP 由请求方指定：伪造 XFF 即可无限轮换限流身份
+ * 「无脑取首段」会让限流身份与审计 IP 由请求方指定：伪造 XFF 即可无限轮换限流身份
  * （游客端点按 IP 限频形同虚设），审计日志里的 IP 也不可信。
  * <p>
  * 新规则：

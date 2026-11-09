@@ -24,8 +24,8 @@ export const FALLBACK_IMG = 'data:image/svg+xml;utf8,' + encodeURIComponent(
 export const onImgError = e => { e.target.onerror = null; e.target.src = FALLBACK_IMG }
 
 // 动作图标：路径直接取自 @ant-design/icons-svg 的 CopyOutlined / CheckOutlined / PlayCircleOutlined /
-// EyeOutlined（render 内联生成，无需挂 vRender 组件）。原先这几条是手写的近似路径，
-// 画出来是一团认不出的形状——图标不认人，按钮就等于没有。
+// EyeOutlined（render 内联生成，无需挂 vRender 组件）。手写近似路径会画成一团认不出的形状
+// ——图标不认人，按钮就等于没有。
 const antIcon = d => `<span class="anticon"><svg viewBox="64 64 896 896" width="1em" height="1em" fill="currentColor">${d}</svg></span>`
 const COPY_SVG = antIcon('<path d="M832 64H296c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h496v688c0 4.4 3.6 8 8 8h56c4.4 0 8-3.6 8-8V96c0-17.7-14.3-32-32-32zM704 192H192c-17.7 0-32 14.3-32 32v530.7c0 8.5 3.4 16.6 9.4 22.6l173.3 173.3c2.2 2.2 4.7 4 7.4 5.5v1.9h4.2c3.5 1.3 7.2 2 11 2H704c17.7 0 32-14.3 32-32V224c0-17.7-14.3-32-32-32zM350 856.2L263.9 770H350v86.2zM664 888H414V746c0-22.1-17.9-40-40-40H232V264h432v624z"/>')
 const CHECK_SVG = antIcon('<path d="M912 190h-69.9c-9.8 0-19.1 4.5-25.1 12.2L404.7 724.5 207 474a32 32 0 00-25.1-12.2H112c-6.7 0-10.4 7.7-6.3 12.9l273.9 347c12.8 16.2 37.4 16.2 50.3 0l488.4-618.9c4.1-5.1.4-12.8-6.3-12.8z"/>')
@@ -35,7 +35,7 @@ const CHECK_SVG = antIcon('<path d="M912 190h-69.9c-9.8 0-19.1 4.5-25.1 12.2L404
 const md = new MarkdownIt({
   html: false,
   linkify: true,
-  breaks: true,                 // 单换行即换行，贴近原手写行为
+  breaks: true,                 // 单换行即换行
   langPrefix: 'hljs language-', // 代码块带 hljs 类才能着色
   highlight(str, lang) {
     if (lang && hljs.getLanguage(lang)) {
@@ -44,7 +44,7 @@ const md = new MarkdownIt({
     return md.utils.escapeHtml(str) // 兜底必须手动转义（markdown-it 不自动转义 highlight 返回值）
   }
 })
-// 降级标题：h1→h2 ... h6 封顶（保持原手写 #→h2 行为，h1 留给页面）
+// 降级标题：h1→h2 ... h6 封顶（h1 留给页面）
 md.renderer.rules.heading_open = t => `<h${Math.min(+t[0].tag[1] + 1, 6)}>`
 md.renderer.rules.heading_close = t => `</h${Math.min(+t[0].tag[1] + 1, 6)}>`
 
@@ -244,7 +244,7 @@ const fence = (tokens, idx) => {
   const lang = info.split(/\s+/)[0].toLowerCase()
   const code = token.content
   // Mermaid / ECharts：源码放**文本子节点**（pre>code），不放 data-code 属性。
-  // 原因（实测定位，不是猜）：DOMPurify 的 mXSS 守卫（SAFE_FOR_XML，分支 /((--!?|])>)|<\/(style|script|…)/i）
+  // 原因：DOMPurify 的 mXSS 守卫（SAFE_FOR_XML，分支 /((--!?|])>)|<\/(style|script|…)/i）
   // 会剥掉任何**值里含 `-->` / `]>`** 的属性，而 mermaid 源码恰恰满屏 `A --> B`、`A -.-> B`，
   // 放属性里等于属性必被剥光。文本节点不受该守卫影响，故源码走 pre>code，由 enhanceDiagrams 取 textContent。
   // echarts 的 option JSON 里也有 `}]`、字符串里可能有 `-->`，同一条路走文本子节点。
@@ -318,7 +318,7 @@ export const prepKnowledgeContent = (content, images) => {
 // 事件委托由调用方处理（点击 .code-copy 调 copyCode；.ref-sup/.md-img 按页面语义处理）
 // 表格容错：LLM 常在标题/列表项后直接跟表格行（无空行），markdown-it 会把表格行吞进列表/段落变成纯文本。
 // 逐行扫描：识别"表头行 + 分隔行(|---|)"表格起点，在其前补空行；分隔行后连续收集表体行。
-// 显式区分表头/分隔/表体，避免误伤正常表格（上一版正则把"分隔行+表体行"误当表格起点，导致表体丢失）。
+// 显式区分表头/分隔/表体，避免误伤正常表格。
 // 注意：分隔行必须含至少一个 '-' —— [\s:|-]+ 会把"全空单元格表体行"(|  |  |)误判为分隔行，
 // 导致表格被拆碎（序号块预览中修订记录表掉行、剩余行渲染成原始竖线文本）。
 const isTableRow = l => /^\s*\|.*\|\s*$/.test(l)
@@ -444,8 +444,8 @@ const renderMdInner = (t, images = [], runnable = RUNNABLE_DEFAULT, preview = PR
     wrap.appendChild(real)
     img.replaceWith(wrap)
   })
-  // 历史里的图片一律延迟加载：一条 22 轮的会话有 13 张图文交错的配图，打开时全量拉是 5.3 MB
-  // （真机 2026-10-26 实测），手机上这正是最贵的那一笔。视口内的浏览器本来就会立刻取，
+  // 历史里的图片一律延迟加载：长会话里图文交错的配图全量拉会一次吃掉几 MB，手机上这正是最贵的一笔。
+  // 视口内的浏览器本来就会立刻取，
   // 视口外的等滚到跟前——滚动位置由 Chrome 的 scroll anchoring 兜住，不会跳。
   box.querySelectorAll('img').forEach(img => { img.loading = 'lazy'; img.decoding = 'async' })
   // 引用角标：[N] → sup（TreeWalker 跳过 pre/code/a，防误伤代码块/链接内的 [1]）
@@ -504,8 +504,8 @@ const actBtn = (cls, title, icon, label) => {
   b.className = 'md-act ' + cls
   b.title = title
   // 只有「运行」带文字：预览/复制是通用图标语义，业务用户一眼认得；
-  // 而「在云端沙盒里跑一段代码」不是通用语义，纯图标（22px 的小圆圈）在真机截图里几乎看不出来
-  // 2026-10-17 真机验收：用户是业务岗，图标不可发现 = 这个能力等于不存在。
+  // 而「在云端沙盒里跑一段代码」不是通用语义，纯图标（22px 的小圆圈）很难被发现，
+  // 图标不可发现就等于这个能力不存在。
   b.innerHTML = label ? icon + `<span class="md-act-label">${label}</span>` : icon
   return b
 }
@@ -766,7 +766,7 @@ export const snapshotEChart = async code => {
     document.body.appendChild(host)
     fixChartHeader(opt, EC_SNAPSHOT_H)
     // 动画必须关：setOption 后同步取位图拿到的是第 0 帧——柱子和扇形还从 0 长起来，
-    // 导出的图就只剩坐标轴和图例（实测柱状图差异像素 4.6%、饼图 0.1%）。
+    // 导出的图就只剩坐标轴和图例。
     opt.animation = false
     inst = echarts.init(host, echartsThemeName, { renderer: 'canvas', width: EC_SNAPSHOT_W, height: EC_SNAPSHOT_H })
     inst.setOption(opt)
@@ -786,9 +786,8 @@ export const snapshotEChart = async code => {
  * 同步把已画好的图表搬回**当前**容器——流式期间每帧都要调一次，否则图表会闪。
  *
  * <p>为什么画图那套幂等不够：v-html 每 120ms 换掉整棵正文，图表容器随之变成空节点；
- * 而补画走 300ms 节流（实测约 600ms 才落一拍）。中间这段窗口里图表根本不在屏上，
- * 用户看到的就是「图一闪一闪」——实测一屏只有 12% 的帧画着图，canvas 自始至终只有一个，
- * 说明闪的不是重画，是**离场**。
+ * 而补画走 300ms 节流。中间这段窗口里图表根本不在屏上，用户看到的就是「图一闪一闪」
+ * ——canvas 自始至终只有一个，说明闪的不是重画，是**离场**。
  *
  * <p>所以搬回必须和 DOM 更新在同一个任务里（渲染后、浏览器绘制前）做完，绘制时才带着图出场；
  * 顺带写上 data-done，节流那一拍再跑到时直接跳过，不会再 init 一遍。

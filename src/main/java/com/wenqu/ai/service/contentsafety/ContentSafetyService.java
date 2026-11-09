@@ -19,14 +19,14 @@ import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
 /**
- * 内容安全网关（Phase 3 · P12）。
+ * 内容安全网关。
  *
  * <p><b>两道闸的位置</b>：
  * <ul>
  *   <li><b>输入闸</b>在问答入口（{@code ChatService#chat} 与运行中插话）——命中 block 规则就不发起这一轮，
  *       一次模型调用都不花，用户当场看到「哪条规则拦的」；</li>
  *   <li><b>出口闸</b>在<b>两处模型出口的流式响应上</b>（框架路 {@code MeteredModel}、Spring AI 路
- *       {@code DynamicOpenAiChatModel}），与 Phase 2 的配额闸同形、同一份判据。挂在模型出口而不是
+ *       {@code DynamicOpenAiChatModel}），与配额闸同形、同一份判据。挂在模型出口而不是
  *       推送出口，是因为要拦的东西必须在<b>离开供应商那一刻</b>就被处置：下游有正文缓冲、过程台账、
  *       框架会话状态、事件日志、接流快照五条拷贝，在推送侧拦等于违规内容照样落库，只是不显示。</li>
  * </ul>
@@ -67,7 +67,7 @@ public class ContentSafetyService {
 
     /**
      * 编译后的规则表（按侧分开缓存，判定路径上零编译）。
-     * <p>规则缓存按<b>租户</b>分格（Phase 4 多租户）：{@code c_ai_content_rule} 是租户归属的表，
+     * <p>规则缓存按<b>租户</b>分格：{@code c_ai_content_rule} 是租户归属的表，
      * 共用一份全局缓存等于「谁最后刷新算谁的」——A 租户的屏蔽词会在 15 秒内审 B 租户的回答，
      * 反向也一样（B 的合规词表在 A 这里变成空表＝该拦的没拦）。两类错都是静默的，只能从键设计上堵掉。
      */

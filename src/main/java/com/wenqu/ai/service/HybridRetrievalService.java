@@ -57,7 +57,7 @@ public class HybridRetrievalService {
     private final ResourceVisibilityService resourceVisibilityService;
     /** 知识库共享范围：检索过滤要按"文档 + 所属库"两级判定（与管理接口同口径） */
     private final KnowledgeBaseService knowledgeBaseService;
-    /** P1 GraphRAG 图扩展（收口处调用；GraphRagService 不反向依赖本服务，无环） */
+    /** GraphRAG 图扩展（GraphRagService 不反向依赖本服务，无环） */
     private final GraphRagService graphRagService;
     /** ACL 标签编译：把可见库集合 + 当前身份编译成向量索引的 filter 表达式（检索时过滤） */
     private final DocumentAclTags documentAclTags;
@@ -162,7 +162,7 @@ public class HybridRetrievalService {
     }
 
     /**
-     * 混合检索：返回按融合分降序的结果（已过滤弃用文档）。旧签名委托，外部调用方不受影响。
+     * 混合检索：返回按融合分降序的结果（已过滤弃用文档）。
      */
     public List<Hit> search(String query) {
         return search(query, null);
@@ -175,9 +175,9 @@ public class HybridRetrievalService {
 
     /**
      * 混合检索；{@code kbIds} 限定检索的知识库（空=全部）。
-     * <p><b>不启用权限补采</b>（{@code adaptiveTopK=false}）——等价于改动前的行为，供量化评估
+     * <p><b>不启用权限补采</b>（{@code adaptiveTopK=false}），供量化评估
      * （{@code RetrievalEvaluationService}）与检索调试面板使用：它们比较的是检索策略本身，
-     * 补采会改变 topK 语义、让跨轮基线不可比（评测基线是调 vectorWeight/阈值后重标定的锚点）。
+     * 补采会改变 topK 语义、让跨轮基线不可比。
      */
     public List<Hit> search(String query, RetrievalDiag diag, java.util.Collection<String> kbIds) {
         return search(query, diag, kbIds, false);
@@ -239,9 +239,9 @@ public class HybridRetrievalService {
         Set<String> blockedDocIds = loadNonRetrievableDocIds(kidMap);
 
         // 4. 可见范围过滤（**晚绑定**：召回后才判，只查「本轮命中的那些文档」）
-        //    旧实现是召回前全表扫 c_ai_document 算出不可见集合——文档量涨上去就是每问一次全表，
+        //    若召回前全表扫 c_ai_document 算不可见集合，文档量涨上去就是每问一次全表，
         //    且 ACL 真相被复制进向量 metadata 造成两处口径（详见 DocumentAclTags 类注释）。
-        //    现在只对命中块涉及的 docId 批量查一次（WHERE id IN (...)，主键索引、亚毫秒级），
+        //    这里只对命中块涉及的 docId 批量查一次（WHERE id IN (...)，主键索引、亚毫秒级），
         //    判定全部收敛到 ResourceVisibilityService 一处，改共享范围下次检索即生效、无需重写索引。
         //    docKb 顺手带回 docId→kbId：关键词路只拿到 docId，没有它就无法按库取权重。
         Map<String, String> docKb = new HashMap<>();
@@ -270,7 +270,7 @@ public class HybridRetrievalService {
                 log.debug("[RAG] 跳过已停用知识块: kid={}", kid);
                 continue;
             }
-            // 向量的库门字段是 @kbId；RedisVectorStore 可能丢 metadata（M6），退 docId→kbId 映射
+            // 向量的库门字段是 @kbId；RedisVectorStore 可能丢 metadata，退 docId→kbId 映射
             String kbId = metadataKbId(doc);
             if (kbId == null || kbId.isBlank()) kbId = docId == null || docId.isBlank() ? null : docKb.get(docId);
             double vt = params.getOrDefault(kbId, defaults).vecThreshold();
@@ -314,7 +314,7 @@ public class HybridRetrievalService {
             result.add(f.hit.withScore(p.vectorWeight() * f.vec + p.keywordWeight() * f.kw));
         }
         result.sort((a, b) -> Double.compare(b.score(), a.score()));
-        // P1 GraphRAG 图扩展：按库级开关一跳补块（真实块衰减分并入，diag.graphExpanded 计数）
+        // GraphRAG 图扩展：按库级开关一跳补块（真实块衰减分并入，diag.graphExpanded 计数）
         try {
             result = graphRagService.expand(result, kbIds, diag);
         } catch (Exception e) {
@@ -452,7 +452,7 @@ public class HybridRetrievalService {
             result.sort((a, b) -> Double.compare(b.score(), a.score()));
             return result;
         } catch (Exception e) {
-            // L1 fail-loud：多路检索超时/失败，降级首路（不再静默）
+            // fail-loud：多路检索超时/失败，降级首路（不再静默）
             if (diag != null) diag.multiTimeout();
             log.warn("[FAIL-LOUD] 多路检索超时/失败，降级首路: {}", e.getMessage());
             return search(qs.get(0), diag, kbIds);
@@ -497,10 +497,10 @@ public class HybridRetrievalService {
      * 再由 {@link #loadVisibleDocIdsOfHits} 剔除无权文档。于是「topK 配额」被同库内的无权文档占掉，
      * 用户实际拿到的有效命中少于 topK（私有文档占比越高损失越大），而系统以为召回正常。
      * 本方法把固定配额改成<b>「要够 N 条有效结果才停」</b>：先按配置 topK 取一次，
-     * 若因权限被剔除导致有效条数不足，按实测保留率放大 topK <b>补采一次</b>，过滤仍由调用方做。
+     * 若因权限被剔除导致有效条数不足，按保留率放大 topK <b>补采一次</b>，过滤仍由调用方做。
      * 权限过滤从「削减结果」变成「参与配额计算」。
      *
-     * <p><b>为什么不做「文档级 ACL 下推索引」</b>（2026-10-06 复核否决，见 cd57b47）：
+     * <p><b>为什么不做「文档级 ACL 下推索引」</b>：
      * 下推要求权限变更时重写向量标签，而标签陈旧即越权；且要覆盖 6 处写入点 + QA/子块附加索引，
      * 极易做漏。补采是纯读侧优化，不碰任何写入路径，风险面小得多。
      *
@@ -550,7 +550,7 @@ public class HybridRetrievalService {
             List<Document> second = similaritySearchAcross(stores, query, aclFilter, target, diag, params);
             return second.isEmpty() ? first : second;
         } catch (Exception e) {
-            // M4 fail-loud：向量路失败不再静默空
+            // fail-loud：向量路失败不再静默空
             if (diag != null) diag.vectorFailed(e.getMessage());
             log.warn("[FAIL-LOUD] 向量检索失败: {}", e.getMessage());
             return List.of();
@@ -648,14 +648,13 @@ public class HybridRetrievalService {
      * <p>返回 Map 而不是 List：阈值/权重按库取，调用方必须知道每个 store 属于哪个库。
      * <p>（去重语义仍保留：同一 store 实例只出现一次，键取该库 id。）
      *
-     * <p><b>为什么必须在建实例之前按可见性收窄（2026-10-06 修）</b>：
+     * <p><b>为什么必须在建实例之前按可见性收窄</b>：
      * 原来 kbIds 为空时直接 {@code allStores()} 展开<b>全部</b>已绑模型的库，不看当前用户能不能读。
      * 后果不是「多搜了点无关内容」这么轻——向量空间互不相通，逐库检索意味着<b>每个库都要用自己绑定的
      * 向量模型把 query 嵌一遍</b>，于是：
      * <ol>
      *   <li><b>烧别人的额度</b>：A 用户提问会去调 B 用户知识库绑定的供应商，B 的账户被扣费、
-     *       B 收到「额度不足」通知，而 A 全程不知情（实测：yuanke 名下库的嵌入模型额度耗尽后，
-     *       admin 提问反复报「阿里百炼平台额度不足」，对话模型用的却是 admin 自己的 glm-5.3）；</li>
+     * B 收到「额度不足」通知，而 A 全程不知情。</li>
      *   <li><b>报错归属错位</b>：库里那套「通知归属人不是管理员」的设计是对的（供应商谁建归谁），
      *       但检索期越权代打把这条设计的前提破坏了——owner 从没 configuring 过这条链路，却在替别人背额度；</li>
      *   <li><b>拖慢每一轮问答</b>：无谓的嵌入往返 + 无谓的索引 KNN。</li>
@@ -713,11 +712,11 @@ public class HybridRetrievalService {
             List<Knowledge> hits = keywordSearchMeili(query, terms, limit);
             if (!hits.isEmpty()) return hits;
             // 索引空/未重建时不静默返回空，回退 MySQL 保证召回（首次切换引擎未 reindex 的常见场景）
-            // L2：仅调试展示，不扰用户
+            // 仅调试展示，不扰用户
             if (diag != null) diag.keywordFallback();
             log.debug("[Keyword] Meilisearch 无命中，回退 MySQL 关键词召回");
         } else {
-            // M13 fail-loud：Meili 不可用（探测失败/401/冷却期）→ 降级 MySQL 要标记
+            // fail-loud：Meili 不可用（探测失败/401/冷却期）→ 降级 MySQL 要标记
             if (diag != null) diag.keywordFailed();
             log.warn("[FAIL-LOUD] Meilisearch 不可用，关键词降级 MySQL LIKE（{}）", keywordIndexService.debugUnavailableReason());
         }
@@ -826,7 +825,7 @@ public class HybridRetrievalService {
         } catch (Exception e) {
             // 取消：未开始的任务直接出队，避免超时后仍堆积无人取用的慢 LIKE 查询
             future.cancel(true);
-            // M4 fail-loud：关键词路失败/超时不再静默空
+            // fail-loud：关键词路失败/超时不再静默空
             if (diag != null) diag.keywordBusy();
             log.warn("[FAIL-LOUD] 关键词检索失败/超时: {}", e.getMessage());
             return List.of();
@@ -909,7 +908,7 @@ public class HybridRetrievalService {
         List<String> images = imagesFromMd(md);
         Integer chunkIndex = null;
         String titlePath = null;
-        // M6 RedisVectorStore 可能丢弃 metadata（docId/title/images 均可能为空），用批量加载的知识块兜底
+        // RedisVectorStore 可能丢弃 metadata（docId/title/images 均可能为空），用批量加载的知识块兜底
         if (k != null) {
             if (docId == null || docId.isEmpty()) docId = String.valueOf(k.getDocId());
             if (title.isEmpty()) title = k.getTitle();
@@ -930,7 +929,7 @@ public class HybridRetrievalService {
     /**
      * 批量加载向量命中的知识块（一次 selectBatchIds，替代逐条 selectById；失败返回空 Map 走原降级）。
      * QA 增强：未命中的 id 查问答对表解析回来源块（vector id = qa.id；元数据可能被 RedisVectorStore
-     * 丢弃，M6——以表为准不依赖 metadata）
+     * 丢弃，以表为准不依赖 metadata）
      */
     private Map<String, Knowledge> loadKnowledgeBatch(List<Document> vectorDocs) {
         if (vectorDocs == null || vectorDocs.isEmpty()) return Map.of();
@@ -1021,7 +1020,7 @@ public class HybridRetrievalService {
                         .map(d -> String.valueOf(d.getId()))
                         .collect(Collectors.toSet());
             } catch (Exception ex) {
-                // 双重失败：放行但 error 级告警（不再静默；diag 透传见 M4）
+                // 双重失败：放行但 error 级告警（不再静默）
                 log.error("[FAIL-LOUD] 内存过滤也失败，非生效文档可能进入上下文: {}", ex.getMessage());
                 return Set.of();
             }
@@ -1031,7 +1030,7 @@ public class HybridRetrievalService {
     /**
      * 编译<b>库门</b>过滤表达式并下推到向量索引（检索时过滤）。
      *
-     * <p><b>下推范围仅限库级</b>（2026-10-06 晚绑定改造后）：文档级 ACL 依赖
+     * <p><b>下推范围仅限库级</b>：文档级 ACL 依赖
      * 「未配置共享=跟随库」这种 DB 状态规则，索引层无法表达，改由
      * {@link #loadVisibleDocIdsOfHits} 在检索后按命中块实时判定（晚绑定）。
      * 库级满足下推三前提——集合小（几十个库）、每次实时算（无陈旧问题）、能整库挡掉召回。
@@ -1041,7 +1040,7 @@ public class HybridRetrievalService {
      *   <li><b>检索后过滤</b>：先无差别召回 topK，再在 Java 里逐条判可见性并剔除
      *       ——<b>不可见文档照样占掉 topK 名额</b>。topK=15 若 12 条是别人的私有文档，
      *       本用户只剩 3 条可用，召回率被 ACL 悄悄吃掉；</li>
-     *   <li><b>检索时过滤</b>（现，库级）：把「可见库 IN(...)」作为 RediSearch filter 下推，
+     *   <li><b>检索时过滤</b>（库级）：把「可见库 IN(...)」作为 RediSearch filter 下推，
      *       无权库的文档<b>在 KNN 之前</b>就被排除，topK 名额不被整库浪费。</li>
      * </ul>
      *
@@ -1079,8 +1078,7 @@ public class HybridRetrievalService {
      * 当前用户可读的知识库 id 集合（<b>库门下推的唯一来源，每次实时计算</b>）。
      *
      * <p><b>为什么库级能下推而文档级不能</b>：库集合是几十量级、每轮实时算（<b>无陈旧问题</b>），
-     * 且能整库挡掉召回；文档级可见性曾依赖 per-row 配置（share_config），现已随共享功能移除——
-     * 文档恒跟随所属库，库门即全部判定。
+     * 且能整库挡掉召回；文档恒跟随所属库，库门即全部判定。
      *
      * <p><b>查库表而非文档表</b>：库数量是几十量级，文档表会随使用持续增长。
      *
@@ -1108,19 +1106,18 @@ public class HybridRetrievalService {
     /**
      * <b>检索期可见范围判定（晚绑定，唯一入口）</b>：返回<b>本轮命中块涉及</b>的文档里，当前用户可见的 docId 集合。
      *
-     * <p><b>为什么是「按命中块查」而不是「全表算不可见集」</b>（2026-10-05 晚绑定改造）：
-     * 旧实现每问一次都 {@code selectList} 全表 {@code c_ai_document}（无 WHERE）并逐行解析
+     * <p><b>为什么是「按命中块查」而不是「全表算不可见集」</b>：
+     * 若每问一次都 {@code selectList} 全表 {@code c_ai_document}（无 WHERE）并逐行解析
      * 权限配置，文档量涨上去就是硬伤；更本质的问题是它与「写入侧把 ACL 烘焙进向量
-     * metadata」并存，<b>同一份权限被两处各解析一次</b>，口径易漂移
-     * （「OR 门里没有标签=永不可见」那次 bug 即由此而来）。
-     * <p>现在只查本轮命中的那些文档（向量路 metadata + 关键词路 docId 合并去重），
+     * metadata」并存，<b>同一份权限被两处各解析一次</b>，口径易漂移。
+     * <p>这里只查本轮命中的那些文档（向量路 metadata + 关键词路 docId 合并去重），
      * 走主键索引、亚毫秒级。
      *
      * <p><b>两级判定，与管理接口同源</b>（全部走 {@link ResourceVisibilityService}，判定逻辑只此一处）：
      * 文档可见 = 所属库可读（共享功能移除后文档恒跟随所属库，库门即唯一文档级判定）。
      *
      * <p><b>异常时的取向</b>：查询失败返回<b>空集</b>（=什么都不可见）而非放行全部。
-     * 这是与旧实现相反的取舍，理由是<b>权限判定失败应当 fail-closed</b>：
+     * 取舍，理由是<b>权限判定失败应当 fail-closed</b>：
      * 放行全部等于把一次 DB 抖动变成越权，而空集最坏只是「检索不到、报个错」。
      * 用户重试或运维介入即可恢复，不会泄露内容。
      */

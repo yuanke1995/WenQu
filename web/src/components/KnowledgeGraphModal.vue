@@ -237,7 +237,7 @@ function renderFromData(data, focus) {
   nodes.forEach(n => { nameToId.set(n.name, n.id); idToName.set(n.id, n.name) })
   const maxDegree = Math.max(1, ...nodes.map(n => n.degree || 1))
   // 节点**不能带 id 字段**：echarts graph 在节点有 id 时以 id 作为 links 的匹配键，
-  // 下面按 name 引用的连线会被整体静默丢弃（表现为「只有点没有线」，实测踩过）。
+  // 下面按 name 引用的连线会被整体静默丢弃。
   // 实体 id 的映射走 nameToId（点击换 id 查详情），不进 echarts。
   const chartNodes = nodes.map(n => {
     const item = {
@@ -500,7 +500,7 @@ window.addEventListener('resize', onWinResize)
 
 watch(() => props.open, open => {
   if (open) {
-    // a-modal 内容是懒挂载：open 置真后的下一个 tick 容器才在 DOM（P1 原实现同款时序，实测够用）
+    // a-modal 内容是懒挂载：open 置真后的下一个 tick 容器才在 DOM
     triplePage.value = 1
     graphView.value = 'graph'
     searchQ.value = ''

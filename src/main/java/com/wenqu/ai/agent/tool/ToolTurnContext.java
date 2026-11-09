@@ -5,16 +5,16 @@ import org.springframework.ai.tool.ToolCallback;
 import java.util.Map;
 
 /**
- * 一轮问答交给工具执行层的契约（P1 seam 的 Consumer 侧）。
+ * 一轮问答交给工具执行层的契约（Consumer 侧）。
  * <p>
- * 为什么是接口而不是一句「把 TurnState 传进去」：TurnState 是本轮的可变状态袋（P6 刀 0 才从 ChatService
- *   的私有内部类提成顶层类），工具层不该因为「想读一个本轮的事实」就依赖它的类型，
+ * 为什么是接口而不是一句「把 TurnState 传进去」：TurnState 是本轮的可变状态袋，
+ * 工具层不该因为「想读一个本轮的事实」就依赖它的类型，
  * 86 个字段、什么都有。守卫链一旦认识它，就再也拿不出问答流水线之外——工作流节点与技能那两条
  * 现在完全绕过守卫的旁路（{@code WorkflowEngine.mcpBody}/{@code skillBody}）会永远接不上来。
  * 本接口只声明工具执行层真正需要的十余件事，其余本轮状态留在问答侧自己管。
  * <p>
  * 生命周期：一轮一个。实现方（框架侧由 {@code WenquAgentxTools} 按轮建）不许把它存进静态字段
- * 或跨轮复用——这一条正是本次迁移要修掉的老写法。
+ * 或跨轮复用。
  *
  * @author yuanke
  */
@@ -40,7 +40,7 @@ public interface ToolTurnContext {
     /** 本轮已用步数 */
     int stepsTaken();
 
-    /** 占用一步（记账；由预算守卫在放行时调用，与迁移前「过闸即计数」的时序一致） */
+    /** 占用一步（记账；由预算守卫在放行时调用） */
     void takeStep();
 
     // ==================== 审批 ====================
@@ -60,7 +60,7 @@ public interface ToolTurnContext {
     // ==================== 权限档位 ====================
 
     /**
-     * 本轮生效的权限档位（P2）。默认 null = 本轮无档位判定，守卫不做档位裁剪。
+     * 本轮生效的权限档位。默认 null = 本轮无档位判定，守卫不做档位裁剪。
      * <p>与装配侧 {@link ToolMountContext#permissionPolicy()} 必须是<b>同一份</b>对象：档位禁用的工具
      * 在工具表里消失，若执行侧另算一份，就会出现「挂着的被拦、没挂的反而能跑」这种最难查的错配。
      */
@@ -98,7 +98,7 @@ public interface ToolTurnContext {
 
     /**
      * 结果回给模型之前的加工：把 MCP 工具命中注册为引用来源（正文里的 [N] 才有对应条目）。
-     * <b>在观测之前调用</b>——工具卡片要显示注册后的那份文本，与迁移前一致。
+     * <b>在观测之前调用</b>——工具卡片要显示注册后的那份文本。
      */
     String decorateResult(ToolInvocation inv, String result);
 

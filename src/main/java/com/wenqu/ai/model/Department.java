@@ -20,7 +20,7 @@ public class Department {
     @TableId(type = IdType.ASSIGN_UUID)
     private String id;
 
-    /** 父部门ID（空=根节点；2026-09-26 升级树形） */
+    /** 父部门ID（空=根节点） */
     private String parentId;
 
     /** 部门名称 */

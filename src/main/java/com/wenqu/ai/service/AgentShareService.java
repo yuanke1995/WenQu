@@ -28,7 +28,7 @@ import java.util.List;
 @Service
 @RequiredArgsConstructor
 public class AgentShareService {
-    /** 统一审计事件（Phase 3）：同一份格式串派生日志与结构化事件，不再两处抄 */
+    /** 统一审计事件：同一份格式串派生日志与结构化事件，不再两处抄 */
     private final AuditService audit;
 
 
@@ -59,7 +59,7 @@ public class AgentShareService {
                               java.util.Set<String> guestMcpServers, boolean variablesEnabled) {
     }
 
-    /** 游客发图是否开启（列可能为 NULL——存量行由 SchemaMigrator 补列前就是 NULL，按关闭兜底） */
+    /** 游客发图是否开启（列可能为 NULL，按关闭兜底） */
     public static boolean guestImagesOn(AgentShare share) {
         return share != null && share.getGuestImagesEnabled() != null && share.getGuestImagesEnabled() == 1;
     }
@@ -193,7 +193,7 @@ public class AgentShareService {
 
     /**
      * 发布访问统计：每次游客成功发起对话 +1（best-effort，失败仅日志，绝不影响对话主链路）。
-     * 用 COALESCE 兜底未补列的老实例（SchemaMigrator 补列前 visit_count 为 NULL）。
+     * 用 COALESCE 兜底未补列的老实例（老实例该列为 NULL）。
      */
     public void incrementVisit(String shareId) {
         if (shareId == null || shareId.isBlank()) return;

@@ -119,7 +119,7 @@ const load = async () => {
 const openCreate = () => { editing.value = null; showEdit.value = true }
 const openEdit = row => { editing.value = row; showEdit.value = true }
 
-// ==================== P1 GraphRAG：图谱弹窗（§5 组件化，搜索定位/实体三元组/源块溯源在组件内） ====================
+// ==================== GraphRAG：图谱弹窗（§5 组件化，搜索定位/实体三元组/源块溯源在组件内） ====================
 const graphModal = ref(false)
 const graphKb = ref(null)
 const openGraph = kb => {

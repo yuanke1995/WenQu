@@ -7,10 +7,10 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** ModelOutputParser 的孤儿闭标签闸（真机 2026-11-07 泄漏案）与既有行为的回归。本目录约定不入库。 */
+/** ModelOutputParser 的孤儿闭标签闸与既有行为的回归。本目录约定不入库。 */
 class ModelOutputParserTest {
 
-    /** 真机 2026-11-07 原始形态：只有第一块带开标签，后面把闭标签当每条建议的收尾符。 */
+    /** 只有第一块带开标签，后面把闭标签当每条建议的收尾符。 */
     @Test
     void orphanClosesAreSwallowedAndFirstBlockStillChips() {
         String raw = "结论一句。\n\n<related>把「申请试用」按钮接到真实表单或邮箱，我直接改好"
@@ -55,7 +55,7 @@ class ModelOutputParserTest {
         assertEquals("对比  写法说明与 </b> 标签", body.toString());
     }
 
-    /** 正常两块 + 未闭合块（流截断）的老口径不回归。 */
+    /** 正常两块 + 未闭合块（流截断）的口径不回归。 */
     @Test
     void normalBlocksAndUnclosedStillWork() {
         ModelOutputParser p = new ModelOutputParser();

@@ -6,10 +6,10 @@ import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
 
 /**
- * 提问工具：只剩 {@code askUser}（人在回路）。
+ * 提问工具：{@code askUser}（人在回路）。
  *
- * <p>2026-11-06 物理退役了 10 把纯计算工具：这些能力模型原生具备，常驻只占 schema；
- * 外部世界能力仍走 MCP/Provider 壳。退役工具的描述符、实现与前端展示映射一并删除。
+ * <p>纯计算类能力模型原生具备，常驻只占 schema；外部世界能力走 MCP/Provider 壳，
+ * 因此这里只保留需用户拍板的提问入口。
  *
  * @author yuanke
  */

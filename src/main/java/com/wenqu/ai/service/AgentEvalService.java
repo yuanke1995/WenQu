@@ -268,8 +268,8 @@ public class AgentEvalService {
             throw new BizException("智能体评测功能已被管理员停用");
         }
         if (allowSideEffects) {
-            // 安全边界（plan §10）：默认只读评测；「允许副作用工具」需要显式开关——P1 仅支持只读，
-            // 打开即拒，宁可报错也不静默放宽（后续版本再评估放开口径）
+            // 安全边界（plan §10）：默认只读评测；「允许副作用工具」需要显式开关——当前仅支持只读，
+            // 打开即拒，宁可报错也不静默放宽。
             throw new BizException("评测默认只读，暂不支持放开有副作用的工具");
         }
         Agent agent = mustManageable(agentId);
@@ -403,7 +403,7 @@ public class AgentEvalService {
 
     // ==================== 对比 ====================
 
-    /** 两次运行对比（plan §6.4 P1 口径：两次运行逐用例对比，不比较绝对版本配置） */
+    /** 两次运行对比（plan §6.4 口径：两次运行逐用例对比，不比较绝对版本配置） */
     public Map<String, Object> compare(String agentId, String runAId, String runBId) {
         mustReadable(agentId);
         AgentEvalRun a = runMapper.selectById(runAId);
@@ -481,8 +481,8 @@ public class AgentEvalService {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("runA", a);
         out.put("runB", b);
-        // 指标可空（评判不可用的运行没有综合分、失败运行没有耗时）——Map.of 不吃 null（NPE 真机踩过：
-        // 20:11 那次「无法评分」的运行一对比就 500），这里必须用允许 null 的 LinkedHashMap
+        // 指标可空（评判不可用的运行没有综合分、失败运行没有耗时）——Map.of 不吃 null，
+        // 这里必须用允许 null 的 LinkedHashMap。
         Map<String, Object> metrics = new LinkedHashMap<>();
         metrics.put("passRateA", raRate);
         metrics.put("passRateB", rbRate);

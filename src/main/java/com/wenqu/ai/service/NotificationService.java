@@ -67,7 +67,7 @@ public class NotificationService {
     private final UserRoleService userRoleService;
     /** Web Push：一条<b>新</b>通知落库后推给本人已订阅的设备（旁路，失败只记日志） */
     private final WebPushNotifier webPush;
-    /** 邮件外发（P1）：落库后判规则并写投递台账；SMTP 发送由后台任务承担 */
+    /** 邮件外发：落库后判规则并写投递台账；SMTP 发送由后台任务承担 */
     private final MailDispatchService mailDispatch;
 
     /** 列表单次上限（防止一次拉爆；前端铃铛面板一屏足够） */
@@ -244,7 +244,7 @@ public class NotificationService {
                             .in(com.wenqu.ai.model.User::getUid, adminUids));
             for (com.wenqu.ai.model.User u : admins) {
                 if (u.getStatus() == null || u.getStatus() != 1) continue;
-                // 收件人限定在本租户（Phase 4）：A 家的配额触顶不该去敲 B 家管理员的铃铛。
+                // 收件人限定在本租户：A 家的配额触顶不该去敲 B 家管理员的铃铛。
                 // 未绑定线程（系统任务）保持原语义——它本来就在跨租户做事，此时过滤会把所有通知都吞掉
                 String bound = com.wenqu.ai.util.TenantContext.current();
                 if (bound != null && !bound.equals(u.getTenantId() == null || u.getTenantId().isBlank()

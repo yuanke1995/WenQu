@@ -108,14 +108,14 @@ public class UserContextInterceptor implements HandlerInterceptor {
             request.setAttribute(ATTR_AUTHENTICATED, Boolean.TRUE);
             // 多角色装载（并集判定口径）：鉴权一律用 roles()，role() 仅展示
             RequestUser.set(u.getUid(), u.getDepartmentId(), userRoleService.rolesOf(u.getUid()));
-            // 租户绑定（Phase 4）：与身份同处装载，行级过滤由 WenquTenantLineHandler 拼在 SQL 上。
+            // 租户绑定：与身份同处装载，行级过滤由 WenquTenantLineHandler 拼在 SQL 上。
             // 空归属按 default 处理（存量行加列时由数据库默认值回填，不该出现空，出现也不能变成「看全部」）
             com.wenqu.ai.util.TenantContext.bind(
                     u.getTenantId() == null || u.getTenantId().isBlank()
                             ? com.wenqu.ai.util.TenantContext.DEFAULT_TENANT : u.getTenantId());
             return true;
         }
-        // 无令牌：先看是不是服务账号通道（批次 C3，非人类身份），再看 API Key，都不是才落 SYSTEM。
+        // 无令牌：先看是不是服务账号通道（非人类身份），再看 API Key，都不是才落 SYSTEM。
         // 服务账号的判定口径与人类用户完全一致（角色绑在 c_ai_user_role，uid=svc:{id}）——
         // 差异只在「凭据是长期机器令牌、不在 c_ai_user 表、不能登录网页」。
         String svcToken = request.getHeader("X-Service-Token");
@@ -125,7 +125,7 @@ public class UserContextInterceptor implements HandlerInterceptor {
             String svcUid = com.wenqu.ai.service.ServiceAccountService.uidOf(acc);
             request.setAttribute(ATTR_AUTHENTICATED, Boolean.TRUE);
             // 先装载归属租户，再取角色。两处都不能省：
-            // ① 租户取建号时记下的那一个，不写死 default——角色定义快照按租户键控（批次 F），
+            // ① 租户取建号时记下的那一个，不写死 default——角色定义快照按租户键控，
             //    绑错租户的症状是「角色行查得到、但该租户的角色表里没这条定义」，
             //    于是判定静默按停用角色处理，调用方只拿到一句 403，看不出问题在哪；
             // ② 顺序反了则角色查询跑在无租户上下文里（谓词不注入），读到的是跨租户全集。

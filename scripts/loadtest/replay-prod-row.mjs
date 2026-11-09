@@ -1,8 +1,8 @@
 /**
  * 把现网某一轮的落库行导入**本地**库，供无头浏览器用同一份前端构建渲染真模型输出。
  *
- * 场景：无头浏览器是全新 profile，拿不到现网登录态；线上静态又与本地 `web/dist` 逐字节相同
- * （见 `docs/chat-blocks-rollout.md` §3.3），所以把行搬回本地渲染，结论对线上成立。
+ * 场景：无头浏览器是全新 profile，拿不到现网登录态；线上静态又与本地 `web/dist` 逐字节相同，
+ * 所以把行搬回本地渲染，结论对线上成立。
  * 只写本地 `wenqu_ai`；不改任何现网数据。
  *
  * 用法：
@@ -44,7 +44,7 @@ rows.forEach((r, i) => {
       ${h(r.timeline)},${h(r.process_text)},${h(r.tokens)},${i + 1},'${r.create_time}',0,${h(r.blocks)},${h(r.turn_id)},${h(r.end_reason)},'default');`)
 })
 writeFileSync(`/tmp/${localId}.sql`, sql.join('\n'))
-// 用文件描述符喂 stdin：200KB+ 的整段 SQL 走管道时 mysql 客户端会停在那里等退出（实测卡死）。
+// 用文件描述符喂 stdin：200KB+ 的整段 SQL 走管道时 mysql 客户端会停在那里等退出。
 execFileSync('mysql', ['-uroot', '-h127.0.0.1', 'wenqu_ai', '--default-character-set=utf8mb4'], {
   stdio: [openSync(`/tmp/${localId}.sql`, 'r'), 'inherit', 'inherit'],
 })

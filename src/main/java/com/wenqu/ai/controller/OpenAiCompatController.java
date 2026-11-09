@@ -94,7 +94,7 @@ public class OpenAiCompatController {
         if (messages.size() > MESSAGES_MAX_COUNT) {
             return bad("invalid_request_error", "messages 过多（上限 " + MESSAGES_MAX_COUNT + " 条）");
         }
-        // Function calling（P1 §3.4）：只接受只读工具，副作用工具 fail-closed 不暴露；
+        // Function calling：只接受只读工具，副作用工具 fail-closed 不暴露；
         // 未知工具静默忽略（不在声明集合里就不可能在响应里出现 tool_calls）
         Set<String> declaredTools = new LinkedHashSet<>();
         JSONArray tools = body.getJSONArray("tools");
@@ -177,7 +177,7 @@ public class OpenAiCompatController {
             }
             CollectingSseEmitter sink = new CollectingSseEmitter();
             String completionId = "chatcmpl-" + UUID.randomUUID().toString().replace("-", "").substring(0, 24);
-            // 真流式（P1 · OpenAI 端点补齐）：先建通道、注册正文增量转发，再开跑；
+            // 真流式：先建通道、注册正文增量转发，再开跑；
             // 尾帧与清理由后台等待线程完成，不能等整轮跑完才返回 SseEmitter
             if (stream) {
                 return openAiStream(sink, completionId, agentId, sessionId, uid, apiKeyId, finalQuestion, start, declaredTools);
@@ -266,7 +266,7 @@ public class OpenAiCompatController {
     }
 
     /**
-     * 真增量流式（P1 · OpenAI 端点补齐）：先返回 SseEmitter，正文 token 到达即转发，
+     * 真增量流式：先返回 SseEmitter，正文 token 到达即转发，
      * 整轮结束后补 usage 尾帧与 [DONE]。临时会话在后台收尾时删除，外层 finally 不再重复删。
      */
     private org.springframework.http.ResponseEntity<?> openAiStream(CollectingSseEmitter sink, String completionId,
@@ -441,7 +441,7 @@ public class OpenAiCompatController {
                 || n.startsWith("wf_") || n.startsWith("localBrowser");
     }
 
-    // ==================== Responses API（P1 · OpenAI 端点补齐 3-2） ====================
+    // ==================== Responses API ====================
 
     @Operation(summary = "Responses API（OpenAI 兼容）")
     @PostMapping("/api/ai/v1/responses")

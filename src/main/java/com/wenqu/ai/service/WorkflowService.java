@@ -50,13 +50,13 @@ import java.util.UUID;
 import java.util.function.Consumer;
 
 /**
- * 工作流管理：DSL 是唯一真源（架构决策见排班计划），本服务做
+ * 工作流管理：DSL 是唯一真源，本服务做
  * 存储 + 校验 + 编译 dry-run 的编排，以及调试运行（run）与运行记录查询。
  * <p>
  * 归属口径：谁建归谁——仅<b>创建者本人</b>可见可管（{@link ResourceVisibilityService#canRead}），
  * 启用发布语义后 api/agent 触发同样要求「对触发者可见」。
  * <p>
- * M4 的三种触发与各自跑的 DSL：
+ * 三种触发与各自跑的 DSL：
  * <ul>
  *   <li><b>manual</b>（画布调试／本服务 {@link #run}）：跑<b>草稿</b> DSL，支持人工审核挂起；</li>
  *   <li><b>api</b>（外部 Key 触发 {@link #runByApi}）：跑<b>已发布</b> DSL，遇审核节点 fail-loud；</li>
@@ -87,7 +87,7 @@ public class WorkflowService {
     private static final int SCHEDULE_MAX_RETRY = 1;
 
     /**
-     * run 级执行线程池（M5 硬超时用）：把图调用从请求线程挪到独立线程，主线程带时限等待。
+     * run 级执行线程池（硬超时用）：把图调用从请求线程挪到独立线程，主线程带时限等待。
      * cached + daemon：并发量 = 同时在跑的工作流数，线程随用随建、空闲即回收。
      */
     private static final java.util.concurrent.ExecutorService RUN_POOL =
@@ -116,7 +116,7 @@ public class WorkflowService {
     private final UserRoleService userRoleService;
 
     /**
-     * 异步运行派发池（第 2 期：run 异步化 + 排队可见）：core=max=workflow.maxConcurrentRuns，
+     * 异步运行派发池（run 异步化 + 排队可见）：core=max=workflow.maxConcurrentRuns，
      * 有界队列 workflow.runQueueCapacity——队列满即拒绝（fail-loud，不无限堆积）。
      * 与 run 级超时用的 {@link #RUN_POOL} 分开：异步任务若与超时包装同池，池满时会自我等待死锁。
      * 并发上限与队列容量都在运行时现读（见 {@link #registerDispatchHotReload()}、{@link RuntimeCapacityQueue}）。
@@ -124,7 +124,7 @@ public class WorkflowService {
     private volatile java.util.concurrent.ThreadPoolExecutor dispatchPool;
 
     /**
-     * 运行主体（触发者身份）：M4 起触发者不一定是登录用户——外部 API Key 触发时身份是
+     * 运行主体（触发者身份）：触发者不一定是登录用户——外部 API Key 触发时身份是
      * <b>Key 的归属用户</b>（{@code c_ai_api_key.created_by}），故身份显式封装传递，
      * 不直接读 {@link RequestUser}（API Key 请求没有登录令牌，ThreadLocal 是 SYSTEM）。
      */
@@ -400,7 +400,7 @@ public class WorkflowService {
 
     /**
      * 编译闸（保存/发布前 fail-loud）：结构校验管不到的「图不可编译」问题——典型如并行分支没有汇聚到
-     * 同一节点——此前只能拖到运行时才炸，且框架报错指向两跳外的节点，用户没法自查。
+     * 同一节点——拖到运行时才炸，且框架报错指向两跳外的节点，用户没法自查。
      * 这里复用引擎编译（框架仍是唯一裁决者，不自建第二套汇聚分析），只把典型报错翻译成可操作的指引。
      */
     private void assertCompilable(WorkflowDsl dsl) {
@@ -418,7 +418,7 @@ public class WorkflowService {
     }
 
     // --------------------------------------------------------------------------------------------------
-    // M5：模板库 / 委派编排转工作流
+    // 模板库 / 委派编排转工作流
     // --------------------------------------------------------------------------------------------------
 
     /** 内置模板清单（见 {@link WorkflowTemplates}）：dsl 字段画布/创建接口直接可用 */
@@ -437,7 +437,7 @@ public class WorkflowService {
     }
 
     /**
-     * M5：把智能体的「委派编排关系」一键转成工作流 DSL 并创建（衔接 AgentsPage 的委派配置）。
+     * 把智能体的「委派编排关系」一键转成工作流 DSL 并创建（衔接 AgentsPage 的委派配置）。
      * <p>
      * 转换语义：{@code subAgentIds} 的并行委派 → start 扇出 N 个 subagent 节点（各自委派对应
      * 子智能体、prompt 均取用户问题）→ template 节点聚合各视角 → llm 总结 → end。
@@ -552,7 +552,7 @@ public class WorkflowService {
     }
 
     // --------------------------------------------------------------------------------------------------
-    // M4：发布与版本（草稿可改，已发布行为冻结；回滚 = 以历史版本 DSL 再发一版）
+    // 发布与版本（草稿可改，已发布行为冻结；回滚 = 以历史版本 DSL 再发一版）
     // --------------------------------------------------------------------------------------------------
 
     /**
@@ -670,7 +670,7 @@ public class WorkflowService {
     }
 
     // --------------------------------------------------------------------------------------------------
-    // M4：API 触发 / 智能体绑定（跑已发布版本）
+    // API 触发 / 智能体绑定（跑已发布版本）
     // --------------------------------------------------------------------------------------------------
 
     /**
@@ -812,7 +812,7 @@ public class WorkflowService {
     }
 
     // --------------------------------------------------------------------------------------------------
-    // 调试运行（M1）
+    // 调试运行
     // --------------------------------------------------------------------------------------------------
 
     /**
@@ -832,7 +832,7 @@ public class WorkflowService {
     }
 
     /**
-     * 第 2 期：异步调试运行——创建即返回 {@code status=queued} 的 run，实际执行在派发池里跑，
+     * 异步调试运行——创建即返回 {@code status=queued} 的 run，实际执行在派发池里跑，
      * 前端订阅 {@code /run/{runId}/stream} 边跑边亮。DSL 选择与同步 {@link #run} 同口径
      * （管理权跑草稿、共享只读跑已发布版本）；DSL 在入队前先解析（坏图 fail-loud，不占队列）。
      */
@@ -953,7 +953,7 @@ public class WorkflowService {
     }
 
     /**
-     * 取消排队中的运行（第 2 期）：条件更新 queued→failed，与任务启动的 queued→running 互斥——
+     * 取消排队中的运行：条件更新 queued→failed，与任务启动的 queued→running 互斥——
      * 只有一个能成功。已在运行 / 已结束则报错（不做中断式取消：运行中的 LLM/HTTP 节点无法安全打断）。
      */
     public WorkflowRun cancelQueuedRun(String workflowId, String runId) {
@@ -1030,7 +1030,7 @@ public class WorkflowService {
     }
 
     /**
-     * 实时观测通道（有观众的运行才装）：节点完成推 trace、节点开始推 node_start（第 4 期并发可视化）。
+     * 实时观测通道（有观众的运行才装）：节点完成推 trace、节点开始推 node_start（供并发可视化）。
      * 两个回调的异常都在 ctx 侧兜住，不影响执行。
      */
     private void installStreamSinks(String runId, WorkflowRunCtx ctx) {
@@ -1169,7 +1169,7 @@ public class WorkflowService {
     }
 
     /**
-     * 执行图（M5 run 硬超时）：{@code workflow.runTimeoutSeconds} &gt; 0 时把图调用丢进独立线程池、
+     * 执行图（run 硬超时）：{@code workflow.runTimeoutSeconds} &gt; 0 时把图调用丢进独立线程池、
      * 主线程带时限等待——超时 cancel(true) 中断执行线程并抛 {@link RunTimeoutException}。
      * 图内部跑在框架的 reactor 调度上，中断能解开"主线程阻塞等待"这一层；真正的长任务
      * （LLM/HTTP/子智能体）各有节点级超时兜底，不会无限占用公共池。
@@ -1282,7 +1282,7 @@ public class WorkflowService {
     }
 
     /**
-     * M5 失败检查点续跑（挂起-快照-短路重放的失败场景复用）：仅运行发起人可续跑；
+     * 失败检查点续跑（挂起-快照-短路重放的失败场景复用）：仅运行发起人可续跑；
      * 按 run 锁定的 DSL 快照恢复执行，<b>已成功节点短路回放</b>（不重复消耗 LLM 调用），
      * 只有失败节点与其下游真正执行。恢复在本次请求内同步完成——返回的就是终态 run。
      * <p>
@@ -1541,7 +1541,7 @@ public class WorkflowService {
     }
 
     /**
-     * 订阅某次运行的进度流（第 2 期）：读取权校验后，按 run 快照（当前状态 + 已产生 trace）订阅——
+     * 订阅某次运行的进度流：读取权校验后，按 run 快照（当前状态 + 已产生 trace）订阅——
      * 订阅前完成的节点由快照回放补齐，已终态则回放后立即关闭（断线重连 / 迟到订阅都不丢时间线）。
      */
     public org.springframework.web.servlet.mvc.method.annotation.SseEmitter subscribeRunStream(String workflowId, String runId) {
@@ -1550,7 +1550,7 @@ public class WorkflowService {
     }
 
     // --------------------------------------------------------------------------------------------------
-    // 第 1 期：定时触发（cron 绑定已发布版本）与运行终态回调
+    // 定时触发（cron 绑定已发布版本）与运行终态回调
     // --------------------------------------------------------------------------------------------------
 
     /**
@@ -1596,7 +1596,7 @@ public class WorkflowService {
         if (setUrl) up.set(Workflow::getCallbackUrl, callbackUrl);
         if (setSecret) up.set(Workflow::getCallbackSecret, secret);
 
-        // ---- 第 4 期：webhook 入站 ----
+        // ---- webhook 入站 ----
         // 开关切换不删令牌（重新打开沿用，外部系统不必改配置）；首次开启或显式重置时才生成新令牌
         boolean webhookOn = asBool(body.get("webhookEnabled"));
         String webhookToken = row.getWebhookToken();
@@ -1606,7 +1606,7 @@ public class WorkflowService {
         up.set(Workflow::getWebhookEnabled, webhookOn ? 1 : 0);
         up.set(Workflow::getWebhookToken, webhookToken);
 
-        // ---- 第 4 期：事件触发订阅 ----
+        // ---- 事件触发订阅 ----
         if (body.containsKey("eventTriggers")) {
             Object v = body.get("eventTriggers");
             List<Map<String, Object>> subs = new ArrayList<>();
@@ -1644,7 +1644,7 @@ public class WorkflowService {
         m.put("nextRunAt", row.getScheduleNextRunAt());
         m.put("callbackUrl", row.getCallbackUrl());
         m.put("callbackSecretSet", row.getCallbackSecret() != null && !row.getCallbackSecret().isBlank());
-        // 第 4 期：webhook（令牌明文回显——管理权已把关，外部系统配置时要从这里复制）+ 事件订阅
+        // webhook（令牌明文回显——管理权已把关，外部系统配置时要从这里复制）+ 事件订阅
         m.put("webhookEnabled", Integer.valueOf(1).equals(row.getWebhookEnabled()));
         m.put("webhookToken", row.getWebhookToken());
         m.put("webhookPath", row.getWebhookToken() == null || row.getWebhookToken().isBlank()
@@ -1740,7 +1740,7 @@ public class WorkflowService {
     }
 
     // --------------------------------------------------------------------------------------------------
-    // 第 4 期：webhook 入站触发 + 事件触发派发
+    // webhook 入站触发 + 事件触发派发
     // --------------------------------------------------------------------------------------------------
 
     /**
@@ -1784,7 +1784,7 @@ public class WorkflowService {
     }
 
     /**
-     * 事件触发运行（第 4 期，{@code WorkflowEventTriggerService} 派发）：守卫与定时同口径——
+     * 事件触发运行（由 {@code WorkflowEventTriggerService} 派发）：守卫与定时同口径——
      * 未发布/含审批节点抛 BizException（调用方按「跳过并告警」处理），归档拒绝。异步入派发池，
      * 排队/取消/SSE 与调试运行完全一致。触发身份 = 工作流创建者。
      */

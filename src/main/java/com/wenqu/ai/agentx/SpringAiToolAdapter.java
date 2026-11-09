@@ -42,7 +42,7 @@ public final class SpringAiToolAdapter extends ToolBase {
      * 而问渠的工具是 Spring AI 的 {@code ToolCallback}，框架不认识它们的签名，绑不进去。
      * 这里是唯一还拿得到 {@code ToolCallParam} 的地方，所以状态也从这里递进 {@code ToolContext}。
      * <p>不能改用 {@code AgentSession.inspect()} 那份代替：它是从会话日志重放出来的<b>只读快照</b>，
-     * 改完不回写、也看不到本轮还没收尾时写进去的条目（真机踩过：清单每轮都报「回读失败」）。
+     * 改完不回写、也看不到本轮还没收尾时写进去的条目。
      */
     public static final String CTX_AGENT_STATE = "agentscopeAgentState";
 
@@ -56,8 +56,8 @@ public final class SpringAiToolAdapter extends ToolBase {
     /**
      * 框架引擎这条路上「问人」这件事是否真的有人能答。
      * <p>人在回路还没接框架确认事件之前必须为 false：返回 {@code ask} 会挂出一张没人能批的卡，
-     * 整轮悬到超时——实测就是这个形状（无正文、无终态）。接上 {@code AgentSession.respond} 之后
-     * 由引擎传 true，权限判定本身不改。
+     * 整轮悬到超时（无正文、无终态）。接上 {@code AgentSession.respond} 后由引擎传 true，
+     * 权限判定本身不改。
      */
     private final boolean approvalCanAsk;
     /**

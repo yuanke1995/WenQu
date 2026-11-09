@@ -119,7 +119,7 @@
       </a-form>
     </a-modal>
 
-    <!-- 租户品牌（P1 · 3B）：登录页名称/logo/主色/副标题；空=恢复默认 -->
+    <!-- 租户品牌：登录页名称/logo/主色/副标题；空=恢复默认 -->
     <a-modal v-model:open="brandOpen" title="租户品牌" :confirm-loading="saving" @ok="saveBrand">
       <a-form layout="vertical" autocomplete="off">
         <a-form-item label="登录页展示名" extra="留空=用租户显示名；单租户部署留空即与现状一致">
@@ -295,7 +295,7 @@ async function doRestore (t) {
   } catch (e) { message.error(e.message || '恢复失败') }
 }
 
-// ---------- 租户品牌（P1 · 3B） ----------
+// ---------- 租户品牌 ----------
 const brandOpen = ref(false)
 const brandForm = ref({ id: '', brandName: '', brandLogo: '', brandColor: '', loginHint: '' })
 function openBrand (t) {

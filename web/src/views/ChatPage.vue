@@ -15,7 +15,7 @@
           <span class="head-ws-name">{{ sessionWorkspace.name }}</span>
         </button>
         <span class="head-tip" title="查看免责声明" @click="disclaimerVisible = true">AI 回答可能有误，重要信息请核实</span>
-        <!-- 头部动作区：右对齐一组，图标按钮无框安静（此前每个按钮各自 margin-left:auto 散落标题栏中间，视觉突兀） -->
+        <!-- 头部动作区：右对齐一组，图标按钮无框安静 -->
         <div class="head-actions">
           <button class="app-icon-btn" title="在本会话中查找（Ctrl/⌘ + F）" @click="openSearch">
             <search-outlined />
@@ -131,10 +131,10 @@
                     @click="openCompactSummary">{{ compactSummaryLoading ? '读取中…' : '查看摘要' }}</button>
           </MsgDivider>
           <!-- 模型切换记录：本轮回答与前一条回答的模型展示名不同才出现（发消息产生新回答的那一刻，切换选择器本身不产生记录）。
-               只点名换成了谁：这一行夹在两条回答中间，上一条是什么顺着看就有，两个名字并排会把行撑得比正文还长 -->
+               两侧名字都点名：只报「换成了谁」会让人读不出从哪儿换的，A → B 才是完整一句话 -->
           <MsgDivider v-if="modelSwitchInfo(m, i)" class="msd">
             <swap-outlined />
-            <span>模型已切换 → {{ modelSwitchInfo(m, i).toLabel }}</span>
+            <span>模型已切换 {{ modelSwitchInfo(m, i).fromLabel }} → {{ modelSwitchInfo(m, i).toLabel }}</span>
           </MsgDivider>
           </template>
           <template #user-meta="{ m, i }">
@@ -258,9 +258,8 @@
                               <ToolSpillButton v-if="lr.t.spillId" :id="lr.t.spillId" :tool="lr.t.name" kind="输出" />
                             </div>
                           </div>
-                          <!-- 咨询另一位助手（2026-11-07）：平铺行的详情里也挂子对话卡（问它/执行过程/它的回答
-                               +「完整过程」抽屉）。此前它只挂在 tl-card 路径上，DSH 平铺行成了主流后 subChat
-                               就没了着落（旧派遣卡点开只有入参/输出）——挂在这里两条路径同构 -->
+                          <!-- 咨询另一位助手：平铺行的详情里也挂子对话卡（问它/执行过程/它的回答
+                               +「完整过程」抽屉），两条路径同构 -->
                           <SubAgentChatCard v-if="isDispatchTool(lr.t.name) && (lr.t.subChat || (lr.t._steps && lr.t._steps.length))"
                                             :t="lr.t"
                                             :agent="lr.t.subChat ? agentBadgeOf(agentList, lr.t.subChat.agentId, lr.t.subChat.agentName) : null"
@@ -268,8 +267,7 @@
                                             :session-id="currentSessionId || ''" :turn-id="m.turnId || ''" />
                         </div>
                         <!-- 还没换来工具的尾部思考/独白：它就是「当前这一步」，自成一节。
-                             转圈只在真的还在长时出现（此前是写死的 loading，本轮答完它还在转）；
-                             整组可点开看正文（此前是纯文字，点了没反应）。正文另起一块，不能挤在 flex 行里。 -->
+                             转圈只在真的还在长时出现；整组可点开看正文。正文另起一块，不能挤在 flex 行里。 -->
                         <template v-if="!lr.t">
                           <div class="tl-live-row" :class="{ run: tailNotesGrowing(m, lr.tailNotes), open: tailOpen(m, seg) }">
                             <button type="button" class="tl-live-tail-btn" @click.stop="toggleTail(m, seg)">
@@ -327,11 +325,11 @@
                                只活这一次、不落库，所以刷新后这一行是空的——卡片自己退回「跑了 N 步」 -->
                           <span v-if="t._live && t.status === 'start'" class="tl-live" :title="t._live">{{ t._live }}</span>
                           <span v-if="t.attempts > 1" class="tool-dur">重试 {{ t.attempts - 1 }} 次</span>
-                      <!-- 脚本扇出的规模（P3b）：不点开卡片也能看出"这一次跑了多少个子调用" -->
+                      <!-- 脚本扇出的规模：不点开卡片也能看出"这一次跑了多少个子调用" -->
                       <span v-if="fanHasBoard(t.fanOut)" class="tool-dur">{{ fanHead(t) }}</span>
                       <span v-if="fanRun(t)" class="fan-run">{{ fanRun(t) }}</span>
                           <span v-if="t.status === 'error'" class="tool-fail">失败</span>
-                          <!-- 这一轮的思考/独白并到步的行尾（原来各占一行标题，展开态一半高度是它买单的）：
+                          <!-- 这一轮的思考/独白并到步的行尾（不各占一行标题，免得展开态一半高度由它买单）：
                                它本来就长在「想了这些才动手」的那个位置；标签只写类别名，量级展开后自己看 -->
                           <NoteTag v-if="ti === 0 && !groupHasBar(seg)" v-for="(nt, ni) in seg.notes" :key="ni" :m="m" :note="nt" />
                           <span class="tl-caret tl-caret-btn" :class="{ open: toolCardOpen(t) }"><caret-right-outlined /></span>
@@ -347,7 +345,7 @@
                                           :sources="m.sources"
                                           :session-id="currentSessionId || ''" :turn-id="m.turnId || ''" />
                         <div v-if="t._open" class="tl-card-body">
-                      <!-- 脚本扇出清单（P3b 过程下钻）：一次运行内部调了什么、各多久、有没有被挡下。
+                      <!-- 脚本扇出清单：一次运行内部调了什么、各多久、有没有被挡下。
                            子调用刻意不各占一张顶层卡片（会被刷成一堵墙），结构就收在这里 -->
                       <template v-if="fanHasBoard(t.fanOut)">
                         <div class="tl-io-label">{{ fanTitle(t.fanOut) }}</div>
@@ -361,7 +359,7 @@
                           </div>
                           <div v-if="t.fanOut.omitted" class="fan-more">另有 {{ t.fanOut.omitted }} 次未列出</div>
                         </div>
-                        <!-- 额度与并发上限（P3b 实时面板）：跑着的时候看这条才知道"离撞上限还有多远"，
+                        <!-- 额度与并发上限：跑着的时候看这条才知道"离撞上限还有多远"，
                              终态那份也带着——刷新后同样能看出这一次占了几成预算 -->
                         <div v-if="fanBudget(t.fanOut)" class="fan-budget">{{ fanBudget(t.fanOut) }}</div>
                       </template>
@@ -1321,7 +1319,7 @@
            正文里刚亮起的角标，用户得点开侧栏再往下翻。移动端 sheet 一直把它排第一，这里对齐。
            有引用才显示整卡（空则隐藏，不占版面，与产物卡同规则）。
            卡头可折叠：来源多时（11 个来源就是 11 个分组行）整卡会把下面的卡顶出首屏。
-           任务清单原先在本栏首位，2026-10-22 挪到输入框上方常驻（见 #above 的 .todo-bar）。 -->
+           任务清单在输入框上方常驻（见 #above 的 .todo-bar）。 -->
       <div v-if="groupedSources.length" class="rp-card">
         <button type="button" class="rp-card-head" @click="srcCardOpen = !srcCardOpen">
           <span class="rp-label">引用来源 · {{ groupedSources.length }} 个来源</span>
@@ -1360,7 +1358,7 @@
       <!-- 本会话产物：有文件才显示整卡（空则隐藏，不占版面）。预览＝进预览台（与气泡内产物卡、产物页
            同一判据同一待遇），下载走同一份签名地址；更多入口跳产物页 -->
       <!-- 本会话交付：按交付包列（目标跨轮一个包、其余按轮一个包），点开进交付抽屉；
-           不再把每件产物摊成一行——那是气泡里刚被收掉的那套形状 -->
+           不再把每件产物摊成一行。 -->
       <div v-if="deliveryPackages.length" class="rp-card">
         <div class="rp-label">交付 · {{ deliveryPackages.length }} 个包</div>
         <button v-for="d in deliveryPackages" :key="d.anchorKey || d.name" type="button" class="rp-dlv"
@@ -1441,7 +1439,7 @@
         <div v-for="(p, i) in procs" :key="p.tag" class="rp-proc"
              :class="{ 'is-killing': killingTag === p.tag }" :style="{ '--proc-i': i }">
           <!-- 命令行独占一行：它和「跑了多久/端口」挤同一行时，右栏一窄就被 flex 压成零宽，
-               于是这张卡最该认得出的东西（这是哪个服务）整个消失（真机 2026-10-25 用户截图复现） -->
+               于是这张卡最该认得出的东西（这是哪个服务）整个消失 -->
           <div class="rp-proc-cmd">
             <span class="rp-proc-dot" aria-hidden="true" />
             <span class="rp-proc-cmd-t" :title="p.command">{{ p.command }}</span>
@@ -1643,7 +1641,7 @@
         <div class="thinkp">
           <div class="thinkp-title">深度思考</div>
           <div v-if="thinkPanelCtxText || thinkPanelCaps.visible" class="thinkp-row-wrap">
-            <!-- 上下文窗口只报登记上限：档位选择已退役，窗口一律按模型登记的最大值走 -->
+            <!-- 上下文窗口只报登记上限：窗口一律按模型登记的最大值走 -->
             <div v-if="thinkPanelCtxText" class="thinkp-row"
                  title="模型登记的上下文窗口：一次能带进的资料与历史总量，也决定长对话什么时候开始折上下文">
               <span class="thinkp-row-label">上下文窗口</span>
@@ -1703,7 +1701,7 @@
               </span>
             </div>
             <div v-if="!ctxCapData.rows.length" class="ctxcap-empty">本轮还没有实测用量（随用量事件下发）</div>
-            <!-- 手动压缩上下文的常驻入口（此前只有 /compact 一条键盘路径）：压完本卡数字不动，
+            <!-- 手动压缩上下文的常驻入口：压完本卡数字不动，
                  腾出的量在 toast 里报，占用率要到下一轮落库才反映在这里 -->
             <div class="ctxcap-foot">
               <button class="app-btn ghost ctxcap-compact" type="button"
@@ -1793,7 +1791,7 @@ import DeliveryPanel from '../components/DeliveryPanel.vue'
 import AnswerBody from '../components/AnswerBody.vue'
 import AnswerViewerHost from '../components/AnswerViewerHost.vue'
 
-// 聊天引擎（M1 引擎抽取）：引擎逻辑见 src/chat/useChatEngine.js，纯函数/常量见 src/chat/projections.js
+// 聊天引擎：引擎逻辑见 src/chat/useChatEngine.js，纯函数/常量见 src/chat/projections.js
 import { useChatEngine } from '../chat/useChatEngine'
 import { useChatSearch } from '../chat/useChatSearch'
 import Composer from '../chat/Composer.vue'
@@ -2078,8 +2076,7 @@ function revealApprovalCard (id) {
 
 
 // ==================== 执行过程（事件账本回放） ====================
-// 「这一轮是怎么跑出来的」此前只有两种看法：正开着页面时看实时过程簇，或事后翻通知/产物倒推。
-// 账本（c_ai_session_event）落地后按写入顺序可枚举了，这里给它一个读口——按轮展开，只给摘要。
+// 「这一轮是怎么跑出来的」由事件账本（c_ai_session_event）按写入顺序枚举，这里给它一个读口——按轮展开，只给摘要。
 // 取数与渲染都在共用组件 SessionEventsPanel 里（移动壳的底部 sheet 用的就是同一份，不各写一遍）。
 const eventsOpen = ref(false)
 // 非空=只看这一轮（气泡上的「过程」带进来的 turnId）；空=会话级最近几轮
@@ -2181,7 +2178,7 @@ const openPlanFromRail = p => {
   if (!m || !m.planCard) return
   openPlanViewer(m, p.mi)
 }
-// 免责声明（与旧版同一份文案）
+// 免责声明
 const disclaimerVisible = ref(false)
 const DISCLAIMER_TEXT = `
 
@@ -2205,7 +2202,7 @@ AI 生成内容可能存在**错误、遗漏、过时或与实际情况不符**�
 
 如发现回答有误或内容不当，可通过回答下方的反馈按钮告知我们，帮助我们持续改进。`
 
-// ===== 引用相关度 + 角标联动（P1 #5）=====
+// ===== 引用相关度 + 角标联动 =====
 // 分值口径：rerankScore=重排模型相关度（重排实际执行才有），否则回落检索融合分 score；都缺则不显示。
 // 分值属于调参排障信息，默认不对普通用户露出：显示统一挂 debugDisplayVisible（chat.retrievalDebugEnabled）
 const setSupHighlight = (refN, on) => {
@@ -2810,7 +2807,7 @@ const ensureRefCandidates = () => {
  *  两处键盘都走 onPanelNavKeydown，焦点在哪都能继续 ↑↓/Enter/Esc */
 const focusAddSearch = () => nextTick(() => {
   if (addSearchable.value) { addSearchEl.value?.focus?.(); return }
-  // 退回一级时把焦点交回编辑区：antd 的 focus() 在 keydown 事件流里调用不生效（实测焦点落回 BODY，
+  // 退回一级时把焦点交回编辑区：antd 的 focus() 在 keydown 事件流里调用不生效（焦点会落回 BODY，
   // 后续 Esc 全打空），同一事件流里连原生 focus() 也留不住，必须 setTimeout 挪出事件流；
   // click 流（点「+」打开）没这问题，多延一拍无害
   setTimeout(() => {
@@ -3170,7 +3167,7 @@ const copyAnswer = async mi => {
   if (!m || !m.content) { message.warning('该回答无可复制内容'); return }
   await copyText(m.content.trim())
 }
-/** 复制用户的问题（长会话里把问题转走/复问用；此前只有回答能复制） */
+/** 复制用户的问题（长会话里把问题转走/复问用） */
 const copyUserMessage = m => {
   const txt = (m?.content || '').trim()
   if (!txt) { message.warning('该消息无可复制内容'); return }
@@ -3348,7 +3345,7 @@ const editMessage = mi => {
   editingText.value = m.content
   // 编辑卡里的附件条：attachData（重发载荷 {name,mime,fileId}）与 attachments（展示 {name,mime,size}）合并。
   //
-  // 三种形态必须分开说（此前一律写成「已失效」，把还能用的也说没了）：
+  // 三种形态必须分开说（一律写成「已失效」会把还能用的也说没了）：
   //  · 带 fileId 且服务端确认字节还在 → 原样带走。刷新/切会话回来也一样，凭据现在随消息一起落库。
   //  · 带 fileId 但服务端说没了 → 「已过保留期」（默认 24h 周期清理），要重传。
   //  · 没 fileId（凭据开始落库之前发的存量消息）→ 「不可重发」，也要重传。
@@ -3575,7 +3572,7 @@ const updateTailSpacer = () => {
   tailSpacer.value = Math.max(0, Math.round(el.clientHeight - padTop - tail))
 }
 
-// ==================== 聊天引擎（M1 引擎抽取：逻辑主体在 src/chat/useChatEngine.js） ====================
+// ==================== 聊天引擎（逻辑主体在 src/chat/useChatEngine.js） ====================
 // 接缝：滚动/收面板/聚焦经 hooks 回到视图（保持原 DOM 行为），路由落点 chatPath='/chat'。
 // 引擎调用必须放在 scroll/updateTailSpacer/closeAllPanels/focusInput 这些 const 之后（TDZ）。
 const {
@@ -3618,15 +3615,15 @@ const {
   // 检索 / 用量 / 来源
   lastAi, groupedSources, ctxTokens, ctxCapData, ctxRingDash,
   ctxRingLevel, panelAi, sessionArtifacts, sessionTodos,
-  // 清单的计数与显隐判据吃引擎那一份（此前长在本页，于是移动壳拿不到、清单在手机上整条不可见）
+  // 清单的计数与显隐判据吃引擎那一份，PC 与移动壳共用。
   todoSummary, todoBarVisible,
   // 这一会话的历史有没有取回来（与「取回来了、就是空的」是两条判据，见引擎 historyError 注释）
   historyError, retryHistory,
-  // 沙盒目录同样整族吃引擎：取数、判据、折树、下载与存为产物（2026-10-25 下沉，与任务清单同一刀）
+  // 沙盒目录同样整族吃引擎：取数、判据、折树、下载与存为产物
   sandboxFiles, sandboxRows, sandboxCount, sandboxBytes, sandboxRest,
   sandboxErr, sandboxLocalOffline, sandboxLoading, sandboxTaken, sessionSandboxActive,
   loadSandboxFiles, toggleSandboxDir, sandboxDownload, sandboxTake, sbSize,
-  // 后台进程那一族同样吃引擎（2026-10-26 下沉）：本页只留这张卡的摆法
+  // 后台进程那一族同样吃引擎：本页只留这张卡的摆法
   procs, procErr, procLoading, procCardVisible, killingTag, loadSandboxProcs, procAge, killProc,
   // 图片与附件（chip 的删除走编辑区 → onKeys 剪枝，不再需要按下标移除）
   pendingImages, MAX_FILES, pendingFiles, hasUploadingFile, addFiles,
@@ -3635,7 +3632,7 @@ const {
   mentionTab, mentionQuery, mentionLoading, mentionKbs, mentionDocs, pendingMentions,
   isMentioned, toggleMention, removeMention, loadMentionCandidates, MAX_MENTIONS,
   mentionDocStatus, mentionKbFiltered, mentionAgents, mentionAgentFiltered, mentionDocFiltered,
-  // # 历史引用（上限常量此前漏了，编辑卡里点历史引用会直接抛 ReferenceError）
+  // # 历史引用（上限常量在编辑卡里同样要用到）
   pendingHistoryRefs, histPool, isHistPicked, toggleHistoryRef, removeHistoryRef, MAX_HISTORY_REFS,
   // 会话生命周期 / 重新生成 / 分支 / 初始化
   switchSession, createNewSession, workspaceEpoch, regenerate, variantSwitching, switchBranch, ready,
@@ -3864,12 +3861,10 @@ const wsTitle = computed(() => {
   return t + '（点开进工作区页）'
 })
 // ==================== 本会话沙盒目录 ====================
-// 取数、判据（sessionSandboxActive）、折树与三个重拉时机已全部下沉到 chat/useChatEngine.js
-// （2026-10-25 与任务清单同一刀）：过去整块长在本页，移动壳拿不到，于是「助手在沙盒里做了文件」
-// 这件事在手机上完全不可见。本页只留右栏那张卡的摆法。
-// 后台进程那一族（procs / procErr / procCardVisible / killProc / 秒针）2026-10-26 同样下沉，
-// 理由一模一样：手机上「有个服务正占着端口」此前看不见。下载与存为产物（sandboxDownload / sandboxTake）
-// 也住在引擎里——两端那张卡要的是同一个动作、同一句失败话术。
+// 取数、判据（sessionSandboxActive）、折树与三个重拉时机都在 chat/useChatEngine.js 里统一一份：
+// PC 这张卡与移动壳共用，本页只留右栏那张卡的摆法。
+// 后台进程那一族（procs / procErr / procCardVisible / killProc / 秒针）也在引擎里，
+// 下载与存为产物（sandboxDownload / sandboxTake）同样住在引擎里——两端那张卡要的是同一个动作、同一句失败话术。
 // 折树（sandboxTree / sandboxRows）、计数与体积文案（sandboxCount / sandboxBytes / sandboxRest / sbSize）
 // 全在引擎那一份里：PC 这张卡与移动壳「状态与来源」里那段读的是同一批值。
 
@@ -4118,8 +4113,6 @@ const srcCardOpen = ref(true)
 // 而 sessionPlans 依赖引擎解构出的 messages。若这段排在解构之前，getter 会在
 // messages 的 const 还未初始化时被调用，抛 TDZ「Cannot access 'S' before initialization」
 // （表现为 ChatPage 渲染函数内报错）。
-// 原先 sessionPlans 独占一格时无事，正因为没有任何东西在 setup 阶段急切读它；
-// 加了这个 watch 才暴露出来。
 //
 // 计划卡默认折叠（沉底），但**有待确认计划时自动展开**：
 // 计划模式在等人批准，藏起来等于让「模型在等你裁决」这件事消失在侧栏底部——
@@ -4488,7 +4481,7 @@ watch(() => pendingAsk.value?.ask, (a) => {
   // 仅在有 deadline 时启心跳；归零后停止（由 onToolStatus 收卡，或用户已提交）
   if (a && a.deadline) {
     // 挂卡的这一刻就先对表：后台标签页里 1s 心跳会被节流到分钟级，不校准则首屏倒计时
-    // 按上一次 askNow 的旧值算，能比真实剩余多出好几分钟（2026-10-07 真机复测见到 11:32 / 10:00）
+    // 按上一次 askNow 的旧值算，能比真实剩余多出好几分钟
     askNow.value = Date.now()
     if (!askTimer) askTimer = setInterval(() => { askNow.value = Date.now() }, 1000)
   } else if (askTimer) {
@@ -4610,7 +4603,7 @@ watch(messages, () => {
   if (editingIdx.value == null) return
   if ((messages.value[editingIdx.value] || {}).messageId !== editingMessageId.value) cancelEdit()
 })
-// Mermaid/ECharts 图表的补画已随正文下沉到 AnswerBody（每个 .md 容器画自己那份）：
+// Mermaid/ECharts 图表的补画在 AnswerBody 里（每个 .md 容器画自己那份）：
 // 流式期间也画——echarts 半截 JSON 有截断探测兜底（pending→补全自愈），mermaid 落
 // 「接收中」提示等流结束补画，节流与流结束边沿的处理都在 AnswerBody 的 watch 里。
 
@@ -4836,8 +4829,8 @@ onMounted(async () => {
 .tl-process-head:hover { color: var(--app-text2); background: var(--app-panel-2); }
 .tl-process-title { font-weight: 500; color: var(--app-text2); }
 .tl-process { margin: 2px 0; padding: 2px 10px; border-left: 2px solid var(--app-border); color: var(--app-text3); font-size: 12.5px; line-height: 1.7; white-space: pre-wrap; word-break: break-word; }
-/* 思考段：一轮思考一行，长在它发生的位置（旧版那块「气泡顶上的深度思考面板」已退役——
-   多轮思考首尾粘成一块读不出时序）。头部与过程独白同款窄条，展开体保留 markdown 排版。 */
+/* 思考段：一轮思考一行，长在它发生的位置，避免多轮思考首尾粘成一块读不出时序。
+   头部与过程独白同款窄条，展开体保留 markdown 排版。 */
 .tl-think-block { margin: 2px 0; }
 .tl-think-head { display: inline-flex; align-items: center; gap: 5px; border: 0; background: none; padding: 2px 4px; margin: 0 0 2px -4px; border-radius: 4px; cursor: pointer; user-select: none; font-size: 12px; color: var(--app-text3); }
 .tl-think-head:hover { color: var(--app-text2); background: var(--app-panel-2); }
@@ -5102,7 +5095,7 @@ onMounted(async () => {
 .ctx-ring.danger .ctx-ring-val { stroke: var(--app-danger); }
 
 
-/* 脚本扇出清单（P3b）：一行一次子调用，窄栏时摘要自己换行，不横向溢出 */
+/* 脚本扇出清单：一行一次子调用，窄栏时摘要自己换行，不横向溢出 */
 .fan-list { display: flex; flex-direction: column; gap: 2px; margin: 2px 0 8px; font-size: 12px; }
 .fan-row { display: grid; grid-template-columns: 20px 96px 60px 1fr; gap: 6px; align-items: baseline; }
 .fan-row.err .fan-name, .fan-row.err .fan-brief { color: var(--app-danger); }
@@ -5114,7 +5107,7 @@ onMounted(async () => {
 /* 在途那条（实时面板）：还没有结果可摘要，用主色标出"正在跑"而不是留一行空白 */
 .fan-row.run .fan-name { color: var(--app-accent); }
 .fan-row.run .fan-dur { color: var(--app-accent); }
-/* 额度/并发上限/交付数一行（P3b 实时面板）：清单之下、入参之上，弱文本不抢正文 */
+/* 额度/并发上限/交付数一行：清单之下、入参之上，弱文本不抢正文 */
 .fan-budget { color: var(--app-text3); font-size: 11px; margin: 2px 0 8px; }
 /* 运行未完成的那三种收尾（超时/沙盒故障/退出码非 0）：警示色，挂在卡片头上不点开也看得见 */
 .fan-run { color: var(--app-warn); font-size: 11px; }
@@ -5415,7 +5408,7 @@ onMounted(async () => {
 /* 三条消息分隔线（压缩点 / 模型切换 / 流尾当场那条）共用的宽度约定：列宽收进**内边距**，
    不给这条 flex 项本身设 max-width——组件靠 flex-basis:100% 独占一行，而 max-width 会把
    100% 的基准宽压到 860，于是行内容器一旦宽过两倍列宽，分隔线就和消息块挤进同一条 flex 行：
-   线探进左侧留白、气泡被推到右缘外、还被拉成整条消息那么高（2434 宽视口实测偏 430px）。
+   线探进左侧留白、气泡被推到右缘外、还被拉成整条消息那么高。
    收进 padding 后基准宽仍是满行（照旧独占一行），墨迹两端与正文列对齐。 */
 .cdiv, .msd, .cn-tail { padding-inline: max(0px, calc((100% - var(--chat-col)) / 2)); }
 /* 模型切换那条贴气泡更紧（组件默认 6px 上下等距偏松） */
@@ -5711,7 +5704,7 @@ onMounted(async () => {
 .askp-tag { flex: none; font-size: 12px; line-height: 1; padding: 5px 9px; border-radius: 999px; background: var(--app-panel-2); border: 1px solid var(--app-border); color: var(--app-text2); }
 /* 题面是唯一可伸缩项（basis 0 + grow）：题干长时在自己的盒内折行，倒计时/状态徽标/翻页器
    永远钉在首行右侧——否则长题干占满首行，margin-left:auto 会把倒计时单独挤到第二行，
-   右对齐孤零零一行（真机见过）。短题干时仍与徽标同一行，观感不变。 */
+   右对齐孤零零一行。短题干时仍与徽标同一行，观感不变。 */
 .askp-q { flex: 1 1 0; min-width: 0; font-size: 13.5px; font-weight: 600; color: var(--app-text); }
 /* 「可多选」= 这一题可以勾不止一个候选（不是「这张卡有几个问句」，那由翻页 ‹1/2› 说）。
    画在题面旁边，用户勾第二个之前就得知道勾第一个不会被顶掉 */
@@ -5933,7 +5926,7 @@ onMounted(async () => {
   @keyframes sheet-up { from { transform: translateY(100%); } to { transform: none; } }
 
   /* ---- 工具条窄屏形态：整条不换行 ----
-     症状（真机 375px）：模型名 deepseek-flash 把「思考」按钮压成竖排两字。
+     症状：模型名 deepseek-flash 把「思考」按钮压成竖排两字。
      成因：工具条是 flex 但没设 nowrap，子项宽度总和超过容器时浏览器换行，
      而按钮内的文字被压窄后按字符断行。
      修法：nowrap 已内建在 chat/ChatInput.vue 的 ≤768 块里（工具条本身归它）。
@@ -5975,10 +5968,9 @@ onMounted(async () => {
   .think-entry.on { color: var(--app-accent); border-color: var(--app-accent-border); background: var(--app-accent-weak); }
 }
 /* 宽度不作为 .think-entry 的显示条件 —— 显示与否只由 v-if="isCoarse" 决定。
-   此前这里写了 @media (hover:hover){ display:none }，与 v-if 判据不同源：
-   在 Surface 之类「(pointer:coarse) 与 (hover:hover) 同时成立」的设备上，
-   按钮会被渲染出来又被这条 CSS 藏掉，而 hover 通路已被 onModelOptionHover
-   的 isCoarse 早退堵死 —— 深度思考入口彻底消失。判据必须只有 isCoarse 一个。 */
+   判据必须只有 isCoarse 一个：在 Surface 之类「(pointer:coarse) 与 (hover:hover) 同时成立」的设备上，
+   若再用 CSS 按 hover 隐藏，按钮会被渲染出来又被藏掉，而 hover 通路已被 onModelOptionHover
+   的 isCoarse 早退堵死 —— 深度思考入口会彻底消失。 */
 /* 工作区未准备好的提示：一行、可操作，不占对话区；没有目录时给「去绑定」，离线时给「重新检查」 */
 .local-ws-hint { display: flex; width: fit-content; max-width: min(100%, 620px);
   align-items: center; justify-content: center; gap: 8px; margin: 0 auto 8px;

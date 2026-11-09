@@ -11,7 +11,7 @@ import java.util.Locale;
  * 各家网关报额度不足的形态差异极大：HTTP 402（Payment Required，部分厂商）、HTTP 429 但 code 是
  * {@code insufficient_quota}（OpenAI 系，429 另一个含义是瞬时限流）、HTTP 403 且文案是
  * 「model not in account / 余额不足」（国内厂商常见，甚至不是余额而是套餐到期）、
- * 纯文案无状态码（如 DeepSeek 的「Insufficient Balance」）。此前这些形态全部原样冒泡：
+ * 纯文案无状态码（如 DeepSeek 的「Insufficient Balance」）。若不归类，这些形态会原样冒泡：
  * 聊天侧被压成「AI 回复失败，请稍后重试」、向量侧在异步线程里只记一行日志——用户既没收到通知，
  * 也不知道该去哪里改。
  *
@@ -58,21 +58,21 @@ public final class ModelQuotaGuard {
             "账户余额", "账号余额", "余额已用尽", "欠费", "已欠费", "计费额度", "免费额度",
             "insufficient balance", "insufficient quota", "exceeded your current quota",
             "quota exceeded", "out of credit", "billing", "arrearage", "payment required",
-            // 厂商的「免费额度用尽」是英文原文（实测阿里云百炼：403 "Free quota exhausted. To continue…"）。
+            // 厂商的「免费额度用尽」是英文原文（如 403 "Free quota exhausted"）。
             // 不收这一条的后果：两条运行时的流错误都被判成通用的「AI 回复失败，请稍后重试」，
             // 用户等一会重试到永远——这件事的处置和额度不足是同一个（去充值或换模型）
             "free quota exhausted", "quota exhausted", "free quota",
             // 火山系（DeepSeek 官方 API）的 5 小时窗口配额：code 是连写的 AccountQuotaExceeded，
             // 文案是 "You have exceeded the 5-hour usage quota"。上面两条带空格的判据都够不着它，
             // 于是这条真额度问题会被判成「瞬时限流」或「无响应」——而窗口配额虽然会自己恢复，
-            // 用户要等的是一整段窗口，与「稍后重试」说的几十秒不是一件事（真机 2026-11-03 21:48 线上 429）
+            // 用户要等的是一整段窗口，与「稍后重试」说的几十秒不是一件事。
             "quotaexceeded", "usage quota",
             "account balance", "not in account",   // 「model not in account」：套餐内无此模型权限，实质同为额度问题
             "insufficient permissions to query the model",  // 同上，OpenAI 表述
             // 问渠自己的配额闸拒起来发的是中文整句（UsageQuotaService.refusalText）。不收这一条，
             // 「本月 token 上限用完」会被判成通用的「AI 回复失败，请稍后重试」——用户重试到永远，
-            // 而这件事的处置和上游额度不足是同一件（找管理员放宽或换模型）。真机 2026-10-29 实测：
-            // 本机租户月度配额触顶后界面只给那句通用文案。判据引用常量而不是再抄一遍字面量。
+            // 而这件事的处置和上游额度不足是同一件（找管理员放宽或换模型）。
+            // 判据引用常量而不是再抄一遍字面量。
             UsageQuotaService.REFUSAL_PREFIX
     };
 
@@ -117,7 +117,7 @@ public final class ModelQuotaGuard {
      * 按<b>文案</b>判「额度不足」——给拿不到 {@code Throwable}、只剩一句错误文本的调用方
      * （框架引擎把执行异常收成字符串留在 {@code executionError()} 里）。
      * <p>判据必须与 {@link #isQuotaExhausted(Throwable)} 用同一张表：两处各抄一份的结果，
-     * 就是同一件 402 在一边是人话、在另一边是原文（双跑实测过这个形状）。
+     * 就是同一件 402 在一边是人话、在另一边是原文。
      */
     public static boolean isQuotaText(String text) {
         if (text == null || text.isBlank()) return false;

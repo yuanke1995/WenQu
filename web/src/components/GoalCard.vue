@@ -26,7 +26,7 @@
     <!-- 后端给的那句人话提示（如「第 3 轮自动接着推进」），只展示结果，不解释机制 -->
     <div v-if="card.hint" class="goal-hint">{{ card.hint }}</div>
 
-    <!-- 任务运行时（2026-10-22）：阶段/等待/核验中说人话；预算与结果只在这张事实面上出现 -->
+    <!-- 任务运行时：阶段/等待/核验中说人话；预算与结果只在这张事实面上出现 -->
     <div v-if="phaseLine" class="goal-phase">{{ phaseLine }}</div>
     <div v-if="budgetLine" class="goal-budget">{{ budgetLine }}</div>
     <div v-if="outcomeLine" class="goal-outcome">{{ outcomeLine }}</div>

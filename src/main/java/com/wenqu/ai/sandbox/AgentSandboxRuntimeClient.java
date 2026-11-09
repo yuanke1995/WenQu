@@ -56,7 +56,7 @@ import java.util.UUID;
  *   <li>SDK 的浏览器 / Jupyter / NodeJS / MCP / 技能 等其余端点面未照搬——本工程消费方
  *       （{@link SandboxRuntimeClient}）只需要文件与 shell 两组。</li>
  *   <li>{@code shell.exec} 的异步会话（{@code async_mode} + {@code v1/shell/wait}）未启用：
- *       与参考实现的同步调用点保持一致。{@code status != completed}（实测到点回
+ *       与参考实现的同步调用点保持一致。{@code status != completed}（到点回
  *       {@code running} 或 {@code no_change_timeout}，两种都带 output/exit_code 双「没结果」）
  *       单独还原成 {@code notCompleted} 字段带出去，不与「跑完了、没输出」共用一个形状。</li>
  * </ul>
@@ -83,7 +83,7 @@ public class AgentSandboxRuntimeClient implements SandboxRuntimeClient {
     /** 沙盒 runtime 的连接池与线程池由全进程共享（HttpClient 线程安全）。 */
     private static final HttpClient HTTP = HttpClient.newBuilder()
             // 显式固定 HTTP/1.1，理由同 SandboxProvisionerClient：runtime 服务同为 uvicorn 系，
-            // 默认 HTTP/2 的 h2c 升级请求会被拒绝且 body 被丢（2026-09-27 实测 provisioner 侧踩坑）。
+            // 默认 HTTP/2 的 h2c 升级请求会被拒绝且 body 被丢。
             .version(HttpClient.Version.HTTP_1_1)
             .connectTimeout(Duration.ofSeconds(10))
             .build();
@@ -160,7 +160,7 @@ public class AgentSandboxRuntimeClient implements SandboxRuntimeClient {
         body.put("recursive", recursive);
         body.put("include_size", includeSize);
         JSONObject payload = postJson(LIST_PATH, body, null);
-        // 「路径不存在」「那是文件不是目录」都回 HTTP 200 + success:false（真机实测），
+        // 「路径不存在」「那是文件不是目录」都回 HTTP 200 + success:false，
         // 只扒 data.files 会把失败读成一个空目录。
         requireSuccess(payload, "list", path);
         JSONObject data = dataOf(payload);
@@ -279,13 +279,10 @@ public class AgentSandboxRuntimeClient implements SandboxRuntimeClient {
             double seconds = timeout.toMillis() / 1000.0;
             body.put("timeout", seconds);
             // runtime 除了这个总闸，另有一道「输出多少秒没变化就放弃」的闸，缺省 120 秒，
-            // 且它同样是请求字段（2026-10-22 实测：静默 130 秒的命令不带这个字段 120s 就被回
-            // no_change_timeout，带上 600 就正常跑完、退出码 0）。不把它抬到调用方要的上限，
-            // 模型显式传的 timeout 只有一半说话权——真机那条跑 6 次 chromium 的截图脚本
-            // 就是这么在 119.4 秒被掐的，而它请求的是 300。
+            // 且它同样是请求字段：必须抬到调用方要的上限，否则 runtime 会在
+            // 输出静默满 120 秒时提前放弃，模型显式传的 timeout 只有一半说话权。
             body.put("no_change_timeout", seconds);
-            // 读超时比命令超时多等一截：两边同值时谁先到点是掷骰子。2026-10-22 实测那次 30 秒的命令
-            // 就是 Java 侧先炸（整 30.013s），把 runtime 那句结构化的「还在跑」读成了「沙盒不可达」。
+            // 读超时比命令超时多等一截：两边同值时谁先到点是掷骰子，Java 侧可能先炸。
             readTimeout = timeout.plus(EXEC_READ_SLACK);
         } else {
             readTimeout = defaultTimeout;
@@ -297,12 +294,11 @@ public class AgentSandboxRuntimeClient implements SandboxRuntimeClient {
         }
         // 服务端语义：output / exit_code 仅在 status=completed 时有值；到点没跑完回的是
         // status=running（请求的总闸）或 status=no_change_timeout（输出静默闸）+ 两个「没结果」。
-        // 判据按「不等于 completed」收，别按某一种 status 收：2026-10-22 那轮就是只认 running，
-        // 让 no_change_timeout 穿着「跑完了」的外衣一路走到模型面前。
+        // 判据按「不等于 completed」收，别只认某一种 status，否则会漏掉 no_change_timeout。
         String status = data.getString("status");
         boolean notCompleted = !"completed".equalsIgnoreCase(status);
         Integer exitCode = data.getInteger("exit_code");
-        // 负数是 runtime 自己「这一趟没拿到码」的哨兵（no_change_timeout 那份实测回 -1），
+        // 负数是 runtime 自己「这一趟没拿到码」的哨兵（no_change_timeout 回 -1），
         // 不是 shell 退出码（真码 0-255）。原样带上去，模型看到的就是一行孤零零的
         // 「Exit code: -1」，长得跟「命令自己返回了 -1」一模一样，分不清是崩了还是被切了。
         if (exitCode != null && exitCode < 0) {
@@ -353,7 +349,7 @@ public class AgentSandboxRuntimeClient implements SandboxRuntimeClient {
 
     /** 统一响应包装的 {@code data} 载荷（对应 SDK 的 {@code response.data}）。 */
     /**
-     * runtime 对失败回的是 <b>HTTP 200 + {@code success:false}</b>（真机实测），不认这一层就会把失败读成结果：
+     * runtime 对失败回的是 <b>HTTP 200 + {@code success:false}</b>，不认这一层就会把失败读成结果：
      * 读不存在的文件＝「空文件、成功」，列不存在的目录＝「空目录、成功」。
      * <p>{@code not_found} 必须还原成 {@link FileNotFoundError}：流式执行那三处轮询
      * （{@code drainLines} / {@code tryReadExitCode} / {@code waitForMarker}）都靠它判「标记文件还没落盘」，

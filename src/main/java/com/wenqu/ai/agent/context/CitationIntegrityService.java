@@ -24,22 +24,20 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * 回答定稿前的<b>引用面校验</b>（P6 刀 5a，自 {@code ChatService} 的流收尾回调里收口）。
+ * 回答定稿前的<b>引用面校验</b>。
  *
  * <p>四道检查按由浅到深排：<b>没标引用</b>（有来源却一个 [N] 都没有）→ <b>编号越界</b>（[N] 落不在
  * 来源表里，LLM 编造）→ <b>图片标记越界</b>（[图片N] 落不在本轮图片清单里）→ <b>语义不支撑</b>
  * （编号合法、句子却与那条 snippet 无关，要一次 LLM 判定）。前三道是纯字符串活儿；第四道才是深度防线。
  *
- * <p>第四道内部又分两层，顺序不能反：<b>先机械零共现预筛，再 LLM 判定</b>。2026-10-18 真机现场
- * （「我想设计一个学生表」那轮，31 条来源、16 处角标）模型把引用按自己的答题结构重编了号——
- * 角标 [4] 讲的是"改列数"，池里第 4 条却是《03-对话与问答.md》的"多模态输入"，一个共同词都不共。
- * 这种句子与来源零共现的角标任何 judge 都不该救得回来，先用 2-gram 共现机械剔除（不花一次
+ * <p>第四道内部又分两层，顺序不能反：<b>先机械零共现预筛，再 LLM 判定</b>。
+ * 句子与来源零共现的角标任何 judge 都不该救得回来，先用 2-gram 共现机械剔除（不花一次
  * LLM 调用），剩下真有词面重叠的歧义案例才打包给 LLM。顺序反了就是把最硬的证据交给最软的环节。
  *
- * <p>LLM 判定本身也必须<b>可判失效</b>：旧实现把"输出里解析不出编号"直接当成"全部支撑"静默放行——
+ * <p>LLM 判定本身也必须<b>可判失效</b>：输出里解析不出编号时不能当成"全部支撑"静默放行——
  * judge 回一段中文（"以上均不支撑"）、被 maxTokens 截断、或思考模型把 token 全烧在推理上导致
- * content 为空，三种情况都走这条静默通道，整道防线无声缺席（日志还写着"剔除 0 处"）。
- * 现在：输出既不是明确的"全部支撑"口令、又给不出任何编号 → 判定不可用，fail-loud
+ * content 为空，三种情况都走这条静默通道，整道防线会无声缺席。
+ * 输出既不是明确的"全部支撑"口令、又给不出任何编号 → 判定不可用，fail-loud
  * （WARN + 降级登记），回答保持不变——与自检调用失败同语义，但必须看得见。
  *
  * <p>为什么必须与本轮的引用池放在一起看：裁剪之后<b>编号要重编</b>，而正文里的 [N] 与 sources 的
@@ -125,7 +123,7 @@ public class CitationIntegrityService {
                     properties.getImages().getImageFilter().getMinHits(),
                     properties.getImages().getImageFilter().getPreContextChars());
             if (!rr.dropped().isEmpty()) {
-                // M7 fail-loud：图片被剔除后回答仍引用旧编号，需告知
+                // fail-loud：图片被剔除后回答仍引用旧编号，需告知
                 degrade(ctx, "imgFilterDropped",
                         "已剔除 " + rr.dropped().size() + " 张与回答内容不匹配的图片引用");
                 log.info("[IMG-FILTER] 图片错配剔除 {} 个: {}", rr.dropped().size(), rr.dropped());
@@ -134,7 +132,7 @@ public class CitationIntegrityService {
             }
         }
 
-        // 2) L4 fail-loud：有引用来源但回答未标注任何 [N]（溯源缺失）
+        // 2) fail-loud：有引用来源但回答未标注任何 [N]（溯源缺失）
         // 注意用 find() 而非 matches()：matches 全串锚定且 . 不跨行，多行回答永远误判为未标注
         if (!sources.isEmpty() && !CITE_PATTERN.matcher(answer).find()) {
             degrade(ctx, "noCitation", "回答未标注引用来源");
@@ -258,9 +256,7 @@ public class CitationIntegrityService {
         if (sentenceByRef.isEmpty()) return new CheckResult(answer, sources, Set.of(), 0, 0);
 
         // 2a. 机械预筛：句子与所指来源<b>零共现</b>（2-gram 交集为空）→ 直接判不支撑，不过 LLM。
-        //     2026-10-18 真机现场：模型按自己的答题结构把 31 条来源重编成 1..16，角标 [4] 讲
-        //     "改列数"而池里第 4 条是《03-对话与问答.md》的"多模态输入"——这类角标与来源一个
-        //     共同词都不共，judge 再强也只是复读机械结论，还白花一次调用与一次出错机会。
+        //     角标与来源一个共同词都不共时，judge 再强也只是复读机械结论，还白花一次调用与一次出错机会。
         //     两侧任一凑不出 2-gram（单词句/空片段）时不判：无法证伪的事不机械定罪，留给 LLM。
         Set<Integer> dropped = new HashSet<>();
         Map<Integer, String> forJudge = new LinkedHashMap<>();
@@ -288,12 +284,12 @@ public class CitationIntegrityService {
             if (snip.length() > 180) snip = snip.substring(0, 180);
             prompt.append("[").append(e.getKey()).append("] 句子：").append(sent).append("\n");
             // 证据带上来源名与章节名：光一句 snippet 时 judge 只能猜"这段话说的是哪个组件"，
-            // 2026-10-18 那次重编号现场就是缺了这个信号（多条 snippet 同属一本手册，标题才分得开）
+            // 多条 snippet 同属一本手册，只有标题才分得开
             prompt.append("   证据（").append(sourceNameOf(sources.get(e.getKey() - 1))).append("）：")
                     .append(snip).append("\n");
         }
-        // maxTokens 256：旧值 64 连 "1,2,...,31" 都差点装不下（约 62 token），截断的编号表
-        // 会静默少剔一半；思考模型还要给推理留余量。输出"无"时成本不变。
+        // maxTokens 256：编号表要放得下 "1,2,...,31"（约 62 token），截断会静默少剔一半；
+        // 思考模型还要给推理留余量。输出"无"时成本不变。
         String judge = chatClient.prompt()
                 .system("你是回答引用的质检员，只判断引用是否被证据直接支撑，输出最简结果。")
                 .user(prompt.toString())
@@ -305,10 +301,10 @@ public class CitationIntegrityService {
                 .call()
                 .content();
 
-        // 3. 解析质检判定。旧实现按 [,，、;；\s] 切token后 Integer.parseInt，解析不出数字就
+        // 3. 解析质检判定。按 [,，、;；\s] 切 token 再 Integer.parseInt 的做法，解析不出数字就
         //    静默按"全部支撑"放行——judge 回一句"以上均不支撑"、或被 maxTokens 截断、或思考模型
         //    把预算全烧在推理上 content 为空，三种都走这条静默通道，防线无声缺席。
-        //    现在：全文捞 \d+（"编号4不支撑"也认得），捞不到编号又不是明确口令 → 判定不可用，
+        //    全文捞 \d+（"编号4不支撑"也认得），捞不到编号又不是明确口令 → 判定不可用，
         //    fail-loud（WARN + 降级），机械预筛的结论保留、LLM 这部分不生效。
         Set<Integer> judged = parseVerdict(judge, sources.size());
         int mechanical = dropped.size(); // 2a 机械剔的条数（日志口径：区分"谁剔的"）
@@ -364,7 +360,7 @@ public class CitationIntegrityService {
 
     /**
      * 解析质检员输出 → 要剔除的编号集合；{@code null} = 判定不可用（调用方必须 fail-loud，
-     * 不得按"全部支撑"放行——那是这道防线曾经静默缺席的原因）。
+     * 不得按"全部支撑"放行，否则这道防线会静默缺席）。
      * <p>口径：trim 后命中 {@link #ALL_SUPPORTED_VERDICTS} → 空集（全部支撑）；否则全文捞
      * {@code \d+}（"4、5"、"编号4不支撑"都认），越界编号忽略；一个编号都捞不到 → null。
      */

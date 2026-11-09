@@ -17,7 +17,7 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * 服务账号服务（批次 C3）：CRUD + 令牌签发/校验 + 到期回收。
+ * 服务账号服务：CRUD + 令牌签发/校验 + 到期回收。
  * <p>
  * 令牌形态 {@code svcq-<32 hex>}：明文只在创建响应里出现一次，库里只存 SHA-256——
  * 与「密钥不落明文」的平台口径一致，泄露处置 = 停用 + 重建（不提供解密回显）。
@@ -192,7 +192,7 @@ public class ServiceAccountService {
         }
         if (touchExpire) acc.setExpireAt(expireAt);
         if (touchExpire && expireAt == null) {
-            // updateById 按「非空字段」拼 SET，把到期改成 NULL 落不进去（本仓 model_ref 上踩过同一条）
+            // updateById 按「非空字段」拼 SET，把到期改成 NULL 落不进去
             mapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<ServiceAccount>()
                     .eq(ServiceAccount::getId, id).set(ServiceAccount::getExpireAt, null));
         } else {

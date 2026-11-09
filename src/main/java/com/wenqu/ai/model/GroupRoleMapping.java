@@ -22,7 +22,7 @@ public class GroupRoleMapping {
     @TableId(type = IdType.INPUT)
     private String id;
 
-    /** 租户ID（Phase4 启用，当前 NULL） */
+    /** 租户ID（当前 NULL） */
     private String tenantId;
 
     /** 认证源 (c_ai_identity_provider.id) */

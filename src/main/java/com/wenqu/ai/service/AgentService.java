@@ -29,7 +29,7 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
- * 智能体配置服务（P3：4.1 Agent 配置——模型/知识库/工具/提示词）。
+ * 智能体配置服务（模型/知识库/工具/提示词）。
  * <p>
  * 一个智能体把「模型 / 系统提示词 / 知识库范围 / 工具开关」打包成命名预设，对话页下拉切换；
  * 选中后该轮问答按智能体覆盖全局配置（未填维度继承全局）。工具开关三态：1=开 0=关 null=继承。
@@ -319,7 +319,7 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
     }
 
     /**
-     * 本轮可咨询的助手清单（P5 agent-as-tool）：使用者可读的<b>全部</b>智能体，含子智能体，
+     * 本轮可咨询的助手清单：使用者可读的<b>全部</b>智能体，含子智能体，
      * 只排除"自己咨询自己"。
      * <p>它刻意<b>包含</b>子智能体：过去那套派遣问的是"换哪个角色来答"，所以要剔掉子智能体；
      * 这里问的是"有哪几块资料可以派出去查"，子智能体恰恰是最规整的那一块。
@@ -355,7 +355,7 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
      * 只返回子智能体（is_subagent=1），且是最小字段——配置页只需要 id 与展示名。
      * <p>额外带 {@code subagentMode}（这一支实际会怎么跑：digest=检索要点 / full=全循环）与
      * {@code subagentModeInherited}（它是自己选的还是跟随平台默认）。勾选处要看得见"派出去的是交资料的
-     * 还是真去干活的"——这个差别在配置页是两个下拉框，在委派处只有一行标签（P3a）。
+     * 还是真去干活的"——这个差别在配置页是两个下拉框，在委派处只有一行标签。
      */
     public List<Map<String, Object>> subAgents() {
         List<Map<String, Object>> out = new ArrayList<>();
@@ -423,7 +423,7 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
      * 按 ID 直取，<b>刻意不套登录用户可读校验</b>：仅供分享 token 免登录通道
      * （{@code AgentShareService.resolveGuest}，同时承载 /s/{token} 与 /ai/mcp/{token}）使用。
      * <p>{@link #readable} 是「谁的资产对谁可见」的登录户口径，游客没有身份，套用后
-     * 未配置共享范围（2026-10 起默认＝私有）的智能体即使已发布，链接也一律判成「分享不存在」。
+     * 未配置共享范围（默认＝私有）的智能体即使已发布，链接也一律判成「分享不存在」。
      * 而发布端点已用 {@code canManage} 把关——能生成 token 的人本就有权公开该智能体，
      * 所以这里的授权语义是「持 token 即已获发布者授权」（见 ShareController 类注释）。</p>
      * <p>除分享通道外不要用本方法；需要可见性判定的地方一律用 {@link #get}。</p>
@@ -659,7 +659,7 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
             String s = body.get("callbackSecret") == null ? null : String.valueOf(body.get("callbackSecret"));
             if (s != null && !s.isBlank()) a.setCallbackSecret(cryptoService.encrypt(s.trim()));
         }
-        // 记忆域三态（对外能力第二批）：NULL/0=跟随全局 1=专属 2=叠加。不用 toTri（非零归一成 1 会把叠加压成专属），
+        // 记忆域三态：NULL/0=跟随全局 1=专属 2=叠加。不用 toTri（非零归一成 1 会把叠加压成专属），
         // 认不得的值直接拒——静默归 null 会让「配了叠加」变成「其实跟着全局」，配置页看不出漂移
         if (body.containsKey("memoryMode")) {
             Integer m = toIntOrNull(body.get("memoryMode"));
@@ -699,7 +699,7 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
                 a.setPermissionPreset(p.code());
             }
         }
-        // 工具黑名单（P2）：逐个核对名字在注册中心里存在。存一个拼错的名字不会报错、只会静默不生效——
+        // 工具黑名单：逐个核对名字在注册中心里存在。存一个拼错的名字不会报错、只会静默不生效——
         // 「我明明禁了 webSearch，它怎么还在被调用」这种问题从界面上完全看不出来，所以在写入口就拒。
         // 只核对静态声明的工具：MCP 动态工具的名字由外部 server 自定、本来不在注册中心，
         // 那族允许存任意名字（运行时按名逐字匹配剔除）。
@@ -763,7 +763,7 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
             }
         }
         if (body.containsKey("isDefault")) a.setIsDefault(toTri(body.get("isDefault")));
-        // M4：绑定工作流（chatflow）——非空时校验「存在 + 对当前用户可读 + 已发布」，
+        // 绑定工作流（chatflow）——非空时校验「存在 + 对当前用户可读 + 已发布」，
         // 未发布直接拒绝：绑定后对话才报错不如配置时就说清楚（fail-loud，不做运行时静默回退）
         if (body.containsKey("workflowId")) a.setWorkflowId(assertBindableWorkflow(body.get("workflowId")));
         if (body.containsKey("queryParams")) a.setQueryParams(asText(body.get("queryParams"), 2000));
@@ -789,7 +789,7 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
      * 清掉其它智能体上的默认标记，为把 {@code keepId} 设为默认做准备。
      * <p><b>必须排除 {@code keepId} 本身</b>：本行若原本就是默认，清零后若请求体没带 isDefault，
      * {@link #updateColumns} 不会把该列写回去（只写 body 里出现过的字段）——本行就永久停在 0，
-     * 系统默认智能体凭空消失（2026-10-06 实测：改个描述就把内置问渠的默认标记弄丢了）。</p>
+     * 系统默认智能体凭空消失。</p>
      */
     private void clearDefault(String keepId) {
         List<Agent> all = mapper.selectList(new LambdaQueryWrapper<Agent>().eq(Agent::getIsDefault, 1));

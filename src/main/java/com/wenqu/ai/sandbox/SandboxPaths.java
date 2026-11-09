@@ -8,10 +8,10 @@ import java.util.regex.Pattern;
 /**
  * 沙盒路径工具（对应问渠新栈 {@code com.wenqu.wenqu.workspace.WorkspacePaths} 的那几个纯函数）。
  * <p>
- * 最初只搬两个：{@code uidDirname}（传给 provisioner 的 uid 参数，必须是路径安全的目录名）与
- * {@code normalizeWorkdirPath}（workdir 的相对路径校验）。2026-10 P2 权限档位又收进来两个绝对路径判据
- * （{@code normalizeAbsolutePath} / {@code isSameOrChild}），因为它们同时被沙盒工具执行前的写入收束
- * 和 backend 的路径校验用——两处各写一份的话，「浏览面板认为的越界」与「工具执行认为的越界」就不是
+ * 提供 {@code uidDirname}（传给 provisioner 的 uid 参数，必须是路径安全的目录名）、
+ * {@code normalizeWorkdirPath}（workdir 的相对路径校验）与两个绝对路径判据
+ * （{@code normalizeAbsolutePath} / {@code isSameOrChild}）——后两者同时被沙盒工具执行前的写入收束
+ * 和 backend 的路径校验用：两处各写一份的话，「浏览面板认为的越界」与「工具执行认为的越界」就不是
  * 同一个边界，那种不一致的表现是用户看着文件在、工具却说写不进去。
  * <p>
  * 新栈的 {@code PosixPathLite} 在本工程无对应物，故 {@code asPosix()} 那一层用「已校验的原始串」等价表达
@@ -84,7 +84,7 @@ public final class SandboxPaths {
 
     /**
      * candidate 是否为 ancestor 自身或其后裔（对应 {@code _is_same_or_child}）。
-     * <p>P2 的写入收束用它：{@code workspace-write} 档下沙盒写类工具的 path 必须落在沙盒根目录内。
+     * <p>写入收束用它：{@code workspace-write} 档下沙盒写类工具的 path 必须落在沙盒根目录内。
      * 两侧共用一份实现，否则「浏览面板判的越界」和「工具执行判的越界」迟早不是同一个边界。
      */
     public static boolean isSameOrChild(String candidate, String ancestor) {

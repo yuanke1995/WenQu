@@ -39,12 +39,12 @@ public class QaLog {
     private Integer elapsedMs;
 
     /**
-     * P1：本轮回答消息 ID（trace 详情还原 toolCalls/sources/tokens 的关联键）。
-     * 存量行为 NULL——详情降级为「摘要视图」，如实展示，不做近似匹配硬凑。
+     * 本轮回答消息 ID（trace 详情还原 toolCalls/sources/tokens 的关联键）。
+     * 为 NULL 时详情降级为「摘要视图」，如实展示，不做近似匹配硬凑。
      */
     private String messageId;
 
-    /** P1：本轮生效智能体 ID（trace 按智能体筛选；未用智能体为 NULL） */
+    /** 本轮生效智能体 ID（trace 按智能体筛选；未用智能体为 NULL） */
     private String agentId;
 
     private LocalDateTime createdAt;

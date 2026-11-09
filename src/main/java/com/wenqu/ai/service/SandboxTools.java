@@ -16,14 +16,13 @@ import org.springframework.stereotype.Component;
  * 提供 read_file/write_file/edit_file/ls/glob/grep/execute 一族工具，并配合大结果裁剪），
  * 而本工程没有该中间件，故这里**按本工程的 {@code @Tool} 机制逐个显式注册**，
  * 接当前用得上的六个：{@code execute} / {@code read_file} / {@code write_file} / {@code edit_file} /
- * {@code ls} / {@code deliver_artifact}（沙盒文件 → 我的产物）。工具名与新栈保持一致
- * （{@code deliver_artifact} 为本工程新增），便于将来两边共用提示词与技能文档。
+ * {@code ls} / {@code deliver_artifact}（沙盒文件 → 我的产物）。工具名与新栈保持一致。
  * <p>
  * 归属与 scope 的来源：会话 id 与用户 uid 都走 {@code ToolContext}（与产物交付工具同一约定），
  * 由 ChatService 发起流式请求时注入。注意：工具回调跑在 Spring AI 响应式 I/O 线程上，
  * 而 {@code RequestUser} 是流水线线程装载的 ThreadLocal，跨线程读不到（回落 SYSTEM），
  * 所以这里必须读 toolContext 透传的 uid，而不是 RequestUser.uid()——否则沙盒会被建到
- * {@code shared/system/workspace}（已踩坑）。
+ * {@code shared/system/workspace}。
  *
  * @author yuanke
  */
@@ -59,13 +58,13 @@ public class SandboxTools {
     /**
      * 输出被截断时把<b>整份原文</b>外溢留存的能力：(工具名, 原文) → spillId，由问答侧经 ToolContext 注入。
      * <p>走上下文而不是全局单例：留存要按「哪一轮的哪个工具」归属，工具执行在弹性线程上并发跑，
-     * setter 式单例会串号（与 P1 要修掉的那对 setSourceRegistrar/setSink 同病灶）。
+     * setter 式单例会串号。
      */
     public static final String CTX_SPILL = "wq_tool_spill";
     /** 留存成功后的上报（工具名, spillId）：问答侧据此把「查看完整输出」挂到对应那张工具卡上 */
     public static final String CTX_SPILL_REPORT = "wq_tool_spill_report";
     /**
-     * toolContext 里「本轮子调用回程」的键（{@link com.wenqu.ai.agent.runcode.RunCodeBridge}，P3b）。
+     * toolContext 里「本轮子调用回程」的键（{@link com.wenqu.ai.agent.runcode.RunCodeBridge}）。
      * <p>{@code run_code} 生成的 Python 客户端要把脚本里的每次工具调用打回平台，而"打回哪儿、能调哪些、
      * 这轮还剩几次额度"全是本轮的事——所以经上下文注入，与沙盒档位、spill 信箱同一条路子。
      * 缺这个键时 run_code 直接拒（不是"那就不带工具、纯算"）：模型看到的能力与实际给的不能两样。
@@ -73,7 +72,7 @@ public class SandboxTools {
     public static final String CTX_RUN_CODE_BRIDGE = "wq_runcode_bridge";
     /** 支持流式输出的工具名（ChatService 按 name 判定是否注入输出回调）。 */
     public static final String STREAMING_TOOL_NAME = "execute";
-    /** 脚本型工具名（P3b）：ChatService 判定是否注入子调用回程用 */
+    /** 脚本型工具名：ChatService 判定是否注入子调用回程用 */
     public static final String RUN_CODE_TOOL_NAME = "run_code";
     /**
      * 本组件注册的全部工具名（ChatService 判定「是否沙盒工具」用，决定要不要注入
@@ -95,34 +94,16 @@ public class SandboxTools {
         this.runCodeService = runCodeService;
     }
     /**
-     * execute / read_file / write_file / edit_file / ls 五把已退役（全框架化 P1）。
-     *
-     * <p>改由框架 {@code FilesystemTool}（read/write/edit/grep/glob/list）与 {@code ShellExecuteTool}
-     * 提供，模型侧工具名与契约不变；沙箱经 {@code SandboxService#frameworkFilesystem} 产出的
-     * {@code ProvisionerSandboxFilesystem} 接入 builder 的 {@code .abstractFilesystem(...)}。
-     *
-     * <p><b>必须真删而不是留着</b>：{@code ToolRegistry} 启动期核对「声明的 descriptor」与
-     * 「holder 上反射出的 {@code @Tool} 方法」，两边对不上就打 ERROR（真机验证确实报了）。
-     * 留着还会在同一 toolkit 上挂出与框架重名的工具，模型只能二选一。
-     *
-     * <p>权限档位裁剪改由 {@code AgentxFrameworkToolGate} 在执行前逐个判
-     * （只读档下裁掉写类与 {@code execute}）。
-     *
-
-    /**
-     * 沙盒文件 → 我的产物已改由框架 {@code deliver_artifact} 承担（全框架化 P1-c）。
-     *
-     * <p>框架侧：{@code ArtifactDeliveryTarget} SPI 的实现见
-     * {@code com.wenqu.ai.sandbox.WenquArtifactDeliveryTarget}，注册点为
-     * {@code HarnessAgent.builder().artifactDeliveryTarget(...)}。框架工具负责从沙盒下载文件字节，
-     * 本类原先那套「路径判据 → downloadFiles → writeBytes → publish」已整体搬进该 SPI 实现。
-     *
-     * <p><b>因此本工具已删除</b>：留着会与框架的同名工具并存，模型面对重名工具会二选一。
-     * 权限档位的路径收束由 {@code AgentxFrameworkToolGate} 统一承担（deliver_artifact 按写类处理）。
+     * 文件读写、列目录与产物交付由框架的 {@code FilesystemTool} / {@code ShellExecuteTool} /
+     * {@code ArtifactDeliveryTool} 提供，工具名与契约保持一致；沙箱经
+     * {@code SandboxService#frameworkFilesystem} 产出的 {@code ProvisionerSandboxFilesystem}
+     * 接入 builder 的 {@code .abstractFilesystem(...)}，产物交付 SPI 实现见
+     * {@code com.wenqu.ai.sandbox.WenquArtifactDeliveryTarget}。权限档位裁剪由
+     * {@code AgentxFrameworkToolGate} 在执行前逐个判（只读档下裁掉写类与 {@code execute}）。
      */
 
     /**
-     * 沙盒里跑一段脚本（P3b）。工具本身只做"该不该给"的判定与落点解析，运行编排在
+     * 沙盒里跑一段脚本。工具本身只做"该不该给"的判定与落点解析，运行编排在
      * {@link com.wenqu.ai.agent.runcode.RunCodeService}：生成 Python 客户端、发一次性运行凭据、
      * 执行、回收。
      * <p>写盘位置走与 write/edit 同一条档位判据（脚本与客户端要落进沙盒目录），所以只读档压根
@@ -230,7 +211,7 @@ public class SandboxTools {
     // ==================== 内部 ====================
 
     /**
-     * 写入前的权限档位判据（P2）：返回 null 表示放行，否则返回给模型看的拒绝理由。
+     * 写入前的权限档位判据：返回 null 表示放行，否则返回给模型看的拒绝理由。
      * <p>三种拒绝的措辞刻意不同，因为模型该做的下一步不同：只读档要它<b>别再试写</b>（换工具也没用，
      * 换路径更没用）；越界要它<b>换个路径重试</b>（把允许区写清楚）；缺档位要说这是平台判定缺失，
      * 不是用户的限制，免得模型对着用户道歉或反复重试。
@@ -294,7 +275,7 @@ public class SandboxTools {
     }
 
     /**
-     * 本轮档位是否放开沙盒内的写入位置（P2 的 danger-full-access）。
+     * 本轮档位是否放开沙盒内的写入位置（对应 danger-full-access）。
      * <p>沙盒的文件写入边界本来就落在 {@code ProvisionerSandboxBackend.writableRoots()} 那一层，
      * 档位不传到这里就只是界面上的一个标签——只读档靠不挂工具收紧，全自主档靠这个参数放开边界。
      */

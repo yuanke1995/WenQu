@@ -8,7 +8,7 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 /**
- * 租户邀请（P1 多租户生命周期 · 3A）。
+ * 租户邀请。
  *
  * <p>一次性短链：token 只存 SHA-256（明文只在生成时返回一次），注册成功即落本租户。
  * 行带 {@code tenant_id}，由租户行级过滤兜住，不在 GLOBAL_TABLES 里。

@@ -27,18 +27,17 @@ import org.slf4j.LoggerFactory;
 /**
  * 框架 {@link BaseSandboxFilesystem} 的问渠实现 —— <b>这一类才让框架的工具真正落到 provisioner 沙箱</b>。
  *
- * <h3>为什么必须有它（踩过的坑）</h3>
+ * <h3>为什么必须有它</h3>
  * 只往 {@link RuntimeContext} 里 put {@code SandboxContext}（官网「自管沙箱实例」教的做法）
  * <b>不足以让工具落到沙箱</b>：框架的 {@code FilesystemTool} / {@code ShellExecuteTool}
  * 在 <b>build 期</b>就从 builder 字段绑好文件系统，{@code RuntimeContext} 里有没有
- * {@code AbstractFilesystem} 它们都不看。实测后果：模型调 {@code execute("pwd")}，
- * 返回的是<b>宿主项目目录</b>而不是沙箱的 {@code /home/gem/user-data}——
- * 工具静默跑在宿主上，这是最危险的一种失败（看起来成功、实则没隔离）。
+ * {@code AbstractFilesystem} 它们都不看；只给 {@code SandboxContext} 时工具会静默跑在宿主上——
+ * 模型调 {@code execute("pwd")} 拿到的是宿主项目目录而不是沙箱的 {@code /home/gem/user-data}，
+ * 看起来成功、实则没隔离。
  * <p>因此本类必须经 {@code HarnessAgent.Builder#abstractFilesystem} 在 build 期传入。
  * 框架另有声明式的 {@code .filesystem(SandboxFilesystemSpec)}（官网文档口径），走那条会在
  * {@code HarnessAgent#build} 里硬 new 一份框架自带的 {@code SandboxBackedFilesystem}，
- * 既接不进问渠的沙箱语义、也不提供会话日志存储（接口默认实现直接抛）——两条证据见
- * {@code docs/harness-framework-migration.md} §P1-5 复核。
+ * 既接不进问渠的沙箱语义、也不提供会话日志存储（接口默认实现直接抛）。
  * <p>正确形态：{@code SandboxContext} 管<b>生命周期</b>（框架 stop / 应用 shutdown），
  * 本类作为 {@code AbstractFilesystem} 管<b>工具实际怎么访问沙箱</b>，两者都要出现在 RuntimeContext 里。
  *
@@ -48,12 +47,12 @@ import org.slf4j.LoggerFactory;
  * File listing, grep, and glob use standard Unix commands. Read uses server-side commands
  * for paginated access. Edit uses server-side commands for string replacement."*
  * ——问渠只提供 {@code execute} + 两个字节搬运方法 + {@code sessionStorage}，{@code write}/{@code edit}/
- * {@code grep} 沿用框架那份（实测写改后容器内字节与送进去的一致）。
+ * {@code grep} 沿用框架那份。
  * <b>{@code ls}、{@code glob}、{@code read}（文本）这三个必须覆盖</b>：框架那三份都靠 shell 取文本，
  * 而沙盒 runtime 会把输出里的制表符展成空格，原因见下面各方法的说明。
  *
- * <p><b>前提</b>：沙盒镜像需满足 POSIX 工具链（已实测火山 all-in-one-sandbox:1.11.0 通过
- * {@code python3} / {@code tar} / {@code base64} / {@code grep -rHnF --include}）。
+ * <p><b>前提</b>：沙盒镜像需满足 POSIX 工具链（{@code python3} / {@code tar} / {@code base64} /
+ * {@code grep -rHnF --include}）。
  */
 public class ProvisionerSandboxFilesystem extends BaseSandboxFilesystem {
 
@@ -79,7 +78,7 @@ public class ProvisionerSandboxFilesystem extends BaseSandboxFilesystem {
      * 「预期为空」的探测结果缓存。框架在<b>每轮模型调用的 system prompt 组装</b>里
      * （WorkspaceContextMiddleware 读 AGENTS.md/MEMORY.md/knowledge.md、HarnessSkillMiddleware
      * glob 沙盒技能清单）都会对本文件系统发起一批探测；工作区里这些文件/目录大多根本不存在，
-     * 但每次探测仍是一次到容器的同步 HTTP 往返（线上线程栈实测正卡在这里，占稳态首包 0.3~0.5s）。
+     * 但每次探测仍是一次到容器的同步 HTTP 往返。
      *
      * <p>只缓存两种「空」结果：<b>读不存在的文件</b>与<b>命中 0 条的 glob</b>——内容类操作
      * （读存在的文件、非空清单）一律实调。失效口径宁粗勿漏：
@@ -145,8 +144,7 @@ public class ProvisionerSandboxFilesystem extends BaseSandboxFilesystem {
      * <p><b>为什么必须提供而不是返回 null</b>：框架 {@code HarnessAgent#sessionLog} 用
      * {@code ctx.get(AbstractFilesystem.class).sessionStorage(ctx)} 构造 {@code JournalSessionLog}，
      * 而后者对 storage 强制 {@code requireNonNull}（{@code JournalSessionLog:55}）。
-     * 返回 null 会让整轮问答在 {@code FrameworkSessions#open} 里以 NPE 掐断——
-     * 真机验证踩过这个坑。
+     * 返回 null 会让整轮问答在 {@code FrameworkSessions#open} 里以 NPE 掐断。
      *
      * <p>接口默认实现是抛 {@link UnsupportedOperationException}，同样会断；
      * 而接口注释要求 *"Implementations must durably store bytes before ACK"* 且
@@ -169,7 +167,7 @@ public class ProvisionerSandboxFilesystem extends BaseSandboxFilesystem {
     @Override
     public ExecuteResponse execute(RuntimeContext runtimeContext, String command, Integer timeoutSeconds) {
         // 模型那把 execute 工具的 timeout 有下界：它 schema 里的 30 只是「不传时」的缺省，
-        // 显式传 5 也照样收（真机 2026-10-22 那条 pip 就是这么被掐断的）。
+        // 显式传 5 也照样收。
         ProvisionerSandboxBackend.ExecuteResponse r =
                 backend.execute(command, ProvisionerSandboxBackend.floorToolTimeout(timeoutSeconds));
         // shell 能写任何文件（edit_file 也由 execute 实现）：跑过就当工作区可能变了，
@@ -189,22 +187,15 @@ public class ProvisionerSandboxFilesystem extends BaseSandboxFilesystem {
      * 写入文本文件——<b>create-or-overwrite</b>，覆盖框架 {@code BaseSandboxFilesystem#write} 的 create-only 语义。
      *
      * <p>框架那份先跑一条检查命令 {@code if [ -e 路径 ]; then echo EXISTS; exit 1; fi}，命中已存在文件就拒写。
-     * 两个后果（2026-10-23 真机逐环取证）：
-     * <ul>
-     *   <li>命令里的 {@code exit} 会退出 runtime 那个常驻 shell，于是这一条既拿不到退出码也拿不到
-     *       {@code EXISTS} 那行输出，要白等到 runtime 缺省 120 秒才回「没跑完」；</li>
-     *   <li>我们 {@link #execute} 把「没拿到码」记成 124（防假成功，那条是对的），框架因此走不到
-     *       「already exists，去 edit 或换个路径」这句可操作提示，回的是通用
-     *       {@code Failed to write file '<路径>'}。模型据此猜成「覆盖长文件有长度限制」，
-     *       改成拆片段写新文件再用脚本合并——于是一次交付在沙盒里留下 p1/p2/n1a/n1b/n2a/n2b 一堆
-     *       半成品，用户从「沙盒文件」面板挑中其中半份存成产物，预览和下载都是白页。</li>
-     * </ul>
+     * 但命令里的 {@code exit} 会退出 runtime 那个常驻 shell，这一条既拿不到退出码也拿不到
+     * {@code EXISTS} 那行输出，要白等到 runtime 缺省 120 秒才回「没跑完」；{@link #execute}
+     * 又会把「没拿到码」记成 124（防假成功），框架因此给不出「已存在，去 edit 或换个路径」的
+     * 可操作提示，只回通用 {@code Failed to write file '<路径>'}，模型容易据此误判。
      *
-     * <p>这里去掉那条前置检查，直接走框架自己的第二步（{@link #uploadFiles}）：实测
-     * {@code /v1/file/upload} 0.1 秒返回、允许覆盖、父目录不存在时自动建，三项都够，不需要补检查或补
-     * {@code mkdir}。语义本身与 {@code ProvisionerSandboxBackend#write} 注释里早已定案的那份一致
-     * （deepagents 上游 issue #3731 同题，现行 write_file = 「不存在则创建，存在则整体替换」）——
-     * 只是那份校正落在了模型走不到的方法上。局部修改仍由工具描述引导走 {@code edit_file}。
+     * <p>这里去掉那条前置检查，直接走框架自己的第二步（{@link #uploadFiles}）：
+     * {@code /v1/file/upload} 允许覆盖、父目录不存在时自动建，不需要补检查或补 {@code mkdir}。
+     * 语义与 {@code ProvisionerSandboxBackend#write} 一致：不存在则创建，存在则整体替换
+     * （deepagents 上游 issue #3731 同题）。局部修改仍由工具描述引导走 {@code edit_file}。
      */
     @Override
     public WriteResult write(RuntimeContext runtimeContext, String filePath, String content) {
@@ -225,9 +216,9 @@ public class ProvisionerSandboxFilesystem extends BaseSandboxFilesystem {
      * <p>框架协议是 {@code Map.Entry<相对路径, 字节数组>}，问渠 client 要的是 {@link File}，
      * 故先落一份临时文件再交给 client；传完即删（不留痕、不落沙盒工作区）。
      *
-     * <p><b>路径必须转绝对（真机实测踩坑）</b>：框架的 {@code WorkspacePathNormalizer} 会把
+     * <p><b>路径必须转绝对</b>：框架的 {@code WorkspacePathNormalizer} 会把
      * {@code /home/gem/user-data/xxx} 剥成工作区相对形式（{@code xxx}），而 runtime 的
-     * {@code /v1/file/upload} 端点<b>不认相对路径</b>——它按容器根解析相对路径，实测报
+     * {@code /v1/file/upload} 端点<b>不认相对路径</b>——它按容器根解析相对路径，会报
      * {@code Permission denied: 'wenqu-website'}（父目录不存在时）或
      * {@code No such file or directory: ''}（裸文件名，dirname 为空）。故这里统一经
      * {@link ProvisionerSandboxBackend#workspaceAbsolutePath(String)} 落到
@@ -321,14 +312,13 @@ public class ProvisionerSandboxFilesystem extends BaseSandboxFilesystem {
      *
      * <p><b>为什么要覆盖框架实现</b>：{@code BaseSandboxFilesystem#ls} 与 {@code #glob} 都靠
      * {@code printf '...%s\t%s...'} 打字段、再用 {@code split("\t")} 切回来，而本沙盒 runtime 的
-     * {@code /v1/shell/exec} 会把<b>输出里的制表符展成空格</b>。丢字符的是输出侧、不是命令侧（真机实测：
-     * 同一条 {@code printf 'A\tB\n'} 在容器内 {@code | od -c} 看到的是 {@code A \t B \n}，
-     * 经 {@code /v1/shell/exec} 取回却是 {@code "A       B"}）。字段切不开不会报错，后果是<b>整行被当成路径</b>——
+     * {@code /v1/shell/exec} 会把<b>输出里的制表符展成空格</b>。丢字符的是输出侧、不是命令侧。
+     * 字段切不开不会报错，后果是<b>整行被当成路径</b>——
      * {@code list_files} 交给模型的路径带着尾巴上的大小与时间戳，模型照着读必然 {@code file_not_found}；
      * {@code glob_files} 同理恒空（技能目录 {@code skills/**} 的扫描就死在这里）。
      *
      * <p>这里<b>不再只是换个分隔符</b>（换竖线同样是在赌镜像行为），而是改用结构化 JSON 端点：
-     * 路径、类型、大小、时间各成字段，实测连文件名里带的制表符都能原样取回。
+     * 路径、类型、大小、时间各成字段，连文件名里带的制表符都能原样取回。
      * <p>同一个根因还打到 {@link #read}（框架那份读文本也走 shell），见那里的说明；
      * {@code write} / {@code edit} 不覆盖——那两份把内容做成 base64 载荷经 stdin 送进去，不回读文本通道。
      */
@@ -358,8 +348,8 @@ public class ProvisionerSandboxFilesystem extends BaseSandboxFilesystem {
      *
      * <p>根因与 {@link #ls} 同一条，但后果重得多：框架 {@code BaseSandboxFilesystem#read} 只对<b>非文本</b>
      * 文件用 base64，文本一律 {@code sed -n '<起>,<止>p'} —— 还是那条会把制表符展成空格的文本通道。
-     * 真机实测：文件里一个制表符缩进（容器内 {@code od -c} 看得到），经框架那份 {@code read} 取回后
-     * 制表符计数为 0、变成了 8 个空格。模型「读进来—改一下—写回去」一轮下来<b>源文件缩进被改写</b>，
+     * 文件里一个制表符缩进，经框架那份 {@code read} 取回后会变成 8 个空格。
+     * 模型「读进来—改一下—写回去」一轮下来<b>源文件缩进被改写</b>，
      * Python 混用制表符与空格就是 {@code IndentationError}。这不是显示不好看，是静默改坏用户的文件。
      *
      * <p>分页换算、读写权限守卫、图片与二进制判定全部复用 {@link ProvisionerSandboxBackend#read}——
@@ -392,11 +382,11 @@ public class ProvisionerSandboxFilesystem extends BaseSandboxFilesystem {
     /**
      * 按文件名模式找文件：同样走结构化端点（{@code recursive=true} 一次取全，再在 Java 侧按 basename 匹配）。
      *
-     * <p>不用 runtime 的 {@code /v1/file/find}：实测它的 glob 只匹配同一层（在 {@code skills/} 下找
+     * <p>不用 runtime 的 {@code /v1/file/find}：它的 glob 只匹配同一层（在 {@code skills/} 下找
      * {@code SKILL.md} 返回空），而框架调用方 {@code WorkspaceSkillRepository}（:619）传的是
      * 「双星号斜杠开头 + 星号」那种跨层递归模式，只匹配同层的端点接不住。
      *
-     * <p>匹配与结果口径对齐被替掉的 {@code find -type f -name}：只对 basename 生效（含 {@code /} 的模式
+     * <p>匹配与结果口径对齐 {@code find -type f -name}：只对 basename 生效（含 {@code /} 的模式
      * 匹配不到）、只返回文件。框架调用方只取 {@code FileInfo#path()}，但尺寸与时间一并给出，
      * 供 {@code glob_files} 的展示文案用。
      */

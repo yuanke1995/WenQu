@@ -24,12 +24,12 @@ import reactor.core.publisher.Flux;
  * <p><b>为什么需要这一刀</b>：AgentScope 的 WorkspaceContextMiddleware 会把
  * {@code AgentStateStore ID: <sessionId>} 与 {@code Sandbox root: /workspace (container id: <sandboxId>)}
  * 写进 system prompt。每个新会话的这两个 id 都不同，而供应商的 prefix cache 是整段前缀匹配——
- * 从这一行之后（实测约 2~3.5k tokens 处）整段 16.8k 前缀全部失效，缓存只中 0~3.5k。
+ * 从这一行之后（约 2~3.5k tokens 处）整段 16.8k 前缀全部失效，缓存只中 0~3.5k。
  * 同前缀连发时能中 14k，说明缓存本身正常，坏在「每会话必变」的 id。
  *
  * <p><b>只改模型看到的文本</b>：挂点在 {@code onModelCall}，替换 system 消息里的这两个 id；
  * 注册表、会话状态、工具执行、RuntimeContext 全部不动。会话工具（SessionSearchTool 等）读的是
- * RuntimeContext 的 sessionId，不依赖提示词里的这行；真机若发现依赖，关掉本中间件即恢复原样。
+ * RuntimeContext 的 sessionId，不依赖提示词里的这行；若有依赖，关掉本中间件即恢复原样。
  *
  * <p><b>只处理纯文本 system 消息</b>：含非文本块（图片等）的消息原样放行，避免破坏结构。
  */

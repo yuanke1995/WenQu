@@ -327,7 +327,7 @@ public class ApiEndpointScanner implements ApplicationRunner {
     }
 
     void scan() {
-        // 存量模块名归一：历史上登记的是英文类名键，按对照表改名（管理员已手工归类的值不会命中，保持不动）
+        // 存量模块名归一：按对照表把英文类名键改成中文（管理员已手工归类的值不会命中，保持不动）
         int renamed = 0;
         for (Map.Entry<String, String> e : MODULE_ZH.entrySet()) {
             renamed += apiEndpointMapper.renameModule(e.getKey(), e.getValue());
@@ -358,9 +358,9 @@ public class ApiEndpointScanner implements ApplicationRunner {
         // 默认菜单归属：新登记接口 → 插入成功后绑定；零归属内置接口 → 循环结束后幂等补齐
         Map<String, List<String>> newApiMenus = new HashMap<>();
         Map<String, List<String>> backfillMenus = new HashMap<>();
-        // Tab 拆分迁移（2026-10-08）：归属恰好还是旧默认 menu-agents 的内置接口 → 迁到对应 Tab 菜单
+        // Tab 拆分迁移：归属恰好还是旧默认 menu-agents 的内置接口 → 迁到对应 Tab 菜单
         Map<String, List<String>> remapMenus = new HashMap<>();
-        // 授权点（方案批次 A）：注解读取结果回写存量行 + 目录表登记
+        // 授权点：注解读取结果回写存量行 + 目录表登记
         Map<String, ApiEndpoint> permissionUpdates = new LinkedHashMap<>();
         Map<String, String> permissionCatalog = new LinkedHashMap<>();
         List<String> unannotated = new ArrayList<>();
@@ -455,7 +455,7 @@ public class ApiEndpointScanner implements ApplicationRunner {
         if (added > 0) roleService.invalidateEndpointCache();
         if (backfilled > 0) log.info("[ApiScan] 默认菜单归属补齐：{} 个存量接口（此前零归属）", backfillMenus.size());
         if (remapped > 0) log.info("[ApiScan] Tab 拆分迁移：{} 个内置接口归属从 menu-agents 细化到对应 Tab 菜单", remapped);
-        // 授权点（批次 A）：注解回写存量行 + 目录表登记。两者都幂等：注解未变则零写
+        // 授权点：注解回写存量行 + 目录表登记。两者都幂等：注解未变则零写
         int permUpdated = 0;
         for (ApiEndpoint api : permissionUpdates.values()) {
             try {
@@ -538,7 +538,7 @@ public class ApiEndpointScanner implements ApplicationRunner {
     }
 
     /**
-     * 设计上的公开通道控制器（方案 A.2b）：整类不需要 @Permission——它们走显式公开端点集，
+     * 设计上的公开通道控制器：整类不需要 @Permission——它们走显式公开端点集，
      * 标注反而会被误当受控端点。仅影响标注自检的豁免名单，不参与任何判定。
      * 注意 {@code Auth} 里若混入受控端点（如自助改密），A2 标注扫描时按端点单独标，不受本豁免影响。
      */
@@ -546,7 +546,7 @@ public class ApiEndpointScanner implements ApplicationRunner {
             "Share", "Scim", "Auth", "Oidc", "Saml", "ProjectFileView",
             "SandboxToolCallback", "ToolInventory");
 
-    /** 端点级公开豁免（与 isPublicUserEndpoint 白名单里的公开只读/公开写入口一一对应；A4 收口时并入显式公开端点集） */
+    /** 端点级公开豁免（与 isPublicUserEndpoint 白名单里的公开只读/公开写入口一一对应） */
     private static final Set<String> PUBLIC_ENDPOINTS = Set.of(
             "GET /api/ai/agent/available",
             "GET /api/ai/auth/me",

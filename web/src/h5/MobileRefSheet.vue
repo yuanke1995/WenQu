@@ -145,8 +145,8 @@
            「读不到」才显示并给重试。秒针、跑了多久、停掉几种结果全在引擎那一份里。
            PC 上那些靠 hover 才说得清的（端口是沙盒内部的、来源不明为什么停不了）在触屏上没有第二次
            机会，所以把话直接写进行内。
-           类名走 rs-bg* 一段：rs-proc* 已被上面「本轮」那些步 row 占着，同名会让两套样式互相打脏
-           （真机 2026-10-26 撞过一次：进程行数比实况多 1，多的那条就是工具步 row）。 -->
+           类名走 rs-bg* 一段：rs-proc* 已被上面「本轮」那些步 row 占着，同名会让两套样式互相打脏，
+           进程行里会多出工具步 row。 -->
       <template v-if="procCardVisible">
         <div class="rs-section">后台进程<span class="rs-n rs-bg-n">{{ procs.length }} 个在跑</span></div>
         <div v-if="procErr" class="rs-sb-err">
@@ -256,15 +256,15 @@ const engine = inject('wqChat')
 const { groupedSources, lastTokens, lastSources, sessionTokens, sessionRetrieval,
   currentSessionId, currentSessionTitle, messages,
   // 容量与实测用量整份吃引擎那一份：与 PC 悬浮卡同一个算法、同一套行。
-  // 此前移动壳自持一份分类表与 cap 计算，两端各写各的，同一轮的占用被两把尺量出两个数
+  // 若移动壳自持一份分类表与 cap 计算，两端各写各的，同一轮的占用被两把尺量出两个数
   ctxCapData, ctxRingLevel,
   sessionGoal,
-  // 沙盒目录：取数、判据、折树、下载与存为产物全吃引擎那一份（与 PC 右栏那张卡同源，
-  // 2026-10-25 从 PC 壳下沉），本 sheet 只负责把它摆成触屏形状
+  // 沙盒目录：取数、判据、折树、下载与存为产物全吃引擎那一份（与 PC 右栏那张卡同源），
+  // 本 sheet 只负责把它摆成触屏形状
   sandboxFiles, sandboxRows, sandboxCount, sandboxBytes, sandboxRest,
   sandboxErr, sandboxLoading, sandboxTaken,
   loadSandboxFiles, toggleSandboxDir, sandboxDownload, sandboxTake, sbSize,
-  // 后台进程同样整族吃引擎（2026-10-26 从 PC 壳下沉）：露脸判据、秒针、停止的三种结果只算一份
+  // 后台进程同样整族吃引擎：露脸判据、秒针、停止的三种结果只算一份
   procs, procErr, procCardVisible, killingTag, loadSandboxProcs, procAge, killProc,
   // 本轮过程总览的数据源：与 PC 右栏那张卡同一个对象（跑轮时它就是正在流的那条，结束后是上一轮）
   panelAi } = engine

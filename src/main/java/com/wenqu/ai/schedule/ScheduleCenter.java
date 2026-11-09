@@ -62,9 +62,6 @@ public class ScheduleCenter {
     private static final long TICK_MS = 10_000;
     /**
      * 间隔下限：与调度节拍同值（{@link #TICK_MS}），即"一个节拍"。
-     * <p>此前取 60s（意图是防误配打爆），但它把秒级扫描任务的配置静默抬到了一分钟：
-     * 扫描器们各写的默认值（解析队列 5s、工作流/定时智能体 30s）实际都按 60s 跑，
-     * 而设置页「间隔」列照实显示配置值（5 秒）——界面与行为不符，且无人察觉。
      * <p>节拍本身已经是天然且足够的打爆保护：调度线程 10s 才醒一次，
      * 任何任务都不可能跑得比一个节拍更密，所以下限对齐节拍即可，不需要额外抬到分钟级。
      * 该常量同时用于 {@link #tick()} 的触发判定与 {@link #snapshot()} 的下次预计，
@@ -191,9 +188,8 @@ public class ScheduleCenter {
     /**
      * 清理/回收类任务的共用节拍（{@code cleanup.intervalMs}）。
      *
-     * <p>原先每个清理任务各带一个「每日跑一次」的间隔键，11 个键说的是同一件事，改一个留十个。
-     * 收成一个键的代价：界面上「暂停本任务」会连带暂停全部清理与回收任务——所以每个 A 类任务的
-     * 暂停确认里都要写明这一点，别让人以为只停了一个。
+     * <p>所有清理任务共用一个间隔键：界面上「暂停本任务」会连带暂停全部清理与回收任务——
+     * 所以每个 A 类任务的暂停确认里都要写明这一点，别让人以为只停了一个。
      */
     private int cleanupIntervalMs() {
         return configService.getInt("cleanup.intervalMs", ConfigDefaults.CLEANUP_INTERVAL_MS);
@@ -383,7 +379,7 @@ public class ScheduleCenter {
         // 只能按空闲时长回收，否则用过沙盒的会话会永久占着一个容器。
         // 阈值 sandbox.idleReleaseMinutes（0=不回收）。
         // 节拍不进「清理共用节拍」那一族：容器空闲回收要的是「用过就很快还」，跟着每日节拍走会让
-        // 一个空容器再多占一整天。它原先也没有 schema 键（defaults-only），界面本来就改不动。
+        // 一个空容器再多占一整天。这里同样不做成参数（内置节拍、defaults-only），界面本来就改不动。
         // provider 不可达/未配置 token 时 releaseIdle 内部按失败计数并摘除缓存条目，不会拖垮节拍线程。
         // 返回实际回收数：无事可收不落执行日志。
         registerWork("沙盒空闲回收", "回收空闲超过 sandbox.idleReleaseMinutes 的会话沙盒容器（0=不回收）",
@@ -401,8 +397,8 @@ public class ScheduleCenter {
                 () -> sandboxService.cleanupChatScratch());
 
         // 长任务接续：进程停过之后，把「发出去了却再没有过回答」的那一轮按中断收口（半程正文留下 + 提示发「继续」）。
-        // 实测边界（2026-10-29，kill -9 复现）：框架的排队任务只覆盖「还没启动的 submit」，跑到一半被硬杀的轮
-        // 不在里面，所以这一刀做的是如实收口、不是自动续跑——想让它接着跑，用户发一句「继续」即可。
+        // 边界：框架的排队任务只覆盖「还没启动的 submit」，跑到一半被硬杀的轮不在里面，
+        // 所以这里做的是如实收口、不是自动续跑——想让它接着跑，用户发一句「继续」即可。
         // 内置节拍 2 分钟（不可暂停：停掉等于让中断的轮永远停在「只有问题没有回答」那一行）；
         // 窗口 chat.turnResumeWindowMinutes 见任务参数表。
         // 返回交回引擎的条数：没有孤儿轮就不落执行日志（每 10 分钟一行心跳会把日志刷满）。
@@ -459,7 +455,7 @@ public class ScheduleCenter {
                 () -> false,
                 () -> agentWebhookService.sweepRetry());
 
-        // P1 Trace 线上采样：差评必采 + 无引用/随机按配置数量入池（间隔 trace.samplingIntervalMs，默认每日；≤0 暂停）。
+        // Trace 线上采样：差评必采 + 无引用/随机按配置数量入池（间隔 trace.samplingIntervalMs，默认每日；≤0 暂停）。
         // uk_qalog 唯一键兜底幂等，重复触发不产生重复样本
         register("Trace 线上采样", "线上对话按规则入采样池（差评必采 + 无引用/随机），供标注回流评测集",
                 "trace.samplingIntervalMs",
@@ -559,7 +555,7 @@ public class ScheduleCenter {
 
     /**
      * 每个周期任务的「专属可调参数」：只登记**该任务自身行为**的旋钮（保留期、并发、阈值、总量上限等），
-     * 间隔键不在其中（单独成列）。设置页据此把参数按任务归组——原先所有参数平铺在一张长表单里，
+     * 间隔键不在其中（单独成列）。设置页据此把参数按任务归组，避免所有参数平铺在一张长表单里、
      * 管理员无法判断某个旋钮该在哪调。
      * <p>登记纪律：
      * <ul>

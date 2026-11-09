@@ -1,5 +1,5 @@
 // ==================== 聊天页投影层（纯函数与常量） ====================
-// 从 ChatPage.vue（M1 引擎抽取）搬出的「入参之外不读任何 .value」的纯函数与常量：
+// 「入参之外不读任何 .value」的纯函数与常量：
 // 工具名映射、时间线视图、工具卡片、编排卡片、来源分组与各处格式化。
 // 模块内唯一的响应式状态是 nowTick（运行中工具的实时耗时 tick），自产自销；
 // 组件卸载时由消费方在 onUnmounted 里调 stopTick() 收尾。
@@ -51,7 +51,7 @@ const TOOL_DESCS = {
 // ⚠️ 与 McpClientService 的 clientInfo name 对应。Spring AI 的 SyncMcpToolCallback 用
 // clientInfo.name 经 McpToolUtils.prefixedToolName → shorten() 生成前缀。只认现行前缀 "w_q_"
 // （w_q_sql_query）；历史值 "wen_qu" 不做兼容——库里的旧前缀键已由 SchemaMigrator 启动时
-// 归一成裸名，与后端 McpToolLabelService#stripPrefix 同一条规则（2026-11-09）。
+// 归一成裸名，与后端 McpToolLabelService#stripPrefix 同一条规则。
 const MCP_CLIENT_PREFIX = 'w_q_'
 const bareToolName = n => n.startsWith(MCP_CLIENT_PREFIX) ? n.slice(MCP_CLIENT_PREFIX.length) : n
 const toolLabel = (n, label) => {
@@ -81,7 +81,7 @@ const executedCount = list => (Array.isArray(list) ? list : []).filter(t => t &&
 //     一律当成「这张卡没发出去」——那样正常作答的单问会连问句一起消失、只剩一句答案。
 //     真正没发出去的卡（游客会话 / 提问次数用尽 / 无有效问题 / 本轮中止）回给模型的是一句括号里的
 //     处置说明，按单条说明渲染，绝不按问题逐条铺开空答。
-//  ② answers 数组比问题短 ⇒ 历史数据里后端曾静默截断过（现已改为整卡拒绝），只渲染有答案的前 N 问。
+//  ② answers 数组比问题短的历史数据：只渲染有答案的前 N 问。
 // 未作答的题回给模型的是一句处置指令（前缀由后端 buildCombinedAnswer 固定），卡片里收成「未作答」，
 // 不把模型口径的长句原样摊给用户
 const UNANSWERED_PREFIX = '（用户未回答这一题'
@@ -285,8 +285,8 @@ const toggleProc = (m, seg) => {
 }
 
 // ==================== 思考段（每一轮模型思考就地长在它发生的位置） ====================
-/* 一轮问答常有多次思考（每次调工具/出正文前各一次）。此前它们首尾粘成一块挂在气泡顶上，
- * 用户读不出「这一段是在哪一步想的」；改成按轮成段进时间线，区间指向 m.thinking 的偏移
+/* 一轮问答常有多次思考（每次调工具/出正文前各一次）：按轮成段进时间线，
+ * 好让人读得出「这一段是在哪一步想的」；区间指向 m.thinking 的偏移
  * （与 process 段指向 processText 同一套写法，不复制文本、不做第二份存储）。
  * 段的边界由引擎侧的 thinkSegOpen 决定：thinking_done / 正文 / 工具事件一到就断段，
  * 下一片思考另起一段——光靠「区间是否相接」判不出来，两次思考之间可能一个字正文都没出。 */
@@ -340,13 +340,12 @@ const ensureThinkSegment = m => {
 
 // ==================== 过程簇（连续思考/过程/工具的二次折叠） ====================
 /* 为什么需要这一层：模型一轮里常是「思考→工具→思考→工具」交替，而过程块遇 think/process 段
- * 就 flushGroup（它们天然切断工具分组，时序要如实保留），于是一轮过程被切成 3N 个折叠头
- * （真机「用Java做一个打卡签到的H5」那条：深度思考/执行了4个操作/深度思考/执行了3个操作… 一路排到
- * 屏幕外，实测三十多行）。这里在视图层补一道**后置聚簇**：把 out 里连续的 think/process/group 段
+ * 就 flushGroup（它们天然切断工具分组，时序要如实保留），于是一轮过程被切成 3N 个折叠头。
+ * 这里在视图层补一道**后置聚簇**：把 out 里连续的 think/process/group 段
  * 包成 cluster，折叠态收敛为 1 行；展开态由 clusterSteps 再摊一次——工具一行一步、思考并到步的
  * 行尾，段与段的先后次序不变（时序仍零损失），但不再是一段过程一行标题。
  *
- * 思考段为什么也要进游程（它原来会断簇）：它和 process 一样是「执行细节」，不是正文。
+ * 思考段为什么也要进游程：它和 process 一样是「执行细节」，不是正文。
  * 让它断簇等于每一轮思考都新开一行标题，用户要的「及时合并」恰恰合并不到它身上——
  * 收场后 TurnBar 把整块过程藏起来，才让人产生「输出完才合并」的错觉。
  *
@@ -354,7 +353,7 @@ const ensureThinkSegment = m => {
  *   ① 只在「游程内不含任何 text 段」时成立——即这一段过程与正文无交错、纯属执行细节；
  *      任何一段正文都断簇，否则会把「说完一段→查一下→接着说」的交错节奏一并压平。
  *   ② 单段的 think/process 游程不包（单个思考段套簇壳=多一次点击）；单段 group 照包——
- *      组卡形态（组条+全量卡连排）已被帽体取代，单批工具同样要进帽，否则页面照样被撑长。
+ *      单批工具同样要进帽，否则页面照样被撑长。
  *
  * 簇键用序号 c{N}（N = res.length）。序号稳定性论证：时间线只追加不重排，text 段到来时
  * 已 flush 的簇其 res 下标不会变动，新簇一律追加在尾部，故历史键不会错位到别的簇上。
@@ -379,9 +378,7 @@ const clusterize = out => {
 }
 
 /** 簇内正在长的那一簇（仅末尾簇）标记 grow：流式期自动展开它，本轮结束自动收起，
- *  与 procOpen / thinkSegOpen 同款约定；用户点过就以用户为准（m._clOpen）。
- *  曾在这里把尾部裸 group 临时包成簇（旧 clusterize 单段 run 不包簇），② 放开后
- *  clusterize 恒产簇，这里只剩标记职责。 */
+ *  与 procOpen / thinkSegOpen 同款约定；用户点过就以用户为准（m._clOpen）。 */
 const markGrowingCluster = view => {
   for (const s of view) if (s.kind === 'cluster') s.grow = false
   const last = view[view.length - 1]
@@ -493,7 +490,7 @@ const clusterLiveRows = cl => {
     }
   }
   // 末尾还挂不出去的思考/独白（还没换来工具的那一段）：整组留着，行上按组渲染——
-  // 原先只留最后一段的标签（「深度思考 N 字 等 M 段」），同组里更早的那几段在这一行彻底看不见。
+  // 同组里更早的那几段也要在这一行可见。
   if (notes) rows.push({ tailNotes: notes })
   return rows
 }
@@ -501,7 +498,7 @@ const clusterLiveRows = cl => {
 /** 展开态的簇＝「一行一步」轻量清单（clusterLiveRows）：思考段与过程独白段不再各占一行标题，
  *  落进它之后第一个工具那一行的展开详情（那里本来就是「想了这些才动手」的那个位置）。
  *  末尾挂不出去的段（正在想、还没调工具）自成一节：它正是「当前这一步」，不能因为还没有工具就看不见。
- *  曾有配套的 clusterSteps（摊平成 group/notes 段给顶层渲染全量工具卡），随摊平形态一并退役。 */
+ */
 
 /** 这一组要不要出自己的组条（＝它是并行批次）。组条在不在，决定行尾那一项挂在组条上
  *  还是挂在首张卡上——判据只写这一处，两端模板共用。 */
@@ -537,9 +534,9 @@ const toggleTail = (m, cl) => {
 }
 
 // ==================== 「整轮用时」那一条（跑着在正文末尾，答完在回答顶上） ====================
-// 一轮回答的耗时只报这一处。原先簇头、组条、每张工具卡各挂一个数：一屏六个读数读不出重点，
-// 而且互相打架（组条是首尾跨度、单卡是各自跑掉多久，两个数并排放谁都不认）。现在整块过程收在
-// 这一条底下——跑的时候它跟在正文后面跟着秒走，答完回到回答顶上收成一条总览，点开才回到交错时序。
+// 一轮回答的耗时只报这一处：多处各挂一个数会一屏六个读数、互相打架（组条是首尾跨度、
+// 单卡是各自跑掉多久）。整块过程收在这一条底下——跑的时候它跟在正文后面跟着秒走，
+// 答完回到回答顶上收成一条总览，点开才回到交错时序。
 /** 整轮用时（中文长格式）：35 分 19 秒 / 6 分 26 秒 / 40.5 秒。它现在独占一行标题，
  *  要的是读出量级，不是 toolDuration 那种给行尾小 chip 用的紧凑写法（226.0s 读不出是几分）。 */
 const durZh = ms => {
@@ -562,11 +559,11 @@ const durZh = ms => {
 // 气泡顶部只报一种数：从发出提问到答完的整轮墙钟（含开轮前准备与人在回路等待）。
 // 现场 done 写回的 turnMs 与历史落库的 tokens.turnWallMs 两处同源。报墙钟不报机器时间：
 // 屏幕上跳着的那一份本来就是墙钟，收尾改成机器时间会让数字在答完那一刻变小，刷新后更会直接
-// 换一本账（真机 6.0s → 3.3s）。
+// 换一本账。
 const turnElapsedMs = m => {
   if (!m) return 0
   // 跑动中按整秒报：秒针的相位与服务端起表点天然错开（起表基准要等首帧才到，比秒针晚几百毫秒），
-  // 不取整就会一直显示 0.8、1.8 这种非整秒读数（真机 2026-11-06）——秒表本来就是 1 秒一跳。
+  // 不取整就会一直显示 0.8、1.8 这种非整秒读数——秒表本来就是 1 秒一跳。
   // 向下取整而不是四舍五入：读数永远不超过收尾那份服务端值，答完那一刻不会往回掉。
   if (m.loading) {
     return Math.floor(Math.max(0, nowTick.value - (Number(m.time) || nowTick.value)) / 1000) * 1000
@@ -640,7 +637,7 @@ const turnExpandable = m => {
 }
 /** 本轮终态标注的原文（与后端 {@code TurnRecorder} 同一组常量，逐字一致）。
  *  这里只留「界面要认得它」所需的那几份：正文里出现了就是服务端说过这件事，不再由别处补第二遍。
- *  抄第二份的代价已经踩过一次——当场与刷新后不同形（见 useChatEngine 里原来那份 STOP_SUFFIX）。 */
+ */
 export const TURN_STOP_SUFFIX = '\n\n> ⏹ 已停止本轮，以上为已生成的部分'
 const TURN_TRUNC_SUFFIX = '\n\n> ⏹ 回答在此处被中断，以上为已生成的部分'
 const TURN_BUDGET_SUFFIX = '\n\n> ⏹ 已到整轮时间上限，后面的步骤没有执行。发一句「继续」可以接着做'
@@ -925,7 +922,7 @@ const openDispatchCard = (m, t) => {
   show()
 }
 /**
- * run_code 的扇出看板（P3b）：实时帧与终态清单同一个形状（后端 buildFanOut 一处组），
+ * run_code 的扇出看板：实时帧与终态清单同一个形状（后端 buildFanOut 一处组），
  * 所以这几条判据只写一遍，PC 与移动壳的模板都走它们。
  * 字段：total 已完成条数、inFlight 在途条数、items 清单、omitted 未列出数、
  * used/max 本轮额度、parallel 并发上限、delivered 脚本交回的产物数。
@@ -944,9 +941,9 @@ const fanTitle = f => `扇出 ${Number(f.total) || 0} 次工具调用` +
   ((Number(f.inFlight) || 0) > 0 ? `（还有 ${f.inFlight} 条在跑）` : '')
 const fanRowState = s => s.status === 'start' ? `在跑×${Number(s.running) || 1}` : toolDuration(s.elapsedMs)
 /**
- * run_code 这次运行的收尾类型（P3b 刀4）：后端把结果结构化成 run{kind,exit,ms,calls,maxCalls,truncated}
+ * run_code 这次运行的收尾类型：后端把结果结构化成 run{kind,exit,ms,calls,maxCalls,truncated}
  * 挂在卡片上。正常结束不额外刷屏（卡片头已有耗时与扇出数），只把「没跑成」的三种说出来——
- * 此前这三种都显示成绿色对勾，只有去读正文的人才知道脚本其实没跑完。
+ * 一律显示成绿色对勾的话，只有去读正文的人才知道脚本其实没跑完。
  */
 const fanRun = t => {
   const r = t.run
@@ -957,7 +954,7 @@ const fanRun = t => {
   return '运行未完成'
 }
 /**
- * 并发水位总览（P3b 刀4-2）：脚本跑着的时候，不点开卡片也能看出跑了多少、在途几条。
+ * 并发水位总览：脚本跑着的时候，不点开卡片也能看出跑了多少、在途几条。
  * 数据来自实时进度帧（后端每秒合并一帧），落在消息级 runBoard 上，随本段脚本结束清空。
  */
 const runBoardText = m => {
@@ -990,7 +987,7 @@ const mergeDoneToolCalls = (m, doneCalls) => {
     const live = [...list].reverse().find(x => x.name === d.name && x.status === 'start')
       // 找不到就认「同名、已终态、且这一份还没认领过」的那一张——实时帧早就把这张卡改成 done 了，
       // done 这份该把全文并到它身上。少了这一路，落库那份会被当成一次新调用 push 进去，同一件事
-      // 在界面上算两遍：「执行了 N 个操作」和总览那半步的步数当场翻倍（真机 2 次 writeTodo 数成 4）。
+      // 在界面上算两遍：「执行了 N 个操作」和总览那半步的步数当场翻倍。
       // 正向扫：两份都是到达顺序，倒着配会把重复同名调用的入参/输出串到别的卡上。
       || list.find(x => x.name === d.name && !x._merged)
     if (live) {
@@ -1038,8 +1035,8 @@ const ensureTick = () => {
   }, 1000)
 }
 /** 把秒针相位对齐到本轮的起表点：从 anchor 起每满 1 秒报一次。
- *  秒针原本按页面加载相位跳，起表点要等首帧才到（晚几百毫秒）；不对齐的话读数慢半拍、
- *  收尾那一刻还会直接跳过最后一秒（真机 2026-11-06：跑动 4 秒 → 答完 5.1 秒）。
+ *  秒针按页面加载相位跳，起表点要等首帧才到（晚几百毫秒）；不对齐的话读数慢半拍、
+ *  收尾那一刻还会直接跳过最后一秒。
  *  对齐只改「什么时候报」，不改读数来源；秒针是全局的，同一会话至多一轮在跑，不存在争相位。 */
 const alignTick = anchor => {
   const a = Number(anchor) || 0
@@ -1108,8 +1105,7 @@ const THINK_CAPS = {
  * 为什么按 id 与名称双路：历史消息只保证有 agentName（落库快照），实时流式轮才有 agentId；
  * 而「@ 提及的智能体作答」这类委派轮，agentId 指向被委派者、与列表项对得上，历史恢复时按名称也能命中。
  *
- * 查不到（智能体已被删除/不可见、只有名称快照对不上）返回 null —— AgentAvatar 缺省即默认机器人，
- * 与改动前的写死 <robot-outlined> 表现一致，不出现空洞。
+ * 查不到（智能体已被删除/不可见、只有名称快照对不上）返回 null —— AgentAvatar 缺省即默认机器人，不出现空洞。
  */
 const agentBadgeOf = (agents, agentId, agentName) => {
   const list = Array.isArray(agents) ? agents : []
@@ -1172,8 +1168,8 @@ const usageTip = t => {
 const groupSources = sources => {
   const groups = []
   const byKey = new Map()
-  // 外部来源（联网/MCP）单独成组，名称与知识库文档区分——此前它们没有 fileName/docId，
-  // 全部落进「手动补充的知识」兜底组，名不副实
+  // 外部来源（联网/MCP）单独成组，名称与知识库文档区分——它们没有 fileName/docId，
+  // 落进「手动补充的知识」兜底组会名不副实
   const groupOf = s => {
     if (s.origin === 'WEB') return { key: '__web', fileName: '联网来源', icon: 'web' }
     if (s.origin === 'MCP') return { key: '__mcp', fileName: 'MCP 来源', icon: 'mcp' }
@@ -1260,7 +1256,6 @@ const errorBrief = (raw, kind) => {
   // 'spoken'——服务端 error 帧里那句人话（emitRunFailure 挑好的：额度该充值、断流发「继续」、
   //  平台配额找管理员）。再按文本分类一遍会把它落进兜底「生成失败，可重试或更换模型」，
   //  后端指好的方向就全白写了（断流轮的「重新生成」按钮恰是最不该按的那个）——原样返回。
-  // 真机 2026-11-04：上游 429 那一轮屏幕上写的是兜底那句，而服务端交上来的是「模型服务限流，请稍后重试」。
   if (kind === 'spoken') return s.trim() || '生成失败，可重试或更换模型'
   if (kind === 'interrupted') {
     if (/timeout|timed?\s*out|长时间未收到响应/i.test(s)) return '响应超时：连接已中断'
@@ -1366,7 +1361,7 @@ const verLabel = m => verLocal(m)
 // 没有逐条核验、没有倒计时。用户的动作只剩三个：改目标原文、停止/继续、删除。
 // 摘要条、右栏/移动详情面、目标卡三处共用同一套词与同一份判据：各处各写一遍必然漂移
 // （同一条目标，条子说一个词、卡里说另一个词就是那种）。入参一律是目标视图模型本身，不读任何 .value。
-// 后端状态（2026-10-22 任务运行时）：QUEUED/RUNNING/PAUSED/VERIFYING/WAITING_APPROVAL/
+// 后端状态：QUEUED/RUNNING/PAUSED/VERIFYING/WAITING_APPROVAL/
 // WAITING_EVENT/ACHIEVED/FAILED/CANCELLED。老行的其余状态读取时已归一。
 /** 不再往下推的那几档：详情面转只读，条子也不再露 */
 const GOAL_ENDED = ['ACHIEVED', 'CANCELLED', 'FAILED', 'ENDED_INCOMPLETE']
@@ -1517,8 +1512,7 @@ const goalEchoTipOf = (g, goalId) => {
 }
 
 // ==================== 交付包（产物清单的聚合口径） ====================
-/* 以前产物是「回答的附件」：每件一行、两个常驻动作，多文件一次交付就把对话刷成文件管理器。
- * 现在把一组产物收成一个交付包（有入口、有分组、有体量），卡片与抽屉都吃这一份；
+/* 一组产物收成一个交付包（有入口、有分组、有体量），卡片与抽屉都吃这一份；
  * 目标模式再在包上面加版本与验收，普通问答只少这两样，形状不许另起一套。 */
 
 /** 产物在交付包里的角色：决定分组与卡片标签（入口会由 {@link deliveryOf} 改写） */

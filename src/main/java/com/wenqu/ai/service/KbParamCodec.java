@@ -18,7 +18,7 @@ import java.util.Set;
  * 而跨库的一轮检索里，库级参数只能逐库生效，不能塞进线程级单标量。
  *
  * <p>{@code retrieval.vectorTopK} / {@code retrieval.keywordLimit} / {@code rerank.enabled} /
- * {@code rerank.baseUrl} 曾经在库级白名单里，现分别归全局（召回量）与智能体（重排开关）；
+ * {@code rerank.baseUrl} 分别归全局（召回量）与智能体（重排开关），不在库级白名单内；
  * 存量 JSON 里残留这些键时读取静默忽略、保存时清除，避免“填了不生效”再次出现。
  *
  * @author yuanke

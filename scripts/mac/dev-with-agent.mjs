@@ -9,7 +9,7 @@
  * 环境变量：
  *   WENQU_EXECUTOR_SERVER  执行器连的服务器，默认取 VITE_PROXY_TARGET，再退 http://127.0.0.1:8090/ai
  *   WENQU_EXECUTOR_ROOT    浏览起点，默认 ~（--root / 可浏览整盘）
- *   WENQU_EXECUTOR_TOKEN   手工令牌，仅兼容旧用法；平时不需要——首次启动按终端提示在浏览器里授权即可
+ *   WENQU_EXECUTOR_TOKEN   手工令牌，平时不需要——首次启动按终端提示在浏览器里授权即可
  *   WENQU_EXECUTOR_REQUIRE_HTTPS=1  强制远程服务器使用 https（默认临时允许 http，只告警）
  *   WENQU_EXECUTOR_INSECURE=1       与 REQUIRE_HTTPS 同时出现时仍允许 http（应急用）
  *

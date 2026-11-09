@@ -8,7 +8,7 @@ import io.agentscope.core.permission.PermissionMode;
 import io.agentscope.core.permission.PermissionRule;
 
 /**
- * 问渠权限档位 → AgentScope 权限系统（方案 §4 P1「把现有规则翻译进框架权限配置」这一条）。
+ * 问渠权限档位 → AgentScope 权限系统。
  * <p>翻的是<b>档位语义</b>，不是再造一层判定：档位的解析仍只有
  * {@code PermissionPolicyResolver}（经 {@code ToolAssemblyService.resolvePermissionPolicy}）一处，
  * 它同时喂给问答侧的执行守卫与框架侧的权限系统，两边读同一份 {@link ExecutionPolicy}。

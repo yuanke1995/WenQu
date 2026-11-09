@@ -40,9 +40,8 @@ import java.util.concurrent.TimeUnit;
  * MCP（Model Context Protocol）客户端管理：把用户登记的 MCP Server 的工具动态接入 Function Calling
  * 链路（"工具生态层"——用户可自行添加外部工具，无需改代码）。
  * <p>
- * <b>归属：每人连自己的服务</b>。原形态是「管理员在系统设置里配一个全局 JSON 数组 + 全局总开关」，
- * 现改为 {@code c_ai_user_mcp} 按 uid 登记，连接池也按 uid 分池——取工具时只 disasters 自己那份，
- * 不会因为别人连了什么服务而影响自己。
+ * <b>归属：每人连自己的服务</b>。{@code c_ai_user_mcp} 按 uid 登记，连接池按 uid 分池——
+ * 取工具时只拿自己那份，不会因为别人连了什么服务而影响自己。
  * <p>
  * 连接策略（容错优先，MCP 故障绝不影响问答主链路）：
  * - 连接在<b>后台线程</b>建立：状态接口/首次访问只负责对齐配置清单并立即返回，未连上的服务
@@ -67,8 +66,8 @@ public class McpClientService {
     /**
      * 初始化超时（秒）。SDK（0.18.3）的 initialize 是一个事务：initialize POST +
      * notifications/initialized + postInit 钩子里再串行发一次 tools/list（工具 schema 缓存），
-     * 至少两个业务请求串行。外部 server 的响应延迟波动可以很大（实测 context7 免密钥端点
-     * 单请求 1s~3.5s+），5s 预算会被两个慢请求叠加击穿 → initialize 整体 TimeoutException
+     * 至少两个业务请求串行。外部 server 单请求延迟波动很大（可达 1s~3.5s+），
+     * 5s 预算会被两个慢请求叠加击穿 → initialize 整体 TimeoutException
      * （日志表现为 "Client failed to initialize by explicit API call"，cause 是
      * TimeoutException）。30s 与请求超时同量级，慢服务也能完成握手。
      */
@@ -92,7 +91,7 @@ public class McpClientService {
     private static final long[] RETRY_DELAYS_SECONDS = {30, 60, 120, 300, 600};
     /**
      * 工具清单缓存 TTL：问答/工作流每轮都要工具表，而每次 {@code listTools()} 都是远程往返
-     * （实测 1~3.5s+，还会分页）。连接成功时已经拉过一次，先把那次结果预热进缓存；
+     * （每次 1~3.5s+，还会分页）。连接成功时已经拉过一次，先把那次结果预热进缓存；
      * 过期的旧清单先照常用、后台刷新，避免每 5 分钟固定卡一轮。
      */
     private static final long TOOLS_CACHE_TTL_MILLIS = Duration.ofMinutes(5).toMillis();
@@ -114,7 +113,7 @@ public class McpClientService {
 
     /**
      * 后台连接线程池：连接/握手是慢 IO（单 server initialize 最长 30s），绝不能占着 HTTP
-     * 请求线程等（曾致 MCP 页面首屏要等所有服务连完才出列表）。cached 池按需起线程，
+     * 请求线程等。cached 池按需起线程，
      * 任务数以「正在重建连接的用户数」为上界，不会失控。
      */
     private final ExecutorService connectExecutor = Executors.newCachedThreadPool(r -> {
@@ -189,8 +188,8 @@ public class McpClientService {
         if (uid == null || uid.isBlank()) return List.of();
         UserPool pool = ensureConnections(uid);
         // 连接是后台任务。问答链路只等一个有界窗口：连接没收敛就用已有连接/缓存工具先答，
-        // 后台继续连，下一轮自然拿到新工具。此前固定等 120s——一个不可达的 MCP 服务
-        // 能把新会话的首轮拖到超时（本地实测准备段 10s）。
+        // 后台继续连，下一轮自然拿到新工具。若无限等待，一个不可达的 MCP 服务
+        // 能把新会话的首轮拖到超时。
         awaitConnect(pool, Math.max(0, configService.getInt("mcp.turnWaitMs", 1500)));
 
         // 锁内只做快照，listTools 在锁外发：问答链路对每个 server 的 listTools（远端挂起可吃满
@@ -210,7 +209,7 @@ public class McpClientService {
         Map<String, String> failed = new LinkedHashMap<>();
         long now = System.currentTimeMillis();
         // 本机执行器在线时，云端平台浏览器整族让位：两套浏览器并存会让模型拿到两种结论
-        // （云端看不到 localhost 报「连接被拒绝」，本机却已打开页面），真机表现为回答与窗口对不上。
+        // （云端看不到 localhost 报「连接被拒绝」，本机却已打开页面），回答与窗口会对不上。
         boolean localPreferred = localBrowserTools != null && localBrowserTools.onlineExecutor(uid) != null;
         for (Map.Entry<String, McpSyncClient> entry : snap.entrySet()) {
             if (onlyServers != null && !onlyServers.contains(entry.getKey())) continue;
@@ -299,14 +298,14 @@ public class McpClientService {
      * （远程 IO，单请求 1s~3.5s+、远端挂起要吃满 60s 请求超时）——MCP 管理页要"此刻真实状态"，
      * 值得付这个代价；{@code verifyOnline=false} 只读连接池里最近一次已知状态与配置清单
      * （纯本地内存）。只想拿服务清单的消费方（如智能体页填充「MCP 外部工具」下拉）一律走这档：
-     * 曾把在线校验无条件织进本接口，智能体页每次进入都被远程 MCP 的延迟劫持（整页
-     * Promise.all 等它，转圈数秒起步）。
+     * 若把在线校验无条件织进本接口，智能体页每次进入都会被远程 MCP 的延迟劫持：
+     * Promise.all 会等它，转圈数秒起步。
      *
-     * <p><b>第三档 {@code verifyOnline=false, withTools=true}</b>（2026-10-02 补）：只补工具清单、
+     * <p><b>第三档 {@code verifyOnline=false, withTools=true}</b>：只补工具清单、
      * <b>不翻转状态</b>。工作流画布的 mcp 节点要列该服务下的工具供用户选，纯本地档下 {@code tools}
      * 恒为空 ⇒ 工具下拉永远是空的（画布侧表现为「服务能选、工具选不出来」，节点必然停在必填校验上）；
-     * 而让它走 {@code verifyOnline=true} 又会把打开节点抽屉的代价变成同步远程 IO（正是本方法注释里
-     * 记的那次回归的根因）。这一档取两者中间：对已连接服务发 listTools 拿工具名，但拿到失败也只当
+     * 而让它走 {@code verifyOnline=true} 又会把打开节点抽屉的代价变成同步远程 IO。
+     * 这一档取两者中间：对已连接服务发 listTools 拿工具名，但拿到失败也只当
      * 「本轮没取到工具」——状态显示维持粘性 connected，语义仍由 MCP 管理页的在线校验负责。
      *
      * @param uid          归属用户
@@ -524,8 +523,8 @@ public class McpClientService {
         UserPool pool = ensureConnections(uid);
 
         // 锁内只做三件事：挑出要重连的目标、摘掉旧连接、置 connecting。connect+initialize 是
-        // 秒级远程 IO（单服务最长 30s），持锁做会把 /status 等只读消费方堵在池锁上——此前
-        // "刷新"期间切到智能体页，列表就被这把锁拖住转圈。临界区纪律见 {@link UserPool}。
+        // 秒级远程 IO（单服务最长 30s），持锁做会把 /status 等只读消费方堵在池锁上。
+        // 临界区纪律见 {@link UserPool}。
         List<ConnectTarget> targets = new ArrayList<>();
         List<McpSyncClient> stale = new ArrayList<>();
         synchronized (pool) {
@@ -852,12 +851,11 @@ public class McpClientService {
     /**
      * 按该用户当前配置对齐连接（懒加载；配置指纹变化才做增量对齐）。<b>只对齐清单、立即返回</b>：
      * 具体连接丢给后台线程（{@link #connectAsync}），调用方拿到池时未连上的服务状态是
-     * {@code connecting}。这样 /status 之类只需清单的调用不再被 30s 级的握手拖住
-     * （MCP 页面首屏曾要等全部服务连完才出列表）；需要工具的调用方（问答链路）再显式
+     * {@code connecting}。这样 /status 之类只需清单的调用不再被 30s 级的握手拖住；
+     * 需要工具的调用方（问答链路）再显式
      * {@link #awaitConnect} 等收敛。返回的一定是 {@link #pools} 里的活池：先对齐自己的池
      * （顺带刷新 lastAccess），再做全局空闲回收——顺序反了的话，回收会把自己刚取出的闲置池
-     * 关掉并从 map 摘除，调用方随后按 uid 再 get 就拿不到，对着已出 map 的"僵尸池"继续用
-     * （曾致 serverStatuses NPE）。
+     * 关掉并从 map 摘除，调用方随后按 uid 再 get 就拿不到，对着已出 map 的"僵尸池"继续用。
      */
     private UserPool ensureConnections(String uid) {
         UserPool pool = pools.computeIfAbsent(uid, k -> new UserPool());
@@ -889,7 +887,7 @@ public class McpClientService {
             }
         }
         // 旧连接的 closeGracefully 是远程 IO（streamable 会发 DELETE 关会话），锁外关闭——
-        // 放在临界区里曾让重建路径把池锁握在手里等网络
+        // 放在临界区里会把池锁握在手里等网络
         closeQuietly(stale);
         // 空闲回收也不再持本池锁调用（它要拿别的池的锁）：锁内嵌套他池锁既拖长临界区又有
         // 理论上的锁序死锁面；两个分支现在统一在锁外做这一步
@@ -1011,9 +1009,9 @@ public class McpClientService {
      * 连接单个服务并回写状态（connectAsync 与失败重试共用）。
      * <p>
      * 状态回写紧跟 initialize 成功、在锁内完成；工具数日志的 listTools 单独兜 try 且绝不影响
-     * 状态——这行曾裸奔在 try 之外，initialize 成功但 listTools 被远端掐断（deepwiki 实测的
-     * "Remote host terminated the handshake"是间歇性的，握手能过、下一个请求被掐）时异常
-     * 直接炸掉整个建连任务：该服务永远停在 connecting、排在后面的服务再也不连、也没人重试，
+     * 状态——listTools 必须单独兜 try：若它被远端掐断而未兜住，
+     * 异常会直接炸掉整个建连任务：该服务永远停在 connecting、
+     * 排在后面的服务再也不连、也没人重试，
      * 用户看到的就是"每次点开都在连接中"。
      *
      * @param attempt 已用掉的重试次数（0=首次连接）；失败后按它推进退避序列
@@ -1162,7 +1160,7 @@ public class McpClientService {
      * <p>
      * 只关连接、清指纹，池壳留在 {@link #pools} 里（下次访问指纹为空自动重建连接）——
      * 不从 map 摘除：一旦摘除，「别的线程刚 computeIfAbsent/get 到引用」与「这里 remove」
-     * 之间存在竞态，调用方会拿着已出 map 的僵尸池或 get 到 null（serverStatuses 曾因此 NPE）。
+     * 之间存在竞态，调用方会拿着已出 map 的僵尸池或 get 到 null。
      * 池壳仅几个空字段，常驻开销可忽略；双重检查保证刚被使用的池不会被误关。
      */
     private void evictIdlePools() {

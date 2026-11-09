@@ -22,7 +22,7 @@ import java.util.UUID;
  * <p>
  * 敏感字段（bearerToken/bindPassword/spPrivateKey）回显 {@code ******}；保存时遇掩码值
  * 保留原值（与 OidcProviderService 的 client_secret 同口径）。整块 config RSA 加密落库。
- * OIDC 仍在旧表（迁移期并存，退役见任务 #7），本表承载新协议认证源。
+ * OIDC 仍在旧表，本表承载新协议认证源。
  *
  * @author yuanke
  */
@@ -30,7 +30,7 @@ import java.util.UUID;
 @Service
 @RequiredArgsConstructor
 public class IdentityProviderService {
-    /** 统一审计事件（Phase 3）：同一份格式串派生日志与结构化事件，不再两处抄 */
+    /** 统一审计事件：同一份格式串派生日志与结构化事件，不再两处抄 */
     private final AuditService audit;
 
 
@@ -45,7 +45,7 @@ public class IdentityProviderService {
     private static final String MASK = "******";
 
     /**
-     * 认证源是管理面资源（Phase 4）：superadmin 要能看到并改别家租户的认证源，
+     * 认证源是管理面资源：superadmin 要能看到并改别家租户的认证源，
      * 否则那个租户的认证源一旦建好就再也没有入口能改或删（管理动作不能留这种死路）。
      * 读、写、删整段都要在平台视图里跑——写侧尤其：{@code updateById} 被拼上本租户条件后
      * 匹配 0 行是<b>一声不响</b>的，界面会提示「已保存」而什么都没改。

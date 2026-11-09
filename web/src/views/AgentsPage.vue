@@ -51,7 +51,7 @@
         <!-- 子智能体不再与主智能体混排：主智能体一组，子智能体单独一组 -->
         <div v-else class="ap-groups">
           <section v-for="sec in sections" :key="sec.key" class="ap-group">
-            <!-- 只剩主智能体一组时不显示组头，保持与旧版一致 -->
+            <!-- 只剩主智能体一组时不显示组头 -->
             <div v-if="sections.length > 1 || sec.key !== 'main'" class="ap-group-head">
               <span class="ap-group-title">{{ sec.title }}</span>
               <span v-if="sec.hint" class="ap-group-hint">{{ sec.hint }}</span>
@@ -75,7 +75,7 @@
                 <p class="ap-desc" :title="a.description || ''">{{ a.description || '未填写描述' }}</p>
                 <div class="ap-chips">
                   <span class="ap-chip">{{ scopeText(a) }}</span>
-                  <!-- M4：绑定了工作流的智能体，回答由工作流产出（卡片上一眼可见） -->
+                  <!-- 绑定了工作流的智能体，回答由工作流产出（卡片上一眼可见） -->
                   <span v-if="a.workflowId" class="ap-chip ap-chip-on" :title="'回答由工作流产出：' + workflowName(a.workflowId)">
                     工作流 {{ workflowName(a.workflowId) }}
                   </span>
@@ -510,8 +510,7 @@
 
     <!-- 公开分享（/s/{token} 免登录对话 + iframe 嵌入 + MCP 端点）
          结构：状态卡（一个总开关说清"发布没发布"）→ 游客能力（模型 / MCP）→ 分发方式（Tab 三选一）。
-         此前把链接、iframe、MCP 三段形态连同四段说明文字平铺一列，弹窗被撑到一屏半、
-         复制按钮被输入框挤成竖排（"复 制"/"打 开"），且看不出三者其实是同一 token 的三种用法。 -->
+         链接、iframe、MCP 三段是同一 token 的三种用法，收进 Tab 里切换。 -->
     <a-modal v-model:open="pubVisible" :width="640" :footer="null" class="ap-pub-modal" destroy-on-close>
       <template #title>
         <div class="pub-title">
@@ -549,9 +548,8 @@
           <div class="pub-switch-t">
             <div class="pub-switch-label">开放 MCP 端点</div>
             <div class="pub-switch-d">开启后同一个 token 兼作 MCP 凭据，Claude / Cursor 等客户端可直连，并可挑选对游客开放的 MCP 工具</div>
-            <!-- 游客 MCP 授权名单：挂在端点开关之下（从属关系一眼可见），端点关着时不出现——
-                 此前只跟总开关走，端点关着照样能勾，勾了也保存了但运行期什么都不挂，
-                 「配置了却不生效」。勾选项=智能体配置里实际绑定的 MCP 服务（指定模式列它绑的、
+            <!-- 游客 MCP 授权名单：挂在端点开关之下（从属关系一眼可见），端点关着时不出现。
+                 勾选项=智能体配置里实际绑定的 MCP 服务（指定模式列它绑的、
                  跟随全局列全部已启用），与运行期「游客名单 ∩ 智能体具体项选择」的装配口径一致 -->
             <div v-if="pubMcpEnabled && myMcpServerChoices.length" class="pub-mcp-sub">
               <div class="pub-mcp-sub-h">
@@ -634,7 +632,7 @@
           <a-tab-pane key="link" tab="分享链接">
             <div class="pub-code-box">
               <code class="pub-code">{{ shareUrl }}</code>
-              <!-- 按钮浮在代码框内右上角：此前独占一列，把本就单行的 URL 挤成两行 -->
+              <!-- 按钮浮在代码框内右上角：不独占一列，单行的 URL 不会被挤成两行 -->
               <div class="pub-code-act">
                 <a :href="shareUrl" target="_blank" rel="noopener" class="pub-icon-btn" title="在新标签打开" aria-label="打开链接">
                   <export-outlined />
@@ -851,8 +849,8 @@ const CAP_GROUPS = ['检索与知识', '工具与扩展', '执行与交付']
 const capsOfGroup = g => CAPS.filter(c => c.group === g)
 // 开关型三态：''=跟随系统默认 / '1'=开启 / '0'=关闭（对应后端 tool_* 的 1/0/null）
 // 多实例能力：跟随系统默认 / 指定（选「指定」才展开具体项多选）/ 不使用
-// 两者的「跟随系统」段都点名系统默认当前是哪一侧（gv 小字）——措辞从「跟随全局」改掉，
-// 因为默认值来自管理员侧的「系统设置」，普通用户会把它读成"我自己的全局"
+// 两者的「跟随系统」段都点名系统默认当前是哪一侧（gv 小字）：默认值来自管理员侧的「系统设置」，
+// 用「跟随系统」措辞，免得普通用户把它读成"我自己的全局"
 // 记忆域三态（对外能力第二批）：''=跟随用户级记忆 1=专属 2=叠加；后端认 0/1/2/null
 // 唯一不叫「跟随系统」的跟随档：它的默认值是用户自己的全局记忆，不是管理员侧的系统设置
 const memoryModeOptions = [
@@ -864,7 +862,7 @@ const globalSuffix = c => {
   const t = globalText(c)
   return t ? '（' + (t.startsWith('关闭') ? '关' : '开') + '）' : ''
 }
-// 分段控件（替代原三态下拉）：当前值 + 段列表；「跟随系统」段点名系统默认在哪一侧，
+// 分段控件：当前值 + 段列表；「跟随系统」段点名系统默认在哪一侧，
 // 多实例「指定」段实时点名已选几项——状态、默认值、已选数全部不离开控件本身
 const capSegValue = c => (c.kind === 'switch' ? form.value[c.key] : form.value[c.modeKey])
 const capSegItems = c => (c.kind === 'switch'
@@ -912,8 +910,8 @@ const keyword = ref('')
 const agents = ref([])
 const kbOptions = ref([])
 // 全局默认值（/agent/config-defaults，登录用户都能读）：所有「跟随默认」的控件都要在触发器上
-// 点名它跟随的到底是什么值。以前这份数据从管理端的 /config 取，普通用户拿不到，界面就只剩
-// 「跟随系统默认」五个字——要么猜，要么显式覆盖一份（覆盖一旦写下就不再跟随管理员后续调整）
+// 点名它跟随的到底是什么值，避免界面只剩「跟随系统默认」五个字——要么猜，要么显式覆盖一份
+// （覆盖一旦写下就不再跟随管理员后续调整）
 const agentDefaults = ref(null)
 const agentDefaultsError = ref(false)
 // 管理员级身份：reload 里 ensureAuth 到位后刷新（localStorage 兜底仅在已拉取过时可靠）
@@ -1048,7 +1046,7 @@ const branchModeDefaultLabel = computed(() => {
 /** 留空即跟随平台默认档：把默认档直接写进触发器，用户不点开、不读灰字也知道会怎么走 */
 const branchModePlaceholder = computed(() =>
   '跟随系统默认' + (branchModeDefaultLabel.value ? `（${branchModeDefaultLabel.value}）` : ''))
-/** M4：工作流列表与可绑定选项（只列已发布版本） */
+/** 工作流列表与可绑定选项（只列已发布版本） */
 const workflowRows = ref([])
 const workflowOptions = ref([])
 const OPTION_REFS = { skillOptions, mcpOptions }
@@ -1098,11 +1096,11 @@ const blankForm = () => ({
   mcpMode: 'inherit', mcps: [],
   // 新增时必须给出默认值：save() 会直接读这两个字段，缺失会让整个保存动作抛错
   isSubagent: 0, subAgentIds: [],
-  // 被委派时怎么做（P3a）：null=跟随系统默认（agent.subagentMode）
+  // 被委派时怎么做：null=跟随系统默认（agent.subagentMode）
   subagentMode: null,
   // 检索开关覆盖：只留“这一轮要不要重排”（阈值/权重/召回量归知识库或全局，不在这里配）
   qpRerank: 'inherit',
-  // M4：绑定的工作流 ID（空 = 不绑定，按模型/知识库/工具配置作答）
+  // 绑定的工作流 ID（空 = 不绑定，按模型/知识库/工具配置作答）
   workflowId: null
 })
 /** 全局重排开关当前状态（''=拿不到值） */
@@ -1282,7 +1280,7 @@ const SUB_NAME = Math.floor((TOPO.subW - 24) / 13)
 const SUB_LINE = Math.floor((TOPO.subW - 24) / 11)
 const subCountOf = a => splitList(a.subAgentIds).length
 
-// ==================== M5：委派编排一键转工作流 ====================
+// ==================== 委派编排一键转工作流 ====================
 import { useRoute, useRouter } from 'vue-router'
 const route = useRoute()
 const router = useRouter()
@@ -1412,7 +1410,7 @@ const pubVisitCount = ref(0)
 const pubLastVisitAt = ref('')
 /** 分发方式当前页签（三种形态共用一个 token，切页签不产生新链接） */
 const pubTab = ref('link')
-/** iframe 嵌入尺寸：此前 420×640 写死在代码里，用户想改只能复制出去手改。做成可调并实时反映进代码 */
+/** iframe 嵌入尺寸：可调，并实时反映进代码 */
 const pubFrameW = ref(420)
 const pubFrameH = ref(640)
 const shareUrl = computed(() => pubToken.value ? publicUrl('/s/' + pubToken.value) : '')
@@ -1753,7 +1751,7 @@ const reload = async () => {
           : '')
       }))
     }
-    // M4：可绑定的工作流（只列已发布的——绑定未发布会在后端被拒，不如下拉里就不给）
+    // 可绑定的工作流（只列已发布的——绑定未发布会在后端被拒，不如下拉里就不给）
     workflowOptions.value = workflowRows.value
       .filter(w => w.status === 'published')
       .map(w => ({ value: w.id, label: (w.name || w.id) + (w.publishedVersion != null ? `（v${w.publishedVersion}）` : '') }))
@@ -1781,8 +1779,8 @@ const modeOf = tri => {
   return 'inherit'
 }
 /**
- * 向用户提问的存量兼容：旧「内置高频工具」时代选过「指定」的智能体，
- * builtinTools 里不含 askUser（空串=不使用）时即使 toolBuiltin=1 实际也不挂载
+ * 向用户提问的存量兼容：builtinTools 里不含 askUser（空串=不使用）时，
+ * 即使 toolBuiltin=1 实际也不挂载
  * （挂载判据按名单过滤）——读作「关」，别让界面显示开着而提问卡永远弹不出来。
  */
 const effectiveAskUserTri = a => {
@@ -1836,7 +1834,7 @@ const openEdit = a => {
     isSubagent: sub ? 1 : 0,
     subAgentIds: splitList(a.subAgentIds),
     subagentMode: a.subagentMode || null,
-    // M4：绑定的工作流（未绑定 → null；下拉里只列已发布的工作流）
+    // 绑定的工作流（未绑定 → null；下拉里只列已发布的工作流）
     workflowId: a.workflowId || null,
     // 检索开关（只有重排三态；旧版存量的阈值/权重键由后端忽略并在下次保存时清除）
     qpRerank: parseQueryParams(a.queryParams)
@@ -1983,7 +1981,7 @@ const save = async () => {
     // 工具黑名单：始终带这个键（清空后要能落回 null，后端按 body 出现的字段才写列）
     toolDeny: (f.toolDeny || []).join(','),
     maxToolSteps: f.maxToolSteps == null || f.maxToolSteps === '' ? null : Number(f.maxToolSteps),
-    // 「设为默认」已移到页头星标（独立动作），保存不再带 isDefault：否则每次保存都会把默认位清掉
+    // 「设为默认」是页头的独立星标动作，保存不带 isDefault：否则每次保存都会把默认位清掉
     isSubagent: runMode.value === 'sub' ? 1 : 0,
     // 子智能体没有委派对象；问答助手一个都没选 → 空串（后端归一为 null → 编排走多视角策略）。
     // 工作流模式不参与委派，但仍保留已存名单：切回问答助手时不用重新配
@@ -2364,7 +2362,7 @@ onMounted(async () => { })
   font-size: 11.5px; color: var(--app-text3); line-height: 1.45; margin-top: 1px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-/* 分段控件（替代原 130px 三态下拉）：当前态一眼可见；「跟随系统」段用小字点名默认在哪一侧 */
+/* 分段控件：当前态一眼可见；「跟随系统」段用小字点名默认在哪一侧 */
 .ap-seg { display: flex; flex: none; border: 1px solid var(--app-border-strong); border-radius: 6px; overflow: hidden; background: var(--app-panel); }
 .ap-seg button { border: 0; background: transparent; font: inherit; font-size: 11.5px; color: var(--app-text2); padding: 4px 10px; cursor: pointer; border-left: 1px solid var(--app-border); display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 .ap-seg button:first-child { border-left: 0; }
@@ -2500,8 +2498,7 @@ onMounted(async () => { })
 .pub-size { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--app-text2); }
 .pub-size :deep(.ant-input-number) { width: 88px; }
 .pub-size-hint { font-size: 12px; color: var(--app-text3); line-height: 1.6; }
-/* 代码框：占满整行，复制/打开按钮**浮在框内**右上角。
-   此前按钮与代码框并排（flex 两列），链接这种单行内容被挤到两行、按钮还拉成一条竖条。 */
+/* 代码框：占满整行，复制/打开按钮**浮在框内**右上角，不另起一列把单行的链接挤成两行 */
 .pub-code-box { position: relative; }
 .pub-code {
   display: block; padding: 8px 10px; border-radius: var(--app-radius-sm);

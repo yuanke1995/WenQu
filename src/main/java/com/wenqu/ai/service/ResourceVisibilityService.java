@@ -17,11 +17,11 @@ import java.util.Map;
 /**
  * 资源可见性 / 权限解析器。
  * <p>
- * 2026-11-02 移除共享范围（share_config 已随功能删除）：资源一律私有——仅创建者可见可管；
- * 管理员级（含 superadmin）同样没有全量短路（无归属的历史数据已迁给 admin）。
+ * 资源一律私有——仅创建者可见可管；
+ * 管理员级（含 superadmin）同样没有全量短路（无归属的历史数据归到 admin 名下）。
  * <p>
- * <b>2026-11-04 批次 C2</b>：部门数据隔离回归，但形态是<b>角色自带数据范围</b>
- * （{@code c_ai_role_data_scope}，方案拍板 D6"重建能力不重建形态"）——资源侧没有共享入口，
+ * 部门数据隔离的形态是<b>角色自带数据范围</b>
+ * （{@code c_ai_role_data_scope}）——资源侧没有共享入口，
  * 用户能看什么由其角色集合推导。判定 = 创建者（恒 MANAGE）∪ 角色数据范围（最高 READ）：
  * <ul>
  *   <li>{@code all}：全部资源可读；</li>
@@ -66,10 +66,9 @@ public class ResourceVisibilityService {
 
     /**
      * 数据范围与部门树快照（按租户键控，TTL 60s；写路径 invalidate 后当场重建）。
-     * <p>{@code c_ai_role_data_scope} 已随批次 F 租户化，租户谓词由框架拼在查询上；
-     * 若还像原先那样存成一张全局 volatile 快照，租户 A 的请求建好快照后，
-     * B 的请求在 TTL 内会直接复用 <b>A 的范围配置</b>——与 {@code RoleService} 里
-     * 「A 租户能读到 B 租户的角色定义（直接越权源）」是同一条注释描述的那个形状，那处修了、这处漏了。
+     * <p>数据范围快照按租户键控（租户谓词由框架拼在查询上）：
+     * 若存成一张全局 volatile 快照，租户 A 的请求建好快照后，
+     * B 的请求在 TTL 内会直接复用 <b>A 的范围配置</b>，造成越权。
      * 键规则与 {@code RoleService.tenantKey()} 一致：平台视图与未绑定线程共用一个不过滤键。
      */
     private record Timed<T>(T value, long expireAt) {

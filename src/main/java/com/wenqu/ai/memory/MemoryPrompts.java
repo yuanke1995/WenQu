@@ -58,8 +58,7 @@ public final class MemoryPrompts {
      *
      * <p><b>为什么要有这一处</b>：框架往 SYSTEM 注入「Update MEMORY.md proactively」引导，
      * {@code memory_search} 又能看到日账里「## Memory Flush — …」的标题样式，弱模型会把
-     * 「维护记忆」理解成「在回复里打印一份 Memory Flush 报告」（2026-10-22 线上实测，
-     * glm-5.3-flash 在问答回复里输出 20+ 条记忆簿记）。上面 {@link #FLUSH_RULES} 那套
+     * 「维护记忆」理解成「在回复里打印一份 Memory Flush 报告」。上面 {@link #FLUSH_RULES} 那套
      * 「记什么、记几条」只约束后台提炼调用，管不到主模型——主模型缺的是对偶的那半句：
      * 「要记就用工具静默记，别在回复里演」。
      */

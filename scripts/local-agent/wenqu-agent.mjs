@@ -10,7 +10,7 @@
  * 授权被撤销或失效时会自动重新走一遍。
  *
  * 可选：
- *   --token <设备令牌>  手工指定（仅兼容旧用法；平时不需要）
+ *   --token <设备令牌>  手工指定（平时不需要）
  *   --web <页面地址>    授权链接的页面地址，默认按 --server 推断（如 http://<host>）
  *   --ask            写文件/跑命令前在终端逐次确认（默认不问：权限档位已经由页面选择器定好，
  *                    执行器再弹一次终端确认会让浏览器里的这一轮一直等不到返回）
@@ -92,7 +92,11 @@ const ASK = flag('ask')
 const ROOT = path.resolve((arg('root', arg('dir', os.homedir())) || os.homedir())
   .replace(/^~(?=$|\/)/, os.homedir()))
 
-const log = (...a) => console.log(`[${new Date().toISOString()}]`, ...a)
+const fmtTime = d => {
+  const p = (n, w = 2) => String(n).padStart(w, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`
+}
+const log = (...a) => console.log(`[${fmtTime(new Date())}]`, ...a)
 
 // ==================== 设备授权 ====================
 
@@ -833,7 +837,7 @@ function macShellProfile (roots) {
   const lines = ['(version 1)', '(allow default)', '(deny file-write*)', '(allow file-write*']
   for (const p of writable) lines.push(`  (subpath "${profilePath(p)}")`)
   lines.push(')')
-  // 注意：sandbox-exec 的 deny 会被 (allow default) 盖住，读隔离做不到（实测）。
+  // 注意：sandbox-exec 的 deny 会被 (allow default) 盖住，读隔离做不到。
   // 这里只承诺“写”围栏；读敏感文件仍须靠 standard 默认审批与 autonomous 分层。
   return lines.join('\n')
 }
@@ -2163,7 +2167,7 @@ async function postAck(id) {
         const body = await res.json().catch(() => null)
         return !!(body && body.accepted === true)
       }
-      // 旧服务端没有 /ack（升级过渡期）：按旧协议直接执行。新服务端一定返回 JSON accepted。
+      // 旧服务端没有 /ack：按旧协议直接执行。新服务端一定返回 JSON accepted。
       if (res.status === 404 || res.status === 405) {
         if (!legacyServerWarned) log('服务端不支持 ack（旧版本），按旧协议执行；升级服务端后自动启用租约')
         legacyServerWarned = true

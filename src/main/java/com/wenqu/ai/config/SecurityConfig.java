@@ -43,7 +43,7 @@ public class SecurityConfig implements WebMvcConfigurer {
     /**
      * SCIM 2.0 入站路径（机器凭据，RFC 7644）：整条拦截链豁免——凭据是认证源专属 Bearer
      * （非用户 JWT、非 API Key），鉴权在 {@code ScimService.authenticate} 逐入口强校验，
-     * 认不出即 401。挂 /api/ai/scim/** 刻意避开 /api/ai/auth/ 前缀（P7 后 auth 只做精确枚举）。
+     * 认不出即 401。挂 /api/ai/scim/** 刻意避开 /api/ai/auth/ 前缀（auth 前缀走精确枚举）。
      */
     private static boolean isScimEndpoint(String path) {
         return path != null && path.startsWith("/api/ai/scim/");
@@ -69,8 +69,8 @@ public class SecurityConfig implements WebMvcConfigurer {
      */
 
     /**
-     * 显式公开端点集（白名单的唯一形态，方案 A.2b）：设计上的公开通道<b>逐条列名</b>，
-     * 不许前缀通配——这是 G3（"看着像同一段就被漏掉自动放行"）的结构性收口。
+     * 显式公开端点集（白名单的唯一形态）：设计上的公开通道<b>逐条列名</b>，
+     * 不许前缀通配——这是「看着像同一段就被漏掉自动放行」的结构性收口。
      * 与 {@link #isPublicUserEndpoint}（API Key 的问答白名单）的区别：
      * 这里只放"没有登录态/没有角色语义也必须可达"的通道；普通用户的能力全部走角色授权点。
      */
@@ -84,7 +84,7 @@ public class SecurityConfig implements WebMvcConfigurer {
         if ("GET".equals(method) && "/api/ai/auth/me".equals(path)) return true;
         // 游客分享通道：分享 token 即凭据
         if (isShareGuestEndpoint(path)) return true;
-        // 工作流 webhook 入站（第 4 期）：令牌即凭据（POST /api/ai/v1/workflows/webhook/{token}），
+        // 工作流 webhook 入站：令牌即凭据（POST /api/ai/v1/workflows/webhook/{token}），
         // 与游客分享同一形态——逐条列名放行，资源级校验在 WorkflowService.runByWebhook
         if (isWorkflowWebhookEndpoint(method, path)) return true;
         // 租户开通申请：免登录的唯一写入端点（精确 POST）
@@ -126,7 +126,7 @@ public class SecurityConfig implements WebMvcConfigurer {
         }
         // 个人长期记忆面板：查看/编辑/清空自己的 MEMORY.md 与日账。所有路径都由
         // MemoryService 按登录 uid 解析，不接收调用方声明的用户；普通用户必须能用，
-        // 否则「我的记忆」对非管理员是坏的（和分享管理同一条历史教训）。
+        // 否则「我的记忆」对非管理员是坏的。
         if (path.equals("/api/ai/memory") || path.startsWith("/api/ai/memory/")) {
             return true;
         }
@@ -155,8 +155,7 @@ public class SecurityConfig implements WebMvcConfigurer {
         // 工具执行审批（人在回路）：POST /tool-approval/{id}——归属由 ChatService.resolveApproval
         // 按"审批人 uid == 发起轮次用户"严格校验，非本人裁决一律拒绝。
         // GET 同样放行：GET /tool-approval/{id} 是铃铛通知的深链恢复入口、GET /tool-approval/pending 是
-        // 会话加载/断线接回时重建审批卡的入口（控制器内都按 uid 过滤）。此前只放了 POST，普通用户点铃铛
-        // 恢复审批卡会撞 403（管理员靠直通看不出来），接流补上审批卡恢复时一并修掉。
+        // 会话加载/断线接回时重建审批卡的入口（控制器内都按 uid 过滤）。
         if (("POST".equals(method) || "GET".equals(method)) && (path.equals("/api/ai/tool-approval")
                 || path.startsWith("/api/ai/tool-approval/"))) return true;
         // 工具完整输出（外溢原文按需读回）：GET /tool-output/{spillId}——归属在 ToolSpillService.read 内
@@ -186,29 +185,28 @@ public class SecurityConfig implements WebMvcConfigurer {
         if ("POST".equals(method) && path.equals("/api/ai/feedback")) return true;
         if (path.equals("/api/ai/auth/me")) return true;
         // 登录鉴权相关端点不要求管理员（登录门禁另判：见 isAuthBootstrapEndpoint）。
-        // P7 收窄（2026-10-26）：原来是 isAuthEndpoint 前缀一把放行——/api/ai/auth/** 下任何
-        // 新端点都自动对全体登录用户免 RBAC，属于「看着像同一段就被漏掉自动放行」的形状
-        // （与本文件 isKbOrDocEndpoint 注释里的历史教训同型）。改精确枚举：
+        // 登录鉴权相关端点按精确枚举放行，不对 /api/ai/auth/** 前缀整体放行——
+        // 前缀放行会让新增端点自动对全体登录用户免 RBAC，属于「看着像同一段就被漏掉自动放行」的形状。
         // 登录前可达的端点逐条列在 isAuthBootstrapEndpoint（含 /auth/me）。
         if (isAuthBootstrapEndpoint(method, path)) return true;
         if ("GET".equals(method) && path.equals("/api/ai/config/public")) return true;
         // 对话页智能体下拉：只读精简列表（不含提示词/知识库范围等管理配置），问答用户可用；
         // 管理端 /api/ai/agent/list 等仍走管理员判定。
         if ("GET".equals(method) && path.equals("/api/ai/agent/available")) return true;
-        // 技能与 MCP 已于 2026-09-26 从「管理员全局设置」下沉为「个人资产」：控制器统一按
+        // 技能与 MCP 属「个人资产」：控制器统一按
         // RequestUser.uid() 过滤（看不到也改不了别人的），因此不再要求管理员；未登录请求由登录门禁挡下。
         // 技能侧现有清单/正文/详情/**用户自助安装与管理**：
         // 内置技能只读，用户自装（user-data/skills-users/{uid}）可增删改，工作区那一路要求会话归属；
         // 所有写端点的归属判定在 SkillController 内做（SYSTEM 直接 401），这里只按端点放行。
         if (path.equals("/api/ai/skill") || path.startsWith("/api/ai/skill/")) return true;
-        // 市场（技能市场 v1，个人资产同口径）：浏览/上架/安装/管理。浏览对全员开放（上架中的物品），
+        // 市场（技能市场，个人资产同口径）：浏览/上架/安装/管理。浏览对全员开放（上架中的物品），
         // 上架/管理/安装的归属判定在 MarketService 内做（上架=本人安装的技能、管理=作者或管理员、
         // 安装=落进本人技能目录且与上传 zip 同一条校验链），这里只按端点放行。
         if (path.equals("/api/ai/market") || path.startsWith("/api/ai/market/")) return true;
         if (path.equals("/api/ai/mcp") || path.startsWith("/api/ai/mcp/")) return true;
         // 可用模型清单（聊天页模型选择器/个人设置数据源）：只读、不含 baseUrl/apiKey
         if ("GET".equals(method) && path.equals("/api/ai/provider/available")) return true;
-        // 模型供应商（2026-09-26）：普通用户可登记**自己的**网关与 Key（个人级，仅本人可见可用），
+        // 模型供应商：普通用户可登记**自己的**网关与 Key（个人级，仅本人可见可用），
         // 管理员登记的为平台级（所有人可用）。资源级判定在 ProviderController.denyUnlessManageable
         // 内做（改/删/启停/登记模型必须先通过归属校验），这里只按端点放行。
         if (isProviderSelfEndpoint(method, path)) return true;
@@ -226,8 +224,8 @@ public class SecurityConfig implements WebMvcConfigurer {
         if ("PUT".equals(method) && path.equals("/api/ai/user/profile")) return true;
         if ("PUT".equals(method) && path.matches("/api/ai/user/[^/]+/password")) return true;
         // 个人资料自助：头像上传 / 通知邮箱 / 首登引导状态——数据一律取登录 uid，只作用于本人。
-        // 这三条此前漏在白名单外，导致 self:preference 授权点整组无法推导，普通用户的
-        // 偏好、设置、侧栏布局跟着一起 403（授权点粒度整组进出的连带效应）。
+        // 这三条与 self:preference 授权点整组绑定，漏放行会让普通用户的
+        // 偏好、设置、侧栏布局一起 403（授权点粒度整组进出的连带效应）。
         if ("POST".equals(method) && path.equals("/api/ai/user/avatar")) return true;
         if ("PUT".equals(method) && path.equals("/api/ai/user/email")) return true;
         if ("GET".equals(method) && path.equals("/api/ai/tenant/onboarding")) return true;
@@ -252,7 +250,7 @@ public class SecurityConfig implements WebMvcConfigurer {
         // 知识库导入导出：只作用于可管理的知识库（KnowledgeBaseService 内按归属校验）
         if ("GET".equals(method) && path.matches("/api/ai/kb/[^/]+/export")) return true;
         if ("POST".equals(method) && path.matches("/api/ai/kb/[^/]+/import")) return true;
-        // 知识库 / 文档 / 智能体对普通用户开放**自建自管**（2026-09-26，用户数据隔离由
+        // 知识库 / 文档 / 智能体对普通用户开放**自建自管**（用户数据隔离由
         // ResourceVisibilityService 在 Controller 内做资源级判定：创建者=可管理、他人按共享范围、
         // 知识库对他人封顶只读）。这里按端点精确放行；不匹配的（如 /agent/{id}/default 设默认、
         // /document/stats 命中统计、/knowledge/list 知识块批量）仍走管理员判定，fail-closed。
@@ -269,7 +267,7 @@ public class SecurityConfig implements WebMvcConfigurer {
         // 写端点与「运行回归」要求可管理（谁建归谁）——归属校验收在 AgentEvalService 的
         // mustReadable / mustManageable，这里只按端点放行
         if (path.equals("/api/ai/agent-eval") || path.startsWith("/api/ai/agent-eval/")) return true;
-        // API 密钥（2026-11-02 下放为个人资产）：登录用户自管自己的 Key——普通用户签发即绑本人，
+        // API 密钥（个人资产）：登录用户自管自己的 Key——普通用户签发即绑本人，
         // 列表按共享范围过滤、改动走 ensureManageable（资源级判定在 ApiKeyService 内做）。
         // 这组端点同时在 isKeyDeniedEndpoint 内：Key 本身不能管理 Key（否则一把泄露的 Key
         // 能给自己签发续命、改绑定换身份）
@@ -280,7 +278,7 @@ public class SecurityConfig implements WebMvcConfigurer {
         // 沙盒目录浏览（个人资产）：scope=(sessionId,uid)，sandboxId 由二者派生——探别人的会话 id
         // 只会按自己的 uid 派生 sandboxId，天然探不到别人的容器；开关 tool.sandbox.enabled 关闭时控制器 fail-closed
         if (path.equals("/api/ai/sandbox") || path.startsWith("/api/ai/sandbox/")) return true;
-        // 知识块（2026-10）：预览/搜索/编辑对「文档可读/可管理」的普通用户开放——资源级判定在
+        // 知识块：预览/搜索/编辑对「文档可读/可管理」的普通用户开放——资源级判定在
         // KnowledgeController 内做（文档可读=列块与搜索命中，文档可管=改块删块；全局搜索按可见文档过滤）。
         // /knowledge/unmatched（无命中问题分析）与 POST /knowledge（手动补块）仍仅管理员。
         if (path.startsWith("/api/ai/knowledge/") && !path.equals("/api/ai/knowledge/unmatched")) return true;
@@ -293,20 +291,20 @@ public class SecurityConfig implements WebMvcConfigurer {
         // 登录即可读——入口是前端右下角全局悬浮按钮，所有角色都要能用
         if ("GET".equals(method) && (path.equals("/api/ai/manual/documents")
                 || path.matches("/api/ai/manual/documents/[^/]+/content"))) return true;
-        // 工作流（个人资产）：M0~M3 仅创建者本人可见可管（WorkflowService 按 uid 归属校验；M4 随发布语义启用共享）
+        // 工作流（个人资产）：未发布的工作流仅创建者本人可见可管（WorkflowService 按 uid 归属校验；发布后按共享语义启用共享）
         if (path.equals("/api/ai/workflow") || path.startsWith("/api/ai/workflow/")) return true;
-        // 工作流凭据（第 3 期，个人资产）：http 节点以 {{credential:名称}} 引用；值加密落库、出参脱敏，
+        // 工作流凭据（个人资产）：http 节点以 {{credential:名称}} 引用；值加密落库、出参脱敏，
         // 控制器一律按 RequestUser.uid() 过滤（看不到也改不了别人的），故与技能/MCP 同口径不要求管理员
         if (path.equals("/api/ai/credential") || path.startsWith("/api/ai/credential/")) return true;
-        // 工作流开放接口（M4）：/api/ai/v1/workflows/**——对外系统持 API Key 触发已发布工作流。
+        // 工作流开放接口：/api/ai/v1/workflows/**——对外系统持 API Key 触发已发布工作流。
         // 与普通用户白名单同层（API Key 走第 1 层放行分支）；权限面收在 WorkflowService 内：
         // 工作流对该身份可读才可触发，不可见/未发布一律拒绝，不因端点开放而放宽资源级判定。
         if (path.startsWith("/api/ai/v1/workflows")) return true;
-        // OpenAI 兼容端点（对外能力第二批）：/api/ai/v1/chat/completions——外部项目持 API Key
+        // OpenAI 兼容端点：/api/ai/v1/chat/completions——外部项目持 API Key
         // 以 OpenAI SDK 语义调用智能体（model=智能体id）。资源级判定在端点内（智能体可见性），
         // 与 /v1/workflows 同层同口径；刻意不进 isKeyDeniedEndpoint——这个端点就是给 Key 用的。
         if (path.equals("/api/ai/v1/chat/completions")) return true;
-        // Responses API（P1 · OpenAI 端点补齐）：与 chat/completions 同层同口径，同样只给 API Key 用
+        // Responses API：与 chat/completions 同层同口径，同样只给 API Key 用
         if (path.equals("/api/ai/v1/responses")) return true;
         return false;
     }
@@ -325,7 +323,7 @@ public class SecurityConfig implements WebMvcConfigurer {
      */
     private static boolean isKeyDeniedEndpoint(String method, String path) {
         if (path == null) return true;
-        // Key 管理本身（2026-11-02 起对登录用户开放的自服务端点）：带 Key 的调用方不能列 Key /
+        // Key 管理本身（登录用户的自服务端点）：带 Key 的调用方不能列 Key /
         // 签发 Key / 改代表账号——否则一把泄露的 Key 能给自己签发续命，还能改绑定换身份
         if (path.equals("/api/ai/api-key") || path.startsWith("/api/ai/api-key/")) return true;
         // 账号自服务：改密、资料、偏好、系统设置
@@ -443,7 +441,7 @@ public class SecurityConfig implements WebMvcConfigurer {
      * token 校验 + IP 限流 + 工具白名单收窄（沙盒/产物/MCP/技能不暴露）。
      */
     /**
-     * 租户开通申请（Phase 4 刀三）：免登录的唯一<b>写入</b>端点，只此一条路径，不给前缀。
+     * 租户开通申请：免登录的唯一<b>写入</b>端点，只此一条路径，不给前缀。
      * <p>它免的是登录门禁，不是所有约束：控制器里不读任何用户态数据、按 IP 限流、
      * 字段全量校验，且提交后只是待审记录——真正的开通动作在平台级管理员手里。
      */
@@ -452,7 +450,7 @@ public class SecurityConfig implements WebMvcConfigurer {
     }
 
     /**
-     * 租户邀请落地页（P1 · 3A）：{@code /api/ai/join/{token}} 的 GET 预览与 POST 注册。
+     * 租户邀请落地页：{@code /api/ai/join/{token}} 的 GET 预览与 POST 注册。
      * <p>token 即凭据（32 字节高熵、只存哈希）；不按前缀通配，只放这一个两段路径。
      */
     private static boolean isJoinEndpoint(String method, String path) {
@@ -465,7 +463,7 @@ public class SecurityConfig implements WebMvcConfigurer {
     }
 
     /**
-     * 沙盒脚本回调（P3a/P3b 的 {@code run_code}）：容器里没有、也不该有用户的登录令牌，
+     * 沙盒脚本回调（{@code run_code}）：容器里没有、也不该有用户的登录令牌，
      * 它带的是一次性的<b>运行凭据</b>——发于本次 {@code run_code}、随运行结束撤销，只能调本轮
      * 已挂载的工具（名单在控制器里核，执行一律走守卫链）。
      * <p>所以这里免的是"登录门禁"这一层，不是免鉴权：凭据认不出来就是 401。
@@ -530,7 +528,7 @@ public class SecurityConfig implements WebMvcConfigurer {
                 || path.equals("/api/ai/auth/oidc/exchange-code")) {
             return true;
         }
-        // SAML 单点登录（Phase 1 批次 3）：登录页取清单 + 发起登录都在无令牌阶段；
+        // SAML 单点登录：登录页取清单 + 发起登录都在无令牌阶段；
         // 兑换复用上面的 /oidc/exchange-code（SSO 一次性 code 与协议无关）。
         // ACS（/login/saml2/sso/{id}）与 metadata（/saml2/**）不在 /api/** 下，由 SAML 过滤链处理。
         if ("GET".equals(method) && path.equals("/api/ai/auth/saml/config")) return true;
@@ -544,7 +542,7 @@ public class SecurityConfig implements WebMvcConfigurer {
     }
 
     /**
-     * 工作流 webhook 入站（第 4 期）：免登录通道——令牌即凭据（高熵随机，URL 自证明身份）。
+     * 工作流 webhook 入站：免登录通道——令牌即凭据（高熵随机，URL 自证明身份）。
      * 只对 POST 且精确前缀 /api/ai/v1/workflows/webhook/ 放行；令牌错/未启用 404、
      * 发布态/审批节点/归档校验收在 WorkflowService.runByWebhook（fail-loud）。
      * 与游客分享同一形态：没有登录态也没有角色的调用方，RBAC 层必须显式放过（isPublicChannelEndpoint 同款分支）。

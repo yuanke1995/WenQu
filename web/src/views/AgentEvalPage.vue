@@ -616,7 +616,7 @@ async function viewRun (runId, silent) {
       detail.value = r.data
       enrichResults()
       if (!silent) {
-        // 历史运行页点「查看结果」：切到本次结果页签，否则数据换了用户却看不见（真机踩过：点了没反应）
+        // 历史运行页点「查看结果」：切到本次结果页签，否则数据换了用户却看不见。
         innerTab.value = 'results'
         failOnly.value = false
       }

@@ -314,7 +314,6 @@ public class RetrievalEvaluationService {
     /**
      * asUid：评测执行身份。检索层按该用户可读范围过滤文档（loadVisibleDocIdsOfHits 读 RequestUser），
      * 评测线程池不继承请求线程的 ThreadLocal，必须显式装载到每个执行线程（finally 清理）。
-     * 此前评测线程没有装载身份（SYSTEM）：私有库整库被可见性过滤剔除，recall 恒 0 —— 工装缺陷，非检索质量问题。
      */
     public EvalResult run(List<EvalCase> cases, List<EvalParams> groups, List<Integer> kList, String asUid) {
         long start = System.currentTimeMillis();
@@ -463,8 +462,7 @@ public class RetrievalEvaluationService {
     }
 
     /** 深度思考多路近似：确定性拆子问题后委托生产入口 searchMulti（并行 + 超时降级 + 多路共识加分）。
-     * 此前在此处独立复刻了一份"max 合并"——与生产的合并语义（A1 双命中叠加之后又加了共识加分）
-     * 必然漂移（同检索调试面板的教训：两处实现必然不一致），评测口径必须与生产同源。 */
+     * 多路合并直接复用生产实现，评测口径与生产同源，避免两处实现漂移。 */
     private List<HybridRetrievalService.Hit> multiSearch(String question) {
         return retrievalService.searchMulti(subQueries(question));
     }
@@ -603,7 +601,7 @@ public class RetrievalEvaluationService {
 
                     // 与上期对比：同键指标相对变化（%），跌幅超阈值置 decline。
                     // 基线护栏：对比仅在"评估集未变更"时有效——评估集是 generate 从历史问答回放生成的，
-                    // 重新生成后样本与上期不同，delta 失去可比性（曾误报 recall@5 下滑）。用
+                    // 重新生成后样本与上期不同，delta 失去可比性。用
                     // generatedAt+version+caseCount 作为评估集标识，标识不同则本期记为新的基线，不做 delta 判定。
                     String evalSetId = set.generatedAt() + "|v" + set.version() + "|" + set.cases().size();
                     report.put("evalSetId", evalSetId);
@@ -768,7 +766,7 @@ public class RetrievalEvaluationService {
      * LLM 评判检索充分性：对每个 case 用当前线上参数检索 top 命中，由评判模型判"命中资料是否足以直接回答该问题"，
      * 汇总为 judgeScore（0~1）。这是对 recall@k 的补充：recall 度量"期望块是否在结果里"，judge 度量"用户能否从结果得到答案"。
      * 证据窗口与产品上下文一致（context.maxContextHits 条，默认 8）：只给 top3 会把真实可答的 case 判成"不足"，系统性低估。
-     * 评判模型由 eval.judgeModel 独立配置（chat.model 全局兜底已退役）；未配置时无法计算，返回 null（体检结果标注跳过）。
+     * 评判模型由 eval.judgeModel 独立配置（无全局兜底）；未配置时无法计算，返回 null（体检结果标注跳过）。
      * 单 case 单次调用（temperature=0）；检索无命中按"不足以回答"计（退化检索正是该指标要暴露的）；失败的单 case 跳过不计。
      * 返回 null 表示无法计算（空集/未配置评判模型/全部失败）。
      */

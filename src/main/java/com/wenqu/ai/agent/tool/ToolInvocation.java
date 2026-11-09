@@ -5,15 +5,12 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 一次工具调用的上下文（P1 seam 的「per-invocation」那一层）。
+ * 一次工具调用的上下文（per-invocation 那一层）。
  * <p>
- * 它替代的是这一类写法：{@code KnowledgeRetrievalTool.setSourceRegistrar(...)} /
- * {@code WebSearchTools.setSink(...)} 把「本轮的落点」写进**类级 ThreadLocal**，再在 finally 里清。
- * 迁移前那套能工作，靠的是两个不体面的前提：① 工具回调与 setter 在同一个线程上同步执行；
- * ② 每一次 set 都配得上一次 clear。前提①在新版 Spring AI 允许工具并行执行时不成立，
- * 前提②只要有一条异常路径漏清，池化线程就把上一轮的注册器带给下一个会话——引用编号会
- * 注册进别人的回答里。把落点装进本次调用独占的对象、经 {@code ToolContext} 递给工具，
- * 两个前提都不再需要：作用域就是这一次调用，没有跨调用的可变状态可漏清。
+ * 把「本轮的落点」装进本次调用独占的对象、经 {@code ToolContext} 递给工具：作用域就是这一次调用，
+ * 没有跨调用的可变状态可漏清。类级 {@code ThreadLocal} 的写法依赖「回调与 setter 同线程同步执行」
+ * 与「每次 set 都配上 clear」；工具并行执行或异常路径漏清时，池化线程会把落点带到别的会话，
+ * 引用编号注册进别人的回答里。
  * <p>
  * {@link #attributes()} 是给各族 {@link ToolContextEnricher} 放私有信箱的地方（例如沙盒工具
  * 上报基础设施故障的那个引用），生命周期与本对象一致，同样不落到静态字段上。

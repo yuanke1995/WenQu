@@ -206,8 +206,8 @@
                     placeholder="至少选一个角色" />
           <div class="form-tip">{{ roleTip }}</div>
         </a-form-item>
-        <!-- C1：临时授权到期。默认折成一行摘要——「这个角色什么时候失效」不是每次编辑都要动的事，
-             但不给口就等於只能永久授权（批次 C1 落地时后端有参数、界面没入口） -->
+        <!-- 临时授权到期。默认折成一行摘要——「这个角色什么时候失效」不是每次编辑都要动的事，
+             但不给口就等於只能永久授权 -->
         <a-form-item v-if="userForm.isEdit && manualRoleList.length" label="临时授权">
           <div v-if="!expiryKnown" class="form-tip mem-expire-warn">
             到期时间没读到，保存会被挡住。
@@ -246,7 +246,7 @@
       </a-form>
     </a-modal>
 
-    <!-- 租户管理弹窗（Phase 4）：清单 + 开通 + 启停。刻意没有「删除租户」——那等于按归属批量删数据 -->
+    <!-- 租户管理弹窗：清单 + 开通 + 启停。刻意没有「删除租户」——那等于按归属批量删数据 -->
     <a-modal v-model:open="tenantModal" title="租户管理" :width="680" :footer="null">
       <a-table :data-source="tenants" :row-key="r => r.id" size="small" :pagination="false">
         <a-table-column title="租户" key="t" min-width="200">
@@ -325,7 +325,7 @@
       <div class="form-tip">新租户初始是空的：把成员的「所属租户」改过来，他们才开始在这个租户里各用各的数据。租户没有删除功能——要下线一个租户就停用它。</div>
     </a-modal>
 
-    <!-- 邀请成员（P1 · 3A）：一次性短链，注册落当前租户 -->
+    <!-- 邀请成员：一次性短链，注册落当前租户 -->
     <InviteMemberModal v-model:open="inviteOpen" :roles="roles" :departments="departments"
                        :tenant-name="inviteTenantName" @created="loadData(['users', 'tenants'], { force: true })" />
 
@@ -620,7 +620,7 @@ async function loadData (names, { force = false } = {}) {
 // 页签即数据入口：URL 直达 ?tab=departments 时也只会拉它依赖的数据
 watch(tab, t => loadData(TAB_DEPS[t]), { immediate: true })
 
-// ---------- 租户（Phase 4 多租户） ----------
+// ---------- 租户 ----------
 const defaultTenant = 'default'
 const tenantOptionsList = computed(() => tenants.value
   .filter(t => t.status !== 0)
@@ -631,7 +631,7 @@ function tenantName (id) {
 }
 const tenantModal = ref(false)
 
-// ---------- 开通申请（Phase 4 刀三 · 自助开通）----------
+// ---------- 开通申请----------
 // 只有平台级看得到这一区：批准等于开一家新客户，租户管理员批准等于自己给自己开门
 const isSuper = computed(() => isSuperadminSync())
 // 邀请落「当前租户」：弹窗里把这句写清楚，避免平台管理员误以为邀请到了别家
@@ -882,7 +882,7 @@ async function delDept (id) {
 .mem-filter .ant-select-selector { font-size: 12px; }
 .mem-count { font-size: 12px; color: var(--app-text3); }
 /* 操作区整体右对齐成组：只让容器吃 margin-left:auto，按钮之间用固定 gap。
-   原先 margin-left:auto 直接挂在每个 .mem-new 上，flex 会把空白平分到多个 auto 间距，
+   若把 margin-left:auto 挂到每个 .mem-new 上，flex 会把空白平分到多个 auto 间距，
    导致「新建用户」「租户管理」之间被撑出一大段空隙。 */
 .mem-actions { margin-left: auto; display: inline-flex; align-items: center; gap: 10px; flex: none; }
 .mem-new { flex: none; }
@@ -918,7 +918,7 @@ async function delDept (id) {
 
 .mem-empty { padding: 28px 0; color: var(--app-text3); font-size: 12px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
 .form-tip { margin-top: 6px; font-size: 12px; color: var(--app-text3); line-height: 1.5; }
-/* 临时授权到期（批次 C1 界面口） */
+/* 临时授权到期 */
 .mem-expire-list { display: flex; flex-direction: column; gap: 6px; }
 .mem-expire-row { display: flex; align-items: center; gap: 8px; }
 .mem-expire-role { font-size: 12px; background: var(--app-panel-2); border: 1px solid var(--app-border);

@@ -101,7 +101,7 @@ const {
   agentList, currentAgentId, currentAgentName, hasDefaultAgent, pickAgent
 } = engine
 
-// 智能体切换（P5）：换人立即生效，下一问就由它答，不需要新建会话；选完即关 sheet（用户接下来多半要打字）
+// 智能体切换：换人立即生效，下一问就由它答，不需要新建会话；选完即关 sheet（用户接下来多半要打字）
 const pickAgentRow = id => { pickAgent(id); emit('close') }
 
 // 模型下拉数据（与 ModelSelect 同源 /provider/available）：10s 模块级缓存，避免每次开 sheet 都打接口。

@@ -127,7 +127,7 @@ public class KnowledgeBaseService {
         // 写进来也一律清掉，避免又出现“表单里填了、运行时没人读”的键
         kb.setQueryParams(KbParamCodec.normalize(str(body.get("queryParams"))));
         kb.setParseParams(str(body.get("parseParams")));
-        // P1 GraphRAG 库级开关（新建时同样可带；漏了会让"新建时开开关"被静默丢弃）
+        // GraphRAG 库级开关（新建时同样可带；漏了会让"新建时开开关"被静默丢弃）
         kb.setGraphEnabled(toInt(body.get("graphEnabled"), 0));
         // GraphRAG 抽取模型（库级，归库主）：空=回落库主个人默认聊天模型 User.defaultModel
         kb.setGraphModelRef(validateGraphModelRef(str(body.get("graphModelRef"))));
@@ -164,9 +164,7 @@ public class KnowledgeBaseService {
         // （同步只在「原绑定已不可解析」时才换模型并全篇重建）：
         // ① 参数必须可改——官方库同样要能绑重排模型，不绑就拿不到重排分，引用门从重排门 0.6
         //    退化到融合分门（minFusionScore，默认 0.5），词面重叠的弱相关块更容易进引用面板；
-        // ② 向量模型必须可改——供应商额度耗尽时，管理员唯一能救这个库的动作就是换一个能用的向量
-        //    模型。原先白名单漏了它，表现为「引用清单里点去修改 → 弹窗里向量模型是灰的」，
-        //    而提示却说「仅 1 处可在下列位置直接修改」，指了个改不了的地方。
+        // ② 向量模型必须可改——供应商额度耗尽时，管理员唯一能救这个库的动作就是换一个能用的向量模型。
         boolean builtin = kb.getBuiltin() != null && kb.getBuiltin() == 1;
         if (builtin) {
             if (!roleService.isAdminAny(com.wenqu.ai.util.RequestUser.roles())) {
@@ -219,7 +217,7 @@ public class KnowledgeBaseService {
             upd.set(KnowledgeBase::getIcon, icon);
         }
         // 库级检索参数：写入前归一（只保留 KbParamCodec.KEYS；已迁出的键随保存清除）。
-        // 必须显式 set null 才能“清空并恢复继承”——NOT_NULL 策略会跳过 null 列（本仓库踩过同款坑）。
+        // 必须显式 set null 才能“清空并恢复继承”——NOT_NULL 策略会跳过 null 列。
         String nextQueryParams = kb.getQueryParams();
         if (body.containsKey("queryParams")) {
             nextQueryParams = KbParamCodec.normalize(str(body.get("queryParams")));
@@ -237,7 +235,7 @@ public class KnowledgeBaseService {
             // 重嵌成功后 DocumentService.reembedKbAsync 会以实际维度再回写校正。
             upd.set(KnowledgeBase::getEmbeddingDimensions, probeEmbeddingDimension(newRef));
         }
-        // P1 GraphRAG 库级开关（默认关；开启后解析完成自动抽三元组，检索一跳图扩展）
+        // GraphRAG 库级开关（默认关；开启后解析完成自动抽三元组，检索一跳图扩展）
         int resultingGraph = kb.getGraphEnabled() == null ? 0 : kb.getGraphEnabled();
         if (body.containsKey("graphEnabled")) {
             Object v = body.get("graphEnabled");
@@ -268,7 +266,7 @@ public class KnowledgeBaseService {
         }
         upd.set(KnowledgeBase::getUpdateTime, LocalDateTime.now());
         // 必须显式 set：updateById 走 NOT_NULL 策略会跳过 null 列，
-        // 导致「清空检索参数 → 恢复继承全局」这类操作静默失效（本仓库已踩过同一坑）
+        // 导致「清空检索参数 → 恢复继承全局」这类操作静默失效
         kbMapper.update(null, upd);
         defaultIdByUid.clear();
         return kbMapper.selectById(id);
@@ -303,7 +301,7 @@ public class KnowledgeBaseService {
         // 不清会留下「孤儿索引」——库已删但 wenqu-kb-{id} 与 ai:chunkkb-{id}:* 常驻 Redis，
         // 既占内存（每条向量按维度数×4 字节，1024 维≈4KB/条），又会让人误以为该库仍可检索
         // （检索侧按 customKbs() 展开可见库，已删库不在其中故不会真被路由到，
-        //  但残留数据不会被任何路径回收）。历史已产生多个孤儿索引，需一并清理。
+        //  但残留数据不会被任何路径回收）。
         cleanupVectorIndex(id);
         return null;
     }
@@ -397,8 +395,8 @@ public class KnowledgeBaseService {
      * 库级参数（queryParams / parseParams）里模型引用的归属校验：新增/变更的引用必须对
      * 「库主或当前操作者」可用——防构造请求把重排/视觉引用指到第三方的供应商上（借用他人 Key）。
      * 两人都属该库的合法配置者（共享管理场景各用各的模型），故任一归属即放行。
-     * 未变更的存量引用放行：历史供应商归属经 2026-09 迁移，用现状值回刷旧库时可能已不满足
-     * 新口径，"改个名字"不应被历史数据卡住（真正防的是"把引用改到别人头上"这个动作）。
+     * 未变更的存量引用放行：用现状值回刷旧库时可能已不满足新口径，
+     * "改个名字"不应被历史数据卡住（真正防的是"把引用改到别人头上"这个动作）。
      */
     private void validateChangedParamRefs(String oldQuery, String oldParse, String newQuery, String newParse,
                                           String ownerUid, String uid, String role) {

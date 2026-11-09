@@ -31,7 +31,7 @@ class ShareBudgetServiceTest {
         ops = mock(ValueOperations.class);
         when(redis.opsForValue()).thenReturn(ops);
         config = mock(ConfigService.class);
-        // 出厂默认已改为 0=不限制；这里显式给有限值测「设了限额时」的闸判定
+        // 出厂默认 0=不限制；这里显式给有限值测「设了限额时」的闸判定
         when(config.getInt("share.guestDailyTurns", 0)).thenReturn(2);
         when(config.getInt("share.guestDailyTurnsPerVisitor", 0)).thenReturn(1);
         when(config.getLong("share.guestDailyTokens", 0L)).thenReturn(10L);

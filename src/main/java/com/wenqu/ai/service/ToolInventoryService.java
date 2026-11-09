@@ -16,12 +16,11 @@ import java.util.Map;
  * 工具清单（管理员的「本平台有哪些工具」总览）。
  * <p>
  * 数据来源是 {@link ToolRegistry}：工具名、中文名、开关归属、是否算有副作用，都由各工具族的
- * {@code ToolFamilyProvider} 声明一次，这里只负责按族展示。迁移前这个类自己维护一张中文名表
- * 与一份硬编码的 sensitive 集合，与问答侧的装配处、前端两处
- * 各抄各的——新工具上线时清单里只剩英文名（writeTodo 就漏过），改一个开关要同步三处。
+ * {@code ToolFamilyProvider} 声明一次，这里只负责按族展示。各端共用同一份声明：新工具上线自动进清单，
+ * 改开关也只动一处。
  * <p>
  * 模型可见的 description 仍然是反射出来的（{@code @Tool} 注解原文），不另存一份：
- * 那是喂给模型的提示，抄进清单就成了第四份副本。
+ * 那是喂给模型的提示，抄进清单就成了又一份副本。
  * <p>
  * 与「提问工具可选项」（前端 AgentsPage 的 builtinOptions）的关系不变：那边是智能体配置时的
  * 多选框选项，这边是全景清单，口径不同；两边都从工具注册中心取值，不再手抄。
@@ -60,7 +59,7 @@ public class ToolInventoryService {
                 t.put("label", d.label());
                 t.put("description", orEmpty(registry.modelDescription(d.name())));
                 t.put("sensitive", d.requiresApproval(configService::getBoolean));
-                // 副作用等级：P2 按档位收紧时要用它区分「只读」与「变更」，先在清单里可见
+                // 副作用等级：按档位收紧时要用它区分「只读」与「变更」，先在清单里可见
                 t.put("sideEffect", d.sideEffect().name().toLowerCase());
                 tools.add(t);
             }
@@ -101,8 +100,7 @@ public class ToolInventoryService {
      * {@code SecurityConfig.isAgentSelfEndpoint} 已放行的「智能体自助端点」分支里
      * （那条规则按既有形状匹配一段路径），**不新增通配规则、也不给管理员视图
      * {@code /api/ai/tools} 开普通用户洞**（后者按既定口径刻意不开）。
-     * <p>它存在的理由是消灭第三份手抄：前端 AgentsPage 原来自己维护一张内置工具中文名表，
-     * 后端加一个内置工具就得同时改两处，漏一处的表现是「配置页里看不见这个工具的名字」。
+     * <p>前端配置页从这里取名册：内置工具中文名只在 {@link ToolRegistry} 维护一份，新增工具后配置页自动可见。
      */
     public List<Map<String, Object>> agentCatalog() {
         List<Map<String, Object>> out = new ArrayList<>();

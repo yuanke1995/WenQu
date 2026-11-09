@@ -38,7 +38,7 @@ public class IdentityMappingService {
     private final ExternalUserService externalUserService;
 
     // ==================== 规则管理 ====================
-    // 四条管理入口一律跑在「该认证源的租户」里（Phase 4）：平台级管理员替别家租户配规则时，
+    // 四条管理入口一律跑在「该认证源的租户」里：平台级管理员替别家租户配规则时，
     // 若按管理员本人的租户落行或取数，规则会存进他自己的租户而本租户的同步永远读不到它——
     // 界面上「已保存」、裁决照旧不生效，正是要防的静默失配。判据与 ExternalUserService.inProviderTenant 同源。
 

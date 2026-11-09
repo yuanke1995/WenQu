@@ -24,7 +24,7 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
 /**
- * 一轮问答的<b>运行总线</b>（P0 最后一刀：断线重连接流）。
+ * 一轮问答的<b>运行总线</b>（断线重连接流）。
  *
  * <p>要解决的问题：{@code SseEmitter} 是一次性单向通道，页面刷新、切设备、网络抖动之后，
  * 那条还在逐字出答案的连接接不回来了——用户只能干等本轮落库后回看半程正文
@@ -32,7 +32,7 @@ import java.util.function.Supplier;
  *
  * <p>做法是把「一轮的执行」和「一条连接」解耦：事件先进总线（按 sessionId 归属，一轮一条），
  * 由它扇出给<b>当前挂着的所有通道</b>；通道全没了也不掐本轮，只在<b>宽限期</b>到点后回调中止
- * （中止走 ChatService 既有的半程截断落库路径，落库结果与今天「断开即停」完全一致）。
+ * （中止走 ChatService 既有的半程截断落库路径，落库结果与「断开即停」完全一致）。
  * 迟到的观众先拿一份<b>权威快照</b>（正文/过程独白/工具卡片/时间线/清单……），此后只收快照之后的增量。
  *
  * <p>为什么不缓冲逐字增量：正文的权威缓冲在运行时自己手里（框架引擎是 AgentScope 的会话状态），
@@ -45,9 +45,9 @@ import java.util.function.Supplier;
  * <ul>
  *   <li><b>人在回路的等待不受宽限约束</b>——挂在提问卡/计划卡/审批上的轮，关掉页面本来就一直在等人，
  *       宽限不许把它掐了：那是对用户承诺过的行为（判据在框架会话侧的挂起态，见 {@code FrameworkSessions}）；</li>
- *   <li><b>只在内存</b>：进程重启后轮已经没了，此时接流方拿 {@code running:false}，按历史落库回显（与今天一致）；</li>
+ *   <li><b>只在内存</b>：进程重启后轮已经没了，此时接流方拿 {@code running:false}，按历史落库回显；</li>
  *   <li>游客分享会话与工作流/定时任务的收集型通道（{@code CollectingSseEmitter}）不登记总线；</li>
- *   <li>回滚开关 {@code chat.resumeEnabled}（已从设置页移除，仅保留配置行供排障）关掉后一条事件都不接，
+ *   <li>开关 {@code chat.resumeEnabled}（设置页不暴露，仅留配置行供排障）关掉后一条事件都不接，
  *       行为回到「断开即中止、刷新看不到在跑的轮」。</li>
  * </ul>
  *
@@ -68,7 +68,7 @@ public class ChatRunBus {
      * 与实时下发时喂给回调的值同源（plan/todo/retrieved/usage/warn 是 JSON 串）。
      * <p>compact_state 进镜像的理由与 goal_state 同一条：压缩是那二十多秒里唯一的进度说明，
      * 中途刷新的人只拿快照重建，不镜像就会接上一个「正在生成回答却一个字没有」的轮，
-     * 而这条轮其实还在压缩——正是这一帧当初要加的原因。
+     * 而这条轮其实还在压缩。
      */
     private static final List<String> MIRROR_TYPES =
             List.of("plan", "todo", "retrieved", "usage", "warn", "goal_state", "compact_state",
@@ -84,7 +84,7 @@ public class ChatRunBus {
     private static final String RUN_CODE_TOOL = "run_code";
 
     private final ConfigService configService;
-    /** 跨副本层（Phase 0 · P1）：注册表、事件帧广播、远端观众与快照请求 */
+    /** 跨副本层：注册表、事件帧广播、远端观众与快照请求 */
     private final RunBusCluster cluster;
 
     /** 一条在跑的轮：订阅者 + 事件序号 + 宽限状态 */
@@ -187,7 +187,7 @@ public class ChatRunBus {
             return out;
         }
 
-        /** P6 刀 2：轮次控制搬到 {@code agent.chat.ChatRunRuntime} 后跨包读这两个字段，
+        /** 轮次控制在 {@code agent.chat.ChatRunRuntime}，这里跨包读这两个字段，
          *  表本身仍不外露——只给读口。 */
         public String userId() {
             return userId;
@@ -280,7 +280,7 @@ public class ChatRunBus {
     /**
      * 宽限期（毫秒）。三档语义一个旋钮覆盖：
      * {@code >0}=没人看这么久就掐本轮（默认 180000，刷新/换设备都在这窗口里接得回来）；
-     * {@code 0}=最后一个观众一走就掐（旧的成本口径，接流只在窗口内有效）；
+     * {@code 0}=最后一个观众一走就掐（接流只在窗口内有效）；
      * {@code <0}=一律转后台跑完。
      */
     public long graceMs() {
@@ -427,7 +427,7 @@ public class ChatRunBus {
             try {
                 sub.emitter.send(SseEmitter.event().name(type).data(frame));
             } catch (Exception e) {
-                // 单条通道失败只摘它，本轮继续跑——「观众走光」不等于「停止执行」，这正是这次改造的要害
+                // 单条通道失败只摘它，本轮继续跑——「观众走光」不等于「停止执行」
                 sub.dead.set(true);
                 removeSub(run, sub);
                 log.debug("[RUN] 通道推送失败已摘除: session={} type={} {}", run.sessionId, type, e.getMessage());
@@ -627,7 +627,7 @@ public class ChatRunBus {
         cluster.reportViewerCount(sessionId, local + cluster.remoteSubCountHere(sessionId));
     }
 
-    // ==================== 跨副本（Phase 0 · P1）====================
+    // ==================== 跨副本 ====================
 
     /** 只取快照不登记观众：供别的副本上的接流方使用（它们要的是「此刻为止看得见的东西」） */
     private Map<String, Object> snapshotForRemote(String sessionId) {
@@ -700,7 +700,7 @@ public class ChatRunBus {
 
     /**
      * 组装 data 帧：{@code {"type":..,"content":"..","sessionId":..,"seq":..,"pos":..}}。
-     * <p>content 一律按字符串转义，与 {@code ChatService.sendSseEvent} 原有的手工拼接同形；
+     * <p>content 一律按字符串转义，与 {@code ChatService.sendSseEvent} 的手工拼接同形；
      * 多出的 seq/pos 对老前端无感（只读 data 行、按 type 派发）。
      */
     public static String frame(String type, String content, String sessionId, long seq, Integer pos) {
@@ -722,7 +722,7 @@ public class ChatRunBus {
                 + ",\"seq\":" + seq + "}";
     }
 
-    /** 运维读口：当前挂着几轮（面板没做，先留一手） */
+    /** 运维读口：当前挂着几轮 */
     public int liveRuns() {
         return runs.size();
     }

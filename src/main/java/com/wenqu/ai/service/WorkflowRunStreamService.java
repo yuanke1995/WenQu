@@ -23,21 +23,19 @@ import java.util.concurrent.TimeUnit;
  * 工作流运行进度流——<b>问答那条运行总线（{@link ChatRunBus}）的第二个使用方</b>。
  * <p>一次运行对应一个总线上的 Run（键 {@code wf:{runId}}）：节点完成 → {@code trace}、状态迁移 →
  * {@code status}、收口 → {@code done} 后关闭。画布据此"边跑边亮"，不再等跑完批量回放。
- * <p>2026-10-12 从「自带一条通道」改为接进总线，补掉的是三件原来真做不到的事：
+ * <p>接进总线带来的三条能力：
  * <ul>
- *   <li><b>多端同看</b>：旧实现一个 runId 只留一条流，后订阅顶掉先订阅——两个人（或画布与历史页）
- *       同时看一次运行，先开那个会静默失去更新；</li>
- *   <li><b>跑到一半刷新</b>：旧实现的快照取自 run 行的 {@code node_traces}，而那一列<b>只在收口时写</b>，
- *       所以中途重连看到的是「状态在跑、时间线空白」；现在快照取自内存事件缓冲（本类 {@link Buffer}），
- *       已跑过的每个节点都回放得出来；</li>
+ *   <li><b>多端同看</b>：总线让一个 runId 同时挂多条通道，两个人（或画布与历史页）
+ *       同时看一次运行不会互相顶掉；</li>
+ *   <li><b>跑到一半刷新</b>：快照取自内存事件缓冲（本类 {@link Buffer}），已跑过的每个节点都回放得出来；</li>
  *   <li><b>重复事件</b>：总线给每帧带本轮单调序号，前端按快照序号去重（与问答链路同一条判据）。</li>
  * </ul>
  * <p>与问答的两处刻意不同：
  * <ul>
  *   <li><b>没有宽限期</b>：观众全走也不中止——一次运行是用户显式发起的任务，跑完才有结果，
  *       「没人看」不是中止的理由（{@code onGraceExpired} 恒 false）；</li>
- *   <li>不受 {@code chat.resumeEnabled} 影响：那个开关管的是问答「断开即中止」的行为回滚，
- *       工作流的流式进度没有旧行为可退。</li>
+ *   <li>不受 {@code chat.resumeEnabled} 影响：那个开关只管问答链路的断线续跑，
+ *       工作流的流式进度不走问答那套断线重连。</li>
  * </ul>
  * <p>心跳：长 LLM 节点可能几分钟无事件，按 20s 一条 {@code ping} 防中间层按空闲断连；
  * 推送失败只摘通道，<b>绝不影响运行本身</b>。
@@ -189,7 +187,7 @@ public class WorkflowRunStreamService {
         return em;
     }
 
-    /** 没有在跑（已结束、或服务重启过）：按 run 行一次性回放时间线后关闭——与旧行为同语义 */
+    /** 没有在跑（已结束、或服务重启过）：按 run 行一次性回放时间线后关闭 */
     private void replayFromRunRow(SseEmitter em, String k, String status, List<Map<String, Object>> traces) {
         Map<String, Object> snap = new LinkedHashMap<>();
         snap.put("running", false);
@@ -216,8 +214,8 @@ public class WorkflowRunStreamService {
     }
 
     /**
-     * 节点开始事件（第 4 期并发可视化）：<b>只实时推，不进缓冲快照</b>——中途重连的观众按
-     * 快照回放只能看到已完成节点（与旧行为一致），进行中状态仅对一直在线的观众有意义；
+     * 节点开始事件（并发可视化）：<b>只实时推，不进缓冲快照</b>——中途重连的观众按
+     * 快照回放只能看到已完成节点，进行中状态仅对一直在线的观众有意义；
      * 也不落库（run 收口的 node_traces 仍只含完成态，历史回放语义不变）。
      */
     public void publishNodeStart(String runId, Map<String, Object> m) {

@@ -15,8 +15,7 @@
         <span v-if="!collapsed" class="logo-name">问渠</span>
         <!-- 侧栏的「形态操作」组：编辑 + 折叠，用容器整体靠右（.side-logo-ops margin-left:auto）。
              必须成组包起来，而不是各自 margin-left:auto —— 后者只推走了折叠按钮，
-             编辑按钮留在「问渠」旁、像品牌名的后缀（2026-10-08 实测踩过：注释写「紧挨折叠
-             按钮」而效果不符，返工过一次）。成组后两者真正相邻且不与品牌名抢位。
+             编辑按钮留在「问渠」旁、像品牌名的后缀。成组后两者真正相邻且不与品牌名抢位。
              编辑放这里而非底部那排（通知/主题/退出）：那是全局动作区；
              「改这列菜单」是侧栏自身的形态操作，与折叠同属一类。
              也曾试过放导航组末尾：混在菜单列表里像第 11 个功能入口，用户会预期点了跳页
@@ -62,7 +61,7 @@
         <!-- 导航数据源：编辑态取 navEditRows（my-layout 的**全集**，含被自己隐藏的），
              非编辑态取 navMenus（/auth/me，已剔除 hidden 的实际渲染集）。
              两者不能混用 —— 用 navMenus 渲染编辑行会让「已隐藏项」从清单里消失，
-             开关再也打不回来（抽屉版已踩过一次，换实现后又复现了一次）。
+             开关再也打不回来。
              renderAs：sidebar=可点入口；group=分组标题（不可点）；tab=页内 Tab（宿主页渲染，
              不进侧栏）；hidden=纯权限容器（任何 UI 不渲染）。
              待配置 tag：/chat=聊天模型或默认模型未就绪、/knowledge=向量模型未就绪（tooltip 列缺失项） -->
@@ -412,7 +411,7 @@
       </Teleport>
 
       <div class="side-foot">
-        <!-- 头像+昵称即「个人设置」入口（此前另有一个与头像语义重复的人形图标，折叠态还挤溢出）。
+        <!-- 头像+昵称即「个人设置」入口。
              身份两行：名字在上，租户/角色退为副信息——租户不再用强调色药丸抢在头像前面 -->
         <a-tooltip :title="collapsed ? '个人设置（' + (userName || '未登录') + '）' : '个人设置'" placement="right">
           <button class="foot-user" @click="goProfile">
@@ -480,7 +479,7 @@
              属侧栏自身的形态操作，不该混在底部这排「通知/主题/退出」的全局动作里 -->
         <a-tooltip :title="themeState === 'dark' ? '切换到亮色主题' : '切换到暗色主题'" placement="right">
           <button class="app-icon-btn" @click="toggleTheme">
-            <!-- 主题切换：亮色显月亮（点去暗色）、暗色显太阳（点去亮色），替代原先的灯泡 -->
+            <!-- 主题切换：亮色显月亮（点去暗色）、暗色显太阳（点去亮色） -->
             <svg v-if="themeState === 'dark'" class="theme-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <circle cx="12" cy="12" r="4"/>
               <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
@@ -528,7 +527,7 @@
       <NetBanner />
       <!-- 平台公告横幅（按租户发布，danger 级别常驻不可关）：与断网横幅同一层级——「平台要停机」是持续状态 -->
       <AnnouncementsBar />
-      <!-- 新租户首登引导（P1 · 3D）：只在 /chat、只对非 default 租户的管理员、五项全按真实数据判定 -->
+      <!-- 新租户首登引导：只在 /chat、只对非 default 租户的管理员、五项全按真实数据判定 -->
       <TenantOnboardingCard />
       <div class="main-body">
         <DesktopOnlyGuard v-if="isNarrow || mobileShell" :path="route.path">
@@ -778,10 +777,10 @@ async function resetNavDefault () {
  * 为什么不用原生 HTML5 DnD：
  * 1. 拖影是浏览器在 dragstart 拍的**静态快照**，行在脚下让位后快照不会更新 ——
  *    屏幕上同时出现「快照」和「真实行」两份，一个跟着鼠标、一个在被重排，
- *    视觉上就是拖拽过程中的「闪一下」（首版就是这么写的，实测很明显）；
+ *    视觉上就是拖拽过程中的「闪一下」；
  * 2. dragover 每帧触发数次，每次越过中线就 splice 一次数组，列表反复重排，
  *    而且没有过渡 ⇒ 位移是瞬跳而非滑动。
- * 改为指针事件自绘：一个 fixed 的幽灵行跟手（transform 合成层，不触发布局），
+ * 用指针事件自绘：一个 fixed 的幽灵行跟手（transform 合成层，不触发布局），
  * 原行留作虚线占位，其他行用 FLIP（先量后移，差值补transform 再放行）滑到新位。
  * 三点注意：
  * 1. 阈值 4px 才起拖 —— 否则一次普通点击会被判成拖拽（抖一下就取消，用户观感更差）；
@@ -919,7 +918,7 @@ const toggleFold = () => {
   try { localStorage.setItem('app_sidebar', collapsed.value ? '1' : '0') } catch (e) { /* 忽略：本次会话内仍然可用 */ }
   // 收起时顺带结束侧栏编辑：折叠是用户明确表示「收起这列」，编辑态跟着一起结束。
   // 不这么做的话，编辑行/操作条只判 navEditing 不判 collapsed，会挤进 56px 图标条——
-  // 带文字和开关的行在图标条里必然溢出（实测：开关悬在条外、「恢复默认」文字糊成一团）。
+  // 带文字和开关的行在图标条里必然溢出。
   // 未保存的草稿直接丢弃，语义同「点编辑按钮退出」。
   // 编辑态里折叠按钮已隐身（模板 .slot-hidden），所以这条联动是第二道保险：
   // 防的是将来别处直接改 collapsed 而绕过按钮。
@@ -1345,8 +1344,7 @@ const sessionMenu = (s, key) => {
 }
 
 // ==================== 移动到工作区（会话归属可改） ====================
-// 会话的工作区此前只在创建时定一次：在「会话」里聊开了才想起归拢，只能重开对话、历史带不走。
-// 这里补上事后整理的入口；产物由后端随会话一起走，文件本身留在旧工作区（弹窗里说清）。
+// 会话归属可事后整理：产物由后端随会话一起走，文件本身留在旧工作区（弹窗里说清）。
 const MOVE_SESSION_NOTE = '移动后，此前在旧工作区目录里产生的文件仍留在原处；之后新写的文件才进新工作区。该对话交出的产物会跟着一起走。'
 const moveOpen = ref(false)
 const moveTarget = ref(null)
@@ -1824,10 +1822,10 @@ watch(() => route.fullPath, () => {
 /* 折叠态：logo 与收起按钮总宽超出 56px 会被 overflow:hidden 裁掉按钮 → 折叠态只渲染一个
    按钮，图标即问渠品牌标（点击展开侧边栏），比裸的展开箭头更能表明"这是谁家的栏" */
 .side.collapsed .side-logo { justify-content: center; padding: 2px 0 12px; }
-/* 折叠态导航图标对齐到侧边栏中轴（实测导航图标左偏 4px） */
+/* 折叠态导航图标对齐到侧边栏中轴 */
 .side.collapsed .nav-item { justify-content: center; padding-left: 0; padding-right: 0; }
-/* 折叠态：底部改为竖排（头像=个人设置入口 + 主题 + 退出），沿侧边栏中轴对齐——
-   横排 3 个 26px 图标在 ~56px 图标条里放不下，此前直接溢出 */
+/* 折叠态：底部竖排（头像=个人设置入口 + 主题 + 退出），沿侧边栏中轴对齐——
+   横排 3 个 26px 图标在 ~56px 图标条里放不下 */
 .side.collapsed .side-foot { flex-direction: column; gap: 6px; padding: 8px 0; }
 .side.collapsed .side-foot .app-icon-btn { margin-left: 0 !important; }
 /* 折叠态只剩头像：28px 头像要落在 56px 条的中轴上，不能再左对齐 */
@@ -1835,7 +1833,7 @@ watch(() => route.fullPath, () => {
 /* 品牌标用 BrandMark 组件（SVG 自带圆角与品牌渐变，明暗主题通用）；此处只留占位规则 */
 .logo-name { font-weight: 500; font-size: 13px; white-space: nowrap; }
 /* 形态操作组：编辑 + 折叠，整体靠右（margin-left:auto 必须落在**容器**上——
-   落在单个按钮上只会推走那一个，另一个留在品牌名旁，实测返工过一次）。 */
+   落在单个按钮上只会推走那一个，另一个留在品牌名旁）。 */
 .side-logo-ops { margin-left: auto; display: flex; align-items: center; gap: 2px; }
 .side-logo-ops .app-icon-btn.on { color: var(--app-accent); background: var(--app-accent-weak); }
 /* auto 由 .side-logo-ops 承担（展开态才渲染该容器），折叠态下无右侧元素可推 */
@@ -1863,19 +1861,19 @@ watch(() => route.fullPath, () => {
   }
   /* 显形三条路，选择器都必须带上 .side:not(.collapsed) 前缀：
      隐身规则的 specificity 是 (0,3,0)，写成 .side-logo-ops.pinned 这种 (0,2,0) 会被它压住——
-     编辑态里鼠标一移开图标就消失，连「保存」都点不到（实测踩过）。
+     编辑态里鼠标一移开图标就消失，连「保存」都点不到。
      · hover：鼠标移到 logo 行；
      · :has(:focus-visible)：**键盘** Tab 到按钮（pointer-events:none 挡不住焦点，
        看不见的按钮等于没入口）。这里刻意不用 :focus-within —— 鼠标点完按钮后焦点仍留在它身上
        （Chrome 里 click 就等价于 focus），:focus-within 会把整组钉在屏幕上：点「✓」退出编辑态后
-       图标一直常驻，直到用户再点别处才消失，看着就像"退出没生效"（2026-10-16 实测踩过）；
+       图标一直常驻，直到用户再点别处才消失，看着就像"退出没生效"；
        :focus-visible 只在键盘导航时命中，鼠标点击不触发。
      · pinned：编辑态，用户正在用的工具条不能因为鼠标移开就消失。 */
   .side:not(.collapsed) .side-logo:hover .side-logo-ops,
   .side:not(.collapsed) .side-logo-ops:has(:focus-visible),
   .side:not(.collapsed) .side-logo-ops.pinned { opacity: 1; pointer-events: auto; }
 }
-/* 粗指针（触屏、含带触摸屏的笔记本）：恒显且退回常规文档流，形态与改动前一致。
+/* 粗指针（触屏、含带触摸屏的笔记本）：恒显且退回常规文档流。
    写在 hover 块之后：两者同时命中时（触摸屏笔记本）由这里覆盖。 */
 @media (any-pointer: coarse) {
   /* 触屏没有 hover：工作区行的 ⋯ 必须常显，否则等于没有操作入口 */
@@ -1919,7 +1917,7 @@ watch(() => route.fullPath, () => {
 
 /* 操作条：单行按钮，接替入口行、与它等高 ⇒ 进/出编辑态侧栏总高不变，
    下方会话列表不会被顶下去（提示语降为 title，不占垂直空间）。
-   white-space:nowrap 是硬要求：一换行按钮就变竖排单字（200px 侧栏实测过）。 */
+   white-space:nowrap 是硬要求：一换行按钮就变竖排单字。 */
 .nav-edit-bar {
   display: flex; align-items: center; gap: 6px;
   margin-top: 4px; padding: 0;
@@ -1993,8 +1991,7 @@ watch(() => route.fullPath, () => {
 .guide-count.muted { color: var(--app-text3); background: var(--app-panel-2); }
 
 /* ==================== 会话树：分区 / 工作区 / 会话行 ==================== */
-/* 分区标题：小号、加字距、计数紧跟其后。参考的是「任务 (0)」「工作区 (2)」那种目录式表头，
-   而不是旧版灰色小标题 + 组内数字角标（视觉重量太轻，撑不起分区）。 */
+/* 分区标题：小号、加字距、计数紧跟其后，做成「任务 (0)」「工作区 (2)」那种目录式表头 */
 .side-sec { display: flex; flex-direction: column; padding: 0 2px; }
 .side-sec + .side-sec { margin-top: 2px; }
 .side-sec-head { display: flex; align-items: center; gap: 4px; padding: 9px 6px 3px; min-height: 28px; user-select: none; touch-action: none; }
@@ -2034,7 +2031,7 @@ watch(() => route.fullPath, () => {
 .sec-caret { margin-left: 0; color: var(--app-text3); }
 
 /* 工作区：一行「图标 + 名字（点名字展开/收起） + ⋯ + 新建对话」。
-   不再放折叠箭头：名字本身就是折叠开关（与基准稿一致），右侧两个图标各管一件事。 */
+   不再放折叠箭头：名字本身就是折叠开关，右侧两个图标各管一件事。 */
 .space { display: flex; flex-direction: column; }
 .space-head {
   display: flex; align-items: center; gap: 6px; min-height: 30px;
@@ -2082,7 +2079,7 @@ watch(() => route.fullPath, () => {
 /* ---- 有悬停能力的环境：表头操作组与工作区行右侧图标一律「平时隐身、hover 这一行显形」 ----
    与 logo 行 .side-logo-ops 同一套口径（触发区只给所在那一行，鼠标扫过列表时不该有东西在闪）。
    :has(:focus-visible) 兜键盘：Tab 到按钮才显形，看不见的按钮等于没入口；
-   刻意不用 :focus-within —— 鼠标点完焦点会留在按钮上，会把图标一直钉在屏幕上（logo 行实测踩过）。
+   刻意不用 :focus-within —— 鼠标点完焦点会留在按钮上，会把图标一直钉在屏幕上。
    写在 .space-op/.side-sec-ops 基础规则之后：媒体查询不加 specificity，顺序决定谁生效。 */
 @media (hover: hover) and (pointer: fine) {
   .side-sec-ops,
@@ -2186,8 +2183,7 @@ watch(() => route.fullPath, () => {
 .sess-export:hover { color: var(--app-accent); }
 
 /* 会话搜索框（列表顶部，防抖走后端检索）
-   视觉与导航项同一语言：无边框弱底胶囊，聚焦时才浮现边框——
-   此前常驻边框+纯白底，夹在无边框导航项之间显得格格不入 */
+   视觉与导航项同一语言：无边框弱底胶囊，聚焦时才浮现边框 */
 .sess-search-wrap {
   position: relative; display: flex; align-items: center; margin: 6px 2px 2px;
   height: 30px; padding: 0 2px;

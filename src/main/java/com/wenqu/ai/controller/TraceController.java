@@ -18,7 +18,7 @@ import java.util.Map;
 import com.wenqu.ai.security.Permission;
 
 /**
- * 执行 Trace 与运营闭环（P1，Coze Loop 模式）。
+ * 执行 Trace 与运营闭环（Coze Loop 模式）。
  * <p>
  * 权限：<b>运营功能，不进普通用户白名单</b>——RBAC 下管理员直通，普通角色默认 403
  * （可在权限管理为角色显式绑定 /api/ai/trace/**）。工作流 run 详情不做逐条归属校验（运营视角，与看板同面）。

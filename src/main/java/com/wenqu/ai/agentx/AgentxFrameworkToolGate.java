@@ -27,7 +27,7 @@ import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Flux;
 
 /**
- * 工具执行前的档位闸（全框架化 P1 / 方案 B）。
+ * 工具执行前的档位闸。
  *
  * <p><b>为什么需要它</b>：沙箱与文件系统改由框架提供后，那批工具挂在<b>框架自己的 Toolkit</b> 上，
  * 不再经过问渠的 {@code ToolRegistry} 与 {@code ExecutionPolicy#allowsTool} 装配链；而问渠还欠两件
@@ -39,8 +39,7 @@ import reactor.core.publisher.Flux;
  * （{@code @Tool(readOnly=…)} 换算进 {@code ToolBase}；问渠那批由 {@code SideEffect} 经
  * {@link SpringAiToolAdapter} 带过来）。框架权限引擎在只读档也按同一份标记裁
  * （{@code PermissionEngine#checkExploreMode}），本闸只是把拒绝提前一步、并把理由说成人话。
- * <b>这里不许再列工具名字表</b>：抄一份名单就是第三套口径，漏一个名字会把读类能力判成写操作——
- * 2026-10-20 的现场是只读档的智能体五发检索全拒、界面上一点错都没有。
+ * <b>这里不许再列工具名字表</b>：抄一份名单就是第三套口径，漏一个名字会把读类能力判成写操作。
  *
  * <p><b>execute 为什么在只读档不给</b>：容器没有任何按档位收束命令的机制（provisioner 建容器时
  * 不接档位），「能跑命令」就等于「能写文件」，所以框架把它申报成非只读——与
@@ -100,7 +99,7 @@ public final class AgentxFrameworkToolGate implements MiddlewareBase {
     }
 
     /**
-     * 本轮的工具卡记录器（全框架化 P1）。
+     * 本轮的工具卡记录器。
      *
      * <p>只用于<b>被本闸挡下</b>的那几次调用：放行的工具由引擎读框架 Session Log 的
      * {@code tool/requested}／{@code tool/result} 统一记卡（入参、耗时、成功/失败都在那两帧里）。

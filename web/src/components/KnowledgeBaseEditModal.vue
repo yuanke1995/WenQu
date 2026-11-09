@@ -38,9 +38,8 @@
         <a-input v-model:value="form.description" :disabled="isBuiltin || isDefaultKb" placeholder="这个库放什么资料" />
         <div v-if="isDefaultKb" class="kb-hint" style="margin-top:4px">默认库描述固定，不可修改</div>
       </a-form-item>
-      <!-- 向量模型：官方内置库也**可改**（管理员级）。原先随「名称/描述」一起置灰，而后端
-           同一批字段里又放开了检索参数——于是引用清单里「去修改」指过来，看到的却是一个
-           灰框：供应商额度耗尽时，管理员唯一能救内置库的动作就是换一个能用的向量模型。 -->
+      <!-- 向量模型：官方内置库也**可改**（管理员级）。供应商额度耗尽时，
+           管理员唯一能救内置库的动作就是换一个能用的向量模型。 -->
       <a-form-item label="向量模型" required data-fix="embeddingRef">
         <ModelSelect v-model="form.embeddingRef" type="embedding"
                      :width="320" :admin-tip-visible="true" />
@@ -148,9 +147,9 @@
       </a-collapse>
 
       <!-- 无「设为默认库」开关：默认库是「未指定归属文档」的兜底（每人一个、系统懒创建、不可删）；
-           后端 isDefault 不可写（无晋升路径），UI 上传也全部显式带库——2026-10-06 评估后不提供换默认库入口 -->
+           后端 isDefault 不可写（无晋升路径），UI 上传也全部显式带库，不提供换默认库入口 -->
 
-      <!-- P1 GraphRAG 库级开关（默认关）：开启后解析完成自动抽三元组，检索一跳图扩展；
+      <!-- GraphRAG 库级开关（默认关）：开启后解析完成自动抽三元组，检索一跳图扩展；
            官方内置库不显示——后端 builtin 白名单只收检索/解析参数与向量模型，提交会被整单拒绝 -->
       <a-form-item v-if="!isBuiltin" label="知识图谱" style="margin-top:4px">
         <div class="kb-switch-line">
@@ -380,7 +379,7 @@ const rerankPh = computed(() => {
  */
 const prefillFromGlobal = async () => {
   // 模型索引一并加载：rerank 引用要先验可解析（停用/他人供应商不在可选列表）再预填，
-  // 否则触发器裸显原始 UUID 长串（也是此前参数网格被撑爆错位的诱因）
+  // 否则触发器裸显原始 UUID 长串
   await Promise.all([loadParamDefaults(), loadModelIndex()])
   const num = v => (v === undefined || v === null || v === '' ? null : Number(v))
   const q = form.value.q
@@ -424,7 +423,7 @@ watch(() => props.open, open => {
   if (fold && !advActive.value.includes(fold)) advActive.value = [...advActive.value, fold]
   if (props.fix) locateField(props.fix).catch(() => {})
   loadParamTips().catch(() => {})   // 问号文案加载失败不阻塞（只是少个问号）
-  // 重排模型占位点名需要模型索引解析展示名（编辑模式此前不装；模块级 10s 缓存，新建模式重复调用无额外请求）
+  // 重排模型占位点名需要模型索引解析展示名（模块级 10s 缓存，新建模式重复调用无额外请求）
   loadModelIndex().then(i => { rerankIndex.value = i || {} }).catch(() => {})
   if (props.kb) {
     loadParamDefaults().catch(e => message.error('知识库参数默认值加载失败：' + (e.message || '请刷新重试')))

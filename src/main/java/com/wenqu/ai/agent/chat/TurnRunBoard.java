@@ -1,7 +1,5 @@
 package com.wenqu.ai.agent.chat;
 
-// [保留] 问渠轮次台账 / 个性化提示词 —— AgentScope 框架不提供等价能力，框架引擎(agentx)与共享服务仍依赖此文件，勿当作已退役的控制流删除。
-
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -12,8 +10,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * 本轮沙盒脚本的<b>运行面板</b>（P3b；P6 刀 0 第二步从手写运行时的平铺字段下沉，
- * 行为与簿记本体在 {@code agent/runcode/RunCodeSubCallRuntime}）。
+ * 本轮沙盒脚本的<b>运行面板</b>（行为与簿记本体在 {@code agent/runcode/RunCodeSubCallRuntime}）。
  *
  * <p><b>作用域是一次运行，不是本轮</b>：{@code RunCodeSubCallRuntime#startRunBoard} 在每次 run_code
  * 起头清空/复位这些字段，否则同一轮里的第二段脚本，卡片会显示成第一段做过的事。

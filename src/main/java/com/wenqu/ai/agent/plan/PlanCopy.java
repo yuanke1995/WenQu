@@ -8,16 +8,11 @@ import java.util.regex.Pattern;
 /**
  * 计划正文的「给用户看」口径：一句提示词（主修）+ 一道剥内部路径的兜底（保底）。
  *
- * <p><b>为什么要有这一处</b>：手写推理循环退役后，计划轮改由框架的
- * {@code plan_enter/plan_write/plan_exit} 产出，而问渠原先那条「计划只写用户关心的结果，
- * 不写工具名、能力名、内部做法与执行细节」的指令随手写阶段一起删了。框架这一路反而<b>主动</b>把
- * 内部路径喂给模型：{@code PlanModeMiddleware} 的 PLAN MODE banner 里带 {@code Plan file: <路径>}、
- * {@code plan_enter} 的工具结果里带「record your plan at "&lt;路径&gt;"」，
- * 沙盒几把工具的参数说明又举着 {@code /home/gem/user-data/report.md} 这种例子。
+ * <p><b>为什么要有这一处</b>：计划轮由框架的 {@code plan_enter/plan_write/plan_exit} 产出，
+ * 框架这一路<b>主动</b>把内部路径喂给模型：{@code PlanModeMiddleware} 的 PLAN MODE banner
+ * 里带 {@code Plan file: <路径>}、{@code plan_enter} 的工具结果里带「record your plan at
+ * "&lt;路径&gt;"」，沙盒几把工具的参数说明又举着 {@code /home/gem/user-data/report.md} 这种例子。
  * 模型照抄进计划正文，用户批准的就不是「它给我做成什么样」，而是「它在沙盒里怎么落地文件」。
- * <p>真机账（本机库 {@code c_ai_tool_approval.tool_name='planApproval'}）：2026-10-15 21:41/21:55/21:57
- * 三条计划卡印着 {@code /home/gem/user-data/index.html}，其中两条还写着
- * {@code 用 deliver_artifact 交付}；2026-10-14 及更早（还带那条指令的一族）一条都没有。
  * <p><b>两处各自管什么</b>：{@link #guidance()} 让模型不写；{@link #stripInternalPaths} 在模型仍写时
  * 保证用户看不见。兜底只作用于<b>权威稿</b>（计划卡正文、落库的 {@code plan} 列与版本链）——
  * 流式预览（{@code plan_delta}）是按字节切片的，逐片替换会把半截路径拼成乱码，
@@ -33,8 +28,8 @@ public final class PlanCopy {
 
     /**
      * 挂进系统提示词的一条口径（与 {@code RelatedPrompt.line} 同一种装配法：提示它 + 由代码兜底）。
-     * <p>口径本身不是新规矩，是 2026-10-08 定案的那条「计划＝成品描述，不写工具名与内部做法」，
-     * 只是框架路径下没人再说一遍。
+     * <p>口径是「计划＝成品描述，不写工具名与内部做法」；
+     * 框架路径下没有这条指令，故由这里补上。
      */
     public static String guidance() {
         return "\n【写给用户看的文字】回答正文、计划、任务清单都只讲用户看得懂的结果：不要出现沙盒或服务器上的"

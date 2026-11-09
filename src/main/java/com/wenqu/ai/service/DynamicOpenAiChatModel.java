@@ -33,7 +33,7 @@ import com.wenqu.ai.util.UsageAttr;
  *   {@link ModelRegistryService#chatRoute} 解析出对应供应商网关（baseUrl/apiKey/completionsPath），
  *   按「归一化 baseUrl|path|apiKey」指纹缓存并委派对应 {@link OpenAiChatModel} 实例；
  *   下发前把 options.model 改写为裸模型名（引用前缀不透传给网关）
- * - <b>无兜底</b>：模型值缺失 / 非引用 / 供应商不存在 → fail-loud 抛出（全局 chat.* 网关兜底已移除），
+ * - <b>无兜底</b>：模型值缺失 / 非引用 / 供应商不存在 → fail-loud 抛出，
  *   由问答入口/调用方的「选择模型」引导兜住
  * - 网关地址/密钥变更（供应商管理保存）后指纹变化 → 自动构建新客户端，旧实例由缓存淘汰
  * - 供应商变更经由 Redis 广播 reload / 周期兜底 reload 刷新，下一次请求自动感知
@@ -54,9 +54,9 @@ public class DynamicOpenAiChatModel implements ChatModel {
     private final UsageLedgerService usageLedger;
     /** 额度状态登记（识别在 ModelQuotaGuard，本类只负责在路由出口触发登记与恢复） */
     private final ModelQuotaService quotaService;
-    /** 平台侧配额闸（Phase 2）：与框架出口 {@code MeteredModel} 共用一份判据 */
+    /** 平台侧配额闸：与框架出口 {@code MeteredModel} 共用一份判据 */
     private final UsageQuotaService usageQuota;
-    /** 内容安全出口闸（Phase 3 · P12）：与框架出口 {@code MeteredModel} 共用一份规则表与判据 */
+    /** 内容安全出口闸：与框架出口 {@code MeteredModel} 共用一份规则表与判据 */
     private final com.wenqu.ai.service.contentsafety.ContentSafetyService contentSafety;
     /** 容器存在则复用（与自动配置构建的 ChatModel 行为一致），缺失时用 builder 内部默认值 */
     private final RetryTemplate retryTemplate;
@@ -84,7 +84,7 @@ public class DynamicOpenAiChatModel implements ChatModel {
 
     @Override
     public ChatResponse call(Prompt prompt) {
-        // 配额闸在计费请求发起前判（Phase 2）：辅助用途与不在受限清单里的用途由服务内部放行
+        // 配额闸在计费请求发起前判：辅助用途与不在受限清单里的用途由服务内部放行
         UsageAttr.Attr selfAttr = UsageAttr.current();
         usageQuota.assertWithinBudget(selfAttr == null ? null : selfAttr.uid(),
                 selfAttr == null ? null : selfAttr.kind());
@@ -106,7 +106,7 @@ public class DynamicOpenAiChatModel implements ChatModel {
         } catch (Exception e) {
             log.warn("[UsageLedger] 非流式用量记账异常（不影响本次调用）: {}", e.getMessage());
         }
-        // 出口闸（Phase 3 · P12）：非流式没有「已经下发收不回」的问题，整段一次判完即可
+        // 出口闸：非流式没有「已经下发收不回」的问题，整段一次判完即可
         return guardText(resp, selfAttr);
     }
 
@@ -175,7 +175,7 @@ public class DynamicOpenAiChatModel implements ChatModel {
             // 每订阅一个累加器：多次订阅互不串账
             UsageAccumulator acc = new UsageAccumulator();
             UsageAttr.Attr[] holder = new UsageAttr.Attr[1];
-            // 出口闸（Phase 3 · P12）：订阅时起，一次订阅＝一次模型调用＝一本独立的判定状态
+            // 出口闸：订阅时起，一次订阅＝一次模型调用＝一本独立的判定状态
             com.wenqu.ai.service.contentsafety.ContentSafetyService.OutputGate gate =
                     contentSafety.outputGate(preAttr == null ? null : preAttr.uid(),
                             preAttr == null ? null : preAttr.sessionId(),
@@ -221,7 +221,7 @@ public class DynamicOpenAiChatModel implements ChatModel {
                         try {
                             UsageAttr.Attr attr = holder[0] != null ? holder[0] : UsageAttr.current();
                             // 中断兜底：usage 只随流末块下发，取消（ESC 停止/断开/护栏截断）后永远收不到，
-                            // 但已下发内容供应商照单计费——漏记就是台账与账单的整轮缺口（实测单轮可达 1.6 万 token）。
+                            // 但已下发内容供应商照单计费——漏记就是台账与账单的整轮缺口。
                             // 只要收到过输出块（请求确实被网关处理）就按实际下发内容估算入账；usage 已到达
                             // （acc 非空）仍以网关真实值入账。报错路径不估算：网关 5xx 通常不计费。
                             if (acc.isEmpty() && sig == SignalType.CANCEL && !received.isEmpty()) {
@@ -337,11 +337,10 @@ public class DynamicOpenAiChatModel implements ChatModel {
     }
 
     /**
-     * 按模型登记值补 max_tokens（请求未显式设置时）：登记为空/非正=不下发，行为与改前一致。
-     * <p>为什么要在这里补：这是全平台 Spring AI 请求的必经点，手写侧聊天、摘要、评测评判、
-     * 连通性探测都从这里过——不设的话单次补全上限一直是厂商默认（token-plan 族实测 8192），
-     * 模型把大产物内联进工具参数必被截断成残缺参数（真机 2026-11-07 presentArtifact 空参案，
-     * 能力是 2026-10-13 P6 迁移删 RagService 时丢的，见 docs/max-tokens-dispatch/ 方案）。
+     * 按模型登记值补 max_tokens（请求未显式设置时）：登记为空/非正=不下发。
+     * <p>为什么要在这里补：这是全平台 Spring AI 请求的必经点，聊天、摘要、评测评判、
+     * 连通性探测都从这里过——不设的话单次补全上限一直是厂商默认，
+     * 模型把大产物内联进工具参数必被截断成残缺参数。
      * <p>显式 per-request 的 maxTokens 永远赢（评测评判的 200、压缩的预算等各自语义不动）；
      * 供应商级 delegate 缓存是多个模型共享的，所以只能按请求注入、不能进 defaultOptions。
      */

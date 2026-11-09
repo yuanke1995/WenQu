@@ -42,8 +42,8 @@ import java.util.HexFormat;
  *       {@link #getFileType} 取代（未知扩展名默认 text；已知音视频/归档/可执行扩展名判 binary）。</li>
  *   <li>参考实现 {@code grep} 委托 deepagents 基类扫描；本工程以 {@link #superGrep} 提供等价进程内实现
  *       （find_files + 读 + 正则），能力差异仅在于实现位置。</li>
- *   <li>{@code write} 由 create-only（已存在报错）改为<b>创建或整体替换</b>——对齐 deepagents 现行
- *       {@code write_file} 语义（上游 issue #3731；对应错误文案已随该分支移除），理由见方法注释。</li>
+ *   <li>{@code write} 为<b>创建或整体替换</b>——对齐 deepagents 现行
+ *       {@code write_file} 语义，理由见方法注释。</li>
  * </ul>
  */
 /**
@@ -94,7 +94,7 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
     private final String workdirPath;
     private final boolean inheritEnv;
     private final boolean createIfMissing;
-    /** P2 权限档位 danger-full-access：true 时写类工具不再限定在沙盒根目录内（见 writableRoots） */
+    /** 权限档位 danger-full-access：true 时写类工具不再限定在沙盒根目录内（见 writableRoots） */
     private final boolean unrestrictedWrites;
     private final int commandTimeoutSeconds;
     private final int maxOutputBytes;
@@ -120,8 +120,8 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
     }
 
     /**
-     * @param unrestrictedWrites P2 权限档位的 {@code danger-full-access}：写类工具不再限定在沙盒根目录内。
-     *                           默认 false=只可写 {@code userDataRoot}（引入档位前后的形态都由这条守住）。
+     * @param unrestrictedWrites 权限档位的 {@code danger-full-access}：写类工具不再限定在沙盒根目录内。
+     *                           默认 false=只可写 {@code userDataRoot}。
      *                           档位是<b>本轮</b>属性，所以它经构造参数进来而不是读全局配置——同一会话两轮可以不同档。
      */
     public ProvisionerSandboxBackend(
@@ -614,9 +614,9 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
      * 沙盒里「工作目录」的容器内路径。
      *
      * <p><b>为什么要在 Java 侧 cd</b>：runtime 的 {@code /v1/shell/exec} 固定在 {@code /home/gem} 执行
-     * （实测传 {@code cwd}/{@code workdir} 都被忽略），而 {@code /home/gem/user-data} 才是挂到宿主的工作区目录。
+     * （传 {@code cwd}/{@code workdir} 都被忽略），而 {@code /home/gem/user-data} 才是挂到宿主的工作区目录。
      * 不 cd 的后果不是"路径不好看"，是**文件写到没挂载的目录里，容器回收即丢失**——
-     * 正好是工作区要解决的问题（2026-10-17 真机实测：echo > attendance.md 落在 /home/gem，宿主 projects/ 下空空如也）。
+     * 正好是工作区要解决的问题。
      */
     private static final String WORKSPACE_ROOT = "/home/gem/user-data";
 
@@ -631,8 +631,7 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
     /**
      * 模型那把 {@code execute} 工具传下来的 {@code timeout} 的下界。
      * <p>为什么不设成 30（框架 {@code ShellExecuteTool} schema 里那句 "default: 30"）：低于 30 的数
-     * 几乎不是模型算出来的判断，而是随手填的（真机 2026-10-22 那次 {@code pip install} 填了 5，
-     * 命令还在容器里跑着，卡片就已经报「没跑完」）。
+     * 几乎不是模型算出来的判断，而是随手填的。
      * <p>代价只落在「命令真挂住」那一类：一次 HTTP 读要等满 {@code 60 + EXEC_READ_SLACK} 才拿到
      * 「没跑完」。timeout 本身是上限不是固定 sleep，{@code ls} 传 60 照样秒回。
      * <p>为什么不用 {@code sandbox.commandTimeoutSeconds}（180）那份：那是「不传时」的缺省档，
@@ -660,8 +659,6 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
      * 进程归属标记的环境变量名。子进程<b>继承</b>它（exec 出去、fork 出来的都带着），
      * 所以扫一遍 {@code /proc} 下各进程的 {@code environ} 就能把「哪条命令漏下的进程」还原出来——
      * 不需要在 Java 侧维护一份会和容器 reality 漂移的台账。
-     * <p>真机 2026-10-25 在探针沙盒里验过：{@code ( export WQ_PROC_TAG=x; python3 -m http.server )}
-     * 超时退出后，那条 http.server 仍带标记、可被 {@code /proc} 扫到并按标记杀掉。
      */
     public static final String PROC_TAG_VAR = "WQ_PROC_TAG";
 
@@ -702,13 +699,12 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
      * <p>用<b>子 shell</b> {@code ( ... )} 而不是花括号组包住原命令：runtime 那条 exec 跑在
      * <b>常驻 shell</b> 里，命令自带的 {@code exit N}（模型写 {@code || exit 1} 很常见，框架
      * {@code write_file} 的旧前置检查也用了它）会把那个 shell 一起退出——于是这一条既拿不到退出码
-     * 也拿不到任何输出，还要白等到 runtime 缺省的 120 秒才回「没跑完」（2026-10-23 直连 runtime
-     * A/B 实测：花括号包 90 秒无响应，子 shell 包 0 秒回 {@code exit=1 output='EXISTS'}）。
+     * 也拿不到任何输出，还要白等到 runtime 缺省的 120 秒才回「没跑完」。
      * 子 shell 只让 {@code exit} 结束这一次执行，退出码仍是整条命令的退出码。
-     * 顺带这才是原注释想要的语义：{@code cd} 与变量赋值出不了这一次执行。
+     * 此外，{@code cd} 与变量赋值出不了这一次执行。
      * <p>标记同样写在子 shell <b>里面</b>（{@code export} 而不是 {@code VAR=x ( ... )}）：
      * 前者出不了子 shell、不会污染常驻 shell 后续命令；后者 bash 直接报
-     * {@code syntax error near unexpected token '('}（2026-10-25 真机实测，赋值前缀只允许配简单命令）。
+     * {@code syntax error near unexpected token '('}（赋值前缀只允许配简单命令）。
      */
     private static String inWorkspace(String command, String tag) {
         if (command == null || command.isBlank()) return command;
@@ -722,7 +718,7 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
      * <p><b>为什么必须显式解析</b>：框架的 {@code WorkspacePathNormalizer} 会先把
      * {@code /home/gem/user-data/skills/x.md} 这类绝对路径<b>剥成工作区相对形式</b>
      * （{@code skills/x.md}，剥不动才原样透传），而 shell 端点靠 {@code cd} 兜住相对路径、
-     * {@code /v1/file/*} 端点不兜（真机实测：相对路径直接 {@code not_found}，{@code "."} 落到容器根）。
+     * {@code /v1/file/*} 端点不兜（相对路径直接 {@code not_found}，{@code "."} 落到容器根）。
      * 不经这一层，结构化端点会把每一个工作区相对路径都报成不存在。
      */
     public String workspaceAbsolutePath(String path) {
@@ -765,8 +761,8 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
             Duration t = timeout == null ? null : Duration.ofSeconds(timeout);
             SandboxRuntimeClient.SandboxExecResult result = client.execCommand(inWorkspace(command, tag), t, false);
             if (result.notCompleted()) {
-                // runtime 到点说的是「这一趟没等到结果」：命令仍在容器里活着（实测——被 no_change
-                // 闸放弃的那条，130 秒的 touch 照样落盘），只是它不再等了。所以这句话必须同时
+                // runtime 到点说的是「这一趟没等到结果」：命令仍在容器里活着，
+                // 只是它不再等了。所以这句话必须同时
                 // 劝住「当成失败重跑」：重跑等于把同一件事做两遍，还会和活着的那条互相覆盖产物。
                 return new ExecuteResponse(notCompletedText(timeout, result.status()), null, false);
             }
@@ -801,8 +797,7 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
      * 「这一趟没等到结果」这句话（给模型看的，也是工具卡上唯一的解释）。
      *
      * <p>按 runtime 的原词分档：两种到点的原因不同、下一步该怎么走也不同。合成一句
-     * 「命令没跑完」的话，模型只能猜——真机那次它猜成「被打断了」，于是收工，
-     * 把已经跑成功的命令当成失败重跑了一遍。
+     * 「命令没跑完」的话，模型只能猜，可能把跑成功的命令当成失败重跑。
      */
     private String notCompletedText(Integer timeout, String status) {
         if ("no_change_timeout".equalsIgnoreCase(status)) {
@@ -830,8 +825,7 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
      * <p><b>为什么扫 {@code /proc} 而不在 Java 侧记一本台账</b>：进程的真实状态只有容器自己知道。
      * 记一份「我起过什么」的表，就要面对「表说在跑、其实早退了」和反过来的两种漂移（还要处理重启、
      * 多副本、空闲回收后表还留着）；而子进程<b>天然继承</b>环境变量这一条 POSIX 语义，
-     * 让标记本身就长在进程上，扫一次就是实况。真机 2026-10-25 验过三层：
-     * 超时残留的进程带得上标记、孙进程也带（{@code bash -c 'sleep & sleep'} 三个 pid 全命中）、按标记杀之后端口释放。
+     * 让标记本身就长在进程上，扫一次就是实况。
      *
      * <p>输出形状（每行一条，解析在 {@code SandboxProcService}）：
      * <ul>
@@ -858,8 +852,8 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
     /**
      * 按标记杀整棵进程树：先 TERM 给它一次清理的机会，一秒后对幸存的补 KILL，再等一秒结算。
      * <p>结算<b>必须等一拍</b>且要认僵尸态：{@code kill -KILL} 之后 {@code /proc/<pid>} 还会短暂存在
-     * （等父进程回收），当场查会把「已经杀掉」如实报成「幸存」——2026-10-25 探针沙盒实测四个 pid
-     * 全在 {@code remaining} 里，而再扫一次它们确实没了。僵尸态（{@code Z}）进程已经死了、只剩一条
+     * （等父进程回收），当场查会把「已经杀掉」如实报成「幸存」。
+     * 僵尸态（{@code Z}）进程已经死了、只剩一条
      * 待回收的记录，同样不算幸存。
      * <p>标记已经过 {@link #PROC_TAG_PATTERN} 校验（只含 {@code [A-Za-z0-9_.-]}），
      * 拼进单引号里不构成注入面；这道校验是<b>必须</b>的，标记来自前端请求。
@@ -984,7 +978,7 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
      *
      * <p>命令原文先落盘成脚本、以 {@code /bin/bash <脚本>} 执行——绝不把命令拼进 shell 包装串：
      * 拼接会改写命令末行，heredoc 终止符被 {@code " ; }"} 尾缀破坏后 shell 会一直等续行输入、
-     * 挂到超时（2026-10-08 线上实测：{@code python3 - <<'EOF' …} 180s 不返回）。落盘执行让
+     * 挂到超时。落盘执行让
      * heredoc/多行/引号原样保真。
      *
      * <p>为什么不直接流式：runtime（all-in-one-sandbox 镜像）的 {@code /v1/shell/exec} 是同步一次性
@@ -1023,7 +1017,7 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
             // ② 后台启动：花括号组后台化，组内先跑命令（2>&1 合并）、再写退出码标记；组输出进 log。
             //    启动成功判据 = ok 标记文件落盘（echo BG_OK > ok），不判 stdout 文本：
             //    runtime 的 exec 用带 job control 的 shell，秒级命令的完成通知（[1]+ Done …）
-            //    会在 BG_OK 之后混进同一响应，任何文本前后缀匹配都会被噪音击穿（09-28 实测回归）。
+            //    会在 BG_OK 之后混进同一响应，任何文本前后缀匹配都会被噪音击穿。
             String wrapped = "{ { /bin/bash " + cmdPath + " ; } 2>&1; echo $? > " + exitPath + "; } > " + logPath
                     + " 2>&1 & echo BG_OK > " + okPath;
             SandboxRuntimeClient.SandboxExecResult launch = client.execCommand(wrapped, null, false);
@@ -1283,8 +1277,7 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
      * <p>与 {@link #write(String, String)} 的关键差异是<b>刻意的</b>：write() 的 user-data 守卫是用户
      * 工具面（write_file）的产品语义——「用户文件进 user-data 目录」；而沙盒 execute 本就持完整
      * shell 权限，对引擎内部 /tmp 放置套这个守卫不会更安全，只会把失败伪装成执行期的
-     * {@code can't open file}（exit=2，2026-09-30 实测踩坑：provisioner 日志零 file/write 请求、
-     * runtime 实测接受 /tmp 写入）。
+     * {@code can't open file}（exit=2）；
      * 失败直接抛异常（fail-loud）：引擎写入是执行的前置条件，静默失败会把错误推迟到执行期，
      * 排查成本远高于在写入点报错。
      */
@@ -2181,7 +2174,7 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
          * 砍<b>之前</b>的整份输出；没截断、或全文超过 {@code MAX_FULL_OUTPUT_CHARS} 时为 null。
          * <p>{@link #output} 的口径历来不变（问答卡片与工作流节点都靠 {@code maxOutputBytes} 这道帽控体积），
          * 这个字段只是把本来已经生成过的那份整文本多带一个引用出来，供上层落盘留存——
-         * 留存的钩子以前只能拿到砍过的那份，「查看完整输出」读回来的是残缺，根因就在这。
+         * 否则留存钩子只能拿到砍过的那份，「查看完整输出」读回来会是残缺。
          */
         public final String fullOutput;
         /**

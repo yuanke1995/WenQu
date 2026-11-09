@@ -24,7 +24,7 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * 智能体绑定工作流后的问答路径（M4，chatflow 语义；P6 刀 4 自 {@code ChatService} 抽出）。
+ * 智能体绑定工作流后的问答路径（chatflow 语义）。
  *
  * <p><b>为什么整条走工作流、不与常规链路混合</b>：绑定了工作流的智能体，行为由工作流定义——
  * 智能体自带的人设 / 知识库范围 / 工具开关都不参与（那些是"预设型智能体"的维度）。两套逻辑同时生效
@@ -61,10 +61,10 @@ public class ChatflowBridge {
         this.historyCompaction = historyCompaction;
     }
 
-    // ==================== M4：智能体绑定工作流（chatflow 语义） ====================
+    // ==================== 智能体绑定工作流（chatflow 语义） ====================
 
     /**
-     * 智能体绑定工作流后的问答路径（M4）：会话每轮把用户问题送进图，end 节点的出参即回答。
+     * 智能体绑定工作流后的问答路径：会话每轮把用户问题送进图，end 节点的出参即回答。
      * <p>
      * 与常规链路的分工：绑定了工作流的智能体，<b>行为由工作流定义</b>——智能体自带的人设 /
      * 知识库范围 / 工具开关都不参与（那些是"预设型智能体"的维度）。两套逻辑同时生效会让回答
@@ -194,7 +194,7 @@ public class ChatflowBridge {
                     .messageId(messageId)
                     .userMessageId(workflowUserMsgId)
                     .turnId(workflowTurnId)
-                    // 本轮作答方归属（P5）：不再有会话锁定，工作流轮同样按实际作答的智能体下发
+                    // 本轮作答方归属：不再有会话锁定，工作流轮同样按实际作答的智能体下发
                     .agentId(agent.getId())
                     .agentName(agent.getName() == null ? "" : agent.getName())
                     // 工作流节点各有各的模型，本轮没有一个「整轮模型」可报；前端对空 model 有兜底
@@ -218,9 +218,8 @@ public class ChatflowBridge {
                     .build());
             runtime.sendSseEvent(emitter, "done", donePayload, sessionId);
             runtime.completeEmitter(emitter);
-            // 长期记忆提取已交框架（全框架化P3）：MemoryFlushManager 在上下文压缩时按 MemoryConfig
-            // 的触发条件自动 flush，不再由问渠在工作流收尾处手动调模型提炼。
-            // 代价（如实记录）：工作流这条路径**不再提取长期记忆**——它绕过 agent 运行时，
+            // 长期记忆由框架提取：MemoryFlushManager 在上下文压缩时按 MemoryConfig
+            // 的触发条件自动 flush。工作流这条路径**不提取长期记忆**——它绕过 agent 运行时，
             // 框架的 flush 钩子挂不上。
             log.info("[WORKFLOW-CHAT] 工作流回答完成: session={} run={} v={} 耗时 {}ms",
                     sessionId, run.getId(), run.getVersion(), run.getDurationMs());

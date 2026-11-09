@@ -140,8 +140,7 @@ function upload(path, formData, onProgress) {
 /**
  * ==================== SSE 事件表（登录态与游客分享共用）====================
  * 「事件名 → 回调名」只在这里声明一次。两条链路（sendQuestion / sendShareMessage）各自只管传输与收尾，
- * 派发统一走 dispatchChatEvent。此前它们各写一份 if/else（主链路认 20 种事件、分享链路只认 4 种），
- * 新增事件必然漏一处——游客分享看不到图片与引用就是这么掉的。
+ * 派发统一走 dispatchChatEvent，新增事件只需在这里登记一处。
  * 终止事件 done / error 刻意不进表：两条链路的收尾语义不同（分享链路的 sessionId 在事件信封上，
  * 且要摘掉 visibilitychange 监听）。
  */
@@ -162,7 +161,7 @@ const CHAT_EVENT_CB = {
   plan_delta: 'onPlanDelta', plan_approval: 'onPlanApproval', plan_cancelled: 'onPlanCancelled',
   plan_superseded: 'onPlanSuperseded', todo: 'onTodo', snapshot: 'onSnapshot',
   // turn_start＝本轮的服务端起表基准（时长形式）：开流第一帧把秒表锚到服务端收到提问那一刻，
-  // 收尾换成落库那份墙钟时才不会掉一个网络往返（答完 5.3s → 刷新 5.1s）
+  // 收尾换成落库那份墙钟时才不会掉一个网络往返。
   turn_start: 'onTurnStart',
   // compact_state＝轮内框架自动压缩的开始/结束：那两次摘要模型调用的内容全被按 purpose 滤掉，
   // 不带这一帧，压缩那二十多秒界面上一个字都没有，用户读成「卡住了」
@@ -273,9 +272,7 @@ function streamChatSse (start, opts) {
     if (signal.aborted) inner.abort()
     else signal.addEventListener('abort', () => inner.abort())
   }
-  // 终态闸门：整条流最多收尾一次。此前 done 事件先调 end()（触发一次无载荷的 onDone）
-  // 再调 onDone(content)，**回调被调用两次**——处理逻辑是"重新赋值"所以一直没暴露，
-  // 直到按消息状态做增量操作（重新生成的版本序列）出现重复计数。所有终态路径统一走这里。
+  // 终态闸门：整条流最多收尾一次，所有终态路径统一走这里。
   let ended = false
   let donePayload = null
   // kind 区分失败性质，供 UI 决定文案与「重试」语义：
@@ -342,7 +339,7 @@ function streamChatSse (start, opts) {
     read()
   }).catch(e => {
     // 同一道闸门收尾：用户主动停止按正常结束（onDone 无载荷 → 前端收尾为「已停止生成」），
-    // 空闲超时与其它错误按可重试错误上报。此前这里不走 end()，与内层 reader 的收尾可能各调一次回调
+    // 空闲超时与其它错误按可重试错误上报。
     if (e.name === 'AbortError') end(idleTimedOut ? '长时间未收到响应，连接已中断，请重试' : undefined, idleTimedOut ? 'interrupted' : undefined)
     else end('请求失败: ' + e.message, 'interrupted')
   })
@@ -368,7 +365,7 @@ export function sendQuestion (sessionId, question, images = [], opts = {}) {
       sessionId, question, images, deepThink,
       // 计划模式（人在回路）：true=本轮先产出执行计划，经用户批准/编辑后再正式回答
       planMode: planMode || undefined,
-      // 重新计划血缘（B+）：旧计划批准 ID。服务端据此把上一版计划与该轮进度拼进本轮提示词，
+      // 重新计划血缘：旧计划批准 ID。服务端据此把上一版计划与该轮进度拼进本轮提示词，
       // 并把血缘落进新计划记录；空=不是重新计划
       planBaseId: planBaseId || undefined,
       // 思考强度档位（低/中/高/超高/极致）：仅在模型库登记了支持档位时由界面给出，空串=用模型默认档位
@@ -389,7 +386,7 @@ export function sendQuestion (sessionId, question, images = [], opts = {}) {
       historyRefs: Array.isArray(historyRefs) && historyRefs.length ? historyRefs : undefined,
       // 插话续发标记：这句话是上一轮跑到一半时补的方向。后端据此跳过用户消息重复落库，
       // 并在那句话后面补一句上下文声明。必须在这里点名——请求体是按白名单拼的，
-      // 少这一行调用方传了也到不了后端（此前正是这样静默丢过）
+      // 少这一行调用方传了也到不了后端
       fromSteer: fromSteer || undefined
     }),
     signal
@@ -417,8 +414,7 @@ export const getChatRun = sid => request(`/chat/run?sessionId=${encodeURICompone
 // 新建对话的目标工作区：由侧栏工作区行的「+」/ 工作区页入口设置。
 // 为什么放在这里而不是让调用方传参：newSession() 的唯一调用点在 chat/useChatEngine.js
 // （对话引擎内部），侧栏与它没有直接引用关系；用一个显式的 setter 比让引擎去读 store 少一层耦合。
-// 未设置 = 显式不挂工作区（传 __none__）：顶部「新建对话」就该落进顶栏「会话」，
-// 而不是像旧口径那样被后端悄悄塞进 implicit 兜底容器。
+// 未设置 = 显式不挂工作区（传 __none__）：顶部「新建对话」落进顶栏「会话」。
 const NO_PROJECT = '__none__'
 let newSessionProjectId = ''
 export const setNewSessionProject = id => { newSessionProjectId = id || '' }
@@ -726,14 +722,14 @@ export const validateWorkflowDsl = dsl => request('/workflow/validate', { method
 /** 同步调试运行（LLM/检索耗时可达分钟级，放宽超时）；失败不抛——返回 status=failed 的 run */
 export const runWorkflow = (id, inputs) =>
   request(`/workflow/${id}/run`, { method: 'POST', body: JSON.stringify({ inputs }), timeout: 300000 })
-/** 第 2 期：异步调试运行——创建即返回 status=queued 的 run，配合 subscribeWorkflowRun 边跑边亮 */
+/** 异步调试运行——创建即返回 status=queued 的 run，配合 subscribeWorkflowRun 边跑边亮 */
 export const runWorkflowAsync = (id, inputs) =>
   request(`/workflow/${id}/run`, { method: 'POST', body: JSON.stringify({ inputs, async: true }) })
-/** 第 2 期：取消排队中的运行（仅 queued 可取消；已开始/已结束报错） */
+/** 取消排队中的运行（仅 queued 可取消；已开始/已结束报错） */
 export const cancelWorkflowRun = (id, runId) =>
   request(`/workflow/${id}/run/${runId}/cancel`, { method: 'POST' })
 /**
- * 第 2 期：订阅运行进度流（SSE over fetch——EventSource 不能带鉴权头，故用 fetch + reader）。
+ * 订阅运行进度流（SSE over fetch——EventSource 不能带鉴权头，故用 fetch + reader）。
  * 事件：snapshot（订阅瞬间状态 + 已产生 trace）/ trace（节点完成）/ status（状态迁移）/ done（终态 run 全量）。
  * @returns abort 函数（组件卸载 / 开始新一轮运行前调用）
  */
@@ -788,11 +784,11 @@ export function subscribeWorkflowRun (workflowId, runId, onEvent, onError) {
 }
 export const listWorkflowRuns = id => request(`/workflow/${id}/run/list`)
 export const getWorkflowRun = (id, runId) => request(`/workflow/${id}/run/${runId}`)
-// M5 模板库：内置模板清单（选用即把 dsl 作为新建入参）
+// 内置模板清单（选用即把 dsl 作为新建入参）
 export const listWorkflowTemplates = () => request('/workflow/templates')
-// M5 委派编排转工作流：一键把智能体的 subAgentIds 编排转成工作流
+// 委派编排转工作流：一键把智能体的 subAgentIds 编排转成工作流
 export const createWorkflowFromAgent = agentId => request(`/workflow/from-agent/${agentId}`, { method: 'POST' })
-// M5 失败检查点续跑：failed/timeout 且带快照的运行从失败点续跑（同步返回终态 run）
+// 失败检查点续跑：failed/timeout 且带快照的运行从失败点续跑（同步返回终态 run）
 export const resumeWorkflowRun = (id, runId) =>
   request(`/workflow/${id}/run/${runId}/resume`, { method: 'POST', timeout: 300000 })
 /** 人工审核：待审批信息（prompt/超时/挂起时刻），无则 null */
@@ -800,7 +796,7 @@ export const getWorkflowPendingApproval = (id, runId) => request(`/workflow/${id
 /** 人工审核：裁决并恢复续跑（同步跑完，返回终态 run） */
 export const resolveWorkflowApproval = (id, runId, approved) =>
   request(`/workflow/${id}/run/${runId}/approval`, { method: 'POST', body: JSON.stringify({ approved }), timeout: 300000 })
-// ---------- M4：发布与版本 ----------
+// ---------- 发布与版本 ----------
 /** 发布当前草稿为新版本（返回 {id, version, publishedAt, status}）；草稿校验不过会被拒 */
 export const publishWorkflow = (id, note) =>
   request(`/workflow/${id}/publish`, { method: 'POST', body: JSON.stringify({ note: note || '' }) })
@@ -810,7 +806,7 @@ export const unpublishWorkflow = id => request(`/workflow/${id}/unpublish`, { me
 export const listWorkflowVersions = id => request(`/workflow/${id}/versions`)
 /** 回滚到指定版本：以该版本 DSL 再发一版（返回 {version, rolledBackTo}） */
 export const rollbackWorkflow = (id, version) => request(`/workflow/${id}/rollback/${version}`, { method: 'POST' })
-// ---------- 第 1 期：定时触发 + 终态回调 ----------
+// ---------- 定时触发 + 终态回调 ----------
 /** 自动化配置（定时 + 回调）：{scheduleEnabled, cron, timezone, nextRunAt, callbackUrl, callbackSecretSet, published} */
 export const getWorkflowAutomation = id => request(`/workflow/${id}/automation`)
 /** 保存自动化配置：body {scheduleEnabled, cron, timezone, callbackUrl, callbackSecret} */
@@ -823,7 +819,7 @@ export const runWorkflowScheduleNow = id =>
 export const batchDeleteWorkflows = ids => request('/workflow/batch-delete', { method: 'POST', body: JSON.stringify({ ids }) })
 export const batchPublishWorkflows = (ids, note = '') => request('/workflow/batch-publish', { method: 'POST', body: JSON.stringify({ ids, note }) })
 export const batchUnpublishWorkflows = ids => request('/workflow/batch-unpublish', { method: 'POST', body: JSON.stringify({ ids }) })
-// ---------- 第 3 期：工作流凭据（http 节点 {{credential:名称}} 引用；个人资产，值加密落库、出参脱敏） ----------
+// ---------- 工作流凭据（http 节点 {{credential:名称}} 引用；个人资产，值加密落库、出参脱敏） ----------
 export const listCredentials = () => request('/credential/list')
 export const createCredential = body => request('/credential', { method: 'POST', body: JSON.stringify(body) })
 export const updateCredential = (id, body) => request(`/credential/${id}`, { method: 'PUT', body: JSON.stringify(body) })
@@ -966,7 +962,7 @@ export const getScheduleRuns = ({ taskName, success, page, size } = {}) => {
 }
 export const clearScheduleRuns = () => request('/schedule/runs', { method: 'DELETE' })
 
-// ---------- P1 执行 Trace 与采样池（运营闭环；管理员） ----------
+// ---------- 执行 Trace 与采样池（运营闭环；管理员） ----------
 export const listTraces = ({ kind, page, size, keyword, hasCitation, rating, days, agentId } = {}) => {
   const q = new URLSearchParams()
   if (kind) q.set('kind', kind)
@@ -1321,7 +1317,7 @@ export function uploadShareAttachment(token, visitorId, file, onProgress) {
 /**
  * 游客提交回答反馈（👍/👎，可选文字）：发布者在公开链接上唯一拿得到的内容质量信号。
  * <p>不能走登录态的 {@code /feedback}——那条按 RequestUser.uid() 校验归属，游客没有登录 uid，一律 403。
- * 服务端改为按访客 uid 校验：由 messageId 取回消息，再比对消息所属会话是否属于该访客。
+ * 服务端按访客 uid 校验：由 messageId 取回消息，再比对消息所属会话是否属于该访客。
  */
 /** 游客回答提问卡（人在回路）：归属按「提问行 → 会话 → 访客」两跳认，见后端 guestAnswerAsk。
  *  答案送回当前那条还开着的 SSE 流里正在阻塞的工具线程，本轮继续，不另起一轮。 */
@@ -1406,7 +1402,7 @@ export const getSessionTodosApi = (sessionId, turnId = '') =>
 /** 目标模式：创建目标（对齐 DSH：只有一句目标原文，没有验收标准、没有启动策略）。
  *  建行即开跑，系统自己跨轮推进到完成；轮数上限只是兜底安全阈值，不是给用户的预算。
  *  返回目标视图模型 {goalId,status,objective,round,maxRounds,hint,endReason,blockedReason,live,createdAt,startedAt,endedAt}。
- *  多余的入参忽略：老调用方还会多传两个，保持调用点可平滑迁移。 */
+ *  多余的入参忽略（老调用方仍会多传两个）。 */
 export const startGoalApi = (sessionId, objective) =>
   request('/chat/goal', {
     method: 'POST',
@@ -1594,7 +1590,7 @@ export const createRole = body => request('/role', { method: 'POST', body: JSON.
 export const updateRole = (code, body) => request(`/role/${encodeURIComponent(code)}`, { method: 'PUT', body: JSON.stringify(body) })
 export const deleteRole = code => request(`/role/${encodeURIComponent(code)}`, { method: 'DELETE' })
 export const getRolePermissions = code => request(`/role/${encodeURIComponent(code)}/permissions`)
-/** 授权点目录（RBAC 批次 A：权限页按授权点粒度勾选；目录事实源在代码注解，扫描器启动登记） */
+/** 授权点目录：权限页按授权点粒度勾选；目录事实源在代码注解，扫描器启动登记 */
 export const getPermissionCatalog = () => request('/role/permission-catalog')
 /** 按授权点保存角色权限（menuIds + permissions + denies）
  *  denies=[{permissionCode, exempt}]：不传这个参数=本次不动 deny 行，传空表=清空 */
@@ -1603,7 +1599,7 @@ export const saveRolePermissionPoints = (code, menuIds, permissions, denies) =>
     method: 'PUT',
     body: JSON.stringify(denies === undefined ? { menuIds, permissions } : { menuIds, permissions, denies })
   })
-/** 服务账号（批次 C3）：清单 / 建号（响应含明文令牌，只此一次）/ 编辑 / 轮换 / 删除 / 角色回显 */
+/** 服务账号：清单 / 建号（响应含明文令牌，只此一次）/ 编辑 / 轮换 / 删除 / 角色回显 */
 export const listServiceAccounts = () => request('/service-account/list')
 export const createServiceAccount = body => request('/service-account', { method: 'POST', body: JSON.stringify(body) })
 export const updateServiceAccount = (id, body) =>
@@ -1614,21 +1610,21 @@ export const deleteServiceAccount = id => request(`/service-account/${encodeURIC
 export const getServiceAccountRoles = id => request(`/service-account/${encodeURIComponent(id)}/roles`)
 /** 有效授权点视图（给定 uid 算实际可用授权点集；排查「为什么进不去/为什么进得来」用） */
 export const getEffectivePermissions = uid => request(`/role/effective/${encodeURIComponent(uid)}`)
-/** 各角色成员数（角色列表徽标，批次 D-2） */
+/** 各角色成员数（角色列表徽标） */
 export const getRoleMemberCounts = () => request('/role/members-counts')
-/** 角色成员清单（批次 D-2） */
+/** 角色成员清单 */
 export const getRoleMembers = code => request(`/role/${encodeURIComponent(code)}/members`)
-/** 授权点 → 已授权角色映射（接口页反查列，批次 D-1） */
+/** 授权点 → 已授权角色映射（接口页反查列） */
 export const getPermissionRoles = () => request('/role/permission-roles')
 /** 权限域概览（角色/菜单/接口/授权点规模与各角色统计；只读聚合） */
 export const getRoleOverview = () => request('/role/overview')
 /** 菜单 → 可见角色（菜单页反查列；只读） */
 export const getMenuRoles = () => request('/role/menu-roles')
-/** 即将到期的临时授权清单（批次 C1 提醒） */
+/** 即将到期的临时授权清单 */
 export const getExpiringRoles = days => request(`/role/expiring?days=${days || 7}`)
-/** 角色数据范围（批次 C2） */
+/** 角色数据范围 */
 export const getRoleDataScope = code => request(`/role/${encodeURIComponent(code)}/data-scope`)
-/** 保存角色数据范围（批次 C2） */
+/** 保存角色数据范围 */
 export const saveRoleDataScope = (code, scopeType, departmentId) =>
   request(`/role/${encodeURIComponent(code)}/data-scope`, { method: 'PUT', body: JSON.stringify({ scopeType, departmentId }) })
 
@@ -1658,7 +1654,7 @@ export const saveQuota = body => request('/quota', { method: 'POST', body: JSON.
 export const deleteQuota = id => request(`/quota/${id}`, { method: 'DELETE' })
 
 /**
- * 内容安全（Phase 3 · P12）：规则清单 / 闸门状态 / 试跑。
+ * 内容安全：规则清单 / 闸门状态 / 试跑。
  * <p>闸门参数（总开关、外部服务、文案）不在这儿，那些走设置页的通用 /config 读写。
  */
 export const listContentRules = () => request('/content-safety')
@@ -1668,7 +1664,7 @@ export const deleteContentRule = id => request(`/content-safety/${id}`, { method
 export const dryRunContentRule = (text, stage) =>
   request('/content-safety/dry-run', { method: 'POST', body: JSON.stringify({ text, stage }) })
 
-/** 租户（Phase 4 多租户）：清单/开通/启停/成员归属变更 */
+/** 租户（多租户）：清单/开通/启停/成员归属变更 */
 export const listTenants = () => request('/tenant')
 export const createTenant = body => request('/tenant', { method: 'POST', body: JSON.stringify(body) })
 export const setTenantStatus = (id, enabled) =>
@@ -1972,7 +1968,7 @@ export const uploadAvatarApi = file => {
 export const sandboxRun = (sessionId, language, code) =>
   request('/sandbox/run', { method: 'POST', timeout: 90000, body: JSON.stringify({ sessionId, language, code }) })
 // ---------- 本会话沙盒目录（宿主侧读口，容器回收后照样列得出来） ----------
-// 模型写进沙盒却没交付的文件，此前在应用里没有出口：工作区文件栏只读 projects/{工作区}，
+// 模型写进沙盒却没交付的文件：工作区文件栏只读 projects/{工作区}，
 // 会话没挂工作区时那份文件躺在 sessions/{会话} 下，界面上看不见也取不出来。
 /** 列本会话沙盒目录里的文件：{files:[{path,name,ext,size,mtime,viewUrl?}], total, truncated}，按修改时间倒序 */
 export const listSandboxFiles = sessionId =>
@@ -2012,12 +2008,12 @@ export const downloadSandboxFile = async (sessionId, path, filename) => {
   setTimeout(() => URL.revokeObjectURL(url), 2000)
 }
 
-// ---------- P1 GraphRAG（知识图谱；管理员） ----------
+// ---------- GraphRAG（知识图谱；管理员） ----------
 export const graphBuild = kbId => request(`/graph/${kbId}/build`, { method: 'POST' })
 export const graphStatus = kbId => request(`/graph/${kbId}/status`)
 export const graphTriples = (kbId, page = 1, size = 20) => request(`/graph/${kbId}/triples?page=${page}&size=${size}`)
 export const graphClear = kbId => request(`/graph/${kbId}`, { method: 'DELETE' })
-// ---------- §5 图谱可视化（聚合视图 / 实体溯源 / 搜索定位） ----------
+// ---------- 图谱可视化（聚合视图 / 实体溯源 / 搜索定位） ----------
 export const graphViewData = (kbId, limit = 300) => request(`/graph/${kbId}/view?limit=${limit}`)
 export const graphEntityDetail = (kbId, entityId) => request(`/graph/${kbId}/entity/${entityId}`)
 export const graphNeighbor = (kbId, entityId) => request(`/graph/${kbId}/neighbor/${entityId}`)
@@ -2065,7 +2061,6 @@ export const sendMailTest = () => request('/notify/mail/test', { method: 'POST',
 export const getMailDeliveries = (status = '', limit = 50) =>
   request(`/notify/mail/deliveries?limit=${limit}${status ? '&status=' + encodeURIComponent(status) : ''}`)
 // 工具审批恢复：按 approvalId 取本人审批记录（tool.approval 通知点击后重建审批卡）
-// （此前误写 /chat/tool-approval/，后端实际映射 /api/ai/tool-approval/{id}，恢复查询一直 404）
 export const getToolApproval = id => request(`/tool-approval/${encodeURIComponent(id)}`)
 
 // 会话内待批准的工具执行审批（与 /ask-user/pending、/plan-approval/pending 同口径）：
@@ -2133,7 +2128,7 @@ export const agentEvalGate = agentId =>
 export const agentEvalGateCheck = (agentId, payload) =>
   request(`/agent-eval/agents/${encodeURIComponent(agentId)}/gate`, { method: 'POST', body: JSON.stringify(payload || {}), timeout: 60000 })
 
-// ==================== P1 多租户生命周期 ====================
+// ==================== 多租户生命周期 ====================
 /** 登录页租户品牌（免登录；tenant 留空=default） */
 export const getTenantBrand = tenant =>
   request(`/auth/brand${tenant ? '?tenant=' + encodeURIComponent(tenant) : ''}`)

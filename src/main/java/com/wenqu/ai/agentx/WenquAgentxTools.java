@@ -113,9 +113,9 @@ public class WenquAgentxTools {
      * 本轮的「落点」四件套：会话号 + 使用者 + 轮号 + 工具大输出外溢的回收队列。
      * <p>为什么单独立一个类型：任务清单要按轮留痕（{@code turnId}）、外溢要挂回收尾那一刻的
      * 工具卡（{@code spills}），这些都是「这一轮」的东西，而框架的工具在弹性线程上跑、
-     * 又没有手写运行时的 {@code TurnState}，只能按轮显式传进来——藏进单例就是别人的轮串到这一轮。
+     * 也没有 {@code TurnState} 这样的状态袋，只能按轮显式传进来——藏进单例就是别人的轮串到这一轮。
      * <p>{@code userId} 也必须显式带：{@code RequestUser} 是 ThreadLocal，在框架的弹性线程上读出来
-     * 是 SYSTEM，留痕就会记到 SYSTEM 头上（这条坑本方案已实测踩过两次）。
+     * 是 SYSTEM，留痕就会记到 SYSTEM 头上。
      */
     public record TurnHooks(String sessionId, String userId, String modelRef,
                             java.util.function.Supplier<String> turnId,
@@ -176,7 +176,7 @@ public class WenquAgentxTools {
 
     /**
      * 在工具线程上复原「这一轮是谁、这一轮显式改过哪些检索参数」，用完复原回去。
-     * <p>不复原的后果实测过第三种：{@code AgentService#get} 内部带登录户可读校验，弹性线程上没身份
+     * <p>不复原的后果：{@code AgentService#get} 内部带登录户可读校验，弹性线程上没身份
      * 就返回 null，于是咨询把「权限问题」报成了「查无这位助手（id 不在清单里）」——排查方向直接被带偏。
      * <p>{@code putOverrides} 是合并语义，所以必须先清再装，否则设置页那份覆盖对工具侧静默失效。
      */
@@ -235,8 +235,8 @@ public class WenquAgentxTools {
             if (!sandboxEnabled && family == com.wenqu.ai.agent.tool.ToolFamily.SANDBOX) {
                 continue;
             }
-            // 聊天档不挂 MCP：MCP 是外部进程/网络连接，一个不可达的服务会把开轮拖到超时
-            // （本地实测 10s）；纯问答不需要它，需要外部工具的会话走工作区档。
+            // 聊天档不挂 MCP：MCP 是外部进程/网络连接，一个不可达的服务会把开轮拖到超时；
+            // 纯问答不需要它，需要外部工具的会话走工作区档。
             if (!mcpEnabled && family == com.wenqu.ai.agent.tool.ToolFamily.MCP) {
                 continue;
             }
@@ -288,7 +288,7 @@ public class WenquAgentxTools {
     /**
      * 交给框架组管理的族（注册名经别名换算后逐把建组）。
      * <p>MCP 刻意不在这里：动态工具没有静态描述符，激活集无从按 {@code exposes} 问它，
-     * 由 {@link FrameworkSessions#applyToolSurface} 那侧按档位与黑名单单独算（下一刀收口）。
+     * 由 {@link FrameworkSessions#applyToolSurface} 那侧按档位与黑名单单独算。
      */
     private static final java.util.List<com.wenqu.ai.agent.tool.ToolFamily> GROUPED_FAMILIES =
             java.util.List.of(com.wenqu.ai.agent.tool.ToolFamily.ASK_USER,
@@ -410,9 +410,9 @@ public class WenquAgentxTools {
     }
 
     /**
-     * 注册工具持有对象，并给本刀那批问渠工具<b>一把建一个 EXTERNAL 组</b>（组名=工具名）。
+     * 注册工具持有对象，并给问渠工具<b>一把建一个 EXTERNAL 组</b>（组名=工具名）。
      * <p>为什么一把一个组而不是一个族一个组：框架的组是整组开关，族粒度表达不了「一族三把里只用一把」
-     * （智能体的内置工具白名单）与逐工具黑名单。换成按名 deny 规则更糟——实测
+     * （智能体的内置工具白名单）与逐工具黑名单。换成按名 deny 规则更糟：
      * {@code Toolkit#getToolSchemas} 只按激活集过滤，<b>权限规则不过滤 schema</b>，于是那条能力会从
      * 「模型压根看不见」退化成「看得见、调了被拒」，白烧一步工具预算与 token。
      * <p>为什么是 EXTERNAL：{@code reset_equipped_tools} 的 enum 与 {@code getNotes()} 只列 META 组，
@@ -585,10 +585,10 @@ public class WenquAgentxTools {
      * 分支深度也照读 {@code cmd.getSubagentDepth()}——两边走的是同一把预算，不是各数各的。
      */
     /**
-     * 「这一轮会不会问人」——判据必须与手写侧 {@code ApprovalGate} 一字不差：智能体的审批档位是
+     * 「这一轮会不会问人」——判据必须与 {@code ApprovalGate} 一字不差：智能体的审批档位是
      * {@code ask} 才算会问人（{@code auto}/{@code off}/未登记都算不问），档位没解析出来时按最保守的会问人处理。
-     * <p>为什么单独收成一处：框架侧原先只看了「这把工具有没有副作用」，于是 auto 档也每把写操作都弹卡
-     * （双跑实测：同一智能体同一问题，手写侧一句没问，框架那边 write_file 与 MCP 只读工具都要确认）。
+     * <p>为什么单独收成一处：若只判「这把工具有没有副作用」，auto 档也会每把写操作都弹卡，
+     * 与问答侧口径不一致。
      * 卡片没人答的代价不是「多问一句」而是整轮悬到确认超时、正文什么都没有。
      */
     public static boolean asksHuman(com.wenqu.ai.agent.permission.ExecutionPolicy policy) {
@@ -649,7 +649,7 @@ public class WenquAgentxTools {
      * <p>库界口径与主链路一致：只有免登录分享轮才是权限墙，登录轮按使用者可见库收口。
      * <p>身份与配置覆盖<b>必须在发起线程（这里=问答流水线线程）取快照</b>：框架把工具派到自己的
      * 弹性线程上执行，不重放身份就是 SYSTEM → 可见库集合为空 → 检索恒空且一声不响；不重放覆盖
-     * 则是设置页那份 {@code retrieval.*} 对工具侧静默失效。两个坑都是实测踩过的。
+     * 则是设置页那份 {@code retrieval.*} 对工具侧静默失效。
      */
     public List<Object> turnTools(ChatCommand cmd, AgentxTurnSlot slot) {
         // 纯角色智能体（knowledge_disabled=1）：整条不挂知识检索工具。挂上了再指望模型不用，
@@ -851,15 +851,15 @@ public class WenquAgentxTools {
     /**
      * 任务清单写入器：<b>存储落在框架的 {@code AgentState.tasksContext}</b>，问渠只保留护栏与呈现。
      *
-     * <p>为什么不再自己落 {@code c_ai_session.todos}：清单的权威状态该由框架持有
+     * <p>为什么清单不落在 {@code c_ai_session.todos}：清单的权威状态该由框架持有
      * （{@code todo_write} 工具 + {@code TaskReminderMiddleware} 每轮重述都围绕它），
-     * 问渠再存一份就是两个真���源迟早对不上。现在问渠做的是三件框架不管的事：
+     * 问渠再存一份就是两个真���源迟早对不上。问渠做的是三件框架不管的事：
      * <ol>
      *   <li><b>护栏</b>——≤{@value com.wenqu.ai.service.TodoService#MAX_ITEMS} 项、单项截断、
      *       状态归一、同时只允许一项 doing。框架的 {@code todo_write} 没有这层，模型写歪了
      *       （几十项、单项写成段落、同时三项 doing）会直接进用户可见的清单卡；</li>
      *   <li><b>呈现在线</b>——转成 {@code todo} 帧推给前端，右栏那张「任务清单」卡要实时长出来；</li>
-     *   <li><b>账本留痕</b>——断线后台续跑那一轮，清清单要能事后回放（与手写侧同一句）。</li>
+     *   <li><b>账本留痕</b>——断线后台续跑那一轮，清清单要能事后回放。</li>
      * </ol>
      *
      * <p>写入走 {@link com.wenqu.ai.service.TodoBridge}：它把问渠的归一结果翻译成框架
@@ -891,7 +891,7 @@ public class WenquAgentxTools {
                 if ("doing".equals(n.items().get(i).status())) { active = i; break; }
             }
             hooks.step().index(active);
-            // 账本留痕：断线后台续跑那一轮，清单也要能事后回放（与手写侧同一句）
+            // 账本留痕：断线后台续跑那一轮，清单也要能事后回放
             sessionEventService.append(hooks.sessionId(), hooks.userId(), turnId, "todo", doc);
             // 会话表那一份只是重启后的回显兜底（权威真源是框架 state；见 TodoBridge 类注释）
             todoService.save(hooks.sessionId(), doc);
@@ -937,7 +937,7 @@ public class WenquAgentxTools {
      * （{@code PresentArtifactTool.CTX_SESSION_ID/CTX_USER_ID}）：跨线程读不到 {@code RequestUser}，
      * 缺了就建不出沙盒——而它必须显式透传，绝不静默回落 SYSTEM 建沙盒（那是越权归属）。
      * <p>任务清单写入器同样放在这份共用落点上：主链路的 {@code toolContext} 就是全族一张表，
-     * 按族挂会漏（{@code writeTodo} 属任务清单族而不是内置族，真机错过一次）。
+     * 按族挂会漏（{@code writeTodo} 属任务清单族而不是内置族）。
      */
     private Map<String, Object> withBaseContext(AgentxTurnSlot.Turn t, Map<String, Object> perFamily) {
         TurnHooks hooks = t.hooks();
@@ -990,7 +990,7 @@ public class WenquAgentxTools {
     }
 
     /**
-     * run_code 起头：开这块扇出面板（每秒把在途与已完成合成一帧下发，见 P3b）。
+     * run_code 起头：开这块扇出面板（每秒把在途与已完成合成一帧下发）。
      * <p>由引擎在工具卡转 running 时调用——面板的作用域是<b>一次运行</b>，两段脚本要各自复位。
      */
     public void beginRunCode(TurnHooks hooks) {
@@ -1000,7 +1000,7 @@ public class WenquAgentxTools {
 
     /**
      * run_code 收尾：停掉 ticker，并交出卡片要带的两份看板数据（扇出清单 + 这次运行的结构化结果）。
-     * <p>只带终态那一份、随卡片落库——刷新后仍然点得开，与手写侧那条口径一致。
+     * <p>只带终态那一份、随卡片落库——刷新后仍然点得开。
      */
     public Map<String, Object> finishRunCodeCard(TurnHooks hooks) {
         var turn = hooks == null ? null : hooks.runCode().turn();

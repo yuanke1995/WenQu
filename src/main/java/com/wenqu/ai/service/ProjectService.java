@@ -84,8 +84,7 @@ public class ProjectService {
 
         Project p = new Project();
         // 必须先自己生成 id 再拼 workdir：@TableId(ASSIGN_UUID) 是**insert 时**才回填 id 的，
-        // 依赖"insert 后就有 id"会把路径写成 projects/null，于是**所有用户的兜底容器落到同一个目录**
-        // （2026-10-17 真实上下文集成测试当场抓到，mock 单测测不出这种时序）。
+        // 依赖"insert 后就有 id"会把路径写成 projects/null，于是**所有用户的兜底容器落到同一个目录**。
         // 自己先赋值后，MyBatis-Plus 见 id 非空就不再生成。
         p.setId(java.util.UUID.randomUUID().toString().replace("-", ""));
         p.setUid(uid);
@@ -343,7 +342,7 @@ public class ProjectService {
     /**
      * 把工作区绑到一台本机执行器上的一个或多个目录（替换式：传进来的这一批就是全部）。
      *
-     * <p>工作区不再有「服务器目录」这一形态：{@code roots} 至少一项，第一项为主目录。
+     * <p>工作区由 {@code roots} 描述：至少一项，第一项为主目录。
      * 替换只动「服务器记的路径映射」，用户硬盘上的文件一个都不动。
      */
     @Transactional

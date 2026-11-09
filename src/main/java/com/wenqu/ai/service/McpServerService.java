@@ -284,12 +284,11 @@ public class McpServerService {
             if (!kbId.isEmpty() && !visibleKbIds().contains(kbId)) {
                 return toolError("kbId 不存在或不在可见范围内（用 wenqu_list_knowledge_bases 查看）");
             }
-            // 检索范围显式传参。此前这里是 KnowledgeRetrievalTool.setKbScope(...) + finally clear 那对
-            // ThreadLocal：免登录对外端点跑在池化线程上，漏清一次就把上一个人的库界留给下一个人
-            // ——那是越权读库，不是显示错乱。P1 seam 化后工具不再持有跨调用的可变状态。
+            // 检索范围显式传参：免登录对外端点跑在池化线程上，用 ThreadLocal 传库界一旦漏清，
+            // 就会把上一个人的库界留给下一个人（越权读库）。工具不持有跨调用的可变状态。
             KnowledgeRetrievalTool.KbScope scope = new KnowledgeRetrievalTool.KbScope(
                     kbId.isEmpty() ? null : List.of(kbId), null);
-            // 注册器传 null：对外调用没有「本轮回答」可注册引用，结果保持旧【片段N】格式（与迁移前一致）
+            // 注册器传 null：对外调用没有「本轮回答」可注册引用，结果保持【片段N】格式
             return ok(knowledgeRetrievalTool.searchKnowledge(query, topK, scope, null));
         });
     }
@@ -387,7 +386,7 @@ public class McpServerService {
      *
      * <p>平台级入口能问任何智能体（{@code wenqu_ask} + agentId），但想让某个智能体**单独**接进
      * Claude / Cursor（工具名、提示词、权限都是那一个），得去它的「公开发布 → MCP 端点」拿地址。
-     * 此前这一步只能靠人在网页上翻，外部调用方在 MCP 里看不到——这里把已开放的那些直接标出来。
+     * 外部调用方在 MCP 里也能看到已开放的端点——这里把它们直接标出来。
      *
      * <p>只标出 {@code mcpEnabled=1 且未停用} 的：停用的分享会让端点立即失效，标出来等于给个死链。
      */
@@ -766,8 +765,8 @@ public class McpServerService {
      *
      * <p>为什么专门做这个：fastjson 的报错是 {@code illegal input, offset 4124, char \x1a}——
      * 那个 char 本身是个 C0 控制字符，写进日志后在终端与文本工具里**根本不显示**（表现为
-     * "char " 后面什么都没有）。真机排查时为此多绕了三轮。这里把控制字符转成可见的
-     * {@code U+001A} 形式，下次一眼就能看出是哪个字符坏了 JSON。
+     * "char " 后面什么都没有）。这里把控制字符转成可见的 {@code U+001A} 形式，
+     * 下次一眼就能看出是哪个字符坏了 JSON。
      */
     private static String describeParseFailure(Exception e) {
         String msg = e.getMessage() == null ? "" : e.getMessage();
@@ -783,10 +782,9 @@ public class McpServerService {
     /**
      * 从整包不可解析的载荷里，用括号配平单独切出 {@code sources} 数组并解析。
      *
-     * <p><b>为什么需要它</b>：真机实测过一次——MCP 回答的正文里带着 {@code [2][3]} 角标，
-     * 而 {@code structuredContent.sources} 是空数组、文本也没有来源清单，日志给出
-     * 「解析 done 载荷取来源失败」。载荷是 {@code AgentscopeChatEngine} 手工拼接的 JSON，
-     * 任何一处漏转义都会让整包非法；但 sources 那一段本身是良构的。
+     * <p><b>为什么需要它</b>：载荷是 {@code AgentscopeChatEngine} 手工拼接的 JSON，
+     * 任何一处漏转义都会让整包非法；但 sources 那一段本身可能是良构的。正文里带着 {@code [2][3]}
+     * 角标时，若整包解析失败就取不到来源清单，答案便不可溯源。
      * 本方法只做一件事：**不让一个与取来源无关的载荷缺陷，毁掉「答案可溯源」**。
      *
      * <p>切法：定位 {@code "sources":[} 之后做深度扫描，遇引号切换字符串态（认转义 \\），
@@ -830,9 +828,8 @@ public class McpServerService {
     /**
      * 把本轮回答的来源清单从 {@code done} 事件里取出来投影成外发形状。
      *
-     * <p><b>为什么必须带上</b>：回答正文里的 {@code [1][2]} 角标只有配上这份清单才有意义。此前
-     * MCP 只回正文与 sessionId，外部客户端拿到的是「带角标的无源回答」——而「答案可溯源」正是
-     * 本产品唯一承诺的东西，在网页与分享页都兑现了，只有 MCP 这一路整个丢掉。
+     * <p><b>为什么必须带上</b>：回答正文里的 {@code [1][2]} 角标只有配上这份清单才有意义——
+     * 「答案可溯源」是本产品对外承诺的东西，MCP 这一路也必须兑现。
      *
      * <p><b>字段白名单与不外发的边界</b>（与分享页 {@code SessionShareService.projectMessages} 同一口径）：
      * 只给文档名/章节标题/站点/相关度；<b>知识块全文（snippet）与块内图片一律不外发</b>——
@@ -846,9 +843,8 @@ public class McpServerService {
         if (donePayload == null || donePayload.isBlank()) return out;
         JSONArray arr = null;
         Exception firstError = null;
-        // 三个入口依次试。为什么不是一个：真机实测 fastjson2 的 parseObject 会对**完全合法**
-        // 的载荷在 EOF 处抛 `illegal input`（报错里的 char U+001A 在载荷里根本不存在——
-        // 「非标准控制字符=0」是实测数据）。换入口是零成本的绕行，比继续猜它的解析器行为划算。
+        // 三个入口依次试。为什么不是一个：fastjson2 的 parseObject 会对**完全合法**的载荷在 EOF 处
+        // 抛 `illegal input`。换入口是零成本的绕行，比继续猜它的解析器行为划算。
         for (int attempt = 0; attempt < 2 && arr == null; attempt++) {
             try {
                 Object parsed = attempt == 0 ? JSON.parseObject(donePayload) : JSON.parse(donePayload);
@@ -867,7 +863,7 @@ public class McpServerService {
             log.warn("[MCP] 解析 done 载荷取来源失败，本轮按无来源外发: {}", describeParseFailure(e));
             // 只记**结尾 60 字符**：合法载荷必然以 "}" 收尾（done 载荷的尾部就是最后那几个标量字段加闭括号）。
             // 结尾停在半句上 ⇒ 载荷被截断；结尾结构完整 ⇒ 是转义问题。两者修法完全不同，
-            // 这一行就是为了让下次看一眼就知道是哪一种（此前记 400 字窗口，反而看不出结尾）。
+            // 这一行就是为了让下次看一眼就知道是哪一种。
             // 二级：整包解析不了 ≠ sources 取不出来。载荷是拼接出来的，某处漏转义会让整包非法，
             // 但 sources 那一段本身仍是良构 JSON 数组——用括号配平把它单独切出来。
             arr = extractSourcesArray(donePayload);
@@ -926,10 +922,9 @@ public class McpServerService {
     /**
      * 构造带来源的回答结果：文本里附可读来源清单，结构化输出里带 sources 数组。
      *
-     * <p><b>两级取数</b>：先按本轮 {@code done} 载荷投影；载荷不可解析时（上游手工拼 JSON 的
-     * 历史包袱），退回按会话读最近一条助手消息的 {@code sources} 列。第二级是刻意留的：
-     * 「答案可溯源」是外部调用的核心价值，不该因为一个与本功能无关的载荷缺陷而整条丢掉——
-     * 本轮真实发生过（真机 MCP 调用正文带 [2][3] 角标、sources 却是空数组）。
+     * <p><b>两级取数</b>：先按本轮 {@code done} 载荷投影；载荷不可解析时（上游手工拼 JSON 可能漏转义），
+     * 退回按会话读最近一条助手消息的 {@code sources} 列。第二级是刻意留的：
+     * 「答案可溯源」是外部调用的核心价值，不该因为一个与本功能无关的载荷缺陷而整条丢掉。
      *
      * @param sink        收集型通道（已 done）
      * @param sessionId   本轮会话 id（第二级取数用）
@@ -947,11 +942,9 @@ public class McpServerService {
                 // 只影响「另有 N 条」这句，取不到就按已列出的条数说话
             }
         }
-        // **主路径是按会话回读消息行**，不是解析 done 载荷。
-        // 真机实测（5 轮真实 MCP 调用）：载荷结构完整、结尾闭合、非标准控制字符 0，但 fastjson2
-        // 的 parseObject 与 parse 两个入口都会在 EOF 处抛 `illegal input, char U+001A`——那个字符
-        // 在载荷里根本不存在（"非标准控制字符=0"是打点数据）。既然整包解析不可靠，就不该让
-        // 「答案可溯源」建立在它上面；消息行的 sources 列是本链路的权威记录，且与 done 同轮落库。
+        // **主路径是按会话回读消息行**，不是解析 done 载荷：整包解析不可靠（fastjson2 的 parseObject
+        // 与 parse 都会在 EOF 处抛 `illegal input, char U+001A`），不该让「答案可溯源」建立在它上面；
+        // 消息行的 sources 列是本链路的权威记录，且与 done 同轮落库。
         List<Map<String, Object>> sources = sourcesFromSession(sessionId);
         if (sources.isEmpty()) {
             // 消息行还没落（半程轮/落库失败）时，退回载荷投影；再不行就按括号配平切
@@ -961,14 +954,13 @@ public class McpServerService {
             }
         } else {
             total = Math.max(total, sources.size());
-            // 主路径成功时也留痕：这条链路此前"静默成功"，导致无法从日志判断来源到底来自
-            // 消息行还是载荷投影——提交前复验时就卡在"看起来对，但不知道走的哪条路"。
+            // 主路径成功时也留痕：日志要能看出来源取自消息行还是载荷投影。
             log.info("[MCP] 本轮来源 {} 条（取自消息行 session={}）", sources.size(), sessionId);
         }
         String text = appendSourcesBlock(sink.answer(), sources, total);
         Map<String, Object> structured = new LinkedHashMap<>();
         if (extraFields != null) structured.putAll(extraFields);
-        // 正文必须在这份里也有一份：只认 structuredContent 的客户端（实测 Qoder）读不到 content 文本时，
+        // 正文必须在这份里也有一份：只认 structuredContent 的客户端读不到 content 文本时，
         // 拿到的就是「只有 sessionId 和空 sources」——服务端明明答了，客户端看起来像没答。
         structured.put("answer", text);
         structured.put("sessionId", sessionId);

@@ -26,7 +26,7 @@
     </div>
     <div v-else-if="searched" class="spill-none">这份原文里没有「{{ q.trim() }}」——整份都扫过了，不是只筛了眼前这一段。</div>
 
-    <!-- 一段读得完的（多数情况）：整份在前端按行筛，跟以前一样 -->
+    <!-- 一段读得完的（多数情况）：整份在前端按行筛 -->
     <pre v-if="local && bodyText" class="spill-body">{{ bodyText }}</pre>
     <div v-else-if="local && raw" class="spill-err">没有匹配行（这份原文里没有「{{ q.trim() }}」）。</div>
 

@@ -23,8 +23,8 @@ import java.util.Map;
  * 模型引用扫描器：回答「这个供应商/模型到底被谁在用」。
  *
  * <h3>为什么抽出独立服务</h3>
- * 原先这套检查内联在 {@code ModelRegistryService.deleteProvider} 里（refs 是方法内局部变量），
- * 结果只有「删除时被拒绝」这一个场景能用。额度不足时用户真正需要的恰恰相反——他要知道该去
+ * 这套检查若内联在 {@code ModelRegistryService.deleteProvider} 里（refs 是方法内局部变量），
+ * 就只有「删除时被拒绝」这一个场景能用。额度不足时用户真正需要的恰恰相反——他要知道该去
  * 哪里把引用改掉，「你知道有问题」本身没用，「你有问题的地方在这里」才有用。
  * 停用供应商走的是同一份清单：清单少一类，界面就会理直气壮地说「没有地方在用」，
  * 而用户回到聊天页/定时任务里照样撞上失败——所以<b>宁可多报也不能漏报</b>。
@@ -43,7 +43,7 @@ import java.util.Map;
  *   <li><b>定时任务模型覆盖</b>（{@code c_ai_scheduled_job.model_ref}）——每次触发都失败；</li>
  *   <li><b>工作流节点模型</b>（{@code c_ai_workflow.dsl/published_dsl} 里的 modelRef）——运行即失败；</li>
  *   <li><b>个人默认模型</b>（{@code c_ai_user.default_model}）——该用户每一次未指定模型的问答都会撞上；</li>
- *   <li><b>历史个人配置</b>（{@code c_ai_user_config.config_value} 里的遗留行）——入口已下线，
+ *   <li><b>历史个人配置</b>（{@code c_ai_user_config.config_value} 里的遗留行）——界面不可编辑，
  *       只报不计入可改；</li>
  *   <li><b>系统配置槽位</b>（{@code c_ai_config}，如 rerank.platformRef）——影响全平台；</li>
  *   <li><b>游客对话模型</b>（{@code c_ai_agent_share.model_ref}）——公开分享链接的调用方。</li>
@@ -52,7 +52,7 @@ import java.util.Map;
  * 「当前会话里可能仍有指向它的历史覆盖」——不静默略过，否则用户改完仍会遇到失败而无解。
  *
  * <h3>与删除守门的关系</h3>
- * {@code deleteProvider} 改为复用本服务，保证「删不掉」和「改不掉」看到的引用集合完全一致——
+ * {@code deleteProvider} 复用本服务，保证「删不掉」和「改不掉」看到的引用集合完全一致——
  * 两处口径各写一遍必然漂移，出现「删时被拦却找不到地方改」的僵局。
  *
  * <h3>软删行不算引用</h3>
@@ -319,7 +319,7 @@ public class ModelReferenceScanner {
 
     /**
      * 个人设置里的模型引用。
-     * <p>当前 schema 已不再标记任何 personal 字段（原「回答偏好」五项与个人重排/向量覆盖入口都已下线），
+     * <p>当前 schema 已不再标记任何 personal 字段，
      * 所以命中的只会是历史存量行——<b>界面上没有地方能改它</b>，故 {@code editable=false}：
      * 给一个跳不过去的「去修改」比不给按钮更糟。
      */

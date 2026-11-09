@@ -9,7 +9,7 @@
       </button>
     </div>
 
-    <!-- 全局分层概览：这一页一共多少项、默认露出多少、收起多少（效果图里那条统计带） -->
+    <!-- 全局分层概览：这一页一共多少项、默认露出多少、收起多少 -->
     <div v-if="schemaLoaded" class="tier-stat">
       <span class="tier-stat-main"><b>{{ tierStats.visible }}</b> 项可见</span>
       <span class="key-dim">= {{ tierStats.must }} 必需 · {{ tierStats.tuned }} 调优</span>
@@ -386,7 +386,7 @@
                     </div>
                   </div>
 
-                  <!-- 知识库健康（§8）：文档态分布 / 块规模 / 未向量化 / 索引漂移。
+                  <!-- 知识库健康：文档态分布 / 块规模 / 未向量化 / 索引漂移。
                        只读聚合不触发修复；漂移与未向量化给出「去哪修」的指引 -->
                   <div class="idx-ops">
                     <div class="idx-ops-head">
@@ -496,7 +496,7 @@
                 </div>
               </template>
 
-              <!-- 技能停用清单已并入上方「技能」页签；MCP 的管理界面仍在「智能体」页的个人 Tab -->
+              <!-- 技能停用清单在上方「技能」页签；MCP 的管理界面在「智能体」页的个人 Tab -->
 
             </a-form>
 
@@ -605,7 +605,7 @@ const NAV_LABELS = {
   sandbox: '沙盒', debug: '调试设置'
 }
 // 导航短名优先；未登记的分组回退到 schema 面板标题的中文主干（取「（」前的主体），
-// 而不是把英文 key 直接漏到导航上——oidc / sandbox / memory 曾因此显示成裸 key
+// 而不是把英文 key 直接漏到导航上。
 const groupLabel = key => NAV_LABELS[key]
   || ((PANELS.find(p => p.key === key)?.title || key).split(/[（(]/)[0].trim() || key)
 const current = ref('chat')
@@ -821,8 +821,8 @@ const applyFieldDeepLink = async () => {
 // 按 panel 名重置匹配不到键，且两个调试开关默认即关、重置价值低）
 const NO_RESET = ['maintenance', 'debug']
 
-// 分组顶部说明已整体删除：逐条核对后，它们说的都是分节标题、字段旁的 ? 说明或页内已有的话
-// （「关闭后怎样」「≤0=暂停」「重排归知识库」等在对应字段上都有），横幅只会把视线从参数上挪走
+// 不设分组顶部说明：分节标题、字段旁的 ? 说明或页内已有的话
+// （「关闭后怎样」「≤0=暂停」「重排归知识库」等在对应字段上都有）已经覆盖，横幅只会把视线从参数上挪走
 
 const loading = ref(false)
 const saving = ref(false)
@@ -842,7 +842,7 @@ const sources = ref({})
  * 部署属性（目录与前缀类）：改一次不会迁移存量，看上去就像「数据消失」，所以不做成可编辑参数，
  * 只在所属面板底部把当前生效值摊开给排障看。
  * 数据源是后端 snapshot 的原始载荷（组名 → 去掉组前缀的键名），刻意不走 FIELDS：
- * 这些键不再有字段定义，走 FIELDS 就永远取不到值——只读区会在下一版本删字段后仍然可用。
+ * 这些键没有字段定义，走 FIELDS 就永远取不到值——只读区与字段定义解耦。
  */
 const DEPLOY_ITEMS = [
   { panel: 'debug', key: 'chat.agentscopeStateDir', label: '框架引擎工作区目录' },
@@ -859,7 +859,7 @@ const deployRows = computed(() => {
       const cell = d[it.key.split('.')[0]]?.[it.key.slice(it.key.indexOf('.') + 1)]
       return { ...it, reported: Boolean(cell), value: cell?.value ?? '', isDefault: cell?.source === 'CODE_DEFAULT' }
     })
-    // 只丢「后端根本没回这一项」（defaults() 已删＝将来批次 5 之后），那种行没有信息量；
+    // 只丢「后端根本没回这一项」，那种行没有信息量；
     // 「回了但值是空」要留着——那是真的没配，写成（空）比凭空少一行更接近实况
     .filter(it => it.reported)
 })
@@ -924,7 +924,7 @@ const buildPayload = () => {
     if (f.type === 'multiselect') {
       // 数组 → 后端那一个逗号串键（顺序即标签顺序）。空数组也要提交成空串：这一步是与
       // 「库里清空」的唯一通路，而脏检测只比 payload 里出现过的键——这里 continue 掉，
-      // 删完最后一个标签时按钮就永远是灰的，用户清不掉任何一项（实测踩到）。
+      // 删完最后一个标签时按钮就永远是灰的，用户清不掉任何一项。
       const joined = (Array.isArray(v) ? v : []).map(s => String(s).trim()).filter(Boolean).join(',')
       ;(out[f.group] = out[f.group] || {})[f.submitKey || f.key] = joined
       continue
@@ -1025,7 +1025,7 @@ const onResetGroup = key => {
 }
 
 // ==================== 测试连接（先测后存） ====================
-// 模型网关的连通性测试已随 baseUrl/API Key 迁至「模型供应商」页（先测后存）；
+// 模型网关的连通性测试在「模型供应商」页（baseUrl/API Key，先测后存）；
 // 这里保留关键词引擎、沙盒 provisioner 等服务地址的探测。
 const probeStates = ref({
   keyword: { loading: false, result: null },
@@ -1073,11 +1073,11 @@ watch(
   }
 )
 // ==================== 枚举变更校验 ====================
-// 刻意**没有**「切换到 meilisearch 就探测、不通就静默改回 mysql」的联动（历史上有过，已移除）：
+// 刻意**没有**「切换到 meilisearch 就探测、不通就静默改回 mysql」的联动：
 // 服务地址/Key 只有选中 meilisearch 后才可见（schema 的 vif），用户正要在这两个字段里填值，
 // 而探测必须走网络——此刻表单里往往还是默认值/空值，探测必然失败；一旦据此回改引擎，
 // 字段又立刻消失，用户永远配不成（死锁），且失败原因被静默吞掉。
-// 可达性校验改由保存时的后端执行（ConfigService.update 用**本次提交的值**探测，失败带原因报错），
+// 可达性校验由保存时的后端执行（ConfigService.update 用**本次提交的值**探测，失败带原因报错），
 // 「测试连接」按钮则走 /config/probe，同样用表单当前值——先测后存，不必先保存。
 
 // ==================== 重嵌入状态 ====================
@@ -1180,7 +1180,7 @@ const schedSavingKey = ref('')
 
 /**
  * 共用同一个间隔键的任务：{ 配置键: [任务名] }，只保留成员 &gt;1 的项。
- * 清理/回收类任务从 11 个「每日清理间隔」收成一个 cleanup.intervalMs 之后，
+ * 清理/回收类任务共用一个 cleanup.intervalMs，
  * 改一个键会同时改掉全部——必须让界面说清"这一行管的不止这一行"，
  * 否则"暂停聊天附件清理"看起来像只停了一件小事，实际停了全部清理。
  */
@@ -1207,18 +1207,15 @@ const cadenceShareNote = key => {
  *
  * <p>**按容器真实高度算，不按 window.innerHeight 算**——这是本条最关键的一点。
  * `.set-content` 是 flex:1 但没有固定高度，它随内容长高，所以
- * `window.innerHeight - 固定常数` 算出来的值对不上它真实的可视高度
- * （实测：视口 900 时 .set-content.clientHeight 只有 849，差的是页头 51px）。
- * 早先按估值 220 / 实测常数 143 各试一次都判错方向（后者甚至让整页滚动从 48px 涨到 176px）。
- * 现在直接量容器：clientHeight 减去工具条(26) + 表头(≈41) + 面板 padding(≈27) 余量。
+ * `window.innerHeight - 固定常数` 算出来的值对不上它真实的可视高度。
+ * 直接量容器：clientHeight 减去工具条(26) + 表头(≈41) + 面板 padding(≈27) 余量。
  *
- * <p>不用纯 CSS flex 链的原因：多级 flex 里 .sched-pane 的 flex:1 实测压不住
+ * <p>不用纯 CSS flex 链的原因：多级 flex 里 .sched-pane 的 flex:1 压不住
  * （父 .set-card 734px 而它 1085px），改 height:0 又会把表格压成零高、
  * 元素被父层 overflow 裁掉——页面看着不滚了，但末 4 行既看不见也滚不到，是"假优化"。
  */
 const isFillPanel = computed(() => current.value === 'maintenance' && maintTab.value === 'status')
-/** 表格体之外、同一屏内还要占的高度。实测标定过程：先按 100 取 → 整页差 168px；
- *  改 196 → 差 72px；再补 72（合计 268）恰好归零。构成：面板标题 16 + 页签条 41
+/** 表格体之外、同一屏内还要占的高度：面板标题 16 + 页签条 41
  *  + 工具条 26 + 表头 41 + 卡片 padding 48 + 展开行余量。 */
 const TABLE_CHROME_H = 268
 const tableScrollY = ref(520)
@@ -1380,9 +1377,7 @@ const toggleTaskPause = record => {
 
 // ==================== 参数分组折叠视图（所有配置面板共用） ====================
 // 每个面板都按 config-schema.json 的 sections 切组，组标题就是节标题，默认全展开。
-// 「定时任务 → 参数配置」页签额外收口成**只放非任务专属的通用参数**：此前两个页签各存一份
-// 同样的旋钮，49 项里 41 项两边都有（间隔 20 + 专属参数 27），改一处要猜另一处是否跟着变。
-// 现按「一个参数只有一个家」收口：
+// 「定时任务 → 参数配置」页签只放非任务专属的通用参数，按「一个参数只有一个家」收口：
 //   · 任务间隔 → 「运行状态」表格的间隔列，就地编辑；
 //   · 任务专属参数（后端 relatedKeys 声明）→ 「运行状态」表格的展开行；
 //   · 其余通用参数（GraphRAG、重试、启动复位、缓存 TTL、版本保留…）→ 留在本页签。
@@ -1440,7 +1435,7 @@ const cfgGroupsAll = computed(() => {
   }
   // 有块就留：只剩「超时档位」卡的那一节字段数虽然是 0，但那张卡是四个超时键唯一的入口
   const groups = out.filter(g => g.blocks.length)
-  // 整节都是工程参数的那些节：默认不渲染任何东西，但也不能像现在这样整节消失——
+  // 整节都是工程参数的那些节：默认不渲染任何东西，但也不能让整节消失——
   // 「超时与等待」「消息图片限制」凭空不见，读起来像是这些问题在系统里不存在。
   // 插一行占位（engineOnly=N），点一下按节摊开。
   if (!showEngine.value) {
@@ -1621,7 +1616,7 @@ const doRebuildKb = async () => {
   finally { diagRebuilding.value = false }
 }
 
-// ── 知识库健康（§8）：按库聚合文档态/块规模/未向量化 + 索引漂移信号；非管理员静默留空
+// ── 知识库健康：按库聚合文档态/块规模/未向量化 + 索引漂移信号；非管理员静默留空
 const healthRows = ref([])
 const healthIndex = ref({})
 const healthLoading = ref(false)
@@ -1676,7 +1671,7 @@ onMounted(() => { fetchAndFill(); loadToolInventory(); loadSkillOptions() })
 
 <style scoped>
 .dirty-hint { font-size: 12px; color: var(--app-warn-text); background: var(--app-warn-weak); border-radius: 6px; padding: 3px 10px; }
-/* .head-hint-plain 已提到 app.css 作为全局共用样式（供应商/知识库/技能/MCP 页也用它） */
+/* .head-hint-plain 在 app.css 里作为全局共用样式（供应商/知识库/技能/MCP 页也用它） */
 .app-btn.dis { background: var(--app-accent-disabled); cursor: not-allowed; }
 .set-body { flex: 1; min-height: 0; display: flex; }
 .set-nav {
@@ -1707,7 +1702,7 @@ onMounted(() => { fetchAndFill(); loadToolInventory(); loadSkillOptions() })
    所以这里让 .set-content 自身在 fill 模式下不再滚动，由表格体限高来吸收多余高度。 */
 .set-panel--fill { overflow: hidden; }
 .set-panel-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
-/* 工程参数铺开开关：效果图里的「提醒色药丸」。它确实是视图偏好，但被收起的是 100 多项，
+/* 工程参数铺开开关：「提醒色药丸」。它确实是视图偏好，但被收起的是 100 多项，
    颜色弱到看不见反而让人以为参数丢了——用 warning 底、字仍是正文色，抢眼但不刺目 */
 .engine-switch { display: flex; align-items: center; gap: 6px; margin-left: auto; font-size: 12px; color: var(--app-text2);
   cursor: pointer; background: var(--app-warn-weak, #fdf4e6); border: 1px solid var(--app-warn-border, #f0dcb4);

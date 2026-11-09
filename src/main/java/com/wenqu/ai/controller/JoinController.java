@@ -18,7 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.Map;
 
 /**
- * 租户邀请落地页（P1 多租户生命周期 · 3A）：免登录。
+ * 租户邀请落地页：免登录。
  *
  * <p>token 即凭据（高熵随机、只存哈希）；两个端点都按 IP 限流，避免链接被拿去当枚举靶子。
  *

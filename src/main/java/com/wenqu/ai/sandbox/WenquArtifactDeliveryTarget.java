@@ -37,9 +37,8 @@ public class WenquArtifactDeliveryTarget implements ArtifactDeliveryTarget {
     private static final ObjectMapper STRICT_JSON = new ObjectMapper();
 
     /** 同一会话同一文件的 JSON 打回上限：超过直接放行入库（fail-open），由面板校验兜底。
-     * 2026-11-03 实测教训：无上限的打回会让模型无限重写（一轮烧掉 200 万+ token），与
-     * form_get_draft 盲试事故同构——错误回声必须有终止性。且实测重写成功率极低
-     * （坏上下文会污染后续重写，9 连坏），多打回只是烧时间，1 次足够。 */
+     * 打回次数必须有上限：无上限时模型会反复重写、一轮烧掉大量 token，
+     * 而坏上下文会污染后续重写，多打回只是烧时间，1 次足够。 */
     private static final int MAX_JSON_REJECTS = 1;
 
     private final java.util.concurrent.ConcurrentHashMap<String, Integer> jsonRejects =
@@ -60,7 +59,7 @@ public class WenquArtifactDeliveryTarget implements ArtifactDeliveryTarget {
             return ArtifactDeliveryResult.fail(
                     "产物无法交付：这一轮没有会话标识，请重试或改用 execute 把结果打印出来。");
         }
-        // .json 产物交付前语法把关：模型偶发写出括号错位的坏 JSON（2026-11-03 实测约 1/3 轮次），
+        // .json 产物交付前语法把关：模型偶发写出括号错位的坏 JSON，
         // 面板解析失败只能让用户整轮重发；在这里当轮打回，模型立即重写，用户无感。
         // 打回有硬上限：超限放行入库，绝不让模型陷入重写循环。
         String fileName = request.fileName();
@@ -103,7 +102,7 @@ public class WenquArtifactDeliveryTarget implements ArtifactDeliveryTarget {
     /**
      * .json 产物交付前的严格语法校验；通过返回 {@code null}，不通过返回当轮打回的失败结果。
      * <p>打回文案必须是<b>可执行的当轮指令</b>（坏点位置 + 上下文 + 立即重写），不能只说"格式错了"——
-     * 2026-11-02 form_get_draft 事故的教训：错误回声没有终止性/行动性，模型会原地打转。
+     * 错误回声没有终止性/行动性时，模型会原地打转。
      * <p>只拦单份 JSON；逐行 JSON 请用 .jsonl 后缀交付，不在此限。
      */
     private ArtifactDeliveryResult validateJson(String fileName, byte[] content) {

@@ -29,7 +29,7 @@ import java.util.Map;
 @Service
 @RequiredArgsConstructor
 public class AuthService {
-    /** 统一审计事件（Phase 3）：同一份格式串派生日志与结构化事件，不再两处抄 */
+    /** 统一审计事件：同一份格式串派生日志与结构化事件，不再两处抄 */
     private final AuditService audit;
 
 

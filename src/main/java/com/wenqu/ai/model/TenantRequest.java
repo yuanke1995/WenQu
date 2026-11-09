@@ -8,7 +8,7 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 /**
- * 租户开通申请（Phase 4 刀三 · 自助开通）。
+ * 租户开通申请（自助开通）。
  *
  * <p>申请发生在<b>还没有租户</b>的时候，所以这张表没有 {@code tenant_id}（在
  * {@code WenquTenantLineHandler} 的平台全局表清单里）：给一条还没有归属的行硬编一个归属，

@@ -9,7 +9,7 @@ import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
 /**
- * 默认租户登记（Phase 4 · P9）。
+ * 默认租户登记。
  *
  * <p>跑在 {@code SchemaMigrator}（@Order(0)，补 {@code tenant_id} 列与 {@code c_ai_tenant} 表）之后：
  * 单租户部署也要有一行真实租户，否则「无租户」会变成代码里的第二条路径——两条路径迟早漂。

@@ -32,7 +32,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * 每个库必须绑定自己的向量模型（必须是可解析的供应商引用）：懒创建独立
  * RedisVectorStore——独立索引 {@code wenqu-kb-{kbId}}、独立 key 前缀 {@code ai:chunkkb-{kbId}:}、
  * 独立维度 schema、向量化客户端为该库绑定的模型（{@link DynamicEmbeddingModel#forRef}）。
- * 全局共享向量索引已退役（spring.ai.vectorstore.type=none 不再装配全局向量库 bean）。
+ * 不设全局共享向量索引（{@code spring.ai.vectorstore.type=none}），各库索引彼此独立。
  * <p>
  * 维度一致性约束因此从"全库"收缩到"单库"：同库所有块同一向量模型；换模型触发本库重嵌入
  * （{@code DocumentService.reembedKbAsync}）。
@@ -105,8 +105,8 @@ public class KbVectorStoreRegistry {
     /**
      * 索引诊断（运维用，只读）：某库向量的「schema 是否就绪 + 存量向量是否已带库门字段」。
      *
-     * <p><b>2026-10-05 晚绑定改造后语义变化</b>：文档级 ACL 已不再烘焙进索引（改检索期按命中块
-     * 实时查 MySQL），所以这里查的是<b>库门字段 {@code kbId}</b>而非 ACL 标签。
+     * <p>文档级 ACL 不烘焙进索引（检索期按命中块实时查 MySQL），
+     * 所以这里查的是<b>库门字段 {@code kbId}</b>而非 ACL 标签。
      * <ul>
      *   <li><b>schemaReady</b>：索引有没有 kbId/docId 可过滤字段 → 决定库门能否下推
      *       （缺字段时 {@code ensureKbGateSchema} 会自动热补）；</li>
@@ -137,7 +137,7 @@ public class KbVectorStoreRegistry {
             out.put("schemaReady", fieldsReady);
             out.put("separatorReady", gateSeparatorOk(index));
             out.put("indexedDocs", countDocs(index, "*"));
-            // TAG 字段不支持 {*} 通配（实测 @docId:* 直接 Syntax error），故抽样读 JSON 键判断
+            // TAG 字段不支持 {*} 通配（@docId:* 直接 Syntax error），故抽样读 JSON 键判断
             out.put("docsWithKbIdSampled", sampleWithKbId(effective));
             long tagged = out.get("docsWithKbIdSampled") instanceof Long v ? v : -1L;
             out.put("kbGateUsable", fieldsReady && tagged > 0);
@@ -168,7 +168,7 @@ public class KbVectorStoreRegistry {
     /**
      * 抽样统计带库门字段 {@code kbId} 的向量数（最多抽 {@value} 条）。
      * <p><b>为什么抽样而不是 FT.SEARCH 聚合</b>：TAG 字段不支持 {@code @field:{*}} 通配
-     * （实测 {@code @docId:*} 直接报 Syntax error），跨字段 OR 通配也不被解析器接受，
+     * （{@code @docId:*} 直接报 Syntax error），跨字段 OR 通配也不被解析器接受，
      * 拿不到「任一 TAG 字段有值」的总数。抽样读 JSON 键已足够区分
      * 「已回填」与「未回填」两种需处置状态，成本也更低（不必扫全索引）。
      *
@@ -330,8 +330,8 @@ public class KbVectorStoreRegistry {
     /**
      * 热补存量索引的可过滤字段（FT.ALTER SCHEMA ADD）。
      *
-     * <p><b>补的是「库门字段」，不是 ACL 标签</b>（2026-10-06 晚绑定改造后语义变化）：
-     * 文档级 ACL 已改为检索期按命中块实时查 MySQL（{@code HybridRetrievalService.loadVisibleDocIdsOfHits}），
+     * <p><b>补的是「库门字段」，不是 ACL 标签</b>：
+     * 文档级 ACL 在检索期按命中块实时查 MySQL（{@code HybridRetrievalService.loadVisibleDocIdsOfHits}），
      * 不再烘焙进索引，所以这里只补 {@code docId}/{@code kbId} 两个 TAG（{@link DocumentAclTags#METADATA_FIELDS}）。
      *
      * <p><b>为什么必须显式补</b>：{@link RedisVectorStore#afterPropertiesSet()} 在索引已存在时
@@ -339,7 +339,7 @@ public class KbVectorStoreRegistry {
      * 也就是说 builder 里声明的 metadataFields <b>只对新建索引生效</b>。存量索引若不补，
      * 检索期 {@code kbId IN [...]} 库门过滤会报「字段不存在」而整个向量路失败。
      *
-     * <p><b>Spring AI 建索引时不带 SEPARATOR（2026-10-05 实测，重要）</b>：
+     * <p><b>Spring AI 建索引时不带 SEPARATOR</b>：
      * {@link RedisVectorStore} 的 {@code schemaField(MetadataField)} 只按字段类型生成
      * {@code TextField}/{@code TagField}/{@code NumericField}，<b>不设置 SEPARATOR</b>；
      * builder 的 {@code metadataFields(...)} 也无法表达分隔符。
@@ -393,7 +393,7 @@ public class KbVectorStoreRegistry {
     /**
      * 库门字段的 TagField 定义：{@code $.name AS name TAG SEPARATOR ","}。
      * <p>SEPARATOR 是多值标签生效的<b>必要条件</b>，缺它则整个字段值当字面量
-     * （实测：写 {@code deptA,deptB} 后查 {@code deptA} 恒 0 命中）。单值字段设了无副作用。
+     * （写 {@code deptA,deptB} 后查 {@code deptA} 恒 0 命中）。单值字段设了无副作用。
      */
     private SchemaField gateTagField(String name) {
         return TagField.of("$." + name)
@@ -517,7 +517,7 @@ public class KbVectorStoreRegistry {
     /**
      * 索引 schema 是否已含全部库门可过滤字段<b>且 SEPARATOR 正确</b>（齐备则无需 ALTER）。
      *
-     * <p><b>{@code ftInfo} 的返回结构（Jedis 6.0 实测）</b>：{@code Map<String,Object>} 里
+     * <p><b>{@code ftInfo} 的返回结构（Jedis 6.0）</b>：{@code Map<String,Object>} 里
      * {@code attributes} 节点是 {@code List<Object>}，<b>每个元素是扁平键值对 List</b>
      * （{@code [identifier, $.content, attribute, content, type, TEXT, SEPARATOR, N/A, ...]}），
      * <b>不是</b> {@code TextField}/{@code TagField} 对象——那几个类也没有公开 getter。

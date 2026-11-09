@@ -25,13 +25,13 @@ public class UserIdentity {
     @TableId(type = IdType.INPUT)
     private String id;
 
-    /** 租户ID（Phase4 启用，当前 NULL） */
+    /** 租户ID（当前 NULL） */
     private String tenantId;
 
     /** 本地账号 (c_ai_user.uid) */
     private String uid;
 
-    /** 认证源 (c_ai_identity_provider.id；OIDC 存量迁移期=旧 c_ai_oidc_provider.id) */
+    /** 认证源 (c_ai_identity_provider.id；OIDC 旧值来自 c_ai_oidc_provider.id) */
     private String providerId;
 
     /** IdP 侧唯一标识（OIDC sub / SAML NameID / SCIM id / LDAP dn 摘要） */

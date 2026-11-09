@@ -12,8 +12,7 @@ import java.util.Map;
 /**
  * 工具调用管线：把模型侧的一次工具调用过一遍「守卫链 → 上下文注入 → 执行 → 观测 → 结果加工」。
  * <p>
- * 迁移前这一整段是 {@code ChatService.instrumentTools} 里的匿名内部类（两百行、直读
- * TurnState 的字段）。搬出来的直接收益有三条，都不是抽象洁癖：
+ * 独立成 bean 的直接收益有三条，都不是抽象洁癖：
  * <ol>
  *   <li><b>旁路可收口</b>：工作流的 mcp/skill 节点当前是 {@code target.call(json)} 裸调，
  *       绕开审批、绕开预算、绕开工具卡与事件账本。管线独立成 bean 之后它才可能被复用；</li>
@@ -22,8 +21,8 @@ import java.util.Map;
  *   <li><b>元数据有单一来源</b>：要不要审批、卡片叫什么，都查 {@link ToolRegistry}，
  *       不再在装配处维护一份、清单页维护另一份。</li>
  * </ol>
- * 绞杀式迁移：本管线目前只服务问答流水线那一条装配路径（{@code instrumentTools} 的唯一调用点），
- * 工作流/技能/MCP server 侧的裸调路径**本期不动**，只留下 {@link #wrapOne} 这个接入口。
+ * <p>本管线目前只服务问答流水线那一条装配路径（{@code instrumentTools} 的唯一调用点），
+ * 工作流/技能/MCP server 侧的裸调路径不在这条管线上，只留下 {@link #wrapOne} 这个接入口。
  *
  * @author yuanke
  */
@@ -128,7 +127,7 @@ public class ToolPipelineFactory {
                 throw e;
             }
             inv.attempts(attempts[0]);
-            // 引用注册要在观测之前：卡片显示的是注册后的文本（与迁移前一致）
+            // 引用注册要在观测之前：卡片显示的是注册后的文本
             String result2;
             try {
                 result2 = turn.decorateResult(inv, result);

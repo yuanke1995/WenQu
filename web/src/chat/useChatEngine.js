@@ -1,4 +1,4 @@
-// ==================== 聊天引擎（ChatPage 抽出的引擎 composable，M1 引擎抽取） ====================
+// ==================== 聊天引擎 composable ====================
 // 承载聊天页的「引擎逻辑」：思考/模型/智能体状态、会话生命周期、附件与 @ 引用载荷、
 // 发送与 SSE 流式回答、审批、重新生成与分支切换。与视图的接缝全部收在 hooks 里
 // （滚动、收面板、聚焦），PC 端由 ChatPage 按原行为传参；移动壳可传自己的落点
@@ -48,11 +48,11 @@ export function useChatEngine (hooks = {}) {
   // hooks 全部可选（缺省安全）：PC 端传原行为的实现；hook 实现方自己决定滚动时序
   const {
     chatPath = '/chat',      // 引擎内所有 route.path 判断与 router.replace 的落点（移动壳传 '/m/chat'）
-    scrollFollow = () => {}, // 替代原 liveScroll 体内的 nextTick(() => { updateTailSpacer(); scroll() })
-    scrollForce = () => {},  // 替代原 nextTick(() => { updateTailSpacer(); scrollForce() })
-    scrollSoft = () => {},   // 替代原 resolveApproval 里的 scroll() 调用
+    scrollFollow = () => {}, // 跟随最新内容滚动（更新尾部留白后）
+    scrollForce = () => {},  // 强制滚动（更新尾部留白后）
+    scrollSoft = () => {},   // 审批定位用的滚动
     closePanels = () => {},  // send() 清空面板时调用（PC 传 closeAllPanels）
-    focusInput = () => {}    // 替代原 focusInput() 的 DOM 聚焦
+    focusInput = () => {}    // 聚焦输入框
   } = hooks
 
 const text = ref('')
@@ -181,9 +181,9 @@ const skillAvaStyle = name => {
   const color = SKILL_AVA_COLORS[(i < 0 ? name.length : i) % SKILL_AVA_COLORS.length]
   return { background: color }
 }
-// ==================== 智能体（P5）：本轮作答方，会话不再锁定 ====================
+// ==================== 智能体：本轮作答方，会话不再锁定 ====================
 const agentList = ref([])                       // 全部主智能体
-// 会话ID → 用户为本会话挑的作答智能体（''=默认助手）。纯前端待选值：P5 起后端没有"首问锁定"，
+// 会话ID → 用户为本会话挑的作答智能体（''=默认助手）。纯前端待选值：后端没有"首问锁定"，
 // 每轮都按请求里的 agentId 解析，所以这一项就是"下一问用谁"，换人立即生效、不需要开新会话。
 const agentMap = ref({})
 const defaultAgentId = ref('')                  // 默认智能体（isDefault），无则空=全局配置
@@ -192,7 +192,7 @@ const defaultAgentId = ref('')                  // 默认智能体（isDefault�
 const hasDefaultAgent = computed(() => agentList.value.some(a => a.isDefault === 1 || a.isDefault === true))
 /** 本会话最近一次作答的智能体（取最后一条带归属快照的助手消息；没有=null）。
  *  打开旧会话时输入框的待选值跟随它：接着问下去，多半还是想问同一位——而不是刷新后
- *  被拉回全局默认。它只是"下一问用谁"的预填（P5 每轮按请求解析，会话本就不锁定），
+ *  被拉回全局默认。它只是"下一问用谁"的预填（每轮按请求解析，会话本就不锁定），
  *  用户在胶囊上显式选过人（agentMap 有本会话的键）时仍以显式选择优先。
  *  messages 声明在本段之后：computed 惰性求值（首次读取在装配完成后），无 TDZ 问题。 */
 const lastTurnAgent = computed(() => {
@@ -221,7 +221,7 @@ const pickAgent = id => {
   agentPickerOpen.value = false
   agentMap.value = { ...agentMap.value, [currentSessionId.value]: id || '' }
 }
-/** 当前生效的智能体名（空=默认助手；P5 起没有"锁定"这一说，换人立即生效） */
+/** 当前生效的智能体名（空=默认助手；没有"锁定"这一说，换人立即生效） */
 const currentAgentName = computed(() => {
   const id = currentAgentId.value
   if (!id) return '默认助手'
@@ -268,7 +268,7 @@ const modelLabelOf = ref => {
 /**
  * 「模型已切换」分隔记录：本轮回答与上一条助手消息的落库模型**展示名**不同时，在本条回答上方挂一条居中分隔。
  * 只在发消息产生新回答时出现（切换选择器本身不产生任何记录）；两侧都有模型引用才比对——
- * 旧消息/工作流轮没有 model，无法判定是否切换，不渲染。返回 {toLabel} 或 null。
+ * 旧消息/工作流轮没有 model，无法判定是否切换，不渲染。返回 {fromLabel,toLabel} 或 null。
  * <p>比展示名而不是比落库原串：同一个模型在库里存过两种写法（早期是「供应商/模型名」整条引用，
  * 现在只存模型名），拿原串比会把没换模型报成换了；何况展示名一样时「模型已切换 X → X」这句话本身就是假的。
  */
@@ -287,8 +287,7 @@ const modelSwitchInfo = (m, i) => {
 /**
  * 「已压缩上下文」分隔记录：这一轮回答落库的 tokens 带着 {@code compacted} 标记
  * （框架在这一轮里自动压过一次上下文）→ 分隔线画在这条提问<b>上方</b>，读作「压缩发生在这个缝上」。
- * <p>标记由后端在收尾时随消息行落库。此前它读的是自研压缩那份 {@code summaryUntil} 覆盖点，
- * 压缩交回 AgentScope 后写侧断了、判据留在读一个没人写的键，于是这条线只在流里闪一下、刷新即无痕。
+ * <p>标记由后端在收尾时随消息行落库，刷新后这条线仍在同一个缝上。
  * <p>手动 /compact 不产生消息行，它当场那条线走 {@code compactNotice}（挂在流尾，同一个缝）。
  */
 const compactDividerAt = (m, i) => {
@@ -338,15 +337,13 @@ const currentSessionId = ref(null)
 // 「工作区」那一路技能随会话走：换会话必须重拉清单，否则「+」里还是上一个会话的技能（或空着不给看）
 watch(currentSessionId, () => { loadSkills() })
 // 「当前会话正在回答」：流式记录按会话各存一条（chatStreams，store.js 模块单例，跨路由存活）。
-// 语义变化：以前是页面全局布尔（任何会话在答都不能切会话/新建，点击被静默吞掉），
-// 现在只表示"正在看的这个会话在答"——其它会话后台流不影响新建/切换/发送；
+// 只表示"正在看的这个会话在答"——其它会话后台流不影响新建/切换/发送；
 // 同一会话内仍互斥（输入/重新生成/停止都作用于当前会话），守卫写法不用动。
 const loading = computed(() => chatStreams.has(currentSessionId.value))
 const messages = ref([])
 /**
  * 当前会话的历史**没取回来**的原因（空串=取到了，不论有没有内容）。
- * <p>必须有这一格：过去拉取失败只把 messages 清空，于是「断网/500/超时」和「这个会话是空的」
- * 在界面上长成同一张欢迎页——那是把失败伪装成空态。两端各自按它决定露错误卡还是露空态。
+ * <p>必须有这一格：拉取失败与空会话不能长成同一张欢迎页，两端各自按它决定露错误卡还是露空态。
  */
 const historyError = ref('')
 const currentSessionTitle = computed(() => {
@@ -395,7 +392,7 @@ const userDefaultModel = ref('')    // 个人默认模型（个人设置，后�
 const userDefaultModelIssue = ref('')  // 它此刻能不能用（同样由后端判，空=可用/未设置）
 const modelIndex = ref({})          // 引用 → { displayName, providerName, icon }（展示映射）
 
-/** 实际生效的模型（引用或遗留名）：会话覆盖 > 个人默认（智能体不绑模型、全局兜底已移除；空=未指定，发送时引导选择） */
+/** 实际生效的模型（引用或遗留名）：会话覆盖 > 个人默认（智能体不绑模型、无全局兜底；空=未指定，发送时引导选择） */
 const effectiveModel = computed(() => {
   return currentOverrideModel.value || userDefaultModel.value
 })
@@ -444,7 +441,7 @@ const groupedSources = computed(() => groupSources(lastSources.value))
 const lastTokens = computed(() => lastAi.value?.tokens || null)
 // 流式中的用量预览（后端 usage 事件：第一次模型回包后到、之后每一步各刷一次，都是已发生那几次调用的
 // 网关实测值；onUsage 挂在 msg.tokensPreview）：只看最新一轮 AI 消息——该轮生成中且预览已到才返回；否则为 null
-// （回落 lastTokens，与旧口径一致：流式期间显示上一完成轮的用量）。done 的实测 tokens 到达后自然切换为终值。
+// （回落 lastTokens：流式期间显示上一完成轮的用量）。done 的实测 tokens 到达后自然切换为终值。
 const liveTokensPreview = computed(() => {
   for (let i = messages.value.length - 1; i >= 0; i--) {
     const m = messages.value[i]
@@ -504,7 +501,7 @@ const ctxRingDash = computed(() => {
   return `${(p / 100 * CTX_RING_C).toFixed(2)} ${CTX_RING_C.toFixed(2)}`
 })
 const ctxRingLevel = computed(() => ctxCapData.value.pct >= 95 ? 'danger' : ctxCapData.value.pct >= 80 ? 'warn' : '')
-// ==================== 右栏：本会话产物（执行过程卡已移除：消息流内已有完整执行明细） ====================
+// ==================== 右栏：本会话产物（消息流内已有完整执行明细） ====================
 // panelAi = 最后一轮 AI 消息（含进行中）——供正文「接下来可以」只挂在最新一轮、移动壳末轮标记定位，
 // 与「本次用量」用的 lastAi（仅已完成轮）口径不同
 const panelAi = computed(() => {
@@ -533,7 +530,7 @@ const sessionArtifacts = computed(() => {
 let refreshSeq = 0
 const refreshArtifactSigns = async () => {
   const seq = ++refreshSeq
-  // 收集本会话全部产物（按 id 去重；无 id 的历史遗留条目跳过）
+  // 收集本会话全部产物（按 id 去重；无 id 的条目跳过）
   const byId = new Map()
   for (const m of messages.value) {
     if (m.role !== 'ai' || !Array.isArray(m.artifacts)) continue
@@ -575,17 +572,16 @@ const sessionRetrieval = computed(() => {
   }
   return { rounds, refs }
 })
-// 上下文占用条（context/budget）已删：budget 是手写引擎时代的检索配额（窗口×安全系数−最大输出），
-// 框架引擎下这套分配不存在，报上来只会让「上下文 3.4K / 预算 120K」里的 120K 无人认领。
-// 上下文占用了窗口多少，现在由容量卡的 ctxCapData 回答（context/window，>80% 警告 / >95% 危险）。
+// 上下文占用由容量卡的 ctxCapData 回答（context/window，>80% 警告 / >95% 危险）：
+// 框架引擎下没有检索配额那套分配，报「预算」只会给出一个无人认领的数。
 // ==================== 图片（「+」菜单选择 / 拖入 / 粘贴 → 压缩为 dataURL） ====================
 // 压缩参数、附件白名单与各项限额已抽到 ./intake.js：分享页要用同一份口径，
 // 抄一份的代价不是多几行，是两页对「最多几张图 / 收哪些格式」慢慢说出不同的话
 const pendingImages = ref([])
 const removePendingImage = i => pendingImages.value.splice(i, 1)
 // ==================== 附件上传（「+」菜单选择/拖入/粘贴 → 先传换 fileId，问答请求只带 fileId） ====================
-// 此前附件以 base64 内联在 /chat 的 JSON body 里：5×15MB 会打出 ~100MB 的字符串，弱网必挂、
-// 断线要整包重传、后端也得先把整包读进内存。现在文件先走 multipart 上传落盘换号，请求体只带 id。
+// 文件先走 multipart 上传落盘换号，请求体只带 fileId：base64 内联会把 5×15MB 打出 ~100MB 的字符串，
+// 弱网必挂、断线要整包重传、后端也得先把整包读进内存。
 const pendingFiles = ref([])
 /** 输入框内联 chip 的编号源：附件/图片在上传前就得有一个稳定身份（fileId 要等响应回来才有），
  *  否则「这颗 chip 对应数组里哪一条」只能靠文件名猜，重名就串号。 */
@@ -594,7 +590,7 @@ let chipSeq = 0
  *  list 缺省挂主输入框，编辑卡复用时传自己的列表；extra 是只给本地呈现用的附加字段（如粘贴文本的原文） */
 const uploadOneFile = async (f, list = pendingFiles, extra) => {
   // 先 reactive 再入列：直接改裸对象绕过代理的 set 陷阱，进度/失败态不会重渲染，
-  // 卡片会停在「上传中…」直到下一次无关渲染才突然变成体积（实测踩过）
+  // 卡片会停在「上传中…」直到下一次无关渲染才突然变成体积
   const item = reactive({ chipKey: 'f' + (++chipSeq), name: f.name, size: f.size, mime: f.type || '', fileId: '', uploading: true, error: '', ...(extra || {}) })
   list.value.push(item)
   try {
@@ -626,7 +622,7 @@ const addFiles = (files, target, extra) => {
   // 只看 imgList.value.length 的话一次框选 8 张图会全部通过「最多 5 张」那道判断
   let imgAccepted = 0
   // 「附件满了」只提示一次：超限的那一批后面往往全是附件，逐个提示会把同一句话刷十几遍。
-  // 但不 break——图片不吃这个上限，后面的图片仍该被收下（原实现在这里 break，混合批次里的图片会被一起丢掉）
+  // 但不 break——图片不吃这个上限，后面的图片仍该被收下（break 会把混合批次里的图片一起丢掉）
   let fileMaxWarned = false
   for (const f of files) {
     const verdict = classifyIntake(f, imgList.value.length + imgAccepted, fileList.value.length)
@@ -821,7 +817,7 @@ const sessionTodos = computed(() => todosMap.value[currentSessionId.value] || nu
 function setTodos (sid, doc) { todosMap.value = { ...todosMap.value, [sid]: doc } }
 
 /**
- * 历史轮次的任务清单（B+）：会话表只留最新一份，旧已批准计划刷新后要靠账本读回它那一轮的 N/M。
+ * 历史轮次的任务清单：会话表只留最新一份，旧已批准计划刷新后要靠账本读回它那一轮的 N/M。
  * 按 `${sid}|${turnId}` 缓存，切走再回来不重复请求；拉不到的轮次保持“没有清单”，不拿当前清单冒充。
  */
 const turnTodos = ref({})
@@ -911,8 +907,7 @@ const todoAllDone = computed(() => {
  * 实时 done/接流快照与历史回放都会给用户行和回答行盖上同一个 turnId（与落库同源）。
  * 认不出来（存量清单没 turnId、或那一轮的消息已被过滤）按「还没开始新一轮」处理：
  * 宁可多留一条，也不能把正在推进的清单藏掉。
- * <p>**这条与上面两个派生态过去长在 PC 壳里**（2026-10-25 下沉），于是移动壳拿不到、清单在手机上
- * 整条不可见；现在两端同吃这一份，页面只留折叠态这种纯 UI 开关。
+ * <p>两端同吃这一份派生态，页面只留折叠态这种纯 UI 开关。
  */
 const todoBarVisible = computed(() => {
   const doc = sessionTodos.value
@@ -1052,7 +1047,7 @@ const deliveryByKey = computed(() => {
 })
 /** 已收进「交付卡」的所有轮：这些轮不再逐行平铺产物。
  *  只有真会画出卡的那些包才算数——普通回答单件不成卡（仍走旧的一行），不能算「已收进」，
- *  否则那一行会在 done 把 turnId 填上的同一刻被隐藏，屏幕上什么都不剩（2026-11-08 线上：单网页交付）。 */
+ *  否则那一行会在 done 把 turnId 填上的同一刻被隐藏，屏幕上什么都不剩。 */
 const deliveryTurnIds = computed(() => {
   const set = new Set()
   if (goalDelivery.value) for (const t of goalDelivery.value.turnIds) set.add(t)
@@ -1111,7 +1106,7 @@ const goalModeOn = computed(() => {
  * 目标态的两条兜底：面板取数 + 接回后台那一轮。
  * <p>后台续跑轮由服务端自己起（没有浏览器发起通道），它登记在运行总线上，但「有没有人在看」
  * 只能由这一侧决定：本地没有这一轮的流、服务端却还在跑，就开一条接流通道。不接的表现为
- * 目标自己跑了好几轮、聊天区一颗气泡都没长——真机实测过：正文全在库里，刷新才读得到。
+ * 目标自己跑了好几轮、聊天区一颗气泡都没长——正文全在库里，刷新才读得到。
  * <p>只有 RUNNING 才可能有轮在飞：暂停与终态都不开轮询、也不去探测（白跑请求）。
  * 接流探测要勤（2.5 秒一跳，一轮通常跑一两分钟，太慢就等于没接上），面板取数不必（每三跳一次）。
  * 有动作在飞时不覆盖（busy 态是本地的乐观锁，被轮询冲掉会让人以为按钮没生效）。
@@ -1121,8 +1116,8 @@ let goalPollTimer = null
 let goalTick = 0
 /**
  * 目标轮的占位气泡。从「按下回车」到「总线上探得到这一轮」之间有一段真空：调度器一拍 2 秒，
- * 加上实例冷启动装配（模型客户端 / MCP / 记忆 / 沙盒供给）实测 5 秒起、可拖到数十秒，
- * 那几秒里聊天区只有用户那句话——看着像根本没发出去（2026-10-22 用户点名，继续目标同一条路径）。
+ * 加上实例冷启动装配（模型客户端 / MCP / 记忆 / 沙盒供给）5 秒起、可拖到数十秒，
+ * 那几秒里聊天区只有用户那句话——看着像根本没发出去。
  * <p>这颗气泡只带 loading，TurnBar 当场说「正在溯源」；总线一登记上就把**同一颗**交给接流通道
  * （attachRunningTurn 的 reuseMsg），不另起一颗、秒数也不倒回去。它不是那一轮本身，所以目标一停下
  * 或转终态就撤——没有真轮接上时不许留一行呼吸中的假状态。
@@ -1317,9 +1312,9 @@ const switchSession = async sid => {
             attachData: (Array.isArray(m.attachments) ? m.attachments : [])
               .filter(a => a && a.fileId).map(a => ({ name: a.name, mime: a.mime, fileId: a.fileId })),
             sources: Array.isArray(m.sources) ? m.sources : [],
-            // 「接下来可以」推荐（随消息落库后回显）：此前恒为空数组，刷新后推荐整块消失
+            // 「接下来可以」推荐（随消息落库后回显）：刷新后整块还在
             related: Array.isArray(m.related) ? m.related : [],
-            // 本轮降级事件（随消息落库后回显）：此前只活在流式那一瞬，刷新后降级条整块消失
+            // 本轮降级事件（随消息落库后回显）：刷新后降级条整块还在
             degradations: Array.isArray(m.degradations) ? m.degradations : [],
             // 本轮警示条（同上）：沙盒基建异常这类当场看得见的异常，刷新后必须还在
             warnMsg: typeof m.warnMsg === 'string' ? m.warnMsg : '',
@@ -1329,8 +1324,8 @@ const switchSession = async sid => {
             historyRefs: Array.isArray(m.historyRefs) ? m.historyRefs : [],
             // 本轮终止原因（叫停且该轮没产出回答时记在用户提问上）：刷新后据此在问题下补一行说明
             endReason: m.endReason || '',
-            // 本轮失败原因（挂在回答上，什么都没产出时挂在那一问上）：这一句此前只随 error 帧下发一次，
-            // 刷一下页面连「这一轮断过」都读不出来，用户面对的是一轮凭空消失的回答
+            // 本轮失败原因（挂在回答上，什么都没产出时挂在那一问上）：随消息落库，刷新后仍读得出
+            // 「这一轮断过」，否则用户面对的是一轮凭空消失的回答
             failMsg: typeof m.failMsg === 'string' ? m.failMsg : '',
             // 目标指令回声（记在用户提问上）：气泡挂 /goal 命令标注、不挂普通消息动作
             goalCommand: typeof m.goalCommand === 'string' ? m.goalCommand : '',
@@ -1339,7 +1334,7 @@ const switchSession = async sid => {
             artifacts: Array.isArray(m.artifacts) ? m.artifacts : [],
             toolCalls: Array.isArray(m.toolCalls) ? m.toolCalls : [],
             // 计划批准卡（随助手消息落库）：历史按轮重建气泡里的计划卡（已批准/未批准 + 末版正文 + 修改记录），
-            // 有多少轮计划就回显多少张。此前计划只活在实时流里，刷新/切会话后除「还在等确认」外全丢
+            // 有多少轮计划就回显多少张，刷新/切会话后仍在
             planCard: (m.plan && typeof m.plan === 'object' && m.plan.plan) ? planCardFromRecord(m.plan, undefined, sid) : null,
             // 过程独白全文（随消息落库）：历史回显时间线 process 段的区间数据源（旧消息无此字段则为空）
             processText: typeof m.processText === 'string' ? m.processText : '',
@@ -1369,7 +1364,7 @@ const switchSession = async sid => {
           // 失败轮的错误卡按库里那句重建：实时那颗长在同一行上（有回答挂回答、零产出挂那一问），
           // kind 记 'spoken'——它是服务端说过的那句业务错误，原样显示，不再按文本猜一遍
           if (msg.failMsg) msg.errorCard = { message: msg.failMsg, kind: 'spoken', at: msg.time || 0 }
-          // 存量消息没落思考分段（改动前只存一整块全文）：补一段在头部，别让它从界面上消失
+          // 存量消息没落思考分段：补一段在头部，别让它从界面上消失
           ensureThinkSegment(msg)
           return msg
         })
@@ -1379,7 +1374,7 @@ const switchSession = async sid => {
       const st = chatStreams.get(sid)
       if (st && st.msg.loading) list.push(st.msg)
       // 目标排队那颗占位气泡原样带回去：同一会话的历史重铺（新建后补 sid / 侧栏回填触发）会把整表换掉，
-      // 换掉就等于把那一行撤了再挂一颗新的——秒表从 0 重跳，用户读成计时坏了（真机 2026-10-22 拍到）
+      // 换掉就等于把那一行撤了再挂一颗新的——秒表从 0 重跳，用户读成计时坏了
       if (!st && goalPlaceholder && goalPlaceholderSid === sid && goalRunning.value
           && !list.includes(goalPlaceholder)) list.push(goalPlaceholder)
       // 插话在库里同时是两样东西：一条独立用户消息（sequence 排在当轮回答之前）＋当轮时间线里的一段
@@ -1387,7 +1382,7 @@ const switchSession = async sid => {
       // 这条用户行就此退场——一句不许显示两遍。没被任何时间线用掉的那些（没赶上这一轮、或本轮
       // 根本没落库回答）照旧按普通用户行显示，说过的话不许凭空消失。
       messages.value = dropSteeredUserRows(list)
-      // 计划血缘与历史轮次进度（B+）：两张卡互相指认 + 按 turnId 回捞旧轮清单，
+      // 计划血缘与历史轮次进度：两张卡互相指认 + 按 turnId 回捞旧轮清单，
       // 刷新/换设备后旧卡仍是「2/5 已完成」，新卡仍能点回「调整自 v1」
       linkPlanLineage(messages.value)
       ensureTurnTodos(sid, messages.value)
@@ -1423,9 +1418,8 @@ const switchSession = async sid => {
     }
   } catch (e) {
     if (currentSessionId.value === sid) messages.value = []
-    // 「拉取失败」与「这个会话确实是空的」必须是两个判据：过去这里只把 messages 清空，
-    // 于是断网/500/超时的下场和空会话一模一样——界面摊开一张欢迎页，用户读到的是
-    // 「我聊过的东西没了」。（同一条口径见通知中心那次：空态不许掩盖失败。）
+    // 「拉取失败」与「这个会话确实是空的」必须是两个判据：空态不许掩盖失败，
+    // 断网/500/超时要露错误卡，而不是摊开一张欢迎页让人读成「我聊过的东西没了」。
     // 403/404 不算失败：那是「这条会话不归你/已删除」，走下面那条静默回退。
     if (currentSessionId.value === sid && e?.status !== 403 && e?.status !== 404) {
       historyError.value = e?.message || '历史加载失败，请重试'
@@ -1564,7 +1558,7 @@ const handleDeleteSession = async sid => {
     await loadSessions()
   } catch (e) { message.error(e.message || '删除失败') }
 }
-// ==================== 发送与流式回答（SSE，事件处理与旧版口径一致） ====================
+// ==================== 发送与流式回答（SSE） ====================
 // async：生成中按发送走插话分支，要等入队结果回来才知道该不该清输入框
 // opts.steerNow=true：入队后马上走一遍「立即发送」（⌘/Ctrl+Enter 这一档）
 const send = async (opts = {}) => {
@@ -1677,9 +1671,8 @@ async function resolveApproval (m, card, approved) {
 }
 /**
  * 待批准的计划卡（两端共用，与提问面板同判据）：倒着找最后一条还挂着 pending 计划的助手消息。
- * <p>原先这四份派生只长在 ChatPage 里，而计划数据两端都拿得到（hydratePendingPlans 在引擎内），
- * 于是移动壳的现象是「卡片在 messages 里，界面上一个字都没有」，连超时锁与倒计时都无处可放。
- * 派生收到这里，两端各自再算一遍就没有可能了。
+ * <p>计划数据两端都拿得到（hydratePendingPlans 在引擎内），派生放在这里两端共用同一份，
+ * 不会出现「卡片在 messages 里、界面上一个字都没有」。
  */
 const pendingPlan = computed(() => {
   const list = messages.value
@@ -1810,7 +1803,7 @@ async function startGoal (objective) {
       echo.goalCommand = r.data.goalId || ''
       echo.goalPending = !echo.goalCommand
       // 侧栏要立刻看得见这条会话：目标会话在第一条回答落地之前 message_count 一直是 0，而会话列表
-      // 隐藏空会话——用户在工作区里定了目标，回头看那个工作区读到的是「暂无会话」（真机实测）。
+      // 隐藏空会话——用户在工作区里定了目标，回头看那个工作区读到的是「暂无会话」。
       // 标题用目标原文：这条会话讲的就是这件事，比「新对话」认得出来。
       markSessionActive(sid, obj)
       return r.data
@@ -2013,7 +2006,7 @@ async function submitPlanApproval (m, action) {
 }
 
 /**
- * 计划「同一轮退回重出」（默认修改路径，DECISION 01）：意见不回显成用户消息，消息流不新增气泡；
+ * 计划「同一轮退回重出」（默认修改路径）：意见不回显成用户消息，消息流不新增气泡；
  * 本版在下一份增量到达时归档进 versions，卡片原地显示新一版。可反复，直到批准/拒绝/超时。
  * 恢复态卡没有本设备的流可接，改走「转到对话修改」（supersede），避免提交后等不到新稿。
  */
@@ -2079,7 +2072,7 @@ async function continuePlanConversation (m, text) {
   }
   // 本地立刻定格「已被取代」，不等 plan_superseded 事件：这一版作废已是既成事实，而等事件的这段
   // 里卡片停在 busy=true——确认/取消/输入框整片灰、再点「继续对话」被开头那道判据静默 return，
-  // 恢复态卡片更是没有本轮的流可等（真机：第二次继续对话整个确认栏冻死）。
+  // 恢复态卡片更是没有本轮的流可等（第二次继续对话整个确认栏会冻死）。
   c.status = 'superseded'
   c.busy = false
   c.editText = ''
@@ -2112,7 +2105,7 @@ async function steerPlanAdjustment (m, raw) {
 }
 
 /**
- * 批准后调整（B）：停止并重新计划。旧卡冻结当前进度后保留记录，意见作为新一轮问题发出；
+ * 批准后调整：停止并重新计划。旧卡冻结当前进度后保留记录，意见作为新一轮问题发出；
  * 新一轮强制计划模式，并带 planBaseId，服务端据此把旧计划与进度拼进提示词、给新卡落血缘。
  * @returns {Promise<{ok:boolean, reason?:string}>}
  */
@@ -2344,7 +2337,7 @@ function settlePreparingCards (m, reason) {
 
 /**
  * 恢复出来的卡片挂到哪条气泡——按记录带的 turnId 认（一问一答共用一个 id，与 c_ai_message 同源）。
- * 此前一律挂「这台设备手上的那一轮」，于是更早一轮的待决卡会挂到最新的气泡上：
+ * 挂「这台设备手上的那一轮」会让更早一轮的待决卡挂到最新的气泡上：
  * 用户答的是上一轮的题，屏幕上指的却是这一轮，裁决送得回去但看着是错的。
  *   - 这台设备有在跑的流，且它要么没有轮身份（本轮助手消息还没落库，实时气泡拿不到 turnId），
  *     要么正是这一轮 → 挂它；轮身份未知时不另造气泡，宁可照旧挂；
@@ -2425,7 +2418,7 @@ const stopRestoredPoll = () => { if (restoredPoll) { clearInterval(restoredPoll)
 
 /**
  * 计划正文归一化成**字符串**：卡片主体最终交给 renderMd 渲染，喂进去非字符串就是屏幕上那个
- * `[object Object]`（真机踩过：框架 plan_exit 的入参只有一句 summary，后端把整个入参对象当 plan 下发）。
+ * `[object Object]`（框架 plan_exit 的入参只有一句 summary，后端把整个入参对象当 plan 下发）。
  * 这里做最后一道闸——对象按常见字段名（content/plan/text/summary）取值，都取不到才退成可读的 JSON，
  * 绝不把对象直接透传给渲染层。
  */
@@ -2446,7 +2439,7 @@ const planText = v => {
 /**
  * 落库计划快照 → 气泡计划卡字段（历史回显与待批准卡重建共用）：
  * plan=末版正文（卡片主体），versions=已产各版（不含末版，供「修改记录」逐版回看），feedback=产出末版的用户意见。
- * 老消息无 versions 字段 → 退化为单版（与改动前一致）。
+ * 老消息无 versions 字段 → 退化为单版。
  */
 const planCardFromRecord = (rec, statusOverride, sid = '') => {
   const all = (rec && Array.isArray(rec.versions) ? rec.versions : [])
@@ -2456,7 +2449,7 @@ const planCardFromRecord = (rec, statusOverride, sid = '') => {
     plan: '', status: statusOverride || st,
     busy: false, editText: '', versions: [], feedback: '',
     auto: !!(rec && rec.auto),   // 按消息意图自动开启（历史回显照常标「自动开启」）
-    // B+：计划卡的稳定 id 与血缘。旧记录没有 id（改动前的计划卡）→ 空串，界面按无血缘处理
+    // 计划卡的稳定 id 与血缘。旧记录没有 id → 空串，界面按无血缘处理
     id: (rec && typeof rec.id === 'string') ? rec.id : '',
     adjustFrom: (rec && typeof rec.planBaseId === 'string' && rec.planBaseId)
       ? {
@@ -2485,7 +2478,7 @@ const planCardFromRecord = (rec, statusOverride, sid = '') => {
 }
 
 /**
- * 历史计划血缘（B+）：新卡记着 planBaseId，旧卡没有反向字段；载入后按 id 双向补齐，
+ * 历史计划血缘：新卡记着 planBaseId，旧卡没有反向字段；载入后按 id 双向补齐，
  * 让「查看新一轮」在刷新/换设备后仍可点。缺 id 的存量卡不连——宁可不显示，也不猜错关系。
  */
 function linkPlanLineage (list) {
@@ -2560,7 +2553,7 @@ const hydratePendingPlans = async sid => {
 
 /**
  * 会话加载/接流后恢复「等你批准执行」的审批卡（与提问卡、计划卡同一套人在回路恢复口径）。
- * 审批只有 120 秒时限、此前只在实时流里下发过一次：刷新或换设备接回这一轮时看不见那张卡，
+ * 审批只有 120 秒时限，卡片不落库时刷新或换设备接回这一轮就看不见那张卡，
  * 而本轮又豁免断线宽限、会一直等——用户读到的就是「智能体莫名其妙不动了」。
  * 只重建**未过期且唤醒句柄还在**（live）的审批卡；{@code onlyId} 是通知深链点名的
  * 那一张（同一轮挂着多张时也只挂它），并按记录带的 turnId 挂回它自己那一轮的气泡：
@@ -2824,14 +2817,14 @@ const finishResumedShell = (msg, st, sid, reload = true) => {
 const resumeRetryOf = new Map()
 /** 接流探测在飞的会话：这一跳里 chatStreams 还没登记，光靠它挡不住第二个入口
  *  （2.5 秒轮询 / goal_turn 帧 / 通道断了要再接，谁都可能同时来）。两份都探到 running:true
- *  就会为同一轮长出两颗「正在溯源」气泡——真机 2026-10-22 继续目标那一拍拍到。 */
+ *  就会为同一轮长出两颗「正在溯源」气泡。 */
 const attachProbing = new Set()
 /**
  * 这一页已经收过场的那些轮（{@code sid|turnId}）。
  * <p>总线上一条登记的回收要等巡检那一拍（5 秒），这一轮已经答完了、{@code GET /chat/run} 却还回
  * running:true。目标模式点「继续」正好撞进这个窗口：接上的是刚停掉那一轮的鬼魂，把它的旧答案
- * 当新一轮重播一遍，占位气泡也被它吃掉（真机 2026-10-22 拍到：那一行的秒数在交接后归零重跳）。
- * <p>认 turnId 挡掉：总线回的那个与 done、与落库那行同源于一个字符串（实测 goal:<goalId>:<n>）。
+ * 当新一轮重播一遍，占位气泡也被它吃掉（那一行的秒数在交接后归零重跳）。
+ * <p>认 turnId 挡掉：总线回的那个与 done、与落库那行同源于一个字符串（形如 goal:<goalId>:<n>）。
  */
 const settledTurns = new Set()
 const rememberSettledTurn = (sid, turnId) => {
@@ -2842,7 +2835,7 @@ const rememberSettledTurn = (sid, turnId) => {
 }
 
 /**
- * 接回该会话正在跑的这一轮（P0 断线重连接流的入口）。
+ * 接回该会话正在跑的这一轮（断线重连接流的入口）。
  * <p>先探一下（GET /chat/run，服务端按内存里的运行登记回答，很便宜）——确有在跑的轮才开那条接流通道，
  * 免得每次切会话都拖一条「什么都没有」的流。reuseMsg 是通道断了要再接时沿用的那颗气泡
  * （内容由下一帧快照重铺，不靠本地残影）。
@@ -2920,7 +2913,7 @@ const applyTurnSnapshot = (msg, snap, sid) => {
   // 那一刻，不换算的话顶部秒表从 0 重新起跳，跑掉的那段在用户眼里不算数。
   // 有 wallMs（墙钟，含开轮前准备）就**精确**按服务端基准重锚：外壳与引擎两份快照同一基准，
   // 收尾与刷新读的又是同一个数，三处必须逐毫秒一致。旧服务端只有机器耗时（elapsedMs）时退回
-  // 原先的取早值——目标占位气泡从检测那一刻起表，取新的会让秒数往回跳（占位交接已把 time 带过来）。
+  // 退回取早值——目标占位气泡从检测那一刻起表，取新的会让秒数往回跳（占位交接已把 time 带过来）。
   if (typeof snap.wallMs === 'number') {
     // 服务端基准只认第一份：重连/再接会拿到更晚生成的快照，按它重锚会把这一帧在路上的时间
     // 从读数里扣掉，秒表往回跳。基准一旦定下就只续算，收尾那份才校正终值。
@@ -3006,7 +2999,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
   const sid = prev ? prev.sid : currentSessionId.value
   const agentId = prev ? prev.agentId : (currentAgentId.value || '')
   // 会话已有 ID 时**不再**随发送带模型：会话里存的那一份是权威（选择器改动即时 PUT 落库，后端也按它作答）。
-  // 把页签内存里的那一份发上去，等于用一个端的选择盖掉另一个端刚改过的值——真机 sbx-3：A 端刚切到
+  // 把页签内存里的那一份发上去，等于用一个端的选择盖掉另一个端刚改过的值——A 端刚切到
   // 可用模型，B 端一句重发又把已停用的写回会话，两边来回盖、每轮都在重建实例。
   // 只有还没有会话 ID 的首问才随载荷带过去（那时 PUT 无处可落，后端补建会话后据此落库）
   const model = prev ? prev.model : (currentSessionId.value ? '' : (currentOverrideModel.value || ''))
@@ -3075,7 +3068,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
     signal: abort.signal,
     // 服务端起表基准（开流第一帧，时长形式）：把秒表锚到服务端收到提问那一刻。
     // 没有它，秒表只能按本地「按下回车」起表，收尾换成落库那份服务端墙钟时会掉一个网络往返
-    //（真机 2026-11-06：答完 5.3s、刷新 5.1s）。外壳与引擎各发一帧、同一基准（后者 prepMs 更准），
+    // 外壳与引擎各发一帧、同一基准（后者 prepMs 更准），
     // 重锚只校正基准，不会改变已显示的量级。绝对时刻不下发，两端钟差进不来。
     onTurnStart: payload => {
       let p = null
@@ -3160,7 +3153,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
     deepThink,
     // 计划模式（人在回路）：true=本轮先产出执行计划，经用户批准/编辑后再正式回答
     planMode: planMode || false,
-    // 重新计划血缘（B+）：旧计划批准 ID，服务端据此拼上一版计划与执行进度
+    // 重新计划血缘：旧计划批准 ID，服务端据此拼上一版计划与执行进度
     planBaseId: (planBase && planBase.planBaseId) || '',
     // 思考强度档位（低/中/高/超高/极致）：空串=不指定，后端回落模型登记的默认档位
     reasoningLevel: reasoningLevelParam.value,
@@ -3178,10 +3171,10 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
     editMessageId,
     // 插话续发：这句话是用户**在上一轮回答跑到一半时补的方向**，不是一次新提问。
     // 后端据此跳过用户消息重复落库，并在那句话后面补一句上下文声明——不带它，模型会把重新
-    // 发出来的那句当成「用户又问了一遍」起题（实测短问答必现），插话"改了方向立刻生效"就废了
+    // 发出来的那句当成「用户又问了一遍」起题（短问答必现），插话"改了方向立刻生效"就废了
     fromSteer: !!fromSteer,
     agentId,
-    // 会话级模型覆盖：仅用户手动切换时传（空=后端按 个人默认>无 兜底解析，全局模型默认已退役）
+    // 会话级模型覆盖：仅用户手动切换时传（空=后端按 个人默认>无 兜底解析，无全局模型默认）
     model,
     onThinking: t => {
       if (!t) return
@@ -3301,7 +3294,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       // 计划模式：计划正文流式增量进计划卡（终版以 plan_approval 下发的落库稿为准）
       if (!msg.planCard) msg.planCard = { plan: '', status: 'drafting', busy: false, editText: '', versions: [], feedback: '' }
       const c = msg.planCard
-      // 重新计划（B+）：草稿一出现就带来源，卡头「调整自 vN」不用等批准才有
+      // 重新计划：草稿一出现就带来源，卡头「调整自 vN」不用等批准才有
       if (userMsg && userMsg.planAdjustFrom && !c.adjustFrom) {
         c.adjustFrom = { ...userMsg.planAdjustFrom }
       }
@@ -3334,7 +3327,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
           c.revisingStarted = true
         }
         c.id = j.planApprovalId
-        // 重新计划（B+）：来源优先取本轮的 userMsg；断线接流/换设备时 userMsg 不存在，
+        // 重新计划：来源优先取本轮的 userMsg；断线接流/换设备时 userMsg 不存在，
         // 改从 plan_approval 帧自带的血缘字段恢复（后端同一份数据，两个入口不各写一套）
         const frameFrom = (typeof j.planBaseId === 'string' && j.planBaseId)
           ? {
@@ -3517,7 +3510,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         if (!live) return
         const MAX = 65536
         // 字段名带 live 前缀：这是**前端本地**的增量累积，与后端落库的 result/output 是两回事。
-        // 早先叫 output，与后端字段撞名，读侧于是分不清「本地累积」与「历史字段」，
+        // 不带前缀会与后端字段撞名，读侧分不清「本地累积」与「历史字段」，
         // 只能写成 t.result || t.output 这种看着同源、实际异义的三元。
         let out = (live.liveOutput || '') + o.delta
         if (out.length > MAX) { out = out.slice(out.length - MAX); live.outputTruncated = true }
@@ -3534,7 +3527,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       try {
         const o = typeof payload === 'string' ? JSON.parse(payload) : payload
         if (!o || !o.agent) return
-        // 完整过程的直播帧（2026-11-07）：关键帧全量累积进派遣卡的 _frames，「完整过程」抽屉直播就吃它。
+        // 完整过程的直播帧：关键帧全量累积进派遣卡的 _frames，「完整过程」抽屉直播就吃它。
         // 同一帧可能经两条路各到一遍（SSE 直发 + 总线扇出），按类型+内容前缀去重；上限 240 帧，超出丢最早。
         // tool_status 之外的新帧型（检索/产物/提醒/待裁决）在这里只进抽屉，下面的迷你时间线逻辑不变。
         {
@@ -3612,7 +3605,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       } catch (e) { /* 忽略 */ }
     },
     onRunCodeProgress: payload => {
-      // 脚本内的并发与额度（P3b 实时面板）：进度帧挂到"正在跑"的那张 run_code 卡上。
+      // 脚本内的并发与额度（实时面板）：进度帧挂到"正在跑"的那张 run_code 卡上。
       // 与 tool_output 同一条规矩——接流回来的观众手里没有这张卡（start 记录不入快照），
       // 帧就丢弃，跑完后终态卡片自己带完整清单，不凭空造一张卡。
       try {
@@ -3699,8 +3692,8 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         // 整轮用时（气泡顶部那一条读的数）：只认服务端这一份墙钟——它从收到提问起表（含开轮前
         // 准备与人在回路），落库的 tokens.turnWallMs 就是同一个数，刷新前后必须一模一样。
         // 不再与本地钟取大：本地从按下回车起表，比服务端多出的只是一次网络往返；取大会让同一轮
-        // 答完显示 5.3、刷新只剩 5.1（真机 2026-11-06，远端后端往返 0.2s）。
-        // 旧服务端没有这个键时退回原先的「机器耗时 + 等人」口径。
+        // 答完显示 5.3、刷新只剩 5.1（差的是一次远端往返）。
+        // 服务端没有这个键时退回「机器耗时 + 等人」口径。
         if (typeof p.humanWaitMs === 'number') msg.humanWaitMs = p.humanWaitMs
         if (typeof p.prepMs === 'number') msg.turnPrepMs = p.prepMs
         if (typeof p.turnWallMs === 'number') {
@@ -3708,7 +3701,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         } else if (typeof p.elapsedMs === 'number') {
           msg.turnMs = settledTurnMs(p.elapsedMs, msg.humanWaitMs, msg.time, Date.now())
         }
-        // 本轮作答方归属（P5：不再有会话锁定，done 的 agentId/agentName 就是这一轮实际作答的智能体）
+        // 本轮作答方归属（不再有会话锁定，done 的 agentId/agentName 就是这一轮实际作答的智能体）
         if (p.agentId) msg.agentId = p.agentId
         if (p.agentName) msg.agentName = p.agentName
         // 会话内 @ 智能体（§4）：done 的 agentName 是会话绑定口径，本轮由被 @ 的智能体作答时
@@ -3760,8 +3753,8 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         msg.stoppedTurn = true
         markStoppedTurn(msg)
       }
-      // 空正文那一支的收束语排在补尾注<b>之后</b>，两者只出一个。早先排在之前，尾注那句的「正文为空
-      // 就不补」判据被自己刚填的那句骗过，界面上就是「（已停止生成）」与「已停止本轮」并排（真机 2026-11-04）。
+      // 空正文那一支的收束语排在补尾注<b>之后</b>，两者只出一个：排在之前会让尾注那句的「正文为空
+      // 就不补」判据被自己刚填的那句骗过，界面上「（已停止生成）」与「已停止本轮」并排。
       // 计划被拒/超时、被「继续对话」取代那两支都不写：卡片角标已经说了同一件事（「未批准 · 已停止本轮」/「已被取代」）。
       if (msg.content === '' && !msg.planStopped && !msg.planSuperseded && !st.surrendered) {
         msg.content = STOP_PLACEHOLDER
@@ -3805,7 +3798,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
     },
     onWarn: w => { msg.warnMsg = w; liveScroll() },
     // 轮内自动压缩（框架在推理前把早期对话折进摘要）：那两次摘要模型调用的字全被按 purpose 滤掉，
-    // 不带这一帧就是二十多秒纯静默（实测 24.7s 一个字没出），用户只能读成「卡住了」。
+    // 不带这一帧就是二十多秒纯静默，用户只能读成「卡住了」。
     // 进度说在气泡那条本来就在走的状态行上（本轮唯一那一条状态文案），不另起一行：
     // 一轮里框架可以压好几次，另起的那条每压完一次撤走、下一次又长出来，还和提问上方的留痕同时挂着。
     onCompactState: payload => {
@@ -3848,7 +3841,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       if (resume && kind === 'interrupted') {
         // 接来的通道断了 ≠ 这一轮失败了：服务端那一轮多半还在跑（宽限期内没停）。
         // 报「本轮失败」是假消息（用户会重新生成，而后端那一份照样跑完、两份答案打架）——
-        // 改为静默再接（按会话计数、最多三次、接上即归零），实在接不上就收掉气泡按历史重显
+        // 静默再接（按会话计数、最多三次、接上即归零），实在接不上就收掉气泡按历史重显
         if (chatStreams.get(sid) === st) chatStreams.delete(sid)
         const tries = (resumeRetryOf.get(sid) || 0) + 1
         if (tries > 3) {
@@ -3867,8 +3860,8 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         return
       }
       // 错误不再整体替换正文：flushNow 保留已流出的半程内容与时间线，挂独立错误卡
-      // （分类文案 + 重新生成 + 异常详情折叠，对齐主流产品的失败态；此前「😅+裸异常」写进气泡
-      //  会冲掉半程内容，长回答生成到 90% 失败时全部丢失）
+      // （分类文案 + 重新生成 + 异常详情折叠，对齐主流产品的失败态；不把异常写进气泡，
+      //  避免冲掉半程内容、长回答生成到 90% 失败时全部丢失）
       flushNow()
       settlePreparingCards(msg, '本轮中断，这一步没有执行')
       msg.loading = false
@@ -4009,9 +4002,9 @@ const STOP_PLACEHOLDER = '（已停止生成）'
 /**
  * 把「已停止本轮」补到这一轮正文尾部。
  * <p>服务端只把它追加在<b>落库</b>的那一份上，而叫停时这条通道已经 abort，终态帧赶不上来——
- * 不就地补这一句，用户要刷新才看得见（真机 2026-11-03）。
+ * 不就地补这一句，用户要刷新才看得见。
  * <p>只在整轮收尾后补：正文还在流式累积时补，下一帧 flush 会把 `full` 盖回来、把这半句冲掉。
- * <p>/chat/stop 的确认与 done 收尾谁先到不确定（桩流真机 2026-11-04 实测两条顺序都会出）：
+ * <p>/chat/stop 的确认与 done 收尾谁先到不确定（两种顺序都会出）：
  * 占位语已经写上时由正式标注<b>顶掉它</b>，不并列——否则界面上就是「（已停止生成）」与
  * 「已停止本轮」两句并排，而它们说的是同一件事。
  */
@@ -4091,8 +4084,7 @@ const steer = async (q) => {
  *   带材料的这轮塞不进去，等本轮结束按原载荷开新一轮）。
  *
  * 反悔窗口因此是白拿的：东西还在本地，删掉/改掉就是改数组。**不需要任何后端接口**——
- * 此前为"入队即落库 + 可撤回"加过 steer_flag 列与 /chat/steer/recall 端点，那是在解决
- * 一个自造的问题（已经发出去的东西怎么撤），而"点了才发"的模型里根本不存在它。
+ * "点了才发"的模型里根本不存在「已经发出去的东西怎么撤」这个问题。
  */
 
 /** 带材料的插话只能等本轮结束按新一轮发出（这轮的上下文在请求构建期已定型） */
@@ -4192,7 +4184,7 @@ function moveSteer (from, to) {
 
 /** 按原载荷把一条插话作为完整新一轮发出（与计划「继续对话」同一条通路）
  *  `fromSteer` 让后端在那句话后面补一句身份声明（"这是上一轮还没答完时补的方向，不是新提问"）——
- *  不带它，模型会当成用户又问了一遍（实测短问答必现：它会复述「你消息里的 X 这一段…」），
+ *  不带它，模型会当成用户又问了一遍（短问答必现：它会复述「你消息里的 X 这一段…」），
  *  插话最核心的「改了方向立刻生效」就废了。 */
 function sendSteerRound (s, origin = null) {
   // origin：发起那一轮的会话与作答智能体（收尾自动派发时用户可能已切走，新一轮必须回到原会话）。
@@ -4477,10 +4469,9 @@ if (typeof window !== 'undefined') {
 }
 
 // ==================== 本会话沙盒目录（两端同吃这一份） ====================
-// 模型写进沙盒、却没交付成产物的文件，此前在应用里没有任何出口：工作区文件栏只读 projects/{工作区}，
-// 会话没挂工作区时那份文件躺在 sessions/{会话} 下看不见（真机 2026-10-23 21:04 那一轮做好的
-// 20.7 KB 看板页就是这么烂在盘上的）。读的是宿主目录，容器空闲回收后照样列得出来。
-// 这一族过去整块长在 ChatPage 里，移动壳拿不到——于是「助手在沙盒里做了文件」在手机上完全不可见。
+// 模型写进沙盒、却没交付成产物的文件也列在这里：工作区文件栏只读 projects/{工作区}，
+// 会话没挂工作区时那份文件躺在 sessions/{会话} 下，本栏按宿主目录读，容器空闲回收后照样列得出来。
+// 两端同吃这一份，「助手在沙盒里做了文件」在手机上也看得见。
 // 与任务清单同一刀：取数、判据、折树只算一份，页面只管怎么摆。
 const sandboxFiles = ref([])
 const sandboxTotal = ref(0)
@@ -4495,12 +4486,12 @@ const sandboxTaken = ref(new Set())
  *  切会话才清空——换了份目录，旧路径没有指代对象。 */
 const sandboxOpened = ref(new Set())
 // 沙盒系工具名单：与后端 FrameworkToolLabels.FilesystemToolNames 同口径，另加 run_code（SANDBOX 族仅存的
-// 一把）与 deliver_artifact（把沙盒里做出来的文件存进会话）；ls 是退役老名，只为按裸名落库的老历史兜底。
+// 一把）与 deliver_artifact（把沙盒里做出来的文件存进会话）；ls 是老名，只为按裸名落库的历史兜底。
 const SANDBOX_TOOL_NAMES = new Set(['execute', 'run_code', 'read_file', 'write_file', 'edit_file',
                                     'grep_files', 'glob_files', 'list_files', 'ls', 'deliver_artifact'])
 /** 本会话是否真用过沙盒：沙盒目录要等模型第一次往里写东西才由 provisioner 建出来——没用过沙盒
  *  工具的会话（新用户第一问最典型）连本人 workspace 根都还没有，这时去拉文件列表只会撞上
- *  「沙盒可能部署在另一台机器上」的假故障（2026-10-24）。判据认「成功跑完的沙盒系工具调用」：
+ *  「沙盒可能部署在另一台机器上」的假故障。判据认「成功跑完的沙盒系工具调用」：
  *  被拒/失败的调用没建出任何目录，不算——只认 done 顺带把「审批被拒却报目录故障」也挡掉。
  *  会话目录里出现文件 ⟺ 本会话有过成功的沙盒系调用（附件、模板复制都落各自的目录，不进这里）。 */
 const sessionSandboxActive = computed(() => messages.value.some(m => m.role !== 'user'
@@ -4646,7 +4637,7 @@ watch(sessionSandboxActive, () => { loadSandboxFiles() })
 // 沙盒那条执行到点只是「不再等它」，进程照旧活着、端口照旧占着，界面上却什么都看不见。
 // 读的是容器实况（带归属标记的进程），不是服务端台账：后端重启、换副本都照得到；
 // 沙盒被空闲回收（默认 60 分钟）后整张清单自然清空。
-// 2026-10-26 从 ChatPage 下沉：这一族长在 PC 页里时，手机上「有个服务正占着端口」完全不可见。
+// 这一族两端共用，手机上「有个服务正占着端口」也看得见。
 const procs = ref([])
 const procErr = ref('')
 const procLoading = ref(false)

@@ -457,8 +457,8 @@ const baseName = name => {
 const isRenamed = r => !!r.displayName && r.displayName !== baseName(r.originalFilename || r.filename)
 const sourceTitle = r => r.sessionTitle || '会话'
 
-// ==================== 网格真实缩略（原型） ====================
-// 网格此前给每个非图片产物画同一张“迷你文档”，扫一眼分不出内容。这里改成真实内容：
+// ==================== 网格真实缩略 ====================
+// 网格给每个非图片产物画真实内容缩略，扫一眼就能分出内容：
 // 网页类把产物挂进 iframe（按 375 逻辑宽渲染后缩放铺满缩略区，只露首屏），文本类拉原文取前几行，
 // 图片本来就是真图。iframe 一屏开太多会真的跑几十份文档，所以按可见区域懒加载并限量。
 const THUMB_LOGICAL_W = 375

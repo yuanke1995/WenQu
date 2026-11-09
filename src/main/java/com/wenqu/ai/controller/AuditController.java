@@ -25,7 +25,7 @@ import java.util.Map;
 import com.wenqu.ai.security.Permission;
 
 /**
- * 统一审计事件的查询、导出与链校验（Phase 3 · P11）。
+ * 统一审计事件的查询、导出与链校验。
  * <p>
  * 全部仅管理员：审计里含他人姓名、IP 与操作对象，普通成员看自己的用量走「使用统计」，
  * 不能从这里读别人的操作轨迹。
@@ -131,7 +131,7 @@ public class AuditController {
     }
 
     /**
-     * 跨租户审阅的准入判定（Phase 4）：带 {@code tenant} 且调用者是平台级（superadmin）才生效，
+     * 跨租户审阅的准入判定：带 {@code tenant} 且调用者是平台级（superadmin）才生效，
      * 返回该租户标识；其余情况返回 null＝按登录者自己的租户看（不是「看全部」）。
      * <p>租户管理员点名别人的租户要报错而不是静默回本租户——静默会让他在自己的账里找别人的事件，
      * 找不到就以为平台没记。

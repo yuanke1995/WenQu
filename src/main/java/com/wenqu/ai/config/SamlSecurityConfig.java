@@ -30,14 +30,14 @@ import java.security.interfaces.RSAPrivateKey;
 import java.security.cert.X509Certificate;
 
 /**
- * SAML 2.0 过滤链（企业级身份治理，Phase 1 批次 3）：
+ * SAML 2.0 过滤链（企业级身份治理）：
  * <ul>
  *   <li><b>只接管 SAML 协议</b>：SAML 链限死 {@code /saml2/**} 与 {@code /login/saml2/**}，
  *       AuthnRequest 生成与 Response 验签交 Spring Security SAML2（其 pom 默认依赖 OpenSAML 4.3.2，
  *       来自 Shibboleth 仓库——OpenSAML 不发布到 Maven Central）；</li>
  *   <li><b>兜底链全放行</b>：应用鉴权仍是拦截器（{@code SecurityConfig}）+ JWT 自有体系，
- *       兜底链 permitAll + 无 CSRF + 不加安全响应头——语义与引入 Spring Security 之前完全一致，
- *       不让默认安全配置打断既有 API（例如 CSRF 会拦掉全部 POST）；</li>
+ *       兜底链 permitAll + 无 CSRF + 不加安全响应头——不让默认安全配置打断既有 API
+ *       （例如 CSRF 会拦掉全部 POST）；</li>
  *   <li><b>认证源来自数据库</b>：{@code c_ai_identity_provider}(type=saml) 每行一个 Relying Party，
  *       每次登录现查（配置热更新即时生效，登录频度低可接受）；</li>
  *   <li>登录成功不走 Spring Security 的 SecurityContext（本系统认 JWT）：SuccessHandler 直接
@@ -173,7 +173,7 @@ public class SamlSecurityConfig {
     /**
      * 兜底链：其余全部路径放行——鉴权语义交给既有拦截器体系（SecurityConfig 的
      * UserContextInterceptor + AccessControlInterceptor），Spring Security 在这里只是「在场」。
-     * headers 全关：不引入引入前不存在的响应头（X-Frame-Options 等），保持行为零变化。
+     * headers 全关：不新增 X-Frame-Options 等响应头，保持行为零变化。
      */
     @Bean
     @Order(2)

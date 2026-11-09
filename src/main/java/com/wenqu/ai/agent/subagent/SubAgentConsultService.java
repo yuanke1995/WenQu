@@ -16,16 +16,16 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * 智能体咨询的执行侧（P5 agent-as-tool）：预算、去重、跑分支、把回报转成给模型的文本。
+ * 智能体咨询的执行侧（agent-as-tool）：预算、去重、跑分支、把回报转成给模型的文本。
  * <p>
  * 独立成服务而不是写进问答侧，为的是让"这一轮咨询了谁、花了几次"这件事有一份明确归属：
  * 台账对象按轮创建（{@link #newLedger()}），由工具上下文带着走，没有静态表、也没有 ThreadLocal
- * ——本仓 P1 那一刀删掉的就是"池化线程漏清把上一轮状态留给下一个会话"这类写法。
+ * ——池化线程若漏清，会把上一轮状态留给下一个会话。
  * <p>
  * <b>引用编号的口径</b>：分支回报里的 {@code [N]} 是<b>子轮自己的编号</b>，直接拼进父轮上下文会让
  * 模型抄出一个指错资料的角标（{@link BranchReport} 的类注释把这条写得很重）。编排器那条路有整表回填
  * （占位符 {@code ⟦b<支>:r<号>⟧} → 父轮编号），工具这条路不搭那趟车：它一次只回来一份回报，
- * 于是改成「剥掉子轮编号 + 把子轮资料注册成父轮引用 + 明确告诉模型该标哪几个号」。
+ * 做法是「剥掉子轮编号 + 把子轮资料注册成父轮引用 + 明确告诉模型该标哪几个号」。
  * 少了一段映射，换来的是不会指错——宁可模型引用得粗，也不要引用到别的资料上。
  *
  * @author yuanke
@@ -86,8 +86,7 @@ public class SubAgentConsultService {
     /**
      * 本轮已咨询过的问题 → 当时那份「给模型的文本」。
      * <p>键必须是「助手 + 问题」，不能只有助手：同一轮里对同一位追问不同内容是合法场景
-     * （先要总量、再补剩下的维度），只按助手去重会把第二次追问直接挡回第一次的旧答案
-     * （2026-11-08 真机：取数助手连续三次返回同一份「步数用尽」回报）。
+     * （先要总量、再补剩下的维度），只按助手去重会把第二次追问直接挡回第一次的旧答案。
      */
     public static final class Ledger {
         private final Map<String, String> answered = new LinkedHashMap<>();
@@ -162,7 +161,7 @@ public class SubAgentConsultService {
 
         if (id.equals(ctx.preConsultedAgentId())) {
             // @ 已经强制咨询过这一位，结论就在本轮上下文里：模型再调一次工具就是同一条子轮跑两遍
-            //（实测发生过：@ 智报 + 模型自己又派了智报 → 两条分支、双份开销）
+            //（否则同一条子轮会跑两遍，平白多一份分支开销）
             return "本轮已经咨询过这位助手，它的结论与资料已在你的上下文里，无需重复咨询；请据此作答，或改问清单里的其他助手。";
         }
         String hit = ledger.cached(id, question);
@@ -279,7 +278,7 @@ public class SubAgentConsultService {
         chat.put("toolSteps", report.toolSteps());
         chat.put("elapsedMs", ms);
         chat.put("sources", registered);
-        // 干活视角（2026-10-25）：逐步执行记录随卡落库，刷新后卡上那条「执行过程」时间线的真身；
+        // 干活视角：逐步执行记录随卡落库，刷新后卡上那条「执行过程」时间线的真身；
         // 产物是 {f,u,s,e} 明细（可点）
         chat.put("steps", report.stepsOrEmpty());
         chat.put("artifacts", report.artifactsOrEmpty());

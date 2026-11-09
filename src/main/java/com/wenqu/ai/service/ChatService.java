@@ -23,10 +23,10 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 
 /**
- * 问答运行时门面（P6 刀 5d 由 {@code RagService} 更名）：一轮问答的<b>外壳</b>都在这里——
+ * 问答运行时门面：一轮问答的<b>外壳</b>都在这里——
  * 会话轮级互斥、断线续跑总线、身份/偏好装载、分派（工作流旁路 / AgentScope 框架引擎）。
  * <p>推理循环、工具派发、上下文压缩、计划工具面已全部由 AgentScope 框架引擎（{@code agentx} 包）
- * 原生接管（2026-10-15 单引擎化收口）；本类不再持有任何生成侧状态，只保留两件框架不提供的事：
+ * 原生接管；本类不再持有任何生成侧状态，只保留两件框架不提供的事：
  * ① 轮级外壳（互斥、把手、看门狗、断线接流，经 {@link ChatRunRuntime}）；
  * ② 工作流旁路（{@code ChatflowBridge}）——绑定工作流的智能体由 end 节点出参当回答。
  * <p>检索执行在 {@code HybridRetrievalService}/{@code RerankService}，卡片在
@@ -41,17 +41,17 @@ public class ChatService {
     /**
      * 智能体可覆盖的检索参数白名单：<b>只留“出水”那一层的开关</b>。
      *
-     * <p>两阶段分工（2026-10 收口）：知识库管“召回池”（阈值、两路权重、重排模型，见
+     * <p>两阶段分工：知识库管“召回池”（阈值、两路权重、重排模型，见
      * {@link KbParamCodec}），智能体管“这一轮怎么用检索”（要不要重排、给模型几条）。
-     * 同一个键只归一层——此前两层共用一份白名单，表现为同一项在两处都能填，
-     * 而运行时线程覆盖会静默压掉库级配置（库主调好的阈值实际上从没生效）。
+     * 同一个键只归一层：运行时线程覆盖会静默压掉库级配置，
+     * 库主调好的阈值须从库级取。
      *
      * <p>{@code public}：设置页/默认值端点按同一白名单展示可配置项。
      */
     public static final Set<String> AGENT_QUERY_PARAM_KEYS = Set.of("rerank.enabled");
 
     /**
-     * 已迁出智能体层的键：读取时静默忽略（存量 JSON 不报错，也不每轮刷 warn），保存时不再写入。
+     * 不归智能体层的键：读取时静默忽略（存量 JSON 不报错，也不每轮刷 warn），保存时不写入。
      * <p>阈值/权重/召回量归知识库或全局；重排模型归知识库（资源归属：谁建库谁付费）。
      */
     private static final Set<String> AGENT_QUERY_PARAM_MOVED = Set.of(
@@ -81,7 +81,7 @@ public class ChatService {
                 if (e.getKey() == null || e.getValue() == null) continue;
                 if (!AGENT_QUERY_PARAM_KEYS.contains(e.getKey())) {
                     if (AGENT_QUERY_PARAM_MOVED.contains(e.getKey())) {
-                        // 迁移期存量：这些项已归知识库/全局，静默忽略（debug 便于排查"为什么配了没变"）
+                        // 已归知识库/全局的键：静默忽略（debug 便于排查"为什么配了没变"）
                         log.debug("[AGENT] 检索参数已迁出智能体层，忽略: {}", e.getKey());
                     } else {
                         log.warn("[AGENT] 检索参数键不在白名单内，已忽略: {}", e.getKey());
@@ -154,11 +154,11 @@ public class ChatService {
     private final ProjectTurnGuard projectTurnGuard;
     /** 智能体配置（4.1）：对话页下拉选中后，按智能体覆盖模型/提示词/工具/知识库范围 */
     private final AgentService agentService;
-    /** 游客分享的 chatflow 安全闸：判定绑定工作流是否只含只读节点（P1 · 工作流游客放行 B 档） */
+    /** 游客分享的 chatflow 安全闸：判定绑定工作流是否只含只读节点 */
     private final com.wenqu.ai.mapper.WorkflowMapper workflowMapper;
     private final ModelRegistryService modelRegistryService;
     /**
-     * M4：工作流服务（智能体绑定工作流时取用）。走 ObjectProvider <b>惰性</b>获取而不是直接注入：
+     * 工作流服务（智能体绑定工作流时取用）。走 ObjectProvider <b>惰性</b>获取而不是直接注入：
      * {@code WorkflowService → WorkflowEngine → ChatService} 已是一条依赖链（子智能体节点复用问答管线），
      * 这里再直接注入就成环（Spring Boot 3 默认禁止循环依赖，启动直接失败）。惰性取用把这个
      * 「只有绑定了工作流的智能体才用得到」的反向依赖推迟到调用时，依赖图保持单向。
@@ -173,10 +173,10 @@ public class ChatService {
     private final ChatRunBus chatRunBus;
 
     /**
-     * 轮次控制与存活（P6 刀 2）：SSE 投递与断开跟踪、心跳与存活看门狗、停止本轮 / 运行中插话 /
+     * 轮次控制与存活：SSE 投递与断开跟踪、心跳与存活看门狗、停止本轮 / 运行中插话 /
      * 探测接流、断线宽限中止都在它那里。本类只剩「这一轮怎么把资料找出来、答案怎么生成出来」。
      * <p>方向单向：问答侧调用它，它不回叫问答侧。{@code chat()} 刻意留在这边（要提交流水线），
-     * 而原先直接摸那三张登记表的四处改走它的具名闸口——登记表不外露，进出都得走名字。
+     * 四处访问都走它暴露的具名闸口——登记表不外露，进出都得走名字。
      */
     private final ChatRunRuntime runtime;
 
@@ -184,7 +184,7 @@ public class ChatService {
     private final com.wenqu.ai.agent.subagent.SubAgentBranchRuntime branchRuntime;
 
     /**
-     * chatflow 桥（P6 刀 4）：智能体绑定了工作流的那条路——每轮把问题送进图，end 节点出参就是回答。
+     * chatflow 桥：智能体绑定了工作流的那条路——每轮把问题送进图，end 节点出参就是回答。
      * 这一条路没有生成流，所以桥完全不碰任何运行时状态袋，只吃通道与会话落库。
      */
     private final com.wenqu.ai.agent.chatflow.ChatflowBridge chatflow;
@@ -194,11 +194,11 @@ public class ChatService {
      * 问答外壳与工作流桥：常规问答已全部交给 AgentScope 框架引擎（见 {@code agentx} 包），
      * 本类保留承担「轮级外壳」（会话轮级互斥、断线续跑、身份与个人覆盖装载）以及工作流（Chatflow）旁路
      * ——绑定工作流的智能体由工作流 end 节点的出参当回答，这条路由工作流执行、是 AgentScope 不提供的
-     * 个性化能力，经 {@link #runWorkflowBoundTurn} 处理，不属于被框架替代的手写推理循环。
+     * 个性化能力，经 {@link #runWorkflowBoundTurn} 处理。
      */
     private final com.wenqu.ai.engine.ChatEngineFactory chatEngines;
     private final UserRoleService userRoleService;
-    /** 内容安全输入闸（Phase 3 · P12）：命中即不发起本轮，与模型出口的出口闸共用一份判据 */
+    /** 内容安全输入闸：命中即不发起本轮，与模型出口的出口闸共用一份判据 */
     private final com.wenqu.ai.service.contentsafety.ContentSafetyService contentSafety;
 
 
@@ -230,7 +230,7 @@ public class ChatService {
     }
 
     /**
-     * 游客轮绑定的工作流是否只读安全（P1 · B 档）：节点全在 start/end/llm/retrieval/condition/loop/template。
+     * 游客轮绑定的工作流是否只读安全：节点全在 start/end/llm/retrieval/condition/loop/template。
      * 未绑定、查不到、解析失败一律按「不安全」处理（fail-closed），只有明确只读才放行。
      */
     private boolean guestSafeBoundWorkflow(com.wenqu.ai.model.Agent agent) {
@@ -246,11 +246,6 @@ public class ChatService {
 
     /**
      * {@link ChatflowBridge} 跑那张图 —— <b>之后不再有任何推理逻辑</b>。
-     *
-     * <p>为什么单独成方法：这段原本是手写推理循环 {@code runChat} 的前导段，而推理循环本体
-     * （{@code runChat} 的后半段 + {@code buildAnswerStream}）在单引擎化之后<b>已经不可达</b>——
-     * 能进 {@code runChat} 的前提是「智能体绑了工作流」（分派点判的就是它），而 {@code runChat}
-     * 内部第一个分支判的又是同一个条件并直接 return。把前导段抽出来，那个推理循环整体消失。
      *
      * <p>出口仍用本轮那条 emitter，深度思考由入口处裁决好传入（工作流节点用自己的模型）。
      */
@@ -295,7 +290,7 @@ public class ChatService {
         if (turnModel.fallbackNotice() != null) {
             runtime.addDegradation(degradations, degradedCodes, "modelFallback", turnModel.fallbackNotice());
         }
-        // @ 智能体（P5 换芯）：不换成它作答，而是要求它被咨询一次。
+        // @ 智能体：不换成它作答，而是要求它被咨询一次。
         // 用户显式点名的咨询不受平台侧编排开关影响：这条是用户指令。
         final Agent forcedConsult = resolveDelegatedAgent(mentions, degradations, degradedCodes);
         final Agent agent = resolveTurnAgent(agentId, degradations, degradedCodes);
@@ -321,7 +316,7 @@ public class ChatService {
                     "这个智能体绑定的工作流包含副作用节点，游客暂不可使用（请登录后再试）");
             return;
         }
-        // M4：智能体绑定工作流（chatflow）——回答由工作流产出，整条不走常规检索/生成链路。
+        // 智能体绑定工作流（chatflow）——回答由工作流产出，整条不走常规检索/生成链路。
         // 图片/附件在此路径下不参与（工作流只接收文本入参），显式登记为降级提示而不是静默丢弃。
         if ((userImages != null && !userImages.isEmpty()) || (attachments != null && !attachments.isEmpty())) {
             runtime.addDegradation(degradations, degradedCodes, "workflowInputIgnored",
@@ -345,9 +340,8 @@ public class ChatService {
 
     /**
      * 启动期单线程预热工具 schema：@Tool 回调的 inputSchema 由 victools/Jackson 首次
-     * introspection 时生成，而 Jackson 对同一类型的并发首采会抛
-     * 「Conflicting property-based creators」（record 的 canonical 构造器被两个线程同时收集，
-     * 8091 百并发压测实测复现：重启后头一批并发问答随机「系统处理异常」）。
+     * introspection 时生成，Jackson 对同一类型的并发首采会抛
+     * 「Conflicting property-based creators」（record 的 canonical 构造器被两个线程同时收集）。
      * 启动期串行生成一遍，Jackson 的 introspection 缓存填充后，后续并发生成只读缓存。
      */
     private void warmUpToolSchemas() {
@@ -443,12 +437,11 @@ public class ChatService {
 
     /**
      * 处理用户问题（可含上传图片与附件），通过 SSE 流式返回。
-     * <p>P1 seam 化：这里原本是 10 个 telescoping 重载层层委托（10 参一路加到 19 参），
-     * 现收成 {@link ChatCommand} 一个入参对象。加能力不再动调用方，相邻同类型实参写反也不再
-     * 只能靠人眼拦（见 ChatCommand 类注释）。
+     * <p>参数统一收进 {@link ChatCommand}：避免重载层层委托（10 参一路加到 19 参），
+     * 加能力不必改调用方，相邻同类型实参写反也能由类型拦住（见 ChatCommand 类注释）。
      * <p>{@code emitter} 刻意不进命令对象：它是这一轮的<b>出口</b>而不是内容——工作流子 agent 用
      * CollectingSseEmitter，定时任务与对外 MCP 端点各有自己的收集通道，与「问了什么」正交；
-     * 混进同一个列表就会出现第 11 个重载。整条流水线在独立线程池执行（重活不占 Tomcat 请求线程）。
+     * 混进同一个列表就又多一层重载。整条流水线在独立线程池执行（重活不占 Tomcat 请求线程）。
      */
     public void chat(ChatCommand cmd, SseEmitter emitter) {
         // 只解包这一段外壳真正要用的四个名字，其余字段由引擎整包收 cmd 后自取（见 ChatEngine#chat）
@@ -457,9 +450,9 @@ public class ChatService {
         final String userId = cmd.getUserId();
         final boolean guestMode = cmd.isGuestMode();
 
-        // 内容安全输入闸（Phase 3 · P12）：命中 block 规则就不发起这一轮——一次模型调用都不花，
+        // 内容安全输入闸：命中 block 规则就不发起这一轮——一次模型调用都不花，
         // 用户当场看到「哪条规则拦的」。判据只有一处实现（ContentSafetyService），出口闸在模型出口
-        // （MeteredModel / DynamicOpenAiChatModel），两道闸同一份规则表，与 Phase 2 配额闸同一形态。
+        // （MeteredModel / DynamicOpenAiChatModel），两道闸同一份规则表，与配额闸同一形态。
         String refused = contentSafety.checkInput(userId, sessionId, cmd.getQuestion());
         if (refused != null) {
             rejectTurn(emitter, cmd, sessionId, userId, null, refused);
@@ -504,11 +497,11 @@ public class ChatService {
         TurnRegistry.registerHandle(sessionId, new TurnHandle(turnId, userId, emitter));
         // 断开跟踪：登记查表项并绑定生命周期回调清理；发送失败也会打标（见 runtime.sendSseEvent），各等待点据此短路后续 LLM/检索开销
         runtime.trackChannel(emitter);
-        // 运行总线登记（P0 断线重连接流）：本轮的执行不再绑死在发起时那条通道上——刷新/换设备能接回来看它
+        // 运行总线登记：本轮的执行不再绑死在发起时那条通道上——刷新/换设备能接回来看它
         // 继续长出来，观众走光也只是「暂时没人看」，宽限（chat.detachGraceMs）到点才由总线回调按中断收束，
         // 走的还是既有半程截断落库那条路。刻意不登记：收集型通道（定时任务/MCP/工作流节点没有真实响应）、
         // 开关关闭（行为回到「断开即中止」）。
-        // 游客分享会话<b>也登记</b>（2026-10-12 补全）：归属用的是访客自己的身份（share-visitor:{随机}）
+        // 游客分享会话<b>也登记</b>：归属用的是访客自己的身份（share-visitor:{随机}）
         // 而不是发布者——用发布者的 uid 挂归属，等于任何拿到分享链接的人都能接走别人会话的流。
         // 访客身份缺失（老链接没带 visitorId）就退回不登记，照旧按历史回显，绝不退成「按发布者放行」。
         final String runOwner = guestMode ? cmd.getGuestUid() : userId;
@@ -524,7 +517,7 @@ public class ChatService {
         }
         // 起表基准早帧：开流第一秒就把「这一轮从服务端收到提问起已经过了多久」交给前端。
         // 没有它，屏幕上的秒表只能从本地「按下回车」起表，收尾换成落库那份服务端墙钟时会
-        // 掉一个网络往返（真机 2026-11-06：答完 5.3s、刷新 5.1s）。只给时长不给绝对时刻，
+        // 掉一个网络往返。只给时长不给绝对时刻，
         // 两端钟差进不来。引擎开轮起表时还会再发一帧校准 prepMs（同一基准，读数不跳）。
         // 定时/目标/工作流没有请求体（receivedAtMs=0）：基准是引擎开轮时刻，由引擎自己发那一帧。
         if (cmd.getReceivedAtMs() > 0L && !(emitter instanceof CollectingSseEmitter)) {
@@ -555,7 +548,7 @@ public class ChatService {
                 // 与调用线程无关：网页问答的 Tomcat 线程、定时任务的池线程同一个来源）。
                 boolean identity = loadIdentity(userId);
                 // 个人配置覆盖（schema personal 字段）：随身份一次性载入，本轮内 configService.get 对
-                // 标了 personal 的字段优先读个人值。当前 schema 里没有这类字段（原「回答偏好」五项已下线），
+                // 标了 personal 的字段优先读个人值。当前 schema 里没有这类字段，
                 // 这一层作为配置四档的通用机制保留，将来再有个人可覆盖项时不必重铺。
                 // 与身份同生命周期：池化线程复用，finally 必须清（否则下一轮会带着上一轮用户的偏好）
                 configService.putUserOverrides(userConfigService.overrides(userId));
@@ -575,8 +568,6 @@ public class ChatService {
                 try {
                     // 绑定了工作流的智能体<b>不进任何一条推理循环</b>：那条路由工作流 end 节点的出参当回答
                     // （ChatflowBridge 的口径是「整条不走常规检索/生成，人设/库界/工具都不参与」）。
-                    // 分派原先只看「引擎选哪个」，于是切到框架引擎后这张图被整个跳过——用户配的是「图的答案」，
-                    // 拿到的却是模型自己答的一句。这不是观测出来的差异，是 Phase 5 排工作流用例时读代码照出来的。
                     if (workflowBoundOf(cmd.getAgentId())) {
                         runWorkflowBoundTurn(cmd, dispatchChannel);
                     } else {
@@ -585,7 +576,7 @@ public class ChatService {
                     // 框架引擎同步跑完整轮：方法返回即本轮已终结（待办/计划批准期间引擎是在循环里
                     // 阻塞等待的，不会提前返回）。必须在这里摘轮次把手 + 收掉总线 run——总线 run 的
                     // turnAlive 判的是「TurnRegistry 里的把手是否还是本轮」，不摘就恒为真：会话被永久
-                    // 当成「正在跑」，刷新/换设备接回来永远转圈，直到 300s 看门狗超时才收（实测踩过）。
+                    // 当成「正在跑」，刷新/换设备接回来永远转圈，直到 300s 看门狗超时才收。
                     TurnRegistry.removeHandle(sessionId);
                     chatRunBus.finish(sessionId);
                 } catch (Exception e) {
@@ -616,7 +607,7 @@ public class ChatService {
                     // 两种终止要分开写：用户点停止 ≠ 没人看超时——后者不是用户做的事，文案不许怪他。
                     // 显式停止必须排在最前：慢启动（沙盒装配卡住几分钟）时用户先点了停止，随后
                     // 宽限到点的「无观众中断」也会登记一笔——先取 bareAbort 就会把用户的动作记成
-                    // 系统中断（2026-11-05 线上复现：主动停止的那一问落成 interrupted）。
+                    // 系统中断。
                     final boolean userStopped = runtime.takeStopMark(sessionId, turnId);
                     final boolean bareAbort = runtime.takeBareAbort(sessionId, turnId);
                     if (userStopped) {
@@ -735,18 +726,17 @@ public class ChatService {
     }
 
 
-    // ==================== P3b：沙盒脚本的子调用回程 ====================
+    // ==================== 沙盒脚本的子调用回程 ====================
 
 
 
-    // ---- 智能体（P5）本轮作答方解析 ----    // ---- 智能体（P5）本轮作答方解析 ----
+    // ---- 智能体本轮作答方解析 ----
 
     /**
      * 本轮作答的智能体：请求带 id 就用它（分享页 / 定时任务 / 工作流 / 对外 MCP 都是显式指定），
      * 不带就用默认智能体（isDefault=1）；未设默认才落到纯系统设置的全局配置。
-     * <p>P5 起这里<b>不再有"会话锁定"</b>。过去首问把智能体锁进会话，是为了让同一会话里人设、知识库、
-     * 工具集全程一致；代价是跨主题的问题只能对着自己那套库空转——"上一轮问手册、这一轮问法律就查不到"。
-     * 现在资料域由模型经派遣助手（框架的 agent_spawn）主动派出去查，作答方不需要被锁，也没有"换人请新建会话"这回事。
+     * <p>这里<b>不做"会话锁定"</b>：
+     * 资料域由模型经派遣助手（框架的 agent_spawn）主动派出去查，作答方不需要被锁，也没有"换人请新建会话"这回事。
      * <p>显式指定却解析不到（已删除或无权限）时 fail-loud：静默改用全局配置等于悄悄换人，用户无从察觉。
      */
     private Agent resolveTurnAgent(String requestedAgentId,
@@ -819,7 +809,7 @@ public class ChatService {
     /**
      * 模型解析链（优先级从高到低）：会话级覆盖（聊天页手动切换）> 用户个人默认模型。
      * 值为引用（providerId/modelId）或遗留纯模型名均可，供应商网关路由由 DynamicOpenAiChatModel 按引用解析；
-     * 智能体不再绑定聊天模型、全局 chat.model 兜底已移除——均未配置时返回空串，由调用方 fail-loud 引导配置。
+     * 智能体不绑定聊天模型，也没有全局兜底——均未配置时返回空串，由调用方 fail-loud 引导配置。
      */
     private String resolveModel(String modelOverride, com.wenqu.ai.model.User prefUser) {
         if (modelOverride != null && !modelOverride.isBlank()) return modelOverride.trim();
@@ -832,7 +822,7 @@ public class ChatService {
     /**
      * 本轮该用哪个模型引用：请求覆盖 &gt; 会话固定 &gt; 个人默认；返回空串＝全链未配置（调用方 fail-loud）。
      * <p>公开是因为并列的第二套运行时（AgentScope 框架引擎）必须问得到<b>同一条</b>解析链：
-     * 它原先只拿「请求里的 model」，用户靠个人默认作答时框架侧就解析不出路由（实测是 NPE 打断整轮）。
+     * 它不能只拿「请求里的 model」——用户靠个人默认作答时，框架侧同样要靠这条链解析路由。
      */
     public String modelRefFor(String modelOverride, String sessionId, com.wenqu.ai.model.User prefUser) {
         String effective = modelOverride != null && !modelOverride.isBlank()
@@ -850,8 +840,7 @@ public class ChatService {
      * （请求覆盖 &gt; 会话固定 &gt; 个人默认），差别是撞上已停用的模型时不再把坏引用发给上游。
      * <ul>
      *   <li><b>会话固定失效</b>：清掉这一条会话的选择、回落个人默认，并把改动说出来。会话里钉着的
-     *       是某次点选留下的串，用户早就不记得它，留着只会每轮撞一次上游报错（真机 sbx-3：
-     *       模型停用后连续几轮 401，之后整条会话不再启动）。</li>
+     *       是某次点选留下的串，用户早就不记得它，留着只会每轮撞一次上游报错。</li>
      *   <li><b>请求显式携带的失效</b>：不动任何已存的选择、也不换模型——那是用户这一轮点名的，
      *       替他猜等于改他的指令。</li>
      *   <li><b>个人默认失效</b>：同样不自动改（那是他显式设的），只报错并说清去哪儿改。</li>
@@ -981,7 +970,7 @@ public class ChatService {
     }
 
 
-    // ==================== P3a：子智能体真全循环 ====================
+    // ==================== 子智能体真全循环 ====================
 
 
     /**
@@ -993,7 +982,7 @@ public class ChatService {
     }
 
 
-    // ==================== 断线重连接流（P0 最后一刀，配合 ChatRunBus） ====================
+    // ==================== 断线重连接流 ====================
 
     /**
      * 接流快照：从本轮的权威缓冲重建「到此刻为止看得见的东西」。
@@ -1008,8 +997,7 @@ public class ChatService {
         TurnHandle h = TurnRegistry.handle(sessionId);
         // stopped 与「把手已摘」同列：用户已经点过停止的这一轮不再是「在跑的轮」。装配期（沙盒要
         // 几十秒到几分钟）线程还卡在 sessions.open，把手与总线 run 都还在，若不在这里判 stopped，
-        // 刷新就会把刚停掉的那一轮接回来继续显示「正在溯源」（2026-11-05 线上：21:42:43 停止、
-        // 21:42:46 刷新接回，直到装配超时才收）。
+        // 刷新就会把刚停掉的那一轮接回来继续显示「正在溯源」，直到装配超时才收。
         if (h == null || !turnId.equals(h.turnId()) || h.stopped().get()) {
             snap.put("running", false);
             return snap;
@@ -1135,7 +1123,7 @@ public class ChatService {
                 // 非 JSON：保留 summary 原文
             }
         }
-        // 子智能体运行过程（2026-11-07）：摘要是给人看的一行话；完整帧流整份带上——
+        // 子智能体运行过程：摘要是给人看的一行话；完整帧流整份带上——
         // 派遣卡上的「完整过程」回放就是从这里懒取的，别的类型不带全量（账本不是原文复读机）
         if ("subagent".equals(ev.getType())) {
             try {

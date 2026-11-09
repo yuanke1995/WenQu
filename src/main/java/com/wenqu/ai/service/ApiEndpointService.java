@@ -34,7 +34,7 @@ import java.util.Set;
 @Service
 @RequiredArgsConstructor
 public class ApiEndpointService {
-    /** 统一审计事件（Phase 3）：同一份格式串派生日志与结构化事件，不再两处抄 */
+    /** 统一审计事件：同一份格式串派生日志与结构化事件，不再两处抄 */
     private final AuditService audit;
 
 

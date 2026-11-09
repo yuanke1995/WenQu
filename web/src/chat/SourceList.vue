@@ -7,8 +7,8 @@
  * （它没有排障语境，游客也不关心"用了什么检索词"）。所以这些差异做成开关而不是两份实现。
  *
  * <p>来源名与「是否外部来源」的判定统一走 {@code sourceName / externalOrigin}：
- * 那两处口径曾经各写一份，结果是联网来源在分享页统一显示成「来源文档不可用」
- * （裁剪时丢了 origin 字段，而分享页靠它区分联网/库内）。
+ * 联网来源在分享页要靠 origin 字段与库内来源区分，
+ * 裁剪时丢了它就会统一显示成「来源文档不可用」。
  */
 import { CaretRightOutlined } from '@ant-design/icons-vue'
 import { sourceName } from './projections'

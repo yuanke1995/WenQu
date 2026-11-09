@@ -54,10 +54,10 @@ public class ImageWebConfig implements WebMvcConfigurer {
 
     /**
      * 文本类产物的 Content-Type。md / markdown / py 在 Tomcat 的 {@code MimeTypeMappings.properties}
-     * 与 Spring 的 {@code mime.types} 两张表里都没有条目（两个 jar 各翻过一遍），静态资源解析就不发
+     * 与 Spring 的 {@code mime.types} 两张表里都没有条目，静态资源解析就不发
      * Content-Type——浏览器对顶层导航会嗅探成纯文本显示，但没有任何编码线索时按单字节解，
-     * 实测（无头 Edge）中文产物渲染成「# 鏍囬」这类乱码。产物里 md 是主力类型，编码错等于预览是坏的。
-     * <p>现在按 {@link PreviewTypes#TEXT_ARTIFACT_EXTS} 整张扫（逐个点补就是下一次漏一个），并且**一律覆盖**，
+     * 中文产物会渲染成「# 鏍囬」这类乱码。产物里 md 是主力类型，编码错等于预览是坏的。
+     * <p>按 {@link PreviewTypes#TEXT_ARTIFACT_EXTS} 整张扫（逐个点补就是下一次漏一个），并且**一律覆盖**，
      * 不只是补缺：表里已有的条目并不都适合直接读——{@code ts} 被映射成 {@code video/mp2t}、
      * {@code rs} 成 {@code application/rls-services+xml}、{@code sql} 成 {@code application/x-sql}，
      * 顶层导航打开会被当媒体/未知类型处理（下载而不是显示）。产物里的这些类型要看的是源码。

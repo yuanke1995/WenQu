@@ -1,6 +1,6 @@
 package com.wenqu.ai.agent.chat;
 
-// [保留] 问渠轮次台账 / 个性化提示词 —— AgentScope 框架不提供等价能力，框架引擎(agentx)与共享服务仍依赖此文件，勿当作已退役的控制流删除。
+// 问渠轮次台账 / 个性化提示词 —— AgentScope 框架不提供等价能力，框架引擎(agentx)与共享服务仍依赖此文件。
 
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -10,7 +10,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * 本轮身份把手：turnId + userId + 通道，外加两个跨线程标志（叫停 / 已送进框架会话的插话收据）。
- * <p>P6 刀 0 自 {@code ChatService} 提出顶层（原先是它的私有 record，只有内层状态能碰）。
  * <p><b>它比任何流式结构都早，也必须早</b>：在 {@code chat()} 抢到轮级互斥的那一刻就建好——
  * 计划卡、子智能体编排、检索统计这些事件发生在流状态构造之前，只靠状态表归因会把同一轮的轨迹劈成
  * 「无 turn_id 的孤儿行」与「有 turn_id 的行」两截，回放时拼不回去。

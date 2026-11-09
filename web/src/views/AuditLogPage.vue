@@ -1,6 +1,6 @@
 <script setup>
 /**
- * 统一审计事件（Phase 3 · P11）：查「谁在什么时候对什么做了什么」，
+ * 统一审计事件：查「谁在什么时候对什么做了什么」，
  * 一键导出 CSV 交合规，并校验哈希链有没有被改过。挂在「权限管理 → 审计事件」页签下。
  */
 import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
@@ -97,7 +97,7 @@ const targetText = row => {
   return `${row.target_type} · ${row.target_id || ''}`
 }
 /** 后端给的是 ISO 串（2026-10-28T22:33:28.225），165px 列宽里会折成两行把行高撑到 52px；
- *  展示统一成「2026-10-28 22:33:28」单行（与线上口径一致），15 行就能全放进视口 */
+ *  展示统一成「2026-10-28 22:33:28」单行，15 行就能全放进视口 */
 const fmtTs = s => (typeof s === 'string' ? s.replace('T', ' ').slice(0, 19) : s)
 const detailText = row => {
   try {
@@ -107,10 +107,9 @@ const detailText = row => {
   } catch (e) { return row.detail || '' }
 }
 /* ==================== 表体高度实测（表头固定，页内不滚） ====================
-   页面骨架从「整页滚动」改为「页内不滚、表体内部滚动」：筛选栏/表头/分页/页脚常驻，
+   页面骨架为「页内不滚、表体内部滚动」：筛选栏/表头/分页/页脚常驻，
    行放不下时只在表格体里滚（macOS 悬浮滚动条平时不可见）。scroll.y 必须给真实像素，
-   不能用 window.innerHeight 减常数去估——筛选栏会折行、链校验横幅时有时无，常数一变就错
-   （「系统设置 → 运行状态」表就是先按常数估、两次都判错方向后才改成实测的）。 */
+   不能用 window.innerHeight 减常数去估——筛选栏会折行、链校验横幅时有时无，常数一变就错。 */
 const wrapRef = ref(null)
 const tableHost = ref(null)
 const tableY = ref(240)
@@ -222,7 +221,7 @@ watch([rows, chain, dropped], () => nextTick(measureTableY))
 </template>
 
 <style scoped>
-/* 本页原挂在「权限管理」页签，2026-11 迁到「安全与运维」：
+/* 本页挂在「安全与运维」：
    整块是一张卡片（筛选栏 + 表头 + 表体 + 分页），与巡检/会话列表同一视觉语言。
    页内不滚（overflow hidden）：表格体高度由 tableY 实测封顶，行放不下时在表体内部滚动、
    表头由 antd 固定（scroll.y 拆出的 .ant-table-header，别给 th 加 position:sticky）。 */

@@ -125,7 +125,7 @@ const redirectTarget = computed(() => {
 const oidcProviders = ref([])
 const oidcLoading = ref('')
 
-// 租户品牌（P1 · 3B）：?tenant= 优先，其次子域；子域猜错时后端返回 default+available=false，前端保持现状
+// 租户品牌：?tenant= 优先，其次子域；子域猜错时后端返回 default+available=false，前端保持现状
 const brand = ref(null)
 const brandName = computed(() => (brand.value && brand.value.brandName) || '问渠')
 const brandSlogan = computed(() => (brand.value && brand.value.loginHint) || '答案，自有源头 · Ask the source.')
@@ -363,13 +363,13 @@ html[data-theme='dark'] .login-title::after {
 }
 
 /* ==================== 移动端窄屏（h5）====================
-   高度改由 --app-vh 接管（= visualViewport.height，已扣掉软键盘）——
-   原先用的 100dvh 在 iOS 上不随键盘变化，键盘弹起会盖住输入框。
-   宽屏 --app-vh 不存在 → 回落 100dvh，与改动前一致。 */
+   高度由 --app-vh 接管（= visualViewport.height，已扣掉软键盘）——
+   100dvh 在 iOS 上不随键盘变化，键盘弹起会盖住输入框。
+   宽屏 --app-vh 不存在 → 回落 100dvh。 */
 @media (max-width: 768px) {
   .login-wrap { height: 100vh; height: var(--app-vh, 100dvh); }
-  /* 键盘弹起后容器被压缩，原先 margin:auto 的垂直居中会让整张卡片落到视口外。
-     改为顶部对齐 + margin:auto 0 0（仍水平居中，垂直靠上），
+  /* 键盘弹起后容器被压缩，若保持 margin:auto 的垂直居中会把卡片顶到视口外，
+     因此用顶部对齐 + margin:auto 0 0（仍水平居中，垂直靠上），
      再给底部留出键盘高度，滚动时卡片始终可达 */
   .login-pane { padding: 16px 14px; align-items: flex-start; }
   .login-card { margin: auto 0 0; padding: 22px 18px 18px; }

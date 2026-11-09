@@ -16,13 +16,12 @@ import java.util.Map;
 /**
  * OIDC 认证源的登录流数据视图：统一表行 ↔ {@link OidcProvider} 视图互转、登录页公开清单、密钥解密。
  * <p>
- * <b>数据统一存 {@code c_ai_identity_provider}(type='oidc')</b>（2026-10-26 任务 #8：旧表
- * c_ai_oidc_provider 已退役）：协议参数收纳进 {@code config} JSON（键名与 {@link OidcProvider}
- * 视图字段一致，clientSecret 为 RSA 密文），name/enabled/defaultRole/defaultDepartment/
- * autoCreateUser/sortOrder 用统一表列。
+ * <b>数据统一存 {@code c_ai_identity_provider}(type='oidc')</b>：协议参数收纳进 {@code config} JSON
+ * （键名与 {@link OidcProvider} 视图字段一致，clientSecret 为 RSA 密文），name/enabled/defaultRole/
+ * defaultDepartment/autoCreateUser/sortOrder 用统一表列。
  * <p>
- * OIDC 的管理面（CRUD/启停/删除）已退役（2026-10-27）：四类认证源统一走
- * {@link IdentityProviderService}（「认证源」页签）；本服务只服务登录链路（{@link OidcService}）。
+ * 四类认证源的管理面（CRUD/启停/删除）统一走 {@link IdentityProviderService}（「认证源」页签）；
+ * 本服务只服务登录链路（{@link OidcService}）。
  * <p>
  * config JSON 由统一认证源侧整块加密（JWE）；读取时解密后按 JSON 解析。
  *

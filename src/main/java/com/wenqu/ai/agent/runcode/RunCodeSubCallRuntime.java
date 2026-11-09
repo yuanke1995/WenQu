@@ -27,13 +27,13 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * run_code 的子调用通道与实时面板（P6 刀 3a，自 {@code ChatService} 抽出）。
+ * run_code 的子调用通道与实时面板。
  * <p>两件事长在一起是有原因的：脚本里那一路子调用<b>必须走与模型直调同一条守卫链</b>
  * （叫停、权限档位、引用登记），而它绕开了模型的工具循环，于是"这一次运行调了哪些工具、
  * 各自多久、额度还剩多少"这份账只能在这里记——面板就是这本账的展示面。分开两处必漂移。
  * <p><b>它能做成 bean 而 {@code BranchRunner} 不能</b>：这一族不需要"跑一整轮问答"，
  * 依赖只有工具管线与投递通道，方向天然单向；而分支那条要回头调问答入口，只能按轮回传函数
- * （见 {@code SubAgentOrchestrator} 与刀 3b）。这正是卡里拦路点 2 的答案怎么用。
+ * （见 {@code SubAgentOrchestrator}）。
  * <p>面板只走实时通道：不进 {@code toolCalls}、不进事件账本——它的价值在"当场看得见"，
  * 跑完后终态那一份挂在 run_code 那张卡片上随消息落库，两套真源只会对不上。
  *
@@ -59,13 +59,13 @@ public class RunCodeSubCallRuntime {
     }
 
     /**
-     * 为本轮准备「脚本子调用」的管线（P3b）。
+     * 为本轮准备「脚本子调用」的管线。
      * <p>
      * 只在真挂了 {@code run_code} 时构建，其余轮次一个对象都不多造（默认关的功能不该给每轮加开销）。
      * <p><b>为什么要再包一条</b>：脚本里的子调用必须与模型直调走<b>同一条守卫链</b>（叫停、权限档位、
      * 引用登记、工具卡片），绕过去就不是"少几次模型往返"而是"少一层管控"。但<b>不能共用同一份步数预算</b>：
-     * 一段扇出 30 份资料的脚本会把 15 步的模型预算一次吃光，主模型随后就没工具可用了——那正是 P3b
-     * 要解决的问题本身。所以这条管线与本轮同源，只换预算那一项（{@code maxToolSteps}/{@code takeStep}
+     * 一段扇出 30 份资料的脚本会把 15 步的模型预算一次吃光，主模型随后就没工具可用了。
+     * 所以这条管线与本轮同源，只换预算那一项（{@code maxToolSteps}/{@code takeStep}
      * 走本轮的子调用计数，上限是 {@code tool.runcode.maxSubCalls}）。
      */
     /**
@@ -82,11 +82,10 @@ public class RunCodeSubCallRuntime {
         for (org.springframework.ai.tool.ToolCallback cb : rawTools) {
             String n = cb.getToolDefinition() == null ? null : cb.getToolDefinition().name();
             if (n == null || SandboxTools.RUN_CODE_TOOL_NAME.equals(n)) continue;
-            // 脚本里不给 execute（嵌套命令行）：刀4 用「平台侧回执日志」定位过——四路并发时
-            // 平台把四条响应都组装好并写回，容器里的脚本只收到部分，剩下的连接永远等不到返回；
-            // 改成流式响应 + 每 2s 写一个心跳空格更糟（一条都送不到）。丢在容器→宿主这条回程上，
-            // 本机环境无法从平台侧修好，所以切断入口：命令行请用工具本身（模型直调，看得见且走
-            // 平台自己的流式通道）。文件类（读写列目录交付）走文件 API、不碰那条会话，实测正常。
+            // 脚本里不给 execute（嵌套命令行）：四路并发时平台把四条响应都组装好并写回，
+            // 容器里的脚本只收到部分，剩下的连接永远等不到返回（丢在容器→宿主这条回程上，
+            // 本机环境无法从平台侧修好）。所以切断入口：命令行请用工具本身（模型直调，
+            // 看得见且走平台自己的流式通道）。文件类（读写列目录交付）走文件 API、不碰那条会话。
             if (SandboxTools.STREAMING_TOOL_NAME.equals(n)) continue;
             // 「要有人在场」的工具不给脚本：askUser 在脚本里既没人答、又会把整段运行挂住——
             // 判据与本轮装配同一条（描述符 viewerRequired），不在这里再抄一份名字表
@@ -213,7 +212,7 @@ public class RunCodeSubCallRuntime {
      * 子调用的本轮上下文：除预算那三项，其余全部转发给本轮那份。
      * <p>刻意<b>不</b>重算身份：{@code toolTurnContext(st)} 在流水线入口线程捕获了 RequestUser 快照，
      * 子调用来自 Tomcat 线程、那里根本没有这个 ThreadLocal——转发（而不是新建）是唯一正确的做法，
-     * 也是 P1 那条「身份快照必须在入口线程捕获」结论的复用。
+     * 也是「身份快照必须在入口线程捕获」这条结论的复用。
      */
     private ToolTurnContext subCallTurnContext(RunCodeTurn turn) {
         final ToolTurnContext base = turn.baseContext();
@@ -299,7 +298,7 @@ public class RunCodeSubCallRuntime {
             @Override
             public void observe(ToolInvocation inv, String status, String resultOrError) {
                 // 子调用不各开一张顶层卡片：一段脚本扇出 20 次就把过程区刷出 20 行，而它们本来就属于
-                // 同一次运行。改成记进 run_code 那张卡的「扇出清单」，点开看结构（这是过程下钻的落点）。
+                // 同一次运行。记进 run_code 那张卡的「扇出清单」，点开看结构（这是过程下钻的落点）。
                 // 守卫链其它三道（叫停/步数/权限）与引用登记都照常走，只是不再各占一个操作位。
                 // <p>start 也过这里：在途那几条与"本轮额度还剩多少"只有起止两侧才知道。
                 // 这里只改计数、不发帧——发帧由面板 ticker 每秒合并一帧（见 RUN_PROGRESS_POOL）。
@@ -325,12 +324,11 @@ public class RunCodeSubCallRuntime {
     }
 
     /**
-     * run_code 实时面板的下发线程（P3b）。与心跳/看门狗分池，理由与上面那条注释同源：
+     * run_code 实时面板的下发线程。与心跳/看门狗分池，理由与上面那条注释同源：
      * 一次慢客户端的 send 不许连坐别人的心跳。
      * <p><b>发送点刻意不在子调用线程上</b>：扇出六路时六个 Tomcat 线程同时往同一根 SSE 通道 send，
-     * 各自的 HTTP 响应被自己刚发的进度帧卡住，脚本就停在第 7 次调用之前直到整段运行超时
-     * （本机实测：6 路 execute 扇出，卡片停在「子调用 6 次」120s 不前进）。
-     * 现在子调用线程只置脏位，ticker 每秒最多合并成一帧。
+     * 各自的 HTTP 响应被自己刚发的进度帧卡住，脚本就停在第 7 次调用之前直到整段运行超时。
+     * 子调用线程只置脏位，ticker 每秒最多合并成一帧。
      */
     private static final java.util.concurrent.ScheduledExecutorService RUN_PROGRESS_POOL =
             java.util.concurrent.Executors.newScheduledThreadPool(2, r -> {
@@ -344,7 +342,7 @@ public class RunCodeSubCallRuntime {
 
     /** 记录一条工具状态：实时 SSE tool_status 事件（短摘要）+ 本轮扇出清单累积（全文，done 汇总与持久化用） */
     /**
-     * 记一条脚本子调用进 run_code 卡片的扇出清单（P3b 过程下钻）。
+     * 记一条脚本子调用进 run_code 卡片的扇出清单（过程下钻）。
      * <p>摘要取结果首行/失败原因前 80 字：够看出这一支在查什么、有没有被挡下，又不至于把卡片变成第二个输出区。
      */
     private static void recordSubCall(RunCodeTurn turn, String tool, String status,
@@ -470,7 +468,7 @@ public class RunCodeSubCallRuntime {
     }
 
     /**
-     * 下发一帧脚本运行进度（P3b 的实时面板）。
+     * 下发一帧脚本运行进度（实时面板）。
      * <p>只走实时通道：不进 {@code toolCalls}、不进账本——这份数据的价值在"当场看得见"，
      * 跑完后卡片自己带终态那份（随消息落库，刷新后仍点得开），两套真源只会对不上。
      */

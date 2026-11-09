@@ -10,7 +10,7 @@
     </div>
 
     <!-- 执行过程（干活视角）：直播时逐步追加，终态后取落库那份；digest 支没有工具步，这段自然不渲染。
-         「完整过程」开关（2026-11-07）：展开看关键帧全量——直播吃引擎侧 _frames，终态从账本事件懒取回放；
+         「完整过程」开关：展开看关键帧全量——直播吃引擎侧 _frames，终态从账本事件懒取回放；
          迷你时间线（≤20 步摘要）在展开时让位。老消息既没有 turnId 也没有直播帧，开关不出现，行为零变化 -->
     <div v-if="stepsView.length" class="sac-line">
       <div class="sac-label">
@@ -113,7 +113,7 @@ const stepsView = computed(() => v.value.stepList.length
   ? v.value.stepList
   : (Array.isArray(props.t._steps) ? props.t._steps : []))
 
-// —— 完整过程（2026-11-07）：直播帧 + 账本回放 ——
+// —— 完整过程：直播帧 + 账本回放 ——
 const fullOpen = ref(false)
 const replayFrames = ref(null)
 /** 直播帧：引擎侧 onSubagentStep 累积的 _frames（关键帧全量，≤240 条） */

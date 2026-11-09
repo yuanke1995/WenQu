@@ -36,7 +36,7 @@ class AgentxDestructiveCommandsTest {
     @Test
     @DisplayName("惰性文本不参与判定：heredoc 脚本与引号里的 > 不再被当成重定向")
     void inertTextIsNotDestructive() {
-        // 真机现场：只读自检脚本里的 </html> 被当成写文件，连挂三张确认卡
+        // 只读自检脚本里的 </html> 是惰性文本，不能当成写文件、连挂确认卡
         String pythonSelfCheck = "cd /Users/me/work && python3 - <<'EOF'\n"
                 + "import re\n"
                 + "s=open('index.html',encoding='utf-8').read()\n"

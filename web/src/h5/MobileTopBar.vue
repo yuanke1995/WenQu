@@ -12,7 +12,7 @@
     <button class="m-tb-btn" title="新建对话" aria-label="新建对话" @click="$emit('new-chat')">
       <plus-outlined />
     </button>
-    <!-- 帮助入口：窄屏下 HelpFab（fixed 右下角）会压住对话页输入框，改为顶栏入口 -->
+    <!-- 帮助入口：窄屏下 HelpFab（fixed 右下角）会压住对话页输入框，故放在顶栏 -->
     <button class="m-tb-btn" title="帮助中心" aria-label="帮助中心" @click="openHelp">
       <question-circle-outlined />
     </button>
@@ -32,7 +32,7 @@ import { MenuOutlined, SearchOutlined, PlusOutlined, QuestionCircleOutlined, Bel
 import { sessionStore } from '../views/store'
 
 // notif/unread：H5 外壳（AppLayout 的触屏形态）传入——顶栏多一个铃铛入口；
-// 抽屉形态（桌面窄窗口）不传，顶栏与之前完全一致（通知在抽屉 foot）
+// 抽屉形态（桌面窄窗口）不传，铃铛不出现在顶栏（通知仍在抽屉 foot）
 defineProps({
   notif: { type: Boolean, default: false },
   unread: { type: Number, default: 0 }
@@ -41,8 +41,8 @@ defineEmits(['toggle-side', 'search', 'new-chat', 'notif'])
 
 const route = useRoute()
 
-// 标题：对话页取当前会话名，**其它页取路由标题**（个人设置 / 帮助中心…）。
-// 此前一律按会话取名，非对话页窄屏顶栏会一直显示「新对话」，与页面内容对不上。
+// 标题：对话页取当前会话名，**其它页取路由标题**（个人设置 / 帮助中心…）——否则非对话页
+// 窄屏顶栏会一直显示「新对话」，与页面内容对不上。
 const title = computed(() => {
   if (route.path !== '/chat') return route.meta?.title || '问渠'
   const sid = route.query.sid

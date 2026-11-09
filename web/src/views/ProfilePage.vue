@@ -1,4 +1,4 @@
-<!-- 个人设置。长期记忆面板在 P5 收口时补回：框架仍负责写入（MEMORY.md + 日账），
+<!-- 个人设置。长期记忆面板：框架仍负责写入（MEMORY.md + 日账），
      这里只提供「看得见、改得动、删得掉」的个人治理入口；日账只读，MEMORY.md 可编辑/清空。 -->
 <template>
   <div class="app-page">
@@ -111,8 +111,6 @@
           </div>
           <p class="pf-sub-hint">{{ panelMeta.tail }}</p>
 
-          <!-- 回答偏好（原「相关建议条数 / 空态示例问题 / 默认助手 / 停用的技能 / 工具执行上限」五项
-               个人覆盖）已整体下线：连同它们在系统设置里的全局那一份一起删干净，不再有两处口径。 -->
         </div>
 
         <!-- 通知与推送：一件事的两半放同一屏——「收哪些类」与「要不要跳出浏览器成为系统级通知」。
@@ -208,8 +206,8 @@
           </div>
         </div>
 
-        <!-- 我的记忆（P5 收口）：框架负责写，这里负责让用户看得见、改得动、删得掉；
-             「自动提炼记忆」生成闸也从聊天面板挪到了这里——开关与沉淀内容同面板，边看边管。
+        <!-- 我的记忆：框架负责写，这里负责让用户看得见、改得动、删得掉；
+             「自动提炼记忆」生成闸与沉淀内容同面板，边看边管。
              阅读与编辑都按「分类 → 条目」结构化呈现（parse/serialize 见 utils/memoryDoc.js），
              不要求用户懂 Markdown；原文编辑作为高级项保留，兼容手写/异常格式的内容。 -->
         <div v-else-if="current === 'memory'" class="app-card pf-card mem-card">
@@ -473,7 +471,7 @@
         </div>
 
         <!-- API 密钥（个人资产）：自己的 Key 恒绑自己，开放自己智能体的全能力，不经管理员；
-             管理员在这里为机器号代签并看到全平台列表。整块面板从系统设置迁来（2026-11-02 下放自服务）。
+             管理员在这里为机器号代签并看到全平台列表。
              卡片放宽：密钥表格比个人设置其它卡宽（pf-card 的 640px 装不下），akp-card 不限宽 -->
         <ApiKeysPanel v-else-if="current === 'apikeys'" class="app-card akp-card" />
       </section>
@@ -1471,7 +1469,7 @@ watch(current, v => { if (v === 'notify') refreshPushState().then(refreshCap).ca
 .mem-auto-title { font-size: 13px; color: var(--app-text); font-weight: 500; margin-bottom: 2px; }
 .mem-auto-row .pf-sub-hint { margin: 0; }
 
-/* ---- 我的记忆（P5） ---- */
+/* ---- 我的记忆 ---- */
 .mem-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
 .mem-warn {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
@@ -1533,8 +1531,7 @@ watch(current, v => { if (v === 'notify') refreshPushState().then(refreshCap).ca
 
 /* ==================== 窄屏（手机）适配 ====================
    这一页是手机上的白名单页（改昵称/头像/密码是刚需），窄屏必须真能用：
-   左列 Tab 竖排 + 定宽卡片 + 并排表单在 412px 上会把内容挤到破版
-   （实测「清除头像」探出视口被裁、「保存」两字压成竖排、emoji 每格 13px 点不中）。
+   左列 Tab 竖排 + 定宽卡片 + 并排表单在 412px 上会把内容挤到破版。
    这里把结构改成移动端设置页的常规形态：顶部横滑 Tab + 全宽卡片 + 换行表单。 */
 @media (max-width: 768px) {
   /* 页头大标题与移动顶栏重复（顶栏已随路由显示「个人设置」），隐藏省一截首屏；
@@ -1589,8 +1586,8 @@ watch(current, v => { if (v === 'notify') refreshPushState().then(refreshCap).ca
   .mem-add-input { min-width: 100%; }
   .mem-add-cat { flex: 1; width: auto; }
   /* 分享管理：一行两栏（左正文 + 右操作）在手机上必然破版——操作区是 flex:none
-     且按内容定宽（五个链接钮约 300px），336px 的行里正文只剩 2px，实测标题一字一行
-     竖排、链接框只剩一个「h」。窄屏改成纵向：正文占满整行，操作另起一行左对齐。 */
+     且按内容定宽（五个链接钮约 300px），336px 的行里正文只剩 2px，
+     窄屏改成纵向：正文占满整行，操作另起一行左对齐。 */
   .shm-item { flex-direction: column; align-items: stretch; gap: 8px; }
   .shm-acts { max-width: none; justify-content: flex-start; row-gap: 2px; column-gap: 14px;
     border-top: 1px dashed var(--app-border); padding-top: 6px; }

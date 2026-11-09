@@ -253,7 +253,7 @@ const onImg = e => {
 }
 .as-row.on { background: var(--app-accent-weak); border-color: var(--app-accent-border); }
 .as-row.static { cursor: default; }
-/* 技能行：整行是「勾选/取消」的命中区，右侧另给一个「正文」入口（按钮不能嵌套，故行改为 div） */
+/* 技能行：整行是「勾选/取消」的命中区，右侧另给一个「正文」入口（按钮不能嵌套，故用 div 作行） */
 .as-hit { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 0; border: 0;
   background: transparent; color: inherit; font: inherit; text-align: left; touch-action: manipulation; }
 .as-hit:disabled { cursor: default; }

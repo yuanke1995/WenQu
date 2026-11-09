@@ -14,8 +14,8 @@ import java.util.List;
 /**
  * 沙盒执行族。
  * <p>
- * 本族只提供 {@code run_code}（旧六把工具里的读写与列目录已由框架自带工具承担），它 requiresApproval=true：
- * 装配处把整族回调一律计入有副作用名单。{@code SideEffect} 的 READ/MUTATE 之分从 P2 起<b>真的参与裁剪</b>：
+ * 本族只提供 {@code run_code}（读写与列目录由框架自带工具承担），它 requiresApproval=true：
+ * 装配处把整族回调一律计入有副作用名单。{@code SideEffect} 的 READ/MUTATE 之分<b>真的参与裁剪</b>：
  * 只读档（read-only）下这一把不进模型的工具表——不是「点了被拒」，是看不见。
  * <p>
  * 只读档必须整族摘掉：容器没有按档位收束命令的机制（provisioner 建容器时不接档位），
@@ -42,14 +42,10 @@ public class SandboxToolProvider implements ToolFamilyProvider {
 
 @Override
 public List<ToolDescriptor> descriptors() {
-        // 全框架化 P1：execute / read_file / write_file / edit_file / ls 五把已退役，
-        // 改由框架 FilesystemTool + ShellExecuteTool 提供（工具名相同，模型侧无感）；
-        // deliver_artifact 已退役（P1-c），改由框架的 ArtifactDeliveryTool 提供——
-        // 框架注释明确「配了 ArtifactDeliveryTarget 才注册该工具」，注册点见
-        // AgentscopeChatEngine#buildAgent 的 .artifactDeliveryTarget(...)。
-        // 留着会与框架的同名工具同时挂在 toolkit 上，模型面对重名工具会二选一——
-        // 那既不是「用框架」，也不是「用问渠」，是最坏的一种中间态。
-        // 本族只剩 run_code：框架确无对应工具（core/tool/coding 只到 ShellCommandTool）。
+        // 本族只剩 run_code：读写、列目录、产物交付由框架自带工具承担（工具名相同，模型侧无感；
+        // 产物交付工具需配 ArtifactDeliveryTarget 才注册，注册点见 AgentscopeChatEngine#buildAgent）。
+        // 框架确无对应工具（core/tool/coding 只到 ShellCommandTool）；留着同名工具会与框架工具
+        // 同时挂在 toolkit 上，模型面对重名工具会二选一。
         return List.of(
                 new ToolDescriptor("run_code", ToolFamily.SANDBOX,
                         "沙盒脚本（一次做完一批）", "执行脚本",

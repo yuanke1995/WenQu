@@ -5,10 +5,10 @@ package com.wenqu.ai.agent.subagent;
  * <p>
  * 为什么是一份记录而不是八个位置参数：分支执行的入参里全是同类型字符串（父会话 id / 子智能体 id /
  * 用户问题 / 生效模型引用），写错位置编译器不拦——而这一轮跑在并行线程上，写错的表现是
- * 「子智能体拿着父会话的 id 去问自己的问题」，只在并发时偶发、事后极难归因。这正是 P1 把
- * {@code chat()} 收成 {@code ChatCommand} 的同一个理由，在分支侧的复现。
+ * 「子智能体拿着父会话的 id 去问自己的问题」，只在并发时偶发、事后极难归因；
+ * 因此用一份记录固定入参，与把 {@code chat()} 收成 {@code ChatCommand} 同理。
  * <p>
- * {@code parentBrief} 与 {@code depth} 是 P3a 相对原「检索 + 要点提炼」分支新增的两件事：前者让分支
+ * {@code parentBrief} 与 {@code depth} 是分支的两件事：前者让分支
  * 继承父轮上下文（对标 DeepSeek Harness 的 fork-in-process），后者让平台能拦住无限套娃，
  * 并让每层预算随深度递减。
  *

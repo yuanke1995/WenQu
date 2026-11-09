@@ -26,7 +26,7 @@ public interface UsageLogMapper extends BaseMapper<UsageLog> {
     List<Map<String, Object>> statDailyTokens(@Param("uid") String uid,
                                               @Param("since") LocalDateTime since);
 
-    /** 按 API Key 聚合（对外能力第二批：ApiKey 管理页的近 30 天用量小列；uid 空则跨 Key 归属人全查） */
+    /** 按 API Key 聚合（ApiKey 管理页的近 30 天用量小列；uid 空则跨 Key 归属人全查） */
     @Select("<script>SELECT api_key_id AS k, COUNT(*) AS c, COALESCE(SUM(total_tokens), 0) AS t "
             + "FROM c_ai_usage_log "
             + "WHERE api_key_id IS NOT NULL "
@@ -88,8 +88,7 @@ public interface UsageLogMapper extends BaseMapper<UsageLog> {
      * @param deptId 部门档：非空按该部门全体成员（join c_ai_user.department_id）
      * @param tenantId 租户档：<b>非空按该租户自己的用量</b>。必须显式传——租户过滤那条路只在「线程
      *                 绑着租户」时生效，而模型出口的配额闸跑在框架的弹性线程上（没有绑定），
-     *                 不传就等于拿<b>全平台用量</b>去比单租户的上限（真机 2026-10-29：default 租户
-     *                 的成员被别家「月 2.00 百万」的规则按「已用 42.99 百万」拦下）。
+     *                 不传就等于拿<b>全平台用量</b>去比单租户的上限。
      * @param kinds  受限用途清单（空=全部）
      */
     @Select("<script>SELECT u.model AS model, SUM(u.prompt_tokens) AS p, SUM(u.completion_tokens) AS c "

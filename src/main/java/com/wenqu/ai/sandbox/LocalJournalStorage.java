@@ -12,14 +12,13 @@ import java.util.Objects;
 import java.util.stream.Stream;
 
 /**
- * 框架会话日志用的本地原子存储（全框架化 P1）。
+ * 框架会话日志用的本地原子存储。
  *
  * <p><b>为什么需要它</b>：框架 {@code HarnessAgent#sessionLog} 会用
  * {@code ctx.get(AbstractFilesystem.class).sessionStorage(ctx)} 构造
  * {@code JournalSessionLog}，而后者对 storage 强制 {@code requireNonNull}。
  * 问渠的 {@code ProvisionerSandboxFilesystem} 若不给这个能力（返回 null），
- * 整轮问答会在 {@code FrameworkSessions#open} 里以 NPE 掐断——
- * 真机验证时确实如此（{@code JournalSessionLog:55} 的 NPE）。
+ * 整轮问答会在 {@code FrameworkSessions#open} 里以 NPE 掐断。
  *
  * <p><b>为什么落宿主本地而不是沙箱</b>：会话日志要跨轮、跨进程、跨容器生命周期存活，
  * 而沙箱容器会被空闲回收。接口注释也写明 *"Implementations must durably store bytes before ACK"*
@@ -59,8 +58,7 @@ public class LocalJournalStorage implements AtomicSessionStorage {
      * 不可变路径的读缓存。JournalSessionLog 的 commit 链（{@code commits/{id}.json}）与
      * 大 payload（{@code blobs/{hash}}）都是<b>写一次永不改</b>的内容寻址文件——但
      * {@code SessionTurns.read} 每轮从 0 全量回放（框架 BETA1 未做稳定前缀缓存），对同一批
-     * 文件反复 {@code read + Jackson parse + hash 校验}，会话越长每轮开头的这段越贵
-     * （线上 4C4G 实测占 PRE_REASONING 前数百毫秒，线程栈抓到时正卡在 parse 上）。
+     * 文件反复 {@code read + Jackson parse + hash 校验}，会话越长每轮开头的这段越贵。
      * 在 storage 层缓存 bytes：IO 归零，语义零风险（内容不可变，缓存永不会 stale；
      * 轮转归档把旧目录搬走后，缓存条目返回的仍是同一份 bytes，且那些路径本就不再被读）。
      * parse 与 hash 在框架类内部，动不了——这里的缓存先砍掉 IO 与重复读这两层。
@@ -100,7 +98,7 @@ public class LocalJournalStorage implements AtomicSessionStorage {
  * <p><b>返回 null 而不是空 Value</b>：{@code JournalSessionLog#head} 是这么写的——
  * {@code var header = storage.read(...); if (header != null) parse(header.bytes(), SessionHeader.class).validate();}
  * ——文件不存在时框架期望拿到 null。返回 {@code Value(0, new byte[0])} 会让 parse 去解析空串，
- * *直接抛 JsonException*（真机验证踩过）。
+ * *直接抛 JsonException*。
  */
 @Override
     public Value read(String path) {

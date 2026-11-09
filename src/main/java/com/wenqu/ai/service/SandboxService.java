@@ -46,8 +46,7 @@ import java.util.concurrent.TimeoutException;
  *   <li>会话有工作区 ⇒ scope = <b>工作区 id</b>，workdir = 工作区的 {@code projects/{工作区 id}}。
  *       同一工作区的多个会话因此共用同一个容器与同一个工作区——这是「围绕一件事反复干活」
  *       这件事在盘上的落地；容器空闲回收后 workdir 仍在，<b>文件不丢</b>；</li>
- *   <li>会话无工作区（存量会话、SYSTEM、没挂工作区）⇒ scope = <b>会话 id</b>，workdir 仍是 {@code null}。
- *       <b>与本次改动之前逐字相同</b>，保证不建工作区的用户行为零变化。</li>
+ *   <li>会话无工作区（存量会话、SYSTEM、没挂工作区）⇒ scope = <b>会话 id</b>，workdir 仍是 {@code null}。</li>
  * </ul>
  *
  * <p>释放不靠「run 结束」（本工程没有 run 队列），而是<b>空闲回收</b>
@@ -120,10 +119,9 @@ public class SandboxService {
      * 聊天开轮时等沙盒装配的上限。超了就<b>本轮先不挂沙盒</b>，装配继续在后台跑完并进缓存，
      * 下一轮直接命中——问答本身的路由/检索/模型调用不等它。
      * <p>为什么必须有这道闸：装配要建沙盒容器（正常 3 秒，provisioner 侧健康检查最长 300 秒），
-     * 而这一步在框架建实例之前，卡住时整轮一个字节都出不来（2026-11-05 线上：一次 create 的
-     * 响应没回来，用户对着「正在溯源」干等 5 分半，模型调用根本没发生）。
-     * <p>取 10 秒：正常创建 + 健康检查在本机实测不到 3 秒；真赶上基础设施慢，本轮退回 P1 之前
-     * 的无沙盒形态，比让用户对着空屏等强。
+     * 而这一步在框架建实例之前，卡住时整轮一个字节都出不来。
+     * <p>取 10 秒：正常创建 + 健康检查耗时远小于此；真赶上基础设施慢，本轮先不挂沙盒，
+     * 比让用户对着空屏等强。
      */
     private static final long ATTACH_TIMEOUT_MS = 10_000;
 
@@ -224,7 +222,7 @@ public class SandboxService {
     /**
      * 取当前会话的沙盒 backend，并带上本轮的写入边界。
      *
-     * @param unrestrictedWrites P2 权限档位的 {@code danger-full-access}：true 时写类工具不再限定在
+     * @param unrestrictedWrites {@code danger-full-access} 权限档位：true 时写类工具不再限定在
      *                           沙盒根目录内。默认 false——**沙盒的文件写入边界本来就在这个类这一层**，
      *                           档位要改变它必须经这里传进来，否则「全自主」只是个标签。
      */
@@ -249,12 +247,12 @@ public class SandboxService {
     }
 
     /**
-     * 产框架侧的文件系统（全框架化 P1，{@code SandboxContext} 的必需搭档）。
+     * 产框架侧的文件系统（{@code SandboxContext} 的必需搭档）。
      *
      * <p><b>为什么两者都要</b>：{@code SandboxContext} 只管生命周期，框架的文件与 shell 工具不看它——
      * {@code FilesystemTool} / {@code ShellExecuteTool} 在 <b>build 期</b>就从 builder 字段绑好了文件系统。
-     * 真机验证过：只挂 {@code SandboxContext} 时，模型调 {@code execute("pwd")} 返回的是
-     * <b>宿主项目目录</b>——工具静默跑在宿主上，看着成功实则没隔离。
+     * 只挂 {@code SandboxContext} 时，这些工具会静默跑在宿主上（{@code execute("pwd")} 返回宿主项目目录），
+     * 看着成功实则没隔离。
      * 反过来 {@code AbstractFilesystem} 也替代不了 {@code SandboxContext}：框架只在 spec 路线上自己造
      * 一份默认沙箱上下文，问渠走的是自管形态（{@code externalSandbox}），不挂它就解析不到沙箱。
      *
@@ -272,9 +270,9 @@ public class SandboxService {
     }
 
     /**
-     * 带智能体记忆域的重载（对外能力第二批）：{@code memoryAgentId} 非空 = 本轮记忆路由到
+     * 带智能体记忆域的重载：{@code memoryAgentId} 非空 = 本轮记忆路由到
      * {@code {uid}/agents/{agentId}} 专属根（智能体 memory_mode=专属/叠加，引擎侧已过总闸与三态判定）；
-     * 空 = 用户根，与旧签名逐字同行为。
+     * 空 = 用户根。
      */
     public AbstractFilesystem frameworkFilesystem(String sessionId, String uid, boolean unrestrictedWrites,
                                                  boolean sandboxReady, String memoryAgentId) {
@@ -327,8 +325,8 @@ public class SandboxService {
             }
             if (!sandboxReady) {
                 // 本轮装配超时/失败：别把沙盒文件系统交给框架。框架建实例时 WorkspaceManager.validate()
-                // 会对它做一次 exists()，这一步恰好卡在仍在后台进行的 create 上（实测 33 秒，
-                // provisioner 恢复才放行）。退回本地文件系统 = P1 之前的形态，本轮少几个文件工具。
+                // 会对它做一次 exists()，这一步恰好卡在仍在后台进行的 create 上。本轮退回本地文件系统，
+                // 少几个文件工具。
                 log.warn("[SANDBOX] 本轮沙盒未装配成功，框架文件系统退回本地（不挂沙盒）: session={}", sessionId);
                 return null;
             }
@@ -536,21 +534,19 @@ public class SandboxService {
     }
 
     /**
-     * 把记忆从沙箱文件系统里摘出来，钉回 uid 级（P3 遗留的收口）。
+     * 把记忆从沙箱文件系统里摘出来，钉回 uid 级。
      *
      * <p><b>问题是什么</b>：框架的 {@code WorkspaceManager} 用 build 期那份
-     * {@link AbstractFilesystem} 读写 {@code MEMORY.md} 与 {@code memory/*.md}，而 P1 之后那份就是沙箱
-     * 文件系统——于是记忆跟着沙箱作用域走：开了工作区目录就按工作区、关了就按会话，
-     * 且 P3 之前沉淀在 {@code user-data/agentscope/{uid}/} 的那份读不到（真机问过模型「以前让你做过
-     * 某件事吗」，那条老记忆写得很细，模型答「记忆里检索不到」）。
+     * {@link AbstractFilesystem} 读写 {@code MEMORY.md} 与 {@code memory/*.md}；若那份就是沙箱
+     * 文件系统，记忆会跟着沙箱作用域走（按工作区或按会话），而钉在
+     * {@code user-data/agentscope/{uid}/} 的既有记忆就读不到。
      *
      * <p><b>为什么这样修</b>：框架给的 {@link RoutedSandboxFilesystem} 就是为这件事造的——
      * 类注释原文 *"Prefix-routed filesystem that preserves shell execution on the primary sandbox backend
      * … mount … {@code memory-stores/} routes alongside a SandboxBackedFilesystem without losing
      * {@code shell_execute}"*。把 {@code MEMORY.md} 与 {@code memory/} 两条前缀路由到宿主
      * {@link LocalFilesystem}，其余路径（工作区文件、{@code skills/}）照旧落沙箱，shell 也照旧走主沙箱。
-     * 路由后记忆的宿主目录正好是 {@code user-data/agentscope/{uid}/}——与 P3 之前的老位置重合，
-     * 所以<b>存量老记忆不用迁移就能读回来</b>。
+     * 路由后记忆的宿主目录正好是 {@code user-data/agentscope/{uid}/}，既有记忆原样可读。
      *
      * <p><b>为什么不用 CompositeFilesystem</b>：它不实现 {@code execute}，框架的 {@code ShellExecuteTool}
      * 要求 {@code filesystem instanceof AbstractSandboxFilesystem} 才会注册；直接套 composite 会把
@@ -559,11 +555,10 @@ public class SandboxService {
      * <p><b>为什么两条前缀各给一个根</b>：路由会把命中的前缀<b>剥掉</b>再交给后端
      * （{@code CompositeFilesystem#routeForPath}：{@code memory/2026-10-18.md} → 后端路径
      * {@code /2026-10-18.md}）。若两条前缀共用一个根，日账会落到 {@code {uid}/2026-10-18.md}，
-     * 与老布局 {@code {uid}/memory/2026-10-18.md} 错位（最小用例实测踩过）。故
-     * {@code MEMORY.md} 路由到 {@code {uid}/}、{@code memory/} 路由到 {@code {uid}/memory/}，
-     * 剥完前缀正好各归各位。
+     * 与 {@code {uid}/memory/2026-10-18.md} 的布局错位。故 {@code MEMORY.md} 路由到 {@code {uid}/}、
+     * {@code memory/} 路由到 {@code {uid}/memory/}，剥完前缀正好各归各位。
      *
-     * <p>路由装配失败（拿到非法路径等）就退回不路由：记忆落沙箱是旧行为，比整轮没有文件系统好。
+     * <p>路由装配失败（拿到非法路径等）就退回不路由：记忆落沙箱至少比整轮没有文件系统好。
      */
     private AbstractFilesystem memoryRouted(
             io.agentscope.harness.agent.filesystem.sandbox.AbstractSandboxFilesystem sandboxFs, String uid,
@@ -616,7 +611,7 @@ public class SandboxService {
     }
 
     /**
-     * 产框架侧的 {@link SandboxContext}（全框架化迁移 P1）。
+     * 产框架侧的 {@link SandboxContext}。
      *
      * <p>按官网「自管沙箱实例（高级）」的 {@code externalSandbox} 模式：沙箱由问渠创建与持有，
      * 框架只在本次 call 期间借用，call 结束只 {@code stop()} 不 {@code shutdown()}。
@@ -640,8 +635,8 @@ public class SandboxService {
             if (sessionWs != null && sessionWs.local()) {
                 return null;
             }
-            // 显式工作区走本机执行器（或尚未绑目录），不需要服务器沙盒；此前这里仍会建一个容器，
-            // 文件却全部走执行器，等于白建。直接返回 null，FrameworkSessions 的 sandboxAttached 会置 false。
+            // 显式工作区走本机执行器（或尚未绑目录），不需要服务器沙盒；直接返回 null，
+            // FrameworkSessions 的 sandboxAttached 会置 false。
             Project bound = projectService.projectOfSession(sessionId);
             if (bound != null && !Project.SELECTION_IMPLICIT.equals(bound.getSelectionStatus())) {
                 return null;
@@ -671,7 +666,7 @@ public class SandboxService {
                     .build();
         } catch (Exception e) {
             // 沙盒不可用不该让整轮问答失败：问渠侧的沙盒工具也会返回失败文本让模型自行调整。
-            // 这里只不提供框架沙箱上下文，模型退回无沙盒工具的形态，与 P1 之前一致。
+            // 这里只不提供框架沙箱上下文，模型退回无沙盒工具的形态。
             log.warn("[SANDBOX] 框架沙箱上下文装配失败，本轮不挂框架沙箱 (session={}): {}", sessionId, e.getMessage());
             return null;
         }

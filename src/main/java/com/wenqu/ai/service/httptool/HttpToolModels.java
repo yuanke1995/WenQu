@@ -21,7 +21,7 @@ import java.util.UUID;
  * <pre>[[{id,name,baseUrl,timeoutMs,enabled,auth:{type,header,value,hasValue},
  *   ops:[{name,method,path,summary,params:[{name,in,required}],hasBody,inputSchema}]}]</pre>
  * 上限刻意收紧：每智能体 ≤4 个工具集、每集 ≤20 操作、合计 ≤30——工具越多提示词越大，
- * 工具 schema 在 prompt 里是与系统提示词并列的固定开销（延迟线实测 toolSchema 占 5.25k token）。
+ * 工具 schema 在 prompt 里是与系统提示词并列的固定开销（toolSchema 占 5.25k token）。
  *
  * @author yuanke
  */

@@ -37,7 +37,7 @@ import com.wenqu.ai.security.Permission;
 @RequiredArgsConstructor
 @Tag(name = "文档管理", description = "文档上传/解析、列表、启停用、重解析、批量操作、命中统计")
 public class DocumentController {
-    /** 统一审计事件（Phase 3）：同一份格式串派生日志与结构化事件，不再两处抄 */
+    /** 统一审计事件：同一份格式串派生日志与结构化事件，不再两处抄 */
     private final AuditService audit;
 
 
@@ -301,7 +301,7 @@ public class DocumentController {
     @GetMapping("/recycle")
     public ResultJson recycle(@Parameter(description = "知识库 ID（空=全部）")
                               @RequestParam(value = "kbId", required = false) String kbId) {
-        // 原先这里不过滤任何权限：普通用户不传 kbId 能翻到全平台（含官方手册库同步替换下来的
+        // 不按权限过滤会让普通用户翻到全平台（含官方手册库同步替换下来的
         // 旧篇目）的软删内容。可见口径与操作权对齐（restore/purge 走 canManage）：
         // 管理员全量（页头回收站徽标语义），普通用户按行判管理权。
         return ResultJson.ok(documentService.recycleList(kbId).stream()

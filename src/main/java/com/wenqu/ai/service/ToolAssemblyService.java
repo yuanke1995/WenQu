@@ -148,8 +148,8 @@ public class ToolAssemblyService {
 
             @Override
             public boolean approvalOff() {
-                // 工具执行确认=off（禁用）：不给模型沙盒/MCP 这类有副作用工具。UI 与手册均按此语义承诺，
-                // 此前仅 ask 分支有实现、off 静默等同 auto——按承诺补齐。联网搜索不受本档管辖（族上未标）
+                // 工具执行确认=off（禁用）：不给模型沙盒/MCP 这类有副作用工具，与 UI/手册的语义承诺一致。
+                // 联网搜索不受本档管辖（族上未标）
                 return agent != null && "off".equalsIgnoreCase(agent.getToolApprovalMode());
             }
 

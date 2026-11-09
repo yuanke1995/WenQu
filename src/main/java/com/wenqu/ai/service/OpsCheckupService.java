@@ -34,13 +34,13 @@ import java.util.stream.Collectors;
 /**
  * 系统巡检（运维保障）：一键把「这套平台现在还能不能正常服务」摸一遍，出一份入审计的报告。
  * <p>
- * 判据与 scripts/mac/check-enterprise.py 的真机回归同源（审计链完整性、Redis 边界、供应商在位），
+ * 判据与 scripts/mac/check-enterprise.py 同源（审计链完整性、Redis 边界、供应商在位），
  * 但这里是<b>产品能力</b>而不是工程师的命令行——管理员不需要登服务器也能回答「现在平台健康吗」。
  * <p>
  * 各项互相独立：一项挂了不影响其余各项出结果（巡检本身不能成为第二个故障点）。
  * 级别：ok=正常 warn=要留意 fail=必须处理；overall 取最差项。
  * <p>
- * 2026-11：报告从「进程内一份」升级为<b>落库历史</b>。原因是重启即丢的缓存回答不了运维真正的问题
+ * 报告<b>落库留存历史</b>：重启即丢的缓存回答不了运维真正的问题
  * ——「昨天 22 点那次失败长什么样」。落库后定时巡检、趋势与失败告警才有可回溯的底座；
  * 进程内 {@code lastReport} 只保留作数据库暂不可用时的兜底。
  *
@@ -74,7 +74,7 @@ public class OpsCheckupService {
     public record Check(String key, String group, String name, String level, String detail, long ms, String hint) {
     }
 
-    /** 兼容旧调用点：默认按手动触发 */
+    /** 默认按手动触发 */
     public Map<String, Object> run() {
         return run("manual");
     }
@@ -313,7 +313,7 @@ public class OpsCheckupService {
         }
     }
 
-    /** 审计链：哈希不符必须为 0（有人动过账）；序号洞如实报——那是修复前遗留的历史洞，按设计不算坏 */
+    /** 审计链：哈希不符必须为 0（有人动过账）；序号洞如实报——那是历史遗留的序号洞，按设计不算坏 */
     private Check checkAuditChain() {
         long t = System.currentTimeMillis();
         try {

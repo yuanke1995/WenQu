@@ -22,7 +22,7 @@ import com.wenqu.ai.security.Permission;
 
 /**
  * 检索调试：分步展示"关键词命中 → 向量命中 → 合并 → 重排 → 最终上下文 → 被排除"，
- * 用于排查"为什么答非所问"（P0-3）
+ * 用于排查"为什么答非所问"
  *
  * @author yuanke
  */
@@ -99,7 +99,7 @@ public class RetrievalDebugController {
             String kid = String.valueOf(doc.getId());
             Object titleObj = doc.getMetadata().get("title");
             String title = titleObj == null ? "" : String.valueOf(titleObj);
-            // M6 RedisVectorStore 查询还原 metadata 可能缺失 title/docId，按 knowledgeId 查 MySQL 兜底（与 buildHit 一致）
+            // RedisVectorStore 查询还原 metadata 可能缺失 title/docId，按 knowledgeId 查 MySQL 兜底（与 buildHit 一致）
             String docId = doc.getMetadata().get("docId") == null ? "" : String.valueOf(doc.getMetadata().get("docId"));
             if (title.isEmpty() || docId.isEmpty()) {
                 try {
@@ -155,8 +155,6 @@ public class RetrievalDebugController {
 
         // 4. 重排（与生产链路同一入口，判定单一来源）：RerankService.rank 内含完整口径——
         //    「候选 <rerank.minHits 跳过 / ≥minHits 重排、超 rerank.maxHits 截断 top maxHits 重排」。
-        //    此前本接口自留一份「仅 6~15 条才重排」的旧判定：候选多于此区间时显示 rerankApplied=false，
-        //    而生产在重排（实测候选 65 条仍 top15 重排）——面板与实际不符，按面板调参会得出错误结论。
         List<HybridRetrievalService.Hit> reranked = merged;
         // 重排可用性/实际调用都按“本轮命中库的重排模型”判定：库绑了模型就不该因平台层没配而报不可用。
         // 按命中库而不是范围取模型：范围可能是“全部库”，按范围会选中别人的默认库（hitKbIds 已在上面算出）。
@@ -183,9 +181,6 @@ public class RetrievalDebugController {
         result.put("reranked", reranked.stream().map(this::hitMap).toList());
 
         // 5. 最终上下文：走与真实问答**同一道相关性门**。
-        //    此前这里只截前 8 条，面板报 8 而生产实际进 1~2 条——排查召回的人会去找一个不存在的堵点
-        //    （2026-10-13 实测：为此连试每库配额、门限、重排窗口三组 A/B 全部空转，真因是分布本身
-        //    只有 1~2 块过 0.6 门）。与本文件上面第 4 步那条"面板要与生产同口径"是同一条标准。
         double minRerank = configService.getDouble("retrieval.minContextScore", ConfigDefaults.RETRIEVAL_MIN_CONTEXT_SCORE);
         double minFusion = configService.getDouble("retrieval.minFusionScore", ConfigDefaults.RETRIEVAL_MIN_FUSION_SCORE);
         List<HybridRetrievalService.Hit> gated = new ArrayList<>();

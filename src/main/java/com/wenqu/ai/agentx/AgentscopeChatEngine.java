@@ -68,7 +68,7 @@ import java.util.regex.Pattern;
  * <p>执行形态是 {@code AgentSession.submit}（常驻会话实例），不是每请求 {@code streamEvents}+close：
  * 只有前者带来待办持久化、答复后由框架找回原任务与原工具调用接续执行，以及按 {@code seq} 游标读增量
  * 事件（断线续跑的等价物）。模型切换走「换模型就重建实例并接管同一条会话」——会话能否接续不依赖实例
- * 永生：Phase 0 实测换一个全新实例、同一 {@code (userId, sessionId)} 能读到完整历史并接着答。
+ * 永生：换一个全新实例、同一 {@code (userId, sessionId)} 也能读到完整历史并接着答。
  * <p>框架帮不上、必须问渠写的只有两处：RAG 检索链（框架没有问渠的多路召回，包成被调用的工具）
  * 与前端 29 个事件名的词汇差异（见 {@link #translate}）。
  */
@@ -109,10 +109,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
 
     /**
      * 早产工具卡：模型一边流式生成工具入参，界面一边就能看到「这一步在跑」。
-     * <p>框架只在 assistant 消息完整后才写 {@code tool/requested}。2026-11-08 实测一轮「做一个官网」：
-     * {@code presentArtifact} 的 33KB HTML 入参从第 4.7 秒开始生成、第 69.8 秒才完整，中间 65 秒
-     * 前端一个工具都没有（那一轮在界面上就是纯静默），而工具真正执行只用了 90ms。
-     * {@code model/chunk} 里带 {@code tool_use} 增量块（首块有 name/id，后续块是参数片段），
+     * <p>框架只在 assistant 消息完整后才写 {@code tool/requested}：长入参生成期间前端一个工具都没有，
+     * 界面就是一段纯静默。{@code model/chunk} 里带 {@code tool_use} 增量块（首块有 name/id，后续块是参数片段），
      * 据此提前发一张 {@code tool_status start} 卡即可把这段静默变成可见的进行中。
      * <p>短入参的检索类调用不值得闪一下：累计到这个字数、或生成超过这个毫秒数才发第一帧。
      */
@@ -285,7 +283,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     private static final int GOAL_RETRY_MAX = 20;
     /**
      * 工具展示名与悬停说明的解析入口（落库的工具卡按这里补全展示字段）。
-     * <p>框架引擎原先把工具<b>裸名</b>当 {@code label} 下发（{@code toolCard} 里的 {@code esc(name)}），
+     * <p>框架引擎把工具<b>裸名</b>当 {@code label} 下发（{@code toolCard} 里的 {@code esc(name)}），
      * 前端 {@code toolLabel} 认得出「这不是展示名」而回落本地映射，于是这一路上的卡片全靠那份手抄表撑着——
      * 表里没有的（{@code consultAgent}、{@code writeTodo}、{@code plan_*}）就现出英文裸名。
      * 问渠自己的工具归注册中心，框架挂的那几把归 {@link FrameworkToolLabels}，两处合成一个解析入口。
@@ -310,10 +308,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     private volatile boolean jedisResolved;
     /**
      * 引擎级共享的模型 HTTP 通道（OkHttp）：连接池跨会话、跨实例常驻。
-     * <p>此前每个会话实例各建一个 transport＝各一份连接池，会话轮与轮之间连接虽能复用，
-     * 但<b>池与池之间不互通</b>，而且空闲连接没有任何保活——网关侧把空闲连接掐掉后，
-     * 下一轮的第一笔请求都要重新 TCP+TLS（方舟裸测：冷连接首包 0.55s，热连接 8ms，
-     * 这 0.5s 正是稳态问答「模型段」的最大单一开销）。共享实例 + HTTP/2 pingInterval
+     * <p>每个会话实例各建一个 transport 就等于各一份连接池：轮与轮之间连接虽能复用，
+     * 但<b>池与池之间不互通</b>，空闲连接也没有保活——网关侧把空闲连接掐掉后，
+     * 下一轮第一笔请求都要重新 TCP+TLS（冷连接首包比热连接多约 0.5s，是稳态问答「模型段」
+     * 的最大单一开销）。共享实例 + HTTP/2 pingInterval
      * 让活跃供应商的连接始终保持热：ping 对 HTTP/2 连接生效（防网关闲除断连），
      * 对 HTTP/1.1 连接无感，openai 兼容网关两种形态都覆盖。
      */
@@ -530,7 +528,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     @Override
     public void chat(ChatCommand cmd, RunChannel channel) {
         // 模型引用按问答侧同一条链解析（请求覆盖 > 会话固定 > 个人默认）：只认请求里那一份时，
-        // 靠个人默认作答的轮会解析不出路由（实测是 NPE 打断整轮，连错误帧都没有）
+        // 靠个人默认作答的轮会解析不出路由（NPE 打断整轮，连错误帧都没有）
         com.wenqu.ai.service.ChatService.TurnModel turn = modelResolver.apply(cmd);
         if (turn.unusableMessage() != null) {
             // 已停用的模型不发给上游：上游只会回一句 401/404，用户读到的是「网关坏了」，
@@ -559,7 +557,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         WenquSourcePool pool = tools.newPool(cmd, channel.emitter());
         // 本轮改过用户存过的选择（失效的会话模型已清除、改用他的默认模型）必须说出来。
         // 只登记降级、不再另发一条 WARN：降级随消息落库、刷新后仍在，WARN 是同一句话的第二份，
-        // 两条都会渲染成警示条（实测同一个原因上下各一条）
+        // 两条都会渲染成警示条（同一个原因上下各一条）
         if (turn.fallbackNotice() != null) {
             pool.registrar().degrade("modelFallback", turn.fallbackNotice());
         }
@@ -673,7 +671,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             slot.current().taint().mark("workspace-memory");
         }
         // 起轮缝里先给这条会话的事件日志换一次代：框架每轮开始要把整条事件链从头读好几遍，
-        // 代价按事件数的平方算（实测 3.5k→1.1s、14k→4.7s、9.2 万→单是最贵的一趟 40.2s），
+        // 代价按事件数的平方算，
         // 而本轮第一个这样的读就是下面的 reconcileStalledTurn（它读 SessionTurns.read）。
         // 排在所有全量读之前，否则本轮照样白付一次旧账；上一轮留着没结算的卡或没撒手的租约时
         // 框架自己会拒换代，那一轮就照旧不换，下一轮再试。
@@ -696,7 +694,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 channel.emit(RunEventType.WARN, message);
             });
         }
-        // 框架工具档位闸按轮更新标签（全框架化 P1）：拒了什么要能在日志里追到是哪一轮。
+        // 框架工具档位闸按轮更新标签：拒了什么要能在日志里追到是哪一轮。
         AgentxFrameworkToolGate toolGate = sessions.frameworkToolGate(sessions.key(cmd));
         if (toolGate != null) {
             toolGate.beginTurn(turnId);
@@ -714,7 +712,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
 
         // 计划模式（框架原生 plan_enter/plan_write/plan_exit）按轮进入，跑完必须退出。
         // 是否进入只由两件事决定：用户显式开计划开关，或模型自己在推理中调用 plan_enter。
-        // 问渠不再做「按消息意图预判」——预判器已删除，避免在模型之外多一层会误判的闸。
+        // 问渠不做「按消息意图预判」，避免在模型之外多一层会误判的闸。
         boolean planWanted = cmd.isPlanMode();
         boolean planEngaged = planWanted && sessions.setPlanMode(cmd, true);
         if (planWanted && !planEngaged) {
@@ -723,17 +721,16 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             channel.emit(RunEventType.WARN, "计划模式未能启用（框架侧未进入计划位），本轮将不使用计划卡");
         }
         // 送进模型的不只是问题原文：附件正文 / @ 引用 / # 历史引用都在这一段拼进去。
-        // 此前这里直接送 cmd.getQuestion()，于是用户传的东西模型一概看不见（附件问题表现为
-        // 它如实回答「没有看到您上传的文件」）——落库只保证人能回看到，不等于模型收到了。
+        // 只送问题原文的话，用户传的东西模型一概看不见——落库只保证人能回看到，不等于模型收到了。
         String modelInput = promptAssembler.userContentWithContext(cmd, binding.skillFilter(),
                 tools.agentMentionDirective(cmd, policy)) + imgNote;
         // 用户改动对账（轮首）：只等一小会儿，快照慢就跳过——对账是增强，不能把每一轮都拖住。
         // 放在 modelInput 而不是系统提示词里：系统提示词是 build 期烤进常驻实例的，轮级事实进不去。
         String driftNote = turnChangeService.driftNote(cmd.getSessionId(), changes, DRIFT_NOTE_WAIT_MS);
         if (!driftNote.isEmpty()) modelInput = modelInput + driftNote;
-        // 模型能读图时，把原图作为 image_url 内容部件随本轮一起送进去。此前这里只有 submit(String)，
+        // 模型能读图时，把原图作为 image_url 内容部件随本轮一起送进去。
         // 图片在「问题正文」里没有任何落点——附件有 buildContextText 抽正文，图片没有等价的通道，
-        // 于是发了图模型也一概看不见（它只会如实回答"没有看到图片"）。
+        // 不随本轮送，模型就一概看不见（只会如实回答"没有看到图片"）。
         // 目标模式：用户这一轮也带上当前目标的一句上下文（跨轮目标不能只活在更早的提示词里，
         // 压缩/换设备之后仍然要让助手知道自己正在做什么）。没有当前目标时拼空串。
         // 续跑轮不走这里（续跑提示词由 GoalPromptBuilder 自带完整目标），不会重复。
@@ -745,7 +742,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         if (!goalNote.isEmpty()) {
             modelInput = modelInput + goalNote;
         }
-        // 重新计划血缘（B+）：上一版计划与那一轮执行进度必须拼进本轮用户消息，而不是只留在历史里——
+        // 重新计划血缘：上一版计划与那一轮执行进度必须拼进本轮用户消息，而不是只留在历史里——
         // 长会话被压缩/换设备/历史裁剪后，历史里的旧计划可能已经不在模型上下文里。
         // 只在本轮确实开计划模式时拼：普通问答带 planBaseId 没有意义，也别往上下文塞一整份旧计划。
         String planBaseNote = cmd.getPlanBaseContext();
@@ -838,17 +835,17 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 等待预算用尽：卡片已落终态，收尾时不再对用户说「答完会自动接着跑」
         // 本轮有没有真的被框架启动。投递循环 100ms 一跳，正常几百毫秒内就离队；被闸门跳过时它会
         // 永远停在 queued，而「没启动」这件事框架自己不报错——不另设一条早于整轮预算的判据，
-        // 用户看到的就只是「转了五分钟然后说超时」，一个字也没有（真机 sbx-3 三连中）。
+        // 用户看到的就只是「转了五分钟然后说超时」，一个字也没有。
         long launchDeadline = startedAt + LAUNCH_GRACE_MS;
-        // 会话状态改为跟事件认（见 TurnMirror）。起轮种一次权威待办，之后每一跳只认这一跳读到的事件。
+        // 会话状态跟事件认（见 TurnMirror）。起轮种一次权威待办，之后每一跳只认这一跳读到的事件。
         TurnMirror mirror = new TurnMirror();
         mirror.resyncPending(session);
         // 兜底复查时刻：租约过期与 inbox 拒绝不落事件，只能按 STATE_RECHECK_MS 回查权威值
 
         // 一整轮里待办可能出好几次：批准之后模型仍可再要一次确认。所以这里不是「等一次答复」，
         // 而是跟随会话现状——有待办就等人，没待办就跟到最后一条任务，任务结算了还要再看一眼
-        // 有没有新待办或接续出来的新任务，两者都没有才算这一轮跑完（真机踩过：只等一次就收尾，
-        // 第二次确认的卡永远发不出去，正文也是空的）
+        // 有没有新待办或接续出来的新任务，两者都没有才算这一轮跑完；只等一次就收尾的话，
+        // 第二次确认的卡发不出去，正文也是空的。
         final class FollowHooks implements TurnFollowLoop.Hooks {
             @Override
             public long now() {
@@ -1008,9 +1005,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             channel.emit(RunEventType.PLAN_CANCELLED, "{}");
         }
         // 整轮机器预算用尽而循环是自己退的：屏幕上这一轮已经收尾，框架那一跑却还活着——不叫停，
-        // 下一步与下一段钱就记在没有人跟的那一跑上（线上 57 分钟那一账的第 4 条机制：整轮那道闸
-        // 打不断在途调用，turn 1/3/4 全部越闸）。中断是协作式的：在途那一步跑完，之后不再起新的
-        // 模型调用；已经流出半截的正文照旧走下面的收尾落库，不丢。
+        // 下一步与下一段钱就记在没有人跟的那一跑上。中断是协作式的：整轮那道闸打不断在途调用，
+        // 在途那一步跑完之后不再起新的模型调用；已经流出半截的正文照旧走下面的收尾落库，不丢。
         // 判据用同一个 machineMs——与上面 while 的退出条件一字不差，否则「退出了」与「预算用尽」
         // 会对不上，把正常答完的那一轮也报成超时。
         boolean ranOutBudget = false;
@@ -1023,8 +1019,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                     cmd.getSessionId(), turnId, machineBudgetMs);
         }
         // 跟随循环退场时框架那一跑还活着：这不是正常收尾。它还会继续调模型、继续计费，
-        // 而下一条新轮会在它尚未提交的上下文上从零开始（线上 2026-11-03：用户重发同一问，
-        // 新一轮只看到系统提示词与原问题，把上一轮已经做好的文件又“确认”了 33 次）。
+        // 而下一条新轮会在它尚未提交的上下文上从零开始。
         // 预算那一条上面已经叫停过；这里兜住其余退出支路，确保「引擎的轮」与「框架的 run」同生共死。
         if (!loop.stopped() && !loop.neverLaunched() && !superseded && !ranOutBudget && !loop.timedOut()
                 && (current == null || !current.settled())
@@ -1046,7 +1041,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                     : "supersede".equals(planOutcomeRaw) ? "superseded" : "rejected");
             // 版本项现在带 feedback（产出该版的修改意见）：刷新后 PlanViewer 的版本轨也能逐版回看
             planRecord.put("versions", planVersionList);
-            // B+ 血缘：这一版自己的稳定 id + 它基于哪一版旧计划（旧计划那一轮的执行统计也落库，
+            // 计划血缘：这一版自己的稳定 id + 它基于哪一版旧计划（旧计划那一轮的执行统计也落库，
             // 刷新/换设备后新卡仍能显示「调整自 v1 · 已执行 2/5」，不必再依赖本机内存）。
             if (recording.planApprovalIdValue() != null) planRecord.put("id", recording.planApprovalIdValue());
             if (cmd.getPlanBaseId() != null && !cmd.getPlanBaseId().isBlank()) {
@@ -1065,7 +1060,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         //  2) 卡片留在 PENDING → 恢复端点还能把它重建出来，但答了没人接，成了「点了没反应」。
         // 所以按超时收口：待办落 TIMEOUT、这一轮走 timedOut 那条落库与文案（半程内容据此可见）。
         // 收尾的权威待办快照只做一次：pending() 按 256 一批从 0 倒走整条 commit 链，万级事件
-        // 日志上一次就是十几秒（2026-11-01 纸表轮收口空窗 57s 的主力），下面四处各读一遍等于
+        // 日志上一次就是十几秒，下面四处各读一遍等于
         // 四份白付。abandon 结算掉的卡在快照里仍挂着——那几支已经把 timedOut 置真，awaiting
         // 的 !timedOut 正好把这笔陈旧性挡掉；真还在等人的卡快照如实保留，语义不变。
         Map<String, SessionEvent> pendingAtClose = session.pending();
@@ -1084,9 +1079,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         if (!loop.neverLaunched()) abandonPendingInteractions(session, cmd, channel, recording, loop.stopped() || loop.stalled(), pendingAtClose);
         sessions.setPlanMode(cmd, false);
         // 正文取哪一份：优先本轮实际流出来的那一截（与发出去的 token 帧同源）；只有它为空、且这一轮
-        // 本身没失败，才回退到会话里最后一条有正文的助手消息。反过来先查会话会出两件坏事：被叫停的那一跑在 Transcript 里
-        // 没有 committed text，取到的是<b>上一轮的答复</b>——拿别人的话给这一轮存档；真机踩过停止轮
-        // 库里 0 行，就是这个取序的另一面（那一会话恰好只有一轮，所以表现为空而不是串轮）。
+        // 本身没失败，才回退到会话里最后一条有正文的助手消息。先查会话会拿到<b>上一轮的答复</b>：
+        // 被叫停的那一跑在 Transcript 里没有 committed text，等于拿别人的话给这一轮存档。
         // 流末尾留着没定性的尾巴先归位（它可能只是正文的最后几个字）
         ModelOutputParser.Delta finishTail = recording.related.finish();
         recording.answer(finishTail.text());
@@ -1096,12 +1090,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 空正文时下面那条回退取的就是框架收尾消息本身，再补一遍等于把同一段话印两次
         final boolean streamedBody = !answer.isBlank();
         // 失败判据必须排在回填前面：回填不问这一轮是不是失败的那一跑，上游 401 的轮因此会顶着
-        // 「答好了」的样子把上一轮的正文存进历史——真机 2026-10-15 20:00:49 那轮 401，库里多出一条
-        // 597 字助手行、model 记的正是失败那个模型，界面上只收到一个正常 done，失败一个字没提。
+        // 「答好了」的样子把上一轮的正文存进历史，失败一个字没提。
         String failure = runFailure(session, current);
         // 上游把连接直接收了、没给带 finishReason/usage 的末块：框架那一跑看到的是「正常结束」，
         // executionError 为空、done 帧照发——屏幕上是一段凭空短掉的正文，刷新后连「这一轮断过」
-        // 都读不出来（真机 2026-10-29 用假上游复现：半句正文 + done + fail_msg 为 NULL）。
+        // 都读不出来。
         // 框架不报，就只能问渠自己报：这个判据出自模型出口那一层，不靠上游错误文本。
         if (failure == null && turnModel != null && turnModel.abruptCloses() > abruptBefore) {
             failure = UPSTREAM_STREAM_CUT;
@@ -1113,9 +1106,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 是英文、带响应体碎片，用户在铃铛里读不出「该充值还是该换模型」
         String spokenFailure = null;
         // 框架把「重试烧完」压成一句 Retries exhausted: 2/2，真正的 429/额度文案留在它挂住的
-        // 那次失败里；只看这句会把「额度耗尽」说成「模型无响应」，指的方向正好反了
-        // （真机 2026-11-03 21:48 线上：上游 429 AccountQuotaExceeded，屏幕上给的是「换一个响应快的
-        // 模型」）。只往<b>已判定失败</b>的那一句并原文——重试成功的那一轮同样会记一次错误，
+        // 那次失败里；只看这句会把「额度耗尽」说成「模型无响应」，指的方向正好反了。
+        // 只往<b>已判定失败</b>的那一句并原文——重试成功的那一轮同样会记一次错误，
         // 拿它当失败就是把答好了的一轮报成故障。
         // 并原文也只认「Retries exhausted」这一句本身：doOnError 对每次失败的尝试都计数，
         // 重试救回的旧错也在 modelErrors 差值里——只看差值就会把无关的 429 拼上断流轮，
@@ -1129,9 +1121,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         }
         if (answer.isBlank() && failure == null) answer = stripFallbackBody(
                 recording, lastAssistantText(session, historyBefore));
-        // 框架那一跑本身失败（上游 402 额度、网关异常、运行被拒……）必须说出来的那一件事：双跑实测——
-        // 同一问题手写引擎发 error 帧，框架只发了一条「done + 空正文」，用户看到的是「它答了个空」，
-        // 而不是「这次没答出来，原因是额度不足」。失败判据用框架自己留的 executionError / 任务终态。
+        // 框架那一跑本身失败（上游 402 额度、网关异常、运行被拒……）必须说出来：它只发一条
+        // 「done + 空正文」，用户看到的是「它答了个空」，而不是「这次没答出来，原因是额度不足」。
+        // 失败判据用框架自己留的 executionError / 任务终态。
         if (loop.neverLaunched()) {
             // 单独一句而不是套用「AI 回复失败，请稍后重试」：这一轮模型根本没被调用，重试同样的坑还在，
             // 得让用户知道该换个动作
@@ -1141,7 +1133,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             log.warn("[FAIL-LOUD] 本轮 submit 始终未被框架启动: session={} turn={} 空等 {}ms",
                     cmd.getSessionId(), turnId, System.currentTimeMillis() - startedAt);
         } else if (!loop.stopped() && failure != null) {
-            // 不看正文空不空：跑出过半截正文的那一跑同样是被 402／网关异常打死的。原先只在
+            // 不看正文空不空：跑出过半截正文的那一跑同样是被 402／网关异常打死的。若只在
             // answer 空时才出声，症状是「气泡照报已完成、正文停在半句」，而错误卡与「这一轮中断」
             // 那句状态全都没长出来——用户得自己发现它没说完。
             // 叫停那一支不套用：那是用户自己按的，再说一句「AI 回复失败」就是把他的动作报成故障。
@@ -1201,11 +1193,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 userMessageId, loop.stopped(),
                 loop.timedOut(), ranOutBudget, loop.stalled(), awaiting, machineMs, interactions.humanWaitMs(), wallMs, prepMs,
                 session, historyBefore, turnId, planRecord);
-        // 站内通知（旁路：内部全捕获，写不进去只记 WARN，绝不影响这一轮收口）。这件事此前只有
-        // 屏幕前的人看得见——长轮跑完时人多半已经切走或锁屏，铃铛一声不响等于「跑完没人知道」。
+        // 站内通知（旁路：内部全捕获，写不进去只记 WARN，绝不影响这一轮收口）：长轮跑完时
+        // 人多半已经切走或锁屏，只靠屏幕看得见等于「跑完没人知道」。
         // 「提前停了」与「没跑成」分两句说：已经写出一半正文的那一轮，用户真读到了东西，
         // 把它报成「没跑成」等于说那段话不存在。
-        // 铃铛只说人话：spokenFailure 就是 emitRunFailure 生成的那一句。原先这里在它为空时退回
+        // 铃铛只说人话：spokenFailure 就是 emitRunFailure 生成的那一句。若在它为空时退回
         // `failure`——那是上游原始串（「HTTP transport error during streaming: HTTP request failed
         // with status 403…」，英文、带响应体碎片），用户在铃铛里读不出「该充值还是该换模型」，
         // 而用户自己叫停的那一轮也会被报成故障。原始串留给日志，不进通知。
@@ -1272,8 +1264,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 静默判死那条（ModelUtils 的 timeout 包成 ModelException「Model request timeout after PT60S」，
         // 重试烧完再包成「Retries exhausted: 2/2」）必须单独说一句：通用那句「请稍后重试」不知道重试
         // 也是白重试——上游已经按设置的时长判死过两轮。指出的动作是「等一会再问」或「换个响应快的
-        // 模型」，不是原地反复按发送。真机 2026-10-29：假上游收下请求后一个字不发、阈值设 3 秒，
-        // 交上来的原文逐字是 Retries exhausted: 2/2——只认 timeout 这个词的话这一支照样落进通用文案。
+        // 模型」，不是原地反复按发送。只认 timeout 这个词的话，Retries exhausted 那一支照样落进通用文案。
         String lower = raw.toLowerCase(java.util.Locale.ROOT);
         if (!quota && !limited && (lower.contains("timeout") || lower.contains("timed out")
                 || lower.contains("retries exhausted"))) {
@@ -1384,8 +1375,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             channel.emit(RunEventType.WARN, surfaceProblem);
         }
         // 目标续跑也要先收拾「上一轮没被框架记成结束」的遗留：删掉旧目标/暂停旧目标时，
-        // 它可能刚好有一轮进了收件箱还没启动；不归档，新目标的第一轮会一直排在那条死轮后面
-        // （实测：submit 空等 30 秒后转暂停，界面看起来目标在跑却一动不动）。
+        // 它可能刚好有一轮进了收件箱还没启动；不归档，新目标的第一轮会一直排在那条死轮后面。
         if (turnId != null && turnId.startsWith("goal:")) {
             if (recover) sessionGateway.recoverInterruptedSession(session, turnId);
             sessionGateway.reconcileStalledTurn(session, cmd.getSessionId(), sessions::abandoned);
@@ -1398,7 +1388,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 续跑轮同样要归零重复调用闸：不归零，上一轮最后那条命令会把这一轮的第一步判成重复
         AgentxRepeatGuard repeatGuard = sessions.repeatGuard(sessions.key(cmd));
         if (repeatGuard != null) repeatGuard.beginTurn(null);
-        // 接续轮同样要更新档位闸标签（全框架化 P1）：否则被拒的工具在日志里挂到上一轮头上。
+        // 接续轮同样要更新档位闸标签：否则被拒的工具在日志里挂到上一轮头上。
         AgentxFrameworkToolGate toolGate = sessions.frameworkToolGate(sessions.key(cmd));
         if (toolGate != null) {
             toolGate.beginTurn(turnId);
@@ -1414,15 +1404,15 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     }
 
 /**
- * 供 builder 用的框架文件系统（全框架化 P1）。
+ * 供 builder 用的框架文件系统。
  *
      * <p><b>为什么走 builder 而不是 RuntimeContext</b>：框架的文件工具在 build 期就绑好了文件系统
      * （{@code HarnessAgent:2895} {@code new FilesystemTool(filesystem, ...)}、
      * {@code :2903} {@code new ShellExecuteTool(sandbox)}），两者都读 builder 字段，
      * 对 {@code RuntimeContext} 里的 {@code AbstractFilesystem} 无感。
-     * 真机验证过这个差别：只往 ctx 里put 时，{@code execute("pwd")} 返回宿主项目目录。
+     * 只往 ctx 里 put 时，{@code execute("pwd")} 返回的是宿主项目目录。
      *
-     * <p>拿不到时返回 null（沙盒不可用）——框架会退回默认文件系统，形态与 P1 之前一致，
+     * <p>拿不到时返回 null（沙盒不可用）——框架会退回默认文件系统，
      * 不为了「有工具就挂」而给一个指向宿主的文件系统：那会让隔离静默失效。
      */
     private io.agentscope.harness.agent.filesystem.AbstractFilesystem frameworkFilesystem(
@@ -1461,7 +1451,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     }
 
     /**
-     * 把本轮的工具卡记录器交给框架工具档位闸（全框架化 P1）。
+     * 把本轮的工具卡记录器交给框架工具档位闸。
      *
      * <p>框架工具走框架 Toolkit，其执行不经过问渠的 {@code rawCallbacks} 通道，
      * 工具卡只能由闸自己从 {@code ToolUseBlock} 取入参往 {@code Recording} 报。
@@ -1627,9 +1617,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
 
     /**
      * 把后台目标续跑轮登记上运行总线——不登记的话这一轮只进账本，浏览器上什么都看不见，
-     * 用户得刷新才读得到（真机实测：目标跑了 4 轮、正文全在库里，聊天区一颗气泡都没长）。
+     * 用户得刷新才读得到。
      *
-     * <p>当初「刻意不另开总线 run」的顾虑仍然成立：{@code ChatRunBus.open} 是同会话<b>替换</b>语义，
+     * <p>「不另开总线 run」的顾虑仍然成立：{@code ChatRunBus.open} 是同会话<b>替换</b>语义，
      * 顶掉一条活着的用户轮会把它的 done 帧与观众一起切掉。所以这里只顶「上一轮目标轮」——那一条
      * 已经发过 done、正等巡检回收；探到的是用户自己那一轮就照旧不登记，这一轮仍按账本回显。
      *
@@ -1656,8 +1646,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     /**
      * 进程重启后接回一条待办并把它跑完（{@link FrameworkSessions.ResumeHandler} 的实现）。
      * <p>为什么能做：框架的会话状态本来就持久化在 stateStore 里，缺的只是「内存里那条常驻实例」。
-     * 按表里的归属重建实例、respond 进去、跟着跑到收尾并落库，用户刷新就能看到那一轮的答案——
-     * 而不是像现在这样，一次「已批准」之后什么都没发生。
+     * 按表里的归属重建实例、respond 进去、跟着跑到收尾并落库，用户刷新就能看到那一轮的答案，
+     * 而不是「已批准」之后什么都没发生。
      * <p>分工：respond <b>同步</b>做（控制器要当场知道这次裁决有没有接上，接不上才如实报失效），
      * 续跑<b>异步</b>做（可能跑几分钟，不能占住那次 HTTP 请求）。
      */
@@ -1681,7 +1671,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
 
     /**
      * 卡片已答复、但这一轮没有活着的跟随者（跟随循环撞到墙钟上限退了、或进程重启过）：补起一个跟到收尾。
-     * <p>不补的表现为「答了却什么都没发生」——真机实测到的正是这一面：续跑那一跑重新执行了工具、模型也
+     * <p>不补的表现为「答了却什么都没发生」：续跑那一跑重新执行了工具、模型也
      * 重新推理出了正文，事件全在框架的 Session Log 里，只是没有人在读，正文也就没落库。
      */
     @Override
@@ -1697,7 +1687,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         Following f = openForContinuation(sessionId, userId, turnId, recover, guestUid);
         if (f == null) {
             // 接不动必须说：扫描器报「已交给引擎接续 N 条」而这里悄悄返回 null，
-            // 用户看到的就是「扫到了、也交接了、什么都没发生」（2026-10-29 真机就是这个形状）。
+            // 用户看到的就是「扫到了、也交接了、什么都没发生」。
             log.warn("[agentx] 这一轮接不回来（模型解析不到或会话重建失败）session={} turn={} user={}",
                     sessionId, turnId, userId);
             return;
@@ -1799,7 +1789,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     /**
      * 提问行的一次落库——正常轮与失败轮共用，这一行的形状只在这里定义一遍。
      * <p>编辑重发要挂上被替换旧分支的版本组键（与工作流路径同口径）：被编辑的旧分支已在控制器
-     * 同步段软删留档，不挂组键的话「‹ n/N ›」切换器出不来，旧版本从此够不着——「编辑重发可反悔」就只剩一句空话
+     * 同步段软删留档，不挂组键的话「‹ n/N ›」切换器出不来，被替换的旧版本也无法回看。
      */
     private String appendQuestion(ChatCommand cmd, String turnId, List<String> userImgUrls) {
         String messageId = sessionService.appendMessage(MessageWrite.builder()
@@ -1876,8 +1866,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     /**
      * 各形态的等待预算，与手写侧同一组配置键（{@code HitlDecisionService} 的三个读取口）：
      * 提问 {@code chat.askTimeoutMs}、计划 {@code chat.planTimeoutMs}、工具审批 {@code chat.approvalTimeoutMs}。
-     * <p>此前这一段只分「计划 vs 其余」，提问卡被塞进了 {@code approvalTimeoutMs}（默认 120s）——
-     * 比它本该有的 10 分钟短了 5 倍，而提问恰恰是最需要人从容看完题面的一类。
+     * <p>提问不能和工具审批挤同一份短预算：它恰恰是最需要人从容看完题面的一类。
      */
     private long pendingBudgetMs(PendingKind kind) {
         return switch (kind) {
@@ -1898,8 +1887,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * <b>不</b>把这一轮掐掉。
      * <p>与手写侧 {@code ChatService} 的超时分支同一语义（那边是
      * {@code buildCombinedAnswer(..., "TIMEOUT")} 回一句「用户未回答这一题」）：超时是「用户不在」，
-     * 不是「用户拒绝」，也不是「这一轮作废」。此前框架侧只有「超时即收轮」一条路，
-     * 于是没人答一次提问，整轮就没了——真机实测到的正是这一条。
+     * 不是「用户拒绝」，也不是「这一轮作废」；否则一次提问没人答，整轮就没了。
      * <p>走 {@code respondRaw} 而不是 {@code respondAsk}：后者末尾会 {@code ensureFollowing} 补起跟随者，
      * 而这里本来就有一个活着的跟随循环在跑，补第二个会有两个循环读同一条会话、各落一条助手消息。
      */
@@ -1931,8 +1919,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 这一轮不再有人跟随：把还挂在人身上的待办当场收口。三件事必须一起做，少一件就有一件用户看得见的事坏掉。
      * <ul>
      *  <li><b>卡片终态</b>：挂在提问卡上的那一次工具调用只有 {@code tool/requested}、没有结果，不补终态
-     *      那张卡就永远转圈（真机 2026-10-16 21:19：用户早已叫停、正文也落了「已停止本轮」，那张
-     *      「向用户提问」还在转圈——因为落库那份 {@code status} 就停在 start，刷新一次还是转圈）。</li>
+     *      那张卡就永远转圈——落库那份 {@code status} 停在 start，刷新一次还是转圈。</li>
      *  <li><b>框架侧结算</b>（{@link SessionRecovery#cancelPending}）：那一跑在框架台账里留的是
      *      {@code run/end status=suspended}，而 {@code Turn.ended()} 只认 completed/cancelled——不补这一刀，
      *      这条会话之后每一轮都只进收件箱不启动（与 {@code reconcileStalledTurn} 那条 failed 轮同一种病）。</li>
@@ -2019,8 +2006,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
          * 本轮实际流出的正文（与发给前端的 {@code token} 帧同源）。
          * <p>为什么不只取会话里那条最终 assistant 消息：框架把「一条完整的助手消息」在跑完时才写进
          * Transcript，被叫停或等待超时的那一跑根本没有 committed text——那时去取「最后一条有正文的
-         * 助手消息」拿到的是<b>上一轮的答复</b>，等于拿别人的话给这一轮存档（真机踩过：停止后库里 0 行，
-         * 而同一份代码在多轮会话里就会落成上一轮的内容）。
+         * 助手消息」拿到的是<b>上一轮的答复</b>，等于拿别人的话给这一轮存档；多轮会话里
+         * 这一取法就会落成上一轮的内容。
          */
         private final StringBuffer answerText = new StringBuffer();
         /**
@@ -2086,7 +2073,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
          */
         private final String uid;
         /**
-         * tool/decision 与 tool/result 的载荷不一定再带工具名，从 requested 帧沿用（实测）。
+         * tool/decision 与 tool/result 的载荷不一定再带工具名，从 requested 帧沿用。
          * <p>记在这里而不是引擎字段上：引擎 bean 是单例、两条会话可以同时在跑，挂在实例上就是
          * 甲轮的工具卡收了乙轮的尾巴。
          */
@@ -2165,7 +2152,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
          * <p>为什么不能共用 {@link #lastToolInput} 那一个字段：模型一步里可以同时点两把工具（框架并发派发），
          * 后到的 requested 会盖掉先到的入参，先那把的 done 帧就带着别人的参数下发。而前端
          * {@code onToolStatus} 收终态是「按名字找最近那张 start 卡并把 args 写回去」，于是那张卡的
-         * 「入参」整段变成另一个工具的参数（真机：整理任务清单的卡显示成 {@code {"query":"断线重连"}}）。
+         * 「入参」整段变成另一个工具的参数。
          * 落库那份是在 start 时写的、本来就是对的，所以症状是「实时看到的入参是错的、刷新又好了」。
          */
         private final Map<String, String> toolInputByKey = new java.util.LinkedHashMap<>();
@@ -2200,7 +2187,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
          * <p><b>为什么必须单独攒</b>：框架的计划正文走 {@code plan_write} 落到工作区 {@code plans/PLAN.md}，
          * 而 {@code plan_exit} 的入参只有一个可选的 {@code summary}（一句话摘要，见 {@code PlanExitTool}
          * 的 inputSchema）——正文不在退出确认的入参里。问渠的计划卡要展示「整份计划」，
-         * 早前直接拿 {@code plan_exit} 的入参当 plan 字段，用户看到的就是 {@code [object Object]}。
+         * 若直接拿 {@code plan_exit} 的入参当 plan 字段，用户看到的就是 {@code [object Object]}。
          * <p>同轮多次 {@code plan_write} 是覆盖语义（框架侧 replace the file），保留最后一份即可。
          */
         private String planMarkdown = "";
@@ -2222,15 +2209,14 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
          * <p>提问卡/计划卡/审批卡挂出到用户点完，那一段既在工具的开始-结束窗口里、又不是机器在干活。
          * 不拆出去的后果：一张让人思考了三分钟的提问卡，卡片自己写着「3m12s」，读起来就是「这个工具慢得离谱」。
          * <p>扣账摊给<b>等待期间仍在飞的每一把</b>，不是只摊给挂卡那一把：人在回路的这道闸门卡住的是
-         * 整个工具步，同一步里别家的 result 也要等用户点完才到。真机 08:55 那一轮的账：
-         * {@code plan_write} 的窗口 160610ms，其中 160288ms 是用户在读 {@code plan_exit} 的批准卡，
-         * 而 plan_write 自己只跑了三百毫秒——只摊给挂卡那一把时，这张卡就顶着 2m40s 上界面。
+         * 整个工具步，同一步里别家的 result 也要等用户点完才到；只摊给挂卡那一把时，
+         * 那张卡就会顶着一整段等待时长上界面。
          */
         private final Map<String, Long> toolWaitDeduct = new java.util.LinkedHashMap<>();
         /**
          * 每段等待<b>记在哪一张卡上</b>（对外下发与落库的那份 {@code waitedMs}）。
          * <p>一张闸门只记一笔：前端整段跨度算的是「首尾之差 − 各张卡 waitedMs 之和」，同一段时间摊到两张
-         * 卡上就扣了两遍——真机那一轮两个 160288 相加 320576ms，比整个 169901ms 的窗口还长，跨度被夹成 0。
+         * 卡上就扣了两遍，跨度会被夹成 0。
          */
         private final Map<String, Long> toolWaitCharge = new java.util.LinkedHashMap<>();
         /** 当前这段等待的起点（0 = 此刻没在等人）；与 followTurn 里的 {@code waitBeganAt} 同步进出。 */
@@ -2347,8 +2333,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
          * 落库用时间线：工具段按调用顺序夹在正文段之间，末段补到 body 全长（含追加的相关推荐/中断标记）。
          * <p>body 若被引用自检整体替换过（{@code outcome.text()}），正文区间就对不上了——此时<b>只丢 text 段</b>，
          * 保留思考/过程/工具段：正文由前端按整段接在末尾（{@code timelineView} 的尾段），过程与工具卡仍点得开。
-         * 整条返回 null 的旧口径会让前端在 done 那一步把时间线清空：用户刚看着跑完的几次检索/咨询，
-         * 在答完的同一秒整体消失（真机：3 次 search_knowledge + 1 次咨询，点开「已完成」只剩「深度思考」）。
+         * 整条返回 null 会让前端在 done 那一步把时间线清空：用户刚看着跑完的几次检索/咨询，
+         * 在答完的同一秒整体消失。
          */
         String timelineJson(String body, String answerText) {
             if (body == null || !body.startsWith(answerText == null ? "" : answerText)) {
@@ -2386,7 +2372,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         private final java.util.List<Map<String, Object>> planVersions =
                 java.util.Collections.synchronizedList(new java.util.ArrayList<>());
         /**
-         * 最后一版计划卡的批准 ID（随助手消息落 plan 列）：B+ 的血缘需要一个稳定锚点——
+         * 最后一版计划卡的批准 ID（随助手消息落 plan 列）：血缘需要一个稳定锚点——
          * 旧卡要能被新卡指回、刷新后「查看新一轮」要能按 id 定位；只有正文的 plan 记录做不到这一点。
          */
         private volatile String planApprovalId;
@@ -2537,11 +2523,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
          * @param waitedMs  这段等待<b>记本账的那一笔</b>：只有挂卡那一张拿到非零值，整段跨度按它减一次；
          *                  0 = 这张不是挂卡那张（它的等待已经体现在 elapsedMs 里，但跨度不该重复减）
          * @param result    这一步的输出文本（{@link #toolResultText} 那份，已按 2000 字截断）。
-         *                  <b>必须和 SSE 那一帧同形落库</b>：以前只有流里带 result，刷新后读落库那份
+         *                  <b>必须和 SSE 那一帧同形落库</b>：落库那份若不带 result，刷新后
          *                  就只剩入参——工具卡上是一个看不出原因的红叉，「这步为什么失败」只能回去翻服务端日志
          */
         // 返回这一把（若是咨询类工具）的 subChat，供实时 tool_status 终态帧一并下发——
-        // 此前只落库不实时发，导致咨询卡的结果（问/答/资料/子对话）直播看不见、刷新才冒出来。
+        // 只落库不实时发的话，咨询卡的结果（问/答/资料/子对话）直播看不见、刷新才冒出来。
         java.util.Map<String, Object> toolCall(String name, String status, String args, long elapsedMs, long beganAtMs, long waitedMs,
                       String result) {
             if (name == null || name.isBlank()) return null;
@@ -2585,7 +2571,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             if (args != null && !args.isBlank()) entry.put("args", args);
             // 输出与入参同一条规则：只在有内容时写，且与 SSE 帧同一个键名（前端读 t.result）
             if (result != null && !result.isBlank()) entry.put("result", result);
-            // 耗时与开始时刻同样落库：此前只有 SSE 那一帧带 elapsedMs，刷新后每张卡都没有数，
+            // 耗时与开始时刻同样落库：只靠 SSE 那一帧带 elapsedMs，刷新后每张卡都没有数，
             // 「执行了 N 个操作」后面跟着的是各张卡之和（全为 0）——当场看着有、回头读成 0ms。
             putTiming(entry, elapsedMs, beganAtMs > 0L ? beganAtMs : System.currentTimeMillis(), waitedMs);
             // 时间线：先把这把工具之前的正文成段，再插工具段（下标=它在 toolCalls 里的位置），
@@ -2714,8 +2700,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
 
     /**
      * 本轮的角色提示词段（{@code sysPrompt} 的第一段）：智能体人设优先，为空回落平台默认。
-     * <p>选段口径在 {@link RolePrompt#of}——抽成纯函数是为了让这条口径可被单测钉住，
-     * 它此前是「注释写着归智能体管、实现里没人读」的形状。
+     * <p>选段口径在 {@link RolePrompt#of}——抽成纯函数是为了让这条口径可被单测钉住。
      * <p><b>为什么吞异常</b>：人设取不到不该把整轮打挂——回落平台默认即可，
      * 与 {@code agentNameOf} 同样的降级姿态。
      */
@@ -2827,7 +2812,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         try {
             row = tools.agentOf(cmd);
         } catch (RuntimeException e) {
-            // 解析失败不打断本轮：按「无绑定」走平台默认档（与改前 rolePrompt 的兜底一致）
+            // 解析失败不打断本轮：按「无绑定」走平台默认档（与 rolePrompt 的兜底一致）
             log.warn("[agentx] 本轮智能体解析失败，回落平台默认档: session={} err={}",
                     cmd.getSessionId(), e.getMessage());
         }
@@ -2998,7 +2983,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * <p>框架的 WorkspaceContextMiddleware 会把工作区写成服务器状态目录（{@code /app/data/agentscope}），
      * 并把 {@code ExecutorFilesystem} 当作沙盒容器渲染成「Sandbox root: /workspace」——这两个路径都在
      * 服务器上，而 execute / 文件工具实际跑在用户电脑上。不纠正的话模型第一发就去 {@code ls} 这两个
-     * 不存在的路径，失败后又当成可重试，反复空转（线上 2026-11-08 实测）。
+     * 不存在的路径，失败后又当成可重试，反复空转。
      * <p>只读库取根目录（{@link com.wenqu.ai.service.SandboxService#pinnedLocalWorkspaceRoot}），
      * 不在装配期建目录；不是本机后端就整段缺席。
      */
@@ -3077,10 +3062,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 不是「都给你」。一次只取一页等于给两次读之间的积压设了一道隐形上限，而收尾那一次是全轮最后
      * 一次读——只走一页，此后没人再推进游标，落后的那一截永久丢掉。丢掉的是最后的正文增量：剥离器
      * 吃不到它，落库就改从框架 transcript 取（那份没经过剥离），用户读到带 {@code <related>} 原文的
-     * 回答，而「接下来可以」那排芯片同时没了（真机 2026-10-18 20:20 那轮，全库 502 条助手消息中 3 条）。
-     * <p>这条按「隐形上限必须拆掉」改，不当它是已定案的根因：要触发得让每一拍慢到追不上增量，照同一
-     * 族问题跑 7 轮（每轮 1350–1776 帧）没能复现。标签到不了用户眼前由 {@link #stripFallbackBody}
-     * 在那条回退路径上兜死，不依赖这里的因果。
+     * 回答，而「接下来可以」那排芯片同时没了。
+     * <p>标签到不了用户眼前，由 {@link #stripFallbackBody} 在那条回退路径上兜住。
      * <p>上界取进入时的 {@code head} 快照而不是「读到空为止」：事件在跑的过程中持续追加，
      * 没有快照这个循环可以永不返回。快照之后新到的事件交给下一拍。
      */
@@ -3107,9 +3090,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * {@code after}，每跳一个 commit 文件都要 read + JSON parse——取尾部增量也是这个代价。更要命的是
      * {@code SessionInteractions#pending}（即 {@code session.pending()}）按 256 一批从 0 走到 head，
      * 等于把这条回走跑几十遍；而 {@code transcript()} 与 {@code tasks()}（后者对<b>每条历史命令</b>
-     * 各做一次全量 scan）同样按全量算。旧循环名义上 200ms 一跳，实际每一跳要做三四次这种读，
-     * 真机实测一跳 1.05 秒：正文按秒成坨落地，界面上就成了「不是流式，一下就出来」
-     * （2026-10-18 实测一轮 30.7s／977 帧，token 只分 3 簇：70／394／228 字）。
+     * 各做一次全量 scan）同样按全量算：每跳要做三四次这种读，正文按秒成坨落地，
+     * 界面上就成了「不是流式，一下就出来」。
      *
      * <p><b>判据与框架同源，不是近似值</b>：待办＝{@code interaction/requested} 收、{@code interaction/resolved}
      * 撤（框架 {@code pending()} 就是这两类事件按 requestId 增删）；任务变化＝{@code inbox/*} 与
@@ -3178,7 +3160,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         /**
          * 用权威值重种待办表：代价是一次全量读，一轮只做一次。
          * <p>起轮时本轮游标之前挂着的待办（上一轮没答完的那张卡）不在 drain 的范围里，不种就看不见；
-         * 种完把脏位置真，让第一跳照旧把这一批卡报出去——那是改前就有的行为，别顺手改掉。
+         * 种完把脏位置真，让第一跳照旧把这一批卡报出去。
          */
         void resyncPending(AgentSession session) {
             pending.clear();
@@ -3203,15 +3185,15 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 辅助模型调用（记忆提炼 / 压缩摘要，payload.purpose=SUMMARY）与主推理走同一条
                 // Session Log：框架的 SessionModels.Recorded 把 purpose 放进每个 chunk 载荷，不认它
                 // 的表现是提炼/摘要的正文（「## Memory Flush —（本轮新增）」「## SESSION INTENT /
-                // SUMMARY / ARTIFACTS / NEXT STEPS」）被当成用户正文发 TOKEN 帧并落库（2026-10-22
-                // 线上实测），其 thinking 块同时把本轮思考撑爆 TEXT 列 → 整条消息落库失败。只透传
+                // SUMMARY / ARTIFACTS / NEXT STEPS」）被当成用户正文发 TOKEN 帧并落库，
+                // 其 thinking 块同时把本轮思考撑爆 TEXT 列 → 整条消息落库失败。只透传
                 // 主推理（REASONING）；SUMMARY 的账另有去处（记忆文件/压缩摘要消息），不进聊天流。
                 if (!"REASONING".equals(String.valueOf(data.get("purpose")))) return;
                 if (!(data.get("chunk") instanceof Map<?, ?> chunk)) return;
                 if (!(chunk.get("content") instanceof List<?> blocks)) return;
-                // 收尾聚合帧拦截（2026-11-01 真机字节级对账）：框架在流末会再发一条携带 finishReason 的
+                // 收尾聚合帧拦截：框架在流末会再发一条携带 finishReason 的
                 // 「聚合后段」帧——正文在 ~2 万字处被一分为二，delta 流已完整覆盖全文，聚合帧只重发后段；
-                // 照收等于尾部整段重投 + 接缝错位（FormCopilot 42 组件表连坏三场的真凶）。识别规则：
+                // 照收等于尾部整段重投 + 接缝错位。识别规则：
                 // finishReason 在场且帧文本已被已记录正文包含（纯重复）→ 整块跳过；正常收尾帧
                 // （空正文/真正的续写）不受影响。
                 boolean aggregateTail = chunk.get("finishReason") != null;
@@ -3220,7 +3202,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                     if ("thinking".equals(b.get("type"))) {
                         String thinkingDelta = str(b.get("thinking"));
                         // 聚合帧同样会重发思考的尾段：正文有上面那道去重闸，思考没有，尾段就会在
-                        // 回答末尾多出一行「深度思考」（真机 2026-11-05 17:50：一段从半句开始的碎片）。
+                        // 回答末尾多出一行「深度思考」。
                         // 已记录过的一律跳过——它不是新一步的思考，只是同一段的尾巴。
                         if (aggregateTail && recording.thinkingContains(thinkingDelta)) {
                             log.info("[TIMELINE] 流末聚合帧重复思考尾段已跳过 {} 字: session={}",
@@ -3238,7 +3220,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                         closeThinkingFrame(channel, recording);
                         ModelOutputParser.Delta parsed = recording.related.feed(rawText);
                         // 同一个 delta 里可能同时有过程与正文：必须按原文先后下发（processFirst），
-                        // 否则「过程独白紧跟正文」被拆到正文后面，过程块就劈成两段（2026-11-06 夹具实测）。
+                        // 否则「过程独白紧跟正文」被拆到正文后面，过程块就劈成两段。
                         boolean processFirst = parsed.processFirst();
                         if (processFirst) emitProcess(channel, recording, parsed.process());
                         if (!parsed.text().isEmpty()) {
@@ -3261,12 +3243,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 调工具也是「这一段想完了」的信号：不在这儿收场，思考段会一直挂着转圈直到下一段正文出现，
                 // 而时间线里这段思考也会压到工具卡后面（区间是按关闭时刻写的，顺序即到达顺序）
                 closeThinkingFrame(channel, recording);
-                // 载荷形状（实测）：{toolCallId, call:{type,id,name,input}} —— 名字在 call.name 里，
+                // 载荷形状：{toolCallId, call:{type,id,name,input}} —— 名字在 call.name 里，
                 // 不在顶层；按顶层取会拿到空串，工具卡就成了没有名字的空白行
                 recording.lastToolName = toolNameOf(data.get("call"));
                 Object requestedInput = toolInputOf(data.get("call"));
                 // 必须序列化成 JSON：咨询卡片按入参里的 agentId 取那一份子对话，
-                // 用 Map.toString() 就得到 "{agentId=xxx}" 这种 Java 形状，解析必然失败（实测卡片没了）
+                // 用 Map.toString() 就得到 "{agentId=xxx}" 这种 Java 形状，解析必然失败
                 recording.lastToolInput = com.alibaba.fastjson2.JSON.toJSONString(requestedInput);
                 // 按这一次调用登记入参与开始时刻：一步里并发两把工具时，共用字段会被后到的盖掉（见 toolInputByKey）
                 String callKey = Recording.toolCallKey(toolCallIdOf(data), recording.lastToolName);
@@ -3322,7 +3304,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                         elapsed, beganAt, charged, args, resultText, subChat, recording.hooks.step().index()));
             }
             case "tool/decision" -> {
-                // 权限判定由框架说出（实测字段 decision=allowed|denied）：拒绝必须让用户看见，
+                // 权限判定由框架说出（字段 decision=allowed|denied）：拒绝必须让用户看见，
                 // 否则「这个能力没生效」会被读成没反应
                 if (str(data.get("decision")).toUpperCase().contains("DENY")) {
                     channel.emit(RunEventType.WARN, "该操作被权限档位拒绝：" + recording.lastToolName);
@@ -3363,12 +3345,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             }
             case "turn/interrupted" -> channel.emit(RunEventType.WARN, "本轮已被中断");
             // 轮内自动压缩：它跑的是两次 SUMMARY 用途的模型调用，思考与正文都被上面的 purpose 闸
-            // 滤掉，不补这两帧，那二十多秒在界面上就是纯静默（实测 24.7s 一个字没出）。
+            // 滤掉，不补这两帧，那二十多秒在界面上就是纯静默。
             case "compaction/start" -> channel.emit(RunEventType.COMPACT_STATE, "{\"phase\":\"start\"}");
             case "compaction/end" -> {
                 // status 必须带给前端：压完了那条线要原地换成「已压缩上下文」，压砸了则整条退场——
                 // 只发「结束」不发「结束得怎么样」，界面上就只能一律报喜。
-                // 框架实测载荷是 {compactionId, status=completed|failed|cancelled}，缺键按 failed 处理。
+                // 框架载荷是 {compactionId, status=completed|failed|cancelled}，缺键按 failed 处理。
                 String status = str(data.get("status"));
                 boolean done = "completed".equalsIgnoreCase(status);
                 if (done) recording.compactedThisTurn = true;
@@ -3383,7 +3365,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     }
 
     /**
-     * 取工具名。两条事件把名字放在不同层级（实测）：{@code tool/requested} 在 {@code call.name}，
+     * 取工具名。两条事件把名字放在不同层级：{@code tool/requested} 在 {@code call.name}，
      * {@code tool/result} 在 {@code message.content[].name}——而 {@code message.name} 是<b>智能体名</b>，
      * 先取它会得到 "wenqu" 这种空白归属，工具卡就认不出是哪把工具收的尾。
      */
@@ -3475,7 +3457,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                     firstNonNull(data.get("message"), data))));
             String args = str(firstNonNull(toolInputOf(data.get("call")),
                     firstNonNull(toolInputOf(data.get("toolUse")), toolInputOf(data))));
-            // 两种待办按 kind 分流（实测：工具挂起=external_execution，权限确认=confirmation）。
+            // 两种待办按 kind 分流（工具挂起=external_execution，权限确认=confirmation）。
             // 分错的后果是「给用户的卡答不上它真正在等的事」，所以未知 kind 也走提问卡——
             // 题面至少能呈现，绝不静默吞掉
             String kind = str(data.get("kind"));
@@ -3566,10 +3548,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
 
     /**
      * 计划批准卡的正文：<b>必须是一段 Markdown 文本</b>，不能是工具入参对象。
-     * <p>真机踩过：早前直接 {@code planCard.put("plan", toolInputOf(call))}，而框架 {@code plan_exit}
-     * 的入参只有一个可选 {@code summary}（{@code PlanExitTool} 的 inputSchema 就这么声明的），
-     * 整份计划正文在更早的 {@code plan_write(content=…)} 里。塞对象过去，前端 {@code renderMd()} 拿到
-     * 非字符串就渲染成 {@code [object Object]}——用户批准的是一份看不见的计划。
+     * <p>框架 {@code plan_exit} 的入参只有一个可选 {@code summary}（{@code PlanExitTool} 的 inputSchema
+     * 就这么声明的），整份计划正文在更早的 {@code plan_write(content=…)} 里。塞对象过去，前端
+     * {@code renderMd()} 拿到非字符串就渲染成 {@code [object Object]}——用户批准的是一份看不见的计划。
      * <p>取值优先级：{@code plan_write} 攒下的正文 → {@code plan_exit} 入参里的 summary →
      * 入参本身是纯文本时的原文。三档都空则给一句说明，不让卡片空白。
      *
@@ -3630,7 +3611,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 io.agentscope.core.model.GenerateOptions.builder()
                         .executionConfig(modelExecutionConfig(MODEL_MAX_ATTEMPTS));
         // 登记了最大输出才下发 max_tokens（0=未登记，交厂商默认）：不设的话单次补全上限就是
-        // 厂商默认（token-plan 族实测 8192），模型内联大产物必被截断成残缺参数。
+        // 厂商默认（token-plan 族为 8192），模型内联大产物必被截断成残缺参数。
         if (maxOutput > 0) b.maxTokens(maxOutput);
         String thinkLevel = cmd.getReasoningLevel() != null ? cmd.getReasoningLevel()
                 : modelRegistry.defaultReasoningLevelOf(ref);
@@ -3640,8 +3621,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             b.temperature(configService.getDouble("chat.temperature"));
             // 未勾深度思考 ≠ 一言不发：DeepSeek V4／豆包这类网关<b>默认开思考</b>的模型，
             // 不显式下发关闭字段就吃网关默认——界面上「思考强度：未开启」、实际单轮照烧
-            // 几万 reasoning token（2026-11-02 表单设计助手实测：单轮 thinking 2.7万~5.9万
-            // token，占总耗时 2 分钟的大头）。与辅助链路（auxGenerateOptions）同一条口径：
+            // 几万 reasoning token。与辅助链路（auxGenerateOptions）同一条口径：
             // reasoningOffBody 只对登记为「可开关思考」的模型给关闭方言；恒思考（R1/QwQ）、
             // 未识别方言、OpenAI 系与 GLM（拒绝 disabled，400）都返回空 Map，行为与不下发一致。
             for (Map.Entry<String, Object> e : modelRegistry.reasoningOffBody(ref).entrySet()) {
@@ -3674,11 +3654,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 辅助调用（框架的记忆提炼与上下文压缩）那一份请求参数：<b>把思考关掉</b>，其余照最小集。
      * <p>为什么要单独一份：这两类调用由框架直接拿建实例时那份模型去发（调用点传的是
      * {@code options=null}，只吃模型实例的 configuredOptions），所以「用户这一轮开了深度思考」会
-     * 一并带进摘要与记忆里。实测代价是 2026-10-22 那一轮压缩前的 24.7 秒静默——两次 SUMMARY
-     * 调用共 4,811 输出 token，其中 2,705 是 reasoning，折完就扔。摘要要的是把话压短，不是想清楚。
+     * 一并带进摘要与记忆里，凭空多出一大段 reasoning token，折完就扔。
+     * 摘要要的是把话压短，不是想清楚。
      * <p>{@code reasoningOffBody} 只在模型登记为「可开关思考」时给关闭方言；<b>恒思考那一族
      * （R1／deepseek-flash 等）压根没有关的开关</b>，返回空 Map 时这里就只发最小集（不猜方言字段，
-     * 发了会被网关 400 拒掉，真机为 GLM 那条踩过并写进方法注释）。这一族确实省不掉，至少不再
+     * 发了会被网关 400 拒掉）。这一族确实省不掉，至少不再
      * 把主链的「思考强度档位」也叠上去。
      * <p>温度沿用设置页那一个值：这两类调用本来就跟着问答走，不为它们另开一档。
      * <p><b>刻意不下发登记的 max_tokens</b>（与主链 {@code generateOptions} 唯一的参数差）：
@@ -3734,7 +3714,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 后台合并也照跑。已经沉淀下来的 {@code MEMORY.md} 仍照常注入，与两处界面
      * 「仅关生成，不关注入」的说明对齐。
      *
-     * <p>P5 追加三件：① default 的每轮 ALWAYS 改成可配节流（默认 10 分钟），否则每轮问答
+     * <p>三处口径：① default 的每轮 ALWAYS 走可配节流（默认 10 分钟），否则每轮问答
      * 都多一次主模型提炼调用；② prompt 追加问渠规则（中文、只记持久事实、不记密钥/探针）；
      * ③ 记忆模型包 MeteredModel（kind=memory），成本进台账。{@code MEMORY.md} 的硬上限
      * 不在这里——它落在写入文件系统那一层（{@code MemoryCappedFilesystem}）。
@@ -3783,8 +3763,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * context-overflow 错，当场强制折一次并重试同一轮，所以取消条数那道线不会变成「直接报错」。
      * <p>手动 {@code /compact} 在这一路会话上留过请求时，本次建实例强制「有一条就先压」，
      * 让那次点击真的在下一次提问前把旧对话折进去（框架没有「就地压一次」的入口，压缩长在推理循环前）。
-     * <p>此前框架默认阈值另有可配项（chat.agentscopeCompactTriggerMessages，0＝框架默认），默认态
-     * 与框架默认逐字相同，属「框架已有限制、参数只留个默认就用不上的改口」，已取消。
      * <p>记忆关闭（平台/个人）或游客/子轮时显式 {@code flushBeforeCompact(false)}：框架的
      * {@code FlushTrigger.never()} 只管每轮收尾，压缩触发时仍会按默认 {@code true} 提炼一次
      * （{@code MemoryFlushMiddleware} 注释原文：*"The CompactionMiddleware and overflow-recovery
@@ -3792,7 +3770,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 只能在这里关；溢出兜底在 CompactionMiddleware 内复制同一开关，因此一并生效。
      * <p>摘要模型包 MeteredModel（kind=compress）：压缩平时不常跑，但一跑就是一次不小的输入，
      * 不记账就永远不知道它花在哪。进来的模型是 {@code auxModel}（关思考那一份，见
-     * {@link #auxGenerateOptions}）——那 24.7 秒里有 2,705 个 reasoning token 是折完就扔的。
+     * {@link #auxGenerateOptions}）——辅助调用带上 reasoning 也是折完就扔的。
      */
     private io.agentscope.harness.agent.memory.compaction.CompactionConfig compactionConfig(
             ChatCommand cmd, io.agentscope.core.model.Model auxModel, String modelRef) {
@@ -3841,7 +3819,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 .build();
         io.agentscope.core.tool.Toolkit toolkit = new io.agentscope.core.tool.Toolkit();
         // 框架把工具派到自己的弹性线程：身份与本轮检索开关覆盖必须在发起线程取快照、在工具内重放，
-        // 不重放就是检索恒空且不报错（Phase 0 与本刀都实测过这个形状）
+        // 不重放就是检索恒空且不报错
         java.util.List<Object> holders = tools.frameworkTools(cmd, policy, slot, (code, message) -> {
             log.info("[agentx] 降级 {}: {}", code, message);
             // 未接入的能力必须让用户看见：静默少挂一个族会被读成「配了没生效」。
@@ -3872,7 +3850,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 重复调用闸：步数预算限不了「每一步都是同一句命令」，见 AgentxRepeatGuard 类注释
         AgentxRepeatGuard repeatGuard = new AgentxRepeatGuard();
         sessions.noteRepeatGuard(sessions.key(cmd), repeatGuard);
-        // 框架工具的档位闸（全框架化 P1）：沙箱/文件工具改由框架提供后不再过问渠装配链，
+        // 框架工具的档位闸：沙箱/文件工具由框架提供，不过问渠装配链，
         // 档位裁剪挪到执行前逐个判。策略按轮取（同实例多轮可能不同档）。
         // 游客 MCP 授权名单一并传入：名单内工具按「发布者预批」在闸上放行（只读档的
         // readOnly 判据对 MCP 恒拒，不认名单就永远调不动，见 AgentxFrameworkToolGate）。
@@ -3887,13 +3865,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 模型实例建两份，共用同一条 HTTP 通道（一个连接池）：
         //  · 主链那份带用户这一轮的思考档与温度；
         //  · 辅助那份只服务框架的记忆提炼与上下文压缩——它们要的是「把话折短」，不是「想清楚」，
-        //    跟着主链开思考就是拿最贵的token去写一段算完即扔的推理（实测一次压缩 4,811 输出
-        //    token 里 2,705 是 reasoning，24.7 秒静默全花在这上面）。两条请求参数不同，只能是两个实例；
+        //    跟着主链开思考就是拿最贵的 token 去写一段算完即扔的推理。两条请求参数不同，只能是两个实例；
         //    transport 提出来复用，否则多建一个 OkHttp 客户端＝多一份连接池。
         // 两处的用量各按 kind 分开记账（chat/subagent/memory/compress），窗口都照抄登记值。
-        // 传输层实验（2026-11-01）已回退：JDK HttpClient 与 OkHttp 同样在长流式 ~2 万字处丢字，
-        // 丢失点在框架 ingestion 共用层（AgentScope 2.1.0-BETA1，供应商网线连续干净、直连同模型
-        // 6/6 全净——字节级对账见 copilot-long-output-corruption 记忆），换传输无收益，回退基线。
         io.agentscope.core.model.transport.OkHttpTransport modelTransport = sharedModelTransport();
         String completionsPath = route.completionsPath() == null || route.completionsPath().isBlank()
                 ? "/v1/chat/completions" : route.completionsPath();
@@ -3907,7 +3881,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 .endpointPath(completionsPath);
         // 窗口拿得到登记值才交给模型：没拿到时一次都不调，让框架按模型名查它自己的内置表。
         // 显式传 0 会被框架当成「这条模型的窗口是 0」，输入上限直接掉到 64000 兜底值——
-        // 压缩阈值随之变成 64000 减去固定开销（系统提示词＋投影＋工具声明），实测约 44K 就折一次。
+        // 压缩阈值随之变成 64000 减去固定开销（系统提示词＋投影＋工具声明），约 44K 就折一次。
         // 值取 binding 里那一份：它同时是实例复用指纹的一部分，两处共用一个数才不会出现
         // 「指纹判成没变、实例里的窗口却是另一个」这种自相矛盾。
         int contextWindow = binding.contextWindow();
@@ -3925,7 +3899,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         sessions.noteChatModel(sessions.key(cmd), (MeteredModel) chatModel);
         // 可派遣的助手（派遣由框架的 agent_spawn 驱使）：这一份列表同时决定两件事——
         // 注册进框架的子智能体表（模型手上有没有这把能力），以及提示词里那两句路由纪律（教不教它用）。
-        // 分成两处判就会漂移成「教了模型一件它没有的能力」，这条坑本仓点过名。
+        // 分成两处判就会漂移成「教了模型一件它没有的能力」。
         List<WenquAgentxTools.SubagentTarget> subagentTargets =
                 tools.consultSubagentTargets(cmd, policy, slot);
         // 工作区记忆只读一次：既要拼进系统提示词，也要让本轮污点知道「上下文里已经混有可编辑资料」
@@ -3939,12 +3913,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 .agentId(AGENT_ID)
                 .name("wenqu")
                 .description("问渠·AgentScope 运行时")
-                // 角色提示词归智能体管（chat.systemPrompt 已退役）：见 rolePrompt 的分层说明。
+                // 角色提示词归智能体管：见 rolePrompt 的分层说明。
                 // 派遣纪律必须跟着挂：清单本体由框架的 ## Subagents 段渲染，但「id 逐字取自清单、
                 // 通用问题不要派」这两句只有问渠说得出（派错一位的成本是一整条子轮）
-                // 用户口径那条（正文/计划/清单不写沙盒路径与工具名）也要跟着挂：它原先长在已退役的手写
-                // 计划阶段里，框架这一路没人再说第二遍，而框架的 PLAN banner 与沙盒工具说明反而主动把
-                // 路径喂给模型——不挂回去，计划卡就变成「它打算在沙盒里怎么写文件」的说明书
+                // 用户口径那条（正文/计划/清单不写沙盒路径与工具名）也要跟着挂：框架这一路没人再说第二遍，
+                // 而框架的 PLAN banner 与沙盒工具说明反而主动把路径喂给模型——不挂，
+                // 计划卡就变成「它打算在沙盒里怎么写文件」的说明书
                 .sysPrompt(rolePrompt(binding.row()) + projectContext(cmd)
                         + workspaceMemory
                         + userMemoryReadonly
@@ -3955,7 +3929,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                         + com.wenqu.ai.agent.chat.ArtifactPrompt.guidance()
                         + com.wenqu.ai.memory.MemoryPrompts.replyDiscipline()
                         + com.wenqu.ai.agent.chat.RelatedPrompt.line())
-                // 问渠所有供应商都是 OpenAI 兼容网关（c_ai_provider.base_url 实测全是 compatible-mode）。
+                // 问渠所有供应商都是 OpenAI 兼容网关。
                 // 用户在界面选的上下文窗口（contextWindow 档位）落到 model 的 contextWindowSize：
                 // 框架的压缩阈值/输入预算都由它推（CompactionMiddleware: window-reserved；
                 // HarnessContextBuilder.inputLimit: window-output-safety），
@@ -3964,21 +3938,19 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 .model(chatModel)
                 .toolkit(toolkit)
                 // 框架对「一把工具」有自带的 5 分钟硬超时（TOOL_DEFAULTS）。咨询子轮、沙盒长命令都会撞上去，
-                // 而手写运行时没有这一层——不显式设，就等于框架比问答侧多一道没人知道的天花板（实测踩过：
-                // 咨询跑满 5 分钟被判工具失败，父轮只收到一句 Tool execution timeout）
+                // 而手写运行时没有这一层——不显式设，就等于框架比问答侧多一道没人知道的天花板。
                 .toolExecutionConfig(io.agentscope.core.model.ExecutionConfig.builder()
                         .timeout(java.time.Duration.ofSeconds(turnSeconds()))
                         .build())
                 .maxIters(maxItersForTurn())
                 // 计划模式工具面常驻开启：是否进入只由用户显式开计划开关（sessions.setPlanMode）或
-                // 模型自己在推理中调用 plan_enter 决定。问渠不再做「按消息意图预判」——PlanModeService
-                // 与 chat.planAutoIntent 已删除，计划怎么执行全交框架的 plan_enter/write/exit + 只读拦截。
+                // 模型自己在推理中调用 plan_enter 决定。问渠不做「按消息意图预判」，
+                // 计划怎么执行全交框架的 plan_enter/write/exit + 只读拦截。
                 // 历史计划卡的多版本落库仍由 Recording.planVersions 负责，与意图判定无关。
                 .enablePlanMode(!cmd.branchTurn())
-                // 目标模式（Goal Mode）：不再借框架的任务上下文投影（Scope/要求/验证）——那一套
-                // 是「验收标准」范式的载体，已经随产品简化退役。当前目标改由问渠自己带进模型输入
-                // （交互轮拼目标上下文，续跑轮用 GoalPromptBuilder 的续跑提示词），副作用是
-                // task_requirement_propose 不再注册（模型没有地方、也没有必要「提议验收标准」）。
+                // 目标模式（Goal Mode）：不借框架的任务上下文投影（Scope/要求/验证）——
+                // 目标由问渠自己带进模型输入（交互轮拼目标上下文，续跑轮用 GoalPromptBuilder 的续跑提示词），
+                // task_requirement_propose 也不注册（模型没有地方、也没有必要「提议验收标准」）。
                 // 任务清单的投影不受影响：TaskContextProjection 仍照常渲染 todo 状态，它只看自己的
                 // tasksContext 存储，与这里的开关无关。
                 // 任务清单：**不开**框架的 enableTaskList，只借它的 state 做存储。
@@ -3995,7 +3967,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 压缩摘要用独立的 MeteredModel（kind=compress），成本才进得了台账。
                 .compaction(compactionConfig(cmd, auxModel, hooks.modelRef()))
                 .workspace(stateDir)
-                // 会话状态恒存 Redis：本地文件方案已退役（容器重建即丢，会让多轮对话退化成每轮独立问答）。
+                // 会话状态恒存 Redis，没有本地文件兜底（容器重建即丢，会让多轮对话退化成每轮独立问答）。
                 // Redis 连不上时应用起不来——宁可启动失败，也不要带着「每轮失忆」对外服务。
                 .stateStore(stateStore())
                 // 权限由框架持有：档位→模式、按名黑名单→deny 规则；工具级不可绕过的判定落在
@@ -4028,9 +4000,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                         () -> configService.getBoolean("chat.prefixStabilizer", true)))
                 // 异步升级首轮：工作区还没好，不把文件/命令工具暴露给模型，避免 scratch 写了带不进沙盒。
                 .middleware(new AgentxToolSurfaceFilter(slot, !subagentTargets.isEmpty()))
-                // Phase 0 实测：框架默认装备子智能体/技能/工作区上下文/tools.json 等旁路能力。
+                // 框架默认装备子智能体/技能/工作区上下文/tools.json 等旁路能力。
                 //
-                // 子智能体由**框架驱使**（2026-10-18 全框架化迁移 P0 启用，2026-10-20 收口成一条）：
+                // 子智能体由**框架驱使**：
                 // 去掉 disableSubagents / disableDynamicSubagents 后框架装配 SubagentsMiddleware，
                 // 注册 agent_spawn / agent_send / agent_list 三把工具，并每轮在 SYSTEM 消息前
                 // 插入子智能体使用指引与异步任务摘要（框架自己从「冻结基线」重建 SYSTEM，
@@ -4040,19 +4012,19 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 都归框架；子轮本体仍是问渠那条完整问答通路（临时会话、引用回填、产物收编），
                 // 因为框架的子 agent 只回一段文本、没有问渠的问答外壳。
                 //
-                // 技能已改为**框架接管**（2026-10-18，全框架化迁移 P3）：
+                // 技能由**框架接管**：
                 // WenquSkillRepository 实现 RuntimeContextSkillRepository，按当轮 uid 解析可见技能
                 // （classpath 内置 + 沙盒工作区 + user-data/skills-users/{uid}/，同名用户版优先）。
                 // disableDynamicSkills 去掉——那会拦掉框架的动态技能加载。
                 // disableDefaultWorkspaceSkills 保留：工作区里的默认技能集与问渠的技能体系无关。
                 .skillRepositories(List.of(skillRepository))
-                // 智能体的「技能范围」真正生效的地方（全框架化收口）：三态 → SkillFilter。
+                // 智能体的「技能范围」真正生效的地方：三态 → SkillFilter。
                 // 框架的 HarnessSkillMiddleware 按它裁目录（被滤掉的不进提示词、也不注册 load 工具），
                 // 所以「限定用哪几个」是边界而不是建议。空白名单/关闭 = 一条都不给。
                 // 注意：只能走 builder —— AgentSession 构造时把 RuntimeContext 复制了一份
                 // （AgentSession:84），事后往原 ctx put SkillFilter 影响不到已建实例。
                 .skillFilter(binding.skillFilter())
-                // 助手侧「技能沉淀」仍交给框架 skill_manage（全框架化 P3）：写沙盒工作区，随会话走。
+                // 助手侧「技能沉淀」仍交给框架 skill_manage：写沙盒工作区，随会话走。
                 // 用户自己的技能安装/编辑/删除走 SkillsPage + SkillController（user-data/skills-users/{uid}，
                 // 跨会话、不依赖沙箱）；两套并存，本开关只负责「模型自己起草/改写技能」这条路。
                 // autoPromote=true：新技能直接落可加载目录，下一轮推理即可见。
@@ -4062,43 +4034,39 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                         .autoPromote(true)
                         .build())
                 .disableDefaultWorkspaceSkills()
-                // 记忆改由框架接管（全框架化 P3）：去掉 disableMemoryTools 后框架注册
+                // 记忆由框架接管：去掉 disableMemoryTools 后框架注册
                 // memory_search / memory_get / memory_save / session_search 四把。
                 //
                 // 隔离性核对过：`WorkspaceManager#getMemoryDir(rc)` → `resolveRuntimeDataPath(rc, ...)`
                 // 按 RuntimeContext 解析，本轮的 uid 不同则记忆目录不同 —— 满足问渠的 per-user 语义。
                 //
-                // 已接受的降级（换框架的必然结果）：框架 `MemorySearchTool` 是 **keyword 检索**
-                // （源码注释：*"Uses keyword-based search through all memory files"*），
-                // 问渠原实现是 embedding 向量检索；且用户失去「长期记忆」面板的手动管理入口。
+                // 已接受的降级：框架 `MemorySearchTool` 是 **keyword 检索**
+                // （源码注释：*"Uses keyword-based search through all memory files"*），不是向量检索；
+                // 且用户没有「长期记忆」面板的手动管理入口。
                 //
-                // disableWorkspaceContext 已去掉（全框架化 P4 修正）：该开关会整条关掉
-                // WorkspaceContextMiddleware，而它承担 P3 记忆「读回」的两件事——
+                // 不设置 disableWorkspaceContext：该开关会整条关掉 WorkspaceContextMiddleware，
+                // 而它承担记忆「读回」的两件事——
                 //   ① readMemoryMd(rc) 把 MEMORY.md 注入 HARNESS_CONTEXT（不开则模型看不到已沉淀的记忆）
                 //   ② 注入 Memory Recall / Memory Persistence 使用指引（不开则模型不知道
                 //      memory_search 四把工具何时用）
-                // P3 之前它留着是因为当时记忆/技能还是自研体系（HEAD 注释：关掉框架自带的
-                // memory_* 四把工具防第二套记忆）；P3 把记忆换成框架后这一条已不成立，
-                // 继续关着 = 记忆只写不读（flush hook 照常跑、注入却断了）。
                 // 副作用核对：该 middleware 注入的 ## Workspace 段落会描述沙箱路径，
                 // 但问渠有 PlanCopy.guidance()（提示词「正文/计划/清单不写路径与工具名」）
                 // + PlanCopy.stripInternalPaths（计划卡兜底剥路径）两层护栏，与它共存无冲突。
                 .disableAtPathExpansion()
                 .disableToolsConfig()
-                // 沙箱与文件系统：**框架接管**（全框架化P1）。
+                // 沙箱与文件系统：**框架接管**。
                 // 关键：框架的工具在 **build 期**绑定文件系统——
                 //   HarnessAgent:2895 `new FilesystemTool(filesystem, pathNormalizer)`
                 //   HarnessAgent:2903 `new ShellExecuteTool(sandbox)`（filesystem 当沙箱用）
                 // 两者都从 builder 字段取，**不看 RuntimeContext**。
-                // 所以此前每轮往 ctx 里 put AbstractFilesystem 是无效动作（真机验证已证：
-                // execute("pwd") 返回宿主项目目录）。必须用 abstractFilesystem(...) 在 build 期传进去。
+                // 往 ctx 里 put AbstractFilesystem 无效，必须用 abstractFilesystem(...) 在 build 期传进去。
                 .abstractFilesystem(frameworkFilesystem(cmd,
                         policy.sandboxMode() == com.wenqu.ai.agent.permission.SandboxMode.DANGER_FULL_ACCESS,
                         sandboxEnabled))
                 .artifactDeliveryTarget(new com.wenqu.ai.sandbox.WenquArtifactDeliveryTarget(artifactService))
                 .disableWebTools();
 
-        // 记忆闸（P5 收口）：三种轮次三种口径，必须在 build 期定——MemoryConfig / disableMemoryHooks
+        // 记忆闸：三种轮次三种口径，必须在 build 期定——MemoryConfig / disableMemoryHooks
         // 都烤在常驻实例里。
         // ① 游客/分享/MCP：userId 是发布者（检索可见性按他执行），若不关记忆，发布者的 MEMORY.md
         //    会被注入访客对话，访客的话也会写进发布者日账。两个开关必须同时关：只关 hooks 仍会注入。
@@ -4108,7 +4076,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         //    （与②同一条路：不注册 flush/维护，模型侧也不再有「自动提炼」引导，已沉淀的仍注入）。
         // ④ 工作区记忆隔离（Project.memoryIsolated，干净房间）：本区会话不注入本人已沉淀的个人记忆、
         //    也不往里写——按①同款全关。给敏感项目/客户现场一个不串味的场子；工作区自己的上下文由
-        //    约定+绑定资料域+目录文件承担（2026-10-24，A4 记忆分域的落地口径）。
+        //    约定+绑定资料域+目录文件承担。
         if (cmd.isGuestMode() || projectService.memoryIsolatedOfSession(cmd.getSessionId())) {
             agentBuilder.disableMemoryHooks().disableMemoryTools();
         } else if (cmd.branchTurn() || !memoryOn(cmd)) {
@@ -4122,13 +4090,13 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         }
         // 消息总线/异步工具注册表换成无操作实现：问渠不使用这两个通道（steer 走 SessionInbox，
         // 异步工具未启用），不换的话框架回落到沙盒文件系统版——InboxMiddleware 每轮在模型调用前
-        // 做 inboxDrain + findStale，两次判定各打一次到沙盒容器的同步 HTTP（线上线程栈实测），
+        // 做 inboxDrain + findStale，两次判定各打一次到沙盒容器的同步 HTTP，
         // 全部换回空列表（NoopBusComponents 类注释有完整机制说明）。
         agentBuilder.messageBus(NoopBusComponents.MESSAGE_BUS);
         agentBuilder.asyncToolRegistry(NoopBusComponents.ASYNC_TOOL_REGISTRY);
         // 动态子智能体声明关掉：问渠的子智能体全部走 subagentFactory 静态注册，工作区里从不放
         // subagents/*.md 声明文件——而 DynamicSubagentsMiddleware 每轮模型调用前都会 glob 扫一遍
-        // 工作区（经沙盒文件系统 = 一次容器 HTTP + provisioner touch），线上线程栈实测正卡在这。
+        // 工作区（经沙盒文件系统 = 一次容器 HTTP + provisioner touch），每轮都多这一笔开销。
         // 只关「声明文件扫描」这一支，spawn 工具与静态注册的子智能体不受影响。
         agentBuilder.disableDynamicSubagents();
         // 问渠的助手登记成框架的子智能体（派遣改由框架 agent_spawn 驱使，问渠不再挂 consultAgent）。
@@ -4148,7 +4116,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     }
 
     /**
-     * 框架原生文件/命令工具的统一护栏（全框架化 P1 的注入防护补全）。
+     * 框架原生文件/命令工具的统一护栏（注入防护补全）。
      *
      * <p>与 {@link #alignWriteFileDescription} 同一做法：build 之后按同名重新注册。框架在 build 期
      * 把 {@code FilesystemTool / ShellExecuteTool} 注册进 toolkit 的副本，问渠只能在这个副本上覆盖；
@@ -4226,11 +4194,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     /**
      * 把 {@code write_file} 的 schema 说明改成与问渠实际行为一致的那句。
      *
-     * <p>框架 2.1.0-BETA1 的说明仍写着 "Write content to a <b>new</b> file"，而问渠侧早已把
+     * <p>框架 2.1.0-BETA1 的说明仍写着 "Write content to a <b>new</b> file"，而问渠侧把
      * {@code write} 定为「无则新建、有则整体替换」（{@code ProvisionerSandboxFilesystem#write}，
      * 手册 {@code 09-技能与沙盒} 同一口径）。说明与行为不一致不是显示问题：模型是照着说明行事的，
-     * "new file" 等于叫它换路径——真机那次它照做了，一份交付被拆成 {@code p1/p2/n1a/n1b/n2a/n2b}
-     * 六个片段留在沙盒里，用户从「沙盒文件」挑中半份存成产物，预览与下载都是白页。
+     * "new file" 等于叫它换路径，一份交付会被拆成多段留在沙盒里。
      *
      * <p><b>只能在 build 之后改</b>：框架 {@code HarnessAgent:2530} 先 {@code this.toolkit.copy()}，
      * 再往那个副本上注册文件工具（{@code :2895}）——build 前注册的同名工具会被这次注册盖掉
@@ -4261,7 +4228,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     /**
      * 给框架 {@code execute} 的说明补一句「退出码取整条命令链的最后一条」。
      *
-     * <p>线上实测：模型删完文件后用 {@code ls <path>} 验证，文件不在时 {@code ls} 退出 1，
+     * <p>模型删完文件后用 {@code ls <path>} 验证，文件不在时 {@code ls} 退出 1，
      * 整条命令因此被判失败（卡片红色），而删除其实已经成功。工具状态只能看退出码，
      * 不能从输出里猜「其实成功了」——所以把正确的验证写法教给模型：
      * {@code test ! -e <path>} 在文件不存在时退出 0。
@@ -4528,15 +4495,14 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                         long elapsedMs, long humanWaitMs, long wallMs, long prepMs,
                         AgentSession session, int historyBefore, String turnId,
                         Map<String, Object> planRecord) {
-        // 落库这一轮：框架引擎此前只发帧不落库，界面上点进去是空会话（真机被这个抓到）。
+        // 落库这一轮：只发帧不落库的话，界面上点进去就是空会话。
         // 走 SessionService 同一入口，不另写一套消息表——会话列表、历史、引用面板都吃这份数据
         String body = answer == null ? "" : answer;
         // 每轮文件改动：轮末对比（轮前快照在这里等齐）。非本机工作区/失败=不出卡，绝不给收尾添错。
         Map<String, Object> turnChanges = cmd.isApiKey() ? null
                 : turnChangeService.settle(cmd.getSessionId(), turnId);
         // 推荐块两道护栏，都住在 ModelOutputParser 里：条目数超过要的那 N 条＝整块是被塞进来的正文
-        // （全数并回、一颗芯片不出），否则只并回长过正文量级的那几条。真机 2026-10-18 21:00 那轮模型把
-        // 摘要骨架整块写进 {@code <related>}，71 条短行条条过单条长度闸，界面上是一整屏绿芯片。
+        // （全数并回、一颗芯片不出），否则只并回长过正文量级的那几条。
         int relatedMaxChips = RelatedPrompt.COUNT + RELATED_CHIPS_TOLERANCE;
         List<String> relatedProse = recording.related.prose(RELATED_PROSE_MIN_CHARS, relatedMaxChips);
         if (!relatedProse.isEmpty()) {
@@ -4550,7 +4516,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         List<String> relatedChips = recording.related.chips(RELATED_PROSE_MIN_CHARS, relatedMaxChips);
         // 内部标记闸：上游偶发把工具调用当正文吐出来（本该进 tool_calls 的那一截进了 content）。
         // 剥离器已经把脏文本吞了，这里补的是「别让它静默」——这一步系统真的没执行，用户有权知道
-        // 内容是缺的，而不是读到一个凭空短了一截的回答（真机 2026-10-22 20:54 整条回答只有一段调用文本）。
+        // 内容是缺的，而不是读到一个凭空短了一截的回答。
         // 日志只报字数不报内容：调用入参里常带 URL 与令牌，抄进日志等于换个地方泄露。
         String leakedCall = recording.related.dsml();
         if (!leakedCall.isEmpty()) {
@@ -4561,18 +4527,17 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         }
         boolean realAnswer = !body.isBlank();
         // 半程轮有过程就落库、连过程都没有就不落（与手写侧 persistPartialAnswer 同一道守卫）：
-        // 「正文非空」单独判会让只跑了工具的轮整条蒸发，而真空轮落一条空消息只是污染历史——
-        // 真机实测到的正是后者：确认卡没人答、撞到墙钟上限收尾，历史里多出一条空白助手消息
+        // 「正文非空」单独判会让只跑了工具的轮整条蒸发，而真空轮落一条空消息只是污染历史。
         boolean hasProcess = !recording.toolCalls.isEmpty() || recording.thinking.length() > 0;
         boolean supersededRound = planRecord != null && "superseded".equals(planRecord.get("status"));
         // 尾标进了正文的那一支，同句话再结构化入一块（noticeText 非空即「本轮被中断」的事实）：
-        // 双写窗口内两边都写——旧客户端读正文尾标，blocks 里的 notice 给刷新/分享与 P6 渲染用。
+        // 两边都写：正文里留一份，blocks 里的 notice 给刷新/分享与渲染用。
         String noticeText = "";
         if (!realAnswer && hasProcess) {
             // 被「继续对话」取代的那一轮正文留空：计划卡角标已经写着「已被取代」，再补一句中断
             // 标注就是把同一件事说两遍（与手写引擎同一口径）
             // 只有正文本来就空的那一支才去分隔符：非空正文必须带着「\n\n」拼在尾段，
-            // 少了它引用块会粘回最后一句、">" 原样印在屏幕上（trim 掉分隔符实测中过一次）
+            // 少了它引用块会粘回最后一句、">" 原样印在屏幕上
             if (!supersededRound) {
                 noticeText = interruptMarker(stopped, timedOut, budget, stalled).trim();
                 body = noticeText;
@@ -4585,7 +4550,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         }
         boolean persist = realAnswer || (hasProcess && !awaiting);
         // 本轮正文配图清单：正文里的 [图片N] 就是按这份的下标还原的（N → 第 N-1 项）。
-        // 它此前只活在 SSE image 帧里、从不落库，表现是「当场看得见图，一刷新全变成 [图片1] 四个字」。
+        // 只随 SSE image 帧下发而不落库的话，表现是「当场看得见图，一刷新全变成 [图片1] 四个字」。
         List<String> turnImages = pool.rawImages();
         // 引用完整性防线：悬空角标剔除、「有来源却没标 [N]」的 fail-loud、「编号对上了但语义不支撑」的
         // LLM 自检——与手写侧同一个实现。换了运行时不该把这道答案质量防线摘掉。
@@ -4620,8 +4585,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 思考字数进台账：这一族关着思考也照样回 reasoning，单列出来放量时才看得出
         // 「框架引擎多烧的那一截」是思考而不是正文（§29 成本账那条）
         tokens.put("thinkingChars", recording.thinking.length());
-        // 整轮耗时随消息行落库：它此前只活在 done 那一帧，刷新一次「这一轮跑了多久」就读不出来了——
-        // 而界面已经改成只在气泡顶部报这一个数（原先每张卡各挂一个），落不了库就等于刷新即空白。
+        // 整轮耗时随消息行落库：只活在 done 那一帧的话，刷新一次「这一轮跑了多久」就读不出来了——
+        // 界面只在气泡顶部报这一个数，落不了库就等于刷新即空白。
         // 两份都要：机器时间对得上看板与台账，等待那份让前端能拼回墙钟（屏幕上跳着的是墙钟，
         // 收尾只报机器时间会让数字在答完那一刻变小），并在悬停里说清等了多久。
         // humanWaitMs 只在真等过的时候写：为 0 时不占键位。
@@ -4633,7 +4598,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         }
         if (humanWaitMs > 0L) tokens.put("humanWaitMs", humanWaitMs);
         // 整轮墙钟也落库：气泡顶部那条报的是「从发出提问到答完」，屏幕上跳的是这一份、刷新后读的
-        // 必须还是这一份。只落机器耗时的话，刷新一次数字就变小（真机 2026-11-05 量到 6.0s → 3.3s），
+        // 必须还是这一份。只落机器耗时的话，刷新一次数字就变小，
         // 因为排队、限流、会话补建与实例装配那几秒不在 startedAt 之后起表。
         // 所有轮都写：没有请求体的入口 prepMs=0、基准是开轮时刻——照样有「这一轮跑了多久」，
         // 少了这个键，那些轮答完与刷新后就会各说各的（done 走本地钟回退、历史走机器耗时）。
@@ -4660,8 +4625,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         }
         if (!tokens.isEmpty()) channel.emit(RunEventType.USAGE, com.alibaba.fastjson2.JSON.toJSONString(tokens));
         // 本轮压过上下文 → 消息行落一个标记：流里那条线只是进度，刷新后「已压缩上下文」分隔线
-        // 只有这一个数据源（自研压缩交回框架那次改动把写侧删了、判据留在读空键，线从此再不出现）。
-        // 挂在 usage 帧之后：预览那份只认用量，多一个非用量键会让容量面板读到一本空账。
+        // 只有这一个数据源。挂在 usage 帧之后：预览那份只认用量，多一个非用量键会让容量面板读到一本空账。
         if (recording.compactedThisTurn) {
             tokens.put("compacted", 1);
             // 摘要文本也要落库：分隔线上的「查看摘要」按会话读，不落就是压完刷新点进去报「还没有摘要」
@@ -4677,7 +4641,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         String artifactsJson = "[]".equals(artifactList) ? null : artifactList;
         // 产物是收尾才结算的：先入 blocks 再落库，保证历史时间线里同一份产物不丢
         recording.artifacts(artifactItems);
-        // 终态原因入块：刷新/分享/P6 渲染都读这一条结构化事实，不再靠整串文案 endsWith 反推（§1 第 6 行）
+        // 终态原因入块：刷新/分享与渲染都读这一条结构化事实，不再靠整串文案 endsWith 反推（§1 第 6 行）
         if (!noticeText.isEmpty()) {
             recording.notice(TurnTranscriptRecorder.toneOf(stopped, timedOut, budget, stalled), noticeText);
         }
@@ -4688,8 +4652,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 : (cmd.isGuestMode() ? TurnBlocks.answerOnly(blocksJson)
                 : com.alibaba.fastjson2.JSON.parseObject(blocksJson));
         // 重新生成的分支手术（与工作流路径 ChatflowBridge 同口径）：先软删被替换的旧回答并登记
-        // 版本组，新回答落库后挂同一组。单引擎化时这段没接回来——旧回答不软删，刷新后两条答案
-        // 并存且无 ‹ n/N › 可切。只在真要落库这一轮时做：等待/失败轮不落库，旧回答就不该被动。
+        // 版本组，新回答落库后挂同一组，刷新后才有 ‹ n/N › 可切。只在真要落库这一轮时做：
+        // 等待/失败轮不落库，旧回答就不该被动。
         String replaceGroup = null;
         if (persist && cmd.getReplaceMessageId() != null && !cmd.getReplaceMessageId().isBlank()) {
             replaceGroup = sessionService.beginAnswerReplace(cmd.getReplaceMessageId());
@@ -4738,12 +4702,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                     !pool.sources().isEmpty(), elapsedMs,
                     cmd.isDeepThink(), assistantMessageId, cmd.getAgentId());
         }
-        // 载荷改为 JSONObject 序列化，**不再手工拼字符串**。
-        // 原先按 "..." + json(x) 手工拼接，json() 只转义 \\ " \n \r \t——其余控制字符与非法转义
-        // 序列会让整包失去合法性。真机实测两轮 MCP 调用都命中：报 "illegal input" 且偏移正好落在
-        // 字符串末尾，危害是**本轮来源清单与外发文本一起丢掉**，「答案可溯源」在外部链路静默失效。
+        // 载荷用 JSONObject 序列化，不手工拼字符串：控制字符与非法转义序列会让整包失去合法性，
+        // 本轮来源清单与外发文本会一起丢掉，「答案可溯源」在外部链路静默失效。
         // 键序与拼接版逐字一致（下游有多个消费方按名取字段，含前端与子轮回取）。
-        // WriteMapNullValue 保持「显式给 null」的旧语义（原先 json(null) 产出空串，缺键会让前端读不到）。
+        // WriteMapNullValue 保持「显式给 null」的语义（缺键会让前端读不到）。
         List<Map<String, Object>> pendingSteers = awaiting ? null : unsentSteers(handle, turnId, recording);
         if (pendingSteers != null && pendingSteers.isEmpty()) pendingSteers = null;
         String payload = TurnDonePayload.toJson(TurnDonePayload.Input.builder()
@@ -4905,7 +4867,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 上下文没添新行就不必读全量日志去问「添了几条」：transcript() 走的是从 head 回走的整条 commit 链
         if (!transcriptChanged) return;
         // 墙钟节流（stamp[1]）：tool/result 会让 transcriptChanged 每步都真，大表轮 20 来步就是
-        // 20 来次全量读，全折进轮内延迟（2026-11-01 纸表轮实测）。容量圆环 4 秒刷一次没有可感知损失。
+        // 20 来次全量读，全折进轮内延迟。容量圆环 4 秒刷一次没有可感知损失。
         long now = System.currentTimeMillis();
         if (stamp[1] > 0 && now - stamp[1] < 4_000L) return;
         stamp[1] = now;
@@ -4987,8 +4949,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 把框架那份滚动摘要落进会话行（{@code c_ai_session.history_summary}）。
      * <p>压缩交回 AgentScope 之后摘要只活在框架的<b>会话状态</b>里：{@code CompactionMiddleware}
      * 把它写进 {@code AgentState.contextMutable()} 首位，而框架原生日志没有这条消息
-     * （{@code transcript()} 只回放 user/assistant/tool 三类事件）。此前正是从 transcript 头一条找它，
-     * 判据永远不成立——分隔线照画、正文一行不落，点「查看摘要」就报「这个会话还没有生成过摘要」。
+     * （{@code transcript()} 只回放 user/assistant/tool 三类事件），从 transcript 头一条找不到它。
      * <p>读不到就一行不写——宁可让面板报空，也不落一份来历不明的摘要。
      */
     private void persistCompactionSummary(ChatCommand cmd) {
@@ -5023,20 +4984,19 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * generateReason=INTERRUPTED）就**停在这里返回空**，不再往前翻：它是这一跑留在上下文里的最后一条，
      * 前面那条属于**上一轮**，捞出来就是拿别人的话给这一轮存档（上面那条注释记过的旧坑）。
      * 空正文的停止轮会落到「只有过程、没有正文」那一支——界面上只剩工具卡与「已停止本轮」标注，
-     * 这才是这一轮真实留下的东西（真机 2026-10-20 22:06 那一轮屏幕上是一句英文客套话）。
+     * 这才是这一轮真实留下的东西。
      * 判据用框架自己留的 generateReason，不比对文案。
      * <p><b>只看这一跑添的那几行</b>（与 {@link #usageOf} 同一个 {@code historyBefore} 口径）：
      * 回退要补的是「模型答了、正文没进过流式剥离器」，而这一跑一个字也没添时，transcript 尾部那条
      * 必然属于上一轮——拿它当本轮正文存档，就是把别人的话记在这一轮名下。实例被重建过尤其如此：
-     * 框架的执行异常留在旧实例里，新实例读不到失败痕迹，光靠 {@code failure == null} 挡不住
-     * （真机 2026-11-03 21:49 线上：接续一条已失败的轮，库里凭空多出一条与上一轮逐字相同的回答）。
+     * 框架的执行异常留在旧实例里，新实例读不到失败痕迹，光靠 {@code failure == null} 挡不住。
      */
     private static String lastAssistantText(AgentSession session, int historyBefore) {
         List<Msg> messages = session.transcript().messages();
         if (messages.size() <= historyBefore) return "";
         // 下界必须停在 historyBefore：submit 后用户行必然已 commit，本轮 transcript 里再没有
         // 可用的 assistant 正文时（思考吃光 max_tokens 的 0-token 轮、出字前被叫停），
-        // 一路扫到 0 就穿透进上一轮——把上一轮的回答当本轮正文存档（线上出现过逐字相同的复制轮）
+        // 一路扫到 0 就穿透进上一轮——把上一轮的回答当本轮正文存档
         for (int i = messages.size() - 1; i >= historyBefore; i--) {
             Msg m = messages.get(i);
             if (!"ASSISTANT".equals(String.valueOf(m.getRole()))) continue;
@@ -5074,7 +5034,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 回退那一份正文的收尾处理：它出自框架的 transcript，从没进过流式剥离器（{@code model/chunk}
      * 的增量才是它的正常入口），所以标签得在这儿剥掉。
      * <p>不剥的表现为两件事同时发生：{@code <related>…</related>} 原文印进回答，而「接下来可以」
-     * 那排芯片一个也没有——芯片正是从这块里拆出来的（真机 2026-10-18 20:20 那轮）。
+     * 那排芯片一个也没有——芯片正是从这块里拆出来的。
      * <p>过同一个 {@link Recording#related} 而不是在这里补一条正则：推荐条数、「模型把正文写进
      * 推荐块时并回回答」那道护栏、以及 {@code <process>} 分流都住在它身上，同一件事不该有第二份口径。
      */
@@ -5143,9 +5103,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     /**
      * 工具卡载荷（{@code tool_status} 实时帧与落库那份同源，字段形状一致）。
      *
-     * <p><b>展示名从 {@link ToolDisplayNames} 取，不写裸名</b>：原先这里 {@code esc(name)} 直接把
-     * 工具名塞进 {@code label}，前端 {@code toolLabel} 认得出「label 就是名字」而回落它那份手抄映射，
-     * 表里没有的 {@code consultAgent}、{@code plan_*} 就现出英文裸名。取不到展示名时<b>不写该字段</b>
+     * <p><b>展示名从 {@link ToolDisplayNames} 取，不写裸名</b>：把工具名直接塞进 {@code label} 会让前端
+     * {@code toolLabel} 认出「label 就是名字」而回落那份手抄映射，表里没有的 {@code consultAgent}、
+     * {@code plan_*} 就现出英文裸名。取不到展示名时<b>不写该字段</b>
      * （前端映射与「后端确实没给名字」两种情况在界面上同形，但载荷里能分辨）。
      *
      * <p>{@code startedAtMs} 用<b>服务端</b>墙上时刻：并发派发时各张卡的起止只有落在同一个钟上才减得出
@@ -5324,10 +5284,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 case '\f' -> sb.append("\\f");
                 default -> {
                     // **JSON 规范要求 U+0000–U+001F 全部转义**，不只是 \n \r \t。
-                    // 真机实测（2026-10-16）：模型思考文本里出现 U+001A（SUB），上面那个 esc() 放它
-                    // 过去，整份 done 载荷变成非法 JSON → MCP 取不到来源清单 → 「答案可溯源」在外部
-                    // 链路静默失效。报错是 `illegal input, offset <len>, char \x1a`，而这个字符在
-                    // 终端与文本工具里根本显示不出来，定位成本极高。
+                    // 控制字符（如 U+001A）漏出去会让整份 done 载荷变成非法 JSON，下游拿不到来源清单，
+                    // 且这类字符在终端里显示不出来，排查成本极高。
                     if (c < 0x20) sb.append(String.format("\\u%04x", (int) c));
                     else sb.append(c);
                 }

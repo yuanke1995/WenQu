@@ -450,7 +450,7 @@ const doBatchEnabled = async on => {
   }
 }
 
-/** 批量重连（P1 · MCP 3.8）：逐个调单服务重连，结果按 reportBatch 口径汇报 */
+/** 批量重连：逐个调单服务重连，结果按 reportBatch 口径汇报 */
 const doBatchReconnect = async () => {
   if (!selected.value.length) return
   batchBusy.value = true
@@ -710,7 +710,7 @@ const headersObject = () => {
   }
   return any ? out : null
 }
-// ---- 编辑弹窗：URL 自动识别传输类型 + 名称即时查重（P1 · MCP 3.6）----
+// ---- 编辑弹窗：URL 自动识别传输类型 + 名称即时查重----
 const typeTouched = ref(false)
 const autoTypeHint = ref(false)
 const nameError = computed(() => {

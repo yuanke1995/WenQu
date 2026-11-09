@@ -15,7 +15,7 @@ import org.slf4j.LoggerFactory;
 /**
  * 框架 {@link SandboxClient} 的问渠实现 —— 让框架把「问渠 provisioner 管理的沙盒」当成一等沙箱后端。
  *
- * <p><b>定位</b>：全框架化迁移（P1）的客户端侧适配。官方文档「实现自己的沙箱后端」一节：
+ * <p><b>定位</b>：问渠沙盒作为框架一等后端的客户端侧适配。官方文档「实现自己的沙箱后端」一节：
  * *"不需要改 Harness 源码——实现几个契约接口然后传给 {@code filesystem(...)} 就行"*。
  * BETA1 的 {@code impl/} 下只有 docker 后端，故问渠的跨语言 provisioner 只能走这条自建路径。
  *

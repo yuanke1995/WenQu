@@ -9,7 +9,7 @@ package com.wenqu.ai.config;
  *   <li>{@code ConfigService.defaults()} —— 运行时权威默认（启动灌库 + 缓存 miss 兜底）；</li>
  *   <li>读点 {@code get*(key, fallback)} 的 fallback —— 防御层（DB 值缺失/手改坏时的最后兜底）。</li>
  * </ol>
- * 同一默认值此前在三层各写一遍字面量，改一次默认要全仓库跟着改（0.25→0.5 重标定即漂移实证）。
+ * 同一默认值若分散在三层各写一遍字面量，改一次默认要全仓库跟着改。
  * 收敛约定：凡 fallback 散布 ≥2 个读点的 key，默认值只在本类定义一处——
  * {@code defaults()} 与各读点全部引用常量，改默认值只改这里（schema def 记得手动同步，仅影响前端展示）。
  * 单读点 key 的 fallback 仍留在读点原地（不值得为它建常量）。
@@ -107,7 +107,7 @@ public final class ConfigDefaults {
     public static final int SANDBOX_CLEANUP_INTERVAL_MS = 600_000;
 
     /**
-     * cleanup.intervalMs：清理/回收类任务的共用节拍（原 11 个「每日/每小时清理间隔」键收成一个）。
+     * cleanup.intervalMs：清理/回收类任务的共用节拍。
      * <p>取族内**最小**的旧默认（1 小时）而不是最大：清理间隔决定的是「过期数据什么时候被扫到」，
      * 保留期本身没变，扫得勤只是让已过期的东西早一点删，代价是多几轮空扫；反过来把一个原本
      * 每小时的临时目录/外溢原文清理改成每天一轮，等于让磁盘上最脏的两类文件多堆 23 小时。
@@ -117,7 +117,7 @@ public final class ConfigDefaults {
     /**
      * cleanup.tempFileRetentionDays：临时件保留天数（附件 / 聊天档临时目录 / 工具外溢原文 /
      * 任务执行日志 / 聊天图片）。
-     * <p>这一族原先 5 个键各说各的（24 小时、72 小时、7 天、7 天、7 天），折算后按**最长**的 7 天走：
+     * <p>这一族折算后按**最长**的 7 天走：
      * 保留期取短了会真删掉本来该留的东西，取长了只多占几天磁盘。
      */
     public static final int CLEANUP_TEMP_FILE_RETENTION_DAYS = 7;

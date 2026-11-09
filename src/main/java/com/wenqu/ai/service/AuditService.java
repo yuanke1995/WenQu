@@ -30,7 +30,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * 统一审计事件总线（Phase 3 · P11）。
+ * 统一审计事件总线。
  *
  * <p>一条审计事件同时落两处：<b>日志</b>（保持运维习惯：{@code grep '\[AUDIT\]' 仍能看到全过程）与
  * <b>库里的一行结构化事件</b>（可按人/动作/对象/时间查、可按留存期清、可导出交合规）。
@@ -105,7 +105,7 @@ public class AuditService {
         if (writerThread != null) {
             writerThread.interrupt();
             try {
-                // 必须先等写线程真的停下来，再自己上手冲队列。原先只 interrupt 就立刻 drainOnce，
+                // 必须先等写线程真的停下来，再自己上手冲队列。若 interrupt 后不等待就 drainOnce，
                 // 收尾那一瞬两个线程同时在改 seq 与链尾：链上会多出「序号断裂 + 链头不接」——
                 // 而这恰好是「事后有人删了行」的形状，等于每次重启都可能自己造出一条假篡改证据。
                 writerThread.join(2000);
@@ -124,7 +124,7 @@ public class AuditService {
     // ==================== 业务侧入口 ====================
 
     /**
-     * 记一条常规审计事件。用法与原来的 {@code log.info("[AUDIT] 动作 k={} k={}", ...)} 完全一致——
+     * 记一条常规审计事件。用法与 {@code log.info("[AUDIT] 动作 k={} k={}", ...)} 完全一致——
      * <b>格式串就是唯一作者点</b>：日志文本按 SLF4J 同形渲染，结构化行从同一份串里派生
      * （动作＝串里第一个带名键之前的部分，键值按 {@code 键={}} 与其占位序号配对）。
      * 这样才不会出现「日志写一份、库里再抄一份」的两本账。
@@ -163,7 +163,7 @@ public class AuditService {
         AuditEvent row = new AuditEvent();
         // 时间戳先截到毫秒再入队：链里的 ts 参与哈希，而列是 DATETIME(3)、MySQL 存时四舍五入、
         // 哈希用的是截断值——纳秒尾巴 ≥500µs 的那一条，落库后按库里的 ts 永远算不回原哈希
-        //（实测约四成的行被 verify 报成「内容被改写」）。两边统一成毫秒，链才可能自校验通过。
+        // 两边统一成毫秒，链才可能自校验通过。
         row.setTs(LocalDateTime.now().truncatedTo(java.time.temporal.ChronoUnit.MILLIS));
         row.setLevel(level);
         row.setAction(action.length() > 64 ? action.substring(0, 64) : action);
@@ -309,10 +309,10 @@ public class AuditService {
 
     private synchronized void persist(List<AuditEvent> batch) {
         for (AuditEvent row : batch) {
-            // 序号与链头只在「真落库」之后才推进：原先是先 ++seq 再插，一条插失败就 return，
+            // 序号与链头只在「真落库」之后才推进：若先 ++seq 再插，一条插失败就 return，
             // 于是那一期号被占掉、下一期的 prev_hash 又指向一条库里不存在的行——verify 同时报
             // 「序号断裂」与「链头不接」，看起来像有人删了行，其实是我们自己没插进去。
-            // 现在失败的这一条不进链、单独计数并打错误行，链本身保持连续：
+            // 失败的这一条不进链、单独计数并打错误行，链本身保持连续：
             // 于是「链上有洞」重新变成它唯一的含义——事后被人删过。
             long next = seq + 1;
             row.setSeq(next);
@@ -332,8 +332,8 @@ public class AuditService {
 
     /**
      * 这行的内容哈希对不对。
-     * <p>写侧已把 ts 截到毫秒，与 DATETIME(3) 存值一致；修复前落库的行已在 2026-11-08 一次性
-     * 归一到哈希口径，因此这里直接比对即可。{@code detail}/{@code action} 等任一字段被改，
+     * <p>写侧已把 ts 截到毫秒，与 DATETIME(3) 存值一致，
+     * 因此这里直接比对即可。{@code detail}/{@code action} 等任一字段被改，
      * 哈希都对不上。
      */
     private static boolean hashMatchesStored(AuditEvent row) {
@@ -445,8 +445,8 @@ public class AuditService {
      * <p><b>必须走平台视图读</b>：链是「副本」级的，同一根链上混着各租户的行（写侧按业务线程落
      * {@code tenant_id}），而 {@code chainAfter} 经 MyBatis 会被租户拦截器拼上租户条件——用请求线程
      * 的租户视图读，别家租户的那几行就「不存在」，于是每跨一次租户报一对「序号断裂 + 链头不接」。
-     * 本机实测 38 条断点全是这么来的假信号（那些行都在，只是不属于 default）。
-     * <p>哈希比对直接按库里的 ts 重算：写侧与落库都是毫秒口径，修复前的旧行已一次性归一到同一口径。
+     * 这些断点都是假信号（那些行都在，只是不属于 default）。
+     * <p>哈希比对直接按库里的 ts 重算：写侧与落库都是毫秒口径，旧行亦按此口径归一。
      */
     public List<Map<String, Object>> verify(int maxRowsPerReplica) {
         return com.wenqu.ai.util.TenantContext.asPlatform(() -> verifyChain(maxRowsPerReplica));
@@ -496,7 +496,7 @@ public class AuditService {
     /** 留存清理：删早于 365 天前的事件（保留期固定）；分批删避免长事务锁表 */
     public int purgeExpired() {
         // 保留期是平台常量（ConfigDefaults.CLEANUP_AUDIT_RETENTION_DAYS），≤0 时不清理（永久保留）
-        // 键名须与 config-schema.json 一致，否则设置页改审计保留天数不生效、恒按兜底的 365 天跑
+        int days = ConfigDefaults.CLEANUP_AUDIT_RETENTION_DAYS;
         if (days <= 0) return 0;
         LocalDateTime cutoff = LocalDateTime.now().minusDays(days);
         int total = 0;

@@ -33,7 +33,7 @@ public class AgentEvalRun {
     /** 运行时智能体版本号快照（versionCount） */
     private Integer agentVersion;
 
-    /** 触发方式: manual / gate / scheduled(P2)（列名 trigger_kind 避开保留字 trigger） */
+    /** 触发方式: manual / gate / scheduled（列名 trigger_kind 避开保留字 trigger） */
     private String triggerKind;
 
     /** running / succeeded / failed / cancelled */

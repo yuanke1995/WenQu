@@ -20,9 +20,9 @@ import java.util.regex.Pattern;
  * 淹在卡里；写工作区外、删除/覆盖、以及把本地内容发到外部才在这里命中。
  *
  * <p><b>先中和再判</b>（{@link #scan}）：单引号串、双引号串里的字面段、heredoc 正文
- * 都不会被 shell 当成命令/运算符解析。早前直接拿正则扫原文，把 `python3 - <<'EOF'` 脚本里的
- * `'>'`（如 `endswith('&lt;/html&gt;')`）当成输出重定向挂了一张确认卡——真机 3 次只读自检全部被问。
- * 现在先把这些惰性文本中和掉，只留下真正会执行的命令骨架再判；引号里的字母与路径保留，
+ * 都不会被 shell 当成命令/运算符解析。直接拿正则扫原文会把 `python3 - <<'EOF'` 脚本里的
+ * `'>'`（如 `endswith('&lt;/html&gt;')`）当成输出重定向，误挂确认卡。
+ * 先把这些惰性文本中和掉，只留下真正会执行的命令骨架再判；引号里的字母与路径保留，
  * `sh -c "…"` 这类把命令藏进引号里的写法仍按字面处理（粗判不追，交给沙盒写收束与执行器）。
  *
  * @author yuanke
@@ -45,8 +45,7 @@ public final class AgentxDestructiveCommands {
     /**
      * find -delete / find -exec rm / xargs rm / 命令替换里藏删除。
      * <p>{@code \b} 只放在需要「从单词开头起算」的两支里：放到整个分组前面时，{@code $} 与
-     * 它前面的引号/空白都是非单词字符、中间没有边界，{@code $(rm …)} 这一支会永远不命中
-     * （注释里承诺的能力实际是空的，2026-11-06 补测才发现）。
+     * 它前面的引号/空白都是非单词字符、中间没有边界，{@code $(rm …)} 这一支会永远不命中。
      */
     private static final Pattern INDIRECT_DELETE = Pattern.compile(
             "(?is)\\b(?:find\\b[^;&|\\n]*\\s-delete"

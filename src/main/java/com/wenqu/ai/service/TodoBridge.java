@@ -17,11 +17,11 @@ import java.util.Map;
 /**
  * 任务清单的存储桥：<b>问渠的护栏 + 框架的 state</b>。
  *
- * <p>问渠的清单原来自己落 {@code c_ai_session.todos}。单引擎之后权威真源改由框架持有 ——
+ * <p>清单的权威真源在框架侧 ——
  * 清单状态就是 {@code AgentState.tasksContext}（框架的 {@code todo_write} 与
  * {@code TaskReminderMiddleware} 每轮重述都围绕它），问渠再把它当一份平行的真值源就是两个真源，
  * 迟早对不上（模型读到框架那份、前端显示问渠那份，用户看到的进度和模型以为的进度不是一回事）。
- * 会话表那一份现在只留「最后写成的那张清单」做回显兜底：进程重启后框架实例不在本进程，
+ * 会话表那一份只留「最后写成的那张清单」做回显兜底：进程重启后框架实例不在本进程，
  * 右栏仍要能长出清单，而重建一个实例只为读一张卡不值当。
  *
  * <p>本类只做翻译，不做存储：
@@ -33,7 +33,7 @@ import java.util.Map;
  *       没有「本轮」，只能读 {@code session.inspect()} 那份快照——前端契约一个字没改。</li>
  * </ul>
  *
- * <p><b>为什么写活状态而不是会话投影</b>（这里踩过一次，症状是「清单已写入但回读失败」每轮必报）：
+ * <p><b>为什么写活状态而不是会话投影</b>：
  * {@code SessionProjection#restore} 每次从日志重放出<b>一个新的</b>反序列化对象，改它不影响任何人，
  * 框架收尾落库的仍是自己那份活状态——于是写入永远静默丢失。框架自带的 {@code todo_write}
  * 之所以没这个毛病，是因为它靠 {@code stateInjected} 拿到同一份活对象；问渠的工具走 Spring AI 的
@@ -66,7 +66,7 @@ public class TodoBridge {
      * <p><b>写的是框架这一轮活着的 {@link AgentState}</b>，不是 {@code session.inspect()} 那份快照：
      * 后者是从会话日志重放出来的只读恢复视图（{@code SessionProjection#restore} 每次
      * 反序列化一个新对象），改它等于改完就丢——框架在收尾时落库的是自己那份活状态，
-     * 于是「写入成功、回读为空」，清单永远记不上（真机就是这个形状）。框架自带的
+     * 于是「写入成功、回读为空」，清单永远记不上。框架自带的
      * {@code todo_write} 之所以正常，就是因为它拿的是 {@code stateInjected} 注入的同一份活对象。
      *
      * <p>落库不用这里管：框架在每次 call 收尾时把活状态整体 checkpoint 进会话日志与 stateStore。

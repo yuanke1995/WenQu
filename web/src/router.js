@@ -23,9 +23,9 @@ const routes = [
   // 通用 HTTP 错误页（/error?code=401&msg=...）：免登录（链接失效的访客本就没有登录态）。
   // 支持任意 3 位状态码，code 决定兜底文案与是否给「去登录」入口；跳转方经 ?msg= 带具体原因优先展示。
   { path: '/error', component: page(() => import('./views/HttpErrorPage.vue')), meta: { title: '出错了', public: true } },
-  // 租户开通申请（Phase 4 刀三 · 自助开通）：免登录的公开表单，提交后仍需平台管理员批准
+  // 租户开通申请（自助开通）：免登录的公开表单，提交后仍需平台管理员批准
   { path: '/apply', component: page(() => import('./views/TenantApplyPage.vue')), meta: { title: '申请开通', public: true, pageFlow: true } },
-  // 租户邀请落地页（P1 · 3A）：token 即凭据，免登录注册后直接进入工作台
+  // 租户邀请落地页：token 即凭据，免登录注册后直接进入工作台
   { path: '/join/:token', component: page(() => import('./views/JoinPage.vue')), meta: { title: '邀请注册', public: true, pageFlow: true } },
   // 本机执行器授权确认页：执行器在终端打印 /pair?code=XXXXXX，登录后确认即完成配对
   { path: '/pair', component: page(() => import('./views/PairDevicePage.vue')), meta: { title: '授权本机', pageFlow: true } },
@@ -58,7 +58,7 @@ const routes = [
   // 对接文档：API Key 对外集成的在线手册（怎么用 / 有什么能力 / 接哪些），所有登录用户可读
   { path: '/docs', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/ApiDocsPage.vue')) }], meta: { title: '对接文档' } },
   { path: '/members', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/MembersPage.vue')) }], meta: { requiresAdmin: true, title: '成员管理' } },
-  // 租户与开通（Phase 4 · P9）：租户清单/启停/直开 + 自助开通申请的批准与驳回；
+  // 租户与开通：租户清单/启停/直开 + 自助开通申请的批准与驳回；
   // 平台级动作（启停/直开/审批/落点清单）页内按 superadmin 显隐，服务端同判据兜底
   { path: '/tenants', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/TenantsPage.vue')) }], meta: { requiresAdmin: true, title: '租户与开通' } },
   // 安全与运维（管理员面）：系统巡检（运行状态体检）/ 会话治理（强制下线）/ 平台公告（停机/升级通知）

@@ -34,7 +34,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * 也不受「后端重启、换副本」影响（表在容器里，不在本进程内存里）。
  *
  * <p><b>边界（如实）</b>：只有<b>带标记</b>的进程进这张清单。三类看不见——
- * ① 这次改动之前起的老进程；② 工作流代码节点/定时任务起的（没有会话上下文，{@code procTag=null}）；
+ * ① 未带标记的老进程；② 工作流代码节点/定时任务起的（没有会话上下文，{@code procTag=null}）；
  * ③ 模型自己 {@code unset} 掉标记或换了个执行域（{@code sudo}、{@code docker exec}）起走的。
  * 沙盒被空闲回收（{@code sandbox.idleReleaseMinutes}）时容器整个没了，清单自然归零。
  *
@@ -243,7 +243,7 @@ public class SandboxProcService {
             item.put("tag", e.getKey());
             item.put("sessionId", owner == null ? "" : owner);
             item.put("own", sessionId.equals(owner));
-            // 认不出归属会话的标记（不是本平台起的，或形状是旧版/手工塞的）停不了：
+            // 认不出归属会话的标记（不是本平台起的，或手工塞的）停不了：
             // 卡片照列，但不给停止按钮——给了就是一条必然失败的死操作
             item.put("killable", owner != null);
             item.put("command", cmd.isEmpty() ? "(读不到命令行)" : cmd.toString());

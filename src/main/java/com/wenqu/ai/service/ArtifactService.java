@@ -47,8 +47,7 @@ import java.util.zip.ZipOutputStream;
  * <p>
  * 归属口径：产物归**用户**（取产生它的会话的 {@code c_ai_session.user_id}），不归会话——
  * 会话可以被清理，但成果仍在「我的产物」里可查可下；因此本服务同时提供列表 / 删除 / 超期清理。
- * 文件名带产物 id 前缀，**同一会话重复生成同名文件不再互相覆盖**（旧实现按 {sessionId}/{文件名} 落盘，
- * 第二次生成会覆盖第一个且 URL 相同，历史产物直接丢失）。
+ * 文件名带产物 id 前缀，**同一会话重复生成同名文件不再互相覆盖**。
  * <p>
  * 安全约束：
  * - 文件名白名单扩展名（{@link PreviewTypes#TEXT_ARTIFACT_EXTS} / {@link PreviewTypes#FILE_DELIVERY_EXTS}），
@@ -185,7 +184,7 @@ public class ArtifactService {
     }
 
     /**
-     * 把一个会话的产物收编到另一个会话（P3a 子智能体分支）。
+     * 把一个会话的产物收编到另一个会话。
      * <p>为什么需要：全循环分支跑在<b>一条用完即删的临时会话</b>里（{@code chat()} 的轮级互斥按会话加锁，
      * 分支不能借父会话）。于是分支交付的产物按子会话落库、按子会话登记实时下发——子会话一删，
      * 用户手上只剩一句"已经生成好了"的文件，点开却是 404 的签名路径。收编就是把这三处一起改到父会话：
@@ -874,7 +873,7 @@ public class ArtifactService {
             if (!sessionId.equals(row.getSessionId())) return null;
             return materialize(row.getObjectKey(), row.getFilename());
         }
-        // 库里无行：只可能是产物表建立之前的遗留布局，要求目录段严格等于本会话 id
+        // 库里无行：只可能是旧布局（无产物表记录），要求目录段严格等于本会话 id
         if (seg.length == 3 && sessionId.equals(seg[1])) {
             return materialize(rel, seg[2]);
         }

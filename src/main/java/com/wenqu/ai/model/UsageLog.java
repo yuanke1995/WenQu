@@ -11,8 +11,7 @@ import java.time.LocalDateTime;
  * 推理用量台账流水
  * <p>
  * 每一笔经多供应商路由发出的 LLM 请求记账一行（含工具调用循环的每一轮），
- * 是「个人使用统计」与「供应商账单对账」的唯一数据源。以前三期 statistics 直接读
- * c_ai_message.tokens，只能覆盖主链路回答那一轮的用量，与主账单差 4 倍。
+ * 是「个人使用统计」与「供应商账单对账」的唯一数据源。
  * <p>
  * uid 可为 NULL：索引/评测/探测等无用户上下文的系统调用如实记为空归属
  * （总账单仍包含它们，个人侧只看自己的行），避免在缺失上下文时伪造归属。
@@ -29,7 +28,7 @@ public class UsageLog {
     /** 归属用户 uid（NULL=无用户上下文的系统调用） */
     private String uid;
     /**
-     * 归属租户（Phase 4）。显式落值而不是靠拦截器补：记账常发生在未绑定租户的线程上
+     * 归属租户。显式落值而不是靠拦截器补：记账常发生在未绑定租户的线程上
      * （定时任务、工作流后台跑），那些行若留 NULL 就在本租户的用量与配额聚合里<b>凭空不存在</b>——
      * 花掉的钱看不见，配额闸也拦不住。
      */
@@ -48,7 +47,7 @@ public class UsageLog {
     /** 调用用途：chat / dispatch / subagent / memory / compress / rewrite / citecheck / think / workflow / graphrag / index / probe / eval / other */
     private String kind;
 
-    /** 发起本笔调用的 API Key id（对外能力第二批；null=非 API Key 通道。Key 主键是 VARCHAR，与 c_ai_api_key.id 同形） */
+    /** 发起本笔调用的 API Key id（null=非 API Key 通道。Key 主键是 VARCHAR，与 c_ai_api_key.id 同形） */
     private String apiKeyId;
 
     /** 输入 token（含缓存命中部分，与网关 usage.prompt_tokens 同口径） */

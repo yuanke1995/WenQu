@@ -18,7 +18,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * 沙盒脚本回调平台的回程（P3b 的「跨网络回调」端点）。
+ * 沙盒脚本回调平台的回程（「跨网络回调」端点）。
  * <p>
  * 容器里的 Python 代码要调本轮已挂载的工具，只能走 HTTP 回来。这条通道的设计取向全在<b>收窄</b>上：
  * <ol>
@@ -57,7 +57,7 @@ public class SandboxToolCallbackController {
      * @param body     {@code {"tool": "read_file", "args": {"path": "..."}}}
      *     <p>刻意不用 {@code Authorization: Bearer}：那个头在本平台专指登录令牌，
      *     {@code UserContextInterceptor} 见到它就一定要验成 JWT，验不过直接 401——请求根本到不了这里，
-     *     而现象是"脚本里每次调用都失败"，看着像工具坏了（本机实测踩过这一坑）。
+     *     而现象是"脚本里每次调用都失败"，看着像工具坏了。
      */
     @Operation(summary = "子调用一次本轮已挂载的工具",
             description = "凭据无效/过期 401；工具不在本轮名册、或被守卫挡下都返回 ok=false（不是 5xx）")

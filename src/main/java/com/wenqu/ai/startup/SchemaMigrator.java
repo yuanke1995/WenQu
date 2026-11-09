@@ -34,10 +34,7 @@ import java.util.regex.Pattern;
 @Slf4j
 @Component
 // @Order(0) —— 必须**最早**跑，不是"较早"：本类存在的唯一目的就是让后续启动任务能操作新列/新表。
-// 历史事故（2026-10-08）：本类曾是 @Order(100) 而 RbacSeedRunner 是 @Order(1)，种子先跑 →
-// 存量库缺 render_as 列时 seed() 第一条 selectList 就 SQLSyntaxErrorException，
-// 6 个内置 Tab 菜单一条没种、user 角色补绑整段没跑，表现为「智能体页没有可用的功能 Tab」。
-// 任何给已有表加列的改动都会踩这个坑，故取 0：ApplicationRunner 之间不存在需要更早的先决条件。
+// 任何给已有表加列的改动都要求本类先跑，故取 0：ApplicationRunner 之间不存在需要更早的先决条件。
 @Order(0)
 public class SchemaMigrator implements ApplicationRunner {
 
@@ -54,17 +51,15 @@ public class SchemaMigrator implements ApplicationRunner {
 
     /** 已退役列（表 → 列）：存量库若还有就删；新库 schema.sql 已不再建这些列 */
     private static final Map<String, List<String>> RETIRED_COLUMNS = Map.of(
-            // 2026-11-04: 工作区改为用户本机目录，服务器目录形态整体退役
             "c_ai_project", List.of("workdir_path", "directory_mode", "root_path", "shared_workdir"),
             // 只列「已改名」的旧预算列（budget_turns→budget_rounds、budget_minutes→budget_ms）。
-            // budget_tokens/budget_tool_calls 曾是退役列，2026-10-23 随预算四档装回 schema.sql，
+            // budget_tokens/budget_tool_calls 是 schema.sql 仍在建的有效列，
             // 留在名单里会让本类先补列再删列，实体 SELECT 直接 Unknown column。
             "c_ai_goal", List.of("criteria_json", "constraints_json", "subject_version",
                     "verifications_json", "contract_version", "state_revision",
                     "budget_turns", "budget_minutes"),
             "c_ai_user", List.of("role", "oidc_sub", "oidc_provider",
                     "default_rerank_model", "default_vision_model"),
-            // 2026-11-05: 上下文窗口档位整体退役——会话级档列与模型登记的下限列一并删
             "c_ai_session", List.of("context_window"),
             "c_ai_model", List.of("context_window_min"));
 
@@ -140,8 +135,8 @@ public class SchemaMigrator implements ApplicationRunner {
     }
 
     /**
-     * 已退役但仍可能留在存量库里的列：删掉，不再让「旧结构」跟着库走。
-     * <p>列名来自已删除的实体/读写路径，schema.sql 也不再建；存量库若还有，删列是纯减法。
+     * 不在当前 schema 中的列：存量库若还有就删掉，不让旧结构跟着库走。
+     * <p>名单里的列既不建也不读写；存量库若还有，删列是纯减法。
      * 用 information_schema 先查再删，幂等；单列失败只告警，不阻塞其余列。
      * <p>名单与 schema.sql 撞名（同一列既声明要建又声明要删）时**跳过不删并告警**：
      * 撞名说明名单没跟着「列装回」一起清，删下去会让实体每次查询报 Unknown column。
@@ -173,13 +168,12 @@ public class SchemaMigrator implements ApplicationRunner {
     }
 
     /**
-     * 租户列归一（Phase 4 刀二）：把所有 {@code tenant_id} 统一成 {@code VARCHAR(32) NOT NULL DEFAULT 'default'}，
+     * 租户列归一：把所有 {@code tenant_id} 统一成 {@code VARCHAR(32) NOT NULL DEFAULT 'default'}，
      * 并把历史 NULL 行回填成默认租户。
      *
-     * <p><b>为什么必须在这里改数据</b>：Phase 1/P3 那批表留的是可空占位列
-     * （注释写着「Phase4 启用，当前 NULL」）。租户行级过滤一上线，读侧谓词就是 {@code tenant_id = 'default'}，
-     * 而 SQL 里 {@code NULL = 'default'} 不为真 —— 那些行会<b>在界面上集体消失</b>。真机实测到两处：
-     * 审计页 27 条变 0 条、内容安全规则读成空集＝<b>闸门静默失效</b>。这里改的不是类型，是「数据看不看得见」。
+     * <p><b>为什么必须在这里改数据</b>：可空占位列在租户行级过滤下读不出来——
+     * 读侧谓词是 {@code tenant_id = 'default'}，而 SQL 里 {@code NULL = 'default'} 不为真，那些行会<b>在界面上集体消失</b>。
+     * 这里改的不是类型，是「数据看不看得见」。
      *
      * <p>顺序是先回填再改列：MySQL 严格模式下带着 NULL 去 {@code MODIFY ... NOT NULL} 会直接报错。
      * 表名取自 information_schema（不是外部输入），拼接安全。大表上这条 ALTER 会重建表——
@@ -228,7 +222,7 @@ public class SchemaMigrator implements ApplicationRunner {
     }
 
     /**
-     * 配额作用域 {@code platform} → {@code tenant}（Phase 4 刀二）。
+     * 配额作用域 {@code platform} → {@code tenant}。
      * <p>配额行本身按租户归属，"全平台"这个说法在多租户下是错的——一条规则管不到别的租户。
      * 值改了就要连带存量行一起改，否则老行读成未知作用域、{@code matchesScope} 一律不匹配，
      * 表现为「设过预算的人突然不限额了」这种最坏的静默失效。
@@ -244,7 +238,7 @@ public class SchemaMigrator implements ApplicationRunner {
     }
 
     /**
-     * MCP 工具中文名的旧前缀键归一（2026-11-09）。
+     * MCP 工具中文名的旧前缀键归一。
      * <p>Spring AI 挂载名前缀从直拼的 {@code wen_qu}（{@code wen_qusql_query}）换成了现行的
      * {@code w_q_}（{@code w_q_sql_query}）。{@code c_ai_user_mcp.tool_labels} 的存储契约一直是
      * <b>裸工具名</b>（见 schema.sql 列注释），但旧代码按旧前缀剥键，按挂载名存进来的条目就带着

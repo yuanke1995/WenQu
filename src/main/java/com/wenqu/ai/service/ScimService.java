@@ -52,7 +52,7 @@ import java.util.UUID;
 @Service
 @RequiredArgsConstructor
 public class ScimService {
-    /** 统一审计事件（Phase 3）：同一份格式串派生日志与结构化事件，不再两处抄 */
+    /** 统一审计事件：同一份格式串派生日志与结构化事件，不再两处抄 */
     private final AuditService audit;
 
 
@@ -229,7 +229,7 @@ public class ScimService {
                 touched = true;
             } else if (isReplace && (path == null || path.equalsIgnoreCase("displayName")) && value != null) {
                 // value 两种形态：直接文本 = displayName；对象 = {"active":x,"displayName":y}——
-                // Entra 停用账号发的就是无 path 的对象形态，漏了会静默 no-op 还返回 200（2026-10-27 实机验证发现）
+                // Entra 停用账号发的就是无 path 的对象形态，漏了会静默 no-op 还返回 200
                 if (value.isObject() && value.has("active")) {
                     Boolean v = boolOf(value.get("active"));
                     if (v != null) {

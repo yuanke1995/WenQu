@@ -8,7 +8,7 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 /**
- * 内容安全规则（Phase 3 · P12）。
+ * 内容安全规则。
  *
  * <p>合规口径属于<b>部署方</b>而不是代码：哪些词、哪些模式该拦，各机构各行业的判断不同，
  * 所以规则一律以数据存在这张表里、由管理员在界面上增删改，代码里不写死任何一条拦截词。
@@ -26,7 +26,7 @@ public class ContentRule {
     @TableId(type = IdType.ASSIGN_UUID)
     private String id;
 
-    /** 租户 ID（Phase 4 多租户启用，当前为空） */
+    /** 租户 ID（多租户启用前为空） */
     private String tenantId;
 
     /** 规则名：审计事件与拦截文案都点名它，必须是能读懂的一句话 */

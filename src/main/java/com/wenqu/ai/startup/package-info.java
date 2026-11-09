@@ -4,13 +4,7 @@
  * <h3>为什么要有这个包</h3>
  * 启动钩子（{@code @PostConstruct} / {@code ApplicationRunner} / {@code ApplicationReadyEvent}）
  * 天然是「没人盯着也会跑」的代码——写的时候不起眼，出问题时表现为「重启后额度莫名少了」
- * 或「文档莫名其妙全被重置」，极难归因。历史上就踩过两次：
- * <ul>
- *   <li>手册同步挂在 {@code ApplicationReadyEvent} 上，每次启动逐篇向量化（数十次远程 embedding），
- *       扣的是供应商额度，用户什么都没做；</li>
- *   <li>{@code RedisVectorStore.delete()} 隐式调 {@code dimensions()}，
- *       把「删向量」绑到了远程 embedding 可用性上（见 {@code LocalDimensionEmbeddingModel}）。</li>
- * </ul>
+ * 或「文档莫名其妙全被重置」，极难归因。
  * 散落在 {@code config}/{@code service}/{@code schedule} 各处时，没人说得清「启动到底会动哪些数据」。
  * 故把<b>所有「启动即动数据」的代码收进本包</b>——收口的目的不是好看，是<b>可审计、可清理</b>：
  * 想确认「重启一次到底会发生什么」，只看本包即可，不必在十几个包里翻钩子。
@@ -38,7 +32,7 @@
  * <b>不在启动路径上</b>。本条红线只有文档、没有代码守卫：以后有人想在启动时做点「顺手的事」，
  * 先回来看这段，而不是散落在各处注释里的口头约定。
  *
- * <h3>本包现状（2026-11-04 复核：RBAC 旧判定链路的一次性迁移钩子已全部退役）</h3>
+ * <h3>本包现状</h3>
  * <table border="1">
  *   <caption>启动钩子清单</caption>
  *   <tr><th>类</th><th>触发</th><th>动什么数据</th><th>是否烧额度</th></tr>
@@ -62,18 +56,8 @@
  *       <td><b>接续的那一轮会继续调模型</b>；节拍不做成配置项，也不给暂停——停掉等于让中断的轮
  *           一直停在「只有问题没有回答」那一行</td></tr>
  *   <tr><td>{@link com.wenqu.ai.startup.ManualSeedService}</td><td><b>无启动钩子（手动触发）</b></td>
- *       <td>官方手册同步：建库 + 逐篇分块向量化</td><td><b>是，已改为手动</b></td></tr>
+ *       <td>官方手册同步：建库 + 逐篇分块向量化</td><td><b>是（手动触发）</b></td></tr>
  * </table>
- *
- * <p><b>已退役的启动钩子（口径：一次性迁移用完即删）</b>：
- * <ul>
- *   <li>{@code RbacPermissionMigrationRunner}——把 {@code c_ai_role_api} 存量绑定折算成授权点行。
- *       判定链路已整体切到授权点，旧表随之退役（schema.sql 内置 DROP），折算职责一并消失。
- *       新库改由 {@link com.wenqu.ai.startup.RbacUserRoleSeeder} 兜底；</li>
- *   <li>{@code RbacTenantKeyRetrofitRunner}——角色域四表主键补 {@code tenant_id}。
- *       全租户主键已含 {@code tenant_id}，该 Runner 每次启动都空转，已整类删除；</li>
- *   <li>密钥轮换的批量重封与五个一次性迁移 Runner（2026-10 退役）。</li>
- * </ul>
  *
  * <p>另外两个<b>不在本包但仍会在启动期动数据</b>的（散在 service 里，刻意未搬动——搬动会牵连大量注入关系）：
  * <ul>

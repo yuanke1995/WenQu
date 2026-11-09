@@ -18,7 +18,7 @@ import java.util.Map;
 @Mapper
 public interface QaLogMapper extends BaseMapper<QaLog> {
 
-    /** 最近 limit 条日志中热门问题 TOP10（先取最近 N 条再过滤聚合，保留原 LIMIT 2000 语义） */
+    /** 最近 limit 条日志中热门问题 TOP10（先取最近 N 条再过滤聚合） */
     @Select("SELECT question, COUNT(*) AS cnt FROM (" +
             "  SELECT question FROM c_ai_qa_log ORDER BY created_at DESC LIMIT #{limit}" +
             ") t WHERE question IS NOT NULL AND question <> '' GROUP BY question ORDER BY cnt DESC LIMIT 10")

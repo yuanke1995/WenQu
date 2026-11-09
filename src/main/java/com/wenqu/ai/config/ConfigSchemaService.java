@@ -21,8 +21,8 @@ import java.util.Map;
  * 同一份定义同时服务三件事，避免"后端白名单 / 分层 / 前端表单 / 校验规则"四处各写一遍：
  * <ol>
  *   <li><b>下发给前端</b>：{@link #describe()} 供 {@code GET /api/ai/config/schema}，设置页据此渲染字段与校验提示；</li>
- *   <li><b>可编辑白名单与分层</b>：替代原先手写的 {@code EDITABLE} / {@code TIER} 两张 Map；</li>
- *   <li><b>保存校验</b>：{@link #validate(String, String)} 按字段类型/范围/枚举校验，替代原先按前缀分组的一长串 if。</li>
+ *   <li><b>可编辑白名单与分层</b>：由字段定义唯一给出；</li>
+ *   <li><b>保存校验</b>：{@link #validate(String, String)} 按字段类型/范围/枚举校验。</li>
  * </ol>
  * 字段定义改这一处即可；{@code ConfigService.defaults()} 仍只负责"运行时默认值"（yml/env 种子）。
  *
@@ -123,7 +123,6 @@ public class ConfigSchemaService {
                 // 拼出的是 group="chat" / 短键="goalMode.enabled"。写成 group="chat.goalMode" + key="enabled"
                 // 上面那条拼接照样成立（保存能落库），但回显查的是 data["chat.goalMode"]["enabled"]——
                 // 取不到值，开关一律显示成关、数字显示成 schema 默认，改完保存「生效了却看不到」。
-                // （chat.goalMode.* 七项实测踩到：库里 enabled=true，设置页显示关）
                 int firstDot = key.indexOf('.');
                 if (group != null && !group.isBlank() && firstDot > 0 && !key.substring(0, firstDot).equals(group)) {
                     throw new IllegalStateException("config-schema.json 字段 " + key
@@ -250,9 +249,9 @@ public class ConfigSchemaService {
      *   <li>不出现在管理员设置页（{@link #describe()} 剔除）、管理端保存拒绝；</li>
      *   <li>{@code ConfigService.get} 跳过全局缓存/默认值层——未装载个人值的线程一律视为未配置。</li>
      * </ul>
-     * 消费面随字段而异：parse.qaModel 已退役——问答对生成回落库主默认聊天模型；
-     * rerank.model 归知识库检索设置绑定（重排项已从个人设置下线）；graphrag.modelRef
-     * 亦已退役——GraphRAG 抽取回落库主默认聊天模型，不再单独配置。
+     * 消费面随字段而异：parse.qaModel 不单独配置，问答对生成回落库主默认聊天模型；
+     * rerank.model 归知识库检索设置绑定；graphrag.modelRef 不单独配置，
+     * GraphRAG 抽取回落库主默认聊天模型。
      */
     public boolean isPersonalOnly(String key) {
         Field f = byKey.get(key);

@@ -76,7 +76,7 @@ import java.time.LocalDateTime;
 @Service
 @RequiredArgsConstructor
 public class DocumentService {
-    /** 统一审计事件（Phase 3）：同一份格式串派生日志与结构化事件，不再两处抄 */
+    /** 统一审计事件：同一份格式串派生日志与结构化事件，不再两处抄 */
     private final AuditService audit;
 
 
@@ -93,7 +93,7 @@ public class DocumentService {
     private final DocumentAclTags documentAclTags;
     private final com.wenqu.ai.mapper.QaLogMapper qaLogMapper;
     private final List<DocumentParser> parsers;
-    /** Spring 事件发布（第 4 期）：文档解析完成发 DocIndexedEvent，工作流事件触发订阅（旁路，失败不影响解析） */
+    /** Spring 事件发布：文档解析完成发 DocIndexedEvent，工作流事件触发订阅（旁路，失败不影响解析） */
     private final org.springframework.context.ApplicationEventPublisher eventPublisher;
 
     /** 上传支持格式清单（聚合全部解析器声明；解析器增删后报错文案自动跟上，不再写死过期） */
@@ -158,7 +158,7 @@ public class DocumentService {
 
     /** 正在自动刷新的网页文档 id（防同文档上轮未结束又被触发；单实例内有效） */
     private final Set<String> refreshingDocs = ConcurrentHashMap.newKeySet();
-    /** P1 GraphRAG：解析成功后抽三元组 / 删除时清图（开关按库判定，服务内自兜异常不扰解析） */
+    /** GraphRAG：解析成功后抽三元组 / 删除时清图（开关按库判定，服务内自兜异常不扰解析） */
     private final GraphRagService graphRagService;
 
     /** 全量重嵌入分布式锁 key：持有期间所有实例的向量检索路跳过（降级关键词路），避免命中半成品索引 */
@@ -167,9 +167,9 @@ public class DocumentService {
     private static final long REEMBED_LOCK_TTL_SECONDS = 120;
 
     /**
-     * 文档解析已改为「持久化任务队列 + 扫描器抢占」（见 {@link ParseQueueService}），
-     * 本类不再自建解析线程池：上传只登记任务，worker 池与扫描器都在 ParseQueueService 里。
-     * 并发上限 parse.concurrency，下游 OCR / 视觉 /embedding 另有闸门限流（改并发前先看那几处）。
+     * 文档解析走「持久化任务队列 + 扫描器抢占」（见 {@link ParseQueueService}）：上传只登记任务，
+     * worker 池与扫描器都在 ParseQueueService 里，本类不自建解析线程池。
+     * 并发上限 parse.concurrency，下游 OCR / 视觉 / embedding 另有闸门限流（改并发前先看那几处）。
      */
 
     @PostConstruct
@@ -283,7 +283,6 @@ public class DocumentService {
     private AiDocument doUpload(MultipartFile file, String fileName, String ext, String description,
                                 DocumentParser parser, String targetKbId, String visionRef) throws Exception {
         // 背压：队列排满时**在落盘建记录之前**就拒绝，而不是先收下、再在线程池里丢掉解析任务。
-        // 旧实现是后者（队列满→删记录→报"解析队列繁忙"），用户看到的就是"传上去了却解析失败"。
         if (parseQueue.isBackpressured()) {
             throw new BizException("解析队列已满（" + parseQueue.queuedCount() + "/" + parseQueue.capacity()
                     + "），请稍后再上传");
@@ -328,7 +327,6 @@ public class DocumentService {
             throw e;
         }
         // 登记驱动：只往持久化队列塞一行任务就返回，解析由扫描器抢占执行。
-        // 旧实现在这里 submit 到 fixed(2)+LBQ(50)+AbortPolicy，队列满就删掉刚建好的文档记录——批量上传时数据就这么丢了。
         parseQueue.enqueue(doc.getId(), doc.getKbId(), 0);
         return doc;
     }
@@ -857,11 +855,11 @@ public class DocumentService {
     /**
      * 同模型重建本库向量（异步，运维用）：<b>不需要换向量模型</b>，用当前绑定重跑一遍。
      *
-     * <p><b>为什么需要这个入口（2026-10-05）</b>：{@link #reembedKbAsync} 只在
+     * <p><b>为什么需要这个入口</b>：{@link #reembedKbAsync} 只在
      * <b>embeddingRef 变更</b>时被 {@code KnowledgeBaseController.update} 触发
      * （条件是 {@code !oldRef.equals(newRef)}），于是有两类运维操作没有入口：
      * <ol>
-     *   <li>检索期过滤下推上线后，<b>存量向量缺 ACL 标签</b>（FT.ALTER 只改schema 不回填
+     *   <li><b>存量向量缺 ACL 标签</b>（FT.ALTER 只改schema 不回填
      *       历史 JSON），需重建才能让全部块参与下推过滤；</li>
      *   <li>索引 schema 被动过（如字段 SEPARATOR 声明错误，RediSearch 不支持改已有字段属性，
      *       只能 DROP 重建）后，需要一个不换模型的重建途径。</li>
@@ -924,7 +922,7 @@ public class DocumentService {
         List<Knowledge> rows = docIds.isEmpty() ? List.of() : knowledgeMapper.selectList(
                 new LambdaQueryWrapper<Knowledge>().in(Knowledge::getDocId, docIds));
 
-        // 2. 清旧向量：旧绑定=遗留跟随全局（已退役，全局索引不再参与路由，残留向量不自动清理）；
+        // 2. 清旧向量：旧绑定=遗留跟随全局（全局索引不再参与路由，残留向量不自动清理）；
         //    旧绑定=自定义引用 → DROP 本库独立索引（连数据）
         if (old.isBlank()) {
             log.info("[KB-Reembed] 知识库 {} 旧绑定跟随全局（已退役），全局索引残留向量如有可在 Redis 手动清理", kbId);
@@ -1015,7 +1013,7 @@ public class DocumentService {
                     to.add(List.of(new org.springframework.ai.document.Document(k.getId(),
                             buildEmbedText(k.getTitle(), k.getTitlePath(), k.getContent(), null), metadata)));
                 }
-                // 主块向量「先拷后删」，删不分模型同不同：同模型分支此前只搬不删，旧库索引永久残留
+                // 主块向量「先拷后删」，删不分模型同不同：同模型分支若只搬不删，旧库索引会永久残留
                 // 这份已搬走的文档，A 库检索照样命中它（可见性按文档当前 kbId 判定，跨库泄漏/白占
                 // topK），直到重建索引。放在 to.add 全部成功之后：迁移中途失败时旧库召回还在，不会两头都空。
                 if (!vectorIds.isEmpty()) {
@@ -1092,7 +1090,7 @@ public class DocumentService {
      * 解析进度上报（节流：progress 未变化且非终态时不写库；只更新进度两字段，避免整行 update）
      */
     /**
-     * 向量化单批写入（M10 fail-loud）：失败自动重试 retryCount 次，仍失败抛异常 → 文档整体失败/回退，
+     * 向量化单批写入（fail-loud）：失败自动重试 retryCount 次，仍失败抛异常 → 文档整体失败/回退，
      * 绝不静默丢块（否则文档置成功但部分块仅关键词可召回）。
      */
     private void vectorAddWithRetry(String docId, List<Document> batch, int retryCount) {
@@ -1279,7 +1277,7 @@ public class DocumentService {
             // 删除感知：入库后、向量化前再查一次
             if (!isDocAlive(docId)) { cleanupPartial(docId, aiDocs); return; }
 
-            // 写入向量库（embedding 接口单次请求有条数上限，需分批；M10：每批失败自动重试 embedRetry 次）
+            // 写入向量库（embedding 接口单次请求有条数上限，需分批；每批失败自动重试 embedRetry 次）
             if (!aiDocs.isEmpty()) {
                 int batchSize = Math.max(1, configService.getInt("parse.embedBatchSize", ConfigDefaults.PARSE_EMBED_BATCH_SIZE));
                 int embedRetry = Math.max(0, configService.getInt("parse.embedRetryCount", ConfigDefaults.PARSE_EMBED_RETRY_COUNT));
@@ -1406,10 +1404,10 @@ public class DocumentService {
             log.info("[{}] 解析成功: {} chunks", docId, chunks.size());
             // 图片描述补齐：解析中视觉调用失败/超限的图，后台补描述并回写知识块（图片语义全部进入 RAG）
             backfillImageDescriptions(docId);
-            // P1 GraphRAG：库级开关开启时异步抽实体关系三元组（抽取模型与判权按库主，
+            // GraphRAG：库级开关开启时异步抽实体关系三元组（抽取模型与判权按库主，
             // 见 GraphRagService.extractDoc；这里传的 uid 仅作库主缺失时的兜底）
             graphRagService.onDocParsed(docId, null, "user");
-            // 第 4 期：解析完成事件（工作流事件触发源 kb.docIndexed）。旁路发布——
+            // 解析完成事件（工作流事件触发源 kb.docIndexed）。旁路发布——
             // 与「解析完成」通知同款语义：监听侧自兜异常，这里任何抖动都不许影响解析收口
             try {
                 eventPublisher.publishEvent(new DocIndexedEvent(docId, doc.getKbId(),
@@ -1692,7 +1690,7 @@ public class DocumentService {
         }
         // QA/子块附加索引随文档删除（向量失败不中止删除，行删除兜底；向量残留可整库重建清理）
         deleteExtrasByDoc(docId);
-        // P1 GraphRAG：该文档的三元组与抽取记录随删（实体保留——无三元组引用的实体不参与图扩展，无害）
+        // GraphRAG：该文档的三元组与抽取记录随删（实体保留——无三元组引用的实体不参与图扩展，无害）
         try {
             graphRagService.onDocDeleted(docId);
         } catch (Exception e) {
@@ -2362,8 +2360,7 @@ public class DocumentService {
 
     /**
      * 重解析/上传登记后的任务入口：由 {@link ParseQueueService} 在 worker 线程里调用。
-     * 源文件缺失、格式不支持这类问题在这里一次性校验清楚（旧实现是在 reparse 里校验后才 submit，
-     * 队列化后校验点只能是执行侧，登记侧无权拦）。
+     * 源文件缺失、格式不支持这类问题在这里一次性校验清楚（校验点在解析执行侧，登记侧无权拦）。
      */
     public void runParseTask(String taskId, String docId) throws Exception {
         AiDocument doc = documentMapper.selectById(docId);
@@ -2623,7 +2620,7 @@ public class DocumentService {
                 }
             });
         } catch (IOException e) {
-            // L11 fail-loud：清理失败升级 error（遗留磁盘文件属数据一致性风险）
+            // fail-loud：清理失败升级 error（遗留磁盘文件属数据一致性风险）
             log.error("[FAIL-LOUD] 清理源文件目录失败: {}", e.getMessage());
         }
     }
@@ -2647,7 +2644,7 @@ public class DocumentService {
      * 孤儿图片清扫：删除 data/images/{docId}/ 下未被任何剩余知识块 images 字段引用的文件
      * （内容寻址文件名下，被删图/变更图的旧文件在这里回收；未变图片保留供复用块引用，保证 URL 稳定）
      *
-     * @return true=正常完成（含无孤儿）；false=清扫失败（L11 fail-loud：调用方把失败写进终态 desc）
+     * @return true=正常完成（含无孤儿）；false=清扫失败（fail-loud：调用方把失败写进终态 desc）
      */
     private boolean sweepOrphanImages(String docId) {
         Path dir = Paths.get(properties.getImages().getDir(), "images", docId);
@@ -2849,7 +2846,7 @@ public class DocumentService {
                     }
                 }
                 log.info("[{}] 图片描述补齐完成：补 {}/{} 张，回写 {} 块", docId, descByUrl.size(), missing.size(), written);
-                // M8 fail-loud：补完仍缺的图必须留在解析状态可见（不能只记一条日志）
+                // fail-loud：补完仍缺的图必须留在解析状态可见（不能只记一条日志）
                 int remaining = countRemainingMissing(blocks, descByUrl);
                 if (remaining > 0) {
                     log.warn("[FAIL-LOUD] [{}] 图片描述补齐后仍有 {} 张无描述（视觉模型不可用？可稍后重试补描述接口）", docId, remaining);
@@ -2869,7 +2866,7 @@ public class DocumentService {
             }
         });
         if (!submitted) {
-            // L10 fail-loud：任务被共享池丢弃（队列满）——必须落状态，不留无感知缺口
+            // fail-loud：任务被共享池丢弃（队列满）——必须落状态，不留无感知缺口
             descBackfillRunning.remove(docId);
             log.error("[FAIL-LOUD] [{}] 图片描述补齐任务被丢弃（后台队列满），请稍后重试", docId);
             try {
@@ -2893,7 +2890,7 @@ public class DocumentService {
         }
     }
 
-    /** 补描述后仍无描述（本次未补上）的图片数（M8 fail-loud 统计用） */
+    /** 补描述后仍无描述（本次未补上）的图片数（fail-loud 统计用） */
     private int countRemainingMissing(List<Knowledge> blocks, Map<String, String> descByUrl) {
         Set<String> missing = new LinkedHashSet<>();
         for (Knowledge k : blocks) {

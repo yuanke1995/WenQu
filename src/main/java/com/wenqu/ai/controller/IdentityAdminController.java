@@ -30,7 +30,7 @@ import com.wenqu.ai.security.Permission;
 /**
  * 认证源与身份同步管理（管理员端点，RBAC fail-closed——不在任何白名单，未授权即 403）：
  * 统一认证源（SAML/SCIM/LDAP）CRUD、组映射规则、手动同步、同步日志。
- * OIDC 管理端点仍在 /api/ai/oidc/**（旧表迁移期并存，退役见任务 #7）。
+ * OIDC 管理端点在 /api/ai/oidc/**。
  *
  * @author yuanke
  */

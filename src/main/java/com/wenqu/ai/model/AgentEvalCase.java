@@ -37,7 +37,7 @@ public class AgentEvalCase implements com.wenqu.ai.service.AgentEvalScorer.Agent
     /** 期望文档 ID（JSON 数组字符串；与知识块任一命中即算召回命中） */
     private String expectedDocIds;
 
-    /** 期望调用的工具名（JSON 数组字符串；P2 参与评分，本期仅记录不判分） */
+    /** 期望调用的工具名（JSON 数组字符串；仅记录，暂不参与判分） */
     private String expectedTools;
 
     /** 备注 / 考察点 */

@@ -15,8 +15,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * {@code /api/ai/auth/oidc/exchange-code} 兑换（兑换即失效）——登录令牌不落 URL，
  * 不进浏览器历史/访问日志。OIDC 与 SAML 共用：兑换端点语义是「SSO 登录结果兑换」，与协议无关。
  * <p>
- * 注意：存储为进程内存 Map——与 OidcService 的 state 同属运行态，Phase 0（运行态外置）时
- * 随 ChatRunBus/FrameworkSessions 一并迁 Redis；单实例语义下正确，多副本需粘性或外置。
+ * 注意：存储为进程内存 Map——与 OidcService 的 state 同属运行态；
+ * 单实例语义下正确，多副本需粘性或外置。
  *
  * @author yuanke
  */

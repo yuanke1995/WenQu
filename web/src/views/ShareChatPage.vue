@@ -225,7 +225,7 @@ function rememberSession (id) {
 }
 
 /** 首轮就先生成 sessionId 随请求带上：服务端 ensureSession 会按这个 id 落会话并归属当前访客。
- *  此前 id 要等 done 帧才回传，流死在 done 之前时前端永远不知道 sessionId——
+ *  若等 done 帧才回传 id，流死在 done 之前时前端永远不知道 sessionId——
  *  停止（POST /chat/stop 缺参被挡）、续聊全都点不到名。 */
 function mintSessionId () {
   if (sessionId.value) return sessionId.value
@@ -236,7 +236,7 @@ function mintSessionId () {
 
 /** 历史消息 → 页面消息（首屏恢复与切换会话同一份口径）。
  *  <p>messageId / degradations 都取自后端**已经在下发**的字段（SessionService.toMessageMap）：
- *  此前只留 role/content/images/sources，于是降级提示看不见、评价也没有落点。 */
+ *  若只留 role/content/images/sources，降级提示就看不见、评价也没有落点。 */
 const mapHistory = rows => (Array.isArray(rows) ? rows : [])
   .filter(m => m && m.content)
   .map(m => applyBlocks({
@@ -747,7 +747,7 @@ async function restorePendingPlan () {
 
 /**
  * 刷新/切会话后接回正在跑的这一轮：先探测（没有就不开通道），有才挂一条新通道。
- * <p>分享页原本只有「按历史回显」这一条恢复路径——正在生成的那一轮要等它落库后才看得见，
+ * <p>分享页若只按「按历史回显」恢复——正在生成的那一轮要等它落库后才看得见，
  * 用户刷新后面对的是一个不动的界面，读成「卡住了」。
  */
 const attaching = ref(false)
@@ -824,7 +824,7 @@ function stop () {
   if (controller) controller.abort()
   sending.value = false
   // 中断要把这一轮**整条撤掉**，不能只置 sending=false——那样「正在溯源」那一行会永久
-  // 卡在页面上（后续新消息也压不掉它）。曾改成补一句「已停止生成」占位气泡，
+  // 卡在页面上（后续新消息也压不掉它）。补一句「已停止生成」占位气泡，
   // 但那是空的回答，留在对话里比不留更碍眼；用户点了停止，要的就是"没这条"。
   // 判据必须是 'ai'：这页从历史回显到本地气泡都用 'ai'/'user'，写成别的名义上是撤气泡、
   // 实际上是两条分支都不执行（空泡留着呼吸、已出正文的那条永远停在流式态）

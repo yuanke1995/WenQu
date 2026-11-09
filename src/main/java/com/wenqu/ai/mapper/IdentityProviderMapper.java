@@ -11,7 +11,7 @@ import org.apache.ibatis.annotations.Update;
 public interface IdentityProviderMapper extends BaseMapper<IdentityProvider> {
 
     /**
-     * 认证源换归属时，把由它决定归属的从属行一起带走（Phase 4 多租户）。
+     * 认证源换归属时，把由它决定归属的从属行一起带走（多租户）。
      * <p>身份绑定 / 组映射 / 组成员 / 同步日志一律按 {@code provider_id}（同步日志是 source_id）存取，
      * 它们的租户本就该跟着认证源走。留在旧租户的症状是「规则仍在界面上列着，裁决却再也不生效」
      * ——同步与登录都在新租户里跑，按租户过滤就读不到自己认证源的规则。这类静默失配必须一次做对。

@@ -27,7 +27,7 @@ import java.util.Properties;
 import java.util.UUID;
 
 /**
- * 邮件外发通道（P1 · 通知外发）。
+ * 邮件外发通道。
  *
  * <p>站内通知落库后由 {@link NotificationService} 旁路调用 {@link #dispatch}：
  * 只做「判规则 + 落台账」（快），真正的 SMTP 发送由后台扫描任务完成——通知主链路不能被

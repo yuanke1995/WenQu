@@ -3,7 +3,7 @@ package com.wenqu.ai.util;
 import java.util.function.Supplier;
 
 /**
- * 当前租户上下文（Phase 4 · P9 多租户）。
+ * 当前租户上下文（多租户）。
  *
  * <p>租户是<b>行级归属</b>：全表 {@code tenant_id} 由 MyBatis-Plus 的
  * {@code TenantLineInnerInterceptor} 在 SQL 上强制，判定用的就是这里的当前租户
@@ -19,8 +19,7 @@ import java.util.function.Supplier;
  *       ——给某个成员发通知、按归属人汇总用量，都要显式 {@link #as} 到那个租户里再查，不能靠拦截器兜。</li>
  * </ul>
  *
- * <p>单租户部署不需要任何开关：平台自己就是 {@code default} 这个租户，谓词恒等于 {@code tenant_id='default'}，
- * 与加列前的行为一致。
+ * <p>单租户部署不需要任何开关：平台自己就是 {@code default} 这个租户，谓词恒等于 {@code tenant_id='default'}。
  *
  * @author yuanke
  */

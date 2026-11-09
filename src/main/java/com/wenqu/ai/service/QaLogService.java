@@ -35,7 +35,7 @@ public class QaLogService {
 
     /**
      * 异步落问答日志（不阻塞主流程）。
-     * P1：messageId/agentId 随行落库——messageId 是 trace 详情还原全过程（toolCalls/sources/tokens）
+     * messageId/agentId 随行落库——messageId 是 trace 详情还原全过程（toolCalls/sources/tokens）
      * 的关联键，agentId 支撑按智能体筛选。存量行为 NULL，详情按摘要视图降级展示。
      */
     public void logAsync(String sessionId, String question, String answer,
@@ -189,7 +189,7 @@ public class QaLogService {
     public Map<String, Object> analyticsSummary() {
         Map<String, Object> result = new LinkedHashMap<>();
         try {
-            int limit = 2000; // 与原先 LIMIT 2000 语义一致
+            int limit = 2000;
             Map<String, Object> stats = qaLogMapper.summaryStats(limit);
             long total = num(stats.get("total"));
             long noHit = num(stats.get("no_hit"));

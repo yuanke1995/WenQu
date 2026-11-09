@@ -53,7 +53,7 @@ import java.util.stream.Collectors;
  *   <li><b>构建</b>：手动按钮回溯存量（分页逐文档串行），进度内存可查；清图是显式动作。</li>
  * </ul>
  * <p>
- * 模型口径（2026-10 库级化）：抽取模型<b>归知识库</b>——知识库编辑里绑定（<code>graph_model_ref</code>，
+ * 模型口径：抽取模型<b>归知识库</b>——知识库编辑里绑定（<code>graph_model_ref</code>，
  * 判权按库主：谁建库烧谁的模型，与向量/视觉模型同口径）；未绑定的回落<b>库主的个人默认聊天模型</b>
  * （<code>User.defaultModel</code>，按库主 uid 显式查询——它是配置引导的必配项②，配好即有）。
  * 两者皆空 = 不抽取并告警（fail-loud，不静默用别的模型烧 token）。

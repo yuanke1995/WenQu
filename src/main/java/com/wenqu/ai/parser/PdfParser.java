@@ -153,8 +153,7 @@ public class PdfParser implements DocumentParser {
         List<Chunk> chunks = new ArrayList<>();
         StringBuilder pageBuffer = new StringBuilder();
         // 标题取「本块开始时已生效的章节名」，不是「最近见到的章节名」：新节标题行往往就落在
-        // 新缓冲的第一片里，先更新再冲刷会把上一节的内容标成下一节
-        // （实测踩过：含第 275 条「故意毁坏公私财物」的块被标成「第一节 扰乱公共秩序罪」）
+        // 新缓冲的第一片里，先更新再冲刷会把上一节的内容标成下一节。
         String bufferTitle = "第 1 页";
         String sectionTitle = null;
 
@@ -233,17 +232,17 @@ public class PdfParser implements DocumentParser {
     }
 
     /**
-     * 引擎输出的页 markdown → 分块（结构感知，方案 S2）。
+     * 引擎输出的页 markdown → 分块（结构感知）。
      * <p>
      * ① 页内按 ATX 标题（#~######）切节，标题栈按级别维护（对齐 docx/WebParser 语义：title=最近标题，
-     * titlePath=栈深≥2 时「 &gt; 」连接；MinerU 实测标题全为 h1 平铺，路径退化为空属预期，标题本身仍入 embedding）；
+     * titlePath=栈深≥2 时「 &gt; 」连接；MinerU 标题全为 h1 平铺，路径退化为空属预期，标题本身仍入 embedding）；
      * 标题行不重复进正文——content 只承载净正文，路径/标题由 embedding 组装时拼接。
      * ② 节内按空行分段；Markdown 表格行连续天然同段不跨块。
      * ③ 顺序贪心累积到 maxSize 成块；单独超限的段：表格走 splitTableRows（每段重复表头）、
      * 其余走 splitByBoundaries（段落→句→字符硬切）——兜底 embedding token 上限。
      * <p>
-     * 缺陷背景：MinerU 整份 markdown 是单一「页」（约定 page=1），旧实现只在页间累积切分、
-     * 单页超限从不切，22047 字符整块入库直接撑爆向量化（Tokens exceeds maximum allowed）。
+     * MinerU 整份 markdown 是单一「页」（约定 page=1），因此必须在本方法内按节/段切分，
+     * 不能只在页间累积，否则单页超长会撑爆向量化。
      * 包内可见供冒烟验证。
      */
     List<Chunk> chunksFromPages(List<PageMarkdown> pages, int maxSize) {

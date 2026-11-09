@@ -860,7 +860,7 @@ const removeQuota = async record => {
     loadQuotas()
   } catch (e) { message.error(e.message || '删除失败') }
 }
-/** 未计价清单默认只展开前 8 类（按 token 降序）——曾经这里是几百个原始 providerId/模型名标签 */
+/** 未计价清单默认只展开前 8 类（按 token 降序） */
 const UNPRICED_SHOWN = 8
 const unpricedAll = ref(false)
 const unpricedList = computed(() => cost.value.unpricedModels || [])

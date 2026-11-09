@@ -283,7 +283,7 @@ const sync = wantKeys => {
     else el.insertBefore(node, point.before)
     last = node
   })
-  // 光标跟到最后一颗之后：否则用户接着打字会打到 chip 前面去（实测踩过：附件 chip 后面的字跑到了它左边）
+  // 光标跟到最后一颗之后：否则用户接着打字会打到 chip 前面去
   if (i >= 0 && last) {
     const r = document.createRange()
     r.setStartAfter(last)
@@ -323,7 +323,7 @@ const syncEmpty = () => {
 }
 
 /** 光标紧邻的那颗 chip（前向/后向各一个方向）。空文本节点要跳过——execCommand 与粘贴会在 chip 旁边
- *  留下零长文本节点，Chrome 的退格遇到这种形态不整颗删 chip，而是插一个 <br>（实测）。 */
+ *  留下零长文本节点，Chrome 的退格遇到这种形态不整颗删 chip，而是插一个 <br>。 */
 const chipAdjacent = dir => {
   const el = rootEl.value
   const sel = window.getSelection()
@@ -653,14 +653,14 @@ defineExpose({
 .composer-edit.is-empty.has-rich-hint::before { content: none; }
 :deep(.cchip) {
   display: inline-flex; align-items: center; gap: 4px; max-width: 240px; vertical-align: middle;
-  /* vertical-align:middle 锚的是拉丁 x-height 中点，中文正文旁 chip 会看着沉半格。实测（14px 正文/行盒 22.4px）：
+  /* vertical-align:middle 锚的是拉丁 x-height 中点，中文正文旁 chip 会看着沉半格（14px 正文/行盒 22.4px）：
      不抬时 chip 盒中心 18.31，正文墨迹中心 16.75、光标中心（=行盒）17.2 → 各低 1.56 / 1.11px。
      抬 1px 落在两者之间（离正文 0.56、离光标 0.11）；抬 2px 反过来——光标比 chip 低半格，
-     看着像光标自己跑偏了（用户两次点的正是这两端）。
+     看着像光标自己跑偏了。
      用相对偏移而不是改 vertical-align 长度：后者会撑高行盒，开关 chip 时正文要上下跳 1.5px。 */
   position: relative; top: -1px;
   /* 与右邻的间隙用透明右 border 承担而不用 margin：正文为空时 Chrome 把行尾光标画在最后一个
-     原子内联的 border-box 右缘，margin 吃不到——margin 6px 时光标紧贴 chip（实测截图）。
+     原子内联的 border-box 右缘，margin 吃不到——margin 6px 时光标紧贴 chip。
      背景裁到 padding-box 后可见背景止于 padding 缘，光标落在透明 border 里，与 chip 之间有
      6px 视觉间隙；打字落点（border 缘之后）与光标位置也从此一致。 */
   margin: 1px 0; padding: 1px 5px; font-size: 12px; line-height: 18px;

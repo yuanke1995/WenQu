@@ -12,7 +12,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 框架会话的<b>跨副本协调</b>（Phase 0 · P2）：三件事外置，实例本体不动。
+ * 框架会话的<b>跨副本协调</b>：三件事外置，实例本体不动。
  *
  * <ul>
  *   <li><b>实例租约</b> {@code wenqu:agentx:held:{会话键}}：常驻的 {@code HarnessAgent}/{@code AgentSession}
@@ -44,9 +44,8 @@ public class AgentxCluster {
 
     /**
      * 实例租约与跟随位的存活时间：<b>活着的进程每 30 秒续一次</b>，所以 90 秒足以判死。
-     * <p>为什么不是原来的 30 分钟：进程被 kill -9（部署脚本、OOM、容器被驱逐）时没人能释放租约，
-     * 那条 30 分钟的僵尸跟随位会把「重启后把没跑完的轮接回来」挡在门外——真机 2026-10-29 实测：
-     * 扫描器认出了孤儿轮也交给了引擎，引擎却因为租约还亮着而静默早退，用户看到的仍是一条没人回答的问题。
+     * <p>为什么按心跳而不是最长耗时：进程被 kill -9（部署脚本、OOM、容器被驱逐）时没人能释放租约，
+     * 那条 30 分钟的僵尸跟随位会把「重启后把没跑完的轮接回来」挡在门外。
      * 租约的语义是「持有人还活着吗」，那它就必须按心跳活，而不是按最长可能耗时写死。
      */
     private static final Duration HELD_TTL = Duration.ofSeconds(90);

@@ -8,7 +8,7 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 /**
- * P1 Trace 采样池：线上对话按规则自动入池（差评必采 / 无引用 / 随机），
+ * Trace 采样池：线上对话按规则自动入池（差评必采 / 无引用 / 随机），
  * 运营在池里标注「期望命中的知识块」后回流评测集（{@code RetrievalEvaluationService.addCase}）。
  * <p>
  * 状态机：pending → labeled（回流）| dismissed（忽略）。qa_log_id 唯一——一条日志只进一次池，

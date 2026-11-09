@@ -1,6 +1,6 @@
 package com.wenqu.ai.agent.chat;
 
-// [保留] 问渠轮次台账 / 个性化提示词 —— AgentScope 框架不提供等价能力，框架引擎(agentx)与共享服务仍依赖此文件，勿当作已退役的控制流删除。
+// 问渠轮次台账 / 个性化提示词 —— AgentScope 框架不提供等价能力，框架引擎(agentx)与共享服务仍依赖此文件。
 
 import com.wenqu.ai.dto.ChatRequest;
 import lombok.Builder;
@@ -9,14 +9,14 @@ import lombok.Getter;
 import java.util.List;
 
 /**
- * 一轮问答的入参对象（P1 seam 化：把 {@code ChatService.chat(...)} 的十个 telescoping 重载收成这一个）。
+ * 一轮问答的入参对象（把 {@code ChatService.chat(...)} 的十个 telescoping 重载收成这一个）。
  * <p>
- * 为什么值得动：迁移前 {@code chat()} 有 10 个重载层层委托（10 参 → 11 参 → … → 19 参），
+ * 为什么值得动：{@code chat()} 若用重载层层委托（10 参 → 11 参 → … → 19 参），
  * 每加一个能力就往尾部加一个参数、再补一个重载。后果不是难看，而是三件具体的事：
  * <ul>
  *   <li><b>位置错位不可见</b>：{@code (String, String, List, List, List, boolean, String, String, String, ...)}
  *       这种签名里，两个相邻的同类型实参写反了编译器不会拦——插话、重新生成、@ 引用三个功能都在这一串里传值。</li>
- *   <li><b>子智能体接不上来</b>：P3a 要分支跑完整循环、并继承父轮的上下文摘要与深度预算，
+ *   <li><b>子智能体接不上来</b>：分支要跑完整循环、并继承父轮的上下文摘要与深度预算，
  *       那意味着第 11 个重载；对象化之后加字段不再动调用方。</li>
  *   <li><b>会话互斥的边界说不清</b>：19 个参数里哪些属于「这一轮问什么」、哪些属于「往哪儿写」
  *       混在一个列表里。本类型只装前者，{@code SseEmitter} 单独作方法入参——它不是这一轮的内容，
@@ -83,7 +83,7 @@ public final class ChatCommand {
      */
     final boolean apiKey;
     /**
-     * 发起本调用的 API Key id（对外能力第二批）：用量台账按它落 c_ai_usage_log.api_key_id（Key 主键为 VARCHAR），
+     * 发起本调用的 API Key id：用量台账按它落 c_ai_usage_log.api_key_id（Key 主键为 VARCHAR），
      * 供按 Key 对账。仅 X-Api-Key 通道由控制器从拦截器属性取值传入，其余调用方恒为 null
      * （与 {@link #apiKey} 布尔位分开：那个管能力面收窄，这个管计量归属）。
      */
@@ -134,7 +134,7 @@ public final class ChatCommand {
      * 本轮是**插话续发**：用户在这轮回答跑到一半时补了一句方向，框架那一轮没收下它（撞步数上限、
      * 被叫停或提前收尾），随 done 交回前端后作为新一轮发出。
      * <p>为什么必须显式带标记：作为新一轮发出去时，模型只看到一条孤零零的新用户消息，会当成
-     * 「用户又问了一遍」重新起题（实测短问答必现，模型会复述「你消息里的 X 这一段…」）。
+     * 「用户又问了一遍」重新起题。
      * 那条上下文声明由 {@link #decorateSteerQuestion(String)} 统一拼在那句话后面，与送进框架会话的
      * 那一条同一个出口。
      */
@@ -205,7 +205,7 @@ public final class ChatCommand {
      * 请求体的入口）。
      * <p>为什么要在控制器入口就记：气泡顶部报的是「从按下发送到答完」的墙钟，而机器耗时从
      * {@code submit} 之后才起表——两者差着排队、限流、会话补建、实例装配那几秒。只落机器时间，
-     * 刷新一次数字就变小（真机 6.0s → 3.3s）。带上它才能把同一本账写到库里。
+     * 刷新一次数字就变小。带上它才能把同一本账写到库里。
      */
     final long receivedAtMs;
 
@@ -273,8 +273,8 @@ public final class ChatCommand {
     /**
      * 给插话拼上身份声明。两条路共用这一个出口：送进框架会话的那一条，和本轮没收下、
      * 随收尾交回前端后作为新一轮补发的那一条（{@link #fromSteer}）。
-     * <p>不带它，模型只看到一句孤零零的新用户消息，会当成「用户又问了一遍」重新起题
-     * （实测短问答必现：它复述「你消息里的 X 这一段…」开头作答），插话「改了方向立刻生效」就废了。
+     * <p>不带它，模型只看到一句孤零零的新用户消息，会当成「用户又问了一遍」重新起题，
+     * 插话「改了方向立刻生效」就废了。
      */
     public static String decorateSteerQuestion(String text) {
         String t = text == null ? "" : text.strip();

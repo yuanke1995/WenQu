@@ -322,7 +322,7 @@ public class SessionService {
      * <p>
      * 空会话不再新增（前端侧栏本就隐藏空会话，堆积的空会话不出现在界面上，只会在游标分页里
      * 挤占真实会话的名额——首屏 20 条里大半是空会话时，侧栏首屏看起来就只剩几条）。
-     * <b>注意「恒定为 1」只对新增这一侧成立</b>：规则上线前与各类探针留下的存量空行仍在表里，
+     * <b>注意「恒定为 1」只对新增这一侧成立</b>：表里已有的空会话仍在，
      * 会被新对话逐条领走，所以领走时要顺手洗掉其上已失效的模型（见下方复用处）。
      * 复用条件与前端 useChatEngine 的本地复用口径一致：未绑定智能体的空会话才复用（已绑定的带着
      * 自己的绑定，复用会让「切换智能体」看起来没生效）。定时任务 / 工作流 / MCP 建会话走
@@ -396,8 +396,8 @@ public class SessionService {
     }
 
     /** 取当前用户可复用的空会话（无消息、未置顶；取最近更新的那条）。
-     *  <p>P5 起不再看 agent_id：那一列已从"会话锁定的智能体"变成"最近一次作答的智能体"，
-     *  一个还没发过消息的会话本来就没有作答方，用它当"不可复用"的判据是旧锁定语义的残留。
+     *  <p>不再看 agent_id：那一列已从"会话锁定的智能体"变成"最近一次作答的智能体"，
+     *  一个还没发过消息的会话本来就没有作答方，用它当"不可复用"的判据并不成立。
      *  <p>内部临时会话要排除：它从建出来到首条消息落库之间正是"无消息"的空档，被复用成用户的
      *  新对话就等于把一条分支会话交到人手上——分支跑完随手一删，用户这一轮就写进了已删会话。 */
     private Session findEmptySession(String uid) {
@@ -471,7 +471,7 @@ public class SessionService {
     /**
      * 查询会话列表（游标分页版；仅当前用户；支持关键词搜索）。
      * <p>
-     * 排序口径与旧版一致：置顶优先、其余按更新时间倒序（id 兜底同刻排序）。分页设计：
+     * 排序口径：置顶优先、其余按更新时间倒序（id 兜底同刻排序）。分页设计：
      * <ul>
      *   <li>置顶会话数量由用户行为天然有界（个人手动置顶），首页整表返回、不参与游标；</li>
      *   <li>非置顶会话按 (update_time, id) 复合值游标翻页：cursor = Base64url("epochMillis|会话ID")。
@@ -569,7 +569,7 @@ public class SessionService {
      *  供计数/置顶/分页三路查询复用（避免 OR 分组被重复拼装）。
      *  <p>「仅含消息」必须下推到 SQL：侧栏展示层隐藏空会话，若只靠前端过滤，空会话仍占游标分页的
      *  页容量——一旦积攒了 20+ 条空会话（如验证脚本直插、异常流程残留），最新的真实对话会被挤到
-     *  第二页之后，侧栏整页"暂无会话"而组头计数正常（2026-10-14 实测）。空会话的复用由
+     *  第二页之后，侧栏整页"暂无会话"而组头计数正常。空会话的复用由
      *  {@code createOrReuseEmptySession} 在服务端管理，不依赖列表返回空会话。 */
     private LambdaQueryWrapper<Session> baseWrapper(String uid, String kw,
                                                     String projectId, String noSpaceImplicitId) {
@@ -1118,7 +1118,7 @@ public class SessionService {
             Collections.reverse(messages); // 恢复时间正序（最新在后）
             return messages.stream().map(this::toMessageMap).collect(Collectors.toList());
         } catch (Exception e) {
-            // M6 fail-loud：读失败返回 null（区分"无历史"与"读取失败"），调用方上报而非静默跳过记忆
+            // fail-loud：读失败返回 null（区分"无历史"与"读取失败"），调用方上报而非静默跳过记忆
             log.warn("[FAIL-LOUD] MySQL 读取最近会话历史失败 (session={}): {}", sessionId, e.getMessage());
             return null;
         }
@@ -1231,10 +1231,10 @@ public class SessionService {
         final String content = w.getContent();
         // 列宽护栏：c_ai_message 的 TEXT 列容量 64KB（utf8mb4 按字节算，中文约 2.1 万字）。
         // 超长的直接后果不是「存一半」——是 MysqlDataTruncation 让**整条消息**（正文/工具卡/时间线/用量）
-        // 一起落库失败（2026-10-22 线上实测：一轮异常长的思考把 thinking 列撑爆，助手消息整体没存进库）。
+        // 一起落库失败。
         // 落库侧截断兜底而不是只靠源头自律：思考与过程独白是回放性内容，截掉尾部只少看一点过程；
-        // 消息本体丢了才是不可逆的。content 已升 MEDIUMTEXT（单条提问 6 万字那次的 ALTER），
-        // 走自己的护栏（CONTENT_COLUMN_MAX_CHARS）——TEXT 的 2 万字旧护栏会把长回答（表单助手
+        // 消息本体丢了才是不可逆的。content 已升 MEDIUMTEXT，
+        // 走自己的护栏（CONTENT_COLUMN_MAX_CHARS）——TEXT 列的 2 万字护栏会把长回答（表单助手
         // 一轮 2 万字以上的 schema）拦腰截断，截断副本落库后，回放/读库侧拿到的都是残缺 JSON。
         final String contentCapped = capForColumn(content, CONTENT_COLUMN_MAX_CHARS);
         final String thinkingCapped = capForTextColumn(w.getThinking());
@@ -1379,10 +1379,10 @@ public class SessionService {
 
     
     /**
-     * 记下本轮实际作答的智能体（P5：这一列从"会话锁定值"改为"最近作答方"）。
+     * 记下本轮实际作答的智能体。
      * <p>为什么还留着写它：分享页要按智能体列访客会话（{@link #listSessionsForAgent}）、
      * 访客闲置会话要按智能体回收（{@link #deleteSessionsOfVisitor}）——对免登录链路来说
-     * 作答方恒等于被发布的那个智能体，语义没变；变的是登录对话页不再被它锁住。
+     * 作答方恒等于被发布的那个智能体，登录对话页不读取这一列做会话锁定。
      * <p>best-effort：写失败只影响列表回显，不影响这一轮回答。
      */
     public void recordTurnAgent(String sessionId, String agentId, String agentName) {
@@ -1399,7 +1399,7 @@ public class SessionService {
 
     /**
      * 记下本轮实际生效的模型引用（轮首解析出可用模型后顺手落一份，与 {@link #recordTurnAgent} 同风格）。
-     * <p>为什么要写：会话行上的 model 原本只在聊天页<b>手动切换</b>时写入，靠个人默认作答的会话永远
+     * <p>为什么要写：会话行上的 model 若只在聊天页<b>手动切换</b>时写入，靠个人默认作答的会话就
      * 没有这份记录——隔天打开旧会话，右下角模型选择器回显的是"现在的"个人默认，而不是这个会话
      * 上一轮真正用的那个。每轮把生效值落一份后，回显与下一轮解析（会话固定优先于个人默认）都钉在
      * 会话实际用的模型上，个人默认的改动只影响新会话。
@@ -1444,7 +1444,7 @@ public class SessionService {
     /**
      * 清除会话级模型覆盖中指向某个供应商的那些条（只动本人的会话——这一列只归本人改）。
      * <p>为什么需要：停用供应商或把模型从模型列表里移除，都不会让历史会话里钉着的那串引用自己消失，
-     * 于是每一轮都要拿坏引用去打上游（真机 sbx-3：停用后连续几轮 401）。问答侧会在撞上时清掉当前这一条，
+     * 于是每一轮都要拿坏引用去打上游。问答侧会在撞上时清掉当前这一条，
      * 这里给的是「一次清干净」的入口，配合供应商管理界面的引用清单用。
      *
      * @return 清掉的条数
@@ -1605,14 +1605,14 @@ public class SessionService {
 
     /**
      * 本轮降级事件补写（回答落库后另发一条 UPDATE，只在**真有降级**时调用——正常轮次不产生这次往返）。
-     * <p>为什么不塞进 appendMessage 那串 21 个位置参数：那条签名已是 P6 的搬迁对象，为一个偶发字段
+     * <p>为什么不塞进 appendMessage 那串 21 个位置参数：那条签名已经很长，为一个偶发字段
      * 再加一位会让调用点更难对齐；且降级列表在落库时点之后还会增长（工具链路与换路重试都可能在之后登记）。
      */
     /**
      * 本轮降级事件补写到回答消息行（没降级就不写）。
      * <p>补的是「只在流里活一次」那半只钥匙：降级条此前只随 done 事件下发，刷新/切会话后整块消失——
      * 用户当时看见「本轮没咨询成其他助手」，回头看不见就成了没发生过，与设置页不许有假开关是同一条底线。
-     * <p>P6 刀 4 从问答侧的那层私有包装收口到这里：主链路与工作流那条路都要补，
+     * <p>主链路与工作流那条路都要补，
      * 留两份就是两份「什么时候不补」的判据。
      */
     public void persistDegradations(String messageId, java.util.List<java.util.Map<String, String>> degradations) {
@@ -1726,11 +1726,11 @@ public class SessionService {
     }
 
     /**
-     * 重新生成的分支手术（回答落库闸内调用，替代原先的裸 deleteMessage）：
+     * 重新生成的分支手术（回答落库闸内调用）：
      * 旧回答软删让位并登记组键/尾部快照；新回答落库后 setMessageVariant 挂同一组，
-     * 重新生成的多版本由此跨刷新留存。旧口径语义保持：旧消息缺失/已删只记日志不阻断新回答落库。
+     * 重新生成的多版本由此跨刷新留存。旧消息缺失/已删只记日志不阻断新回答落库。
      *
-     * @return 版本组键（null=旧消息不可定位，仅跳过分组，行为与旧版「软删失败留两条答案」一致）
+     * @return 版本组键（null=旧消息不可定位，仅跳过分组，此时软删失败会留下两条答案）
      */
     public String beginAnswerReplace(String oldMessageId) {
         Message old = messageMapper.selectById(oldMessageId);
@@ -2227,7 +2227,7 @@ public class SessionService {
                     msg.setImages(imagesJson);
                     Object thinkingObj = m.get("thinking");
                     if (thinkingObj != null) {
-                        // 降级缓存里的 thinking 是未截断原文：直接落 TEXT 列会重演 2026-10-22 的整行落库失败
+                        // 降级缓存里的 thinking 是未截断原文：直接落 TEXT 列会导致整行落库失败
                         msg.setThinking(capForTextColumn(String.valueOf(thinkingObj)));
                     }
                     Object sourcesObj = m.get("sources");

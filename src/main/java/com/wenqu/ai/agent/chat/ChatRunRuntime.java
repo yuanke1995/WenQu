@@ -26,13 +26,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * 轮次控制与存活（P6 刀 2，自 {@code ChatService} 抽出）：一条问答轮从「占住会话」到「通道收摊」
+ * 轮次控制与存活：一条问答轮从「占住会话」到「通道收摊」
  * 的全部生命周期都在这里——SSE 投递与断开跟踪、事件账本留痕、运行总线的接流与宽限中止、
  * 停止本轮 / 运行中插话 / 探测接流三个入口、整轮心跳与存活看门狗。
  * <p><b>它不知道流水线</b>：正文怎么检索、上下文怎么拼、模型怎么调，一概在 {@code ChatService}。
- * 反过来那边要发一个事件、要问一句「这轮还活着吗」、要叫停，都到这里来。这条边界是刀 2 的全部意义：
- * 原先这两件事挤在同一个 8700 行的类里，于是「通道断了该不该掐本轮」这种判断只能靠读全文才能确定
- * 影响到哪一段。
+ * 反过来那边要发一个事件、要问一句「这轮还活着吗」、要叫停，都到这里来。
  * <p>{@code chat()} 的入口仍留在问答侧（它要提交流水线），会话互斥、通道登记、宽限中止这三件事
  * 经下面四个小闸口（{@link #tryBeginTurn} / {@link #endTurnMutex} / {@link #trackChannel} /
  * {@link #takeBareAbort}）在这里落地——登记表不外露，进出都得走名字。
@@ -99,7 +97,7 @@ public class ChatRunRuntime {
 
     /**
      * fail-loud：按 code 去重添加降级事件（全部 debug 级，由 chat.retrievalDebugEnabled 开关控制）。
-     * <p>该开关默认<b>开</b>（2026-10-18 由 false 改 true，理由见 ConfigService 里那一段）：它管的不只是
+     * <p>该开关默认<b>开</b>：它管的不只是
      * 排障项，「无命中 / 改写失败 / 图片剔除」这类降级信息关掉就等于系统性地不告诉用户这一轮检索没按
      * 预期发生。关掉它时这里不再登记，前端与库里的降级条一起消失。
      * <p>并行工具调用会同时走到这里（典型：同一轮 4 路 search_knowledge 各自发现重排不可用）：
@@ -141,8 +139,7 @@ public class ChatRunRuntime {
         h.stopped().set(true);
         STOP_MARKS.put(sessionId, h.turnId());
         sessionEventService.append(sessionId, h.userId(), h.turnId(), "stop", "用户停止本轮");
-        // 总线当场收摊（别的标签/设备立刻收尾、注册表摘掉「在跑」——2026-11-05 装配期点停止后
-        // 所有页面挂着「正在溯源」的修复对象），而发起者这一路的连接留给引擎发完 done 再关。
+        // 总线当场收摊（别的标签/设备立刻收尾、注册表摘掉「在跑」），而发起者这一路的连接留给引擎发完 done 再关。
         SseEmitter initiator = h.emitter();
         chatRunBus.finish(sessionId, initiator);
         scheduleEmitterClose(initiator);
@@ -158,10 +155,10 @@ public class ChatRunRuntime {
     /**
      * 提前收轮（用户点停止 / 看门狗判预算用尽）后留给引擎发 done 的宽限期。
      * <p>done 是终态事实的唯一载体（finalContent/blocks/notice/messageId/tokens），抢先 complete 让客户端
-     * 只收到那句 warn——2026-11-06 本地真跑实测：停止与预算两条支路都是「一帧 done 都没有」，
+     * 只收到那句 warn、拿不到 done，
      * 界面只能落回本地抄的那句「已停止生成」文案，blocks/工具卡要等刷新才看得见。
      * <p>引擎收口时自己会关流，这里的定时器只兜「引擎再也走不到收口」的那种；之所以取 90s 而不是几秒：
-     * 中断是协作式的，在途那一次模型调用要跑完（本地实测 16s，模型静默上限由 chat.modelStallTimeoutMs 管），
+     * 中断是协作式的，在途那一次模型调用要跑完（模型静默上限由 chat.modelStallTimeoutMs 管），
      * 3s 宽限期在预算支路上根本等不到 done。
      */
     private static final long STOP_CLOSE_GRACE_MS = 90_000L;
@@ -253,9 +250,8 @@ public class ChatRunRuntime {
      * （半程正文按截断态落库），连接留给引擎收口发完 done 再关（见 {@link #scheduleEmitterClose}）。
      * 失联兜底另有 15s 心跳、前端 120s 空闲看门狗与各阶段自身超时，本看门狗只管「整轮做机器工作太久」。
      * <p>每个 tick 先认一次「这一轮还是不是我登记的那一轮」（见 {@link TurnDeadline#turnId}）：
-     * 台账刻意比通道活得久的路不止一条，而它一旦越不过本轮终态就再没有停它的地方——真机 2026-10-23
-     * 一个会话里四条，每轮收口后整 600 秒补一条假超时 warn（其中一条还挂到了<b>下一轮</b>的 turnId 上，
-     * 因为账本按「当时在跑的那一轮」记）。预算是给正在干活的轮设的天花板，不是给历史轮开的闹钟。
+     * 台账刻意比通道活得久，一旦越不过本轮终态就再没有停它的地方。
+     * 预算是给正在干活的轮设的天花板，不是给历史轮开的闹钟。
      */
     public java.util.concurrent.ScheduledFuture<?> startTurnWatchdog(SseEmitter emitter, String sessionId,
                                                                       TurnDeadline d) {
@@ -274,7 +270,7 @@ public class ChatRunRuntime {
                 sendSseEvent(emitter, "warn", TurnRecorder.TURN_BUDGET_NOTE, sessionId);
                 // 与用户点停止同一条口径：warn 先到，done 由引擎收口那一侧发（半程正文/blocks/notice
                 // 都在 done 上），这里只排兜底关流。当场 complete 的后果是客户端只有一句 warn、
-                // 半个终态都没有——2026-11-06 本地真跑预算支路实测就是如此。
+                // 半个终态都没有。
                 scheduleEmitterClose(emitter);
             } finally {
                 TurnRegistry.stopDeadline(emitter);
@@ -372,10 +368,7 @@ public class ChatRunRuntime {
     /**
      * 运行中插话（steer）：用户在本轮还在跑时补一句方向性意见，交给<b>框架会话自己</b>送进正在跑的那一轮。
      * <p><b>为什么必须走框架</b>：插话的送达点在框架自己的推理循环里——它每次调模型前把待送达的插话写进
-     * 会话上下文（{@code ReActAgent#reasoning} → {@code SessionExecution#beforeStep}），并且
-     * <b>本轮没读到这句就不收尾</b>。问渠原先那条「附在下一个工具结果尾部」的路依赖自己的守卫链，
-     * 而框架引擎的模型直调工具不经过那条链：真机结果是这句话只落进历史、模型一个字没收到，收尾也不会
-     * 交回前端（{@code docs/chat-turn-pipeline.md} 遗留下第 7 条记的正是这件事）。
+     * 会话上下文（{@code ReActAgent#reasoning} → {@code SessionExecution#beforeStep}），<b>本轮没读到这句就不收尾</b>。
      * <p>做不到的是「掐掉正在执行的那一步」——那由框架持有，它自己也是协作式中断。所以插话生效于
      * <b>下一次模型调用之前</b>，不是当场改写已在飞的那一次。
      * <p><b>落库为一条普通用户消息</b>：用户按了发送、话是自己说的，界面与历史里它就该长成用户消息
@@ -459,7 +452,7 @@ public class ChatRunRuntime {
      * <p>刻意不含 {@code done}：轮终态快照本就随助手消息落库（正文/时间线/工具列表/用量），
      * 账本再存一份只是把大 JSON 截断成半截文本，没有增量信息。也不含 token/thinking/process/
      * stage/image/plan_delta/keepalive 这类高频增量——它们会让账本行数淹没真正的执行轨迹。
-     * （stage 通道已整体退役：一轮的进行中提示只剩「整轮用时」那一条。）
+     * （一轮的进行中提示只保留「整轮用时」那一条。）
      * <p>{@code tool_status} 单独走 {@link #toolLedgerPayload}：一次调用只记终态一行，
      * start/preparing 帧不落账本，参数与输出压成摘要——完整原文仍由消息表与工具卡承载。
      */

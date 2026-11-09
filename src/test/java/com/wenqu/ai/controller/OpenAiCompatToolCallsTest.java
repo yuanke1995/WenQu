@@ -16,7 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * OpenAI function calling 映射契约（P1 §3.4）。
+ * OpenAI function calling 映射契约。
  * <p>只验证本仓自己的转换与过滤口径：done payload 的 toolCalls → OpenAI tool_calls、
  * 未声明/副作用工具不出现。真实模型调用链由端点 E2E 覆盖（本机环境模型/检索可用性不稳定，不在此断言）。
  */

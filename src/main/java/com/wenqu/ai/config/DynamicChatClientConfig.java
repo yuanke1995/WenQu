@@ -12,7 +12,7 @@ import org.springframework.context.annotation.Configuration;
  * 网关四要素由「模型供应商」表按模型引用解析（会话覆盖 / 个人默认均为 {providerId}/{modelId}），
  * 供应商保存即生效，下一次请求自动用新网关，无需重启服务；解析不出引用一律 fail-loud。
  * <p>
- * 替换 Spring AI 自动配置基于 yml 单例 ChatModel 的 ChatClient.Builder 注入（ChatService 改为注入本 ChatClient）。
+ * 本 ChatClient 取代 Spring AI 基于 yml 单例 ChatModel 自动配置的 Builder 注入，ChatService 注入的即是它。
  *
  * <h3>工具调用（Function Calling）</h3>
  * 本配置注册 {@link ToolCallAdvisor} 作为默认 advisor：它持有 {@link ToolCallingManager}，

@@ -27,9 +27,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
- * 本轮的<b>引用池</b>：一条编号空间（[1..N]）+ 与之绑定的来源清单、图片编号与注册入口
- * （P6 刀 0 第二步自手写运行时 {@code TurnState} 的平铺字段与注册方法下沉；刀 5 以此为
- * {@code TurnSourceRegistry} 的收编对象）。
+ * 本轮的<b>引用池</b>：一条编号空间（[1..N]）+ 与之绑定的来源清单、图片编号与注册入口。
  *
  * <p><b>为什么这一族必须是一个对象而不是一袋字段</b>：库内命中、精确检索工具的结果、联网搜索结果、
  * MCP 结果文本里的链接、被咨询子智能体交回的资料——<b>五路来源共用同一个编号空间</b>。前端角标按 ref
@@ -37,7 +35,7 @@ import java.util.stream.Collectors;
  * 图片编号体系三者必须原子地一起变（{@code synchronized (sources)} 就是这条不变量的实现），
  * 它们的所有者就该只有一个。
  *
- * <p>三条口径别在搬迁中丢：
+ * <p>三条口径：
  * <ul>
  *   <li><b>同块/同源不重复占号</b>：库内按 knowledgeId 判重，联网与 MCP 按归一化 URL 判重
  *       （{@link #webRefByUrl}），于是联网搜过的网页被 MCP 再拿到时是同一个角标；</li>
@@ -46,10 +44,10 @@ import java.util.stream.Collectors;
  *   <li>只有结果文本<b>显式给出 URL</b> 的 MCP 内容才可溯源——伪造来源比没有来源更糟。</li>
  * </ul>
  *
- * <p>{@link WebSearchTools.WebSearchSink} 由本类实现（原先在手写运行时的状态袋上）：
+ * <p>{@link WebSearchTools.WebSearchSink} 由本类实现：
  * 工具经 {@code ToolContext} 拿到的是"本轮的引用注册器/配额计"，不是整个状态袋。
- * <p>刀 5a 把依赖面也收窄了：池只吃配置/重排/图片签名三件无状态服务加一个投递出口，
- * 不再借本轮状态袋的 Deps 拿运行时动作——方向保持池→运行时单向。
+ * <p>池只吃配置/重排/图片签名三件无状态服务加一个投递出口，
+ * 不借本轮状态袋拿运行时动作——方向保持池→运行时单向。
  *
  * @author yuanke
  */
@@ -288,8 +286,8 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
             }
             sources.add(src);
             // 图片编号与来源编号在同一把锁内落定：assignToolImages 要遍历 imgIndex（LinkedHashMap），
-            // 而并行工具调用会同时往 imgIndex 写图 —— 在锁外遍历就是 fail-fast，真机现场
-            // search_knowledge 并发 4 路时抛 ConcurrentModificationException，整路工具结果变成错误。
+            // 而并行工具调用会同时往 imgIndex 写图 —— 在锁外遍历会抛
+            // ConcurrentModificationException，整路工具结果变成错误。
             ImageAssignment imgs = assignToolImages(h);
             imgSeqs = imgs.seqs();
             // 与 sources.add 同一把锁：否则并发注册撞到「来源已占号、图片清单还没写入」的窗口，
@@ -321,9 +319,8 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
     /**
      * 来源图片并入全局编号：URL 去重（全局一张图一个编号），编号延续 imgIndex.size()+1。
      * <p><b>调用方必须持有 {@code sources} 锁</b>：本方法要遍历 imgIndex，而并发工具调用会同时写它。
-     * 2026-10-18 真机现场 4 路 {@code search_knowledge} 并发注册，锁外遍历 {@code imgIndex.values()}
-     * 抛 {@code ConcurrentModificationException}，该路工具结果整条变成
-     * {@code Error: Tool execution failed: ConcurrentModificationException}。
+     * 锁外遍历 {@code imgIndex.values()} 会抛 {@code ConcurrentModificationException}，
+     * 使该路工具结果整条变成错误。
      * <p>SSE 发送不在这里做（签名与网络写不应持锁），由调用方在锁外以 {@link #publishImageEvent()} 发全量清单。
      *
      * @return 本次命中的图片编号，以及是否真的新增了图片（决定要不要重发 image 事件）

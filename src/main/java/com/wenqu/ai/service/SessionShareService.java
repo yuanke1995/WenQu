@@ -184,7 +184,7 @@ public class SessionShareService {
      * 不泄露存在性），顺带累计访问量（best-effort：统计失败不影响访问）。
      *
      * <p>会话存活性是第二道闸：{@code deleteSession} 已会联动停用，但那是 best-effort，
-     * 且存量脏数据（本次上线前删掉的会话）不会自己好。少一次会话查询换"绝不把空页当有效分享
+     * 且已有的脏数据不会自己好。少一次会话查询换"绝不把空页当有效分享
      * 链接发出去"——访客拿到空白页却没报错，只会以为链接坏了再去问分享者。
      */
     public SessionShare resolvePublic(String token) {

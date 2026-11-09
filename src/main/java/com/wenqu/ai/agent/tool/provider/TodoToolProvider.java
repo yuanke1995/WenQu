@@ -14,9 +14,8 @@ import java.util.List;
 /**
  * 任务清单族（writeTodo）。
  * <p>
- * 这一行是本次重构顺带补上的漏：工具上线时「清单页有英文名、没有中文名」——因为中文名当时手抄在
- * {@code ToolInventoryService.LABELS} 里，加新工具的人不知道要同步。声明式提供方 + 启动期反射核对
- * 之后，加了 @Tool 方法却没声明描述符会当场记 ERROR，漏项不再靠人记得住。
+ * 描述符由各提供方声明：加了 {@code @Tool} 方法却没声明描述符，启动期反射核对会当场记 ERROR，
+ * 漏项不再靠人记得住。
  */
 @Component
 public class TodoToolProvider implements ToolFamilyProvider {
@@ -42,7 +41,7 @@ public class TodoToolProvider implements ToolFamilyProvider {
         return List.of(new ToolDescriptor("writeTodo", ToolFamily.TODO,
                 "任务清单", "更新任务清单", "把要做的事列成清单，看得见总共几件、还剩几件",
                 SideEffect.READ, null, false, false, null,
-                // viewerRequired=true：清单是给正在看这一轮的人看的进度板。子智能体分支（P3a）跑在
+                // viewerRequired=true：清单是给正在看这一轮的人看的进度板。子智能体分支跑在
                 // 一条没有观众、跑完即删的临时会话里，写进去的清单谁都看不到，故分支轮不挂——
                 // 判据落在描述符字段上而不是装配处再抄一个 if（见 ToolDescriptor#viewerRequired）
                 true));

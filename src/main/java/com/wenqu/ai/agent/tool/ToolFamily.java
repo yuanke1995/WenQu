@@ -1,12 +1,11 @@
 package com.wenqu.ai.agent.tool;
 
 /**
- * 工具族（P1 seam 化的第一层归属）。
+ * 工具族：工具归属的第一层。
  * <p>
- * 为什么要有它：一个工具的「挂不挂、要不要审批、游客能不能用、开关在哪、卡片叫什么」历史上散在
- * 问答侧的 if 链、{@code ToolInventoryService.LABELS}、
- * {@code ToolInventoryService} 里硬编码的 sensitive 集合、以及前端两份映射里——同一族工具的属性
- * 被抄了四份，改一处漏三处（writeTodo 上线时清单页就直接漏了中文名，就是这个机制的实测代价）。
+ * 为什么要有它：一个工具的「挂不挂、要不要审批、游客能不能用、开关在哪、卡片叫什么」
+ * 若散在问答侧的 if 链、{@code ToolInventoryService.LABELS}、硬编码的 sensitive 集合与前端映射里，
+ * 同一族工具的属性就会被抄几份，改一处漏三处。
  * 族是收口的单位：每个 {@link ToolFamilyProvider} 一次把本族全部 {@link ToolDescriptor} 声明清楚，
  * 其余地方一律来查它。
  * <p>
@@ -17,7 +16,7 @@ package com.wenqu.ai.agent.tool;
  */
 public enum ToolFamily {
 
-    /** 提问工具：只剩 askUser（人在回路）；历史纯计算工具已退役（见 AskUserToolProvider 类注释） */
+    /** 提问工具：只剩 askUser（人在回路） */
     ASK_USER("ask_user", "提问工具"),
     /** 知识库精确检索 */
     KNOWLEDGE("knowledge", "知识库精确检索"),
@@ -54,7 +53,7 @@ public enum ToolFamily {
     private final String familyLabel;
     /**
      * 「工具执行确认=off（禁用）」时整族不挂。
-     * <p>这条闸本来写在装配处的两处 {@code !approvalOff &&} 上，是族级事实而不是工具级事实：
+     * <p>这是族级事实而不是工具级事实：
      * 沙盒与 MCP 在 off 档下整族不给（前者真在容器里跑命令、后者是外部 server 的任意工具），
      * 而联网搜索<b>刻意不受 off 管辖</b>——它启停由自身开关决定，纳入审批
      * （webSearch.requireApproval）后只有 ask 会拦；把它也算进 off 档会把联网整个关掉，

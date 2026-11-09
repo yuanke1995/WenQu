@@ -54,17 +54,17 @@ public class KnowledgeRetrievalTool {
 
     /**
      * toolContext 键：本轮引用来源注册器（值为 {@link SourceRegistrar}）。
-     * <p>P1 迁移前这里是两个类级 ThreadLocal（{@code setSourceRegistrar} / {@code setKbScope} +
+     * <p>若用两个类级 ThreadLocal（{@code setSourceRegistrar} / {@code setKbScope} +
      * finally clear）。它依赖两个不体面的前提：① setter 与工具执行在同一个线程上同步发生；
      * ② 每次 set 都配得上一次 clear。①在新版 Spring AI 允许工具并行执行时不成立；②只要有一条
      * 异常路径漏清，池化线程就把上一轮的注册器带给下一个会话——引用编号会注册进别人的回答里，
-     * 用户看到的是「我引用了不存在的出处」。现在落点装进本次调用独占的上下文，作用域=这一次调用，
+     * 用户看到的是「我引用了不存在的出处」。因此落点装进本次调用独占的上下文，作用域=这一次调用，
      * 没有跨调用的可变状态可漏清。
      */
     public static final String CTX_SOURCE_REGISTRAR = "wenqu.knowledge.sourceRegistrar";
 
     /**
-     * 工具检索范围（与主链路同库界，2026-09-26 库隔离修复）：智能体绑定了知识库时，
+     * 工具检索范围（与主链路同库界）：智能体绑定了知识库时，
      * searchKnowledge 不允许越过范围检索其他库——否则「仅挂刑法库」的智能体经工具仍能
      * 把其他库的块召回并注册进引用来源。kbIds 限定向量检索的库（null=不限，与主链路
      * scopeKbIds 同语义）；docIds 对命中做后过滤（null=不限，空集合=范围内无文档，检索为空）；
@@ -217,7 +217,7 @@ public class KnowledgeRetrievalTool {
             hits = hybridRetrievalService.filterByDocTags(hits, scope.tags());
             log.info("[TOOL-DIAG] 标签收窄后过滤：{} → {} 条（tags={}）", before, hits.size(), scope.tags());
         }
-        // 补重排（强制窗口）：search() 只出融合分，本工具此前从未重排，相关分门发生在两个分值域上——
+        // 补重排（强制窗口）：search() 只出融合分，不重排的话相关分门发生在两个分值域上——
         // 与查询仅词面重叠的无关块（如"框架/使用"命中操作手册章节）融合分可达 0.6+，而真实重排分 ~0.000x，
         // 全部混进工具结果并注册进引用面板。rankForced 不受 minHits 窗口限制（工具候选可能不足 6 条），
         // 失败时回退融合分序（rerankScore=null，走下方融合门），与主链路降级语义一致。

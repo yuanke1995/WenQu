@@ -17,7 +17,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 内容安全规则的首批登记（Phase 3 · P12，docs/enterprise-upgrade-plan.md §4.3）。
+ * 内容安全规则的首批登记。
  *
  * <p><b>只登记两条「个人信息」类的只告警规则，不预置任何拦截词表</b>：哪些字该拦属于部署方的
  * 合规判断（行业、地域、机构口径都不同），把一份词表写死进代码等于替客户做合规决定，
@@ -29,7 +29,7 @@ import java.util.List;
  * 用它可以立刻验证出口闸真的在判（见手册「内容安全」一节），不需要先编一句违规话去试。
  *
  * <p>幂等：某个租户名下已有任何规则就一条都不加（管理员删掉的规则不会被重启塞回来）；
- * 词表按租户各一份（Phase 4），所以这里是逐租户各补一次，开通新租户时也走同一个入口。
+ * 词表按租户各一份，所以这里是逐租户各补一次，开通新租户时也走同一个入口。
  *
  * @author yuanke
  */
@@ -44,7 +44,7 @@ public class ContentSafetySeedRunner implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
-        // 词表是按租户各一份的（Phase 4），所以首批规则要每家各登记一次：
+        // 词表是按租户各一份的，所以首批规则要每家各登记一次：
         // 只给 default 种，等于新租户天生没有底线示例，管理员删掉自己那条之后就再也看不出闸门在不在跑
         try {
             List<String> tenants = new ArrayList<>();

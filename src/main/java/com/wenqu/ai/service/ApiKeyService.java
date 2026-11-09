@@ -27,7 +27,7 @@ import java.util.Map;
  * <ul>
  *   <li>明文保管两份口径：SHA-256 哈希用于请求校验（不可逆）；明文本体以部署密钥 JWE 加密存
  *       {@code key_cipher}，供列表「眼睛」回显/复制（与模型供应商 api_key 同一套
- *       {@link ConfigCryptoService}）。存量 Key（上线回显前签发）无密文，不可回显、只能重签</li>
+ *       {@link ConfigCryptoService}）。存量 Key 无密文，不可回显、只能重签</li>
  *   <li>校验走哈希等值查询（索引命中），命中后还要判停用/过期</li>
  *   <li>热路径（每次带 Key 的请求）只做一次 update 记录 last_used_at，失败不影响放行</li>
  *   <li>Key 权限固定为问答链路（调用方 SecurityConfig 只放行白名单端点，白名单之外对 Key 身份
@@ -35,7 +35,7 @@ import java.util.Map;
  *       技能/MCP 配置/定时任务与会话删除，以及 Key 管理本身），见
  *       {@code SecurityConfig#isKeyDeniedEndpoint}——一把 Key 拿到的是「以某个账号发问」的能力，
  *       不是「成为那个账号」</li>
- *   <li>恒绑签发人（2026-11-02 定稿）：Key 以「谁签发」的身份发问，不存在指定/改绑任何别人——
+ *   <li>恒绑签发人：Key 以「谁签发」的身份发问，不存在指定/改绑任何别人——
  *       平台没有机器号概念，也不给「把 Key 指到任意成员」留口子。签名授权交给 1c 硬边界：
  *       无论签发人是什么角色，Key 的 API 面恒为问答白名单</li>
  * </ul>
@@ -89,7 +89,7 @@ public class ApiKeyService {
         k.setKeyCipher(crypto.encrypt(plain));
         k.setDisabled(0);
         k.setExpireAt(expireAt);
-        // 恒绑签发人本人（2026-11-02 定稿）：Key 就是以「谁签发」的身份发问，不存在指定别人——
+        // 恒绑签发人本人：Key 就是以「谁签发」的身份发问，不存在指定别人——
         // 也就不存在「管理员把 Key 指到任意成员」的口子。签发人必然存在且未停用（能登录才能签）。
         k.setActAsUid(createdBy);
         k.setCreatedBy(createdBy);
