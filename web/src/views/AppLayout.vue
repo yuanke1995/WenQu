@@ -262,8 +262,10 @@
                   <span class="space-icon" :style="row.color ? { color: row.color } : null">
                     <component :is="workspaceIconOf(row.icon, !spaceHidden(row))" />
                   </span>
-                  <!-- 重命名就地改：名字换成输入框，回车/失焦保存、Esc 取消（同 VS Code 侧栏口径） -->
-                  <input v-if="renameProjectId === row.id" :ref="setRenameInputEl"
+                  <!-- 重命名就地改：名字换成输入框，回车/失焦保存、Esc 取消（同 VS Code 侧栏口径）。
+                       renameProjectId 必须非空再比对：虚拟分组（如接口不可用时的「全部会话」）id 为空，
+                       与「未在重命名」的默认空串相等，否则这一行会永远停在可编辑输入框的样子。 -->
+                  <input v-if="renameProjectId && renameProjectId === row.id" :ref="setRenameInputEl"
                          v-model="renameDraft" class="space-name-input" :maxlength="60"
                          placeholder="工作区名" @click.stop
                          @keydown.enter.prevent="commitProjectRename(row)"

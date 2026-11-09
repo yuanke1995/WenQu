@@ -312,16 +312,21 @@ export async function loadSessions (keyword, { refreshProjects = false } = {}) {
   sessionStore.loading = true
   try {
     let projects = projectsCache
+    // projectsOk 只看「这份列表是否来自一次成功的接口返回」：空数组 = 这个账号确实还没有工作区，
+    // 是正常空态（新账号必然如此），不能当成接口挂了去退化出「全部会话」伪工作区。
+    let projectsOk = projectsLoaded
     if (refreshProjects || !projectsLoaded) {
       try {
         const r = await listProjects()
         projects = (r && r.data) || []
         projectsCache = projects
         projectsLoaded = true
+        projectsOk = true
       } catch (e) {
         // 工作区接口挂了不等于会话接口挂了：退化成「全部会话」一个分组，列表仍可读。
         // 不把 projectsLoaded 置 true —— 下一次刷新会重试。
         projects = []
+        projectsOk = false
       }
     }
     if (gen !== loadGen) return null
@@ -330,8 +335,8 @@ export async function loadSessions (keyword, { refreshProjects = false } = {}) {
     // implicit 兜底容器的会话也算在内，所以它不再出现在「工作区」列表里。
     // 工作区接口不可用时退化成「全部会话」一个分组，此时不再单列这一段（否则同一批会话出现两次）。
     // 只列这台电脑绑定的工作区：别的电脑上的仍留在库里，换台电脑登录自然出现。
-    // 是否退化仍看接口返回的原始 projects——本机一个工作区都没有是正常状态，不是接口挂了。
-    const defs = projects.length
+    // 退化只看接口这次是否成功：本机一个工作区都没有是正常状态，不是接口挂了。
+    const defs = projectsOk
       ? [noSpaceSpace(), ...projects.filter(p => p.status !== 'archived' && !p.isImplicit && projectOnThisComputer(p)).map(spaceOfProject)]
       : [allSessionsSpace()]
 
@@ -617,15 +622,18 @@ export async function resyncSessions ({ withProjects = false } = {}) {
   resyncInFlight = true
   try {
     let projects = projectsCache
+    // 与 loadSessions 同口径：只有接口失败才退化，成功返回空数组是「还没有工作区」的正常空态
+    let projectsOk = projectsLoaded
     if (withProjects || !projectsLoaded) {
       try {
         projects = ((await listProjects()) || {}).data || []
         projectsCache = projects
         projectsLoaded = true
+        projectsOk = true
       } catch (e) { /* 工作区结构这一轮对不了，会话行照常补 */ }
     }
     if (gen !== loadGen) return
-    const defs = projects.length
+    const defs = projectsOk
       ? [noSpaceSpace(), ...projects.filter(p => p.status !== 'archived' && !p.isImplicit && projectOnThisComputer(p)).map(spaceOfProject)]
       : [allSessionsSpace()]
     // 结构没变的工作区一律沿用原对象：换成新对象等于把展开态与已加载行一起丢掉
