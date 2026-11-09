@@ -167,8 +167,15 @@ public class RetrievalEvalRunService {
     public Map<String, Object> listCases(String setId, String filter, String keyword, int page, int size) {
         RetrievalEvalSet set = setId == null || setId.isBlank() ? catalog.activeSetOrImport(null) : setMapper.selectById(setId);
         if (set == null) {
-            return Map.of("total", 0, "page", 1, "size", size, "rows", List.of(),
-                    "set", null, "counts", Map.of());
+            // 无评估集时 set 必须回 null：Map.of 不收 null 值（线上空库走进这里会直接 NPE 500）
+            Map<String, Object> empty = new LinkedHashMap<>();
+            empty.put("total", 0);
+            empty.put("page", 1);
+            empty.put("size", size);
+            empty.put("rows", List.of());
+            empty.put("set", null);
+            empty.put("counts", Map.of());
+            return empty;
         }
         List<RetrievalEvalCase> cases = catalog.casesOf(set.getId(), null);
         Map<String, Map<String, Object>> lastMetrics = lastMetricsMap(set);
