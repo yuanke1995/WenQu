@@ -73,7 +73,7 @@ public class McpController {
     /** 试调用互斥：每 uid 同时只允许一个在跑（工具可能很慢，连点会把远端打爆） */
     private final Map<String, Boolean> invoking = new ConcurrentHashMap<>();
 
-    @Operation(summary = "连接状态一览", description = "工具调用总开关 + 本人每个 server 的地址/类型/启停/连接状态/可用工具数（连接失败带原因）；立即返回，尚未连上的服务状态为 connecting（后台建连中，前端轮询到收敛）；retryBroken=true 时先对未连上的服务补一次同步重连（点「刷新」用，连接中的服务会跳过）")
+    @Operation(summary = "连接状态一览", description = "工具调用总开关 + 本人每个 server 的地址/类型/启停/连接状态/可用工具数（连接失败带原因）；立即返回，尚未连上的服务状态为 connecting（后台建连中，前端轮询到收敛）；retryBroken=true 时先对未连上的服务补一次同步重连（点「刷新」用，连接中的服务会跳过）；平台级服务仅管理员可见")
     @Permission("mcp:read")
     @GetMapping("/status")
     public ResultJson status(@RequestParam(value = "retryBroken", required = false) Boolean retryBroken,
@@ -82,13 +82,22 @@ public class McpController {
                              @RequestParam(value = "verifyOnline", required = false) Boolean verifyOnline,
                              // withTools=true：只补工具清单、不翻转连接状态（远程 listTools 但不判生死）。
                              // 工作流画布的 mcp 节点要列工具供选，纯本地档 tools 恒为空会让下拉选不出工具
-                             @RequestParam(value = "withTools", required = false) Boolean withTools) {
+                             @RequestParam(value = "withTools", required = false) Boolean withTools,
+                             HttpServletRequest httpRequest) {
         String uid = RequestUser.uid();
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("toolsEnabled", configService.getBoolean("tool.enabled"));
         if (Boolean.TRUE.equals(retryBroken)) mcpClientService.retryBroken(uid);
-        data.put("servers", mcpClientService.serverStatuses(uid, Boolean.TRUE.equals(verifyOnline),
-                Boolean.TRUE.equals(withTools)));
+        List<Map<String, Object>> servers = mcpClientService.serverStatuses(uid, Boolean.TRUE.equals(verifyOnline),
+                Boolean.TRUE.equals(withTools));
+        // 平台级服务是内置能力（如浏览器操作），仅管理员级可见：MCP 面板、智能体配置页、工作流画布的
+        // MCP 选项都从这一个口取数，统一在此筛掉，避免某个入口漏改又把平台服务露给普通用户。
+        if (!adminGuard.isAdmin(httpRequest)) {
+            servers = servers.stream()
+                    .filter(s -> !UserMcp.SCOPE_PLATFORM.equals(s.get("scope")))
+                    .toList();
+        }
+        data.put("servers", servers);
         return ResultJson.ok(data);
     }
 
@@ -254,19 +263,19 @@ public class McpController {
     @Operation(summary = "重连", description = "按当前配置重建本人的全部连接（改完通常已自动生效；此接口用于失败重试），立即返回、重建在后台进行，最终状态由 /status 轮询得到")
     @Permission("mcp:write")
     @PostMapping("/reload")
-    public ResultJson reload() {
+    public ResultJson reload(HttpServletRequest request) {
         String uid = RequestUser.uid();
         mcpClientService.reload(uid);
-        return status(null, null, null); // 重连刚整池重建过，无需再补重连
+        return status(null, null, null, request); // 重连刚整池重建过，无需再补重连
     }
 
     @Operation(summary = "重连单个 MCP 服务", description = "只按当前配置重建这一个服务（卡片「重连」按钮：远程抖动/卡 connecting/假绿时手动拉一把）；只动这一个，其余连接不受影响。立即返回，最终状态由 /status 轮询得到")
     @Permission("mcp:write")
     @PostMapping("/servers/{id}/reconnect")
-    public ResultJson reconnect(@PathVariable("id") String id) {
+    public ResultJson reconnect(@PathVariable("id") String id, HttpServletRequest request) {
         UserMcp row = visible(id); // 不存在或不是本人的按不存在处理（fail-closed）；平台行谁都能重连自己那条连接
         mcpClientService.reconnect(RequestUser.uid(), row);
-        return status(null, null, null); // 刚触发单服务重连，无需再补重连
+        return status(null, null, null, request); // 刚触发单服务重连，无需再补重连
     }
 
     @Operation(summary = "测试连接", description = "临时连接一个 MCP 服务（不落配置），返回是否可达与工具清单；用于\"先测再存\"。"

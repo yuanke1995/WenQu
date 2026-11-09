@@ -78,7 +78,7 @@
                 <span class="mcp-dot" :class="stateCls(s)"></span>
                 <span class="mcp-card-name">{{ s.name }}</span>
                 <span v-if="isPlatform(s)" class="mcp-pill-platform"
-                      title="平台为全员提供：管理员维护地址与工具名，普通用户只读可用">平台</span>
+                      title="平台内置服务：仅管理员可见，地址与工具名由管理员维护">平台</span>
                 <span v-if="expandable(s)" class="mcp-chev" :class="{ up: expanded === s.id }" aria-hidden="true">
                   <down-outlined />
                 </span>

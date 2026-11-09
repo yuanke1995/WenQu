@@ -11,9 +11,12 @@ import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.mapper.AgentMapper;
 import com.wenqu.ai.mapper.AgentVersionMapper;
+import com.wenqu.ai.mapper.TenantMapper;
 import com.wenqu.ai.model.Agent;
 import com.wenqu.ai.model.AgentVersion;
+import com.wenqu.ai.model.Tenant;
 import com.wenqu.ai.service.ResourceVisibilityService.Principal;
+import com.wenqu.ai.util.TenantContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -34,8 +37,8 @@ import java.util.stream.Collectors;
  * 一个智能体把「模型 / 系统提示词 / 知识库范围 / 工具开关」打包成命名预设，对话页下拉切换；
  * 选中后该轮问答按智能体覆盖全局配置（未填维度继承全局）。工具开关三态：1=开 0=关 null=继承。
  * <p>
- * 内置「问渠」智能体是系统默认：<b>全局唯一</b>（启动时唯一性维护：多余降级、缺失播种），
- * 所有登录用户可读可用（{@link #readable} 豁免），仅管理员级可配置、不可删除。
+ * 内置「问渠」智能体是系统默认：<b>每个租户一条</b>（启动时按租户维护：多余降级、缺失播种），
+ * 该租户内所有登录用户可读可用（{@link #readable} 豁免），仅管理员级可配置、不可删除。
  *
  * @author yuanke
  */
@@ -74,6 +77,7 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
 
     private final AgentMapper mapper;
     private final AgentVersionMapper versionMapper;
+    private final TenantMapper tenantMapper;
     private final ConfigService configService;
     private final ResourceVisibilityService resourceVisibilityService;
     private final com.wenqu.ai.mapper.WorkflowMapper workflowMapper;
@@ -132,9 +136,13 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
     }
 
     /**
-     * 启动时维护内置「问渠」智能体的全局唯一性：多于一个时保留「默认优先、创建最早」的一条，
-     * 其余降级为普通智能体（log.warn 留痕）；一个都没有（全新环境）时播种最小配置——
+     * 启动时按租户维护内置「问渠」智能体：多于一个时保留「默认优先、创建最早」的一条，
+     * 其余降级为普通智能体（log.warn 留痕）；一个都没有（全新环境/后建租户）时播种最小配置——
      * 各维度全部继承全局，无需任何手工建档。
+     * <p><b>为什么必须逐个租户绑定上下文</b>：{@code c_ai_agent} 是行级租户谓词，
+     * 未绑定租户时 {@code selectList} 会跨租户摊开（启动任务的既有口径）。不绑定就会看到
+     * 别租户已有一条而误判「已存在」，后建租户永远没有默认助手——症状正是这些租户的
+     * 用户在对话页下拉里选不到「问渠」。
      * <p>
      * <b>为什么从 @PostConstruct 改成 ApplicationRunner(@Order(1))</b>：本方法会
      * {@code selectList} 整张 {@code c_ai_agent}（MyBatis-Plus 带上实体全部列），
@@ -146,7 +154,16 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
      */
     @Override
     public void run(org.springframework.boot.ApplicationArguments args) {
-        maintainBuiltinAgent();
+        List<String> tenants = new ArrayList<>();
+        try {
+            for (Tenant t : tenantMapper.selectList(null)) tenants.add(t.getId());
+        } catch (Exception e) {
+            log.warn("[AGENT] 租户清单读取失败，按 default 维护内置「问渠」: {}", e.getMessage());
+        }
+        if (tenants.isEmpty()) tenants.add(TenantContext.DEFAULT_TENANT);
+        for (String tenant : tenants) {
+            TenantContext.as(tenant, this::maintainBuiltinAgent);
+        }
     }
 
     public void maintainBuiltinAgent() {
@@ -217,10 +234,13 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
     }
 
     /**
-     * 平台预置智能体：启动期播种、全员可用的示例角色（{@code created_by='system'} 且非内置「问渠」）。
+     * 平台预置智能体：启动期播种、由平台维护的内置助手（{@code created_by='system'} 且非内置「问渠」），
+     * 如网页操作助手。
      * <p>为什么不复用 {@code isBuiltin=1}：那一格的语义是「全局唯一的产品默认助手」，启动维护会把
      * 多出来的降级。平台预置可以有多个，只是可见性同样要跨过「谁建归谁」——归属人 'system'
      * 不等于任何登录 uid，不在这里开口子，播种出来的行就没有任何人看得到。
+     * <p><b>可见性与内置「问渠」不同</b>：平台预置是平台能力（网页操作等），仅管理员级可见可用——
+     * 它依赖的平台级 MCP 服务同样只对管理员露出，普通用户不该在对话页、评测页或工作流里选到它。
      */
     public static boolean isPlatformPreset(Agent a) {
         return a != null && "system".equals(a.getCreatedBy())
@@ -230,11 +250,11 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
     /**
      * 当前用户是否可读取该智能体。归属口径（谁建归谁）：仅创建者可见；
      * 内置「问渠」是系统默认——给每个人用，所有登录用户可读（配置仍只由管理员级维护）。
-     * 平台预置角色同样全员可读（见 {@link #isPlatformPreset}）。
+     * 平台预置助手仅管理员级可读（见 {@link #isPlatformPreset}）。
      */
     public boolean readable(Agent a) {
         if (a != null && Integer.valueOf(1).equals(a.getIsBuiltin())) return true;
-        if (isPlatformPreset(a)) return true;
+        if (isPlatformPreset(a)) return roleService.isAdminAny(RequestUser.roles());
         return resourceVisibilityService.canRead(principal(), a == null ? null : a.getCreatedBy());
     }
 
@@ -577,12 +597,12 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         mapper.update(null, uw);
     }
 
-    /** 删除智能体（内置标记的禁止删除） */
+    /** 删除智能体（内置标记与平台预置的禁止删除） */
     public void delete(String id) {
         Agent existing = mapper.selectById(id);
         if (existing != null) {
             ensureManageable(existing);
-            if (Integer.valueOf(1).equals(existing.getIsBuiltin())) {
+            if (Integer.valueOf(1).equals(existing.getIsBuiltin()) || isPlatformPreset(existing)) {
                 throw new BizException("内置智能体不可删除（如需调整请编辑其配置）");
             }
         }
@@ -600,6 +620,10 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         ensureManageable(target);
         if (Integer.valueOf(1).equals(target.getIsSubagent())) {
             throw new BizException("子智能体不能设为默认：它只能被主智能体委派调用");
+        }
+        // 平台预置仅管理员可见：设成默认会让普通用户的下拉预选命中一个他们无权读取的助手
+        if (isPlatformPreset(target)) {
+            throw new BizException("内置助手「" + target.getName() + "」仅管理员可用，不能设为全员默认");
         }
         clearDefault(id);
         Agent a = new Agent();

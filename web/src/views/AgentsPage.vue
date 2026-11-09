@@ -63,13 +63,14 @@
               <article v-for="a in sec.members" :key="sec.key + '-' + a.id" class="ap-card"
                        :class="{ 'ap-card-readonly': !a.manageable }" @click="a.manageable && openEdit(a)">
                 <div class="ap-card-head">
-                  <a-checkbox v-if="batchMode && !isBuiltin(a)" class="ap-check" :checked="selected.includes(a.id)"
+                  <a-checkbox v-if="batchMode && !isBuiltin(a) && !isPreset(a)" class="ap-check" :checked="selected.includes(a.id)"
                               @click.stop @change="toggleSelect(a.id)" />
                   <AgentAvatar :agent="a" :size="24" />
                   <span class="ap-name" :title="a.name">{{ a.name }}</span>
-                  <span v-if="isDefault(a) || isBuiltin(a)" class="ap-card-tags">
+                  <span v-if="isDefault(a) || isBuiltin(a) || isPreset(a)" class="ap-card-tags">
                     <span v-if="isDefault(a)" class="ap-tag-default">默认</span>
                     <span v-if="isBuiltin(a)" class="ap-tag-builtin" title="系统默认智能体：全员可用，仅管理员可配置">内置</span>
+                    <span v-else-if="isPreset(a)" class="ap-tag-builtin" title="平台内置助手：仅管理员可见可配置">内置</span>
                   </span>
                 </div>
                 <p class="ap-desc" :title="a.description || ''">{{ a.description || '未填写描述' }}</p>
@@ -90,14 +91,15 @@
                   <template v-if="a.manageable">
                     <button class="app-link-btn" @click.stop="openEdit(a)">配置</button>
                     <button class="app-link-btn" @click.stop="openPublish(a)">发布</button>
-                    <!-- 「设为默认」是全局动作（影响所有人下拉的预选），后端仅管理员放行，故对普通用户不显示 -->
-                    <button v-if="!isSub(a) && !isDefault(a) && isAdmin" class="app-link-btn" @click.stop="doSetDefault(a.id)">设为默认</button>
+                    <!-- 「设为默认」是全局动作（影响所有人下拉的预选），后端仅管理员放行，故对普通用户不显示；
+                         平台预置仅管理员可见，不能设为全员默认 -->
+                    <button v-if="!isSub(a) && !isDefault(a) && isAdmin && !isPreset(a)" class="app-link-btn" @click.stop="doSetDefault(a.id)">设为默认</button>
                     <!-- 内置智能体不提供删除入口（后端也会拒绝），避免出现"点了报错"的死路；内置以卡片右上角「内置」标记区分 -->
-                    <a-popconfirm v-if="!isBuiltin(a)" title="删除该智能体？对话页将不再可选" ok-text="删除" cancel-text="取消" @confirm="doDelete(a.id)">
+                    <a-popconfirm v-if="!isBuiltin(a) && !isPreset(a)" title="删除该智能体？对话页将不再可选" ok-text="删除" cancel-text="取消" @confirm="doDelete(a.id)">
                       <button class="app-link-btn danger" @click.stop>删除</button>
                     </a-popconfirm>
                   </template>
-                  <span v-else class="ap-readonly-hint">{{ isBuiltin(a) ? '系统默认 · 管理员可配置' : '仅可使用' }}</span>
+                  <span v-else class="ap-readonly-hint">{{ isBuiltin(a) || isPreset(a) ? '系统内置 · 管理员可配置' : '仅可使用' }}</span>
                 </div>
               </article>
             </div>
@@ -1167,8 +1169,13 @@ const onRunModeChange = v => {
   if (v === 'sub' && form.value.isBuiltin === 1) { runMode.value = 'main'; return }
   form.value.isSubagent = v === 'sub' ? 1 : 0
 }
-// 页头星标：已存在的非子智能体、且管理员才有「设为默认」能力（与列表卡片同一判据）
-const canShowStar = computed(() => !!editingId.value && isAdmin.value && !form.value.isSubagent)
+// 页头星标：已存在的非子智能体、且管理员才有「设为默认」能力（与列表卡片同一判据）；
+// 平台预置仅管理员可见，不能设为全员默认
+const canShowStar = computed(() => {
+  if (!editingId.value || !isAdmin.value || form.value.isSubagent) return false
+  const a = agents.value.find(x => String(x.id) === String(editingId.value))
+  return !!a && !isPreset(a)
+})
 
 // 图标可选集：问渠品牌标为内置「问渠」专属（后端同样强制），非内置智能体的选项里不出现。
 // 内置问渠整块「图标」已隐藏，这里恒走过滤分支
@@ -1177,6 +1184,8 @@ const iconOptions = computed(() => ICON_OPTIONS.filter(o => o.value !== 'wenqu')
 const isDefault = a => a.isDefault === 1 || a.isDefault === true
 /** 系统内置（如默认「知识库助手」）：不可删除，卡片上以「内置」标记区分 */
 const isBuiltin = a => a.isBuiltin === 1 || a.isBuiltin === true
+/** 平台预置的内置助手（created_by=system，如网页操作助手）：仅管理员可见可配置，不可删除、不可设为默认 */
+const isPreset = a => a.createdBy === 'system' && !isBuiltin(a)
 /** 子智能体：不直接参与对话，只能被主智能体委派 */
 const isSub = a => a.isSubagent === 1 || a.isSubagent === true
 /** 逗号串 → 数组（具体项） */
@@ -2094,9 +2103,9 @@ const toggleBatchMode = () => {
   batchMode.value = !batchMode.value
   if (!batchMode.value) selected.value = []
 }
-/** 可勾选集合 = 当前搜索过滤后的非内置智能体（两组：主 + 子） */
+/** 可勾选集合 = 当前搜索过滤后的非内置智能体（两组：主 + 子；平台预置同样不可删） */
 const selectableIds = computed(() =>
-  sections.value.flatMap(sec => sec.members.filter(a => !isBuiltin(a)).map(a => a.id)))
+  sections.value.flatMap(sec => sec.members.filter(a => !isBuiltin(a) && !isPreset(a)).map(a => a.id)))
 const allChecked = computed(() =>
   selectableIds.value.length > 0 && selectableIds.value.every(id => selected.value.includes(id)))
 const someChecked = computed(() => selected.value.length > 0 && !allChecked.value)
