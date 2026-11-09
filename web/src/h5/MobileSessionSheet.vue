@@ -203,7 +203,6 @@ const doLogout = () => {
       try { await logoutApi() } catch (e) { /* 忽略：服务端不维护会话 */ }
       clearAuth()
       resetSessionStore()
-      message.success('已退出登录')
       router.replace('/login')
     }
   })

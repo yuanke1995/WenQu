@@ -540,7 +540,9 @@
         <div class="pub-block-h">游客能力</div>
         <div class="pub-field" data-fix="pubModelRef">
           <span class="pub-label">对话模型</span>
-          <ModelSelect v-model="pubModelRef" type="chat" width="100%" inherit-label="跟随发布者个人默认模型" @change="savePublish" />
+          <!-- 发布者就是当前登录用户：跟随档位直接点名其个人默认聊天模型 -->
+          <ModelSelect v-model="pubModelRef" type="chat" width="100%" inherit-label="跟随发布者个人默认模型"
+                       inherit-resolve="personalDefault" @change="savePublish" />
         </div>
         <div class="pub-switch-row">
           <a-switch v-model:checked="pubMcpEnabled" :disabled="!pubEnabled" size="small" @change="savePublish" />

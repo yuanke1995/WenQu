@@ -151,7 +151,10 @@
         </div>
       </a-form-item>
       <a-form-item v-if="!isBuiltin && form.graphEnabled" label="图谱抽取模型" data-fix="graphModelRef">
-        <ModelSelect v-model="form.graphModelRef" type="chat" width="320" inherit-label="跟随库主默认聊天模型" />
+        <!-- 「跟随库主默认」点名到具体模型：可管库的只有创建者本人（谁建归谁），
+             库主默认即当前登录用户的个人默认聊天模型，留空时直接把模型名写在触发器上 -->
+        <ModelSelect v-model="form.graphModelRef" type="chat" width="320"
+                     inherit-label="跟随库主默认聊天模型" inherit-resolve="personalDefault" />
         <div class="kb-hint" style="margin-top:4px">
           抽取用的聊天模型；留空用库主默认，都没有则不抽取。
         </div>

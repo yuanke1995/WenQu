@@ -10,14 +10,17 @@
     <div class="app-page-body stats-body">
       <!-- ==================== 统计卡（全时段口径） ==================== -->
       <div class="app-card stat-cards">
-        <div v-for="c in cardCells" :key="c.label" class="stat-cell">
-          <div class="stat-num">{{ c.value }}</div>
-          <div class="stat-label">{{ c.label }}</div>
-        </div>
-        <!-- 费用卡：模型登记单价 × 台账 tokens 换算；有未计价模型的用量时提示数字不完整 -->
-        <div class="stat-cell">
-          <div class="stat-num">{{ fmtCost(cards.totalCost) }}<i v-if="unpricedTokens" class="stat-approx">*</i></div>
-          <div class="stat-label">累计费用<template v-if="unpricedTokens">（*{{ fmtTokens(unpricedTokens) }} tokens 未计价）</template></div>
+        <span class="stat-scope" title="下方趋势图与模型用量按所选时间范围统计">全时段口径</span>
+        <div class="stat-grid">
+          <div v-for="c in cardCells" :key="c.label" class="stat-cell">
+            <div class="stat-num">{{ c.value }}</div>
+            <div class="stat-label">{{ c.label }}</div>
+          </div>
+          <!-- 费用卡：模型登记单价 × 台账 tokens 换算；有未计价模型的用量时提示数字不完整 -->
+          <div class="stat-cell">
+            <div class="stat-num">{{ fmtCost(cards.totalCost) }}<i v-if="unpricedTokens" class="stat-approx">*</i></div>
+            <div class="stat-label">累计费用<template v-if="unpricedTokens">（*{{ fmtTokens(unpricedTokens) }} tokens 未计价）</template></div>
+          </div>
         </div>
       </div>
 
@@ -120,18 +123,24 @@
       </div>
 
       <!-- ==================== 按用途占比 ==================== -->
-      <div v-if="kindRows.length" class="app-card kind-card">
+      <div v-if="kindView.length" class="app-card kind-card">
         <div class="app-card-title">这些用量花在什么地方
           <span class="card-sub">记忆提炼、压缩等辅助调用，没有对应消息</span>
         </div>
+        <!-- 一条堆叠条看构成：占比悬殊时，逐行短条会缩成一个点，看不出份额关系 -->
+        <div class="kind-stack">
+          <i v-for="(k, i) in kindView" :key="k.kind"
+             :style="{ flexGrow: k.tokens, background: kindColor(k.kind, i) }"
+             :title="`${k.label} ${fmtKindPct(k.pct)}%`"></i>
+        </div>
         <div class="kind-grid">
-          <div v-for="k in kindRows" :key="k.kind" class="kind-row">
+          <div v-for="(k, i) in kindView" :key="k.kind" class="kind-row">
+            <i class="kind-dot" :style="{ background: kindColor(k.kind, i) }"></i>
             <div class="kind-main">
               <div class="kind-name">{{ k.label }}</div>
               <div class="kind-sub">{{ fmtTokens(k.tokens) }} tokens · {{ k.count }} 次</div>
             </div>
-            <div class="kind-bar"><i :style="{ width: pctKind(k.tokens) + '%' }"></i></div>
-            <div class="kind-pct">{{ pctKind(k.tokens) }}%</div>
+            <div class="kind-pct">{{ fmtKindPct(k.pct) }}%</div>
           </div>
         </div>
       </div>
@@ -170,11 +179,39 @@ const trendSeries = ref([])    // [{ model, values[] }]
 const modelRows = ref([])      // [{ model, tokens, cost }]（近 N 日；cost=null=该模型未登记单价）
 const kindRows = ref([])       // [{ kind, label, tokens, count }]：回答本身 vs 为回答做的辅助调用
 // 用途占比的分母是"用途合计"，与模型占比各算各的：两个维度的总量本来就应相等，但历史数据里
-// 存在只有其中一个维度记了 kind 的行，混用分母会让某一栏的百分比看着不对账
-const pctKind = tokens => {
+// 存在只有其中一个维度记了 kind 的行，混用分母会让某一栏的百分比看着不对账。
+// 不足 0.1% 的辅助调用单独成行只会显示成「0.0%」的噪声，合并为「其他（n 项）」。
+const KIND_OTHER = '__other__'
+const kindView = computed(() => {
   const total = kindRows.value.reduce((a, k) => a + (Number(k.tokens) || 0), 0)
-  const v = total > 0 ? ((Number(tokens) || 0) / total) * 100 : 0
-  return v >= 10 ? String(Math.round(v)) : v.toFixed(1)
+  if (total <= 0) return []
+  const rows = kindRows.value.map(k => {
+    const tokens = Number(k.tokens) || 0
+    return { kind: k.kind, label: k.label, tokens, count: Number(k.count) || 0, pct: (tokens / total) * 100 }
+  })
+  const main = rows.filter(r => r.pct >= 0.1)
+  const tiny = rows.filter(r => r.pct < 0.1)
+  if (tiny.length === 1) {
+    // 只有一项时不合并：保留原名比「其他（1 项）」有信息量
+    main.push(tiny[0])
+  } else if (tiny.length > 1) {
+    main.push({
+      kind: KIND_OTHER,
+      label: `其他（${tiny.length} 项）`,
+      tokens: tiny.reduce((a, r) => a + r.tokens, 0),
+      count: tiny.reduce((a, r) => a + r.count, 0),
+      pct: tiny.reduce((a, r) => a + r.pct, 0)
+    })
+  }
+  return main.sort((a, b) => b.tokens - a.tokens)
+})
+// ≥10% 取整、<10% 保留一位；不足 0.1% 明确写「<0.1%」，不倒成 0.0%
+const fmtKindPct = v => (v >= 10 ? String(Math.round(v)) : v >= 0.1 ? v.toFixed(1) : '<0.1')
+// 堆叠条与清单共用同一套色：按排序位取数据编码色，「其他」用中性灰（不占一个语义色）
+const kindColor = (kind, i) => {
+  if (kind === KIND_OTHER) return themeState.value === 'dark' ? MUTED.dark : MUTED.light
+  const pal = PALETTES[themeState.value === 'dark' ? 'dark' : 'light']
+  return pal[i % pal.length]
 }
 const hasUnrecorded = computed(() => modelRows.value.some(m => m.model === '未记录'))
 // 有任一模型配置了价格才在列表里显示「未计价」标注——全员都没配价时整列都是噪声
@@ -549,9 +586,17 @@ onBeforeUnmount(() => {
 
 /* ==================== 统计卡 ==================== */
 .stat-cards {
+  position: relative;
+  padding: 22px 8px 12px;
+}
+/* 统计卡是「全时段」，下方图表是「近 7/30 日」：两种口径同页出现，不标出来容易被读成同一组数 */
+.stat-scope {
+  position: absolute; top: 6px; right: 12px;
+  font-size: 11px; color: var(--app-text3);
+}
+.stat-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  padding: 12px 8px;
 }
 .stat-cell {
   text-align: center;
@@ -643,7 +688,13 @@ onBeforeUnmount(() => {
 .legend-pct { font-size: 13px; color: var(--app-text2); font-variant-numeric: tabular-nums; }
 
 /* ==================== 按用途占比 ==================== */
-.kind-card { margin-top: 12px; padding: 12px 14px; }
+.kind-card { padding: 12px 14px; }
+/* 构成条：宽度按真实占比分配（flexGrow=tokens），极小项保底 2px 仍可见 */
+.kind-stack {
+  display: flex; gap: 2px; height: 8px; margin: 2px 0 10px;
+  border-radius: 4px; overflow: hidden; background: var(--app-accent-weak);
+}
+.kind-stack i { display: block; min-width: 2px; }
 .kind-grid {
   display: grid;
   /* 两列排：一行放得下就两列，窄屏自动收回一列（不用固定断点值，交给 minmax 判定） */
@@ -651,12 +702,11 @@ onBeforeUnmount(() => {
   gap: 2px 24px;
 }
 .kind-row { display: flex; align-items: center; gap: 10px; padding: 7px 2px; }
-.kind-main { flex: none; width: 128px; min-width: 0; }
+.kind-dot { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+.kind-main { flex: 1; min-width: 0; }
 .kind-name { font-size: 13px; color: var(--app-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .kind-sub { font-size: 11px; color: var(--app-text3); margin-top: 2px; }
-.kind-bar { flex: 1; min-width: 0; height: 5px; border-radius: 3px; background: var(--app-accent-weak); overflow: hidden; }
-.kind-bar i { display: block; height: 100%; background: var(--app-accent); border-radius: 3px; }
-.kind-pct { font-size: 13px; color: var(--app-text2); font-variant-numeric: tabular-nums; width: 44px; text-align: right; }
+.kind-pct { font-size: 13px; color: var(--app-text2); font-variant-numeric: tabular-nums; width: 52px; text-align: right; }
 
 /* 我的配额：一行一档，标签靠左、数字靠右，触顶用 tag 说明后果 */
 .quota-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 6px 0; border-top: 1px solid var(--app-border, rgba(0,0,0,.06)); }

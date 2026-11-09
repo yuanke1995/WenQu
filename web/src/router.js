@@ -82,6 +82,7 @@ const router = createRouter({ history: createWebHistory(), routes })
 // 普通角色若其角色绑定的菜单包含该路径（RBAC 授权）也放行，否则回对话页
 //
 // 登录 ⇄ 工作台之间还会先盖一层品牌过渡遮罩（见 utils/authTransition.js）：
+// 登录 → 工作台是一次从品牌标出发的推镜，盖遮罩的时长里跑完推镜再放行路由；
 // 只在这道边界上生效——首次进入（无上一页）、站内跳转、公开分享页都不铺，
 // 否则日常导航会平白多出几百毫秒的等待。
 const isLoginSide = r => r.path === '/login' || r.path === '/auth/oidc/callback'

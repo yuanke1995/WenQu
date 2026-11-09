@@ -19,8 +19,8 @@
       <aside class="login-hero">
         <div class="hero-inner">
           <div class="hero-brand">
-            <img v-if="brandLogo" :src="brandLogo" class="hero-logo" alt="" />
-            <BrandMark v-else :size="44" />
+            <img v-if="brandLogo" :src="brandLogo" class="hero-logo" alt="" data-brand-anchor />
+            <BrandMark v-else :size="44" data-brand-anchor />
             <div>
               <div class="hero-name">{{ brandName }}</div>
               <div class="hero-slogan">{{ brandSlogan }}</div>
@@ -41,8 +41,8 @@
         <div class="login-card">
           <!-- 窄屏（品牌面板隐藏）时才显示的紧凑品牌行 -->
           <div class="login-brand">
-            <img v-if="brandLogo" :src="brandLogo" class="brand-logo" alt="" />
-            <BrandMark v-else :size="32" class="brand-mark" />
+            <img v-if="brandLogo" :src="brandLogo" class="brand-logo" alt="" data-brand-anchor />
+            <BrandMark v-else :size="32" class="brand-mark" data-brand-anchor />
             <div>
               <div class="brand-name">{{ brandName }}</div>
               <div class="brand-slogan">{{ brandSlogan }}</div>
@@ -220,7 +220,8 @@ async function submit () {
     // 换号登录（含已登录状态下直闯 /login 再登一次）必须先清掉上一个用户的模块级
     // 会话/工作区缓存——SPA 内不整页刷新，缓存里 projectsLoaded 置位后侧栏甚至不再重拉
     resetSessionStore()
-    message.success(isInit.value ? '管理员已创建' : '登录成功')
+    // 登录成功的确认交给过场本身：工作台落位即结果，不再叠一个 toast 打断推镜
+    if (isInit.value) message.success('管理员已创建')
     router.replace(redirectTarget.value)
   } catch (e) {
     error.value = e.message || '登录失败'
@@ -369,6 +370,39 @@ html[data-theme='dark'] .login-title::after {
 .login-alt a:hover { text-decoration: underline; }
 .login-alt-sep { color: var(--app-text3, #98a0aa); }
 
+/* ==================== 登录 → 工作台：从品牌标推镜 ====================
+   触发与时长由 utils/authTransition.js 控制；这里只描述“怎么动”。
+   整页以品牌标为圆心放大失焦，卡片沿同一圆心再放大一点，形成前景视差。 */
+html[data-leave='push'] .login-wrap {
+  transform-origin: var(--wq-push-x, 50%) var(--wq-push-y, 50%);
+  animation:
+    wq-login-push .52s linear .04s both,
+    wq-login-push-scale .52s cubic-bezier(.16, 1, .3, 1) .04s both;
+  will-change: transform, filter, opacity;
+}
+html[data-leave='push'] .login-card {
+  transform-origin: var(--wq-card-x, 50%) var(--wq-card-y, 50%);
+  animation: wq-login-card-push .52s cubic-bezier(.16, 1, .3, 1) .04s both;
+  will-change: transform;
+}
+@keyframes wq-login-push {
+  0%, 55% { opacity: 1; }
+  100% { opacity: 0; }
+}
+/* 缩放/失焦走强缓出，透明度留到最后 45% 才收——否则页面在前半程就化没了，
+   推镜只剩一层空画布 */
+@keyframes wq-login-push-scale {
+  from { transform: scale(1); filter: blur(0); }
+  to   { transform: scale(1.3); filter: blur(12px); }
+}
+@keyframes wq-login-card-push {
+  from { transform: scale(1); }
+  to   { transform: scale(1.1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  html[data-leave='push'] .login-wrap,
+  html[data-leave='push'] .login-card { animation: none; }
+}
 
 /* ==================== 响应式 ==================== */
 /* 窄于 1200px：左侧品牌文字与居中卡片会重叠，整栏收起，卡片内恢复紧凑品牌行 */

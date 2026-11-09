@@ -245,7 +245,8 @@
               </span>
             </div>
 
-            <template v-if="!secHidden(sec)">
+            <Transition name="fold" @enter="foldEnter" @leave="foldLeave" @after-enter="foldDone" @after-leave="foldDone">
+            <div v-if="!secHidden(sec)" class="side-sec-body">
             <template v-for="row in sec.rows" :key="row.key">
               <!-- 已归档的折叠头：插在活动工作区之后，展开时才拉这些工作区的会话 -->
               <button v-if="row.archivedHead" class="side-sec-sub" @click="toggleArchived">
@@ -253,7 +254,7 @@
                 <right-outlined class="group-caret" :class="{ open: sessionStore.archivedOpen }" />
               </button>
               <div v-else class="space" :class="{ archived: row.status === 'archived' }">
-                <div v-if="!sec.bare" class="space-head" role="button" tabindex="0"
+                <div v-if="!sec.bare" class="space-head" :class="{ open: !spaceHidden(row) }" role="button" tabindex="0"
                      :aria-expanded="!spaceHidden(row)"
                      :title="(spaceHidden(row) ? '展开：' : '收起：') + row.name"
                      @contextmenu.prevent="onSpaceCtxMenu($event, row)"
@@ -274,6 +275,10 @@
                          @blur="commitProjectRename(row)" />
                   <span v-else class="space-name">{{ row.name }}</span>
                   <a-spin v-if="row.loading" class="space-spin" size="small" />
+                  <!-- 展开/收起指示：与分区表头、已归档同一枚箭头，随状态转 90°。
+                       工作区的自定义图标没有「打开/关闭」两态（如咖啡），只靠图标变化无法表达折叠，
+                       箭头负责把这一行能不能点、现在是开还是关统一说清。 -->
+                  <right-outlined class="group-caret space-caret" :class="{ open: !spaceHidden(row) }" />
                   <a-dropdown v-if="row.selectable && renameProjectId !== row.id" trigger="['click']" placement="bottomRight">
                     <button class="space-op" title="工作区操作" @click.stop><more-outlined /></button>
                     <template #overlay>
@@ -296,7 +301,8 @@
                   </button>
                 </div>
 
-                <template v-if="sec.bare || !spaceHidden(row)">
+                <Transition name="fold" @enter="foldEnter" @leave="foldLeave" @after-enter="foldDone" @after-leave="foldDone">
+                <div v-if="sec.bare || !spaceHidden(row)" class="space-body">
                   <div v-if="row.error" class="side-empty err">
                     加载失败
                     <button class="side-inline-btn" @click.stop="reloadSpace(row)">重试</button>
@@ -365,16 +371,18 @@
                     </button>
                     <button v-if="row.expanded" class="side-more-btn muted" @click="collapseSpace(row)">收起</button>
                   </div>
-                </template>
+                </div>
+                </Transition>
               </div>
-            </template>
             </template>
 
             <!-- 整段收起时空态也不留：那一块位置此刻正被「分区标题 (N) >」这一行表达 -->
-            <div v-if="sec.spacesSection && !secHidden(sec) && !sec.count && !sessionStore.loading" class="side-empty">
+            <div v-if="sec.spacesSection && !sec.count && !sessionStore.loading" class="side-empty">
               {{ searchKw ? '没有匹配的会话' : '暂无工作区' }}
               <button v-if="!searchKw" class="side-inline-btn" @click="newWsOpen = true">新建工作区</button>
             </div>
+            </div>
+            </Transition>
           </section>
         </template>
       </div>
@@ -1020,6 +1028,27 @@ const toggleSpace = space => {
   if (collapsedSpaces.has(space.key)) collapsedSpaces.delete(space.key)
   else collapsedSpaces.add(space.key)
   persistCollapsedSpaces()
+}
+
+/** 分区/工作区的展开收起动画：高度由内容决定，每次按 scrollHeight 现测。
+    结束后清掉内联高度，回到自适应——否则窗口或字号一变，内容就会被旧高度裁掉。 */
+const foldEnter = el => {
+  el.style.height = '0px'
+  el.style.opacity = '0'
+  void el.offsetHeight
+  el.style.height = el.scrollHeight + 'px'
+  el.style.opacity = '1'
+}
+const foldLeave = el => {
+  el.style.height = el.scrollHeight + 'px'
+  el.style.opacity = '1'
+  void el.offsetHeight
+  el.style.height = '0px'
+  el.style.opacity = '0'
+}
+const foldDone = el => {
+  el.style.height = ''
+  el.style.opacity = ''
 }
 
 /** 「会话 / 工作区」两段的上下顺序：长按表头拖动交换，按本机记忆（与折叠状态同口径） */
@@ -1734,7 +1763,6 @@ const doLogout = async () => {
   try { await logoutApi() } catch (e) { /* 忽略：服务端不维护会话 */ }
   clearAuth()
   resetSessionStore()
-  message.success('已退出登录')
   router.replace('/login')
 }
 
@@ -2043,8 +2071,18 @@ watch(() => route.fullPath, () => {
   transition: color .15s, background .15s;
 }
 .side-sec-sub:hover { color: var(--app-text2); background: var(--app-panel-2); }
-.group-caret { margin-left: auto; font-size: 9px; transition: transform .15s; }
+.group-caret { flex: none; margin-left: auto; font-size: 9px; transition: transform .15s; }
 .group-caret.open { transform: rotate(90deg); }
+/* 分区与工作区的折叠体：高度动画期间两层都要裁掉溢出，内容才不会压到相邻行 */
+.side-sec-body, .space-body { display: flex; flex-direction: column; }
+.fold-enter-active, .fold-leave-active {
+  overflow: hidden;
+  transition: height .18s cubic-bezier(.4, 0, .2, 1), opacity .14s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .fold-enter-active, .fold-leave-active { transition: none; }
+  .group-caret { transition: none; }
+}
 /* 分区表头（会话 / 工作区）整段可点：光标 + 文字提亮给到可点感，不给整行底色
    （这一行的上下 padding 是 9/3 不对称的分区留白，铺底色会明显偏上）。
    箭头紧跟计数、不 .group-caret 那样靠右——它属于「会话 (187)」这个标题，
@@ -2060,8 +2098,8 @@ watch(() => route.fullPath, () => {
 }
 .sec-caret { margin-left: 0; color: var(--app-text3); }
 
-/* 工作区：一行「图标 + 名字（点名字展开/收起） + ⋯ + 新建对话」。
-   不再放折叠箭头：名字本身就是折叠开关，右侧两个图标各管一件事。 */
+/* 工作区：一行「图标 + 名字（点名字展开/收起） + 折叠箭头 + ⋯ + 新建对话」。
+   名字仍是折叠开关；箭头只做状态提示，与分区表头、已归档同一枚。 */
 .space { display: flex; flex-direction: column; }
 .space-head {
   display: flex; align-items: center; gap: 6px; min-height: 30px;
@@ -2072,8 +2110,15 @@ watch(() => route.fullPath, () => {
 .space-icon {
   flex: none; width: 20px; height: 20px; border-radius: 6px;
   display: inline-flex; align-items: center; justify-content: center;
-  background: var(--app-accent-weak); color: var(--app-accent); font-size: 11px;
+  background: var(--app-panel-2); color: var(--app-accent); font-size: 12px;
+  transition: background .16s;
 }
+/* 展开态给主题色弱底：自定义图标（咖啡等）没有「开/关」两态，靠这层底色统一表达折叠状态，
+   否则只有文件夹图标会开合、别的图标点下去毫无反馈。 */
+.space-head.open .space-icon,
+.space-head:hover .space-icon { background: var(--app-accent-weak); }
+/* 折叠箭头不跟操作组一起隐身：它是这一行能否点开、现在是开还是关的常驻提示 */
+.space-caret { margin-left: 0; color: var(--app-text3); }
 .space-name {
   flex: 1; min-width: 0; font-size: 12.5px; font-weight: 500; color: var(--app-text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
