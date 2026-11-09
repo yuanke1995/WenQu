@@ -1996,7 +1996,14 @@ watch(() => route.fullPath, () => {
 /* 分区标题：小号、加字距、计数紧跟其后，做成「任务 (0)」「工作区 (2)」那种目录式表头 */
 .side-sec { display: flex; flex-direction: column; padding: 0 2px; }
 .side-sec + .side-sec { margin-top: 2px; }
-.side-sec-head { display: flex; align-items: center; gap: 4px; padding: 9px 6px 3px; min-height: 28px; user-select: none; touch-action: none; }
+/* 分区表头吸顶：会话一多，列表整段往下滚，「会话 (109)」「工作区 (N)」会先被滚出视野，
+   用户就不知道自己翻到哪一堆里了。sticky 到滚动容器（.side-sessions）顶部，
+   分区滚完时自然被下一段表头顶走；底色必须不透明，否则下面的会话行会透上来。 */
+.side-sec-head {
+  display: flex; align-items: center; gap: 4px; padding: 9px 6px 3px; min-height: 28px;
+  user-select: none; touch-action: none;
+  position: sticky; top: 0; z-index: 2; background: var(--app-panel);
+}
 .side-sec-title { font-size: 11px; font-weight: 600; color: var(--app-text3); letter-spacing: .04em; }
 .side-sec-count { font-size: 11px; color: var(--app-text3); opacity: .8; }
 .side-sec-ops { margin-left: auto; display: inline-flex; align-items: center; gap: 2px; }

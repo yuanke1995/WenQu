@@ -2375,9 +2375,14 @@ onMounted(async () => { })
 .ap-seg button.on { background: var(--app-accent); color: #fff; font-weight: 500; }
 .ap-seg button.on:hover { background: var(--app-accent-hover); }
 .ap-seg-gv { font-size: 10px; opacity: .8; }
-/* 卡头唯一差异指示：行内徽标只作定位，计数与「恢复跟随」集中在这里（与右侧摘要同口径） */
-.ap-head-diff { margin-left: auto; font-size: 11px; color: var(--app-text3); white-space: nowrap; }
-.ap-head-diff.diff { color: var(--app-accent); background: var(--app-accent-weak); border: 1px solid var(--app-accent-border); border-radius: 999px; padding: 2px 10px; }
+/* 卡头唯一差异指示：行内徽标只作定位，计数与「恢复跟随」集中在这里（与右侧摘要同口径）。
+   零差异与有差异共用同一盒模型（始终占位 + 透明边框），切换开关时卡头高度不变，下方内容不跳动 */
+.ap-head-diff {
+  margin-left: auto; display: inline-flex; align-items: center; height: 22px; box-sizing: border-box;
+  padding: 0 10px; border: 1px solid transparent; border-radius: 999px;
+  font-size: 11px; line-height: 1; color: var(--app-text3); white-space: nowrap;
+}
+.ap-head-diff.diff { color: var(--app-accent); background: var(--app-accent-weak); border-color: var(--app-accent-border); }
 .ap-diff-reset { border: 0; background: transparent; color: var(--app-accent); font: inherit; font-size: 11px; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; margin-left: 6px; }
 /* 「指定」模式展开的具体项多选：跟在自己那行能力下面，与上方图标块左对齐 */
 .ap-cap-pick { padding: 2px 0 10px 38px; }
