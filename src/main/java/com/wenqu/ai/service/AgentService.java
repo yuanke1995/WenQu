@@ -104,7 +104,7 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         m.put("knowledgeTags", "检索标签收窄");
         m.put("knowledgeDisabled", "不使用知识库");
         m.put("toolKnowledge", "知识库检索");
-        m.put("toolBuiltin", "内置工具");
+        m.put("toolBuiltin", "向用户提问");
         m.put("toolSkill", "技能 Skills");
         m.put("toolArtifact", "产物交付");
         m.put("toolMcp", "MCP 外部工具");
