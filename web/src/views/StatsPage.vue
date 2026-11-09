@@ -6,7 +6,7 @@
       <button class="app-btn ghost" style="margin-left:auto" :disabled="loading" @click="load">刷新</button>
     </div>
 
-    <!-- 一屏布局：统计卡 / Token 活动 / 图表行三行，图表行吃掉剩余高度（页面本身不滚动） -->
+    <!-- 一屏布局：统计卡 / 配额卡 / Token 活动 / 图表行 / 用途占比，图表行吃掉剩余高度（页面本身不滚动） -->
     <div class="app-page-body stats-body">
       <!-- ==================== 统计卡（全时段口径） ==================== -->
       <div class="app-card stat-cards">
@@ -561,13 +561,14 @@ onBeforeUnmount(() => {
 
 <style scoped>
 /* ==================== 一屏布局 ====================
-   三行：统计卡 / Token 活动 / 图表行。图表行吃掉剩余高度（1fr），
+   统计卡 / 配额卡（有数据才出现）/ Token 活动 / 图表行 / 用途占比。
+   块数随数据变化，所以剩余高度必须落在「图表行」这个元素上，不能用第 N 行固定 1fr：
+   否则配额卡一出现，行序错位，1fr 会落到 Token 活动卡上，热力图下方空出一大块。
    各卡片内部用 min-height:0 + flex 让图表填满而不撑破容器——
    常规屏幕下页面不出现滚动条；窗口过矮时（图表行触底 240px）才回落到滚动。 */
 .stats-body {
-  display: grid;
-  grid-template-columns: 1fr;
-  grid-template-rows: auto auto minmax(240px, 1fr);
+  display: flex;
+  flex-direction: column;
   gap: 12px;
   padding: 12px 16px;
 }
@@ -576,7 +577,8 @@ onBeforeUnmount(() => {
   /* 模型用量列给足宽度（≥420px，宽屏最多 46%）：环形图 + 图例都要摆得开 */
   grid-template-columns: minmax(0, 1fr) minmax(400px, 46%);
   gap: 12px;
-  min-height: 0;
+  flex: 1 1 auto;
+  min-height: 240px;
 }
 /* 窄屏（≤1100px）两图上下排：此时内容必然高于一屏，body 回落为滚动 */
 @media (max-width: 1100px) {

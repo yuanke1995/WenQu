@@ -5,24 +5,26 @@
       <span class="head-stat">问答质量、执行记录与知识回流闭环</span>
       <div class="head-acts">
         <span class="data-ts" :title="fmtTime(summary.dataThrough)">数据截至 {{ fmtClock(summary.dataThrough) }}</span>
-        <a-segmented v-model:value="range" size="small" :options="rangeOptions" @change="onRangeChange" />
-        <a-checkbox v-model:checked="compare">对比上期</a-checkbox>
-        <a-dropdown :trigger="['click']">
-          <button class="app-btn ghost small">视图</button>
-          <template #overlay>
-            <div class="view-menu">
-              <div class="vm-title">已保存视图</div>
-              <div v-if="!savedViews.length" class="vm-empty">还没有保存的视图</div>
-              <div v-for="v in savedViews" :key="v.id" class="vm-row" @click="applyView(v)">
-                <span class="vm-name">{{ v.name }}</span>
-                <span class="vm-del" title="删除视图" @click.stop="removeView(v.id)">×</span>
+        <template v-if="tab === 'overview'">
+          <a-segmented v-model:value="range" size="small" :options="rangeOptions" @change="onRangeChange" />
+          <a-checkbox v-model:checked="compare">对比上期</a-checkbox>
+          <a-dropdown :trigger="['click']">
+            <button class="app-btn ghost small">视图</button>
+            <template #overlay>
+              <div class="view-menu">
+                <div class="vm-title">已保存视图</div>
+                <div v-if="!savedViews.length" class="vm-empty">还没有保存的视图</div>
+                <div v-for="v in savedViews" :key="v.id" class="vm-row" @click="applyView(v)">
+                  <span class="vm-name">{{ v.name }}</span>
+                  <span class="vm-del" title="删除视图" @click.stop="removeView(v.id)">×</span>
+                </div>
+                <div class="vm-sep"></div>
+                <div class="vm-row vm-save" @click="openSaveView">＋ 保存当前视图</div>
               </div>
-              <div class="vm-sep"></div>
-              <div class="vm-row vm-save" @click="openSaveView">＋ 保存当前视图</div>
-            </div>
-          </template>
-        </a-dropdown>
-        <button class="app-btn ghost small" @click="layoutEdit = !layoutEdit">{{ layoutEdit ? '完成布局' : '布局' }}</button>
+            </template>
+          </a-dropdown>
+          <button class="app-btn ghost small" @click="layoutEdit = !layoutEdit">{{ layoutEdit ? '完成布局' : '布局' }}</button>
+        </template>
         <a-checkbox v-model:checked="autoRefresh">自动刷新</a-checkbox>
         <button class="app-btn ghost small" @click="copyLink">复制链接</button>
         <button class="app-btn ghost small" @click="exportCsv">导出</button>
