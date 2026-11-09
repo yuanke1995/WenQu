@@ -306,7 +306,8 @@ public class ConfigService {
     }
 
     /**
-     * 收敛族清单。旧键的本版本一律<b>不删</b>（defaults() 与 schema 都留着，schema 条目标 hidden）：
+     * 收敛族清单。旧键的本版本一律<b>不删</b>（defaults() 与 schema 都留着，schema 条目标 hidden + deprecated，
+     * note 以「【已停用】」开头；前端据此把已停用键彻底挡在设置页之外，连工程参数铺开也不显示）：
      * 它们已无读取点，留着只是惰性数据，回滚等于 git revert 而无需数据修复。
      */
     private static final List<MergeFamily> MERGED_FAMILIES = List.of(

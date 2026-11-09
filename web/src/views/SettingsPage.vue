@@ -589,7 +589,7 @@ import { getConfig, getConfigSchema, saveConfig, resetConfig,
 import SchemaField from '../components/SchemaField.vue'
 import IntervalEditor from '../components/IntervalEditor.vue'
 import TimeoutPreset from '../components/TimeoutPreset.vue'
-import { FIELDS, PANELS, TIPS, blocksOf, buildDefaultForm, readForm, writeForm, applyServerSchema, isEngineField, isVisible } from '../configSchema'
+import { FIELDS, PANELS, TIPS, blocksOf, buildDefaultForm, readForm, writeForm, applyServerSchema, isEngineField, isDeprecatedField, isVisible } from '../configSchema'
 import { locateField } from '../utils/fieldLocate'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -622,12 +622,14 @@ const activeFormPanel = computed(() => current.value === 'tool'
 
 /**
  * 全局分层概览（设置页顶部那条统计带）：全量字段按 tier 分三档，hidden 统一算进工程参数。
+ * 已停用键（deprecated）不进统计：它们永远不渲染，算进「收起 N 项」会虚报一个摊开也见不到的数。
  * 数字直接从 FIELDS 现算，不写死——schema 一变（本版本加了 4 个键、收了 46 个）这里跟着变。
  */
 const tierStats = computed(() => {
-  const total = FIELDS.length
+  const live = FIELDS.filter(f => !isDeprecatedField(f))
+  const total = live.length
   let must = 0, tuned = 0
-  for (const f of FIELDS) {
+  for (const f of live) {
     const t = Number(f.tier ?? 2)
     if (t === 1) must++
     else if (t === 2 && !f.hidden) tuned++
@@ -646,6 +648,7 @@ const tierStats = computed(() => {
 const panelTierMap = computed(() => {
   const m = {}
   for (const f of FIELDS) {
+    if (isDeprecatedField(f)) continue
     const o = m[f.panel] || (m[f.panel] = { visible: 0, total: 0 })
     o.total++
     if (!isEngineField(f)) o.visible++
@@ -670,7 +673,8 @@ watch(showEngine, v => { try { localStorage.setItem(ENGINE_KEY, v ? '1' : '0') }
 
 /** 当前面板被工程参数收起的项数（开关文案与空态提示共用；镜像 cfgBlocks 的过滤口径） */
 const engineHiddenCount = computed(() => {
-  let fs = FIELDS.filter(f => f.panel === activeFormPanel.value && isEngineField(f) && isVisible(f, form.value))
+  let fs = FIELDS.filter(f => f.panel === activeFormPanel.value && isEngineField(f)
+    && !isDeprecatedField(f) && isVisible(f, form.value))
   if (isMaintConfig.value) {
     const owned = taskOwnedKeys.value
     fs = fs.filter(f => !owned.has(f.backendKey))
@@ -793,8 +797,8 @@ const applyPanelDeepLink = raw => {
   current.value = panel
   // 全工程参数的面板（「调试设置」11 项都是 tier3）落点会是一片空白，看着像页面坏了：
   // 这一组本来就没有常规参数，直接铺开
-  if (!FIELDS.some(f => f.panel === panel && !isEngineField(f))
-    && FIELDS.some(f => f.panel === panel && isEngineField(f))) showEngine.value = true
+  if (!FIELDS.some(f => f.panel === panel && !isEngineField(f) && !isDeprecatedField(f))
+    && FIELDS.some(f => f.panel === panel && isEngineField(f) && !isDeprecatedField(f))) showEngine.value = true
 }
 
 /**
@@ -807,7 +811,7 @@ const applyFieldDeepLink = async () => {
   const key = typeof route.query.fix === 'string' ? route.query.fix : ''
   if (!key) return
   const f = FIELDS.find(x => x.backendKey === key)
-  if (f && isEngineField(f)) showEngine.value = true
+  if (f && isEngineField(f) && !isDeprecatedField(f)) showEngine.value = true
   const title = fieldFoldTitle(f)
   if (title && closedFolds.value.includes(title)) toggleFold(title)
   await nextTick()
@@ -1450,7 +1454,7 @@ const cfgGroupsAll = computed(() => {
         const title = p.sections[i]
         if (present.has(title)) continue
         const fs = FIELDS.filter(f => f.panel === p.key && f.section === i && !f.groupedUnder
-          && (!owned || !owned.has(f.backendKey)) && isVisible(f, form.value))
+          && !isDeprecatedField(f) && (!owned || !owned.has(f.backendKey)) && isVisible(f, form.value))
         const engine = fs.filter(f => isEngineField(f))
         if (fs.length && engine.length === fs.length) {
           groups.push({ title, blocks: [], fields: [], engineOnly: engine.length })
@@ -1517,7 +1521,7 @@ watch(cfgKeyword, v => {
   if (!kw) return
   closedFolds.value = []
   if (!showEngine.value && FIELDS.some(f => f.panel === activeFormPanel.value && isEngineField(f)
-    && isVisible(f, form.value)
+    && !isDeprecatedField(f) && isVisible(f, form.value)
     && ((f.label || '').toLowerCase().includes(kw)
       || (f.backendKey || '').toLowerCase().includes(kw)))) showEngine.value = true
 })

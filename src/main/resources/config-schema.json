@@ -317,7 +317,8 @@
       "width": 200,
       "note": "【已停用】本键不再被读取，该扫描器改为内置节拍（见 ScheduleCenter 常量）；要停用请用它的业务总开关。多久找一次「发出去却没人跑完」的问题并交回引擎接着跑（升级、重启打断的长任务靠它接回），默认 10 分钟；填 0 = 暂停这项任务",
       "tier": 3,
-      "hidden": true
+      "hidden": true,
+      "deprecated": true
     },
     {
       "backendKey": "chat.turnResumeWindowMinutes",
@@ -522,7 +523,8 @@
       "width": 200,
       "note": "【已停用】本键不再被读取，保留期已并入 cleanup.tempFileRetentionDays。聊天附件上传后落盘供问答读取，超过该时长由定时任务删除（0=不清理）；附件是「当轮看一眼」的轻路径，长时间留盘只会占空间",
       "tier": 3,
-      "hidden": true
+      "hidden": true,
+      "deprecated": true
     },
     {
       "backendKey": "chat.uploadCleanupIntervalMs",
@@ -556,7 +558,8 @@
           "1 天"
         ]
       ],
-      "hidden": true
+      "hidden": true,
+      "deprecated": true
     },
     {
       "backendKey": "chat.retrievalDebugEnabled",
@@ -670,7 +673,8 @@
       "note": "【已停用】本键不再被读取，保留期已并入 cleanup.assetRetentionDays。按归档文件的最后写入时间判定（一条会话可以聊几个月，按创建时间会把它正在写的归档删掉）；0 = 不清理",
       "debug": true,
       "tier": 3,
-      "hidden": true
+      "hidden": true,
+      "deprecated": true
     },
     {
       "backendKey": "chat.sessionLogArchive.cleanupIntervalMs",
@@ -689,7 +693,8 @@
       "note": "【已停用】本键不再被读取，间隔已并入 cleanup.intervalMs（「运行状态」任一行改的都是它）。「会话日志归档清理」这条定时任务的间隔，默认 1 天；≤0 暂停该任务",
       "debug": true,
       "tier": 3,
-      "hidden": true
+      "hidden": true,
+      "deprecated": true
     },
     {
       "backendKey": "chat.agentscopeJournalRotateEvents",
@@ -726,7 +731,8 @@
       "note": "【已停用】本键不再被读取，保留期已并入 cleanup.recordRetentionDays。换代搬走的那些旧日志目录（rotated/ 下）留多少天，随「会话数 × 换代次数」增长，由「会话日志归档清理」这条任务按目录修改时间删。长期件是归档 JSONL，这里只保「刚换完代就要翻原始事件」那几天；0=不清理",
       "debug": true,
       "tier": 3,
-      "hidden": true
+      "hidden": true,
+      "deprecated": true
     },
     {
       "backendKey": "vision.enabled",
@@ -1284,7 +1290,8 @@
       "width": 200,
       "note": "【已停用】本键不再被读取，该扫描器改为内置节拍（见 ScheduleCenter 常量）；要停用请用它的业务总开关。按 (id, contentHash) 双向比对 MySQL 有效块与 Meilisearch 文档并定向修复漂移的周期（毫秒，默认 1 小时；0=暂停）。只比对索引与数据库，不调用任何模型，不消耗额度",
       "tier": 3,
-      "hidden": true
+      "hidden": true,
+      "deprecated": true
     },
     {
       "backendKey": "keyword.reconcileOnStartup",
@@ -1723,7 +1730,8 @@
       "width": 200,
       "note": "【已停用】本键不再被读取，间隔已并入 cleanup.intervalMs（「运行状态」任一行改的都是它）。多久扫一次外溢原文目录做超期清理，默认 1 小时",
       "tier": 3,
-      "hidden": true
+      "hidden": true,
+      "deprecated": true
     },
     {
       "backendKey": "tool.spillMaxMbPerUser",
@@ -2185,7 +2193,8 @@
           "7 天"
         ]
       ],
-      "hidden": true
+      "hidden": true,
+      "deprecated": true
     },
     {
       "backendKey": "cleanup.sessionRetentionDays",
@@ -2204,7 +2213,8 @@
       "width": 200,
       "note": "【已停用】本键不再被读取，保留期已并入 cleanup.recordRetentionDays。软删后仍可撤销的窗口（天数，默认 30）：超期才被清理任务物理删除。调大可保留更久，代价是存储与查询变慢",
       "tier": 3,
-      "hidden": true
+      "hidden": true,
+      "deprecated": true
     },
     {
       "backendKey": "cleanup.sessionEventRetentionDays",
@@ -2223,7 +2233,8 @@
       "width": 200,
       "note": "【已停用】本键不再被读取，保留期已并入 cleanup.recordRetentionDays。每轮的过程记录（工具步与耗时、审批/提问/计划三张卡、产物、子智能体编排、停止与失败）保留天数（默认 30），超期由同一个清理任务删除——账本一轮十几条，比会话表长得更快。0 = 不清理，会一直增长",
       "tier": 3,
-      "hidden": true
+      "hidden": true,
+      "deprecated": true
     },
     {
       "backendKey": "cleanup.auditRetentionDays",
@@ -2260,7 +2271,8 @@
       "width": 160,
       "note": "【已停用】本键不再被读取，保留期已并入 cleanup.tempFileRetentionDays。工具完整输出留存的原文超过该天数即删（默认 7 天，0 = 不清理）",
       "tier": 3,
-      "hidden": true
+      "hidden": true,
+      "deprecated": true
     },
     {
       "backendKey": "cleanup.visitorIdleDays",
@@ -2279,7 +2291,8 @@
       "width": 200,
       "note": "【已停用】本键不再被读取，保留期已并入 cleanup.recordRetentionDays。公开链接与 MCP 端点产生的访客对话，距最后一次提问超过该天数即回收（软删，仍受上面的「会话保留天数」保护，期内可捞回）。默认 30 天：这类对话没人会去删，不清就永久堆着",
       "tier": 3,
-      "hidden": true
+      "hidden": true,
+      "deprecated": true
     },
     {
       "backendKey": "config.reloadIntervalMs",
@@ -2311,7 +2324,8 @@
           "30 分钟"
         ]
       ],
-      "hidden": true
+      "hidden": true,
+      "deprecated": true
     },
     {
       "backendKey": "images.chatCleanupIntervalMs",
@@ -2351,7 +2365,8 @@
           "3 天"
         ]
       ],
-      "hidden": true
+      "hidden": true,
+      "deprecated": true
     },
     {
       "backendKey": "images.chatRetentionMillis",
@@ -2391,7 +2406,8 @@
           "30 天"
         ]
       ],
-      "hidden": true
+      "hidden": true,
+      "deprecated": true
     },
     {
       "backendKey": "skill.disabled",
@@ -2590,7 +2606,8 @@
       "note": "【已停用】本键不再被读取，保留期已并入 cleanup.assetRetentionDays。0=不清理；超期产物的文件与记录一起删除（按用户归属保存，故保留期即用户的取回窗口）",
       "backendKey": "artifact.retentionDays",
       "tier": 3,
-      "hidden": true
+      "hidden": true,
+      "deprecated": true
     },
     {
       "panel": "maintenance",
@@ -2630,6 +2647,7 @@
         ]
       ],
       "hidden": true,
+      "deprecated": true,
       "note": "【已停用】本键不再被读取，间隔已并入 cleanup.intervalMs（「运行状态」任一行改的都是它）。"
     },
     {
@@ -2732,7 +2750,8 @@
           "5 分钟"
         ]
       ],
-      "hidden": true
+      "hidden": true,
+      "deprecated": true
     },
     {
       "backendKey": "web.refreshEnabled",
@@ -2786,7 +2805,8 @@
           "30 分钟"
         ]
       ],
-      "hidden": true
+      "hidden": true,
+      "deprecated": true
     },
     {
       "backendKey": "tool.sandbox.enabled",
@@ -3298,7 +3318,8 @@
       "width": 200,
       "note": "【已停用】本键不再被读取，保留期已并入 cleanup.tempFileRetentionDays。定时任务执行日志（c_ai_schedule_run）的保留天数，超期由「任务执行日志清理」任务物理删除。日志只记有信息量的执行（失败/手动触发/有产出），高频扫描任务空跑不落行；即便如此，保留期也别设太长。0 = 不清理",
       "tier": 3,
-      "hidden": true
+      "hidden": true,
+      "deprecated": true
     },
     {
       "backendKey": "schedule.runLogCleanupIntervalMs",
@@ -3330,7 +3351,8 @@
           "1 天"
         ]
       ],
-      "hidden": true
+      "hidden": true,
+      "deprecated": true
     },
     {
       "backendKey": "workflow.approvalReapIntervalMs",
@@ -3362,7 +3384,8 @@
           "30 分钟"
         ]
       ],
-      "hidden": true
+      "hidden": true,
+      "deprecated": true
     },
     {
       "backendKey": "workflow.maxSteps",
@@ -3525,7 +3548,8 @@
       "width": 200,
       "note": "【已停用】本键不再被读取，保留期已并入 cleanup.recordRetentionDays。含 DSL 快照与节点 trace 大字段，超期物理删除；等待人工审批的运行不会被清理。0 = 不清理",
       "tier": 3,
-      "hidden": true
+      "hidden": true,
+      "deprecated": true
     },
     {
       "backendKey": "workflow.runCleanupIntervalMs",
@@ -3557,7 +3581,8 @@
           "1 天"
         ]
       ],
-      "hidden": true
+      "hidden": true,
+      "deprecated": true
     },
     {
       "backendKey": "workflow.scheduleScanIntervalMs",
@@ -3593,7 +3618,8 @@
           "5 分钟"
         ]
       ],
-      "hidden": true
+      "hidden": true,
+      "deprecated": true
     },
     {
       "backendKey": "workflow.maxConcurrentRuns",
@@ -3680,7 +3706,8 @@
       "width": 200,
       "note": "【已停用】本键不再被读取，保留期已并入 cleanup.recordRetentionDays。站内通知（铃铛）超期物理删除，不区分已读未读；通知指向的运行记录/解析任务本身也有保留期。0 = 不清理（此前 min=1，界面填不出去清理的语义）",
       "tier": 3,
-      "hidden": true
+      "hidden": true,
+      "deprecated": true
     },
     {
       "backendKey": "notification.dedupWindow",
@@ -3936,7 +3963,8 @@
           "1 天"
         ]
       ],
-      "hidden": true
+      "hidden": true,
+      "deprecated": true
     },
     {
       "backendKey": "mcp.patrolIntervalMs",
@@ -4127,7 +4155,8 @@
           "1 分钟"
         ]
       ],
-      "hidden": true
+      "hidden": true,
+      "deprecated": true
     },
     {
       "backendKey": "parse.taskTimeoutMs",
@@ -4873,7 +4902,8 @@
       "width": 200,
       "note": "【已停用】本键不再被读取，保留期已并入 cleanup.tempFileRetentionDays。聊天档宿主临时目录超过这个小时数未写入就清理；0=不清理",
       "tier": 2,
-      "hidden": true
+      "hidden": true,
+      "deprecated": true
     },
     {
       "backendKey": "chat.scratchCleanupIntervalMs",
@@ -4890,7 +4920,8 @@
       "width": 200,
       "note": "【已停用】本键不再被读取，间隔已并入 cleanup.intervalMs（「运行状态」任一行改的都是它）。扫描过期聊天档临时目录的间隔；≤0 暂停该任务",
       "tier": 2,
-      "hidden": true
+      "hidden": true,
+      "deprecated": true
     },
     {
       "backendKey": "mcp.turnWaitMs",
