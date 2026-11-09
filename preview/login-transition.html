@@ -1,0 +1,903 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>登录 → 工作台 · 过场动效方案预览</title>
+<style>
+  :root {
+    --bg: #f7f8fa;
+    --panel: #ffffff;
+    --panel2: #fafbfc;
+    --border: #e6e9ed;
+    --border-strong: #d8dde3;
+    --text: #1f2329;
+    --text2: #5f6570;
+    --text3: #98a0aa;
+    --accent: #2e6be6;
+    --accent-hover: #1f5bd8;
+    --accent-weak: #eef2f7;
+    --shadow: 0 12px 36px rgba(31, 60, 120, .10);
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    --serif: "Songti SC", "STSong", "SimSun", "Noto Serif CJK SC", serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); font-family: var(--font); color: var(--text); }
+  .stage { position: fixed; inset: 0; overflow: hidden; background: var(--bg); }
+  [data-mark] { display: inline-flex; flex: none; }
+  [data-mark] svg { display: block; width: 100%; height: 100%; }
+
+  /* ==================== 工作台（底层） ==================== */
+  .app { position: absolute; inset: 0; display: flex; visibility: hidden; background: var(--bg); will-change: transform, filter, opacity; }
+  .app.shown { visibility: visible; }
+  .side {
+    width: 232px; flex: none; display: flex; flex-direction: column;
+    background: var(--panel); border-right: 1px solid var(--border);
+    padding: 10px 8px 12px; will-change: transform;
+  }
+  .side-logo { display: flex; align-items: center; gap: 8px; padding: 2px 6px 12px; }
+  .side-name { font-size: 13px; font-weight: 500; letter-spacing: 1px; }
+  .side-fold { margin-left: auto; color: var(--text3); font-size: 11px; }
+  .nav { display: flex; flex-direction: column; gap: 1px; }
+  .nav-group { font-size: 11px; color: var(--text3); letter-spacing: .05em; margin: 8px 9px 2px; }
+  .nav-item { display: flex; align-items: center; gap: 9px; padding: 6px 9px; border-radius: 8px; font-size: 13px; color: var(--text2); }
+  .nav-item i { width: 14px; height: 14px; border-radius: 4px; background: #cfd7e3; opacity: .8; flex: none; }
+  .nav-item.on { background: var(--accent-weak); color: var(--accent); }
+  .nav-item.on i { background: var(--accent); opacity: .9; }
+  .side-foot { margin-top: auto; display: flex; align-items: center; gap: 8px; padding: 8px 9px; }
+  .avatar { width: 26px; height: 26px; border-radius: 50%; background: linear-gradient(135deg, #5E93F5, #2A5FE0); }
+  .foot-name { font-size: 12px; color: var(--text2); }
+
+  .main { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg); }
+  .head { height: 52px; flex: none; display: flex; align-items: center; justify-content: space-between; padding: 0 18px; }
+  .head-title { font-size: 13px; color: var(--text2); }
+  .head-actions { display: flex; gap: 8px; }
+  .head-actions i { width: 26px; height: 26px; border-radius: 7px; border: 1px solid var(--border); background: var(--panel); }
+
+  .body { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 0 24px 104px; min-height: 0; }
+  .welcome { text-align: center; will-change: transform, opacity, filter; }
+  .welcome h2 { margin: 12px 0 5px; font-size: 16px; font-weight: 500; }
+  .welcome p { margin: 0; color: var(--text3); font-size: 13px; }
+  .chips { margin-top: 18px; display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+  .chips span { font-size: 12px; color: var(--text2); border: 1px solid var(--border); background: var(--panel); border-radius: 999px; padding: 7px 12px; }
+  .composer { position: absolute; left: 0; right: 0; bottom: 26px; display: flex; justify-content: center; padding: 0 24px; will-change: transform, opacity; }
+  .composer-box {
+    width: min(760px, 100%); display: flex; align-items: center; gap: 10px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+    box-shadow: 0 6px 20px rgba(31, 60, 120, .06); padding: 12px 14px;
+  }
+  .composer-box .ph { flex: 1; font-size: 13px; color: var(--text3); }
+  .send { width: 28px; height: 28px; border-radius: 8px; background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 14px; }
+
+  /* ==================== 登录页（上层） ==================== */
+  .login { position: absolute; inset: 0; overflow: hidden; z-index: 1; }
+  .login.gone { display: none; }
+  .canvas {
+    position: absolute; inset: 0; will-change: opacity;
+    background:
+      radial-gradient(760px 400px at 88% 10%, rgba(94, 147, 245, .10), transparent 60%),
+      radial-gradient(900px 520px at 6% 88%, rgba(94, 147, 245, .08), transparent 62%),
+      radial-gradient(720px 380px at 12% 6%, rgba(94, 147, 245, .10), transparent 60%),
+      linear-gradient(165deg, #f3f7fd 0%, #edf2fa 50%, #e7eef9 100%);
+  }
+  .hero-waves { position: absolute; left: 0; right: 0; bottom: -2px; width: 100%; height: 200px; pointer-events: none; will-change: opacity; }
+  .hero-waves .w1 { fill: rgba(94, 147, 245, .10); }
+  .hero-waves .w2 { fill: rgba(94, 147, 245, .08); }
+  .hero-waves .w3 { fill: rgba(42, 95, 224, .10); }
+
+  .hero { position: absolute; left: 64px; top: 0; bottom: 0; display: flex; align-items: center; will-change: opacity; }
+  .hero-inner { padding: 40px 0; }
+  .hero-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 48px; }
+  .hero-name { font-size: 18px; font-weight: 600; letter-spacing: 2px; }
+  .hero-slogan { font-size: 12px; color: var(--text3); margin-top: 2px; }
+  .poem { margin: 0; font-family: var(--serif); font-size: 30px; font-weight: 600; line-height: 1.65; letter-spacing: 1px; color: #2450c8; }
+  .cite { margin: 14px 0 0; font-size: 13px; color: var(--text3); }
+  .feats { list-style: none; margin: 44px 0 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
+  .feats li { display: flex; align-items: center; gap: 10px; font-size: 14px; color: var(--text2); }
+  .feats li::before { content: ''; flex: none; width: 6px; height: 6px; border-radius: 50%; background: rgba(42, 95, 224, .65); }
+
+  .dot {
+    position: absolute; top: 45px; right: 61px; width: 32px; height: 32px;
+    display: flex; align-items: center; justify-content: center; padding: 0; border: none; background: transparent;
+  }
+  .dot::after {
+    content: ''; width: 10px; height: 10px; border-radius: 50%; background: #2a5fe0; opacity: .85;
+    box-shadow: 0 0 0 6px rgba(42, 95, 224, .10), 0 0 26px 8px rgba(42, 95, 224, .16);
+    animation: dot-pulse 5s ease-in-out infinite;
+  }
+  @keyframes dot-pulse { 0%, 100% { opacity: .85; } 50% { opacity: .45; } }
+
+  .card {
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    width: 384px; padding: 30px 30px 22px; z-index: 2;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+    box-shadow: var(--shadow); will-change: transform, opacity;
+  }
+  .card.gone { display: none; }
+  .card-inner { will-change: opacity, transform; }
+  .card h3 { display: flex; align-items: center; gap: 12px; margin: 0 0 6px; font-size: 20px; font-weight: 600; letter-spacing: 1px; }
+  .card h3::after { content: ''; flex: 1; height: 2px; border-radius: 1px; background: linear-gradient(90deg, rgba(42, 95, 224, .30), rgba(42, 95, 224, 0)); }
+  .card-sub { margin: 0 0 18px; font-size: 13px; color: var(--text2); }
+  .field-label { margin: 0 0 6px; font-size: 13px; }
+  .input {
+    height: 36px; display: flex; align-items: center; padding: 0 11px; margin-bottom: 16px;
+    border: 1px solid #d9d9d9; border-radius: 8px; background: #fff;
+    color: var(--text3); font-size: 14px;
+  }
+  .login-btn {
+    width: 100%; height: 36px; border: none; border-radius: 8px; cursor: pointer;
+    background: var(--accent); color: #fff; font-size: 14px; transition: background .15s;
+  }
+  .login-btn:hover { background: var(--accent-hover); }
+  .alt {
+    margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    font-size: 12px; color: var(--text2);
+  }
+  .alt a { color: var(--accent); text-decoration: none; }
+  .alt .sep { color: var(--text3); }
+
+  /* ==================== 过渡层 ==================== */
+  .veil {
+    position: absolute; inset: 0; z-index: 3; visibility: hidden; pointer-events: none; overflow: hidden;
+    background:
+      radial-gradient(760px 400px at 88% 10%, rgba(94, 147, 245, .10), transparent 60%),
+      radial-gradient(900px 520px at 6% 88%, rgba(94, 147, 245, .08), transparent 62%),
+      radial-gradient(720px 380px at 12% 6%, rgba(94, 147, 245, .10), transparent 60%),
+      linear-gradient(165deg, #f3f7fd 0%, #edf2fa 50%, #e7eef9 100%);
+  }
+  .veil.show { visibility: visible; }
+  .veil-blur { position: absolute; inset: 0; }
+  .veil-waves { position: absolute; left: 0; right: 0; bottom: -1px; width: 100%; height: 46%; will-change: transform; }
+  .veil-waves .w1 { fill: rgba(94, 147, 245, .10); }
+  .veil-waves .w2 { fill: rgba(94, 147, 245, .08); }
+  .veil-waves .w3 { fill: rgba(42, 95, 224, .10); }
+  .veil-brand {
+    position: absolute; inset: 0; opacity: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 12px; will-change: opacity, transform;
+  }
+  .veil-brand .name { font-size: 13px; letter-spacing: 4px; font-weight: 500; color: var(--accent); }
+  .veil.compact .veil-waves,
+  .veil.compact .veil-brand { display: none; }
+  /* 静光方案：不做满幅画布，只留一层薄雾 + 失焦，让页面本身透出来 */
+  .veil.compact { background: rgba(243, 247, 253, .55); }
+
+  .halo {
+    position: absolute; z-index: 4; width: 320px; height: 320px; border-radius: 50%;
+    border: 1.5px solid rgba(46, 107, 230, .40); visibility: hidden; pointer-events: none;
+    transform: translate(-50%, -50%) scale(.1); will-change: transform, opacity;
+  }
+  .halo.show { visibility: visible; }
+
+  .sheen {
+    position: absolute; z-index: 4; top: -40%; left: 0; width: 26vw; height: 180%;
+    visibility: hidden; pointer-events: none; filter: blur(6px);
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0) 12%, rgba(255, 255, 255, .72) 50%, rgba(255, 255, 255, 0) 88%, transparent);
+    transform: rotate(-16deg) translateX(-70vw); will-change: transform;
+  }
+  .sheen.show { visibility: visible; }
+
+  /* D 推镜的品牌层：源头圆点 / 三道涟漪 / 三道活水线 / 穿过的品牌标 */
+  .seed {
+    position: absolute; z-index: 5; width: 9px; height: 9px; border-radius: 50%;
+    background: #fff; visibility: hidden; pointer-events: none;
+    box-shadow: 0 0 0 2px rgba(46, 107, 230, .30), 0 0 26px 8px rgba(46, 107, 230, .42);
+    transform: translate(-50%, -50%);
+  }
+  .seed.show { visibility: visible; }
+  .ripples { position: absolute; inset: 0; z-index: 4; visibility: hidden; pointer-events: none; }
+  .ripples.show { visibility: visible; }
+  .ripples i {
+    position: absolute; width: 280px; height: 280px; border-radius: 50%;
+    border: 1px solid rgba(46, 107, 230, .34); opacity: 0;
+    transform: translate(-50%, -50%) scale(.06);
+  }
+  .ripples i:nth-child(2) { border-color: rgba(46, 107, 230, .26); }
+  .ripples i:nth-child(3) { border-color: rgba(46, 107, 230, .18); }
+  .streams {
+    position: absolute; inset: 0; z-index: 4; width: 100%; height: 100%;
+    visibility: hidden; pointer-events: none;
+  }
+  .streams.show { visibility: visible; }
+  .streams path {
+    fill: none; stroke: rgba(46, 107, 230, .30); stroke-width: 1.4;
+    stroke-linecap: round; stroke-dasharray: 1; stroke-dashoffset: 1;
+  }
+  .mark-ghost {
+    position: absolute; z-index: 5; width: 52px; height: 52px;
+    visibility: hidden; pointer-events: none; opacity: 0;
+    transform: translate(-50%, -50%) scale(.9);
+  }
+  .mark-ghost.show { visibility: visible; }
+
+  /* ==================== D 推镜 / E 控制变形 / F 卷轴 ==================== */
+  .glow {
+    position: absolute; z-index: 4; width: 560px; height: 560px; border-radius: 50%;
+    visibility: hidden; pointer-events: none; filter: blur(8px);
+    background: radial-gradient(circle, rgba(255, 255, 255, .98) 0%, rgba(196, 219, 255, .60) 34%, rgba(196, 219, 255, 0) 70%);
+    transform: translate(-50%, -50%) scale(.2); will-change: transform, opacity;
+  }
+  .glow.show { visibility: visible; }
+
+  .ghost {
+    position: absolute; z-index: 12; display: flex; align-items: center; gap: 10px;
+    padding: 0 14px; visibility: hidden; pointer-events: none;
+    background: var(--accent); border: 1px solid transparent; border-radius: 8px;
+    will-change: left, top, width, height, border-radius, background-color;
+  }
+  .ghost.show { visibility: visible; }
+  .ghost.gone { display: none; }
+  .ghost-label {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    color: #fff; font-size: 14px; white-space: nowrap;
+  }
+  .ghost-ph { flex: 1; opacity: 0; font-size: 13px; color: var(--text3); white-space: nowrap; }
+  .ghost-send {
+    width: 28px; height: 28px; flex: none; opacity: 0; border-radius: 8px;
+    background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 14px;
+  }
+
+  .edge {
+    position: absolute; left: 0; right: 0; top: 0; height: 1px; z-index: 6;
+    visibility: hidden; pointer-events: none;
+    background: linear-gradient(90deg, transparent, rgba(46, 107, 230, .45) 16%, rgba(46, 107, 230, .45) 84%, transparent);
+    box-shadow: 0 -22px 44px rgba(31, 60, 120, .10), 0 6px 18px rgba(31, 60, 120, .06);
+  }
+  .edge.show { visibility: visible; }
+  .app.top { z-index: 5; }
+
+  /* ==================== 方案切换器 ==================== */
+  .dock {
+    position: absolute; z-index: 20; top: 16px; left: 50%; transform: translateX(-50%);
+    min-width: 660px; max-width: calc(100vw - 32px);
+    padding: 8px 10px 9px; border-radius: 14px;
+    background: rgba(255, 255, 255, .88);
+    -webkit-backdrop-filter: blur(18px) saturate(1.4); backdrop-filter: blur(18px) saturate(1.4);
+    border: 1px solid rgba(31, 60, 120, .10);
+    box-shadow: 0 10px 30px rgba(31, 60, 120, .12);
+  }
+  .dock-head { display: flex; align-items: center; gap: 10px; }
+  .dock-tabs { display: flex; gap: 4px; flex: 1; }
+  .dock-tabs button {
+    flex: 1; height: 30px; padding: 0 9px; border: none; border-radius: 8px;
+    background: transparent; color: var(--text2); font-size: 12px; font-family: var(--font);
+    cursor: pointer; white-space: nowrap; transition: background .15s, color .15s;
+  }
+  .dock-tabs button:hover { background: rgba(46, 107, 230, .06); }
+  .dock-tabs button.on { background: var(--accent); color: #fff; box-shadow: 0 3px 10px rgba(46, 107, 230, .24); }
+  .replay {
+    flex: none; height: 30px; padding: 0 12px; border-radius: 8px; cursor: pointer;
+    border: 1px solid var(--border-strong); background: #fff; color: var(--text2);
+    font-size: 12.5px; font-family: var(--font);
+  }
+  .replay:hover { color: var(--accent); border-color: #b9cdf5; }
+  .dock-desc { margin: 7px 4px 0; font-size: 11.5px; line-height: 1.5; color: var(--text2); }
+  .dock-desc b { color: var(--accent); font-weight: 500; }
+
+  @media (max-width: 1199px) { .hero { display: none; } }
+  @media (max-width: 720px) {
+    .dock { min-width: 0; left: 12px; right: 12px; transform: none; }
+    .dock-desc { display: none; }
+    .side { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<template id="mark-tpl">
+  <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <defs>
+      <linearGradient id="bg" x1="14" y1="4" x2="50" y2="60" gradientUnits="userSpaceOnUse">
+        <stop offset="0" stop-color="#5E93F5" />
+        <stop offset="1" stop-color="#2A5FE0" />
+      </linearGradient>
+    </defs>
+    <rect x="3" y="3" width="58" height="58" rx="17" fill="url(#bg)" />
+    <circle cx="46" cy="16.5" r="3.6" fill="#fff" />
+    <path d="M18 25c4.5-5.2 9-5.2 13.5 0s9 5.2 13.5 0" stroke="#fff" stroke-width="5.4" stroke-linecap="round" />
+    <path d="M16 35c5-5.6 10-5.6 15 0s10 5.6 15 0" stroke="#fff" stroke-width="5.4" stroke-linecap="round" />
+    <path d="M16 45c5-5.6 10-5.6 15 0s10 5.6 15 0" stroke="#fff" stroke-width="5.4" stroke-linecap="round" />
+  </svg>
+</template>
+
+<div class="stage" id="stage">
+
+  <!-- ==================== 工作台 ==================== -->
+  <section class="app" id="app" aria-hidden="true">
+    <aside class="side">
+      <div class="side-logo">
+        <span class="mark" data-mark style="width:24px;height:24px"></span>
+        <span class="side-name">问渠</span>
+        <span class="side-fold">«</span>
+      </div>
+      <nav class="nav">
+        <div class="nav-group">对话</div>
+        <div class="nav-item on"><i></i>新对话</div>
+        <div class="nav-item"><i></i>历史会话</div>
+        <div class="nav-group">资产</div>
+        <div class="nav-item"><i></i>知识库</div>
+        <div class="nav-item"><i></i>智能体</div>
+        <div class="nav-item"><i></i>市场</div>
+      </nav>
+      <div class="side-foot">
+        <span class="avatar"></span>
+        <span class="foot-name">管理员</span>
+      </div>
+    </aside>
+    <main class="main">
+      <header class="head">
+        <span class="head-title">新对话</span>
+        <span class="head-actions"><i></i><i></i></span>
+      </header>
+      <div class="body">
+        <div class="welcome">
+          <span class="mark" data-mark style="width:44px;height:44px;display:block;margin:0 auto"></span>
+          <h2>早上好</h2>
+          <p>有什么想问的，直接说就好</p>
+          <div class="chips">
+            <span>把这份文档总结成三条</span>
+            <span>对比这两个方案的取舍</span>
+            <span>按上个季度数据出一份简报</span>
+          </div>
+        </div>
+      </div>
+      <div class="composer">
+        <div class="composer-box">
+          <span class="ph">输入问题，Enter 发送</span>
+          <span class="send">↑</span>
+        </div>
+      </div>
+    </main>
+  </section>
+
+  <!-- ==================== 登录页 ==================== -->
+  <section class="login" id="login">
+    <div class="canvas"></div>
+    <svg class="hero-waves" viewBox="0 0 1440 320" preserveAspectRatio="none" aria-hidden="true">
+      <path class="w1" d="M0,160 C180,120 320,196 540,168 C760,140 900,96 1080,132 C1240,164 1360,180 1440,168 L1440,320 L0,320 Z" />
+      <path class="w2" d="M0,206 C200,170 360,238 560,214 C780,188 920,150 1100,178 C1260,202 1370,214 1440,206 L1440,320 L0,320 Z" />
+      <path class="w3" d="M0,246 C220,214 380,272 580,252 C800,230 940,200 1120,220 C1270,236 1380,248 1440,242 L1440,320 L0,320 Z" />
+    </svg>
+
+    <aside class="hero">
+      <div class="hero-inner">
+        <div class="hero-brand">
+          <span class="mark" data-mark style="width:44px;height:44px"></span>
+          <div>
+            <div class="hero-name">问渠</div>
+            <div class="hero-slogan">答案，自有源头 · Ask the source.</div>
+          </div>
+        </div>
+        <h1 class="poem">问渠那得清如许？<br />为有源头活水来。</h1>
+        <p class="cite">—— 朱熹《观书有感》</p>
+        <ul class="feats">
+          <li>知识库问答，句句有出处</li>
+          <li>多模型接入，交给更合适的助手</li>
+          <li>技能与 MCP 工具，即连即用</li>
+        </ul>
+      </div>
+    </aside>
+
+    <button class="dot" type="button" aria-label="主题切换"></button>
+  </section>
+
+  <!-- 登录卡单独成层：B 方案里它要胀满全屏后继续留在场上 -->
+  <div class="card" id="card">
+    <div class="card-inner" id="cardInner">
+      <h3>登录</h3>
+      <p class="card-sub">欢迎回来</p>
+      <p class="field-label">登录账号</p>
+      <div class="input">请输入登录账号</div>
+      <p class="field-label">密码</p>
+      <div class="input">••••••••</div>
+      <button class="login-btn" id="loginBtn">登录</button>
+      <div class="alt"><span>还没有独立工作区？</span><a href="javascript:void(0)">申请开通</a><span class="sep">·</span><a href="javascript:void(0)">查询进度</a></div>
+    </div>
+  </div>
+
+  <!-- ==================== 过渡层 ==================== -->
+  <div class="veil" id="veil" aria-hidden="true">
+    <div class="veil-blur"></div>
+    <svg class="veil-waves" viewBox="0 0 1440 320" preserveAspectRatio="none">
+      <path class="w1" d="M0,160 C180,120 320,196 540,168 C760,140 900,96 1080,132 C1240,164 1360,180 1440,168 L1440,320 L0,320 Z" />
+      <path class="w2" d="M0,206 C200,170 360,238 560,214 C780,188 920,150 1100,178 C1260,202 1370,214 1440,206 L1440,320 L0,320 Z" />
+      <path class="w3" d="M0,246 C220,214 380,272 580,252 C800,230 940,200 1120,220 C1270,236 1380,248 1440,242 L1440,320 L0,320 Z" />
+    </svg>
+    <div class="veil-brand">
+      <span class="mark" data-mark style="width:38px;height:38px"></span>
+      <span class="name">问渠</span>
+    </div>
+  </div>
+  <div class="halo" id="halo"></div>
+  <div class="sheen" id="sheen"></div>
+  <div class="ripples" id="ripples"><i></i><i></i><i></i></div>
+  <svg class="streams" id="streams" viewBox="0 0 1440 900" preserveAspectRatio="none" aria-hidden="true">
+    <path pathLength="1" d="M-80,286 C180,226 320,346 560,306 C800,266 940,186 1160,226 C1320,254 1400,286 1520,272" />
+    <path pathLength="1" d="M-80,420 C200,360 360,470 600,436 C840,402 980,330 1200,368 C1360,396 1420,424 1520,412" />
+    <path pathLength="1" d="M-80,554 C220,500 380,598 620,570 C860,542 1000,476 1220,508 C1370,530 1430,556 1520,546" />
+  </svg>
+  <div class="mark-ghost" id="markGhost"><span data-mark style="width:100%;height:100%"></span></div>
+  <div class="seed" id="seed"></div>
+  <div class="glow" id="glow"></div>
+  <div class="ghost" id="ghost" aria-hidden="true">
+    <span class="ghost-label" id="ghostLabel">登录</span>
+    <span class="ghost-ph" id="ghostPh">输入问题，Enter 发送</span>
+    <span class="ghost-send" id="ghostSend">↑</span>
+  </div>
+  <div class="edge" id="edge"></div>
+
+  <!-- ==================== 切换器 ==================== -->
+  <div class="dock">
+    <div class="dock-head">
+      <div class="dock-tabs">
+        <button data-v="a" class="on">A 涟漪展开</button>
+        <button data-v="b">B 一体成形</button>
+        <button data-v="c">C 静光克制</button>
+        <button data-v="d">D 推镜穿越</button>
+        <button data-v="e">E 化为输入框</button>
+        <button data-v="f">F 卷轴展开</button>
+      </div>
+      <button class="replay" id="replay">重播</button>
+    </div>
+    <p class="dock-desc" id="dockDesc"></p>
+  </div>
+</div>
+
+<script>
+/* ---------------- 品牌标注入：每个占位一份独立渐变 id ---------------- */
+;(function injectMarks () {
+  const tpl = document.getElementById('mark-tpl')
+  let n = 0
+  document.querySelectorAll('[data-mark]').forEach(el => {
+    const frag = tpl.content.cloneNode(true)
+    const gid = 'wq-g-' + (++n)
+    frag.querySelector('linearGradient').id = gid
+    frag.querySelector('rect').setAttribute('fill', 'url(#' + gid + ')')
+    el.appendChild(frag)
+  })
+})()
+
+/* ---------------- 元素引用 ---------------- */
+const $ = s => document.querySelector(s)
+const loginEl = $('#login')
+const cardEl = $('#card')
+const cardInner = $('#cardInner')
+const appEl = $('#app')
+const veil = $('#veil')
+const halo = $('#halo')
+const sheen = $('#sheen')
+const loginBtn = $('#loginBtn')
+const canvasEl = $('.canvas')
+const wavesEl = $('.hero-waves')
+const heroEl = $('.hero')
+const dotEl = $('.dot')
+const veilWaves = veil.querySelector('.veil-waves')
+const veilBrand = veil.querySelector('.veil-brand')
+const veilBlur = veil.querySelector('.veil-blur')
+const glow = $('#glow')
+const ghost = $('#ghost')
+const ghostLabel = $('#ghostLabel')
+const ghostPh = $('#ghostPh')
+const ghostSend = $('#ghostSend')
+const edge = $('#edge')
+const composerEl = $('.composer')
+const seed = $('#seed')
+const ripples = $('#ripples')
+const streams = $('#streams')
+const markGhost = $('#markGhost')
+
+const EASE_OUT = 'cubic-bezier(.22,1,.36,1)'
+const EASE_SOFT = 'cubic-bezier(.16,1,.3,1)'
+const EASE_INOUT = 'cubic-bezier(.4,0,.2,1)'
+const REDUCE = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+
+let anims = []
+let busy = false
+let current = 'a'
+
+const wait = ms => new Promise(r => setTimeout(r, ms))
+function anim (el, frames, opts) {
+  const a = el.animate(frames, opts)
+  anims.push(a)
+  return a
+}
+function reset () {
+  anims.forEach(a => { try { a.cancel() } catch (e) {} })
+  anims = []
+  loginEl.classList.remove('gone')
+  cardEl.classList.remove('gone')
+  appEl.classList.remove('shown')
+  veil.classList.remove('show', 'compact')
+  halo.classList.remove('show')
+  sheen.classList.remove('show')
+  veil.style.clipPath = ''
+  halo.style.left = ''
+  halo.style.top = ''
+  glow.classList.remove('show')
+  glow.style.left = ''
+  glow.style.top = ''
+  ghost.classList.remove('show', 'gone')
+  ghost.style.cssText = ''
+  ghostLabel.style.cssText = ''
+  ghostPh.style.cssText = ''
+  ghostSend.style.cssText = ''
+  edge.classList.remove('show')
+  edge.style.top = ''
+  appEl.classList.remove('top')
+  composerEl.style.opacity = ''
+  loginEl.style.transformOrigin = ''
+  cardEl.style.transformOrigin = ''
+  seed.classList.remove('show')
+  seed.style.left = ''
+  seed.style.top = ''
+  ripples.classList.remove('show')
+  ;[...ripples.children].forEach(el => { el.style.left = ''; el.style.top = '' })
+  streams.classList.remove('show')
+  markGhost.classList.remove('show')
+  markGhost.style.left = ''
+  markGhost.style.top = ''
+}
+
+/* 工作台落位：三套方案的差别只在「起手姿态」，收尾都是同一套节奏 */
+function stageAppIn (kind) {
+  const side = $('.side')
+  const head = $('.head')
+  const welcome = $('.welcome')
+  const composer = $('.composer')
+  if (kind === 'a') {
+    anim(side, [{ opacity: 0, transform: 'translateX(-18px)' }, { opacity: 1, transform: 'none' }], { duration: 520, easing: EASE_OUT, fill: 'forwards' })
+    anim(head, [{ opacity: 0, transform: 'translateY(-8px)' }, { opacity: 1, transform: 'none' }], { duration: 420, delay: 40, easing: 'ease-out', fill: 'forwards' })
+    anim(welcome, [{ opacity: 0, transform: 'scale(.985)' }, { opacity: 1, transform: 'none' }], { duration: 520, delay: 80, easing: EASE_OUT, fill: 'forwards' })
+    anim(composer, [{ opacity: 0, transform: 'translateY(16px)' }, { opacity: 1, transform: 'none' }], { duration: 560, delay: 110, easing: EASE_OUT, fill: 'forwards' })
+  } else if (kind === 'b') {
+    anim(side, [{ transform: 'translateX(-12px)' }, { transform: 'none' }], { duration: 560, easing: EASE_OUT, fill: 'forwards' })
+    anim(welcome, [{ transform: 'scale(.985)' }, { transform: 'none' }], { duration: 560, easing: EASE_OUT, fill: 'forwards' })
+    anim(composer, [{ transform: 'translateY(10px)' }, { transform: 'none' }], { duration: 560, easing: EASE_OUT, fill: 'forwards' })
+  } else if (kind === 'c') {
+    anim(side, [{ opacity: .5, transform: 'translateX(-12px)' }, { opacity: 1, transform: 'none' }], { duration: 520, easing: EASE_OUT, fill: 'forwards' })
+    anim(head, [{ opacity: 0, transform: 'translateY(-6px)' }, { opacity: 1, transform: 'none' }], { duration: 460, delay: 30, easing: 'ease-out', fill: 'forwards' })
+    anim(welcome, [{ opacity: 0, filter: 'blur(6px)', transform: 'translateY(8px)' }, { opacity: 1, filter: 'blur(0px)', transform: 'none' }], { duration: 560, delay: 60, easing: EASE_OUT, fill: 'forwards' })
+    anim(composer, [{ opacity: 0, transform: 'translateY(14px)' }, { opacity: 1, transform: 'none' }], { duration: 560, delay: 90, easing: EASE_OUT, fill: 'forwards' })
+  } else {
+    anim(side, [{ opacity: 0, transform: 'translateX(-10px)' }, { opacity: 1, transform: 'none' }], { duration: 480, easing: EASE_OUT, fill: 'forwards' })
+    anim(head, [{ opacity: 0, transform: 'translateY(-6px)' }, { opacity: 1, transform: 'none' }], { duration: 420, delay: 30, easing: 'ease-out', fill: 'forwards' })
+    anim(welcome, [{ opacity: 0, transform: 'translateY(8px)' }, { opacity: 1, transform: 'none' }], { duration: 480, delay: 60, easing: EASE_OUT, fill: 'forwards' })
+  }
+}
+
+/* ---------------- A · 涟漪展开 ----------------
+   从点击处绽开一圈光：画布圆撑满、冲击环扩散、波纹漫起，
+   换页在圆完全覆盖的那一帧完成，随后圆退、工作台逐层落位。 */
+async function runA () {
+  const r = loginBtn.getBoundingClientRect()
+  const cx = r.left + r.width / 2
+  const cy = r.top + r.height / 2
+
+  anim(cardInner, [{ opacity: 1 }, { opacity: .3 }], { duration: 170, easing: 'ease-out', fill: 'forwards' })
+  await wait(130)
+
+  veil.classList.add('show')
+  veil.style.clipPath = 'circle(0px at ' + cx + 'px ' + cy + 'px)'
+  const R = Math.hypot(Math.max(cx, innerWidth - cx), Math.max(cy, innerHeight - cy)) + 80
+  anim(veil, [
+    { clipPath: 'circle(0px at ' + cx + 'px ' + cy + 'px)' },
+    { clipPath: 'circle(' + R + 'px at ' + cx + 'px ' + cy + 'px)' }
+  ], { duration: 460, easing: EASE_SOFT, fill: 'forwards' })
+  anim(veilWaves, [{ transform: 'translateY(108%)' }, { transform: 'translateY(0)' }], { duration: 560, easing: EASE_OUT, fill: 'forwards' })
+  anim(veilBrand, [{ opacity: 0, transform: 'translateY(8px) scale(.96)' }, { opacity: 1, transform: 'none' }], { duration: 300, delay: 170, easing: EASE_OUT, fill: 'forwards' })
+
+  halo.style.left = cx + 'px'
+  halo.style.top = cy + 'px'
+  halo.classList.add('show')
+  anim(halo, [
+    { transform: 'translate(-50%,-50%) scale(.12)', opacity: .45 },
+    { transform: 'translate(-50%,-50%) scale(9)', opacity: .18, offset: .45 },
+    { transform: 'translate(-50%,-50%) scale(26)', opacity: 0 }
+  ], { duration: 820, easing: 'cubic-bezier(.16,.84,.34,1)', fill: 'forwards' })
+
+  await wait(460)
+
+  loginEl.classList.add('gone')
+  cardEl.classList.add('gone')
+  appEl.classList.add('shown')
+
+  anim(veil, [{ opacity: 1 }, { opacity: 0 }], { duration: 420, easing: EASE_INOUT, fill: 'forwards' })
+  anim(veilBrand, [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'scale(1.06)' }], { duration: 340, easing: 'ease-in', fill: 'forwards' })
+  stageAppIn('a')
+  await wait(470)
+}
+
+/* ---------------- B · 一体成形 ----------------
+   表单先化掉，卡片本身胀满全屏，白面再化成工作台底色。
+   全程是「同一块表面」在变，没有第二个场景切进来。 */
+async function runB () {
+  const cr = cardEl.getBoundingClientRect()
+  const sx = innerWidth / cr.width
+  const sy = innerHeight / cr.height
+
+  anim(cardInner, [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateY(-6px)' }], { duration: 150, easing: 'ease-in', fill: 'forwards' })
+  await wait(110)
+
+  ;[canvasEl, heroEl, dotEl, wavesEl].forEach(el => {
+    anim(el, [{ opacity: 1 }, { opacity: 0 }], { duration: 380, easing: 'ease-out', fill: 'forwards' })
+  })
+
+  anim(cardEl, [
+    { transform: 'translate(-50%,-50%) scale(1)', borderRadius: '14px', borderColor: '#e6e9ed', boxShadow: '0 12px 36px rgba(31,60,120,.10)' },
+    { transform: 'translate(-50%,-50%) scale(' + sx + ',' + sy + ')', borderRadius: '0px', borderColor: 'rgba(230,233,237,0)', boxShadow: '0 0 0 rgba(0,0,0,0)' }
+  ], { duration: 520, easing: EASE_SOFT, fill: 'forwards' })
+
+  await wait(440)
+
+  loginEl.classList.add('gone')
+  appEl.classList.add('shown')
+
+  anim(cardEl, [
+    { opacity: 1, backgroundColor: '#ffffff' },
+    { opacity: 0, backgroundColor: '#f7f8fa' }
+  ], { duration: 320, easing: EASE_INOUT, fill: 'forwards' })
+
+  stageAppIn('b')
+  await wait(420)
+  cardEl.classList.add('gone')
+}
+
+/* ---------------- C · 静光克制 ----------------
+   几乎不位移：画布轻微失焦、一道柔光扫过、工作台微微抬起。
+   靠节奏和精度，而不是幅度。 */
+async function runC () {
+  anim(cardInner, [{ opacity: 1 }, { opacity: .2 }], { duration: 200, easing: 'ease-out', fill: 'forwards' })
+
+  veil.classList.add('show', 'compact')
+  anim(veil, [{ opacity: 0 }, { opacity: 1 }], { duration: 220, easing: 'ease-out', fill: 'forwards' })
+  anim(veilBlur, [{ backdropFilter: 'blur(0px)' }, { backdropFilter: 'blur(12px)' }], { duration: 260, easing: 'ease-out', fill: 'forwards' })
+
+  sheen.classList.add('show')
+  anim(sheen, [
+    { transform: 'rotate(-16deg) translateX(-70vw)' },
+    { transform: 'rotate(-16deg) translateX(135vw)' }
+  ], { duration: 640, easing: EASE_INOUT, fill: 'forwards' })
+
+  await wait(300)
+
+  loginEl.classList.add('gone')
+  cardEl.classList.add('gone')
+  appEl.classList.add('shown')
+
+  anim(veil, [{ opacity: 1 }, { opacity: 0 }], { duration: 320, easing: EASE_INOUT, fill: 'forwards' })
+  anim(veilBlur, [{ backdropFilter: 'blur(12px)' }, { backdropFilter: 'blur(0px)' }], { duration: 320, easing: 'ease-out', fill: 'forwards' })
+  stageAppIn('c')
+  await wait(520)
+}
+
+/* ---------------- D · 推镜穿越 ----------------
+   起点是左上角品牌标（源头）。三道涟漪与活水线都从那里出发，
+   品牌标随后在原点胀开成「门」，页面以它为圆心放大失焦，
+   工作台从 1.06 倍景深外对上焦。全片只有一个镜头方向：从源头向里推。 */
+async function runD () {
+  // 锚点：宽屏取左栏品牌标；品牌标不可见时退回登录按钮
+  const heroMark = document.querySelector('.hero-brand .mark')
+  const hb = heroMark && heroMark.getBoundingClientRect()
+  const useMark = hb && hb.width > 0 && heroMark.offsetParent !== null
+  const br = loginBtn.getBoundingClientRect()
+  const cx = useMark ? hb.left + hb.width / 2 : br.left + br.width / 2
+  const cy = useMark ? hb.top + hb.height / 2 : br.top + br.height / 2
+
+  // 让两个图层的缩放圆心都落在品牌标上，卡片的前后位移才和整页一致
+  const cr0 = cardEl.getBoundingClientRect()
+  loginEl.style.transformOrigin = cx + 'px ' + cy + 'px'
+  cardEl.style.transformOrigin = (cx - cr0.left) + 'px ' + (cy - cr0.top) + 'px'
+
+  anim(cardInner, [{ opacity: 1 }, { opacity: .35 }], { duration: 180, easing: 'ease-out', fill: 'forwards' })
+
+  // 源头圆点：品牌标右上那颗白点，在按下处亮起
+  seed.style.left = cx + 'px'
+  seed.style.top = cy + 'px'
+  seed.classList.add('show')
+  anim(seed, [
+    { transform: 'translate(-50%,-50%) scale(.4)', opacity: 0 },
+    { transform: 'translate(-50%,-50%) scale(1)', opacity: 1 }
+  ], { duration: 170, easing: 'ease-out', fill: 'forwards' })
+
+  // 三道涟漪：品牌标里的三道波线，以点击处为圆心依次散开
+  ripples.classList.add('show')
+  Array.prototype.forEach.call(ripples.children, (ring, i) => {
+    ring.style.left = cx + 'px'
+    ring.style.top = cy + 'px'
+    anim(ring, [
+      { transform: 'translate(-50%,-50%) scale(.06)', opacity: .5 },
+      { transform: 'translate(-50%,-50%) scale(' + (2.4 - i * .3) + ')', opacity: 0 }
+    ], { duration: 980 + i * 150, delay: i * 80, easing: 'cubic-bezier(.16,.7,.3,1)', fill: 'forwards' })
+  })
+
+  // 三道活水线：横穿画面，随镜头推进逐条画出
+  streams.classList.add('show')
+  Array.prototype.forEach.call(streams.querySelectorAll('path'), (p, i) => {
+    anim(p, [{ strokeDashoffset: 1 }, { strokeDashoffset: 0 }], {
+      duration: 760, delay: i * 90, easing: 'cubic-bezier(.3,.6,.2,1)', fill: 'forwards'
+    })
+  })
+  anim(streams, [{ opacity: 1 }, { opacity: 0 }], { duration: 420, delay: 540, easing: 'ease-in', fill: 'forwards' })
+
+  // 「门」：品牌标在消失点轻轻胀开，镜头从它中间穿过去
+  markGhost.style.left = cx + 'px'
+  markGhost.style.top = cy + 'px'
+  markGhost.classList.add('show')
+  anim(markGhost, [
+    { transform: 'translate(-50%,-50%) scale(.9)', opacity: 0, filter: 'blur(0px)' },
+    { transform: 'translate(-50%,-50%) scale(1.3)', opacity: .92, offset: .42 },
+    { transform: 'translate(-50%,-50%) scale(2.6)', opacity: 0, filter: 'blur(3px)' }
+  ], { duration: 640, delay: 70, easing: EASE_SOFT, fill: 'forwards' })
+
+  // 光井：穿过之后迎面而来的光
+  glow.style.left = cx + 'px'
+  glow.style.top = cy + 'px'
+  glow.classList.add('show')
+  anim(glow, [
+    { transform: 'translate(-50%,-50%) scale(.25)', opacity: 0 },
+    { transform: 'translate(-50%,-50%) scale(1)', opacity: .9, offset: .55 },
+    { transform: 'translate(-50%,-50%) scale(1.7)', opacity: 0 }
+  ], { duration: 900, delay: 90, easing: 'ease-out', fill: 'forwards' })
+  anim(seed, [{ opacity: 1 }, { opacity: 0 }], { duration: 260, delay: 540, fill: 'forwards' })
+
+  // 镜头推进：以品牌标为圆心放大失焦，卡片朝镜头方向掠过
+  anim(loginEl, [
+    { transform: 'scale(1)', filter: 'blur(0px)', opacity: 1 },
+    { transform: 'scale(1.3)', filter: 'blur(12px)', opacity: 0 }
+  ], { duration: 520, delay: 80, easing: EASE_SOFT, fill: 'forwards' })
+  anim(cardEl, [
+    { transform: 'translate(-50%,-50%) scale(1)', filter: 'blur(0px)', opacity: 1 },
+    { transform: 'translate(-50%,-50%) scale(1.42)', filter: 'blur(10px)', opacity: 0 }
+  ], { duration: 520, delay: 80, easing: EASE_SOFT, fill: 'forwards' })
+
+  await wait(460)
+
+  loginEl.classList.add('gone')
+  cardEl.classList.add('gone')
+  appEl.classList.add('shown')
+  anim(appEl, [
+    { opacity: 0, transform: 'scale(1.06)', filter: 'blur(12px)' },
+    { opacity: 1, transform: 'scale(1)', filter: 'blur(0px)' }
+  ], { duration: 680, easing: EASE_SOFT, fill: 'forwards' })
+
+  await wait(680)
+}
+
+/* ---------------- E · 化为输入框 ----------------
+   只动一个东西：登录按钮自己飞下去、横向展开，变成对话输入框；
+   侧栏、欢迎区在它落点的周围淡入。动作最少，但记忆点最强。 */
+async function runE () {
+  const br = loginBtn.getBoundingClientRect()
+  const cr = $('.composer-box').getBoundingClientRect()
+
+  anim(cardInner, [{ opacity: 1 }, { opacity: 0 }], { duration: 160, easing: 'ease-in', fill: 'forwards' })
+  ;[canvasEl, heroEl, dotEl, wavesEl].forEach(el => {
+    anim(el, [{ opacity: 1 }, { opacity: 0 }], { duration: 320, easing: 'ease-out', fill: 'forwards' })
+  })
+  anim(cardEl, [{ opacity: 1 }, { opacity: 0 }], { duration: 300, easing: 'ease-out', fill: 'forwards' })
+
+  ghost.style.left = br.left + 'px'
+  ghost.style.top = br.top + 'px'
+  ghost.style.width = br.width + 'px'
+  ghost.style.height = br.height + 'px'
+  ghost.classList.add('show')
+
+  await wait(80)
+  anim(ghostLabel, [{ opacity: 1 }, { opacity: 0 }], { duration: 140, fill: 'forwards' })
+  anim(ghost, [
+    {
+      left: br.left + 'px', top: br.top + 'px', width: br.width + 'px', height: br.height + 'px',
+      borderRadius: '8px', borderColor: 'rgba(230,233,237,0)', backgroundColor: '#2e6be6', boxShadow: '0 0 0 rgba(0,0,0,0)'
+    },
+    {
+      left: cr.left + 'px', top: cr.top + 'px', width: cr.width + 'px', height: cr.height + 'px',
+      borderRadius: '14px', borderColor: '#e6e9ed', backgroundColor: '#ffffff', boxShadow: '0 6px 20px rgba(31,60,120,.06)'
+    }
+  ], { duration: 580, easing: EASE_SOFT, fill: 'forwards' })
+
+  composerEl.style.opacity = '0'
+  await wait(240)
+  appEl.classList.add('shown')
+  stageAppIn('e')
+
+  await wait(380)
+  anim(ghostPh, [{ opacity: 0 }, { opacity: 1 }], { duration: 200, easing: 'ease-out', fill: 'forwards' })
+  anim(ghostSend, [{ opacity: 0 }, { opacity: 1 }], { duration: 200, delay: 40, easing: 'ease-out', fill: 'forwards' })
+  await wait(180)
+  anim(ghost, [{ opacity: 1 }, { opacity: 0 }], { duration: 160, easing: 'ease-out', fill: 'forwards' })
+  anim(composerEl, [{ opacity: 0 }, { opacity: 1 }], { duration: 200, easing: 'ease-out', fill: 'forwards' })
+  await wait(220)
+  ghost.classList.add('gone')
+}
+
+/* ---------------- F · 卷轴展开 ----------------
+   工作台从顶部像卷轴一样往下展开，边缘是一道细光加投影；
+   登录页在卷轴后面轻退。唯一带东方叙事的版本。 */
+async function runF () {
+  appEl.classList.add('shown', 'top')
+  const h = innerHeight
+
+  anim(appEl, [
+    { clipPath: 'inset(0 0 100% 0)' },
+    { clipPath: 'inset(0 0 0% 0)' }
+  ], { duration: 680, easing: EASE_SOFT, fill: 'forwards' })
+
+  edge.classList.add('show')
+  anim(edge, [{ top: '0px' }, { top: h + 'px' }], { duration: 680, easing: EASE_SOFT, fill: 'forwards' })
+
+  anim(loginEl, [
+    { transform: 'none', opacity: 1 },
+    { transform: 'translateY(14px) scale(.997)', opacity: .55 }
+  ], { duration: 680, easing: 'ease-out', fill: 'forwards' })
+  anim(cardEl, [{ opacity: 1 }, { opacity: 0 }], { duration: 300, delay: 60, easing: 'ease-out', fill: 'forwards' })
+  anim($('.body'), [{ transform: 'translateY(18px)' }, { transform: 'none' }], { duration: 640, delay: 60, easing: EASE_OUT, fill: 'forwards' })
+
+  await wait(700)
+
+  loginEl.classList.add('gone')
+  cardEl.classList.add('gone')
+  appEl.classList.remove('top')
+  anim(edge, [{ opacity: 1 }, { opacity: 0 }], { duration: 220, fill: 'forwards' })
+  await wait(220)
+}
+
+/* 减弱动效：只保留一次极短的遮挡 */
+async function runReduce () {
+  veil.classList.add('show', 'compact')
+  anim(veil, [{ opacity: 0 }, { opacity: 1 }], { duration: 120, fill: 'forwards' })
+  await wait(160)
+  loginEl.classList.add('gone')
+  cardEl.classList.add('gone')
+  appEl.classList.add('shown')
+  anim(veil, [{ opacity: 1 }, { opacity: 0 }], { duration: 120, fill: 'forwards' })
+  await wait(140)
+}
+
+/* ---------------- 播放控制 ---------------- */
+const DESC = {
+  a: '<b>约 1.0s</b> · 光从按下的位置绽开，画布圆铺满、冲击环扩散、波纹漫起，换页藏在圆完全覆盖的那一帧，工作台随环落位。呼应品牌「源头活水」，动势最足。',
+  b: '<b>约 1.1s</b> · 表单先化掉，登录卡本身胀满整屏，白面再化成工作台底色。全程没有第二个场景切进来，像同一块表面长成了工作台，连贯感最强。',
+  c: '<b>约 0.8s</b> · 几乎不动：画布轻失焦、一道柔光横扫、工作台微抬升。幅度最小、精度最高，接近 Linear / Vercel 的处理方式。',
+  d: '<b>约 1.15s</b> · 从左上品牌标推进去：源头圆点亮起，三道涟漪与活水线从那里散开，品牌标胀开成「门」，页面以它为圆心放大失焦，工作台从景深外对上焦。',
+  e: '<b>约 1.0s</b> · 登录按钮自己飞下去、展开成对话输入框，侧栏与问候在它周围淡入。动作最少、记忆点最强，也最难被看成通用模板。',
+  f: '<b>约 0.95s</b> · 工作台从顶部像卷轴一样往下展开，边缘一道细光与投影，登录页在卷轴后轻退。唯一带东方叙事的版本。'
+}
+const dockDesc = $('#dockDesc')
+const tabs = Array.prototype.slice.call(document.querySelectorAll('.dock-tabs button'))
+
+const RUN = { a: runA, b: runB, c: runC, d: runD, e: runE, f: runF }
+
+async function play (v) {
+  if (busy) return
+  busy = true
+  current = v
+  try {
+    reset()
+    await wait(150)
+    if (REDUCE) await runReduce()
+    else await RUN[v]()
+  } finally {
+    busy = false
+  }
+}
+
+tabs.forEach(t => {
+  t.addEventListener('click', () => {
+    if (busy) return
+    current = t.dataset.v
+    tabs.forEach(x => x.classList.toggle('on', x === t))
+    dockDesc.innerHTML = DESC[current]
+    play(current)
+  })
+})
+$('#replay').addEventListener('click', () => play(current))
+loginBtn.addEventListener('click', () => play(current))
+window.addEventListener('keydown', e => {
+  if (e.key === 'r' || e.key === 'R') play(current)
+})
+
+dockDesc.innerHTML = DESC.a
+setTimeout(() => play('a'), 800)
+</script>
+</body>
+</html>

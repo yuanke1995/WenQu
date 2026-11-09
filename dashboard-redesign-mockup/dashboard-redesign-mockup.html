@@ -1,0 +1,1377 @@
+<!-- 数据看板 UI/UX 与功能升级方案 + 高保真效果图 -->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>数据看板改版方案与效果图</title>
+<style>
+:root{
+  --bg:#f7f8fa; --panel:#ffffff; --panel2:#fafbfc; --rule:#e6e9ed; --rule2:#d8dde3;
+  --ink:#1f2329; --muted:#5f6570; --faint:#98a0aa;
+  --accent:#2e6be6; --accent-hover:#1f5bd8; --accent-weak:#eef2f7; --accent-border:#bcd0f7;
+  --ok:#3b8f4e; --ok-weak:#eaf5ec; --warn:#c77c14; --warn-weak:#faf3e6; --warn-border:#f0dfb6;
+  --danger:#d4552e; --danger-weak:#fff2f0; --danger-border:#ffccc7;
+  --radius:8px; --shadow:0 1px 2px rgba(31,35,41,.04);
+  --font:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--ink);font-family:var(--font);font-size:14.5px;line-height:1.7;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1280px;margin:0 auto;padding:48px 24px 72px}
+
+/* ==================== 文档部分 ==================== */
+.masthead{margin-bottom:42px}
+.mast-kicker{font-size:12.5px;font-weight:700;letter-spacing:.1em;color:var(--accent);margin-bottom:12px}
+.masthead h1{font-size:30px;font-weight:700;letter-spacing:-.01em;line-height:1.35;margin-bottom:12px}
+.masthead h1 em{font-style:normal;color:var(--accent)}
+.mast-sub{color:var(--muted);font-size:15px;max-width:820px}
+.mast-meta{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}
+.meta-chip{font-size:12.5px;color:var(--muted);background:var(--panel);border:1px solid var(--rule);border-radius:999px;padding:4px 12px}
+.meta-chip b{color:var(--ink);font-weight:600}
+.claim{margin-top:22px;border-left:3px solid var(--accent);background:var(--accent-weak);border-radius:0 8px 8px 0;padding:12px 18px;font-size:14px;color:var(--muted)}
+.claim b{color:var(--ink)}
+
+section{margin-bottom:52px}
+.sec-h{display:flex;align-items:baseline;gap:12px;margin-bottom:6px}
+.sec-no{font-size:12.5px;font-weight:700;color:var(--accent);letter-spacing:.08em;font-family:var(--mono)}
+.sec-h h2{font-size:21px;font-weight:700;letter-spacing:-.01em}
+.sec-lead{color:var(--muted);font-size:14px;margin-bottom:20px;max-width:860px}
+.sec-lead b{color:var(--ink)}
+.sec-lead code,.foot-note code{font-family:var(--mono);font-size:12px;background:var(--panel2);border:1px solid var(--rule);border-radius:4px;padding:0 5px;color:var(--ink)}
+
+.prob-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.prob{background:var(--panel);border:1px solid var(--rule);border-radius:var(--radius);padding:16px 18px;box-shadow:var(--shadow)}
+.prob-n{display:inline-flex;width:22px;height:22px;border-radius:50%;background:var(--warn-weak);border:1px solid var(--warn-border);color:var(--warn);font-size:12px;font-weight:700;align-items:center;justify-content:center;margin-bottom:10px;font-family:var(--mono)}
+.prob h3{font-size:14.5px;font-weight:700;margin-bottom:6px}
+.prob p{font-size:12.8px;color:var(--muted);line-height:1.65}
+.prob code{font-family:var(--mono);font-size:11.5px;background:var(--panel2);border:1px solid var(--rule);border-radius:4px;padding:1px 5px;color:var(--ink)}
+
+.prin-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.prin{background:var(--panel);border:1px solid var(--rule);border-radius:var(--radius);padding:16px 18px;box-shadow:var(--shadow)}
+.prin-i{width:30px;height:30px;border-radius:8px;background:var(--accent-weak);border:1px solid var(--accent-border);color:var(--accent);display:flex;align-items:center;justify-content:center;margin-bottom:12px}
+.prin h3{font-size:14px;font-weight:700;margin-bottom:5px}
+.prin p{font-size:12.5px;color:var(--muted);line-height:1.6}
+
+/* 前后对比 */
+.ba{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.ba-panel{background:var(--panel);border:1px solid var(--rule);border-radius:10px;padding:16px 18px;box-shadow:var(--shadow)}
+.ba-h{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;margin-bottom:12px}
+.ba-tag{font-size:11px;font-weight:700;border-radius:4px;padding:2px 8px}
+.ba-tag.now{background:var(--warn-weak);color:var(--warn);border:1px solid var(--warn-border)}
+.ba-tag.new{background:var(--accent-weak);color:var(--accent);border:1px solid var(--accent-border)}
+.flow{display:flex;flex-direction:column;gap:0}
+.fl{position:relative;border:1px solid var(--rule);border-radius:6px;padding:8px 10px;background:var(--panel2);font-size:12px;color:var(--muted)}
+.fl b{color:var(--ink);font-weight:600}
+.fl.new{border-color:var(--accent-border);background:#f6f9ff}
+.fl.warn{border-color:var(--warn-border);background:#fdf9f0}
+.fl .fl-badge{position:absolute;top:-7px;right:8px;font-size:10px;background:var(--accent);color:#fff;border-radius:999px;padding:0 7px;line-height:15px}
+.arrow{height:14px;display:flex;align-items:center;justify-content:center;color:var(--rule2);font-size:11px}
+.fl-split{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.mini-note{font-size:11.5px;color:var(--faint);margin-top:10px;line-height:1.6}
+
+/* 功能清单 */
+.ftable{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--rule);border-radius:10px;overflow:hidden;font-size:12.8px}
+.ftable th{background:var(--panel2);text-align:left;font-size:11.5px;font-weight:600;color:var(--muted);padding:10px 12px;border-bottom:1px solid var(--rule);white-space:nowrap}
+.ftable td{padding:10px 12px;border-bottom:1px solid var(--rule);color:var(--muted);vertical-align:top}
+.ftable tr:last-child td{border-bottom:none}
+.ftable td b{color:var(--ink);font-weight:600}
+.ftable tr:hover td{background:#fcfdff}
+.p0,.p1,.p2{font-size:10.5px;font-weight:700;border-radius:4px;padding:1px 7px;display:inline-block;font-family:var(--mono)}
+.p0{background:var(--accent);color:#fff}
+.p1{background:var(--accent-weak);color:var(--accent);border:1px solid var(--accent-border)}
+.p2{background:var(--panel2);color:var(--faint);border:1px solid var(--rule)}
+.col-pri{width:64px}
+
+/* ==================== 效果图外框 ==================== */
+.shot-head{display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap}
+.shot-title{font-size:13px;font-weight:700}
+.shot-note{font-size:12px;color:var(--faint)}
+.pin-anchor{position:relative;display:inline-flex}
+.ts-anchor .pin{left:-20px;right:auto;top:-6px}
+.pin-toggle{margin-left:auto;display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--muted);cursor:pointer;user-select:none}
+.pin-toggle input{accent-color:var(--accent);cursor:pointer}
+.browser{border:1px solid var(--rule2);border-radius:12px;overflow:hidden;background:var(--panel);box-shadow:0 10px 34px rgba(31,35,41,.09)}
+.browser-bar{display:flex;align-items:center;gap:10px;background:#f1f3f6;border-bottom:1px solid var(--rule2);padding:9px 14px}
+.dots{display:flex;gap:6px}
+.dots i{width:10px;height:10px;border-radius:50%;background:#d9dde3;display:block}
+.dots i:nth-child(1){background:#f0b6ab}.dots i:nth-child(2){background:#f3d9a4}.dots i:nth-child(3){background:#b8ddc0}
+.urlbar{flex:1;max-width:520px;background:#fff;border:1px solid var(--rule);border-radius:6px;font-size:11.5px;color:var(--faint);padding:3px 10px;font-family:var(--mono)}
+.browser-tag{margin-left:auto;font-size:10.5px;color:var(--accent);background:var(--accent-weak);border:1px solid var(--accent-border);border-radius:999px;padding:1px 9px}
+
+.app-shell{position:relative;display:grid;grid-template-columns:188px minmax(0,1fr);background:var(--bg);overflow:hidden}
+.side{background:#fbfcfd;border-right:1px solid var(--rule);padding:12px 10px;display:flex;flex-direction:column;font-size:12px;min-height:100%}
+.side-brand{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;padding:2px 6px 12px}
+.brand-logo{width:22px;height:22px;border-radius:6px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700}
+.side-new{display:flex;align-items:center;gap:6px;border:1px solid var(--rule2);border-radius:6px;padding:5px 9px;color:var(--muted);margin-bottom:12px;background:#fff}
+.side-grp{font-size:10.5px;color:var(--faint);letter-spacing:.06em;padding:8px 8px 4px}
+.nav-item{padding:6px 9px;border-radius:6px;color:var(--muted);display:flex;align-items:center;gap:7px;margin-bottom:1px}
+.nav-item .ico{width:13px;height:13px;border:1.4px solid currentColor;border-radius:3px;opacity:.55;flex:none}
+.nav-item.active{background:var(--accent-weak);color:var(--accent);font-weight:600}
+.side-foot{margin-top:auto;border-top:1px solid var(--rule);padding:10px 6px 0;font-size:11.5px;color:var(--muted)}
+.side-user{display:flex;align-items:center;gap:7px}
+.avatar{width:24px;height:24px;border-radius:50%;background:#dfe6f3;color:#42618f;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700}
+
+.main{display:flex;flex-direction:column;min-width:0;font-size:12px}
+.p-head{background:#fff;border-bottom:1px solid var(--rule);padding:11px 16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.p-title{font-size:14px;font-weight:600}
+.p-sub{font-size:11.5px;color:var(--faint)}
+.p-acts{margin-left:auto;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.ts{font-size:11px;color:var(--faint)}
+.seg{display:flex;border:1px solid var(--rule2);border-radius:6px;overflow:hidden;background:#fff}
+.seg button{border:none;background:none;font-family:var(--font);font-size:11.5px;color:var(--muted);padding:4px 10px;cursor:pointer;border-left:1px solid var(--rule)}
+.seg button:first-child{border-left:none}
+.seg button:hover{background:var(--panel2)}
+.seg button.on{background:var(--accent);color:#fff;font-weight:600}
+.btn{border:none;cursor:pointer;font-family:var(--font);font-size:11.5px;border-radius:6px;padding:5px 11px;background:var(--accent);color:#fff}
+.btn.ghost{background:#fff;color:var(--muted);border:1px solid var(--rule2)}
+.btn.ghost:hover{color:var(--accent);border-color:var(--accent);background:var(--accent-weak)}
+.cmp{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted);cursor:pointer}
+.cmp input{accent-color:var(--accent)}
+
+.tabs{display:flex;gap:20px;padding:0 16px;background:#fff;border-bottom:1px solid var(--rule)}
+.tab{position:relative;padding:9px 1px;font-size:12.5px;color:var(--muted);cursor:pointer;display:flex;align-items:center;gap:5px;border-bottom:2px solid transparent;margin-bottom:-1px}
+.tab:hover{color:var(--accent)}
+.tab.on{color:var(--accent);font-weight:600;border-bottom-color:var(--accent)}
+.tab-badge{font-size:10px;line-height:15px;padding:0 5px;border-radius:999px;background:#fbecea;color:var(--danger);font-weight:700}
+
+.p-body{padding:12px 16px 16px;background:var(--bg)}
+.pane{display:none}
+.pane.on{display:block;animation:fade .18s ease}
+@keyframes fade{from{opacity:.35;transform:translateY(2px)}to{opacity:1;transform:none}}
+
+.d-card{position:relative;background:#fff;border:1px solid var(--rule);border-radius:8px;padding:11px 13px}
+.d-card-h{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;margin-bottom:9px;min-height:18px}
+.d-card-h .sub{font-size:10.5px;color:var(--faint);font-weight:400}
+.d-card-h .more{margin-left:auto;font-size:11px;color:var(--accent);font-weight:400;cursor:pointer}
+.d-card-h .more:hover{text-decoration:underline}
+.pill{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;padding:2px 8px;border-radius:999px;font-weight:500;white-space:nowrap}
+.pill::before{content:'';width:5px;height:5px;border-radius:50%;background:currentColor}
+.pill.ok{color:var(--ok);background:var(--ok-weak)}
+.pill.warn{color:var(--warn);background:var(--warn-weak)}
+.pill.err{color:var(--danger);background:var(--danger-weak)}
+.pill.blue{color:var(--accent);background:var(--accent-weak)}
+.delta{font-size:10.5px;font-weight:600;font-variant-numeric:tabular-nums}
+.delta.up{color:var(--ok)}.delta.down{color:var(--danger)}.delta.flat{color:var(--faint);font-weight:500}
+.up{color:var(--ok)}.down{color:var(--danger)}.flat{color:var(--faint)}
+
+/* 指标行 */
+.kpi-row{display:grid;grid-template-columns:300px repeat(4,minmax(0,1fr));gap:10px}
+.health-wrap{display:flex;align-items:center;gap:14px}
+.ring{flex:none;width:78px;height:78px}
+.health-score{font-size:26px;font-weight:600;letter-spacing:-.02em;line-height:1.1}
+.health-score span{font-size:11px;color:var(--faint);font-weight:400;letter-spacing:0}
+.health-line{display:flex;align-items:center;gap:8px;margin-top:5px}
+.health-parts{display:flex;flex-wrap:wrap;gap:4px 10px;font-size:10.5px;color:var(--faint);margin-top:9px;padding-top:8px;border-top:1px dashed var(--rule)}
+.health-parts b{color:var(--muted);font-weight:600}
+.metric{display:flex;flex-direction:column;justify-content:space-between;min-height:112px}
+.m-label{font-size:11px;color:var(--faint)}
+.m-row{display:flex;align-items:baseline;gap:7px;margin-top:3px}
+.m-num{font-size:24px;font-weight:600;letter-spacing:-.02em;line-height:1.15;font-variant-numeric:tabular-nums}
+.m-unit{font-size:12px;color:var(--faint);font-weight:400;margin-left:1px}
+.m-foot{display:flex;align-items:flex-end;justify-content:space-between;gap:8px;margin-top:8px}
+.spark{width:92px;height:28px;display:block;flex:none}
+.m-hint{font-size:10px;color:var(--faint);text-align:right;line-height:1.35}
+
+.chart-row{display:grid;grid-template-columns:minmax(0,2.15fr) minmax(0,1fr);gap:10px;margin-top:10px}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+.chart{width:100%}
+.chart svg{width:100%;height:auto;display:block}
+.legend{display:flex;align-items:center;gap:12px;margin-left:auto;font-size:10.5px;color:var(--muted);font-weight:400}
+.legend i{width:8px;height:8px;border-radius:2px;display:inline-block;margin-right:4px}
+
+.donut-flex{display:flex;align-items:center;gap:14px}
+.lg-list{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px}
+.lg-row{display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--muted)}
+.lg-row .dot{width:8px;height:8px;border-radius:2px;flex:none}
+.lg-row b{margin-left:auto;color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums}
+.lg-t{color:var(--ink)}
+.lg-s{font-size:10px;color:var(--faint)}
+.sat{margin-top:10px;padding-top:10px;border-top:1px dashed var(--rule);font-size:10.5px;color:var(--faint)}
+.sat-bar{height:7px;border-radius:4px;background:#f0f2f5;overflow:hidden;margin:6px 0 5px;display:flex}
+.sat-bar i{display:block;height:100%;border-radius:4px 0 0 4px;background:var(--ok)}
+.sat-bar em{display:block;height:100%;background:#e9a3a3;flex:1}
+.sat-line{display:flex;justify-content:space-between;color:var(--muted)}
+
+/* 问题榜 */
+.list-row{display:grid;grid-template-columns:18px minmax(0,1fr) 110px 40px;gap:8px;align-items:center;padding:6px 0;border-bottom:1px dashed var(--rule);cursor:pointer;border-radius:4px}
+.list-row:last-child{border-bottom:none}
+.list-row:hover{background:#fbfcfe}
+.rank{font-size:10.5px;color:var(--faint);font-family:var(--mono);text-align:center}
+.rank.top{color:var(--accent);font-weight:700}
+.q-text{font-size:11.8px;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.q-text:hover{color:var(--accent)}
+.bar-track{height:6px;border-radius:3px;background:#f0f2f5;overflow:hidden}
+.bar-track i{display:block;height:100%;border-radius:3px;background:var(--accent)}
+.bar-track i.warm{background:#e0a44a}
+.cnt{font-size:11px;color:var(--muted);text-align:right;font-variant-numeric:tabular-nums}
+
+/* 体检条 */
+.strip{display:flex;align-items:center;gap:10px;padding:10px 13px;margin-top:10px;flex-wrap:wrap}
+.strip b.t{font-size:12px;font-weight:600}
+.strip-meta{font-size:10.5px;color:var(--faint)}
+.chip{font-size:10.5px;border:1px solid var(--rule);border-radius:999px;padding:2px 8px;color:var(--muted);background:var(--panel2);white-space:nowrap}
+.chip b{color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums}
+.strip-acts{margin-left:auto;display:flex;gap:6px}
+.dot-status{width:7px;height:7px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 3px var(--ok-weak)}
+
+/* 待办闭环 */
+.aq-head{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.aq-progress{display:flex;align-items:center;gap:8px;font-size:10.5px;color:var(--muted);margin-left:auto}
+.aq-progress .track{width:110px;height:6px;border-radius:3px;background:#f0f2f5;overflow:hidden}
+.aq-progress .track i{display:block;height:100%;background:var(--accent);border-radius:3px}
+.aq-chips{display:flex;gap:6px;margin:2px 0 4px;flex-wrap:wrap}
+.aq-chip{font-size:10.5px;color:var(--muted);background:#fff;border:1px solid var(--rule);border-radius:999px;padding:2px 9px;cursor:pointer;font-family:var(--font)}
+.aq-chip.on{color:var(--accent);border-color:var(--accent-border);background:var(--accent-weak);font-weight:600}
+.aq-row{display:flex;align-items:center;gap:9px;padding:8px 0;border-bottom:1px dashed var(--rule)}
+.aq-row:last-child{border-bottom:none}
+.src{font-size:10px;padding:1px 6px;border-radius:4px;flex:none;white-space:nowrap}
+.src.bad{color:#cf1322;background:var(--danger-weak);border:1px solid var(--danger-border)}
+.src.gap{color:var(--warn);background:var(--warn-weak);border:1px solid var(--warn-border)}
+.src.pool{color:var(--accent);background:var(--accent-weak);border:1px solid var(--accent-border)}
+.aq-main{flex:1;min-width:0}
+.aq-q{font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.aq-meta{font-size:10.5px;color:var(--faint);margin-top:1px}
+.aq-acts{display:flex;gap:6px;flex:none}
+.mini-btn{font-family:var(--font);font-size:10.5px;padding:3px 9px;border-radius:6px;border:1px solid var(--accent-border);color:var(--accent);background:#fff;cursor:pointer;white-space:nowrap}
+.mini-btn:hover{background:var(--accent-weak)}
+.mini-btn.ghost{border-color:var(--rule2);color:var(--muted)}
+.mini-btn.ghost:hover{color:var(--accent);border-color:var(--accent);background:var(--accent-weak)}
+.mini-btn.danger{color:var(--danger);border-color:var(--danger-border)}
+.mini-btn.danger:hover{background:var(--danger-weak)}
+
+/* 执行记录 */
+.stat-strip{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.mini-stat .m-label{margin-bottom:2px}
+.mini-stat .m-num{font-size:20px}
+.mini-stat .m-foot{margin-top:4px}
+.mini-stat .spark{width:100%;height:26px}
+.fbar{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:9px}
+.sel{font-family:var(--font);font-size:11px;color:var(--muted);background:#fff;border:1px solid var(--rule2);border-radius:6px;padding:4px 9px;cursor:pointer}
+.sel.on{color:var(--accent);border-color:var(--accent-border);background:var(--accent-weak)}
+.search{flex:1;min-width:150px;max-width:240px;font-size:11px;padding:4px 10px;border:1px solid var(--rule2);border-radius:6px;color:var(--faint);background:#fff}
+.t-table{border:1px solid var(--rule);border-radius:6px;overflow:hidden}
+.t-row{display:grid;grid-template-columns:92px 112px minmax(0,1fr) 88px 66px 108px 46px;gap:8px;align-items:center;padding:8px 10px;border-bottom:1px solid #f1f3f5;font-size:11.5px;color:var(--muted);cursor:pointer}
+.t-row:last-child{border-bottom:none}
+.t-row:hover{background:#fcfdff}
+.t-row.head{background:var(--panel2);font-size:10.5px;color:var(--faint);cursor:default;font-weight:500}
+.t-row.head:hover{background:var(--panel2)}
+.t-agent{font-size:10.5px;background:#f2f4f7;border-radius:4px;padding:1px 6px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.t-q{color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.t-status{display:flex;align-items:center;gap:5px}
+.t-status .dot{width:6px;height:6px;border-radius:50%;flex:none}
+.hit{font-size:10px;border:1px solid var(--rule);border-radius:4px;padding:0 5px;color:var(--muted);background:var(--panel2)}
+.dur{display:flex;align-items:center;gap:6px}
+.dur .track{width:58px;height:5px;border-radius:3px;background:#f0f2f5;overflow:hidden;flex:none}
+.dur .track i{display:block;height:100%;border-radius:3px;background:var(--accent);opacity:.65}
+.dur span{font-size:10.5px;font-variant-numeric:tabular-nums}
+
+/* 抽屉 */
+.scrim{position:absolute;inset:0;background:rgba(31,35,41,.22);opacity:0;pointer-events:none;transition:opacity .2s;z-index:4}
+.scrim.show{opacity:1;pointer-events:auto}
+.drawer{position:absolute;top:0;right:0;bottom:0;width:392px;max-width:88%;background:#fff;border-left:1px solid var(--rule);box-shadow:-12px 0 32px rgba(31,35,41,.1);transform:translateX(102%);transition:transform .24s ease;z-index:5;display:flex;flex-direction:column}
+.drawer.show{transform:none}
+.dw-h{display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid var(--rule);font-size:13px;font-weight:600}
+.dw-x{margin-left:auto;border:none;background:none;font-size:16px;color:var(--faint);cursor:pointer;line-height:1}
+.dw-body{padding:14px 16px;overflow-y:auto;font-size:12px}
+.dw-block{margin-bottom:14px}
+.dw-label{font-size:10.5px;color:var(--faint);margin-bottom:4px}
+.dw-pre{background:var(--panel2);border:1px solid var(--rule);border-radius:6px;padding:8px 10px;font-size:11.5px;line-height:1.6;white-space:pre-wrap;color:var(--muted)}
+.kv{display:flex;gap:10px;padding:2px 0;font-size:11.5px;color:var(--muted)}
+.kv span{color:var(--faint);width:56px;flex:none}
+.src-item{display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px dashed var(--rule);font-size:11.5px}
+.src-item:last-child{border-bottom:none}
+.src-name{color:var(--ink)}
+.src-id{font-size:10px;color:var(--faint);font-family:var(--mono)}
+
+/* 采样标注 */
+.funnel{display:flex;align-items:stretch;gap:8px}
+.f-stage{flex:1;background:#fff;border:1px solid var(--rule);border-radius:8px;padding:10px 12px;position:relative;overflow:hidden}
+.f-stage::after{content:'';position:absolute;left:0;right:0;bottom:0;height:3px;background:var(--accent);opacity:.5}
+.f-stage:nth-child(3)::after{opacity:.7}.f-stage:nth-child(5)::after{opacity:.9}
+.f-arrow{display:flex;align-items:center;color:var(--rule2);font-size:12px;flex:none}
+.f-num{font-size:21px;font-weight:600;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.f-label{font-size:10.5px;color:var(--faint);margin-top:1px}
+.f-pct{font-size:10px;color:var(--muted);margin-top:3px}
+.samples{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+.sample{border:1px solid var(--rule);border-radius:8px;padding:10px 12px;background:#fff;position:relative}
+.sample:hover{border-color:var(--accent-border);background:#fcfdff}
+.s-top{display:flex;align-items:center;gap:7px;margin-bottom:5px}
+.s-q{font-size:12px;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.s-time{font-size:10px;color:var(--faint);margin-left:auto;flex:none}
+.s-a{font-size:11px;color:var(--muted);line-height:1.55;height:34px;overflow:hidden;margin-bottom:7px}
+.s-kb{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px}
+.kb{font-size:10px;color:var(--accent);background:var(--accent-weak);border:1px solid var(--accent-border);border-radius:4px;padding:0 5px}
+.s-acts{display:flex;gap:6px}
+
+/* 费用与配额 */
+.budget-row{display:grid;grid-template-columns:170px minmax(0,1fr) 150px;gap:12px;align-items:center;padding:9px 0;border-bottom:1px dashed var(--rule)}
+.budget-row:last-child{border-bottom:none}
+.b-name{font-size:11.5px;color:var(--ink)}
+.b-sub{font-size:10px;color:var(--faint)}
+.b-track{height:10px;border-radius:5px;background:#f0f2f5;position:relative;overflow:hidden}
+.b-fill{height:100%;border-radius:5px;background:var(--accent)}
+.b-fill.warn{background:var(--warn)}
+.b-fill.danger{background:var(--danger)}
+.b-threshold{position:absolute;top:0;bottom:0;left:80%;width:1px;background:rgba(212,85,46,.45)}
+.b-meta{text-align:right;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+.b-meta b{color:var(--ink);font-weight:600}
+.b-state{display:inline-block;font-size:10px;border-radius:4px;padding:0 6px;margin-left:5px}
+.b-state.warn{color:var(--warn);background:var(--warn-weak);border:1px solid var(--warn-border)}
+.cost-grid{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:10px;margin-top:10px}
+.cost-grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+.user-bar{display:grid;grid-template-columns:64px minmax(0,1fr) 52px;gap:8px;align-items:center;padding:6px 0}
+.user-bar .nm{font-size:11.5px;color:var(--ink)}
+.user-bar .track{height:7px;border-radius:4px;background:#f0f2f5;overflow:hidden}
+.user-bar .track i{display:block;height:100%;border-radius:4px;background:var(--accent)}
+.user-bar .val{font-size:11px;color:var(--muted);text-align:right;font-variant-numeric:tabular-nums}
+.mini-table{width:100%;border-collapse:collapse;font-size:11.5px}
+.mini-table th{text-align:left;font-size:10px;color:var(--faint);font-weight:500;padding:5px 6px;background:var(--panel2);border-bottom:1px solid var(--rule)}
+.mini-table td{padding:6px;border-bottom:1px solid #f4f6f8;color:var(--muted)}
+.mini-table td.money{text-align:right;color:var(--ink);font-variant-numeric:tabular-nums}
+.mini-table tr:last-child td{border-bottom:none}
+
+/* 标注针 */
+.pin{position:absolute;top:-7px;right:-7px;width:19px;height:19px;border-radius:50%;background:#1f2329;color:#fff;font-size:10.5px;font-weight:700;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(0,0,0,.2);z-index:3;font-family:var(--mono);cursor:help}
+.pins-off .pin{display:none}
+.anno{display:grid;grid-template-columns:1fr 1fr;gap:10px 22px;margin-top:14px;background:var(--panel);border:1px solid var(--rule);border-radius:10px;padding:16px 18px}
+.anno-item{display:flex;gap:9px;font-size:12px;color:var(--muted);line-height:1.55}
+.anno-n{width:19px;height:19px;border-radius:50%;background:#1f2329;color:#fff;font-size:10.5px;font-weight:700;display:flex;align-items:center;justify-content:center;flex:none;margin-top:2px;font-family:var(--mono)}
+.anno-item b{color:var(--ink);font-weight:600}
+
+/* 交互说明 */
+.inter-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.inter{background:var(--panel);border:1px solid var(--rule);border-radius:10px;padding:16px 18px;box-shadow:var(--shadow)}
+.inter h3{font-size:14px;font-weight:700;margin-bottom:4px}
+.inter p{font-size:12.5px;color:var(--muted);line-height:1.6;margin-bottom:12px}
+.inter-flow{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);flex-wrap:wrap}
+.if-box{border:1px solid var(--rule2);background:var(--panel2);border-radius:5px;padding:3px 8px;white-space:nowrap}
+.if-box.accent{border-color:var(--accent-border);background:var(--accent-weak);color:var(--accent);font-weight:600}
+.if-arrow{color:var(--rule2)}
+
+/* 落地 */
+.impl{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.impl-card{background:var(--panel);border:1px solid var(--rule);border-radius:10px;padding:16px 18px;box-shadow:var(--shadow)}
+.impl-card h3{font-size:13.5px;font-weight:700;margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.impl-card h3::before{content:'';width:3px;height:14px;border-radius:2px;background:var(--accent)}
+.comp-list{display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--muted)}
+.comp-list code{font-family:var(--mono);font-size:11.5px;background:var(--panel2);border:1px solid var(--rule);border-radius:4px;padding:1px 6px;color:var(--ink)}
+pre.json{background:#f8fafc;border:1px solid var(--rule);border-radius:8px;padding:12px 14px;font-family:var(--mono);font-size:11.5px;line-height:1.6;color:#3d4653;overflow-x:auto}
+pre.json .k{color:#2e6be6}
+pre.json .s{color:#3b8f4e}
+pre.json .n{color:#c77c14}
+.check{display:flex;flex-direction:column;gap:7px;font-size:12.5px;color:var(--muted)}
+.check div{display:flex;gap:8px;align-items:flex-start}
+.check i{width:15px;height:15px;border-radius:50%;background:var(--ok-weak);color:var(--ok);font-style:normal;font-size:10px;display:flex;align-items:center;justify-content:center;flex:none;margin-top:3px}
+.foot-note{font-size:11.5px;color:var(--faint);border-top:1px solid var(--rule);padding-top:16px;line-height:1.7}
+
+@media (max-width:1180px){
+  .kpi-row{grid-template-columns:1fr 1fr 1fr}
+  .kpi-row .d-card:first-child{grid-column:span 3}
+  .chart-row,.two-col,.cost-grid,.cost-grid2,.samples,.inter-grid,.impl,.ba,.prin-grid{grid-template-columns:1fr}
+  .prob-grid{grid-template-columns:1fr 1fr}
+  .anno{grid-template-columns:1fr}
+}
+@media (max-width:900px){
+  .side{display:none}
+  .app-shell{grid-template-columns:1fr}
+  .prob-grid{grid-template-columns:1fr}
+  .t-row{grid-template-columns:80px minmax(0,1fr) 80px 60px}
+  .t-row > :nth-child(2),.t-row > :nth-child(6){display:none}
+  .budget-row{grid-template-columns:1fr;gap:4px}
+  .b-meta{text-align:left}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ==================== 封面 ==================== -->
+  <header class="masthead">
+    <div class="mast-kicker">问渠 · 管理台改版提案</div>
+    <h1>数据看板：从「表格台账」到<em>「问答质量驾驶舱」</em></h1>
+    <p class="mast-sub">
+      把散落在 4 个页签、5 张表格里的数字，重排成「一屏判断 → 一眼定位 → 一键处置 → 回测验证」的闭环。
+      视觉沿用现有设计语言（<code>--app-*</code> token、ant-design-vue、ECharts），不引入新框架。
+    </p>
+    <div class="mast-meta">
+      <span class="meta-chip">现状 <b>4 页签 · 5 张表 · 0 张图</b></span>
+      <span class="meta-chip">目标 <b>首屏即可判断健康度</b></span>
+      <span class="meta-chip">改动 <b>前端重排 + 3 个聚合接口</b></span>
+      <span class="meta-chip">兼容 <b>浅色 / 深色 / 1080 宽</b></span>
+    </div>
+    <div class="claim">
+      <b>设计主张：</b>看板不是「数据陈列柜」，而是运营动作的起点。每个数字都要能回答三个问题——<b>现在好不好？比上期如何？我该做什么？</b>
+    </div>
+  </header>
+
+  <!-- ==================== 01 效果图 ==================== -->
+  <section id="shot">
+    <div class="sec-h"><span class="sec-no">01</span><h2>效果图（可交互）</h2></div>
+    <p class="sec-lead">
+      依次点击四个页签查看改版后的完整信息架构；点击「执行记录」中的任意一行可打开详情抽屉；点击「待办闭环」的来源筛选可过滤队列。
+      图中数据为示意数据，标注 1–8 对应右侧改动说明。
+    </p>
+
+    <div class="shot-head">
+      <span class="shot-title">桌面端 · 1280px · 浅色主题</span>
+      <span class="shot-note">原型为纯静态 HTML，无外部依赖</span>
+      <label class="pin-toggle"><input type="checkbox" id="pinToggle" checked> 显示标注</label>
+    </div>
+
+    <div class="browser">
+      <div class="browser-bar">
+        <span class="dots"><i></i><i></i><i></i></span>
+        <div class="urlbar">localhost:5800/dashboard</div>
+        <span class="browser-tag">效果图</span>
+      </div>
+
+      <div class="app-shell">
+        <!-- 侧栏（缩略） -->
+        <aside class="side">
+          <div class="side-brand"><span class="brand-logo">问</span>问渠</div>
+          <div class="side-new">＋ 新建对话</div>
+          <div class="side-grp">工作区</div>
+          <div class="nav-item"><span class="ico"></span>智能体</div>
+          <div class="nav-item"><span class="ico"></span>市场</div>
+          <div class="nav-item"><span class="ico"></span>知识库</div>
+          <div class="nav-item"><span class="ico"></span>我的产物</div>
+          <div class="side-grp">管理</div>
+          <div class="nav-item"><span class="ico"></span>成员管理</div>
+          <div class="nav-item"><span class="ico"></span>权限管理</div>
+          <div class="nav-item active"><span class="ico"></span>数据看板</div>
+          <div class="nav-item"><span class="ico"></span>系统设置</div>
+          <div class="side-foot">
+            <div class="side-user"><span class="avatar">管</span><div>平台管理员</div></div>
+          </div>
+        </aside>
+
+        <!-- 主区 -->
+        <main class="main">
+          <div class="p-head">
+            <div>
+              <div class="p-title">数据看板</div>
+              <div class="p-sub">问答质量、执行记录与知识回流闭环</div>
+            </div>
+            <div class="p-acts">
+              <span class="pin-anchor ts-anchor">
+                <span class="pin" title="全局时间范围与对比">2</span>
+                <span class="ts">数据截至 11:42</span>
+              </span>
+              <span class="pin-anchor">
+                <div class="seg range-seg">
+                  <button>近 7 天</button><button class="on">近 30 天</button><button>近 90 天</button><button>全部</button>
+                </div>
+              </span>
+              <label class="cmp"><input type="checkbox" checked> 对比上期</label>
+              <button class="btn ghost">导出</button>
+              <button class="btn ghost">刷新</button>
+            </div>
+          </div>
+
+          <div class="tabs">
+            <div class="tab on" data-tab="overview">总览</div>
+            <div class="tab" data-tab="trace">执行记录</div>
+            <div class="tab" data-tab="pool">采样标注 <span class="tab-badge">5</span></div>
+            <div class="tab" data-tab="cost">费用与配额</div>
+          </div>
+
+          <div class="p-body">
+
+            <!-- ========== 总览 ========== -->
+            <div class="pane on" data-pane="overview">
+
+              <div class="kpi-row">
+                <div class="d-card">
+                  <span class="pin" title="新增：健康度总分">1</span>
+                  <div class="d-card-h">问答健康度 <span class="sub">4 项加权</span></div>
+                  <div class="health-wrap">
+                    <svg class="ring" viewBox="0 0 80 80">
+                      <circle cx="40" cy="40" r="31" fill="none" stroke="#eef1f5" stroke-width="7"/>
+                      <circle cx="40" cy="40" r="31" fill="none" stroke="#3b8f4e" stroke-width="7"
+                              stroke-linecap="round" stroke-dasharray="159.6 195" transform="rotate(-90 40 40)"/>
+                    </svg>
+                    <div>
+                      <div class="health-score">82<span> / 100</span></div>
+                      <div class="health-line"><span class="pill ok">良好</span><span class="delta up">▲ 2.4</span></div>
+                    </div>
+                  </div>
+                  <div class="health-parts">
+                    <span>命中 <b>86.1</b></span><span>引用 <b>91.2</b></span><span>满意 <b>92.4</b></span><span>体检 <b>正常</b></span>
+                  </div>
+                </div>
+
+                <div class="d-card metric">
+                  <div class="m-label">问答总数</div>
+                  <div class="m-row"><div class="m-num">1,284</div><span class="delta up">▲ 12.4%</span></div>
+                  <div class="m-foot"><svg class="spark" id="sp1"></svg><span class="m-hint">上期 1,142</span></div>
+                </div>
+
+                <div class="d-card metric">
+                  <span class="pin" title="指标卡升级：趋势 + 环比">3</span>
+                  <div class="m-label">无命中率</div>
+                  <div class="m-row"><div class="m-num">8.4<i class="m-unit">%</i></div><span class="delta up">▼ 2.1pt</span></div>
+                  <div class="m-foot"><svg class="spark" id="sp2"></svg><span class="m-hint">上期 10.5%</span></div>
+                </div>
+
+                <div class="d-card metric">
+                  <div class="m-label">有引用标注</div>
+                  <div class="m-row"><div class="m-num">91.2<i class="m-unit">%</i></div><span class="delta up">▲ 4.3pt</span></div>
+                  <div class="m-foot"><svg class="spark" id="sp3"></svg><span class="m-hint">上期 86.9%</span></div>
+                </div>
+
+                <div class="d-card metric">
+                  <div class="m-label">反馈满意率</div>
+                  <div class="m-row"><div class="m-num">92.4<i class="m-unit">%</i></div><span class="delta up">▲ 0.8pt</span></div>
+                  <div class="m-foot"><svg class="spark" id="sp4"></svg><span class="m-hint">👍 186 · 👎 15</span></div>
+                </div>
+              </div>
+
+              <div class="chart-row">
+                <div class="d-card">
+                  <span class="pin" title="新增：趋势图">4</span>
+                  <div class="d-card-h">问答趋势
+                    <div class="legend">
+                      <span><i style="background:#2e6be6"></i>问答量</span>
+                      <span><i style="background:#3b8f4e"></i>有引用</span>
+                      <span><i style="background:#c77c14"></i>无命中</span>
+                    </div>
+                    <span class="more range-label">近 30 天</span>
+                  </div>
+                  <div class="chart" id="trendChart"></div>
+                </div>
+
+                <div class="d-card">
+                  <div class="d-card-h">命中构成 <span class="sub">按问答条数</span></div>
+                  <div class="donut-flex">
+                    <div id="donutHit"></div>
+                    <div class="lg-list">
+                      <div class="lg-row"><i class="dot" style="background:#2e6be6"></i>
+                        <div><div class="lg-t">有引用命中</div><div class="lg-s">1,176 条</div></div><b>91.6%</b></div>
+                      <div class="lg-row"><i class="dot" style="background:#e0a44a"></i>
+                        <div><div class="lg-t">无命中</div><div class="lg-s">108 条</div></div><b>8.4%</b></div>
+                    </div>
+                  </div>
+                  <div class="sat">
+                    反馈满意度
+                    <div class="sat-bar"><i style="width:92.4%"></i><em></em></div>
+                    <div class="sat-line"><span>👍 186</span><span>👎 15</span></div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="two-col">
+                <div class="d-card">
+                  <div class="d-card-h">热门问题 TOP8 <span class="sub">点击可下钻到执行记录</span>
+                    <span class="more">查看全部 →</span></div>
+                  <div class="list-row"><span class="rank top">1</span><span class="q-text">只回一个字：好</span><div class="bar-track"><i style="width:100%"></i></div><span class="cnt">42</span></div>
+                  <div class="list-row"><span class="rank top">2</span><span class="q-text">帮我总结这份周报</span><div class="bar-track"><i style="width:90%"></i></div><span class="cnt">38</span></div>
+                  <div class="list-row"><span class="rank top">3</span><span class="q-text">1+1=? 请给出推导过程</span><div class="bar-track"><i style="width:78%"></i></div><span class="cnt">33</span></div>
+                  <div class="list-row"><span class="rank">4</span><span class="q-text">油焖大虾怎么做</span><div class="bar-track"><i style="width:69%"></i></div><span class="cnt">29</span></div>
+                  <div class="list-row"><span class="rank">5</span><span class="q-text">统计最近 30 天的会话和轮数</span><div class="bar-track"><i style="width:62%"></i></div><span class="cnt">26</span></div>
+                  <div class="list-row"><span class="rank">6</span><span class="q-text">安置房暂时没房产证怎么交易</span><div class="bar-track"><i style="width:50%"></i></div><span class="cnt">21</span></div>
+                  <div class="list-row"><span class="rank">7</span><span class="q-text">如何设计一个表单</span><div class="bar-track"><i style="width:43%"></i></div><span class="cnt">18</span></div>
+                  <div class="list-row"><span class="rank">8</span><span class="q-text">发票抬头开错了能重开吗</span><div class="bar-track"><i style="width:36%"></i></div><span class="cnt">15</span></div>
+                </div>
+
+                <div class="d-card">
+                  <span class="pin" title="问题可下钻 + 一键入库">6</span>
+                  <div class="d-card-h">无命中问题 TOP8 <span class="sub">建议补充知识库</span>
+                    <span class="more">批量入库 →</span></div>
+                  <div class="list-row"><span class="rank top">1</span><span class="q-text">统计最近 30 天的会话和轮数</span><div class="bar-track"><i class="warm" style="width:100%"></i></div><span class="cnt">12</span></div>
+                  <div class="list-row"><span class="rank top">2</span><span class="q-text">1+1=? 请给出推导过程</span><div class="bar-track"><i class="warm" style="width:75%"></i></div><span class="cnt">9</span></div>
+                  <div class="list-row"><span class="rank top">3</span><span class="q-text">安置房暂时没房产证怎么交易</span><div class="bar-track"><i class="warm" style="width:67%"></i></div><span class="cnt">8</span></div>
+                  <div class="list-row"><span class="rank">4</span><span class="q-text">帮我写一个 Java 定时任务</span><div class="bar-track"><i class="warm" style="width:58%"></i></div><span class="cnt">7</span></div>
+                  <div class="list-row"><span class="rank">5</span><span class="q-text">油焖大虾怎么做</span><div class="bar-track"><i class="warm" style="width:50%"></i></div><span class="cnt">6</span></div>
+                  <div class="list-row"><span class="rank">6</span><span class="q-text">发票抬头开错了能重开吗</span><div class="bar-track"><i class="warm" style="width:42%"></i></div><span class="cnt">5</span></div>
+                  <div class="list-row"><span class="rank">7</span><span class="q-text">支持哪些文件格式</span><div class="bar-track"><i class="warm" style="width:33%"></i></div><span class="cnt">4</span></div>
+                  <div class="list-row"><span class="rank">8</span><span class="q-text">如何接入企微</span><div class="bar-track"><i class="warm" style="width:25%"></i></div><span class="cnt">3</span></div>
+                </div>
+              </div>
+
+              <div class="d-card strip">
+                <span class="pin" title="体检条：正常时只占一行">5</span>
+                <span class="dot-status"></span>
+                <b class="t">检索质量 · 正常</b>
+                <span class="strip-meta">评估集 42 题 · 今日 03:00 自动跑 · 耗时 18s</span>
+                <span class="chip">recall@5 <b>86.3%</b> <span class="up">▲1.2</span></span>
+                <span class="chip">MRR <b>0.71</b> <span class="up">▲0.03</span></span>
+                <span class="chip">引用完整度 <b>91.2%</b> <span class="flat">—0.4</span></span>
+                <div class="strip-acts">
+                  <button class="mini-btn ghost">查看报告</button>
+                  <button class="mini-btn">立即体检</button>
+                </div>
+              </div>
+
+              <div class="d-card" style="margin-top:10px">
+                <span class="pin" title="三源合一：待办闭环队列">7</span>
+                <div class="d-card-h aq-head">
+                  待办闭环 <span class="sub">差评 / 知识缺口 / 待标注合并，处置后就地减少</span>
+                  <div class="aq-progress"><div class="track"><i style="width:31%"></i></div><span>本周已闭环 <b>9</b> / 29</span></div>
+                </div>
+                <div class="aq-chips">
+                  <button class="aq-chip on" data-g="all">全部 25</button>
+                  <button class="aq-chip" data-g="bad">差评 12</button>
+                  <button class="aq-chip" data-g="gap">知识缺口 8</button>
+                  <button class="aq-chip" data-g="pool">待标注 5</button>
+                </div>
+                <div class="aq-row" data-g="bad">
+                  <span class="src bad">差评</span>
+                  <div class="aq-main">
+                    <div class="aq-q">安置房暂时还没有房产证的房子怎么交易</div>
+                    <div class="aq-meta">反馈「没提合同备案」 · 3 天前 · 命中 2 个知识块</div>
+                  </div>
+                  <div class="aq-acts"><button class="mini-btn">加入评估集</button><button class="mini-btn ghost">补知识块</button></div>
+                </div>
+                <div class="aq-row" data-g="bad">
+                  <span class="src bad">差评</span>
+                  <div class="aq-main">
+                    <div class="aq-q">发票抬头开错了能重开吗</div>
+                    <div class="aq-meta">反馈「引用了旧制度」 · 1 天前 · 无引用块</div>
+                  </div>
+                  <div class="aq-acts"><button class="mini-btn ghost">补知识块</button><button class="mini-btn ghost">忽略</button></div>
+                </div>
+                <div class="aq-row" data-g="gap">
+                  <span class="src gap">缺口</span>
+                  <div class="aq-main">
+                    <div class="aq-q">统计最近 30 天的会话和轮数，多维展示</div>
+                    <div class="aq-meta">近 7 天被问 7 次 · 均无命中 · 最近 11-10 09:12</div>
+                  </div>
+                  <div class="aq-acts"><button class="mini-btn">入库</button><button class="mini-btn ghost">转给知识管理员</button></div>
+                </div>
+                <div class="aq-row" data-g="pool">
+                  <span class="src pool">待标注</span>
+                  <div class="aq-main">
+                    <div class="aq-q">油焖大虾怎么做</div>
+                    <div class="aq-meta">随机采样 · 命中 1 个知识块 · 待回流评测集</div>
+                  </div>
+                  <div class="aq-acts"><button class="mini-btn">标注回流</button><button class="mini-btn ghost">忽略</button></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- ========== 执行记录 ========== -->
+            <div class="pane" data-pane="trace">
+              <div class="stat-strip">
+                <div class="d-card mini-stat">
+                  <div class="m-label">总执行</div>
+                  <div class="m-row"><div class="m-num">2,581</div><span class="delta up">▲ 9.6%</span></div>
+                  <div class="m-foot"><svg class="spark" id="t1"></svg></div>
+                </div>
+                <div class="d-card mini-stat">
+                  <div class="m-label">成功率</div>
+                  <div class="m-row"><div class="m-num">96.2<i class="m-unit">%</i></div><span class="delta up">▲ 1.1pt</span></div>
+                  <div class="m-foot"><svg class="spark" id="t2"></svg></div>
+                </div>
+                <div class="d-card mini-stat">
+                  <div class="m-label">P95 耗时</div>
+                  <div class="m-row"><div class="m-num">4.2<i class="m-unit">s</i></div><span class="delta up">▼ 0.6s</span></div>
+                  <div class="m-foot"><svg class="spark" id="t3"></svg></div>
+                </div>
+                <div class="d-card mini-stat">
+                  <div class="m-label">无引用占比</div>
+                  <div class="m-row"><div class="m-num">8.4<i class="m-unit">%</i></div><span class="delta up">▼ 2.1pt</span></div>
+                  <div class="m-foot"><svg class="spark" id="t4"></svg></div>
+                </div>
+              </div>
+
+              <div class="d-card" style="margin-top:10px">
+                <div class="d-card-h">每日执行量
+                  <span class="sub">近 14 天</span>
+                  <div class="legend"><span><i style="background:#dbe6fb"></i>执行量</span><span><i style="background:#2e6be6"></i>成功率</span></div>
+                </div>
+                <div class="chart" id="traceChart"></div>
+              </div>
+
+              <div class="d-card" style="margin-top:10px">
+                <div class="fbar">
+                  <select class="sel"><option>类型：对话</option><option>工作流</option></select>
+                  <select class="sel"><option>近 7 天</option><option>近 24 小时</option><option>近 30 天</option></select>
+                  <span class="sel on">有引用</span><span class="sel">无引用</span><span class="sel">👍 好评</span><span class="sel">👎 差评</span>
+                  <input class="search" placeholder="关键词：问题 / 入参">
+                  <button class="btn ghost" style="margin-left:auto">查询</button>
+                </div>
+                <div class="t-table">
+                  <div class="t-row head">
+                    <span>时间</span><span>智能体</span><span>问题</span><span>状态</span><span>命中</span><span>耗时</span><span>操作</span>
+                  </div>
+                  <div class="t-row" data-open="1">
+                    <span>11-10 14:32</span><span class="t-agent">知识助手</span>
+                    <span class="t-q">安置房暂时还没有房产证的房子怎么交易</span>
+                    <span class="t-status"><i class="dot" style="background:#3b8f4e"></i>有引用</span>
+                    <span><span class="hit">2 块</span></span>
+                    <span class="dur"><span class="track"><i style="width:62%"></i></span><span>2.8s</span></span>
+                    <span class="up">👍</span>
+                  </div>
+                  <div class="t-row" data-open="1">
+                    <span>11-10 14:27</span><span class="t-agent">全局</span>
+                    <span class="t-q">统计最近 30 天的会话和轮数，多维展示</span>
+                    <span class="t-status"><i class="dot" style="background:#c77c14"></i>无引用</span>
+                    <span><span class="hit">—</span></span>
+                    <span class="dur"><span class="track"><i style="width:38%"></i></span><span>1.6s</span></span>
+                    <span class="down">👎</span>
+                  </div>
+                  <div class="t-row" data-open="1">
+                    <span>11-10 14:19</span><span class="t-agent">合同助手</span>
+                    <span class="t-q">发票抬头开错了能重开吗</span>
+                    <span class="t-status"><i class="dot" style="background:#3b8f4e"></i>有引用</span>
+                    <span><span class="hit">3 块</span></span>
+                    <span class="dur"><span class="track"><i style="width:84%"></i></span><span>5.4s</span></span>
+                    <span class="down">👎</span>
+                  </div>
+                  <div class="t-row" data-open="1">
+                    <span>11-10 14:03</span><span class="t-agent">知识助手</span>
+                    <span class="t-q">帮我总结这份周报，按项目分组</span>
+                    <span class="t-status"><i class="dot" style="background:#3b8f4e"></i>有引用</span>
+                    <span><span class="hit">5 块</span></span>
+                    <span class="dur"><span class="track"><i style="width:55%"></i></span><span>3.1s</span></span>
+                    <span class="up">👍</span>
+                  </div>
+                  <div class="t-row" data-open="1">
+                    <span>11-10 13:48</span><span class="t-agent">合同助手</span>
+                    <span class="t-q">油焖大虾怎么做</span>
+                    <span class="t-status"><i class="dot" style="background:#c77c14"></i>无引用</span>
+                    <span><span class="hit">—</span></span>
+                    <span class="dur"><span class="track"><i style="width:28%"></i></span><span>1.2s</span></span>
+                    <span class="flat">—</span>
+                  </div>
+                </div>
+                <div class="mini-note">点击任意一行打开右侧详情抽屉（问题、回答、引用来源、工具调用、Token、反馈）。</div>
+              </div>
+            </div>
+
+            <!-- ========== 采样标注 ========== -->
+            <div class="pane" data-pane="pool">
+              <div class="d-card">
+                <div class="d-card-h">采样闭环漏斗 <span class="sub">每日自动采样 + 手动采样</span>
+                  <span class="more">立即采样</span>
+                </div>
+                <div class="funnel">
+                  <div class="f-stage"><div class="f-num">128</div><div class="f-label">样本入池</div><div class="f-pct">100%</div></div>
+                  <div class="f-arrow">→</div>
+                  <div class="f-stage"><div class="f-num">104</div><div class="f-label">已处置</div><div class="f-pct">81.3%</div></div>
+                  <div class="f-arrow">→</div>
+                  <div class="f-stage"><div class="f-num">92</div><div class="f-label">已回流评测集</div><div class="f-pct">71.9%</div></div>
+                  <div class="f-arrow">→</div>
+                  <div class="f-stage"><div class="f-num">47</div><div class="f-label">已进入体检对比</div><div class="f-pct">36.7%</div></div>
+                </div>
+                <div class="mini-note">漏斗回答的是「采样之后到底有没有用」：入池多少、处置多少、真正进入评测集并参与下一轮体检的又有多少。</div>
+              </div>
+
+              <div class="samples">
+                <div class="sample">
+                  <div class="s-top"><span class="src bad">差评</span><div class="s-q">安置房暂时没房产证怎么交易</div><span class="s-time">3 天前</span></div>
+                  <div class="s-a">若尚未取得不动产权证，交易主要依靠合同约定与备案……（该轮命中 2 个知识块）</div>
+                  <div class="s-kb"><span class="kb">kb_8f21a3 · 安置房交易规范</span><span class="kb">kb_3c9d04 · 合同备案流程</span></div>
+                  <div class="s-acts"><button class="mini-btn">标注回流</button><button class="mini-btn ghost">补知识块</button><button class="mini-btn ghost">忽略</button></div>
+                </div>
+                <div class="sample">
+                  <div class="s-top"><span class="src gap">无引用</span><div class="s-q">统计最近 30 天的会话和轮数</div><span class="s-time">5 小时前</span></div>
+                  <div class="s-a">近 30 天共 1,284 轮问答，其中工作流执行 2,581 次……（该轮未命中任何知识块）</div>
+                  <div class="s-kb"><span class="kb">待选择期望命中的知识块</span></div>
+                  <div class="s-acts"><button class="mini-btn">标注回流</button><button class="mini-btn ghost">入库</button><button class="mini-btn ghost">忽略</button></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- ========== 费用与配额 ========== -->
+            <div class="pane" data-pane="cost">
+              <div class="d-card">
+                <span class="pin" title="新增：预算水位">8</span>
+                <div class="d-card-h">预算水位 <span class="sub">近 30 天 · 阈值 80%</span>
+                  <span class="more">新建配额</span></div>
+                <div class="budget-row">
+                  <div><div class="b-name">租户月度预算</div><div class="b-sub">本租户</div></div>
+                  <div class="b-track"><div class="b-fill" style="width:64%"></div><span class="b-threshold"></span></div>
+                  <div class="b-meta"><b>¥1,284</b> / ¥2,000</div>
+                </div>
+                <div class="budget-row">
+                  <div><div class="b-name">研发部</div><div class="b-sub">部门 · 按月</div></div>
+                  <div class="b-track"><div class="b-fill warn" style="width:91%"></div><span class="b-threshold"></span></div>
+                  <div class="b-meta"><b>¥820</b> / ¥900 <span class="b-state warn">接近上限</span></div>
+                </div>
+                <div class="budget-row">
+                  <div><div class="b-name">外部合作账号</div><div class="b-sub">成员 · 按月</div></div>
+                  <div class="b-track"><div class="b-fill" style="width:27%"></div><span class="b-threshold"></span></div>
+                  <div class="b-meta"><b>¥160</b> / ¥600</div>
+                </div>
+              </div>
+
+              <div class="cost-grid">
+                <div class="d-card">
+                  <div class="d-card-h">每日费用 <span class="sub">近 14 天</span><span class="more">¥ 元</span></div>
+                  <div class="chart" id="costChart"></div>
+                </div>
+                <div class="d-card">
+                  <div class="d-card-h">按模型 <span class="sub">费用占比</span></div>
+                  <div class="donut-flex">
+                    <div id="donutModel"></div>
+                    <div class="lg-list">
+                      <div class="lg-row"><i class="dot" style="background:#2e6be6"></i><div class="lg-t">GPT-4o</div><b>46%</b></div>
+                      <div class="lg-row"><i class="dot" style="background:#36b3f1"></i><div class="lg-t">DeepSeek-V3</div><b>32%</b></div>
+                      <div class="lg-row"><i class="dot" style="background:#f0a132"></i><div class="lg-t">Qwen-Max</div><b>14%</b></div>
+                      <div class="lg-row"><i class="dot" style="background:#a97fe6"></i><div class="lg-t">其他 / 未计价</div><b>8%</b></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="cost-grid2">
+                <div class="d-card">
+                  <div class="d-card-h">按用户 <span class="sub">费用</span><span class="more">查看全部 →</span></div>
+                  <div class="user-bar"><span class="nm">张敏</span><div class="track"><i style="width:100%"></i></div><span class="val">¥428</span></div>
+                  <div class="user-bar"><span class="nm">李哲</span><div class="track"><i style="width:74%"></i></div><span class="val">¥316</span></div>
+                  <div class="user-bar"><span class="nm">王倩</span><div class="track"><i style="width:48%"></i></div><span class="val">¥204</span></div>
+                  <div class="user-bar"><span class="nm">陈骁</span><div class="track"><i style="width:36%"></i></div><span class="val">¥152</span></div>
+                </div>
+                <div class="d-card">
+                  <div class="d-card-h">配额明细 <span class="sub">按台账现算</span></div>
+                  <table class="mini-table">
+                    <thead><tr><th>对象</th><th>周期</th><th>已用</th><th style="text-align:right">上限</th></tr></thead>
+                    <tbody>
+                      <tr><td>研发部</td><td>按月</td><td>¥820</td><td class="money">¥900</td></tr>
+                      <tr><td>外部合作账号</td><td>按月</td><td>¥160</td><td class="money">¥600</td></tr>
+                      <tr><td>本租户</td><td>按月</td><td>¥1,284</td><td class="money">¥2,000</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </main>
+
+        <!-- 详情抽屉 -->
+        <div class="scrim" id="scrim"></div>
+        <div class="drawer" id="traceDrawer">
+          <div class="dw-h">对话执行详情
+            <button class="dw-x" id="drawerClose">×</button>
+          </div>
+          <div class="dw-body">
+            <div class="dw-block">
+              <div class="dw-label">问题</div>
+              <div class="dw-pre">安置房暂时还没有房产证的房子怎么交易</div>
+            </div>
+            <div class="dw-block">
+              <div class="dw-label">回答摘要</div>
+              <div class="dw-pre">若尚未取得不动产权证，交易主要依靠合同约定与备案。建议先核验安置协议、补签书面合同并办理备案……</div>
+            </div>
+            <div class="dw-block">
+              <div class="dw-label">引用来源（2）</div>
+              <div class="src-item"><span class="src-name">安置房交易规范</span><span class="src-id">kb_8f21a3</span></div>
+              <div class="src-item"><span class="src-name">合同备案流程</span><span class="src-id">kb_3c9d04</span></div>
+            </div>
+            <div class="dw-block">
+              <div class="dw-label">运行信息</div>
+              <div class="kv"><span>智能体</span>知识助手</div>
+              <div class="kv"><span>耗时</span>2.8s（机器实际干活）</div>
+              <div class="kv"><span>Token</span>3,842（输入 3,102 / 输出 740）</div>
+              <div class="kv"><span>工具调用</span>search_knowledge × 2</div>
+            </div>
+            <div class="dw-block">
+              <div class="dw-label">用户反馈</div>
+              <div class="dw-pre">👍 好评：引用准确，直接能用来答复客户。</div>
+            </div>
+            <div class="dw-block">
+              <div class="dw-label">可执行动作</div>
+              <div class="s-acts"><button class="mini-btn">加入评估集</button><button class="mini-btn ghost">查看知识块</button><button class="mini-btn ghost">复制 Trace ID</button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="anno">
+      <div class="anno-item"><span class="anno-n">1</span><div><b>健康度总分</b>：由命中率 40% + 引用率 20% + 满意率 30% + 体检 10% 加权，四档色（良好 / 需关注 / 风险）。解决「四个数字等权、看不出好坏」。</div></div>
+      <div class="anno-item"><span class="anno-n">2</span><div><b>全局时间范围与环比</b>：页头统一近 7/30/90 天与「对比上期」，所有卡片联动。总览不再是「全部时间累计值」。</div></div>
+      <div class="anno-item"><span class="anno-n">3</span><div><b>指标卡升级</b>：大数字 + 环比 + 30 天 sparkline + 上期值，趋势方向一眼可见；降的是好事（无命中率）就用正向绿。</div></div>
+      <div class="anno-item"><span class="anno-n">4</span><div><b>趋势与构成</b>：折线/面积看走势，环形看结构，替代原来两组纯文本表格。悬停可看单日明细。</div></div>
+      <div class="anno-item"><span class="anno-n">5</span><div><b>体检条紧凑化</b>：正常时只占一行（56px），下滑才展开指标表；无报告时也只用一行 CTA，不再让空态吃掉首屏。</div></div>
+      <div class="anno-item"><span class="anno-n">6</span><div><b>问题可下钻</b>：热门/无命中榜改成条形榜，点击即带 question 过滤跳到执行记录；无命中的「批量入库」直达知识库。</div></div>
+      <div class="anno-item"><span class="anno-n">7</span><div><b>待办闭环队列</b>：差评、知识缺口、待标注三源合一，带来源标签、就近动作与「本周已闭环 9/29」进度，处置后就地减少。</div></div>
+      <div class="anno-item"><span class="anno-n">8</span><div><b>预算水位</b>：每条配额一根进度条 + 80% 阈值线 + 状态色，替代逐行读 tag；费用页从「报表」变成「仪表盘」。</div></div>
+    </div>
+  </section>
+
+  <!-- ==================== 02 现状诊断 ==================== -->
+  <section>
+    <div class="sec-h"><span class="sec-no">02</span><h2>现状诊断：六个具体问题</h2></div>
+    <p class="sec-lead">
+      基于当前 <code>DashboardPage.vue</code> 与线上截图，问题不在「缺数据」，而在<b>数据的组织方式</b>。
+    </p>
+    <div class="prob-grid">
+      <div class="prob">
+        <div class="prob-n">01</div>
+        <h3>指标等权，判断不了好坏</h3>
+        <p>4 张卡同样式、纯数字、无环比、无目标线。截图里「无命中率 86.1%」与「引用率 13.9%」需要人脑换算才知道是同一件事的两面。且总览口径是全部时间累计，问题会被历史稀释。</p>
+      </div>
+      <div class="prob">
+        <div class="prob-n">02</div>
+        <h3>空态占据首屏</h3>
+        <p>「检索质量自动体检」在无报告时是一张约 200px 的大卡，只显示一句「暂无体检记录」。新部署环境里，首屏近一半是空白。</p>
+      </div>
+      <div class="prob">
+        <div class="prob-n">03</div>
+        <h3>表格承载一切</h3>
+        <p>两组 TOP10 并排，长问题被 <code>ellipsis</code> 截断，无法点击下钻到「这个问题的执行记录」，也不能从问题跳到知识库。看板与动作之间是断开的。</p>
+      </div>
+      <div class="prob">
+        <div class="prob-n">04</div>
+        <h3>闭环碎成三处</h3>
+        <p>差评样本、知识缺口在「总览」，待标注在「采样池」。四个动作（加入评估集 / 补知识块 / 入库 / 标注回流）互不衔接，也看不到「本周处理了多少」。</p>
+      </div>
+      <div class="prob">
+        <div class="prob-n">05</div>
+        <h3>页签命名与心智不符</h3>
+        <p>「采样池」是工程词，业务同学不知道进来要做什么；页签也没有待办计数徽标，有问题时不会有人主动点进去。</p>
+      </div>
+      <div class="prob">
+        <div class="prob-n">06</div>
+        <h3>费用页是报表，不是仪表盘</h3>
+        <p>只有两行数字 + 五张表，没有预算水位线。「接近上限 / 已到顶」要逐行读 tag 才能发现，配额风险无法一眼识别。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== 03 设计原则 ==================== -->
+  <section>
+    <div class="sec-h"><span class="sec-no">03</span><h2>设计原则</h2></div>
+    <p class="sec-lead">四条原则决定后面的所有取舍。</p>
+    <div class="prin-grid">
+      <div class="prin">
+        <div class="prin-i">◔</div>
+        <h3>先判断，后查数</h3>
+        <p>首屏先给结论（健康度与四档色），再给证据。用户不需要先读 20 个数字才知道系统好不好。</p>
+      </div>
+      <div class="prin">
+        <div class="prin-i">↳</div>
+        <h3>每个数字都能下钻</h3>
+        <p>卡片、柱条、状态胶囊都指向「过滤后的明细」。点击成本控制在 1–2 次，且过滤条件可见、可清除。</p>
+      </div>
+      <div class="prin">
+        <div class="prin-i">▤</div>
+        <h3>图形给趋势，表格给证据</h3>
+        <p>趋势、结构、分布用图；精确值、原始样本放表格与抽屉。不是删掉表格，而是把表格降到第二层。</p>
+      </div>
+      <div class="prin">
+        <div class="prin-i">✓</div>
+        <h3>闭环可见，动作就近</h3>
+        <p>问题旁边就是处置按钮；处置后计数、进度、队列实时变化，让「我做的事有没有用」可见。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== 04 信息架构 ==================== -->
+  <section>
+    <div class="sec-h"><span class="sec-no">04</span><h2>信息架构：前后对比</h2></div>
+    <p class="sec-lead">页签数量不变（减少迁移成本），变化发生在层级与顺序。</p>
+    <div class="ba">
+      <div class="ba-panel">
+        <div class="ba-h"><span class="ba-tag now">现状</span>总览 = 数字 + 表格的平铺</div>
+        <div class="flow">
+          <div class="fl">页头：<b>刷新</b>（无时间范围 / 无对比 / 无导出）</div>
+          <div class="arrow">↓</div>
+          <div class="fl">4 张等权指标卡（纯数字）</div>
+          <div class="arrow">↓</div>
+          <div class="fl warn">体检大卡（空态约 200px）</div>
+          <div class="arrow">↓</div>
+          <div class="fl-split">
+            <div class="fl">热门问题表</div>
+            <div class="fl">无命中问题表</div>
+          </div>
+          <div class="arrow">↓</div>
+          <div class="fl">差评样本表（动作：加入评估集 / 补知识块）</div>
+          <div class="arrow">↓</div>
+          <div class="fl">知识库缺口表（动作：入库）</div>
+          <div class="mini-note">「待标注」在另一个页签，闭环断成两半。</div>
+        </div>
+      </div>
+
+      <div class="ba-panel">
+        <div class="ba-h"><span class="ba-tag new">改版</span>总览 = 判断 + 定位 + 处置</div>
+        <div class="flow">
+          <div class="fl new">页头：<b>时间范围 / 对比上期 / 导出 / 数据截至</b><span class="fl-badge">新</span></div>
+          <div class="arrow">↓</div>
+          <div class="fl new">健康度总分 + 4 张趋势指标卡<span class="fl-badge">新</span></div>
+          <div class="arrow">↓</div>
+          <div class="fl new">问答趋势（面积/折线）+ 命中构成（环形）<span class="fl-badge">新</span></div>
+          <div class="arrow">↓</div>
+          <div class="fl-split">
+            <div class="fl">热门问题榜（条形，可下钻）</div>
+            <div class="fl">无命中问题榜（条形，可批量入库）</div>
+          </div>
+          <div class="arrow">↓</div>
+          <div class="fl">体检条（正常 56px；下滑才展开）</div>
+          <div class="arrow">↓</div>
+          <div class="fl new">待办闭环队列（差评 / 缺口 / 待标注三合一）<span class="fl-badge">新</span></div>
+          <div class="mini-note">执行记录 / 采样标注 / 费用与配额：各自带指标条与图形摘要，表格降为明细。</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== 05 功能清单 ==================== -->
+  <section>
+    <div class="sec-h"><span class="sec-no">05</span><h2>功能升级清单</h2></div>
+    <p class="sec-lead">P0 为「首屏可判断 + 闭环可操作」，P1 补齐图形与效率，P2 是运营增强。<b>P0 全部为前端可交付</b>，后端只需补一个带范围的聚合接口。</p>
+    <table class="ftable">
+      <thead>
+        <tr><th class="col-pri">优先级</th><th>模块</th><th>升级项</th><th>说明与价值</th><th>依赖</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><span class="p0">P0</span></td><td><b>全局</b></td><td>时间范围与环比</td><td>页头统一近 7/30/90 天/全部；卡片显示「较上期」。解决总览永远是累计值、看不出变化的问题</td><td><code>/analytics/summary?range=</code></td></tr>
+        <tr><td><span class="p0">P0</span></td><td><b>总览</b></td><td>健康度总分卡</td><td>命中 40% + 引用 20% + 满意 30% + 体检 10%，四档色；点击展开权重与口径说明</td><td>前端计算</td></tr>
+        <tr><td><span class="p0">P0</span></td><td><b>总览</b></td><td>指标卡升级</td><td>大数字 + 环比 + 30 天 sparkline + 上期值；「降是好事」的指标用正向色，避免误读</td><td>趋势数据</td></tr>
+        <tr><td><span class="p0">P0</span></td><td><b>总览</b></td><td>趋势与构成</td><td>折线/面积（问答量 / 有引用 / 无命中）+ 命中构成环形，替代两组纯文本表</td><td>ECharts（已有）</td></tr>
+        <tr><td><span class="p0">P0</span></td><td><b>总览</b></td><td>体检条紧凑化</td><td>正常只占一行；下滑才展开指标表；无报告时改为一行 CTA，不再吃首屏</td><td><code>/eval/last-report</code></td></tr>
+        <tr><td><span class="p0">P0</span></td><td><b>总览</b></td><td>待办闭环队列</td><td>差评 / 缺口 / 待标注三源合一，带来源标签、就近动作、本周闭环进度</td><td>现有 4 个接口聚合</td></tr>
+        <tr><td><span class="p0">P0</span></td><td><b>总览 → 执行记录</b></td><td>问题下钻</td><td>点击 TOP 问题 → 执行记录以 keyword 过滤，过滤条件以 chip 呈现、可清除</td><td>路由 query</td></tr>
+        <tr><td><span class="p1">P1</span></td><td><b>执行记录</b></td><td>指标条 + 每日趋势</td><td>总执行 / 成功率 / P95 耗时 / 无引用占比；柱+线组合，先看健康再看明细</td><td><code>/trace/stats</code></td></tr>
+        <tr><td><span class="p1">P1</span></td><td><b>执行记录</b></td><td>列表可读性</td><td>状态点 + 引用徽标 + 耗时条形化 + 反馈图标；行点击打开详情抽屉</td><td><code>/trace/list</code></td></tr>
+        <tr><td><span class="p1">P1</span></td><td><b>采样标注</b></td><td>漏斗 + 卡片样本</td><td>入池 → 处置 → 回流 → 进体检；样本卡替代表格，长文本可读，动作成组</td><td><code>/trace/pool</code></td></tr>
+        <tr><td><span class="p1">P1</span></td><td><b>费用与配额</b></td><td>预算水位</td><td>每条配额一根进度条 + 80% 阈值线 + 状态色，替代逐行读 tag</td><td><code>/stats/cost</code> <code>/stats/quota</code></td></tr>
+        <tr><td><span class="p1">P1</span></td><td><b>全局</b></td><td>导出与分享</td><td>当前筛选态导出 CSV；复制带 query 的链接，便于贴到群里对齐</td><td>前端</td></tr>
+        <tr><td><span class="p1">P1</span></td><td><b>全局</b></td><td>数据新鲜度</td><td>页头显示「数据截至」；5 分钟自动刷新，可暂停；刷新不闪整页</td><td>前端</td></tr>
+        <tr><td><span class="p2">P2</span></td><td><b>告警</b></td><td>阈值规则</td><td>无命中率 &gt; 15%、满意率 &lt; 80%、体检下滑时推送飞书 / 通知中心</td><td>通知中心</td></tr>
+        <tr><td><span class="p2">P2</span></td><td><b>个性化</b></td><td>保存视图 / 周报</td><td>保存筛选与卡片顺序；每周一推送「健康度 + 待办 + 费用」摘要</td><td>后端</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ==================== 06 关键交互 ==================== -->
+  <section>
+    <div class="sec-h"><span class="sec-no">06</span><h2>三条关键交互</h2></div>
+    <p class="sec-lead">改版后用户最常走的三条路径，点击次数都压到 3 次以内。</p>
+    <div class="inter-grid">
+      <div class="inter">
+        <h3>① 指标 → 证据</h3>
+        <p>点任意指标卡，右侧抽屉展开：指标定义、分母口径、30 天趋势、关联样本列表。</p>
+        <div class="inter-flow">
+          <span class="if-box">指标卡</span><span class="if-arrow">→</span>
+          <span class="if-box accent">抽屉：趋势 + 样本</span><span class="if-arrow">→</span>
+          <span class="if-box">跳明细</span>
+        </div>
+      </div>
+      <div class="inter">
+        <h3>② 问题 → 执行记录</h3>
+        <p>点热门/无命中的某条问题，切到执行记录并预置 keyword；顶部出现可清除的过滤 chip。</p>
+        <div class="inter-flow">
+          <span class="if-box">问题榜</span><span class="if-arrow">→</span>
+          <span class="if-box accent">执行记录 · keyword</span><span class="if-arrow">→</span>
+          <span class="if-box">详情抽屉</span>
+        </div>
+      </div>
+      <div class="inter">
+        <h3>③ 待办 → 处置 → 复测</h3>
+        <p>在队列里直接加入评估集 / 补知识块 / 入库 / 标注；计数与进度即时更新，下一次体检自动覆盖。</p>
+        <div class="inter-flow">
+          <span class="if-box">待办项</span><span class="if-arrow">→</span>
+          <span class="if-box accent">处置</span><span class="if-arrow">→</span>
+          <span class="if-box">回流评测集</span><span class="if-arrow">→</span>
+          <span class="if-box">体检对比</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== 07 落地 ==================== -->
+  <section>
+    <div class="sec-h"><span class="sec-no">07</span><h2>落地建议</h2></div>
+    <p class="sec-lead">不改技术选型，按区块拆组件；后端只加一个<b>带时间范围与上期对比</b>的聚合接口即可点亮 P0。</p>
+    <div class="impl">
+      <div class="impl-card">
+        <h3>前端：按区块拆组件</h3>
+        <div class="comp-list">
+          <div><code>HealthScoreCard.vue</code> 健康度环 + 权重说明</div>
+          <div><code>MetricCard.vue</code> 指标 + 环比 + sparkline（复用 4 次）</div>
+          <div><code>TrendPanel.vue</code> ECharts 封装（折线 / 面积 / 环形）</div>
+          <div><code>TopProblemList.vue</code> 条形榜 + 点击下钻</div>
+          <div><code>CheckupStrip.vue</code> 体检条（正常 / 下滑两态）</div>
+          <div><code>ActionQueue.vue</code> 三源待办 + 筛选 + 动作</div>
+          <div>复用现有 <code>a-drawer</code> / <code>a-table</code> / <code>--app-*</code> token；ECharts 6.1 已在依赖中</div>
+        </div>
+      </div>
+
+      <div class="impl-card">
+        <h3>后端：一个聚合接口</h3>
+        <pre class="json"><span class="k">GET</span> /analytics/summary?range=30&amp;compare=1
+
+{
+  <span class="k">"total"</span>: <span class="n">1284</span>,
+  <span class="k">"noHitRate"</span>: <span class="n">8.4</span>,
+  <span class="k">"citationRate"</span>: <span class="n">91.2</span>,
+  <span class="k">"feedback"</span>: { <span class="k">"likeRate"</span>: <span class="n">92.4</span>, <span class="k">"likes"</span>: <span class="n">186</span>, <span class="k">"dislikes"</span>: <span class="n">15</span> },
+  <span class="k">"prev"</span>: { <span class="k">"total"</span>: <span class="n">1142</span>, <span class="k">"noHitRate"</span>: <span class="n">10.5</span>, <span class="k">"citationRate"</span>: <span class="n">86.9</span> },
+  <span class="k">"health"</span>: { <span class="k">"score"</span>: <span class="n">82</span>, <span class="k">"status"</span>: <span class="s">"good"</span> },
+  <span class="k">"trend"</span>: [{ <span class="k">"date"</span>: <span class="s">"2026-10-12"</span>, <span class="k">"total"</span>: <span class="n">38</span>, <span class="k">"noHit"</span>: <span class="n">5</span>, <span class="k">"cited"</span>: <span class="n">30</span> }]
+}</pre>
+      </div>
+
+      <div class="impl-card">
+        <h3>分期</h3>
+        <div class="comp-list">
+          <div><span class="p0">P0</span> 时间范围 + 健康度 + 指标卡 + 趋势/构成 + 体检条 + 待办队列 + 下钻（哪项先上都能独立交付）</div>
+          <div><span class="p1">P1</span> 执行记录指标条与趋势、采样漏斗、预算水位、导出与自动刷新</div>
+          <div><span class="p2">P2</span> 阈值告警、保存视图、周报订阅（依赖通知中心）</div>
+        </div>
+      </div>
+
+      <div class="impl-card">
+        <h3>验收标准</h3>
+        <div class="check">
+          <div><i>✓</i><span>1080 × 800 首屏不滚动即可判断健康度</span></div>
+          <div><i>✓</i><span>任一指标 ≤ 2 次点击到达原始样本</span></div>
+          <div><i>✓</i><span>待办处置 ≤ 3 次点击，计数即时更新</span></div>
+          <div><i>✓</i><span>空数据 / 加载 / 异常三态齐全，空态不再占首屏</span></div>
+          <div><i>✓</i><span>浅色与深色主题均通过正文 4.5:1 对比度</span></div>
+        </div>
+      </div>
+    </div>
+    <p class="foot-note">
+      注：效果图为静态视觉稿，数据为示意数据；配色、圆角、字号均取自现有 <code>web/src/views/app.css</code> 的 <code>--app-*</code> 变量，落地时直接复用，不做二次设计。
+    </p>
+  </section>
+
+</div>
+
+<script>
+/* ==================== 示意数据 ==================== */
+const C = { accent:'#2e6be6', ok:'#3b8f4e', warn:'#c77c14', danger:'#d4552e', faint:'#98a0aa' }
+
+const DAYS = Array.from({length:30}, (_,i) => {
+  const d = new Date(2026, 9, 12 + i) // 2026-10-12 → 2026-11-10
+  return (d.getMonth() + 1) + '-' + d.getDate()
+})
+const TOTAL = [38,42,35,48,52,44,31,36,41,55,61,49,34,39,45,58,66,52,37,43,47,60,69,55,40,46,50,63,71,57]
+const NOHIT = [5,6,4,7,8,6,4,5,5,7,8,6,4,5,6,7,9,7,5,5,6,8,9,7,5,6,6,8,9,7]
+const CITED = [30,33,29,39,42,36,25,29,34,45,50,40,28,32,37,48,54,43,30,35,38,49,56,45,33,37,41,51,58,47]
+
+const TD = Array.from({length:14}, (_,i) => {
+  const d = new Date(2026, 9, 28 + i)
+  return (d.getMonth() + 1) + '-' + d.getDate()
+})
+const TRUN = [168,192,151,204,238,176,132,158,186,221,262,198,149,171]
+const TOK  = [96.1,96.8,95.2,97.4,98.1,96.9,97.2,98.4,96.6,97.8,98.6,97.1,96.4,97.9]
+const COST = [42,55,48,61,72,58,44,51,63,70,82,66,57,68]
+
+/* ==================== 图表工具（纯 SVG） ==================== */
+function spark(id, data, color){
+  const host = document.getElementById(id)
+  if (!host) return
+  const W = 100, H = 30, pad = 2
+  const mx = Math.max(...data), mn = Math.min(...data)
+  const X = i => pad + i * (W - pad * 2) / (data.length - 1)
+  const Y = v => pad + (1 - (v - mn) / ((mx - mn) || 1)) * (H - pad * 2)
+  const d = data.map((v,i) => (i ? 'L' : 'M') + X(i).toFixed(1) + ',' + Y(v).toFixed(1)).join(' ')
+  const area = d + ' L' + X(data.length - 1).toFixed(1) + ',' + H + ' L' + X(0).toFixed(1) + ',' + H + ' Z'
+  const gid = 'g-' + id
+  host.innerHTML =
+    '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none">' +
+      '<defs><linearGradient id="' + gid + '" x1="0" y1="0" x2="0" y2="1">' +
+        '<stop offset="0" stop-color="' + color + '" stop-opacity=".20"/>' +
+        '<stop offset="1" stop-color="' + color + '" stop-opacity="0"/>' +
+      '</linearGradient></defs>' +
+      '<path d="' + area + '" fill="url(#' + gid + ')"/>' +
+      '<path d="' + d + '" fill="none" stroke="' + color + '" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>' +
+    '</svg>'
+}
+
+function lineChart(host, { labels, series, width = 860, height = 238, yMax }){
+  if (!host || host.dataset.done) return
+  host.dataset.done = '1'
+  const p = { t: 16, r: 14, b: 26, l: 36 }
+  const rawMax = Math.max(...series.flatMap(s => s.data))
+  const max = yMax || Math.max(20, Math.ceil(rawMax * 1.1 / 20) * 20)
+  const n = labels.length
+  const X = i => p.l + i * (width - p.l - p.r) / (n - 1)
+  const Y = v => p.t + (1 - v / max) * (height - p.t - p.b)
+  let grid = ''
+  for (let i = 0; i <= 4; i++){
+    const yy = p.t + i * (height - p.t - p.b) / 4
+    const val = Math.round(max * (1 - i / 4))
+    grid += '<line x1="' + p.l + '" x2="' + (width - p.r) + '" y1="' + yy + '" y2="' + yy + '" stroke="#eef1f5" stroke-width="1"/>'
+    grid += '<text x="' + (p.l - 7) + '" y="' + (yy + 3.5) + '" text-anchor="end" font-size="9.5" fill="#98a0aa">' + val + '</text>'
+  }
+  let paths = ''
+  series.forEach(s => {
+    const pts = s.data.map((v,i) => [X(i), Y(v)])
+    const d = pts.map((pt,i) => (i ? 'L' : 'M') + pt[0].toFixed(1) + ',' + pt[1].toFixed(1)).join(' ')
+    if (s.fill){
+      const area = d + ' L' + pts[n-1][0].toFixed(1) + ',' + (height - p.b) +
+                   ' L' + pts[0][0].toFixed(1) + ',' + (height - p.b) + ' Z'
+      paths += '<path d="' + area + '" fill="url(#grad-' + host.id + ')"/>'
+    }
+    paths += '<path d="' + d + '" fill="none" stroke="' + s.color + '" stroke-width="' + (s.fill ? 2 : 1.6) +
+             '" stroke-linejoin="round" stroke-linecap="round"/>'
+    const last = pts[n-1]
+    paths += '<circle cx="' + last[0].toFixed(1) + '" cy="' + last[1].toFixed(1) + '" r="2.8" fill="#fff" stroke="' +
+             s.color + '" stroke-width="1.8"/>'
+  })
+  let xl = ''
+  labels.forEach((l,i) => {
+    if (i % 5 === 0 || i === n - 1){
+      const anchor = i === 0 ? 'start' : (i === n - 1 ? 'end' : 'middle')
+      xl += '<text x="' + X(i) + '" y="' + (height - 7) + '" text-anchor="' + anchor +
+            '" font-size="9.5" fill="#98a0aa">' + l + '</text>'
+    }
+  })
+  host.innerHTML =
+    '<svg viewBox="0 0 ' + width + ' ' + height + '" preserveAspectRatio="xMidYMid meet">' +
+      '<defs><linearGradient id="grad-' + host.id + '" x1="0" y1="0" x2="0" y2="1">' +
+        '<stop offset="0" stop-color="' + C.accent + '" stop-opacity=".16"/>' +
+        '<stop offset="1" stop-color="' + C.accent + '" stop-opacity="0"/>' +
+      '</linearGradient></defs>' + grid + paths + xl +
+    '</svg>'
+}
+
+function donut(host, parts, big, small){
+  if (!host || host.dataset.done) return
+  host.dataset.done = '1'
+  const R = 52, CC = 2 * Math.PI * R
+  const total = parts.reduce((a,b) => a + b.v, 0)
+  let off = 0, arcs = ''
+  parts.forEach(pt => {
+    const len = pt.v / total * CC
+    arcs += '<circle cx="70" cy="70" r="' + R + '" fill="none" stroke="' + pt.color + '" stroke-width="15" ' +
+            'stroke-dasharray="' + Math.max(len - 2, 0) + ' ' + (CC - len + 2) + '" ' +
+            'stroke-dashoffset="' + (-off) + '" transform="rotate(-90 70 70)" stroke-linecap="round"/>'
+    off += len
+  })
+  host.innerHTML =
+    '<svg viewBox="0 0 140 140" width="128" height="128">' + arcs +
+      '<text x="70" y="68" text-anchor="middle" font-size="' + (big.length > 4 ? 17 : 21) + '" font-weight="600" fill="#1f2329">' + big + '</text>' +
+      '<text x="70" y="85" text-anchor="middle" font-size="9.5" fill="#98a0aa">' + small + '</text>' +
+    '</svg>'
+}
+
+function barLine(host){
+  if (!host || host.dataset.done) return
+  host.dataset.done = '1'
+  const W = 880, H = 186, p = { t: 16, r: 40, b: 24, l: 30 }
+  const max = Math.max(...TRUN) * 1.18
+  const step = (W - p.l - p.r) / TRUN.length
+  const bw = Math.min(step * 0.46, 18)
+  let bars = '', grid = ''
+  for (let i = 0; i <= 4; i++){
+    const yy = p.t + i * (H - p.t - p.b) / 4
+    grid += '<line x1="' + p.l + '" x2="' + (W - p.r) + '" y1="' + yy + '" y2="' + yy + '" stroke="#eef1f5"/>'
+    grid += '<text x="' + (W - p.r + 7) + '" y="' + (yy + 3) + '" font-size="9" fill="#98a0aa">' + (100 - i * 2) + '%</text>'
+  }
+  TRUN.forEach((v,i) => {
+    const x = p.l + (i + 0.5) * step
+    const h = (v / max) * (H - p.t - p.b)
+    const y = H - p.b - h
+    bars += '<rect x="' + (x - bw / 2).toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + bw + '" height="' + h.toFixed(1) +
+            '" rx="2.5" fill="#dbe6fb"/>'
+    bars += '<text x="' + x.toFixed(1) + '" y="' + (H - 7) + '" text-anchor="middle" font-size="8.5" fill="#98a0aa">' +
+            (i % 2 === 0 ? TD[i] : '') + '</text>'
+  })
+  const Y2 = v => p.t + (1 - (v - 92) / 8) * (H - p.t - p.b)
+  const d = TOK.map((v,i) => {
+    const x = p.l + (i + 0.5) * step
+    return (i ? 'L' : 'M') + x.toFixed(1) + ',' + Y2(v).toFixed(1)
+  }).join(' ')
+  host.innerHTML =
+    '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="xMidYMid meet">' +
+      grid + bars +
+      '<path d="' + d + '" fill="none" stroke="' + C.accent + '" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>' +
+    '</svg>'
+}
+
+/* ==================== 分页渲染 ==================== */
+function renderOverview(){
+  spark('sp1', [28,34,31,40,44,39,46,52,48,57], C.accent)
+  spark('sp2', [12,11,13,10,9,11,8,8,7,6], C.ok)
+  spark('sp3', [82,84,83,86,88,87,89,90,90,91], C.accent)
+  spark('sp4', [88,89,88,90,91,90,91,92,92,92], C.ok)
+  lineChart(document.getElementById('trendChart'), {
+    labels: DAYS,
+    series: [
+      { color: C.accent, fill: true, data: TOTAL },
+      { color: C.ok, data: CITED },
+      { color: C.warn, data: NOHIT }
+    ]
+  })
+  donut(document.getElementById('donutHit'), [
+    { v: 91.6, color: C.accent },
+    { v: 8.4, color: '#e0a44a' }
+  ], '1,284', '近 30 天')
+}
+
+function renderTrace(){
+  spark('t1', [120,140,132,160,158,170,165,182,178,196], C.accent)
+  spark('t2', [95.1,95.8,94.9,96.4,96.9,96.2,96.8,97.1,96.6,96.2], C.ok)
+  spark('t3', [5.4,5.1,5.3,4.9,4.6,4.8,4.5,4.4,4.3,4.2], C.ok)
+  spark('t4', [12,11,10.5,10,9.6,9.2,9,8.8,8.6,8.4], C.ok)
+  barLine(document.getElementById('traceChart'))
+}
+
+function renderCost(){
+  lineChart(document.getElementById('costChart'), {
+    labels: TD,
+    series: [{ color: C.accent, fill: true, data: COST }],
+    height: 206
+  })
+  donut(document.getElementById('donutModel'), [
+    { v: 46, color: '#2e6be6' },
+    { v: 32, color: '#36b3f1' },
+    { v: 14, color: '#f0a132' },
+    { v: 8, color: '#a97fe6' }
+  ], '¥1,284', '近 30 天')
+}
+
+/* ==================== 交互 ==================== */
+const renderers = { overview: renderOverview, trace: renderTrace, pool: null, cost: renderCost }
+
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    const key = tab.dataset.tab
+    document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', t === tab))
+    document.querySelectorAll('.pane').forEach(p => p.classList.toggle('on', p.dataset.pane === key))
+    if (renderers[key]) renderers[key]()
+  })
+})
+
+// 详情抽屉
+const drawer = document.getElementById('traceDrawer')
+const scrim = document.getElementById('scrim')
+document.querySelectorAll('[data-open]').forEach(row => {
+  row.addEventListener('click', () => {
+    drawer.classList.add('show')
+    scrim.classList.add('show')
+  })
+})
+function closeDrawer(){ drawer.classList.remove('show'); scrim.classList.remove('show') }
+document.getElementById('drawerClose').addEventListener('click', closeDrawer)
+scrim.addEventListener('click', closeDrawer)
+
+// 待办来源筛选
+document.querySelectorAll('.aq-chip').forEach(chip => {
+  chip.addEventListener('click', () => {
+    document.querySelectorAll('.aq-chip').forEach(c => c.classList.toggle('on', c === chip))
+    const g = chip.dataset.g
+    document.querySelectorAll('.aq-row').forEach(row => {
+      row.style.display = (g === 'all' || row.dataset.g === g) ? 'flex' : 'none'
+    })
+  })
+})
+
+// 时间范围切换（仅切换视觉状态与文案）
+document.querySelectorAll('.range-seg button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.range-seg button').forEach(b => b.classList.toggle('on', b === btn))
+    document.querySelectorAll('.range-label').forEach(el => { el.textContent = btn.textContent })
+  })
+})
+
+// 标注开关
+document.getElementById('pinToggle').addEventListener('change', e => {
+  document.body.classList.toggle('pins-off', !e.target.checked)
+})
+
+// 初始渲染总览
+renderOverview()
+</script>
+</body>
+</html>
