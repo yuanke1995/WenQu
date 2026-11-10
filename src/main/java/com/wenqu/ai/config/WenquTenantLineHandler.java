@@ -54,7 +54,10 @@ public class WenquTenantLineHandler implements TenantLineHandler {
             // 归属租户记在行上、由令牌校验时装载——见 c_ai_service_account.tenant_id）
             "c_ai_service_account",
             "c_ai_provider", "c_ai_model", "c_ai_config", "c_ai_image_desc",
-            "c_ai_market_item", "c_ai_market_install");
+            "c_ai_market_item", "c_ai_market_install",
+            // 市场版本历史与安装流水：同样平台级共享，不按租户隔离；
+            // 漏登记会被 SchemaMigrator/租户拦截注入 tenant_id（表里没有这一列）
+            "c_ai_market_version", "c_ai_market_install_log");
 
     @Override
     public Expression getTenantId() {

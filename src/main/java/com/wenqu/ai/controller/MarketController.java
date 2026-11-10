@@ -50,17 +50,27 @@ public class MarketController {
     @Operation(summary = "市场列表",
             description = "上架中的物品 + 我上架的（含已下架）；每条带 installed/hasUpdate/mine 徽标。"
                     + "counts 给页签打标：byType 按技能/应用模板/工作流各一份、mine 跨类型，"
-                    + "与列表同关键词标签条件、不受分页影响")
+                    + "与列表同关键词标签条件、不受分页影响。"
+                    + "sort=update_time|install_count；page 从 1 起，pageSize 默认 24、上限 100")
     @Permission("market:read")
     @GetMapping("/list")
     public ResultJson list(@RequestParam(value = "type", required = false) String type,
                            @RequestParam(value = "keyword", required = false) String keyword,
                            @RequestParam(value = "tag", required = false) String tag,
                            @Parameter(description = "true=只看我上架的（管理视图）")
-                           @RequestParam(value = "mine", required = false, defaultValue = "false") boolean mine) {
+                           @RequestParam(value = "mine", required = false, defaultValue = "false") boolean mine,
+                           @Parameter(description = "update_time=最新（默认）、install_count=最多安装")
+                           @RequestParam(value = "sort", required = false) String sort,
+                           @RequestParam(value = "page", required = false, defaultValue = "1") int page,
+                           @RequestParam(value = "pageSize", required = false, defaultValue = "24") int pageSize) {
         String uid = uid();
-        List<Map<String, Object>> items = market.list(uid, type, keyword, tag, mine);
-        return ResultJson.ok(Map.of("items", items, "counts", market.counts(uid, keyword, tag)));
+        List<Map<String, Object>> items = market.list(uid, type, keyword, tag, mine, sort, page, pageSize);
+        return ResultJson.ok(Map.of(
+                "items", items,
+                "total", market.total(uid, type, keyword, tag, mine),
+                "page", Math.max(1, page),
+                "pageSize", pageSize <= 0 ? 24 : Math.min(pageSize, 100),
+                "counts", market.counts(uid, keyword, tag)));
     }
 
     @Operation(summary = "物品详情", description = "元信息 + 详细介绍 + SKILL.md 正文预览（装前可审阅模型将读到的原文）")
@@ -68,6 +78,49 @@ public class MarketController {
     @GetMapping("/{id}")
     public ResultJson detail(@PathVariable("id") String id) {
         return ResultJson.ok(market.detail(uid(), id));
+    }
+
+    @Operation(summary = "我安装的", description = "安装记录 join 现存条目；按最近安装时间倒序；MCP 只展示「已在 MCP」，不参与更新")
+    @Permission("market:read")
+    @GetMapping("/installed")
+    public ResultJson installed(@RequestParam(value = "type", required = false) String type,
+                                @RequestParam(value = "keyword", required = false) String keyword,
+                                @RequestParam(value = "page", required = false, defaultValue = "1") int page,
+                                @RequestParam(value = "pageSize", required = false, defaultValue = "24") int pageSize) {
+        String uid = uid();
+        Map<String, Object> out = new java.util.LinkedHashMap<>(market.installed(uid, type, keyword, page, pageSize));
+        // 已装视图复用页签角标与汇总条：counts 走全量（不带关键词），避免筛选后角标抖动
+        out.put("counts", market.counts(uid, null, null));
+        return ResultJson.ok(out);
+    }
+
+    @Operation(summary = "可更新清单", description = "已装且内容指纹变化、条目仍上架中；MCP 与已下架条目不参与。侧栏红点与批量更新共用")
+    @Permission("market:read")
+    @GetMapping("/updates")
+    public ResultJson updates() {
+        return ResultJson.ok(market.updates(uid()));
+    }
+
+    @Operation(summary = "版本历史", description = "返回全部历史（最多 20 条）+ 已装版本之后的新说明（newItems）；按内容指纹切区间，不看版本号")
+    @Permission("market:read")
+    @GetMapping("/{id}/versions")
+    public ResultJson versions(@PathVariable("id") String id) {
+        return ResultJson.ok(market.versions(uid(), id));
+    }
+
+    @Operation(summary = "编辑展示信息", description = "body: {summary, description?, tags?}；只改卡片文案，不动内容、版本与指纹，不产生新版本")
+    @Permission("market:publish")
+    @PutMapping("/{id}/meta")
+    public ResultJson updateMeta(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
+        return ResultJson.ok(market.updateMeta(uid(), id,
+                text(body.get("summary")), text(body.get("description")), text(body.get("tags"))), "已保存");
+    }
+
+    @Operation(summary = "我的市场数据", description = "近 N 天安装趋势 + 最近安装人（仅本人上架内容；days 默认 30，范围 7-90）")
+    @Permission("market:read")
+    @GetMapping("/mine/stats")
+    public ResultJson myStats(@RequestParam(value = "days", required = false, defaultValue = "30") int days) {
+        return ResultJson.ok(market.myStats(uid(), days));
     }
 
     @Operation(summary = "下载物品包", description = "快照包（skill=zip、agent/workflow=JSON；装前留档/离线分发）；可见即可下")
@@ -103,7 +156,7 @@ public class MarketController {
         Map<String, Object> item = market.publish(uid(),
                 type, text(body.get("ref")),
                 text(body.get("summary")), text(body.get("description")),
-                text(body.get("tags")), text(body.get("version")));
+                text(body.get("tags")), text(body.get("version")), text(body.get("releaseNote")));
         return ResultJson.ok(item, "已上架");
     }
 

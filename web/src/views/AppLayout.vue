@@ -85,6 +85,8 @@
             <component :is="iconOf(m.icon)" />
             <span v-if="!collapsed">{{ m.name }}</span>
             <span v-if="!collapsed && m.path === '/tenants' && tenantPending > 0" class="nav-pending-badge">{{ tenantPending }}</span>
+            <!-- 市场：可更新计数红点（安装/更新后由市场页失效，不做轮询） -->
+            <span v-if="!collapsed && m.path === '/market' && marketUpdateCount > 0" class="nav-pending-badge">{{ marketUpdateCount }}</span>
             <span v-if="!collapsed && menuPending(m)" class="app-pill nav-pending">待配置</span>
             <i v-if="menuPending(m)" class="nav-dot"></i>
           </button>
@@ -598,6 +600,7 @@ import NotificationList from '../components/notification/NotificationList.vue'
 import { themeState, toggleTheme } from '../utils/theme'
 import { authUser, ensureAuth, isAdminSync, isSuperadminSync, clearAuth, tenantStateSync } from '../utils/auth'
 import { localExecutorId, setLocalExecutorId } from '../utils/localExecutor'
+import { marketUpdateCount, refreshMarketUpdates } from '../utils/marketUpdates'
 import { chatDone, chatReady, defaultReady, embeddingReady, pendingCount, refreshSetupGuide, setupGuide,
          advPendingCount } from '../utils/setupGuide'
 import { sessionStore, loadSessions, loadTasks, loadSpaceMore, collapseSpace, reloadSpace, toggleArchived, visibleSessions, chatStreams, procSessions, startProcBadgePoll, stopProcBadgePoll, NO_SPACE_KEY, startSessionTabSync, stopSessionTabSync, resetSessionStore } from './store'
@@ -1848,6 +1851,7 @@ onMounted(async () => {
   navMenus.value = sidebarMenusOf(info && info.menus)
   refreshTenantPending()
   tenantPendingTimer = setInterval(refreshTenantPending, 60_000)
+  refreshMarketUpdates()
   loadSessions()
   loadTasks(true)  // 「任务」分区 + 会话行时钟标记（与工作区取数并行，不互相阻塞）
   startProcBadgePoll()  // 会话行的「还背着沙盒进程」标记：60s 一轮，没有活容器时后端一次网络都不发

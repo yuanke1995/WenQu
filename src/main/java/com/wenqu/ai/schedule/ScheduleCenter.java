@@ -132,6 +132,8 @@ public class ScheduleCenter {
     private final com.wenqu.ai.service.webhook.AgentWebhookService agentWebhookService;
     /** 数据看板：阈值告警与周报（P2 运营增强，只读聚合 + 站内通知） */
     private final com.wenqu.ai.service.DashboardService dashboardService;
+    /** 市场安装流水清理（固定保留 180 天） */
+    private final com.wenqu.ai.service.MarketService marketService;
 
     /** 仅负责计时（daemon，随 JVM 退出），任务体都在 ThreadPoolManager 里跑 */
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -162,7 +164,8 @@ public class ScheduleCenter {
                           ScheduleRunLogMapper scheduleRunLogMapper,
                           com.wenqu.ai.service.OpsCheckupService opsCheckupService,
                           com.wenqu.ai.service.webhook.AgentWebhookService agentWebhookService,
-                          com.wenqu.ai.service.DashboardService dashboardService) {
+                          com.wenqu.ai.service.DashboardService dashboardService,
+                          com.wenqu.ai.service.MarketService marketService) {
         this.configService = configService;
         this.configSchemaService = configSchemaService;
         this.keywordIndexService = keywordIndexService;
@@ -187,6 +190,7 @@ public class ScheduleCenter {
         this.opsCheckupService = opsCheckupService;
         this.agentWebhookService = agentWebhookService;
         this.dashboardService = dashboardService;
+        this.marketService = marketService;
         this.auditService = auditService;
     }
 
@@ -274,6 +278,13 @@ public class ScheduleCenter {
                 this::cleanupIntervalMs,
                 () -> false,
                 () -> auditService.purgeExpired());
+
+        // 市场安装流水清理：作者趋势/最近安装人只读最近 180 天；固定保留期，不清理就会随安装次数无限增长
+        register("市场安装流水清理", "删除超过 180 天的市场安装流水（固定保留期）",
+                "cleanup.intervalMs",
+                this::cleanupIntervalMs,
+                () -> false,
+                () -> marketService.cleanupInstallLogs());
 
         // 系统巡检：后台按配置节拍跑一次（逐租户绑定，登录安全态势才看得到各租户的锁定账号）。
         // 报告落库后，趋势、历史与 fail 告警都从这里长出来；手动「立即巡检」不受这个间隔影响。

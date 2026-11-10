@@ -1,173 +1,378 @@
-# 市场（Marketplace）UI/UX 与功能升级方案（先出方案，确认后再写代码）
+# 市场 UI/UX 与功能升级方案（v2）
+
+> 2026-11-10 重写。效果图：`design/mockups/market-upgrade/market-upgrade.html`（11 屏，Chromium 实机渲染校验）。
+> 本版所有现状结论均按当前代码重新核对，修正了初版的四处不成立前提（见 §0.2）。
+> **本阶段只出方案与效果图，不改业务代码**；确认后再按 §8 分期实施。
 
 ## 0. 结论先行
 
+### 0.1 一句话主张
+
+把市场从「上架动作的集合」收敛成三件事：**一眼看到有内容的东西（发现）→ 装过的东西能回看、能更新（闭环）→ 装之前看得懂里面是什么（决策）**。
+
 | 项 | 结论 |
 |---|---|
-| **本次第一步** | 产出本方案 + `design/mockups/market-upgrade/market-upgrade.html`（现状对照 + 6 屏高保真效果图），**这一步不写业务代码** |
-| **核心主张** | 把市场从「上架动作的集合」升级为「发现 → 安装 → 跟踪更新 → 反馈」的**闭环运营台**：默认页有东西看、搜索跨类型、装过的能回看、更新有说明、详情看得懂 |
-| **最大缺口** | 没有「我安装的」视图，也没有更新聚合入口——安装记录表自己声明「不是已装清单」（[MarketInstall.java](file:///Users/wangxi/workspace/WenQu/src/main/java/com/wenqu/ai/model/MarketInstall.java#L14)），用户装完就断线，「有更新」只能逐页签肉眼找 |
-| **范围** | 市场页五个页签的列表/搜索/排序/分页、详情弹窗、上架与我的上架管理、更新提示链路、侧边栏市场入口徽标；不动「安装即复制」核心语义 |
-| **不做** | 不引入新视觉体系（沿用 `web/src/views/app.css` 令牌）；不做跨租户/对外分享市场；不做付费分发；不改权限边界（`market:read/publish/install` + 资源级判定不变） |
-| **后端最小改动** | ① list 增排序/分页参数 ② 已装清单与 updates 聚合查询 ③ 版本历史表 + 发布说明 ④ 元信息编辑端点 ⑤ icon/category 可选字段 |
-| **默认推荐** | 分四期：一期纯前端体验修复（F1-F4）；二期安装闭环（F5-F7）；三期详情结构化与作者运营（F8-F10）；四期反馈与精选（F11-F12） |
+| 范围 | 市场页 6 个页签、全局搜索与筛选、卡片、详情、上架/重新上架、我的上架；侧栏市场入口的更新计数 |
+| 核心新增 | 「我安装的」页签 + 更新聚合 + 批量更新 + 版本说明/版本历史 + 详情结构化预览 + 元信息独立编辑 |
+| 不动 | 「安装即复制」语义、内容指纹判更新、引用按权限裁剪 + warnings、权限点与资源级判定、市场平台级共享边界 |
+| 后端改动 | list 增排序分页；新增 installed / updates / versions / meta 四个端点；publish 增发布说明；新增 `c_ai_market_version` 表 |
+| 前端改动 | 市场页重构 + 4 个新弹窗/面板 + 上架弹窗扩展 + FlowEditor 只读 `dsl` 入参 + 侧栏徽标 |
+| 分期 | 一期 P0 纯体验与零/小后端（6 项）；二期 P1 安装闭环（3 项）；三期 P1 详情结构化（2 项）；四期 P2 作者运营（2 项，含一个待拍板的数据表） |
+
+### 0.2 本版与初版的差异（按代码纠正）
+
+| # | 初版假设 | 当前代码事实 | 本版处理 |
+|---|---|---|---|
+| 1 | 「我的上架」可做 30 天安装趋势 | 安装台账每次安装是**先删后插**（`MarketService.java` finishInstall），只留一条最新记录，没有时间序列；`c_ai_market_install.update_time` 也被重置 | 趋势改为 P2，前置一张追加型安装日志表；不画没有数据源的图 |
+| 2 | 「有更新」对所有类型通用 | MCP 安装走 `installMcp`：同名同址直接拒绝、同名异址拒绝覆盖，**根本没有更新动作** | 「我安装的」与更新聚合**排除 MCP**；MCP 只展示「已在 MCP」 |
+| 3 | 新增版本表直接建表即可 | 市场两张表在 `WenquTenantLineHandler` 的 `GLOBAL_TABLES` 里（平台级共享），漏登记会被注入 `tenant_id` 导致 SQL 失败 | 新表必须同步进 `GLOBAL_TABLES`，并在验收里单列 |
+| 4 | 已装版本要后端补字段 | `view()` 已经下发 `installedVersion`，前端没消费 | 一期零后端：卡片/详情直接显示「已装 v2.3」 |
+| 5 | 标签 chips 要新接口 | list/counts 早已支持 `tag` 参数且 counts 会带同一条件 | 一期前端接通即可，不新增接口 |
+| 6 | 详情里「能力」和「介绍」并列 | 能力摘要属于「内容」页签的一种类型视图 | 详情页签固定为 **介绍 / 内容 / 版本历史**，内容按类型切换 |
 
 ---
 
-## 1. 现状诊断（基于代码与截图，非猜测）
+## 1. 现状诊断（代码事实）
 
-### 1.1 现状截图
-
-用户截图所示：默认落在「技能 0」空页签，而「工作流 3」「应用模板 1」有内容；搜索框、刷新、上架按钮均在页头。
-
-### 1.2 代码事实
+### 1.1 代码证据
 
 | 编号 | 现状 | 证据 |
 |---|---|---|
-| M1 | 默认页签硬编码为 `skill`——技能为空时首屏就是空态，用户第一眼看到「这个页签还是空的」，而不是市场里已有的 4 件物品 | [MarketplacePage.vue](file:///Users/wangxi/workspace/WenQu/web/src/views/MarketplacePage.vue#L253-L256) |
-| M2 | 搜索只作用于当前页签（`load()` 把 `type=tab` 一起传），跨类型找东西要逐个页签试 | [MarketplacePage.vue](file:///Users/wangxi/workspace/WenQu/web/src/views/MarketplacePage.vue#L313-L329) |
-| M3 | 点击标签走的是 `keyword=标签词` 的模糊匹配，而后端本有专用 `tag` 过滤参数；且 `counts` 调用不传 tag，切页签后角标数与列表结果可能对不上 | [MarketplacePage.vue](file:///Users/wangxi/workspace/WenQu/web/src/views/MarketplacePage.vue#L336-L341)；[MarketService.java](file:///Users/wangxi/workspace/WenQu/src/main/java/com/wenqu/ai/service/MarketService.java#L159-L195) |
-| M4 | 列表固定按 `update_time` 倒序 + 硬上限 `LIMIT MAX_LIST`：无排序选项（最热/安装量），无分页，超出上限静默截断 | [MarketService.java](file:///Users/wangxi/workspace/WenQu/src/main/java/com/wenqu/ai/service/MarketService.java#L137-L140) |
-| M5 | 没有「我安装的」视图：`c_ai_market_install` 只服务徽标判定，注释明确「不是已装清单」；用户无法在市场回看自己装过什么 | [MarketInstall.java](file:///Users/wangxi/workspace/WenQu/src/main/java/com/wenqu/ai/model/MarketInstall.java#L10-L14) |
-| M6 | 「有更新」只在进入市场、切到对应页签时才可见：侧边栏「市场」入口无角标，无跨页签的更新聚合列表，更无「一键全部更新」 | [MarketplacePage.vue](file:///Users/wangxi/workspace/WenQu/web/src/views/MarketplacePage.vue#L68) |
-| M7 | 详情弹窗对应用模板/工作流/MCP 直接甩原始 JSON（`configJson` pre 块）：安装人要自己读懂 DSL/配置才能判断「装的是不是我要的」；工作流无流程图预览、智能体无能力摘要 | [MarketplacePage.vue](file:///Users/wangxi/workspace/WenQu/web/src/views/MarketplacePage.vue#L180-L181) |
-| M8 | 卡片描述固定 38px 高硬裁切、无省略号；物品无图标/封面/分类维度；非 MCP 类型没有「官方」徽标（内置官方模板与用户物品同款白卡） | [MarketplacePage.vue](file:///Users/wangxi/workspace/WenQu/web/src/views/MarketplacePage.vue#L506)（样式）、[L59-L67](file:///Users/wangxi/workspace/WenQu/web/src/views/MarketplacePage.vue#L59-L67) |
-| M9 | 重复上架只按内容指纹检出「有更新」，没有发布说明：装过的人看到徽标，但不知道这次改了什么、要不要更 | [MarketController.java](file:///Users/wangxi/workspace/WenQu/src/main/java/com/wenqu/ai/controller/MarketController.java#L91-L95)；[MarketItem.java](file:///Users/wangxi/workspace/WenQu/src/main/java/com/wenqu/ai/model/MarketItem.java#L63-L67) |
-| M10 | 「我的上架」只有下架/删除三个动作，改简介/描述/标签必须重新走一遍完整上架；作者看不到自己条目的安装数据（只有卡片上一个累计数） | [MarketplacePage.vue](file:///Users/wangxi/workspace/WenQu/web/src/views/MarketplacePage.vue#L124-L127) |
-| M11 | 无任何质量信号与运营位：无点赞/评论，无管理员精选/置顶；`publish` 表单里标签是自由文本，无建议与规范提示 | [MarketPublishModal.vue](file:///Users/wangxi/workspace/WenQu/web/src/components/MarketPublishModal.vue#L30-L35) |
+| M1 | 默认页签硬编码 `skill`，技能为空时首屏就是空态 | `web/src/views/MarketplacePage.vue` 253-256 行 |
+| M2 | 搜索只作用于当前页签（`type` 与 `keyword` 一起提交） | 同文件 313-329 行 |
+| M3 | 点标签走 `keyword=标签词` 模糊匹配，没用专用 `tag`；counts 也不传 tag，角标与结果可能对不上 | 同文件 336-341 行；`MarketService.java` 159-197 行 |
+| M4 | 列表固定 `update_time` 倒序 + `LIMIT 200`，无排序、无分页、超出静默截断 | `MarketService.java` 82、137-140 行 |
+| M5 | 没有「我安装的」视图：`c_ai_market_install` 只用于徽标，注释明确「不是已装清单」 | `MarketInstall.java` 注释；schema 1326-1338 行 |
+| M6 | 「有更新」只有进入对应页签才可见；侧栏无计数、无聚合、无批量更新 | `MarketplacePage.vue` 68 行、`MarketService.java` view |
+| M7 | 详情对应用模板/工作流/MCP 直接甩载荷 JSON；技能给 SKILL.md 正文 | `MarketplacePage.vue` 175-181 行 |
+| M8 | 卡片描述固定 38px 硬裁切、无省略号；无类型图标；官方徽标只给 MCP | 同文件 60、506 行 |
+| M9 | 重复上架只覆盖快照，没有「这次改了什么」；版本号纯展示 | `MarketController.java` 91-95 行；`MarketItem.java` 63-67 行 |
+| M10 | 「我的上架」只有下架/删除；改简介必须整包重新上架；作者看不到安装数据明细 | `MarketplacePage.vue` 124-127 行 |
+| M11 | `view()` 对所有类型都算 `hasUpdate`（含 MCP），但 MCP 无更新入口，状态语义悬空 | `MarketService.java` 929-938 行；`installMcp` 366-399 行 |
+| M12 | 详情标题是「物品：xxx」；有两处开发术语（`references/scripts`、`fork`） | 同文件 143 行、354 行、137 行；`MarketPublishModal.vue` 84 行 |
+| M13 | 已装版本（`installedVersion`）已随视图下发，前端未使用 | `MarketService.java` 928 行 |
+| M14 | 删除条目会连安装记录一起删，已装清单无法保留「作者已删除」痕迹 | `MarketService.java` 591-604 行 |
 
-### 1.3 用户现在回答不了的四个问题
+### 1.2 用户现在回答不了的四个问题
 
-1. **市场里有什么值得装？** 默认页签是空的、搜索不出当前页签、没有热度排序和推荐位。
-2. **我装过什么、哪些有更新？** 没有已装清单；「有更新」徽标散在四个页签里，要逐页翻。
-3. **这次更新改了什么？** 只有「有更新」三个字，没有发布说明，用户不敢点更新（fork 类还怕丢掉本地改动语境）。
-4. **这个物品适不适合我？** 详情是原始 JSON；没有预览、没有分类、没有别人用过好没好用的信号。
-
----
-
-## 2. 设计目标与原则
-
-1. **首屏即发现**：进入市场 3 秒内看到可装的东西——默认落在有内容的页签、支持全局搜索、有「最热/最新」排序。
-2. **装完不断线**：新增「我安装的」页签 + 更新聚合（侧边栏徽标 + 一键全部更新），把安装记录从「徽标数据源」升级为「用户资产视图」。
-3. **装前知道装的是什么**：详情从 JSON 墙升级为结构化预览（工作流流程图缩览、智能体能力清单、技能说明卡）；更新有发布说明。
-4. **作者能运营**：重新上架必填/可选「更新说明」；元信息可单独编辑；能看到安装趋势。
-5. **沿用现有设计语言**：只用 `app.css` 令牌与 `.app-card / .app-btn / .app-pill` 类；页签形态、卡片网格、详情弹窗骨架不推翻，渐进增强。
-6. **不破坏核心语义**：「安装即复制」「内容指纹判更新」「引用按权限裁剪 + warnings」三条既有规则原样保留，所有新 UI 只是把已有事实呈现得更清楚。
+1. **市场里有什么？** 默认页签可能是空的，搜索只在一个类型里找。
+2. **我装过什么、哪些要更新？** 没有已装清单，徽标散在四个页签里。
+3. **这次更新改了什么？** 只有「有更新」三个字，没有说明。
+4. **装之前它里面是什么？** 应用模板/工作流/MCP 的详情是一堵 JSON。
 
 ---
 
-## 3. 信息架构与交互重构
+## 2. 设计原则
 
-### 3.1 页签结构（场景 1）
+1. **首屏必有内容**：默认落到上次访问且有内容的页签；搜索跨类型。
+2. **装完不断线**：已装清单 + 更新聚合 + 批量更新，但市场**不做卸载管理**。
+3. **更新要可预期**：技能是覆盖（有损），应用模板/工作流是新增副本（无损），MCP 不更新——三种后果必须在按钮旁说清。
+4. **装前看得懂**：按类型给结构化预览，原始配置永远可折叠查看。
+5. **不造第二真相源**：状态、计数、版本区间全部由后端给，前端不本地猜测。
+6. **沿用现有设计语言**：只消费 `web/src/views/app.css` 的 token 与通用类；页签、卡片网格、弹窗骨架渐进增强。
+
+---
+
+## 3. 信息架构
+
+### 3.1 页签与默认落点
 
 ```
 页签：技能 · 应用模板 · 工作流 · MCP 服务 · 我安装的(新增) · 我的上架
-默认落点：上次访问的页签（localStorage）→ 否则第一个 counts>0 的页签 → 否则技能
-「我安装的」= 安装记录 join 物品表，逐条带 已是最新/有更新/已下架 三态 + 更新入口
+落点优先级：URL ?tab= → localStorage 上次页签 → 第一个 counts>0 的类型页签 → 技能
+```
+- 「我安装的」用 `?tab=installed`，不改现有 `?tab=mine`。
+- 空页签追加「其他页签还有 N 件」+ 跳转，不再只说「第一个上架的人就是你」。
+- MCP 页签不出现「上架」，仍由管理员维护目录（现状不变）。
+
+### 3.2 搜索与筛选
+
+- 搜索框改为**全局**：有关键词时跨 4 个类型拉取，结果按类型分组用紧凑行展示，组头可跳到对应页签（保留关键词）；此时排序与标签行隐藏。
+- 清空关键词恢复当前页签列表与工具行。
+- 标签 chips：走 `tag` 精确过滤（不再塞 keyword），并同步传给 counts，保证角标与列表同条件。
+- chips 数据源：当前类型已加载条目里出现过的标签，按出现频次排序，最多 12 个 + 「全部」。不新增接口。
+- 搜索 + 标签互斥：点标签时清空关键词，输入关键词时清空标签。
+
+### 3.3 排序与分页
+
+- 排序：最新（默认，`update_time desc`）/ 最多安装（`install_count desc`）。
+- 分页：`page/pageSize`（默认 24，上限 100），返回 `total`；底部「加载更多」，到底显示「已经到底了」。
+- counts 永远按全量算，不受分页影响。
+- 我的上架与已装视图同样支持分页。
+
+### 3.4 卡片
+
+| 元素 | 规格 |
+|---|---|
+| 类型图标 | 技能=书、应用模板=机器人、工作流=流程、MCP=插头；四个类型各自弱底色，仅用现有 token |
+| 官方徽标 | `authorUid=system` 的**所有类型**都打「平台官方」描边徽标（现在只有 MCP） |
+| 描述 | 两行截断 + 省略号，`title` 给全文；无简介显示「暂无简介」弱文本 |
+| 已装 | 浏览页签头部胶囊「已安装」，元信息里显示「已装 v1.2」；有更新时头部「有更新」，元信息显示「已装 v2.3 → v2.4」（`installedVersion` 与 `version` 后端已下发） |
+| 状态去重 | 状态只在头部出现一次，卡片底部不再重复「已是最新」 |
+| 底部操作 | 左「详情」；右侧按类型与状态给唯一主操作：安装 / 更新 / 装新版 / 在 MCP 页 / 无（已最新时不放按钮） |
+| 标签 | 可点击，触发 tag 过滤 |
+
+### 3.5 详情
+
+保留 820px 弹窗骨架，标题改为物品名；头部一行元信息（作者 / 版本 / 安装量 / 更新时间 / 状态）。
+
+页签固定三个：**介绍 / 内容 / 版本历史**。
+实施节奏：一期先上「介绍 / 内容」；「版本历史」随二期的 `GET /{id}/versions` 一起上线，避免出现空页签。
+
+| 类型 | 内容页签 |
+|---|---|
+| 技能 | 技能正文（渲染后的 SKILL.md，去掉 frontmatter）、附件数量、原始文件下载入口 |
+| 应用模板 | 能力摘要卡（知识库 / 技能 / MCP / HTTP 工具 / 工作流工具各几项）+ 引用明细（技能、MCP、HTTP 工具名称直出；知识库只给数量与「安装时按你的权限裁剪」）+ 原始配置折叠 |
+| 工作流 | 只读流程图（复用 `FlowEditor`，新增 `dsl` 入参，不建临时工作流）+ 节点/连线数量 + 原始流程定义折叠 |
+| MCP | 参数表（名称 / 地址 / 传输类型 / 是否需要认证 / 我的配额占用）+ 认证提醒（现有常驻条）+ 原始配置折叠 |
+
+- 底部：下载物品包（非 MCP）/ 主操作（安装或更新，带版本区间）/ 关闭。
+- 「版本历史」对所有类型开放，按创建时间倒序，最多 20 条。
+
+### 3.6 更新闭环
+
+- 发布说明：重新上架且**内容指纹变化**时，「这次改了什么」必填（前端 + 后端双校验）。
+- 内容没变化时拒绝重新上架，提示「内容没有变化，未生成新版本；只改简介/标签请用编辑信息」。
+- 每次指纹变化写一条 `c_ai_market_version`；同事务完成。
+- 更新弹窗展示「已装版本 → 最新版本」区间内的说明；技能额外展示覆盖警告，应用模板/工作流展示「会新增副本，旧副本保留」。
+- 更新聚合：`GET /market/updates` 返回可更新条目（排除 MCP、排除已下架）；侧栏「市场」挂计数红点，进入市场或完成安装后刷新。
+- 批量更新：一次弹窗列出全部可更新项，按后果分组：
+  - 应用模板/工作流：默认勾选，文案「新增副本，旧副本保留」。
+  - 技能：默认不勾选，必须手动勾选，文案「整包覆盖，装后改动会丢失」。
+  - 提交仍逐个调用现有 install 端点，不新增批量端点；失败逐条提示，成功的从清单移除。
+
+### 3.7 我的上架
+
+- 卡片展示：状态、版本、累计安装、更新时间；操作：编辑信息 / 下架或重新上架 / 删除。
+- 编辑信息：只改简介、详细介绍、标签，不动快照、版本与指纹，**不产生版本、不触发有更新**。
+- 作者数据：P2 增加安装趋势与最近安装人，依赖 §6.3 的追加型安装日志表；未拍板前不上线。
+
+---
+
+## 4. 更新语义规格（必须按类型区分）
+
+| 类型 | 更新动作 | 是否破坏 | 用户提示 | 参与更新聚合 | 参与批量更新 |
+|---|---|---|---|---|---|
+| 技能 | 同名整包覆盖 | **有损**：装后改动、旧版本附属文件丢失 | 覆盖警告 + 版本区间说明 + 确认 | 是 | 是（默认不勾选） |
+| 应用模板 | 新建一份智能体副本 | 无损，但会多一份副本 | 「会新增副本，旧副本保留，可自行删除」 | 是 | 是（默认勾选） |
+| 工作流 | 新建一份草稿副本 | 无损，同上 | 同上 | 是 | 是（默认勾选） |
+| MCP | 无更新动作 | — | 「已在 MCP」；后续配置由本人在 MCP 页维护 | **否** | 否 |
+
+- 判定始终用 `content_hash`，版本号只用于展示，不参与排序与比较。
+- 已下架条目：可查看详情、不可更新；已装副本不受影响。
+
+---
+
+## 5. 接口与数据模型
+
+### 5.1 端点
+
+| 方法 | 路径 | 说明 | 权限 |
+|---|---|---|---|
+| GET | `/api/ai/market/list` | 增 `sort`（update_time/install_count）、`page`、`pageSize`；返回 `total`；其余参数不变 | market:read |
+| GET | `/api/ai/market/installed` | **新增**：安装记录 join 条目，过滤条目仍存在；每条带 `installedVersion`、`version`、`hasUpdate`、`online`；支持 keyword/type/page/pageSize；排除 MCP 更新语义 | market:read |
+| GET | `/api/ai/market/updates` | **新增**：installed 中 `hasUpdate && online && itemType != mcp` 的子集 + `count`；侧栏徽标与批量更新共用 | market:read |
+| GET | `/api/ai/market/{id}/versions` | **新增**：版本历史（version/contentHash/releaseNote/createTime，倒序 ≤20） | market:read |
+| PUT | `/api/ai/market/{id}/meta` | **新增**：summary/description/tags；不动 payload、版本、指纹 | market:publish + 作者/管理员 |
+| POST | `/api/ai/market/publish` | body 增 `releaseNote`；更新且指纹变化时必填；同事务写版本行 | market:publish |
+| POST | `/api/ai/market/{id}/install` | 不变（overwrite 语义保留） | market:install |
+
+### 5.2 表结构
+
+```sql
+CREATE TABLE IF NOT EXISTS `c_ai_market_version` (
+    `id`           VARCHAR(50) NOT NULL COMMENT '主键ID (UUID)',
+    `item_id`      VARCHAR(50) NOT NULL COMMENT '市场物品ID',
+    `version`      VARCHAR(32) NOT NULL COMMENT '发布时的版本号（展示用）',
+    `content_hash` CHAR(64)    NOT NULL COMMENT '发布时的内容指纹',
+    `release_note` MEDIUMTEXT  COMMENT '这次改了什么（重新上架必填）',
+    `released_at_ms` BIGINT    NOT NULL DEFAULT 0 COMMENT '发布序号（毫秒，进程内单调递增）',
+    `create_time`  DATETIME    DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_item_time` (`item_id`, `create_time`),
+    KEY `idx_item_seq` (`item_id`, `released_at_ms`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='市场版本历史（发布说明）';
 ```
 
-- 空态页签不再只说「第一个上架的人就是你」，追加一行「其他页签有 N 件物品」+ 跳转链接。
+- **必须加入 `WenquTenantLineHandler.GLOBAL_TABLES`**：市场当前是平台级共享，漏登记会被注入 `tenant_id`。
+- 不新建 `icon/category/featured` 列：卡片图标按类型推导，分类与精选不在本期。
+- 版本行随条目删除显式清理；单条保留最近 20 版（插入后按 item_id 计数裁剪）。
+- 平台官方模板种子内容变化时（`seedOfficialWorkflow`）也写一条版本行，说明固定为「平台模板更新」，否则装过的人会看到「有更新」却无说明。
 
-### 3.2 工具行（场景 1）
+### 5.3 兼容与存量
 
+- 不回填历史版本：上线前的版本无说明可展示。
+- 若上线时已存在「有更新」但没有任何版本行：更新弹窗只展示已装版本、最新版本与时间，明确显示「本次更新没有说明」，不编造内容；这条线记入遗留债。
+- 不改旧列语义；`c_ai_market_install` 结构不动。
+- P2 安装日志（已拍板）：
+
+```sql
+CREATE TABLE IF NOT EXISTS `c_ai_market_install_log` (
+    `id`           VARCHAR(50) NOT NULL,
+    `item_id`      VARCHAR(50) NOT NULL,
+    `uid`          VARCHAR(64) NOT NULL,
+    `item_type`    VARCHAR(20) NOT NULL,
+    `version`      VARCHAR(32) NOT NULL,
+    `content_hash` CHAR(64),
+    `action`       VARCHAR(16) NOT NULL COMMENT 'install/update/copy',
+    `create_time`  DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_item_time` (`item_id`, `create_time`),
+    KEY `idx_uid_time` (`uid`, `create_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='市场安装流水（趋势与最近安装人）';
 ```
-搜索框（全局，跨类型，结果按类型分组）· 排序下拉（最新/最热/安装量）· 标签 chips（点标签=tag 精确过滤，counts 同步传 tag）
-分页：滚动加载（后端 page/pageSize，超上限不再静默截断）
-```
+同样必须进 `GLOBAL_TABLES`，并按 180 天清理。
 
-### 3.3 卡片（场景 1）
+### 5.4 权限与边界
 
-- 描述改 2 行省略号 + hover 全文；缺描述给警示态（对齐技能页方案 F3）。
-- 增加类别图标（按类型/分类给色块图标，不引入外部图片）；`authorUid=system` 的非 MCP 条目同样打「平台官方」徽标。
-- 「有更新」徽标点击 = 直接弹更新说明（见 3.5），而不是让用户先进详情自己找。
+- 不新增权限点，全部沿用 `market:read/publish/install` 与资源级判定。
+- 「一键更新」逐条走 install，引用裁剪与 warnings 语义不变。
+- 市场维持平台级共享；不做租户私有市场（需要显式 SQL 表达「本租户 ∪ 平台公共」，另立项）。
 
-### 3.4 详情弹窗（场景 2）
+---
 
-保留 820px 弹窗骨架，「内容」页签按类型结构化：
+## 6. 前端改动清单
 
-| 类型 | 现在的展示 | 升级为 |
+| 文件 | 改动 |
+|---|---|
+| `web/src/views/MarketplacePage.vue` | 页签落点、全局搜索/分组结果、tag 过滤、排序分页、卡片重构、已装视图、更新聚合与批量更新入口、文案清理 |
+| `web/src/components/MarketUpdateModal.vue`（新增） | 更新说明弹窗（版本区间、覆盖/新增副本两种警告） |
+| `web/src/components/MarketBatchUpdateModal.vue`（新增） | 批量更新勾选与逐条执行 |
+| `web/src/components/MarketItemContentView.vue`（新增） | 详情「内容」页签按类型渲染（能力摘要 / 流程图 / 参数表 / 技能正文） |
+| `web/src/components/MarketMetaModal.vue`（新增） | 编辑信息（简介/详细介绍/标签） |
+| `web/src/components/MarketPublishModal.vue` | 发布说明必填、卡片实时预览、文案清理 |
+| `web/src/views/FlowEditor.vue` | 新增 `dsl` 入参：传了 DSL 就 `loadGraph`，不再按 id 拉取；只读态隐藏保存/发布 |
+| `web/src/api/index.js` | 新增 installed/updates/versions/meta 四个请求 |
+| `web/src/views/AppLayout.vue` | 市场菜单项挂更新计数红点；与市场页共用轻量刷新方法 |
+| `web/src/utils/marketUpdates.js`（新增） | 更新计数的拉取与失效通知（不做轮询） |
+
+文案要求：用户可见文案不用 `fork`、`DSL`、`SKILL.md`、`references/scripts`、`物品` 等术语；改用「副本」「原始流程定义」「技能正文」「参考文件与脚本」「这条市场内容」。
+
+---
+
+## 7. 分期
+
+### 一期 P0（体验修复，先见效）
+1. 默认页签策略 + 空态跨页签引导。
+2. 全局搜索 + 分组结果。
+3. 标签走 `tag` + counts 同步；排序与分页（小后端）。
+4. 卡片重构：类型图标、官方徽标扩展、两行省略、已装版本、状态去重。
+5. 详情/上架文案清理与标题修正。
+6. 详情页签收敛为 介绍 / 内容（内容先沿用原 JSON，结构化放三期）；「版本历史」随二期端点上线。
+
+### 二期 P1（安装闭环）
+7. 「我安装的」页签 + installed 端点。
+8. 更新聚合 + 侧栏徽标 + 批量更新弹窗。
+9. 版本说明与版本历史（表 + publish 扩展 + 更新弹窗）。
+
+### 三期 P1（详情结构化）
+10. 应用模板能力摘要、工作流只读流程图（FlowEditor `dsl` 入参）、MCP 参数表。
+
+### 四期 P2（作者运营）
+11. 编辑信息（meta 端点 + 弹窗）。
+12. 安装趋势与最近安装人（前置安装日志表，待拍板）。
+
+---
+
+## 8. 效果图导览
+
+打开 `design/mockups/market-upgrade/market-upgrade.html`：
+
+| 场景 | 画面 | 覆盖 |
 |---|---|---|
-| 技能 | SKILL.md 正文（已可用） | 平移 + 附属文件列表 |
-| 应用模板 | 原始 JSON | 能力摘要卡：人设一句话、知识库/工具/技能/MCP 各几项（引用明细折叠） |
-| 工作流 | 原始 JSON | 只读流程图缩览（复用画布渲染器的只读态）+「查看原始 DSL」折叠 |
-| MCP | 原始 JSON | 参数说明表（名称/地址/传输类型/是否需要认证） |
-
-底部动作区增加「版本历史」入口（见 3.5）。
-
-### 3.5 更新闭环（场景 3，核心新增）
-
-- **发布说明**：`publish` 时（重复上架）多一个「这次改了什么」输入框，落 `c_ai_market_version`（itemId/version/contentHash/releaseNote/时间）。
-- **消费侧**：「有更新」徽标点开 = 当前已装指纹与最新指纹之间的 changelog 列表；技能更新确认弹窗里同步展示说明文案（现在只警告会丢本地改动，没说对面有什么新东西）。
-- **聚合**：`GET /market/updates` 返回我装的、有更新的条目；侧边栏「市场」项挂红点计数；「我安装的」页签顶部「一键全部更新」（fork 类=装新副本、技能=逐条确认后覆盖）。
-
-### 3.6 我的上架（场景 4）
-
-- 卡片操作增加「编辑信息」：单独改 简介/详细介绍/标签/图标分类，不动快照（新端点 `PUT /{id}/meta`），避免为改个错别字重新上架。
-- 每条展示安装趋势（累计 + 最近 30 天），作者可展开最近安装人列表（企业内网场景，同租户可见）。
+| 00 | 现状复刻：技能 0 空页签、搜索只在当前页签、无排序分页 | §1 诊断 |
+| 01 | 升级后主列表：默认落到有内容页签、全局搜索、排序、标签 chips、新卡片、加载更多、侧栏计数 | 一期 1-4 |
+| 02 | 全局搜索结果：跨类型分组紧凑行 | 一期 2 |
+| 03 | 我安装的：汇总条 + 三态卡片 + 批量更新入口 | 二期 7-8 |
+| 04 | 批量更新弹窗：技能覆盖与新增副本分组 | 二期 8 |
+| 05 | 更新说明弹窗：版本区间 + 技能覆盖警告 | 二期 9 |
+| 06 | 详情双栏：应用模板能力摘要 + 工作流只读流程图 | 三期 10 |
+| 07 | 详情双栏：技能正文 + MCP 参数表 | 三期 10 |
+| 08 | 重新上架：发布说明必填 + 卡片实时预览 | 二期 9、一期 5 |
+| 09 | 我的上架 + 编辑信息（趋势位标注 P2 前置） | 四期 11-12 |
+| 10 | 状态与空态一览 + 暗色态 | 全局 |
 
 ---
 
-## 4. 功能升级清单（优先级与改动面）
+## 9. 验收清单（真机逐项）
 
-| # | 升级项 | 前端 | 后端 | 优先级 |
-|---|---|---|---|---|
-| F1 | 默认页签策略 + 空态跨页签引导 | MarketplacePage.vue | 无 | **P0** |
-| F2 | 全局搜索 + 标签走 tag 参数 + counts 传 tag 对齐角标 | 搜索/标签逻辑 | list/counts 已有参数，仅需前端接通 | **P0** |
-| F3 | 排序（最新/最热）+ 分页（滚动加载） | 列表 | list 增 `sort/page/pageSize` | **P0** |
-| F4 | 卡片体验：描述省略+hover、类型图标、官方徽标扩展到非 MCP | 卡片 | 无 | **P0** |
-| F5 | 「我安装的」页签（三态 + 更新入口） | 新页签 | installed 视图查询（join 安装记录） | **P1** |
-| F6 | 更新聚合：`/market/updates` + 侧边栏徽标 + 一键全部更新 | 市场页 + 侧边栏 | updates 端点 | **P1** |
-| F7 | 发布说明 + 版本历史 + 更新弹窗展示 changelog | 上架弹窗/徽标点击流 | `c_ai_market_version` 表 + publish 扩展 | **P1** |
-| F8 | 详情结构化预览（智能体能力卡/工作流只读流程图/MCP 参数表） | 详情弹窗 | agent 摘要字段可前端从 configJson 提炼，工作流复用现有渲染 | **P1** |
-| F9 | 我的上架：元信息编辑 + 安装趋势 | 管理操作 | `PUT /{id}/meta` + 安装统计查询 | **P2** |
-| F10 | 上架表单体验：卡片效果实时预览、标签建议、分类选择 | MarketPublishModal | MarketItem 增 `icon/category`（可选） | **P2** |
-| F11 | 轻量反馈：点赞 + 一句话评价，聚合回卡片 | 详情/卡片 | 评价表 + 端点 | **P2** |
-| F12 | 管理员精选/置顶运营位 | 列表头部 | featured 标记（复用官方条目维护面） | **P2** |
-
----
-
-## 5. 效果图导览
-
-打开 [`design/mockups/market-upgrade/market-upgrade.html`](file:///Users/wangxi/workspace/WenQu/design/mockups/market-upgrade/market-upgrade.html)：
-
-| 场景 | 画面 | 对应升级项 |
-|---|---|---|
-| 00 | 现状截图（对照底图，已存 `assets/current-market.png`） | §1 诊断 |
-| 01 | 升级后主列表：默认落在有内容页签 + 全局搜索 + 排序/标签 chips + 新卡片（图标/官方徽标/描述省略）+ 侧边栏红点 | F1-F4 |
-| 02 | 「我安装的」页签：更新汇总条 + 一键全部更新 + 三态卡片 | F5-F6 |
-| 03 | 更新说明弹窗：changelog + 覆盖警告 | F6、F7 |
-| 04 | 详情结构化预览：应用模板能力摘要卡 / 工作流只读流程图 | F8 |
-| 05 | 发布弹窗：重复上架填发布说明 + 卡片效果实时预览 | F7、F10 |
-| 06 | 我的上架：编辑信息 + 安装趋势 + 最近安装人 | F9 |
+1. 默认落点：无本地记录且技能 0 → 落应用模板；有记录 → 上次页签；URL 参数优先。
+2. 全局搜索：「周报」返回技能/应用模板/工作流分组；切页签保留关键词；清空恢复。
+3. 标签：chip 走 tag，角标与列表同条件一致。
+4. 排序/分页：安装量排序正确；加载更多不重复不丢；counts 不受分页影响。
+5. 卡片：已装版本、版本区间、官方徽标四类覆盖、两行省略、hover 全文。
+6. 我安装的：三态正确；下架条目可看详情但无更新；MCP 不出现更新状态。
+7. 更新弹窗：技能覆盖警告；应用模板/工作流「新增副本」提示。
+8. 批量更新：技能默认不勾选且不能直接提交；执行后新增副本、旧副本仍在。
+9. 发布：无发布说明被前后端同时拦截；内容未变被拦并指引编辑信息；成功后版本历史新增一条。
+10. 编辑信息：卡片立即变化，不产生版本，不触发有更新。
+11. 我的上架：下架/重新上架/删除回归；删除后版本历史同步清理。
+12. 权限：非作者改 meta 403；普通用户看不到 MCP 目录维护；跨租户行为与现状一致。
+13. 主题与宽度：1600 三列、1280 两列、暗色对比度、空态无横向滚动。
+14. 回归：技能安装/覆盖、应用模板 fork + warnings、工作流安装、MCP 四态与配额。
 
 ---
 
-## 6. 后端最小改动集（确认后实施）
+## 10. 明确不做
 
-1. **list/counts 扩展**：`sort`（update_time|install_count）、`page/pageSize` 替代硬 LIMIT；`installed=true` 视图（`c_ai_market_install` join 物品，含 最新/有更新/已下架 三态）；counts 与列表同条件（tag 已支持，前端补传即可）。
-2. **updates 聚合**：`GET /api/ai/market/updates` 返回 `[{id,name,itemType,installedHash,latestHash,latestNote}]`，判定逻辑复用现有指纹比对，不新增机制。
-3. **版本历史**：新表 `c_ai_market_version(id, item_id, version, content_hash, release_note, create_time)`；publish 覆盖快照时同事务写一条；`GET /{id}/versions`。
-4. **元信息编辑**：`PUT /{id}/meta`（summary/description/tags/icon/category），只动展示字段、不动 payload 与指纹——**不触发**「有更新」提示。
-5. **字段扩展**：`c_ai_market_item` 增 `icon`、`category`、`featured`（默认空/false，扩列不改语义）。
-6. **反馈（P2）**：`c_ai_market_rating(uid, item_id, like, comment)`，uk_uid_item 一人一条可改。
+- 不做卸载管理：已装副本仍在技能/智能体/工作流各自的管理页处理。
+- 不做星级评分、评论区、精选/置顶运营位（无治理流程，先不引入）。
+- 不做租户私有市场与对外分享。
+- 不引入封面图/外部图片，卡片图标一律用现有图标 + 类型色。
+- 不改「安装即复制」、指纹判更新、权限裁剪三条既有语义。
 
-不新增权限点：沿用 `market:read/publish/install` 与资源级判定（[MarketController.java](file:///Users/wangxi/workspace/WenQu/src/main/java/com/wenqu/ai/controller/MarketController.java#L33-L36)）；「一键全部更新」逐条走现有 install 端点，权限与裁剪 warnings 语义不变。
+## 11. 风险与遗留
 
----
+| 风险 | 处理 |
+|---|---|
+| 分页改变「一次拉 200」行为，组合条件回归面大 | 一期先补齐组合用例（搜索+标签+排序+我的上架）再动排序 |
+| 版本表漏进 `GLOBAL_TABLES` → 启动后查询报 `tenant_id` 不存在 | 建表与名单同提交，验收单列一项 |
+| 已存在更新提示无版本行 | 明确展示「本次更新没有说明」，记录为遗留债 |
+| 批量更新并发点击 | 逐条 busy 状态 + 提交中禁用 |
+| 详情页签变化影响既有详情入口 | 保留「内容」页签与下载包；不改详情接口返回结构 |
+| 测试地基薄 | 本线全部走真机 E2E；后端对版本区间选择、排序白名单加单测 |
 
-## 7. 实施步骤（方案确认后启动）
+## 12. 拍板记录（2026-11-10）
 
-1. **一期（P0，见效最快）**：F1-F4。前端体验修复为主，后端只加 sort/page。
-2. **二期（P1）**：F5-F7。安装闭环——已装清单、更新聚合与徽标、发布说明与版本历史。
-3. **三期（P1）**：F8。详情结构化预览。
-4. **四期（P2）**：F9-F12。作者运营、上架表单体验、反馈与精选。
+1. **安装趋势/最近安装人：做**。P2 增加追加型 `c_ai_market_install_log`（安装/更新/新增副本逐条记录），趋势与最近安装人以此为准。
+2. **批量更新：允许包含技能，默认不勾选**。技能必须手动勾选并看到覆盖警告；应用模板/工作流默认勾选。
+3. **标签 chips：用当前类型已加载条目推导**，不新增全量标签接口。
+4. **重新上架：发布说明强制必填**（内容指纹变化时，前后端双校验）。
+5. **侧栏「市场」：常驻更新计数红点**，数据来自 `GET /market/updates`，不做轮询。
 
----
+以上 5 项直接作为实施口径，不再回问。
 
-## 8. 明确不做
+## 13. 实施记录（2026-11-10）
 
-- 不改「安装即复制」语义：装完就是自己的资产，与市场条目断关联的既有设计（含 fork 裁剪 warnings）原样保留。
-- 不把「已装清单」变成卸载管理：技能副本、fork 出的智能体/工作流仍归各自管理页，市场只读展示状态并提供更新。
-- 不做星级评分/评论社区化运营：内部市场只做轻量「点赞 + 一句话」。
-- 不做跨租户/对外公开市场：MCP 目录的「平台官方」边界同样适用于未来的精选位。
-- 不引入封面图/外部图片资源：卡片图标一律用现有图标库 + 类别色，避免图片资产治理成本。
+四期全部落地，未提交 git。
+
+### 13.1 后端
+
+- 新增表 `c_ai_market_version`、`c_ai_market_install_log`，均登记进 `GLOBAL_TABLES`；版本表加 `released_at_ms` 解决同秒发布排序错乱。
+- `MarketService`：`installed` / `updates` / `versions` / `updateMeta` / `myStats` / `cleanupInstallLogs`；`publish` 增发布说明校验与版本行；`publishMcp` 写目录版本；官方模板种子写版本行；`finishInstall` 追加安装流水（写失败只告警，不回滚已完成的复制）；删除条目级联清理版本与流水。
+- `MarketController`：新增 `/installed`、`/updates`、`/{id}/versions`、`PUT /{id}/meta`、`/mine/stats`；列表接口返回 `total/page/pageSize`。
+- 调度中心注册「市场安装流水清理」（固定 180 天）。
+- 顺带修掉两个被新功能放大的存量问题：官方模板 DSL 用 `Map.of` 拼装导致每次启动指纹漂移（改为有序 Map，重启不再刷假更新/版本记录）；作者下架后装过的人仍可查看详情与版本历史（新增 `requireViewable`，安装/下载仍受上架可见性约束）。
+- 已装清单里的 MCP 以用户真实配置（`c_ai_user_mcp`）为准：配置被删后残留的安装记录不再算「已安装」；非作者管理操作统一返回 403。
+
+### 13.2 前端
+
+- 市场页新增「我安装的」页签、汇总条、批量更新入口；更新统一先看说明（技能覆盖警告 / fork 新增副本提示）；侧栏市场红点。
+- 详情新增「版本历史」；「内容」页签按类型结构化：技能正文 + 附件清单、应用模板能力摘要 + 引用明细、工作流只读画布（FlowEditor 新增 `dsl`/`preview` 入参）、MCP 参数表；原始配置折叠。
+- 我的上架：安装趋势 + 最近安装人 + 编辑信息弹窗。
+- 上架弹窗：类型切换常驻、重新上架必填发布说明、卡片实时预览、重新上架自动带回原卡片文案。
+- 新增组件：`MarketUpdateModal`、`MarketBatchUpdateModal`、`MarketMetaModal`、`MarketItemContentView`、`utils/marketUpdates.js`。
+
+### 13.3 验证
+
+- 后端 `mvn package`、前端 `npm run build` 通过。
+- 8091 jar + 5820 前端 API E2E：上架 → 安装 → 修改内容 → 发布更新 → `updates=1` → 版本区间 `newItems=1` → 批量安装副本 → `updates=0` → 统计 `count30/recent` → 编辑信息不产生版本 → 删除级联清理，全过。
+- Playwright 真机：我安装的汇总/状态、更新说明、批量更新（fork 默认勾选、技能默认不勾选且提交禁用）、详情只读流程图与版本历史、我的上架趋势与最近安装人、编辑信息、侧栏红点、重新上架发布说明必填与预览，全过，无 console error。
+- 补充审计：应用模板能力摘要与引用明细、MCP 参数表、作者下架后装过的人可看详情/版本但不能安装/下载、`/updates` 排除已下架、非作者改 meta 与普通用户发 MCP 目录均 403、MCP 已装以真实配置为准（孤记录不再显示）。
+- 规模与落点：无技能可见内容时自动落到工作流页签（URL `?tab=workflow`）；26 条已装时首屏 24、点「加载更多」到 26、无重复、1600 宽三列，无 console error。
+- 测试数据全部经 API 删除；测试技能目录已清理；多次重启产生的重复模板版本记录已按批准清理到每个模板 1 条。
+
+### 13.4 已知遗留
+
+- 存量条目没有历史版本行，版本历史显示「还没有版本记录」；上线后首次重新上架开始积累。
+- 开发库唯一的技能条目快照 zip 丢失（`user-data/market/skill/...`），其正文与下载不可用，属存量数据问题，与本次改动无关。

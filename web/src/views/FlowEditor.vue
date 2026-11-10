@@ -2,7 +2,7 @@
   <!-- 工作流画布编辑器（M2）：DSL 是唯一真源，画布只是编辑器——
        加载即还原图形（坐标读 DSL position），保存即序列化回 DSL（坐标写回 position）。
        连线校验：禁悬空/自环、start 无入边、end 无出边、非 loop 禁成环、条件出边必须挂已声明分支。 -->
-  <div class="wf-editor">
+  <div class="wf-editor" :class="{ 'wf-preview': preview }">
     <div class="wf-toolbar">
       <button class="app-btn ghost small wf-tb-back" @click="$emit('back')"><arrow-left-outlined /> 返回</button>
       <a-input v-model:value="name" class="wf-name" :maxlength="100" :disabled="readonly" placeholder="工作流名称" @change="dirty = true" />
@@ -634,7 +634,11 @@ import {
 const props = defineProps({
   workflowId: { type: String, default: '' },  // 空 = 新建
   /** 只读（共享查看）：隐藏保存/发布/节点面板，禁用拖拽连线——后端同样会拒绝写操作 */
-  readonly: { type: Boolean, default: false }
+  readonly: { type: Boolean, default: false },
+  /** 直接传入 DSL（市场详情只读预览用）：传了就按这份 DSL 渲染，不再按 id 拉取 */
+  dsl: { type: String, default: '' },
+  /** 纯预览：隐藏顶部工具栏与小地图（市场详情用，画布仍可缩放/查看节点配置） */
+  preview: { type: Boolean, default: false }
 })
 const emit = defineEmits(['back', 'saved'])
 
@@ -1530,6 +1534,15 @@ async function openRunDetail(row) {
 
 // ---------- 加载 ----------
 async function load() {
+  // 市场详情：直接渲染传入的 DSL 快照（不落库、不拉取、不显示工具栏）
+  if (props.dsl && props.dsl.trim()) {
+    const snapshot = safeParse(props.dsl) || { nodes: [], edges: [] }
+    loadGraph(snapshot)
+    savedDsl.value = props.dsl
+    dirty.value = false
+    nextTick(() => fitView({ padding: 0.2 }))
+    return
+  }
   if (!workflowId.value) {
     // 新建画布：默认 start→end 骨架（入参 question / 出参 answer），开箱即改
     name.value = ''
@@ -1750,6 +1763,9 @@ load()
 
 <style scoped>
 .wf-editor { display: flex; flex-direction: column; height: 100%; min-width: 0; }
+/* 市场详情预览：只留画布（工具栏与小地图都是编辑态控件，预览里只会误导） */
+.wf-preview .wf-toolbar { display: none; }
+.wf-preview :deep(.wf-minimap) { display: none; }
 .wf-toolbar {
   display: flex; align-items: center; gap: 10px; flex-wrap: nowrap;
   padding: 9px 14px; background: var(--app-panel);

@@ -7,14 +7,18 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.mapper.KnowledgeBaseMapper;
+import com.wenqu.ai.mapper.MarketInstallLogMapper;
 import com.wenqu.ai.mapper.MarketInstallMapper;
 import com.wenqu.ai.mapper.MarketItemMapper;
+import com.wenqu.ai.mapper.MarketVersionMapper;
 import com.wenqu.ai.mapper.UserMapper;
 import com.wenqu.ai.mapper.UserMcpMapper;
 import com.wenqu.ai.model.Agent;
 import com.wenqu.ai.model.KnowledgeBase;
 import com.wenqu.ai.model.MarketInstall;
+import com.wenqu.ai.model.MarketInstallLog;
 import com.wenqu.ai.model.MarketItem;
+import com.wenqu.ai.model.MarketVersion;
 import com.wenqu.ai.model.User;
 import com.wenqu.ai.model.UserMcp;
 import com.wenqu.ai.model.Workflow;
@@ -25,6 +29,7 @@ import com.wenqu.ai.util.RequestUser;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -33,6 +38,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -42,6 +49,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -79,12 +87,23 @@ public class MarketService {
     private static final int MAX_SUMMARY = 256;
     private static final int MAX_NAME = 128;
     private static final int MAX_VERSION = 32;
-    private static final int MAX_LIST = 200;
+    private static final int DEFAULT_PAGE_SIZE = 24;
+    private static final int MAX_PAGE_SIZE = 100;
+    private static final int MAX_PAGE = 10000;
     private static final int MAX_SKILL_MD_BYTES = 512 * 1024;
     private static final int MAX_PAYLOAD_JSON_BYTES = 512 * 1024;
+    private static final int MAX_RELEASE_NOTE = 4000;
+    private static final int MAX_SKILL_FILES = 50;
+    private static final int VERSION_KEEP = 20;
+    /** 安装流水保留天数（作者趋势/最近安装人；固定口径，不做配置项） */
+    public static final int INSTALL_LOG_RETENTION_DAYS = 180;
+    /** 版本发布序号：毫秒时间戳 + 进程内自增，保证同一秒多次发布也能稳定排序 */
+    private static final AtomicLong VERSION_SEQ = new AtomicLong();
 
     private final MarketItemMapper itemMapper;
     private final MarketInstallMapper installMapper;
+    private final MarketVersionMapper versionMapper;
+    private final MarketInstallLogMapper installLogMapper;
     private final UserSkillStore skillStore;
     private final WenquSkillRepository skillRepository;
     private final UserMapper userMapper;
@@ -103,6 +122,7 @@ public class MarketService {
     public MarketService(
             @Value("${wenqu.market.payload-dir:user-data/market}") String payloadDir,
             MarketItemMapper itemMapper, MarketInstallMapper installMapper,
+            MarketVersionMapper versionMapper, MarketInstallLogMapper installLogMapper,
             UserSkillStore skillStore, WenquSkillRepository skillRepository,
             UserMapper userMapper, RoleService roleService,
             AgentService agentService, WorkflowService workflowService,
@@ -115,6 +135,8 @@ public class MarketService {
                 ? "user-data/market" : payloadDir).toAbsolutePath().normalize();
         this.itemMapper = itemMapper;
         this.installMapper = installMapper;
+        this.versionMapper = versionMapper;
+        this.installLogMapper = installLogMapper;
         this.skillStore = skillStore;
         this.skillRepository = skillRepository;
         this.userMapper = userMapper;
@@ -133,11 +155,20 @@ public class MarketService {
     /**
      * 市场列表：上架中的物品 + 我自己上架的（含已下架，便于重新上架）。
      * 每条带 installed / hasUpdate / mine 徽标与作者显示名。
+     *
+     * <p>排序只接受白名单（update_time / install_count），分页在 SQL 层完成；
+     * 越界参数按默认值收口，避免把前端传来的任意值拼进 LIMIT。</p>
      */
     public List<Map<String, Object>> list(String uid, String type, String keyword,
-                                          String tag, boolean mineOnly) {
+                                          String tag, boolean mineOnly,
+                                          String sort, int page, int pageSize) {
         QueryWrapper<MarketItem> w = listWrapper(uid, type, keyword, tag, mineOnly);
-        w.orderByDesc("update_time").last("LIMIT " + MAX_LIST);
+        String sortCol = sortColumn(sort);
+        w.orderByDesc(sortCol);
+        if (!"update_time".equals(sortCol)) w.orderByDesc("update_time");
+        int size = pageSize <= 0 ? DEFAULT_PAGE_SIZE : Math.min(pageSize, MAX_PAGE_SIZE);
+        int current = Math.max(1, Math.min(page, MAX_PAGE));
+        w.last("LIMIT " + size + " OFFSET " + (long) (current - 1) * size);
         List<MarketItem> items = itemMapper.selectList(w);
 
         Map<String, MarketInstall> installed = installsOf(uid,
@@ -149,6 +180,266 @@ public class MarketService {
                 .collect(Collectors.toList());
         enrichMcpViews(uid, views, items);
         return views;
+    }
+
+    /** 列表总数（与列表同筛选条件；排序与分页不参与）。 */
+    public long total(String uid, String type, String keyword, String tag, boolean mineOnly) {
+        return itemMapper.selectCount(listWrapper(uid, type, keyword, tag, mineOnly));
+    }
+
+    /** 排序白名单：未知值一律按「最新」处理，不把前端字符串直接拼进 SQL。 */
+    private static String sortColumn(String sort) {
+        return "install_count".equalsIgnoreCase(sort == null ? "" : sort.trim())
+                ? "install_count" : "update_time";
+    }
+
+    /**
+     * 我安装的：安装记录 join 现存条目，按最近一次安装时间倒序。
+     * <p>个人安装量小，筛选与分页在内存完成；条目被删除时安装记录已随删除清理，不会出现幽灵行。</p>
+     */
+    public Map<String, Object> installed(String uid, String type, String keyword, int page, int pageSize) {
+        String t = type == null ? "" : type.trim();
+        String k = keyword == null ? "" : keyword.trim().toLowerCase(Locale.ROOT);
+        List<InstalledEntry> matched = installedEntries(uid).stream()
+                .filter(e -> t.isEmpty() || t.equals(e.item.getItemType()))
+                .filter(e -> k.isEmpty() || matchesKeyword(e.item, k))
+                .collect(Collectors.toList());
+        int size = pageSize <= 0 ? DEFAULT_PAGE_SIZE : Math.min(pageSize, MAX_PAGE_SIZE);
+        int current = Math.max(1, Math.min(page, MAX_PAGE));
+        int from = Math.min((current - 1) * size, matched.size());
+        int to = Math.min(from + size, matched.size());
+        List<InstalledEntry> slice = matched.subList(from, to);
+        List<MarketItem> rows = slice.stream().map(e -> e.item).collect(Collectors.toList());
+        Map<String, MarketInstall> recs = new LinkedHashMap<>();
+        for (InstalledEntry e : slice) recs.put(e.item.getId(), e.rec);
+        Map<String, String> names = authorNames(rows.stream()
+                .map(MarketItem::getAuthorUid).collect(Collectors.toSet()));
+        List<Map<String, Object>> views = rows.stream()
+                .map(i -> view(i, recs.get(i.getId()), names, uid))
+                .collect(Collectors.toList());
+        enrichMcpViews(uid, views, rows);
+        return Map.of("items", views, "total", matched.size(), "page", current, "pageSize", size);
+    }
+
+    /**
+     * 可更新清单：已装、条目仍上架中且内容指纹变化。
+     * MCP 没有覆盖更新动作（目录只负责首次接入），不参与更新与批量更新。
+     */
+    public Map<String, Object> updates(String uid) {
+        List<InstalledEntry> entries = installedEntries(uid).stream()
+                .filter(e -> isUpdatable(e.item, e.rec))
+                .collect(Collectors.toList());
+        List<MarketItem> rows = entries.stream().map(e -> e.item).collect(Collectors.toList());
+        Map<String, MarketInstall> recs = new LinkedHashMap<>();
+        for (InstalledEntry e : entries) recs.put(e.item.getId(), e.rec);
+        Map<String, String> names = authorNames(rows.stream()
+                .map(MarketItem::getAuthorUid).collect(Collectors.toSet()));
+        List<Map<String, Object>> views = rows.stream()
+                .map(i -> view(i, recs.get(i.getId()), names, uid))
+                .collect(Collectors.toList());
+        return Map.of("items", views, "count", views.size());
+    }
+
+    /**
+     * 版本历史 + 已装版本之后的新说明（更新弹窗用）。
+     * <p>匹配用内容指纹而不是版本号：作者忘升版本号时仍能正确切出「装后新增的说明」。</p>
+     */
+    public Map<String, Object> versions(String uid, String id) {
+        requireViewable(uid, id);
+        List<MarketVersion> rows = versionMapper.selectList(new QueryWrapper<MarketVersion>()
+                .eq("item_id", id).orderByDesc("released_at_ms").orderByDesc("create_time"));
+        MarketInstall rec = installsOf(uid, Set.of(id)).get(id);
+        String installedHash = rec == null ? null : normalizeHash(rec.getContentHash());
+        int installedIndex = -1;
+        if (installedHash != null) {
+            for (int i = 0; i < rows.size(); i++) {
+                if (installedHash.equals(normalizeHash(rows.get(i).getContentHash()))) {
+                    installedIndex = i;
+                    break;
+                }
+            }
+        }
+        boolean matched = installedIndex >= 0;
+        List<MarketVersion> fresh = matched ? rows.subList(0, installedIndex) : rows;
+        return Map.of(
+                "items", versionMaps(rows),
+                "newItems", versionMaps(fresh),
+                "matched", matched);
+    }
+
+    /** 编辑展示信息：只动卡片文案，不动快照、版本与指纹，因此不会产生新版本、不会触发「有更新」。 */
+    public Map<String, Object> updateMeta(String uid, String id, String summary, String description, String tags) {
+        MarketItem item = requireManageable(uid, id);
+        String s = clean(summary, MAX_SUMMARY, "简介");
+        itemMapper.update(null, new UpdateWrapper<MarketItem>()
+                .eq("id", item.getId())
+                .set("summary", s)
+                .set("description", description == null ? "" : description.trim())
+                .set("tags", normalizeTags(tags)));
+        audit.record("[AUDIT] 市场编辑信息 uid={} item={}", uid, id);
+        MarketItem fresh = itemMapper.selectById(id);
+        return view(fresh, installsOf(uid, Set.of(id)).get(id),
+                authorNames(Set.of(fresh.getAuthorUid())), uid);
+    }
+
+    /** 作者数据：近 N 天安装趋势 + 最近安装人（流水聚合，仅作者/管理员可看）。 */
+    public Map<String, Object> myStats(String uid, int days) {
+        int d = days <= 0 ? 30 : Math.min(Math.max(days, 7), 90);
+        LocalDate start = LocalDate.now().minusDays(d - 1L);
+        List<MarketItem> mine = itemMapper.selectList(new QueryWrapper<MarketItem>()
+                .eq("author_uid", uid));
+        Map<String, MarketItem> byId = new LinkedHashMap<>();
+        for (MarketItem it : mine) byId.put(it.getId(), it);
+
+        Map<String, Map<String, Object>> byItem = new LinkedHashMap<>();
+        Map<String, Map<String, Integer>> dayCounts = new LinkedHashMap<>();
+        Map<String, List<Map<String, Object>>> recents = new LinkedHashMap<>();
+        Set<String> recentUids = new LinkedHashSet<>();
+        for (MarketItem it : mine) {
+            List<Map<String, Object>> series = new ArrayList<>();
+            for (int i = 0; i < d; i++) {
+                Map<String, Object> point = new LinkedHashMap<>();
+                point.put("date", start.plusDays(i).toString());
+                point.put("count", 0);
+                series.add(point);
+            }
+            Map<String, Object> node = new LinkedHashMap<>();
+            List<Map<String, Object>> recent = new ArrayList<>();
+            node.put("count30", 0);
+            node.put("series", series);
+            node.put("recent", recent);
+            byItem.put(it.getId(), node);
+            dayCounts.put(it.getId(), new LinkedHashMap<>());
+            recents.put(it.getId(), recent);
+        }
+        if (!mine.isEmpty()) {
+            List<MarketInstallLog> logs = installLogMapper.selectList(
+                    new QueryWrapper<MarketInstallLog>()
+                            .in("item_id", byId.keySet())
+                            .ge("create_time", start.atStartOfDay())
+                            .orderByDesc("create_time"));
+            for (MarketInstallLog row : logs) {
+                Map<String, Integer> counts = dayCounts.get(row.getItemId());
+                if (counts == null || row.getCreateTime() == null) continue;
+                String day = row.getCreateTime().toLocalDate().toString();
+                counts.put(day, counts.getOrDefault(day, 0) + 1);
+                Map<String, Object> node = byItem.get(row.getItemId());
+                node.put("count30", ((Integer) node.get("count30")) + 1);
+                List<Map<String, Object>> recent = recents.get(row.getItemId());
+                boolean seen = recent.stream().anyMatch(r -> row.getUid().equals(r.get("uid")));
+                if (!seen && recent.size() < 5) {
+                    Map<String, Object> person = new LinkedHashMap<>();
+                    person.put("uid", row.getUid());
+                    person.put("time", row.getCreateTime().toString());
+                    recent.add(person);
+                    recentUids.add(row.getUid());
+                }
+            }
+            Map<String, String> names = authorNames(recentUids);
+            for (Map.Entry<String, Map<String, Object>> e : byItem.entrySet()) {
+                List<Map<String, Object>> series = (List<Map<String, Object>>) e.getValue().get("series");
+                Map<String, Integer> counts = dayCounts.get(e.getKey());
+                for (Map<String, Object> point : series) {
+                    point.put("count", counts.getOrDefault((String) point.get("date"), 0));
+                }
+                for (Map<String, Object> person : recents.get(e.getKey())) {
+                    person.put("name", names.getOrDefault((String) person.get("uid"),
+                            String.valueOf(person.get("uid"))));
+                }
+            }
+        }
+        return Map.of("days", d, "byItem", byItem);
+    }
+
+    /** 安装流水清理：保留期外的行直接删（固定 180 天，由调度中心按清理节拍调用）。 */
+    public void cleanupInstallLogs() {
+        LocalDateTime before = LocalDateTime.now().minusDays(INSTALL_LOG_RETENTION_DAYS);
+        int deleted = installLogMapper.delete(new QueryWrapper<MarketInstallLog>()
+                .lt("create_time", before));
+        if (deleted > 0) log.info("[MARKET] 安装流水清理完成：删除 {} 条（保留 {} 天）",
+                deleted, INSTALL_LOG_RETENTION_DAYS);
+    }
+
+    private static boolean matchesKeyword(MarketItem item, String lowerKeyword) {
+        String name = item.getName() == null ? "" : item.getName().toLowerCase(Locale.ROOT);
+        String summary = item.getSummary() == null ? "" : item.getSummary().toLowerCase(Locale.ROOT);
+        String tags = item.getTags() == null ? "" : item.getTags().toLowerCase(Locale.ROOT);
+        return name.contains(lowerKeyword) || summary.contains(lowerKeyword) || tags.contains(lowerKeyword);
+    }
+
+    private static boolean isUpdatable(MarketItem item, MarketInstall rec) {
+        return MarketItem.STATUS_ONLINE.equals(item.getStatus())
+                && !MarketItem.TYPE_MCP.equals(item.getItemType())
+                && hasUpdate(item, rec);
+    }
+
+    private static boolean hasUpdate(MarketItem item, MarketInstall rec) {
+        if (rec == null) return false;
+        String curHash = normalizeHash(item.getContentHash());
+        String insHash = normalizeHash(rec.getContentHash());
+        if (curHash != null && insHash != null) return !curHash.equals(insHash);
+        return !Objects.equals(item.getVersion(), rec.getVersion());
+    }
+
+    private List<InstalledEntry> installedEntries(String uid) {
+        List<MarketInstall> recs = installMapper.selectList(new QueryWrapper<MarketInstall>()
+                .eq("uid", uid).orderByDesc("update_time").orderByDesc("id"));
+        if (recs.isEmpty()) return List.of();
+        Set<String> ids = recs.stream().map(MarketInstall::getItemId).collect(Collectors.toSet());
+        Map<String, MarketItem> byId = new LinkedHashMap<>();
+        for (MarketItem it : itemMapper.selectBatchIds(ids)) byId.put(it.getId(), it);
+        List<InstalledEntry> out = new ArrayList<>();
+        Map<String, String> mcpUrlByName = null;
+        for (MarketInstall rec : recs) {
+            MarketItem item = byId.get(rec.getItemId());
+            if (item == null) continue;
+            // MCP 的真相是用户侧真实配置（c_ai_user_mcp）：配置被删后只剩安装记录，不能继续算「已安装」
+            if (MarketItem.TYPE_MCP.equals(item.getItemType())) {
+                if (mcpUrlByName == null) {
+                    mcpUrlByName = new LinkedHashMap<>();
+                    for (UserMcp row : userMcpMapper.selectList(
+                            new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<UserMcp>()
+                                    .eq(UserMcp::getUid, uid))) {
+                        mcpUrlByName.put(row.getName(), row.getUrl());
+                    }
+                }
+                String name;
+                String url;
+                try {
+                    JSONObject payload = payloadJson(item);
+                    name = str(payload, "name");
+                    url = str(payload, "url");
+                } catch (RuntimeException e) {
+                    continue;
+                }
+                if (name == null || url == null || !url.equals(mcpUrlByName.get(name))) continue;
+            }
+            out.add(new InstalledEntry(item, rec));
+        }
+        return out;
+    }
+
+    private static List<Map<String, Object>> versionMaps(List<MarketVersion> rows) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (MarketVersion v : rows) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("version", v.getVersion());
+            m.put("releaseNote", v.getReleaseNote());
+            m.put("createTime", v.getCreateTime() == null ? null : v.getCreateTime().toString());
+            out.add(m);
+        }
+        return out;
+    }
+
+    /** 安装记录 + 现存条目（安装清单与可更新清单的共用数据源）。 */
+    private static final class InstalledEntry {
+        private final MarketItem item;
+        private final MarketInstall rec;
+
+        private InstalledEntry(MarketItem item, MarketInstall rec) {
+            this.item = item;
+            this.rec = rec;
+        }
     }
 
     /**
@@ -165,6 +456,11 @@ public class MarketService {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("byType", byType);
         out.put("mine", count(uid, null, keyword, tag, true));
+        // 「我安装的」角标与汇总条：已装总数 + 可更新数（MCP 与已下架不参与更新）
+        List<InstalledEntry> installed = installedEntries(uid);
+        out.put("installed", (long) installed.size());
+        out.put("updates", installed.stream()
+                .filter(e -> isUpdatable(e.item, e.rec)).count());
         // MCP 配额（「已达上限（N/10）」文案与四态判定的同源数据）：一张卡都不用猜
         Long used = userMcpMapper.selectCount(
                 new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<UserMcp>()
@@ -198,12 +494,13 @@ public class MarketService {
 
     /** 详情：元信息 + 详细介绍 + 内容预览（skill=SKILL.md 原文；agent/workflow/mcp=载荷 JSON，装前可审阅）。 */
     public Map<String, Object> detail(String uid, String id) {
-        MarketItem item = requireVisible(uid, id);
+        MarketItem item = requireViewable(uid, id);
         Map<String, String> names = authorNames(Set.of(item.getAuthorUid()));
         Map<String, Object> m = view(item, installsOf(uid, Set.of(id)).get(id), names, uid);
         m.put("description", item.getDescription());
         if (MarketItem.TYPE_SKILL.equals(item.getItemType())) {
             m.put("skillMd", readSkillMdFromPayload(item));
+            m.put("files", skillFiles(item));
         } else {
             m.put("configJson", prettyPayload(item));
         }
@@ -219,9 +516,13 @@ public class MarketService {
      * 上架（三类型）：skill=自己安装的技能（ref=技能名）；agent=自己可管理的智能体（ref=agentId）；
      * workflow=自己可管理的工作流（ref=workflowId）。
      * <p>同一作者同 item_type + item_key 重复上架 = 更新同一条（快照覆盖、重新上架）。
+     * 更新要求内容指纹真的变化，并且必须填写「这次改了什么」——装过的人会看到这段说明；
+     * 只改卡片文案请走 {@link #updateMeta}，不会产生新版本。</p>
      */
+    @Transactional(rollbackFor = Exception.class)
     public Map<String, Object> publish(String uid, String type, String ref,
-                                       String summary, String description, String tags, String version) {
+                                       String summary, String description, String tags, String version,
+                                       String releaseNote) {
         String t = normalizeType(type);
         String itemKey;
         String name;
@@ -272,6 +573,7 @@ public class MarketService {
                 .eq("item_key", itemKey)
                 .eq("author_uid", uid));
         boolean update = item != null;
+        String previousHash = update ? normalizeHash(item.getContentHash()) : null;
         if (item == null) item = new MarketItem();
         if (!update) {
             item.setId(UUID.randomUUID().toString().replace("-", ""));
@@ -282,7 +584,9 @@ public class MarketService {
         }
         item.setName(name);
         item.setSummary(finalSummary);
-        item.setDescription(description == null ? "" : description.trim());
+        // 重新上架时前端可能没带回详细介绍（详情拉取失败/未改动）：保留库里原文，避免一次发布把介绍清空
+        if (description != null) item.setDescription(description.trim());
+        else if (!update) item.setDescription("");
         item.setTags(finalTags);
         item.setVersion(finalVersion);
         item.setStatus(MarketItem.STATUS_ONLINE);
@@ -292,12 +596,27 @@ public class MarketService {
         item.setPayloadPath(rel);
         // 内容指纹：徽标只认内容变化，不认版本号（版本号纯展示）。
         // 技能 zip 对同一份技能字节确定（文件按名排序、条目时间取 mtime），内容没变指纹就不变
-        item.setContentHash(sha256Of(payload));
+        String hash = sha256Of(payload);
+        item.setContentHash(hash);
+        String note = releaseNote == null ? "" : releaseNote.trim();
+        if (note.length() > MAX_RELEASE_NOTE) {
+            throw new BizException("发布说明过长（最多 " + MAX_RELEASE_NOTE + " 字）");
+        }
+        if (update) {
+            // 内容没变 = 这次上架不会产生任何新东西：拦下来并指路「编辑信息」，避免版本历史被空更新刷屏
+            if (Objects.equals(previousHash, hash)) {
+                throw new BizException("内容没有变化，未生成新版本；只改简介或标签请用「编辑信息」");
+            }
+            if (note.isEmpty()) {
+                throw new BizException("请填写这次改了什么，装过的人会看到这段说明");
+            }
+        }
         if (update) {
             itemMapper.updateById(item);
         } else {
             itemMapper.insert(item);
         }
+        recordVersion(item, update ? note : (note.isEmpty() ? "首次上架" : note));
         audit.record("[AUDIT] 市场上架 uid={} item={} type={} key={} version={} update={}",
                 uid, item.getId(), t, itemKey, finalVersion, update);
         return view(item, null, Map.of(), uid);
@@ -309,6 +628,7 @@ public class MarketService {
      * <p>payload 只存 {@code {name, url, type, requiresAuth}}，<b>永不收凭据</b>（headers 由安装人
      * 在 MCP 页自行补充）；条目统一 {@code author_uid=system}（平台官方），重复保存同名 = 更新同一条。
      */
+    @Transactional(rollbackFor = Exception.class)
     public Map<String, Object> publishMcp(String uid, Map<String, Object> body) {
         if (!isAdmin()) throw new BizException(403, "MCP 目录仅平台管理员可维护");
         String name = str(body, "name");
@@ -334,6 +654,7 @@ public class MarketService {
                 .eq("item_key", name)
                 .eq("author_uid", MarketItem.AUTHOR_SYSTEM));
         boolean update = item != null;
+        String previousHash = update ? normalizeHash(item.getContentHash()) : null;
         if (item == null) item = new MarketItem();
         if (!update) {
             item.setId(UUID.randomUUID().toString().replace("-", ""));
@@ -351,11 +672,16 @@ public class MarketService {
         String rel = MarketItem.TYPE_MCP + "/" + item.getId() + ".json";
         writePayloadBytes(payloadBytes, rel);
         item.setPayloadPath(rel);
-        item.setContentHash(sha256Of(payloadBytes));
+        String hash = sha256Of(payloadBytes);
+        item.setContentHash(hash);
         if (update) {
             itemMapper.updateById(item);
         } else {
             itemMapper.insert(item);
+        }
+        // 目录条目不参与更新聚合，但版本历史仍留痕：管理员改了地址/传输类型时可回看
+        if (!update || !Objects.equals(previousHash, hash)) {
+            recordVersion(item, update ? "目录信息更新" : "首次登记");
         }
         audit.record("[AUDIT] 市场 MCP 目录{} uid={} item={} key={} url={} update={}",
                 update ? "更新" : "上架", uid, item.getId(), name, url, update);
@@ -459,27 +785,28 @@ public class MarketService {
                 Path zip = payloadOf(item);
                 UserSkillStore.InstalledSkill skill = skillStore.installZipFile(uid, zip,
                         null, overwrite, new LinkedHashSet<>(skillRepository.builtinNames()));
-                m = finishInstall(uid, item);
+                m = finishInstall(uid, item, overwrite
+                        ? MarketInstallLog.ACTION_UPDATE : MarketInstallLog.ACTION_INSTALL);
                 m.put("skillName", skill.name());
             }
             case MarketItem.TYPE_WORKFLOW -> {
                 JSONObject payload = payloadJson(item);
                 Workflow wf = workflowService.create(
                         str(payload, "name"), str(payload, "description"), str(payload, "dsl"));
-                m = finishInstall(uid, item);
+                m = finishInstall(uid, item, MarketInstallLog.ACTION_COPY);
                 m.put("workflowId", wf.getId());
                 m.put("workflowName", wf.getName());
             }
             case MarketItem.TYPE_AGENT -> {
                 JSONObject payload = payloadJson(item);
                 Agent created = forkAgent(uid, payload, warnings);
-                m = finishInstall(uid, item);
+                m = finishInstall(uid, item, MarketInstallLog.ACTION_COPY);
                 m.put("agentId", created.getId());
                 m.put("agentName", created.getName());
             }
             case MarketItem.TYPE_MCP -> {
                 UserMcp row = installMcp(uid, item);
-                m = finishInstall(uid, item);
+                m = finishInstall(uid, item, MarketInstallLog.ACTION_INSTALL);
                 m.put("mcpName", row.getName());
             }
             default -> throw new BizException("暂不支持该物品类型：" + item.getItemType());
@@ -488,8 +815,8 @@ public class MarketService {
         return m;
     }
 
-    /** 安装收尾：落安装记录（记当前指纹）+ 计数 + 视图；失败路径不会走到这里（不留「装过」痕迹）。 */
-    private Map<String, Object> finishInstall(String uid, MarketItem item) {
+    /** 安装收尾：落安装记录（记当前指纹）+ 安装流水 + 计数 + 视图；失败路径不会走到这里（不留「装过」痕迹）。 */
+    private Map<String, Object> finishInstall(String uid, MarketItem item, String action) {
         installMapper.delete(new QueryWrapper<MarketInstall>()
                 .eq("uid", uid).eq("item_id", item.getId()));
         MarketInstall rec = new MarketInstall();
@@ -501,8 +828,22 @@ public class MarketService {
         installMapper.insert(rec);
         itemMapper.update(null, new UpdateWrapper<MarketItem>()
                 .eq("id", item.getId()).setSql("install_count = install_count + 1"));
-        audit.record("[AUDIT] 市场安装 uid={} item={} type={} key={} version={}",
-                uid, item.getId(), item.getItemType(), item.getItemKey(), item.getVersion());
+        // 趋势/最近安装人是次级观测：写失败只告警，不回滚已经成功的复制（文件侧也无法回滚）
+        try {
+            MarketInstallLog entry = new MarketInstallLog();
+            entry.setItemId(item.getId());
+            entry.setUid(uid);
+            entry.setItemType(item.getItemType());
+            entry.setVersion(item.getVersion());
+            entry.setContentHash(item.getContentHash());
+            entry.setAction(action);
+            entry.setCreateTime(LocalDateTime.now());
+            installLogMapper.insert(entry);
+        } catch (Exception e) {
+            log.warn("[MARKET] 安装流水写入失败 uid={} item={}: {}", uid, item.getId(), e.toString());
+        }
+        audit.record("[AUDIT] 市场安装 uid={} item={} type={} key={} version={} action={}",
+                uid, item.getId(), item.getItemType(), item.getItemKey(), item.getVersion(), action);
         return view(item, rec, Map.of(), uid);
     }
 
@@ -595,6 +936,8 @@ public class MarketService {
         }
         itemMapper.deleteById(id);
         installMapper.delete(new QueryWrapper<MarketInstall>().eq("item_id", id));
+        versionMapper.delete(new QueryWrapper<MarketVersion>().eq("item_id", id));
+        installLogMapper.delete(new QueryWrapper<MarketInstallLog>().eq("item_id", id));
         try {
             Files.deleteIfExists(payloadOf(item));
         } catch (IOException e) {
@@ -627,11 +970,25 @@ public class MarketService {
         return item;
     }
 
+    /**
+     * 可查看：在上架可见性之外，放宽「装过的人」。
+     * 作者下架后，已装副本仍归使用者，详情与版本历史要能回看；但安装/下载仍走 {@link #requireVisible}。
+     */
+    private MarketItem requireViewable(String uid, String id) {
+        MarketItem item = requireItem(id);
+        if (MarketItem.STATUS_ONLINE.equals(item.getStatus())
+                || uid.equals(item.getAuthorUid()) || isAdmin()) {
+            return item;
+        }
+        if (installsOf(uid, Set.of(id)).get(id) != null) return item;
+        throw new BizException("该物品已下架");
+    }
+
     /** 可管理：作者本人或管理员。 */
     private MarketItem requireManageable(String uid, String id) {
         MarketItem item = requireItem(id);
         if (!uid.equals(item.getAuthorUid()) && !isAdmin()) {
-            throw new BizException("只有上架人（或管理员）可以管理该物品");
+            throw new BizException(403, "只有上架人（或管理员）可以管理该物品");
         }
         return item;
     }
@@ -760,6 +1117,53 @@ public class MarketService {
         }
     }
 
+    /** 技能包内文件清单（详情页展示附件数量与名字；最多 50 条，不含目录）。 */
+    private List<Map<String, Object>> skillFiles(MarketItem item) {
+        if (!MarketItem.TYPE_SKILL.equals(item.getItemType())) return List.of();
+        List<Map<String, Object>> out = new ArrayList<>();
+        try {
+            Path zip = payloadOf(item);
+            try (ZipInputStream zis = new ZipInputStream(Files.newInputStream(zip), StandardCharsets.UTF_8)) {
+                ZipEntry e;
+                while ((e = zis.getNextEntry()) != null && out.size() < MAX_SKILL_FILES) {
+                    if (e.isDirectory()) continue;
+                    String name = e.getName();
+                    // SKILL.md 是正文本身，不算「附带文件」
+                    if ("SKILL.md".equals(name) || name.endsWith("/SKILL.md")) continue;
+                    Map<String, Object> f = new LinkedHashMap<>();
+                    f.put("name", name);
+                    f.put("size", e.getSize() < 0 ? 0 : e.getSize());
+                    out.add(f);
+                }
+            }
+        } catch (IOException | RuntimeException e) {
+            log.warn("[MARKET] 读取快照文件清单失败 item={}: {}", item.getId(), e.toString());
+        }
+        return out;
+    }
+
+    /** 写一条版本历史并裁剪到最近 20 条（版本号只展示，匹配与排序用时间）。 */
+    private void recordVersion(MarketItem item, String note) {
+        MarketVersion v = new MarketVersion();
+        v.setItemId(item.getId());
+        v.setVersion(item.getVersion());
+        v.setContentHash(item.getContentHash());
+        v.setReleaseNote(note == null ? "" : note.trim());
+        v.setReleasedAtMs(VERSION_SEQ.updateAndGet(prev -> Math.max(System.currentTimeMillis(), prev + 1)));
+        v.setCreateTime(LocalDateTime.now());
+        versionMapper.insert(v);
+        pruneVersions(item.getId());
+    }
+
+    private void pruneVersions(String itemId) {
+        List<MarketVersion> rows = versionMapper.selectList(new QueryWrapper<MarketVersion>()
+                .eq("item_id", itemId).orderByDesc("released_at_ms").orderByDesc("create_time"));
+        if (rows.size() <= VERSION_KEEP) return;
+        List<String> drop = rows.subList(VERSION_KEEP, rows.size()).stream()
+                .map(MarketVersion::getId).collect(Collectors.toList());
+        if (!drop.isEmpty()) versionMapper.deleteBatchIds(drop);
+    }
+
     /** 物品类型归一：空/未知按 skill 兜底（v1 只有技能时的旧调用不带 type）。 */
     private static String normalizeType(String raw) {
         String t = raw == null ? "" : raw.trim().toLowerCase(Locale.ROOT);
@@ -842,6 +1246,7 @@ public class MarketService {
             writePayloadBytes(bytes, item.getPayloadPath());
             item.setContentHash(hash);
             itemMapper.insert(item);
+            recordVersion(item, "平台模板");
             log.info("[MARKET] 官方模板已种入市场：{}", name);
             return;
         }
@@ -853,6 +1258,7 @@ public class MarketService {
             item.setDescription(description);
             item.setContentHash(hash);
             itemMapper.updateById(item);
+            recordVersion(item, "平台模板更新");
             log.info("[MARKET] 官方模板内容已刷新：{}", name);
         }
     }
@@ -927,15 +1333,7 @@ public class MarketService {
         m.put("installed", install != null);
         m.put("installedVersion", install == null ? null : install.getVersion());
         // 「有更新」按内容指纹判定；指纹缺失（历史行/异常路径）退回版本号比对
-        String curHash = normalizeHash(item.getContentHash());
-        String insHash = install == null ? null : normalizeHash(install.getContentHash());
-        boolean hasUpdate;
-        if (curHash != null && insHash != null) {
-            hasUpdate = !curHash.equals(insHash);
-        } else {
-            hasUpdate = install != null && !item.getVersion().equals(install.getVersion());
-        }
-        m.put("hasUpdate", hasUpdate);
+        m.put("hasUpdate", hasUpdate(item, install));
         return m;
     }
 

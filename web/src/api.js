@@ -1104,11 +1104,37 @@ export const listMarketItems = (params = {}) => {
   if (params.keyword) q.set('keyword', params.keyword)
   if (params.tag) q.set('tag', params.tag)
   if (params.mine) q.set('mine', 'true')
+  if (params.sort) q.set('sort', params.sort)
+  if (params.page) q.set('page', String(params.page))
+  if (params.pageSize) q.set('pageSize', String(params.pageSize))
   const s = q.toString()
   return request('/market/list' + (s ? '?' + s : ''))
 }
 /** 物品详情：元信息 + 详细介绍 + skillMd（技能）或 configJson（应用模板/工作流的载荷预览） */
 export const getMarketItem = id => request(`/market/${encodeURIComponent(id || '')}`)
+/** 我安装的：安装记录 join 现存条目（MCP 只展示「已在 MCP」，不参与更新） */
+export const listMarketInstalled = (params = {}) => {
+  const q = new URLSearchParams()
+  if (params.type) q.set('type', params.type)
+  if (params.keyword) q.set('keyword', params.keyword)
+  if (params.page) q.set('page', String(params.page))
+  if (params.pageSize) q.set('pageSize', String(params.pageSize))
+  const s = q.toString()
+  return request('/market/installed' + (s ? '?' + s : ''))
+}
+/** 可更新清单（侧栏红点与批量更新共用） */
+export const listMarketUpdates = () => request('/market/updates')
+/** 版本历史：items=全部（≤20），newItems=已装版本之后的新说明，matched=是否按指纹匹配到已装版本 */
+export const getMarketItemVersions = id =>
+  request(`/market/${encodeURIComponent(id || '')}/versions`)
+/** 编辑展示信息：只改卡片文案，不产生新版本 */
+export const updateMarketItemMeta = (id, body) =>
+  request(`/market/${encodeURIComponent(id || '')}/meta`, {
+    method: 'PUT', body: JSON.stringify(body)
+  })
+/** 我上架内容的近 N 天安装趋势 + 最近安装人 */
+export const getMyMarketStats = (days = 30) =>
+  request(`/market/mine/stats?days=${Number(days) || 30}`)
 /**
  * 上架：{type: skill|agent|workflow, ref, summary?, description?, tags?, version?}
  * ref——skill=技能名（仅「我的技能」）、agent=智能体 id、workflow=工作流 id（后两者须本人可管理）。

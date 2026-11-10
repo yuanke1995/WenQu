@@ -59,16 +59,16 @@ public final class WorkflowTemplates {
     /** 模板一：检索问答（start → retrieval → llm → end） */
     private static String buildRetrievalQa() {
         List<WorkflowDsl.Node> nodes = new ArrayList<>();
-        nodes.add(node("start", "start", 0, Map.of(
+        nodes.add(node("start", "start", 0, linkedMap(
                 "inputs", List.of(input("question", true)))));
-        nodes.add(node("retrieval_1", "retrieval", 1, Map.of(
+        nodes.add(node("retrieval_1", "retrieval", 1, linkedMap(
                 "query", "{{start.question}}",
                 "kbIds", new ArrayList<>(),
                 "topK", 5)));
-        nodes.add(node("llm_1", "llm", 2, Map.of(
+        nodes.add(node("llm_1", "llm", 2, linkedMap(
                 "prompt", "请依据以下检索到的资料回答用户问题。资料中没有的信息不要编造。\n\n【检索资料】\n{{retrieval_1.text}}\n\n【用户问题】\n{{start.question}}",
                 "temperature", 0.7)));
-        nodes.add(node("end_1", "end", 3, Map.of(
+        nodes.add(node("end_1", "end", 3, linkedMap(
                 "outputs", linkedMap("answer", "{{llm_1.answer}}"))));
         return toJson(nodes, straightEdges(nodes));
     }
@@ -76,21 +76,21 @@ public final class WorkflowTemplates {
     /** 模板二：并行多视角（start → llm_1/llm_2 并行 → template 聚合 → llm_3 总结 → end） */
     private static String buildMultiView() {
         List<WorkflowDsl.Node> nodes = new ArrayList<>();
-        nodes.add(node("start", "start", 0, Map.of(
+        nodes.add(node("start", "start", 0, linkedMap(
                 "inputs", List.of(input("question", true)))));
         // 并行扇出：start 出两条边（StateGraph.START 扇出已生产验证），两 llm 汇入 template（扇入）
-        nodes.add(node("llm_pro", "llm", 1, Map.of(
+        nodes.add(node("llm_pro", "llm", 1, linkedMap(
                 "prompt", "你是优势分析视角。请只从「机会与优势」的角度分析下面的问题，给出 2~4 条要点：\n\n{{start.question}}",
                 "temperature", 0.7)));
-        nodes.add(node("llm_risk", "llm", 1, Map.of(
+        nodes.add(node("llm_risk", "llm", 1, linkedMap(
                 "prompt", "你是风险分析视角。请只从「风险与隐患」的角度分析下面的问题，给出 2~4 条要点：\n\n{{start.question}}",
                 "temperature", 0.7)));
-        nodes.add(node("template_1", "template", 2, Map.of(
+        nodes.add(node("template_1", "template", 2, linkedMap(
                 "template", "【优势视角】\n{{llm_pro.answer}}\n\n【风险视角】\n{{llm_risk.answer}}")));
-        nodes.add(node("llm_sum", "llm", 3, Map.of(
+        nodes.add(node("llm_sum", "llm", 3, linkedMap(
                 "prompt", "以下是同一问题的两路分析：\n\n{{template_1.text}}\n\n请综合两个视角给出平衡的最终结论（先各用一句话概括两路要点，再给结论）。",
                 "temperature", 0.5)));
-        nodes.add(node("end_1", "end", 4, Map.of(
+        nodes.add(node("end_1", "end", 4, linkedMap(
                 "outputs", linkedMap("answer", "{{llm_sum.answer}}"))));
         List<WorkflowDsl.Edge> edges = new ArrayList<>();
         edges.add(edge("start", "llm_pro"));
@@ -105,26 +105,26 @@ public final class WorkflowTemplates {
     /** 模板三：审核流水线（start → retrieval → llm → approval → approve: end 回答 / reject: end 拒绝说明） */
     private static String buildApprovalFlow() {
         List<WorkflowDsl.Node> nodes = new ArrayList<>();
-        nodes.add(node("start", "start", 0, Map.of(
+        nodes.add(node("start", "start", 0, linkedMap(
                 "inputs", List.of(input("question", true)))));
-        nodes.add(node("retrieval_1", "retrieval", 1, Map.of(
+        nodes.add(node("retrieval_1", "retrieval", 1, linkedMap(
                 "query", "{{start.question}}",
                 "kbIds", new ArrayList<>(),
                 "topK", 5)));
-        nodes.add(node("llm_1", "llm", 2, Map.of(
+        nodes.add(node("llm_1", "llm", 2, linkedMap(
                 "prompt", "请依据以下检索到的资料起草一份供人工审核的回答：\n\n【检索资料】\n{{retrieval_1.text}}\n\n【用户问题】\n{{start.question}}",
                 "temperature", 0.7)));
         // approval：approve/reject 两分支必须声明且都连线（校验器强制）
-        nodes.add(node("approval_1", "approval", 3, Map.of(
+        nodes.add(node("approval_1", "approval", 3, linkedMap(
                 "prompt", "请审核以下待发出的回答（来自知识库检索作答）：\n\n{{llm_1.answer}}",
                 "timeoutSeconds", 120,
                 "branches", List.of(
                         branch("approve", "审核通过"),
                         branch("reject", "审核不通过")))));
         // 批准 → 输出原回答；拒绝 → 输出未通过说明（两个 end，路径产出各自可回放）
-        nodes.add(node("end_ok", "end", 4, Map.of(
+        nodes.add(node("end_ok", "end", 4, linkedMap(
                 "outputs", linkedMap("answer", "{{llm_1.answer}}"))));
-        nodes.add(node("end_reject", "end", 4, Map.of(
+        nodes.add(node("end_reject", "end", 4, linkedMap(
                 "outputs", linkedMap("answer", "该回答未通过人工审核，已被驳回。"))));
         List<WorkflowDsl.Edge> edges = new ArrayList<>();
         edges.add(edge("start", "retrieval_1"));

@@ -1337,6 +1337,34 @@ CREATE TABLE IF NOT EXISTS `c_ai_market_install` (
     KEY `idx_item` (`item_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='市场安装记录（「已安装/有更新」徽标依据；卸载技能不删记录）';
 
+CREATE TABLE IF NOT EXISTS `c_ai_market_version` (
+    `id`           VARCHAR(50) NOT NULL COMMENT '主键ID (UUID)',
+    `item_id`      VARCHAR(50) NOT NULL COMMENT '市场物品（c_ai_market_item.id）',
+    `version`      VARCHAR(32) NOT NULL COMMENT '发布时的版本号（展示用，不参与更新判定）',
+    `content_hash` CHAR(64)    NOT NULL COMMENT '发布时的内容指纹（SHA-256）',
+    `release_note` MEDIUMTEXT  COMMENT '这次改了什么（重新上架必填；平台种子为系统文案）',
+    `released_at_ms` BIGINT    NOT NULL DEFAULT 0 COMMENT '发布序号（毫秒时间戳，进程内单调递增；同秒多次发布也能排序）',
+    `create_time`  DATETIME    DEFAULT CURRENT_TIMESTAMP COMMENT '发布时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_item_time` (`item_id`, `create_time`),
+    KEY `idx_item_seq` (`item_id`, `released_at_ms`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='市场版本历史（更新说明与版本历史）';
+
+CREATE TABLE IF NOT EXISTS `c_ai_market_install_log` (
+    `id`           VARCHAR(50) NOT NULL COMMENT '主键ID (UUID)',
+    `item_id`      VARCHAR(50) NOT NULL COMMENT '市场物品（c_ai_market_item.id）',
+    `uid`          VARCHAR(64) NOT NULL COMMENT '安装人（c_ai_user.uid）',
+    `item_type`    VARCHAR(20) NOT NULL COMMENT '物品类型（冗余，便于按类型统计）',
+    `version`      VARCHAR(32) NOT NULL COMMENT '本次安装到的版本（展示用）',
+    `content_hash` CHAR(64)    DEFAULT NULL COMMENT '本次安装到的内容指纹',
+    `action`       VARCHAR(16) NOT NULL COMMENT 'install=首次安装 update=覆盖更新 copy=新增副本',
+    `create_time`  DATETIME    DEFAULT CURRENT_TIMESTAMP COMMENT '发生时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_item_time` (`item_id`, `create_time`),
+    KEY `idx_uid_time` (`uid`, `create_time`),
+    KEY `idx_time` (`create_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='市场安装流水（作者趋势与最近安装人；追加型，保留 180 天）';
+
 -- ============================================
 -- 退役清理（全框架化 P3：技能与记忆改由文件系统 + 框架工具承载）
 -- 本文件由 spring.sql.init 在每次启动时逐条执行，故这四条 DROP 是幂等的：表不存在就是空操作。
