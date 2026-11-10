@@ -208,37 +208,46 @@
               </span>
             </div>
             <div v-if="expandedDocId === d.id" class="doc-expand">
-              <div class="de-row">
-                <span class="de-label">描述</span>
-                <span class="de-val">{{ d.description || '暂无描述' }}</span>
-              </div>
-              <div class="de-row">
-                <span class="de-label">标签</span>
-                <span class="de-val">
-                  <template v-if="docTags(d).length">
-                    <a-tag v-for="t in docTags(d)" :key="t" class="doc-tag-chip">{{ t }}</a-tag>
-                  </template>
-                  <span v-else class="de-muted">未设置</span>
-                </span>
-              </div>
-              <div class="de-row">
-                <span class="de-label">来源</span>
-                <span class="de-val">
-                  <a v-if="d.sourceUrl" :href="d.sourceUrl" target="_blank" rel="noopener">{{ d.sourceUrl }}</a>
-                  <span v-else>本地上传</span>
-                </span>
-              </div>
-              <div class="de-row">
-                <span class="de-label">解析</span>
-                <span class="de-val">{{ d.status === 2 ? (d.parseDesc || '解析中') : statusText(d.status) }}<span v-if="d.parseProgress && d.status === 2"> · {{ d.parseProgress }}%</span></span>
-              </div>
-              <div class="de-row">
-                <span class="de-label">归属</span>
-                <span class="de-val">{{ kbNameOf(d) }}</span>
-                <span class="sp"></span>
-                <button v-if="d.status !== 2" class="app-link-btn" @click="openKb(d)">查看知识块</button>
-                <button v-if="canManageDoc(d)" class="app-link-btn" @click="openTagEdit(d)">编辑标签</button>
-                <button v-if="d.status !== 2" class="app-link-btn" @click="dlSource(d)">下载源文件</button>
+              <div class="de-meta">
+                <div class="de-row">
+                  <span class="de-label">描述</span>
+                  <span class="de-val">{{ d.description || '暂无描述' }}</span>
+                </div>
+                <div class="de-row">
+                  <span class="de-label">标签</span>
+                  <span class="de-val">
+                    <template v-if="docTags(d).length">
+                      <a-tag v-for="t in docTags(d)" :key="t" class="doc-tag-chip">{{ t }}</a-tag>
+                    </template>
+                    <span v-else class="de-muted">未设置</span>
+                  </span>
+                </div>
+                <div class="de-row">
+                  <span class="de-label">来源</span>
+                  <span class="de-val de-ellipsis" :title="d.sourceUrl || '本地上传'">
+                    <a v-if="d.sourceUrl" :href="d.sourceUrl" target="_blank" rel="noopener">{{ d.sourceUrl }}</a>
+                    <span v-else>本地上传</span>
+                  </span>
+                </div>
+                <div class="de-row">
+                  <span class="de-label">解析</span>
+                  <span class="de-val">{{ d.status === 2 ? (d.parseDesc || '解析中') : statusText(d.status) }}<span v-if="d.parseProgress && d.status === 2"> · {{ d.parseProgress }}%</span></span>
+                </div>
+                <div class="de-row de-row-kb">
+                  <span class="de-label">归属</span>
+                  <span class="de-val de-val-kb">
+                    <a-select v-if="canManageDoc(d)" :value="kbOf(d)" size="small"
+                              :options="kbSelectOptions" :dropdown-match-select-width="false"
+                              :title="'切换所属知识库：决定哪些助手能检索到该文档'"
+                              @change="v => onMoveKb(d, v)" />
+                    <template v-else>{{ kbNameOf(d) }}</template>
+                  </span>
+                  <span class="de-links">
+                    <button v-if="d.status !== 2" class="app-link-btn" @click="openKb(d)">查看知识块</button>
+                    <button v-if="canManageDoc(d)" class="app-link-btn" @click="openTagEdit(d)">编辑标签</button>
+                    <button v-if="d.status !== 2" class="app-link-btn" @click="dlSource(d)">下载源文件</button>
+                  </span>
+                </div>
               </div>
             </div>
           </template>
@@ -1934,13 +1943,21 @@ const fmtTime = t => {
 .doc-toggle:hover { color: var(--app-accent); }
 .doc-toggle .flip { transform: rotate(-90deg); transition: transform .15s; }
 .doc-row.row-open { background: var(--app-accent-weak); }
-.doc-expand { padding: 9px 16px 11px 60px; background: var(--app-panel-2); border-bottom: 1px solid var(--app-border); }
-.de-row { display: flex; align-items: flex-start; gap: 10px; font-size: 11.5px; color: var(--app-text2); padding: 3px 0; }
+.doc-expand { padding: 10px 16px 12px 60px; background: var(--app-panel-2); border-bottom: 1px solid var(--app-border); }
+.de-meta { display: flex; flex-direction: column; gap: 2px; }
+.de-row { display: flex; align-items: flex-start; gap: 10px; font-size: 11.5px; line-height: 20px;
+  color: var(--app-text2); padding: 2px 0; }
 .de-label { width: 42px; flex: none; color: var(--app-text3); }
-.de-val { min-width: 0; word-break: break-all; }
+.de-val { min-width: 0; flex: 1; word-break: break-all; }
 .de-val a { color: var(--app-accent); }
 .de-muted { color: var(--app-text3); }
-.de-row .sp { flex: 1; }
+.de-ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 归属行：左侧下拉收窄，右侧操作靠右；窄屏时操作整体换行，不挤压下拉 */
+.de-row-kb { align-items: center; flex-wrap: wrap; row-gap: 6px; }
+.de-val-kb { flex: 0 1 auto; }
+.de-val-kb :deep(.ant-select) { width: 170px; max-width: 100%; }
+.de-links { margin-left: auto; display: inline-flex; align-items: center; flex-wrap: wrap; gap: 14px; }
+.de-links .app-link-btn { font-size: 11.5px; }
 /* 上传队列浮层 */
 /* 队列收起后的悬浮入口：与展开卡同位置，点一下原样展开 */
 .uploadq-pill { position: fixed; right: 24px; bottom: 24px; display: inline-flex; align-items: center; gap: 6px;
