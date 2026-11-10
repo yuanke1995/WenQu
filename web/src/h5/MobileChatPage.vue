@@ -80,9 +80,9 @@
            —— 且必须排掉 historyError：那是「没取回来」，不是「没有」 -->
       <div v-if="!messages.length && !historyError" class="m-welcome">
         <BrandMark class="m-brand" />
-        <template v-if="setupGuide.loaded && !chatDone">
+        <template v-if="setupGuide.loaded && !chatDone && !guideSnoozed">
           <div class="m-welcome-title">欢迎使用问渠</div>
-          <div class="m-welcome-sub">完成下面的配置即可开始对话</div>
+          <div class="m-welcome-sub">先完成 2 步，即可开始对话</div>
           <div class="m-setup"><SetupGuide scope="chat" variant="card" /></div>
         </template>
         <WelcomeCopy v-else variant="mobile" :agent-name="engine.currentAgent?.name || ''" :think-on="deepThinkOn"
@@ -666,7 +666,7 @@ import NetBanner from '../components/NetBanner.vue'
 import SetupGuide from '../components/SetupGuide.vue'
 import WelcomeCopy from '../components/WelcomeCopy.vue'
 import MsgDivider from '../components/MsgDivider.vue'
-import { chatDone, refreshSetupGuide, setupGuide } from '../utils/setupGuide'
+import { chatDone, guideSnoozed, refreshSetupGuide, setupGuide } from '../utils/setupGuide'
 
 const router = useRouter()
 

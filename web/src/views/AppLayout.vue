@@ -88,21 +88,21 @@
             <!-- 市场：可更新计数红点（安装/更新后由市场页失效，不做轮询） -->
             <span v-if="!collapsed && m.path === '/market' && marketUpdateCount > 0" class="nav-pending-badge">{{ marketUpdateCount }}</span>
             <span v-if="!collapsed && menuPending(m)" class="app-pill nav-pending">待配置</span>
+            <span v-if="!collapsed && menuMuted(m)" class="app-pill nav-muted">未启用</span>
             <i v-if="menuPending(m)" class="nav-dot"></i>
           </button>
         </template>
 
         <!-- 配置引导入口（导航组末尾——辅助层功能不占 logo 下的黄金位，必配的醒目性
              由菜单「待配置」tag 与对话页欢迎卡承担）：
-             必配未完成=琥珀「配置引导·还差 N 项」+ 折叠圆点（待办感）；
-             必配完成但进阶项有缺=弱化链接「进阶配置 · N 项可选」（感知但不催办）；
-             全部完成=消失，对已配好的存量用户零打扰 -->
-        <button v-if="guideVisible" class="nav-item guide-entry" :class="{ adv: guideAdvOnly }"
+             只统计聊天必需的两步（进度 N / 2）；知识库属于可选增强，只在其菜单上提示，
+             不进入这条计数，避免只聊天的用户永远看到一条消不掉的待办。
+             聊天就绪即消失，对已配好的存量用户零打扰 -->
+        <button v-if="guideVisible" class="nav-item guide-entry"
                 @click="guideOpen = true" :title="guideEntryTitle">
           <compass-outlined />
-          <span v-if="!collapsed" class="guide-entry-text">{{ guideAdvOnly ? '进阶配置' : '配置引导' }}</span>
-          <span v-if="!collapsed && !guideAdvOnly" class="guide-count">还差 {{ pendingCount }} 项</span>
-          <span v-else-if="!collapsed" class="guide-count muted">{{ advPendingCount }} 项可选</span>
+          <span v-if="!collapsed" class="guide-entry-text">配置引导</span>
+          <span v-if="!collapsed" class="guide-count">{{ chatDoneCount }} / 2</span>
           <i v-if="pendingCount > 0" class="nav-dot"></i>
         </button>
 
@@ -518,7 +518,8 @@
     </aside>
 
     <!-- 配置引导抽屉：常驻入口点开，清单含向量模型项（scope=all）；跳转前由组件 emit close 关闭 -->
-    <a-drawer v-model:open="guideOpen" placement="left" :width="400" title="配置引导">
+    <a-drawer v-model:open="guideOpen" placement="left" :width="400" title="配置引导"
+              :body-style="{ padding: '12px 18px 14px' }">
       <SetupGuide scope="all" variant="plain" @close="guideOpen = false" />
     </a-drawer>
 
@@ -601,8 +602,8 @@ import { themeState, toggleTheme } from '../utils/theme'
 import { authUser, ensureAuth, isAdminSync, isSuperadminSync, clearAuth, tenantStateSync } from '../utils/auth'
 import { localExecutorId, setLocalExecutorId } from '../utils/localExecutor'
 import { marketUpdateCount, refreshMarketUpdates } from '../utils/marketUpdates'
-import { chatDone, chatReady, defaultReady, embeddingReady, pendingCount, refreshSetupGuide, setupGuide,
-         advPendingCount } from '../utils/setupGuide'
+import { chatDone, chatDoneCount, chatReady, defaultReady, embeddingReady, pendingCount,
+         refreshSetupGuide, setupGuide } from '../utils/setupGuide'
 import { sessionStore, loadSessions, loadTasks, loadSpaceMore, collapseSpace, reloadSpace, toggleArchived, visibleSessions, chatStreams, procSessions, startProcBadgePoll, stopProcBadgePoll, NO_SPACE_KEY, startSessionTabSync, stopSessionTabSync, resetSessionStore } from './store'
 import { isNarrow, mobileShell } from '../h5/mobile'
 import BrandMark from '../components/BrandMark.vue'
@@ -1746,31 +1747,30 @@ const openShareManage = sid =>
   router.push({ path: '/profile', query: sid ? { panel: 'shares', sid } : { panel: 'shares' } })
 
 // ==================== 新手配置引导（侧栏入口 + 菜单 tag + 抽屉） ====================
-// 状态口径见 utils/setupGuide.js：入口/抽屉=任一项未完成；/chat tag=①②任一未完成；
-// /knowledge tag=③未完成。loaded=false（首次对账未成功）一律不显示，避免给存量用户误报。
-// 两层清单：必配（pendingCount，琥珀待办）与进阶（advPendingCount，「配置了效果更好」弱化建议）。
+// 状态口径见 utils/setupGuide.js：pendingCount 只统计聊天必需的两步；向量模型属于可选增强，
+// 只在知识库菜单上以中性「未启用」提示，不进侧栏计数（否则只用对话的用户永远差一项）。
+// loaded=false（首次对账未成功）一律不显示，避免给存量用户误报。
 const guideOpen = ref(false)
-const guideVisible = computed(() =>
-  setupGuide.loaded && (pendingCount.value > 0 || advPendingCount.value > 0))
-// 必配全部完成后入口切弱化形态：不再琥珀计数、无折叠圆点，避免"永远有待办"的催办感
-const guideAdvOnly = computed(() => pendingCount.value === 0 && advPendingCount.value > 0)
-const guideEntryTitle = computed(() =>
-  guideAdvOnly.value ? '进阶配置 — 配置后效果更好（可选）' : '配置引导')
-// 聊天侧缺失项文案（tooltip 用）
+const guideVisible = computed(() => setupGuide.loaded && pendingCount.value > 0)
+// 聊天侧缺失项文案（tooltip / 入口标题用）
 const chatPendingText = computed(() => {
   const parts = []
   if (!chatReady.value) parts.push('添加聊天模型')
   if (!defaultReady.value) parts.push('设置默认聊天模型')
   return parts.join('、')
 })
+const guideEntryTitle = computed(() => `配置引导 — 还差：${chatPendingText.value}`)
 // 未完成对账（loaded=false）时一律按「不显示」处理：模块级状态刷新后初始为空，
-// 此时 chatModels/embeddingCount 全空会被误读成「真的没配」，导致 tag 闪一下
+// 此时 chatModels/embeddingCount 全空会被误读成「真的没配」，导致 tag 闪一下。
+// 对话菜单的琥珀「待配置」只表示聊天阻塞；知识库用中性「未启用」，不制造待办压力。
 const menuPending = m => !setupGuide.loaded ? false
-  : (m.path === '/chat' && !chatDone.value) || (m.path === '/knowledge' && !embeddingReady.value)
+  : (m.path === '/chat' && !chatDone.value)
+const menuMuted = m => !setupGuide.loaded ? false
+  : (m.path === '/knowledge' && !embeddingReady.value)
 const menuTitle = m => {
   if (!setupGuide.loaded) return m.name
   if (m.path === '/chat' && !chatDone.value) return `${m.name} — 还差：${chatPendingText.value}`
-  if (m.path === '/knowledge' && !embeddingReady.value) return `${m.name} — 还差：添加向量模型（建知识库需要）`
+  if (m.path === '/knowledge' && !embeddingReady.value) return `${m.name} — 未启用：添加向量模型后可用`
   return m.name
 }
 // 导航回来 TTL 对账（15s 内不重复请求；配置动作后的 force 对账在 Providers/Profile 页内做）
@@ -2041,6 +2041,12 @@ watch(() => route.fullPath, () => {
   font-size: 10px; padding: 2.5px 7px;
   color: var(--app-warn-text); background: var(--app-warn-weak);
 }
+/* 知识库缺口用中性「未启用」：它是可选能力，不该和聊天的必配项抢注意力 */
+.nav-item .app-pill.nav-muted {
+  margin-left: auto; flex: none;
+  font-size: 10px; padding: 2.5px 7px;
+  color: var(--app-text3); background: #f1f3f5;
+}
 /* 折叠态：span 文本被隐藏，用 <i> 圆点提示待配置（span 会被隐藏规则吞掉）。
    窄屏抽屉是展开形态（宽度够放文字与计数），不需要圆点，故只在 .collapsed 下生效 */
 .nav-dot {
@@ -2056,10 +2062,6 @@ watch(() => route.fullPath, () => {
   flex: none; font-size: 10px; line-height: 1; padding: 3px 7px; border-radius: 999px;
   color: var(--app-warn-text); background: var(--app-warn-weak);
 }
-/* 进阶弱化态：链接式（无弱底、灰字），hover 才提亮——感知得到但不催办 */
-.guide-entry.adv { background: transparent; color: var(--app-text3); }
-.guide-entry.adv:hover { background: var(--app-accent-weak); color: var(--app-text2); }
-.guide-count.muted { color: var(--app-text3); background: var(--app-panel-2); }
 
 /* ==================== 会话树：分区 / 工作区 / 会话行 ==================== */
 /* 分区标题：小号、加字距、计数紧跟其后，做成「任务 (0)」「工作区 (2)」那种目录式表头 */

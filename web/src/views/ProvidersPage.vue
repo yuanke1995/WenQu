@@ -1,6 +1,12 @@
 <template>
   <!-- 页面骨架与「智能体 / 技能 / MCP 外部工具」Tab 完全一致：标题栏（页名 sr-only + 说明 + 主操作）+ 带内边距的内容区 -->
   <div class="app-page">
+    <!-- 配置引导深链：交代「从哪来、做完回哪去」，保存后自动回跳，用户不必自己找路 -->
+    <div v-if="setupMode" class="pv-setup-bar">
+      <InfoCircleOutlined />
+      <span>正在完成配置引导 · 添加并保存模型后会自动返回对话页</span>
+      <button class="app-link-btn" type="button" @click="backToGuide">返回配置引导</button>
+    </div>
     <div class="app-page-head pv-page-head">
       <!-- 页名与 Tab 名重复，标题仅保留给读屏器（sr-only），视觉上从统计起头 -->
       <h1 class="app-page-title sr-only">模型供应商</h1>
@@ -703,7 +709,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
-import { PlusOutlined, DatabaseOutlined, CloudDownloadOutlined, QuestionCircleOutlined, EyeOutlined, EyeInvisibleOutlined, SearchOutlined, ReloadOutlined, AppstoreOutlined, TableOutlined, MoreOutlined, PartitionOutlined } from '@ant-design/icons-vue'
+import { PlusOutlined, DatabaseOutlined, CloudDownloadOutlined, QuestionCircleOutlined, EyeOutlined, EyeInvisibleOutlined, SearchOutlined, ReloadOutlined, AppstoreOutlined, TableOutlined, MoreOutlined, PartitionOutlined, InfoCircleOutlined } from '@ant-design/icons-vue'
 import ProviderIcon from '../components/ProviderIcon.vue'
 import { BRAND_PATHS, BRAND_BADGES } from '../assets/providerIcons.js'
 import { fmtWindow } from '../chat/projections'
@@ -721,6 +727,15 @@ listProviders, createProvider, updateProvider, setProviderEnabled, deleteProvide
 
 const route = useRoute()
 const router = useRouter()
+
+// 配置引导深链：顶部返回条 + 模型保存后自动回跳（from=setup 由引导清单带上）
+const setupMode = computed(() => route.query.from === 'setup')
+// 建供应商成功后要接着预选的新模型类型（深链落不到已有供应商时用）
+const pendingSetupType = ref('')
+const backToGuide = async () => {
+  await refreshSetupGuide(true)
+  router.push('/chat')
+}
 
 const list = ref([])
 const loading = ref(false)
@@ -1412,7 +1427,14 @@ const save = async () => {
     const newId = !editing.value && r && r.data && r.data.id
     if (newId) {
       const created = list.value.find(p => p.id === newId)
-      if (created) openModels(created)
+      if (created) {
+        await openModels(created)
+        // 从配置引导来的（建供应商是为了登记模型）：直接弹出新增表单并预选类型
+        if (pendingSetupType.value) {
+          openModelAdd(pendingSetupType.value)
+          pendingSetupType.value = ''
+        }
+      }
     }
   } catch (e) {
     message.error(e.message || '保存失败')
@@ -1740,11 +1762,11 @@ const blankEditForm = () => ({
   reasoningParams: { dialect: '', effort: {}, budget: {} }
 })
 
-const openModelAdd = () => {
+const openModelAdd = (type = 'chat') => {
   editIsNew.value = true
   editIdLocked.value = false
   editSourceKey.value = ''
-  editForm.value = blankEditForm()
+  editForm.value = { ...blankEditForm(), modelType: type }
   editLevels.value = []
   editBaseline.value = editSnapshot()
   editOpen.value = true
@@ -2121,10 +2143,12 @@ const saveModels = async () => {
   savingModels.value = true
   try {
     await saveProviderModels(modelProvider.value.id, payload)
-    message.success('模型已保存')
+    message.success(setupMode.value ? '模型已保存，返回配置引导' : '模型已保存')
     showModels.value = false
     await load()
     refreshSetupGuide(true)  // 登记模型后立即对账引导状态（返回对话页 tag/清单即时正确）
+    // 从配置引导进来的：保存即完成一步，直接回去，不用用户再自己找路
+    if (setupMode.value) router.push('/chat')
   } catch (e) {
     message.error(e.message || '保存失败')
   } finally {
@@ -2132,16 +2156,38 @@ const saveModels = async () => {
   }
 }
 
-/** 深链处理：/agents?tab=providers&action=new-provider（配置引导清单「去添加」的跳转目标）。
- *  无任何供应商 → 直接弹「新建供应商」；已有 → 打开第一个还没登记聊天模型的供应商的「管理模型」，
- *  全都登记过则兜底 openCreate()。处理完 replace 清掉 action：本页在 a-tabs
- *  destroy-inactive-tab-pane 下切 Tab 会重挂载，不清参数会反复自动弹窗。 */
-const handleSetupAction = () => {
-  if (route.query.action !== 'new-provider') return
-  router.replace({ path: '/agents', query: { tab: 'providers' } })
-  const target = list.value.find(p => !(p.typeCounts && p.typeCounts.chat))
-  if (target) openModels(target)
-  else openCreate()
+/** 深链处理：/agents?tab=providers&action=new-provider|add-model&type=chat|embedding&from=setup
+ *  type=chat：找还没登记聊天模型的供应商；type=embedding：优先找已有聊天模型、缺向量模型的供应商。
+ *  找到 → 直接打开「管理模型」并弹出「添加模型」并预选类型；找不到 → 先建供应商。
+ *  处理完 replace 清掉 action：本页在 a-tabs destroy-inactive-tab-pane 下切 Tab 会重挂载，
+ *  不清参数会反复自动弹窗；from=setup 保留，用于顶部返回条与保存后回跳。 */
+const pickProviderFor = type => {
+  const usable = list.value.filter(p => p && p.enabled !== false)
+  const has = (p, k) => Boolean(p.typeCounts && p.typeCounts[k])
+  // 全模态（omni）本质也是对话模型，与后端 /provider/available 的 chat 口径一致
+  const hasChat = p => has(p, 'chat') || has(p, 'omni')
+  const lacks = p => type === 'chat' ? !hasChat(p) : !has(p, type)
+  if (type === 'embedding') {
+    // 同一个网关通常同时提供聊天与向量：优先已有聊天模型的那家
+    return usable.find(p => hasChat(p) && lacks(p)) || usable.find(lacks) || null
+  }
+  return usable.find(lacks) || null
+}
+/** 深链落地：按 type 选供应商并打开新增表单；没有落点时先建供应商 */
+const handleSetupAction = async () => {
+  const action = route.query.action
+  if (action !== 'new-provider' && action !== 'add-model') return
+  const type = route.query.type === 'embedding' ? 'embedding' : 'chat'
+  const fromSetup = route.query.from === 'setup'
+  router.replace({ path: '/agents', query: { tab: 'providers', ...(fromSetup ? { from: 'setup' } : {}) } })
+  const target = pickProviderFor(type)
+  if (target) {
+    await openModels(target)
+    openModelAdd(type)
+  } else {
+    pendingSetupType.value = type
+    openCreate()
+  }
 }
 
 // 模型名一改就重算「不点名时按谁下发」：判定规则只在后端有一份，界面不能猜
@@ -2352,6 +2398,14 @@ onMounted(async () => {
 .pm-footer-actions { margin-left: auto; display: flex; gap: 8px; }
 
 /* ==================== 列表页骨架升级：工具栏 / 状态点 / 模型 chips / meta 行 ==================== */
+/* 配置引导深链条：说明来意 + 返回出口，不占页头高度 */
+.pv-setup-bar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin: 10px 20px 0; padding: 8px 12px; border-radius: 8px;
+  border: 1px solid var(--app-accent-border); background: var(--app-info-weak);
+  color: var(--app-text2); font-size: 12px;
+}
+.pv-setup-bar .app-link-btn { margin-left: auto; font-size: 12px; }
 /* 页头容纳筛选与工具组后控件变多：允许提前换行（全局兜底只在 ≤768px 生效，这里更宽就折） */
 .pv-page-head { flex-wrap: wrap; row-gap: 8px; }
 .pv-search { width: 200px; flex: 0 1 200px; min-width: 130px; }
