@@ -36,8 +36,9 @@ public class KnowledgeRetrievalTool {
          * 注册一个工具命中的知识块。
          *
          * @return 注册结果：ref=引用编号；imageSeqs=该来源图片分配到的全局图片编号（块无图则为空；
-         *         重复注册同一块时返回首次分配的编号）。工具文本据此附「本段相关截图」清单，
-         *         模型才能在正文中用真实存在的 [图片N] 配图，而不是编造编号。
+         *         重复注册同一块时返回首次分配的编号）；imageDescs=编号→图片视觉描述。工具文本据此附
+         *         「本段相关截图」清单（[图片N：描述]），模型既拿得到真实编号，也知道每张图讲什么，
+         *         才能把截图插在对应步骤旁，而不是编造编号或按段落主题盲配。
          */
         Registration register(Hit hit, String snippet);
 
@@ -48,8 +49,9 @@ public class KnowledgeRetrievalTool {
          */
         void degrade(String code, String msg);
 
-        /** 注册结果 */
-        record Registration(int ref, java.util.List<Integer> imageSeqs) {}
+        /** 注册结果：imageDescs 与 imageSeqs 同编号空间（无视觉描述的旧文档值为空串） */
+        record Registration(int ref, java.util.List<Integer> imageSeqs,
+                            java.util.Map<Integer, String> imageDescs) {}
     }
 
     /**
@@ -303,11 +305,14 @@ public class KnowledgeRetrievalTool {
             // 正文套信封：章节/标题行是系统生成的元信息格式，正文才是不可信原文
             sb.append(com.wenqu.ai.util.UntrustedContent.envelope("知识库块", cut)).append("\n");
             // 图片清单放块尾：正文截断（MAX_CONTENT_CHARS）会丢掉原文里的图片占位，清单不受影响；
-            // 描述帮助模型判断这张截图讲什么、该插在哪个步骤（与主链路 [图片N：描述] 同格式）
+            // 描述必须随编号一起给模型（与主链路 [图片N：描述] 同格式）——只给编号时模型不知道
+            // 每张图讲什么，只能按整段主题盲配，截图标记被插到段末/独立行，定稿时的词面相关性
+            // 校验又拿不到「紧邻前一句」的证据，正确配图会被整批误剔。
             if (reg != null && !reg.imageSeqs().isEmpty()) {
                 sb.append("本段相关截图：");
                 for (Integer seq : reg.imageSeqs()) {
-                    sb.append("[图片").append(seq).append("]");
+                    String desc = inlineImageDesc(reg.imageDescs().get(seq));
+                    sb.append("[图片").append(seq).append(desc.isEmpty() ? "" : "：" + desc).append("]");
                 }
                 sb.append("\n");
             }
@@ -325,5 +330,16 @@ public class KnowledgeRetrievalTool {
         }
         // 不再注入「证据充分性自评」约束。
         return sb.toString().trim();
+    }
+
+    /**
+     * 图片描述压成可安全嵌进 {@code [图片N：描述]} 的单行短文本：描述取自知识块原文（不可信数据），
+     * 含 {@code ]} / 换行会破坏标记语法，过长又会把工具结果撑爆。
+     */
+    private static String inlineImageDesc(String raw) {
+        if (raw == null || raw.isBlank()) return "";
+        String s = raw.replace('[', ' ').replace(']', ' ')
+                .replace('\r', ' ').replace('\n', ' ').replace('\t', ' ').trim();
+        return s.length() > 160 ? s.substring(0, 160) + "…" : s;
     }
 }

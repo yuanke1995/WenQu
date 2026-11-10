@@ -15,10 +15,16 @@ import java.util.regex.Pattern;
 
 /**
  * 回答中 [图片N] 标记与图片描述的相关性校验（LLM 偶发错配的兜底防线）。
- * 策略：提取回答中的图片标记，取标记前文 + 用户问题作为判定文本，
+ * 策略：提取回答中的图片标记，取标记前一段完整上下文 + 用户问题作为判定文本，
  * 与图片真实描述做包含关系判断；不匹配的标记由调用方删除并重建编号。
  * 空描述 / 判定文本无可用内容一律放行，避免误杀旧文档（无视觉描述）与泛化问题。
  * 匹配算法：描述切 2 字滑窗，任一窗口出现在判定文本中即命中（宁漏检、勿误杀）。
+ *
+ * <p><b>判定文本必须跨句取窗口</b>：模型常把截图标记紧跟句号、换行或独立成行（尤其一次列多张图时），
+ * 按「最近分句符之后」切出来的往往是空串，判定文本退化成只剩用户问题；而视觉描述讲的是界面元素
+ * （「表单管理界面，显示多条报表列表」），与「帮我设计一个学生信息采集表」几乎没有 2 字共现，
+ * minHits=1 都达不到 → 一整批正确配图被判错配、正文标记与 finalImages 一起被清空，
+ * 表现就是「流式时有图、回答完就没图」。窗口覆盖标记所在段落及其上一段，才是模型选图的真实依据。
  *
  * @author yuanke
  */
@@ -59,6 +65,17 @@ public class ImageFilterService {
             cut = Math.max(cut, window.lastIndexOf(c));
         }
         return (cut >= 0 ? window.substring(cut + 1) : window).trim();
+    }
+
+    /**
+     * 图片标记的判定上下文：标记前 maxChars 字的<b>完整窗口，不按分句符切断</b>。
+     * <p>与 {@link #precedingContext} 的用途不同：引用角标总在句末，切句能界定「这句话」；
+     * 截图标记却常单独成行或紧跟句号，切句会把证据切成空串（见类注释）。图片相关性看的是
+     * 标记所在段落及其上一段在讲什么，不是标记前那半句话。
+     */
+    public String contextWindow(String answer, int pos, int maxChars) {
+        if (answer == null || answer.isEmpty() || pos <= 0 || maxChars <= 0) return "";
+        return answer.substring(Math.max(0, pos - maxChars), pos).trim();
     }
 
     /**
@@ -119,7 +136,7 @@ public class ImageFilterService {
                 keptSeq.add(m.seq());
                 continue;
             }
-            String ctx = precedingContext(answer, m.pos(), preContextChars);
+            String ctx = contextWindow(answer, m.pos(), preContextChars);
             String judgeText = (ctx + " " + (question == null ? "" : question)).trim();
             if (relevant(judgeText, desc, minHits)) {
                 seqMap.put(m.seq(), ++newSeq);

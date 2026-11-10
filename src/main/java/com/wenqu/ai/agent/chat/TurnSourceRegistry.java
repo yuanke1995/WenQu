@@ -250,18 +250,19 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
         if (existing != null) {
             // 图片清单与来源同锁写入：这里读的也持锁，避免另一路正在给别的来源 put 时读到半更新状态
             synchronized (sources) {
-                return new KnowledgeRetrievalTool.SourceRegistrar.Registration(existing,
-                        toolRefImages.getOrDefault(existing, List.of()));
+                List<Integer> seqs = toolRefImages.getOrDefault(existing, List.of());
+                return new KnowledgeRetrievalTool.SourceRegistrar.Registration(existing, seqs, descsOf(seqs));
             }
         }
         int ref;
         List<Integer> imgSeqs;
+        Map<Integer, String> imgDescs;
         boolean imagesAdded;
         synchronized (sources) {
             existing = findExistingSourceRef(h); // 并发注册同一块的双检
             if (existing != null) {
-                return new KnowledgeRetrievalTool.SourceRegistrar.Registration(existing,
-                        toolRefImages.getOrDefault(existing, List.of()));
+                List<Integer> seqs = toolRefImages.getOrDefault(existing, List.of());
+                return new KnowledgeRetrievalTool.SourceRegistrar.Registration(existing, seqs, descsOf(seqs));
             }
             ref = sources.size() + 1;
             Map<String, Object> src = new LinkedHashMap<>();
@@ -290,6 +291,8 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
             // ConcurrentModificationException，整路工具结果变成错误。
             ImageAssignment imgs = assignToolImages(h);
             imgSeqs = imgs.seqs();
+            // 描述与编号同锁取出：工具文本要把 [图片N：描述] 给模型，模型才知道每张图该插在哪一步
+            imgDescs = descsOf(imgSeqs);
             // 与 sources.add 同一把锁：否则并发注册撞到「来源已占号、图片清单还没写入」的窗口，
             // 后到的那一路命中同一块时会拿到空清单（正文配图丢失而非报错，更难发现）。
             toolRefImages.put(ref, imgSeqs);
@@ -300,7 +303,14 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
         if (imagesAdded) {
             publishImageEvent();
         }
-        return new KnowledgeRetrievalTool.SourceRegistrar.Registration(ref, imgSeqs);
+        return new KnowledgeRetrievalTool.SourceRegistrar.Registration(ref, imgSeqs, imgDescs);
+    }
+
+    /** 按图片编号取本轮视觉描述（调用方须持 sources 锁；无描述的旧文档给空串） */
+    private Map<Integer, String> descsOf(List<Integer> seqs) {
+        Map<Integer, String> out = new LinkedHashMap<>();
+        for (Integer seq : seqs) out.put(seq, imgDescIndex.getOrDefault(seq, ""));
+        return out;
     }
 
     /** 已注册过同一知识块 → 返回既有引用编号（未注册返回 null） */

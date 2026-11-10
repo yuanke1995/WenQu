@@ -167,7 +167,9 @@ public class CitationIntegrityService {
         // 4) 图片标记越界（与引用越界同构）：正文 [图片N] 必须落在本轮真实图片（imgIndex）范围内。
         //    工具模式下模型手里没有编号图片（工具返回文本不带编号、images 为空），却可能按「尽量配图」
         //    规则编造 [图片N]，前端 images[N-1] 映射不到就把字面 [图片N] 原样显示在回答里。剔除 + fail-loud。
-        int maxImg = ctx.imgIndex().size();
+        // 用定稿清单的长度：第 1 步剔图后 [图片N] 已重编成 1..M，images 也按 keptSeq 重排成 M 张，
+        // 再拿剔除前的 ctx.imgIndex().size() 当上界，会把 M+1..原size 这段悬空编号放过去。
+        int maxImg = images.size();
         Matcher im = TurnSourceRegistry.IMG_NUMBER_PATTERN.matcher(answer);
         StringBuilder imgSb = new StringBuilder();
         int bogusImgs = 0;
