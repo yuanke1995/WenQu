@@ -76,7 +76,7 @@
         </div>
         <div class="preset-row" v-for="p in presetRows" :key="p.k"><span>{{ p.k }}</span><b>{{ p.v }}</b></div>
         <div class="preset-tip">
-          创建后可在「编辑 → 高级参数」逐项调整；模板不会写入文档内容。
+          创建后可在「编辑设置 → 高级参数」逐项调整；模板不会写入文档内容。
         </div>
       </div>
     </div>
@@ -161,7 +161,7 @@
         <div class="preset-row"><span>知识图谱</span><b>{{ form.graphEnabled ? '开启' : '关闭' }}</b></div>
         <div class="preset-row"><span>资料</span><b>{{ importFile ? importFile.name : '先建空库' }}</b></div>
         <div class="preset-tip">
-          {{ createdKb ? '知识库已创建，可运行自检或继续导入资料。' : '创建后可随时在「编辑 → 高级参数」里调整。' }}
+          {{ createdKb ? '知识库已创建，可运行自检或继续导入资料。' : '创建后可随时在「编辑设置 → 高级参数」里调整。' }}
         </div>
       </div>
     </div>
@@ -552,8 +552,7 @@ async function runSelfCheck () {
   border-bottom: 1px dashed var(--app-border); }
 .preset-row b { margin-left: auto; color: var(--app-text2); font-weight: 500; }
 .preset-tip { margin-top: 9px; font-size: 10.5px; color: var(--app-text3); line-height: 1.6; }
-.wiz-foot { display: flex; align-items: center; gap: 8px; margin-top: 12px; padding-top: 12px;
-  border-top: 1px solid var(--app-border); }
+.wiz-foot { display: flex; align-items: center; gap: 8px; margin-top: 12px; padding-top: 12px; }
 .wiz-import { display: flex; gap: 24px; }
 .wiz-import .wiz-left { flex: 1; min-width: 0; }
 .wiz-import .wiz-right { width: 300px; flex: none; background: var(--app-panel-2); border: 1px solid var(--app-border);

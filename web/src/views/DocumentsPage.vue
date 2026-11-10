@@ -110,13 +110,18 @@
         <span class="st-chip" @click="openRecycle"><i class="d off"></i>回收站 <b>{{ recycleCount }}</b></span>
         <span class="sp"></span>
         <span v-if="queueText" class="queue-chip"><clock-circle-outlined /> {{ queueText }}</span>
-        <span class="st-chip muted"><database-outlined /> {{ summaryText }}</span>
+        <span class="st-chip muted"><database-outlined /> {{ chunkSizeText }}</span>
       </div>
 
       <div class="doc-toolbar">
-        <a-input-search v-model:value="docSearch" placeholder="搜索文件名、标签…" allow-clear style="width:240px" />
-        <a-select v-if="tagOptions.length" v-model:value="tagFilter" allow-clear :options="tagOptions"
-                  placeholder="按标签筛选" style="width:140px" size="small" :dropdown-match-select-width="false" />
+        <a-input v-model:value="docSearch" placeholder="搜索文件名、标签…" allow-clear style="width:240px">
+          <template #prefix><search-outlined style="color:var(--app-text3)" /></template>
+        </a-input>
+        <span class="filter-field">
+          <span class="filter-label">标签：</span>
+          <a-select v-model:value="tagFilter" allow-clear :options="tagOptions" :bordered="false"
+                    placeholder="全部" style="width:84px" :dropdown-match-select-width="false" />
+        </span>
         <span class="sp"></span>
         <button class="app-btn ghost sm" @click="openGlobalSearch"><search-outlined /> 全局搜索</button>
         <button class="app-btn ghost sm" @click="fetchList"><reload-outlined /> 刷新</button>
@@ -174,8 +179,9 @@
                   <span v-else-if="d.status === 1" class="app-pill warn">已弃用</span>
                   <span v-else class="app-pill err" style="cursor:pointer" @click="showFailReason(d)">解析失败</span>
                 </a-tooltip>
-                <div v-else-if="d.status === 2" style="min-width:120px">
-                  <a-progress :percent="d.parseProgress || 0" size="small" style="margin:0" />
+                <div v-else-if="d.status === 2" class="parse-cell">
+                  <span class="app-pill warn">解析中</span>
+                  <span class="parse-bar"><i :style="{ width: (d.parseProgress || 0) + '%' }"></i></span>
                   <span class="parse-desc" :title="d.parseDesc || '解析中'">{{ d.parseDesc || '解析中' }}</span>
                 </div>
               </span>
@@ -245,14 +251,21 @@
         </div>
       </div>
 
-      <!-- 上传队列：逐文件展示本轮提交与结果，不再只靠一条进度条 -->
-      <div v-if="uploadQueue.length" class="uploadq">
+      <!-- 上传队列：逐文件展示本轮提交与结果；收起后保留右下角悬浮入口，随时可展开 -->
+      <button v-if="uploadQueue.length && queueCollapsed" class="uploadq-pill" type="button"
+              @click="queueCollapsed = false">
+        <upload-outlined />
+        上传队列 · {{ uploading ? uploadPercent + '%' : uploadQueue.length + ' 项' }}
+        <span v-if="uploading" class="upl-run">处理中</span>
+        <span class="upl-open">展开</span>
+      </button>
+      <div v-else-if="uploadQueue.length" class="uploadq">
         <div class="uq-head">
           <upload-outlined />
           上传队列（{{ uploadQueue.length }}）
           <span class="sp"></span>
           <span class="uq-pct">{{ uploading ? uploadPercent + '%' : '完成' }}</span>
-          <button v-if="!uploading" class="app-link-btn uq-close" @click="uploadQueue = []">收起</button>
+          <button class="app-link-btn uq-close" @click="queueCollapsed = true">收起</button>
         </div>
         <div v-for="(f, i) in uploadQueue" :key="i" class="uq-row">
           <file-outlined class="uq-ic" />
@@ -719,6 +732,8 @@ const statusFilter = ref('all')
 const docSearch = ref('')
 const expandedDocId = ref('')
 const uploadQueue = ref([])
+/** 队列收起态：收起只折叠卡片，右下角保留悬浮入口；新一轮上传自动展开 */
+const queueCollapsed = ref(false)
 const probeOpen = ref(false)
 let pollTimer = null
 let pollTicks = 0
@@ -726,10 +741,8 @@ let pollTicks = 0
 const queueStats = ref({ queued: 0, running: 0, dead: 0 })
 const queueText = computed(() => {
   const q = queueStats.value
-  const parts = []
-  if (q.queued > 0) parts.push('排队 ' + q.queued)
-  if (q.running > 0) parts.push('执行 ' + q.running)
-  return parts.join(' · ')
+  const total = Number(q.queued || 0) + Number(q.running || 0)
+  return total > 0 ? `队列 ${total} 个解析任务` : ''
 })
 async function fetchQueueStats () {
   try {
@@ -804,6 +817,13 @@ const summaryText = computed(() => {
   // 文件区概览（5.4）：源文件总占用，让"存了多少"可见
   const bytes = list.value.reduce((n, d) => n + (d.fileSize || 0), 0)
   return `${total} 个文档 · ${active} 个生效 · ${chunks} 片段 · 占用 ${fmtSize(bytes)}`
+})
+
+/** 状态栏右侧的紧凑口径：知识块 + 占用（与效果图「128 块 · 占用 16.2 MB」对齐） */
+const chunkSizeText = computed(() => {
+  const chunks = list.value.reduce((n, d) => n + (d.chunkCount || 0), 0)
+  const bytes = list.value.reduce((n, d) => n + (d.fileSize || 0), 0)
+  return `${chunks} 块 · 占用 ${fmtSize(bytes)}`
 })
 
 const statusCounts = computed(() => ({
@@ -931,6 +951,7 @@ async function submitFiles (files, desc, visionRef) {
   uploading.value = true
   uploadPercent.value = 0
   uploadQueue.value = files.map(f => ({ name: f.name, size: f.size, status: 'uploading', progress: 0 }))
+  queueCollapsed.value = false   // 新一轮上传自动展开，否则用户只看到进度百分比却找不到明细
   const rows = []
   try {
     // 逐文件上传：现有批量接口一次只回一个总进度，拆成单文件请求才能给出真实的逐文件进度
@@ -956,10 +977,11 @@ async function submitFiles (files, desc, visionRef) {
     if (failed.length) message.warning(`${files.length - failed.length} 个提交成功，${failed.length} 个失败: ${failed[0].msg || ''}`)
     else message.success(`已提交 ${files.length} 个文档解析`)
     fetchList()
-    setTimeout(() => { if (!uploading.value) uploadQueue.value = [] }, 3200)
+    setTimeout(() => { if (!uploading.value) { uploadQueue.value = []; queueCollapsed.value = false } }, 3200)
     return failed.length === 0
   } catch (e) {
     uploadQueue.value = uploadQueue.value.map(f => ({ ...f, status: 'error' }))
+    queueCollapsed.value = false
     message.error(e.message || '上传失败')
     return false
   } finally { uploading.value = false }
@@ -1205,18 +1227,24 @@ const tagVisible = ref(false)
 const tagDoc = ref(null)
 const tagDocName = computed(() => tagDoc.value?.fileName || '')
 function openTagEdit (d) {
-  tagDoc.value = d
-  tagDraft.value = docTags(d)
+  // 用列表里的实时行对象：轮询刷新会整体换 list，旧引用改了也渲染不出来
+  const row = list.value.find(x => String(x.id) === String(d.id)) || d
+  tagDoc.value = row
+  tagDraft.value = docTags(row)
   tagVisible.value = true
 }
 /** 保存标签：成功后就地回写行数据（免整表重拉；标签筛选选项随之自动更新） */
 async function saveTags () {
   const d = tagDoc.value
   if (!d) return
+  const csv = tagDraft.value.map(t => String(t).trim()).filter(Boolean).join(',')
   try {
-    const r = await setDocumentTags(d.id, tagDraft.value.join(','))
-    if (r.success) { message.success('已更新标签'); d.tags = tagDraft.value.join(','); tagVisible.value = false }
-    else message.error(r.msg || '保存失败')
+    const r = await setDocumentTags(d.id, csv)
+    if (!r.success) { message.error(r.msg || '保存失败'); return }
+    // 按 id 回写当前列表的全部同 id 行：即便期间轮询换过对象，列表也立刻显示新标签
+    list.value.forEach(row => { if (String(row.id) === String(d.id)) row.tags = csv })
+    tagVisible.value = false
+    message.success('已更新标签')
   } catch (e) { message.error(e.message || '保存失败') }
 }
 
@@ -1891,6 +1919,13 @@ const fmtTime = t => {
 .doc-statusbar .sp { flex: 1; }
 .doc-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; }
 .doc-toolbar .sp { flex: 1; }
+/* 标签筛选：「标签：」是常驻前缀，只有值区域用占位符「全部」，选中后前缀不丢 */
+.filter-field { display: inline-flex; align-items: center; height: 32px; padding: 0 6px 0 10px;
+  border: 1px solid var(--app-border-strong); border-radius: 6px; background: #fff; }
+.filter-label { font-size: 12px; color: var(--app-text2); white-space: nowrap; }
+.filter-field :deep(.ant-select-selector) { padding-inline: 0 !important; }
+.filter-field :deep(.ant-select-selection-item) { color: var(--app-text); }
+.filter-field :deep(.ant-select-selection-placeholder) { color: var(--app-text3); }
 .menu-badge { margin-left: 6px; font-size: 10px; color: var(--app-accent); background: var(--app-accent-weak);
   border-radius: 999px; padding: 0 5px; }
 /* 行内展开 */
@@ -1907,6 +1942,14 @@ const fmtTime = t => {
 .de-muted { color: var(--app-text3); }
 .de-row .sp { flex: 1; }
 /* 上传队列浮层 */
+/* 队列收起后的悬浮入口：与展开卡同位置，点一下原样展开 */
+.uploadq-pill { position: fixed; right: 24px; bottom: 24px; display: inline-flex; align-items: center; gap: 6px;
+  height: 34px; padding: 0 13px; border-radius: 999px; background: #fff; border: 1px solid var(--app-border);
+  box-shadow: 0 12px 32px rgba(16,24,40,.14); font-family: inherit; font-size: 12px; color: var(--app-text2);
+  cursor: pointer; z-index: 1000; }
+.uploadq-pill:hover { color: var(--app-accent); border-color: var(--app-accent-border); }
+.upl-run { color: var(--app-warn-text); font-size: 10.5px; }
+.upl-open { color: var(--app-accent); font-size: 11px; }
 .uploadq { position: fixed; right: 24px; bottom: 24px; width: 320px; background: #fff; border: 1px solid var(--app-border);
   border-radius: 10px; box-shadow: 0 12px 32px rgba(16,24,40,.14); z-index: 1000; overflow: hidden; }
 .uq-head { display: flex; align-items: center; gap: 7px; padding: 9px 11px; border-bottom: 1px solid var(--app-border);
@@ -1929,8 +1972,16 @@ const fmtTime = t => {
 .modal-note { margin: 10px 0 6px; font-size: 12px; color: var(--app-text3); }
 .rf-row { display: flex; align-items: center; gap: 10px; }
 .parse-desc { font-size: 11px; color: var(--app-text3); display: inline-block; max-width: 150px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* 解析队列指示：队列非空时常驻页头，点工具栏按钮/刷新不会丢 */
+/* 解析中：状态徽标 + 细进度条 + 进度文案（与效果图一致，不再用带百分比的 a-progress） */
+.parse-cell { display: flex; flex-direction: column; gap: 3px; min-width: 118px; }
+.parse-cell .app-pill { align-self: flex-start; }
+.parse-bar { display: block; height: 3px; border-radius: 999px; background: #eef0f3; overflow: hidden; }
+.parse-bar i { display: block; height: 100%; background: var(--app-accent); transition: width .2s; }
+/* 解析队列指示：队列非空时常驻页头/状态栏，点工具栏按钮/刷新不会丢；状态栏用与效果图同款琥珀色胶囊 */
 .queue-chip { flex: none; cursor: default; }
+.doc-statusbar .queue-chip { display: inline-flex; align-items: center; gap: 5px;
+  height: 24px; padding: 0 9px; border-radius: 999px; font-size: 11px; color: var(--app-warn-text);
+  background: var(--app-warn-weak); border: 1px solid var(--app-warn-border); }
 /* 作废胶囊：可点击下钻，区别于排队/执行的只读指示 */
 .dead-chip { cursor: pointer; }
 .dead-chip:hover { filter: brightness(0.96); }
@@ -1945,7 +1996,8 @@ const fmtTime = t => {
 .dead-acts { flex: none; }
 /* 文档标签：贴在文件名后的小号 chip；标签多时行内收起（悬浮 title 仍全量可见） */
 .doc-tags { display: inline-flex; gap: 4px; flex-wrap: wrap; margin-left: 8px; max-width: 260px; overflow: hidden; max-height: 22px; }
-.doc-tag-chip { margin-inline-end: 0; font-size: 11px; line-height: 16px; padding: 0 6px; border-radius: 4px; }
+.doc-tag-chip { margin-inline-end: 0; font-size: 9.5px; line-height: 15px; padding: 0 4px; border-radius: 3px;
+  color: var(--app-text3); background: var(--app-panel-2); border-color: var(--app-border); }
 /* 回收站徽标：数量小圆点贴在按钮文字后 */
 .recycle-badge {
   display: inline-flex; align-items: center; justify-content: center;
