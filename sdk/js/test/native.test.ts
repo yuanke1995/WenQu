@@ -54,6 +54,7 @@ test("send：token 增量、tool_status 整包与人话行、artifact、done 双
   assert.equal((r.artifacts as ArtifactEvent[])[0].filename, "form.json");
   const done = r.done as DonePayload;
   assert.equal(done.messageId, "msg-1");
+  assert.equal(done.sessionId, "sess-1"); // 帧上的会话 id 合入载荷顶层
   assert.equal(done.finalContent, "你好，这是原生流");
   assert.equal((done.sources ?? []).length, 1);
   // 未知/透传事件（turn_start）经 onEvent 可见

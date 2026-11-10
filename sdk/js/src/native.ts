@@ -341,9 +341,14 @@ export class NativeChat {
               }
               break;
             }
-            case "done":
-              finish(handlers.onDone, (parsed ?? {}) as DonePayload);
+            case "done": {
+              // 帧上的 sessionId 合进载荷（顶层没有才补）：done 载荷本体不带会话字段，
+              // 而调用方普遍要按帧里的 id 更新自己的会话指针——不让各家自己从 onEvent 里捞
+              const payload = (parsed ?? {}) as DonePayload;
+              if (payload.sessionId === undefined && frame.sessionId) payload.sessionId = frame.sessionId;
+              finish(handlers.onDone, payload);
               return;
+            }
             case "error":
               finish(handlers.onError, typeof frame.content === "string" ? frame.content : "回答失败");
               return;

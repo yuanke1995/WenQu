@@ -456,6 +456,8 @@ export interface DonePayload {
   related?: string[];
   messageId?: string;
   turnId?: string;
+  /** 帧上的会话 id 由 SDK 合入顶层（done 载荷本体不带） */
+  sessionId?: string;
   finalContent?: string;
   finalImages?: string[];
   toolCalls?: Array<Record<string, unknown>>;
