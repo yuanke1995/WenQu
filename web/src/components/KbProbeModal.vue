@@ -53,6 +53,18 @@
               <span v-else class="hit-rerank dim">未重排</span>
             </div>
             <div class="hit-snippet">{{ h.snippet }}</div>
+            <div class="hit-bars">
+              <span class="sbar">向量
+                <span class="track"><i :style="{ width: pct(h.vectorScore) }"></i></span>
+                {{ h.vectorScore == null ? '—' : h.vectorScore }}
+              </span>
+              <span class="sbar key">关键词
+                <span class="track"><i :style="{ width: pct(h.keywordScore) }"></i></span>
+                {{ h.keywordScore == null ? '—' : h.keywordScore }}
+              </span>
+              <span class="sp"></span>
+              <span class="fusion">融合 {{ h.score }}</span>
+            </div>
           </div>
         </div>
 
@@ -136,6 +148,11 @@ const activeHit = computed(() => (result.value?.hits || [])[selected.value] || n
 function friendlyModel (ref) {
   if (!ref) return '跟随默认'
   return modelRefInfo(ref)?.displayName || String(ref).split('/').pop() || ref
+}
+
+function pct (v) {
+  if (v == null) return '0%'
+  return `${Math.max(0, Math.min(100, Math.round(Number(v) * 100)))}%`
 }
 
 watch(() => props.open, v => {
@@ -246,6 +263,13 @@ async function saveMiss () {
 .hit-rerank.dim { color: var(--app-text3); background: var(--app-panel-2); }
 .hit-snippet { margin-top: 5px; font-size: 11.5px; color: var(--app-text2); line-height: 1.6;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.hit-bars { display: flex; align-items: center; gap: 12px; margin-top: 6px; font-size: 9.5px; color: var(--app-text3); }
+.sbar { display: inline-flex; align-items: center; gap: 5px; }
+.sbar .track { width: 48px; height: 4px; border-radius: 999px; background: #eef0f3; overflow: hidden; }
+.sbar .track i { display: block; height: 100%; background: var(--app-accent); }
+.sbar.key .track i { background: var(--c-teal, #0f8a8a); }
+.hit-bars .sp { flex: 1; }
+.hit-bars .fusion { color: var(--app-text2); }
 .probe-diag { width: 320px; flex: none; border-left: 1px solid var(--app-border); padding-left: 14px; }
 .diag-verdict { border-radius: 8px; padding: 10px 12px; }
 .diag-verdict.ok { background: var(--app-ok-weak); border: 1px solid #cfe6d4; }

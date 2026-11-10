@@ -4,7 +4,9 @@
     <div class="wiz-steps">
       <span :class="['wiz-step', { on: step === 1, done: step > 1 }]"><i>1</i>选择场景</span>
       <span class="wiz-line"></span>
-      <span :class="['wiz-step', { on: step === 2 }]"><i>2</i>基础信息</span>
+      <span :class="['wiz-step', { on: step === 2, done: step > 2 }]"><i>2</i>基础信息</span>
+      <span class="wiz-line"></span>
+      <span :class="['wiz-step', { on: step === 3 }]"><i>3</i>导入资料</span>
       <span class="sp"></span>
       <span class="wiz-hint">模板只预置解析/检索参数，不预置任何内容</span>
     </div>
@@ -28,7 +30,7 @@
       </div>
     </div>
 
-    <div v-else class="wiz-body wiz-form">
+    <div v-else-if="step === 2" class="wiz-body wiz-form">
       <div class="wiz-left">
         <div class="field">
           <label>知识库名称 <em>*</em></label>
@@ -56,7 +58,7 @@
       </div>
       <div class="wiz-right">
         <div class="preset-head">
-          <span>「{{ currentTpl.name }}」会预置</span>
+          <span>「{{ seededParams ? '复制原库' : currentTpl.name }}」会预置</span>
           <a-tag color="blue" style="margin:0">可修改</a-tag>
         </div>
         <div class="preset-row" v-for="p in presetRows" :key="p.k"><span>{{ p.k }}</span><b>{{ p.v }}</b></div>
@@ -66,13 +68,54 @@
       </div>
     </div>
 
+    <div v-else class="wiz-body wiz-import">
+      <div class="wiz-left">
+        <a-upload-dragger :before-upload="onImportFile" :show-upload-list="false" accept=".zip"
+                          :disabled="saving || !!createdKb" style="margin-top:0">
+          <p class="ant-upload-drag-icon"><inbox-outlined /></p>
+          <p class="ant-upload-text">{{ importFile ? importFile.name : '点击或拖拽 zip 文档包到此处（可选）' }}</p>
+          <p class="ant-upload-hint">不选也可以先创建空库，稍后从文档管理上传；新库没有同名冲突</p>
+        </a-upload-dragger>
+        <div class="import-note">
+          导入后按本库参数重新解析、分块、向量化；解析在后台队列执行，可离开页面。
+        </div>
+        <div v-if="importResult" class="import-result">
+          <div class="ir-head">
+            导入结果：成功 {{ importResult.ok }} / {{ importResult.total }}
+            <span v-if="importResult.failed" class="ir-fail">失败 {{ importResult.failed }}</span>
+          </div>
+          <div v-for="r in importResult.results" :key="r.fileName" class="ir-row">
+            <check-circle-outlined v-if="r.success" class="ir-ok" />
+            <close-circle-outlined v-else class="ir-err" />
+            <span class="ir-name">{{ r.fileName }}</span>
+            <span class="ir-msg">{{ r.msg || '已提交解析' }}</span>
+          </div>
+        </div>
+      </div>
+      <div class="wiz-right">
+        <div class="preset-head">创建摘要</div>
+        <div class="preset-row"><span>名称</span><b>{{ form.name || '—' }}</b></div>
+        <div class="preset-row"><span>向量模型</span><b>{{ form.embeddingRef ? '已选择' : '未选择' }}</b></div>
+        <div class="preset-row"><span>参数</span><b>{{ seededParams ? '复制原库' : currentTpl.name }}</b></div>
+        <div class="preset-row"><span>知识图谱</span><b>{{ form.graphEnabled ? '开启' : '关闭' }}</b></div>
+        <div class="preset-row"><span>资料</span><b>{{ importFile ? importFile.name : '先建空库' }}</b></div>
+        <div class="preset-tip">
+          {{ createdKb ? '知识库已创建，可直接完成或继续查看导入结果。' : '创建后可随时在「编辑 → 高级参数」里调整。' }}
+        </div>
+      </div>
+    </div>
+
     <div class="wiz-foot">
       <span class="wiz-hint">预计 1 分钟完成</span>
       <span class="sp"></span>
       <a-button @click="emit('update:open', false)">取消</a-button>
-      <a-button v-if="step === 2" @click="step = 1">上一步</a-button>
+      <a-button v-if="step > 1 && !createdKb" @click="step--">上一步</a-button>
       <a-button v-if="step === 1" type="primary" @click="step = 2">下一步</a-button>
-      <a-button v-else type="primary" :loading="saving" @click="create">创建知识库</a-button>
+      <a-button v-else-if="step === 2" type="primary" @click="step = 3">下一步：导入资料</a-button>
+      <a-button v-else-if="createdKb" type="primary" @click="emit('update:open', false)">完成</a-button>
+      <a-button v-else type="primary" :loading="saving || importing" @click="create">
+        {{ importFile ? '创建并导入' : '创建知识库' }}
+      </a-button>
     </div>
   </a-modal>
 </template>
@@ -81,13 +124,18 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import {
-  BookOutlined, BulbOutlined, CheckOutlined, FileTextOutlined, CodeOutlined,
-  CustomerServiceOutlined, PlusOutlined, SafetyCertificateOutlined
+  BookOutlined, BulbOutlined, CheckCircleOutlined, CheckOutlined, CloseCircleOutlined,
+  CodeOutlined, CustomerServiceOutlined, FileTextOutlined, InboxOutlined, PlusOutlined,
+  SafetyCertificateOutlined
 } from '@ant-design/icons-vue'
 import ModelSelect from './ModelSelect.vue'
-import { createKnowledgeBase } from '../api'
+import { createKnowledgeBase, importKnowledgeBase } from '../api'
 
-const props = defineProps({ open: { type: Boolean, default: false } })
+const props = defineProps({
+  open: { type: Boolean, default: false },
+  /** 复制为模板的来源库：预填名称/描述/参数/模型，进入第二步 */
+  seed: { type: Object, default: null }
+})
 const emit = defineEmits(['update:open', 'created'])
 
 const TEMPLATES = [
@@ -152,10 +200,22 @@ const TEMPLATES = [
 const step = ref(1)
 const template = ref('law')
 const saving = ref(false)
+const importing = ref(false)
+const importFile = ref(null)
+const importResult = ref(null)
+const createdKb = ref(null)
+const seededParams = ref(null)
 const form = reactive({ name: '', description: '', embeddingRef: '', graphEnabled: false, graphModelRef: '' })
 
 const currentTpl = computed(() => TEMPLATES.find(t => t.key === template.value) || TEMPLATES[0])
 const presetRows = computed(() => {
+  if (seededParams.value) {
+    return [
+      { k: '检索参数', v: paramSummary(seededParams.value.query) },
+      { k: '解析参数', v: paramSummary(seededParams.value.parse) },
+      { k: '知识图谱', v: form.graphEnabled ? '开（复制原库）' : '关' }
+    ]
+  }
   const p = currentTpl.value.params
   const rows = []
   if (p.parse['chunk.maxSize']) rows.push({ k: '分块大小', v: p.parse['chunk.maxSize'] + ' 字符' })
@@ -178,10 +238,27 @@ watch(() => props.open, v => {
   form.embeddingRef = ''
   form.graphEnabled = false
   form.graphModelRef = ''
-  pick('law')
+  importFile.value = null
+  importResult.value = null
+  createdKb.value = null
+  seededParams.value = null
+  if (props.seed) {
+    // 复制为模板：直接进第二步，参数按原库 JSON 原样带过去
+    step.value = 2
+    template.value = 'blank'
+    form.name = `${props.seed.name || '知识库'} 副本`
+    form.description = props.seed.description || ''
+    form.embeddingRef = props.seed.embeddingRef || ''
+    form.graphEnabled = props.seed.graphEnabled === 1
+    form.graphModelRef = props.seed.graphModelRef || ''
+    seededParams.value = { query: props.seed.queryParams || null, parse: props.seed.parseParams || null }
+  } else {
+    pick('law')
+  }
 })
 
 function pick (key) {
+  seededParams.value = null
   template.value = key
   const t = TEMPLATES.find(x => x.key === key)
   if (t && key !== 'blank') {
@@ -195,25 +272,66 @@ function pick (key) {
   }
 }
 
+function onImportFile (file) {
+  if (!/\.zip$/i.test(file.name)) { message.warning('只支持知识库导出 zip 包'); return false }
+  importFile.value = file
+  importResult.value = null
+  return false
+}
+
+function paramSummary (raw) {
+  if (!raw) return '继承默认'
+  try {
+    const n = Object.keys(JSON.parse(raw) || {}).length
+    return n ? `${n} 项覆盖` : '继承默认'
+  } catch (e) {
+    return '已自定义'
+  }
+}
+
 async function create () {
+  if (createdKb.value) return
   if (!form.name.trim()) { message.warning('请填写知识库名称'); return }
   if (!form.embeddingRef) { message.warning('请选择向量模型'); return }
   saving.value = true
   try {
-    const t = currentTpl.value.params
+    const t = seededParams.value || currentTpl.value.params
+    const queryParams = typeof t.query === 'string' ? t.query : (Object.keys(t.query || {}).length ? JSON.stringify(t.query) : undefined)
+    const parseParams = typeof t.parse === 'string' ? t.parse : (Object.keys(t.parse || {}).length ? JSON.stringify(t.parse) : undefined)
     const r = await createKnowledgeBase({
       name: form.name.trim(),
       description: form.description.trim() || undefined,
       embeddingRef: form.embeddingRef,
-      queryParams: Object.keys(t.query).length ? JSON.stringify(t.query) : undefined,
-      parseParams: Object.keys(t.parse).length ? JSON.stringify(t.parse) : undefined,
+      queryParams,
+      parseParams,
       graphEnabled: form.graphEnabled ? 1 : 0,
       graphModelRef: form.graphEnabled ? (form.graphModelRef || undefined) : undefined
     })
     if (r.success === false) { message.error(r.msg || '创建失败'); return }
+    const kb = r.data
+    createdKb.value = kb
     message.success('知识库已创建')
-    emit('created', r.data)
-    emit('update:open', false)
+    emit('created', kb)
+    if (!importFile.value) { emit('update:open', false); return }
+    importing.value = true
+    try {
+      const ir = await importKnowledgeBase(kb.id, importFile.value, 'replace')
+      if (ir.success === false) {
+        message.error(ir.msg || '导入失败，可稍后到文档管理重试')
+        return
+      }
+      importResult.value = ir.data || null
+      if (!importResult.value?.failed) {
+        message.success('创建并导入完成')
+        emit('update:open', false)
+      } else {
+        message.warning(`导入完成：成功 ${importResult.value.ok}/${importResult.value.total}`)
+      }
+    } catch (e) {
+      message.error(e.message || '导入失败，可稍后到文档管理重试')
+    } finally {
+      importing.value = false
+    }
   } catch (e) {
     message.error(e.message || '创建失败')
   } finally {
@@ -265,4 +383,19 @@ async function create () {
 .preset-tip { margin-top: 9px; font-size: 10.5px; color: var(--app-text3); line-height: 1.6; }
 .wiz-foot { display: flex; align-items: center; gap: 8px; margin-top: 12px; padding-top: 12px;
   border-top: 1px solid var(--app-border); }
+.wiz-import { display: flex; gap: 24px; }
+.wiz-import .wiz-left { flex: 1; min-width: 0; }
+.wiz-import .wiz-right { width: 300px; flex: none; background: var(--app-panel-2); border: 1px solid var(--app-border);
+  border-radius: 9px; padding: 12px 14px; }
+.import-note { font-size: 10.5px; color: var(--app-text3); line-height: 1.6; margin-top: 8px; }
+.import-result { margin-top: 12px; border: 1px solid var(--app-border); border-radius: 8px; overflow: hidden; }
+.ir-head { display: flex; align-items: center; gap: 10px; padding: 8px 10px; background: var(--app-panel-2);
+  font-size: 11.5px; color: var(--app-text2); }
+.ir-fail { color: var(--app-danger); }
+.ir-row { display: flex; align-items: center; gap: 7px; padding: 6px 10px; border-top: 1px solid var(--app-border);
+  font-size: 11px; }
+.ir-ok { color: var(--app-ok); }
+.ir-err { color: var(--app-danger); }
+.ir-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--app-text); }
+.ir-msg { margin-left: auto; font-size: 10.5px; color: var(--app-text3); }
 </style>

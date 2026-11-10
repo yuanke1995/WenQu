@@ -253,8 +253,9 @@
           <div class="uq-main">
             <div class="uq-name" :title="f.name">{{ f.name }}</div>
             <div class="uq-sub">{{ f.status === 'error' ? '提交失败，可重试' : (f.status === 'done' ? '已提交解析，后台处理中' : '上传中…') }}</div>
+            <div class="uq-track"><i :style="{ width: (f.progress || 0) + '%' }"></i></div>
           </div>
-          <span :class="['uq-state', f.status]">{{ f.status === 'error' ? '失败' : (f.status === 'done' ? '完成' : '…') }}</span>
+          <span :class="['uq-state', f.status]">{{ f.status === 'error' ? '失败' : (f.status === 'done' ? '完成' : (f.progress || 0) + '%') }}</span>
         </div>
       </div>
     </div>
@@ -923,26 +924,34 @@ async function submitFiles (files, desc, visionRef) {
   }
   uploading.value = true
   uploadPercent.value = 0
-  uploadQueue.value = files.map(f => ({ name: f.name, size: f.size, status: 'uploading' }))
+  uploadQueue.value = files.map(f => ({ name: f.name, size: f.size, status: 'uploading', progress: 0 }))
+  const rows = []
   try {
-    const r = await uploadDocumentsBatch(files, pct => { uploadPercent.value = pct }, desc, route.params.kbId, visionRef)
-    if (r.success) {
-      const rows = r.data || []
-      const failed = rows.filter(x => !x.success)
-      uploadQueue.value = files.map((f, i) => ({
-        name: f.name,
-        size: f.size,
-        status: rows[i] && rows[i].success === false ? 'error' : 'done'
-      }))
-      if (failed.length) message.warning(`${files.length - failed.length} 个提交成功，${failed.length} 个失败: ${failed[0].msg || ''}`)
-      else message.success(`已提交 ${files.length} 个文档解析`)
-      fetchList()
-      setTimeout(() => { if (!uploading.value) uploadQueue.value = [] }, 2600)
-      return true
+    // 逐文件上传：现有批量接口一次只回一个总进度，拆成单文件请求才能给出真实的逐文件进度
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i]
+      try {
+        const r = await uploadDocumentsBatch([f], pct => {
+          uploadQueue.value[i].progress = pct
+          const sum = uploadQueue.value.reduce((n, x) => n + (x.progress || 0), 0)
+          uploadPercent.value = Math.round(sum / files.length)
+        }, desc, route.params.kbId, visionRef)
+        const one = (r.data && r.data[0]) || { success: r.success !== false, msg: r.msg }
+        rows.push(one)
+        uploadQueue.value[i].status = one.success === false ? 'error' : 'done'
+        uploadQueue.value[i].progress = 100
+      } catch (e) {
+        rows.push({ success: false, msg: e.message || '上传失败' })
+        uploadQueue.value[i].status = 'error'
+      }
     }
-    uploadQueue.value = uploadQueue.value.map(f => ({ ...f, status: 'error' }))
-    message.error(r.msg || '上传失败')
-    return false
+    const failed = rows.filter(x => !x.success)
+    uploadPercent.value = 100
+    if (failed.length) message.warning(`${files.length - failed.length} 个提交成功，${failed.length} 个失败: ${failed[0].msg || ''}`)
+    else message.success(`已提交 ${files.length} 个文档解析`)
+    fetchList()
+    setTimeout(() => { if (!uploading.value) uploadQueue.value = [] }, 3200)
+    return failed.length === 0
   } catch (e) {
     uploadQueue.value = uploadQueue.value.map(f => ({ ...f, status: 'error' }))
     message.error(e.message || '上传失败')
@@ -1900,6 +1909,8 @@ const fmtTime = t => {
 .uq-main { flex: 1; min-width: 0; }
 .uq-name { font-size: 11px; color: var(--app-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .uq-sub { font-size: 9.5px; color: var(--app-text3); margin-top: 2px; }
+.uq-track { height: 3px; border-radius: 999px; background: #eef0f3; margin-top: 4px; overflow: hidden; }
+.uq-track i { display: block; height: 100%; background: var(--app-accent); transition: width .2s; }
 .uq-state { font-size: 10px; color: var(--app-text3); flex: none; }
 .uq-state.done { color: var(--app-ok); }
 .uq-state.error { color: var(--app-danger); }

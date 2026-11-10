@@ -39,10 +39,15 @@
     <a-spin :spinning="loading">
       <div class="dr-tabs">
         <span :class="['dr-tab', { on: tab === 'overview' }]" @click="tab = 'overview'">概览</span>
-        <span :class="['dr-tab', { on: tab === 'unmatched' }]" @click="tab = 'unmatched'">
+        <span :class="['dr-tab', { on: tab === 'documents' }]" @click="switchTab('documents')">
+          文档 <i v-if="docs.length" class="n">{{ docs.length }}</i>
+        </span>
+        <span :class="['dr-tab', { on: tab === 'graph' }]" @click="switchTab('graph')">图谱</span>
+        <span :class="['dr-tab', { on: tab === 'settings' }]" @click="switchTab('settings')">设置</span>
+        <span :class="['dr-tab', { on: tab === 'unmatched' }]" @click="switchTab('unmatched')">
           未命中 <i v-if="unmatchedCount" class="n warn">{{ unmatchedCount }}</i>
         </span>
-        <span :class="['dr-tab', { on: tab === 'agents' }]" @click="tab = 'agents'">
+        <span :class="['dr-tab', { on: tab === 'agents' }]" @click="switchTab('agents')">
           智能体 <i v-if="agents.length" class="n">{{ agents.length }}</i>
         </span>
         <span class="sp"></span>
@@ -150,6 +155,62 @@
         </template>
       </div>
 
+      <div v-else-if="tab === 'documents'" class="dr-body">
+        <div class="panel">
+          <div class="panel-h">文档
+            <span class="sub">{{ docs.length }} 个 · {{ data?.health?.chunkTotal || 0 }} 个知识块</span>
+            <span class="sp"></span>
+            <span class="lnk" @click="emit('docs', kb)">打开文档管理 →</span>
+          </div>
+          <a-spin :spinning="docsLoading">
+            <div v-if="!docs.length" class="mini-empty">还没有文档，去文档管理上传或导入</div>
+            <div v-for="d in docs" :key="d.id" class="doc-mini" @click="emit('docs', kb)">
+              <span class="doc-type" :style="typeStyle(d.fileType)">{{ (d.fileType || 'file').toUpperCase().slice(0, 4) }}</span>
+              <div class="doc-main">
+                <div class="doc-name" :title="d.fileName">{{ d.fileName }}</div>
+                <div class="doc-meta">{{ d.chunkCount || 0 }} 块 · {{ d.hitCount || 0 }} 命中 · {{ fmtTime(d.updateTime || d.createTime) }}</div>
+              </div>
+              <span :class="['pill-mini', statusClass(d.status)]">{{ statusText(d.status) }}</span>
+            </div>
+          </a-spin>
+        </div>
+      </div>
+
+      <div v-else-if="tab === 'graph'" class="dr-body">
+        <div class="panel">
+          <div class="panel-h">知识图谱
+            <span class="sub">{{ kb?.graphEnabled === 1 ? '已开启检索图扩展' : '未开启' }}</span>
+            <span class="sp"></span>
+            <span class="lnk" @click="emit('graph', kb)">打开图谱工作台 →</span>
+          </div>
+          <div class="graph-stats">
+            <div class="gs"><b>{{ graphInfo.entities || 0 }}</b><span>实体</span></div>
+            <div class="gs"><b>{{ graphInfo.triples || 0 }}</b><span>三元组</span></div>
+            <div class="gs"><b>{{ graphInfo.building ? '构建中' : '空闲' }}</b><span>构建状态</span></div>
+          </div>
+          <div v-if="graphInfo.building" class="tip-strip warn">
+            构建中 {{ graphInfo.done || 0 }}/{{ graphInfo.total || 0 }}，可离开页面，后台完成后自动结束。
+          </div>
+          <div v-else-if="graphInfo.failed" class="tip-strip warn">上次构建失败 {{ graphInfo.failed }} 个文档，可到图谱工作台重试。</div>
+          <div v-else-if="kb?.graphEnabled !== 1" class="mini-empty">开启知识图谱后，解析完成会自动抽三元组，检索时可一跳扩展。</div>
+          <a-button size="small" style="margin-top:10px" @click="emit('graph', kb)">打开图谱</a-button>
+        </div>
+      </div>
+
+      <div v-else-if="tab === 'settings'" class="dr-body">
+        <div class="panel">
+          <div class="panel-h">知识库设置<span class="sp"></span>
+            <span class="lnk" @click="emit('edit', kb)">编辑设置 →</span>
+          </div>
+          <div class="set-row"><span>向量模型</span><b>{{ modelLabel || '未绑定' }}</b></div>
+          <div class="set-row"><span>检索参数</span><b>{{ paramSummary(kb?.queryParams) }}</b></div>
+          <div class="set-row"><span>解析参数</span><b>{{ paramSummary(kb?.parseParams) }}</b></div>
+          <div class="set-row"><span>知识图谱</span><b>{{ kb?.graphEnabled === 1 ? '已开启' : '未开启' }}</b></div>
+          <div class="set-row"><span>创建人</span><b>{{ kb?.createdBy || '—' }}</b></div>
+          <div class="set-note">修改向量模型会按库重嵌入；解析参数只对之后解析的文档生效。</div>
+        </div>
+      </div>
+
       <div v-else-if="tab === 'unmatched'" class="dr-body">
         <div class="panel">
           <div class="panel-h">未命中问题 <span class="sub">检索为空/低分 + 用户引用差评</span></div>
@@ -197,7 +258,7 @@ import {
   InfoCircleOutlined, MoreOutlined, WarningOutlined
 } from '@ant-design/icons-vue'
 import KbIcon from './KbIcon.vue'
-import { addEvalCase, archiveKnowledgeBase, getKbAgents, getKbInsights, unarchiveKnowledgeBase } from '../api'
+import { addEvalCase, archiveKnowledgeBase, getKbAgents, getKbInsights, graphStatus, listDocuments, unarchiveKnowledgeBase } from '../api'
 import { modelRefInfo } from '../utils/modelRef'
 
 const props = defineProps({
@@ -209,6 +270,10 @@ const emit = defineEmits(['update:open', 'probe', 'docs', 'edit', 'graph', 'chan
 const loading = ref(false)
 const data = ref(null)
 const agents = ref([])
+const docs = ref([])
+const docsLoading = ref(false)
+const docsLoaded = ref(false)
+const graphInfo = ref({})
 const tab = ref('overview')
 const days = ref(30)
 const dayOptions = [
@@ -261,8 +326,42 @@ watch(() => [props.open, props.kb?.id], ([open]) => {
   if (!open || !props.kb?.id) return
   tab.value = 'overview'
   data.value = null
+  docs.value = []
+  docsLoaded.value = false
+  graphInfo.value = props.kb?.graph || {}
   load()
 })
+
+/** Tab 切换：文档/图谱按需加载，避免每次打开抽屉都多打两个请求 */
+function switchTab (next) {
+  tab.value = next
+  if (next === 'documents' && !docsLoaded.value) loadDocs()
+  if (next === 'graph') loadGraph()
+}
+
+async function loadDocs () {
+  if (!props.kb?.id) return
+  docsLoading.value = true
+  try {
+    const r = await listDocuments(props.kb.id)
+    docs.value = r.data || []
+    docsLoaded.value = true
+  } catch (e) {
+    message.error(e.message || '文档加载失败')
+  } finally {
+    docsLoading.value = false
+  }
+}
+
+async function loadGraph () {
+  if (!props.kb?.id) return
+  try {
+    const r = await graphStatus(props.kb.id)
+    graphInfo.value = { ...(props.kb?.graph || {}), ...(r.data || {}) }
+  } catch (e) {
+    graphInfo.value = props.kb?.graph || {}
+  }
+}
 
 function pointsFor (key) {
   const arr = data.value?.trend || []
@@ -322,6 +421,31 @@ function reasonText (r) {
 
 function statusText (s) {
   return { 0: '已入库', 1: '已弃用', 2: '解析中', 3: '解析失败' }[Number(s)] || '—'
+}
+
+function statusClass (s) {
+  return { 0: 'ok', 1: 'off', 2: 'run', 3: 'err' }[Number(s)] || 'off'
+}
+
+function typeStyle (t) {
+  const map = {
+    pdf: ['#fff2f0', '#d4552e'], docx: ['#eaf0fd', '#2e6be6'], md: ['#eef0f3', '#98a0aa'],
+    markdown: ['#eef0f3', '#98a0aa'], xlsx: ['#eaf5ec', '#3b8f4e'], csv: ['#eaf5ec', '#3b8f4e'],
+    url: ['#f0ecfb', '#7c5cd6'], pptx: ['#faf3e6', '#a3691b'], ppt: ['#faf3e6', '#a3691b']
+  }
+  const [bg, color] = map[String(t || '').toLowerCase()] || ['#eef0f3', '#5f6570']
+  return { background: bg, color }
+}
+
+/** 参数覆盖摘要：空=继承全局，非空=解析出几项覆盖（坏 JSON 原样提示） */
+function paramSummary (raw) {
+  if (!raw) return '继承全局'
+  try {
+    const n = Object.keys(JSON.parse(raw) || {}).length
+    return n ? `${n} 项已覆盖` : '继承全局'
+  } catch (e) {
+    return '已自定义'
+  }
 }
 
 function statusDot (s) {
@@ -417,6 +541,28 @@ async function onMenu ({ key }) {
 .act-tag { font-size: 9.5px; color: var(--app-text3); background: var(--app-panel-2); border-radius: 3px; padding: 1px 5px; }
 .act .tm { font-size: 10.5px; color: var(--app-text3); flex: none; }
 .mini-empty { padding: 16px 0; text-align: center; font-size: 11.5px; color: var(--app-text3); }
+.doc-mini { display: flex; align-items: center; gap: 9px; padding: 8px 0; border-bottom: 1px solid var(--app-border); cursor: pointer; }
+.doc-mini:last-child { border-bottom: none; }
+.doc-mini:hover .doc-name { color: var(--app-accent); }
+.doc-type { width: 32px; height: 24px; border-radius: 5px; font-size: 8.5px; font-weight: 600; flex: none;
+  display: inline-flex; align-items: center; justify-content: center; letter-spacing: .02em; }
+.doc-main { flex: 1; min-width: 0; }
+.doc-name { font-size: 12px; color: var(--app-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.doc-meta { font-size: 10.5px; color: var(--app-text3); margin-top: 2px; }
+.pill-mini { flex: none; font-size: 10px; padding: 2px 7px; border-radius: 999px; }
+.pill-mini.ok { color: var(--app-ok); background: var(--app-ok-weak); }
+.pill-mini.run { color: var(--app-warn-text); background: var(--app-warn-weak); }
+.pill-mini.err { color: var(--app-danger); background: #fff2f0; }
+.pill-mini.off { color: var(--app-text3); background: #eef0f3; }
+.graph-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 10px; }
+.graph-stats .gs { border: 1px solid var(--app-border); background: var(--app-panel-2); border-radius: 8px; padding: 9px 11px; }
+.graph-stats .gs b { display: block; font-size: 18px; font-weight: 650; }
+.graph-stats .gs span { font-size: 10.5px; color: var(--app-text3); }
+.set-row { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--app-border); font-size: 11.5px; }
+.set-row:last-of-type { border-bottom: none; }
+.set-row span { color: var(--app-text3); }
+.set-row b { margin-left: auto; color: var(--app-text2); font-weight: 500; }
+.set-note { font-size: 10.5px; color: var(--app-text3); line-height: 1.6; margin-top: 8px; }
 .un-item { display: flex; align-items: flex-start; gap: 10px; padding: 10px 0; border-bottom: 1px dashed var(--app-border); }
 .un-item:last-child { border-bottom: none; }
 .un-main { flex: 1; min-width: 0; }

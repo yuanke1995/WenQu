@@ -1,87 +1,159 @@
 <template>
   <a-modal :open="open" @update:open="v => emit('update:open', v)"
            :title="`知识图谱 · ${kb?.name || ''}`" :footer="null" width="96vw"
-           wrap-class-name="kb-graph-workspace">
-    <!-- 工具栏三段式：左=视图切换 · 中=数据状态 · 右=搜索 + 动作区（构建/清空收进 ⋯） -->
-    <div class="graph-toolbar">
-      <a-segmented v-model:value="graphView" size="small" :options="GRAPH_VIEWS" @change="onGraphViewChange" />
-      <span class="kb-hint graph-stat">
-        实体 {{ graphInfo.entities || 0 }} · 三元组 {{ graphInfo.triples || 0 }}
-        <template v-if="graphInfo.building">（进行中 {{ graphInfo.done || 0 }}/{{ graphInfo.total || 0 }}）</template>
-        <template v-else-if="graphInfo.failed">（失败 {{ graphInfo.failed || 0 }}）</template>
-      </span>
-      <div class="graph-toolbar-actions">
-        <!-- §5 按实体搜索定位：命中在当前视图内 → 高亮并打开三元组面板；不在 → 聚焦其邻域子图 -->
-        <a-auto-complete v-if="graphView === 'graph'" v-model:value="searchQ" :options="searchOpts"
-                         style="width: 210px" size="small" placeholder="搜索实体定位…"
-                         :disabled="!graphInfo.triples" @search="onSearchInput" @select="onSearchPick">
-          <template #option="{ label, mention }">
-            <div class="gs-opt">
-              <span class="gs-opt-name">{{ label }}</span>
-              <span class="gs-opt-meta">提及 {{ mention }}</span>
+           wrap-class-name="kb-graph-workspace"
+           :body-style="{ padding: '12px 16px', height: 'calc(100vh - 150px)', overflow: 'hidden' }">
+    <div class="gx-shell">
+      <div class="gx-body">
+        <!-- 左栏：实体搜索与列表 -->
+        <aside class="gx-left">
+          <a-auto-complete v-model:value="searchQ" :options="searchOpts" class="gx-search"
+                           placeholder="搜索实体定位…" :disabled="!graphInfo.triples"
+                           @search="onSearchInput" @select="onSearchPick">
+            <template #option="{ label, mention }">
+              <div class="gs-opt">
+                <span class="gs-opt-name">{{ label }}</span>
+                <span class="gs-opt-meta">提及 {{ mention }}</span>
+              </div>
+            </template>
+          </a-auto-complete>
+          <div class="gx-sec">实体 <span>{{ entityList.length }} / {{ graphInfo.entities || 0 }}</span></div>
+          <div class="gx-entities">
+            <div v-for="e in filteredEntities" :key="e.id"
+                 :class="['gx-entity', { on: selectedDetail?.entity?.id === e.id }]"
+                 @click="pickEntity(e)">
+              <i class="gx-dot"></i>
+              <span class="gx-name" :title="e.name">{{ e.name }}</span>
+              <span class="gx-deg">{{ e.degree || e.mentionCount || 0 }}</span>
             </div>
-          </template>
-        </a-auto-complete>
-        <a-button size="small" :loading="graphBuilding" :disabled="graphInfo.building" @click="doBuild">
-          {{ graphInfo.building ? `构建中 ${graphInfo.done || 0}/${graphInfo.total || 0}` : '构建图谱' }}
-        </a-button>
-        <a-dropdown :trigger="['click']">
-          <a-button size="small"><more-outlined /> 更多</a-button>
-          <template #overlay>
-            <a-menu @click="onGraphMenu">
-              <a-menu-item key="build" :disabled="graphInfo.building">构建 / 重建图谱（存量回溯）</a-menu-item>
-              <a-menu-divider />
-              <a-menu-item key="clear" danger>清空图谱数据…</a-menu-item>
-            </a-menu>
-          </template>
-        </a-dropdown>
-        <a-tooltip title="刷新">
-          <a-button size="small" @click="refreshGraph">
-            <template #icon><reload-outlined /></template>
-          </a-button>
-        </a-tooltip>
-      </div>
-    </div>
-
-    <!-- 图视图：力导向图（节点=实体，大小按关联度；边=关系谓词，聚合重复三元组计数） -->
-    <div v-show="graphView === 'graph'" class="graph-wrap">
-      <div ref="graphChartEl" class="graph-canvas"></div>
-      <div v-if="!graphInfo.triples" class="graph-empty">还没有三元组——先点「构建图谱」。</div>
-      <div v-else-if="focused" class="graph-focus-bar">
-        已聚焦「{{ focused.name }}」的邻域（它不在默认全景视图内）
-        <button class="app-link-btn" style="margin-left:auto" @click="backToOverview">返回全景</button>
-      </div>
-      <!-- §5 点实体看三元组：面板数据来自服务端实体详情（完整关系 + 来源文档 + 源块定位） -->
-      <div v-if="selectedDetail" class="graph-panel graph-panel-col">
-        <div class="gp-head">
-          <b>{{ selectedDetail.entity.name }}</b>
-          <span class="gp-sub">{{ selectedDetail.degree }} 条关系<template v-if="aliasText(selectedDetail)"> · 又名 {{ aliasText(selectedDetail) }}</template></span>
-          <button class="app-link-btn" style="margin-left:auto" @click="closeEntityPanel">收起</button>
-        </div>
-        <a-spin :spinning="entityLoading" size="small">
-          <div class="gp-rows">
-            <div v-for="r in selectedDetail.triples" :key="r.id" class="gp-row">
-              <span class="gp-rel">{{ r.subject }} —【{{ r.predicate }}】→ {{ r.object }}</span>
-              <span class="gp-doc" :title="r.doc">{{ r.doc || '—' }}</span>
-              <button v-if="r.chunkId" class="app-link-btn gp-chunk-btn" @click="openChunk(r)">源块</button>
+            <div v-if="!filteredEntities.length" class="gx-empty-mini">
+              {{ searchQ ? '没有匹配实体' : '还没有实体' }}
             </div>
-            <div v-if="!selectedDetail.triples.length" class="graph-note">该实体暂无关系</div>
           </div>
-        </a-spin>
-      </div>
-      <div v-else-if="graphInfo.triples" class="graph-note">
-        {{ truncated
-          ? `图谱较大，展示关联度最高的前 ${viewLimit} 个实体；其余实体用右上角搜索定位。`
-          : '点一个节点会聚焦与它相连的整条关系链（其余淡化），下方列出三元组与来源块；拖动节点/空白平移、滚轮缩放。' }}
-      </div>
-    </div>
+          <div class="gx-left-foot">点击实体查看关系与源块；拖动/滚轮操作画布。</div>
+        </aside>
 
-    <!-- 列表视图：逐条核对（带来源文档） -->
-    <div v-show="graphView === 'list'">
-      <a-table :data-source="triples" :columns="tripleCols" size="small" row-key="id"
-               :loading="triplesLoading" :pagination="triplePagination"
-               :locale="{ emptyText: '还没有三元组（先构建图谱，或确认已开启开关并配置抽取模型）' }"
-               @change="onTripleTableChange" />
+        <!-- 中栏：图视图 / 列表 -->
+        <section class="gx-center">
+          <div class="graph-toolbar">
+            <a-segmented v-model:value="graphView" size="small" :options="GRAPH_VIEWS" @change="onGraphViewChange" />
+            <a-select v-model:value="nodeLimit" size="small" style="width:104px"
+                      :options="nodeLimitOptions" @change="onNodeLimitChange" />
+            <span class="kb-hint graph-stat">
+              展示 {{ overviewData?.nodes?.length || 0 }} / {{ graphInfo.entities || 0 }} 实体 · 三元组 {{ graphInfo.triples || 0 }}
+              <template v-if="graphInfo.building">（进行中 {{ graphInfo.done || 0 }}/{{ graphInfo.total || 0 }}）</template>
+              <template v-else-if="graphInfo.failed">（失败 {{ graphInfo.failed || 0 }}）</template>
+            </span>
+            <span class="sp"></span>
+            <a-button size="small" :loading="graphBuilding" :disabled="graphInfo.building" @click="doBuild">
+              {{ graphInfo.building ? `构建中 ${graphInfo.done || 0}/${graphInfo.total || 0}` : '构建图谱' }}
+            </a-button>
+            <a-dropdown :trigger="['click']">
+              <a-button size="small"><more-outlined /> 更多</a-button>
+              <template #overlay>
+                <a-menu @click="onGraphMenu">
+                  <a-menu-item key="build" :disabled="graphInfo.building">构建 / 重建图谱（存量回溯）</a-menu-item>
+                  <a-menu-divider />
+                  <a-menu-item key="clear" danger>清空图谱数据…</a-menu-item>
+                </a-menu>
+              </template>
+            </a-dropdown>
+            <a-tooltip title="刷新">
+              <a-button size="small" @click="refreshGraph">
+                <template #icon><reload-outlined /></template>
+              </a-button>
+            </a-tooltip>
+          </div>
+
+          <div v-show="graphView === 'graph'" class="graph-wrap">
+            <div ref="graphChartEl" class="graph-canvas"></div>
+            <div v-if="!graphInfo.triples" class="graph-empty">还没有三元组——先点「构建图谱」。</div>
+            <div v-else-if="focused" class="graph-focus-bar">
+              已聚焦「{{ focused.name }}」的邻域（它不在默认全景视图内）
+              <button class="app-link-btn" style="margin-left:auto" @click="backToOverview">返回全景</button>
+            </div>
+            <div v-if="graphInfo.triples" class="gx-legend">
+              <span><i class="lg high"></i>高关联</span>
+              <span><i class="lg mid"></i>中关联</span>
+              <span><i class="lg low"></i>低关联</span>
+              <span class="lg-note">节点大小 = 关联度 · 默认只展示高频实体</span>
+            </div>
+            <div v-if="truncated" class="gx-trunc">
+              还有 {{ Math.max(0, (graphInfo.entities || 0) - (overviewData?.nodes?.length || 0)) }} 个实体未展示，可增大展示数量或搜索定位
+            </div>
+          </div>
+
+          <div v-show="graphView === 'list'" class="gx-list">
+            <a-table :data-source="triples" :columns="tripleCols" size="small" row-key="id"
+                     :loading="triplesLoading" :pagination="triplePagination"
+                     :locale="{ emptyText: '还没有三元组（先构建图谱，或确认已开启开关并配置抽取模型）' }"
+                     @change="onTripleTableChange" />
+          </div>
+        </section>
+
+        <!-- 右栏：实体详情（常驻） -->
+        <aside class="gx-right">
+          <template v-if="selectedDetail">
+            <div class="gx-detail-head">
+              <span class="gx-detail-avatar">{{ (selectedDetail.entity.name || '?').slice(0, 1) }}</span>
+              <div class="gx-detail-title">
+                <div class="nm">{{ selectedDetail.entity.name }}</div>
+                <div class="sub">{{ selectedDetail.degree }} 条关系<template v-if="aliasText(selectedDetail)"> · 又名 {{ aliasText(selectedDetail) }}</template></div>
+              </div>
+              <button class="app-link-btn" @click="closeEntityPanel">收起</button>
+            </div>
+            <a-spin :spinning="entityLoading" size="small">
+              <div class="gp-cards">
+                <div v-for="r in selectedDetail.triples" :key="r.id" class="gp-card">
+                  <div class="gp-triple">
+                    <template v-if="r.subject === selectedDetail.entity.name">
+                      <span class="gp-pred">{{ r.predicate }}</span>
+                      <b>{{ r.object }}</b>
+                    </template>
+                    <template v-else-if="r.object === selectedDetail.entity.name">
+                      <b>{{ r.subject }}</b>
+                      <span class="gp-pred">{{ r.predicate }}</span>
+                    </template>
+                    <template v-else>
+                      <b>{{ r.subject }}</b>
+                      <span class="gp-pred">{{ r.predicate }}</span>
+                      <b>{{ r.object }}</b>
+                    </template>
+                  </div>
+                  <div class="gp-card-foot">
+                    <span class="gp-doc" :title="r.doc">{{ r.doc || '来源文档不可用' }}</span>
+                    <button v-if="r.chunkId" class="app-link-btn" @click="openChunk(r)">源块 →</button>
+                  </div>
+                </div>
+                <div v-if="!selectedDetail.triples.length" class="graph-note">该实体暂无关系</div>
+              </div>
+            </a-spin>
+          </template>
+          <template v-else>
+            <div class="gx-right-empty">
+              <apartment-outlined class="gx-right-ic" />
+              <div class="gx-right-title">选择实体查看关系</div>
+              <div class="gx-right-sub">点击左侧实体或图中节点，右侧展示完整三元组与源块。</div>
+            </div>
+            <div class="gx-right-stats">
+              <div><b>{{ graphInfo.entities || 0 }}</b><span>实体</span></div>
+              <div><b>{{ graphInfo.triples || 0 }}</b><span>三元组</span></div>
+            </div>
+            <div class="gx-right-note">
+              {{ truncated
+                ? `图谱较大，展示关联度最高的前 ${viewLimit} 个实体；其余用左侧搜索定位。`
+                : '拖动节点/空白平移，滚轮缩放；点节点聚焦整条关系链。' }}
+            </div>
+          </template>
+        </aside>
+      </div>
+
+      <div v-if="graphInfo.building" class="gx-build">
+        <loading-outlined spin />
+        <span>存量回溯构建中 · {{ graphInfo.done || 0 }} / {{ graphInfo.total || 0 }} 个文档</span>
+        <span class="gx-build-track"><i :style="{ width: buildPct + '%' }"></i></span>
+        <span class="gx-build-note">可离开页面，后台完成</span>
+      </div>
     </div>
 
     <!-- §5 源知识块弹层：溯源闭环的最后一跳（三元组 → 块原文 + 所属文档） -->
@@ -108,7 +180,7 @@
 // 高亮/定位用 dispatchAction（运行时动作，不动模拟），聚焦切换=整体 dispose 重建。
 import { ref, computed, watch, nextTick, onBeforeUnmount } from 'vue'
 import { message, Modal } from 'ant-design-vue'
-import { MoreOutlined, ReloadOutlined } from '@ant-design/icons-vue'
+import { ApartmentOutlined, LoadingOutlined, MoreOutlined, ReloadOutlined } from '@ant-design/icons-vue'
 import * as echarts from 'echarts/core'
 import { GraphChart } from 'echarts/charts'
 import { TooltipComponent } from 'echarts/components'
@@ -198,6 +270,13 @@ const truncated = ref(false)
 const overviewData = ref(null)   // 全景数据缓存（聚焦模式「返回全景」用，免重拉）
 const focused = ref(null)        // {id, name}：邻域聚焦模式
 const VIEW_LIMIT = 300
+/** 默认只画关联度最高的一小撮实体：1000+ 节点全量渲染会糊成毛线团 */
+const nodeLimit = ref(40)
+const nodeLimitOptions = [
+  { value: 40, label: '40 个实体' }, { value: 100, label: '100 个实体' },
+  { value: 200, label: '200 个实体' }, { value: 500, label: '500 个实体' }
+]
+const onNodeLimitChange = () => nextTick(renderGraphChart)
 let chainFocusSets = null        // 节点数据下标 → 所在连通链的 {node:[], edge:[]} 下标集（聚焦范围）
 
 const closeEntityPanel = () => { selectedDetail.value = null; clearNodeFocus() }
@@ -208,7 +287,7 @@ async function renderGraphChart() {
   if (!kbId() || !graphChartEl.value) return
   let data = null
   try {
-    const r = await graphViewData(kbId(), VIEW_LIMIT)
+    const r = await graphViewData(kbId(), nodeLimit.value)
     if (r.success) data = r.data || {}
   } catch (e) { message.error(e.message || '图谱数据加载失败'); return }
   overviewData.value = data
@@ -244,19 +323,28 @@ function renderFromData(data, focus) {
   const edges = data.edges || []
   const idToName = new Map()
   nodes.forEach(n => { nameToId.set(n.name, n.id); idToName.set(n.id, n.name) })
-  const maxDegree = Math.max(1, ...nodes.map(n => n.degree || 1))
+  const degrees = nodes.map(n => Number(n.degree || 1)).sort((a, b) => a - b)
+  const maxDegree = Math.max(1, ...degrees)
+  // 只给关联度前 35% 的节点常显标签，其余靠 hover/tooltip；labelLayout hideOverlap 再兜一层
+  const labelThreshold = degrees[Math.max(0, Math.floor(degrees.length * 0.65))] || 1
+  const colorOf = d => {
+    const ratio = d / maxDegree
+    if (ratio >= 0.62) return '#2e6be6'
+    if (ratio >= 0.3) return '#36b3f1'
+    return '#a8b6c8'
+  }
   // 节点**不能带 id 字段**：echarts graph 在节点有 id 时以 id 作为 links 的匹配键，
   // 下面按 name 引用的连线会被整体静默丢弃。
   // 实体 id 的映射走 nameToId（点击换 id 查详情），不进 echarts。
   const chartNodes = nodes.map(n => {
+    const deg = Number(n.degree || 1)
     const item = {
       name: n.name,
-      symbolSize: focus && focus.id === n.id ? 46 : Math.min(44, 12 + Math.round(((n.degree || 1) / maxDegree) * 28)),
-      label: { show: true, fontSize: 10 },
-      // adjacency 只作为兜底范围（链索引集由 applyChainFocus 覆写）；悬停节点才触发聚焦，悬停连线不淡化全图
-      emphasis: { focus: 'adjacency', label: { fontWeight: 'bold' } }
+      symbolSize: focus && focus.id === n.id ? 46 : Math.min(46, 12 + Math.round((deg / maxDegree) * 30)),
+      label: { show: deg >= labelThreshold, fontSize: 10 },
+      itemStyle: { color: focus && focus.id === n.id ? '#e6a23c' : colorOf(deg), borderColor: '#fff', borderWidth: 1 },
+      emphasis: { focus: 'adjacency', label: { show: true, fontWeight: 'bold' } }
     }
-    if (focus && focus.id === n.id) item.itemStyle = { color: '#e6a23c' }
     return item
   })
   const chartLinks = edges.map(e => {
@@ -291,10 +379,12 @@ function renderFromData(data, focus) {
       force: { repulsion: 320, edgeLength: [60, 150], gravity: 0.2, layoutAnimation: true },
       data: chartNodes,
       links: chartLinks,
-      label: { color: cssVar('--app-text'), position: 'right' },
-      lineStyle: { color: cssVar('--app-text3'), curveness: 0.05 },
-      edgeLabel: { show: true, fontSize: 10, color: cssVar('--app-text2'), formatter: '{c}' },
-      edgeSymbol: ['none', 'arrow'], edgeSymbolSize: 7,
+      label: { color: cssVar('--app-text'), position: 'right',
+        formatter: p => String(p.name || '').length > 14 ? String(p.name).slice(0, 14) + '…' : String(p.name || '') },
+      labelLayout: { hideOverlap: true },
+      lineStyle: { color: 'rgba(152,160,170,.55)', curveness: 0.05 },
+      edgeLabel: { show: nodes.length <= 80, fontSize: 10, color: cssVar('--app-text2'), formatter: '{c}' },
+      edgeSymbol: ['none', 'arrow'], edgeSymbolSize: 6,
       itemStyle: { color: '#4f6ef2' }
     }]
   }, true)
@@ -466,6 +556,31 @@ const onSearchPick = async entityId => {
   }
 }
 
+/** 左栏实体列表：取当前全景节点按关联度排序，搜索框做本地过滤（跨全量走上方远程搜索） */
+const entityList = computed(() => {
+  const nodes = overviewData.value?.nodes || []
+  return [...nodes].sort((a, b) => Number(b.degree || 0) - Number(a.degree || 0))
+})
+const filteredEntities = computed(() => {
+  const q = String(searchQ.value || '').trim().toLowerCase()
+  if (!q) return entityList.value
+  return entityList.value.filter(e => String(e.name || '').toLowerCase().includes(q))
+})
+const buildPct = computed(() => {
+  const total = Number(graphInfo.value.total || 0)
+  const done = Number(graphInfo.value.done || 0)
+  return total > 0 ? Math.min(100, Math.round(done * 100 / total)) : 0
+})
+
+function pickEntity (e) {
+  if (!e) return
+  loadEntityDetail(e.id)
+  if (chartInstance && e.name) {
+    focusNodeVisual(e.name)
+    chartInstance.dispatchAction({ type: 'showTip', seriesIndex: 0, name: e.name })
+  }
+}
+
 // ==================== 构建 / 清空 ====================
 const doBuild = async () => {
   graphBuilding.value = true
@@ -526,6 +641,7 @@ watch(() => props.open, open => {
     // a-modal 内容是懒挂载：open 置真后的下一个 tick 容器才在 DOM
     triplePage.value = 1
     graphView.value = 'graph'
+    nodeLimit.value = 40
     searchQ.value = ''
     nextTick(() => refreshGraph())
   } else {
@@ -551,11 +667,89 @@ onBeforeUnmount(() => {
 /* 动作区整体靠右，与左侧视图切换/中间状态拉开距离 */
 .graph-toolbar-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 .graph-wrap { position: relative; }
-.graph-canvas { height: calc(100vh - 330px); min-height: 480px; width: 100%; }
+.graph-canvas { height: 100%; min-height: 0; width: 100%; }
 :global(.kb-graph-workspace .ant-modal) { max-width: 96vw; top: 24px; }
-:global(.kb-graph-workspace .ant-modal-body) { max-height: calc(100vh - 150px); overflow: auto; }
+:global(.kb-graph-workspace .ant-modal-body) { overflow: hidden; }
+/* 三栏工作台：左实体列表 / 中图 / 右实体详情 */
+.gx-shell { height: 100%; display: flex; flex-direction: column; gap: 10px; }
+.gx-body { flex: 1; min-height: 0; display: flex; gap: 12px; }
+.gx-left { width: 228px; flex: none; display: flex; flex-direction: column; min-height: 0;
+  border: 1px solid var(--app-border); border-radius: 8px; background: var(--app-panel); padding: 10px; }
+.gx-search { width: 100%; margin-bottom: 8px; }
+.gx-sec { display: flex; align-items: center; justify-content: space-between; padding: 0 2px 6px;
+  font-size: 10.5px; font-weight: 600; color: var(--app-text3); letter-spacing: .03em; }
+.gx-entities { flex: 1; min-height: 0; overflow-y: auto; }
+.gx-entity { display: flex; align-items: center; gap: 7px; padding: 6px 7px; border-radius: 6px;
+  font-size: 11.5px; color: var(--app-text2); cursor: pointer; }
+.gx-entity:hover { background: var(--app-panel-2); }
+.gx-entity.on { background: var(--app-accent-weak); color: var(--app-accent); font-weight: 500; }
+.gx-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--app-accent); flex: none; }
+.gx-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gx-deg { font-size: 10px; color: var(--app-text3); flex: none; }
+.gx-empty-mini { padding: 18px 6px; text-align: center; font-size: 11px; color: var(--app-text3); }
+.gx-left-foot { flex: none; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--app-border);
+  font-size: 10px; color: var(--app-text3); line-height: 1.6; }
+.gx-center { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.gx-center .graph-toolbar { flex: none; margin-bottom: 8px; }
+.gx-center .graph-wrap { flex: 1; min-height: 0; border: 1px solid var(--app-border); border-radius: 8px;
+  background: var(--app-panel); overflow: hidden; }
+.gx-list { flex: 1; min-height: 0; overflow: auto; }
+.gx-right { width: 338px; flex: none; display: flex; flex-direction: column; min-height: 0; overflow: hidden;
+  border: 1px solid var(--app-border); border-radius: 8px; background: var(--app-panel); padding: 12px; }
+.gx-right .gp-rows-tall { flex: 1; min-height: 0; max-height: none; overflow-y: auto; }
+.gx-right :deep(.ant-spin-nested-loading) { flex: 1; min-height: 0; display: flex; }
+.gx-right :deep(.ant-spin-container) { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.gx-detail-head { flex: none; display: flex; align-items: center; gap: 9px; padding-bottom: 10px;
+  border-bottom: 1px solid var(--app-border); margin-bottom: 8px; }
+.gx-detail-avatar { width: 30px; height: 30px; border-radius: 8px; background: var(--app-accent-weak);
+  color: var(--app-accent); font-size: 13px; font-weight: 600; display: inline-flex; align-items: center;
+  justify-content: center; flex: none; }
+.gx-detail-title { flex: 1; min-width: 0; }
+.gx-detail-title .nm { font-size: 14px; font-weight: 650; color: var(--app-text); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.gx-detail-title .sub { font-size: 10.5px; color: var(--app-text3); margin-top: 2px; }
+.gp-cards { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 7px; }
+.gp-card { border: 1px solid var(--app-border); border-radius: 8px; padding: 8px 9px; background: #fff; }
+.gp-triple { font-size: 11.5px; line-height: 1.65; color: var(--app-text2); word-break: break-word; }
+.gp-triple b { color: var(--app-text); font-weight: 500; }
+.gp-pred { display: inline-block; font-size: 10px; color: var(--app-accent); background: var(--app-accent-weak);
+  border-radius: 3px; padding: 0 5px; margin: 0 4px; vertical-align: 1px; }
+.gp-card-foot { display: flex; align-items: center; gap: 8px; margin-top: 5px; padding-top: 5px;
+  border-top: 1px dashed var(--app-border); }
+.gp-card-foot .gp-doc { flex: 1; min-width: 0; font-size: 10px; color: var(--app-text3); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.gp-cards .graph-note { text-align: center; padding: 16px 0; }
+.gx-legend { position: absolute; left: 10px; bottom: 10px; display: flex; align-items: center; gap: 12px;
+  background: rgba(255,255,255,.94); border: 1px solid var(--app-border); border-radius: 6px;
+  padding: 5px 9px; font-size: 10px; color: var(--app-text3); pointer-events: none; }
+.gx-legend .lg { width: 7px; height: 7px; border-radius: 50%; display: inline-block; margin-right: 4px; }
+.gx-legend .lg.high { background: #2e6be6; }
+.gx-legend .lg.mid { background: #36b3f1; }
+.gx-legend .lg.low { background: #a8b6c8; }
+.gx-legend .lg-note { border-left: 1px solid var(--app-border); padding-left: 10px; }
+.gx-trunc { position: absolute; right: 10px; bottom: 10px; max-width: 300px; font-size: 10px;
+  color: var(--app-text3); background: rgba(255,255,255,.94); border: 1px solid var(--app-border);
+  border-radius: 6px; padding: 5px 9px; line-height: 1.5; pointer-events: none; }
+.gx-right-empty { display: flex; flex-direction: column; align-items: center; text-align: center;
+  padding: 26px 8px 18px; }
+.gx-right-ic { font-size: 30px; color: var(--app-text3); margin-bottom: 8px; }
+.gx-right-title { font-size: 13px; font-weight: 600; color: var(--app-text2); }
+.gx-right-sub { font-size: 11px; color: var(--app-text3); line-height: 1.6; margin-top: 4px; }
+.gx-right-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 6px; }
+.gx-right-stats > div { background: var(--app-panel-2); border-radius: 8px; padding: 9px 11px; }
+.gx-right-stats b { display: block; font-size: 18px; font-weight: 650; }
+.gx-right-stats span { font-size: 10.5px; color: var(--app-text3); }
+.gx-right-note { margin-top: auto; padding-top: 8px; border-top: 1px solid var(--app-border);
+  font-size: 10.5px; color: var(--app-text3); line-height: 1.6; }
+.gx-build { flex: none; display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+  border: 1px solid var(--app-warn-border); background: #fffdf7; border-radius: 8px;
+  font-size: 11px; color: var(--app-warn-text); }
+.gx-build-track { width: 170px; height: 5px; border-radius: 999px; background: var(--app-warn-border); overflow: hidden; }
+.gx-build-track i { display: block; height: 100%; background: var(--app-warn); }
+.gx-build-note { margin-left: auto; font-size: 10.5px; color: var(--app-text3); }
 .graph-focus-bar {
-  display: flex; align-items: center; gap: 8px; margin-top: 6px; padding: 6px 10px;
+  position: absolute; left: 10px; right: 10px; bottom: 10px;
+  display: flex; align-items: center; gap: 8px; margin: 0; padding: 6px 10px;
   border: 1px solid var(--app-warn-border); border-radius: 8px; background: var(--app-warn-weak);
   font-size: 12px; color: var(--app-warn-text);
 }

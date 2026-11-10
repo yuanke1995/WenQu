@@ -367,6 +367,31 @@ public class KbInsightsService {
                     hybridRetrievalService.search(query, diag, List.of(kbId), false);
             long recallMs = System.currentTimeMillis() - t0;
 
+            // 两路分量（仅试检索展示用）：fusion 内部不保留分量，这里按同一 query 再取一次
+            // 向量相似度与关键词归一化分，按 knowledgeId 映射回最终命中；失败不影响主结果。
+            Map<String, Double> vectorScores = new HashMap<>();
+            try {
+                for (org.springframework.ai.document.Document d
+                        : hybridRetrievalService.vectorSearch(query, null, List.of(kbId))) {
+                    String kid = d.getId() == null ? null : String.valueOf(d.getId());
+                    Object metaKid = d.getMetadata() == null ? null : d.getMetadata().get("knowledgeId");
+                    if (metaKid != null && !String.valueOf(metaKid).isBlank()) kid = String.valueOf(metaKid);
+                    if (kid == null) continue;
+                    double score = d.getScore() == null ? 0d : d.getScore();
+                    vectorScores.merge(kid, score, Math::max);
+                }
+            } catch (Exception e) {
+                log.debug("[KB-PROBE] 取向量分量失败（不影响主结果）: {}", e.getMessage());
+            }
+            Map<String, Double> keywordScores = new HashMap<>();
+            try {
+                for (Knowledge k : hybridRetrievalService.keywordSearch(query)) {
+                    if (k.getId() != null) keywordScores.put(String.valueOf(k.getId()), k.getKwScore());
+                }
+            } catch (Exception e) {
+                log.debug("[KB-PROBE] 取关键词分量失败（不影响主结果）: {}", e.getMessage());
+            }
+
             List<HybridRetrievalService.Hit> reranked = merged;
             boolean rerankApplied = false;
             String rerankSkip = null;
@@ -413,6 +438,10 @@ public class KbInsightsService {
                 row.put("chunkIndex", h.chunkIndex());
                 row.put("score", round3(h.score()));
                 row.put("rerankScore", h.rerankScore() == null ? null : round3(h.rerankScore()));
+                row.put("vectorScore", vectorScores.get(h.knowledgeId()) == null
+                        ? null : round3(vectorScores.get(h.knowledgeId())));
+                row.put("keywordScore", keywordScores.get(h.knowledgeId()) == null
+                        ? null : round3(keywordScores.get(h.knowledgeId())));
                 row.put("snippet", snippet(h.content(), 240));
                 hits.add(row);
             }

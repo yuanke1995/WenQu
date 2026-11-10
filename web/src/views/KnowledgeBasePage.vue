@@ -14,7 +14,7 @@
         <button class="app-btn ghost" @click="openImport()">
           <import-outlined /> 导入文档包
         </button>
-        <button class="app-btn" @click="wizardOpen = true">
+        <button class="app-btn" @click="openWizard()">
           <plus-outlined /> 新建知识库
         </button>
       </div>
@@ -23,7 +23,7 @@
     <div class="app-page-body">
       <a-spin :spinning="loading">
         <div class="statbar">
-          <div class="stat sel" @click="resetFilters">
+          <div class="stat stat-active" @click="resetFilters">
             <span class="sic"><book-outlined /></span>
             <div><div class="n">{{ statsView.kbCount }}</div><div class="l">个知识库</div></div>
             <span class="jump">全部</span>
@@ -74,6 +74,14 @@
           <span class="result">{{ filtered.length }} / {{ raw.length }}</span>
         </div>
 
+        <!-- 向量模型缺失：知识库的硬依赖，但只影响知识库，所以提示放在这里而不是侧栏 -->
+        <div v-if="setupGuide.loaded && !embeddingReady" class="kb-embed-tip">
+          <WarningOutlined />
+          <span>知识库需要向量模型：先添加一个「向量」模型，才能创建知识库并检索文档。</span>
+          <button v-if="canManageProviders" class="app-link-btn" type="button" @click="addEmbeddingModel">添加向量模型</button>
+          <span v-else class="kb-tip-muted">请联系管理员开通「智能体」菜单权限</span>
+        </div>
+
         <div v-if="view === 'grid'" class="kb-grid">
           <div v-for="kb in filtered" :key="kb.id"
                :class="['kb-card', { warn: kb.needAttention, archived: kb.archived === 1 }]"
@@ -99,6 +107,7 @@
                       <a-menu-item v-if="canManage(kb)" key="edit">编辑设置</a-menu-item>
                       <a-menu-item v-if="canManage(kb) && kb.builtin !== 1" key="graph">知识图谱</a-menu-item>
                       <a-menu-item v-if="canManage(kb) && kb.builtin !== 1" key="export">导出 zip</a-menu-item>
+                      <a-menu-item v-if="kb.archived !== 1" key="copy">复制为模板</a-menu-item>
                       <a-menu-divider v-if="canManage(kb) && kb.isDefault !== 1 && kb.builtin !== 1" />
                       <a-menu-item v-if="canManage(kb) && kb.isDefault !== 1 && kb.builtin !== 1" key="archive">
                         {{ kb.archived === 1 ? '恢复知识库' : '归档（可恢复）' }}
@@ -144,7 +153,7 @@
             <div class="kb-foot">
               <button class="app-btn sm" @click.stop="openDocs(kb)">打开</button>
               <button class="app-btn ghost sm" @click.stop="openProbe(kb)">试检索</button>
-              <span class="upd">{{ kb.graph?.triples ? `图谱 ${kb.graph.entities} 实体` : '' }}</span>
+              <span class="upd">{{ kb.graph?.building ? '图谱构建中' : (kb.graph?.triples ? `图谱 ${kb.graph.entities} 实体` : '') }}</span>
             </div>
           </div>
 
@@ -152,8 +161,9 @@
             <div class="empty-title">没有匹配的知识库</div>
             <div class="empty-sub">调整筛选，或新建一个知识库 / 导入已有文档包</div>
             <div class="empty-acts">
-              <button class="app-btn" @click="wizardOpen = true"><plus-outlined /> 新建知识库</button>
+              <button class="app-btn" @click="openWizard()"><plus-outlined /> 新建知识库</button>
               <button class="app-btn ghost" @click="openImport()"><import-outlined /> 导入文档包</button>
+              <button class="app-btn ghost" @click="openWizard()"><bulb-outlined /> 从模板开始</button>
             </div>
           </div>
         </div>
@@ -202,7 +212,7 @@
       </a-spin>
     </div>
 
-    <KbCreateWizard v-model:open="wizardOpen" @created="onKbCreated" />
+    <KbCreateWizard v-model:open="wizardOpen" :seed="wizardSeed" @created="onKbCreated" />
     <KnowledgeBaseEditModal v-model:open="showEdit" :kb="editing" @saved="load" />
     <KnowledgeGraphModal v-model:open="graphModal" :kb="graphKb" />
     <KbOverviewDrawer v-model:open="drawerOpen" :kb="drawerKb"
@@ -219,7 +229,7 @@ import { computed, onMounted, ref } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { useRouter } from 'vue-router'
 import {
-  AimOutlined, AppstoreOutlined, BookOutlined, DatabaseOutlined, FileTextOutlined,
+  AimOutlined, AppstoreOutlined, BookOutlined, BulbOutlined, DatabaseOutlined, FileTextOutlined,
   ImportOutlined, MoreOutlined, PlusOutlined, UnorderedListOutlined, WarningOutlined
 } from '@ant-design/icons-vue'
 import {
@@ -234,12 +244,17 @@ import KbOverviewDrawer from '../components/KbOverviewDrawer.vue'
 import KbProbeModal from '../components/KbProbeModal.vue'
 import KbImportModal from '../components/KbImportModal.vue'
 import { loadModelIndex, modelRefInfo } from '../utils/modelRef'
-import { isAdminSync, ensureAuth } from '../utils/auth'
+import { isAdminSync, ensureAuth, menuHasPath } from '../utils/auth'
+import { embeddingReady, refreshSetupGuide, setupGuide } from '../utils/setupGuide'
 import { mobileShell } from '../h5/mobile'
 
 const isAdmin = isAdminSync()
 const myUid = ref('')
 const router = useRouter()
+// 知识库缺口只在这里提示：向量模型属于可选能力，不占侧栏「还差 N 项」
+const canManageProviders = computed(() => Boolean(isAdmin || menuHasPath('/agents')))
+const addEmbeddingModel = () =>
+  router.push('/agents?tab=providers&action=add-model&type=embedding&from=setup')
 
 const loading = ref(false)
 const raw = ref([])
@@ -254,6 +269,7 @@ const view = ref('grid')
 const showEdit = ref(false)
 const editing = ref(null)
 const wizardOpen = ref(false)
+const wizardSeed = ref(null)
 const graphModal = ref(false)
 const graphKb = ref(null)
 const drawerOpen = ref(false)
@@ -327,6 +343,7 @@ const filtered = computed(() => {
 
 onMounted(() => {
   load()
+  refreshSetupGuide()  // 未配向量模型时在页头给出添加入口（TTL 去重，通常直接复用侧栏已拉到的状态）
   ensureAuth().then(me => { myUid.value = me.user || '' }).catch(() => {})
 })
 
@@ -382,14 +399,23 @@ const openProbeFromDrawer = ({ kb, query }) => {
 const openEdit = kb => { editing.value = kb; showEdit.value = true }
 const openGraph = kb => { graphKb.value = kb; graphModal.value = true }
 
+function openWizard (seed = null) {
+  wizardSeed.value = seed
+  wizardOpen.value = true
+}
+
+function openCopyWizard (kb) {
+  openWizard(kb)
+}
+
 function openImport (kb) {
   importFixedKb.value = kb?.id || ''
   importOpen.value = true
 }
 
-async function onKbCreated (kb) {
+async function onKbCreated () {
+  // 导入步骤已收进向导第三步（可选 zip），这里只刷新列表
   await load()
-  if (kb?.id) openImport(kb)
 }
 
 function onImported () {
@@ -401,6 +427,7 @@ async function onCardMenu (key, kb) {
   else if (key === 'edit') openEdit(kb)
   else if (key === 'graph') openGraph(kb)
   else if (key === 'export') doExport(kb)
+  else if (key === 'copy') openCopyWizard(kb)
   else if (key === 'archive') toggleArchive(kb)
   else if (key === 'delete') onDelete(kb)
 }
@@ -500,8 +527,8 @@ function lastUsed (kb) {
 .stat.warn { border-color: var(--app-warn-border); background: #fffdf7; }
 .stat.warn .n { color: var(--app-warn-text); }
 .stat.warn .sic { background: var(--app-warn-weak); color: var(--app-warn); }
-.stat.sel { border-color: var(--app-accent-border); box-shadow: 0 0 0 3px rgba(46,107,230,.08); }
-.stat.sel .sic { background: var(--app-accent-weak); color: var(--app-accent); }
+.stat.stat-active { border-color: var(--app-accent-border); box-shadow: 0 0 0 3px rgba(46,107,230,.08); }
+.stat.stat-active .sic { background: var(--app-accent-weak); color: var(--app-accent); }
 .filterbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
 .seg { display: inline-flex; background: #eceff3; border-radius: 7px; padding: 2px; }
 .seg-item { height: 24px; padding: 0 11px; display: inline-flex; align-items: center; gap: 5px; border-radius: 5px;
@@ -518,6 +545,14 @@ function lastUsed (kb) {
 .sel { height: 26px; display: inline-flex; align-items: center; border: 1px solid var(--app-border-strong);
   border-radius: 6px; background: #fff; }
 .result { font-size: 11.5px; color: var(--app-text3); }
+/* 向量模型缺失提示：知识库能力的前置条件，只在知识库页出现 */
+.kb-embed-tip {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin: 0 0 12px; padding: 9px 12px; border-radius: 8px; font-size: 12px;
+  color: var(--app-warn-text); background: var(--app-warn-weak); border: 1px solid var(--app-warn-border);
+}
+.kb-embed-tip .app-link-btn { margin-left: auto; font-size: 12px; }
+.kb-tip-muted { color: var(--app-text3); font-size: 11.5px; }
 .kb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; align-items: stretch; }
 .kb-card { background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 10px; padding: 13px 14px 11px;
   display: flex; flex-direction: column; gap: 0; cursor: pointer; transition: border-color .15s, box-shadow .15s; min-height: 218px; }
