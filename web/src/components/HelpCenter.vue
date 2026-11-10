@@ -7,6 +7,10 @@
           <search-outlined class="help-search-ic" />
           <input v-model="kw" class="help-search-input" placeholder="筛选篇目…" />
         </div>
+        <!-- 篇目始终来自随包文件，空状态不再出现——同步入口常驻给管理员，用于版本升级后更新检索副本 -->
+        <button v-if="canSync" class="help-sync" :disabled="syncing" @click="doSync">
+          <sync-outlined :spin="syncing" />{{ syncing ? '同步中…' : '同步官方手册' }}
+        </button>
         <div v-if="!filtered.length" class="help-nav-empty">没有匹配的篇目</div>
         <button v-for="d in filtered" :key="d.id" class="help-nav-item"
                 :class="{ active: activeId === d.id }" @click="select(d)">
@@ -36,7 +40,7 @@
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { message, Modal } from 'ant-design-vue'
-import { SearchOutlined } from '@ant-design/icons-vue'
+import { SearchOutlined, SyncOutlined } from '@ant-design/icons-vue'
 import { listManualDocs, getManualDocContent, syncManual } from '../api'
 import { renderMd, copyCode } from '../utils/markdown'
 import { authUser } from '../utils/auth'
@@ -150,6 +154,14 @@ onBeforeUnmount(() => document.removeEventListener('click', onArticleClick))
   color: var(--app-text); font-size: 12px; padding: 6px 8px 6px 26px; outline: none;
 }
 .help-search-input:focus { border-color: var(--app-accent); }
+.help-sync {
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  width: 100%; margin-bottom: 6px; padding: 6px 8px;
+  background: var(--app-panel-2); border: 1px solid var(--app-border); border-radius: 8px;
+  color: var(--app-text2); font-size: 12px; cursor: pointer;
+}
+.help-sync:hover:not(:disabled) { color: var(--app-accent); border-color: var(--app-accent); }
+.help-sync:disabled { cursor: default; opacity: .7; }
 .help-nav-item {
   display: flex; align-items: center; gap: 6px; width: 100%; text-align: left;
   background: transparent; border: none; border-radius: 8px; cursor: pointer;

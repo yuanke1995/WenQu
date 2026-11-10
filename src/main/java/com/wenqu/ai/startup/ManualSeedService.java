@@ -389,6 +389,15 @@ public class ManualSeedService {
         }
     }
 
+    /**
+     * 随包分发的手册文件名（按文件名排序，编号前缀即阅读顺序）。
+     * <p>帮助中心的篇目清单以此为准：手册的正文本来就随版本分发，读手册不该依赖「同步进库」——
+     * 同步只服务检索（问答链路），没同步或同步发生在别的租户时，帮助中心照样要能读。
+     */
+    public List<String> bundledFileNames() {
+        return loadBundledFiles().stream().map(ManualFile::fileName).toList();
+    }
+
     /** 读取 classpath:manual/*.md（按文件名排序，编号前缀即篇目顺序） */
     private List<ManualFile> loadBundledFiles() {
         List<ManualFile> out = new ArrayList<>();

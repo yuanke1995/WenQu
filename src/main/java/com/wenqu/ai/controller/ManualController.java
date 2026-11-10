@@ -31,9 +31,13 @@ import com.wenqu.ai.security.Permission;
 /**
  * 帮助中心 / 官方内置手册只读接口。
  * <p>
- * 数据源即 {@link ManualSeedService} 同步出的官方内置知识库（builtin=1）：
- * 登录即可读（消费侧经 ResourceVisibilityService.canReadBuiltinKb 对内置库豁免，与网页检索可见性同源），
- * 不暴露任何非手册内容——篇目与内容都限定在内置库内。
+ * <b>篇目与正文以随包分发的 {@code classpath:manual/*.md} 为准</b>：手册是版本内容，读它不该依赖
+ * 管理员手动同步。内置知识库（builtin=1）只是这份内容的检索副本——同步进库供问答链路召回。
+ * 早期实现只读内置库，而库表/文档表带租户行级过滤：手册库落在执行同步的那个租户里，
+ * 其他租户的用户（含普通用户）查不到任何篇目，帮助中心就误报「尚未同步」。
+ * <p>
+ * 现在清单来自 classpath，库内同篇目的状态（成功/失败、块数）作为附加信息合并展示；
+ * 未同步时用 {@code src:} 前缀的合成 ID 直接读原文。只暴露手册内容，不暴露任何个人知识库数据。
  * 内容优先回 classpath 原文（阅读体验与源文件逐字一致），资源缺失时回退知识块拼装
  * （标题行在分块时被抽作块 title，拼装时按块标题还原为小节）。
  *
@@ -42,32 +46,43 @@ import com.wenqu.ai.security.Permission;
 @RestController
 @RequestMapping("/api/ai/manual")
 @RequiredArgsConstructor
-@Tag(name = "帮助中心", description = "问渠使用手册（官方内置知识库的只读视图）")
+@Tag(name = "帮助中心", description = "问渠使用手册（随版本分发的只读内容）")
 public class ManualController {
+
+    /** 未入库篇目的合成 ID 前缀：{@code src:01-产品简介.md} */
+    private static final String SRC_ID_PREFIX = "src:";
 
     private final KnowledgeBaseService kbService;
     private final AiDocumentMapper documentMapper;
     private final KnowledgeMapper knowledgeMapper;
     private final ManualSeedService manualSeedService;
 
-    @Operation(summary = "手册篇目列表", description = "官方内置库的全部篇目（按文件名编号排序）；登录即可读")
+    @Operation(summary = "手册篇目列表", description = "随包分发的手册篇目（按文件名编号排序）；登录即可读，不依赖是否已同步")
     @GetMapping("/documents")
     public ResultJson documents() {
+        List<String> bundled = manualSeedService.bundledFileNames();
+        if (bundled.isEmpty()) return ResultJson.ok(List.of());
+        // 库内同篇目的状态只是附加信息（失败原因、块数）：查不到（未同步/别的租户）就不展示
+        Map<String, AiDocument> synced = new LinkedHashMap<>();
         KnowledgeBase kb = kbService.builtinKb();
-        if (kb == null) return ResultJson.ok(List.of());
+        if (kb != null) {
+            for (AiDocument d : documentMapper.selectList(new LambdaQueryWrapper<AiDocument>()
+                    .eq(AiDocument::getKbId, kb.getId())
+                    .eq(AiDocument::getDeleted, 0))) {
+                synced.put(d.getFileName(), d);
+            }
+        }
         List<Map<String, Object>> out = new ArrayList<>();
-        for (AiDocument d : documentMapper.selectList(new LambdaQueryWrapper<AiDocument>()
-                .eq(AiDocument::getKbId, kb.getId())
-                .eq(AiDocument::getDeleted, 0)
-                .orderByAsc(AiDocument::getFileName))) {
+        for (String fileName : bundled) {
+            AiDocument d = synced.get(fileName);
             Map<String, Object> m = new LinkedHashMap<>();
-            m.put("id", d.getId());
-            m.put("fileName", d.getFileName());
-            m.put("title", displayTitle(d.getFileName()));
-            m.put("status", d.getStatus());
-            m.put("chunkCount", d.getChunkCount());
-            m.put("failReason", d.getFailReason());
-            m.put("updateTime", d.getUpdateTime());
+            m.put("id", d == null ? SRC_ID_PREFIX + fileName : d.getId());
+            m.put("fileName", fileName);
+            m.put("title", displayTitle(fileName));
+            m.put("status", d == null ? 0 : d.getStatus());
+            m.put("chunkCount", d == null ? 0 : d.getChunkCount());
+            m.put("failReason", d == null ? null : d.getFailReason());
+            m.put("updateTime", d == null ? null : d.getUpdateTime());
             out.add(m);
         }
         return ResultJson.ok(out);
@@ -99,28 +114,41 @@ public class ManualController {
         return ResultJson.ok(r, "同步完成");
     }
 
-    @Operation(summary = "单篇内容", description = "返回该篇 Markdown 原文；仅官方内置库内的篇目可读")
+    @Operation(summary = "单篇内容", description = "返回该篇 Markdown 原文；篇目限定为随包分发的手册文件")
     @GetMapping("/documents/{id}/content")
     public ResultJson content(@PathVariable("id") String id) {
+        // src: 合成 ID = 未同步（或同步落在别的租户）时直接读 classpath 原文
+        if (id != null && id.startsWith(SRC_ID_PREFIX)) {
+            return ResultJson.ok(contentOf(null, id.substring(SRC_ID_PREFIX.length())));
+        }
         KnowledgeBase kb = kbService.builtinKb();
-        if (kb == null) throw new BizException("内置手册尚未同步");
+        if (kb == null) throw new BizException("手册篇目不存在");
         AiDocument doc = documentMapper.selectById(id);
         if (doc == null || Integer.valueOf(1).equals(doc.getDeleted())
                 || !kb.getId().equals(doc.getKbId())) {
             throw new BizException("手册篇目不存在");
         }
-        String content = rawClasspathContent(doc.getFileName());
+        return ResultJson.ok(contentOf(doc, doc.getFileName()));
+    }
+
+    /** 组装单篇返回体：正文优先 classpath 原文，缺失时回退知识块拼装 */
+    private Map<String, Object> contentOf(AiDocument doc, String fileName) {
+        // src: ID 由客户端回传，不能当资源路径用：必须是随包清单里的文件名
+        if (fileName == null || !manualSeedService.bundledFileNames().contains(fileName)) {
+            throw new BizException("手册篇目不存在");
+        }
+        String content = rawClasspathContent(fileName);
         boolean fromSource = content != null;
-        if (content == null) content = joinChunks(doc.getId());
+        if (content == null && doc != null) content = joinChunks(doc.getId());
         Map<String, Object> m = new LinkedHashMap<>();
-        m.put("id", doc.getId());
-        m.put("fileName", doc.getFileName());
-        m.put("title", displayTitle(doc.getFileName()));
-        m.put("status", doc.getStatus());
-        m.put("failReason", doc.getFailReason());
+        m.put("id", doc != null ? doc.getId() : SRC_ID_PREFIX + fileName);
+        m.put("fileName", fileName);
+        m.put("title", displayTitle(fileName));
+        m.put("status", doc == null ? 0 : doc.getStatus());
+        m.put("failReason", doc == null ? null : doc.getFailReason());
         m.put("fromSource", fromSource);
         m.put("content", content == null ? "" : content);
-        return ResultJson.ok(m);
+        return m;
     }
 
     /** 文件名 → 展示标题："01-产品简介.md" → "产品简介" */
