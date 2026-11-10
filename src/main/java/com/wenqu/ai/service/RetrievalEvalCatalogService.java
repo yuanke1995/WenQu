@@ -5,7 +5,6 @@ import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wenqu.ai.common.BizException;
-import com.wenqu.ai.config.AppProperties;
 import com.wenqu.ai.mapper.AiDocumentMapper;
 import com.wenqu.ai.mapper.KnowledgeMapper;
 import com.wenqu.ai.mapper.MessageMapper;
@@ -20,13 +19,7 @@ import com.wenqu.ai.util.RequestUser;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -53,26 +46,17 @@ public class RetrievalEvalCatalogService {
     private final MessageMapper messageMapper;
     private final KnowledgeMapper knowledgeMapper;
     private final AiDocumentMapper documentMapper;
-    private final AppProperties properties;
 
     public RetrievalEvalCatalogService(RetrievalEvalSetMapper setMapper,
                                        RetrievalEvalCaseMapper caseMapper,
                                        MessageMapper messageMapper,
                                        KnowledgeMapper knowledgeMapper,
-                                       AiDocumentMapper documentMapper,
-                                       AppProperties properties) {
+                                       AiDocumentMapper documentMapper) {
         this.setMapper = setMapper;
         this.caseMapper = caseMapper;
         this.messageMapper = messageMapper;
         this.knowledgeMapper = knowledgeMapper;
         this.documentMapper = documentMapper;
-        this.properties = properties;
-    }
-
-    public record LegacyCase(String id, String question, List<String> expectedKnowledgeIds, String note) {
-    }
-
-    public record LegacySet(int version, String generatedAt, List<LegacyCase> cases, int staleExpected) {
     }
 
     // ==================== 评估集 ====================
@@ -87,14 +71,6 @@ public class RetrievalEvalCatalogService {
         }
         qw.orderByDesc(RetrievalEvalSet::getCreateTime).last("LIMIT 1");
         return setMapper.selectOne(qw);
-    }
-
-    /** 没有评估集时尝试从旧文件导入一次；仍为空返回 null。 */
-    public RetrievalEvalSet activeSetOrImport(String scopeKbId) {
-        RetrievalEvalSet set = activeSet(scopeKbId);
-        if (set != null) return set;
-        if (scopeKbId == null || scopeKbId.isBlank()) importLegacyIfPresent();
-        return activeSet(scopeKbId);
     }
 
     public List<RetrievalEvalSet> listSets() {
@@ -271,7 +247,7 @@ public class RetrievalEvalCatalogService {
         String q = question == null ? "" : question.trim();
         if (q.isEmpty()) throw new BizException("问题不能为空");
         if (q.length() > 200) q = q.substring(0, 200);
-        RetrievalEvalSet set = activeSetOrImport(null);
+        RetrievalEvalSet set = activeSet(null);
         if (set == null) set = createSet(1, null, "manual", 0);
         for (RetrievalEvalCase c : casesOf(set.getId(), null)) {
             if (q.equals(c.getQuestion())) {
@@ -285,42 +261,6 @@ public class RetrievalEvalCatalogService {
                 "feedback", 1);
         caseMapper.insert(c);
         return Map.of("added", true, "caseId", c.getId(), "expected", valid.size());
-    }
-
-    /** 旧 JSON 文件一次性导入（仅在当前没有评估集时执行）。 */
-    public synchronized void importLegacyIfPresent() {
-        try {
-            Long count = setMapper.selectCount(null);
-            if (count != null && count > 0) return;
-            Path file = Paths.get(properties.getImages().getDir(), "eval", "retrieval-eval.json");
-            if (!Files.exists(file)) return;
-            JSONObject o = JSON.parseObject(Files.readString(file, StandardCharsets.UTF_8));
-            if (o == null) return;
-            JSONArray arr = o.getJSONArray("cases");
-            if (arr == null || arr.isEmpty()) return;
-            String generatedAt = o.getString("generatedAt");
-            LocalDateTime time = parseTime(generatedAt);
-            RetrievalEvalSet set = createSet(1, null, "import", o.getIntValue("staleExpected", 0));
-            if (time != null) {
-                set.setGeneratedAt(time);
-                setMapper.updateById(set);
-            }
-            int n = 0;
-            for (int i = 0; i < arr.size(); i++) {
-                JSONObject c = arr.getJSONObject(i);
-                String question = c.getString("question");
-                if (question == null || question.isBlank()) continue;
-                List<String> expected = c.getJSONArray("expectedKnowledgeIds") == null
-                        ? List.of() : c.getJSONArray("expectedKnowledgeIds").toJavaList(String.class);
-                RetrievalEvalCase entity = newCase(set.getId(), truncate(question, 200),
-                        expected, List.of(), c.getString("note"), List.of(), "import", 0);
-                caseMapper.insert(entity);
-                n++;
-            }
-            log.info("[Eval] 旧评估集文件导入完成：{} 条", n);
-        } catch (Exception e) {
-            log.warn("[Eval] 旧评估集文件导入失败（不阻塞启动）: {}", e.getMessage());
-        }
     }
 
     // ==================== 用例维护 ====================
@@ -436,13 +376,13 @@ public class RetrievalEvalCatalogService {
     // ==================== 工具 ====================
 
     public RetrievalEvalSet requireActiveSet() {
-        RetrievalEvalSet set = activeSetOrImport(null);
+        RetrievalEvalSet set = activeSet(null);
         if (set == null) throw new BizException("评估集为空，请先生成评估集");
         return set;
     }
 
     public RetrievalEvalSet requireSet(String setId) {
-        RetrievalEvalSet set = setId == null || setId.isBlank() ? activeSetOrImport(null) : setMapper.selectById(setId);
+        RetrievalEvalSet set = setId == null || setId.isBlank() ? activeSet(null) : setMapper.selectById(setId);
         if (set == null) throw new BizException(404, "评估集不存在");
         return set;
     }
@@ -590,14 +530,5 @@ public class RetrievalEvalCatalogService {
     private static String truncate(String s, int max) {
         if (s == null) return "";
         return s.length() <= max ? s : s.substring(0, max);
-    }
-
-    private static LocalDateTime parseTime(String s) {
-        if (s == null || s.isBlank()) return null;
-        try {
-            return LocalDateTime.parse(s, DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
-        } catch (Exception e) {
-            return null;
-        }
     }
 }

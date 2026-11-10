@@ -195,7 +195,7 @@ public class RetrievalEvaluationService {
     /** 读取当前评估集（DB 首版；无评估集返回空集）。 */
     public EvalSet load() {
         try {
-            com.wenqu.ai.model.RetrievalEvalSet set = catalogService.activeSetOrImport(null);
+            com.wenqu.ai.model.RetrievalEvalSet set = catalogService.activeSet(null);
             if (set == null) return new EvalSet(1, "", List.of(), 0);
             List<EvalCase> cases = catalogService.casesOf(set.getId(), 1).stream()
                     .map(c -> new EvalCase(c.getId(), c.getQuestion(),

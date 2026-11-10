@@ -37,7 +37,7 @@
  *   <caption>启动钩子清单</caption>
  *   <tr><th>类</th><th>触发</th><th>动什么数据</th><th>是否烧额度</th></tr>
  *   <tr><td>{@link com.wenqu.ai.startup.SchemaMigrator}</td><td>ApplicationRunner @Order(0)</td>
- *       <td>按 schema.sql 增量补建表/缺列/缺索引，并把 {@code tenant_id} 归一到默认租户（只增不删）</td><td>否</td></tr>
+ *       <td>按 schema.sql 增量补建表/缺列/缺索引（只增不删）</td><td>否</td></tr>
  *   <tr><td>{@link com.wenqu.ai.startup.RbacSeedRunner}</td><td>ApplicationRunner @Order(1)</td>
  *       <td>角色/菜单种子，仅表空或缺项时补齐</td><td>否</td></tr>
  *   <tr><td>{@link com.wenqu.ai.startup.TenantSeedRunner}</td><td>ApplicationRunner @Order(1)</td>

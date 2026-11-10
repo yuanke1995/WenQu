@@ -122,7 +122,7 @@ public class RetrievalEvalRunService {
             log.debug("[Eval] 定时体检灰度观察失败: {}", e.getMessage());
         }
         try {
-            RetrievalEvalSet set = catalog.activeSetOrImport(null);
+            RetrievalEvalSet set = catalog.activeSet(null);
             if (set != null && report != null && report.get("metrics") instanceof Map<?, ?> metrics && !metrics.isEmpty()) {
                 RetrievalEvalRun run = new RetrievalEvalRun();
                 run.setSetId(set.getId());
@@ -165,7 +165,7 @@ public class RetrievalEvalRunService {
 
     /** 用例表格：搜索/筛选（落空/低相关/失效/待确认/停用）+ 最近一次运行的 recall@5。 */
     public Map<String, Object> listCases(String setId, String filter, String keyword, int page, int size) {
-        RetrievalEvalSet set = setId == null || setId.isBlank() ? catalog.activeSetOrImport(null) : setMapper.selectById(setId);
+        RetrievalEvalSet set = setId == null || setId.isBlank() ? catalog.activeSet(null) : setMapper.selectById(setId);
         if (set == null) {
             // 无评估集时 set 必须回 null：Map.of 不收 null 值（线上空库走进这里会直接 NPE 500）
             Map<String, Object> empty = new LinkedHashMap<>();
@@ -252,7 +252,7 @@ public class RetrievalEvalRunService {
     public Map<String, Object> listRuns(int page, int size, String setId) {
         int p = Math.max(1, page);
         int s = Math.min(Math.max(1, size), 100);
-        RetrievalEvalSet set = setId == null || setId.isBlank() ? catalog.activeSetOrImport(null) : setMapper.selectById(setId);
+        RetrievalEvalSet set = setId == null || setId.isBlank() ? catalog.activeSet(null) : setMapper.selectById(setId);
         LambdaQueryWrapper<RetrievalEvalRun> qw = new LambdaQueryWrapper<>();
         if (set != null) qw.eq(RetrievalEvalRun::getSetId, set.getId());
         long total = runMapper.selectCount(qw);
@@ -399,7 +399,7 @@ public class RetrievalEvalRunService {
     // ==================== 总览 ====================
 
     public Map<String, Object> overview(String scopeKbId) {
-        RetrievalEvalSet set = catalog.activeSetOrImport(scopeKbId);
+        RetrievalEvalSet set = catalog.activeSet(scopeKbId);
         Map<String, Object> detail = catalog.detail(set, false);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("set", set);

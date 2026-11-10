@@ -26,8 +26,7 @@ import java.util.regex.Pattern;
  * 解决"存量表加列/加索引需手动 ALTER"的运维痛点——schema.sql 变更后老库启动即自动升级，
  * 避免新装库与存量库结构漂移。补列/补索引失败仅告警不阻塞启动（保证只读/降级场景可用）。
  * <p>
- * 边界：补列/补索引之外只做两类明确动作——租户列归一（历史 NULL 行会从行级过滤里消失）
- * 与 {@link #RETIRED_COLUMNS} 白名单里的退役列删除；不改列类型、不删除或重建同名索引。
+ * 边界：只补列、补索引与创建缺失表；不改列类型、不删除列、不重建同名索引。
  * 同名索引若定义与 schema.sql 不一致只告警，需运维手工处理。
  * 大表补索引可能耗时较久，可用 ai-app.schema-auto-index=false 关闭索引自动补齐。
  */
@@ -48,20 +47,6 @@ public class SchemaMigrator implements ApplicationRunner {
     /** 非列定义行前缀（PRIMARY KEY / KEY / UNIQUE / 外键 / 全文索引等，列名均以反引号开头故不会误判） */
     private static final List<String> NON_COLUMN_PREFIX =
             List.of("PRIMARY", "KEY", "UNIQUE", "CONSTRAINT", "INDEX", "FULLTEXT", "FOREIGN", "--");
-
-    /** 已退役列（表 → 列）：存量库若还有就删；新库 schema.sql 已不再建这些列 */
-    private static final Map<String, List<String>> RETIRED_COLUMNS = Map.of(
-            "c_ai_project", List.of("workdir_path", "directory_mode", "root_path", "shared_workdir"),
-            // 只列「已改名」的旧预算列（budget_turns→budget_rounds、budget_minutes→budget_ms）。
-            // budget_tokens/budget_tool_calls 是 schema.sql 仍在建的有效列，
-            // 留在名单里会让本类先补列再删列，实体 SELECT 直接 Unknown column。
-            "c_ai_goal", List.of("criteria_json", "constraints_json", "subject_version",
-                    "verifications_json", "contract_version", "state_revision",
-                    "budget_turns", "budget_minutes"),
-            "c_ai_user", List.of("role", "oidc_sub", "oidc_provider",
-                    "default_rerank_model", "default_vision_model"),
-            "c_ai_session", List.of("context_window"),
-            "c_ai_model", List.of("context_window_min"));
 
     private final JdbcTemplate jdbcTemplate;
 
@@ -121,185 +106,9 @@ public class SchemaMigrator implements ApplicationRunner {
                 }
             }
         }
-        int tenantFixed = normalizeTenantColumns();
-        int scopeRenamed = migrateQuotaScope();
-        int mcpLabelFixed = migrateMcpToolLabelKeys();
-        int retiredDropped = dropRetiredColumns(tables);
-        log.info("[SchemaMigrator] schema 演进检查完成：{} 张表，补列 {} 个，补索引 {} 个{}{}{}{}",
+        log.info("[SchemaMigrator] schema 演进检查完成：{} 张表，补列 {} 个，补索引 {} 个{}",
                 tables.size(), addedCols, addedIdx,
-                autoIndex ? "" : "（索引自动补齐已关闭）",
-                tenantFixed > 0 ? "，租户列归一 " + tenantFixed + " 张表" : "",
-                scopeRenamed > 0 ? "，配额作用域改名 " + scopeRenamed + " 条" : "",
-                mcpLabelFixed > 0 ? "，MCP 中文名旧前缀键归一 " + mcpLabelFixed + " 行" : "",
-                retiredDropped > 0 ? "，退役列删除 " + retiredDropped + " 个" : "");
-    }
-
-    /**
-     * 不在当前 schema 中的列：存量库若还有就删掉，不让旧结构跟着库走。
-     * <p>名单里的列既不建也不读写；存量库若还有，删列是纯减法。
-     * 用 information_schema 先查再删，幂等；单列失败只告警，不阻塞其余列。
-     * <p>名单与 schema.sql 撞名（同一列既声明要建又声明要删）时**跳过不删并告警**：
-     * 撞名说明名单没跟着「列装回」一起清，删下去会让实体每次查询报 Unknown column。
-     */
-    private int dropRetiredColumns(Map<String, TableDef> tables) {
-        int dropped = 0;
-        for (Map.Entry<String, List<String>> e : RETIRED_COLUMNS.entrySet()) {
-            List<String> existing = queryColumns(e.getKey());
-            if (existing == null) continue;
-            TableDef schemaDef = tables.get(e.getKey());
-            for (String col : e.getValue()) {
-                if (schemaDef != null && schemaDef.columns().containsKey(col)) {
-                    log.warn("[SchemaMigrator] 退役名单里的 {}.{} 在 schema.sql 中仍是有效列，已跳过删除"
-                            + "（请把该列从 RETIRED_COLUMNS 移除）", e.getKey(), col);
-                    continue;
-                }
-                if (!existing.contains(col)) continue;
-                try {
-                    jdbcTemplate.execute("ALTER TABLE `" + e.getKey() + "` DROP COLUMN `" + col + "`");
-                    dropped++;
-                    log.info("[SchemaMigrator] 已删除退役列 {}.{}", e.getKey(), col);
-                } catch (Exception ex) {
-                    log.warn("[SchemaMigrator] 删除退役列 {}.{} 失败（请手工处理）: {}",
-                            e.getKey(), col, ex.getMessage());
-                }
-            }
-        }
-        return dropped;
-    }
-
-    /**
-     * 租户列归一：把所有 {@code tenant_id} 统一成 {@code VARCHAR(32) NOT NULL DEFAULT 'default'}，
-     * 并把历史 NULL 行回填成默认租户。
-     *
-     * <p><b>为什么必须在这里改数据</b>：可空占位列在租户行级过滤下读不出来——
-     * 读侧谓词是 {@code tenant_id = 'default'}，而 SQL 里 {@code NULL = 'default'} 不为真，那些行会<b>在界面上集体消失</b>。
-     * 这里改的不是类型，是「数据看不看得见」。
-     *
-     * <p>顺序是先回填再改列：MySQL 严格模式下带着 NULL 去 {@code MODIFY ... NOT NULL} 会直接报错。
-     * 表名取自 information_schema（不是外部输入），拼接安全。大表上这条 ALTER 会重建表——
-     * 生产首次升级请在窗口期执行（手册「多租户」里已写明）。
-     *
-     * @return 实际改写定义的表数（0＝都已归一，正常静默）
-     */
-    private int normalizeTenantColumns() {
-        int fixed = 0;
-        try {
-            List<Map<String, Object>> cols = jdbcTemplate.queryForList(
-                    "select TABLE_NAME as t, IS_NULLABLE as n, COLUMN_DEFAULT as d, CHARACTER_MAXIMUM_LENGTH as len "
-                            + "from information_schema.COLUMNS "
-                            + "where TABLE_SCHEMA = DATABASE() and COLUMN_NAME = 'tenant_id'");
-            for (Map<String, Object> c : cols) {
-                // 平台全局表（租户注册表、开通申请等）不归一：它们本来就不参与行级过滤，
-                // 把列改成 NOT NULL DEFAULT 'default' 等于给「没有归属」这件事编一个假值
-                if (com.wenqu.ai.config.WenquTenantLineHandler.isGlobalTable(String.valueOf(c.get("t")))) continue;
-                String table = String.valueOf(c.get("t"));
-                try {
-                    Integer nulls = jdbcTemplate.queryForObject(
-                            "select count(*) from `" + table + "` where `tenant_id` is null", Integer.class);
-                    if (nulls != null && nulls > 0) {
-                        jdbcTemplate.update("update `" + table + "` set `tenant_id` = 'default' where `tenant_id` is null");
-                        log.info("[SchemaMigrator] 租户回填：{}.tenant_id 的 {} 行 NULL 归入默认租户", table, nulls);
-                    }
-                    boolean nullable = !"NO".equalsIgnoreCase(String.valueOf(c.get("n")));
-                    Object def = c.get("d");
-                    boolean wrongDefault = def == null || !"default".equals(String.valueOf(def));
-                    boolean wrongWidth = !"32".equals(String.valueOf(c.get("len")));
-                    if (nullable || wrongDefault || wrongWidth) {
-                        jdbcTemplate.update("alter table `" + table + "` modify column `tenant_id` "
-                                + "VARCHAR(32) NOT NULL DEFAULT 'default' "
-                                + "COMMENT '租户ID（Phase 4 多租户：本行归属的租户）'");
-                        fixed++;
-                    }
-                } catch (Exception ex) {
-                    log.warn("[SchemaMigrator] 表 {} 的租户列归一失败（该表的行可能对部分成员不可见，需手工处理）: {}",
-                            table, ex.getMessage());
-                }
-            }
-        } catch (Exception ex) {
-            log.warn("[SchemaMigrator] 查询租户列清单失败（跳过归一）: {}", ex.getMessage());
-        }
-        return fixed;
-    }
-
-    /**
-     * 配额作用域 {@code platform} → {@code tenant}。
-     * <p>配额行本身按租户归属，"全平台"这个说法在多租户下是错的——一条规则管不到别的租户。
-     * 值改了就要连带存量行一起改，否则老行读成未知作用域、{@code matchesScope} 一律不匹配，
-     * 表现为「设过预算的人突然不限额了」这种最坏的静默失效。
-     */
-    private int migrateQuotaScope() {
-        try {
-            return jdbcTemplate.update("update c_ai_quota set scope = 'tenant' where scope = 'platform'");
-        } catch (Exception ex) {
-            log.warn("[SchemaMigrator] 配额作用域改名失败（platform 档将不再匹配任何调用，请手工处理）: {}",
-                    ex.getMessage());
-            return 0;
-        }
-    }
-
-    /**
-     * MCP 工具中文名的旧前缀键归一。
-     * <p>Spring AI 挂载名前缀从直拼的 {@code wen_qu}（{@code wen_qusql_query}）换成了现行的
-     * {@code w_q_}（{@code w_q_sql_query}）。{@code c_ai_user_mcp.tool_labels} 的存储契约一直是
-     * <b>裸工具名</b>（见 schema.sql 列注释），但旧代码按旧前缀剥键，按挂载名存进来的条目就带着
-     * {@code wen_qu*} 的键落库——读写代码不再兼容旧格式之后，这批键永远查不到（工具卡现英文裸名）。
-     * 这里把旧键一次性剥回裸名：与既有裸名条目撞键时<b>裸名条目优先</b>；没动的条目
-     * （含旧 LLM 翻译格式的对象值）原样保留；{@code w_q_} 开头的键不动——那是合法裸名，
-     * 外部 server 真可能有这么起名的工具。数据归一后，{@code McpToolLabelService#stripPrefix}
-     * 与前端 {@code projections.js#bareToolName} 都只留现行前缀这一条规则。
-     */
-    private int migrateMcpToolLabelKeys() {
-        List<Map<String, Object>> rows;
-        try {
-            rows = jdbcTemplate.queryForList(
-                    "select id, tool_labels from c_ai_user_mcp "
-                            + "where tool_labels is not null and tool_labels <> '' and tool_labels like '%wen_qu%'");
-        } catch (Exception ex) {
-            log.warn("[SchemaMigrator] 查询 MCP 工具中文名失败（跳过旧键归一）: {}", ex.getMessage());
-            return 0;
-        }
-        int fixed = 0;
-        for (Map<String, Object> row : rows) {
-            String id = String.valueOf(row.get("id"));
-            try {
-                com.alibaba.fastjson2.JSONObject root =
-                        com.alibaba.fastjson2.JSON.parseObject(String.valueOf(row.get("tool_labels")));
-                Object itemsObj = root == null ? null : root.get("items");
-                if (!(itemsObj instanceof Map<?, ?> items)) continue;
-                Map<String, Object> out = new LinkedHashMap<>();
-                boolean changed = false;
-                // 第一遍：非旧键原样入（撞键时裸名条目赢）；第二遍：旧键剥前缀补进
-                for (Map.Entry<?, ?> e : items.entrySet()) {
-                    if (e.getKey() == null) continue;
-                    String key = String.valueOf(e.getKey());
-                    if (legacyMcpPrefixLen(key) < 0) out.put(key, e.getValue());
-                    else changed = true;
-                }
-                for (Map.Entry<?, ?> e : items.entrySet()) {
-                    if (e.getKey() == null) continue;
-                    String key = String.valueOf(e.getKey());
-                    int len = legacyMcpPrefixLen(key);
-                    if (len < 0) continue;
-                    out.putIfAbsent(key.substring(len), e.getValue());
-                }
-                if (!changed) continue;
-                String json = com.alibaba.fastjson2.JSON.toJSONString(
-                        Map.of("items", out), com.alibaba.fastjson2.JSONWriter.Feature.WriteMapNullValue);
-                jdbcTemplate.update("update c_ai_user_mcp set tool_labels = ? where id = ?", json, id);
-                fixed++;
-                log.info("[SchemaMigrator] MCP 中文名旧前缀键已归一: id={}", id);
-            } catch (Exception ex) {
-                log.warn("[SchemaMigrator] MCP 中文名旧键归一失败 id={}（请手工处理）: {}", id, ex.getMessage());
-            }
-        }
-        return fixed;
-    }
-
-    /** 历史挂载名前缀（直拼的 wen_qu / 带尾下划线的 wen_qu_）长度；不是旧格式返回 -1 */
-    private static int legacyMcpPrefixLen(String key) {
-        if (key.startsWith("wen_qu_")) return 7;
-        if (key.startsWith("wen_qu") && key.length() > 6) return 6;
-        return -1;
+                autoIndex ? "" : "（索引自动补齐已关闭）");
     }
 
     /** 查表现有列；表不存在返回 null */
