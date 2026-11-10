@@ -66,7 +66,9 @@ export class WenquClient {
     if (options.apiKey != null && typeof options.apiKey !== "string") {
       throw new WenquError("apiKey 传值时必须是字符串（sk-xxx，在问渠 API Key 管理页签发）");
     }
-    const impl = options.fetch ?? globalThis.fetch;
+    const impl = options.fetch ?? ((...args: Parameters<typeof globalThis.fetch>) => globalThis.fetch(...args));
+    // 默认实现必须包一层箭头函数而不是直接存 globalThis.fetch 引用：
+    // 浏览器的 fetch 以脱离 window 的 this 调用会抛 Illegal invocation（Node 的 undici 不检查，测不出）
     if (typeof impl !== "function") {
       throw new WenquError("当前环境没有全局 fetch（Node <18），请通过 options.fetch 传入实现");
     }
