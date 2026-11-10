@@ -1,0 +1,155 @@
+# 技能（Skills）UI/UX 与功能使用升级方案（先出方案与效果图，确认后再写代码）
+
+## 0. 结论先行
+
+| 项 | 结论 |
+|---|---|
+| **本次第一步** | 产出本方案 + `design/mockups/skills-upgrade/skills-upgrade.html`（现状对照 + 4 屏高保真效果图），**这一步不写业务代码** |
+| **核心主张** | 把技能页从「文件管理器」升级为「能力运营台」：**使用数据上卡面、操作分级、详情可下钻、创建有模板、对话能闭环** |
+| **最大缺口** | 现状完全没有「这个技能有没有被用、好不好用」的反馈——用户无法判断技能是否生效，更无法改进描述 |
+| **范围** | Skills Tab 管理页 + 详情抽屉 + 新建流程 + 对话中技能命中/沉淀闭环；不重写市场页（只做跳转与数据联动） |
+| **不做** | 不改技能加载机制（仍由模型按需读取）、不改用户隔离边界、不引入新视觉体系（全部沿用 `web/src/views/app.css` 令牌） |
+| **后端最小改动** | ① 技能读取埋点与统计字段 ② frontmatter 扩展 category/tags ③ 编辑快照与回滚 ④ 强制点名参数 |
+| **默认推荐** | 分三期落地：一期纯前端重构 + 统计字段（见效最快）；二期详情抽屉/测试/模板；三期版本历史/批量/市场联动 |
+
+---
+
+## 1. 现状诊断（基于代码与截图，非猜测）
+
+### 1.1 现状截图
+
+用户截图已存为 [`assets/current-skills.png`](file:///Users/wangxi/workspace/WenQu/design/mockups/skills-upgrade/assets/current-skills.png)，作为效果图「场景 0 · 现状」的对照底图，不修改原文件。
+
+### 1.2 代码事实
+
+| 编号 | 现状 | 证据 |
+|---|---|---|
+| S1 | 卡片底部 6 个等权文字链接：查看/编辑/停用/下载/上架/删除，读操作、高频操作、危险操作混在一排；「删除」虽在末尾但视觉权重相同 | [SkillsPage.vue](file:///Users/wangxi/workspace/WenQu/web/src/views/SkillsPage.vue#L71-L81) |
+| S2 | 15 个技能平铺一张网格，只有关键词搜索；无状态筛选、无分类/标签、无排序（按什么排都不由用户决定） | [SkillsPage.vue](file:///Users/wangxi/workspace/WenQu/web/src/views/SkillsPage.vue#L13-L22)、[L276-L284](file:///Users/wangxi/workspace/WenQu/web/src/views/SkillsPage.vue#L276-L284) |
+| S3 | 卡片元信息只有「来源 / 体积 / 文件数 / 更新日期」——**没有任何使用数据**。后端 `/list` 返回字段里也不存在读取次数、最近使用时间等统计 | [SkillsPage.vue](file:///Users/wangxi/workspace/WenQu/web/src/views/SkillsPage.vue#L65-L70)；[SkillController.java](file:///Users/wangxi/workspace/WenQu/src/main/java/com/wenqu/ai/controller/SkillController.java#L85-L102) |
+| S4 | 详情是 820px 居中弹窗，只有「预览/原文」两个 Tab + 附属文件列表；没有使用数据、版本历史、测试入口；编辑是裸 textarea，frontmatter 写坏了也没有校验反馈 | [SkillsPage.vue](file:///Users/wangxi/workspace/WenQu/web/src/views/SkillsPage.vue#L176-L232) |
+| S5 | 描述固定 38px 高直接裁切，没有省略号、没有 hover 全文；描述缺失时只有一行橙色提示文案 | [SkillsPage.vue](file:///Users/wangxi/workspace/WenQu/web/src/views/SkillsPage.vue#L553-L554) |
+| S6 | 新建技能要求从零写 SKILL.md：无模板、无向导、无 AI 辅助；技能名创建后不可改，填错只能删了重建 | [SkillsPage.vue](file:///Users/wangxi/workspace/WenQu/web/src/views/SkillsPage.vue#L94-L114) |
+| S7 | 内置/我的/工作区三种来源靠分组标题区分，卡片本身无视觉差异（无图标、无类别色），扫一屏全是同款白卡 | [SkillsPage.vue](file:///Users/wangxi/workspace/WenQu/web/src/views/SkillsPage.vue#L46-L55) |
+| S8 | 无批量操作（逐个停用/删除）；无收藏/置顶；「已停用技能本轮仍可点名使用一次」这类关键规则只藏在页尾小字 | [SkillsPage.vue](file:///Users/wangxi/workspace/WenQu/web/src/views/SkillsPage.vue#L86-L89) |
+| S9 | 技能在对话中「被模型读取了没有」对用户不可见：命中无提示、无法验证描述写得好不好，好的做法也无法一键沉淀成新技能（沉淀只发生在沙盒工作区） | [SkillController.java](file:///Users/wangxi/workspace/WenQu/src/main/java/com/wenqu/ai/controller/SkillController.java#L42-L50)；[WenquSkillRepository.java](file:///Users/wangxi/workspace/WenQu/src/main/java/com/wenqu/ai/skill/WenquSkillRepository.java#L22-L60) |
+
+### 1.3 用户现在回答不了的四个问题
+
+1. **哪些技能真的在用？** 没有任何读取次数/最近使用时间，15 个卡长得一模一样。
+2. **描述写得好不好？** 模型靠 description 判断是否读取，但用户看不到「命中/未命中」结果，无法迭代。
+3. **改坏了怎么办？** 编辑直接覆盖 SKILL.md，没有版本历史，无法回滚。
+4. **对话里的好做法怎么固化？** 只能去管理页从零手写，无法从当前会话一键沉淀。
+
+---
+
+## 2. 设计目标与原则
+
+1. **首屏先给结论**：进入页面 3 秒内看到「共 15 · 生效 12 · 30 天被读 186 次 · 2 个零调用」，每个数字可点击下钻成筛选。
+2. **每个技能自带体检报告**：卡面露出 30 天调用数 + 最近使用 + 迷你趋势；零调用、缺描述的卡片用警示态直接暴露。
+3. **操作分级，危险操作退到二级**：卡面只留「开关 + 查看」；编辑/下载/上架/复制/删除收进 ⋯ 菜单，删除保持二次确认。
+4. **详情从弹窗升级为右侧抽屉**：正文 / 附属文件 / 使用数据 / 版本历史 / 测试五个 Tab，能看、能测、能回滚。
+5. **创建门槛降到模板级**：模板画廊 + 「从对话生成」AI 辅助，用户改两行就能用。
+6. **对话闭环**：回答里明示「已按技能 X 执行」（可展开看了什么）；输入框 @ 点名；好答案一键「固化为技能」。
+7. **沿用现有设计语言**：只用 `app.css` 令牌与 `.app-card / .app-btn / .app-pill` 类，不引入新视觉体系。
+
+---
+
+## 3. 信息架构与交互重构
+
+### 3.1 列表页（场景 1）
+
+```
+页头：技能 · 副标题一句话
+统计条：[共15] [生效12] [30天调用186] [零调用2 ⚠] [缺描述1 ⚠]   ← 每项可点击=筛选
+工具行：状态分段（全部/生效中/已停用/需关注） · 分类 chips · 来源下拉 · 排序下拉 · 批量操作
+卡片：图标(类别色) + 名称 + 状态点
+      分类标签 · 描述 2 行省略（hover 全文）
+      数据行：30天 24 次 · 最近 2 天前 + sparkline
+      底部：[开关] [查看详情] [⋯ 菜单]
+```
+
+- 点击卡片主体 = 打开详情抽屉（替代原「查看」链接）。
+- 「需关注」= 零调用 ∪ 缺描述 ∪ 平台停用，作为默认警示入口。
+- 内置/工作区分组保留，但组标题降级为筛选维度，不再切碎网格。
+
+### 3.2 详情抽屉（场景 2）
+
+右侧 780px 抽屉，头部常驻：图标 + 名称 + 开关 + ⋯。五个 Tab：
+
+| Tab | 内容 | 数据来源 |
+|---|---|---|
+| 正文 | Markdown 预览/原文切换（现状能力平移） | 现有 `/detail` |
+| 附属文件 | 文件树 + 预览（现状能力平移） | 现有 `/detail` |
+| 使用数据 | 30 天调用趋势、命中率、最近触发会话列表（可跳回会话） | **新增统计接口** |
+| 版本历史 | 每次编辑快照、diff 摘要、一键回滚 | **新增版本接口** |
+| 测试 | 输入一句话 → 强制加载本技能试运行 → 展示模型是否读取、产出预览 | **复用对话接口 + 点名参数** |
+
+### 3.3 新建流程（场景 3）
+
+三步收敛为一屏：选方式（模板/空白/从对话生成/导入 zip）→ 选模板 → 右侧实时预览 SKILL.md + 补名称/描述/分类。描述字段带「触发词质量」即时提示（模型靠这句判断读取）。
+
+### 3.4 对话闭环（场景 4）
+
+- 回答过程区出现「✓ 已按技能「form-subtable」执行」芯片，展开可见读取了哪些段落。
+- 输入框 `@` 唤起技能点名面板（含已停用技能，符合现有规则）。
+- 任意满意回答下方出现「⚡ 固化为技能」，预填名称/描述/正文草稿，跳转场景 3 的编辑态。
+
+---
+
+## 4. 功能升级清单（优先级与改动面）
+
+| # | 升级项 | 前端 | 后端 | 优先级 |
+|---|---|---|---|---|
+| F1 | 卡片操作重构：开关 + ⋯ 菜单 + 危险操作二级确认 | SkillsPage.vue | 无 | **P0** |
+| F2 | 状态分段 + 分类 chips + 排序筛选 | SkillsPage.vue | 无（分类先按内置映射表） | **P0** |
+| F3 | 描述 2 行省略 + hover 全文 + 缺描述警示态 | SkillsPage.vue | 无 | **P0** |
+| F4 | 使用数据上卡面（30 天调用/最近使用/sparkline）+ 统计条 | 卡片与统计条 | 读取埋点 + `/list` 增 `reads30d/lastUsedAt` | **P0** |
+| F5 | 详情抽屉五 Tab（正文/文件/数据/版本/测试） | 新组件 SkillDrawer | 统计接口、点名参数 | **P1** |
+| F6 | 新建模板画廊 + AI 从对话生成 | 新组件 | 模板资源 + 生成端点 | **P1** |
+| F7 | 版本历史与回滚 | 抽屉 Tab | 编辑快照 `versions/` + 回滚接口 | **P1** |
+| F8 | 对话命中提示 + 一键固化 | 聊天区 | run 事件增加 skill 命中字段 | **P1** |
+| F9 | 批量启停/删除 + 需关注视图 | 列表页 | 批量端点 | **P2** |
+| F10 | 收藏置顶、市场联动（安装量/评分回流） | 列表页 | 市场接口扩展 | **P2** |
+
+---
+
+## 5. 效果图导览
+
+打开 [`design/mockups/skills-upgrade/skills-upgrade.html`](file:///Users/wangxi/workspace/WenQu/design/mockups/skills-upgrade/skills-upgrade.html)：
+
+| 场景 | 画面 | 对应升级项 |
+|---|---|---|
+| 0 | 现状截图（对照底图） | §1 诊断 |
+| 1 | 升级后主列表页：统计条 + 筛选 + 新卡片 + ⋯ 菜单展开态 | F1-F4、F9 |
+| 2 | 技能详情抽屉：使用数据 Tab（趋势图 + 最近触发会话） | F5 |
+| 3 | 新建技能：模板画廊 + SKILL.md 实时预览 | F6 |
+| 4 | 对话中：技能命中芯片 + @ 点名面板 + 固化为技能 | F8 |
+
+卡片上的 ①②③ 角标与每屏说明一一对应。
+
+---
+
+## 6. 后端最小改动集（确认后实施）
+
+1. **统计**：在技能读取路径（模型读取 SKILL.md / 附属文件处）埋点，按 `(uid, skill, day)` 聚合；`/list` 视图增加 `reads30d`、`lastUsedAt`；新增 `GET /api/ai/skill/stats?name=` 返回 30 天序列与最近触发会话（会话来源复用现有 run 事件索引）。
+2. **分类**：SKILL.md frontmatter 可选 `category` / `tags`；缺省时内置技能按映射表归类，用户技能归「未分类」，不强制。
+3. **版本**：`updateSkill` 保存前把旧 SKILL.md 快照写入 `user-data/skills-users/{uid}/{name}/versions/{ts}/`；新增 `GET /versions`、`POST /rollback`。
+4. **测试/点名**：对话请求增加可选 `forcedSkill` 参数，注入该技能正文并跳过描述判断；仅本人可见、不落审计白名单之外的新权限。
+5. **命中事件**：run 事件流里技能读取时输出 `skill_hit{name}` 事件，前端渲染芯片。
+
+不新增写权限边界：所有操作仍按 uid 隔离，沿用个人资产白名单 + 资源级判定（[SkillController.java](file:///Users/wangxi/workspace/WenQu/src/main/java/com/wenqu/ai/controller/SkillController.java#L52-L54)）。
+
+---
+
+## 7. 实施步骤（效果图确认后启动）
+
+1. **一期（P0，约 1 个迭代）**：F1-F4。前端重构 SkillsPage.vue + 后端埋点/统计字段；灰度只对卡面与筛选，不动数据链路。
+2. **二期（P1）**：F5-F8。抽屉组件、版本快照、模板画廊、对话芯片与固化入口。
+3. **三期（P2）**：F9-F10。批量操作、市场联动。
+
+## 8. 明确不做
+
+- 不改「模型按需读取」的机制本身，不做全量技能正文注入（token 成本不可控）。
+- 不合并 Skills 与市场页：市场仍是发现入口，本页只管「已拥有」。
+- 不给内置技能开放编辑：保持「只能停用」的治理边界（[SkillsPage.vue](file:///Users/wangxi/workspace/WenQu/web/src/views/SkillsPage.vue#L48-L50)）。
