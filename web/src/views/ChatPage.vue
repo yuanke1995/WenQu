@@ -129,15 +129,6 @@
             <WelcomeCopy :variant="isNarrow ? 'mobile' : 'pc'" :agent-name="currentAgent?.name || ''"
                          :think-on="deepThinkOn" :attach-count="pendingImages.length + pendingFiles.length"
                          :mentions="mentionNames" />
-            <!-- 配置完成态：放在问候语之后，顺序与效果图一致（品牌标 → 标题 → 副标题 → 就绪条 → 示例问题） -->
-            <div v-if="setupGuide.loaded && chatDone && readyModelLabel" class="setup-ready">
-              <CheckCircleOutlined class="setup-ready-ic" />
-              <span>已就绪 · {{ readyModelLabel }}</span>
-              <button class="app-link-btn" type="button" @click="openModelSettings">更换</button>
-            </div>
-            <div v-if="setupGuide.loaded && chatDone && readyModelLabel" class="setup-samples">
-              <button v-for="q in setupSamples" :key="q" class="setup-sample" type="button" @click="useSample(q)">{{ q }}</button>
-            </div>
           </template>
         </div>
 
@@ -1781,7 +1772,7 @@ import { LoadingOutlined, DownOutlined, CaretRightOutlined, CheckOutlined, Close
          CompressOutlined,
          RobotOutlined, SettingOutlined, ThunderboltOutlined, LockOutlined, RedoOutlined,
          CloseOutlined, DatabaseOutlined, SearchOutlined, UpOutlined, ShareAltOutlined,
-         HistoryOutlined, SwapOutlined, InfoCircleOutlined, CheckCircleOutlined,
+         HistoryOutlined, SwapOutlined, InfoCircleOutlined,
          AppstoreOutlined, ClockCircleOutlined, BookOutlined,
          OrderedListOutlined, LeftOutlined, FolderOpenOutlined, FolderOutlined, ExportOutlined,
          AimOutlined, EyeOutlined, SaveOutlined, ReloadOutlined, BulbOutlined,
@@ -1888,19 +1879,6 @@ function questionFor (i) {
 
 const router = useRouter()
 const route = useRoute()
-
-// 配置完成态：把默认模型的「供应商 · 模型名」写在欢迎区，用户知道现在用的是什么
-const readyModelLabel = computed(() => {
-  const m = setupGuide.chatModels.find(x => x.ref === setupGuide.defaultModel)
-  return m ? `${m.providerName} · ${m.displayName}` : ''
-})
-const openModelSettings = () => router.push('/profile?panel=chat')
-// 示例问题：点一下填进输入框并聚焦，不直接发送（用户还能改）
-const setupSamples = ['帮我总结这份周报', '解释这段代码', '对比两个方案的优缺点']
-const useSample = q => {
-  text.value = q
-  focusInput()
-}
 
 // 目标模式是否已进入（还没发出去）：和计划模式一样，靠输入框里那颗 chip 表示，× 退出
 const goalArmed = ref(false)
@@ -4920,27 +4898,8 @@ onMounted(async () => {
 .welcome-mark { display: block; margin: 0 auto; }
 .welcome h2 { margin: 14px 0 6px; font-size: 16px; font-weight: 500; }
 .welcome p { color: var(--app-text3); margin: 0 0 18px; }
-/* 配置完成态：绿色就绪条（弱底，不抢正文），点「更换」去个人设置里的默认模型面板 */
-.setup-ready {
-  display: inline-flex; align-items: center; gap: 6px; margin: 0 0 18px;
-  padding: 4px 12px; border-radius: 999px; font-size: 12px; color: var(--app-ok);
-  background: var(--app-ok-weak); border: 1px solid rgba(59, 143, 78, .18);
-}
-.setup-ready-ic { font-size: 13px; }
-.setup-ready .app-link-btn { font-size: 12px; }
 /* 配置态欢迎区：比常规空态略靠上，避免引导卡在小屏被压到折线以下 */
 .welcome-setup { padding-top: 56px; }
-/* 示例问题：点一下填进输入框，不直接发送 */
-.setup-samples {
-  display: flex; flex-wrap: wrap; gap: 8px; justify-content: center;
-  max-width: 620px; margin: 0 auto;
-}
-.setup-sample {
-  font-family: inherit; font-size: 12.5px; padding: 6px 14px; cursor: pointer;
-  border: 1px solid var(--app-border-strong); border-radius: 999px;
-  background: #fff; color: var(--app-text2); transition: all .15s;
-}
-.setup-sample:hover { color: var(--app-accent); border-color: var(--app-accent-border); background: var(--app-accent-weak); }
 
 /* 欢迎区引导卡容器：与首屏正文同宽，卡片自身在 SetupGuide.vue 定义（604px 上限） */
 .welcome-guide { max-width: 620px; margin: 18px auto 0; }
