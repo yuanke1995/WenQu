@@ -344,8 +344,11 @@
 
         <!-- 产物：预览＝进预览台（与 PC 气泡、产物页、工作区文件同一判据同一待遇），下载走同一份签名地址。
              两个入口各占一块触屏热区，不靠长按之类的隐藏手势 -->
-        <!-- 交付包：这一轮的产物收进一张卡（与 PC 同一份 DeliveryCard）；收进卡的轮不再逐行平铺 -->
-        <DeliveryCard v-if="delivery" :delivery="delivery"
+        <!-- 生成态：本轮还没有产物、正在生成/交付文件时先占位（与 PC 同一份组件） -->
+        <ArtifactPendingCard v-if="m.role === 'ai' && pending" :pending="pending" />
+        <!-- 交付包：这一轮的产物收进一张卡（与 PC 同一份 DeliveryCard）；收进卡的轮不再逐行平铺。
+             mobile：缩略不跑网页 iframe，只做图片与文本。 -->
+        <DeliveryCard v-if="delivery" :delivery="delivery" mobile :fresh="fresh"
                       @view="$emit('delivery-view', delivery)"
                       @zip="$emit('delivery-zip', delivery)" />
         <div v-if="m.artifacts && m.artifacts.length && !hideArtifacts" class="artifacts">
@@ -466,6 +469,7 @@ import SubAgentChatCard from '../components/SubAgentChatCard.vue'
 import ToolSpillButton from '../components/ToolSpillButton.vue'
 import GoalTerminalCard from '../components/GoalTerminalCard.vue'
 import DeliveryCard from '../components/DeliveryCard.vue'
+import ArtifactPendingCard from '../components/ArtifactPendingCard.vue'
 import AgentAvatar from '../components/AgentAvatar.vue'
 
 // 簇头活动图标（与 PC 同位）：类别 → 图标，收起时常显、展开让位给下开三角（触屏无 hover）
@@ -492,6 +496,10 @@ const props = defineProps({
   goal: { type: Object, default: null },
   /** 这一条回答的交付包（父级按 deliveryCardOfMessage 取；null=不支卡） */
   delivery: { type: Object, default: null },
+  /** 这一轮正在生成的产物占位（父级按 artifactPendingOf 取；null=不显示） */
+  pending: { type: Object, default: null },
+  /** 交付卡里是否有刚刚实时到达的产物（入场只播一次） */
+  fresh: { type: Boolean, default: false },
   /** 当前目标的交付包（终态卡上的「查看交付」入口用） */
   goalDelivery: { type: Object, default: null },
   /** 该轮产物已收进交付包（父级按 deliveryListHidden 算）：不再逐行平铺 */

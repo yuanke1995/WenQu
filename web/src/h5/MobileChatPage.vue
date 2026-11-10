@@ -106,6 +106,7 @@
           :debug-display="debugDisplayVisible" :session-id="currentSessionId || ''" :loading="loading"
           :variant-switching="variantSwitching" :goal="sessionGoal"
           :delivery="deliveryCardOfMessage(m)" :goal-delivery="goalDelivery"
+          :pending="artifactPendingOf(m)" :fresh="freshDeliveryOf(m)"
           :hide-artifacts="deliveryListHidden(m)"
           :approval-now="approvalNow" :progress="planExecProgressOf(m)"
           :adjusts="planAdjustsOfMsg(m)"
@@ -779,6 +780,7 @@ const {
   goalTerminalCard, goalTerminalTitle, goalTerminalNote, goalVersionLabel, goalTurnStreaming, runGoalAction,
   // 交付包：目标跨轮一个包、普通回答按轮一个包（与 PC 同一份引擎口径）
   goalDelivery, deliveryPackages, deliveryCardOfMessage, deliveryListHidden, downloadDeliveryZip,
+  artifactPendingOf, freshDeliveryOf,
   goalEditing, goalEdit, goalEditBusy, goalEditSaveable,
   startGoalInlineEdit, saveGoalEdit,
   // 任务清单：快照与「何时露/怎么计数」全吃引擎那一份，本页只留折叠开关。

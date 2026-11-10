@@ -1585,6 +1585,12 @@ export const deliveryOf = (files, meta = {}) => {
   }
 }
 
+/** 生成态投影：实现移入纯模块 artifactPending，便于 Node 单测；这里保留同一条引用 */
+export { artifactPendingOf } from './artifactPending'
+
+/** 交付包是否值得支一张卡：现在单件也成卡，只要包里有文件 */
+export const deliveryCardOf = d => (d && Array.isArray(d.files) && d.files.length ? d : null)
+
 export {
   TOOL_LABELS, TOOL_DESCS, bareToolName, toolLabel, toolDesc, toolCallsView, executedCount,
   toolDuration, toolRunning, consultChatView, consultNameOf, rememberAgents, extendTimelineText, askUserView,

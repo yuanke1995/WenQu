@@ -420,6 +420,8 @@ import {
 } from '../api'
 import { onImgError, resolveImg } from '../utils/markdown'
 import { canPreview, previewKindOf } from '../utils/artifactView'
+// 缩略行洗法只有一份：对话产物卡与本页共用
+import { pickPreviewLines } from '../utils/artifactPreview'
 import { projectOnThisComputer } from '../utils/localExecutor'
 import { copyText } from '../utils/clipboard'
 import { publicUrl } from '../utils/publicUrl'
@@ -464,7 +466,6 @@ const sourceTitle = r => r.sessionTitle || '会话'
 const THUMB_LOGICAL_W = 375
 const LIVE_FRAME_MAX = 10
 const TEXT_FETCH_MAX = 3
-const TEXT_LINE_MAX = 4
 const TEXT_KINDS = new Set(['md', 'text', 'table'])
 const thumbText = reactive({})
 const frameReady = reactive(new Set())
@@ -480,21 +481,7 @@ const thumbLines = r => {
   const st = thumbText[r.id]
   return st && st.lines.length ? st.lines : null
 }
-const pickLines = raw => {
-  const out = []
-  for (const line of String(raw || '').split(/\r?\n/)) {
-    let t = line.trim()
-    if (!t) continue
-    // Markdown 的结构字符在这个尺寸只会变成噪音：标题保留重字，其余去掉标记
-    const head = /^#{1,6}\s/.test(t)
-    t = t.replace(/^#{1,6}\s+/, '').replace(/^[-*+>]\s+/, '').replace(/^\d+\.\s+/, '')
-    if (/^[:|\-\s]+$/.test(t)) continue
-    t = t.replace(/\*\*/g, '').replace(/`/g, '')
-    if (t) out.push({ text: t, head })
-    if (out.length >= TEXT_LINE_MAX) break
-  }
-  return out
-}
+const pickLines = raw => pickPreviewLines(raw)
 const pumpText = () => {
   while (textBusy < TEXT_FETCH_MAX && textQueue.length) {
     const row = textQueue.shift()

@@ -1,0 +1,1097 @@
+<!-- 问渠 · 产物出场方式优化 效果图（2026-11-10） -->
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>产物出场方式优化 · 效果图</title>
+<style>
+  :root {
+    --bg: #eef1f5;
+    --panel: #ffffff;
+    --panel-2: #fafbfc;
+    --panel-3: #f7f8fa;
+    --ink: #1f2329;
+    --text2: #5f6570;
+    --text3: #98a0aa;
+    --rule: #e6e9ed;
+    --rule-strong: #d8dde3;
+    --accent: #2e6be6;
+    --accent-hover: #1f5bd8;
+    --accent-weak: #eef2f7;
+    --accent-border: #bcd0f7;
+    --ok: #3b8f4e;
+    --ok-weak: #eaf5ec;
+    --ok-border: #cfe4d3;
+    --warn: #c77c14;
+    --warn-weak: #faf3e6;
+    --warn-border: #f0dfb6;
+    --warn-text: #a3691b;
+    --danger: #d4552e;
+    --danger-weak: #fff2f0;
+    --violet: #7c5cff;
+    --violet-weak: #f1eeff;
+    --code: #66758a;
+    --code-weak: #eef1f5;
+    --image: #d98a12;
+    --image-weak: #fdf3e2;
+    --sheet: #2f9e63;
+    --sheet-weak: #e9f6ee;
+    --radius: 10px;
+    --radius-lg: 16px;
+    --shadow: 0 12px 36px rgba(16, 24, 40, .09);
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    --max: 1180px;
+  }
+  html[data-theme="dark"] {
+    --bg: #0f1115;
+    --panel: #1c1f24;
+    --panel-2: #22262c;
+    --panel-3: #191c21;
+    --ink: #e8eaee;
+    --text2: #b6bcc6;
+    --text3: #8b929e;
+    --rule: #2d323a;
+    --rule-strong: #3a4048;
+    --accent: #5b8cf0;
+    --accent-hover: #7aa2f5;
+    --accent-weak: #1e2636;
+    --accent-border: #33456b;
+    --ok: #57a86a;
+    --ok-weak: #1c2b20;
+    --ok-border: #2f4a36;
+    --warn: #d9a04a;
+    --warn-weak: #2b2418;
+    --warn-border: #4a3d26;
+    --warn-text: #d9a04a;
+    --danger: #e06a45;
+    --danger-weak: #2e1d19;
+    --violet: #9b82ff;
+    --violet-weak: #241f3a;
+    --code: #9aa7ba;
+    --code-weak: #242830;
+    --image: #e0a33e;
+    --image-weak: #2f2718;
+    --sheet: #55b27a;
+    --sheet-weak: #1b2a20;
+    --shadow: 0 16px 44px rgba(0, 0, 0, .45);
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { font-size: 16px; scroll-behavior: smooth; }
+  body {
+    font-family: var(--font);
+    color: var(--ink);
+    background:
+      radial-gradient(1100px 520px at 8% -6%, rgba(46,107,230,.10), transparent 62%),
+      radial-gradient(900px 500px at 96% 4%, rgba(124,92,255,.07), transparent 60%),
+      var(--bg);
+    line-height: 1.68;
+    padding: 32px 18px 56px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .report {
+    max-width: var(--max);
+    margin: 0 auto;
+    background: var(--panel);
+    border: 1px solid var(--rule);
+    border-radius: 22px;
+    box-shadow: var(--shadow);
+    padding: 54px 56px 44px;
+  }
+  .ico { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+  .ico-sm { width: 14px; height: 14px; }
+  .sr-svg { position: absolute; width: 0; height: 0; overflow: hidden; }
+
+  /* ============ 顶部 ============ */
+  .cover { padding-bottom: 32px; border-bottom: 1px solid var(--rule); position: relative; }
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 12px; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--accent); font-weight: 700;
+  }
+  .eyebrow::before { content: ""; width: 22px; height: 2px; background: var(--accent); border-radius: 2px; }
+  h1 {
+    margin: 16px 0 0;
+    font-size: clamp(32px, 4.2vw, 48px);
+    line-height: 1.16;
+    letter-spacing: -.02em;
+    font-weight: 750;
+    max-width: 900px;
+  }
+  h1 em { font-style: normal; color: var(--accent); }
+  .lede { margin-top: 18px; max-width: 780px; font-size: 15.5px; line-height: 1.85; color: var(--text2); }
+  .meta-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 24px; }
+  .meta-chip {
+    font-size: 12px; color: var(--text2);
+    padding: 4px 10px; border: 1px solid var(--rule); border-radius: 999px;
+    background: var(--panel-3);
+  }
+  .meta-chip b { color: var(--ink); font-weight: 600; }
+  .theme-btn {
+    position: absolute; top: 0; right: 0;
+    display: inline-flex; align-items: center; gap: 6px;
+    font: inherit; font-size: 12px; color: var(--text2);
+    background: var(--panel-3); border: 1px solid var(--rule);
+    border-radius: 999px; padding: 5px 12px; cursor: pointer;
+  }
+  .theme-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  .summary-band { margin-top: 30px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .summary-card { background: var(--panel-3); border: 1px solid var(--rule); border-radius: var(--radius); padding: 15px 16px 13px; }
+  .summary-card .num { font-family: var(--mono); font-size: 11.5px; font-weight: 700; color: var(--accent); letter-spacing: .06em; }
+  .summary-card strong { display: block; margin-top: 5px; font-size: 15px; font-weight: 700; }
+  .summary-card span { display: block; margin-top: 4px; font-size: 12px; line-height: 1.6; color: var(--text2); }
+
+  .toc { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 26px; }
+  .toc a {
+    font-size: 12px; color: var(--text2); text-decoration: none;
+    border: 1px solid var(--rule); border-radius: 999px; padding: 3px 11px;
+    background: var(--panel);
+  }
+  .toc a:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* ============ 章节 ============ */
+  section { margin-top: 56px; scroll-margin-top: 20px; }
+  .sec-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .sec-no { font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--accent); letter-spacing: .08em; }
+  h2 { font-size: 24px; line-height: 1.35; letter-spacing: -.01em; font-weight: 700; }
+  .sec-sub { margin-top: 8px; max-width: 820px; font-size: 14px; line-height: 1.8; color: var(--text2); }
+
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 22px; }
+  .col-label {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 12px; font-weight: 600; color: var(--text2);
+    margin-bottom: 8px;
+  }
+  .col-label .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text3); }
+  .col-label.good .dot { background: var(--ok); }
+  .col-label.bad .dot { background: var(--danger); }
+
+  /* ============ 对话模拟 ============ */
+  .chat {
+    border: 1px solid var(--rule); border-radius: 14px; overflow: hidden;
+    background: var(--panel); display: flex; flex-direction: column;
+    box-shadow: 0 1px 2px rgba(16,24,40,.03);
+  }
+  .chat-top {
+    display: flex; align-items: center; gap: 7px;
+    padding: 9px 13px; border-bottom: 1px solid var(--rule);
+    background: var(--panel-2);
+    font-size: 11.5px; color: var(--text2); font-weight: 500;
+  }
+  .chat-top .tl { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); flex: none; }
+  .chat-top .tr { margin-left: auto; font-size: 10.5px; color: var(--text3); }
+  .chat-body { padding: 14px 15px 16px; display: flex; flex-direction: column; gap: 12px; flex: 1; }
+  .q {
+    align-self: flex-end; max-width: 86%;
+    background: var(--accent-weak); color: var(--ink);
+    border: 1px solid var(--accent-border);
+    border-radius: 12px 12px 3px 12px;
+    padding: 8px 12px; font-size: 12.5px; line-height: 1.65;
+  }
+  .a { font-size: 12.5px; line-height: 1.8; color: var(--ink); }
+  .a-meta { display: flex; align-items: center; gap: 6px; font-size: 10.5px; color: var(--text3); margin-bottom: 7px; }
+  .a p { margin-bottom: 7px; color: var(--text2); font-size: 12px; }
+  .a p strong { color: var(--ink); font-weight: 600; }
+  .a ul { margin: 2px 0 9px 16px; color: var(--text2); font-size: 11.5px; }
+  .a li { margin-bottom: 2px; }
+  .chat-composer {
+    margin-top: auto; border-top: 1px solid var(--rule);
+    padding: 9px 13px; font-size: 11px; color: var(--text3);
+    background: var(--panel-2);
+  }
+  .chat-composer b { color: var(--accent); font-weight: 500; }
+
+  /* 现状：单件灰条 */
+  .old-row {
+    display: flex; align-items: center; gap: 7px;
+    margin-top: 10px; padding: 9px 10px;
+    background: var(--panel-3); border: 1px solid var(--rule);
+    border-radius: 8px;
+  }
+  .old-ic { color: var(--text3); font-size: 14px; flex: none; }
+  .old-name { font-size: 11.5px; color: var(--accent); font-weight: 500; flex: none; }
+  .old-desc {
+    font-size: 11px; color: var(--text3); min-width: 0;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .old-acts { margin-left: auto; display: inline-flex; gap: 10px; flex: none; }
+  .old-acts a { display: inline-flex; align-items: center; gap: 3px; font-size: 10.5px; color: var(--text2); text-decoration: none; }
+  .old-acts a:hover { color: var(--accent); }
+
+  /* 现状：多件交付卡（按线上样式复刻） */
+  .dlv {
+    margin-top: 10px; border: 1px solid var(--rule); border-radius: 14px;
+    background: var(--panel); overflow: hidden;
+  }
+  .dlv-head {
+    display: flex; align-items: center; gap: 7px; padding: 8px 12px;
+    border-bottom: 1px solid var(--rule); background: var(--panel-2);
+    font-size: 12px; font-weight: 600;
+  }
+  .dlv-head .ic { color: var(--accent); font-size: 14px; }
+  .dlv-ver {
+    font-family: var(--mono); font-size: 10px; color: var(--text3);
+    border: 1px solid var(--rule); border-radius: 4px; padding: 0 4px; font-weight: 500;
+  }
+  .badge {
+    margin-left: auto; font-size: 10px; border-radius: 999px; padding: 1px 7px;
+    color: var(--ok); background: var(--ok-weak); border: 1px solid var(--ok-border);
+    font-weight: 500;
+  }
+  .dlv-hero { display: flex; gap: 10px; padding: 11px 12px 9px; }
+  .dlv-thumb {
+    width: 108px; height: 70px; flex: none; border: 1px solid var(--rule);
+    border-radius: 8px; overflow: hidden; background: var(--panel);
+  }
+  .tb { height: 11px; background: var(--panel-2); border-bottom: 1px solid var(--rule); display: flex; align-items: center; gap: 2.5px; padding: 0 4px; }
+  .tb i { width: 3.5px; height: 3.5px; border-radius: 50%; background: var(--rule-strong); }
+  .tbd { padding: 6px; }
+  .tbd i { display: block; height: 4px; border-radius: 2px; background: var(--panel-2); border: 1px solid var(--rule); margin-bottom: 3px; }
+  .tbd .hi { width: 46%; background: var(--accent-weak); border-color: var(--accent-border); }
+  .tbd .w60 { width: 62%; }
+  .tbd .w40 { width: 40%; }
+  .dlv-main { min-width: 0; }
+  .dlv-entry { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dlv-desc { margin-top: 1px; font-size: 10.5px; color: var(--text2); }
+  .dlv-chips { display: flex; gap: 4px; margin-top: 5px; }
+  .dlv-chip {
+    font-size: 9.5px; color: var(--text3); background: var(--panel-2);
+    border: 1px solid var(--rule); border-radius: 999px; padding: 0 6px;
+  }
+  .dlv-acts { display: flex; align-items: center; gap: 7px; padding: 0 12px 10px; flex-wrap: wrap; }
+  .dlv-btn {
+    display: inline-flex; align-items: center; gap: 4px;
+    border-radius: 7px; padding: 5px 10px; font-size: 10.5px;
+    border: 1px solid transparent; text-decoration: none; white-space: nowrap;
+  }
+  .dlv-btn.primary { background: var(--accent); color: #fff; }
+  .dlv-btn.ghost { background: var(--panel); border-color: var(--rule-strong); color: var(--text2); }
+  .dlv-btn.text { background: transparent; color: var(--text2); padding: 5px 3px; }
+  .dlv-list { border-top: 1px dashed var(--rule); padding: 6px 8px 7px; }
+  .dlv-row { display: flex; align-items: center; gap: 6px; padding: 4px 5px; border-radius: 5px; font-size: 10.5px; }
+  .dlv-row:hover { background: var(--accent-weak); }
+  .dlv-row .ic { color: var(--accent); font-size: 12px; }
+  .dlv-fname { color: var(--accent); font-weight: 500; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dlv-ftag { font-size: 9.5px; color: var(--text3); flex: none; }
+  .dlv-facts { margin-left: auto; display: inline-flex; gap: 8px; font-size: 9.5px; color: var(--text3); opacity: 0; flex: none; }
+  .dlv-row:hover .dlv-facts { opacity: 1; }
+
+  /* ============ 标注 ============ */
+  .notes { margin-top: 14px; display: flex; flex-direction: column; gap: 7px; }
+  .note { display: flex; gap: 8px; font-size: 12px; line-height: 1.65; color: var(--text2); }
+  .note b { color: var(--ink); font-weight: 600; }
+  .nbadge {
+    width: 17px; height: 17px; flex: none; border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 10px; font-weight: 700; font-family: var(--mono);
+    color: var(--danger); background: var(--danger-weak); border: 1px solid var(--rule);
+    margin-top: 2px;
+  }
+  .nbadge.ok { color: var(--ok); background: var(--ok-weak); border-color: var(--ok-border); }
+  .nbadge.acc { color: var(--accent); background: var(--accent-weak); border-color: var(--accent-border); }
+
+  /* ============ 方案 A ============ */
+  .proposal { display: grid; grid-template-columns: 1.05fr .95fr; gap: 30px; margin-top: 24px; align-items: start; }
+  .proposal-copy h3 { font-size: 16px; font-weight: 700; margin-bottom: 8px; }
+  .proposal-copy p { font-size: 13.5px; line-height: 1.85; color: var(--text2); margin-bottom: 10px; }
+  .proposal-copy p b { color: var(--ink); font-weight: 600; }
+  .bullets { list-style: none; display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+  .bullets li { display: flex; gap: 8px; font-size: 12.5px; line-height: 1.7; color: var(--text2); }
+  .bullets .bico { color: var(--ok); flex: none; margin-top: 3px; }
+
+  .demo-shell {
+    border: 1px solid var(--rule); border-radius: var(--radius-lg);
+    background: var(--panel-3); padding: 16px;
+  }
+  .demo-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+  .seg { display: inline-flex; background: var(--panel); border: 1px solid var(--rule); border-radius: 999px; padding: 2px; }
+  .seg button {
+    font: inherit; font-size: 11.5px; border: 0; background: transparent; color: var(--text2);
+    padding: 4px 12px; border-radius: 999px; cursor: pointer;
+  }
+  .seg button.on { background: var(--accent); color: #fff; }
+  .replay-btn {
+    margin-left: auto; display: inline-flex; align-items: center; gap: 5px;
+    font: inherit; font-size: 11.5px; color: var(--accent);
+    background: var(--panel); border: 1px solid var(--accent-border);
+    border-radius: 999px; padding: 4px 11px; cursor: pointer;
+  }
+  .replay-btn:hover { background: var(--accent-weak); }
+  .demo-frame { background: var(--panel); border: 1px solid var(--rule); border-radius: 12px; padding: 13px; }
+  .demo-hint { margin-top: 10px; font-size: 11px; color: var(--text3); line-height: 1.6; }
+
+  /* 新交付卡（单件） */
+  .dcard {
+    border: 1px solid var(--rule); border-radius: 12px; background: var(--panel);
+    overflow: hidden; transition: border-color .15s, box-shadow .15s;
+  }
+  .dcard:hover { border-color: var(--accent-border); box-shadow: 0 4px 14px rgba(46,107,230,.08); }
+  .dcard-main { display: flex; align-items: flex-start; gap: 11px; padding: 12px 13px 10px; }
+  .dtype {
+    width: 38px; height: 38px; flex: none; border-radius: 9px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    font-family: var(--mono); font-size: 9px; font-weight: 700; letter-spacing: .02em;
+    border: 1px solid transparent; gap: 1px;
+  }
+  .dtype .ic { width: 15px; height: 15px; stroke-width: 2; }
+  .dtype.json { color: var(--accent); background: var(--accent-weak); border-color: var(--accent-border); }
+  .dtype.html { color: var(--violet); background: var(--violet-weak); border-color: var(--rule); }
+  .dtype.image { color: var(--image); background: var(--image-weak); border-color: var(--rule); }
+  .dtype.sheet { color: var(--sheet); background: var(--sheet-weak); border-color: var(--rule); }
+  .dtype.code { color: var(--code); background: var(--code-weak); border-color: var(--rule); }
+  .dinfo { min-width: 0; flex: 1; }
+  .dname {
+    font-size: 13px; font-weight: 650; line-height: 1.45; color: var(--ink);
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  }
+  .dext {
+    font-family: var(--mono); font-size: 9.5px; font-weight: 500; color: var(--text3);
+    background: var(--panel-3); border: 1px solid var(--rule); border-radius: 4px; padding: 0 4px;
+  }
+  .ddesc {
+    margin-top: 2px; font-size: 11.5px; line-height: 1.6; color: var(--text2);
+    display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .dmeta { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; margin-top: 6px; }
+  .dchip {
+    font-size: 9.5px; color: var(--text3); background: var(--panel-3);
+    border: 1px solid var(--rule); border-radius: 999px; padding: 0 6px;
+  }
+  .dchip.ok { color: var(--ok); background: var(--ok-weak); border-color: var(--ok-border); }
+  .dacts { display: flex; align-items: center; gap: 7px; padding: 0 13px 12px; }
+  .dbtn {
+    display: inline-flex; align-items: center; gap: 5px; font: inherit;
+    font-size: 11.5px; border-radius: 7px; padding: 5px 11px;
+    border: 1px solid transparent; cursor: pointer; white-space: nowrap;
+  }
+  .dbtn.primary { background: var(--accent); color: #fff; }
+  .dbtn.primary:hover { background: var(--accent-hover); }
+  .dbtn.ghost { background: var(--panel); border-color: var(--rule-strong); color: var(--text2); }
+  .dbtn.ghost:hover { border-color: var(--accent); color: var(--accent); }
+  .dacts .spacer { margin-left: auto; }
+  .dacts .hint { font-size: 10px; color: var(--text3); }
+
+  /* 入场 */
+  .enter { animation: enterUp .28s cubic-bezier(.2,.7,.3,1) both; }
+  @keyframes enterUp {
+    from { opacity: 0; transform: translateY(7px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .enter { animation: none; }
+  }
+
+  /* ============ 方案 B ============ */
+  .stage-wrap { margin-top: 24px; border: 1px solid var(--rule); border-radius: var(--radius-lg); background: var(--panel-3); padding: 20px; }
+  .stage-rail { display: flex; align-items: center; gap: 0; margin-bottom: 18px; }
+  .stage-step { display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--text3); }
+  .stage-step .idx {
+    width: 20px; height: 20px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+    font-family: var(--mono); font-size: 10px; font-weight: 700;
+    background: var(--panel); border: 1px solid var(--rule); color: var(--text3);
+    transition: all .2s;
+  }
+  .stage-step.on { color: var(--ink); font-weight: 600; }
+  .stage-step.on .idx { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .stage-line { flex: 1; height: 1px; background: var(--rule); margin: 0 10px; min-width: 18px; }
+  .stage-frame { background: var(--panel); border: 1px solid var(--rule); border-radius: 12px; padding: 14px; min-height: 118px; display: flex; align-items: center; }
+  .stage-frame .dcard { width: 100%; }
+  .stage-frame .dcard:hover { border-color: var(--rule); box-shadow: none; }
+  .dcard.dim { opacity: .92; }
+  .dprog { height: 4px; border-radius: 99px; background: var(--panel-3); border: 1px solid var(--rule); overflow: hidden; margin-top: 8px; }
+  .dprog i { display: block; height: 100%; width: 40%; background: var(--accent); border-radius: 99px; }
+  .dprog.indet i { animation: indet 1.15s cubic-bezier(.4,0,.2,1) infinite; }
+  @keyframes indet { from { transform: translateX(-110%); } to { transform: translateX(360%); } }
+  .dpulse {
+    flex: none; display: inline-flex; align-items: center; gap: 5px;
+    font-size: 10px; color: var(--accent); background: var(--accent-weak);
+    border: 1px solid var(--accent-border); border-radius: 999px; padding: 2px 8px;
+  }
+  .dpulse i { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); animation: pulse 1.1s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: .3; transform: scale(.85); } 50% { opacity: 1; transform: scale(1); } }
+  .skl { height: 5px; border-radius: 3px; background: var(--panel-2); border: 1px solid var(--rule); margin-top: 6px; }
+  .skl.w70 { width: 70%; }
+  .skl.w45 { width: 45%; }
+  .stage-note { margin-top: 12px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .stage-note div { font-size: 11.5px; line-height: 1.65; color: var(--text2); background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; padding: 9px 10px; }
+  .stage-note b { display: block; color: var(--ink); font-size: 11.5px; margin-bottom: 2px; }
+
+  /* ============ 方案 C ============ */
+  .c-layout { display: grid; grid-template-columns: 1.05fr .95fr; gap: 24px; margin-top: 22px; align-items: start; }
+  /* 单件卡左侧缩略（与多件 card hero 同尺度） */
+  .dthumb {
+    width: 112px; height: 84px; flex: none; border: 1px solid var(--rule);
+    border-radius: 8px; overflow: hidden; background: var(--panel-3);
+  }
+  .thumb-form { height: 100%; padding: 9px 8px; }
+  .thumb-form .tf-title {
+    display: block; height: 5px; width: 46%; margin: 0 auto 7px;
+    background: var(--accent-weak); border: 1px solid var(--accent-border); border-radius: 2px;
+  }
+  .tf-row { display: flex; gap: 3px; margin-bottom: 4px; }
+  .tf-row i { flex: 1; height: 10px; background: var(--panel); border: 1px solid var(--rule); border-radius: 2px; }
+  .thumb-web { height: 100%; display: flex; flex-direction: column; }
+  .tw-bar { height: 12px; background: var(--panel-2); border-bottom: 1px solid var(--rule); display: flex; align-items: center; gap: 2px; padding: 0 4px; }
+  .tw-bar i { width: 3px; height: 3px; border-radius: 50%; background: var(--rule-strong); }
+  .tw-body { flex: 1; padding: 6px; display: flex; flex-direction: column; gap: 3px; }
+  .tw-hero { height: 18px; border-radius: 3px; background: linear-gradient(120deg, var(--accent-weak), var(--violet-weak)); border: 1px solid var(--accent-border); }
+  .tw-l { height: 3px; border-radius: 2px; background: var(--rule); }
+  .tw-l.w60 { width: 60%; }
+  .thumb-img {
+    height: 100%;
+    background:
+      radial-gradient(60% 70% at 20% 20%, rgba(255,255,255,.55), transparent 60%),
+      linear-gradient(135deg, #cfe0ff, #e8dcff 48%, #ffe2cf);
+  }
+  .thumb-fallback { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; color: var(--text3); }
+  .thumb-fallback em { font-family: var(--mono); font-size: 9px; font-style: normal; }
+  .cthumb-list { display: flex; flex-direction: column; gap: 10px; }
+  .cthumb-item { display: flex; gap: 11px; align-items: center; background: var(--panel-3); border: 1px solid var(--rule); border-radius: 10px; padding: 10px 11px; }
+  .cthumb-box { width: 84px; height: 62px; flex: none; border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; background: var(--panel); }
+  .cthumb-box .thumb-form { padding: 6px; }
+  .cthumb-box .tf-row i { height: 7px; }
+  .cthumb-box .tf-row { margin-bottom: 3px; }
+  .cthumb-copy b { display: block; font-size: 12px; color: var(--ink); font-weight: 650; }
+  .cthumb-copy span { display: block; margin-top: 2px; font-size: 11px; line-height: 1.55; color: var(--text2); }
+  .cnote { margin-top: 14px; font-size: 11.5px; color: var(--text3); line-height: 1.7; }
+
+  /* ============ 动效 ============ */
+  .motion-wrap { margin-top: 22px; display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .motion-demo { border: 1px solid var(--rule); border-radius: var(--radius-lg); background: var(--panel-3); padding: 18px; }
+  .motion-stage { background: var(--panel); border: 1px solid var(--rule); border-radius: 12px; padding: 14px; }
+  .timeline { display: flex; flex-direction: column; gap: 12px; }
+  .tl-item { display: flex; gap: 12px; }
+  .tl-time { font-family: var(--mono); font-size: 10.5px; color: var(--accent); font-weight: 700; flex: none; width: 44px; padding-top: 2px; }
+  .tl-body { font-size: 12.5px; line-height: 1.7; color: var(--text2); }
+  .tl-body b { color: var(--ink); font-weight: 600; display: block; }
+  .curve { margin-top: 14px; font-family: var(--mono); font-size: 10.5px; color: var(--text3); }
+
+  /* ============ 对比 ============ */
+  .matrix { width: 100%; border-collapse: collapse; margin-top: 22px; font-size: 12.5px; }
+  .matrix th {
+    text-align: left; font-size: 11px; font-weight: 700; color: var(--text2);
+    background: var(--panel-3); border-bottom: 1px solid var(--rule-strong);
+    padding: 9px 11px; white-space: nowrap;
+  }
+  .matrix td { border-bottom: 1px solid var(--rule); padding: 11px; vertical-align: top; color: var(--text2); line-height: 1.65; }
+  .matrix td:first-child { color: var(--ink); font-weight: 650; white-space: nowrap; }
+  .pill { display: inline-block; font-size: 10px; font-weight: 600; border-radius: 999px; padding: 1px 8px; }
+  .pill.p0 { color: var(--accent); background: var(--accent-weak); border: 1px solid var(--accent-border); }
+  .pill.p1 { color: var(--warn-text); background: var(--warn-weak); border: 1px solid var(--warn-border); }
+  .pill.opt { color: var(--text3); background: var(--panel-3); border: 1px solid var(--rule); }
+
+  .recommend {
+    margin-top: 24px; border: 1px solid var(--accent-border); border-radius: var(--radius-lg);
+    background: var(--accent-weak); padding: 20px 22px;
+  }
+  .recommend .r-eyebrow { font-family: var(--mono); font-size: 11px; font-weight: 700; color: var(--accent); letter-spacing: .08em; }
+  .recommend h3 { margin-top: 7px; font-size: 18px; font-weight: 700; }
+  .recommend p { margin-top: 8px; font-size: 13px; line-height: 1.8; color: var(--text2); max-width: 900px; }
+  .checklist { margin-top: 14px; display: flex; flex-wrap: wrap; gap: 8px; }
+  .checklist span {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 11.5px; color: var(--ink); background: var(--panel);
+    border: 1px solid var(--rule); border-radius: 999px; padding: 4px 11px;
+  }
+  .checklist .ic { color: var(--accent); width: 13px; height: 13px; }
+
+  footer {
+    margin-top: 42px; padding-top: 20px; border-top: 1px solid var(--rule);
+    font-size: 11.5px; color: var(--text3); line-height: 1.8;
+    display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+  }
+
+  @media (max-width: 980px) {
+    .report { padding: 34px 22px 30px; }
+    .two-col, .proposal, .motion-wrap { grid-template-columns: 1fr; }
+    .summary-band { grid-template-columns: repeat(2, 1fr); }
+    .c-layout { grid-template-columns: 1fr; }
+    .stage-note { grid-template-columns: 1fr; }
+    .theme-btn { position: static; margin-bottom: 16px; }
+  }
+</style>
+</head>
+<body>
+
+<svg class="sr-svg" aria-hidden="true">
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v11"/><path d="M7.5 10.5 12 15l4.5-4.5"/><path d="M4 20h16"/></symbol>
+  <symbol id="i-open" viewBox="0 0 24 24"><path d="M14 4h6v6"/><path d="M20 4 11 13"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z"/></symbol>
+  <symbol id="i-code" viewBox="0 0 24 24"><path d="m8.5 8-5 4 5 4"/><path d="m15.5 8 5 4-5 4"/></symbol>
+  <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="m4 18 5-5 4 4 3-3 4 4"/></symbol>
+  <symbol id="i-sheet" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16M15 4v16"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M18 6l-2.5 2.5M8.5 15.5 6 18"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5 19 19M19 5l-1.5 1.5M6.5 17.5 5 19"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5z"/></symbol>
+</svg>
+
+<div class="report">
+  <header class="cover">
+    <button class="theme-btn" id="themeBtn" type="button">
+      <svg class="ico ico-sm"><use href="#i-moon"/></svg><span>深色效果</span>
+    </button>
+    <span class="eyebrow">问渠 · 对话产物体验</span>
+    <h1>产物不该「<em>突然出现</em>」<br>——出场方式优化效果图</h1>
+    <p class="lede">
+      截图里的问题不是单个样式丑，而是同一件事有两副面孔：单件产物是一行灰条，多件才配得上交付卡。
+      这份效果图给出四个方向，重点解决三件事——<b>看起来像交付物</b>、<b>出现得有理有据</b>、<b>不开预览也知道是什么</b>。
+    </p>
+    <div class="meta-row">
+      <span class="meta-chip"><b>2026-11-10</b></span>
+      <span class="meta-chip">4 个方向</span>
+      <span class="meta-chip">单件 / 多件同源</span>
+      <span class="meta-chip">可重放入场动效</span>
+      <span class="meta-chip">浅色 / 深色两套</span>
+    </div>
+
+    <div class="summary-band">
+      <div class="summary-card"><div class="num">现状 01</div><strong>两套视觉</strong><span>单件灰条，多件交付卡，风格断层。</span></div>
+      <div class="summary-card"><div class="num">方案 A</div><strong>统一轻量交付卡</strong><span>单件也长成卡，主行动唯一。</span></div>
+      <div class="summary-card"><div class="num">方案 B</div><strong>生成态到完成态</strong><span>先占位，完成原位替换。</span></div>
+      <div class="summary-card"><div class="num">方案 C</div><strong>首屏所见即所得</strong><span>不开预览也能判断内容。</span></div>
+    </div>
+
+    <nav class="toc">
+      <a href="#now">01 现状</a>
+      <a href="#a">02 方案 A</a>
+      <a href="#b">03 方案 B</a>
+      <a href="#c">04 方案 C</a>
+      <a href="#motion">05 入场动效</a>
+      <a href="#compare">06 取舍与推荐</a>
+    </nav>
+  </header>
+
+  <!-- ================= 01 现状 ================= -->
+  <section id="now">
+    <div class="sec-head"><span class="sec-no">01</span><h2>现状：同一件事，两副面孔</h2></div>
+    <p class="sec-sub">
+      判据在代码里：1 件走旧的一行，2 件及以上才收进交付卡。用户眼里却是「有时是一个灰条，有时是一张大卡」，
+      单件这个最高频的场景，反而拿到了最弱的呈现。
+    </p>
+
+    <div class="two-col">
+      <div>
+        <div class="col-label bad"><span class="dot"></span>现状 · 单件（截图里的样子）</div>
+        <div class="chat">
+          <div class="chat-top"><span class="tl"></span>会话 · 表单设计助手<span class="tr">已连接</span></div>
+          <div class="chat-body">
+            <div class="q">请按图片中的表格样式设计表单</div>
+            <div class="a">
+              <div class="a-meta"><svg class="ico ico-sm"><use href="#i-spark"/></svg>由「表单设计助手」回答 · 用时 1 分 41 秒</div>
+              <p>已按图片的表格版式复制完成，整理成一张可直接填写的表格。</p>
+              <p><strong>版式结构</strong>：粗线外框，左上「受理编号」，居中大标题「入户申请审批表」。</p>
+              <div class="old-row">
+                <svg class="ico ico-sm old-ic"><use href="#i-file"/></svg>
+                <span class="old-name">form.json</span>
+                <span class="old-desc">录入申请人审批表（按返图表单复制）</span>
+                <span class="old-acts">
+                  <a href="#now" onclick="return false"><svg class="ico" style="width:11px;height:11px"><use href="#i-eye"/></svg>预览</a>
+                  <a href="#now" onclick="return false"><svg class="ico" style="width:11px;height:11px"><use href="#i-download"/></svg>下载</a>
+                </span>
+              </div>
+            </div>
+          </div>
+          <div class="chat-composer">问点什么？Enter 发送，Shift+Enter 换行</div>
+        </div>
+        <div class="notes">
+          <div class="note"><span class="nbadge">1</span><span><b>信息层级平</b>：文件名和描述挤在同一行，描述一长就被截断。</span></div>
+          <div class="note"><span class="nbadge">2</span><span><b>主行动弱</b>：预览和下载同权重、都只有 10.5px，用户要自己判断下一步。</span></div>
+          <div class="note"><span class="nbadge">3</span><span><b>没有交付感</b>：灰条更像一条系统提示，而不是「我做完的文件」。</span></div>
+        </div>
+      </div>
+
+      <div>
+        <div class="col-label good"><span class="dot"></span>现状 · 多件（交付卡）</div>
+        <div class="chat">
+          <div class="chat-top"><span class="tl"></span>会话 · 官网搭建助手<span class="tr">已连接</span></div>
+          <div class="chat-body">
+            <div class="q">做一个问渠官网，首页 + 产品 + 关于</div>
+            <div class="a">
+              <div class="a-meta"><svg class="ico ico-sm"><use href="#i-spark"/></svg>由「官网搭建助手」回答 · 用时 3 分 12 秒</div>
+              <p>站点已生成，入口是 index.html，可直接打开预览。</p>
+              <div class="dlv">
+                <div class="dlv-head">
+                  <svg class="ico ico-sm ic"><use href="#i-folder"/></svg>
+                  问渠官网
+                  <span class="dlv-ver">v3</span>
+                  <span class="badge">已完成</span>
+                </div>
+                <div class="dlv-hero">
+                  <div class="dlv-thumb">
+                    <div class="tb"><i></i><i></i><i></i></div>
+                    <div class="tbd"><i class="hi"></i><i></i><i class="w60"></i><i class="w40"></i></div>
+                  </div>
+                  <div class="dlv-main">
+                    <div class="dlv-entry">打开入口 · index.html</div>
+                    <div class="dlv-desc">8 个文件 · 1.2 MB · 第 2 轮交付</div>
+                    <div class="dlv-chips"><span class="dlv-chip">页面 4</span><span class="dlv-chip">站点文件 3</span></div>
+                  </div>
+                </div>
+                <div class="dlv-acts">
+                  <a class="dlv-btn primary" href="#now" onclick="return false"><svg class="ico" style="width:11px;height:11px"><use href="#i-open"/></svg>打开入口</a>
+                  <a class="dlv-btn ghost" href="#now" onclick="return false"><svg class="ico" style="width:11px;height:11px"><use href="#i-download"/></svg>下载 ZIP</a>
+                  <a class="dlv-btn text" href="#now" onclick="return false">查看全部 8 件<svg class="ico" style="width:11px;height:11px"><use href="#i-chev"/></svg></a>
+                </div>
+                <div class="dlv-list">
+                  <div class="dlv-row">
+                    <svg class="ico ico-sm ic"><use href="#i-file"/></svg>
+                    <span class="dlv-fname">index.html</span><span class="dlv-ftag">入口</span>
+                    <span class="dlv-facts"><span>预览</span><span>下载</span></span>
+                  </div>
+                  <div class="dlv-row">
+                    <svg class="ico ico-sm ic"><use href="#i-file"/></svg>
+                    <span class="dlv-fname">styles.css</span><span class="dlv-ftag">样式</span>
+                    <span class="dlv-facts"><span>预览</span><span>下载</span></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="chat-composer">问点什么？Enter 发送，Shift+Enter 换行</div>
+        </div>
+        <div class="notes">
+          <div class="note"><span class="nbadge ok">4</span><span><b>多件这张卡是对的</b>：入口、体量、状态、批量动作都在，用户知道交付了什么。</span></div>
+          <div class="note"><span class="nbadge">5</span><span><b>问题在断点</b>：同样的卡片体验，只因为少了一个文件就整段消失。</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 02 方案 A ================= -->
+  <section id="a">
+    <div class="sec-head"><span class="sec-no">02</span><h2>方案 A · 统一轻量交付卡</h2></div>
+    <p class="sec-sub">
+      单件不再降级成灰条，而是复用交付卡的同一套骨架：<b>类型徽标 + 人类可读标题 + 真实文件名 + 元信息 + 唯一主行动</b>。
+      多件时这张卡自然长出清单，单件与多件从此是一家。
+    </p>
+
+    <div class="proposal">
+      <div class="proposal-copy">
+        <h3>为什么不是把灰条修漂亮一点</h3>
+        <p>
+          灰条的根问题是<b>它只表达「有个文件」</b>，不表达「我交付了什么、下一步做什么」。
+          单件场景占比最高，恰恰最需要交付感；只调字号和间距，断层还在。
+        </p>
+        <h3 style="margin-top:18px">这张卡解决什么</h3>
+        <ul class="bullets">
+          <li><svg class="ico ico-sm bico"><use href="#i-check"/></svg><span><b>类型先说话</b>：JSON / 网页 / 表格 / 图片各有颜色与图标，扫一眼就知道是什么。</span></li>
+          <li><svg class="ico ico-sm bico"><use href="#i-check"/></svg><span><b>标题说人话</b>：「录入申请人审批表」在前，<code style="font-family:var(--mono);font-size:11px">form.json</code> 作为副信息。</span></li>
+          <li><svg class="ico ico-sm bico"><use href="#i-check"/></svg><span><b>主行动唯一</b>：打开预览是主按钮，下载降为次按钮，不再让用户二选一。</span></li>
+          <li><svg class="ico ico-sm bico"><use href="#i-check"/></svg><span><b>状态可见</b>：「已交付」跟在元信息里，和目标的「已完成」用同一套状态语言。</span></li>
+          <li><svg class="ico ico-sm bico"><use href="#i-check"/></svg><span><b>动作位置统一</b>：单件与多件的操作都在卡片右上角，眼睛=预览、下载/ZIP=图标按钮，单件整卡约 104px。</span></li>
+        </ul>
+      </div>
+
+      <div class="demo-shell">
+        <div class="demo-bar">
+          <div class="seg" id="segA">
+            <button type="button" class="on" data-tab="one">单件</button>
+            <button type="button" data-tab="many">多件</button>
+          </div>
+          <button class="replay-btn" type="button" id="replayA"><svg class="ico" style="width:12px;height:12px"><use href="#i-play"/></svg>重放入场</button>
+        </div>
+
+        <div class="demo-frame">
+          <!-- 单件 -->
+          <div id="paneOne">
+            <div class="dcard enter" id="cardOne">
+              <div class="dcard-main">
+                <div class="dtype json"><svg class="ico"><use href="#i-code"/></svg>JSON</div>
+                <div class="dinfo">
+                  <div class="dname">录入申请人审批表 <span class="dext">form.json</span></div>
+                  <div class="ddesc">按返图表单复制，含 21 行 × 8 列字段定义</div>
+                  <div class="dmeta">
+                    <span class="dchip">JSON</span>
+                    <span class="dchip">4.2 KB</span>
+                    <span class="dchip ok">已交付</span>
+                  </div>
+                </div>
+              </div>
+              <div class="dacts">
+                <button class="dbtn primary" type="button"><svg class="ico" style="width:12px;height:12px"><use href="#i-eye"/></svg>打开预览</button>
+                <button class="dbtn ghost" type="button"><svg class="ico" style="width:12px;height:12px"><use href="#i-download"/></svg>下载</button>
+                <span class="spacer"></span>
+                <span class="hint">预览台 · 可读可复制</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 多件 -->
+          <div id="paneMany" style="display:none">
+            <div class="dcard">
+              <div class="dlv-head" style="border-bottom:1px solid var(--rule)">
+                <svg class="ico ico-sm ic" style="color:var(--accent)"><use href="#i-folder"/></svg>
+                入户申请表单
+                <span class="dlv-ver">v1</span>
+                <span class="badge">已完成</span>
+              </div>
+              <div class="dcard-main" style="padding-bottom:8px">
+                <div class="dtype html"><svg class="ico"><use href="#i-open"/></svg>HTML</div>
+                <div class="dinfo">
+                  <div class="dname">打开入口 · index.html</div>
+                  <div class="ddesc">6 个文件 · 38 KB · 第 1 轮交付</div>
+                  <div class="dmeta"><span class="dchip">页面 2</span><span class="dchip">样式 2</span><span class="dchip">数据 2</span></div>
+                </div>
+              </div>
+              <div class="dacts">
+                <button class="dbtn primary" type="button"><svg class="ico" style="width:12px;height:12px"><use href="#i-open"/></svg>打开入口</button>
+                <button class="dbtn ghost" type="button"><svg class="ico" style="width:12px;height:12px"><use href="#i-download"/></svg>下载 ZIP</button>
+                <button class="dbtn ghost" type="button">查看全部 6 件<svg class="ico" style="width:11px;height:11px"><use href="#i-chev"/></svg></button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="demo-hint">切换单件 / 多件：同一张卡，只按件数长出清单，不再换一套视觉。</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 03 方案 B ================= -->
+  <section id="b">
+    <div class="sec-head"><span class="sec-no">03</span><h2>方案 B · 让产物「长出来」：生成态 → 完成态</h2></div>
+    <p class="sec-sub">
+      现在产物是在回答结束时凭空出现的。做法是：工具开始写文件就先占位，写的过程显示进度，写完原地替换成交付卡——
+      位置不跳、眼睛不用重新找。
+    </p>
+
+    <div class="stage-wrap">
+      <div class="stage-rail">
+        <div class="stage-step on" id="step1"><span class="idx">1</span>占位</div>
+        <div class="stage-line"></div>
+        <div class="stage-step" id="step2"><span class="idx">2</span>生成中</div>
+        <div class="stage-line"></div>
+        <div class="stage-step" id="step3"><span class="idx">3</span>完成</div>
+      </div>
+
+      <div class="stage-frame">
+        <!-- 阶段 1 -->
+        <div class="dcard dim" id="stageCard1" style="display:none">
+          <div class="dcard-main">
+            <div class="dtype json" style="opacity:.55"><svg class="ico"><use href="#i-code"/></svg>JSON</div>
+            <div class="dinfo">
+              <div class="dname" style="color:var(--text2)">正在准备表单文件…</div>
+              <div class="skl w70"></div>
+              <div class="skl w45"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 阶段 2 -->
+        <div class="dcard" id="stageCard2" style="display:none">
+          <div class="dcard-main">
+            <div class="dtype json"><svg class="ico"><use href="#i-code"/></svg>JSON</div>
+            <div class="dinfo">
+              <div class="dname">录入申请人审批表 <span class="dext">form.json</span></div>
+              <div class="dprog indet"><i></i></div>
+              <div class="ddesc">正在生成交付文件 · 已接收 12.3 KB</div>
+            </div>
+            <span class="dpulse"><i></i>生成中</span>
+          </div>
+        </div>
+
+        <!-- 阶段 3 -->
+        <div class="dcard enter" id="stageCard3">
+          <div class="dcard-main">
+            <div class="dtype json"><svg class="ico"><use href="#i-code"/></svg>JSON</div>
+            <div class="dinfo">
+              <div class="dname">录入申请人审批表 <span class="dext">form.json</span></div>
+              <div class="ddesc">按返图表单复制，含 21 行 × 8 列字段定义</div>
+              <div class="dmeta"><span class="dchip">JSON</span><span class="dchip">4.2 KB</span><span class="dchip ok">已交付</span></div>
+            </div>
+          </div>
+          <div class="dacts">
+            <button class="dbtn primary" type="button"><svg class="ico" style="width:12px;height:12px"><use href="#i-eye"/></svg>打开预览</button>
+            <button class="dbtn ghost" type="button"><svg class="ico" style="width:12px;height:12px"><use href="#i-download"/></svg>下载</button>
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-top:12px;display:flex;align-items:center;gap:10px">
+        <button class="replay-btn" type="button" id="replayB" style="margin-left:0"><svg class="ico" style="width:12px;height:12px"><use href="#i-play"/></svg>重放生成过程</button>
+        <span style="font-size:11px;color:var(--text3)">约 3 秒，演示三个阶段</span>
+      </div>
+
+      <div class="stage-note">
+        <div><b>什么时候出现</b>准备超过约 600ms 才显示占位，短任务不闪一下。</div>
+        <div><b>位置不动</b>三阶段共用同一块高度，完成时不把下面的对话顶下去。</div>
+        <div><b>进度不编</b>只报「已接收 N 字」，不画假百分比；工具失败就撤掉占位，原因留在工具卡里。</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 04 方案 C ================= -->
+  <section id="c">
+    <div class="sec-head"><span class="sec-no">04</span><h2>方案 C · 首屏所见即所得</h2></div>
+    <p class="sec-sub">
+      缩略图落在单件卡左侧，与多件交付卡的 hero 同尺度：网页给真实首屏、图片给真图、文本给原文前几行。
+      不开预览也能判断内容；拿不到首屏时自动退回类型徽标，不出现空白框。
+    </p>
+
+    <div class="c-layout">
+      <div>
+        <div class="col-label"><span class="dot"></span>单件卡：左侧缩略 + 右侧信息</div>
+        <div class="chat">
+          <div class="chat-top"><span class="tl"></span>会话 · 表单设计助手<span class="tr">已连接</span></div>
+          <div class="chat-body">
+            <div class="q">请按图片中的表格样式设计表单</div>
+            <div class="a">
+              <div class="a-meta"><svg class="ico ico-sm"><use href="#i-spark"/></svg>由「表单设计助手」回答 · 用时 1 分 41 秒</div>
+              <p>已按图片的表格版式复制完成，整理成一张可直接填写的表格。</p>
+              <div class="dcard">
+                <div class="dcard-main">
+                  <div class="dthumb">
+                    <div class="thumb-form">
+                      <i class="tf-title"></i>
+                      <div class="tf-row"><i></i><i></i><i></i></div>
+                      <div class="tf-row"><i></i><i></i><i></i></div>
+                      <div class="tf-row"><i></i><i></i><i></i></div>
+                      <div class="tf-row"><i></i><i></i><i></i></div>
+                    </div>
+                  </div>
+                  <div class="dinfo">
+                    <div class="dname">录入申请人审批表 <span class="dext">form.json</span></div>
+                    <div class="ddesc">按返图表单复制，含 21 行 × 8 列字段定义</div>
+                    <div class="dmeta"><span class="dchip">JSON</span><span class="dchip">4.2 KB</span><span class="dchip ok">已交付</span></div>
+                  </div>
+                </div>
+                <div class="dacts">
+                  <button class="dbtn primary" type="button"><svg class="ico" style="width:12px;height:12px"><use href="#i-eye"/></svg>打开预览</button>
+                  <button class="dbtn ghost" type="button"><svg class="ico" style="width:12px;height:12px"><use href="#i-download"/></svg>下载</button>
+                  <span class="spacer"></span>
+                  <span class="hint">点缩略图也可预览</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="chat-composer">问点什么？Enter 发送，Shift+Enter 换行</div>
+        </div>
+      </div>
+
+      <div>
+        <div class="col-label"><span class="dot"></span>缩略图里放什么</div>
+        <div class="cthumb-list">
+          <div class="cthumb-item">
+            <div class="cthumb-box">
+              <div class="thumb-form">
+                <i class="tf-title"></i>
+                <div class="tf-row"><i></i><i></i><i></i></div>
+                <div class="tf-row"><i></i><i></i><i></i></div>
+                <div class="tf-row"><i></i><i></i><i></i></div>
+              </div>
+            </div>
+            <div class="cthumb-copy"><b>表单 / JSON</b><span>从字段标签拼出迷你网格；结构识别不了时退回原文前几行。</span></div>
+          </div>
+          <div class="cthumb-item">
+            <div class="cthumb-box">
+              <div class="thumb-web">
+                <div class="tw-bar"><i></i><i></i><i></i></div>
+                <div class="tw-body"><div class="tw-hero"></div><div class="tw-l"></div><div class="tw-l w60"></div></div>
+              </div>
+            </div>
+            <div class="cthumb-copy"><b>网页</b><span>按 375 逻辑宽挂首屏后缩放；同屏最多 2 帧，滚出视口即释放。</span></div>
+          </div>
+          <div class="cthumb-item">
+            <div class="cthumb-box"><div class="thumb-img"></div></div>
+            <div class="cthumb-copy"><b>图片</b><span>直接铺真图；加载失败退回类型徽标。</span></div>
+          </div>
+          <div class="cthumb-item">
+            <div class="cthumb-box">
+              <div class="thumb-fallback"><svg class="ico"><use href="#i-file"/></svg><em>MD</em></div>
+            </div>
+            <div class="cthumb-copy"><b>拿不到内容</b><span>分享页全部产物、PDF、Office 与压缩包只给类型徽标。</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="cnote">H5 只做图片与文本缩略，不在手机上跑网页 iframe；分享页的产物地址是下载端点（attachment + octet-stream），整卡退回类型徽标——要让分享页也内联缩略，必须先改后端出流口径，不在本轮零后端改动范围内。</p>
+  </section>
+
+  <!-- ================= 05 动效 ================= -->
+  <section id="motion">
+    <div class="sec-head"><span class="sec-no">05</span><h2>入场动效 · 一次，120ms，不抢戏</h2></div>
+    <p class="sec-sub">
+      「出场」不只是长什么样，也包括什么时候、以什么方式进入视线。动效只做一次：上移 7px 淡入，完成后不再重复。
+      流式回答期间不播，避免每来一段文字就抖一下。
+    </p>
+
+    <div class="motion-wrap">
+      <div class="motion-demo">
+        <div class="demo-bar">
+          <span style="font-size:12px;font-weight:600">完成态入场</span>
+          <button class="replay-btn" type="button" id="replayMotion"><svg class="ico" style="width:12px;height:12px"><use href="#i-play"/></svg>重放</button>
+        </div>
+        <div class="motion-stage">
+          <div class="dcard enter" id="motionCard">
+            <div class="dcard-main">
+              <div class="dtype json"><svg class="ico"><use href="#i-code"/></svg>JSON</div>
+              <div class="dinfo">
+                <div class="dname">录入申请人审批表 <span class="dext">form.json</span></div>
+                <div class="ddesc">按返图表单复制，含 21 行 × 8 列字段定义</div>
+                <div class="dmeta"><span class="dchip">JSON</span><span class="dchip">4.2 KB</span><span class="dchip ok">已交付</span></div>
+              </div>
+            </div>
+            <div class="dacts">
+              <button class="dbtn primary" type="button"><svg class="ico" style="width:12px;height:12px"><use href="#i-eye"/></svg>打开预览</button>
+              <button class="dbtn ghost" type="button"><svg class="ico" style="width:12px;height:12px"><use href="#i-download"/></svg>下载</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="motion-demo">
+        <div class="timeline">
+          <div class="tl-item">
+            <span class="tl-time">0 ms</span>
+            <div class="tl-body"><b>占位已在原位</b>生成态卡片先落位，高度锁死，文字区是骨架。</div>
+          </div>
+          <div class="tl-item">
+            <span class="tl-time">~120 ms</span>
+            <div class="tl-body"><b>上移淡入</b>透明度 0 → 1，位移 7px → 0，只作用于卡片本身。</div>
+          </div>
+          <div class="tl-item">
+            <span class="tl-time">之后</span>
+            <div class="tl-body"><b>保持静止</b>不循环、不呼吸、不缩放；后续刷新历史时不重播。</div>
+          </div>
+        </div>
+        <div class="curve">easing: cubic-bezier(.2, .7, .3, 1) · 尊重系统「减少动态效果」</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 06 对比 ================= -->
+  <section id="compare">
+    <div class="sec-head"><span class="sec-no">06</span><h2>取舍与推荐</h2></div>
+    <p class="sec-sub">A、B、C 全部收敛在前端：同一张卡、同一套产物数据，不需要新增后端接口，建议本轮一起做。</p>
+
+    <table class="matrix">
+      <thead>
+        <tr>
+          <th>方案</th>
+          <th>改什么</th>
+          <th>用户得到什么</th>
+          <th>代价 / 风险</th>
+          <th>建议批次</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>A · 统一轻量交付卡</td>
+          <td>单件复用交付卡视觉，去掉灰条；多件沿用现有清单。</td>
+          <td>风格一致、主行动清晰、单件也有交付感。</td>
+          <td>动作并入元信息行后单件整卡约 104px；需回归分享页与 H5 的窄宽换行。</td>
+          <td><span class="pill p0">P0</span></td>
+        </tr>
+        <tr>
+          <td>B · 生成态到完成态</td>
+          <td>工具开始生成时占位，按已接收字节显示进度，完成原位替换。</td>
+          <td>不再突然出现，等待有反馈，位置不跳。</td>
+          <td>复用现有准备帧，无需后端；只对生成类工具生效，不画假百分比。</td>
+          <td><span class="pill p0">P0</span></td>
+        </tr>
+        <tr>
+          <td>C · 首屏所见即所得</td>
+          <td>单件卡左侧放首屏缩略：图片真图、网页 iframe、文本前几行；拿不到退回类型徽标。</td>
+          <td>不开预览就能判断内容，减少无效点击。</td>
+          <td>iframe 与文本拉取需限量、懒加载；H5 不跑 iframe，分享页退回类型徽标。</td>
+          <td><span class="pill p0">P0</span></td>
+        </tr>
+        <tr>
+          <td>D · 只做细节打磨</td>
+          <td>保持单行结构，仅统一图标、字号、按钮层级与入场。</td>
+          <td>观感略有提升。</td>
+          <td>断层仍在，收益最小。</td>
+          <td><span class="pill opt">可并入 A</span></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="recommend">
+      <div class="r-eyebrow">RECOMMENDED</div>
+      <h3>P0 = A + B + C + 120ms 入场，一轮做完</h3>
+      <p>
+        A 解决「看起来不像交付物」，B 解决「出现得太突然」，C 解决「不开预览不知道是什么」。
+        三者共用同一张卡与同一套产物数据：C 的网页缩略复用产物签名地址、文本缩略复用现有原文接口，不需要新增后端能力；
+        入场动效只是完成态的一个 class。代价是 iframe 与文本拉取必须限量、懒加载，H5 与分享页按能力降级。
+      </p>
+      <div class="checklist">
+        <span><svg class="ico"><use href="#i-check"/></svg>单件也升为卡</span>
+        <span><svg class="ico"><use href="#i-check"/></svg>生成态只报已接收字数</span>
+        <span><svg class="ico"><use href="#i-check"/></svg>完成原位替换</span>
+        <span><svg class="ico"><use href="#i-check"/></svg>缩略图限量 + 懒加载</span>
+        <span><svg class="ico"><use href="#i-check"/></svg>分享页退回徽标 / H5 不跑 iframe</span>
+        <span><svg class="ico"><use href="#i-check"/></svg>入场只播一次</span>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <span>问渠 · 产物出场方式优化 · 效果图（2026-11-10）</span>
+    <span>效果图仅用于确认方向；确认后再出方案并改代码。</span>
+  </footer>
+</div>
+
+<script>
+  // 主题切换
+  const themeBtn = document.getElementById('themeBtn')
+  themeBtn.addEventListener('click', () => {
+    const root = document.documentElement
+    const dark = root.dataset.theme === 'dark'
+    root.dataset.theme = dark ? 'light' : 'dark'
+    themeBtn.querySelector('use').setAttribute('href', dark ? '#i-moon' : '#i-sun')
+    themeBtn.querySelector('span').textContent = dark ? '深色效果' : '浅色效果'
+  })
+
+  // 方案 A：单件 / 多件切换
+  const segA = document.getElementById('segA')
+  const paneOne = document.getElementById('paneOne')
+  const paneMany = document.getElementById('paneMany')
+  segA.addEventListener('click', e => {
+    const btn = e.target.closest('button')
+    if (!btn) return
+    segA.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === btn))
+    const one = btn.dataset.tab === 'one'
+    paneOne.style.display = one ? '' : 'none'
+    paneMany.style.display = one ? 'none' : ''
+  })
+
+  // 入场重放
+  const replay = el => {
+    el.classList.remove('enter')
+    void el.offsetWidth
+    el.classList.add('enter')
+  }
+  document.getElementById('replayA').addEventListener('click', () => {
+    const el = paneOne.style.display === 'none' ? paneMany.firstElementChild : document.getElementById('cardOne')
+    replay(el)
+  })
+  document.getElementById('replayMotion').addEventListener('click', () => replay(document.getElementById('motionCard')))
+
+  // 方案 B：三阶段演示
+  const cards = [1, 2, 3].map(i => document.getElementById('stageCard' + i))
+  const steps = [1, 2, 3].map(i => document.getElementById('step' + i))
+  let timers = []
+  const clearTimers = () => { timers.forEach(clearTimeout); timers = [] }
+  const showStage = n => {
+    cards.forEach((c, i) => { c.style.display = (i + 1 === n) ? '' : 'none' })
+    steps.forEach((s, i) => s.classList.toggle('on', i + 1 <= n))
+  }
+  const runB = () => {
+    clearTimers()
+    showStage(1)
+    timers.push(setTimeout(() => showStage(2), 900))
+    timers.push(setTimeout(() => {
+      showStage(3)
+      replay(document.getElementById('stageCard3'))
+    }, 2400))
+  }
+  document.getElementById('replayB').addEventListener('click', runB)
+</script>
+</body>
+</html>

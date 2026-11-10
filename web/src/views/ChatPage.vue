@@ -491,10 +491,13 @@
                    「预览」＝进预览台（整屏 + 可控视口，见 utils/previewStage）：页面设计档给真实视口，
                    读字档把 Markdown/表格/代码在应用里排好版；锚点的 href 仍是那份签名地址，
                    所以 Ctrl/中键点击照旧开真标签。哪些类型怎么摆是 artifactView 里那一份判据，开不了的只给下载 -->
-              <!-- 交付包：这一轮的产物收进一张卡（入口/体量/折叠清单）；收进卡的轮不再逐行平铺。
-                   1 件的普通回答没有卡，仍走下面那行旧样式。 -->
+              <!-- 生成态：本轮还没有产物、模型正在生成/交付文件时先占位；完成由下面的卡原位接管 -->
+              <ArtifactPendingCard v-if="m.role === 'ai' && artifactPendingOf(m)" :pending="artifactPendingOf(m)" />
+              <!-- 交付包：单件与多件共用同一张卡（单件左缩略+动作，多件包形态+清单）；
+                   实时到达的产物播一次入场，历史恢复不播。定位不到交付包的旧消息仍走下面兜底行。 -->
               <DeliveryCard v-if="m.role === 'ai' && deliveryCardOfMessage(m)"
                             :delivery="deliveryCardOfMessage(m)"
+                            :fresh="freshDeliveryOf(m)"
                             @view="openDelivery"
                             @zip="downloadDeliveryZip" />
               <div v-if="m.role === 'ai' && m.artifacts && m.artifacts.length && !deliveryListHidden(m)" class="artifact-list">
@@ -1820,6 +1823,8 @@ import GoalViewer from '../components/GoalViewer.vue'
 // 交付包：对话内一张卡 + 右侧抽屉（清单/批量动作），与 H5 共用同一份判据
 import DeliveryCard from '../components/DeliveryCard.vue'
 import DeliveryPanel from '../components/DeliveryPanel.vue'
+// 产物生成态占位：只在「本轮还没有产物、正在生成/交付文件」时出现
+import ArtifactPendingCard from '../components/ArtifactPendingCard.vue'
 // 回答正文与它的浮层宿主：与两个分享页共用同一份实现（详见 src/chat/answerViewer.js 顶部说明）
 import AnswerBody from '../components/AnswerBody.vue'
 import AnswerViewerHost from '../components/AnswerViewerHost.vue'
@@ -3677,7 +3682,7 @@ const {
   goalCanPause, goalCanResume, goalCanEdit, goalCanCancel, goalCanClearRecord,
   goalPreempted, goalVersionLabel, goalProgressPercent,
   goalTerminalCard, goalTerminalTitle, goalTerminalNote, goalTurnStreaming,
-  goalDelivery, deliveryPackages, deliveryCardOfMessage, deliveryListHidden, downloadDeliveryZip,
+  goalDelivery, deliveryPackages, deliveryCardOfMessage, deliveryListHidden, downloadDeliveryZip, artifactPendingOf, freshDeliveryOf,
   goalEditing, goalEdit, goalEditBusy, goalEditSaveable,
   startGoalInlineEdit, saveGoalEdit,
   // 思考能力 / 档位（悬浮面板消费）

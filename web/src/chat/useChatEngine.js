@@ -34,7 +34,7 @@ import { THINK_CAPS, REASONING_LEVELS, THINK_LEVEL_ON, levelLabel,
          goalCanPauseOf, goalCanResumeOf, goalCanEditOf, goalCanCancelOf, goalCanClearRecordOf,
          goalPreemptedOf, goalVersionLabelOf, goalProgressPercentOf,
          goalTerminalCardOf, goalTerminalTitleOf, goalTerminalNoteOf,
-         deliveryOf, deliverySubjectOf,
+         deliveryOf, deliverySubjectOf, deliveryCardOf, artifactPendingOf,
          turnSteerRows,
          rememberAgents, isDispatchTool, consultNameOf, stepBriefOf, TURN_STOP_SUFFIX, applyBlocks } from './projections'
 import { planExecProgress, planAdjustsOf, planVersionOf, planStepCount } from './plan'
@@ -1059,13 +1059,17 @@ const deliveryTurnIds = computed(() => {
 })
 /** 某条回答对应的交付包（目标包只挂在它最后一轮上；其余按轮各一份） */
 const deliveryOfMessage = m => deliveryByKey.value.get(deliveryKeyOf(m)) || null
-/** 只有「值得支一张卡」的消息：目标包不论件数都成卡；普通回答 1 件仍走旧的一行 */
-const deliveryCardOfMessage = m => {
-  const d = deliveryOfMessage(m)
-  if (!d) return null
-  return (d.scope === 'goal' || d.fileCount >= 2) ? d : null
+/** 值得支一张卡的消息：单件普通回答也成卡（与多件同一套视觉），目标包保持包形态 */
+const deliveryCardOfMessage = m => deliveryCardOf(deliveryOfMessage(m))
+/** 这张交付卡里是否有「刚刚实时到达」的产物：入场动效只认它，历史恢复不播 */
+const freshDeliveryOf = m => {
+  const id = m && m.freshArtifactId
+  if (!id) return false
+  const d = deliveryCardOfMessage(m)
+  return !!(d && Array.isArray(d.files) && d.files.some(f =>
+    String((f && f.id) || '') === String(id) || String((f && f.filename) || '') === String(id)))
 }
-/** 该轮产物是否已经以交付卡形式展示：成卡的才收起逐行清单（普通回答单件照旧平铺一行） */
+/** 该轮产物是否已经以交付卡形式展示：成卡的才收起逐行清单（定位不到交付包的旧消息仍走兜底行） */
 const deliveryListHidden = m => {
   if (deliveryCardOfMessage(m)) return true
   const tid = String((m && m.turnId) || '')
@@ -3421,6 +3425,13 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         msg.artifacts.push(a)
         // 产物按生成时刻插入时间线（只记下标），刷新后仍在原位而不是堆到气泡底部
         pushTimelineArtifact(msg, msg.artifacts.length - 1)
+        // 入场动效只认「实时到达」的这一件：历史恢复不会走这里，刷新不会满屏乱动
+        msg.freshArtifactId = a.id || a.filename || ''
+        if (msg._freshTimer) clearTimeout(msg._freshTimer)
+        msg._freshTimer = setTimeout(() => {
+          msg.freshArtifactId = ''
+          msg._freshTimer = 0
+        }, 900)
         liveScroll()
       } catch (e) { /* 忽略 */ }
     },
@@ -4781,7 +4792,7 @@ onUnmounted(() => {
     goalTerminalCard, goalTerminalTitle, goalTerminalNote, goalTurnStreaming, surrenderGoalStream,
     // 交付包：目标跨轮一个包、普通回答按轮一个包；卡片/抽屉/H5 汇总只认这一份口径
     goalDelivery, turnDeliveries, deliveryPackages, deliveryOfMessage, deliveryCardOfMessage,
-    deliveryListHidden, downloadDeliveryZip,
+    deliveryListHidden, downloadDeliveryZip, artifactPendingOf, freshDeliveryOf,
     goalEditing, goalEdit, goalEditBusy, goalEditSaveable, startGoalInlineEdit, saveGoalEdit,
     // 思考能力 / 档位
     thinkCapsOf, reasoningLevelsOf, deepThinkMap, deepOnOf, deepThinkOn, levelOptionsOf, currentLevelOf,
