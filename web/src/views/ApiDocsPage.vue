@@ -49,9 +49,24 @@
                 <p>一个地址暴露整套元工具（提问 / 检索 / 列库 / 列智能体），供 Claude、Cursor 等 MCP 客户端直接挂载。</p>
                 <code :title="mcpUrl">{{ mcpUrl }}</code>
               </div>
+              <div class="doc-card">
+                <div class="doc-card-t">Embeddings（OpenAI 兼容）</div>
+                <p>外部项目借用问渠登记的向量模型做向量化，SDK 零改造切换 endpoint；按 embedding scope 授权、单独记账。</p>
+                <code :title="baseUrl + '/api/ai/v1/embeddings'">POST {{ baseUrl }}/api/ai/v1/embeddings</code>
+              </div>
+              <div class="doc-card">
+                <div class="doc-card-t">知识库 API（检索 / 管理）</div>
+                <p>把问渠当检索引擎：直接拿混合检索结果做自己的 RAG；建库、上传文档走 kb.write 授权，可见性与网页一致。</p>
+                <code :title="baseUrl + '/api/ai/v1/retrieval'">POST {{ baseUrl }}/api/ai/v1/retrieval</code>
+              </div>
+              <div class="doc-card">
+                <div class="doc-card-t">前端嵌入（挂件 / iframe）</div>
+                <p>两行 script 在业务页面挂一个浮动聊天入口，或 iframe 直嵌分享页；凭据是分享 token，不接触 API Key。</p>
+                <code>WenquChat.init(&#123;token: '…'&#125;)</code>
+              </div>
             </div>
             <div class="doc-note">
-              准备工作只有一步：在 <b>个人设置 → API 密钥</b> 创建一把 Key（用途名称 + 有效期）。Key 恒以签发人本人身份发问——开放的是你自己的智能体、知识库与额度；给哪个系统对接，就用那个系统归属的账号签发。
+              准备工作只有一步：在 <b>个人设置 → API 密钥</b> 创建一把 Key（用途名称 + 有效期 + 能力范围 scope）。Key 恒以签发人本人身份发问——开放的是你自己的智能体、知识库与额度；给哪个系统对接，就用那个系统归属的账号签发。
             </div>
           </section>
 
@@ -163,11 +178,13 @@
                 <tr><td>溯源与反馈</td><td><code>GET /knowledge/&#123;knowledgeId&#125;</code> · <code>POST /feedback</code></td><td>引用块全文溯源 / 👍👎 反馈</td></tr>
                 <tr><td>元信息</td><td><code>GET /agent/available</code> · <code>GET /auth/me</code> · <code>GET /config/public</code></td><td>可用智能体清单 / 身份自检 / 公开运行时配置</td></tr>
                 <tr><td>工作流开放 API</td><td><code>POST /v1/workflows/&#123;id&#125;/run</code> · <code>GET /v1/workflows/&#123;id&#125;/run/&#123;runId&#125;</code></td><td>触发已发布工作流 / 补查运行结果（见下节）</td></tr>
+                <tr><td rowspan="2">向量与知识库</td><td><code>POST /v1/embeddings</code> · <code>GET /v1/models/embeddings</code></td><td>OpenAI 兼容向量化 / 可用向量模型清单（见 Embeddings 一节）</td></tr>
+                <tr><td><code>POST /v1/retrieval</code> · <code>/v1/kbs…</code></td><td>知识检索（只读）/ 知识库管理（写需 kb.write）（见知识库 API 一节）</td></tr>
                 <tr><td>MCP 入口</td><td><code>{{ mcpUrl }}</code></td><td>平台级 MCP（凭据是 Bearer，见 MCP 一节）</td></tr>
               </tbody>
             </table>
             <div class="doc-note">
-              这张表是"问答链路"的口径：白名单里新增端点会自动对 Key 开放，但<b>能力配置面</b>（技能 / MCP 配置 / 市场等）被拒绝名单挡住——见「权限边界」。
+              这张表是"问答链路"的口径：白名单里新增端点会自动对 Key 开放，但<b>能力配置面</b>（技能 / MCP 配置 / 市场等）被拒绝名单挡住——见「权限与 scope」。
             </div>
           </section>
 
@@ -189,8 +206,106 @@
             </ul>
           </section>
 
-          <!-- ==================== 6. MCP 接入 ==================== -->
+          <!-- ==================== 6. Embeddings ==================== -->
           <section :id="sections[5].id" class="doc-sec">
+            <h2>Embeddings（OpenAI 兼容）</h2>
+            <p>外部项目用任意 OpenAI SDK 把 base_url 指到问渠，即可借用问渠登记的向量模型做向量化。
+              <code>model</code> 为向量模型引用 <code>providerId/modelId</code>（必填——问渠向量按知识库绑定，无全局默认）。</p>
+            <div class="doc-code"><pre class="doc-pre">{{ curlEmbeddings }}</pre>
+              <button class="doc-copy" :title="copied === 'curlEmb' ? '已复制' : '复制'" @click="copy('curlEmb', curlEmbeddings)">
+                <check-outlined v-if="copied === 'curlEmb'" class="doc-copy-ok" /><copy-outlined v-else />
+              </button>
+            </div>
+            <table class="doc-table">
+              <thead><tr><th style="width:150px">字段</th><th style="width:70px">必填</th><th>说明</th></tr></thead>
+              <tbody>
+                <tr><td><code>input</code></td><td>是</td><td>字符串或字符串数组；单批 ≤256 条、单条 ≤8192 token（超限 400）</td></tr>
+                <tr><td><code>model</code></td><td>是</td><td>向量模型引用 <code>providerId/modelId</code>；可用清单：<code>GET /v1/models/embeddings</code></td></tr>
+                <tr><td><code>encoding_format</code></td><td>否</td><td><code>float</code>（默认）或 <code>base64</code>（float32 小端打包）</td></tr>
+                <tr><td><code>dimensions</code></td><td>否</td><td>向维度裁剪（仅模型支持时生效）</td></tr>
+              </tbody>
+            </table>
+            <ul>
+              <li>响应为 OpenAI 标准形状：<code>&#123;object:"list", data:[&#123;object:"embedding", index, embedding&#125;], model, usage&#125;</code>，SDK 零改造切换 endpoint</li>
+              <li>需要 Key 开通 <b>embedding</b> scope（默认集内含）；用量按 <code>kind=embedding</code> 单独记账，与聊天分开统计</li>
+              <li>限频：默认 60 请求/分钟（每请求可带 256 条文本）；供应商额度不足会返回可行动的报错文案</li>
+            </ul>
+          </section>
+
+          <!-- ==================== 7. 知识库 API ==================== -->
+          <section :id="sections[6].id" class="doc-sec">
+            <h2>知识库 API（检索与管理）</h2>
+            <p>把问渠当检索引擎用：外部系统可以直接拿混合检索结果做自己的 RAG，也可以程序化维护知识库内容。
+              可见性与网页端完全一致——签发人看不到的库与文档，从这里同样拿不到。</p>
+            <h3>检索（只读，kb.read）</h3>
+            <div class="doc-code"><pre class="doc-pre">{{ curlRetrieval }}</pre>
+              <button class="doc-copy" :title="copied === 'curlRt' ? '已复制' : '复制'" @click="copy('curlRt', curlRetrieval)">
+                <check-outlined v-if="copied === 'curlRt'" class="doc-copy-ok" /><copy-outlined v-else />
+              </button>
+            </div>
+            <ul>
+              <li>body：<code>query</code>（必填 ≤8000 字）、<code>knowledgeBaseIds</code>（可选，空=本人可见全部库）、<code>topK</code>（1-50，默认 20）、<code>minScore</code>（按融合分过滤）</li>
+              <li>返回 <code>&#123;chunks:[&#123;id,text,score,title,titlePath,docId,kbId,chunkIndex,images&#125;], total, warnings?&#125;</code>；不执行重排，链路降级会在 <code>warnings</code> 如实说明</li>
+            </ul>
+            <h3>库管理（读 kb.read / 写 kb.write）</h3>
+            <table class="doc-table">
+              <thead><tr><th style="width:300px">端点</th><th style="width:90px">scope</th><th>说明</th></tr></thead>
+              <tbody>
+                <tr><td><code>GET /v1/kbs</code></td><td>kb.read</td><td>可见库列表（含文档数）</td></tr>
+                <tr><td><code>GET /v1/kbs/&#123;id&#125;</code></td><td>kb.read</td><td>库详情（精简视图）</td></tr>
+                <tr><td><code>GET /v1/kbs/&#123;id&#125;/documents</code></td><td>kb.read</td><td>库内文档列表（状态 0 生效 / 1 弃用 / 2 解析中 / 3 失败，含进度）</td></tr>
+                <tr><td><code>POST /v1/kbs</code></td><td>kb.write</td><td>建库：name + embeddingRef（必填，向量模型引用）</td></tr>
+                <tr><td><code>POST /v1/kbs/&#123;id&#125;/documents</code></td><td>kb.write</td><td>multipart 传 <code>file</code>；同步返回文档行，解析走后台队列，轮询上面的列表看进度</td></tr>
+              </tbody>
+            </table>
+            <div class="doc-code"><pre class="doc-pre">{{ curlKbUpload }}</pre>
+              <button class="doc-copy" :title="copied === 'curlUp' ? '已复制' : '复制'" @click="copy('curlUp', curlKbUpload)">
+                <check-outlined v-if="copied === 'curlUp'" class="doc-copy-ok" /><copy-outlined v-else />
+              </button>
+            </div>
+            <div class="doc-note">
+              <b>kb.write 默认不放开</b>：签发 Key 时不勾选就没有写库能力（403 会点名缺哪个 scope）。
+              上传格式与大小闸与网页一致（docx/pdf/xlsx/ppt/pptx/txt/md/csv）。
+            </div>
+          </section>
+
+          <!-- ==================== 8. 前端嵌入 ==================== -->
+          <section :id="sections[7].id" class="doc-sec">
+            <h2>前端嵌入（挂件 / iframe）</h2>
+            <p>把智能体嵌进业务页面有两条路，凭据都是<b>分享 token</b>（智能体「公开发布」得到），不接触 API Key：</p>
+            <h3>方式一：浮动聊天挂件（推荐）</h3>
+            <div class="doc-code"><pre class="doc-pre">{{ embedSnippet }}</pre>
+              <button class="doc-copy" :title="copied === 'embSn' ? '已复制' : '复制'" @click="copy('embSn', embedSnippet)">
+                <check-outlined v-if="copied === 'embSn'" class="doc-copy-ok" /><copy-outlined v-else />
+              </button>
+            </div>
+            <ul>
+              <li>加载器约 3KB、零依赖；浮动按钮点击才懒加载对话面板（宿主不为一个按钮付流量）</li>
+              <li>选项：<code>token</code>（必填）/ <code>title</code> / <code>color</code>（品牌色，hex）/ <code>placeholder</code> / <code>position</code>（bottom-right | bottom-left）/ <code>height</code>·<code>width</code> / <code>noTool</code>·<code>compact</code>·<code>autoOpen</code></li>
+              <li>程序化控制：<code>WenquChat.init()</code> 返回 <code>&#123;open, close, toggle, destroy&#125;</code></li>
+            </ul>
+            <h3>方式二：iframe 直嵌</h3>
+            <div class="doc-code"><pre class="doc-pre">{{ iframeSnippet }}</pre>
+              <button class="doc-copy" :title="copied === 'ifSn' ? '已复制' : '复制'" @click="copy('ifSn', iframeSnippet)">
+                <check-outlined v-if="copied === 'ifSn'" class="doc-copy-ok" /><copy-outlined v-else />
+              </button>
+            </div>
+            <p>嵌入参数（query，仅 <code>embed=1</code> 时生效）：</p>
+            <table class="doc-table">
+              <thead><tr><th style="width:150px">参数</th><th>效果</th></tr></thead>
+              <tbody>
+                <tr><td><code>no-tool=1</code></td><td>隐藏输入区工具条（附件/图片入口），纯问答挂件</td></tr>
+                <tr><td><code>compact=1</code></td><td>更紧的内边距，适合小尺寸容器</td></tr>
+                <tr><td><code>color=#rrggbb</code></td><td>品牌色覆盖（只接受合法 hex，脏值忽略）</td></tr>
+                <tr><td><code>placeholder=…</code></td><td>输入框占位提示（≤50 字）</td></tr>
+                <tr><td><code>autoOpen=1</code></td><td>加载后自动聚焦输入框</td></tr>
+              </tbody>
+            </table>
+            <div class="doc-note">游客额度闸照常生效：每条分享有每日轮次上限、每访客每日轮次上限与每日 token 上限，超限返回 429。</div>
+          </section>
+
+          <!-- ==================== 9. MCP 接入 ==================== -->
+          <section :id="sections[8].id" class="doc-sec">
             <h2>MCP 接入</h2>
             <p>平台级 MCP 入口把问渠能力暴露为标准 MCP Server（Streamable HTTP），Claude / Cursor 等客户端粘上就能用。凭据不是 <code>X-Api-Key</code>，而是 <code>Authorization: Bearer</code> 头。</p>
             <div class="doc-usage-label">接入点地址</div>
@@ -227,9 +342,23 @@
             </div>
           </section>
 
-          <!-- ==================== 7. 权限边界 ==================== -->
-          <section :id="sections[6].id" class="doc-sec">
-            <h2>权限边界：Key 接不了哪些</h2>
+          <!-- ==================== 10. 权限与 scope ==================== -->
+          <section :id="sections[9].id" class="doc-sec">
+            <h2>权限与 scope：Key 能碰什么、不能碰什么</h2>
+            <h3>能力范围（scope）</h3>
+            <p>每把 Key 有一份能力范围，签发时勾选、之后可在「个人设置 → API 密钥」编辑。
+              scope 只约束 Key 通道（登录态不受约束）；收紧<b>立即生效</b>——缺对应 scope 的调用返回 403 并点名缺哪一项。</p>
+            <table class="doc-table">
+              <thead><tr><th style="width:130px">scope</th><th style="width:110px">默认开通</th><th>覆盖能力</th></tr></thead>
+              <tbody>
+                <tr><td><code>chat</code></td><td>是</td><td>问答（/chat、OpenAI 兼容端点、Responses）</td></tr>
+                <tr><td><code>embedding</code></td><td>是</td><td>向量化（/v1/embeddings）</td></tr>
+                <tr><td><code>kb.read</code></td><td>是</td><td>知识库检索与只读（/v1/retrieval、/v1/kbs 读侧）</td></tr>
+                <tr><td><code>kb.write</code></td><td><b>否</b></td><td>建库与上传文档（/v1/kbs 写侧）——只在确实需要时勾选</td></tr>
+                <tr><td><code>workflow.run</code></td><td>是</td><td>触发已发布工作流（/v1/workflows）</td></tr>
+              </tbody>
+            </table>
+            <h3>硬性拒绝的端点</h3>
             <p>Key 只开放<b>问答链路</b>。以下是服务端硬性拒绝（HTTP 403）的能力配置面，带 Key 调用会当场得到明确报错，不会静默走到别的鉴权层：</p>
             <table class="doc-table">
               <thead><tr><th style="width:320px">端点前缀</th><th>为什么不给</th></tr></thead>
@@ -252,8 +381,8 @@
             </ul>
           </section>
 
-          <!-- ==================== 8. 错误码 ==================== -->
-          <section :id="sections[7].id" class="doc-sec">
+          <!-- ==================== 11. 错误码 ==================== -->
+          <section :id="sections[10].id" class="doc-sec">
             <h2>错误码与限频</h2>
             <table class="doc-table">
               <thead><tr><th style="width:110px">状态码</th><th>含义与处理</th></tr></thead>
@@ -268,7 +397,7 @@
             <p>额度维度：每轮问答计入签发人的用量与配额，配额到顶会在请求入口直接拒绝并说明恢复时间。</p>
           </section>
 
-          <footer class="doc-foot">接口行为以服务端实现为准；本页与后端同步维护（安全白名单：SecurityConfig · 问答：ChatController · 工作流开放 API：WorkflowApiController · MCP：McpServerService）</footer>
+          <footer class="doc-foot">接口行为以服务端实现为准；本页与后端同步维护（安全白名单：SecurityConfig · 问答：ChatController · 工作流开放 API：WorkflowApiController · 向量：OpenAiEmbeddingsController · 知识库对外：KbApiController · MCP：McpServerService）</footer>
         </article>
       </div>
     </div>
@@ -290,8 +419,11 @@ const sections = [
   { id: 'doc-chat', label: '问答接口（SSE）' },
   { id: 'doc-endpoints', label: '能力清单' },
   { id: 'doc-workflow', label: '工作流触发' },
+  { id: 'doc-embeddings', label: 'Embeddings' },
+  { id: 'doc-kb', label: '知识库 API' },
+  { id: 'doc-embed-widget', label: '前端嵌入' },
   { id: 'doc-mcp', label: 'MCP 接入' },
-  { id: 'doc-boundary', label: '权限边界' },
+  { id: 'doc-boundary', label: '权限与 scope' },
   { id: 'doc-errors', label: '错误码与限频' }
 ]
 
@@ -310,6 +442,31 @@ const curlWorkflow = computed(() => `curl -X POST ${baseUrl.value}/api/ai/v1/wor
   -H "Content-Type: application/json" \\
   -H "X-Api-Key: sk-你的Key" \\
   -d '{"inputs":{"city":"杭州"}}'`)
+const curlEmbeddings = computed(() => `curl -X POST ${baseUrl.value}/api/ai/v1/embeddings \\
+  -H "Content-Type: application/json" \\
+  -H "X-Api-Key: sk-你的Key" \\
+  -d '{"input":["你好，世界"],"model":"<providerId>/<modelId>"}'`)
+const curlRetrieval = computed(() => `curl -X POST ${baseUrl.value}/api/ai/v1/retrieval \\
+  -H "Content-Type: application/json" \\
+  -H "X-Api-Key: sk-你的Key" \\
+  -d '{"query":"报销流程","knowledgeBaseIds":["<kbId>"],"topK":5}'`)
+const curlKbUpload = computed(() => `curl -X POST ${baseUrl.value}/api/ai/v1/kbs/<kbId>/documents \\
+  -H "X-Api-Key: sk-你的Key" \\
+  -F "file=@员工手册.docx"`)
+// SFC 的 script 段以字面量 </scr+ipt> 收尾，示例代码里要出现它只能拼接，不能写死（也无需反斜杠转义——模板字面量里 \/ 不是合法转义）
+const S_CLOSE = '</' + 'script>'
+const embedSnippet = computed(() => `<script src="${publicUrl('/wenqu-embed.js')}">${S_CLOSE}
+<script>
+  WenquChat.init({
+    token: '<分享token>',        // 公开发布链接 /s/ 后面那段
+    title: '在线咨询',
+    color: '#3b82f6',
+    placeholder: '问我任何问题',
+    position: 'bottom-right'    // 或 bottom-left
+  })
+${S_CLOSE}`)
+const iframeSnippet = computed(() => `<iframe src="${publicUrl('/s')}/<分享token>?embed=1&color=%233b82f6&placeholder=%E4%BD%A0%E6%83%B3%E9%97%AE%E4%BB%80%E4%B9%88"
+        width="420" height="640" style="border:0;border-radius:12px"></iframe>`)
 const doneSample = `event: done
 data: {
   "sources": [...],        // 引用来源（知识块，id 可用于引用溯源）

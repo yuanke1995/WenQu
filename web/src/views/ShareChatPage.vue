@@ -1,5 +1,5 @@
 <template>
-  <div class="sc-page" :class="{ embed: isEmbed }">
+  <div class="sc-page" :class="pageClass" :style="embedStyle">
     <header class="sc-head" :class="{ mini: isEmbed }">
       <template v-if="!isEmbed">
         <div class="sc-avatar"><AgentAvatar :agent="info" :size="36" /></div>
@@ -140,6 +140,33 @@ const router = useRouter()
 const token = computed(() => String(route.params.token || ''))
 const isEmbed = computed(() => route.query.embed === '1')
 
+/**
+ * 嵌入参数（只在 embed=1 时生效，普通分享链接不受影响）：
+ * 宿主页面通过 query 控制外观，不需要问渠侧为每个接入方改代码。
+ * - no-tool=1   隐藏输入区工具条（附件/图片入口），适合纯问答挂件
+ * - compact=1   更紧的内边距（小尺寸挂件）
+ * - color=#hex  品牌色覆盖（只接受合法 hex，脏值直接忽略——CSS 变量注入是 XSS 面）
+ * - placeholder=… 输入框占位提示（≤50 字，超长截断）
+ * - autoOpen=1  加载后自动聚焦输入框
+ */
+const embedParam = name => isEmbed.value ? String(route.query[name] ?? '') : ''
+const embedNoTool = computed(() => embedParam('no-tool') === '1')
+const embedCompact = computed(() => embedParam('compact') === '1')
+const embedAutoOpen = computed(() => embedParam('autoOpen') === '1')
+const embedColor = computed(() => {
+  const c = embedParam('color')
+  return /^#[0-9a-fA-F]{3,8}$/.test(c) ? c : ''
+})
+const embedPlaceholder = computed(() => embedParam('placeholder').slice(0, 50))
+const pageClass = computed(() => ({
+  embed: isEmbed.value,
+  'embed-notool': embedNoTool.value,
+  'embed-compact': embedCompact.value,
+}))
+const embedStyle = computed(() => embedColor.value
+  ? { '--app-accent': embedColor.value, '--app-accent-weak': embedColor.value + '1a', '--app-accent-border': embedColor.value + '66' }
+  : {})
+
 /** 待答提问卡（人在回路）。非空时整块顶替打字框——模型正卡在那根工具线程上等答案。 */
 const pendingAsk = ref(null)
 const askPanelRef = ref(null)
@@ -197,7 +224,8 @@ const acceptAttr = computed(() => {
   if (cap.value.guestFiles) parts.push(...SUPPORTED_EXTS.map(e => '.' + e))
   return parts.join(',') || undefined
 })
-const placeholder = computed(() => canAttach.value ? '输入你的问题，或加上图片/文件…' : '输入你的问题…')
+const placeholder = computed(() => embedPlaceholder.value
+  || (canAttach.value ? '输入你的问题，或加上图片/文件…' : '输入你的问题…'))
 const welcomeHint = computed(() => canAttach.value
   ? '在下方输入你的问题；图片和文件可以直接拖进来、粘贴进来，或者点左侧的加号添加。'
   : '在下方输入你的问题，我会基于所配置的资料与能力回答。')
@@ -381,6 +409,11 @@ onMounted(async () => {
     attachRunning()   // 刷新时这一轮可能还在跑（关掉页面它照旧继续），接回来给它长完
     restorePendingAsk() // 更要紧的是这一轮可能正卡在提问上——不取回卡片就是「看不见、后端一直等」
     restorePendingPlan() // 计划卡同理
+  }
+  // 嵌入挂件：autoOpen=1 时加载完即聚焦输入框（挂件嵌在业务页里，用户点到达标即想打字）
+  if (embedAutoOpen.value) {
+    await nextTick()
+    inputRef.value?.focus?.()
   }
 })
 onUnmounted(() => {
@@ -1059,6 +1092,12 @@ async function regenerate (aiIndex) {
 .sc-page.embed :deep(.ci) { padding: 8px 12px; }
 .sc-page.embed :deep(.ci-drop) { inset: 6px 12px; }
 .sc-page.embed .sc-foot-hint { display: none; }
+/* no-tool=1：隐藏输入区工具条（附件/图片入口），纯问答挂件不给多余的点击面 */
+.sc-page.embed-notool :deep(.ci-toolbar) { display: none; }
+/* compact=1：小尺寸挂件的紧边距（列表与输入再收一档） */
+.sc-page.embed-compact .sc-list { padding: 8px; }
+.sc-page.embed-compact .sc-welcome { padding: 18px 8px 12px; }
+.sc-page.embed-compact :deep(.ci) { padding: 6px 8px; }
 
 
 /* ==================== 移动端窄屏（h5）====================
