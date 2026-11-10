@@ -31,6 +31,12 @@ public class GraphEntity {
     /** 别名 JSON 数组（同一实体的其它写法） */
     private String aliases;
 
+    /**
+     * 实体类型：人物 / 机构 / 法规 / 概念 / 产品 / 地点 / 时间 / 其他。
+     * 由抽取模型判定；空=存量未分类（展示时归入「其他」）。
+     */
+    private String type;
+
     /** 提及次数 */
     private Integer mentionCount;
 

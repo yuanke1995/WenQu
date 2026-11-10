@@ -17,20 +17,30 @@
               </div>
             </template>
           </a-auto-complete>
+          <div class="gx-types">
+            <span :class="['gx-type', { on: entityTypeFilter === 'all' }]" @click="setEntityType('all')">
+              全部 {{ allEntities.length }}
+            </span>
+            <span v-for="t in typeCounts" :key="t.label"
+                  :class="['gx-type', { on: entityTypeFilter === t.label }]"
+                  @click="setEntityType(t.label)">
+              <i :style="{ background: t.color }"></i>{{ t.label }} {{ t.count }}
+            </span>
+          </div>
           <div class="gx-sec">实体 <span>{{ entityList.length }} / {{ graphInfo.entities || 0 }}</span></div>
           <div class="gx-entities">
             <div v-for="e in filteredEntities" :key="e.id"
                  :class="['gx-entity', { on: selectedDetail?.entity?.id === e.id }]"
                  @click="pickEntity(e)">
-              <i class="gx-dot"></i>
+              <i class="gx-dot" :style="{ background: typeColor(typeOf(e)) }"></i>
               <span class="gx-name" :title="e.name">{{ e.name }}</span>
               <span class="gx-deg">{{ e.degree || e.mentionCount || 0 }}</span>
             </div>
             <div v-if="!filteredEntities.length" class="gx-empty-mini">
-              {{ searchQ ? '没有匹配实体' : '还没有实体' }}
+              {{ searchQ ? '没有匹配实体' : '该类型暂无实体' }}
             </div>
           </div>
-          <div class="gx-left-foot">点击实体查看关系与源块；拖动/滚轮操作画布。</div>
+          <div class="gx-left-foot">点击实体查看关系与源块；拖动/滚轮操作画布。旧数据未分类：⋯ → 补全实体类型。</div>
         </aside>
 
         <!-- 中栏：图视图 / 列表 -->
@@ -40,12 +50,12 @@
             <a-select v-model:value="nodeLimit" size="small" style="width:104px"
                       :options="nodeLimitOptions" @change="onNodeLimitChange" />
             <span class="kb-hint graph-stat">
-              展示 {{ overviewData?.nodes?.length || 0 }} / {{ graphInfo.entities || 0 }} 实体 · 三元组 {{ graphInfo.triples || 0 }}
+              展示 {{ displayedCount }} / {{ graphInfo.entities || 0 }} 实体 · 三元组 {{ graphInfo.triples || 0 }}
               <template v-if="graphInfo.building">（进行中 {{ graphInfo.done || 0 }}/{{ graphInfo.total || 0 }}）</template>
               <template v-else-if="graphInfo.failed">（失败 {{ graphInfo.failed || 0 }}）</template>
             </span>
             <span class="sp"></span>
-            <a-button size="small" :loading="graphBuilding" :disabled="graphInfo.building" @click="doBuild">
+            <a-button size="small" :loading="graphBuilding" :disabled="graphInfo.building" @click="doBuild(false)">
               {{ graphInfo.building ? `构建中 ${graphInfo.done || 0}/${graphInfo.total || 0}` : '构建图谱' }}
             </a-button>
             <a-dropdown :trigger="['click']">
@@ -53,6 +63,7 @@
               <template #overlay>
                 <a-menu @click="onGraphMenu">
                   <a-menu-item key="build" :disabled="graphInfo.building">构建 / 重建图谱（存量回溯）</a-menu-item>
+                  <a-menu-item key="types" :disabled="graphInfo.building">补全实体类型（重建抽取）…</a-menu-item>
                   <a-menu-divider />
                   <a-menu-item key="clear" danger>清空图谱数据…</a-menu-item>
                 </a-menu>
@@ -73,13 +84,13 @@
               <button class="app-link-btn" style="margin-left:auto" @click="backToOverview">返回全景</button>
             </div>
             <div v-if="graphInfo.triples" class="gx-legend">
-              <span><i class="lg high"></i>高关联</span>
-              <span><i class="lg mid"></i>中关联</span>
-              <span><i class="lg low"></i>低关联</span>
-              <span class="lg-note">节点大小 = 关联度 · 默认只展示高频实体</span>
+              <span v-for="t in typeCounts" :key="t.label">
+                <i class="lg" :style="{ background: t.color }"></i>{{ t.label }} {{ t.count }}
+              </span>
+              <span class="lg-note">节点大小 = 关联度 · 颜色 = 实体类型</span>
             </div>
-            <div v-if="truncated" class="gx-trunc">
-              还有 {{ Math.max(0, (graphInfo.entities || 0) - (overviewData?.nodes?.length || 0)) }} 个实体未展示，可增大展示数量或搜索定位
+            <div v-if="truncated && entityTypeFilter === 'all'" class="gx-trunc">
+              还有 {{ Math.max(0, (graphInfo.entities || 0) - displayedCount) }} 个实体未展示，可增大展示数量或搜索定位
             </div>
           </div>
 
@@ -98,7 +109,14 @@
               <span class="gx-detail-avatar">{{ (selectedDetail.entity.name || '?').slice(0, 1) }}</span>
               <div class="gx-detail-title">
                 <div class="nm">{{ selectedDetail.entity.name }}</div>
-                <div class="sub">{{ selectedDetail.degree }} 条关系<template v-if="aliasText(selectedDetail)"> · 又名 {{ aliasText(selectedDetail) }}</template></div>
+                <div class="sub">
+                  <span class="gx-type-badge"
+                        :style="{ background: typeColor(selectedDetail.entity.type || '其他') + '22',
+                                  color: typeColor(selectedDetail.entity.type || '其他') }">
+                    {{ selectedDetail.entity.type || '其他' }}
+                  </span>
+                  {{ selectedDetail.degree }} 条关系<template v-if="aliasText(selectedDetail)"> · 又名 {{ aliasText(selectedDetail) }}</template>
+                </div>
               </div>
               <button class="app-link-btn" @click="closeEntityPanel">收起</button>
             </div>
@@ -190,7 +208,7 @@ import { CanvasRenderer } from 'echarts/renderers'
 import { getECData } from 'echarts/lib/util/innerStore.js'
 echarts.use([GraphChart, TooltipComponent, CanvasRenderer])
 import {
-  graphBuild, graphStatus, graphTriples, graphClear,
+  graphBuild, graphRebuildTypes, graphStatus, graphTriples, graphClear,
   graphViewData, graphEntityDetail, graphNeighbor, graphSearchEntity, graphChunk
 } from '../api'
 
@@ -281,6 +299,16 @@ let chainFocusSets = null        // 节点数据下标 → 所在连通链的 {n
 
 const closeEntityPanel = () => { selectedDetail.value = null; clearNodeFocus() }
 
+/** 实体类型：与后端抽取 prompt/白名单同口径；颜色只做视觉区分，不表达优先级 */
+const ENTITY_TYPE_ORDER = ['人物', '机构', '法规', '概念', '产品', '地点', '时间', '其他']
+const TYPE_COLORS = {
+  人物: '#7c5cd6', 机构: '#2e6be6', 法规: '#c77c14', 概念: '#0f8a8a',
+  产品: '#3b8f4e', 地点: '#c2477d', 时间: '#8fa3bf', 其他: '#a8b6c8'
+}
+const entityTypeFilter = ref('all')
+const typeColor = t => TYPE_COLORS[t] || TYPE_COLORS['其他']
+const typeOf = n => TYPE_COLORS[n.type] ? n.type : '其他'
+
 const aliasText = detail => (detail.entity.aliases || []).join('、')
 
 async function renderGraphChart() {
@@ -319,7 +347,11 @@ function renderFromData(data, focus) {
   nameToId = new Map()
   if (!data || !data.nodes?.length || !graphChartEl.value) return
   const cssVar = n => (getComputedStyle(document.documentElement).getPropertyValue(n) || '').trim()
-  const nodes = data.nodes
+  const allNodes = data.nodes
+  const nodes = entityTypeFilter.value === 'all'
+    ? allNodes
+    : allNodes.filter(n => typeOf(n) === entityTypeFilter.value)
+  if (!nodes.length) return
   const edges = data.edges || []
   const idToName = new Map()
   nodes.forEach(n => { nameToId.set(n.name, n.id); idToName.set(n.id, n.name) })
@@ -327,12 +359,6 @@ function renderFromData(data, focus) {
   const maxDegree = Math.max(1, ...degrees)
   // 只给关联度前 35% 的节点常显标签，其余靠 hover/tooltip；labelLayout hideOverlap 再兜一层
   const labelThreshold = degrees[Math.max(0, Math.floor(degrees.length * 0.65))] || 1
-  const colorOf = d => {
-    const ratio = d / maxDegree
-    if (ratio >= 0.62) return '#2e6be6'
-    if (ratio >= 0.3) return '#36b3f1'
-    return '#a8b6c8'
-  }
   // 节点**不能带 id 字段**：echarts graph 在节点有 id 时以 id 作为 links 的匹配键，
   // 下面按 name 引用的连线会被整体静默丢弃。
   // 实体 id 的映射走 nameToId（点击换 id 查详情），不进 echarts。
@@ -342,7 +368,7 @@ function renderFromData(data, focus) {
       name: n.name,
       symbolSize: focus && focus.id === n.id ? 46 : Math.min(46, 12 + Math.round((deg / maxDegree) * 30)),
       label: { show: deg >= labelThreshold, fontSize: 10 },
-      itemStyle: { color: focus && focus.id === n.id ? '#e6a23c' : colorOf(deg), borderColor: '#fff', borderWidth: 1 },
+      itemStyle: { color: focus && focus.id === n.id ? '#e6a23c' : typeColor(typeOf(n)), borderColor: '#fff', borderWidth: 1 },
       emphasis: { focus: 'adjacency', label: { show: true, fontWeight: 'bold' } }
     }
     return item
@@ -557,15 +583,34 @@ const onSearchPick = async entityId => {
 }
 
 /** 左栏实体列表：取当前全景节点按关联度排序，搜索框做本地过滤（跨全量走上方远程搜索） */
-const entityList = computed(() => {
+const allEntities = computed(() => {
   const nodes = overviewData.value?.nodes || []
   return [...nodes].sort((a, b) => Number(b.degree || 0) - Number(a.degree || 0))
 })
+const typeCounts = computed(() => {
+  const counts = new Map()
+  for (const n of allEntities.value) {
+    const t = typeOf(n)
+    counts.set(t, (counts.get(t) || 0) + 1)
+  }
+  return ENTITY_TYPE_ORDER.filter(t => counts.has(t))
+    .map(t => ({ label: t, count: counts.get(t), color: typeColor(t) }))
+})
+const entityList = computed(() => entityTypeFilter.value === 'all'
+  ? allEntities.value
+  : allEntities.value.filter(n => typeOf(n) === entityTypeFilter.value))
+const displayedCount = computed(() => entityList.value.length)
 const filteredEntities = computed(() => {
   const q = String(searchQ.value || '').trim().toLowerCase()
   if (!q) return entityList.value
   return entityList.value.filter(e => String(e.name || '').toLowerCase().includes(q))
 })
+
+/** 类型筛选：只重画当前全景，不重新请求 */
+function setEntityType (t) {
+  entityTypeFilter.value = t
+  if (overviewData.value) renderFromData(overviewData.value, null)
+}
 const buildPct = computed(() => {
   const total = Number(graphInfo.value.total || 0)
   const done = Number(graphInfo.value.done || 0)
@@ -582,12 +627,12 @@ function pickEntity (e) {
 }
 
 // ==================== 构建 / 清空 ====================
-const doBuild = async () => {
+const doBuild = async (forceTypes = false) => {
   graphBuilding.value = true
   try {
-    const r = await graphBuild(kbId())
+    const r = forceTypes ? await graphRebuildTypes(kbId()) : await graphBuild(kbId())
     if (r.success) {
-      message.success('构建已开始')
+      message.success(forceTypes ? '已开始补全实体类型（重建抽取）' : '构建已开始')
       const timer = setInterval(() => {
         if (!props.open) { clearInterval(timer); return }
         graphStatus(kbId()).then(st => {
@@ -618,7 +663,14 @@ const doClearGraph = async () => {
 /** 写操作收进 ⋯：清空是破坏性动作，仍需二次确认 */
 function onGraphMenu ({ key }) {
   if (key === 'build') {
-    doBuild()
+    doBuild(false)
+  } else if (key === 'types') {
+    Modal.confirm({
+      title: '补全存量实体类型？',
+      content: '将清空本库抽取账本并重新抽取全部知识块，会重新消耗抽取模型额度；实体与三元组按幂等去重，已有关系不会丢。',
+      okText: '开始补全', cancelText: '取消',
+      onOk: () => doBuild(true)
+    })
   } else if (key === 'clear') {
     Modal.confirm({
       title: '清空该库全部图谱数据？',
@@ -676,6 +728,14 @@ onBeforeUnmount(() => {
 .gx-left { width: 228px; flex: none; display: flex; flex-direction: column; min-height: 0;
   border: 1px solid var(--app-border); border-radius: 8px; background: var(--app-panel); padding: 10px; }
 .gx-search { width: 100%; margin-bottom: 8px; }
+.gx-types { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 7px; }
+.gx-type { display: inline-flex; align-items: center; gap: 4px; height: 19px; padding: 0 7px;
+  border: 1px solid var(--app-border); border-radius: 999px; background: var(--app-panel-2);
+  font-size: 10px; color: var(--app-text3); cursor: pointer; white-space: nowrap; }
+.gx-type i { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
+.gx-type.on { color: var(--app-accent); border-color: var(--app-accent-border); background: var(--app-accent-weak); }
+.gx-type-badge { display: inline-block; font-size: 9.5px; padding: 1px 6px; border-radius: 999px;
+  margin-right: 6px; font-weight: 500; vertical-align: 1px; }
 .gx-sec { display: flex; align-items: center; justify-content: space-between; padding: 0 2px 6px;
   font-size: 10.5px; font-weight: 600; color: var(--app-text3); letter-spacing: .03em; }
 .gx-entities { flex: 1; min-height: 0; overflow-y: auto; }
@@ -723,9 +783,6 @@ onBeforeUnmount(() => {
   background: rgba(255,255,255,.94); border: 1px solid var(--app-border); border-radius: 6px;
   padding: 5px 9px; font-size: 10px; color: var(--app-text3); pointer-events: none; }
 .gx-legend .lg { width: 7px; height: 7px; border-radius: 50%; display: inline-block; margin-right: 4px; }
-.gx-legend .lg.high { background: #2e6be6; }
-.gx-legend .lg.mid { background: #36b3f1; }
-.gx-legend .lg.low { background: #a8b6c8; }
 .gx-legend .lg-note { border-left: 1px solid var(--app-border); padding-left: 10px; }
 .gx-trunc { position: absolute; right: 10px; bottom: 10px; max-width: 300px; font-size: 10px;
   color: var(--app-text3); background: rgba(255,255,255,.94); border: 1px solid var(--app-border);

@@ -37,6 +37,14 @@ public class GraphController {
         return ResultJson.ok(graphRagService.build(kbId));
     }
 
+    @Operation(summary = "补全实体类型（重建抽取）", description = "清空本库抽取账本后强制重建图谱，让存量实体重新抽取 type；"
+            + "会重新消耗抽取模型额度，仅在用户显式触发时执行")
+    @Permission("graph:build")
+    @PostMapping("/{kbId}/types/rebuild")
+    public ResultJson rebuildTypes(@PathVariable("kbId") String kbId) {
+        return ResultJson.ok(graphRagService.rebuildTypes(kbId));
+    }
+
     @Operation(summary = "构建进度与图谱规模", description = "building/total/done/failed/extracted + 实体数/三元组数")
     @Permission("graph:read")
     @GetMapping("/{kbId}/status")

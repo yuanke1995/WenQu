@@ -1108,6 +1108,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_graph_entity` (
     `name`          VARCHAR(128) NOT NULL COMMENT '实体显示名（首次见到的写法）',
     `name_norm`     VARCHAR(128) NOT NULL COMMENT '归一名（去空白/全角转半角/小写，匹配与唯一键用）',
     `aliases`       VARCHAR(1000) DEFAULT NULL COMMENT '别名(JSON数组，同一实体的其它写法)',
+    `type`          VARCHAR(32)  DEFAULT NULL COMMENT '实体类型: 人物/机构/法规/概念/产品/地点/时间/其他；空=存量未分类',
     `mention_count` INT          DEFAULT 0 COMMENT '提及次数（图扩展排序的弱权重）',
     `create_time`   DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     PRIMARY KEY (`id`),

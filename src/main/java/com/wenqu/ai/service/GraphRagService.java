@@ -201,6 +201,27 @@ public class GraphRagService {
         return Map.of("started", true, "total", docs.size());
     }
 
+    /**
+     * 补全实体类型（数据层迁移）：清空本库抽取账本后强制重建，让旧实体重新走带 st/ot 的抽取 prompt。
+     * 只在用户显式触发时执行——会重新消耗抽取模型额度，不能混进普通构建的增量逻辑。
+     */
+    public Map<String, Object> rebuildTypes(String kbId) {
+        KnowledgeBase kb = kbMapper.selectById(kbId);
+        if (kb == null) throw new BizException(404, "知识库不存在");
+        if (!isGraphOn(kb)) throw new BizException("请先开启该知识库的 GraphRAG 开关");
+        BuildProgress progress = buildProgress.get(kbId);
+        if (progress != null && progress.running) {
+            throw new BizException("该库的图谱构建正在进行中，请等它跑完");
+        }
+        String safeKb = kbId.replace("'", "''");
+        int cleared = extractMapper.delete(new LambdaQueryWrapper<GraphExtract>()
+                .inSql(GraphExtract::getDocId, "SELECT id FROM c_ai_document WHERE kb_id = '" + safeKb + "'"));
+        Map<String, Object> out = new LinkedHashMap<>(build(kbId));
+        out.put("clearedLedger", cleared);
+        log.info("[GRAPH] 补全实体类型：kb={} 清空抽取账本 {} 条，开始强制重建", kbId, cleared);
+        return out;
+    }
+
     public Map<String, Object> status(String kbId) {
         BuildProgress p = buildProgress.get(kbId);
         Map<String, Object> out = new LinkedHashMap<>();
@@ -292,6 +313,7 @@ public class GraphRagService {
                 m.put("name", e.getName());
                 m.put("degree", degree.get(id));
                 m.put("mentionCount", e.getMentionCount());
+                m.put("type", e.getType() == null || e.getType().isBlank() ? "其他" : e.getType());
                 nodes.add(m);
             }
         }
@@ -364,7 +386,8 @@ public class GraphRagService {
             rows.add(r);
         }
         Map<String, Object> out = new LinkedHashMap<>();
-        out.put("entity", Map.of("id", e.getId(), "name", e.getName(),
+        String entityType = e.getType() == null || e.getType().isBlank() ? "其他" : e.getType();
+        out.put("entity", Map.of("id", e.getId(), "name", e.getName(), "type", entityType,
                 "aliases", parseAliases(e), "mentionCount", e.getMentionCount() == null ? 0 : e.getMentionCount()));
         out.put("degree", ts.size());
         out.put("triples", rows);
@@ -405,18 +428,26 @@ public class GraphRagService {
             names.put(String.valueOf(t.get("subjectId")), String.valueOf(t.get("subject")));
             names.put(String.valueOf(t.get("objectId")), String.valueOf(t.get("object")));
         }
+        Map<String, String> types = new HashMap<>();
+        if (!degree.isEmpty()) {
+            for (GraphEntity e : entityMapper.selectBatchIds(degree.keySet())) {
+                types.put(e.getId(), e.getType() == null || e.getType().isBlank() ? "其他" : e.getType());
+            }
+        }
         List<Map<String, Object>> nodes = new ArrayList<>();
         for (Map.Entry<String, Integer> en : degree.entrySet()) {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("id", en.getKey());
             m.put("name", names.getOrDefault(en.getKey(), en.getKey()));
             m.put("degree", en.getValue());
+            m.put("type", types.getOrDefault(en.getKey(), "其他"));
             nodes.add(m);
         }
         // 中心节点排最前（渲染层可据此给中心实体做视觉强调）
         nodes.sort((a, b) -> centerId.equals(a.get("id")) ? -1 : centerId.equals(b.get("id")) ? 1 : 0);
         Map<String, Object> out = new LinkedHashMap<>();
-        out.put("center", Map.of("id", centerId, "name", names.getOrDefault(centerId, centerId)));
+        out.put("center", Map.of("id", centerId, "name", names.getOrDefault(centerId, centerId),
+                "type", types.getOrDefault(centerId, "其他")));
         out.put("nodes", nodes);
         out.put("edges", new ArrayList<>(edgeByKey.values()));
         return out;
@@ -574,7 +605,9 @@ public class GraphRagService {
                 .append("1. 只抽取原文明确陈述的事实关系，禁止推断、补全或使用外部知识；\n")
                 .append("2. 每个片段最多 ").append(maxPerChunk).append(" 条；没有可抽取的关系就输出空数组；\n")
                 .append("3. 主体/客体是简短实体名（公司/人名/地名/产品/条款编号等），关系是一个短语（如 母公司、位于、成立于、适用范围）；\n")
-                .append("4. 严格输出 JSON 数组，不要输出任何其它文字：[{\"chunk\":片段序号,\"s\":\"主体\",\"p\":\"关系\",\"o\":\"客体\"}]\n\n");
+                .append("4. 同时给出主体/客体类型 st/ot，只能从「人物/机构/法规/概念/产品/地点/时间/其他」中选，无法判断用「其他」；\n")
+                .append("5. 严格输出 JSON 数组，不要输出任何其它文字：")
+                .append("[{\"chunk\":片段序号,\"s\":\"主体\",\"st\":\"机构\",\"p\":\"关系\",\"o\":\"客体\",\"ot\":\"概念\"}]\n\n");
         for (int i = 0; i < batch.size(); i++) {
             Knowledge c = batch.get(i);
             String content = c.getContent() == null ? "" : c.getContent();
@@ -631,7 +664,30 @@ public class GraphRagService {
     }
 
     /** 抽取结果 record（静态可测：JSON 解析与每块配额在此收口） */
-    public record RawTriple(int chunkIndex, String subject, String predicate, String object) {}
+    public record RawTriple(int chunkIndex, String subject, String subjectType,
+                            String predicate, String object, String objectType) {}
+
+    /** 实体类型白名单：与抽取 prompt、前端图例同口径 */
+    private static final java.util.Set<String> ENTITY_TYPES = java.util.Set.of(
+            "人物", "机构", "法规", "概念", "产品", "地点", "时间", "其他");
+
+    /** 模型可能给近义类型（组织/公司/法律/系统…）：收敛到 8 个标准类，判断不了归「其他」 */
+    static String canonicalType(String raw) {
+        String t = str(raw);
+        if (t.isEmpty()) return "其他";
+        if (ENTITY_TYPES.contains(t)) return t;
+        if (t.contains("人") || t.contains("角色")) return "人物";
+        if (t.contains("机构") || t.contains("组织") || t.contains("公司") || t.contains("单位")
+                || t.contains("部门") || t.contains("团体")) return "机构";
+        if (t.contains("法") || t.contains("条例") || t.contains("条款") || t.contains("制度")) return "法规";
+        if (t.contains("产品") || t.contains("系统") || t.contains("软件") || t.contains("功能")
+                || t.contains("组件") || t.contains("模块")) return "产品";
+        if (t.contains("地点") || t.contains("地区") || t.contains("城市") || t.contains("国家")
+                || t.contains("地址")) return "地点";
+        if (t.contains("时间") || t.contains("日期") || t.contains("年份")) return "时间";
+        if (t.contains("概念") || t.contains("术语") || t.contains("指标") || t.contains("属性")) return "概念";
+        return "其他";
+    }
 
     /**
      * 解析 LLM 输出为三元组：容忍 markdown 代码围栏；每块超出 maxPerChunk 的条目丢弃；
@@ -658,7 +714,8 @@ public class GraphRagService {
                 if (s.length() > MAX_ENTITY_CHARS || o.length() > MAX_ENTITY_CHARS || p.length() > MAX_PREDICATE_CHARS) continue;
                 int used = perChunk.merge(chunkIndex, 1, Integer::sum);
                 if (used > maxPerChunk) continue;   // 每块配额：超出的直接丢（成本闸）
-                out.add(new RawTriple(chunkIndex, s, p, o));
+                out.add(new RawTriple(chunkIndex, s, canonicalType(str(m.get("st"))),
+                        p, o, canonicalType(str(m.get("ot")))));
             }
         } catch (Exception e) {
             return List.of();   // JSON 解析失败：整批按失败记账
@@ -673,8 +730,8 @@ public class GraphRagService {
     /** 实体 upsert + 三元组入库（唯一键幂等），返回是否新增成功 */
     private boolean saveTriple(String kbId, Knowledge chunk, RawTriple t) {
         try {
-            GraphEntity subject = upsertEntity(kbId, t.subject());
-            GraphEntity object = upsertEntity(kbId, t.object());
+            GraphEntity subject = upsertEntity(kbId, t.subject(), t.subjectType());
+            GraphEntity object = upsertEntity(kbId, t.object(), t.objectType());
             GraphTriple triple = new GraphTriple();
             triple.setId(UUID.randomUUID().toString());
             triple.setKbId(kbId);
@@ -694,15 +751,21 @@ public class GraphRagService {
         }
     }
 
-    /** 实体 upsert：归一命中复用（mention+1，新写法进 aliases），否则新建 */
-    private GraphEntity upsertEntity(String kbId, String rawName) {
+    /** 实体 upsert：归一命中复用（mention+1，新写法进 aliases），否则新建；类型可补全但不被泛化覆盖 */
+    private GraphEntity upsertEntity(String kbId, String rawName, String rawType) {
         String norm = normalize(rawName);
         if (norm.isEmpty()) throw new BizException("实体归一后为空");
+        String type = canonicalType(rawType);
         GraphEntity existing = entityMapper.selectOne(new LambdaQueryWrapper<GraphEntity>()
                 .eq(GraphEntity::getKbId, kbId).eq(GraphEntity::getNameNorm, norm).last("LIMIT 1"));
         if (existing != null) {
             existing.setMentionCount((existing.getMentionCount() == null ? 0 : existing.getMentionCount()) + 1);
             if (!existing.getName().equals(rawName)) appendAlias(existing, rawName);
+            // 存量实体可能没有类型：后续抽取给出明确类型时补上；已有明确类型不被「其他」覆盖
+            String oldType = existing.getType();
+            if ((oldType == null || oldType.isBlank() || "其他".equals(oldType)) && !"其他".equals(type)) {
+                existing.setType(type);
+            }
             entityMapper.updateById(existing);
             return existing;
         }
@@ -711,6 +774,7 @@ public class GraphRagService {
         e.setKbId(kbId);
         e.setName(rawName.length() > 128 ? rawName.substring(0, 128) : rawName);
         e.setNameNorm(norm.length() > 128 ? norm.substring(0, 128) : norm);
+        e.setType(type);
         e.setMentionCount(1);
         e.setCreateTime(LocalDateTime.now());
         try {

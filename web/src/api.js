@@ -2213,6 +2213,8 @@ export const downloadSandboxFile = async (sessionId, path, filename) => {
 
 // ---------- GraphRAG（知识图谱；管理员） ----------
 export const graphBuild = kbId => request(`/graph/${kbId}/build`, { method: 'POST' })
+/** 补全实体类型：清空抽取账本后强制重建，会重新消耗抽取模型额度 */
+export const graphRebuildTypes = kbId => request(`/graph/${kbId}/types/rebuild`, { method: 'POST' })
 export const graphStatus = kbId => request(`/graph/${kbId}/status`)
 export const graphTriples = (kbId, page = 1, size = 20) => request(`/graph/${kbId}/triples?page=${page}&size=${size}`)
 export const graphClear = kbId => request(`/graph/${kbId}`, { method: 'DELETE' })
