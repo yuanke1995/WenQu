@@ -57,6 +57,16 @@ public final class AgentxFrameworkToolGate implements MiddlewareBase {
                     + "请改用 read_file / grep_files / glob_files / list_files 获取信息，"
                     + "并直接基于已有信息作答；确实需要写入时，请提示用户把权限档位调到可写。";
 
+    /**
+     * 按名停用时的回话：工具是被本轮停用名单（平台停用、智能体黑名单、开放接入通道只开问答）挡下的，
+     * 与档位无关——此时档位可能本来就是可写的，套 {@link #DENY_TEMPLATE} 会说出
+     * 「沙盒目录可写却只许读」这种自相矛盾的话，还引导用户去调一个调了也没用的档位。
+     */
+    private static final String DENY_DENYLIST =
+            "「%s」已被本轮的停用工具名单挡下（平台停用名单、智能体黑名单，或开放接入通道只开放问答），"
+                    + "本轮不执行。请改用仍然可用的工具，或直接基于已有信息作答；"
+                    + "确实需要这项能力时，请提示用户检查工具停用配置，或改用完整客户端运行该智能体。";
+
     /** 子智能体/咨询轮专用拒绝语：那一轮是只读的，别把内部推演写进用户长期记忆。 */
     private static final String DENY_MEMORY_WRITE =
             "当前是子智能体只读轮，不能写长期记忆（memory_save 本轮不执行）。"
@@ -182,14 +192,6 @@ public final class AgentxFrameworkToolGate implements MiddlewareBase {
             return next.apply(input);
         }
 
-        String message;
-        if (completionCheck) {
-            message = String.format(DENY_COMPLETION_CHECK, denied.get(0).getName());
-        } else if (denied.stream().allMatch(c -> "memory_save".equals(c.getName()))) {
-            message = denyMemoryWrites ? DENY_MEMORY_WRITE : DENY_MEMORY_READONLY;
-        } else {
-            message = String.format(DENY_TEMPLATE, policy.sandboxMode().label(), denied.get(0).getName());
-        }
         log.info("[agentx] 工具闸拒绝 turn={} completionCheck={} mode={} tools={}",
                 turnLabel, completionCheck, policy.sandboxMode().code(),
                 denied.stream().map(ToolUseBlock::getName).toList());
@@ -199,16 +201,22 @@ public final class AgentxFrameworkToolGate implements MiddlewareBase {
             // 被拒的也要有卡：status=error 让界面显示成红色失败，而不是「调了个工具，什么都没发生」。
             // 拒绝理由一并落库（只发帧不落库的话，刷新后这张红叉卡就说不清为什么红）
             for (ToolUseBlock call : denied) {
-                rec.toolCall(call.getName(), "error", argsOf(call), 0L, System.currentTimeMillis(), 0L, message);
+                rec.toolCall(call.getName(), "error", argsOf(call), 0L, System.currentTimeMillis(), 0L,
+                        denyMessage(policy, call.getName()));
             }
         }
 
         AgentState state = RuntimeContext.resolveAgentState(ctx, agent);
+        // 被拒的工具就地退出工具表：模型下一步不该再看见它（见 hideFromToolSurface）
+        for (ToolUseBlock call : denied) {
+            hideFromToolSurface(agent, state, call.getName());
+        }
         String replyId = state == null ? null : state.getReplyId();
         Flux<AgentEvent> deniedFlux = Flux.defer(() -> {
             List<AgentEvent> events = new ArrayList<>();
             String agentName = state == null ? null : agent.getName();
             for (ToolUseBlock call : denied) {
+                String message = denyMessage(policy, call.getName());
                 ToolResultBlock result = ToolResultBlock.text(message)
                         .withIdAndName(call.getId(), call.getName())
                         .withState(ToolResultState.DENIED);
@@ -269,6 +277,44 @@ public final class AgentxFrameworkToolGate implements MiddlewareBase {
         }
         if (policy.sandboxMode() == SandboxMode.READ_ONLY) return readOnly(agent, toolName);
         return true;
+    }
+
+    /**
+     * 拒绝回话按拦截原因选文案：档位只读说「把档位调到可写」，按名停用说「查停用配置/换完整客户端」——
+     * 两者的出路不同，混用一条模板会让界面出现「沙盒目录可写却只许读」这种自相矛盾的读数。
+     */
+    private String denyMessage(ExecutionPolicy policy, String toolName) {
+        if (completionCheck) return String.format(DENY_COMPLETION_CHECK, toolName);
+        if (policy.denies(toolName)) return String.format(DENY_DENYLIST, toolName);
+        if ("memory_save".equals(toolName)) return denyMemoryWrites ? DENY_MEMORY_WRITE : DENY_MEMORY_READONLY;
+        return String.format(DENY_TEMPLATE, policy.sandboxMode().label(), toolName);
+    }
+
+    /**
+     * 被拒的工具就地退出模型的工具表。
+     *
+     * <p>框架生成下发 schema 时只对有组的工具做激活集过滤，<b>无组工具恒可见</b>。
+     * 框架自带的沙盒文件/命令工具在 build 之后才进工具表，错过轮首 {@code FrameworkSessions#applyToolSurface}
+     * 那一次就没人给它们建组——模型每一步都看得见、调了才被本闸拒掉，白烧调用。
+     * 这里按 {@code applyToolSurface} 的同一套组名口径补建一把一组并移出激活集：
+     * 框架每次模型调用都现读活状态里的激活集，下一步起的 schema 里就没有这把工具了。
+     * 只改活状态、不落库：下一轮开轮的工具面写入会按档位与名单重新裁决并持久化，不该在这里抢跑。
+     */
+    private void hideFromToolSurface(Agent agent, AgentState state, String toolName) {
+        try {
+            io.agentscope.core.tool.Toolkit toolkit = agent == null ? null : agent.getToolkit();
+            if (toolkit == null || state == null || toolName == null || toolName.isBlank()) return;
+            if (toolkit.getTool(toolName) == null) return;
+            if (toolkit.getToolGroup(toolName) == null) {
+                toolkit.createToolGroup(toolName, "wenqu:" + toolName, true,
+                        io.agentscope.core.tool.ToolGroupScope.EXTERNAL);
+                toolkit.addToolToGroup(toolName, toolName);
+            }
+            state.getToolContext().replaceActivatedGroups(java.util.List.of(toolName), java.util.List.of());
+        } catch (RuntimeException e) {
+            // 自愈失败不影响这次拒绝本身：闸照样挡，下一轮开轮的工具面写入会补上
+            log.info("[agentx] 拒绝后工具面自愈未生效 turn={} tool={}: {}", turnLabel, toolName, e.toString());
+        }
     }
 
     /**
