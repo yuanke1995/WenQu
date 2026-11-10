@@ -3,11 +3,17 @@
     <!-- ==================== 列表视图 ==================== -->
     <template v-if="!editing">
       <div class="app-page-head">
-        <!-- 页名与 Tab 名重复，标题仅保留给读屏器（sr-only），视觉上从统计起头 -->
+        <!-- 页名与 Tab 名重复，标题仅保留给读屏器（sr-only），视觉上从筛选起头。
+             类型分段器取代「共 N 个」纯计数：计数内嵌在分段里，筛选与清点同一动作完成 -->
         <h1 class="app-page-title sr-only">智能体</h1>
-        <span class="ap-count">共 <b>{{ agents.length }}</b> 个</span>
+        <div class="ap-filter" role="group" aria-label="按类型筛选">
+          <button v-for="f in FILTERS" :key="f.key" type="button" :class="{ on: filter === f.key }"
+                  @click="filter = f.key">{{ f.label }} {{ typeCounts[f.key] }}</button>
+        </div>
+        <a-select v-model:value="sortBy" size="small" class="ap-sort" aria-label="排序方式"
+                  :options="[{ value: 'updated', label: '按更新时间' }, { value: 'name', label: '按名称' }]" />
         <div class="ap-head-r">
-          <a-input v-model:value="keyword" class="ap-search" size="small" allow-clear placeholder="搜索名称或描述">
+          <a-input v-model:value="keyword" class="ap-search" size="small" allow-clear placeholder="搜索名称、描述或能力">
             <template #prefix><search-outlined class="ap-search-ic" /></template>
           </a-input>
           <a-tooltip title="刷新">
@@ -16,12 +22,13 @@
           <a-tooltip title="委派编排视图：主智能体 → 子智能体的委派关系图">
             <button class="app-icon-btn" :disabled="loading || !agents.length" aria-label="委派编排视图" @click="topoOpen = true"><apartment-outlined /></button>
           </a-tooltip>
-          <button class="app-btn small" @click="openCreate">新建智能体</button>
+          <button class="app-btn small" @click="openCreateEntry">新建智能体</button>
           <!-- 批量区（分隔线独立成区，不与搜索/新建挤作一堆）。默认收起，点「批量管理」进入批量模式；
                开关放最右：进出模式自身位置不动；内置智能体不可删，不进勾选范围 -->
           <div v-if="agents.length" class="batch-group">
             <template v-if="batchMode">
               <a-checkbox :checked="allChecked" :indeterminate="someChecked" @change="toggleAll">全选</a-checkbox>
+              <button class="app-btn ghost small" :disabled="!selected.length || batchBusy" @click="doBatchExport">导出</button>
               <button class="app-btn ghost small batch-del" :disabled="!selected.length || batchBusy" @click="doBatchDelete">删除</button>
             </template>
             <button class="app-btn ghost small" :class="{ 'batch-on': batchMode }" @click="toggleBatchMode">{{ batchMode ? '退出管理' : '批量管理' }}</button>
@@ -30,7 +37,13 @@
       </div>
 
       <div class="app-page-body">
-        <div v-if="loading" class="ap-empty"><a-spin size="small" /></div>
+        <!-- 加载态用骨架屏占住卡片网格：整页 spinner 会让列表在慢网络下「闪成空白」，
+             骨架保持了版式，用户视线不用重新找位置 -->
+        <div v-if="loading" class="ap-grid" aria-busy="true" aria-label="智能体列表加载中">
+          <div v-for="i in 6" :key="'sk' + i" class="ap-card ap-skel">
+            <a-skeleton active :avatar="{ shape: 'square', size: 32 }" :paragraph="{ rows: 2 }" :title="false" />
+          </div>
+        </div>
 
         <div v-else-if="!agents.length" class="ap-empty">
           <div class="ap-empty-t">还没有智能体</div>
@@ -38,7 +51,7 @@
             一个智能体就是一组预设：写好角色提示词、圈定知识库范围、按需开启能力；模型在对话页选择。
             对话时在输入框上方切换，这一轮问答就按它的配置走；没配置的维度沿用系统设置。
           </div>
-          <button class="app-btn small" @click="openCreate">新建第一个智能体</button>
+          <button class="app-btn small" @click="openCreateEntry">新建第一个智能体</button>
         </div>
 
         <div v-else-if="!sections.length" class="ap-empty">
@@ -58,45 +71,63 @@
             </div>
             <div class="ap-grid">
               <!-- 卡片点击直达配置：仅可管理的智能体（不可管理时点卡片不做任何事，
-                   否则弹出的编辑框保存必被后端拒绝，是"点了报错"的死路） -->
+                   否则弹出的编辑框保存必被后端拒绝，是"点了报错"的死路）。
+                   信息架构：徽章与状态点说身份/发布态 → 一行描述 → meta 行说「资料/能力/委派/更新」
+                   → 操作收敛为 试一试 + 配置 + ⋯ 菜单（低频与破坏性动作进菜单） -->
               <article v-for="a in sec.members" :key="sec.key + '-' + a.id" class="ap-card"
                        :class="{ 'ap-card-readonly': !a.manageable }" @click="a.manageable && openEdit(a)">
+                <!-- 状态点：绿=公开链接已发布，灰=未发布。颜色之外配 title 文字，不单靠颜色编码 -->
+                <span v-if="showPubDot(a)" class="ap-dot" :class="a.published === 1 ? 'pub' : 'off'"
+                      :title="a.published === 1 ? '公开链接已发布：拿到链接的人可免登录对话，点 ⋯ → 发布管理 查看链接' : '公开链接未发布'"></span>
                 <div class="ap-card-head">
                   <a-checkbox v-if="batchMode && !isBuiltin(a) && !isPreset(a)" class="ap-check" :checked="selected.includes(a.id)"
                               @click.stop @change="toggleSelect(a.id)" />
                   <AgentAvatar :agent="a" :size="24" />
                   <span class="ap-name" :title="a.name">{{ a.name }}</span>
-                  <span v-if="isDefault(a) || isBuiltin(a) || isPreset(a)" class="ap-card-tags">
-                    <span v-if="isDefault(a)" class="ap-tag-default">默认</span>
-                    <span v-if="isBuiltin(a)" class="ap-tag-builtin" title="系统默认智能体：全员可用，仅管理员可配置">内置</span>
-                    <span v-else-if="isPreset(a)" class="ap-tag-builtin" title="平台内置助手：仅管理员可见可配置">内置</span>
+                  <span v-if="isDefault(a) || isBuiltin(a) || isPreset(a) || isSub(a)" class="ap-card-tags">
+                    <span v-if="isDefault(a)" class="ap-tag-default" title="默认智能体：对话页预选">★ 默认</span>
+                    <span v-if="isBuiltin(a)" class="ap-tag-builtin" title="系统默认智能体：全员可用，仅管理员可配置"><lock-outlined />内置</span>
+                    <span v-else-if="isPreset(a)" class="ap-tag-builtin" title="平台内置助手：仅管理员可见可配置"><lock-outlined />内置</span>
+                    <span v-else-if="isSub(a)" class="ap-tag-sub">子智能体</span>
                   </span>
                 </div>
                 <p class="ap-desc" :title="a.description || ''">{{ a.description || '未填写描述' }}</p>
-                <div class="ap-chips">
-                  <span class="ap-chip">{{ scopeText(a) }}</span>
+                <div class="ap-meta">
+                  <span class="ap-meta-i" title="资料范围"><database-outlined />{{ scopeText(a) }}</span>
                   <!-- 绑定了工作流的智能体，回答由工作流产出（卡片上一眼可见） -->
-                  <span v-if="a.workflowId" class="ap-chip ap-chip-on" :title="'回答由工作流产出：' + workflowName(a.workflowId)">
-                    工作流 {{ workflowName(a.workflowId) }}
+                  <span v-if="a.workflowId" class="ap-meta-i is-accent" :title="'回答由工作流产出：' + workflowName(a.workflowId)">
+                    <partition-outlined />工作流 {{ workflowName(a.workflowId) }}
                   </span>
-                  <!-- 公开发布中：弹窗里改态后同步本行，卡片即时反映，不再"发布完毫无感知" -->
-                  <span v-if="a.published === 1" class="ap-chip ap-chip-on"
-                        title="公开发布中：拿到链接的人可免登录与该智能体对话，点「发布」可管理链接">已发布</span>
-                  <span v-for="c in capsForcedOn(a)" :key="c" class="ap-chip ap-chip-on">{{ c }}</span>
+                  <span v-else-if="capSummary(a)" class="ap-meta-i" :title="capSummaryTitle(a)"><control-outlined />{{ capSummary(a) }}</span>
+                  <span v-if="delegText(a)" class="ap-meta-i ap-meta-link" title="在委派编排视图中查看完整链路" @click.stop="topoOpen = true">
+                    <apartment-outlined />{{ delegText(a) }}
+                  </span>
+                  <span v-if="updatedAgo(a)" class="ap-meta-i ap-meta-time" :title="'配置最后保存于 ' + fmtTime(a.updateTime || a.createTime)"><history-outlined />{{ updatedAgo(a) }}</span>
                 </div>
                 <div class="ap-card-foot">
                   <!-- 管理入口按后端回填的 manageable 收起：不可管理的智能体不给"点了报错"的死路
-                       （写路径后端还会按归属二次判定） -->
+                       （写路径后端还会按归属二次判定）。
+                       「试一试」直达对话并预选该智能体——配置完立刻验证，不用去对话页手动找人；
+                       子智能体不参与直接对话，不给这个入口 -->
+                  <button v-if="!isSub(a)" class="app-btn small ap-btn-try" @click.stop="tryAgent(a)">试一试</button>
                   <template v-if="a.manageable">
-                    <button class="app-link-btn" @click.stop="openEdit(a)">配置</button>
-                    <button class="app-link-btn" @click.stop="openPublish(a)">发布</button>
-                    <!-- 「设为默认」是全局动作（影响所有人下拉的预选），后端仅管理员放行，故对普通用户不显示；
-                         平台预置仅管理员可见，不能设为全员默认 -->
-                    <button v-if="!isSub(a) && !isDefault(a) && isAdmin && !isPreset(a)" class="app-link-btn" @click.stop="doSetDefault(a.id)">设为默认</button>
-                    <!-- 内置智能体不提供删除入口（后端也会拒绝），避免出现"点了报错"的死路；内置以卡片右上角「内置」标记区分 -->
-                    <a-popconfirm v-if="!isBuiltin(a) && !isPreset(a)" title="删除该智能体？对话页将不再可选" ok-text="删除" cancel-text="取消" @confirm="doDelete(a.id)">
-                      <button class="app-link-btn danger" @click.stop>删除</button>
-                    </a-popconfirm>
+                    <button class="app-btn ghost small" @click.stop="openEdit(a)">配置</button>
+                    <a-dropdown placement="bottomRight" :trigger="['click']">
+                      <button class="ap-more-btn" aria-label="更多操作" @click.stop><more-outlined /></button>
+                      <template #overlay>
+                        <a-menu>
+                          <a-menu-item key="pub" @click="openPublish(a)">发布管理</a-menu-item>
+                          <a-menu-item key="copy" @click="copyAgent(a)">复制</a-menu-item>
+                          <a-menu-item key="export" @click="exportAgent(a)">导出 JSON</a-menu-item>
+                          <a-menu-item key="ver" @click="openEdit(a); openVersions()">历史版本</a-menu-item>
+                          <!-- 「设为默认」是全局动作（影响所有人下拉的预选），后端仅管理员放行；
+                               平台预置仅管理员可见，不能设为全员默认 -->
+                          <a-menu-item v-if="canSetDefault(a)" key="def" @click="doSetDefault(a.id)">设为默认</a-menu-item>
+                          <!-- 内置智能体不提供删除入口（后端也会拒绝），避免出现"点了报错"的死路 -->
+                          <a-menu-item v-if="!isBuiltin(a) && !isPreset(a)" key="del" danger @click="confirmDelete(a)">删除</a-menu-item>
+                        </a-menu>
+                      </template>
+                    </a-dropdown>
                   </template>
                   <span v-else class="ap-readonly-hint">{{ isBuiltin(a) || isPreset(a) ? '系统内置 · 管理员可配置' : '仅可使用' }}</span>
                 </div>
@@ -770,6 +801,29 @@
          给的是内置 + 名下那两份，与下拉看到的是同一份清单 -->
     <SkillContentModal :open="!!skillDoc" :name="skillDoc" :entry="skillDocEntry"
                        @update:open="v => { if (!v) skillDoc = '' }" />
+
+    <!-- 新建智能体：模板先行。内置助手与自己名下的智能体就是现成模板——
+         复制带出提示词/资料范围/能力配置，创建后均可修改；导入吃「导出 JSON」生成的文件 -->
+    <a-modal v-model:open="createOpen" title="新建智能体" :width="680" :footer="null" class="ap-create-modal" destroy-on-close>
+      <p class="ap-block-hint" style="margin-top:0">
+        从一个现有智能体复制起步，或从空白创建。复制会带出名称、描述、提示词、资料范围与能力配置，创建后均可修改。
+      </p>
+      <div class="ap-tpl-grid">
+        <button class="ap-tpl" type="button" @click="startBlank">
+          <span class="ap-tpl-ic"><plus-outlined /></span>
+          <b>空白创建</b><small>从零配置提示词、能力与资料范围</small>
+        </button>
+        <button v-for="a in copyableAgents" :key="a.id" class="ap-tpl" type="button" @click="copyAgent(a)">
+          <span class="ap-tpl-ic"><AgentAvatar :agent="a" :size="24" /></span>
+          <b>{{ a.name }}</b><small>{{ a.description || '未填写描述' }}</small>
+        </button>
+      </div>
+      <div class="ap-tpl-foot">
+        <button class="app-btn ghost small" type="button" @click="pickImportFile"><import-outlined /> 导入 JSON 配置</button>
+        <span class="ap-hint">导入「导出 JSON」或「批量管理 → 导出」生成的文件；载入后可先检查再保存</span>
+      </div>
+      <input ref="importInput" type="file" accept="application/json,.json" class="ap-import-input" @change="onImportFile" />
+    </a-modal>
   </div>
 </template>
 
@@ -783,7 +837,8 @@ import {
   PartitionOutlined, GlobalOutlined, HistoryOutlined, DownOutlined,
   AimOutlined,
   SettingOutlined, EditOutlined, ExperimentOutlined,
-  CopyOutlined, ExportOutlined, LinkOutlined, ExclamationCircleOutlined
+  CopyOutlined, ExportOutlined, LinkOutlined, ExclamationCircleOutlined,
+  LockOutlined, MoreOutlined, PlusOutlined, ImportOutlined
 } from '@ant-design/icons-vue'
 import { listAgents, createAgent, updateAgent, deleteAgent, batchDeleteAgents, setAgentDefault, listKnowledgeBases,
          listAvailableSkills, getMcpStatus, listSubAgents, getToolCatalog, getPermissionPresets,
@@ -1188,22 +1243,59 @@ const isPreset = a => a.createdBy === 'system' && !isBuiltin(a)
 const isSub = a => a.isSubagent === 1 || a.isSubagent === true
 /** 逗号串 → 数组（具体项） */
 const splitList = v => (v ? String(v).split(',').filter(Boolean) : [])
+/** 搜索覆盖卡片上能看到的一切维度：名称、描述、能力摘要、资料范围、工作流名、MCP/技能/知识库名 */
 const matchKw = a => {
   const kw = keyword.value.trim().toLowerCase()
   if (!kw) return true
-  return String(a.name || '').toLowerCase().includes(kw) || String(a.description || '').toLowerCase().includes(kw)
+  if (String(a.name || '').toLowerCase().includes(kw) || String(a.description || '').toLowerCase().includes(kw)) return true
+  const hay = [
+    capSummary(a), scopeText(a),
+    a.workflowId ? workflowName(a.workflowId) : '',
+    ...splitList(a.mcps).map(r => String(r).split('/').pop()),
+    ...splitList(a.skills).map(r => String(r).split('/').pop()),
+    ...splitList(a.knowledgeBaseIds).map(id => kbOptions.value.find(k => String(k.value) === String(id))?.label || '')
+  ].join(' ').toLowerCase()
+  return hay.includes(kw)
+}
+
+// ==================== 列表筛选与排序 ====================
+const FILTERS = [
+  { key: 'all', label: '全部' },
+  { key: 'main', label: '主智能体' },
+  { key: 'sub', label: '子智能体' },
+  { key: 'builtin', label: '内置' }
+]
+const filter = ref('all')
+const sortBy = ref('updated')
+const matchFilter = a => filter.value === 'all'
+  || (filter.value === 'main' && !isSub(a))
+  || (filter.value === 'sub' && isSub(a))
+  || (filter.value === 'builtin' && (isBuiltin(a) || isPreset(a)))
+/** 分段上的计数按全量算（不随搜索缩水）：它是「这类有几个」的清点，不是搜索结果统计 */
+const typeCounts = computed(() => ({
+  all: agents.value.length,
+  main: agents.value.filter(a => !isSub(a)).length,
+  sub: agents.value.filter(a => isSub(a)).length,
+  builtin: agents.value.filter(a => isBuiltin(a) || isPreset(a)).length
+}))
+const sortAgents = list => {
+  const arr = list.slice()
+  if (sortBy.value === 'name') arr.sort((x, y) => String(x.name || '').localeCompare(String(y.name || ''), 'zh'))
+  else arr.sort((x, y) => String(y.updateTime || y.createTime || '').localeCompare(String(x.updateTime || x.createTime || '')))
+  return arr
 }
 /**
  * 列表分组：主智能体一组，子智能体单独一组，互不混排。
- * 搜索关键词同时作用于所有组，过滤后为空的组不显示。
+ * 类型筛选 + 搜索同时作用于所有组，过滤后为空的组不显示。
  */
 const sections = computed(() => {
+  const pool = agents.value.filter(a => matchFilter(a) && matchKw(a))
   const secs = []
-  const mains = agents.value.filter(a => !isSub(a) && matchKw(a))
+  const mains = sortAgents(pool.filter(a => !isSub(a)))
   if (mains.length) {
     secs.push({ key: 'main', title: '主智能体', hint: '可在对话页直接选用', members: mains })
   }
-  const subs = agents.value.filter(a => isSub(a) && matchKw(a))
+  const subs = sortAgents(pool.filter(isSub))
   if (subs.length) {
     secs.push({ key: 'sub', title: '子智能体', hint: '不直接参与对话，供主智能体并行委派', members: subs })
   }
@@ -1216,6 +1308,155 @@ const scopeText = a => {
   const n = String(a.knowledgeBaseIds || '').split(',').filter(Boolean).length
   if (!n) return '全部知识库'
   return n === 1 ? '限 1 个知识库' : `限 ${n} 个知识库`
+}
+
+// ==================== 卡片 meta 行（资料 / 能力 / 委派 / 更新一眼可辨） ====================
+/**
+ * 能力摘要：只列显式开启的项（跟随系统的不占位置）；MCP 与技能给数量。
+ * 一项都没有覆盖时明说「能力跟随系统」——空白会被读成「没能力」，而不是「全跟随」。
+ */
+const capSummaryParts = a => {
+  const parts = []
+  for (const c of CAPS) {
+    if (a[c.key] !== 1) continue
+    if (c.key === 'toolMcp') {
+      const n = splitList(a.mcps).length
+      if (n) parts.push(`MCP ${n}`)
+    } else if (c.key === 'toolSkill') {
+      const n = splitList(a.skills).length
+      if (n) parts.push(`技能 ${n}`)
+    } else parts.push(c.label)
+  }
+  if (a.goalEnabled === 0) parts.push('目标模式关')
+  return parts
+}
+const capSummary = a => {
+  if (a.workflowId) return ''
+  const parts = capSummaryParts(a)
+  if (!parts.length) return '能力跟随系统'
+  return parts.length > 3 ? parts.slice(0, 3).join(' · ') + ` 等 ${parts.length} 项` : parts.join(' · ')
+}
+const capSummaryTitle = a => {
+  const parts = capSummaryParts(a)
+  return parts.length ? '显式开启的能力：' + parts.join('、') : '能力全部跟随系统默认'
+}
+/** 委派关系外显：主卡说委派了几个，子卡说被谁委派（数据来自已加载列表，与拓扑视图同源） */
+const parentsMap = computed(() => {
+  const map = {}
+  for (const m of agents.value) {
+    if (isSub(m)) continue
+    for (const sid of splitList(m.subAgentIds)) (map[String(sid)] = map[String(sid)] || []).push(m.name || m.id)
+  }
+  return map
+})
+const delegText = a => {
+  if (a.workflowId) return ''
+  if (isSub(a)) {
+    const ps = parentsMap.value[String(a.id)] || []
+    if (!ps.length) return '暂无人委派'
+    return ps.length === 1 ? `被「${ps[0]}」委派` : `被「${ps[0]}」等 ${ps.length} 位委派`
+  }
+  const n = splitList(a.subAgentIds).length
+  return n ? `委派 ${n} 个子智能体` : ''
+}
+/** 相对时间：卡片只回答「多久没动过」，精确时刻在 title 悬浮里 */
+const fmtAgo = t => {
+  if (!t) return ''
+  const d = new Date(String(t).replace(' ', 'T'))
+  if (Number.isNaN(d.getTime())) return ''
+  const s = (Date.now() - d.getTime()) / 1000
+  if (s < 60) return '刚刚'
+  if (s < 3600) return `${Math.floor(s / 60)} 分钟前`
+  if (s < 86400) return `${Math.floor(s / 3600)} 小时前`
+  if (s < 86400 * 30) return `${Math.floor(s / 86400)} 天前`
+  if (s < 86400 * 365) return `${Math.floor(s / (86400 * 30))} 个月前`
+  return `${Math.floor(s / (86400 * 365))} 年前`
+}
+const updatedAgo = a => {
+  const r = fmtAgo(a.updateTime || a.createTime)
+  return r ? `${r}更新` : ''
+}
+/** 状态点只给「发布与否在自己手里」的卡片：子智能体不参与直接对话，发布语义不适用 */
+const showPubDot = a => a.manageable && !isSub(a)
+const canSetDefault = a => !isSub(a) && !isDefault(a) && isAdmin.value && !isPreset(a)
+/** 试一试：直达对话页并预选该智能体（对话页消费 ?agent= 后摘掉参数） */
+const tryAgent = a => router.push({ path: '/chat', query: { agent: String(a.id) } })
+
+// ==================== 复制 / 导出 / 导入（前端整包搬运，创建仍走既有保存链路） ====================
+/** 导出只带配置面字段：id/发布态/管理权等运行时信息带出去只会误导导入方 */
+const EXPORT_KEYS = ['name', 'icon', 'description', 'systemPrompt', 'knowledgeBaseIds', 'knowledgeTags', 'knowledgeDisabled',
+  'toolKnowledge', 'toolBuiltin', 'toolArtifact', 'toolWebsearch', 'toolHttp', 'httpTools',
+  'toolWorkflow', 'workflowTools', 'toolMcp', 'mcps', 'toolSkill', 'skills',
+  'goalEnabled', 'toolApprovalMode', 'permissionPreset', 'toolDeny', 'maxToolSteps', 'memoryMode',
+  'callbackUrl', 'queryParams', 'isSubagent', 'subAgentIds', 'subagentMode', 'workflowId']
+const agentExportConfig = a => Object.fromEntries(EXPORT_KEYS.filter(k => a[k] !== undefined).map(k => [k, a[k]]))
+const downloadJson = (obj, filename) => {
+  const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const el = document.createElement('a')
+  el.href = url
+  el.download = filename
+  el.click()
+  URL.revokeObjectURL(url)
+}
+const exportAgent = a => downloadJson({ wenquAgentExport: 1, exportedAt: new Date().toISOString(), config: agentExportConfig(a) },
+  `智能体-${a.name || a.id}.json`)
+const doBatchExport = () => {
+  const rows = agents.value.filter(x => selected.value.includes(x.id))
+  if (!rows.length) return
+  downloadJson({ wenquAgentExport: 1, exportedAt: new Date().toISOString(),
+    agents: rows.map(a => agentExportConfig(a)) }, '智能体配置导出.json')
+  message.success(`已导出 ${rows.length} 个智能体配置`)
+}
+/** 复制 = 以该智能体的配置开一张新建表单：保存即创建，公开链接与默认位不随副本走 */
+const copyAgent = a => {
+  createOpen.value = false
+  openEdit(a)
+  editingId.value = ''
+  editingUpdatedAt.value = ''
+  form.value.name = `${a.name || '未命名'}-副本`
+  form.value.isDefault = false
+  // 内置标记驱动表单的名称/图标锁定与保存裁剪——复制产物是普通新建智能体，必须清掉；
+  // 问渠品牌标是内置「问渠」专属图标，副本改回默认图标
+  form.value.isBuiltin = 0
+  if (isBuiltin(a) && form.value.icon === 'wenqu') form.value.icon = ''
+}
+const confirmDelete = a => Modal.confirm({
+  title: '删除该智能体？',
+  content: `「${a.name}」将从对话页可选项中移除；如有公开链接同时失效，配置历史版本一并删除。`,
+  okText: '删除', okType: 'danger', cancelText: '取消',
+  onOk: () => doDelete(a.id)
+})
+
+// ==================== 新建入口：模板先行 ====================
+const createOpen = ref(false)
+const importInput = ref(null)
+const openCreateEntry = () => { createOpen.value = true }
+const startBlank = () => { createOpen.value = false; openCreate() }
+/** 可复制 = 有管理权的智能体（含内置：管理员能把它当模板，产物是自己的普通智能体） */
+const copyableAgents = computed(() => agents.value.filter(a => a.manageable))
+const pickImportFile = () => importInput.value && importInput.value.click()
+const onImportFile = ev => {
+  const f = ev.target.files && ev.target.files[0]
+  ev.target.value = ''
+  if (!f) return
+  const rd = new FileReader()
+  rd.onload = () => {
+    let data = null
+    try { data = JSON.parse(String(rd.result)) } catch (e) { message.error('不是有效的 JSON 文件'); return }
+    const cfg = data && data.wenquAgentExport === 1
+      ? (data.config || (Array.isArray(data.agents) ? data.agents[0] : null))
+      : null
+    if (!cfg || !cfg.name) { message.error('文件里没有可识别的智能体配置（请用「导出 JSON」或「批量导出」生成的文件）'); return }
+    createOpen.value = false
+    // 导入走与复制同一条路径：把配置载入新建表单，用户检查后再保存
+    openEdit({ ...cfg, isBuiltin: 0 })
+    editingId.value = ''
+    editingUpdatedAt.value = ''
+    form.value.isDefault = false
+    message.info('配置已载入，确认后点「保存」即创建为新智能体')
+  }
+  rd.readAsText(f)
 }
 
 // ==================== 委派编排视图（拓扑：主智能体 → 子智能体委派关系，纯前端渲染） ====================
@@ -1544,9 +1785,6 @@ async function doRevoke () {
     } else message.error(r?.msg || '撤销失败')
   } catch (e) { message.error(e.message || '撤销失败') }
 }
-
-/** 卡片上只标出「显式开启」的能力——跟随全局的不占位置 */
-const capsForcedOn = a => CAPS.filter(c => a[c.key] === 1).map(c => c.label)
 
 // ==================== 全局默认值（用于把每个「跟随默认」点名成具体值） ====================
 /**
@@ -2171,11 +2409,17 @@ onMounted(async () => { })
 .batch-on { color: var(--app-accent); border-color: var(--app-accent); }
 .batch-del { color: var(--app-danger); }
 .ap-check { flex: none; }
-.ap-count { font-size: 12px; color: var(--app-text2); white-space: nowrap; }
-.ap-count b { color: var(--app-text); font-weight: 600; }
 .ap-head-r { margin-left: auto; display: flex; align-items: center; gap: 8px; flex: none; }
 .ap-search { width: 200px; }
 .ap-search-ic { color: var(--app-text3); }
+
+/* 类型分段筛选：计数内嵌在分段里，与「按更新时间/名称」排序并排 */
+.ap-filter { display: flex; border: 1px solid var(--app-border-strong); border-radius: 7px; overflow: hidden; background: var(--app-panel); flex: none; }
+.ap-filter button { border: 0; background: transparent; font: inherit; font-size: 12px; color: var(--app-text2); padding: 5px 11px; cursor: pointer; border-left: 1px solid var(--app-border); white-space: nowrap; }
+.ap-filter button:first-child { border-left: 0; }
+.ap-filter button:hover { background: var(--app-interactive-hover); }
+.ap-filter button.on { background: var(--app-accent); color: #fff; }
+.ap-sort { width: 108px; flex: none; }
 
 .ap-empty { padding: 48px 20px; text-align: center; }
 .ap-empty-t { font-size: 13px; font-weight: 500; margin-bottom: 6px; }
@@ -2198,29 +2442,53 @@ onMounted(async () => { })
 /* 卡片列表 */
 .ap-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
 .ap-card {
+  position: relative;
   background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 12px;
-  padding: 12px 14px; display: flex; flex-direction: column; gap: 9px; cursor: pointer;
+  padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; cursor: pointer;
   transition: border-color .15s, box-shadow .15s, transform .15s;
 }
 .ap-card:hover {
   border-color: var(--app-accent-border);
   box-shadow: 0 6px 18px -10px rgba(46, 107, 230, .35);
 }
-.ap-card-head { display: flex; align-items: center; gap: 8px; }
+.ap-card-head { display: flex; align-items: center; gap: 8px; padding-right: 14px; }
 .ap-name { font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ap-card-tags { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; flex: none; }
+/* 徽章三重编码：颜色 + 图形（星/锁）+ 文字，不单靠颜色区分 */
 .ap-tag-default {
   font-size: 10px; line-height: 1; padding: 3px 6px; border-radius: 999px;
-  background: var(--app-ok-weak); color: var(--app-ok);
+  background: var(--app-warn-weak); color: var(--app-warn-text);
 }
 .ap-tag-builtin {
   font-size: 10px; line-height: 1; padding: 3px 6px; border-radius: 999px;
-  background: var(--app-accent-weak); color: var(--app-accent);
+  background: var(--app-panel-2); color: var(--app-text2);
+  display: inline-flex; align-items: center; gap: 3px;
 }
+.ap-tag-builtin .anticon { font-size: 9px; }
+.ap-tag-sub {
+  font-size: 10px; line-height: 1; padding: 3px 6px; border-radius: 999px;
+  background: var(--app-info-weak); color: var(--app-accent);
+}
+/* 发布状态点：绿=已发布、灰=未发布；悬停 title 说明入口在哪 */
+.ap-dot { position: absolute; top: 13px; right: 13px; width: 8px; height: 8px; border-radius: 50%; }
+.ap-dot.pub { background: var(--app-ok); box-shadow: 0 0 0 3px var(--app-ok-weak); }
+.ap-dot.off { background: var(--app-text3); opacity: .5; }
 .ap-desc {
-  font-size: 12px; color: var(--app-text2); line-height: 1.6; margin: 0; min-height: 32px;
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  font-size: 12px; color: var(--app-text2); line-height: 1.6; margin: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+/* meta 行：资料 / 能力 / 委派 / 更新——扫视时真正用来「判断该用哪个」的信息 */
+.ap-meta {
+  display: flex; flex-wrap: wrap; gap: 4px 10px;
+  font-size: 11px; color: var(--app-text3);
+  border-top: 1px dashed var(--app-border); padding-top: 7px;
+}
+.ap-meta-i { display: inline-flex; align-items: center; gap: 4px; min-width: 0; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.ap-meta-i .anticon { font-size: 11px; flex: none; }
+.ap-meta-i.is-accent { color: var(--app-accent); }
+.ap-meta-link { color: var(--app-accent); cursor: pointer; }
+.ap-meta-link:hover { text-decoration: underline; text-underline-offset: 2px; }
+.ap-meta-time { margin-left: auto; }
 .ap-chips { display: flex; flex-wrap: wrap; gap: 5px; }
 .ap-chip {
   font-size: 11px; line-height: 1; padding: 4px 7px; border-radius: 6px;
@@ -2228,14 +2496,26 @@ onMounted(async () => { })
 }
 .ap-chip-on { background: var(--app-accent-weak); color: var(--app-accent); }
 .ap-chip-warn { background: var(--app-warn-weak); color: var(--app-warn-text); }
+/* 操作收敛：高频（试一试/配置）是按钮，低频与破坏性进 ⋯ 菜单 */
 .ap-card-foot {
-  display: flex; align-items: center; justify-content: flex-end; gap: 2px;
-  border-top: 1px dashed var(--app-border); padding-top: 6px; margin-top: auto;
+  display: flex; align-items: center; gap: 6px;
+  border-top: 1px dashed var(--app-border); padding-top: 8px; margin-top: auto;
 }
+.ap-btn-try { color: var(--app-accent); border-color: var(--app-accent-border); background: var(--app-info-weak); }
+.ap-btn-try:hover { background: var(--app-accent); color: #fff; border-color: var(--app-accent); }
+.ap-more-btn {
+  margin-left: auto; width: 26px; height: 26px; border: 0; border-radius: 6px; flex: none;
+  background: transparent; color: var(--app-text3); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; font-size: 14px;
+}
+.ap-more-btn:hover { background: var(--app-panel-2); color: var(--app-text); }
 /* 不可管理时占位提示（内置问渠=系统默认，仅管理员可配置） */
-.ap-readonly-hint { margin-right: auto; font-size: 12px; color: var(--app-text3); }
+.ap-readonly-hint { margin-left: auto; font-size: 12px; color: var(--app-text3); }
 /* 不可管理的卡片：无点击态暗示（cursor 保持默认，区别于可点击进入配置的卡片） */
 .ap-card-readonly { cursor: default; }
+/* 骨架屏卡片：占位不响应 hover，与真实卡片同版式 */
+.ap-skel { cursor: default; gap: 10px; }
+.ap-skel:hover { border-color: var(--app-border); box-shadow: none; transform: none; }
 
 /* ==================== 配置视图：主栏 + 右栏生效摘要 ==================== */
 .ap-edit-head { align-items: center; }
@@ -2603,4 +2883,31 @@ onMounted(async () => { })
 .ap-ver-act { margin-top: 10px; }
 .ap-ver-same { font-size: 12px; color: var(--app-text3); }
 .ap-ver-none { font-size: 12px; color: var(--app-text3); padding: 16px 0; }
+
+/* ==================== 新建智能体：模板选择弹层 ==================== */
+.ap-tpl-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px;
+  max-height: 420px; overflow-y: auto;
+}
+.ap-tpl {
+  text-align: left; border: 1px solid var(--app-border); border-radius: 10px;
+  background: var(--app-panel); padding: 12px; cursor: pointer; font: inherit;
+  display: flex; flex-direction: column; gap: 5px;
+  transition: border-color .15s, background .15s;
+}
+.ap-tpl:hover { border-color: var(--app-accent-border); background: var(--app-info-weak); }
+.ap-tpl-ic {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; border-radius: 8px; background: var(--app-panel-2); color: var(--app-text2);
+}
+.ap-tpl b { font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ap-tpl small {
+  font-size: 11px; color: var(--app-text3); line-height: 1.5;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.ap-tpl-foot {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--app-border);
+}
+.ap-import-input { display: none; }
 </style>
