@@ -110,7 +110,7 @@ description: 问渠三仓（wenqu / dynamic-form / dynamic-form-vue）开发规�
 
 硬规则：
 
-1. **根目录不新增条目**：根下只允许已登记的代码/配置/部署目录（`src/`、`web/`、`config/`、`deploy/`、`scripts/`、`fixtures/`、`design/` 等）和标准运行时目录；新目录一律先登记再建。
+1. **根目录不新增条目**：根下只允许已登记的代码/配置/部署目录（`src/`、`web/`、`config/`、`deploy/`、`scripts/`、`fixtures/`、`design/`、`sdk/` 等）和标准运行时目录；新目录一律先登记再建。`sdk/` 放对外语言 SDK（`sdk/js/`、`sdk/python/`，各自独立包管理，不混进 web/ 与 src/）。
 2. **成品与中间物分开**：`design/` 只放成品稿；调试截图、中间渲染、临时导出不进 `design/`。
 3. **一次性产物用完即删**，不留下「等以后清理」的垃圾。
 4. **生成后自检**：跑 `git status --short`，根目录不得出现新条目，`??` 只允许出现在 `design/` 内；命中就按上表挪走或删除。

@@ -1,0 +1,42 @@
+{
+  "name": "@wenqu/sdk",
+  "version": "0.1.0",
+  "description": "问渠 WenQu（AI 智能体工作台）官方 JavaScript/TypeScript SDK：问答、向量、知识检索、知识库管理与工作流",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "build:test": "tsc -p tsconfig.test.json",
+    "test": "npm run build:test && node --test dist-test/test/*.test.js"
+  },
+  "keywords": [
+    "wenqu",
+    "ai",
+    "agent",
+    "openai-compatible",
+    "embeddings",
+    "rag",
+    "knowledge-base",
+    "workflow"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.5.0"
+  }
+}

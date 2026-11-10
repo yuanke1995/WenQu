@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wenqu-ai"
+version = "0.1.0"
+description = "问渠 WenQu（AI 智能体工作台）对外 Python SDK：问答、向量、知识库检索与管理、工作流"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+dependencies = [
+    "requests>=2.28",
+]
+
+[project.optional-dependencies]
+langchain = [
+    "langchain-core>=0.2",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
