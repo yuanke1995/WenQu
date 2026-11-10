@@ -2050,6 +2050,21 @@ export const listProviderReferences = id => request(`/provider/${encodeURICompon
  *  返回 {cleared} 条数 */
 export const clearProviderSessionModels = id =>
   request(`/provider/${encodeURIComponent(id)}/clear-session-models`, { method: 'POST' })
+/** 主动核验单个供应商（GET /v1/models 免费探测）：返回 {verifyStatus,lastVerifyMs,verifyMessage} */
+export const verifyProvider = id =>
+  request(`/provider/${encodeURIComponent(id)}/verify`, { method: 'POST', timeout: 20000 })
+/** 批量核验（批量管理模式）：逐家结果列表 */
+export const verifyProvidersBatch = ids =>
+  request('/provider/verify-batch', { method: 'POST', body: JSON.stringify({ ids }), timeout: 60000 })
+/** 页面打开时核验陈旧项（>10 分钟未核验的启用供应商）；返回本次实际核验的逐家结果（可为空） */
+export const verifyStaleProviders = () =>
+  request('/provider/verify-stale', { method: 'POST', timeout: 60000 })
+/** 模型矩阵：同一模型跨供应商同源对比。返回 [{modelId, entries:[{providerId,providerName,ref,modelType,displayName,inputPrice,outputPrice,contextWindow,modelEnabled,providerEnabled,quotaBlocked,verifyStatus,lastVerifyMs,calls7d,cost7d}]}] */
+export const providerMatrix = () => request('/provider/matrix')
+/** 引用批量替换：把仍引用该供应商的位置一次换成目标供应商下的同名模型。返回 {replaced,failed,remaining} */
+export const replaceProviderReferences = (id, targetProviderId) =>
+  request(`/provider/${encodeURIComponent(id)}/replace-references`,
+    { method: 'POST', body: JSON.stringify({ targetProviderId }) })
 /** 可用模型清单（登录即可用；type 过滤如 chat/vision/embedding/rerank，期望 chat 时全模态 omni 一并入选）：[{providerId,name,icon,models:[{ref,modelId,displayName,type}]}]。
  *  此处解包信封直接返回数组（ModelSelect/modelRef 两处消费方都按数组用，漏解包会静默变空态） */
 export const listAvailableModels = async (type = '') => {

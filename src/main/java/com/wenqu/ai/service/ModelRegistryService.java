@@ -164,6 +164,33 @@ public class ModelRegistryService {
         }
     }
 
+    /**
+     * 外部服务直接写回供应商行（核验字段等）后的缓存刷新口。
+     * 列表读的是内存快照，不刷新核验结果就永远看不见新值；广播让其他实例同步跟上。
+     */
+    public void refreshProviderCache() {
+        reloadAndBroadcast();
+    }
+
+    /** 请求者可见的供应商行（归属过滤后；核验与矩阵等旁路服务复用同一判据，不各抄一份） */
+    public List<Provider> visibleProviders(String uid, String role) {
+        List<Provider> out = new ArrayList<>();
+        for (Provider p : snap.providers()) {
+            if (canUse(p, uid, role)) out.add(p);
+        }
+        return out;
+    }
+
+    /** 某供应商下的模型登记行（快照内对象；调用方只读） */
+    public List<ModelInfo> modelsOf(String providerId) {
+        return snap.modelsOf(providerId);
+    }
+
+    /** 全量供应商行（费用/矩阵等旁路服务构建单价映射用；旁路服务自己按归属过滤展示） */
+    public List<Provider> allProvidersForUsage() {
+        return snap.providers();
+    }
+
     /** 多实例同步：daemon 线程订阅变更广播（模式同 ConfigService），Redis 不可用仅告警 */
     private void startRedisSync() {
         Thread t = new Thread(() -> {
@@ -577,13 +604,32 @@ public class ModelRegistryService {
             m.put("manageable", canManage(p, uid, role));
             // 额度状态：让供应商列表直接呈现「额度不足」标记与原因，不必另开接口
             m.putAll(ModelQuotaService.quotaFields(p));
+            // 主动核验结果（ProviderVerifyService 写回）：列表页状态点与「上次核验」的唯一数据源。
+            // 与 quotaBlocked 一起决定健康档位——被动撞错的结论不因一次可达核验被抹掉
+            m.put("lastVerifiedAt", p.getLastVerifiedAt());
+            m.put("lastVerifyMs", p.getLastVerifyMs());
+            m.put("verifyStatus", p.getVerifyStatus());
+            m.put("verifyMessage", p.getVerifyMessage());
             Map<String, Integer> typeCounts = new java.util.LinkedHashMap<>();
             for (String t : TYPES) typeCounts.put(t, 0);
             int total = 0;
+            // 模型速览 chips：卡片不打开「管理模型」也要看得见登记了什么（名称+类型+单价）；
+            // 上限 12 防单家几百模型撑爆列表载荷，超出部分前端折叠为「+N」进矩阵看全量
+            List<Map<String, Object>> briefs = new ArrayList<>();
             for (ModelInfo mi : snap.modelsOf(p.getId())) {
                 total++;
                 typeCounts.merge(mi.getModelType() == null ? TYPE_OTHER : mi.getModelType(), 1, Integer::sum);
+                if (Integer.valueOf(0).equals(mi.getEnabled()) || briefs.size() >= 12) continue;
+                Map<String, Object> b = new java.util.LinkedHashMap<>();
+                b.put("modelId", mi.getModelId());
+                b.put("displayName", mi.getDisplayName());
+                b.put("modelType", mi.getModelType());
+                b.put("inputPrice", mi.getInputPrice());
+                b.put("outputPrice", mi.getOutputPrice());
+                b.put("contextWindow", mi.getContextWindow());
+                briefs.add(b);
             }
+            m.put("modelBriefs", briefs);
             m.put("modelCount", total);
             m.put("typeCounts", typeCounts);
             result.add(m);

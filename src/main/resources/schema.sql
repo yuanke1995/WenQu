@@ -495,6 +495,10 @@ CREATE TABLE IF NOT EXISTS `c_ai_provider` (
     `quota_message`    VARCHAR(512) DEFAULT NULL COMMENT '额度异常原因（网关返回原文摘要，供界面与通知展示；正常时 NULL）',
     `quota_model_id`   VARCHAR(255) DEFAULT NULL COMMENT '触发额度不足的模型名（裸模型名，不含 providerId 前缀；正常时 NULL）',
     `quota_checked_at` DATETIME     DEFAULT NULL COMMENT '额度状态最近判定时刻（正常时 NULL；超时效未复现视为已自愈）',
+    `last_verified_at` DATETIME     DEFAULT NULL COMMENT '最近一次主动核验时刻（GET /v1/models 免费探测；NULL=从未核验）。被动额度登记只说「撞过墙」，这一列说「最后一次体检是什么时候」',
+    `last_verify_ms`   INT          DEFAULT NULL COMMENT '核验往返耗时（毫秒；未核验 NULL）',
+    `verify_status`    VARCHAR(16)  DEFAULT NULL COMMENT '核验结果: ok=可达 unreachable=网络不通 rejected=网关拒绝(鉴权/路径) expired=额度不足；NULL=从未核验。与 quota_status 独立——后者被动等真实调用失败才登记',
+    `verify_message`   VARCHAR(512) DEFAULT NULL COMMENT '核验失败原因摘要（网关返回原文截断；ok 时 NULL）',
     `create_time`      DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time`      DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`)

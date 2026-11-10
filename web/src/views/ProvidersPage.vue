@@ -1,30 +1,57 @@
 <template>
   <!-- 页面骨架与「智能体 / 技能 / MCP 外部工具」Tab 完全一致：标题栏（页名 sr-only + 说明 + 主操作）+ 带内边距的内容区 -->
   <div class="app-page">
-    <div class="app-page-head">
+    <div class="app-page-head pv-page-head">
       <!-- 页名与 Tab 名重复，标题仅保留给读屏器（sr-only），视觉上从统计起头 -->
       <h1 class="app-page-title sr-only">模型供应商</h1>
       <span class="head-count">共 <b>{{ list.length }}</b> 个供应商 · 已启用 <b>{{ enabledCount }}</b> · 模型 <b>{{ modelTotal }}</b> 个</span>
-      <button class="app-btn" style="margin-left:auto" @click="openCreate">
-        <plus-outlined /> 新建供应商
-      </button>
-      <!-- 批量区（分隔线独立成区，不与常规按钮挤作一堆）。默认收起，点「批量管理」进入批量模式；
-           开关放最右：进出模式自身位置不动；列表里的供应商都是自己可管理的，可勾选 -->
-      <div v-if="list.length" class="batch-group">
-        <template v-if="batchMode">
-          <a-checkbox :checked="allChecked" :indeterminate="someChecked" @change="toggleAll">全选</a-checkbox>
-          <button class="app-btn ghost small" :disabled="!selected.length || batchBusy" @click="doBatchEnabled(true)">启用</button>
-          <button class="app-btn ghost small" :disabled="!selected.length || batchBusy" @click="doBatchEnabled(false)">停用</button>
-          <button class="app-btn ghost small batch-del" :disabled="!selected.length || batchBusy" @click="doBatchDelete">删除</button>
-        </template>
-        <button class="app-btn ghost small" :class="{ 'batch-on': batchMode }" @click="toggleBatchMode">{{ batchMode ? '退出管理' : '批量管理' }}</button>
+      <template v-if="list.length">
+        <!-- 健康度分段筛选：先看「有几家红了」比看总数更有行动价值，数字常驻在标签里 -->
+        <a-segmented v-model:value="healthFilter" :options="filterOptions" size="small" />
+        <a-select v-model:value="sortKey" size="small" :options="sortOptions" style="width:128px" />
+        <a-input v-model:value="searchKw" size="small" allow-clear placeholder="搜索供应商或模型" class="pv-search">
+          <template #prefix><search-outlined /></template>
+        </a-input>
+      </template>
+      <div class="pv-head-acts">
+        <!-- 图标工具组：矩阵（懒加载对比）与全部重新核验（对可见启用供应商批量探测） -->
+        <a-tooltip title="模型矩阵：同名模型跨供应商比价与备份">
+          <button class="app-icon-btn" @click="openMatrix"><partition-outlined /></button>
+        </a-tooltip>
+        <a-tooltip title="全部重新核验（当前筛选可见的启用供应商）">
+          <button class="app-icon-btn" :disabled="verifyAllBusy" @click="doVerifyVisible"><reload-outlined :spin="verifyAllBusy" /></button>
+        </a-tooltip>
+        <button class="app-icon-btn" :class="{ 'pv-view-on': view === 'card' }" title="卡片视图" @click="view = 'card'"><appstore-outlined /></button>
+        <button class="app-icon-btn" :class="{ 'pv-view-on': view === 'table' }" title="表格视图" @click="view = 'table'"><table-outlined /></button>
+        <button class="app-btn" @click="openCreate">
+          <plus-outlined /> 新建供应商
+        </button>
+        <!-- 批量区（分隔线独立成区，不与常规按钮挤作一堆）。默认收起，点「批量管理」进入批量模式；
+             开关放最右：进出模式自身位置不动；列表里的供应商都是自己可管理的，可勾选 -->
+        <div v-if="list.length" class="batch-group">
+          <template v-if="batchMode">
+            <a-checkbox :checked="allChecked" :indeterminate="someChecked" @change="toggleAll">全选</a-checkbox>
+            <button class="app-btn ghost small" :disabled="!selected.length || batchBusy" @click="doBatchEnabled(true)">启用</button>
+            <button class="app-btn ghost small" :disabled="!selected.length || batchBusy" @click="doBatchEnabled(false)">停用</button>
+            <button class="app-btn ghost small" :disabled="!selected.length || batchBusy" @click="doBatchVerify">批量核验</button>
+            <button class="app-btn ghost small batch-del" :disabled="!selected.length || batchBusy" @click="doBatchDelete">删除</button>
+          </template>
+          <button class="app-btn ghost small" :class="{ 'batch-on': batchMode }" @click="toggleBatchMode">{{ batchMode ? '退出管理' : '批量管理' }}</button>
+        </div>
       </div>
     </div>
 
     <div class="app-page-body">
-      <a-spin :spinning="loading">
-        <div v-if="list.length" class="pv-grid">
-          <div v-for="p in list" :key="p.id" class="app-card pv-card">
+      <!-- 首屏骨架：先见结构再见数据（整页转圈在慢网络下读起来像「卡死」）；后续刷新仍走 spin -->
+      <div v-if="firstLoad" class="pv-grid">
+        <div v-for="i in 6" :key="i" class="app-card pv-card pv-skeleton">
+          <a-skeleton active :paragraph="{ rows: 3 }" :title="{ width: '55%' }" />
+        </div>
+      </div>
+      <a-spin v-else :spinning="loading">
+        <!-- 卡片视图 -->
+        <div v-if="filteredList.length && view === 'card'" class="pv-grid">
+          <div v-for="p in filteredList" :key="p.id" class="app-card pv-card">
             <div class="pv-head">
               <a-checkbox v-if="batchMode && p.manageable" class="pv-check" :checked="selected.includes(p.id)"
                           @change="toggleSelect(p.id)" />
@@ -43,15 +70,24 @@
                 </div>
                 <div class="pv-url" :title="p.baseUrl">{{ p.baseUrl }}</div>
               </div>
+              <!-- 健康状态点：颜色 + 文字双编码（暗色下同样可辨、读屏有字），悬浮 title 给原因与延迟 -->
+              <span class="pv-health" :class="'pv-h-' + health(p).cls" :title="health(p).tip">
+                <i class="pv-dot"></i>{{ health(p).label }}
+              </span>
               <a-switch v-if="p.manageable" :checked="p.enabled" size="small"
                         @change="v => onToggle(p, v)" />
             </div>
             <!-- 额度不足时的处置条：说清「哪里用不到」+ 直接给查看引用入口。
-                 没有它的话用户只知道「这个供应商坏了」，不知道自己的哪些库/配置在依赖它 -->
+                 没有它的话用户只知道「这个供应商坏了」，不知道自己的哪些库/配置在依赖它。
+                 「重新核验」给充值/换 Key 之后的即时出口，不必等每日兜底任务 -->
             <div v-if="p.quotaBlocked" class="pv-quota-bar">
               <span class="pv-quota-msg" :title="p.quotaMessage || ''">
                 {{ p.quotaMessage || '账户余额不足或套餐已到期' }}
               </span>
+              <!-- 核验要写权限：别人归属的供应商只给查看引用，不给点了必 403 的按钮 -->
+              <button v-if="p.manageable" class="app-link-btn" :disabled="!!verifyingIds[p.id]" @click="doVerify(p)">
+                {{ verifyingIds[p.id] ? '核验中…' : '重新核验' }}
+              </button>
               <button class="app-link-btn" @click="openRefs(p)">查看引用</button>
             </div>
             <!-- 停用不等于「处理完了」：开关只让模型不再可选，钉着它的地方一处都没解开。
@@ -60,29 +96,113 @@
               <span class="pv-refs-msg">停用后仍有 <b>{{ p.refCount }}</b> 处在用它的模型</span>
               <button class="app-link-btn" @click="openRefs(p)">查看引用</button>
             </div>
+            <!-- 模型速览 chips：登记了什么、什么价，不开「管理模型」也看得见；超过 3 个折叠进矩阵 -->
             <div class="pv-models">
-              <a-tag v-for="t in typeChips(p)" :key="t.key" :color="t.color" class="pv-type-tag">
-                {{ t.label }} {{ t.count }}
+              <a-tag v-for="b in (p.modelBriefs || []).slice(0, 3)" :key="b.modelId"
+                     class="pv-type-tag pv-model-chip" :title="chipTitle(b)">
+                {{ b.displayName || b.modelId }}<i class="pv-chip-type">{{ TYPE_META[b.modelType]?.label || '其他' }}</i>
               </a-tag>
+              <button v-if="(p.modelBriefs || []).length > 3" class="app-link-btn pv-chip-more"
+                      title="在模型矩阵中查看全部" @click="openMatrix">+{{ (p.modelBriefs || []).length - 3 }}</button>
               <span v-if="!p.modelCount" class="pv-none">未登记模型</span>
             </div>
             <div class="pv-remark" v-if="p.remark">{{ p.remark }}</div>
+            <!-- meta 行：核验新鲜度 + 近 7 天用量/费用，回答「这家现在能不能用、花得多不多」 -->
+            <div class="pv-meta">
+              <span>上次核验 {{ p.lastVerifiedAt ? relTime(p.lastVerifiedAt) : '从未' }}<template v-if="p.lastVerifiedAt && p.lastVerifyMs != null"> · {{ p.lastVerifyMs }}ms</template></span>
+              <span class="pv-meta-sep">｜</span>
+              <span>近 7 天 {{ (p.usage7d && p.usage7d.calls) || 0 }} 次</span>
+              <span class="pv-meta-sep">｜</span>
+              <span>费用 {{ costText(p) }}</span>
+            </div>
             <div class="pv-actions">
               <template v-if="p.manageable">
                 <button class="app-link-btn" @click="openModels(p)">
                   <database-outlined /> 管理模型（{{ p.modelCount }}）
                 </button>
-                <button class="app-link-btn" @click="openEdit(p)">编辑</button>
-                <a-popconfirm title="确定删除该供应商？其已登记的模型会一并删除。"
-                              ok-text="删除" cancel-text="取消" @confirm="onDelete(p)">
-                  <button class="app-link-btn danger">删除</button>
-                </a-popconfirm>
+                <!-- 编辑/核验/删除收进「⋯」：主操作只留「管理模型」，低频项不再和它抢视线；
+                     删除仍先确认再走 onDelete，确认语义与原行内 popconfirm 一致 -->
+                <a-dropdown :trigger="['click']" placement="bottomRight">
+                  <button class="app-link-btn pv-more-btn" aria-label="更多操作"><more-outlined /></button>
+                  <template #overlay>
+                    <a-menu>
+                      <a-menu-item key="edit" @click="openEdit(p)">编辑</a-menu-item>
+                      <a-menu-item key="verify" :disabled="!!verifyingIds[p.id]" @click="doVerify(p)">
+                        {{ verifyingIds[p.id] ? '核验中…' : '重新核验' }}
+                      </a-menu-item>
+                      <a-menu-divider />
+                      <a-menu-item key="del" danger @click="confirmDelete(p)">删除</a-menu-item>
+                    </a-menu>
+                  </template>
+                </a-dropdown>
               </template>
             </div>
           </div>
         </div>
+        <!-- 表格视图：与卡片同一数据源（filteredList），横向扫读多家状态/用量比卡片墙快 -->
+        <a-table v-else-if="filteredList.length" :columns="tableCols" :data-source="filteredList"
+                 row-key="id" size="small" :pagination="false" :scroll="{ x: 900 }">
+          <template #bodyCell="{ column, record: p }">
+            <template v-if="column.key === 'prov'">
+              <div class="pv-tp-prov">
+                <ProviderIcon :icon="p.icon" :name="p.name" :size="22" />
+                <span class="pv-tp-name" :title="p.baseUrl">{{ p.name }}</span>
+                <a-tag v-if="p.ownerUid && p.ownerUid !== me" color="default" class="pv-type-tag" :title="'归属 ' + p.ownerUid">归属</a-tag>
+              </div>
+            </template>
+            <template v-else-if="column.key === 'health'">
+              <span class="pv-health" :class="'pv-h-' + health(p).cls" :title="health(p).tip">
+                <i class="pv-dot"></i>{{ health(p).label }}
+              </span>
+            </template>
+            <template v-else-if="column.key === 'models'">
+              <b class="pv-tp-count">{{ p.modelCount }}</b>
+              <span class="pv-tp-types" :title="typeSummary(p)">{{ typeSummary(p) }}</span>
+            </template>
+            <template v-else-if="column.key === 'verify'">
+              <span class="pm-ctx" :title="p.verifyMessage || health(p).tip">
+                {{ p.lastVerifiedAt ? relTime(p.lastVerifiedAt) : '未核验' }}<template v-if="p.lastVerifyMs != null"> · {{ p.lastVerifyMs }}ms</template>
+              </span>
+            </template>
+            <template v-else-if="column.key === 'calls'">{{ (p.usage7d && p.usage7d.calls) || 0 }}</template>
+            <template v-else-if="column.key === 'cost'">{{ costText(p) }}</template>
+            <template v-else-if="column.key === 'refs'">
+              <button v-if="!p.enabled && p.refCount" class="app-link-btn" @click="openRefs(p)">{{ p.refCount }} 处</button>
+              <span v-else class="pv-hint">—</span>
+            </template>
+            <template v-else-if="column.key === 'action'">
+              <div v-if="p.manageable" class="pv-row-actions">
+                <button class="app-link-btn" @click="openModels(p)">管理模型</button>
+                <a-dropdown :trigger="['click']" placement="bottomRight">
+                  <button class="app-link-btn pv-more-btn" aria-label="更多操作"><more-outlined /></button>
+                  <template #overlay>
+                    <a-menu>
+                      <a-menu-item key="edit" @click="openEdit(p)">编辑</a-menu-item>
+                      <a-menu-item key="verify" :disabled="!!verifyingIds[p.id]" @click="doVerify(p)">
+                        {{ verifyingIds[p.id] ? '核验中…' : '重新核验' }}
+                      </a-menu-item>
+                      <a-menu-divider />
+                      <a-menu-item key="del" danger @click="confirmDelete(p)">删除</a-menu-item>
+                    </a-menu>
+                  </template>
+                </a-dropdown>
+              </div>
+              <span v-else class="pv-hint">—</span>
+            </template>
+          </template>
+        </a-table>
+        <!-- 空态分两种：一家都没有（引导从品牌预设开始新建）vs 被筛选/搜索滤掉（一键清条件）。
+             滤空却显示「还没有供应商」会把人引去重建一家本来就存在的供应商 -->
         <div v-else-if="!loading" class="app-card pv-empty">
-          <div class="pv-empty-title">还没有供应商</div>
+          <template v-if="!list.length">
+            <div class="pv-empty-title">还没有供应商</div>
+            <div class="pv-empty-desc">接入一个模型网关（DeepSeek、智谱、自托管 Ollama 等），它登记的模型就能在对话、知识库与工作流里被选用。</div>
+            <button class="app-btn primary" style="margin-top:14px" @click="openCreate"><plus-outlined /> 从品牌开始新建</button>
+          </template>
+          <template v-else>
+            <div class="pv-empty-title">没有符合当前筛选的供应商</div>
+            <button class="app-link-btn" @click="resetFilters">清除筛选与搜索</button>
+          </template>
         </div>
       </a-spin>
     </div>
@@ -483,18 +603,31 @@
       <a-spin :spinning="refsLoading">
         <template v-if="refsData">
           <div v-if="refsData.error" class="pv-refs-error">{{ refsData.error }}</div>
-          <div v-else class="pv-refs-head">
-            <template v-if="refsOff">
-              开关只是让模型<b>不再可选</b>，不会把已经钉住它的地方解开——下面
-              <b>{{ refsData.total || 0 }}</b> 处还在用它，逐处换成别的模型才会真正恢复。
-            </template>
-            <template v-else>
-              共 <b>{{ refsData.total || 0 }}</b> 处引用
-              <template v-if="refsData.total">
-                ，其中 <b>{{ refsData.editableCount || 0 }}</b> 处可在下列位置直接修改
+          <template v-else>
+            <!-- 批量替换条：逐处「去修改」之外给一条一次换干净的路——多数场景只是「这家坏了/贵了，
+                 整体搬到同源的另一家」。只对可管理供应商给这个入口（后端 replace 同样要求写权限） -->
+            <div v-if="(refsData.editableCount || 0) > 0 && refsProvider?.manageable && replaceOptions.length"
+                 class="pv-replace-bar">
+              <span class="pv-replace-lead">一次替换这 <b>{{ refsData.editableCount }}</b> 处 →</span>
+              <a-select v-model:value="replaceTarget" :options="replaceOptions" size="small"
+                        class="pv-replace-select" placeholder="目标供应商" :popup-match-select-width="false" />
+              <button class="app-btn ghost small" :disabled="replacing || !replaceTarget" @click="doReplaceAllRefs">
+                {{ replacing ? '替换中…' : '批量替换' }}
+              </button>
+            </div>
+            <div class="pv-refs-head">
+              <template v-if="refsOff">
+                开关只是让模型<b>不再可选</b>，不会把已经钉住它的地方解开——下面
+                <b>{{ refsData.total || 0 }}</b> 处还在用它，逐处换成别的模型才会真正恢复。
               </template>
-            </template>
-          </div>
+              <template v-else>
+                共 <b>{{ refsData.total || 0 }}</b> 处引用
+                <template v-if="refsData.total">
+                  ，其中 <b>{{ refsData.editableCount || 0 }}</b> 处可在下列位置直接修改
+                </template>
+              </template>
+            </div>
+          </template>
           <div v-if="!refsData.error && (!refsData.items || !refsData.items.length)" class="pv-refs-empty">
             当前没有任何地方引用它的模型，可直接在这里处理。
           </div>
@@ -526,6 +659,43 @@
         </template>
       </a-spin>
     </a-modal>
+
+    <!-- 模型矩阵：同名模型在多家供应商的登记对比（比价、备份缺口一眼可见）。
+         懒加载：聚合全量供应商×模型，只在点开时拉一次，列表刷新即作废缓存 -->
+    <a-modal v-model:open="showMatrix" title="模型矩阵 · 同名模型跨供应商"
+             :width="880" :footer="null" @cancelled="showMatrix = false">
+      <a-spin :spinning="matrixLoading">
+        <div v-if="!matrixData" class="pmx-empty">正在汇总各家登记的模型…</div>
+        <div v-else-if="!matrixData.length" class="pmx-empty">
+          还没有任何已登记的模型：先在某个供应商的「管理模型」里添加，再回来看跨家对比。
+        </div>
+        <div v-else class="pmx-list">
+          <div class="pmx-row pmx-head-row">
+            <span>供应商</span><span>类型</span><span>单价 入/出（元/百万 token）</span><span>窗口</span><span>近7天调用</span><span>近7天费用</span><span>状态</span>
+          </div>
+          <!-- 后端已按「同源家数由多到少」排序：≥2 家的分组天然置顶，这里只做高亮 -->
+          <div v-for="g in matrixData" :key="g.modelId" class="pmx-group" :class="{ 'pmx-same': g.entries.length >= 2 }">
+            <div class="pmx-group-head">
+              <span class="pmx-model" :title="g.modelId">{{ g.modelId }}</span>
+              <a-tag v-if="g.entries.length >= 2" color="purple" class="pv-type-tag">同源 ×{{ g.entries.length }}</a-tag>
+            </div>
+            <div v-for="e in g.entries" :key="e.ref" class="pmx-row">
+              <span class="pmx-prov" :title="e.providerName + (e.modelEnabled ? '' : '（模型已停用）')">
+                {{ e.providerName }}<i v-if="!e.modelEnabled" class="pmx-off">模型停用</i>
+              </span>
+              <a-tag :color="TYPE_META[e.modelType]?.color" class="pv-type-tag">{{ TYPE_META[e.modelType]?.label || '其他' }}</a-tag>
+              <span class="pmx-num">{{ entryPriceText(e) }}</span>
+              <span class="pmx-num">{{ e.contextWindow ? fmtWindow(e.contextWindow) : '—' }}</span>
+              <span class="pmx-num">{{ e.calls7d }}</span>
+              <span class="pmx-num">{{ e.cost7d == null ? '未计价' : '¥' + Number(e.cost7d).toFixed(2) }}</span>
+              <span class="pv-health" :class="'pv-h-' + entryHealth(e).cls" :title="entryHealth(e).tip">
+                <i class="pv-dot"></i>{{ entryHealth(e).label }}
+              </span>
+            </div>
+          </div>
+        </div>
+      </a-spin>
+    </a-modal>
   </div>
 </template>
 
@@ -533,7 +703,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
-import { PlusOutlined, DatabaseOutlined, CloudDownloadOutlined, QuestionCircleOutlined, EyeOutlined, EyeInvisibleOutlined } from '@ant-design/icons-vue'
+import { PlusOutlined, DatabaseOutlined, CloudDownloadOutlined, QuestionCircleOutlined, EyeOutlined, EyeInvisibleOutlined, SearchOutlined, ReloadOutlined, AppstoreOutlined, TableOutlined, MoreOutlined, PartitionOutlined } from '@ant-design/icons-vue'
 import ProviderIcon from '../components/ProviderIcon.vue'
 import { BRAND_PATHS, BRAND_BADGES } from '../assets/providerIcons.js'
 import { fmtWindow } from '../chat/projections'
@@ -544,7 +714,9 @@ listProviders, createProvider, updateProvider, setProviderEnabled, deleteProvide
   listProviderModels, saveProviderModels, fetchProviderModels, testProvider,
   listReasoningDialects, guessReasoningDialect,
   batchDeleteProviders, batchSetProvidersEnabled, listProviderReferences,
-  clearProviderSessionModels
+  clearProviderSessionModels,
+  verifyProvider, verifyProvidersBatch, verifyStaleProviders,
+  providerMatrix, replaceProviderReferences
 } from '../api'
 
 const route = useRoute()
@@ -586,6 +758,8 @@ const loadRefs = async p => {
   refsOff.value = !p.enabled
   refsData.value = null
   refsLoading.value = true
+  // 批量替换默认推荐第一个候选（多数时候就是「还活着的那家同源」），不满意可在下拉里换
+  replaceTarget.value = replaceOptions.value[0]?.value || ''
   try {
     const r = await listProviderReferences(p.id)
     refsData.value = (r && r.data) || {}
@@ -716,8 +890,264 @@ const reEnableFromRefs = async () => {
   }
 }
 
+// ---- 引用批量替换：逐处「去修改」之外给一条一次换干净的路 ----
+// 十几处引用逐个点跳转改到人手酸，而多数场景只是「这家坏了/贵了，整体搬到同源的另一家」。
+// 后端按同名模型逐处换，目标没登记该模型的逐处失败给原因——不做静默换别的模型这种事。
+const replaceTarget = ref('')
+const replacing = ref(false)
+/** 候选：启用、可管理、不是自己（后端 replace 同样要求 provider:write，只列改得动的） */
+const replaceOptions = computed(() => {
+  const cur = refsProvider.value
+  return list.value
+    .filter(p => p.enabled && p.manageable && (!cur || p.id !== cur.id))
+    .map(p => ({ value: p.id, label: p.name }))
+})
+
+const doReplaceAllRefs = async () => {
+  const p = refsProvider.value
+  const target = replaceTarget.value
+  if (!p || !target) return
+  replacing.value = true
+  try {
+    const r = await replaceProviderReferences(p.id, target)
+    const d = (r && r.data) || {}
+    const replaced = d.replaced || []
+    const failed = d.failed || []
+    if (replaced.length) message.success(`已替换 ${replaced.length} 处引用`)
+    if (failed.length) {
+      // 失败逐条列出来：多半是目标供应商没登记同名模型，吞成一句数字会让人以为「替换没生效」
+      Modal.warning({
+        title: `${failed.length} 处没换掉`,
+        content: failed.map(f => `「${f.name}」：${f.error || '目标供应商未登记同名启用模型'}`).join('；'),
+        okText: '知道了'
+      })
+    }
+    if (!replaced.length && !failed.length) message.info('没有可替换的引用')
+    await loadRefs(p)
+    await load()   // 卡片上的剩余引用数随之回落
+  } catch (e) {
+    message.error(`替换失败：${e?.message || '请稍后重试'}`)
+  } finally {
+    replacing.value = false
+  }
+}
+
 // 当前登录人 uid（归属提示只用它判断「这是不是别人的供应商」）
 const me = computed(() => authUser.value?.user || '')
+
+// ==================== 健康判定（状态点 / 筛选 / 排序 / 矩阵共用一份口径） ====================
+/**
+ * 单一判定函数：卡片状态点、表格状态列、矩阵行、分段筛选都读它，避免四处口径漂移。
+ * 优先级：停用 > 额度 > 核验——额度不足是被动撞错定性的「模型用不了」，
+ * 一次免费的 /models 可达核验不能把它抹掉（后端同取舍，见 ProviderVerifyService）。
+ * cls 三分：bad=红（异常）、ok=绿、idle=灰（停用/未核验），筛选按 cls 归类。
+ */
+function health(p) {
+  if (!p.enabled) return { key: 'idle', cls: 'idle', label: '已停用', tip: '已停用：它的模型不再可选' }
+  if (p.quotaBlocked) return { key: 'blocked', cls: 'bad', label: '额度不足', tip: p.quotaMessage || '账户余额不足或套餐已到期' }
+  const s = p.verifyStatus
+  if (s === 'expired') return { key: 'expired', cls: 'bad', label: '额度不足', tip: p.verifyMessage || '核验检出额度耗尽' }
+  if (s === 'unreachable') return { key: 'unreachable', cls: 'bad', label: '不可达', tip: p.verifyMessage || '无法连接网关' }
+  if (s === 'rejected') return { key: 'rejected', cls: 'bad', label: '网关拒绝', tip: p.verifyMessage || 'API Key 可能已失效或被吊销' }
+  if (s === 'ok') return { key: 'ok', cls: 'ok', label: '可达', tip: `上次核验 ${p.lastVerifyMs ?? '—'}ms` }
+  return { key: 'never', cls: 'idle', label: '未核验', tip: '打开页面时会自动核验陈旧项；也可在卡片「⋯」里立即核验' }
+}
+
+/** 相对时间：核验时间要一眼读出「新不新」，超过 7 天回落成日期 */
+const relTime = v => {
+  if (!v) return '从未'
+  const t = typeof v === 'number' ? v : Date.parse(String(v))
+  if (!Number.isFinite(t)) return String(v)
+  const d = Date.now() - t
+  if (d < 60e3) return '刚刚'
+  if (d < 3600e3) return Math.floor(d / 60e3) + '分钟前'
+  if (d < 86400e3) return Math.floor(d / 3600e3) + '小时前'
+  if (d < 7 * 86400e3) return Math.floor(d / 86400e3) + '天前'
+  const dt = new Date(t)
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`
+}
+
+/** 近 7 天费用文案：cost=null 表示该家模型全部未计价——显示「未计价」而不是 ¥0（0 会被读成「没花钱」） */
+const costText = p => {
+  const u = p.usage7d
+  if (!u || u.cost == null) return '未计价'
+  return '¥' + Number(u.cost).toFixed(2)
+}
+
+/** 模型 chip 悬浮：单价（元/百万 token）+ 窗口，不开「管理模型」也能比价 */
+const chipTitle = b => {
+  const price = (b.inputPrice == null && b.outputPrice == null)
+    ? '未计价'
+    : `¥${b.inputPrice ?? 0}/¥${b.outputPrice ?? 0} 每百万 token`
+  return `${b.modelId} · ${TYPE_META[b.modelType]?.label || b.modelType} · ${price}`
+    + (b.contextWindow ? ` · 窗口 ${fmtWindow(b.contextWindow)}` : '')
+}
+
+// ---- 列表工具栏状态：筛选 / 排序 / 搜索 / 视图 ----
+const healthFilter = ref('all')   // all | ok | bad | off（off=停用或未核验灰档）
+const sortKey = ref('health')     // health | usage | name
+const searchKw = ref('')
+// 视图选择记 localStorage：这是个人浏览习惯，不该每次进页都回到默认
+const view = ref(localStorage.getItem('wenqu.provider.view') === 'table' ? 'table' : 'card')
+watch(view, v => { try { localStorage.setItem('wenqu.provider.view', v) } catch (e) { /* 隐私模式写不进就算了 */ } })
+// 首屏用骨架屏而不是整页转圈：先见结构再见数据；后续刷新仍走 a-spin
+const firstLoad = ref(true)
+
+const filterCounts = computed(() => {
+  const c = { all: list.value.length, ok: 0, bad: 0, off: 0 }
+  for (const p of list.value) {
+    const cls = health(p).cls
+    c[cls === 'bad' ? 'bad' : cls === 'ok' ? 'ok' : 'off']++   // idle（停用/未核验）归「已停用」档
+  }
+  return c
+})
+const filterOptions = computed(() => [
+  { value: 'all', label: `全部 ${filterCounts.value.all}` },
+  { value: 'ok', label: `正常 ${filterCounts.value.ok}` },
+  { value: 'bad', label: `异常 ${filterCounts.value.bad}` },
+  { value: 'off', label: `已停用 ${filterCounts.value.off}` }
+])
+const sortOptions = [
+  { value: 'health', label: '健康度优先' },
+  { value: 'usage', label: '近7天用量' },
+  { value: 'name', label: '名称' }
+]
+const HEALTH_RANK = { bad: 0, ok: 1, idle: 2 }
+
+/** 筛选 + 搜索 + 排序后的展示列表（卡片视图与表格视图同一数据源） */
+const filteredList = computed(() => {
+  let arr = list.value
+  const f = healthFilter.value
+  if (f !== 'all') {
+    arr = arr.filter(p => {
+      const cls = health(p).cls
+      return f === 'ok' ? cls === 'ok' : f === 'bad' ? cls === 'bad' : cls === 'idle'
+    })
+  }
+  const kw = (searchKw.value || '').trim().toLowerCase()
+  if (kw) {
+    arr = arr.filter(p => (p.name || '').toLowerCase().includes(kw)
+      || (p.modelBriefs || []).some(b => (b.modelId || '').toLowerCase().includes(kw)
+        || (b.displayName || '').toLowerCase().includes(kw)))
+  }
+  const s = sortKey.value
+  if (s === 'name') return [...arr].sort((a, b) => (a.name || '').localeCompare(b.name || '', 'zh'))
+  if (s === 'usage') return [...arr].sort((a, b) => ((b.usage7d && b.usage7d.calls) || 0) - ((a.usage7d && a.usage7d.calls) || 0))
+  // 健康度优先：异常置顶（Array.sort 稳定，同档保持后端 sort_order 序）
+  return [...arr].sort((a, b) => HEALTH_RANK[health(a).cls] - HEALTH_RANK[health(b).cls])
+})
+const resetFilters = () => { healthFilter.value = 'all'; searchKw.value = '' }
+
+/** 表格视图「模型」列的类型简述：数量之外的第二信息只给类型分布，够速览不抢宽 */
+const typeSummary = p => typeChips(p).map(t => `${t.label}${t.count}`).join(' · ') || '—'
+
+// ==================== 主动核验 ====================
+const verifyingIds = ref({})    // id → true：单家核验在途，防连点重复打网关
+const verifyAllBusy = ref(false)
+
+const setVerifying = (id, on) => {
+  const next = { ...verifyingIds.value }
+  if (on) next[id] = true; else delete next[id]
+  verifyingIds.value = next
+}
+
+/** 单家核验：结果就地写回行（expired 同步登记额度标记，与后端被动通道一致），不整页刷新 */
+const doVerify = async p => {
+  if (verifyingIds.value[p.id]) return
+  setVerifying(p.id, true)
+  try {
+    const r = await verifyProvider(p.id)
+    const d = (r && r.data) || {}
+    p.verifyStatus = d.verifyStatus ?? null
+    p.lastVerifyMs = d.lastVerifyMs ?? null
+    p.verifyMessage = d.verifyMessage ?? null
+    p.lastVerifiedAt = new Date().toISOString()
+    if (d.verifyStatus === 'expired') {
+      p.quotaBlocked = true
+      p.quotaMessage = d.verifyMessage || p.quotaMessage || '账户余额不足或套餐已到期'
+    }
+    const h = health(p)
+    if (h.cls === 'ok') message.success(`「${p.name}」可达（${p.lastVerifyMs ?? '—'}ms）`)
+    else message.warning(`「${p.name}」${h.label}：${h.tip}`)
+  } catch (e) {
+    message.error(`核验失败：${e?.message || '请稍后重试'}`)
+  } finally {
+    setVerifying(p.id, false)
+  }
+}
+
+/** 工具栏「全部重新核验」：对当前筛选可见的启用供应商批量探测（不是全量，用户在看哪档就核哪档） */
+const doVerifyVisible = async () => {
+  const targets = filteredList.value.filter(p => p.enabled && p.manageable)
+  if (!targets.length) { message.info('当前视图没有可核验的启用供应商'); return }
+  verifyAllBusy.value = true
+  try {
+    const r = await verifyProvidersBatch(targets.map(p => p.id))
+    const rows = (r && r.data) || []
+    await load()
+    const bad = rows.filter(x => x.verifyStatus && x.verifyStatus !== 'ok')
+    if (!bad.length) message.success(`已核验 ${rows.length} 家，全部可达`)
+    else message.warning(`已核验 ${rows.length} 家：${bad.length} 家异常（${bad.map(b => b.name).join('、')}）`)
+  } catch (e) {
+    message.error(`核验失败：${e?.message || '请稍后重试'}`)
+  } finally {
+    verifyAllBusy.value = false
+  }
+}
+
+/** 批量管理模式下的「批量核验」：只核勾选的；异常逐条列出来，不汇总成一个数字吞掉原因 */
+const doBatchVerify = async () => {
+  if (!selected.value.length) return
+  batchBusy.value = true
+  try {
+    const r = await verifyProvidersBatch([...selected.value])
+    const rows = (r && r.data) || []
+    await load()
+    const bad = rows.filter(x => x.verifyStatus && x.verifyStatus !== 'ok')
+    if (!bad.length) message.success(`已核验 ${rows.length} 家，全部可达`)
+    else Modal.warning({
+      title: `核验完成：${rows.length} 家中 ${bad.length} 家异常`,
+      content: bad.map(b => `「${b.name}」：${b.verifyMessage || b.verifyStatus}`).join('；'),
+      okText: '知道了'
+    })
+  } catch (e) {
+    message.error('批量核验失败：' + (e.message || ''))
+  } finally {
+    batchBusy.value = false
+  }
+}
+
+// ==================== 模型矩阵（同名模型跨供应商对比） ====================
+const showMatrix = ref(false)
+const matrixLoading = ref(false)
+// 懒加载 + 缓存一次：矩阵要聚合全部供应商×模型，开页不该付这个代价；
+// 列表每次 load()（增删改/核验后都会走到）把缓存作废，避免读到旧对比
+const matrixData = ref(null)
+const loadMatrix = async () => {
+  if (matrixData.value) return
+  matrixLoading.value = true
+  try {
+    const r = await providerMatrix()
+    matrixData.value = (r && r.data) || []
+  } catch (e) {
+    message.error(`矩阵加载失败：${e?.message || '请稍后重试'}`)
+    matrixData.value = []
+  } finally {
+    matrixLoading.value = false
+  }
+}
+const openMatrix = async () => { showMatrix.value = true; await loadMatrix() }
+/** 矩阵条目 → 状态点：后端已带上 providerEnabled/quotaBlocked/verifyStatus，复用卡片同一判定 */
+const entryHealth = e => health({
+  enabled: e.providerEnabled,
+  quotaBlocked: e.quotaBlocked,
+  quotaMessage: null,
+  verifyStatus: e.verifyStatus,
+  lastVerifyMs: e.lastVerifyMs,
+  verifyMessage: null
+})
+const entryPriceText = e => (e.inputPrice == null && e.outputPrice == null)
+  ? '未计价' : `¥${e.inputPrice ?? 0}/¥${e.outputPrice ?? 0}`
 
 // ---- 批量操作：列表里的供应商都是自己可管理的，可勾选 ----
 const selected = ref([])
@@ -924,6 +1354,8 @@ const load = async () => {
     // 勾选与现存列表对账：已被删掉的 id 从选中集合里清掉（避免批量操作撞「不存在」）
     const alive = new Set(list.value.map(x => x.id))
     selected.value = selected.value.filter(id => alive.has(id))
+    // 列表是模型/核验/引用的唯一真源：任何增删改后矩阵缓存都作废，下次打开矩阵重新拉一次
+    matrixData.value = null
   } catch (e) {
     message.error(e.message || '供应商列表加载失败')
   } finally {
@@ -1019,7 +1451,7 @@ const onToggle = async (p, v) => {
 }
 
 const onDelete = async p => {
-  // 确认交互由行内 a-popconfirm 承担
+  // 确认交互由调用方承担（卡片/表格的「⋯」菜单走 Modal.confirm，文案与原先行内 popconfirm 一致）
   try {
     await deleteProvider(p.id)
     message.success('已删除')
@@ -1036,6 +1468,27 @@ const onDelete = async p => {
     })
   }
 }
+
+/** 「⋯」菜单里的删除：确认语义与原先的 a-popconfirm 完全一致，只是入口从卡片底部收进菜单 */
+const confirmDelete = p => {
+  Modal.confirm({
+    title: '确定删除该供应商？其已登记的模型会一并删除。',
+    okText: '删除', okType: 'danger', cancelText: '取消',
+    onOk: () => onDelete(p)
+  })
+}
+
+// ---- 表格视图列（数据源与卡片视图同为 filteredList）----
+const tableCols = [
+  { title: '供应商', key: 'prov', width: 220 },
+  { title: '状态', key: 'health', width: 108 },
+  { title: '模型', key: 'models', width: 170 },
+  { title: '最近核验', key: 'verify', width: 168 },
+  { title: '近7天调用', key: 'calls', width: 96 },
+  { title: '预估费用', key: 'cost', width: 96 },
+  { title: '引用', key: 'refs', width: 88 },
+  { title: '操作', key: 'action', width: 150 }
+]
 
 /**
  * 测试连接：优先拉一次 /v1/models（顺带验证地址与 Key）；
@@ -1698,6 +2151,13 @@ onMounted(async () => {
   loadDialectCatalog()
   await load()
   handleSetupAction()
+  firstLoad.value = false
+  // 陈旧核验 fire-and-forget：等它回来才放行首屏，骨架屏就白做了。
+  // 有实际核验结果（从未核验/超新鲜窗口的启用供应商）才补一次 load()，
+  // 让状态点从「未核验」翻成绿/红；失败静默，用户仍可在卡片「⋯」里手动核验
+  verifyStaleProviders().then(r => {
+    if (((r && r.data) || []).length) load()
+  }).catch(() => {})
 })
 </script>
 
@@ -1890,4 +2350,68 @@ onMounted(async () => {
 .pm-map :deep(.ant-input-number-sm) { width: 100%; font-size: 12px; }
 .pm-footer { display: flex; align-items: center; }
 .pm-footer-actions { margin-left: auto; display: flex; gap: 8px; }
+
+/* ==================== 列表页骨架升级：工具栏 / 状态点 / 模型 chips / meta 行 ==================== */
+/* 页头容纳筛选与工具组后控件变多：允许提前换行（全局兜底只在 ≤768px 生效，这里更宽就折） */
+.pv-page-head { flex-wrap: wrap; row-gap: 8px; }
+.pv-search { width: 200px; flex: 0 1 200px; min-width: 130px; }
+.pv-head-acts { margin-left: auto; display: flex; align-items: center; gap: 8px; flex: none; }
+.pv-view-on { color: var(--app-accent); background: var(--app-accent-weak); }
+
+/* 健康状态点：颜色 + 文字双编码（暗色自适应、读屏有字），圆点只是装饰，语义在文字 */
+.pv-health { display: inline-flex; align-items: center; gap: 5px; flex: none; font-size: 11px; white-space: nowrap; }
+.pv-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; }
+.pv-h-ok { color: var(--app-ok); }
+.pv-h-bad { color: var(--app-danger); }
+.pv-h-idle { color: var(--app-text3); }
+
+/* 模型速览 chip：类型是 chip 内的浅色后缀，不与名称抢宽 */
+.pv-model-chip {
+  max-width: 100%; display: inline-flex; align-items: center; gap: 4px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pv-chip-type { font-style: normal; font-size: 10px; color: var(--app-text3); flex: none; }
+.pv-chip-more { flex: none; }
+
+/* meta 行沉到卡片底部：margin-top:auto 从 .pv-actions 挪到 meta，虚线正好落在小字与操作之间 */
+.pv-meta { margin-top: auto; padding-top: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 11px; color: var(--app-text3); }
+.pv-meta-sep { color: var(--app-border); }
+.pv-actions { margin-top: 0; border-top: 1px dashed var(--app-border); }
+.pv-more-btn { display: inline-flex; align-items: center; }
+
+/* 首屏骨架卡：轮廓与真卡一致，数据到位时不跳版 */
+.pv-skeleton { min-height: 150px; }
+
+/* 表格视图单元 */
+.pv-tp-prov { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.pv-tp-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pv-tp-count { margin-right: 6px; font-variant-numeric: tabular-nums; }
+.pv-tp-types { font-size: 11px; color: var(--app-text3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 引用弹窗的批量替换条：压在清单上方，与逐条「去修改」分区（accent 弱底提示这是「一次做完」的快捷路） */
+.pv-replace-bar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-bottom: 10px; padding: 8px 10px; border-radius: 8px;
+  border: 1px solid var(--app-accent); background: var(--app-accent-weak);
+}
+.pv-replace-lead { font-size: 12px; color: var(--app-text2); }
+.pv-replace-lead b { color: var(--app-text); }
+.pv-replace-select { width: 200px; }
+
+/* 模型矩阵：粘性表头 + 按 modelId 分组，同源 ≥2 家整组弱底高亮 */
+.pmx-list { max-height: 60vh; overflow-y: auto; }
+.pmx-row {
+  display: grid; grid-template-columns: 1.4fr .7fr 1.3fr .7fr .7fr .7fr .8fr;
+  align-items: center; gap: 8px; padding: 5px 10px; font-size: 12px;
+}
+.pmx-head-row { position: sticky; top: 0; z-index: 1; background: var(--app-panel); color: var(--app-text2); font-size: 11px; border-bottom: 1px solid var(--app-border); }
+.pmx-group { border-bottom: 1px solid var(--app-border); }
+.pmx-group:last-child { border-bottom: none; }
+.pmx-group.pmx-same { background: var(--app-accent-weak); }
+.pmx-group-head { display: flex; align-items: center; gap: 8px; padding: 7px 10px 3px; }
+.pmx-model { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pmx-prov { display: flex; align-items: center; gap: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pmx-off { font-style: normal; font-size: 10px; color: var(--app-text3); border: 1px solid var(--app-border); border-radius: 4px; padding: 0 3px; flex: none; }
+.pmx-num { font-variant-numeric: tabular-nums; color: var(--app-text2); white-space: nowrap; }
+.pmx-empty { padding: 28px 0; text-align: center; font-size: 13px; color: var(--app-text3); }
 </style>

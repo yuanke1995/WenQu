@@ -78,6 +78,25 @@ public class Provider {
     /** 额度状态最近一次判定时刻（正常时 NULL；超过时效未复现视为已自愈，不在界面禁选） */
     private LocalDateTime quotaCheckedAt;
 
+    /**
+     * 最近一次主动核验时刻（GET /v1/models 免费探测，由 {@code ProviderVerifyService} 写回）。
+     * 被动额度登记只说「撞过墙」——坏了要用户先去对话页失败一轮才知道；这一列让列表页
+     * 能回答「最后一次体检是什么时候、结论是什么」，供应商坏了 ≤5 分钟在列表可见。
+     */
+    private LocalDateTime lastVerifiedAt;
+
+    /** 核验往返耗时（毫秒；未核验 NULL） */
+    private Integer lastVerifyMs;
+
+    /**
+     * 核验结果：ok=可达 unreachable=网络不通 rejected=网关拒绝（鉴权/路径）expired=额度不足；
+     * NULL=从未核验。与 {@code quotaStatus} 独立——后者纯被动，这里主动体检的结论。
+     */
+    private String verifyStatus;
+
+    /** 核验失败原因摘要（网关返回原文截断；ok 时 NULL） */
+    private String verifyMessage;
+
     /** 创建时间 */
     private LocalDateTime createTime;
 

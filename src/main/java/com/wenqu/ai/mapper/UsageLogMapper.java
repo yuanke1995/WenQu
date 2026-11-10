@@ -105,4 +105,16 @@ public interface UsageLogMapper extends BaseMapper<UsageLog> {
                                           @Param("tenantId") String tenantId,
                                           @Param("since") LocalDateTime since,
                                           @Param("kinds") List<String> kinds);
+
+    /**
+     * 近 N 天按模型引用聚合（供应商列表的 7 天用量/费用与模型矩阵同源复用）：
+     * 一次查询覆盖全部供应商，Java 侧按 {@code providerId/} 前缀归组、乘登记单价现算——
+     * 与费用报表同口径（单价随改随算不落快照），跨全部用户：供应商账户的花费
+     * 归属人关心的是「钱从我的 Key 走了多少」，不分调用方。
+     */
+    @Select("SELECT model AS model, COUNT(*) AS calls, COALESCE(SUM(prompt_tokens),0) AS p, "
+            + "COALESCE(SUM(completion_tokens),0) AS c, COALESCE(SUM(total_tokens),0) AS t "
+            + "FROM c_ai_usage_log WHERE create_time >= #{since} AND model IS NOT NULL "
+            + "GROUP BY model")
+    List<Map<String, Object>> statModelUsageSince(@Param("since") LocalDateTime since);
 }

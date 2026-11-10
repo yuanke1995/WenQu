@@ -8,6 +8,9 @@ import com.wenqu.ai.service.ModelQuotaGuard;
 import com.wenqu.ai.service.ModelQuotaService;
 import com.wenqu.ai.service.ModelReferenceScanner;
 import com.wenqu.ai.service.ModelRegistryService;
+import com.wenqu.ai.service.ProviderReferenceReplaceService;
+import com.wenqu.ai.service.ProviderUsageService;
+import com.wenqu.ai.service.ProviderVerifyService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -40,20 +43,88 @@ public class ProviderController {
     private final ModelReferenceScanner referenceScanner;
     private final ModelQuotaService quotaService;
     private final com.wenqu.ai.service.SessionService sessionService;
+    private final ProviderVerifyService verifyService;
+    private final ProviderUsageService usageService;
+    private final ProviderReferenceReplaceService replaceService;
 
     @Operation(summary = "供应商列表", description = "按归属过滤：仅见自己登记的（数据按 userId 隔离）。apiKey 脱敏；"
             + "每行带 ownerUid/manageable。<b>已停用的行额外带 refCount</b>（仍有几处在用它的模型，含本人的会话级覆盖）"
-            + "——停用不是终点，卡片要能持续提醒还剩几处没改干净；启用中的行不扫，省掉每页五张表的全量查询")
+            + "——停用不是终点，卡片要能持续提醒还剩几处没改干净；启用中的行不扫，省掉每页五张表的全量查询。"
+            + "每行另带 modelBriefs（模型速览 chips）、核验字段（lastVerifiedAt/lastVerifyMs/verifyStatus/verifyMessage）"
+            + "与 usage7d（近 7 天调用数与预估费用，cost=null 表示全部未计价）")
     @Permission("provider:read")
     @GetMapping
     public ResultJson list() {
         String uid = RequestUser.uid();
         List<Map<String, Object>> rows = modelRegistryService.listProviders(uid, RequestUser.role());
+        usageService.enrich(rows);
         for (Map<String, Object> row : rows) {
             boolean off = Boolean.FALSE.equals(row.get("enabled"));
             row.put("refCount", off ? referenceScanner.countOf(String.valueOf(row.get("id")), uid) : 0);
         }
         return ResultJson.ok(rows);
+    }
+
+    @Operation(summary = "模型矩阵", description = "同一裸模型名跨供应商的同源登记分组（按请求者可见范围）："
+            + "[{modelId, entries:[{providerId,providerName,ref,modelType,displayName,inputPrice,outputPrice,contextWindow,"
+            + "modelEnabled,providerEnabled,quotaBlocked,verifyStatus,lastVerifyMs,calls7d,cost7d}]}]，"
+            + "同源家数多的在前。用于比价、备份缺口识别与（三期）主备路由设置")
+    @Permission("provider:read")
+    @GetMapping("/matrix")
+    public ResultJson matrix() {
+        return ResultJson.ok(usageService.matrix(RequestUser.uid(), RequestUser.role()));
+    }
+
+    @Operation(summary = "主动核验单个供应商", description = "GET {baseUrl}/v1/models 免费探测并写回核验结果"
+            + "（verify_status/last_verify_ms/last_verified_at）。检出额度问题时同步登记并通知归属人；"
+            + "核验成功不清额度标记（/models 不花 token，不能当作已充值的证据）。返回 {verifyStatus,lastVerifyMs,verifyMessage}")
+    @Permission("provider:write")
+    @PostMapping("/{id}/verify")
+    public ResultJson verify(
+            @Parameter(description = "供应商ID") @PathVariable("id") String id) {
+        ResultJson denied = denyUnlessManageable(id);
+        if (denied != null) return denied;
+        Map<String, Object> r = verifyService.verify(id);
+        return r == null ? ResultJson.error("供应商不存在（可能已被删除）") : ResultJson.ok(r);
+    }
+
+    @Operation(summary = "批量核验供应商", description = "body: {ids:[...]}；逐条判权后并行探测（免费 /models）。"
+            + "用于批量管理模式的「批量核验」；返回逐家结果列表")
+    @Permission("provider:write")
+    @PostMapping("/verify-batch")
+    public ResultJson verifyBatch(@RequestBody Map<String, Object> body) {
+        List<String> ids = BatchResults.parseIds(body);
+        if (ids.isEmpty()) return ResultJson.error("请先选择要核验的供应商");
+        List<String> allowed = new ArrayList<>();
+        for (String id : ids) {
+            com.wenqu.ai.model.Provider p = modelRegistryService.providerById(id);
+            if (p != null && modelRegistryService.canManage(p, RequestUser.uid(), RequestUser.role())) allowed.add(id);
+        }
+        return ResultJson.ok(verifyService.verifyBatch(allowed));
+    }
+
+    @Operation(summary = "核验陈旧项（页面打开时调用）", description = "对请求者可见、启用中且上次核验超过新鲜窗口"
+            + "（从未核验或早于 10 分钟前）的供应商并行探测；刚核过的不重复打网关，开页代价与供应商数量无关。"
+            + "返回本次实际核验的逐家结果（可能为空列表）")
+    @Permission("provider:read")
+    @PostMapping("/verify-stale")
+    public ResultJson verifyStale() {
+        return ResultJson.ok(verifyService.verifyStaleFor(RequestUser.uid(), RequestUser.role()));
+    }
+
+    @Operation(summary = "引用批量替换", description = "body: {targetProviderId}；把仍引用本供应商的位置一次换成"
+            + "目标供应商下的<b>同名模型</b>（目标未登记该启用模型的逐处失败并给原因，不静默换别的）。"
+            + "只写请求者本人的资源；系统配置槽位与他人个人默认只列不写。返回 {replaced,failed,remaining}")
+    @Permission("provider:write")
+    @PostMapping("/{id}/replace-references")
+    public ResultJson replaceReferences(
+            @Parameter(description = "供应商ID") @PathVariable("id") String id,
+            @RequestBody Map<String, Object> body) {
+        ResultJson denied = denyUnlessManageable(id);
+        if (denied != null) return denied;
+        String target = str(body.get("targetProviderId"));
+        if (target == null || target.isBlank()) return ResultJson.error("请选择目标供应商");
+        return ResultJson.ok(replaceService.replace(id, target, RequestUser.uid()));
     }
 
     @Operation(summary = "可用模型清单", description = "登录即可用（无需管理员）：按归属过滤后，enabled 供应商下 enabled 模型按供应商分组，预先拼好引用串 ref=providerId/modelId；type 过滤（chat/vision/embedding/rerank），期望 chat 时全模态 omni 一并入选（全模态本质是对话模型），不含 baseUrl/apiKey")
