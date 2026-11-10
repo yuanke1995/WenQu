@@ -84,7 +84,7 @@
 
         <div v-if="view === 'grid'" class="kb-grid">
           <div v-for="kb in filtered" :key="kb.id"
-               :class="['kb-card', { warn: kb.needAttention, archived: kb.archived === 1 }]"
+               :class="['kb-card', { warn: kb.needAttention, archived: kb.archived === 1, empty: isEmptyKb(kb) }]"
                @click="openDrawer(kb)">
             <div class="kb-top">
               <KbIcon :kb="kb" :size="30" />
@@ -122,9 +122,9 @@
             </div>
 
             <div class="kb-nums">
-              <div class="kb-num"><b>{{ kb.docTotal ?? kb.docCount ?? 0 }}</b><span>文档</span></div>
-              <div class="kb-num"><b>{{ fmtNum(kb.chunkTotal || 0) }}</b><span>知识块</span></div>
-              <div class="kb-num"><b>{{ fmtNum(kb.hit90d || 0) }}</b><span>90 天命中</span></div>
+              <div :class="['kb-num', { dim: isEmptyKb(kb) }]"><b>{{ kb.docTotal ?? kb.docCount ?? 0 }}</b><span>文档</span></div>
+              <div :class="['kb-num', { dim: isEmptyKb(kb) }]"><b>{{ fmtNum(kb.chunkTotal || 0) }}</b><span>知识块</span></div>
+              <div :class="['kb-num', { dim: isEmptyKb(kb) }]"><b>{{ fmtNum(kb.hit90d || 0) }}</b><span>90 天命中</span></div>
             </div>
 
             <div class="hbar">
@@ -134,10 +134,15 @@
               <i class="off" :style="{ width: pct(kb, 'docDeprecated') }"></i>
             </div>
             <div class="kb-legend">
-              <span><i class="d ok"></i>已入库 {{ kb.docActive || 0 }}</span>
-              <span v-if="kb.docParsing"><i class="d run"></i>解析中 {{ kb.docParsing }}</span>
-              <span v-if="kb.docFailed" class="danger"><i class="d err"></i>失败 {{ kb.docFailed }}</span>
-              <span class="push">{{ lastUsed(kb) }}</span>
+              <template v-if="isEmptyKb(kb)">
+                <span><i class="d off"></i>还没有可检索内容</span>
+              </template>
+              <template v-else>
+                <span><i class="d ok"></i>已入库 {{ kb.docActive || 0 }}</span>
+                <span v-if="kb.docParsing"><i class="d run"></i>解析中 {{ kb.docParsing }}</span>
+                <span v-if="kb.docFailed" class="danger"><i class="d err"></i>失败 {{ kb.docFailed }}</span>
+              </template>
+              <span class="push">{{ isEmptyKb(kb) ? '空库' : lastUsed(kb) }}</span>
             </div>
 
             <div class="kb-meta">
@@ -151,9 +156,19 @@
             </div>
 
             <div class="kb-foot">
-              <button class="app-btn sm" @click.stop="openDocs(kb)">打开</button>
-              <button class="app-btn ghost sm" @click.stop="openProbe(kb)">试检索</button>
-              <span class="upd">{{ kb.graph?.building ? '图谱构建中' : (kb.graph?.triples ? `图谱 ${kb.graph.entities} 实体` : '') }}</span>
+              <template v-if="isEmptyKb(kb)">
+                <button class="app-btn sm" @click.stop="openImport(kb)"><import-outlined /> 上传资料</button>
+                <button v-if="canManage(kb)" class="app-btn ghost sm" @click.stop="openEdit(kb)">编辑</button>
+                <span class="upd">从模板开始 →</span>
+              </template>
+              <template v-else>
+                <button class="app-btn sm" @click.stop="openDocs(kb)">{{ canManage(kb) ? '打开' : '查看' }}</button>
+                <button class="app-btn ghost sm" @click.stop="openProbe(kb)">试检索</button>
+                <button v-if="kbState(kb).danger" class="app-link-btn upd danger" @click.stop="openDocs(kb)">
+                  {{ kbState(kb).text }}
+                </button>
+                <span v-else class="upd">{{ kbState(kb).text }}</span>
+              </template>
             </div>
           </div>
 
@@ -490,6 +505,23 @@ function pct (kb, key) {
   return `${(Number(kb[key] || 0) / total) * 100}%`
 }
 
+/** 空库：上传前没有任何文档与知识块，卡面走虚线/置灰变体 */
+function isEmptyKb (kb) {
+  return Number(kb.docTotal ?? kb.docCount ?? 0) === 0 && Number(kb.chunkTotal || 0) === 0 && kb.archived !== 1
+}
+
+/** 卡底状态文案：失败 > 解析队列 > 图谱构建 > 零命中 > 只读 > 图谱规模 */
+function kbState (kb) {
+  if (kb.archived === 1) return { text: '' }
+  if (Number(kb.docFailed || 0) > 0) return { text: '查看失败 →', danger: true }
+  if (Number(kb.docParsing || 0) > 0) return { text: `解析队列 ${kb.docParsing}` }
+  if (kb.graph?.building) return { text: '图谱构建中' }
+  if (Number(kb.docTotal || 0) > 0 && !Number(kb.hit90d || 0)) return { text: '90 天零命中' }
+  if (!canManage(kb)) return { text: '只读权限' }
+  if (kb.graph?.triples) return { text: `图谱 ${kb.graph.entities} 实体` }
+  return { text: '' }
+}
+
 function modelName (ref) {
   return modelRefInfo(ref)?.displayName || (ref ? String(ref).split('/').pop() : '')
 }
@@ -559,6 +591,7 @@ function lastUsed (kb) {
 .kb-card:hover { border-color: var(--app-accent-border); box-shadow: 0 4px 16px -6px rgba(46,107,230,.25); }
 .kb-card.warn { border-color: var(--app-warn-border); }
 .kb-card.archived { background: var(--app-panel-2); opacity: .8; }
+.kb-card.empty { border-style: dashed; background: var(--app-panel-2); }
 .kb-top { display: flex; align-items: flex-start; gap: 9px; min-width: 0; }
 .kb-title { min-width: 0; flex: 1; }
 .kb-name { display: flex; align-items: center; gap: 6px; font-size: 13.5px; font-weight: 600; line-height: 1.4; }
@@ -576,6 +609,7 @@ function lastUsed (kb) {
 .kb-num { flex: 1; min-width: 0; }
 .kb-num b { display: block; font-size: 17px; font-weight: 650; line-height: 1.2; }
 .kb-num span { font-size: 10.5px; color: var(--app-text3); }
+.kb-num.dim b { color: var(--app-text3); }
 .kb-num + .kb-num { border-left: 1px solid var(--app-border); padding-left: 12px; }
 .hbar { display: flex; height: 5px; border-radius: 999px; overflow: hidden; background: #eef0f3; margin-top: 9px; }
 .hbar i { display: block; height: 100%; }
@@ -597,6 +631,8 @@ function lastUsed (kb) {
 .kb-foot { display: flex; align-items: center; gap: 6px; border-top: 1px solid var(--app-border); margin-top: auto; padding-top: 9px; }
 .app-btn.sm, .app-btn.ghost.sm { padding: 4px 10px; font-size: 11.5px; }
 .kb-foot .upd { margin-left: auto; font-size: 10.5px; color: var(--app-text3); }
+.kb-foot .upd.danger { color: var(--app-danger); }
+.kb-foot .app-link-btn.upd { margin-left: auto; }
 .kb-empty { grid-column: 1 / -1; text-align: center; padding: 60px 0; }
 .empty-title { font-size: 14px; font-weight: 600; color: var(--app-text2); }
 .empty-sub { font-size: 12px; color: var(--app-text3); margin-top: 6px; }

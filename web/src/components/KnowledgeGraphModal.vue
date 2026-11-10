@@ -74,6 +74,9 @@
                 <template #icon><reload-outlined /></template>
               </a-button>
             </a-tooltip>
+            <a-tooltip title="重新计算力导向布局">
+              <a-button size="small" @click="relayout">重新布局</a-button>
+            </a-tooltip>
           </div>
 
           <div v-show="graphView === 'graph'" class="graph-wrap">
@@ -115,7 +118,7 @@
                                   color: typeColor(selectedDetail.entity.type || '其他') }">
                     {{ selectedDetail.entity.type || '其他' }}
                   </span>
-                  {{ selectedDetail.degree }} 条关系<template v-if="aliasText(selectedDetail)"> · 又名 {{ aliasText(selectedDetail) }}</template>
+                  {{ selectedDetail.degree }} 条关系<template v-if="detailDocCount"> · 出现于 {{ detailDocCount }} 个文档</template><template v-if="aliasText(selectedDetail)"> · 又名 {{ aliasText(selectedDetail) }}</template>
                 </div>
               </div>
               <button class="app-link-btn" @click="closeEntityPanel">收起</button>
@@ -163,6 +166,10 @@
                 : '拖动节点/空白平移，滚轮缩放；点节点聚焦整条关系链。' }}
             </div>
           </template>
+          <div v-if="graphInfo.failed" class="gx-right-fail">
+            <span>抽取失败 {{ graphInfo.failed }} 个文档，可重新构建补齐</span>
+            <button class="app-link-btn" :disabled="graphBuilding || graphInfo.building" @click="doBuild(false)">重试</button>
+          </div>
         </aside>
       </div>
 
@@ -287,6 +294,8 @@ const viewLimit = ref(300)
 const truncated = ref(false)
 const overviewData = ref(null)   // 全景数据缓存（聚焦模式「返回全景」用，免重拉）
 const focused = ref(null)        // {id, name}：邻域聚焦模式
+/** 最近一次渲染的入参：重新布局直接用它重算，不再打接口 */
+const lastRender = ref({ data: null, focus: null })
 const VIEW_LIMIT = 300
 /** 默认只画关联度最高的一小撮实体：1000+ 节点全量渲染会糊成毛线团 */
 const nodeLimit = ref(40)
@@ -298,6 +307,12 @@ const onNodeLimitChange = () => nextTick(renderGraphChart)
 let chainFocusSets = null        // 节点数据下标 → 所在连通链的 {node:[], edge:[]} 下标集（聚焦范围）
 
 const closeEntityPanel = () => { selectedDetail.value = null; clearNodeFocus() }
+
+/** 右栏「出现于 N 个文档」：按当前实体三元组里的来源文档去重 */
+const detailDocCount = computed(() => {
+  const rows = selectedDetail.value?.triples || []
+  return new Set(rows.map(r => r.docId || r.doc).filter(Boolean)).size
+})
 
 /** 实体类型：与后端抽取 prompt/白名单同口径；颜色只做视觉区分，不表达优先级 */
 const ENTITY_TYPE_ORDER = ['人物', '机构', '法规', '概念', '产品', '地点', '时间', '其他']
@@ -340,11 +355,19 @@ const backToOverview = () => {
   renderFromData(overviewData.value, null)
 }
 
+/** 重新布局：用最近一次渲染数据整体重建力模拟，不重新拉接口 */
+function relayout () {
+  const lr = lastRender.value
+  if (!lr.data) { renderGraphChart(); return }
+  renderFromData(lr.data, lr.focus)
+}
+
 /** 一次性 setOption（此后只 dispatchAction，不再 setOption——会重建力模拟与漫游坐标系） */
 function renderFromData(data, focus) {
   disposeChart()
   selectedDetail.value = null
   nameToId = new Map()
+  lastRender.value = { data, focus }
   if (!data || !data.nodes?.length || !graphChartEl.value) return
   const cssVar = n => (getComputedStyle(document.documentElement).getPropertyValue(n) || '').trim()
   const allNodes = data.nodes
@@ -798,6 +821,11 @@ onBeforeUnmount(() => {
 .gx-right-stats span { font-size: 10.5px; color: var(--app-text3); }
 .gx-right-note { margin-top: auto; padding-top: 8px; border-top: 1px solid var(--app-border);
   font-size: 10.5px; color: var(--app-text3); line-height: 1.6; }
+.gx-right-fail { flex: none; display: flex; align-items: center; gap: 8px; margin-top: 8px; padding: 7px 9px;
+  border: 1px solid var(--app-warn-border); background: #fffdf7; border-radius: 6px;
+  font-size: 10px; color: var(--app-warn-text); line-height: 1.5; }
+.gx-right-fail span { flex: 1; }
+.gx-right-fail .app-link-btn { flex: none; font-size: 10.5px; }
 .gx-build { flex: none; display: flex; align-items: center; gap: 10px; padding: 8px 12px;
   border: 1px solid var(--app-warn-border); background: #fffdf7; border-radius: 8px;
   font-size: 11px; color: var(--app-warn-text); }

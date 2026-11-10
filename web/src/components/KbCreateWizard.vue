@@ -12,6 +12,8 @@
     </div>
 
     <div v-if="step === 1" class="wiz-body">
+      <div class="wiz-q">这个库主要放什么资料？</div>
+      <div class="wiz-d">模板只预置「解析与检索参数 + 示例问题」，不预置任何内容；选空白则全部走全局默认。</div>
       <div class="tpl-grid">
         <div v-for="t in TEMPLATES" :key="t.key" :class="['tpl', { on: template === t.key }]"
              @click="pick(t.key)">
@@ -27,6 +29,17 @@
       <div class="tpl-note">
         <bulb-outlined />
         <span>不确定选哪个？先选最接近的场景，建库后用「试检索」验证效果，再在设置里微调分块与阈值。</span>
+      </div>
+      <div v-if="checks.length" class="preset self-check">
+        <div class="preset-head">
+          <aim-outlined /> 建库后自检问题
+          <a-tag color="default" style="margin:0">来自模板</a-tag>
+        </div>
+        <div v-for="c in checks" :key="c.q" class="check-row">
+          <span class="check-q">{{ c.q }}</span>
+          <b>预期命中：{{ c.expect }}</b>
+        </div>
+        <div class="check-note">建库后一键跑这 {{ checks.length }} 个问题，检索命中即说明参数可用。</div>
       </div>
     </div>
 
@@ -79,6 +92,54 @@
         <div class="import-note">
           导入后按本库参数重新解析、分块、向量化；解析在后台队列执行，可离开页面。
         </div>
+        <!-- 清单预览：创建后才有库 id，故先创建再拉 manifest，冲突策略在开始导入前选择 -->
+        <a-spin :spinning="previewing">
+          <div v-if="previewError" class="import-err">{{ previewError }}</div>
+          <div v-if="preview" class="import-preview">
+            <div class="ip-head">
+              共 <b>{{ preview.total }}</b> 个文档
+              <span v-if="preview.conflicts" class="ip-warn">同名冲突 {{ preview.conflicts }}</span>
+              <span v-else class="ip-ok">无同名冲突</span>
+            </div>
+            <div class="ip-list">
+              <div v-for="d in (preview.documents || []).slice(0, 8)" :key="d.fileName" class="ip-row">
+                <file-text-outlined class="ip-ic" />
+                <span class="ip-name" :title="d.fileName">{{ d.fileName }}</span>
+                <span v-if="d.exists" class="ip-tag">已存在</span>
+                <span v-if="d.missingSourceFile" class="ip-tag err">源文件缺失</span>
+              </div>
+              <div v-if="(preview.documents || []).length > 8" class="ip-more">
+                还有 {{ preview.documents.length - 8 }} 个文件…
+              </div>
+            </div>
+            <div v-if="preview.conflicts" class="conflict-row">
+              <span>同名冲突</span>
+              <a-radio-group v-model:value="strategy" size="small">
+                <a-radio-button value="replace">替换</a-radio-button>
+                <a-radio-button value="skip">跳过</a-radio-button>
+                <a-radio-button value="keepBoth">保留两份</a-radio-button>
+              </a-radio-group>
+            </div>
+          </div>
+        </a-spin>
+        <div v-if="createdKb" class="selfcheck">
+          <div class="sc-head">
+            <check-circle-outlined class="sc-ic" /> 知识库已创建
+            <span class="sp"></span>
+            <a-button size="small" :loading="selfChecking" :disabled="!checks.length" @click="runSelfCheck">
+              {{ selfCheck.length ? '重新自检' : `运行自检（${checks.length} 个问题）` }}
+            </a-button>
+          </div>
+          <div v-if="!checks.length" class="sc-note">空白模板没有示例问题，可上传资料后在「试检索」里验证。</div>
+          <div v-for="(r, i) in selfCheck" :key="i" class="sc-row">
+            <span class="sc-q" :title="r.q">{{ r.q }}</span>
+            <span :class="['sc-res', r.hit ? 'ok' : 'none']">{{ r.hit ? '命中' : '未命中' }}</span>
+            <span class="sc-doc" :title="r.topDoc">{{ r.topDoc || '—' }}</span>
+          </div>
+          <div v-if="selfCheck.length" class="sc-note">
+            命中说明参数可用；未命中可换关键词、补资料或调整阈值后重测。
+          </div>
+        </div>
         <div v-if="importResult" class="import-result">
           <div class="ir-head">
             导入结果：成功 {{ importResult.ok }} / {{ importResult.total }}
@@ -100,7 +161,7 @@
         <div class="preset-row"><span>知识图谱</span><b>{{ form.graphEnabled ? '开启' : '关闭' }}</b></div>
         <div class="preset-row"><span>资料</span><b>{{ importFile ? importFile.name : '先建空库' }}</b></div>
         <div class="preset-tip">
-          {{ createdKb ? '知识库已创建，可直接完成或继续查看导入结果。' : '创建后可随时在「编辑 → 高级参数」里调整。' }}
+          {{ createdKb ? '知识库已创建，可运行自检或继续导入资料。' : '创建后可随时在「编辑 → 高级参数」里调整。' }}
         </div>
       </div>
     </div>
@@ -112,9 +173,13 @@
       <a-button v-if="step > 1 && !createdKb" @click="step--">上一步</a-button>
       <a-button v-if="step === 1" type="primary" @click="step = 2">下一步</a-button>
       <a-button v-else-if="step === 2" type="primary" @click="step = 3">下一步：导入资料</a-button>
+      <a-button v-else-if="createdKb && importFile && !importResult" type="primary"
+                :loading="importing" :disabled="!preview" @click="startImport">
+        开始导入（{{ preview?.total ?? '…' }} 个文档）
+      </a-button>
       <a-button v-else-if="createdKb" type="primary" @click="emit('update:open', false)">完成</a-button>
       <a-button v-else type="primary" :loading="saving || importing" @click="create">
-        {{ importFile ? '创建并导入' : '创建知识库' }}
+        {{ importFile ? '创建并预览清单' : '创建知识库' }}
       </a-button>
     </div>
   </a-modal>
@@ -124,12 +189,14 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import {
-  BookOutlined, BulbOutlined, CheckCircleOutlined, CheckOutlined, CloseCircleOutlined,
+  AimOutlined, BookOutlined, BulbOutlined, CheckCircleOutlined, CheckOutlined, CloseCircleOutlined,
   CodeOutlined, CustomerServiceOutlined, FileTextOutlined, InboxOutlined, PlusOutlined,
   SafetyCertificateOutlined
 } from '@ant-design/icons-vue'
 import ModelSelect from './ModelSelect.vue'
-import { createKnowledgeBase, importKnowledgeBase } from '../api'
+import {
+  createKnowledgeBase, importKnowledgeBase, previewKnowledgeBaseImport, probeKnowledgeBase
+} from '../api'
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -205,7 +272,44 @@ const importFile = ref(null)
 const importResult = ref(null)
 const createdKb = ref(null)
 const seededParams = ref(null)
+const preview = ref(null)
+const previewing = ref(false)
+const previewError = ref('')
+const strategy = ref('replace')
+const selfCheck = ref([])
+const selfChecking = ref(false)
 const form = reactive({ name: '', description: '', embeddingRef: '', graphEnabled: false, graphModelRef: '' })
+
+/** 建库后自检问题：模板只给问题与预期命中，不写任何内容；建库后逐条跑试检索验证参数 */
+const SELF_CHECKS = {
+  law: [
+    { q: '试用期最长可以约定多久？', expect: '劳动合同法 · 第十九条' },
+    { q: '竞业限制补偿金怎么计算？', expect: '司法解释 · 第 36 条' },
+    { q: '员工手册对远程办公怎么规定？', expect: '员工手册 · 2.3' }
+  ],
+  manual: [
+    { q: '如何升级到最新版本？', expect: '版本日志 · 升级说明' },
+    { q: '支持哪些文件格式？', expect: '功能说明 · 支持格式' },
+    { q: '接口报错怎么排查？', expect: '常见问题 · 错误码' }
+  ],
+  contract: [
+    { q: '合同违约如何赔偿？', expect: '违约责任 · 第 8 条' },
+    { q: '保密期限一般是多久？', expect: '保密条款 · 第 5 条' },
+    { q: '合同解除的条件有哪些？', expect: '合同解除 · 第 9 条' }
+  ],
+  faq: [
+    { q: '退换货政策是什么？', expect: '售后政策 · 退换货' },
+    { q: '多久能发货？', expect: '配送说明 · 时效' },
+    { q: '如何申请发票？', expect: '发票与报销' }
+  ],
+  dev: [
+    { q: '鉴权接口怎么调用？', expect: '接口文档 · 鉴权' },
+    { q: '服务上线流程是什么？', expect: '发布流程 · 上线' },
+    { q: '数据库变更如何审批？', expect: '研发规范 · 变更审批' }
+  ],
+  blank: []
+}
+const checks = computed(() => SELF_CHECKS[template.value] || [])
 
 const currentTpl = computed(() => TEMPLATES.find(t => t.key === template.value) || TEMPLATES[0])
 const presetRows = computed(() => {
@@ -225,6 +329,7 @@ const presetRows = computed(() => {
   if (p.parse['parse.qaEnabled'] === '1') rows.push({ k: '问答对增强', v: '开' })
   if (p.query['retrieval.vecThreshold']) rows.push({ k: '向量阈值', v: p.query['retrieval.vecThreshold'] })
   if (p.graph) rows.push({ k: '知识图谱', v: '开（自动抽三元组）' })
+  if (checks.value.length) rows.push({ k: '示例问题', v: `${checks.value.length} 条（建库后自检）` })
   if (!rows.length) rows.push({ k: '参数', v: '全部继承默认' })
   return rows
 })
@@ -242,6 +347,11 @@ watch(() => props.open, v => {
   importResult.value = null
   createdKb.value = null
   seededParams.value = null
+  preview.value = null
+  previewError.value = ''
+  strategy.value = 'replace'
+  selfCheck.value = []
+  selfChecking.value = false
   if (props.seed) {
     // 复制为模板：直接进第二步，参数按原库 JSON 原样带过去
     step.value = 2
@@ -276,6 +386,9 @@ function onImportFile (file) {
   if (!/\.zip$/i.test(file.name)) { message.warning('只支持知识库导出 zip 包'); return false }
   importFile.value = file
   importResult.value = null
+  preview.value = null
+  previewError.value = ''
+  strategy.value = 'replace'
   return false
 }
 
@@ -312,30 +425,77 @@ async function create () {
     createdKb.value = kb
     message.success('知识库已创建')
     emit('created', kb)
-    if (!importFile.value) { emit('update:open', false); return }
-    importing.value = true
-    try {
-      const ir = await importKnowledgeBase(kb.id, importFile.value, 'replace')
-      if (ir.success === false) {
-        message.error(ir.msg || '导入失败，可稍后到文档管理重试')
-        return
-      }
-      importResult.value = ir.data || null
-      if (!importResult.value?.failed) {
-        message.success('创建并导入完成')
-        emit('update:open', false)
-      } else {
-        message.warning(`导入完成：成功 ${importResult.value.ok}/${importResult.value.total}`)
-      }
-    } catch (e) {
-      message.error(e.message || '导入失败，可稍后到文档管理重试')
-    } finally {
-      importing.value = false
-    }
+    // 有 zip：先拉导入清单给用户确认冲突策略；没有 zip：留在向导里跑建库后自检
+    if (importFile.value) await loadPreview()
   } catch (e) {
     message.error(e.message || '创建失败')
   } finally {
     saving.value = false
+  }
+}
+
+async function loadPreview () {
+  if (!createdKb.value?.id || !importFile.value) return
+  previewing.value = true
+  previewError.value = ''
+  try {
+    const r = await previewKnowledgeBaseImport(createdKb.value.id, importFile.value)
+    if (r.success === false) { previewError.value = r.msg || '读取导出包失败'; return }
+    preview.value = r.data || null
+    if (preview.value?.conflicts) strategy.value = 'replace'
+  } catch (e) {
+    preview.value = null
+    previewError.value = e.message || '读取导出包失败'
+  } finally {
+    previewing.value = false
+  }
+}
+
+async function startImport () {
+  if (!createdKb.value?.id || !importFile.value || importing.value) return
+  importing.value = true
+  try {
+    const ir = await importKnowledgeBase(createdKb.value.id, importFile.value, strategy.value)
+    if (ir.success === false) {
+      message.error(ir.msg || '导入失败，可稍后到文档管理重试')
+      return
+    }
+    importResult.value = ir.data || null
+    if (!importResult.value?.failed) message.success('创建并导入完成')
+    else message.warning(`导入完成：成功 ${importResult.value.ok}/${importResult.value.total}`)
+  } catch (e) {
+    message.error(e.message || '导入失败，可稍后到文档管理重试')
+  } finally {
+    importing.value = false
+  }
+}
+
+/** 建库后自检：逐条走试检索（不调聊天模型），只回报命中与首条来源 */
+async function runSelfCheck () {
+  if (!createdKb.value?.id || !checks.value.length || selfChecking.value) return
+  selfChecking.value = true
+  const rows = []
+  try {
+    for (const c of checks.value) {
+      let hit = false
+      let topDoc = ''
+      try {
+        const r = await probeKnowledgeBase(createdKb.value.id, { query: c.q, topK: 3, rerank: true })
+        const d = r.data || {}
+        hit = d.verdict === 'hit'
+        const h = (d.hits || [])[0]
+        topDoc = h ? [h.docName, h.titlePath || h.title].filter(Boolean).join(' · ') : ''
+      } catch (e) {
+        // 单条失败不阻断其余问题；结果行按未命中展示
+      }
+      rows.push({ q: c.q, expect: c.expect, hit, topDoc })
+    }
+    selfCheck.value = rows
+    const hitCount = rows.filter(x => x.hit).length
+    if (hitCount) message.success(`自检完成：${hitCount}/${rows.length} 个问题命中`)
+    else message.warning('自检完成：暂未命中，确认资料解析完成或调整阈值后重测')
+  } finally {
+    selfChecking.value = false
   }
 }
 </script>
@@ -366,6 +526,17 @@ async function create () {
 .tpl-note { display: flex; gap: 8px; align-items: flex-start; border: 1px dashed var(--app-border-strong);
   border-radius: 8px; padding: 8px 10px; margin-top: 10px; font-size: 11px; color: var(--app-text3); line-height: 1.6; }
 .tpl-note :deep(.anticon) { margin-top: 2px; color: var(--app-accent); }
+.wiz-q { font-size: 13px; font-weight: 600; color: var(--app-text); margin-bottom: 4px; }
+.wiz-d { font-size: 11px; color: var(--app-text3); line-height: 1.6; margin-bottom: 10px; }
+.self-check { border: 1px solid var(--app-border); border-radius: 9px; background: var(--app-panel-2);
+  padding: 10px 12px; margin-top: 10px; }
+.self-check .preset-head { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600;
+  color: var(--app-text2); margin-bottom: 6px; }
+.self-check .preset-head :deep(.anticon) { color: var(--app-accent); }
+.check-row { display: flex; align-items: center; gap: 10px; padding: 5px 0; border-bottom: 1px dashed var(--app-border);
+  font-size: 11.5px; color: var(--app-text2); }
+.check-row b { margin-left: auto; font-weight: 500; color: var(--app-text3); font-size: 10.5px; }
+.check-note { font-size: 10.5px; color: var(--app-text3); line-height: 1.6; margin-top: 5px; }
 .wiz-form { display: flex; gap: 24px; }
 .wiz-left { flex: 1; min-width: 0; }
 .wiz-right { width: 300px; flex: none; background: var(--app-panel-2); border: 1px solid var(--app-border);
@@ -388,6 +559,37 @@ async function create () {
 .wiz-import .wiz-right { width: 300px; flex: none; background: var(--app-panel-2); border: 1px solid var(--app-border);
   border-radius: 9px; padding: 12px 14px; }
 .import-note { font-size: 10.5px; color: var(--app-text3); line-height: 1.6; margin-top: 8px; }
+.import-err { margin-top: 8px; font-size: 11.5px; color: var(--app-danger); }
+.import-preview { margin-top: 10px; border: 1px solid var(--app-border); border-radius: 8px; overflow: hidden; }
+.ip-head { display: flex; align-items: center; gap: 10px; padding: 8px 10px; background: var(--app-panel-2);
+  font-size: 11.5px; color: var(--app-text3); }
+.ip-head b { color: var(--app-text); }
+.ip-warn { color: var(--app-warn-text); }
+.ip-ok { color: var(--app-ok); }
+.ip-list { max-height: 180px; overflow-y: auto; }
+.ip-row { display: flex; align-items: center; gap: 7px; padding: 5px 10px; border-top: 1px solid var(--app-border);
+  font-size: 11px; }
+.ip-ic { color: var(--app-text3); flex: none; }
+.ip-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--app-text); }
+.ip-tag { flex: none; font-size: 9.5px; color: var(--app-warn-text); background: var(--app-warn-weak);
+  border-radius: 3px; padding: 1px 5px; }
+.ip-tag.err { color: var(--app-danger); background: #fff2f0; }
+.ip-more { padding: 6px 10px; border-top: 1px solid var(--app-border); font-size: 10.5px; color: var(--app-text3); }
+.conflict-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-top: 1px solid var(--app-border);
+  background: #fffdf7; font-size: 11.5px; color: var(--app-text2); }
+.selfcheck { margin-top: 10px; border: 1px solid var(--app-border); border-radius: 8px; padding: 10px 12px; }
+.sc-head { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; color: var(--app-text2); }
+.sc-head .sp { flex: 1; }
+.sc-ic { color: var(--app-ok); }
+.sc-note { font-size: 10.5px; color: var(--app-text3); line-height: 1.6; margin-top: 6px; }
+.sc-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px dashed var(--app-border);
+  font-size: 11px; }
+.sc-q { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--app-text2); }
+.sc-res { flex: none; font-size: 10px; border-radius: 999px; padding: 1px 7px; }
+.sc-res.ok { color: var(--app-ok); background: var(--app-ok-weak); }
+.sc-res.none { color: var(--app-warn-text); background: var(--app-warn-weak); }
+.sc-doc { flex: none; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 10px; color: var(--app-text3); }
 .import-result { margin-top: 12px; border: 1px solid var(--app-border); border-radius: 8px; overflow: hidden; }
 .ir-head { display: flex; align-items: center; gap: 10px; padding: 8px 10px; background: var(--app-panel-2);
   font-size: 11.5px; color: var(--app-text2); }

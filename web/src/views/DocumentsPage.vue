@@ -238,6 +238,11 @@
           </template>
           <a-empty v-if="!loading && !shownList.length" :description="`暂无匹配文档，点击右上角上传 ${uploadCfg.allowedExts.join(' / ')} 或导入网页`" style="padding:40px 0" />
         </a-spin>
+        <div class="doc-foot">
+          <span>{{ summaryText }}</span>
+          <span class="sp"></span>
+          <span class="doc-foot-note">解析完成后自动参与检索</span>
+        </div>
       </div>
 
       <!-- 上传队列：逐文件展示本轮提交与结果，不再只靠一条进度条 -->
@@ -247,6 +252,7 @@
           上传队列（{{ uploadQueue.length }}）
           <span class="sp"></span>
           <span class="uq-pct">{{ uploading ? uploadPercent + '%' : '完成' }}</span>
+          <button v-if="!uploading" class="app-link-btn uq-close" @click="uploadQueue = []">收起</button>
         </div>
         <div v-for="(f, i) in uploadQueue" :key="i" class="uq-row">
           <file-outlined class="uq-ic" />
@@ -1844,6 +1850,10 @@ const fmtTime = t => {
   border-bottom: 1px solid var(--app-panel-2); font-size: 12px; color: var(--app-text2); min-width: 0;
 }
 .doc-row:last-child { border-bottom: none; }
+.doc-foot { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-top: 1px solid var(--app-border);
+  background: var(--app-panel-2); font-size: 10.5px; color: var(--app-text3); }
+.doc-foot .sp { flex: 1; }
+.doc-foot-note { color: var(--app-text3); }
 .doc-row:not(.head-row):hover { background: var(--app-panel-2); }
 .head-row { font-size: 11px; color: var(--app-text3); background: var(--app-panel-2); border-bottom: 1px solid var(--app-border); user-select: none; }
 .col-check { width: 26px; flex: none; }
@@ -1903,6 +1913,7 @@ const fmtTime = t => {
   font-size: 11.5px; font-weight: 600; color: var(--app-text2); }
 .uq-head .sp { flex: 1; }
 .uq-pct { font-size: 10.5px; color: var(--app-text3); font-weight: 400; }
+.uq-close { flex: none; font-size: 10.5px; }
 .uq-row { display: flex; align-items: center; gap: 8px; padding: 7px 11px; border-bottom: 1px solid var(--app-border); }
 .uq-row:last-child { border-bottom: none; }
 .uq-ic { color: var(--app-text3); flex: none; }

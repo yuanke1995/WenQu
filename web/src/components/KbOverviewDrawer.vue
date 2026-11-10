@@ -61,6 +61,7 @@
             <warning-outlined v-if="healthTip.type === 'warn'" />
             <info-circle-outlined v-else />
             {{ healthTip.text }}
+            <a v-if="healthTip.action" class="tip-link" @click="emit('docs', kb)">查看文档 →</a>
           </div>
 
           <div class="tiles">
@@ -313,10 +314,10 @@ const dayLabels = computed(() => {
 const healthTip = computed(() => {
   const h = data.value?.health || {}
   if (Number(h.docFailed || 0) > 0) {
-    return { type: 'warn', text: `有 ${h.docFailed} 个文档解析失败，失败文档不会参与检索，请到文档页处理。` }
+    return { type: 'warn', text: `有 ${h.docFailed} 个文档解析失败，失败文档不会参与检索，请到文档页处理。`, action: true }
   }
   if (Number(h.docParsing || 0) > 0) {
-    return { type: 'info', text: `有 ${h.docParsing} 个文档正在解析，完成后自动参与检索。` }
+    return { type: 'info', text: `有 ${h.docParsing} 个文档正在解析，完成后自动参与检索。`, action: true }
   }
   if (!props.kb?.embeddingRef) return { type: 'warn', text: '该库还没有绑定向量模型，无法参与检索。' }
   return null
@@ -501,6 +502,8 @@ async function onMenu ({ key }) {
   margin-bottom: 10px; line-height: 1.6; }
 .tip-strip.warn { background: #fffdf7; border: 1px solid var(--app-warn-border); color: var(--app-warn-text); }
 .tip-strip.info { background: var(--app-info-weak, #f0f6ff); border: 1px solid #d6e4ff; color: var(--app-accent); }
+.tip-strip .tip-link { margin-left: auto; flex: none; font-size: 11px; color: inherit; cursor: pointer;
+  text-decoration: underline; }
 .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
 .tile { border: 1px solid var(--app-border); background: var(--app-panel-2); border-radius: 8px; padding: 9px 11px; }
 .tile .n { font-size: 18px; font-weight: 650; }
