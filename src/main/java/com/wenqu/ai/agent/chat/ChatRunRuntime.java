@@ -459,7 +459,7 @@ public class ChatRunRuntime {
     private static final java.util.Set<String> LEDGER_SSE_TYPES = java.util.Set.of(
             "approval_required", "ask_user", "plan", "plan_approval", "plan_cancelled", "plan_superseded",
             "artifact", "agent_delegated", "agent_consulted",
-            "retrieved", "usage", "error", "warn");
+            "retrieved", "usage", "error", "warn", "skill_hit");
 
     /** 工具终态帧的 SSE 类型；落账本时统一记成 {@code tool}，前端不必认识两个名字。 */
     private static final String TOOL_STATUS_SSE_TYPE = "tool_status";

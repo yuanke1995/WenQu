@@ -37,6 +37,10 @@ public enum RunEventType {
     /** 目标跨轮续跑开了新的一轮（后台轮）：前端据此自动接流。进账本，不进镜像（帧不是状态）。 */
     GOAL_TURN("goal_turn"),
     RETRIEVED("retrieved"),
+    /** 本轮有一条技能被读取（点名注入或模型按需读取）。content: {name, source=picked|model}。
+     *  进账本——刷新后回看要能重建「已按技能 X 执行」芯片；同一轮同一技能可能多条（多次读取），
+     *  前端按 name 合并成一颗芯片。 */
+    SKILL_HIT("skill_hit"),
     USAGE("usage"),
     /** 轮内自动压缩的开始/结束（框架 {@code compaction/start|end}）。
      *  不发这一帧，压缩那二十多秒在界面上是纯静默：压缩走的是 SUMMARY 用途的模型调用，

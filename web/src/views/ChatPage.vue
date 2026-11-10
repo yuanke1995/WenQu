@@ -64,6 +64,23 @@
                          :session-id="currentSessionId || ''"
                          @update:open="v => { if (!v) skillDoc = '' }" />
 
+      <!-- 固化为技能：预填本轮「问题→做法」成一条 SKILL.md，三个字段都可改；提交落当前账号的技能目录 -->
+      <a-modal v-model:open="solidifyOpen" title="固化为技能" width="min(640px, 94vw)"
+               :confirm-loading="solidifyBusy" @ok="submitSolidify">
+        <div class="sf-field">
+          <div class="sf-label">技能名<span class="sf-sub">汉字/字母/数字/下划线/连字符，≤64 字符</span></div>
+          <a-input v-model:value="solidifyForm.name" :maxlength="64" placeholder="这类做法叫什么" />
+        </div>
+        <div class="sf-field">
+          <div class="sf-label">描述<span class="sf-sub">模型靠它判断什么时候读取这条技能</span></div>
+          <a-textarea v-model:value="solidifyForm.description" :rows="2" :maxlength="1000" />
+        </div>
+        <div class="sf-field">
+          <div class="sf-label">正文（SKILL.md）</div>
+          <a-textarea v-model:value="solidifyForm.content" :rows="10" class="sf-content" />
+        </div>
+      </a-modal>
+
       <!-- 会话内查找：按消息导航 + 命中高亮（长会话里定位旧问答） -->
       <div v-if="searchOpen" class="chat-search">
         <search-outlined class="cs-ic" />
@@ -167,6 +184,19 @@
           <template #body="{ m, i }">
               <!-- 整轮用时那一条：它同时是过程块的开关。跑着的时候过程自动展开，答完收起只留正文 -->
               <TurnBar v-if="m.role === 'ai'" :m="m" />
+              <!-- 技能命中芯片（skill_hit 帧，见 useChatEngine.onSkillHit）：这一轮按哪条技能做的答，
+                   在回答头顶明说——用了什么不许用户猜。点名注入与模型自读两种来源文案不同；
+                   点芯片跳技能管理页看正文。刷新后这一档暂无数据源（技能命中不落消息行，
+                   逐轮回看走「看这一轮的过程」账本面板，那里有同一帧的可读投影） -->
+              <div v-if="m.role === 'ai' && m.skillHits && m.skillHits.length" class="skill-hits">
+                <button v-for="(sk, si) in m.skillHits" :key="sk.name" type="button" class="skill-hit-chip"
+                        :title="(sk.source === 'picked' ? '正文已随本轮注入' : '模型按需读取了正文') + ' · 点击查看技能管理'"
+                        @click="gotoSkillsPage">
+                  <check-outlined class="shc-ic" />
+                  <span class="shc-name">已按技能「{{ sk.name }}」执行</span>
+                  <span class="shc-src">{{ sk.source === 'picked' ? '正文已随本轮注入' : '模型按需读取了正文' }}</span>
+                </button>
+              </div>
               <!-- 正文 / 过程分离（统一正文流）：正文＝整段 content（turnAnswerText），工具调用只作过程步骤、
                    不切正文；过程（思考/过程/工具/插话）全收在顶部过程块里，永远不插进正文。 -->
               <div v-if="m.role === 'ai'" class="md" :data-msg-index="i">
@@ -517,6 +547,11 @@
                   </div>
           </template>
           <template #actions-more="{ m, i }">
+                <!-- 固化为技能：把这一轮「问题→做法」沉淀成一条可复用的 SKILL.md（弹窗预填、改两行就能用）。
+                     只挂在落库的 AI 回答上（#more 插槽本就在 messageId 判据内），分享页不渲染这一档 -->
+                <a-tooltip title="把这一轮的做法固化为技能">
+                  <button class="app-icon-btn" @click="openSolidify(i)"><thunderbolt-outlined /></button>
+                </a-tooltip>
                 <a-dropdown :trigger="['hover', 'click']">
                   <button class="app-icon-btn" title="更多"><more-outlined /></button>
                   <template #overlay>
@@ -1738,7 +1773,7 @@ import { LoadingOutlined, DownOutlined, CaretRightOutlined, CheckOutlined, Close
 import { debugRetrieval, deleteMessageGroup, submitFeedback as apiSubmitFeedback,
          addEvalCase, getSessionShare, enableSessionShare, disableSessionShare,
          getSessionWorkspace, getPermissionPresets, setSessionPermission,
-         openProjectFolder, updateProjectItem } from '../api'
+         openProjectFolder, updateProjectItem, createSkill } from '../api'
 import { renderMd, resolveImg, onImgError } from '../utils/markdown'
 import { canPreview, artifactExt, previewKindOf } from '../utils/artifactView'
 import { loadSessions, sessionStore } from './store'
@@ -3209,6 +3244,53 @@ const addToEval = async mi => {
     } else message.error(r?.msg || '加入评测集失败')
   } catch (e) { message.error(e.message || '加入评测集失败') }
 }
+// ==================== 固化为技能 ====================
+// 把这一轮「问题→做法」沉淀成一条可复用的 SKILL.md：预填名称/描述/正文骨架，改两行就能用。
+// 技能名跟后端白名单同一判据（汉字/字母/数字/下划线/连字符，≤64 字符）：拿本轮问题剥掉
+// 白名单外的字符当名（剥空则退回 chat-skill-<时刻>），描述取问题前 80 字——那本来就是一句话场景。
+const solidifyOpen = ref(false)
+const solidifyBusy = ref(false)
+const solidifyForm = reactive({ name: '', description: '', content: '' })
+const gotoSkillsPage = () => router.push({ path: '/agents', query: { tab: 'skills' } })
+const solidifySlug = q => {
+  const s = String(q || '').replace(/[^一-鿿A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64)
+  return s || ('chat-skill-' + Date.now().toString(36))
+}
+const openSolidify = mi => {
+  const m = messages.value[mi]
+  if (!m || !m.content) { message.warning('这一轮还没有可固化的回答'); return }
+  let question = ''
+  for (let i = mi - 1; i >= 0; i--) {
+    const r = messages.value[i]?.role
+    if (r === 'user') { question = String(messages.value[i].content || ''); break }
+    if (r === 'assistant' || r === 'ai') break
+  }
+  solidifyForm.name = solidifySlug(question)
+  solidifyForm.description = question.slice(0, 80)
+  solidifyForm.content = '## 适用场景\n' + question +
+    '\n\n## 做法\n1. （把上面回答的关键步骤整理成可复用做法）\n2. …\n\n## 输出要求\n…'
+  solidifyOpen.value = true
+}
+const submitSolidify = async () => {
+  const name = String(solidifyForm.name || '').trim()
+  if (!name) { message.warning('给技能起个名字'); return }
+  if (solidifyBusy.value) return
+  solidifyBusy.value = true
+  try {
+    await createSkill({ name, description: String(solidifyForm.description || '').trim(),
+      content: solidifyForm.content || '', category: '通用' })
+    solidifyOpen.value = false
+    loadSkills()   // 新技能立刻进 @ 点名候选，不用刷新页面
+    // 成功话术带「去技能页查看」出口：固化完的人下一步就是想看看成品长什么样
+    message.success(h('span', null, ['已创建技能「' + name + '」，',
+      h('a', { onClick: gotoSkillsPage }, '去技能页查看')]), 5)
+  } catch (e) {
+    // request 封装把后端 msg 原样挂在 Error.message 上（重名/非法字符都是现成的一句人话）
+    message.error(e.message || '创建技能失败')
+  } finally {
+    solidifyBusy.value = false
+  }
+}
 // 单轮导出：向 mi 前配对最近的用户提问（遇更早回答即停）
 const exportRound = mi => {
   const m = messages.value[mi]
@@ -4625,6 +4707,30 @@ onMounted(async () => {
     focusInput()
     router.replace({ path: '/chat', query: { ...route.query, ask: undefined } }).catch(() => {})
   }
+  // 「去对话点名试用」带进来的技能名（技能抽屉「测试」Tab 的跳转契约：query {skill: 技能名}）：
+  // 把这条技能钉进本轮已选技能，用户补一句问题就能试。先摘参数防刷新/来回导航重复加；
+  // 清单是引擎挂载时拉的，可能还没回来、也可能拉在技能刚创建之前——查不到就重拉一次再认，
+  // 仍不在清单里才忽略并提醒一句
+  const skillPick = String(route.query.skill || '')
+  if (skillPick) {
+    router.replace({ path: '/chat', query: { ...route.query, skill: undefined } }).catch(() => {})
+    let hit = skillList.value.find(s => s && s.name === skillPick)
+    if (!hit) { await loadSkills(); hit = skillList.value.find(s => s && s.name === skillPick) }
+    if (!hit) message.warning(`技能「${skillPick}」不在当前可用清单，已忽略点名`)
+    else if (hit.selectable === false) message.warning(`技能「${skillPick}」是工作区只读技能，不能在对话中点名`)
+    else if (!pickedSkills.value.includes(skillPick)) toggleSkill(skillPick)
+  }
+  // 智能体管理页「试一试」带进来的预选（query {agent: 智能体id}）：本会话下一问起按它作答。
+  // 更换助手不需要新建会话，与选择器既有口径一致。先摘参数防刷新重复覆盖用户的手动换人；
+  // 清单可能还没拉或刚建的新智能体不在里面——查不到就重拉一次再认，仍不在才提醒
+  const agentPick = String(route.query.agent || '')
+  if (agentPick) {
+    router.replace({ path: '/chat', query: { ...route.query, agent: undefined } }).catch(() => {})
+    let hit = agentList.value.find(a => String(a.id) === agentPick)
+    if (!hit) { await loadAgents(); hit = agentList.value.find(a => String(a.id) === agentPick) }
+    if (hit) pickAgent(hit.id)
+    else message.warning('这位智能体不能直接选用（可能已删除，或是供委派的子智能体）')
+  }
   // 工作区事项「去聊」带来的关联标记：把这条事项与当前会话绑上，
   // 下次再点「去聊」就接回同一条对话，而不是每次另起一条（绑定失败不挡对话）
   const itemId = String(route.query.itemId || '')
@@ -5490,6 +5596,23 @@ onMounted(async () => {
   background: var(--app-panel-2); color: var(--app-text3); }
 .skill-flag.off { background: var(--app-danger-weak); color: var(--app-danger-text); }
 .skill-doc-btn { flex: none; font-size: 12px; }
+
+/* 技能命中芯片（回答头顶一行，效果图 SCENE 4 的 hit-chip）：主色弱底 + 弱描边，
+   是「这一轮用了什么」的说明而不是动作，所以不给实心主色 */
+.skill-hits { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; }
+.skill-hit-chip { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px;
+  border-radius: 7px; background: var(--app-accent-weak); border: 1px solid var(--app-accent-border);
+  color: var(--app-accent); font-size: 12px; font-weight: 500; cursor: pointer; max-width: 100%; }
+.skill-hit-chip:hover { filter: brightness(0.97); }
+.shc-ic { flex: none; font-size: 12px; }
+.shc-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.shc-src { font-size: 11px; font-weight: 400; color: var(--app-text3); white-space: nowrap; }
+
+/* 固化为技能弹窗：字段竖排，标签行把「为什么填这个」说小字里，正文给等宽编辑区 */
+.sf-field { margin-bottom: 12px; }
+.sf-label { font-size: 12px; font-weight: 500; color: var(--app-text); margin-bottom: 5px; }
+.sf-sub { margin-left: 8px; font-weight: 400; color: var(--app-text3); font-size: 11px; }
+.sf-content { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; line-height: 1.6; }
 
 /* 待发送附件条 + 技能选中标签 */
 .pending-files { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 auto 8px; max-width: var(--chat-col); }

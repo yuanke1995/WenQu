@@ -11,6 +11,7 @@ const LABELS = {
   plan_superseded: '计划被取代', artifact: '产物', subagent: '子智能体',
   subagent_route: '派遣路由', agent: '智能体', agent_delegated: '委派作答', agent_consulted: '智能体咨询',
   retrieved: '检索', usage: '用量', todo: '任务清单', error: '失败', warn: '提醒',
+  skill_hit: '技能命中',
   steer: '中途插话', stop: '用户停止', interrupted: '中断收尾', detach: '断线中止',
   goal_state: '目标态', goal_turn: '目标续跑', goal_verify: '完成申请',
   goal_note: '目标进展', goal_outcome: '目标结果', done: '本轮结束'
@@ -195,6 +196,16 @@ function eventNode (e) {
   if (type === 'agent_delegated' || type === 'agent_consulted' || type === 'subagent_route') {
     const who = oneLine((data && (data.name || data.agentName || data.label)) || '')
     return { kind: 'event', tone, label, at, title: who || label, summary: '' }
+  }
+  if (type === 'skill_hit') {
+    // 技能命中帧 {name, source}：与气泡上的芯片同一口径（picked=点名注入，model=按需读取）。
+    // 芯片本身只活在实时流里（技能命中不落消息行），刷新后的逐轮回看就看这一行
+    const name = oneLine((data && data.name) || '')
+    return {
+      kind: 'event', tone, label, at,
+      title: name ? '已按技能「' + name + '」执行' : label,
+      summary: data && data.source === 'picked' ? '正文已随本轮注入' : '模型按需读取了正文'
+    }
   }
   if (type === 'done') {
     return { kind: 'event', tone, label, at, title: '本轮结束', summary: '' }

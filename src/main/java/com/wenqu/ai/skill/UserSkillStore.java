@@ -145,9 +145,9 @@ public class UserSkillStore {
         return root.resolve(SandboxPaths.uidDirname(uid));
     }
 
-    /** 技能元信息（不含正文）。 */
+    /** 技能元信息（不含正文）。category 来自 frontmatter，可空。 */
     public record InstalledSkill(String name, String dirName, String description, long size,
-                                 long updatedAt, int fileCount, boolean disabled) {
+                                 long updatedAt, int fileCount, boolean disabled, String category) {
     }
 
     /** 技能里的一个文件（预览/下载列表用）。 */
@@ -178,7 +178,7 @@ public class UserSkillStore {
                     out.add(new InstalledSkill(
                             doc.name() == null || doc.name().isBlank() ? dirName : doc.name(),
                             dirName, doc.description(), size, updated, files,
-                            disabled.contains(dirName.toLowerCase(Locale.ROOT))));
+                            disabled.contains(dirName.toLowerCase(Locale.ROOT)), doc.category()));
                 } catch (Exception e) {
                     log.warn("[SKILL] 读取用户技能失败 uid={} dir={}: {}", uid, dirName, e.toString());
                 }
@@ -202,7 +202,8 @@ public class UserSkillStore {
         try {
             return new InstalledSkill(doc.name() == null || doc.name().isBlank() ? dirName : doc.name(),
                     dirName, doc.description(), Files.size(dir.resolve(SKILL_FILE)),
-                    Files.getLastModifiedTime(dir.resolve(SKILL_FILE)).toMillis(), countFiles(dir), disabled);
+                    Files.getLastModifiedTime(dir.resolve(SKILL_FILE)).toMillis(), countFiles(dir),
+                    disabled, doc.category());
         } catch (IOException e) {
             return null;
         }
@@ -269,9 +270,20 @@ public class UserSkillStore {
      */
     public InstalledSkill create(String uid, String name, String description,
                                  String content, boolean overwrite, Set<String> reserved) {
+        return create(uid, name, description, content, overwrite, reserved, null);
+    }
+
+    /**
+     * 新建/覆盖一个技能（带保留名与可选分类）。
+     *
+     * @param reserved 保留名（小写），命中即拒绝
+     * @param category 分类（空=沿用内容 frontmatter 里的）
+     */
+    public InstalledSkill create(String uid, String name, String description,
+                                 String content, boolean overwrite, Set<String> reserved, String category) {
         String n = normalizeName(name);
         ensureNotReserved(n, reserved);
-        Doc doc = parseContent(content, n, description);
+        Doc doc = parseContent(content, n, description, category);
         writeSkill(uid, n, doc, overwrite);
         audit.record("[AUDIT] 新建技能 uid={} skill={} overwrite={}", uid, n, overwrite);
         return find(uid, n);
@@ -280,18 +292,135 @@ public class UserSkillStore {
     /**
      * 编辑已有技能的 SKILL.md（保留 references/scripts 等附属文件）。
      * <p>技能名是身份与引用串的一部分，不允许在这里改——改名请新建后删除旧技能。
+     * <p>写之前先给旧版留快照（{@code .versions/}），界面上「版本历史/回滚」靠它兜底。
      */
     public InstalledSkill update(String uid, String key, String description, String content) {
+        return update(uid, key, description, content, null);
+    }
+
+    /** 同 {@link #update(String, String, String, String)}，但允许调用方覆盖 category。 */
+    public InstalledSkill update(String uid, String key, String description, String content, String category) {
         Path dir = findDir(uid, key);
         if (dir == null) throw new BizException("技能不存在，或不是你安装的技能：" + key);
         String dirName = dir.getFileName().toString();
-        Doc doc = parseContent(content, dirName, description);
+        Doc doc = parseContent(content, dirName, description, category);
+        // 调用方与内容都没给分类时沿用磁盘上现存的：编辑正文不该把已设的分类洗掉
+        if (doc.category() == null || doc.category().isBlank()) {
+            try {
+                Doc cur = readDoc(dir.resolve(SKILL_FILE), dirName, false);
+                if (cur.category() != null && !cur.category().isBlank()) {
+                    doc = new Doc(doc.name(), doc.description(), doc.body(), doc.version(),
+                            cur.category().trim(), doc.tags());
+                }
+            } catch (RuntimeException ignored) {
+                // 旧文档读坏了不挡保存：分类按空处理，下次编辑还能补
+            }
+        }
+        snapshotVersion(uid, dirName);
         try {
             writeSkillMd(dir, doc);
         } catch (IOException e) {
             throw new BizException("写入技能失败: " + e.getMessage());
         }
         audit.record("[AUDIT] 编辑技能 uid={} skill={}", uid, dirName);
+        return find(uid, dirName);
+    }
+
+    // ==================== 版本历史 ====================
+
+    private static final int MAX_VERSIONS = 20;
+    private static final String VERSIONS_DIR = ".versions";
+
+    private Path versionsDir(String uid, String dirName) {
+        return userDir(uid).resolve(VERSIONS_DIR).resolve(dirName);
+    }
+
+    /** 编辑/覆盖前给当前 SKILL.md 留一份快照；失败只告警——快照是保险，不能反过来挡住保存。 */
+    private void snapshotVersion(String uid, String dirName) {
+        try {
+            Path md = skillDir(uid, dirName).resolve(SKILL_FILE);
+            if (!Files.isRegularFile(md, LinkOption.NOFOLLOW_LINKS)) return;
+            Path vdir = versionsDir(uid, dirName);
+            Files.createDirectories(vdir);
+            Files.copy(md, vdir.resolve(System.currentTimeMillis() + ".md"),
+                    StandardCopyOption.REPLACE_EXISTING);
+            // 只留最近 MAX_VERSIONS 份
+            List<Path> all;
+            try (Stream<Path> s = Files.list(vdir)) {
+                all = s.filter(p -> p.getFileName().toString().endsWith(".md")).sorted().toList();
+            }
+            for (int i = 0; i < all.size() - MAX_VERSIONS; i++) {
+                Files.deleteIfExists(all.get(i));
+            }
+        } catch (Exception e) {
+            log.warn("[SKILL] 版本快照失败 uid={} skill={}: {}", uid, dirName, e.toString());
+        }
+    }
+
+    /** 版本列表（新→旧）：ts / size / updatedAt / description（来自那份快照的 frontmatter）。 */
+    public List<Map<String, Object>> listVersions(String uid, String key) {
+        Path dir = findDir(uid, key);
+        if (dir == null) throw new BizException("技能不存在，或不是你安装的技能：" + key);
+        String dirName = dir.getFileName().toString();
+        Path vdir = versionsDir(uid, dirName);
+        if (!Files.isDirectory(vdir)) return List.of();
+        List<Map<String, Object>> out = new ArrayList<>();
+        try (Stream<Path> s = Files.list(vdir)) {
+            List<Path> files = s.filter(p -> p.getFileName().toString().endsWith(".md")).sorted().toList();
+            for (Path p : files) {
+                String fn = p.getFileName().toString();
+                long ts;
+                try {
+                    ts = Long.parseLong(fn.substring(0, fn.length() - 3));
+                } catch (NumberFormatException e) {
+                    continue;
+                }
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("ts", ts);
+                try {
+                    m.put("size", Files.size(p));
+                } catch (IOException ignored) {
+                    m.put("size", 0L);
+                }
+                try {
+                    Doc doc = readDoc(p, "", false);
+                    m.put("description", doc.description() == null ? "" : doc.description());
+                    m.put("category", doc.category() == null ? "" : doc.category());
+                } catch (RuntimeException e) {
+                    m.put("description", "");
+                    m.put("category", "");
+                }
+                out.add(m);
+            }
+        } catch (IOException e) {
+            log.warn("[SKILL] 列版本失败 uid={} skill={}: {}", uid, dirName, e.toString());
+            return List.of();
+        }
+        out.sort((a, b) -> Long.compare((Long) b.get("ts"), (Long) a.get("ts")));
+        return out.size() > MAX_VERSIONS ? out.subList(0, MAX_VERSIONS) : out;
+    }
+
+    /**
+     * 回滚到指定版本快照：当前内容先留快照，再把那份原文写回 SKILL.md。
+     * <p>附属文件（references/scripts）不回滚——快照只存 SKILL.md，正文与附属文件分开演进。
+     */
+    public InstalledSkill rollback(String uid, String key, long ts) {
+        Path dir = findDir(uid, key);
+        if (dir == null) throw new BizException("技能不存在，或不是你安装的技能：" + key);
+        String dirName = dir.getFileName().toString();
+        Path target = versionsDir(uid, dirName).resolve(ts + ".md");
+        if (!Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)) {
+            throw new BizException("没有这个版本：" + ts);
+        }
+        String content = readText(target, MAX_SKILL_BYTES);
+        Doc doc = parseContent(content, dirName, null, null);
+        snapshotVersion(uid, dirName);
+        try {
+            writeSkillMd(dir, doc);
+        } catch (IOException e) {
+            throw new BizException("回滚失败: " + e.getMessage());
+        }
+        audit.record("[AUDIT] 回滚技能 uid={} skill={} ts={}", uid, dirName, ts);
         return find(uid, dirName);
     }
 
@@ -322,6 +451,12 @@ public class UserSkillStore {
             }
         } catch (RuntimeException e) {
             log.warn("[SKILL] 清理个人停用记录失败 uid={} skill={}: {}", uid, dirName, e.toString());
+        }
+        // 版本快照随技能一起走：人删了技能，不该在磁盘上留他的历史正文
+        try {
+            deleteRecursively(versionsDir(uid, dirName));
+        } catch (IOException e) {
+            log.warn("[SKILL] 清理版本快照失败 uid={} skill={}: {}", uid, dirName, e.toString());
         }
         audit.record("[AUDIT] 删除技能 uid={} skill={}", uid, dirName);
     }
@@ -577,6 +712,10 @@ public class UserSkillStore {
         try {
             Files.createDirectories(tmp);
             writeSkillMd(tmp, doc);
+            // 覆盖安装同样先留旧版快照：整包替换丢掉的正文也要能找回来
+            if (overwrite && Files.isDirectory(skillDir(uid, name), LinkOption.NOFOLLOW_LINKS)) {
+                snapshotVersion(uid, name);
+            }
             promote(tmp, skillDir(uid, name), overwrite);
         } catch (BizException e) {
             throw e;
@@ -656,7 +795,16 @@ public class UserSkillStore {
         if (parsed.name() != null && !parsed.name().isBlank() && !parsed.name().equals(expectedName)) {
             throw new BizException("内容里的 name（" + parsed.name() + "）与技能名（" + expectedName + "）不一致");
         }
-        return new Doc(expectedName, desc, parsed.body(), parsed.version());
+        return new Doc(expectedName, desc, parsed.body(), parsed.version(),
+                parsed.category(), parsed.tags());
+    }
+
+    /** 同 {@link #parseContent(String, String, String)}，但允许调用方覆盖 category（空串=沿用内容里的）。 */
+    private Doc parseContent(String content, String expectedName, String description, String categoryOverride) {
+        Doc doc = parseContent(content, expectedName, description);
+        if (categoryOverride == null || categoryOverride.isBlank()) return doc;
+        return new Doc(doc.name(), doc.description(), doc.body(), doc.version(),
+                categoryOverride.trim(), doc.tags());
     }
 
     private static String render(Doc doc) {
@@ -666,6 +814,17 @@ public class UserSkillStore {
         sb.append("description: ").append(scalar(doc.description())).append('\n');
         if (doc.version() != null && !doc.version().isBlank()) {
             sb.append("version: ").append(scalar(doc.version())).append('\n');
+        }
+        if (doc.category() != null && !doc.category().isBlank()) {
+            sb.append("category: ").append(scalar(doc.category())).append('\n');
+        }
+        if (doc.tags() != null && !doc.tags().isEmpty()) {
+            sb.append("tags: [");
+            for (int i = 0; i < doc.tags().size(); i++) {
+                if (i > 0) sb.append(", ");
+                sb.append(scalar(doc.tags().get(i)));
+            }
+            sb.append("]\n");
         }
         sb.append("updated: ").append(LocalDate.now().format(DateTimeFormatter.ISO_DATE)).append('\n');
         sb.append("---\n\n");
@@ -683,8 +842,9 @@ public class UserSkillStore {
                 .replace("\r", "").replace("\n", "\\n") + '"';
     }
 
-    /** 文档模型：frontmatter 里的 name/description/version + markdown 正文。 */
-    private record Doc(String name, String description, String body, String version) {
+    /** 文档模型：frontmatter 里的 name/description/version/category/tags + markdown 正文。 */
+    private record Doc(String name, String description, String body, String version,
+                       String category, List<String> tags) {
     }
 
     private Doc readDoc(Path md, String fallbackName, boolean strict) {
@@ -729,11 +889,25 @@ public class UserSkillStore {
         String name = str(fm.get("name"));
         String desc = str(fm.get("description"));
         String version = str(fm.get("version"));
+        String category = str(fm.get("category"));
+        List<String> tags = new ArrayList<>();
+        Object rawTags = fm.get("tags");
+        if (rawTags instanceof List<?> tl) {
+            for (Object t : tl) {
+                String v = str(t);
+                if (!v.isEmpty() && tags.size() < 8) tags.add(v);
+            }
+        } else if (rawTags != null && !String.valueOf(rawTags).isBlank()) {
+            for (String t : String.valueOf(rawTags).split("[,，]")) {
+                String v = t.trim();
+                if (!v.isEmpty() && tags.size() < 8) tags.add(v);
+            }
+        }
         if (hasFrontmatter && strict && desc.isBlank()) {
             throw new BizException("技能缺少 description（frontmatter 里补上：模型靠它判断何时读取）");
         }
         if (name.isBlank()) name = fallbackName == null ? "" : fallbackName;
-        return new Doc(name, desc, body == null ? "" : body, version);
+        return new Doc(name, desc, body == null ? "" : body, version, category, tags);
     }
 
     private static Map<String, Object> parseYaml(String text) {

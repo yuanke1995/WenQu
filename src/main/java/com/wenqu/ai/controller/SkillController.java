@@ -64,6 +64,8 @@ public class SkillController {
     private final WenquSkillRepository skills;
     private final UserSkillStore store;
     private final ConfigService configService;
+    private final com.wenqu.ai.skill.SkillStatsStore stats;
+    private final com.wenqu.ai.service.SessionService sessionService;
 
     // ==================== 读 ====================
 
@@ -83,22 +85,79 @@ public class SkillController {
     }
 
     @Operation(summary = "技能管理清单",
-            description = "管理页数据源：来源/停用（平台或本人）/可否编辑删除/体积/文件数，附带远程安装开关与安装限制")
+            description = "管理页数据源：来源/停用（平台或本人）/可否编辑删除/体积/文件数/分类/使用统计，"
+                    + "附带远程安装开关、安装限制与页头统计条汇总")
     @Permission("skill:read")
     @GetMapping("/list")
     public ResultJson list(@RequestParam(value = "sessionId", required = false) String sessionId) {
         String uid = uid();
         RuntimeContext ctx = ctx(uid);
         Map<String, UserSkillStore.InstalledSkill> mine = mine(uid);
+        Map<String, Map<String, Object>> statsMap = stats.summary(uid);
         List<Map<String, Object>> rows = new ArrayList<>();
         for (WenquSkillRepository.SkillEntry e : skills.catalog(ctx, sessionId)) {
-            rows.add(view(uid, e, metaOf(mine, e), false));
+            rows.add(view(uid, e, metaOf(mine, e), false, statsMap));
         }
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("skills", rows);
         data.put("remoteInstall", remoteInstall());
         data.put("limits", store.limits());
+        data.put("summary", summarizeRows(rows));
         return ResultJson.ok(data);
+    }
+
+    /** 页头统计条：总数/生效中/30 天总读取/零调用/缺描述——每项对应列表页一个可点筛选。 */
+    private static Map<String, Object> summarizeRows(List<Map<String, Object>> rows) {
+        int active = 0, reads30dTotal = 0, zeroCall = 0, missingDesc = 0;
+        for (Map<String, Object> r : rows) {
+            boolean disabled = Boolean.TRUE.equals(r.get("disabled"));
+            if (!disabled) {
+                active++;
+                Object rd = r.get("reads30d");
+                int n = rd instanceof Number nb ? nb.intValue() : 0;
+                reads30dTotal += n;
+                if (n == 0) zeroCall++;
+            }
+            Object desc = r.get("description");
+            if (desc == null || String.valueOf(desc).isBlank()) missingDesc++;
+        }
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("total", rows.size());
+        m.put("active", active);
+        m.put("reads30dTotal", reads30dTotal);
+        m.put("zeroCall", zeroCall);
+        m.put("missingDesc", missingDesc);
+        return m;
+    }
+
+    @Operation(summary = "技能使用统计",
+            description = "单条技能 30 天序列 + 最近触发会话（带标题反查）；抽屉「使用数据」Tab 数据源")
+    @Permission("skill:read")
+    @GetMapping("/stats")
+    public ResultJson statsEndpoint(@RequestParam("name") String name) {
+        String uid = uid();
+        WenquSkillRepository.SkillEntry e = requireEntry(uid, null, name);
+        Map<String, Object> d = new LinkedHashMap<>(stats.detail(uid, e.skill().getName()));
+        // 最近触发补会话标题：查不到的（已删会话）只留 sessionId，前端降级显示
+        Object recent = d.get("recent");
+        if (recent instanceof List<?> rl) {
+            List<Map<String, Object>> out = new ArrayList<>();
+            for (Object o : rl) {
+                if (!(o instanceof Map<?, ?> r)) continue;
+                Map<String, Object> item = new LinkedHashMap<>();
+                item.put("sessionId", r.get("sessionId"));
+                item.put("at", r.get("at"));
+                String sid = r.get("sessionId") == null ? "" : String.valueOf(r.get("sessionId"));
+                String title = "";
+                if (!sid.isBlank()) {
+                    try { title = sessionService.titleOf(sid); } catch (RuntimeException ignored) {}
+                }
+                item.put("title", title == null ? "" : title);
+                out.add(item);
+            }
+            d.put("recent", out);
+        }
+        return ResultJson.ok(d);
     }
 
     @Operation(summary = "技能详情",
@@ -171,7 +230,7 @@ public class SkillController {
 
     // ==================== 写：新建 / 安装 ====================
 
-    @Operation(summary = "新建技能", description = "body: {name, description, content, overwrite?}；落到当前账号的 uid 级技能目录")
+    @Operation(summary = "新建技能", description = "body: {name, description, content, overwrite?, category?}；落到当前账号的 uid 级技能目录")
     @Permission("skill:write")
     @PostMapping
     public ResultJson create(@RequestBody Map<String, Object> body) {
@@ -180,8 +239,9 @@ public class SkillController {
         String description = text(body.get("description"));
         String content = text(body.get("content"));
         boolean overwrite = flag(body.get("overwrite"));
+        String category = text(body.get("category"));
         UserSkillStore.InstalledSkill s = store.create(uid, name, description, content,
-                overwrite, reserved());
+                overwrite, reserved(), category);
         skills.invalidate(null);
         return ResultJson.ok(view(uid, requireEntry(uid, null, s.name()), metaOf(mine(uid), s.name()), false), "已创建");
     }
@@ -213,16 +273,90 @@ public class SkillController {
 
     // ==================== 写：编辑 / 删除 / 停用 ====================
 
-    @Operation(summary = "编辑技能", description = "body: {description?, content}；只能改自己安装的技能，技能名不可改")
+    @Operation(summary = "编辑技能", description = "body: {description?, content, category?}；只能改自己安装的技能，技能名不可改；旧版自动留快照")
     @Permission("skill:write")
     @PutMapping("/{name}")
     public ResultJson update(@PathVariable("name") String name, @RequestBody Map<String, Object> body) {
         String uid = uid();
         requireMine(uid, name);
         UserSkillStore.InstalledSkill s = store.update(uid, name,
-                text(body.get("description")), text(body.get("content")));
+                text(body.get("description")), text(body.get("content")), text(body.get("category")));
         skills.invalidate(null);
         return ResultJson.ok(view(uid, requireEntry(uid, null, s.name()), metaOf(mine(uid), s.name()), false), "已保存");
+    }
+
+    @Operation(summary = "版本历史", description = "编辑/覆盖前自动留存的 SKILL.md 快照列表（新→旧，最多 20 份）")
+    @Permission("skill:read")
+    @GetMapping("/{name}/versions")
+    public ResultJson versions(@PathVariable("name") String name) {
+        String uid = uid();
+        requireMine(uid, name);
+        return ResultJson.ok(Map.of("versions", store.listVersions(uid, name)));
+    }
+
+    @Operation(summary = "回滚版本", description = "body: {ts}；把 SKILL.md 写回指定快照（当前内容先留新快照，附属文件不动）")
+    @Permission("skill:write")
+    @PostMapping("/{name}/rollback")
+    public ResultJson rollback(@PathVariable("name") String name, @RequestBody Map<String, Object> body) {
+        String uid = uid();
+        requireMine(uid, name);
+        Object rawTs = body.get("ts");
+        long ts;
+        try {
+            ts = rawTs instanceof Number n ? n.longValue() : Long.parseLong(String.valueOf(rawTs).trim());
+        } catch (Exception e) {
+            throw new BizException("缺少版本号 ts");
+        }
+        UserSkillStore.InstalledSkill s = store.rollback(uid, name, ts);
+        skills.invalidate(null);
+        return ResultJson.ok(view(uid, requireEntry(uid, null, s.name()), metaOf(mine(uid), s.name()), false), "已回滚");
+    }
+
+    @Operation(summary = "批量操作",
+            description = "body: {names: [技能名], action: disable|enable|delete}；逐项校验归属与可操作性，返回逐项结果")
+    @Permission("skill:write")
+    @PostMapping("/batch")
+    public ResultJson batch(@RequestBody Map<String, Object> body) {
+        String uid = uid();
+        String action = text(body.get("action"));
+        if (action == null || !Set.of("disable", "enable", "delete").contains(action)) {
+            throw new BizException("action 仅支持 disable / enable / delete");
+        }
+        Object rawNames = body.get("names");
+        if (!(rawNames instanceof List<?> list) || list.isEmpty()) throw new BizException("缺少 names");
+        if (list.size() > 100) throw new BizException("单次批量上限 100 条");
+        List<Map<String, Object>> results = new ArrayList<>();
+        int ok = 0;
+        for (Object o : list) {
+            String name = o == null ? "" : String.valueOf(o).trim();
+            Map<String, Object> r = new LinkedHashMap<>();
+            r.put("name", name);
+            try {
+                if (name.isEmpty()) throw new BizException("技能名为空");
+                if ("delete".equals(action)) {
+                    requireMine(uid, name);
+                    store.delete(uid, name);
+                } else {
+                    WenquSkillRepository.SkillEntry e = requireEntry(uid, null, name);
+                    if (WenquSkillRepository.SOURCE_WORKSPACE.equals(e.source())) {
+                        throw new BizException("工作区技能随会话走，不能停用");
+                    }
+                    store.setDisabled(uid, e.skill().getName(), "disable".equals(action));
+                }
+                r.put("ok", true);
+                ok++;
+            } catch (BizException e) {
+                r.put("ok", false);
+                r.put("msg", e.getMessage());
+            }
+            results.add(r);
+        }
+        if (ok > 0) skills.invalidate(null);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("results", results);
+        out.put("ok", ok);
+        out.put("failed", results.size() - ok);
+        return ResultJson.ok(out, "批量完成：成功 " + ok + " 条");
     }
 
     @Operation(summary = "删除技能", description = "只能删自己安装的技能；内置技能只读，工作区技能随会话走")
@@ -324,6 +458,12 @@ public class SkillController {
 
     private Map<String, Object> view(String uid, WenquSkillRepository.SkillEntry e,
                                      UserSkillStore.InstalledSkill meta, boolean withContent) {
+        return view(uid, e, meta, withContent, Map.of());
+    }
+
+    private Map<String, Object> view(String uid, WenquSkillRepository.SkillEntry e,
+                                     UserSkillStore.InstalledSkill meta, boolean withContent,
+                                     Map<String, Map<String, Object>> statsMap) {
         AgentSkill s = e.skill();
         String name = s.getName();
         String source = e.source();
@@ -344,8 +484,87 @@ public class SkillController {
         m.put("size", meta != null ? meta.size() : bytes(s.getSkillContent()));
         m.put("updatedAt", meta != null ? meta.updatedAt() : 0L);
         m.put("fileCount", meta != null ? meta.fileCount() : resourceCount(s));
+        m.put("category", categoryOf(source, name, meta));
+        Map<String, Object> st = statsMap == null ? null : statsMap.get(name);
+        if (st == null) st = statsMap == null ? null : statsMap.get(name.toLowerCase(Locale.ROOT));
+        m.put("reads7d", st == null ? 0 : st.getOrDefault("reads7d", 0));
+        m.put("reads30d", st == null ? 0 : st.getOrDefault("reads30d", 0));
+        m.put("lastUsedAt", st == null ? 0L : st.getOrDefault("lastUsedAt", 0L));
+        m.put("series7d", st == null ? List.of() : st.getOrDefault("series7d", List.of()));
+        m.put("bodyExcerpt", bodyExcerpt(s.getSkillContent()));
         if (withContent) m.put("content", s.getSkillContent());
         return m;
+    }
+
+    /**
+     * 正文首段摘录（列表页短描述补显用）：剥 frontmatter、跳过标题与列表符号，
+     * 取第一段有效文字，压成一行、上限 120 字。正文已在内存里（清单同源），不额外读盘。
+     */
+    private static String bodyExcerpt(String raw) {
+        if (raw == null || raw.isBlank()) return "";
+        String text = raw;
+        if (text.startsWith("---")) {
+            int end = text.indexOf("\n---", 3);
+            if (end > 0) {
+                int bodyStart = end + 4;
+                while (bodyStart < text.length()
+                        && (text.charAt(bodyStart) == '\n' || text.charAt(bodyStart) == '\r')) bodyStart++;
+                text = text.substring(Math.min(bodyStart, text.length()));
+            }
+        }
+        StringBuilder sb = new StringBuilder();
+        for (String line : text.split("\\R")) {
+            String v = line.strip();
+            boolean isHeading = v.startsWith("#");
+            if (v.isEmpty() || isHeading) {
+                // 段前空行与标题跳过；段落已经开始后又遇到空行/新标题 = 第一段结束
+                if (sb.length() > 0) break;
+                continue;
+            }
+            String clean = v.replaceFirst("^[-*+]\\s+", "").replaceFirst("^\\d+\\.\\s+", "")
+                    .replaceAll("[*_`>]", "").strip();
+            if (clean.isEmpty()) continue;
+            if (sb.length() > 0) sb.append(' ');
+            sb.append(clean);
+            if (sb.length() >= 120) break;
+        }
+        return sb.length() > 120 ? sb.substring(0, 120) : sb.toString();
+    }
+
+    // ==================== 分类解析 ====================
+
+    /** 内置技能分类（技能名 → 中文分类）；新增内置技能时同步这张表。 */
+    private static final Map<String, String> BUILTIN_CATEGORY = Map.of(
+            "multi-source-crosscheck", "检索问答",
+            "step-by-step-answering", "回答规范",
+            "web-search-usage", "检索问答");
+
+    /**
+     * 分类口径：用户技能取 frontmatter category，缺省按名称关键词推断；
+     * 内置取映射表；工作区沉淀固定一档。前端 chips 从行数据里聚合，不另发接口。
+     */
+    private static String categoryOf(String source, String name, UserSkillStore.InstalledSkill meta) {
+        if (WenquSkillRepository.SOURCE_WORKSPACE.equals(source)) return "工作区沉淀";
+        if (meta != null && meta.category() != null && !meta.category().isBlank()) {
+            return meta.category().trim();
+        }
+        if (WenquSkillRepository.SOURCE_BUILTIN.equals(source)) {
+            String c = BUILTIN_CATEGORY.get(name == null ? "" : name.toLowerCase(Locale.ROOT));
+            return c == null ? "通用" : c;
+        }
+        return guessCategory(name);
+    }
+
+    /** 名称关键词推断（用户技能没写 category 时的兜底）：命中不了就归「通用」。 */
+    private static String guessCategory(String name) {
+        String n = name == null ? "" : name.toLowerCase(Locale.ROOT);
+        if (n.startsWith("form-") || n.contains("表单") || n.contains("表格") || n.contains("子表")
+                || n.contains("问卷") || n.contains("登记")) return "表单表格";
+        if (n.contains("审查") || n.contains("review") || n.contains("代码")) return "代码审查";
+        if (n.contains("文档") || n.contains("写作") || n.contains("api") || n.contains("手册")) return "文档写作";
+        if (n.contains("设计") || n.contains("走查") || n.contains("ui") || n.contains("视觉")) return "设计走查";
+        if (n.contains("检索") || n.contains("搜索") || n.contains("crosscheck")) return "检索问答";
+        return "通用";
     }
 
     private static Map<String, Object> fileView(UserSkillStore.SkillFile f) {

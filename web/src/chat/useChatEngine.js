@@ -3011,7 +3011,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
   // model 留空，等 done/接流快照带后端那份权威值回来：前端预填的是「生效引用」（覆盖>个人默认），
   // 后端落库的是模型名那一段，两边写法不同却都叫 model——拿引用去和上一条的落库值比，
   // 同一个模型会被判成「已切换」，done 一到又自己消失（刷新后更是从来没有过这条线）
-  const fresh = { role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkLoading: false, time: Date.now(), turnClockFromServer: false, turnMs: 0, humanWaitMs: 0, artifacts: [], toolCalls: [], plan: null, planCard: null, timeline: [], errorCard: null, model: '', goalWaiting: false }
+  const fresh = { role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkLoading: false, time: Date.now(), turnClockFromServer: false, turnMs: 0, humanWaitMs: 0, artifacts: [], toolCalls: [], skillHits: [], plan: null, planCard: null, timeline: [], errorCard: null, model: '', goalWaiting: false }
   // 目标排队那颗占位气泡交给接流通道时，起表点留在用户按下回车那一刻：服务端那份 elapsedMs
   // 从登记总线才算起，直接铺会让「用时 8 秒」在接上的一瞬跳回 1 秒——数字变小读成计时坏了
   const heldStartAt = resume && replaceMsg && replaceMsg.goalWaiting ? Number(replaceMsg.time) || 0 : 0
@@ -3263,6 +3263,22 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       try {
         const j = JSON.parse(payload)
         msg.retrieved = { keywords: j.keywords || 0, refs: j.refs || 0, terms: j.terms || [] }
+        liveScroll()
+      } catch (e) { /* 忽略 */ }
+    },
+    onSkillHit: payload => {
+      // 本轮命中一条技能（skill_hit 帧，content={name,source}）：picked=用户点名、正文已随本轮注入，
+      // model=模型按需读取了正文。按 name 去重累积在消息上，回答的过程区渲染芯片；
+      // 同轮先读到、后被点名时升级成 picked 文案（点名是更强的事实，不许被后到的 model 帧盖回去）。
+      // 接流重复帧由 api.js 的 seq 水位守卫收口，这里只管合并。
+      try {
+        const j = typeof payload === 'string' ? JSON.parse(payload) : payload
+        const name = String((j && j.name) || '').trim()
+        if (!name) return
+        if (!Array.isArray(msg.skillHits)) msg.skillHits = []
+        const hit = msg.skillHits.find(x => x && x.name === name)
+        if (hit) { if (j.source === 'picked') hit.source = 'picked' }
+        else msg.skillHits.push({ name, source: j.source === 'picked' ? 'picked' : 'model' })
         liveScroll()
       } catch (e) { /* 忽略 */ }
     },

@@ -203,6 +203,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
 
     /** 技能仓库：无状态，按当轮 RuntimeContext 解析可见技能，故由 Spring 单例注入。 */
     private final com.wenqu.ai.skill.WenquSkillRepository skillRepository;
+    /** 技能使用统计：点名注入与模型按需读取两条路径都记一笔（异步落盘，不拖慢问答）。 */
+    private final com.wenqu.ai.skill.SkillStatsStore skillStatsStore;
     /** 个人偏好（目前只取「自动提炼记忆」开关，见 memoryConfig）。 */
     private final com.wenqu.ai.service.OrgService orgService;
     private final com.wenqu.ai.agent.subagent.SubAgentConsultService consultService;
@@ -360,6 +362,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                                com.wenqu.ai.service.ProjectFileService projectFileService,
                                com.wenqu.ai.service.ProjectTurnChangesService turnChangeService,
                                com.wenqu.ai.skill.WenquSkillRepository skillRepository,
+                               com.wenqu.ai.skill.SkillStatsStore skillStatsStore,
                                com.wenqu.ai.service.OrgService orgService,
                                com.wenqu.ai.service.UsageLedgerService usageLedger,
                                com.wenqu.ai.service.UsageQuotaService quotaService,
@@ -393,6 +396,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         this.qaLog = qaLog;
         this.displayNames = new ToolDisplayNames(toolRegistry, mcpToolLabelService);
         this.skillRepository = skillRepository;
+        this.skillStatsStore = skillStatsStore;
         this.orgService = orgService;
         this.usageLedger = usageLedger;
         this.quotaService = quotaService;
@@ -787,6 +791,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             // 再校准一次；两帧同一基准，重锚不会让读数跳。没有请求体的入口这一帧就是它唯一的起表基准。
             channel.emit(RunEventType.TURN_START, com.alibaba.fastjson2.JSON.toJSONString(
                     java.util.Map.of("wallMs", prepMs, "prepMs", prepMs)));
+            // 本轮点名的技能：正文已由装配段注入上下文，这里记用量并给前端发命中帧——
+            // 没有这一帧，「选了技能」这件事在界面上是静默的，用户永远不知道模型到底照没照做。
+            emitPickedSkillHits(cmd, channel);
             followTurn(session, cmd, channel, pool, route, hooks, turnId, historyBefore, startCursor,
                     userMessageId, current, recording, startedAt, prepMs, binding.contextWindow());
         } finally {
@@ -3185,6 +3192,52 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         }
     }
 
+    /** 框架技能正文读取工具名：tool/requested 出现这三把之一，就是模型在按需读一条技能。 */
+    private static final java.util.Set<String> SKILL_READ_TOOLS = java.util.Set.of(
+            "load_skill_through_path", "read_skill", "use_skill");
+
+    /** 本轮点名的技能：记用量 + 发 skill_hit 帧（正文由 TurnPromptAssembler 注入，这里只报结果）。 */
+    private void emitPickedSkillHits(ChatCommand cmd, RunChannel channel) {
+        List<String> picked = cmd.getSkills();
+        if (picked == null || picked.isEmpty()) return;
+        for (String raw : picked) {
+            if (raw == null || raw.isBlank()) continue;
+            // 智能体「指定」模式存的是 {uid}/{name} 引用串，命中帧与统计都用裸名
+            String name = raw.contains("/") ? raw.substring(raw.lastIndexOf('/') + 1) : raw.trim();
+            if (name.isEmpty()) continue;
+            skillStatsStore.recordRead(cmd.getUserId(), name, cmd.getSessionId());
+            try {
+                channel.emit(RunEventType.SKILL_HIT, com.alibaba.fastjson2.JSON.toJSONString(
+                        java.util.Map.of("name", name, "source", "picked")));
+            } catch (RuntimeException gone) {
+                log.debug("[SKILL] skill_hit 帧没发出去（通道已收）: session={} skill={}",
+                        cmd.getSessionId(), name);
+            }
+        }
+    }
+
+    /** 模型按需读取技能正文：记用量 + 发 skill_hit 帧（同轮多次读取各记一笔，前端按 name 合并芯片）。 */
+    private void noteSkillToolRead(Recording recording, RunChannel channel, Object input) {
+        if (!SKILL_READ_TOOLS.contains(recording.lastToolName)) return;
+        if (!(input instanceof Map<?, ?> in)) return;
+        String name = null;
+        for (String key : new String[]{"skillId", "skill_id", "skill_name", "skillName", "name"}) {
+            Object v = in.get(key);
+            if (v != null && !String.valueOf(v).isBlank()) {
+                name = String.valueOf(v).trim();
+                break;
+            }
+        }
+        if (name == null) return;
+        skillStatsStore.recordRead(recording.uid, name, channel.sessionId());
+        try {
+            channel.emit(RunEventType.SKILL_HIT, com.alibaba.fastjson2.JSON.toJSONString(
+                    java.util.Map.of("name", name, "source", "model")));
+        } catch (RuntimeException gone) {
+            log.debug("[SKILL] skill_hit 帧没发出去（通道已收）: skill={}", name);
+        }
+    }
+
     /**
      * 框架 Session Log 的事件词汇 → 问渠前端事件名。
      * <p>刻意不发：{@code run/*}、{@code step/*}、{@code state/checkpoint}、{@code model/dispatch} 这些
@@ -3269,6 +3322,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 按这一次调用登记入参与开始时刻：一步里并发两把工具时，共用字段会被后到的盖掉（见 toolInputByKey）
                 String callKey = Recording.toolCallKey(toolCallIdOf(data), recording.lastToolName);
                 recording.toolInputByKey.put(callKey, recording.lastToolInput);
+                // 技能正文被模型按需读取：记一笔使用统计并给前端发命中帧（非技能工具是空操作）
+                noteSkillToolRead(recording, channel, requestedInput);
                 // 收集模型实际发出的检索词：search_knowledge 的 query 入参即它真去搜的短语
                 if (requestedInput instanceof Map<?, ?> in) {
                     if ("search_knowledge".equals(recording.lastToolName)) {

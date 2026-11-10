@@ -150,6 +150,9 @@ const CHAT_EVENT_CB = {
   image: 'onImage', warn: 'onWarn', artifact: 'onArtifact',
   tool_status: 'onToolStatus', tool_output: 'onToolOutput', process: 'onProcess',
   runcode_progress: 'onRunCodeProgress',
+  // skill_hit＝本轮有一条技能被读取（点名注入或模型按需读取）：前端据此在回答区渲染
+  // 「已按技能 X 执行」芯片；进账本，刷新后回看同样能重建
+  skill_hit: 'onSkillHit',
   // subagent_step：分支那一支正在跑的第几步。它原来写进的「编排面板」（msg.subagents）随派遣路由
   // 一起退场了，现在这份实时帧只喂一个去处——顶栏那颗子智能体药丸与派遣卡上的一行文案
   // （见 useChatEngine.onSubagentStep）；仍不落库，刷新后退回卡片上的「跑了 N 步工具」
@@ -1059,6 +1062,19 @@ export const installSkillZip = (file, opts = {}, onProgress) => {
 /** 用户自装技能目录下的文本文件（references/scripts 预览） */
 export const getSkillFile = (name, path) =>
   request(`/skill/file?name=${encodeURIComponent(name || '')}&path=${encodeURIComponent(path || '')}`)
+/** 技能使用统计（列表页数据行 + 统计条用） */
+export const getSkillStats = (name) =>
+  request(`/skill/stats?name=${encodeURIComponent(name || '')}`)
+/** 技能版本列表（详情抽屉「版本」Tab） */
+export const listSkillVersions = (name) =>
+  request(`/skill/${encodeURIComponent(name || '')}/versions`)
+/** 回滚到指定版本（详情抽屉「版本」Tab 里的回滚按钮） */
+export const rollbackSkill = (name, ts) =>
+  request(`/skill/${encodeURIComponent(name || '')}/rollback`,
+    { method: 'POST', body: JSON.stringify({ ts }) })
+/** 批量操作（批量启停/删除：列表页「批量操作」按钮） */
+export const batchSkills = (body) =>
+  request('/skill/batch', { method: 'POST', body: JSON.stringify(body) })
 /** 下载技能 zip（备份/分享）：带登录令牌取 blob，避免 window.open 丢 Authorization */
 export async function downloadSkillZip(name) {
   const bt = authToken()
