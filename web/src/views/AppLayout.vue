@@ -424,7 +424,7 @@
       <div class="side-foot">
         <!-- 头像+昵称即「个人设置」入口。
              身份两行：名字在上，租户/角色退为副信息——租户不再用强调色药丸抢在头像前面 -->
-        <a-tooltip :title="collapsed ? '个人设置（' + (userName || '未登录') + '）' : '个人设置'" placement="right">
+        <a-tooltip :title="collapsed ? '个人设置（' + (userName || '未登录') + '）' : '个人设置'" placement="top">
           <button class="foot-user" @click="goProfile">
             <UserAvatar :avatar="userAvatar" :name="userName" :size="28" />
             <span v-if="!collapsed" class="foot-identity">
@@ -481,14 +481,14 @@
             </div>
           </template>
           <a-badge :count="unreadCount" :offset="[-4, 4]" size="small" :title="''">
-            <a-tooltip title="通知" placement="right">
+            <a-tooltip title="通知" placement="top">
               <button class="app-icon-btn notif-bell"><bell-outlined /></button>
             </a-tooltip>
           </a-badge>
         </a-popover>
         <!-- 我的侧栏布局的入口已移到 logo 行（紧挨折叠按钮）：改的是这列菜单本身，
              属侧栏自身的形态操作，不该混在底部这排「通知/主题/退出」的全局动作里 -->
-        <a-tooltip :title="themeState === 'dark' ? '切换到亮色主题' : '切换到暗色主题'" placement="right">
+        <a-tooltip :title="themeState === 'dark' ? '切换到亮色主题' : '切换到暗色主题'" placement="top">
           <button class="app-icon-btn" @click="toggleTheme">
             <!-- 主题切换：亮色显月亮（点去暗色）、暗色显太阳（点去亮色） -->
             <svg v-if="themeState === 'dark'" class="theme-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -500,7 +500,7 @@
             </svg>
           </button>
         </a-tooltip>
-        <a-tooltip title="退出登录" placement="right">
+        <a-tooltip title="退出登录" placement="top">
           <button class="app-icon-btn" @click="doLogout"><logout-outlined /></button>
         </a-tooltip>
       </div>
