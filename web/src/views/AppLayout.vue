@@ -207,7 +207,10 @@
         <a-spin v-else-if="sessionStore.loading && !sessionStore.spaces.length" size="small" style="display:block;margin:16px auto" />
         <template v-else>
           <section v-for="sec in sidebarSections" :key="sec.key" class="side-sec">
-            <div class="side-sec-head clickable" role="button" :tabindex="0"
+            <!-- single（只剩一个真实工作区）时分区头整行隐去：「工作区 (1)」与空间头是两行
+                 几乎相同的信息。它承载的「新建工作区 / 这台电脑」并入空间头 ⋯ 菜单；
+                 「一键展开/折叠全部」在 N=1 下没有意义，折叠开关由空间头自己的箭头承担。 -->
+            <div v-if="!sec.single" class="side-sec-head clickable" role="button" :tabindex="0"
                  :ref="el => setSecHeadEl(sec.key, el)"
                  :class="{ dragging: sectionDragging.armed && sectionDragging.key === sec.key }"
                  :aria-expanded="String(!secHidden(sec))"
@@ -216,7 +219,7 @@
                  @click="onSecHeadClick(sec)"
                  @keydown.enter.self.prevent="toggleSection(sec)"
                  @keydown.space.self.prevent="toggleSection(sec)">
-              <span class="side-sec-title" :title="sec.key === 'solo' ? '不属于任何工作区的会话' : ''">{{ sec.title }}</span>
+              <span class="side-sec-title" :title="sec.key === 'solo' ? '用「新建对话」创建、未放进工作区的会话' : sec.key === 'spaces' ? '你创建的工作区及其下的会话' : ''">{{ sec.title }}</span>
               <span class="side-sec-count">({{ sec.count }})</span>
               <!-- 整段折叠的常驻指示：与「已归档」同一个箭头口径（折起 = >，展开 = 转 90° 向下）。
                    它不能跟着 hover 才出现——这一行能不能点，靠的就是这个箭头告知。 -->
@@ -246,7 +249,7 @@
             </div>
 
             <Transition name="fold" @enter="foldEnter" @leave="foldLeave" @after-enter="foldDone" @after-leave="foldDone">
-            <div v-if="!secHidden(sec)" class="side-sec-body">
+            <div v-if="sec.single || !secHidden(sec)" class="side-sec-body">
             <template v-for="row in sec.rows" :key="row.key">
               <!-- 已归档的折叠头：插在活动工作区之后，展开时才拉这些工作区的会话 -->
               <button v-if="row.archivedHead" class="side-sec-sub" @click="toggleArchived">
@@ -273,7 +276,7 @@
                          @keydown.enter.prevent="commitProjectRename(row)"
                          @keydown.esc.prevent="cancelProjectRename"
                          @blur="commitProjectRename(row)" />
-                  <span v-else class="space-name">{{ row.name }}</span>
+                  <span v-else class="space-name">{{ row.name }}<span v-if="sec.single" class="space-tag"> · 工作区</span></span>
                   <a-spin v-if="row.loading" class="space-spin" size="small" />
                   <!-- 展开/收起指示：与分区表头、已归档同一枚箭头，随状态转 90°。
                        工作区的自定义图标没有「打开/关闭」两态（如咖啡），只靠图标变化无法表达折叠，
@@ -290,6 +293,12 @@
                         <a-menu-item v-if="row.status === 'archived'" key="restore"><reload-outlined /> 恢复</a-menu-item>
                         <a-menu-item v-else key="archive"><inbox-outlined /> 归档</a-menu-item>
                         <a-menu-item v-if="!row.isImplicit" key="delete" danger><delete-outlined /> 删除工作区</a-menu-item>
+                        <!-- single 扁平态：分区头隐去后，它的两个全局入口借住这一栏的 ⋯ 菜单 -->
+                        <template v-if="sec.single">
+                          <a-menu-divider />
+                          <a-menu-item key="new-ws"><plus-outlined /> 新建工作区</a-menu-item>
+                          <a-menu-item key="device"><setting-outlined /> 这台电脑</a-menu-item>
+                        </template>
                       </a-menu>
                     </template>
                   </a-dropdown>
@@ -1065,20 +1074,24 @@ const persistSectionOrder = () => {
   try { localStorage.setItem(SEC_ORDER_KEY, JSON.stringify(sectionOrder.value)) } catch (e) { /* 忽略 */ }
 }
 
-// 分区数据：第一段「会话」= 不属于任何真实工作区的会话（没挂工作区 + implicit 兜底容器，
-// 后端用 __nospace__ 一次过滤）；第二段「工作区」= 用户新建的工作区 + 已归档。
-// 两段共用同一套行模板，bare 控制有没有工作区头。
+// 分区数据：第一段「快速对话」= 不属于任何真实工作区的会话（没挂工作区 + implicit 兜底容器，
+// 后端用 __nospace__ 一次过滤）——名字与顶栏「新建对话」的落点对齐，和「工作区」段互斥；
+// 第二段「工作区」= 用户新建的工作区 + 已归档。
+// 两段共用同一套行模板，bare 控制有没有工作区头；single（仅工作区段）控制有没有分区头——
+// 只剩一个真实工作区时「工作区 (1)」与空间头是两行几乎相同的信息，隐掉分区头直接渲染空间头。
+// 排除虚拟分组（接口不可用时的「全部会话」）：它 selectable=false 没有 ⋯ 菜单，
+// 隐头会连带丢掉「新建工作区 / 这台电脑」两个入口；也排除搜索态，避免输入时表头忽现忽隐。
 const ARCHIVED_HEAD = { key: '__archived_head__', archivedHead: true }
 const soloSpace = computed(() => sessionStore.spaces.find(s => s.key === NO_SPACE_KEY) || null)
 const projectSpaces = computed(() => sessionStore.spaces.filter(s => s.key !== NO_SPACE_KEY))
 const sidebarSections = computed(() => {
   const out = []
   const solo = soloSpace.value
-  // 搜索态 0 命中的「会话」段不占位置；非搜索态即使没有没挂工作区会话也保留空态
+  // 搜索态 0 命中的「快速对话」段不占位置；非搜索态即使没有没挂工作区会话也保留空态
   // （对应基准稿里的「任务 (0) / 暂无任务」：位置稳定，用户才形成肌肉记忆）
   const soloVisible = Boolean(solo) && (!searchKw.value || solo.count > 0)
   if (soloVisible) {
-    out.push({ key: 'solo', title: '会话', count: solo.count, rows: [solo], bare: true, spacesSection: false })
+    out.push({ key: 'solo', title: '快速对话', count: solo.count, rows: [solo], bare: true, spacesSection: false })
   }
   const rows = [...projectSpaces.value]
   // 搜索态不显示归档（搜索的是会话，不是翻旧工作区），也就省掉归档工作区的懒加载
@@ -1086,10 +1099,11 @@ const sidebarSections = computed(() => {
     rows.push(ARCHIVED_HEAD)
     if (sessionStore.archivedOpen) rows.push(...sessionStore.archived)
   }
-  // 搜索态只剩「会话」有命中时，不再额外渲染一块「工作区 (0) / 没有匹配」——
+  // 搜索态只剩「快速对话」有命中时，不再额外渲染一块「工作区 (0) / 没有匹配」——
   // 两块空态上下叠着，会让人以为工作区加载失败
   if (!searchKw.value || rows.length || !soloVisible) {
-    out.push({ key: 'spaces', title: '工作区', count: projectSpaces.value.length, rows, bare: false, spacesSection: true })
+    const single = !searchKw.value && projectSpaces.value.length === 1 && !projectSpaces.value[0].virtual
+    out.push({ key: 'spaces', title: '工作区', count: projectSpaces.value.length, rows, bare: false, spacesSection: true, single })
   }
   // 可见性决定之后，再按用户拖出来的顺序排：搜索态某段没命中时不占位，顺序照样成立
   return sectionOrder.value.map(k => out.find(s => s.key === k)).filter(Boolean)
@@ -1510,6 +1524,8 @@ const commitProjectRename = async row => {
 
 const spaceMenu = (space, key) => {
   if (!space) return
+  if (key === 'new-ws') { newWsOpen.value = true; return }
+  if (key === 'device') { openLocalDevice(); return }
   if (key === 'open') {
     if (space.id) router.push('/project/' + space.id).catch(() => {})
     return
@@ -2123,6 +2139,9 @@ watch(() => route.fullPath, () => {
   flex: 1; min-width: 0; font-size: 12.5px; font-weight: 500; color: var(--app-text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* single 扁平态的后缀：分区头隐去后把「这一行是什么」说回来。
+   名字太长时 ellipsis 会先裁掉后缀——文件夹图标与 ⋯ 菜单仍能表意，可接受。 */
+.space-tag { color: var(--app-text3); font-weight: 400; }
 /* 就地改名：输入框顶替名字那一格，字号对齐；负外边距抵掉自身高度，行高保持不变 */
 .space-name-input {
   flex: 1; min-width: 0; height: 24px; margin: -3px 0; padding: 0 5px;

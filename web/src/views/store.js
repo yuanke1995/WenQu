@@ -197,8 +197,8 @@ function spaceOfProject (p) {
 
 function noSpaceSpace () {
   // 「不属于任何真实工作区」不是工作区：不给「打开工作区 / 重命名 / 删除」这些对工作区才成立的入口。
-  // 移动端 sheet 里这一段也叫「会话」，与 PC 侧栏同一个名字——不再另造「没挂工作区」这种界面上不存在的名词。
-  return makeSpace({ key: NO_SPACE_KEY, name: '会话', virtual: true, selectable: false })
+  // 名字与 PC 侧栏分区头「快速对话」同源（顶栏「新建对话」的落点），移动端 sheet 同用这一个名字。
+  return makeSpace({ key: NO_SPACE_KEY, name: '快速对话', virtual: true, selectable: false })
 }
 
 function allSessionsSpace () {
@@ -331,7 +331,7 @@ export async function loadSessions (keyword, { refreshProjects = false } = {}) {
     }
     if (gen !== loadGen) return null
 
-    // 「不属于任何真实工作区」始终参与取数且排在最前：侧栏第一段「会话」就是它——
+    // 「不属于任何真实工作区」始终参与取数且排在最前：侧栏第一段「快速对话」就是它——
     // implicit 兜底容器的会话也算在内，所以它不再出现在「工作区」列表里。
     // 工作区接口不可用时退化成「全部会话」一个分组，此时不再单列这一段（否则同一批会话出现两次）。
     // 只列这台电脑绑定的工作区：别的电脑上的仍留在库里，换台电脑登录自然出现。
@@ -351,7 +351,7 @@ export async function loadSessions (keyword, { refreshProjects = false } = {}) {
     if (gen !== loadGen) return null
 
     sessionStore.spaces = loaded.filter(s => {
-      // 「不属于任何真实工作区」：位置固定（第一段「会话」），0 条时也保留——空态本身就是信息
+      // 「不属于任何真实工作区」：位置固定（第一段「快速对话」），0 条时也保留——空态本身就是信息
       if (s.key === NO_SPACE_KEY) return true
       // 搜索态：0 命中的工作区整组隐藏，否则一屏全是「暂无会话」
       if (kw) return s.count > 0 || !!s.error
