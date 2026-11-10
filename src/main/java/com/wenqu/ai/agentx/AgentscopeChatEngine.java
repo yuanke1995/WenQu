@@ -4770,7 +4770,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                     pool.sources().stream().map(x -> String.valueOf(x.get("docId"))).toList(),
                     !pool.sources().isEmpty(), pool.retrievalAttempted() || !pool.sources().isEmpty(),
                     elapsedMs,
-                    cmd.isDeepThink(), assistantMessageId, cmd.getAgentId());
+                    cmd.isDeepThink(), assistantMessageId, cmd.getAgentId(), pool.retrievalKbIds());
         }
         // 载荷用 JSONObject 序列化，不手工拼字符串：控制字符与非法转义序列会让整包失去合法性，
         // 本轮来源清单与外发文本会一起丢掉，「答案可溯源」在外部链路静默失效。

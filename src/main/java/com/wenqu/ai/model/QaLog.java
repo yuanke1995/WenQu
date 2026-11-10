@@ -29,6 +29,13 @@ public class QaLog {
     /** 命中文档 ID 列表（逗号分隔） */
     private String hitDocIds;
 
+    /**
+     * 本轮检索范围的知识库 ID（逗号分隔；NULL=存量日志或未限定范围）。
+     * <p>未命中问题必须按库归属：问答日志本身是全局的，只有记下当时的库范围，
+     * 库洞察才能把「别的库没答上来的问题」挡在当前库之外。
+     */
+    private String kbIds;
+
     /** 是否有引用标注 */
     private Integer hasCitation;
 

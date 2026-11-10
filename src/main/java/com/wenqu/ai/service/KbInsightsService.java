@@ -170,7 +170,7 @@ public class KbInsightsService {
         List<QaLog> logs = qaLogMapper.selectList(new LambdaQueryWrapper<QaLog>()
                 .eq(QaLog::getRetrievalAttempted, 1)
                 .ge(QaLog::getCreatedAt, cutoff)
-                .select(QaLog::getQuestion, QaLog::getHitDocIds, QaLog::getCreatedAt)
+                .select(QaLog::getQuestion, QaLog::getHitDocIds, QaLog::getKbIds, QaLog::getCreatedAt)
                 .last("LIMIT 20000"));
 
         Map<String, long[]> trend = new LinkedHashMap<>();
@@ -191,6 +191,10 @@ public class KbInsightsService {
                     }
                 }
             }
+            // 库归属：本轮检索范围明确包含本库，才算本库的一次问答（命中/未命中都算）。
+            // 存量日志没有库范围，只能靠命中反推——零命中无法归属任何库，不能算成本库的未命中，
+            // 否则新建库会凭空继承其他库的历史未命中问题。
+            if (!kbScopeContains(log.getKbIds(), kbId) && !any) continue;
             long[] arr = trend.get(log.getCreatedAt().toLocalDate().toString());
             if (arr != null) {
                 if (any) arr[0]++; else arr[1]++;
@@ -699,6 +703,15 @@ public class KbInsightsService {
 
     private static String nvl(String s) {
         return s == null ? "" : s;
+    }
+
+    /** 问答日志里的库范围（逗号分隔）是否包含指定库；空范围=存量/未限定，返回 false。 */
+    private static boolean kbScopeContains(String kbIds, String kbId) {
+        if (kbIds == null || kbIds.isBlank() || kbId == null || kbId.isBlank()) return false;
+        for (String id : kbIds.split(",")) {
+            if (kbId.equals(id.trim())) return true;
+        }
+        return false;
     }
 
     private static String snippet(String content, int max) {

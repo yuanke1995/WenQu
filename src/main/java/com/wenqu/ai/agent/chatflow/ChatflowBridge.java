@@ -172,7 +172,7 @@ public class ChatflowBridge {
             sessionService.persistDegradations(messageId, degradations);   // 工作流轮同样能刷新后看到降级条
             qaLogService.logAsync(sessionId, question, answer, List.of(), false, false,
                     System.currentTimeMillis() - startTime, false,
-                    messageId, agent.getId());
+                    messageId, agent.getId(), null);
             // 工作流运行信息：前端可展示"本次回答由工作流 v{n} 产出，耗时 xx"
             Map<String, Object> wfInfo = new LinkedHashMap<>();
             wfInfo.put("workflowId", run.getWorkflowId());

@@ -40,7 +40,8 @@ public class QaLogService {
      */
     public void logAsync(String sessionId, String question, String answer,
                          List<String> hitDocIds, boolean hasCitation, boolean retrievalAttempted,
-                         long elapsedMs, boolean deepThink, String messageId, String agentId) {
+                         long elapsedMs, boolean deepThink, String messageId, String agentId,
+                         java.util.Collection<String> kbIds) {
         ThreadPoolManager.execute(() -> {
             try {
                 QaLog log = new QaLog();
@@ -49,6 +50,9 @@ public class QaLogService {
                 log.setAnswerSummary(summary(answer));
                 log.setHitDocIds(hitDocIds == null || hitDocIds.isEmpty()
                         ? null : hitDocIds.stream().distinct().collect(Collectors.joining(",")));
+                log.setKbIds(kbIds == null || kbIds.isEmpty() ? null
+                        : kbIds.stream().filter(x -> x != null && !x.isBlank()).distinct()
+                                .collect(Collectors.joining(",")));
                 log.setHasCitation(hasCitation ? 1 : 0);
                 log.setRetrievalAttempted(retrievalAttempted ? 1 : 0);
                 log.setDeepThink(deepThink ? 1 : 0);

@@ -963,8 +963,9 @@ public class WenquAgentxTools {
             // 实例按会话常驻，建实例时捕获的那一份只属于第一轮。
             AgentxTurnSlot.Turn t = slot.require();
             TurnHooks hooks = t.hooks();
-            // 先记账再检索：零命中也算「本轮查过知识库」，知识缺口只统计真正检索过却没命中的轮次
-            t.pool().markRetrievalAttempted();
+            // 先记账再检索：零命中也算「本轮查过知识库」，并记下库范围——
+            // 未命中问题要按库归属，否则库洞察会把别的库没答上来的问题算到当前库头上
+            t.pool().markRetrievalAttempted(t.scope() == null ? null : t.scope().kbIds());
             // 弹性线程复用：身份必须在 finally 复原。刻意不用 try-with-resources——AutoCloseable.close()
             // 声明受检异常，而 @Tool 方法是被反射调用的，签名不该往外抛 Exception
             AutoCloseable identityHandle = RequestUser.restore(hooks.identity());

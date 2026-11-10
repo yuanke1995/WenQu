@@ -37,6 +37,8 @@ public final class WenquSourcePool {
     private final Set<String> degradedCodes = new HashSet<>();
     /** 本轮是否真的调用过知识检索工具（零命中也算）——知识缺口只认这一种轮次 */
     private final AtomicBoolean retrievalAttempted = new AtomicBoolean(false);
+    /** 本轮检索命中的知识库范围（工具入参 scope 的 kbIds；零命中也要记，未命中问题才有库归属） */
+    private final Set<String> retrievalKbIds = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     public WenquSourcePool(ChatRunRuntime runtime, ConfigService configService, RerankService rerankService,
                            ImageUrlSigner imageUrlSigner, String sessionId, String question, SseEmitter emitter,
@@ -51,9 +53,22 @@ public final class WenquSourcePool {
         this.registry.docMetaCache = docMetaCache;
     }
 
-    /** 标记本轮调用过知识检索（由检索工具入口调用，零命中也算调过）。 */
-    public void markRetrievalAttempted() {
+    /** 标记本轮调用过知识检索（由检索工具入口调用，零命中也算调过），并记下检索的库范围。 */
+    public void markRetrievalAttempted(java.util.Collection<String> kbIds) {
         retrievalAttempted.set(true);
+        if (kbIds == null) return;
+        for (String kbId : kbIds) {
+            if (kbId != null && !kbId.isBlank()) retrievalKbIds.add(kbId);
+        }
+    }
+
+    public void markRetrievalAttempted() {
+        markRetrievalAttempted(null);
+    }
+
+    /** 本轮检索范围的知识库（快照）：问答日志据此把未命中问题归属到具体的库。 */
+    public List<String> retrievalKbIds() {
+        return List.copyOf(retrievalKbIds);
     }
 
     /** 本轮是否调用过知识检索：知识缺口统计只看这一种轮次。 */

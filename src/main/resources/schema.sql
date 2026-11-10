@@ -280,6 +280,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_qa_log` (
     `deep_think`      INT          DEFAULT 0 COMMENT '是否深度思考: 0=否,1=是',
     `answer_summary`  VARCHAR(1000) DEFAULT NULL COMMENT '回答摘要(前500字)',
     `hit_doc_ids`     VARCHAR(1000) DEFAULT NULL COMMENT '命中文档ID列表(逗号分隔)',
+    `kb_ids`          VARCHAR(500)  DEFAULT NULL COMMENT '本轮检索范围的知识库ID列表(逗号分隔；NULL=存量或未限定范围)',
     `has_citation`    INT          DEFAULT 0 COMMENT '是否有引用标注',
     `retrieval_attempted` INT      DEFAULT NULL COMMENT '本轮是否调用过知识检索: 1=调用过(含零命中),0=未调用,NULL=存量未记录',
     `elapsed_ms`      INT          DEFAULT 0 COMMENT '回答耗时(ms)',
