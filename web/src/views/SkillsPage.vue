@@ -3,23 +3,8 @@
        本页是「能力运营台」：统计条可下钻、筛选排序、卡面带使用数据、操作分级（开关 + ⋯ 菜单），
        详情走右侧抽屉（SkillDrawer）。内置只能停用，自己装的可以编辑/删除/下载/上架。 -->
   <div class="app-page">
-    <div class="app-page-head">
-      <h1 class="app-page-title sr-only">技能</h1>
-      <span class="head-hint-plain" title="技能用来固化「这类问题该怎么做」：步骤、输出格式、禁忌。模型先看清单，需要时再读正文">
-        固化「这类问题该怎么做」的做法，模型按需读取后照做
-      </span>
-      <div class="head-r">
-        <a-input v-model:value="keyword" class="head-search" size="small" allow-clear placeholder="搜索名称、描述或分类">
-          <template #prefix><search-outlined class="head-search-ic" /></template>
-        </a-input>
-        <a-tooltip title="刷新列表">
-          <button class="app-icon-btn" aria-label="刷新技能列表" :disabled="loading" @click="load"><reload-outlined /></button>
-        </a-tooltip>
-        <button class="app-btn ghost small" @click="openInstall('zip')"><upload-outlined /> 上传 zip</button>
-        <button class="app-btn ghost small" @click="openInstall('url')"><link-outlined /> 从 URL 安装</button>
-        <button class="app-btn" @click="openCreate"><plus-outlined /> 新建技能</button>
-      </div>
-    </div>
+    <!-- 无独立页头行：搜索/安装/新建并入统计条右侧，3 行压成 2 行；标题仅留给读屏 -->
+    <h1 class="app-page-title sr-only">技能</h1>
 
     <div class="app-page-body">
       <a-spin v-if="loading && !skills.length" style="display:block;margin:48px auto" />
@@ -32,12 +17,11 @@
         <div class="key-empty-ops">
           <button class="app-btn" @click="openCreate">新建第一个技能</button>
           <button class="app-btn ghost" @click="openInstall('zip')">上传 zip 安装</button>
+          <button class="app-btn ghost" @click="openInstall('url')">从 URL 安装</button>
         </div>
       </div>
 
       <template v-else>
-        <!-- 吸顶区：统计条 + 筛选行。列表往下滚时这块留在滚动容器顶部，随时能换筛选条件 -->
-        <div class="sk-sticky">
         <!-- 统计条：每个数字可点击下钻成筛选（效果图 SCENE 1 ①） -->
         <div class="statbar">
           <button class="stat" @click="setStatFilter('all')">
@@ -62,9 +46,29 @@
             <span class="n">{{ summary.missingDesc }}</span><span class="l">缺描述</span>
             <span class="jump">去处理 <right-outlined /></span>
           </button>
+          <!-- 原页头操作组：搜索 + 安装/新建，收进统计条右侧 -->
+          <div class="stat-acts">
+            <a-tooltip title="技能用来固化「这类问题该怎么做」：步骤、输出格式、禁忌。模型先看清单，需要时再读正文">
+              <info-circle-outlined class="stat-hint-ic" />
+            </a-tooltip>
+            <a-input v-model:value="keyword" class="head-search" size="small" allow-clear placeholder="搜索名称、描述或分类">
+              <template #prefix><search-outlined class="head-search-ic" /></template>
+            </a-input>
+            <a-tooltip title="刷新列表">
+              <button class="app-icon-btn" aria-label="刷新技能列表" :disabled="loading" @click="load"><reload-outlined /></button>
+            </a-tooltip>
+            <a-tooltip title="上传 zip 安装">
+              <button class="app-icon-btn" aria-label="上传 zip 安装" @click="openInstall('zip')"><upload-outlined /></button>
+            </a-tooltip>
+            <a-tooltip title="从 URL 安装">
+              <button class="app-icon-btn" aria-label="从 URL 安装" @click="openInstall('url')"><link-outlined /></button>
+            </a-tooltip>
+            <button class="app-btn" @click="openCreate"><plus-outlined /> 新建技能</button>
+          </div>
         </div>
 
-        <!-- 筛选行（效果图 SCENE 1 ②） -->
+        <!-- 筛选行（效果图 SCENE 1 ②）：滚动到顶部时吸顶 -->
+        <div class="sk-sticky">
         <div class="filterbar">
           <div class="seg">
             <button v-for="o in STATUS_OPTIONS" :key="o.value" class="seg-item"
@@ -351,7 +355,7 @@ import { computed, onMounted, ref } from 'vue'
 import { Modal, message } from 'ant-design-vue'
 import {
   AppstoreOutlined, CheckOutlined, CloseOutlined, CodeOutlined, CopyOutlined, DeleteOutlined,
-  DownloadOutlined, EditOutlined, FileOutlined, FileTextOutlined, HistoryOutlined, InboxOutlined,
+  DownloadOutlined, EditOutlined, FileOutlined, FileTextOutlined, HistoryOutlined, InboxOutlined, InfoCircleOutlined,
   LineChartOutlined, LinkOutlined, MoreOutlined, PlusOutlined, ReloadOutlined, RightOutlined,
   SearchOutlined, ShopOutlined, SkinOutlined, TableOutlined, ToolOutlined, UploadOutlined,
   WarningOutlined
@@ -906,7 +910,10 @@ html[data-theme='dark'] .app-page {
   --c-general-bg: rgba(15, 138, 138, .18);
 }
 
-.head-r { margin-left: auto; display: flex; align-items: center; gap: 8px; flex: none; }
+/* 统计条右侧操作组：原页头的搜索 + 安装/新建。安装两个压成图标按钮，
+   保证 5 张统计卡 + 操作组在常规宽度下仍是一行 */
+.stat-acts { margin-left: auto; display: flex; align-items: center; gap: 8px; flex: none; }
+.stat-hint-ic { color: var(--app-text3); font-size: 14px; cursor: help; }
 .head-search { width: 210px; }
 .head-search-ic { color: var(--app-text3); font-size: 12px; }
 .key-empty { text-align: center; padding: 40px 20px; }
@@ -919,12 +926,13 @@ html[data-theme='dark'] .app-page {
 .sk-md-editor { height: 440px; border-radius: 8px; overflow: hidden; --md-bk-color: var(--app-panel-2, #fff); }
 .sk-md-editor.md-editor-dark { --md-bk-color: var(--app-panel-2, #1e1e1e); }
 
-/* ---------------- 吸顶区（统计条 + 筛选行） ---------------- */
-/* 贴在 .app-page-body 滚动容器顶部：横向负 margin 吃掉 body 的 20px 内边距，
-   背景铺满一行，卡片从底下滚过不透字。top:0 对齐滚动容器内容区上沿，
-   body 自身的 padding-top 16px 与本页背景同色，视觉上无缝。 */
-.sk-sticky { position: sticky; top: 0; z-index: 6; background: var(--app-bg);
-  margin: 0 -20px 12px; padding: 12px 20px 10px; }
+/* ---------------- 吸顶区（仅筛选行） ---------------- */
+/* 统计条随页面滚走，筛选行滚到顶部时才吸顶（sticky 天然行为：未到达前留在原位）。
+   body 有 16px padding-top，top:0 会留出一条缝让卡片从吸顶条上方露出来，
+   故 top:-16px 让背景贴住滚动视口顶沿。吸顶条上方只留 8px 呼吸位：
+   margin-top -8px 吃掉统计条 12px 下边距里的一半，未吸顶时视觉间距仍是 ~12px。 */
+.sk-sticky { position: sticky; top: -16px; z-index: 6; background: var(--app-bg);
+  margin: -8px -20px 12px; padding: 8px 20px 10px; }
 .sk-sticky .filterbar { margin-bottom: 0; }
 
 /* ---------------- 统计条 ---------------- */
