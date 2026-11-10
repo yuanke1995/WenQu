@@ -1790,8 +1790,8 @@ const doLogout = async () => {
 // src/chat/useNotifications.js（后端触发面见该文件注释）；本页只管呈现（popover）
 // 与「点开跳哪」的路由语义——移动壳跳 /m/chat，两端落点不同、读状态口径必须相同。
 const notifOpen = ref(false)
-// 默认落在「待处理」：先回答有没有要我做的事，再看全部
-const notifTab = ref('action')
+// 默认落在「全部」：打开先看全部通知，「待处理」按需切换
+const notifTab = ref('all')
 const notif = useNotifications()
 const { items: notifItems, loading: notifLoading, unreadCount, error: notifError,
         loadList: loadNotifs, markRead, markAllRead: markAllReadApi, markUnread, remove } = notif

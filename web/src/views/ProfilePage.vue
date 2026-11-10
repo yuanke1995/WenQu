@@ -481,7 +481,7 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import {
-  BellOutlined, CameraOutlined, DatabaseOutlined, KeyOutlined,
+  BellOutlined, CameraOutlined, KeyOutlined, ReadOutlined,
   SafetyCertificateOutlined, SettingOutlined, ShareAltOutlined, UserOutlined
 } from '@ant-design/icons-vue'
 import { authUser, clearAuth, ensureAuth } from '../utils/auth'
@@ -520,7 +520,7 @@ const navGroups = [
     { key: 'notify', label: '通知与推送', icon: BellOutlined }
   ] },
   { label: '数据与应用', items: [
-    { key: 'memory', label: '我的记忆', icon: DatabaseOutlined },
+    { key: 'memory', label: '我的记忆', icon: ReadOutlined },
     { key: 'shares', label: '分享管理', icon: ShareAltOutlined },
     { key: 'apikeys', label: 'API 密钥', icon: KeyOutlined }
   ] }

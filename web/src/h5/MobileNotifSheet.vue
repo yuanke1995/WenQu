@@ -71,8 +71,8 @@ const router = useRouter()
 const { items, loading, error, unreadCount, loadList, markRead, markAllRead, markUnread,
   markManyRead, remove, removeMany } = inject('wqNotif')
 
-// 默认待处理；如果没有真正待处理的条目，打开时自动落到全部
-const tab = ref('action')
+// 默认全部；用户切到「待处理」且没有真正待处理的条目时，打开自动回落全部
+const tab = ref('all')
 const selectMode = ref(false)
 const selected = ref([])
 

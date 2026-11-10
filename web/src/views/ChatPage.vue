@@ -186,12 +186,12 @@
               <TurnBar v-if="m.role === 'ai'" :m="m" />
               <!-- 技能命中芯片（skill_hit 帧，见 useChatEngine.onSkillHit）：这一轮按哪条技能做的答，
                    在回答头顶明说——用了什么不许用户猜。点名注入与模型自读两种来源文案不同；
-                   点芯片跳技能管理页看正文。刷新后这一档暂无数据源（技能命中不落消息行，
-                   逐轮回看走「看这一轮的过程」账本面板，那里有同一帧的可读投影） -->
+                   点芯片原地弹正文（SkillContentModal），不跳走打断对话。刷新后这一档暂无数据源
+                   （技能命中不落消息行，逐轮回看走「看这一轮的过程」账本面板，那里有同一帧的可读投影） -->
               <div v-if="m.role === 'ai' && m.skillHits && m.skillHits.length" class="skill-hits">
                 <button v-for="(sk, si) in m.skillHits" :key="sk.name" type="button" class="skill-hit-chip"
-                        :title="(sk.source === 'picked' ? '正文已随本轮注入' : '模型按需读取了正文') + ' · 点击查看技能管理'"
-                        @click="gotoSkillsPage">
+                        :title="(sk.source === 'picked' ? '正文已随本轮注入' : '模型按需读取了正文') + ' · 点击查看正文'"
+                        @click="skillDoc = sk.name">
                   <check-outlined class="shc-ic" />
                   <span class="shc-name">已按技能「{{ sk.name }}」执行</span>
                   <span class="shc-src">{{ sk.source === 'picked' ? '正文已随本轮注入' : '模型按需读取了正文' }}</span>
