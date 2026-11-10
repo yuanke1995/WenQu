@@ -69,7 +69,6 @@
               </span>
               <span class="sp"></span>
               <span :class="['gate-note', { weak: hitLevel(h, i).cls === 'weak' }]">{{ gateNote(h, i) }}</span>
-              <span class="fusion">融合 {{ h.score }}</span>
             </div>
           </div>
         </div>
@@ -196,7 +195,7 @@ function hitLevel (h, i) {
 }
 
 function gateNote (h, i) {
-  if (hitLevel(h, i).cls === 'weak') return '勉强过阈值'
+  if (hitLevel(h, i).cls === 'weak') return `勉强过阈值 ${gate.value}`
   return gate.value ? `✓ 高于阈值 ${gate.value}` : '✓ 有效命中'
 }
 

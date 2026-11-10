@@ -491,6 +491,27 @@ public class HybridRetrievalService {
     }
 
     /**
+     * 试检索用：按<b>知识块 id</b> 汇总原始向量分。
+     * <p>必须与融合路同口径解析附加索引（QA 问法 / 父子子块）→ 来源块：直接拿 vector id 去对
+     * {@code Hit.knowledgeId()} 会全部落空（附加索引的 id 不是块 id），前端就只能看到「向量 —」。
+     */
+    public java.util.Map<String, Double> vectorScoreByKnowledge(String query, java.util.Collection<String> kbIds) {
+        List<Document> docs = vectorSearch(query, null, kbIds);
+        if (docs == null || docs.isEmpty()) return java.util.Map.of();
+        Map<String, Knowledge> kidMap = loadKnowledgeBatch(docs);
+        Map<String, Double> out = new java.util.HashMap<>();
+        for (Document d : docs) {
+            if (d.getId() == null) continue;
+            String rawId = String.valueOf(d.getId());
+            Knowledge k = kidMap.get(rawId);
+            String kid = (k != null && !rawId.equals(String.valueOf(k.getId()))) ? String.valueOf(k.getId()) : rawId;
+            double score = d.getScore() == null ? 0d : d.getScore();
+            out.merge(kid, score, Math::max);
+        }
+        return out;
+    }
+
+    /**
      * 向量召回；{@code minWantedHits} = 通过可见性判定的目标条数（&lt;=0 表示不补采，按配置 topK 取一次）。
      *
      * <p><b>为什么需要补采（治本点）</b>：文档级 ACL 是<b>晚绑定</b>——向量路先按 topK 取候选，

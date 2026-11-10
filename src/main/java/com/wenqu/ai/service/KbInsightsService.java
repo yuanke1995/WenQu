@@ -367,19 +367,11 @@ public class KbInsightsService {
                     hybridRetrievalService.search(query, diag, List.of(kbId), false);
             long recallMs = System.currentTimeMillis() - t0;
 
-            // 两路分量（仅试检索展示用）：fusion 内部不保留分量，这里按同一 query 再取一次
-            // 向量相似度与关键词归一化分，按 knowledgeId 映射回最终命中；失败不影响主结果。
+            // 两路分量（仅试检索展示用）：fusion 内部不保留分量，这里按同一 query 再取一次。
+            // 向量分必须按「知识块 id」汇总（QA/父子附加索引的 vector id 不是块 id，直接对 id 会全部落空）。
             Map<String, Double> vectorScores = new HashMap<>();
             try {
-                for (org.springframework.ai.document.Document d
-                        : hybridRetrievalService.vectorSearch(query, null, List.of(kbId))) {
-                    String kid = d.getId() == null ? null : String.valueOf(d.getId());
-                    Object metaKid = d.getMetadata() == null ? null : d.getMetadata().get("knowledgeId");
-                    if (metaKid != null && !String.valueOf(metaKid).isBlank()) kid = String.valueOf(metaKid);
-                    if (kid == null) continue;
-                    double score = d.getScore() == null ? 0d : d.getScore();
-                    vectorScores.merge(kid, score, Math::max);
-                }
+                vectorScores.putAll(hybridRetrievalService.vectorScoreByKnowledge(query, List.of(kbId)));
             } catch (Exception e) {
                 log.debug("[KB-PROBE] 取向量分量失败（不影响主结果）: {}", e.getMessage());
             }
