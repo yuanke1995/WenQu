@@ -163,6 +163,14 @@
 
   const run = await client.workflows.run({ workflowId: 'wf-xxx', input: { key: 'val' } })
   ```
+- **深度集成模块 `client.native`**（原生 `/api/ai/chat` 事件协议——业务助手类嵌入的标准形态）：
+  - 流式分发：token/thinking/tool_status/artifact/plan/ask_user/plan_approval/approval_required/done/error，
+    每帧先到 `onEvent` 兜底（事件契约只增不删，后端新增事件类型不需要升级 SDK）
+  - 人在回路三张卡：`answerAsk` / `resolvePlan`（approve/revise/supersede/reject）/ `resolveApproval` + pending 恢复
+  - 断线接流：`runStatus` 探测 + `resume`（snapshot 后增量）；`stop` 服务端停整轮 vs `abort` 只断本地流
+  - 运行中插话 `steer`、附件 `uploadAttachment`、历史 `history`/`sessionEvents`、工具大输出 `toolOutput`
+  - **代理拓扑原生支持**：`nativeRoot` 指到业务后端自己的转发前缀、`headers` 函数注入登录态、
+    `apiKey` 可省略——Key 恒在业务代理侧，浏览器不持有凭据
 - **Stream 处理**：用 `fetch` + `ReadableStream` 解析 SSE，提供 async iterator
 - **错误处理**：把 OpenAI 风格的 error 统一映射为 typed Error
 

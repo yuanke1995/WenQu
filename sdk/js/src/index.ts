@@ -4,9 +4,9 @@
 
 export { WenquClient } from "./client.js";
 export type { WenquClientOptions } from "./client.js";
-
 export { WenquError, WenquApiError, WenquAuthError, WenquRateLimitError } from "./errors.js";
 export type { WenquErrorInfo } from "./errors.js";
+export type { NativeTurnHandle } from "./native.js";
 
 export type {
   ChatRole,
@@ -47,4 +47,15 @@ export type {
   UploadDocumentParams,
   WorkflowRunParams,
   WorkflowRun,
+  NativeFrame,
+  NativeSendParams,
+  NativeStreamHandlers,
+  ToolStatusEvent,
+  ArtifactEvent,
+  AskUserCard,
+  ApprovalCard,
+  PlanApprovalCard,
+  SnapshotPayload,
+  DonePayload,
+  UploadAttachmentResult,
 } from "./types.js";

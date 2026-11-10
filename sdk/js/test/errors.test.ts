@@ -59,11 +59,16 @@ test("429 两种错误体都能解析出 message（OpenAI 风格与平台包络�
   await assert.rejects(client.retrieval.search({ query: "ratelimit" }), WenquRateLimitError);
 });
 
-test("构造校验：baseUrl/apiKey 必填，尾部斜杠被归一化", () => {
+test("构造校验：baseUrl 必填；apiKey 可省（代理形态），传值必须是字符串；尾部斜杠归一化", () => {
   assert.throws(() => new WenquClient({ baseUrl: "", apiKey: "sk-x" }), WenquError);
-  assert.throws(() => new WenquClient({ baseUrl: "http://h:8090/ai", apiKey: "" }), WenquError);
+  // 非字符串 apiKey 仍拒；空串/缺省合法（Key 在代理那一侧，浏览器不持有）
+  assert.throws(() => new WenquClient({ baseUrl: "http://h:8090/ai", apiKey: 123 as unknown as string }), WenquError);
   const client = new WenquClient({ baseUrl: "http://h:8090/ai/", apiKey: "sk-x" });
   assert.equal(client.baseUrl, "http://h:8090/ai");
+  // nativeRoot 缺省 = baseUrl + /api/ai；显式给代理前缀时归一化尾斜杠
+  assert.equal(client.nativeRoot, "http://h:8090/ai/api/ai");
+  const proxied = new WenquClient({ baseUrl: "http://h:8090/ai", nativeRoot: "http://dtbd/api/copilot/q/" });
+  assert.equal(proxied.nativeRoot, "http://dtbd/api/copilot/q");
 });
 
 test("客户端参数校验：messages/query 为空直接抛 WenquError", async () => {

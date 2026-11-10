@@ -29,6 +29,9 @@ const client = new WenquClient({
 });
 ```
 
+`apiKey` 可省略——只走 `client.native` 且经自有后端代理时（见「深度集成」），
+凭据在代理那一侧，浏览器不持有 Key。
+
 ## 快速上手
 
 ### 问答（chat completions）
@@ -206,6 +209,61 @@ try {
 ```
 
 流式的错误同样以异常呈现：HTTP 层失败在进入 `for await` 时抛出；流中错误帧（后端以 `error` 字段收尾）会抛出 `WenquApiError` 而不是混在正常 chunk 里。
+
+## 深度集成（client.native：原生问答协议）
+
+`chat.completions` 是无状态的 OpenAI 标准面；把**智能体助手嵌进自己的业务系统**要的是另一套东西——
+流式正文、工具过程、产物实时交付、人在回路三张卡（提问/计划/审批）、断线接流、运行中插话。
+`client.native` 覆盖问渠原生 `/api/ai/chat` 事件协议，这些全部内置。
+
+**推荐拓扑（Key 不进浏览器）**：业务后端加一层薄代理，把 `/api/ai/**` 带 `X-Api-Key` 转发给问渠；
+前端 SDK 用 `nativeRoot` 指到自家代理，`headers` 注入自家登录态：
+
+```ts
+const client = new WenquClient({
+  baseUrl: "http://host:8090/ai",
+  nativeRoot: "https://业务域名/api/copilot/q",   // 代理前缀（转发问渠 /api/ai/**）
+  headers: () => ({ "X-Token": 当前登录令牌() }),  // 函数形态：令牌刷新后自动跟上
+});
+
+const turn = client.native.send(
+  { question: "帮我生成一个请假表单", sessionId, agentId, variables: { formId: "123" } },
+  {
+    onText:  (delta) => 追加正文(delta),
+    onStatus: (line) => 更新状态条(line),          // 「检索知识库」这类人话一行
+    onTool:  (evt)   => 渲染工具进度(evt.name, evt.args, evt.result),
+    onArtifact: (a)  => 挂产物卡片(a.url, a.filename),   // deliver_artifact 实时推送
+    onAskUser: (card) => 弹提问卡(card.askId, card.questions),
+    onPlanApproval: (card) => 弹计划卡(card.planApprovalId, card.plan),
+    onApprovalRequired: (c) => 弹审批卡(c.approvalId),
+    onDone:  (p) => { 收尾(p.finalContent, p.sources, p.messageId); },
+    onError: (m) => 提示(m),
+    onAbort: () => 本地断流收尾(),
+  },
+);
+// turn.abort() 只断本地流（服务端后台照跑，可 resume 接回）；停止整轮用 stop()
+
+// 人在回路：答完卡，同一根流继续长出后续
+await client.native.answerAsk(card.askId, ["方案A"]);        // 或 (id, undefined, true) 忽略
+await client.native.resolvePlan(p.id, { approved: true });   // 或 {revise:true,plan:"意见"} / {supersede:true,plan:"意见"} / {approved:false}
+await client.native.resolveApproval(c.approvalId, true);
+
+// 刷新页面/换设备接回正在跑的一轮：先 snapshot 后增量
+const st = await client.native.runStatus(sessionId);
+if (st.running) client.native.resume(sessionId, { onSnapshot, onText, onDone, onError });
+
+// 运行中插话 / 服务端停止 / 附件 / 历史
+await client.native.steer(sessionId, "第二列改成必填");
+await client.native.stop(sessionId);
+const { fileId } = await client.native.uploadAttachment(file);
+const messages = await client.native.history(sessionId);
+const asks = await client.native.pendingAsks(sessionId);      // 刷新后重建未答的卡
+```
+
+事件契约**只增不删**：每一帧都先到 `onEvent(frame)`，未识别的新事件不报错——
+后端加事件类型时 SDK 不用升级也能透传。
+
+直连形态（Node 脚本/服务端）：不传 `nativeRoot` 与 `headers`，传 `apiKey` 即可，端点自动落在 `{baseUrl}/api/ai/**`。
 
 ## API Key scope
 

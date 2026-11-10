@@ -348,3 +348,159 @@ export interface WorkflowRun {
   durationMs?: number | null;
   error?: string | null;
 }
+
+// ==================== 原生问答运行时（深度集成） ====================
+
+/** SSE 事件帧外壳：content 是字符串（结构化载荷为「字符串套 JSON」，SDK 已尽力解一层） */
+export interface NativeFrame {
+  /** 事件名（token/thinking/tool_status/artifact/ask_user/plan_approval/done/error…，契约只增不删） */
+  type: string;
+  content?: string | null;
+  sessionId?: string;
+}
+
+/** 发问入参（与问渠 ChatRequest 契约对齐，字段以后端为准） */
+export interface NativeSendParams {
+  question: string;
+  /** 会话 id：留空由服务端新建，done 帧带回 */
+  sessionId?: string;
+  /** 智能体 id：不传走默认助手 */
+  agentId?: string;
+  /** 会话级模型覆盖（providerId/modelId） */
+  model?: string;
+  /** 图片 data URL 数组 */
+  images?: string[];
+  /** 附件引用（先 uploadAttachment 换 fileId） */
+  attachments?: Array<{ fileId: string; name?: string; mime?: string }>;
+  /** @ 引用：kb=检索收窄 / doc=内容前置 / agent=轮级委派 */
+  mentions?: Array<{ type: "kb" | "doc" | "agent"; id: string; name?: string }>;
+  /** # 历史引用 */
+  historyRefs?: Array<{ messageId: string }>;
+  /** 本轮启用技能名 */
+  skills?: string[];
+  deepThink?: boolean;
+  planMode?: boolean;
+  /** 重新计划所基于的旧计划批准 id */
+  planBaseId?: string;
+  reasoningLevel?: "low" | "medium" | "high" | "xhigh" | "max";
+  regenerate?: boolean;
+  replaceMessageId?: string;
+  editMessageId?: string;
+  /** 插话续发标记：这句是上一轮跑到一半时补的方向 */
+  fromSteer?: boolean;
+  /** 调用变量（业务上下文注入本轮，≤32 项） */
+  variables?: Record<string, string>;
+}
+
+/** tool_status 事件整包（驱动进度行；args/result 是 JSON 串，用前自行 parse） */
+export interface ToolStatusEvent {
+  name?: string;
+  label?: string;
+  hint?: string;
+  status?: string;
+  elapsedMs?: number;
+  args?: string;
+  result?: string;
+  [k: string]: unknown;
+}
+
+/** artifact 事件：deliver_artifact 的实时产物推送（url 是问渠签名地址） */
+export interface ArtifactEvent {
+  id?: string;
+  url: string;
+  filename?: string;
+  ext?: string;
+  size?: number;
+  description?: string;
+}
+
+/** ask_user 卡片（人在回路·提问） */
+export interface AskUserCard {
+  askId: string;
+  questions: Array<{ topic?: string; question: string; options?: string[]; multiSelect?: boolean }>;
+  timeoutMs?: number;
+  remainingMs?: number;
+}
+
+/** approval_required 卡片（人在回路·工具执行审批） */
+export interface ApprovalCard {
+  approvalId: string;
+  toolName?: string;
+  args?: string;
+  reason?: string;
+  timeoutMs?: number;
+  remainingMs?: number;
+  [k: string]: unknown;
+}
+
+/** plan_approval 卡片（人在回路·执行计划） */
+export interface PlanApprovalCard {
+  planApprovalId: string;
+  /** 计划正文（步骤清单，结构以后端为准） */
+  plan?: unknown;
+  timeoutMs?: number;
+  remainingMs?: number;
+  [k: string]: unknown;
+}
+
+/** resume 的首帧快照（已产出正文/卡片/时间线；running=false 表示没有轮在跑） */
+export interface SnapshotPayload {
+  running?: boolean;
+  content?: string;
+  [k: string]: unknown;
+}
+
+/** done 载荷关键字段（其余字段随功能演进增补，按存在性取值） */
+export interface DonePayload {
+  sources?: Array<Record<string, unknown>>;
+  related?: string[];
+  messageId?: string;
+  turnId?: string;
+  finalContent?: string;
+  finalImages?: string[];
+  toolCalls?: Array<Record<string, unknown>>;
+  artifacts?: Array<Record<string, unknown>>;
+  agentId?: string;
+  agentName?: string;
+  [k: string]: unknown;
+}
+
+/** 流式事件回调：全部帧经 onEvent 透出，已知类型另给专用回调；未识别类型不报错（契约只增不删） */
+export interface NativeStreamHandlers {
+  /** 每一帧先到这里（含 done/error），做兜底渲染或日志 */
+  onEvent?: (frame: NativeFrame) => void;
+  onText?: (delta: string) => void;
+  onThinking?: (delta: string) => void;
+  /** 人话一行（tool_status 的 label/name/hint），适合状态条展示 */
+  onStatus?: (line: string) => void;
+  onTool?: (evt: ToolStatusEvent) => void;
+  onArtifact?: (evt: ArtifactEvent) => void;
+  onAskUser?: (card: AskUserCard) => void;
+  onApprovalRequired?: (card: ApprovalCard) => void;
+  /** plan 事件：整份计划（结构以后端为准） */
+  onPlan?: (plan: unknown) => void;
+  /** plan_delta 事件：计划流式增量 */
+  onPlanDelta?: (delta: string) => void;
+  onPlanApproval?: (card: PlanApprovalCard) => void;
+  /** plan_cancelled / plan_superseded */
+  onPlanTerminal?: (type: "plan_cancelled" | "plan_superseded", payload: unknown) => void;
+  onTodo?: (payload: unknown) => void;
+  onRetrieved?: (payload: unknown) => void;
+  onUsage?: (payload: unknown) => void;
+  onWarn?: (text: string) => void;
+  onImage?: (payload: unknown) => void;
+  onGoalState?: (payload: unknown) => void;
+  onSnapshot?: (snap: SnapshotPayload) => void;
+  onDone?: (payload: DonePayload) => void;
+  onError?: (message: string) => void;
+  /** 本地 abort 断流（服务端按断线宽限后台续跑，之后可 resume 接回） */
+  onAbort?: () => void;
+}
+
+/** /chat/attachment 返回 */
+export interface UploadAttachmentResult {
+  fileId: string;
+  name?: string;
+  mime?: string;
+  size?: number;
+}

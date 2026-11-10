@@ -116,6 +116,13 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const path = new URL(req.url ?? "/", "http://localhost").pathname;
   const method = req.method ?? "GET";
 
+  // 原生问答（代理形态）：挂在 /copilot/q 前缀下，凭据是 X-Test-Login 而非 X-Api-Key
+  //（模拟真实代理：Key 在代理侧，浏览器带的是自家登录态）
+  if (path.startsWith("/copilot/q/")) {
+    await routeNative(path.slice("/copilot/q".length), method, req, res);
+    return;
+  }
+
   // 鉴权闸：所有 v1 端点校验 X-Api-Key
   if (req.headers["x-api-key"] !== MOCK_API_KEY) {
     openAiError(res, 401, "authentication_error", "API Key 无效或缺失");
@@ -410,6 +417,134 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
   }
 
   envelopeError(res, 404, `mock 未实现的端点：${method} ${path}`);
+}
+
+/** 原生 SSE 帧：event 名 + {type,content,sessionId} 外壳（content 为字符串，结构化载荷是「字符串套 JSON」） */
+function nativeFrame(res: ServerResponse, type: string, content: string | null): void {
+  res.write(`event: ${type}\ndata: ${JSON.stringify({ type, content, sessionId: "sess-1" })}\n\n`);
+}
+
+async function routeNative(sub: string, method: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  // 代理自身的登录态校验（SDK 的 headers 选项注入）——没有它说明 SDK 没带附加头
+  if (req.headers["x-test-login"] !== "tok-1") {
+    sendJson(res, 401, { success: false, code: 401, msg: "登录已过期，请刷新页面重新登录" });
+    return;
+  }
+  const url = new URL(req.url ?? "/", "http://localhost");
+
+  if (sub === "/chat" && method === "POST") {
+    const raw = JSON.parse((await readBody(req)).toString("utf8")) as { question?: string };
+    const q = raw.question ?? "";
+    // 代理未配置形态：HTTP 200 但回 JSON 信封——SDK 必须按 Content-Type 分流走 onError
+    if (q === "信封错误") {
+      sendJson(res, 200, { success: false, code: 400, msg: "问渠助手未配置：服务端缺 wenqu.proxy.api-key" });
+      return;
+    }
+    sseHead(res);
+    if (q.includes("提问卡")) {
+      // ask_user 不终结流：卡片帧后流继续挂着等 answerAsk，答完长出后续与 done
+      nativeFrame(res, "token", "先问一句");
+      nativeFrame(res, "ask_user", JSON.stringify({
+        askId: "ask-1",
+        questions: [{ topic: "方案", question: "选哪个方案？", options: ["A", "B"] }],
+        timeoutMs: 600000,
+      }));
+      nativeFrame(res, "token", "，收到答案继续");
+      nativeFrame(res, "done", JSON.stringify({ messageId: "msg-2", finalContent: "先问一句，收到答案继续" }));
+      res.end();
+      return;
+    }
+    nativeFrame(res, "turn_start", JSON.stringify({ prepMs: 10, wallMs: 10 }));
+    nativeFrame(res, "token", "你好");
+    nativeFrame(res, "token", "，这是原生流");
+    nativeFrame(res, "tool_status", JSON.stringify({ name: "search", label: "检索知识库", status: "start" }));
+    nativeFrame(res, "artifact", JSON.stringify({ id: "art-1", url: "/ai/artifacts/a1", filename: "form.json", size: 128 }));
+    // done 载荷双重序列化（与真实服务端一致：content 是 JSON 串的串）
+    nativeFrame(res, "done", JSON.stringify({
+      messageId: "msg-1",
+      turnId: "turn-1",
+      finalContent: "你好，这是原生流",
+      sources: [{ id: "c1", title: "文档A" }],
+      artifacts: [{ id: "art-1" }],
+    }));
+    res.end();
+    return;
+  }
+  if (sub === "/chat" && method === "GET") {
+    // 非法用法探测用：非 SSE 的 JSON 信封错误（代理未配置形态）
+    sendJson(res, 404, { success: false, code: 404, msg: "未配置问渠 API Key（wenqu.proxy.api-key）" });
+    return;
+  }
+  if (sub === "/chat/resume" && method === "GET") {
+    const sid = url.searchParams.get("sessionId") ?? "";
+    sseHead(res);
+    if (sid === "idle") {
+      nativeFrame(res, "snapshot", JSON.stringify({ running: false }));
+      res.end();
+      return;
+    }
+    nativeFrame(res, "snapshot", JSON.stringify({ running: true, content: "已产出半句" }));
+    nativeFrame(res, "token", "继续的部分");
+    nativeFrame(res, "done", JSON.stringify({ messageId: "msg-3", finalContent: "已产出半句继续的部分" }));
+    res.end();
+    return;
+  }
+  if (sub === "/chat/run" && method === "GET") {
+    envelopeOk(res, { running: url.searchParams.get("sessionId") === "sess-1" });
+    return;
+  }
+  if (sub === "/chat/stop" && method === "POST") {
+    envelopeOk(res, { stopped: true });
+    return;
+  }
+  if (sub === "/chat/steer" && method === "POST") {
+    envelopeOk(res, { accepted: true, messageId: "msg-steer" });
+    return;
+  }
+  if (sub === "/chat/attachment" && method === "POST") {
+    const text = (await readBody(req)).toString("utf8");
+    if (!text.includes('name="file"')) {
+      envelopeError(res, 400, "multipart 缺少 file 字段");
+      return;
+    }
+    envelopeOk(res, { fileId: "f-1", name: text.match(/filename="([^"]*)"/)?.[1] ?? "", mime: "text/plain", size: 5 });
+    return;
+  }
+  if (sub === "/ask-user/ask-1" && method === "POST") {
+    const body = JSON.parse(((await readBody(req)).toString("utf8") || "{}")) as { answers?: string[]; ignore?: boolean };
+    envelopeOk(res, { delivered: true, answers: body.answers ?? null, ignore: !!body.ignore });
+    return;
+  }
+  if (sub === "/ask-user/pending" && method === "GET") {
+    envelopeOk(res, { items: [{ askId: "ask-1", questions: [{ question: "选哪个方案？", options: ["A", "B"] }], timeoutMs: 600000, remainingMs: 500000, live: true }] });
+    return;
+  }
+  if (sub === "/plan-approval/p-1" && method === "POST") {
+    const body = JSON.parse(((await readBody(req)).toString("utf8") || "{}")) as Record<string, unknown>;
+    envelopeOk(res, { received: true, decision: body });
+    return;
+  }
+  if (sub === "/plan-approval/pending" && method === "GET") {
+    envelopeOk(res, { items: [{ planApprovalId: "p-1", plan: { steps: ["第一步"] }, timeoutMs: 600000, live: true }] });
+    return;
+  }
+  if (sub === "/tool-approval/t-1" && method === "POST") {
+    envelopeOk(res, "已批准");
+    return;
+  }
+  if (sub === "/tool-approval/pending" && method === "GET") {
+    envelopeOk(res, { items: [{ approvalId: "t-1", toolName: "runCommand", live: true }] });
+    return;
+  }
+  if (sub === "/session/sess-1" && method === "GET") {
+    envelopeOk(res, { messages: [{ id: "m1", role: "user", content: "上一问" }, { id: "m2", role: "assistant", content: "上一答" }] });
+    return;
+  }
+  if (sub === "/session/sess-1/events" && method === "GET") {
+    envelopeOk(res, { items: [{ type: "tool", turnId: "turn-1" }] });
+    return;
+  }
+  sendJson(res, 404, { success: false, code: 404, msg: `mock 未实现的原生端点：${method} ${sub}` });
 }
 
 /** 起 mock 服务（随机端口，127.0.0.1），返回 baseUrl 与 close */
