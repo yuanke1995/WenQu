@@ -758,6 +758,7 @@ public class ConfigService {
         d.put("parse.recoverStuckOnStartup", "true");      // 启动对账：复位崩溃残留的"解析中"文档（多副本部署应置 false）
         d.put("parse.qaEnabled", "true");                  // QA 增强：解析时按块生成问答对并按问法向量化（消耗对话模型 token；需重解析生效）
         d.put("parse.qaPerChunk", "2");                    // QA 增强：每块生成问法条数（1~5）
+        d.put("parse.qaConcurrency", "4");                 // QA 增强：逐块生成的并发数（1~8；区别于 parse.concurrency，后者是文档级）
         // 问答对生成回落库主个人默认聊天模型（User.defaultModel，QaIndexService 显式查询）
         d.put("parse.childEnabled", "true");               // 父子分块：超长块切子块向量化，命中后返回父块正文（确定性切分，无 LLM；需重解析生效）
         // 问答行为参数

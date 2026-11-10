@@ -25,6 +25,11 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 /**
  * QA 增强检索索引服务（对标 FastGPT 问答对模式）
@@ -85,40 +90,72 @@ public class QaIndexService {
                     + "请其在「个人设置 → 默认模型」设置默认聊天模型，QA 生成跳过");
         }
         int perChunk = Math.max(1, Math.min(5, configService.getInt("parse.qaPerChunk", 2)));
+        // 逐块 LLM 调用是解析链路最长的串行尾（44 块=44 次请求）：按块并发、有界线程池（parse.qaConcurrency），
+        // 结果仍按块序在调用线程落库（行/向量顺序确定、进度单调），单块失败跳过继续
+        int concurrency = Math.max(1, Math.min(8, configService.getInt("parse.qaConcurrency", 4)));
         int total = 0;
         int failedBlocks = 0;
+        int blockCount = blocks.size();
         List<KnowledgeQa> rows = new ArrayList<>();
         List<Document> vectors = new ArrayList<>();
-        for (int i = 0; i < blocks.size(); i++) {
-            Knowledge k = blocks.get(i);
-            if (progress != null) {
-                progress.accept(i * 100 / Math.max(1, blocks.size()), "问答对 " + (i + 1) + "/" + blocks.size());
+        ExecutorService pool = Executors.newFixedThreadPool(concurrency, r -> {
+            Thread t = new Thread(r, "qa-gen");
+            t.setDaemon(true);
+            return t;
+        });
+        try {
+            for (int start = 0; start < blockCount; start += concurrency) {
+                int end = Math.min(start + concurrency, blockCount);
+                List<Callable<BlockQa>> tasks = new ArrayList<>(end - start);
+                for (int i = start; i < end; i++) {
+                    Knowledge k = blocks.get(i);
+                    final int index = i;
+                    tasks.add(() -> {
+                        try {
+                            return new BlockQa(index, generate(k, perChunk, model), false);
+                        } catch (Exception e) {
+                            log.warn("[QA] 块 {} 生成失败（跳过）: {}", k.getId(), e.getMessage());
+                            return new BlockQa(index, null, true);
+                        }
+                    });
+                }
+                List<Future<BlockQa>> results = pool.invokeAll(tasks);
+                for (Future<BlockQa> f : results) {
+                    BlockQa done = f.get();
+                    if (done.failed()) {
+                        failedBlocks++;
+                        continue;
+                    }
+                    Knowledge k = blocks.get(done.index());
+                    for (String[] qa : done.pairs()) {
+                        KnowledgeQa row = new KnowledgeQa();
+                        row.setDocId(docId);
+                        row.setKnowledgeId(k.getId());
+                        row.setQuestion(qa[0]);
+                        row.setAnswer(qa[1]);
+                        qaMapper.insert(row);
+                        rows.add(row);
+                        Map<String, Object> md = new HashMap<>();
+                        md.put("docId", docId);
+                        md.put("knowledgeId", k.getId());
+                        md.put("title", row.getQuestion());
+                        md.put("kind", "qa");
+                        documentAclTags.putKbId(md, docId);
+                        vectors.add(new Document(row.getId(), row.getQuestion(), md));
+                        total++;
+                    }
+                }
+                if (progress != null) {
+                    progress.accept(end * 100 / Math.max(1, blockCount), "问答对 " + end + "/" + blockCount);
+                }
             }
-            List<String[]> pairs;
-            try {
-                pairs = generate(k, perChunk, model);
-            } catch (Exception e) {
-                failedBlocks++;
-                log.warn("[QA] 块 {} 生成失败（跳过）: {}", k.getId(), e.getMessage());
-                continue;
-            }
-            for (String[] qa : pairs) {
-                KnowledgeQa row = new KnowledgeQa();
-                row.setDocId(docId);
-                row.setKnowledgeId(k.getId());
-                row.setQuestion(qa[0]);
-                row.setAnswer(qa[1]);
-                qaMapper.insert(row);
-                rows.add(row);
-                Map<String, Object> md = new HashMap<>();
-                md.put("docId", docId);
-                md.put("knowledgeId", k.getId());
-                md.put("title", row.getQuestion());
-                md.put("kind", "qa");
-                documentAclTags.putKbId(md, docId);
-                vectors.add(new Document(row.getId(), row.getQuestion(), md));
-                total++;
-            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("问答对生成被中断", e);
+        } catch (ExecutionException e) {
+            throw new IllegalStateException("问答对生成异常: " + e.getCause(), e);
+        } finally {
+            pool.shutdownNow();
         }
         if (!vectors.isEmpty()) {
             try {
@@ -165,6 +202,9 @@ public class QaIndexService {
         }
         return pairs;
     }
+
+    /** 单块生成结果（index 保留块序；failed=true 表示该块生成失败已跳过） */
+    private record BlockQa(int index, List<String[]> pairs, boolean failed) {}
 
     // ==================== 向量/行清理与恢复（供文档/块删除、迁移、重嵌调用） ====================
 

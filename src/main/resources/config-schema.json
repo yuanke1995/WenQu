@@ -669,6 +669,25 @@
       "tier": 2
     },
     {
+      "backendKey": "parse.qaConcurrency",
+      "panel": "chunk",
+      "section": 2,
+      "group": "parse",
+      "key": "qaConcurrency",
+      "path": "parse.qaConcurrency",
+      "label": "问答对生成并发",
+      "type": "number",
+      "tips": "qaConcurrency",
+      "def": 4,
+      "min": 1,
+      "max": 8,
+      "step": 1,
+      "width": 200,
+      "note": "逐块调用对话模型的并发数；调大解析更快，但会同时占用更多模型配额",
+      "vif": "parse.qaEnabled",
+      "tier": 2
+    },
+    {
       "backendKey": "parse.ocrEngine",
       "panel": "chunk",
       "section": 2,
@@ -2871,6 +2890,7 @@
     "maxImages": "单文档最多描述图片数（0=不限）；防止解析过慢",
     "qaEnabled": "每块生成问法并向量化，提高口语化命中；需重解析，消耗对话模型 token",
     "qaPerChunk": "每块问法条数（1~5）；越多覆盖越广、token 越多",
+    "qaConcurrency": "逐块生成问答对的并发数（1~8）；调大解析更快、模型配额占用更多",
     "childEnabled": "长块切子块检索，命中返回父块全文；需重解析",
     "childSize": "子块尺寸（100~2000）；越小检索越准，向量化次数越多",
     "overlap": "分块重叠字数，仅用于向量化，不写入正文；0=关闭",
