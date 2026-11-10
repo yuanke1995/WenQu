@@ -52,6 +52,58 @@ public class ApiKeyService {
     /** 随机字节数（32 字节 → 64 位十六进制字符，暴力不可行） */
     private static final int RANDOM_BYTES = 32;
 
+    // ==================== API Key 能力范围（scope） ====================
+    // scope 只在 API Key 通道参与判定（登录态不受约束）；每把 Key 的可调面 = 问答白名单 ∩ scope。
+    // 判点在各 v1 端点内（apiKeyId 非空才校验），白名单层保持不变——两层各管一件事：
+    // 白名单管「Key 能不能碰这类端点」，scope 管「这把 Key 被授权了哪几类能力」。
+
+    /** 问答（/api/ai/chat、OpenAI 兼容端点、Responses） */
+    public static final String SCOPE_CHAT = "chat";
+    /** 向量化（/api/ai/v1/embeddings） */
+    public static final String SCOPE_EMBEDDING = "embedding";
+    /** 知识库只读（检索 API、库详情、文档列表） */
+    public static final String SCOPE_KB_READ = "kb.read";
+    /** 知识库写入（建库、上传文档）——默认不含，签发时显式勾选才放开 */
+    public static final String SCOPE_KB_WRITE = "kb.write";
+    /** 工作流触发（/api/ai/v1/workflows/{id}/run） */
+    public static final String SCOPE_WORKFLOW_RUN = "workflow.run";
+    /** 全部合法 scope（前端勾选项与后端校验共用这一份名单） */
+    public static final List<String> ALL_SCOPES = List.of(
+            SCOPE_CHAT, SCOPE_EMBEDDING, SCOPE_KB_READ, SCOPE_KB_WRITE, SCOPE_WORKFLOW_RUN);
+    /** 默认集：除 kb.write 外全部——存量 Key（scopes=NULL）与新签未收窄的 Key 都落在这里，
+     *  与「Key 可走问答/向量/只读/工作流，写库需显式授权」的最小权限口径一致 */
+    public static final List<String> DEFAULT_SCOPES = List.of(
+            SCOPE_CHAT, SCOPE_EMBEDDING, SCOPE_KB_READ, SCOPE_WORKFLOW_RUN);
+
+    /** 解析 scopes 列：NULL/空/解析失败一律按默认集（fail-safe 方向与存量行为一致，不静默清空权限） */
+    public static List<String> parseScopes(String raw) {
+        if (raw == null || raw.isBlank()) return DEFAULT_SCOPES;
+        try {
+            List<String> list = com.alibaba.fastjson2.JSON.parseArray(raw, String.class);
+            if (list == null || list.isEmpty()) return DEFAULT_SCOPES;
+            // 只保留合法值：脏数据（改名/拼错的 scope）不参与判定，避免「写了个没人认识的串」把 Key 锁死
+            List<String> valid = list.stream().filter(ALL_SCOPES::contains).distinct().toList();
+            return valid.isEmpty() ? DEFAULT_SCOPES : valid;
+        } catch (Exception e) {
+            return DEFAULT_SCOPES;
+        }
+    }
+
+    /** 校验并归一化调用方提交的 scope 列表（非法名直接拒，空列表=恢复默认集） */
+    public static List<String> normalizeScopes(Object raw) {
+        if (raw == null) return null;
+        if (!(raw instanceof List<?> list)) throw new BizException("scopes 必须是数组");
+        List<String> out = new java.util.ArrayList<>();
+        for (Object o : list) {
+            String s = o == null ? "" : String.valueOf(o).trim();
+            if (!ALL_SCOPES.contains(s)) {
+                throw new BizException("未知 scope：「" + s + "」，可用：" + String.join(" / ", ALL_SCOPES));
+            }
+            if (!out.contains(s)) out.add(s);
+        }
+        return out;
+    }
+
     private final ApiKeyMapper mapper;
     private final ResourceVisibilityService resourceVisibilityService;
     private final ConfigCryptoService crypto;
@@ -75,9 +127,10 @@ public class ApiKeyService {
      * @param name      用途名称
      * @param expireAt  过期时间（null=长期有效）
      * @param createdBy 创建人标识（= 代表账号：Key 恒以签发人身份发问）
-     * @return {id, name, keyPrefix, actAsUid, apiKey}——apiKey 为明文，此后可在列表「眼睛」回显
+     * @param scopes    能力范围（null/空=默认集：除 kb.write 外全部；非法名由调用方先经 normalizeScopes 拒绝）
+     * @return {id, name, keyPrefix, actAsUid, scopes, apiKey}——apiKey 为明文，此后可在列表「眼睛」回显
      */
-    public Map<String, Object> create(String name, LocalDateTime expireAt, String createdBy) {
+    public Map<String, Object> create(String name, LocalDateTime expireAt, String createdBy, List<String> scopes) {
         byte[] buf = new byte[RANDOM_BYTES];
         RANDOM.nextBytes(buf);
         String plain = PREFIX + HexFormat.of().formatHex(buf);
@@ -89,19 +142,25 @@ public class ApiKeyService {
         k.setKeyCipher(crypto.encrypt(plain));
         k.setDisabled(0);
         k.setExpireAt(expireAt);
+        // 默认集不落库（NULL=默认集）：只有显式收窄/扩权的 Key 才存 scopes，
+        // 也让存量行为与「未勾选任何收窄」的新 Key 完全同形
+        List<String> eff = scopes == null || scopes.isEmpty() ? null
+                : (scopes.size() == DEFAULT_SCOPES.size() && DEFAULT_SCOPES.containsAll(scopes) ? null : scopes);
+        k.setScopes(eff == null ? null : com.alibaba.fastjson2.JSON.toJSONString(eff));
         // 恒绑签发人本人：Key 就是以「谁签发」的身份发问，不存在指定别人——
         // 也就不存在「管理员把 Key 指到任意成员」的口子。签发人必然存在且未停用（能登录才能签）。
         k.setActAsUid(createdBy);
         k.setCreatedBy(createdBy);
         k.setCreateTime(LocalDateTime.now());
         mapper.insert(k);
-        log.info("[API-KEY] 签发 {}（{}），以签发人 {} 身份发问，过期 {}", k.getName(), k.getKeyPrefix() + "…",
-                createdBy, expireAt == null ? "长期" : expireAt);
+        log.info("[API-KEY] 签发 {}（{}），以签发人 {} 身份发问，过期 {}，scope {}", k.getName(), k.getKeyPrefix() + "…",
+                createdBy, expireAt == null ? "长期" : expireAt, parseScopes(k.getScopes()));
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("id", k.getId());
         out.put("name", k.getName());
         out.put("keyPrefix", k.getKeyPrefix());
         out.put("actAsUid", k.getActAsUid());
+        out.put("scopes", parseScopes(k.getScopes()));
         out.put("apiKey", plain);
         return out;
     }
@@ -137,6 +196,7 @@ public class ApiKeyService {
             m.put("name", k.getName());
             m.put("keyPrefix", k.getKeyPrefix());
             m.put("disabled", k.getDisabled() != null && k.getDisabled() == 1);
+            m.put("scopes", parseScopes(k.getScopes()));
             m.put("mcpEnabled", k.getMcpEnabled() != null && k.getMcpEnabled() == 1);
             m.put("expired", k.getExpireAt() != null && k.getExpireAt().isBefore(now));
             m.put("expireAt", k.getExpireAt());
@@ -176,6 +236,46 @@ public class ApiKeyService {
         k.setUpdateTime(LocalDateTime.now());
         mapper.updateById(k);
         log.info("[API-KEY] {} {}", disabled ? "停用" : "启用", id);
+    }
+
+    /**
+     * 设置 Key 的能力范围（scope）。空列表=恢复默认集（与签发未勾选时同形：落 NULL）。
+     * <p>收紧立即生效：v1 端点每次请求现读 Key 行的 scopes，没有缓存一致窗口。
+     */
+    public void updateScopes(String id, List<String> scopes) {
+        ApiKey existing = mapper.selectById(id);
+        ensureManageable(existing);
+        boolean isDefault = scopes == null || scopes.isEmpty()
+                || (scopes.size() == DEFAULT_SCOPES.size() && DEFAULT_SCOPES.containsAll(scopes));
+        LambdaUpdateWrapper<ApiKey> upd = new LambdaUpdateWrapper<ApiKey>()
+                .eq(ApiKey::getId, id)
+                .set(ApiKey::getScopes, isDefault ? null : com.alibaba.fastjson2.JSON.toJSONString(scopes))
+                .set(ApiKey::getUpdateTime, LocalDateTime.now());
+        mapper.update(null, upd);
+        log.info("[API-KEY] 设置 scope {} → {}", id, isDefault ? "默认集" : scopes);
+    }
+
+    /**
+     * scope 判定（仅 API Key 通道调用；JWT 请求不该走到这里）。
+     * <p>按 id 现读 Key 行：一把 Key 的 scope 收紧后，下一次调用立刻按新范围拒绝。
+     */
+    public boolean hasScope(String apiKeyId, String scope) {
+        if (apiKeyId == null || apiKeyId.isBlank()) return true;  // 非 Key 通道不受 scope 约束
+        ApiKey k = mapper.selectById(apiKeyId);
+        if (k == null) return false;  // Key 行已不存在（删除/清理）：宁拒不放
+        return parseScopes(k.getScopes()).contains(scope);
+    }
+
+    /**
+     * v1 端点内的 scope 闸：Key 通道缺对应 scope → 403 并说清这把 Key 还缺什么、去哪儿开。
+     * <p>判点放端点内而不是拦截器：拦截器只回答「Key 能不能碰这类端点」（白名单），
+     * 这里回答「这把 Key 被授权了这项能力没有」——两层各自可核对，不互相绕。
+     */
+    public void requireScope(String apiKeyId, String scope) {
+        if (apiKeyId == null || apiKeyId.isBlank()) return;  // JWT 通道直通
+        if (hasScope(apiKeyId, scope)) return;
+        throw new BizException(403, "该 API Key 未开通「" + scope + "」能力；请在问渠「个人设置 → API 密钥」"
+                + "编辑该 Key 的权限范围后重试");
     }
 
     /**

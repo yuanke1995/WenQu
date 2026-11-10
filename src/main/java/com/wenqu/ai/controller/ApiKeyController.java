@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
 import com.wenqu.ai.security.Permission;
 
@@ -77,16 +78,39 @@ public class ApiKeyController {
     }
 
     @Operation(summary = "签发 Key", description = "返回明文 apiKey（此后可在列表点「眼睛」回显/复制——明文以部署密钥加密保管）。"
-            + "body: {\"name\":\"…\",\"expireAt\":\"yyyy-MM-dd\"}——Key 恒以签发人本人身份发问。"
+            + "body: {\"name\":\"…\",\"expireAt\":\"yyyy-MM-dd\",\"scopes\":[\"chat\",\"embedding\",…]}——Key 恒以签发人本人身份发问。"
+            + "scopes 省略=默认集（chat/embedding/kb.read/workflow.run，不含 kb.write）；非法名直接拒绝。"
             + "改密/资料/技能/MCP 配置等账号自服务面一律不从 Key 走")
     @Permission("apikey:write")
     @PostMapping
-    public ResultJson create(@RequestBody Map<String, String> body) {
-        String name = body.get("name");
-        LocalDateTime expireAt = parseExpire(body.get("expireAt"));
+    public ResultJson create(@RequestBody Map<String, Object> body) {
+        String name = body.get("name") == null ? null : String.valueOf(body.get("name"));
+        LocalDateTime expireAt = parseExpire(body.get("expireAt") == null ? null : String.valueOf(body.get("expireAt")));
+        List<String> scopes = ApiKeyService.normalizeScopes(body.get("scopes"));
         // 归属用「当前登录身份」（RequestUser）：与文档/智能体的 created_by 口径一致，
         // 否则创建者短路会因身份来源不同而失效
-        return ResultJson.ok(apiKeyService.create(name, expireAt, RequestUser.uid()));
+        return ResultJson.ok(apiKeyService.create(name, expireAt, RequestUser.uid(), scopes));
+    }
+
+    @Operation(summary = "设置能力范围", description = "body: {\"scopes\": [\"chat\",\"embedding\",\"kb.read\",\"kb.write\",\"workflow.run\"]}——"
+            + "整组替换；空数组=恢复默认集（除 kb.write 外全部）。收紧立即生效：v1 端点每次请求现读本字段。"
+            + "可选值见 GET /api/ai/api-key/scopes")
+    @Permission("apikey:write")
+    @PutMapping("/{id}/scopes")
+    public ResultJson setScopes(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
+        List<String> scopes = ApiKeyService.normalizeScopes(body.get("scopes"));
+        apiKeyService.updateScopes(id, scopes);
+        return ResultJson.ok(Map.of("id", id, "scopes",
+                scopes == null || scopes.isEmpty() ? ApiKeyService.DEFAULT_SCOPES : scopes));
+    }
+
+    @Operation(summary = "scope 名册", description = "全部合法 scope 与默认集（签发/编辑弹窗的选项数据源，前端不硬编码名单）")
+    @Permission("apikey:read")
+    @GetMapping("/scopes")
+    public ResultJson scopes() {
+        return ResultJson.ok(Map.of(
+                "all", ApiKeyService.ALL_SCOPES,
+                "default", ApiKeyService.DEFAULT_SCOPES));
     }
 
     @Operation(summary = "回显明文", description = "返回该 Key 的明文 apiKey（列表「眼睛」/复制按钮的数据源）；"

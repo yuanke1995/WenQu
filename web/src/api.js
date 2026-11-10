@@ -1005,6 +1005,11 @@ export const updateApiKey = (id, body) =>
 /** 回显 Key 明文（列表「眼睛」/复制）：仅创建者，服务端每次落审计日志 */
 export const revealApiKey = id => request(`/api-key/${id}/reveal`)
 export const deleteApiKey = id => request(`/api-key/${id}`, { method: 'DELETE' })
+/** scope 名册：全部合法 scope 与默认集（签发/编辑弹窗选项数据源） */
+export const getApiKeyScopes = () => request('/api-key/scopes')
+/** 设置 Key 能力范围（整组替换；空数组=恢复默认集） */
+export const setApiKeyScopes = (id, scopes) =>
+  request(`/api-key/${id}/scopes`, { method: 'PUT', body: JSON.stringify({ scopes }) })
 
 // ==================== 智能体 Agent 配置（4.1：模型/知识库/工具/提示词） ====================
 /** 对话页下拉：问答用户可读的精简列表（仅 id/name/description/model/isDefault） */

@@ -335,6 +335,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_api_key` (
     `key_prefix`   VARCHAR(32)  DEFAULT NULL COMMENT '明文前缀（列表展示用）',
     `key_cipher`   TEXT         DEFAULT NULL COMMENT 'Key 明文的 JWE 密文（部署密钥加密保管，列表「眼睛」回显/复制用；与模型供应商 api_key 同一套加密。NULL=无密文，不可回显）',
     `disabled`     INT          DEFAULT 0 COMMENT '是否停用: 0=启用, 1=停用（吊销）',
+    `scopes`       VARCHAR(256) DEFAULT NULL COMMENT '能力范围 JSON 数组（chat/embedding/kb.read/kb.write/workflow.run）；NULL=按默认集生效（含 kb.write 之外的全部），仅 API Key 通道参与判定',
     `mcp_enabled`  INT          DEFAULT 0 COMMENT 'MCP 端点: 1=该 Key 可访问平台级 MCP 入口 /ai/mcp（元工具集），0=不可',
     `expire_at`    DATETIME     DEFAULT NULL COMMENT '过期时间（NULL=长期有效）',
     `last_used_at` DATETIME     DEFAULT NULL COMMENT '最近使用时间',

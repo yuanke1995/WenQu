@@ -43,6 +43,14 @@ public class ApiKey {
     private Integer disabled;
 
     /**
+     * 能力范围（JSON 数组字符串，如 ["chat","embedding","kb.read","kb.write","workflow.run"]）。
+     * <p>NULL=按 {@link com.wenqu.ai.service.ApiKeyService#DEFAULT_SCOPES} 生效——存量 Key 与
+     * 未显式收窄的 Key 都落在默认集（问答/向量/知识库只读/工作流触发），写库只有显式勾选才放开。
+     * scope 只在 API Key 通道参与判定；登录态（JWT）请求不受 scope 约束。
+     */
+    private String scopes;
+
+    /**
      * MCP 端点：1=该 Key 可用于平台级 MCP 入口 /ai/mcp（元工具集：检索/问答/列库/列智能体）
      * <p>默认 0：Key 的权限面是「问答链路」，MCP 是另一条入口，需显式授权后才放行（最小权限）。
      */

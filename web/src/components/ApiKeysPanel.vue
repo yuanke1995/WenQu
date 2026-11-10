@@ -34,7 +34,7 @@
     </div>
 
     <a-table v-else :data-source="filteredKeys" :columns="keyCols" size="small" row-key="id"
-             :pagination="false" table-layout="fixed" :scroll="{ x: 946 }">
+             :pagination="false" table-layout="fixed" :scroll="{ x: 1010 }">
       <template #bodyCell="{ column, record }">
         <template v-if="column.key === 'name'">
           <span class="key-name-wrap">
@@ -65,6 +65,11 @@
           <a-tooltip :title="record.mcpEnabled ? '可访问平台级 MCP 入口 /ai/mcp' : '未授权 MCP 入口（点击授权）'">
             <a-switch size="small" :checked="!!record.mcpEnabled"
                       :loading="keyMcpTogglingId === record.id" @change="toggleKeyMcp(record)" />
+          </a-tooltip>
+        </template>
+        <template v-else-if="column.key === 'scopes'">
+          <a-tooltip :title="'能力范围：' + scopeNames(record.scopes).join(' / ')">
+            <span class="key-dim">{{ isDefaultScopes(record.scopes) ? '默认' : scopeNames(record.scopes).length + ' 项' }}</span>
           </a-tooltip>
         </template>
         <template v-else-if="column.key === 'lastUsed'">
@@ -244,6 +249,15 @@
               对接系统要用的 Key，就用对接时归属的那个账号签发。
             </div>
           </a-form-item>
+          <a-form-item label="能力范围">
+            <a-checkbox-group v-model:value="createForm.scopes" class="key-scope-group">
+              <a-checkbox v-for="s in scopeCatalog.all" :key="s" :value="s">{{ SCOPE_LABELS[s] || s }}</a-checkbox>
+            </a-checkbox-group>
+            <div class="key-field-hint">
+              默认开放除「知识库写入」外的全部能力；勾选越少，Key 泄露时的爆炸半径越小。
+              「知识库写入」允许外部系统向你的库上传文档，只在确实需要时勾选。
+            </div>
+          </a-form-item>
         </a-form>
         <div class="key-modal-foot">
           <button class="app-btn ghost" @click="closeCreateKey">取消</button>
@@ -286,6 +300,12 @@
                          :disabled-date="d => d && d.valueOf() < Date.now() - 86400000" />
           <div class="key-field-hint">「30 天 / 90 天」从今天起算；到期后该 Key 立即不可调用，改回长期即恢复</div>
         </a-form-item>
+        <a-form-item label="能力范围">
+          <a-checkbox-group v-model:value="editForm.scopes" class="key-scope-group">
+            <a-checkbox v-for="s in scopeCatalog.all" :key="s" :value="s">{{ SCOPE_LABELS[s] || s }}</a-checkbox>
+          </a-checkbox-group>
+          <div class="key-field-hint">收紧立即生效（下一次调用就被拒绝）；至少保留一项</div>
+        </a-form-item>
       </a-form>
       <div class="key-modal-foot">
         <button class="app-btn ghost" @click="editOpen = false">取消</button>
@@ -311,7 +331,8 @@ import { message } from 'ant-design-vue'
 import dayjs from 'dayjs'
 import { CheckOutlined, CopyOutlined, EyeInvisibleOutlined, EyeOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons-vue'
 import { listApiKeys, createApiKey, setApiKeyDisabled, setApiKeyMcp, deleteApiKey,
-         updateApiKey, revealApiKey, getMcpAuditLogs, getMcpAuditSummary } from '../api'
+         updateApiKey, revealApiKey, getMcpAuditLogs, getMcpAuditSummary,
+         getApiKeyScopes, setApiKeyScopes } from '../api'
 import { authUser } from '../utils/auth'
 import { writeClipboard } from '../utils/clipboard'
 import { publicUrl } from '../utils/publicUrl'
@@ -329,6 +350,7 @@ const keyCols = [
   { title: '名称', key: 'name', ellipsis: true },
   { title: 'Key', key: 'prefix', width: 230 },
   { title: '启用', key: 'status', width: 50 },
+  { title: '范围', key: 'scopes', width: 64 },
   { title: 'MCP 入口', key: 'mcp', width: 76 },
   { title: '最近使用', key: 'lastUsed', width: 128 },
   { title: '近30天用量', key: 'usage30d', width: 110 },
@@ -353,6 +375,28 @@ const keyCreating = ref(false)
 const usageOpen = ref(false)
 const copiedSample = ref('')
 const copiedKey = ref(false)
+
+// ==================== 能力范围（scope） ====================
+// 名册由后端下发（GET /api-key/scopes）：合法值与默认集以后端为唯一真源，前端不硬编码名单。
+// scope 只约束 API Key 通道（登录态不受约束）；默认集=除「知识库写入」外全部，写库需显式勾选。
+const scopeCatalog = ref({ all: [], default: [] })
+const SCOPE_LABELS = {
+  chat: '问答', embedding: '向量化', 'kb.read': '知识库只读',
+  'kb.write': '知识库写入', 'workflow.run': '工作流触发'
+}
+const scopeNames = list => (list || scopeCatalog.value.default || []).map(s => SCOPE_LABELS[s] || s)
+const isDefaultScopes = list => {
+  const d = scopeCatalog.value.default
+  if (!d.length) return true
+  const cur = list || d
+  return cur.length === d.length && d.every(s => cur.includes(s))
+}
+const loadScopeCatalog = async () => {
+  try {
+    const r = await getApiKeyScopes()
+    if (r.success && r.data) scopeCatalog.value = r.data
+  } catch (e) { /* 名册拉取失败不挡列表；弹窗里勾选项为空时用户仍可保存（后端按默认集处理） */ }
+}
 
 /** 管理员判据与 /auth/me 缓存同源（ensureAuth 在路由进入前已拉好）——只管审计折叠块的显隐 */
 const isAdmin = computed(() => Boolean(authUser.value && authUser.value.admin))
@@ -474,13 +518,13 @@ const mcpPlatformJson = computed(() => {
 // 创建走两步式弹窗：form（填名称/有效期）→ done（明文展示，之后列表眼睛随时可回显）
 const createOpen = ref(false)
 const createStep = ref('form')
-const createForm = ref({ name: '', expireMode: 'never', expireDate: null })
+const createForm = ref({ name: '', expireMode: 'never', expireDate: null, scopes: [] })
 const createdKey = ref({ name: '', apiKey: '' })
 const editOpen = ref(false)
-const editForm = ref({ id: '', name: '', expireMode: 'never', expireDate: null })
+const editForm = ref({ id: '', name: '', expireMode: 'never', expireDate: null, scopes: [] })
 
 const openCreateKey = () => {
-  createForm.value = { name: '', expireMode: 'never', expireDate: null }
+  createForm.value = { name: '', expireMode: 'never', expireDate: null, scopes: [...scopeCatalog.value.default] }
   createdKey.value = { name: '', apiKey: '' }
   copiedKey.value = false
   createStep.value = 'form'
@@ -497,7 +541,8 @@ const submitCreateKey = async () => {
   keyCreating.value = true
   try {
     // 恒绑签发人：不传 actAsUid（传了别人的 uid 后端也会拒）
-    const body = { name: createForm.value.name.trim(), expireAt: expirePayload(createForm.value) }
+    const body = { name: createForm.value.name.trim(), expireAt: expirePayload(createForm.value),
+                   scopes: createForm.value.scopes }
     const r = await createApiKey(body)
     if (r.success) {
       createdKey.value = { name: r.data?.name || createForm.value.name.trim(), apiKey: r.data?.apiKey || '' }
@@ -520,19 +565,29 @@ const copySample = async (k, text) => {
 const openEditKey = rec => {
   // 有效期回填：有到期日 → 「选日期」并显示那一天（已过期的也显示，改到未来或切长期才恢复可用）；无 → 长期有效
   const exp = rec.expireAt ? dayjs(String(rec.expireAt).slice(0, 10)) : null
-  editForm.value = { id: rec.id, name: rec.name || '', expireMode: exp ? 'custom' : 'never', expireDate: exp }
+  editForm.value = { id: rec.id, name: rec.name || '', expireMode: exp ? 'custom' : 'never', expireDate: exp,
+                     scopes: [...(rec.scopes || scopeCatalog.value.default)] }
   editOpen.value = true
 }
 const submitEditKey = async () => {
   const name = editForm.value.name.trim()
   if (!name) { message.warning('名称不能为空'); return }
   if (editForm.value.expireMode === 'custom' && !editForm.value.expireDate) { message.warning('请选择到期日期'); return }
+  if (!editForm.value.scopes.length) { message.warning('至少保留一项能力范围'); return }
   try {
     // 发问身份恒为签发人，编辑不涉及（服务端不收也不认）
     const body = { name, expireAt: expirePayload(editForm.value) }
     const r = await updateApiKey(editForm.value.id, body)
-    if (r.success) { message.success('已保存'); editOpen.value = false; loadKeys() }
-    else message.error(r.msg || '保存失败')
+    if (!r.success) { message.error(r.msg || '保存失败'); return }
+    // scope 独立提交（整组替换）；与当前值一致时跳过一次写库
+    const cur = (keys.value.find(k => k.id === editForm.value.id) || {}).scopes || []
+    const changed = editForm.value.scopes.length !== cur.length
+      || editForm.value.scopes.some(s => !cur.includes(s))
+    if (changed) {
+      const s = await setApiKeyScopes(editForm.value.id, editForm.value.scopes)
+      if (!s.success) { message.error(s.msg || '能力范围保存失败'); return }
+    }
+    message.success('已保存'); editOpen.value = false; loadKeys()
   } catch (e) { message.error(e.message || '保存失败') }
 }
 
@@ -607,8 +662,8 @@ const toggleAudit = () => {
 }
 const onAuditPage = p => { auditPage.value = p; loadAudit(false) }
 
-// 面板随页签挂载（v-if 控制），挂载即拉一次最新列表（数据可能在别处改过）
-onMounted(loadKeys)
+// 面板随页签挂载（v-if 控制），挂载即拉一次最新列表（数据可能在别处改过）与 scope 名册
+onMounted(() => { loadScopeCatalog(); loadKeys() })
 </script>
 
 <style scoped>
@@ -686,6 +741,8 @@ onMounted(loadKeys)
 .key-field-hint { margin-top: 6px; font-size: 12px; color: var(--app-text3); line-height: 1.6; }
 .key-self-bind { padding: 5px 10px; border: 1px solid var(--app-border); border-radius: 6px; background: var(--app-panel-2); font-size: 12px; color: var(--app-text2); }
 .key-self-bind code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--app-text); }
+/* 能力范围勾选组：横排自动换行，勾选项之间留呼吸 */
+.key-scope-group { display: flex; flex-wrap: wrap; gap: 6px 14px; }
 .key-done-warn {
   background: var(--app-warn-weak); border: 1px solid var(--app-warn-border); color: var(--app-warn-text);
   border-radius: 6px; padding: 8px 10px; font-size: 12px; margin-bottom: 12px; line-height: 1.6;
