@@ -553,7 +553,8 @@ async function runSelfCheck () {
 .preset-row b { margin-left: auto; color: var(--app-text2); font-weight: 500; }
 .preset-tip { margin-top: 9px; font-size: 10.5px; color: var(--app-text3); line-height: 1.6; }
 .wiz-foot { display: flex; align-items: center; gap: 8px; margin-top: 12px; padding-top: 12px; }
-.wiz-import { display: flex; gap: 24px; }
+/* 两列都不拉伸：上传拖拽区天然高度，避免它撑满左列把说明与自检块挤到页脚下方 */
+.wiz-import { display: flex; gap: 24px; align-items: flex-start; }
 .wiz-import .wiz-left { flex: 1; min-width: 0; }
 .wiz-import .wiz-right { width: 300px; flex: none; background: var(--app-panel-2); border: 1px solid var(--app-border);
   border-radius: 9px; padding: 12px 14px; }
