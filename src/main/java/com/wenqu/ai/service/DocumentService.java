@@ -2299,23 +2299,66 @@ public class DocumentService {
      */
     public Map<String, Long> statsHitCounts() {
         Map<String, Long> counts = new HashMap<>();
+        hitStatsByDoc().forEach((id, s) -> counts.put(id, s.count()));
+        return counts;
+    }
+
+    /** 单个文档的命中统计：次数 + 最近一次命中时间（知识库卡片「最近使用」用） */
+    public record HitStat(long count, java.time.LocalDateTime lastAt) {}
+
+    /** 近 90 天命中明细：{docId: {count,lastAt}}，与 {@link #statsHitCounts()} 同源 */
+    public Map<String, HitStat> hitStatsByDoc() {
+        Map<String, long[]> counts = new HashMap<>();
+        Map<String, java.time.LocalDateTime> lastAt = new HashMap<>();
         try {
             var logs = qaLogMapper.selectList(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<com.wenqu.ai.model.QaLog>()
                     .isNotNull(com.wenqu.ai.model.QaLog::getHitDocIds)
                     .ne(com.wenqu.ai.model.QaLog::getHitDocIds, "")
                     .ge(com.wenqu.ai.model.QaLog::getCreatedAt, java.time.LocalDateTime.now().minusDays(90))
-                    .select(com.wenqu.ai.model.QaLog::getHitDocIds)
+                    .select(com.wenqu.ai.model.QaLog::getHitDocIds,
+                            com.wenqu.ai.model.QaLog::getCreatedAt)
                     .last("LIMIT 20000"));
             for (var log : logs) {
                 if (log.getHitDocIds() == null || log.getHitDocIds().isBlank()) continue;
                 for (String id : log.getHitDocIds().split(",")) {
-                    if (!id.isBlank()) counts.merge(id.trim(), 1L, Long::sum);
+                    String docId = id.trim();
+                    if (docId.isEmpty()) continue;
+                    counts.computeIfAbsent(docId, k -> new long[1])[0]++;
+                    java.time.LocalDateTime t = log.getCreatedAt();
+                    if (t != null) lastAt.merge(docId, t, (a, b) -> a.isAfter(b) ? a : b);
                 }
             }
         } catch (Exception e) {
             log.warn("统计文档命中次数失败: {}", e.getMessage());
         }
-        return counts;
+        Map<String, HitStat> out = new HashMap<>();
+        counts.forEach((id, c) -> out.put(id, new HitStat(c[0], lastAt.get(id))));
+        return out;
+    }
+
+    /** 全量文档归属映射 {docId: kbId}（含回收站）：空 kbId 按默认库归属，与检索/健康度同口径 */
+    public Map<String, String> docKbMap() {
+        String defaultKbId = defaultKbIdOf();
+        Map<String, String> out = new HashMap<>();
+        for (Map<String, Object> row : documentMapper.selectOwnershipAll()) {
+            out.put(String.valueOf(row.get("id")), resolveOwnKb(row.get("kb_id"), defaultKbId));
+        }
+        return out;
+    }
+
+    /** 各库回收站文档数 {kbId: count}（默认库归属口径与健康度一致） */
+    public Map<String, Long> recycleCountsByKb() {
+        String defaultKbId = defaultKbIdOf();
+        Map<String, Long> out = new HashMap<>();
+        for (Map<String, Object> row : documentMapper.selectMaps(
+                new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<AiDocument>()
+                        .select("kb_id", "COUNT(*) AS total")
+                        .eq("deleted", 1)
+                        .groupBy("kb_id"))) {
+            String kbId = resolveOwnKb(row.get("kb_id"), defaultKbId);
+            out.merge(kbId, num(row, "total"), Long::sum);
+        }
+        return out;
     }
 
     /**

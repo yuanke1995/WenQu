@@ -10,11 +10,14 @@
  * 联网来源在分享页要靠 origin 字段与库内来源区分，
  * 裁剪时丢了它就会统一显示成「来源文档不可用」。
  */
-import { CaretRightOutlined } from '@ant-design/icons-vue'
-import { sourceName } from './projections'
+import { ref } from 'vue'
+import { CaretRightOutlined, DislikeOutlined, LikeOutlined } from '@ant-design/icons-vue'
+import { message } from 'ant-design-vue'
+import { externalOrigin, sourceName } from './projections'
 import { openSource } from './answerViewer'
+import { feedbackKnowledgeByChunk } from '../api'
 
-defineProps({
+const props = defineProps({
   /** 来源列表：[{ref, origin, siteName, fileName, title, url, snippet, score}] */
   sources: { type: Array, default: () => [] },
   /** 折叠行文案（主对话页传检索概览，分享页传「引用 N 条来源」） */
@@ -27,10 +30,32 @@ defineProps({
   toolQueries: { type: Array, default: () => [] },
   /** 是否在来源名下显示原文片段（主对话页显示，分享页不显示） */
   showSnippet: { type: Boolean, default: false },
+  /** 触发本轮回答的用户问题（反馈回流用；分享页不传） */
+  question: { type: String, default: '' },
+  /** 是否显示引用反馈（游客分享页关闭） */
+  canFeedback: { type: Boolean, default: true },
   /** 展开态（v-model:open 双向） */
   open: { type: Boolean, default: false }
 })
 const emit = defineEmits(['update:open'])
+
+const fbSent = ref({})
+
+async function sendFb (s, useful) {
+  if (!props.canFeedback || externalOrigin(s) || !s.knowledgeId) return
+  try {
+    await feedbackKnowledgeByChunk({
+      knowledgeId: s.knowledgeId,
+      docId: s.docId,
+      question: props.question,
+      useful
+    })
+    fbSent.value = { ...fbSent.value, [s.ref]: true }
+    message.success('感谢反馈')
+  } catch (e) {
+    message.error(e.message || '反馈失败')
+  }
+}
 </script>
 
 <template>
@@ -44,13 +69,24 @@ const emit = defineEmits(['update:open'])
       <div v-if="toolQueries && toolQueries.length" class="rt-terms rt-tool-terms">
         <span class="rt-tool-tag">精确检索</span>{{ toolQueries.join('；') }}
       </div>
-      <div v-for="(s, si) in (sources || [])" :key="si" class="rt-ref"
-           :title="s.origin === 'WEB' ? '点击查看来源摘要与原网页' : '点击查看原文'" @click="openSource(s)">
-        <span class="rt-ref-tag">[{{ s.ref }}]</span>
-        <span v-if="s.origin === 'WEB'" class="rt-ref-web">联网</span>
-        <span v-else-if="s.origin === 'MCP'" class="rt-ref-web" title="MCP 工具返回的来源">MCP</span>
-        {{ sourceName(s) }}
-        <div v-if="showSnippet && s.snippet" class="rt-snip">{{ s.snippet }}</div>
+      <div v-for="(s, si) in (sources || [])" :key="si" class="rt-ref-row">
+        <div class="rt-ref"
+             :title="s.origin === 'WEB' ? '点击查看来源摘要与原网页' : '点击查看原文'" @click="openSource(s)">
+          <span class="rt-ref-tag">[{{ s.ref }}]</span>
+          <span v-if="s.origin === 'WEB'" class="rt-ref-web">联网</span>
+          <span v-else-if="s.origin === 'MCP'" class="rt-ref-web" title="MCP 工具返回的来源">MCP</span>
+          {{ sourceName(s) }}
+          <div v-if="showSnippet && s.snippet" class="rt-snip">{{ s.snippet }}</div>
+        </div>
+        <div v-if="canFeedback && !externalOrigin(s) && s.knowledgeId" class="rt-fb" @click.stop>
+          <template v-if="fbSent[s.ref]">
+            <span class="rt-fb-done">已反馈</span>
+          </template>
+          <template v-else>
+            <button class="rt-fb-btn" title="这条引用有用" @click="sendFb(s, true)"><like-outlined /></button>
+            <button class="rt-fb-btn no" title="这条引用没用" @click="sendFb(s, false)"><dislike-outlined /></button>
+          </template>
+        </div>
       </div>
     </div>
   </div>
@@ -79,8 +115,15 @@ const emit = defineEmits(['update:open'])
   display: inline-block; font-size: 10px; line-height: 1; padding: 3px 6px; border-radius: 999px;
   background: var(--app-accent-weak); color: var(--app-accent); margin-right: 6px; vertical-align: 1px;
 }
-.rt-ref { padding: 3px 0; border-top: 1px dashed var(--app-border); cursor: pointer; }
+.rt-ref { padding: 3px 0; border-top: 1px dashed var(--app-border); cursor: pointer; flex: 1; min-width: 0; }
 .rt-ref:hover { color: var(--app-accent); }
+.rt-ref-row { display: flex; align-items: flex-start; gap: 6px; }
+.rt-fb { display: inline-flex; align-items: center; gap: 2px; flex: none; padding-top: 2px; }
+.rt-fb-btn { width: 20px; height: 20px; border: none; background: transparent; color: var(--app-text3);
+  border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; font-size: 11px; padding: 0; }
+.rt-fb-btn:hover { color: var(--app-ok); background: var(--app-ok-weak); }
+.rt-fb-btn.no:hover { color: var(--app-danger); background: #fff2f0; }
+.rt-fb-done { font-size: 10px; color: var(--app-text3); }
 .rt-ref-tag { color: var(--app-accent); margin-right: 4px; }
 /* 联网来源标记：与库内来源区分开，用户有权知道这条依据是网上的还是库里的 */
 .rt-ref-web {

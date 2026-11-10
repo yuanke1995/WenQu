@@ -25,6 +25,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
@@ -142,8 +143,21 @@ public class KbTransferService {
      * 管线。返回逐条结果（成功/失败原因），调用方在响应里透出。
      */
     public Map<String, Object> importZip(MultipartFile file, String kbId) {
-        kbOf(kbId);
+        return importZip(file, kbId, "replace");
+    }
+
+    /**
+     * 导入并处理同名冲突：
+     * <ul>
+     *   <li>{@code replace}（默认）：沿用同名 upsert，重复导入安全；</li>
+     *   <li>{@code skip}：目标库已有同名文档时跳过，不覆盖；</li>
+     *   <li>{@code keepBoth}：同名文件重命名为「name (2).ext」后新增（url 文档仍按源地址 upsert）。</li>
+     * </ul>
+     */
+    public Map<String, Object> importZip(MultipartFile file, String kbId, String conflictStrategy) {
+        KnowledgeBase kb = kbOf(kbId);
         if (file == null || file.isEmpty()) throw new BizException("请选择导出包（zip）");
+        String strategy = normalizeStrategy(conflictStrategy);
         byte[] manifestRaw = null;
         Map<String, byte[]> files = new LinkedHashMap<>();
         try (ZipInputStream zip = new ZipInputStream(file.getInputStream(), StandardCharsets.UTF_8)) {
@@ -170,9 +184,11 @@ public class KbTransferService {
         JSONArray docs = manifest.getJSONArray("documents");
         if (docs == null || docs.isEmpty()) throw new BizException("导出包内没有文档");
 
+        Set<String> existing = existingFileNames(kbId);
         List<Map<String, Object>> results = new ArrayList<>();
         int ok = 0;
         int failed = 0;
+        int skipped = 0;
         for (int i = 0; i < docs.size(); i++) {
             JSONObject d = docs.getJSONObject(i);
             String fileName = d.getString("fileName");
@@ -180,7 +196,22 @@ public class KbTransferService {
             item.put("fileName", fileName);
             try {
                 String type = d.getString("fileType");
-                if ("url".equalsIgnoreCase(type)) {
+                boolean urlDoc = "url".equalsIgnoreCase(type);
+                boolean conflict = fileName != null && existing.contains(fileName);
+                if (conflict && "skip".equals(strategy)) {
+                    skipped++;
+                    item.put("success", true);
+                    item.put("skipped", true);
+                    item.put("msg", "同名文档已存在，已跳过");
+                    results.add(item);
+                    continue;
+                }
+                String effectiveName = fileName;
+                if (conflict && "keepBoth".equals(strategy) && !urlDoc) {
+                    effectiveName = uniqueName(fileName, existing);
+                    item.put("renamedTo", effectiveName);
+                }
+                if (urlDoc) {
                     String url = d.getString("sourceUrl");
                     if (url == null || url.isBlank()) throw new BizException("url 文档缺 sourceUrl");
                     documentService.importFromUrl(url, d.getString("description"), kbId);
@@ -190,13 +221,14 @@ public class KbTransferService {
                     if (bytes == null) throw new BizException("源文件缺失（导出时未打包）");
                     if (bytes.length > MAX_FILE_BYTES) throw new BizException("文件超过大小上限");
                     org.springframework.web.multipart.MultipartFile mf =
-                            new com.wenqu.ai.util.InMemoryMultipartFile("file", fileName, bytes);
+                            new com.wenqu.ai.util.InMemoryMultipartFile("file", effectiveName, bytes);
                     AiDocument doc = documentService.upload(mf, d.getString("description"), kbId, null);
                     // 标签导入后落库（upload 不带标签参数，避免动它的签名）
                     String tags = d.getString("tags");
                     if (tags != null && !tags.isBlank()) {
                         documentService.setTags(doc.getId(), tags);
                     }
+                    existing.add(effectiveName);
                 }
                 ok++;
                 item.put("success", true);
@@ -207,14 +239,104 @@ public class KbTransferService {
             }
             results.add(item);
         }
-        audit.record("[AUDIT] 知识库导入 operator={} kbId={} ok={} failed={}",
-                com.wenqu.ai.util.RequestUser.uid(), kbId, ok, failed);
+        audit.record("[AUDIT] 知识库导入 operator={} kbId={} strategy={} ok={} skipped={} failed={}",
+                com.wenqu.ai.util.RequestUser.uid(), kbId, strategy, ok, skipped, failed);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("total", docs.size());
         out.put("ok", ok);
+        out.put("skipped", skipped);
         out.put("failed", failed);
+        out.put("strategy", strategy);
         out.put("results", results);
+        out.put("kbName", kb.getName());
         return out;
+    }
+
+    /**
+     * 导入预览：只读 manifest + 目标库现有文件名，不落库、不触发解析。
+     * 前端先展示清单与冲突数，用户选策略后再调 import。
+     */
+    public Map<String, Object> previewZip(MultipartFile file, String kbId) {
+        KnowledgeBase kb = kbOf(kbId);
+        if (file == null || file.isEmpty()) throw new BizException("请选择导出包（zip）");
+        JSONObject manifest = readManifestOnly(file);
+        if (!"wenqu-kb-export".equals(manifest.getString("format"))) {
+            throw new BizException("不是问渠导出的知识库包（manifest format 不符）");
+        }
+        JSONArray docs = manifest.getJSONArray("documents");
+        if (docs == null || docs.isEmpty()) throw new BizException("导出包内没有文档");
+        Set<String> existing = existingFileNames(kbId);
+        List<Map<String, Object>> rows = new ArrayList<>();
+        int conflicts = 0;
+        for (int i = 0; i < docs.size(); i++) {
+            JSONObject d = docs.getJSONObject(i);
+            String name = d.getString("fileName");
+            boolean exists = name != null && existing.contains(name);
+            if (exists) conflicts++;
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("fileName", name);
+            row.put("fileType", d.getString("fileType"));
+            row.put("description", d.getString("description"));
+            row.put("tags", d.getString("tags"));
+            row.put("fileSize", d.getLong("fileSize"));
+            row.put("exists", exists);
+            row.put("missingSourceFile", Boolean.TRUE.equals(d.getBoolean("missingSourceFile")));
+            rows.add(row);
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("kbId", kbId);
+        out.put("kbName", kb.getName());
+        out.put("total", rows.size());
+        out.put("conflicts", conflicts);
+        out.put("documents", rows);
+        return out;
+    }
+
+    private JSONObject readManifestOnly(MultipartFile file) {
+        try (ZipInputStream zip = new ZipInputStream(file.getInputStream(), StandardCharsets.UTF_8)) {
+            ZipEntry e;
+            while ((e = zip.getNextEntry()) != null) {
+                if (e.isDirectory()) continue;
+                String name = safeEntryName(e.getName());
+                if (name != null && name.equals(MANIFEST)) {
+                    return JSON.parseObject(new String(zip.readAllBytes(), StandardCharsets.UTF_8));
+                }
+            }
+        } catch (IOException e) {
+            throw new BizException("读取导出包失败：" + e.getMessage());
+        }
+        throw new BizException("导出包缺少 manifest.json（可能不是问渠导出的知识库包）");
+    }
+
+    private Set<String> existingFileNames(String kbId) {
+        Set<String> names = new java.util.HashSet<>();
+        for (AiDocument d : documentMapper.selectList(new LambdaQueryWrapper<AiDocument>()
+                .eq(AiDocument::getKbId, kbId)
+                .eq(AiDocument::getDeleted, 0)
+                .select(AiDocument::getFileName))) {
+            if (d.getFileName() != null) names.add(d.getFileName());
+        }
+        return names;
+    }
+
+    private String uniqueName(String fileName, Set<String> existing) {
+        String base = fileName == null ? "document" : fileName;
+        int dot = base.lastIndexOf('.');
+        String stem = dot > 0 ? base.substring(0, dot) : base;
+        String ext = dot > 0 ? base.substring(dot) : "";
+        for (int i = 2; i < 1000; i++) {
+            String candidate = stem + " (" + i + ")" + ext;
+            if (!existing.contains(candidate)) return candidate;
+        }
+        return stem + " (" + System.currentTimeMillis() + ")" + ext;
+    }
+
+    private String normalizeStrategy(String strategy) {
+        if (strategy == null || strategy.isBlank()) return "replace";
+        String s = strategy.trim();
+        if ("skip".equalsIgnoreCase(s)) return "skip";
+        if ("keepBoth".equalsIgnoreCase(s) || "keep_both".equalsIgnoreCase(s)) return "keepBoth";
+        return "replace";
     }
 
     /** zip 条目名安全化：拒绝绝对路径/../ 穿越、盘符与反斜杠；返回 null 表示拒收 */

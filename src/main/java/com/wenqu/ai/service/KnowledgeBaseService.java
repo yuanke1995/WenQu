@@ -85,12 +85,27 @@ public class KnowledgeBaseService {
 
     // ==================== 读写 ====================
 
-    /** 未删除的知识库列表（按默认库优先、创建时间升序） */
+    /** 未删除、未归档的知识库列表（按默认库优先、创建时间升序） */
     public List<KnowledgeBase> list() {
+        return list(false);
+    }
+
+    /** @param includeArchived true=包含已归档库（知识库页的「归档」筛选/恢复入口用） */
+    public List<KnowledgeBase> list(boolean includeArchived) {
         return kbMapper.selectList(new LambdaQueryWrapper<KnowledgeBase>()
                 .eq(KnowledgeBase::getDeleted, 0)
+                .and(!includeArchived, w -> w.isNull(KnowledgeBase::getArchived)
+                        .or().eq(KnowledgeBase::getArchived, 0))
                 .orderByDesc(KnowledgeBase::getIsDefault)
                 .orderByAsc(KnowledgeBase::getCreateTime));
+    }
+
+    /** 归档/恢复：只改标记，不动文档与向量；归档时调用方负责从智能体绑定中摘除 */
+    public void setArchived(String id, boolean archived) {
+        kbMapper.update(null, new LambdaUpdateWrapper<KnowledgeBase>()
+                .eq(KnowledgeBase::getId, id)
+                .set(KnowledgeBase::getArchived, archived ? 1 : 0)
+                .set(KnowledgeBase::getUpdateTime, LocalDateTime.now()));
     }
 
     public KnowledgeBase get(String id) {
@@ -592,11 +607,16 @@ public class KnowledgeBaseService {
         return m;
     }
 
-    /** 列表页用：库 + 文档数 + 是否默认 */
+    /** 列表页用：库 + 文档数 + 是否默认（默认不含已归档） */
     public List<Map<String, Object>> listWithCounts() {
+        return listWithCounts(false);
+    }
+
+    /** @param includeArchived true=包含已归档库（知识库页筛选/恢复用） */
+    public List<Map<String, Object>> listWithCounts(boolean includeArchived) {
         Map<String, Integer> counts = docCounts();
         List<Map<String, Object>> out = new ArrayList<>();
-        for (KnowledgeBase kb : list()) {
+        for (KnowledgeBase kb : list(includeArchived)) {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("id", kb.getId());
             m.put("name", kb.getName());
@@ -615,6 +635,7 @@ public class KnowledgeBaseService {
             m.put("isDefault", kb.getIsDefault());
             // 官方内置库标记随列表下发：前端挂「官方」徽标并隐藏编辑/删除入口
             m.put("builtin", kb.getBuiltin());
+            m.put("archived", kb.getArchived() == null ? 0 : kb.getArchived());
             m.put("createdBy", kb.getCreatedBy());
             m.put("createTime", kb.getCreateTime());
             m.put("updateTime", kb.getUpdateTime());

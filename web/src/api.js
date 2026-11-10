@@ -854,12 +854,42 @@ export async function exportKnowledgeBase (id, kbName) {
   URL.revokeObjectURL(url)
 }
 
-/** 导入文档包（导出 zip）到目标知识库：逐文档走既有解析管线，返回逐条结果 */
-export function importKnowledgeBase (kbId, file) {
+/** 导入文档包（导出 zip）到目标知识库：逐文档走既有解析管线，返回逐条结果；
+ *  conflictStrategy: replace(默认)/skip/keepBoth */
+export function importKnowledgeBase (kbId, file, conflictStrategy = 'replace') {
   const fd = new FormData()
   fd.append('file', file)
-  return upload(`/kb/${encodeURIComponent(kbId)}/import`, fd)
+  return upload(`/kb/${encodeURIComponent(kbId)}/import?conflictStrategy=${encodeURIComponent(conflictStrategy)}`, fd)
 }
+/** 导入前预览：只解析 manifest + 目标库同名冲突，不落库 */
+export function previewKnowledgeBaseImport (kbId, file) {
+  const fd = new FormData()
+  fd.append('file', file)
+  return upload(`/kb/${encodeURIComponent(kbId)}/import/preview`, fd)
+}
+/** 知识库概览（含体检数据与归档库） */
+export const getKbOverview = () => request('/kb/overview')
+/** 单库洞察（趋势/Top 文档/未命中/最近活动） */
+export const getKbInsights = (id, days = 30) => request(`/kb/${encodeURIComponent(id)}/insights?days=${days}`)
+/** 未命中问题（洞察子集） */
+export const getKbUnmatched = (id, days = 30) => request(`/kb/${encodeURIComponent(id)}/unmatched?days=${days}`)
+/** 绑定该库的智能体（删除影响面） */
+export const getKbAgents = id => request(`/kb/${encodeURIComponent(id)}/agents`)
+/** 试检索：只走检索/重排链路，不调用聊天模型 */
+export const probeKnowledgeBase = (id, body) =>
+  request(`/kb/${encodeURIComponent(id)}/probe`, { method: 'POST', body: JSON.stringify(body) })
+/** 引用反馈：useful=true/false；差评回流未命中 */
+export const feedbackKnowledgeBase = (id, body) =>
+  request(`/kb/${encodeURIComponent(id)}/feedback`, { method: 'POST', body: JSON.stringify(body) })
+/** 对话引用反馈：kbId 由后端按 knowledgeId/docId 反查 */
+export const feedbackKnowledgeByChunk = body =>
+  request('/kb/feedback', { method: 'POST', body: JSON.stringify(body) })
+/** 记录试检索无命中（只存问题，进未命中列表） */
+export const recordKbMiss = (id, body) =>
+  request(`/kb/${encodeURIComponent(id)}/miss`, { method: 'POST', body: JSON.stringify(body) })
+/** 归档（可恢复；从智能体绑定中摘除） */
+export const archiveKnowledgeBase = id => request(`/kb/${encodeURIComponent(id)}/archive`, { method: 'POST' })
+export const unarchiveKnowledgeBase = id => request(`/kb/${encodeURIComponent(id)}/unarchive`, { method: 'POST' })
 /** 移动文档到知识库；kbId 传空表示移回默认库 */
 export const moveDocToKb = (docId, kbId) => request(`/kb/doc/${docId}`, { method: 'PUT', body: JSON.stringify({ kbId: kbId || null }) })
 

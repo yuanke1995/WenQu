@@ -15,25 +15,22 @@
         <span class="app-pill err queue-chip dead-chip" @click="openDeadDrawer">作废 {{ queueStats.dead }}</span>
       </a-tooltip>
       <div class="doc-tools">
-        <!-- 标签筛选（本库内按文档标签过滤列表）：标签即智能体检索收窄与文档治理的同一套元数据 -->
-        <a-select v-if="tagOptions.length" v-model:value="tagFilter" allow-clear :options="tagOptions"
-                  placeholder="按标签筛选" style="width:150px" size="small" :dropdown-match-select-width="false" />
-        <!-- 回收站：软删文档可恢复/彻底删除；数量徽标提示有东西可清 -->
-        <button class="app-btn ghost" @click="openRecycle">
-          回收站<span v-if="recycleCount" class="recycle-badge">{{ recycleCount }}</span>
+        <button v-if="canManageCurrentKb" class="app-btn ghost" @click="probeOpen = true">
+          <play-circle-outlined /> 试检索
         </button>
-        <!-- 知识库配置直达：解析/检索参数与向量模型就地改，不用回知识库列表页。
-             内置库对管理员开放（内容只读但配置可改，与后端内置库白名单同口径） -->
-        <button v-if="canConfigKb" class="app-btn ghost" @click="openKbConfig">
-          <setting-outlined /> 知识库配置
-        </button>
-        <!-- §5 图谱视图入口：与库列表页共用同一弹窗组件。
-             刻意仍用 canManageCurrentKb（内置库为 false）：图谱弹窗里含「构建图谱」「清空图谱」
-             两个真调模型 / 删数据的写操作，对内置库开放等于给了写入入口，不合适。 -->
         <button v-if="canManageCurrentKb" class="app-btn ghost" @click="graphModal = true">
           <apartment-outlined /> 图谱
         </button>
-        <button class="app-btn ghost" @click="openGlobalSearch"><search-outlined /> 全局搜索</button>
+        <a-dropdown :trigger="['click']">
+          <button class="app-btn ghost"><more-outlined /> 更多</button>
+          <template #overlay>
+            <a-menu @click="onMoreMenu">
+              <a-menu-item key="recycle">回收站<span v-if="recycleCount" class="menu-badge">{{ recycleCount }}</span></a-menu-item>
+              <a-menu-item v-if="canConfigKb" key="config">知识库配置</a-menu-item>
+              <a-menu-item key="dead" :disabled="!queueStats.dead">作废任务 {{ queueStats.dead }}</a-menu-item>
+            </a-menu>
+          </template>
+        </a-dropdown>
         <!-- 上传门槛：对当前库有管理权（自己的库，或管理员）。内置库内容随版本同步，
              后端 DocumentController 会明确拒绝，故此处不开放——放开只会让用户点完吃到一句报错 -->
         <button v-if="canUploadToKb" class="app-btn ghost" :disabled="uploading || importing" @click="urlVisible = true">
@@ -92,6 +89,39 @@
         <div class="drag-mask-tip"><upload-outlined style="font-size:36px" /><div>松开鼠标上传到知识库</div></div>
       </div>
 
+      <!-- 状态概览：点击即筛选，替代逐行扫描状态 -->
+      <div class="doc-statusbar">
+        <span :class="['st-chip', { on: statusFilter === 'all' }]" @click="statusFilter = 'all'">
+          <b>全部 {{ statusCounts.all }}</b>
+        </span>
+        <span :class="['st-chip', { on: statusFilter === 'ok' }]" @click="statusFilter = 'ok'">
+          <i class="d ok"></i>已入库 <b>{{ statusCounts.ok }}</b>
+        </span>
+        <span :class="['st-chip', { on: statusFilter === 'parsing', warn: statusCounts.parsing > 0 }]"
+              @click="statusFilter = 'parsing'">
+          <i class="d run"></i>解析中 <b>{{ statusCounts.parsing }}</b>
+        </span>
+        <span :class="['st-chip', { on: statusFilter === 'failed' }]" @click="statusFilter = 'failed'">
+          <i class="d err"></i>失败 <b>{{ statusCounts.failed }}</b>
+        </span>
+        <span :class="['st-chip', { on: statusFilter === 'disabled' }]" @click="statusFilter = 'disabled'">
+          <i class="d off"></i>已弃用 <b>{{ statusCounts.disabled }}</b>
+        </span>
+        <span class="st-chip" @click="openRecycle"><i class="d off"></i>回收站 <b>{{ recycleCount }}</b></span>
+        <span class="sp"></span>
+        <span v-if="queueText" class="queue-chip"><clock-circle-outlined /> {{ queueText }}</span>
+        <span class="st-chip muted"><database-outlined /> {{ summaryText }}</span>
+      </div>
+
+      <div class="doc-toolbar">
+        <a-input-search v-model:value="docSearch" placeholder="搜索文件名、标签…" allow-clear style="width:240px" />
+        <a-select v-if="tagOptions.length" v-model:value="tagFilter" allow-clear :options="tagOptions"
+                  placeholder="按标签筛选" style="width:140px" size="small" :dropdown-match-select-width="false" />
+        <span class="sp"></span>
+        <button class="app-btn ghost sm" @click="openGlobalSearch"><search-outlined /> 全局搜索</button>
+        <button class="app-btn ghost sm" @click="fetchList"><reload-outlined /> 刷新</button>
+      </div>
+
       <!-- 批量操作栏（需要当前库管理权） -->
       <div v-if="selectedKeys.length && canManageCurrentKb" class="batch-bar">
         <span>已选 {{ selectedKeys.length }} 项：</span>
@@ -111,72 +141,121 @@
         <div class="doc-row head-row">
           <span class="col-check"></span>
           <span class="col-name">文件名</span>
-          <span class="col-kb">知识库</span>
-          <span class="col-num">片段</span>
+          <span class="col-num">知识块</span>
           <span class="col-num">命中</span>
           <span class="col-size">大小</span>
           <span class="col-status">状态</span>
-          <span class="col-time">上传时间</span>
+          <span class="col-time">更新时间</span>
           <span class="col-act">操作</span>
         </div>
         <a-spin :spinning="loading">
-          <div v-for="d in shownList" :key="d.id" class="doc-row">
-            <span class="col-check" v-if="canManageCurrentKb"><a-checkbox :checked="selectedKeys.includes(d.id)" @change="e => toggleSelect(d.id, e)" /></span>
-            <span v-else class="col-check"></span>
-            <span class="col-name">
-              <span class="file-ic" :style="{ background: typeColor(d.fileType).bg, color: typeColor(d.fileType).fg }">{{ (d.fileType || '?').toUpperCase().slice(0, 4) }}</span>
-              <span class="file-name" :title="d.fileName + (d.description ? ' · ' + d.description : '') + (d.sourceUrl ? ' · 来源: ' + d.sourceUrl : '')">{{ d.fileName }}<i v-if="d.description" class="file-desc">{{ d.description }}</i></span>
-              <span v-if="docTags(d).length" class="doc-tags">
-                <a-tag v-for="t in docTags(d)" :key="t" class="doc-tag-chip">{{ t }}</a-tag>
+          <template v-for="d in shownList" :key="d.id">
+            <div :class="['doc-row', { 'row-open': expandedDocId === d.id }]">
+              <span class="col-check" v-if="canManageCurrentKb"><a-checkbox :checked="selectedKeys.includes(d.id)" @change="e => toggleSelect(d.id, e)" /></span>
+              <span v-else class="col-check"></span>
+              <span class="col-name">
+                <button class="doc-toggle" :title="expandedDocId === d.id ? '收起详情' : '展开详情'" @click.stop="toggleDoc(d)">
+                  <down-outlined :class="{ flip: expandedDocId !== d.id }" />
+                </button>
+                <span class="file-ic" :style="{ background: typeColor(d.fileType).bg, color: typeColor(d.fileType).fg }">{{ (d.fileType || '?').toUpperCase().slice(0, 4) }}</span>
+                <span class="file-name" :title="d.fileName + (d.description ? ' · ' + d.description : '') + (d.sourceUrl ? ' · 来源: ' + d.sourceUrl : '')" @click="toggleDoc(d)">
+                  {{ d.fileName }}<i v-if="d.description" class="file-desc">{{ d.description }}</i>
+                </span>
+                <span v-if="docTags(d).length" class="doc-tags">
+                  <a-tag v-for="t in docTags(d)" :key="t" class="doc-tag-chip">{{ t }}</a-tag>
+                </span>
               </span>
-            </span>
-            <span class="col-kb">
-              <!-- 移动库 = 写操作：仅对文档有管理权的人开放，其他人显示为纯文本 -->
-              <a-select v-if="canManageDoc(d)" :value="kbOf(d)" size="small" style="width:100%" :options="kbSelectOptions"
-                        :dropdown-match-select-width="false"
-                        :title="'切换所属知识库：决定哪些助手能检索到该文档'"
-                        @change="v => onMoveKb(d, v)" />
-              <span v-else class="kb-name-text" :title="kbNameOf(d)">{{ kbNameOf(d) }}</span>
-            </span>
-            <span class="col-num">{{ d.chunkCount || 0 }}</span>
-            <span class="col-num">{{ d.hitCount || 0 }}</span>
-            <span class="col-size">{{ fmtSize(d.fileSize) }}</span>
-            <span class="col-status">
-              <a-tooltip v-if="d.status === 0 || d.status === 1 || d.status === 3" :title="chipTip(d)">
-                <span v-if="d.status === 0" class="app-pill ok">已入库</span>
-                <span v-else-if="d.status === 1" class="app-pill warn">已弃用</span>
-                <span v-else class="app-pill err" style="cursor:pointer" @click="showFailReason(d)">解析失败</span>
-              </a-tooltip>
-              <div v-else-if="d.status === 2" style="min-width:120px">
-                <a-progress :percent="d.parseProgress || 0" size="small" style="margin:0" />
-                <span class="parse-desc" :title="d.parseDesc || '解析中'">{{ d.parseDesc || '解析中' }}</span>
-              </div>
-            </span>
-            <span class="col-time">{{ fmtTime(d.createTime) }}</span>
-            <span class="col-act">
-              <!-- 行内只留「看内容 / 拿文件 / 换状态」三个高频动作，其余全收进 ⋯。
-                   十个链接按钮排一排会把列宽撑到卡片 overflow 之外，右侧按钮直接看不见。 -->
-              <template v-if="d.status === 0">
-                <button class="app-link-btn" @click="openKb(d)">知识块</button>
-                <button v-if="canManageDoc(d)" class="app-link-btn" @click="toggleStatus(d, 1)">弃用</button>
-              </template>
-              <button v-else-if="d.status === 1 && canManageDoc(d)" class="app-link-btn" @click="toggleStatus(d, 0)">启用</button>
-              <!-- 源文件下载（个人文件区）：解析中的文档源文件可能正在读写，仅非解析中提供 -->
-              <button v-if="d.status !== 2" class="app-link-btn" @click="dlSource(d)">下载</button>
-              <a-dropdown v-if="rowMenu(d).length" :trigger="['click']" placement="bottomRight">
-                <button class="app-icon-btn row-more" type="button" title="更多操作"><more-outlined /></button>
-                <template #overlay>
-                  <a-menu @click="info => onRowMenu(d, String(info && info.key))">
-                    <a-menu-item v-for="m in rowMenu(d)" :key="m.key" :disabled="m.disabled">
-                      <span :class="{ 'row-danger': m.danger }" :title="m.tip">{{ m.label }}</span>
-                    </a-menu-item>
-                  </a-menu>
+              <span class="col-num">{{ d.chunkCount || 0 }}</span>
+              <span class="col-num">{{ d.hitCount || 0 }}</span>
+              <span class="col-size">{{ fmtSize(d.fileSize) }}</span>
+              <span class="col-status">
+                <a-tooltip v-if="d.status === 0 || d.status === 1 || d.status === 3" :title="chipTip(d)">
+                  <span v-if="d.status === 0" class="app-pill ok">已入库</span>
+                  <span v-else-if="d.status === 1" class="app-pill warn">已弃用</span>
+                  <span v-else class="app-pill err" style="cursor:pointer" @click="showFailReason(d)">解析失败</span>
+                </a-tooltip>
+                <div v-else-if="d.status === 2" style="min-width:120px">
+                  <a-progress :percent="d.parseProgress || 0" size="small" style="margin:0" />
+                  <span class="parse-desc" :title="d.parseDesc || '解析中'">{{ d.parseDesc || '解析中' }}</span>
+                </div>
+              </span>
+              <span class="col-time">{{ fmtTime(d.updateTime || d.createTime) }}</span>
+              <span class="col-act">
+                <!-- 行内只留「看内容 / 拿文件 / 换状态」三个高频动作，其余全收进 ⋯。 -->
+                <template v-if="d.status === 0">
+                  <button class="app-link-btn" @click="openKb(d)">知识块</button>
+                  <button v-if="canManageDoc(d)" class="app-link-btn" @click="toggleStatus(d, 1)">弃用</button>
                 </template>
-              </a-dropdown>
-            </span>
-          </div>
-          <a-empty v-if="!loading && !list.length" :description="`暂无文档，点击右上角上传 ${uploadCfg.allowedExts.join(' / ')} 或导入网页`" style="padding:40px 0" />
+                <button v-else-if="d.status === 1 && canManageDoc(d)" class="app-link-btn" @click="toggleStatus(d, 0)">启用</button>
+                <!-- 源文件下载（个人文件区）：解析中的文档源文件可能正在读写，仅非解析中提供 -->
+                <button v-if="d.status !== 2" class="app-link-btn" @click="dlSource(d)">下载</button>
+                <a-dropdown v-if="rowMenu(d).length" :trigger="['click']" placement="bottomRight">
+                  <button class="app-icon-btn row-more" type="button" title="更多操作"><more-outlined /></button>
+                  <template #overlay>
+                    <a-menu @click="info => onRowMenu(d, String(info && info.key))">
+                      <a-menu-item v-for="m in rowMenu(d)" :key="m.key" :disabled="m.disabled">
+                        <span :class="{ 'row-danger': m.danger }" :title="m.tip">{{ m.label }}</span>
+                      </a-menu-item>
+                    </a-menu>
+                  </template>
+                </a-dropdown>
+              </span>
+            </div>
+            <div v-if="expandedDocId === d.id" class="doc-expand">
+              <div class="de-row">
+                <span class="de-label">描述</span>
+                <span class="de-val">{{ d.description || '暂无描述' }}</span>
+              </div>
+              <div class="de-row">
+                <span class="de-label">标签</span>
+                <span class="de-val">
+                  <template v-if="docTags(d).length">
+                    <a-tag v-for="t in docTags(d)" :key="t" class="doc-tag-chip">{{ t }}</a-tag>
+                  </template>
+                  <span v-else class="de-muted">未设置</span>
+                </span>
+              </div>
+              <div class="de-row">
+                <span class="de-label">来源</span>
+                <span class="de-val">
+                  <a v-if="d.sourceUrl" :href="d.sourceUrl" target="_blank" rel="noopener">{{ d.sourceUrl }}</a>
+                  <span v-else>本地上传</span>
+                </span>
+              </div>
+              <div class="de-row">
+                <span class="de-label">解析</span>
+                <span class="de-val">{{ d.status === 2 ? (d.parseDesc || '解析中') : statusText(d.status) }}<span v-if="d.parseProgress && d.status === 2"> · {{ d.parseProgress }}%</span></span>
+              </div>
+              <div class="de-row">
+                <span class="de-label">归属</span>
+                <span class="de-val">{{ kbNameOf(d) }}</span>
+                <span class="sp"></span>
+                <button v-if="d.status !== 2" class="app-link-btn" @click="openKb(d)">查看知识块</button>
+                <button v-if="canManageDoc(d)" class="app-link-btn" @click="openTagEdit(d)">编辑标签</button>
+                <button v-if="d.status !== 2" class="app-link-btn" @click="dlSource(d)">下载源文件</button>
+              </div>
+            </div>
+          </template>
+          <a-empty v-if="!loading && !shownList.length" :description="`暂无匹配文档，点击右上角上传 ${uploadCfg.allowedExts.join(' / ')} 或导入网页`" style="padding:40px 0" />
         </a-spin>
+      </div>
+
+      <!-- 上传队列：逐文件展示本轮提交与结果，不再只靠一条进度条 -->
+      <div v-if="uploadQueue.length" class="uploadq">
+        <div class="uq-head">
+          <upload-outlined />
+          上传队列（{{ uploadQueue.length }}）
+          <span class="sp"></span>
+          <span class="uq-pct">{{ uploading ? uploadPercent + '%' : '完成' }}</span>
+        </div>
+        <div v-for="(f, i) in uploadQueue" :key="i" class="uq-row">
+          <file-outlined class="uq-ic" />
+          <div class="uq-main">
+            <div class="uq-name" :title="f.name">{{ f.name }}</div>
+            <div class="uq-sub">{{ f.status === 'error' ? '提交失败，可重试' : (f.status === 'done' ? '已提交解析，后台处理中' : '上传中…') }}</div>
+          </div>
+          <span :class="['uq-state', f.status]">{{ f.status === 'error' ? '失败' : (f.status === 'done' ? '完成' : '…') }}</span>
+        </div>
       </div>
     </div>
 
@@ -465,6 +544,9 @@
     <!-- 知识图谱（与知识库列表页同一弹窗组件）：库详情页的「图谱」入口 -->
     <KnowledgeGraphModal v-model:open="graphModal" :kb="currentKb" />
 
+    <!-- 试检索：只走检索/重排链路，验证本库召回质量 -->
+    <KbProbeModal v-model:open="probeOpen" :kb="currentKb" />
+
     <!-- 图片灯箱（知识块内容里的图片点击放大）：多图切换 / 滚轮缩放 / 拖动平移 / ESC 关闭 -->
     <div v-if="kbImgUrl" class="lightbox" @click="closeKbImg" @wheel.prevent="onKbImgWheel">
       <img :src="kbImgUrl" alt="大图预览" @click.stop @error="onImgError" class="lightbox-img"
@@ -483,7 +565,8 @@
 import { ref, computed, onMounted, onUnmounted, nextTick, watch, h } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { UploadOutlined, SearchOutlined, DownOutlined, LinkOutlined, SettingOutlined,
-         InboxOutlined, FileOutlined, CloseOutlined, ApartmentOutlined, MoreOutlined } from '@ant-design/icons-vue'
+         InboxOutlined, FileOutlined, CloseOutlined, ApartmentOutlined, MoreOutlined,
+         PlayCircleOutlined, ClockCircleOutlined, DatabaseOutlined, ReloadOutlined } from '@ant-design/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
 import { listDocuments, uploadDocumentsBatch, updateDocumentStatus, reparseDocument, deleteDocument,
          batchDeleteDocuments, batchUpdateDocumentStatus, getDocumentStats, listKnowledgeByDoc, getKnowledgeDetail,
@@ -496,6 +579,7 @@ import { listDocuments, uploadDocumentsBatch, updateDocumentStatus, reparseDocum
          batchRestoreRecycled, batchPurgeRecycled } from '../api'
 import KnowledgeBaseEditModal from '../components/KnowledgeBaseEditModal.vue'
 import KnowledgeGraphModal from '../components/KnowledgeGraphModal.vue'
+import KbProbeModal from '../components/KbProbeModal.vue'
 import ModelSelect from '../components/ModelSelect.vue'
 import { renderMd, prepKnowledgeContent, resolveImg, onImgError, copyCode } from '../utils/markdown'
 import { copyText } from '../utils/clipboard'
@@ -624,6 +708,11 @@ const uploadPercent = ref(0)
 const reparsingId = ref('')
 const dragDepth = ref(0)
 const selectedKeys = ref([])
+const statusFilter = ref('all')
+const docSearch = ref('')
+const expandedDocId = ref('')
+const uploadQueue = ref([])
+const probeOpen = ref(false)
 let pollTimer = null
 let pollTicks = 0
 /** 解析队列计数（后端 c_ai_parse_task 统计，非 table_rows 估算）；按当前库过滤，别的库在跑不在本页显数 */
@@ -709,6 +798,26 @@ const summaryText = computed(() => {
   const bytes = list.value.reduce((n, d) => n + (d.fileSize || 0), 0)
   return `${total} 个文档 · ${active} 个生效 · ${chunks} 片段 · 占用 ${fmtSize(bytes)}`
 })
+
+const statusCounts = computed(() => ({
+  all: list.value.length,
+  ok: list.value.filter(d => d.status === 0).length,
+  parsing: list.value.filter(d => d.status === 2).length,
+  failed: list.value.filter(d => d.status === 3).length,
+  disabled: list.value.filter(d => d.status === 1).length
+}))
+
+const statusText = s => ({ 0: '已入库', 1: '已弃用', 2: '解析中', 3: '解析失败' }[Number(s)] || '—')
+
+function toggleDoc (d) {
+  expandedDocId.value = expandedDocId.value === d.id ? '' : d.id
+}
+
+function onMoreMenu ({ key }) {
+  if (key === 'recycle') openRecycle()
+  else if (key === 'config') openKbConfig()
+  else if (key === 'dead') openDeadDrawer()
+}
 
 const toggleSelect = (id, e) => {
   const at = selectedKeys.value.indexOf(id)
@@ -814,19 +923,31 @@ async function submitFiles (files, desc, visionRef) {
   }
   uploading.value = true
   uploadPercent.value = 0
+  uploadQueue.value = files.map(f => ({ name: f.name, size: f.size, status: 'uploading' }))
   try {
     const r = await uploadDocumentsBatch(files, pct => { uploadPercent.value = pct }, desc, route.params.kbId, visionRef)
     if (r.success) {
-      const failed = (r.data || []).filter(x => !x.success)
+      const rows = r.data || []
+      const failed = rows.filter(x => !x.success)
+      uploadQueue.value = files.map((f, i) => ({
+        name: f.name,
+        size: f.size,
+        status: rows[i] && rows[i].success === false ? 'error' : 'done'
+      }))
       if (failed.length) message.warning(`${files.length - failed.length} 个提交成功，${failed.length} 个失败: ${failed[0].msg || ''}`)
       else message.success(`已提交 ${files.length} 个文档解析`)
       fetchList()
+      setTimeout(() => { if (!uploading.value) uploadQueue.value = [] }, 2600)
       return true
     }
+    uploadQueue.value = uploadQueue.value.map(f => ({ ...f, status: 'error' }))
     message.error(r.msg || '上传失败')
     return false
-  } catch (e) { message.error(e.message || '上传失败'); return false }
-  finally { uploading.value = false }
+  } catch (e) {
+    uploadQueue.value = uploadQueue.value.map(f => ({ ...f, status: 'error' }))
+    message.error(e.message || '上传失败')
+    return false
+  } finally { uploading.value = false }
 }
 
 // ==================== 上传弹窗（选文件 + 描述一体化） ====================
@@ -1048,8 +1169,22 @@ const tagOptions = computed(() => {
   for (const d of list.value) for (const t of docTags(d)) s.add(t)
   return [...s].map(t => ({ value: t, label: t }))
 })
-const shownList = computed(() =>
-  tagFilter.value ? list.value.filter(d => docTags(d).includes(tagFilter.value)) : list.value)
+const shownList = computed(() => {
+  let arr = list.value
+  if (tagFilter.value) arr = arr.filter(d => docTags(d).includes(tagFilter.value))
+  if (statusFilter.value === 'ok') arr = arr.filter(d => d.status === 0)
+  else if (statusFilter.value === 'parsing') arr = arr.filter(d => d.status === 2)
+  else if (statusFilter.value === 'failed') arr = arr.filter(d => d.status === 3)
+  else if (statusFilter.value === 'disabled') arr = arr.filter(d => d.status === 1)
+  const q = docSearch.value.trim().toLowerCase()
+  if (q) {
+    arr = arr.filter(d =>
+      String(d.fileName || '').toLowerCase().includes(q) ||
+      String(d.description || '').toLowerCase().includes(q) ||
+      String(d.tags || '').toLowerCase().includes(q))
+  }
+  return arr
+})
 const tagDraft = ref([])
 const tagVisible = ref(false)
 const tagDoc = ref(null)
@@ -1721,6 +1856,53 @@ const fmtTime = t => {
 .col-act { width: 168px; flex: none; text-align: right; white-space: nowrap; }
 .row-more { vertical-align: middle; }
 .row-danger { color: var(--app-danger); }
+/* 状态概览：点击即筛选 */
+.doc-statusbar { display: flex; align-items: center; gap: 6px; margin-bottom: 9px; flex-wrap: wrap; }
+.st-chip { height: 26px; padding: 0 9px; display: inline-flex; align-items: center; gap: 5px; border-radius: 6px;
+  border: 1px solid var(--app-border); background: #fff; font-size: 11.5px; color: var(--app-text2); cursor: pointer; }
+.st-chip b { font-weight: 600; color: var(--app-text); }
+.st-chip:hover { border-color: var(--app-accent-border); }
+.st-chip.on { border-color: var(--app-accent-border); background: var(--app-accent-weak); color: var(--app-accent); }
+.st-chip.on b { color: var(--app-accent); }
+.st-chip.warn { border-color: var(--app-warn-border); background: #fffdf7; color: var(--app-warn-text); }
+.st-chip.muted { cursor: default; color: var(--app-text3); }
+.st-chip .d { width: 5px; height: 5px; border-radius: 50%; display: inline-block; }
+.st-chip .d.ok { background: var(--app-ok); } .st-chip .d.run { background: var(--app-warn); }
+.st-chip .d.err { background: var(--app-danger); } .st-chip .d.off { background: #c9cfd6; }
+.doc-statusbar .sp { flex: 1; }
+.doc-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; }
+.doc-toolbar .sp { flex: 1; }
+.menu-badge { margin-left: 6px; font-size: 10px; color: var(--app-accent); background: var(--app-accent-weak);
+  border-radius: 999px; padding: 0 5px; }
+/* 行内展开 */
+.doc-toggle { width: 18px; height: 18px; border: none; background: transparent; color: var(--app-text3);
+  display: inline-flex; align-items: center; justify-content: center; padding: 0; flex: none; cursor: pointer; }
+.doc-toggle:hover { color: var(--app-accent); }
+.doc-toggle .flip { transform: rotate(-90deg); transition: transform .15s; }
+.doc-row.row-open { background: var(--app-accent-weak); }
+.doc-expand { padding: 9px 16px 11px 60px; background: var(--app-panel-2); border-bottom: 1px solid var(--app-border); }
+.de-row { display: flex; align-items: flex-start; gap: 10px; font-size: 11.5px; color: var(--app-text2); padding: 3px 0; }
+.de-label { width: 42px; flex: none; color: var(--app-text3); }
+.de-val { min-width: 0; word-break: break-all; }
+.de-val a { color: var(--app-accent); }
+.de-muted { color: var(--app-text3); }
+.de-row .sp { flex: 1; }
+/* 上传队列浮层 */
+.uploadq { position: fixed; right: 24px; bottom: 24px; width: 320px; background: #fff; border: 1px solid var(--app-border);
+  border-radius: 10px; box-shadow: 0 12px 32px rgba(16,24,40,.14); z-index: 1000; overflow: hidden; }
+.uq-head { display: flex; align-items: center; gap: 7px; padding: 9px 11px; border-bottom: 1px solid var(--app-border);
+  font-size: 11.5px; font-weight: 600; color: var(--app-text2); }
+.uq-head .sp { flex: 1; }
+.uq-pct { font-size: 10.5px; color: var(--app-text3); font-weight: 400; }
+.uq-row { display: flex; align-items: center; gap: 8px; padding: 7px 11px; border-bottom: 1px solid var(--app-border); }
+.uq-row:last-child { border-bottom: none; }
+.uq-ic { color: var(--app-text3); flex: none; }
+.uq-main { flex: 1; min-width: 0; }
+.uq-name { font-size: 11px; color: var(--app-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.uq-sub { font-size: 9.5px; color: var(--app-text3); margin-top: 2px; }
+.uq-state { font-size: 10px; color: var(--app-text3); flex: none; }
+.uq-state.done { color: var(--app-ok); }
+.uq-state.error { color: var(--app-danger); }
 /* 弹窗内的说明行（标签、自动刷新共用） */
 .modal-note { margin: 10px 0 6px; font-size: 12px; color: var(--app-text3); }
 .rf-row { display: flex; align-items: center; gap: 10px; }

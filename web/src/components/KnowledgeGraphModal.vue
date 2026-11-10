@@ -1,12 +1,14 @@
 <template>
   <a-modal :open="open" @update:open="v => emit('update:open', v)"
-           :title="`知识图谱 · ${kb?.name || ''}`" :footer="null" width="940px">
-    <!-- 工具栏三段式：左=视图切换 · 中=数据状态 · 右=搜索 + 动作区（构建/清空/刷新） -->
+           :title="`知识图谱 · ${kb?.name || ''}`" :footer="null" width="96vw"
+           wrap-class-name="kb-graph-workspace">
+    <!-- 工具栏三段式：左=视图切换 · 中=数据状态 · 右=搜索 + 动作区（构建/清空收进 ⋯） -->
     <div class="graph-toolbar">
       <a-segmented v-model:value="graphView" size="small" :options="GRAPH_VIEWS" @change="onGraphViewChange" />
       <span class="kb-hint graph-stat">
         实体 {{ graphInfo.entities || 0 }} · 三元组 {{ graphInfo.triples || 0 }}
-        <template v-if="graphInfo.building">（失败 {{ graphInfo.failed || 0 }}）</template>
+        <template v-if="graphInfo.building">（进行中 {{ graphInfo.done || 0 }}/{{ graphInfo.total || 0 }}）</template>
+        <template v-else-if="graphInfo.failed">（失败 {{ graphInfo.failed || 0 }}）</template>
       </span>
       <div class="graph-toolbar-actions">
         <!-- §5 按实体搜索定位：命中在当前视图内 → 高亮并打开三元组面板；不在 → 聚焦其邻域子图 -->
@@ -21,11 +23,18 @@
           </template>
         </a-auto-complete>
         <a-button size="small" :loading="graphBuilding" :disabled="graphInfo.building" @click="doBuild">
-          {{ graphInfo.building ? `构建中 ${graphInfo.done || 0}/${graphInfo.total || 0}` : '构建图谱（存量回溯）' }}
+          {{ graphInfo.building ? `构建中 ${graphInfo.done || 0}/${graphInfo.total || 0}` : '构建图谱' }}
         </a-button>
-        <a-popconfirm title="清空该库全部图谱数据？（三元组/实体/抽取记录全删，可重新构建）" ok-text="清空" cancel-text="取消" @confirm="doClearGraph">
-          <a-button size="small" danger>清空图谱</a-button>
-        </a-popconfirm>
+        <a-dropdown :trigger="['click']">
+          <a-button size="small"><more-outlined /> 更多</a-button>
+          <template #overlay>
+            <a-menu @click="onGraphMenu">
+              <a-menu-item key="build" :disabled="graphInfo.building">构建 / 重建图谱（存量回溯）</a-menu-item>
+              <a-menu-divider />
+              <a-menu-item key="clear" danger>清空图谱数据…</a-menu-item>
+            </a-menu>
+          </template>
+        </a-dropdown>
         <a-tooltip title="刷新">
           <a-button size="small" @click="refreshGraph">
             <template #icon><reload-outlined /></template>
@@ -98,8 +107,8 @@
 // echarts 交互铁律沿用：init + 一次 setOption 之后绝不再 setOption（会重建力模拟与漫游坐标系），
 // 高亮/定位用 dispatchAction（运行时动作，不动模拟），聚焦切换=整体 dispose 重建。
 import { ref, computed, watch, nextTick, onBeforeUnmount } from 'vue'
-import { message } from 'ant-design-vue'
-import { ReloadOutlined } from '@ant-design/icons-vue'
+import { message, Modal } from 'ant-design-vue'
+import { MoreOutlined, ReloadOutlined } from '@ant-design/icons-vue'
 import * as echarts from 'echarts/core'
 import { GraphChart } from 'echarts/charts'
 import { TooltipComponent } from 'echarts/components'
@@ -491,6 +500,20 @@ const doClearGraph = async () => {
   } catch (e) { message.error(e.message || '清空失败') }
 }
 
+/** 写操作收进 ⋯：清空是破坏性动作，仍需二次确认 */
+function onGraphMenu ({ key }) {
+  if (key === 'build') {
+    doBuild()
+  } else if (key === 'clear') {
+    Modal.confirm({
+      title: '清空该库全部图谱数据？',
+      content: '三元组、实体与抽取记录会全部删除，已开启的 GraphRAG 开关不受影响，可重新构建。',
+      okText: '清空', okType: 'danger', cancelText: '取消',
+      onOk: doClearGraph
+    })
+  }
+}
+
 const onWinResize = () => {
   if (!chartInstance) return
   chartInstance.resize()
@@ -528,7 +551,9 @@ onBeforeUnmount(() => {
 /* 动作区整体靠右，与左侧视图切换/中间状态拉开距离 */
 .graph-toolbar-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 .graph-wrap { position: relative; }
-.graph-canvas { height: 480px; width: 100%; }
+.graph-canvas { height: calc(100vh - 330px); min-height: 480px; width: 100%; }
+:global(.kb-graph-workspace .ant-modal) { max-width: 96vw; top: 24px; }
+:global(.kb-graph-workspace .ant-modal-body) { max-height: calc(100vh - 150px); overflow: auto; }
 .graph-focus-bar {
   display: flex; align-items: center; gap: 8px; margin-top: 6px; padding: 6px 10px;
   border: 1px solid var(--app-warn-border); border-radius: 8px; background: var(--app-warn-weak);

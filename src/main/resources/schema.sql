@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_knowledge_base` (
     `graph_model_ref` VARCHAR(255) DEFAULT NULL COMMENT 'GraphRAG 抽取模型（引用 providerId/modelId；归库主，判权按库主可用；空=回落库主个人默认聊天模型，再空则抽取 fail-loud）',
     `is_default`   INT          DEFAULT 0 COMMENT '是否个人默认库: 1=该归属人的默认库（问渠，每人一张、系统懒创建；未指定库的文档兜底归属）',
     `builtin`      INT          DEFAULT 0 COMMENT '官方内置库: 1=系统随版本同步的内置知识库（如问渠使用手册；全员只读、不接受上传/编辑/删除，内容按源文件指纹增量重建）',
+    `archived`     INT          DEFAULT 0 COMMENT '归档标记: 1=已归档（保留文档与向量，从列表默认视图/智能体绑定/检索中摘除，可恢复）',
     `created_by`   VARCHAR(64)  DEFAULT NULL COMMENT '创建人（登录用户 uid；系统内置为 system）',
     `create_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
@@ -106,6 +107,21 @@ CREATE TABLE IF NOT EXISTS `c_ai_knowledge` (
     KEY `idx_doc_id` (`doc_id`),
     KEY `idx_doc_deleted` (`doc_id`, `deleted`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI知识片段表';
+
+CREATE TABLE IF NOT EXISTS `c_ai_kb_feedback` (
+    `tenant_id`    VARCHAR(32)  NOT NULL DEFAULT 'default' COMMENT '租户ID',
+    `id`           VARCHAR(50)  NOT NULL COMMENT '主键ID',
+    `kb_id`        VARCHAR(50)  NOT NULL COMMENT '知识库ID',
+    `knowledge_id` VARCHAR(50)  DEFAULT NULL COMMENT '被反馈的引用知识块ID',
+    `doc_id`       VARCHAR(50)  DEFAULT NULL COMMENT '来源文档ID',
+    `question`     VARCHAR(500) DEFAULT NULL COMMENT '触发该引用的用户问题（可能为空）',
+    `useful`       INT          NOT NULL DEFAULT 1 COMMENT '引用是否有用: 1=有用 0=没用',
+    `uid`          VARCHAR(64)  DEFAULT NULL COMMENT '反馈人',
+    `create_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '反馈时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_kb_time` (`kb_id`, `create_time`),
+    KEY `idx_knowledge` (`knowledge_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知识库引用反馈（未命中治理/评测回流）';
 
 CREATE TABLE IF NOT EXISTS `c_ai_knowledge_qa` (
     `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',

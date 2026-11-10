@@ -20,6 +20,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.LinkedHashMap;
@@ -56,6 +57,8 @@ public class KnowledgeBaseController {
     private final com.wenqu.ai.service.ConfigService configService;
 
     private final com.wenqu.ai.service.KbTransferService kbTransferService;
+    /** 知识库洞察/试检索/引用反馈/归档 */
+    private final com.wenqu.ai.service.KbInsightsService kbInsightsService;
     /** 参数问号文案（/param-tips；与系统设置页同一份定义源，防两处解释漂移） */
     private final com.wenqu.ai.config.ConfigSchemaService configSchemaService;
     /** 个人设置值（/param-defaults 对 personal 键取「本人生效值」预填，与检索实际生效口径一致） */
@@ -278,9 +281,100 @@ public class KnowledgeBaseController {
     @Permission("kb:import")
     @PostMapping("/{id}/import")
     public ResultJson importZip(@PathVariable("id") String id,
-                                @org.springframework.web.bind.annotation.RequestParam("file") org.springframework.web.multipart.MultipartFile file) {
+                                @org.springframework.web.bind.annotation.RequestParam("file") org.springframework.web.multipart.MultipartFile file,
+                                @org.springframework.web.bind.annotation.RequestParam(value = "conflictStrategy", required = false) String conflictStrategy) {
         requireManage(mustGet(id));
-        return ResultJson.ok(kbTransferService.importZip(file, id));
+        return ResultJson.ok(kbTransferService.importZip(file, id, conflictStrategy));
+    }
+
+    @Operation(summary = "预览导入文档包", description = "只解析 manifest 返回文档清单与同名冲突，不落库、不触发解析；"
+            + "前端据此展示清单并让用户选择冲突策略（replace/skip/keepBoth）。仅创建者可导")
+    @Permission("kb:import")
+    @PostMapping("/{id}/import/preview")
+    public ResultJson importPreview(@PathVariable("id") String id,
+                                    @org.springframework.web.bind.annotation.RequestParam("file") org.springframework.web.multipart.MultipartFile file) {
+        requireManage(mustGet(id));
+        return ResultJson.ok(kbTransferService.previewZip(file, id));
+    }
+
+    @Operation(summary = "知识库概览", description = "本人可见知识库 + 体检数据：文档状态分布、知识块、90 天命中、"
+            + "最近使用、绑定智能体数、图谱规模；含已归档库（archived 标记）")
+    @Permission("kb:read")
+    @GetMapping("/overview")
+    public ResultJson overview() {
+        return ResultJson.ok(kbInsightsService.overview());
+    }
+
+    @Operation(summary = "库洞察", description = "单库近 N 天：健康分布、检索趋势、Top 命中文档、未命中问题、最近活动；只读聚合")
+    @Permission("kb:read")
+    @GetMapping("/{id}/insights")
+    public ResultJson insights(@PathVariable("id") String id,
+                               @RequestParam(value = "days", defaultValue = "30") int days) {
+        return ResultJson.ok(kbInsightsService.insights(id, days));
+    }
+
+    @Operation(summary = "未命中问题", description = "该库近 N 天检索为空/低分的问题 + 用户引用差评；可一键加入评测集")
+    @Permission("kb:read")
+    @GetMapping("/{id}/unmatched")
+    public ResultJson unmatched(@PathVariable("id") String id,
+                                @RequestParam(value = "days", defaultValue = "30") int days) {
+        return ResultJson.ok(kbInsightsService.unmatched(id, days));
+    }
+
+    @Operation(summary = "绑定该库的智能体", description = "当前用户可见、且 knowledgeBaseIds 含该库的智能体；用于删除影响面与卡片引用数")
+    @Permission("kb:read")
+    @GetMapping("/{id}/agents")
+    public ResultJson agents(@PathVariable("id") String id) {
+        return ResultJson.ok(kbInsightsService.agents(id));
+    }
+
+    @Operation(summary = "试检索", description = "body: {query, topK(1-20,默认8), rerank(true/false)}；"
+            + "只走检索/重排链路，不调用聊天模型；返回 topK 命中、融合/重排分、命中判定与检索诊断")
+    @Permission("kb:read")
+    @PostMapping("/{id}/probe")
+    public ResultJson probe(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
+        return ResultJson.ok(kbInsightsService.probe(id, body));
+    }
+
+    @Operation(summary = "引用反馈", description = "body: {knowledgeId, question, useful(true/false)}；"
+            + "差评回流到该库未命中问题，供评测集沉淀。kbId 由知识块反查，不接受前端指定")
+    @Permission("kb:read")
+    @PostMapping("/{id}/feedback")
+    public ResultJson feedback(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
+        return ResultJson.ok(kbInsightsService.feedback(id, body));
+    }
+
+    @Operation(summary = "对话引用反馈", description = "body: {knowledgeId, docId, question, useful(true/false)}；"
+            + "与 /{id}/feedback 同义，但 kbId 由文档归属反查，供对话引用条直接调用")
+    @Permission("kb:read")
+    @PostMapping("/feedback")
+    public ResultJson feedbackByChunk(@RequestBody Map<String, Object> body) {
+        return ResultJson.ok(kbInsightsService.feedbackByChunk(body));
+    }
+
+    @Operation(summary = "记录试检索未命中", description = "body: {question}；只存问题不绑定知识块，"
+            + "进入该库未命中列表，供评测集沉淀")
+    @Permission("kb:read")
+    @PostMapping("/{id}/miss")
+    public ResultJson recordMiss(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
+        return ResultJson.ok(kbInsightsService.recordMiss(id, body));
+    }
+
+    @Operation(summary = "归档知识库", description = "保留文档与向量，从列表默认视图、智能体绑定与检索中摘除；可恢复。"
+            + "默认库与官方内置库不可归档；仅创建者可操作")
+    @Permission("kb:write")
+    @PostMapping("/{id}/archive")
+    public ResultJson archive(@PathVariable("id") String id) {
+        requireManage(mustGet(id));
+        return ResultJson.ok(kbInsightsService.archive(id, true));
+    }
+
+    @Operation(summary = "恢复归档知识库", description = "恢复后重新出现在默认列表；不会自动恢复智能体绑定。仅创建者可操作")
+    @Permission("kb:write")
+    @PostMapping("/{id}/unarchive")
+    public ResultJson unarchive(@PathVariable("id") String id) {
+        requireManage(mustGet(id));
+        return ResultJson.ok(kbInsightsService.archive(id, false));
     }
 
     @Operation(summary = "移动文档到知识库", description = "body: {kbId}——传空表示移回自己的默认知识库（问渠）；"

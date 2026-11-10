@@ -70,6 +70,14 @@ function hasSources (m) {
 function sourceTitle (m) {
   return retrievalLineTitle(m) || ('引用 ' + ((m.sources && m.sources.length) || 0) + ' 条来源')
 }
+/** 本轮引用反馈要回填的问题：向上找最近一条用户提问 */
+function questionFor (i) {
+  for (let j = i - 1; j >= 0; j--) {
+    const m = props.messages[j]
+    if (m && m.role === 'user' && m.content) return m.content
+  }
+  return ''
+}
 </script>
 
 <template>
@@ -120,7 +128,8 @@ function sourceTitle (m) {
 
         <slot name="sources" :m="m" :i="i">
           <SourceList v-if="m.role === 'ai' && hasSources(m)" :sources="m.sources"
-                      :title="sourceTitle(m)" v-model:open="m.srcOpen" />
+                      :title="sourceTitle(m)" :question="questionFor(i)" :can-feedback="!!sessionId"
+                      v-model:open="m.srcOpen" />
         </slot>
 
         <slot name="sources-after" :m="m" :i="i" />

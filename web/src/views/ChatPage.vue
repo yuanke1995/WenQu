@@ -529,6 +529,7 @@
               <SourceList v-if="m.role === 'ai' && (retrievalLineTitle(m) || toolSearchQueries(m).length || (m.sources && m.sources.length))"
                           :sources="m.sources" :title="retrievalLineTitle(m)" :note="hitsNote(m)"
                           :terms="m.retrieved && m.retrieved.terms" :tool-queries="toolSearchQueries(m)"
+                          :question="questionFor(i)" :can-feedback="true"
                           show-snippet v-model:open="m.rtOpen" />
           </template>
           <template #sources-after="{ m, i }">
@@ -1862,6 +1863,16 @@ import { toolLabel, toolDesc, toolCallsView, executedCount, toolDuration,
 // 簇头的活动图标（DSH ProcessGroupHeader 的 activityIcon 同位）：类别 → 图标，收起时常显、悬停/展开让位给下开三角
 const CLUSTER_ICONS = { search: SearchOutlined, tools: ApiOutlined, thinking: BulbOutlined }
 const clusterIconOf = seg => CLUSTER_ICONS[clusterHeadKind(seg)] || BulbOutlined
+
+/** 本轮引用反馈要回填的问题：向上找最近一条用户提问 */
+function questionFor (i) {
+  const list = messages.value || []
+  for (let j = i - 1; j >= 0; j--) {
+    const m = list[j]
+    if (m && m.role === 'user' && m.content) return m.content
+  }
+  return ''
+}
 
 const router = useRouter()
 const route = useRoute()

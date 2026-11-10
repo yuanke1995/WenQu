@@ -92,6 +92,12 @@ public class KnowledgeBase {
      */
     private Integer builtin;
 
+    /**
+     * 归档标记：1=已归档（可恢复）。归档库保留文档与向量，但从知识库列表默认视图、
+     * 智能体可绑列表与检索绑定中摘除；删除仍走级联物理清理。
+     */
+    private Integer archived;
+
     /** 创建人（登录用户 uid；系统内置为 system） */
     private String createdBy;
 
