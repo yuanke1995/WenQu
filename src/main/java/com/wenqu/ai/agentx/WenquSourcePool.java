@@ -119,21 +119,12 @@ public final class WenquSourcePool {
         }
     }
 
-    /** 本轮图片编号体系快照（引用完整性自检要按它判 [图片N] 是否悬空）。 */
-    public Map<Integer, String> imgIndex() {
-        synchronized (sources) {
-            return new LinkedHashMap<>(imgIndex);
-        }
-    }
-
-    public Map<Integer, String> imgDescIndex() {
-        synchronized (sources) {
-            return new LinkedHashMap<>(imgDescIndex);
-        }
-    }
-
     /**
      * 本轮正文配图清单（原始 URL，下标即 [图片N] 的 N-1）——落库用这份。
+     * <p><b>清单的唯一对外出口</b>：流式 image 帧由 registry 从同一份 imgIndex 发全量快照，
+     * done.finalImages 与落库都从这里取；定稿校验只拿到这份 List 的只读快照判编号越界，
+     * 拿不到编号映射，也就没有「裁剪 / 重编清单」的入口。配图相关性在生成侧由命中块与
+     * [图片N：描述] 承担，定稿阶段一律不重判、不改写。
      * <p>库里必须存原始地址：签名是一次性凭据，落库等于写进一批过期数据（产物 URL 同一口径，
      * 读侧由 {@code ImageUrlSigner.signMessageMedia} 现场签）。
      */

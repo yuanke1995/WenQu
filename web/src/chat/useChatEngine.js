@@ -3412,10 +3412,12 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       liveScroll()
     },
     onImage: imgs2 => {
+      // 配图清单只有「同源全量替换」一种变更方式：后端 image 帧恒发本轮全量数组。
+      // 解析失败或形状不对时保持已有清单，不用一份可疑数据把已下发的图清空。
       try {
         const parsed = JSON.parse(imgs2)
-        msg.images = Array.isArray(parsed) ? parsed : []
-      } catch (e) { msg.images = [] }
+        if (Array.isArray(parsed)) msg.images = parsed
+      } catch (e) { /* 非法帧不动状态：已下发的图不因解析失败而消失 */ }
     },
     onArtifact: payload => {
       try {
@@ -3746,6 +3748,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
           // 以 done 下发的落库版时间线为准（区间已按最终正文夹取）；后端没给时间线才回退底部汇总
           if (p.finalContent !== msg.content) msg.content = p.finalContent
         }
+        // 权威清单与流式 image 帧、落库同源（后端定稿不再改写配图清单），只做一次对齐
         if (Array.isArray(p.finalImages)) msg.images = p.finalImages
         if (Array.isArray(p.artifacts) && p.artifacts.length) msg.artifacts = p.artifacts
         // 每轮文件改动：随 done 下发（本轮没跑/没改动/执行器不在都没有这个键，保留原值不覆盖）

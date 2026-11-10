@@ -4620,12 +4620,13 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             noticeText = marker;
         }
         boolean persist = realAnswer || (hasProcess && !awaiting);
-        // 本轮正文配图清单：正文里的 [图片N] 就是按这份的下标还原的（N → 第 N-1 项）。
-        // 只随 SSE image 帧下发而不落库的话，表现是「当场看得见图，一刷新全变成 [图片1] 四个字」。
-        List<String> turnImages = pool.rawImages();
-        // 引用完整性防线：悬空角标剔除、「有来源却没标 [N]」的 fail-loud、「编号对上了但语义不支撑」的
-        // LLM 自检——与手写侧同一个实现。换了运行时不该把这道答案质量防线摘掉。
-        // 停止轮与「只有过程没有正文」的半程轮都不跑：那两句标注不是答案，跑了对它们就是白报一条
+        // 本轮配图清单的唯一快照：正文 [图片N] → 第 N-1 项。流式 image 帧、done.finalImages、
+        // 落库 images 全部出自池的 imgIndex；这里取一次，三处共用同一份。定稿校验只读它判编号
+        // 越界，绝不裁剪 / 重编 / 回写——清单一旦在定稿被改写，就会「流式有图、答完没图」。
+        // 只随 SSE image 帧下发而不落库的话，刷新后会全变成 [图片1] 四个字，所以落库也必须用它。
+        List<String> finalImages = pool.rawImages();
+        // 引用完整性校验：悬空角标剔除、「有来源却没标 [N]」的 fail-loud、「编号对上了但语义不支撑」的
+        // LLM 自检。停止轮与「只有过程没有正文」的半程轮都不跑：那两句标注不是答案，跑了对它们就是白报一条
         // 「未标注引用」（半程轮往往还带着工具召回的来源，正好满足那条 fail-loud 的触发条件）。
         if (!stopped && !timedOut && !budget && !stalled && realAnswer) {
             // 反推本轮真实开始时刻必须用墙钟：拿机器耗时去减会把开始点往后挪，挪进用户读卡那几分钟里，
@@ -4635,14 +4636,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             // DynamicOpenAiChatModel，它只按引用解析路由，裸模型名一律 fail-loud——传错就是这道防线
             // 每轮静默哑火（只剩一条 WARN，正文照旧）。落库和 done 帧用裸名是展示口径，不同。
             var outcome = citations.check(body, new com.wenqu.ai.agent.context.CitationIntegrityService.Ctx(
-                    cmd.getSessionId(), cmd.getUserId(), cmd.getQuestion(), modelRef,
-                    pool.sources(), pool.imgIndex(), pool.imgDescIndex(),
+                    cmd.getSessionId(), cmd.getUserId(), modelRef,
+                    pool.sources(), finalImages,
                     pool.degradations(), pool.degradedCodes(), new java.util.HashMap<>(), startedAtMs));
             body = outcome.text();
-            // 自检剔图后编号是重编过的（[图片3] 可能已变成 [图片2]）：清单必须换成 outcome 那一份，
-            // 否则落库/下发的是剔除前的顺序，正文第 N 个标记会配到另一张图
-            turnImages = outcome.images();
-            // 自检会裁掉不支撑的来源并重编编号：池不回写，正文角标与引用面板就会错位
+            // 自检会裁掉不支撑的来源并重编编号：池不回写，正文角标与引用面板就会错位。
+            // 配图清单不在这里回写（Outcome 里根本没有它）。
             pool.applyCitationOutcome(outcome);
         }
         com.wenqu.ai.agent.chat.TurnHandle handle =
@@ -4731,7 +4730,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 .sessionId(cmd.getSessionId())
                 .role("assistant")
                 .content(body)
-                .images(turnImages)
+                .images(finalImages)
                 .sources(com.alibaba.fastjson2.JSON.toJSONString(pool.sources()))
                 .thinking(recording.thinkingText())
                 .retrieved(lastRetrieved)
@@ -4787,8 +4786,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 .agentId(cmd.getAgentId())
                 .agentName(agentNameOf(cmd))
                 .sources(pool.sources())
-                // 定稿配图清单（与 finalContent 的 [图片N] 编号严格同序）：流式 image 帧是剔图重编前那一份
-                .finalImages(pool.sign(turnImages))
+                // 定稿配图清单（与 finalContent 的 [图片N] 编号严格同序）：与流式 image 帧同源、
+                // 与落库同一份快照，定稿不再改写清单，故不会「答完图消失」
+                .finalImages(pool.sign(finalImages))
                 .degradations(pool.degradations())
                 .elapsedMs(elapsedMs)
                 .humanWaitMs(humanWaitMs)

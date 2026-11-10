@@ -4,9 +4,7 @@ package com.wenqu.ai.agent.context;
 
 import com.wenqu.ai.agent.chat.ChatRunRuntime;
 import com.wenqu.ai.agent.chat.TurnSourceRegistry;
-import com.wenqu.ai.config.AppProperties;
 import com.wenqu.ai.service.ConfigService;
-import com.wenqu.ai.service.ImageFilterService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.openai.OpenAiChatOptions;
@@ -26,9 +24,15 @@ import java.util.regex.Pattern;
 /**
  * 回答定稿前的<b>引用面校验</b>。
  *
- * <p>四道检查按由浅到深排：<b>没标引用</b>（有来源却一个 [N] 都没有）→ <b>编号越界</b>（[N] 落不在
+ * <p>检查按由浅到深排：<b>没标引用</b>（有来源却一个 [N] 都没有）→ <b>编号越界</b>（[N] 落不在
  * 来源表里，LLM 编造）→ <b>图片标记越界</b>（[图片N] 落不在本轮图片清单里）→ <b>语义不支撑</b>
  * （编号合法、句子却与那条 snippet 无关，要一次 LLM 判定）。前三道是纯字符串活儿；第四道才是深度防线。
+ *
+ * <p><b>配图清单不变量（本类最重要的约束）</b>：这里<b>永不增删、重编本轮图片清单</b>。图片由检索
+ * 命中块统一编号，清单是唯一事实来源——SSE image 帧、done.finalImages、落库 images 都读同一份快照，
+ * 正文里的 [图片N] 只是对它的引用。越界标记只从正文删除，清单原地不动。定稿阶段一旦能改写清单，
+ * 就必然出现「流式有图、答完没图」：那不是靠事后词面过滤能修好的，只能从结构上排除。
+ * 相关性由「检索命中块 + 模型按 [图片N：描述] 选图」承担，不在定稿阶段重判。
  *
  * <p>第四道内部又分两层，顺序不能反：<b>先机械零共现预筛，再 LLM 判定</b>。
  * 句子与来源零共现的角标任何 judge 都不该救得回来，先用 2-gram 共现机械剔除（不花一次
@@ -42,7 +46,7 @@ import java.util.regex.Pattern;
  *
  * <p>为什么必须与本轮的引用池放在一起看：裁剪之后<b>编号要重编</b>，而正文里的 [N] 与 sources 的
  * 顺序必须<b>同时</b>改——分开在两处改就是"角标点开是另一段资料"。所以这个类的入参是本轮状态，
- * 出参是「定稿正文 + 裁剪后的来源 + 裁剪后的图片清单」三件一起交回调用方。
+ * 出参是「定稿正文 + 裁剪后的来源」；<b>图片清单不在出参里</b>，调用方继续用入参那一份。
  *
  * <p>三条口径别丢：
  * <ul>
@@ -73,72 +77,52 @@ public class CitationIntegrityService {
 
     private final ConfigService configService;
     private final ChatClient chatClient;
-    private final ImageFilterService imageFilterService;
-    private final AppProperties properties;
     private final ChatRunRuntime runtime;
 
     public CitationIntegrityService(ConfigService configService,
                                     ChatClient chatClient,
-                                    ImageFilterService imageFilterService,
-                                    AppProperties properties,
                                     ChatRunRuntime runtime) {
         this.configService = configService;
         this.chatClient = chatClient;
-        this.imageFilterService = imageFilterService;
-        this.properties = properties;
         this.runtime = runtime;
     }
 
-    /** 校验结果：text=定稿正文，sources=裁剪并重编后的来源，images=按 keptImageSeqs 重取后的图片原始 URL 清单 */
-    public record Outcome(String text, List<Map<String, Object>> sources, List<String> images) {}
+    /** 校验结果：text=定稿正文，sources=裁剪并重编后的来源。图片清单不参与定稿改写，故不在结果里。 */
+    public record Outcome(String text, List<Map<String, Object>> sources) {}
 
     /**
      * 本轮引用完整性所需的最小状态。
      * <p>刻意不认运行时的状态袋：这套校验（悬空角标剔除、未标注 fail-loud、语义一致性自检）是
-     * <b>答案质量防线</b>，不该因为运行时换了就缺席——两条运行时各自按自己的结构搬一份 {@link Ctx} 进来。
+     * <b>答案质量防线</b>，不该因为运行时换了就缺席——调用方按自己的结构搬一份 {@link Ctx} 进来。
      *
      * @param sources 本轮引用池（活引用：语义自检会重编它，调用方按返回的 Outcome 回写）
+     * @param images  本轮配图清单快照（只读）：与落库 / done.finalImages / 流式 image 帧是同一份，
+     *                这里只用它判 [图片N] 是否越界，不裁剪、不重编、不回写
      * @param model   本轮生效模型的<b>引用串</b> {@code {providerId}/{modelId}}——自检那次调用经
      *                {@code DynamicOpenAiChatModel} 只按引用解析路由，传裸模型名会 fail-loud，
      *                这道防线就整轮静默缺席（只剩一条 WARN）
      */
-    public record Ctx(String sessionId, String userId, String question, String model,
-                      List<Map<String, Object>> sources, Map<Integer, String> imgIndex,
-                      Map<Integer, String> imgDescIndex, List<Map<String, String>> degradations,
+    public record Ctx(String sessionId, String userId, String model,
+                      List<Map<String, Object>> sources, List<String> images,
+                      List<Map<String, String>> degradations,
                       Set<String> degradedCodes, Map<String, Long> stageMs, long startTime) {
     }
 
     /**
-     * 跑完四道检查并把结果一次交回。降级登记走本轮的 degradations（与调用方同一份列表、同一展示位）。
+     * 跑完引用面检查并把结果一次交回。降级登记走本轮的 degradations（与调用方同一份列表、同一展示位）。
      *
      * @param answer 生成流定稿的正文（尚未做截断标注）
      */
     public Outcome check(String answer, Ctx ctx) {
         List<Map<String, Object>> sources = ctx.sources();
-        List<String> images = new ArrayList<>(ctx.imgIndex().values());
 
-        // 1) 图片相关性兜底：剔除与描述不匹配的 [图片N] 并重建编号（LLM 偶发错配）
-        if (properties.getImages().getImageFilter().isEnabled() && !ctx.imgIndex().isEmpty()) {
-            ImageFilterService.RebuildResult rr = imageFilterService.rebuild(answer, ctx.imgDescIndex(), ctx.question(),
-                    properties.getImages().getImageFilter().getMinHits(),
-                    properties.getImages().getImageFilter().getPreContextChars());
-            if (!rr.dropped().isEmpty()) {
-                // fail-loud：图片被剔除后回答仍引用旧编号，需告知
-                degrade(ctx, "imgFilterDropped",
-                        "已剔除 " + rr.dropped().size() + " 张与回答内容不匹配的图片引用");
-                log.info("[IMG-FILTER] 图片错配剔除 {} 个: {}", rr.dropped().size(), rr.dropped());
-                answer = rr.text();
-                images = rr.keptSeq().stream().map(ctx.imgIndex()::get).toList();
-            }
-        }
-
-        // 2) fail-loud：有引用来源但回答未标注任何 [N]（溯源缺失）
+        // 1) fail-loud：有引用来源但回答未标注任何 [N]（溯源缺失）
         // 注意用 find() 而非 matches()：matches 全串锚定且 . 不跨行，多行回答永远误判为未标注
         if (!sources.isEmpty() && !CITE_PATTERN.matcher(answer).find()) {
             degrade(ctx, "noCitation", "回答未标注引用来源");
         }
 
-        // 3) 引用编号越界：剔除超出来源范围的 [N]（LLM 偶发编造编号，用户点击角标无溯源）。
+        // 2) 引用编号越界：剔除超出来源范围的 [N]（LLM 偶发编造编号，用户点击角标无溯源）。
         //    来源为空（maxRef=0）时同样执行——本轮没有任何可溯源来源，正文不允许残留任何 [N]；
         //    修复前 sources 为空时整段校验被跳过，模型给 MCP 资料自编的 [1][2] 全部悬空（面板无对应条目可点）。
         //    代码段（``` 围栏/行内反引号）跳过：代码里的 [0] 是字面量下标，无差别剔除会改坏代码示例。
@@ -164,12 +148,11 @@ public class CitationIntegrityService {
             log.info("[CITE-CHECK] 剔除越界引用 {} 处 (maxRef={})", invalidRefs, maxRef);
         }
 
-        // 4) 图片标记越界（与引用越界同构）：正文 [图片N] 必须落在本轮真实图片（imgIndex）范围内。
-        //    工具模式下模型手里没有编号图片（工具返回文本不带编号、images 为空），却可能按「尽量配图」
-        //    规则编造 [图片N]，前端 images[N-1] 映射不到就把字面 [图片N] 原样显示在回答里。剔除 + fail-loud。
-        // 用定稿清单的长度：第 1 步剔图后 [图片N] 已重编成 1..M，images 也按 keptSeq 重排成 M 张，
-        // 再拿剔除前的 ctx.imgIndex().size() 当上界，会把 M+1..原size 这段悬空编号放过去。
-        int maxImg = images.size();
+        // 3) 图片标记越界（与引用越界同构）：正文 [图片N] 必须落在本轮配图清单范围内。
+        //    模型偶尔会编造编号，前端 images[N-1] 映射不到就把字面 [图片N] 原样显示在回答里。
+        //    <b>只从正文删标记，绝不裁剪 / 重编 / 回写清单</b>：清单一旦在定稿被改写，
+        //    流式 image 帧已下发的图会被 done.finalImages 覆盖成另一份（「回答时有图、答完没图」）。
+        int maxImg = ctx.images().size();
         Matcher im = TurnSourceRegistry.IMG_NUMBER_PATTERN.matcher(answer);
         StringBuilder imgSb = new StringBuilder();
         int bogusImgs = 0;
@@ -194,7 +177,7 @@ public class CitationIntegrityService {
         // 生成完成（引用语义自检之前的最后一步计时；自检本身另记 citation）
         ctx.stageMs().put("generate", System.currentTimeMillis() - ctx.startTime());
 
-        // 5) 语义一致性自检（深度防线）：编号没越界 ≠ 内容被支撑——LLM 可能引用了一个块，
+        // 4) 语义一致性自检（深度防线）：编号没越界 ≠ 内容被支撑——LLM 可能引用了一个块，
         //    但对应句子的结论与该块无关（编号正确、语义不符）。把每个 [N] 的"前文句子"与其
         //    来源 snippet 打包给 LLM 判"是否支撑"，不支撑的剔除标记、来源同步裁剪并重编 ref。
         //    一次额外调用，超时/失败/无引用跳过（保持原回答）；空前文（无法界定句子）的引用放行。
@@ -226,7 +209,7 @@ public class CitationIntegrityService {
             }
             ctx.stageMs().put("citation", System.currentTimeMillis() - ctx.startTime());
         }
-        return new Outcome(answer, sources, images);
+        return new Outcome(answer, sources);
     }
 
     /**
@@ -251,7 +234,7 @@ public class CitationIntegrityService {
             int n = Integer.parseInt(m.group(1));
             if (inCodeSegment(codeSegs, m.start())) continue;
             if (n < 1 || n > sources.size() || sentenceByRef.containsKey(n)) continue;
-            String pre = imageFilterService.precedingContext(answer, m.start(), 80);
+            String pre = precedingContext(answer, m.start(), 80);
             if (pre.isBlank()) continue; // 无前文无法界定句子 → 放行
             sentenceByRef.put(n, pre);
         }
@@ -419,6 +402,22 @@ public class CitationIntegrityService {
             if (v != null) sb.append(v).append(' ');
         }
         return sb.toString();
+    }
+
+    /**
+     * 引用角标的前文句子：从 [pos-maxChars, pos) 窗口内最近的分句符之后开始。
+     * <p>只用于「[N] 那句话是否被 snippet 支撑」的界定——引用角标总在句末，切句合理。
+     * 图片不再做词面相关性判定，这里也不参与任何配图决策。
+     */
+    private static String precedingContext(String answer, int pos, int maxChars) {
+        if (answer == null || answer.isEmpty() || pos <= 0 || maxChars <= 0) return "";
+        int start = Math.max(0, pos - maxChars);
+        String window = answer.substring(start, pos);
+        int cut = -1;
+        for (char c : new char[]{'。', '！', '？', '；', '\n'}) {
+            cut = Math.max(cut, window.lastIndexOf(c));
+        }
+        return (cut >= 0 ? window.substring(cut + 1) : window).trim();
     }
 
     /** 代码段范围（``` 围栏与行内反引号）；未闭合的围栏吃到文末（流式截断的正文本来就残缺） */

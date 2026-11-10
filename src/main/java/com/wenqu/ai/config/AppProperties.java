@@ -129,18 +129,6 @@ public class AppProperties {
         private boolean authEnabled = true;
         /** 签名 URL 有效期（秒） */
         private long authExpireSeconds = 3600;
-        /** 回答中 [图片N] 标记与图片描述的相关性校验（LLM 偶发错配兜底） */
-        private ImageFilter imageFilter = new ImageFilter();
-    }
-
-    @Data
-    public static class ImageFilter {
-        /** 是否启用图片相关性校验 */
-        private boolean enabled = true;
-        /** 关键词命中数阈值（≥1 即相关，保守防误杀） */
-        private int minHits = 1;
-        /** 校验取标记前文的最大字符数 */
-        private int preContextChars = 100;
     }
 
     @Data

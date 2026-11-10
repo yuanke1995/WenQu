@@ -1582,7 +1582,11 @@ DELETE FROM `c_ai_config` WHERE `config_key` IN (
     -- graphrag
     'graphrag.batchChunks', 'graphrag.maxTriplesPerChunk',
     -- contentSafety
-    'contentSafety.timeoutMs', 'contentSafety.remoteCheckChars', 'contentSafety.outputHoldChars', 'contentSafety.maxScanChars'
+    'contentSafety.timeoutMs', 'contentSafety.remoteCheckChars', 'contentSafety.outputHoldChars', 'contentSafety.maxScanChars',
+    -- 2026-11-11：回答定稿的「图片相关性词面过滤」整条链路退役。定稿阶段不再改写配图清单，
+    -- 流式 image 帧 / done.finalImages / 落库 images 统一读本轮池快照；三个参数再无读取方，
+    -- 存量行只会造成「改库能生效」的错觉（本地 wenqu_ai 实测仍存 3 行）
+    'imageFilter.enabled', 'imageFilter.minHits', 'imageFilter.preContextChars'
 );
 -- 个人层遗留的模型引用键（parse.qaModel / graphrag.modelRef / memory.embeddingRef 曾允许个人覆盖；
 -- rerank.model 的个人设置入口已下线，存量值不再被 UserConfigService 装载）

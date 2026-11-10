@@ -810,10 +810,6 @@ public class ConfigService {
         d.put("images.authEnabled", String.valueOf(properties.getImages().isAuthEnabled()));     // 图片签名鉴权开关（默认开：签名 URL 防盗链）
         d.put("session.maxHistory", String.valueOf(properties.getSession().getMaxHistory()));     // 会话保留轮数
         d.put("session.expireMinutes", String.valueOf(properties.getSession().getExpireMinutes())); // 会话过期(分钟)
-        // 图片相关性校验（读取点 ImageFilterService；defaults 取 bean）
-        d.put("imageFilter.enabled", String.valueOf(properties.getImages().getImageFilter().isEnabled()));
-        d.put("imageFilter.minHits", String.valueOf(properties.getImages().getImageFilter().getMinHits()));
-        d.put("imageFilter.preContextChars", String.valueOf(properties.getImages().getImageFilter().getPreContextChars()));
         // 行为参数（直读 configService，保存即生效）
         // 单条提问字数上限（ShareController 读取点）：默认防滥用口径；表单设计助手等
         // 每轮要整份 schema 回传的分享按需调大，消息落 c_ai_message.content（MEDIUMTEXT）
@@ -980,10 +976,6 @@ public class ConfigService {
             AppProperties.Session session = properties.getSession();
             session.setMaxHistory(pInt("session.maxHistory", session.getMaxHistory()));
             session.setExpireMinutes(pInt("session.expireMinutes", session.getExpireMinutes()));
-            AppProperties.ImageFilter imgFilter = properties.getImages().getImageFilter();
-            imgFilter.setEnabled(pBool("imageFilter.enabled", imgFilter.isEnabled()));
-            imgFilter.setMinHits(pInt("imageFilter.minHits", imgFilter.getMinHits()));
-            imgFilter.setPreContextChars(pInt("imageFilter.preContextChars", imgFilter.getPreContextChars()));
         } catch (Exception e) {
             log.warn("[Config] 回写 AppProperties 失败（沿用当前值）: {}", e.getMessage());
         }
