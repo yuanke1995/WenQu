@@ -306,6 +306,16 @@ public class SecurityConfig implements WebMvcConfigurer {
         if (path.equals("/api/ai/v1/chat/completions")) return true;
         // Responses API：与 chat/completions 同层同口径，同样只给 API Key 用
         if (path.equals("/api/ai/v1/responses")) return true;
+        // Embeddings OpenAI 兼容端点：/api/ai/v1/embeddings——外部项目持 API Key 以 OpenAI SDK
+        // 语义调用问渠登记的向量模型（model=向量模型引用 providerId/modelId）。与 chat/completions
+        // 同层同口径；能力级授权（embedding scope）判在端点内。
+        if (path.equals("/api/ai/v1/embeddings")) return true;
+        // 可用向量模型清单（只读、脱敏）：embeddings 端点 model 参数的数据源
+        if ("GET".equals(method) && path.equals("/api/ai/v1/models/embeddings")) return true;
+        // 知识库对外 API：检索（kb.read）+ 库管理（读 kb.read / 写 kb.write）——scope 判在
+        // KbApiController 内；资源级可见性与网页端点同口径（服务层判定），对外通道不放宽。
+        if ("POST".equals(method) && path.equals("/api/ai/v1/retrieval")) return true;
+        if (path.equals("/api/ai/v1/kbs") || path.startsWith("/api/ai/v1/kbs/")) return true;
         return false;
     }
 

@@ -23,7 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class OpenAiCompatToolCallsTest {
 
     private static List<Map<String, Object>> declared(JSONObject done, Set<String> names) throws Exception {
-        OpenAiCompatController c = new OpenAiCompatController(null, null, null, null);
+        OpenAiCompatController c = new OpenAiCompatController(null, null, null, null, null);
         Method m = OpenAiCompatController.class.getDeclaredMethod("declaredToolCalls", JSONObject.class, Set.class);
         m.setAccessible(true);
         @SuppressWarnings("unchecked")

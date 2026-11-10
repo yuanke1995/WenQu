@@ -174,6 +174,9 @@ public class RateLimitService {
         return switch (bucket) {
             case "chat" -> 10;
             case "upload" -> 10;
+            // 向量批量端点：一次请求可带 256 条文本，按「请求数」限频 60/分钟约够
+            // 每分钟数千条文本的常态集成量，又不至于让一把泄露的 Key 刷爆供应商额度
+            case "embedding" -> 60;
             // 免登录的公开写入端点：不能沿用「未知桶 30/分钟」的通用兜底——那是给登录用户用的量级，
             // 对一个没有登录态、谁都能打的入口来说太宽
             case "apply" -> 5;

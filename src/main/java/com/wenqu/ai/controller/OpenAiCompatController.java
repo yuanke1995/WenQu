@@ -66,6 +66,7 @@ public class OpenAiCompatController {
     private final SessionService sessionService;
     private final AgentService agentService;
     private final RateLimitService rateLimitService;
+    private final com.wenqu.ai.service.ApiKeyService apiKeyService;
 
     /** 临时会话的等待上限（整轮；含工具循环，对齐评测单题口径 300s） */
     private static final long TURN_TIMEOUT_MS = 300_000L;
@@ -121,6 +122,8 @@ public class OpenAiCompatController {
         // 调用方身份（JWT 或 X-Api-Key 已由拦截器/安全链装载）；按 Key 限频独立分桶
         String uid = RequestUser.uid();
         String apiKeyId = apiKeyIdOf();
+        // scope 闸（Key 通道）：问答能力需 chat scope；登录态不受 scope 约束
+        apiKeyService.requireScope(apiKeyId, com.wenqu.ai.service.ApiKeyService.SCOPE_CHAT);
         rateLimitService.checkRateLimit("chat", uid);
 
         // 智能体可见性：与 agent/available 同一口径，不可见一律 404（不泄露存在性）
@@ -456,6 +459,8 @@ public class OpenAiCompatController {
 
         String uid = RequestUser.uid();
         String apiKeyId = apiKeyIdOf();
+        // scope 闸（Key 通道）：Responses 与 chat/completions 同属问答能力
+        apiKeyService.requireScope(apiKeyId, com.wenqu.ai.service.ApiKeyService.SCOPE_CHAT);
         rateLimitService.checkRateLimit("chat", uid);
         Agent agent = agentService.get(agentId);
         if (agent == null) {

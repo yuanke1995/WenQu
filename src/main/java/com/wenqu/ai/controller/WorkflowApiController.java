@@ -3,6 +3,7 @@ package com.wenqu.ai.controller;
 import com.wenqu.ai.config.SecurityConfig;
 import com.wenqu.ai.dto.ResultJson;
 import com.wenqu.ai.model.WorkflowRun;
+import com.wenqu.ai.service.ApiKeyService;
 import com.wenqu.ai.service.WorkflowService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -38,6 +39,7 @@ import com.wenqu.ai.security.Permission;
 public class WorkflowApiController {
 
     private final WorkflowService workflowService;
+    private final ApiKeyService apiKeyService;
 
     @Operation(summary = "触发运行（同步）", description = "body: {inputs?}（开始节点入参，对应 {{start.key}}）。"
             + "跑的是<b>已发布版本</b>的 DSL（草稿改动不影响），返回 run 全量信息："
@@ -52,7 +54,10 @@ public class WorkflowApiController {
                 : (Map<String, Object>) body.get("inputs");
         // API Key 归属：拦截器已校验过 Key 有效性并把 id 放进请求属性（未带 Key 时为 null → 按登录用户）
         Object keyId = request.getAttribute(SecurityConfig.ATTR_API_KEY_ID);
-        WorkflowRun run = workflowService.runByApi(id, inputs, keyId == null ? null : String.valueOf(keyId));
+        String apiKeyId = keyId == null ? null : String.valueOf(keyId);
+        // scope 闸（Key 通道）：触发工作流需 workflow.run；登录态不受 scope 约束
+        apiKeyService.requireScope(apiKeyId, ApiKeyService.SCOPE_WORKFLOW_RUN);
+        WorkflowRun run = workflowService.runByApi(id, inputs, apiKeyId);
         return ResultJson.ok(run);
     }
 
@@ -65,7 +70,9 @@ public class WorkflowApiController {
         // 与触发端点同口径：带 API Key 的调用方按 Key 归属身份判权（否则 SYSTEM 身份在内部归属校验处 404）；
         // 未带 Key（登录令牌调用）时为 null → resolvePrincipal 走当前登录用户，行为不变
         Object keyId = request.getAttribute(SecurityConfig.ATTR_API_KEY_ID);
-        return ResultJson.ok(workflowService.getRunForApi(id, runId, keyId == null ? null : String.valueOf(keyId)));
+        String apiKeyId = keyId == null ? null : String.valueOf(keyId);
+        apiKeyService.requireScope(apiKeyId, ApiKeyService.SCOPE_WORKFLOW_RUN);
+        return ResultJson.ok(workflowService.getRunForApi(id, runId, apiKeyId));
     }
 
     /**
