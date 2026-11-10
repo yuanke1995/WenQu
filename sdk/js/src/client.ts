@@ -153,7 +153,7 @@ async function unwrapEnvelope<T>(res: Response): Promise<T> {
 }
 
 /** body 为字符串（JSON）且调用方未指定 Content-Type 时补 application/json；FormData 交给 fetch 自动带 boundary */
-function withJsonContentType(init: RequestInit): RequestInit {
+export function withJsonContentType(init: RequestInit): RequestInit {
   if (typeof init.body !== "string") return init;
   const headers = new Headers(init.headers);
   if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");

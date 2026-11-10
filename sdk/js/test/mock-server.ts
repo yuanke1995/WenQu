@@ -433,6 +433,14 @@ async function routeNative(sub: string, method: string, req: IncomingMessage, re
   const url = new URL(req.url ?? "/", "http://localhost");
 
   if (sub === "/chat" && method === "POST") {
+    // 与 Spring @RequestBody 同口径拒收非 JSON Content-Type（浏览器 fetch 对 string body
+    // 缺省回落 text/plain——SDK 漏补头时这里必须炸，否则 Node 测试测不出真后端 415）
+    const ct = String(req.headers["content-type"] ?? "");
+    if (!ct.startsWith("application/json")) {
+      res.writeHead(415, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: false, code: 415, msg: "Unsupported Media Type: " + ct }));
+      return;
+    }
     const raw = JSON.parse((await readBody(req)).toString("utf8")) as { question?: string };
     const q = raw.question ?? "";
     // 代理未配置形态：HTTP 200 但回 JSON 信封——SDK 必须按 Content-Type 分流走 onError

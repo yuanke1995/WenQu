@@ -15,6 +15,7 @@
 import type { WenquClient } from "./client.js";
 import { WenquError } from "./errors.js";
 import { sseEvents } from "./sse.js";
+import { withJsonContentType } from "./client.js";
 import type {
   ArtifactEvent,
   AskUserCard,
@@ -235,11 +236,13 @@ export class NativeChat {
     const run = async (): Promise<void> => {
       let res: Response;
       try {
-        res = await this.client.nativeRequest(subPath, {
+        // JSON 字符串体补 Content-Type：浏览器 fetch 对 string body 缺省回落 text/plain，
+        // Spring @RequestBody 按 415 拒收（Node 侧不校验，只有真后端+真浏览器暴露）
+        res = await this.client.nativeRequest(subPath, withJsonContentType({
           ...init,
           headers: { Accept: "text/event-stream", ...(init.headers ?? {}) },
           signal: controller.signal,
-        });
+        }));
       } catch (e) {
         // abort 可能落在 fetch 发起前/中：rawRequest 会把 AbortError 包成网络错误，
         // 以 signal 为准判「调用方主动断流」，不误报成连不上
