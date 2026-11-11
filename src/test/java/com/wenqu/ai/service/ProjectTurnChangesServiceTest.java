@@ -41,25 +41,26 @@ class ProjectTurnChangesServiceTest {
                         "lines", List.of("-旧", "+新"))))));
         Map<String, Object> result = Map.of("drift", drift);
 
-        String first = svc.driftNote("s1", new ProjectTurnChangesService.Start("t1",
+        // Start 只封装执行器的进行中快照；对账基线由执行器按工作区自行选取，不再由服务端下发
+        String first = svc.driftNote("s1", new ProjectTurnChangesService.Start(
                 CompletableFuture.completedFuture(result)), 1000);
         assertThat(first).contains("用户手动改过", "- src/a.md（+2 -1）", "用户改动的差异");
         assertThat(first).contains("<untrusted-data", "-旧", "+新");
         assertThat(first).doesNotContain("连续多轮被用户修正");
 
-        String second = svc.driftNote("s1", new ProjectTurnChangesService.Start("t2",
+        String second = svc.driftNote("s1", new ProjectTurnChangesService.Start(
                 CompletableFuture.completedFuture(result)), 1000);
         assertThat(second).contains("连续多轮被用户修正").contains(".wenqu/MEMORY.md");
     }
 
     @Test
-    @DisplayName("对账上下文：没有上一轮/没有文件/不支持都不注入")
-    void driftNoteSkipsWhenNoBaseline() {
+    @DisplayName("对账上下文：没有快照/空结果/没有文件都不注入")
+    void driftNoteSkipsWhenNoDrift() {
         ProjectTurnChangesService svc = new ProjectTurnChangesService(null, null, null, null, null);
         assertThat(svc.driftNote("s2", null, 1000)).isEmpty();
-        assertThat(svc.driftNote("s2", new ProjectTurnChangesService.Start(null,
+        assertThat(svc.driftNote("s2", new ProjectTurnChangesService.Start(
                 CompletableFuture.completedFuture(Map.of())), 1000)).isEmpty();
-        assertThat(svc.driftNote("s2", new ProjectTurnChangesService.Start("t1",
+        assertThat(svc.driftNote("s2", new ProjectTurnChangesService.Start(
                 CompletableFuture.completedFuture(Map.of("drift", Map.of("supported", true,
                         "files", List.of())))), 1000)).isEmpty();
     }
