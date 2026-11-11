@@ -299,14 +299,15 @@
             </div>
           </template>
           </div>
-          <template v-for="(seg, si) in turnSteerRows(m)" :key="'st' + si">
-            <div class="tl-steer"><span class="tl-steer-txt">{{ seg.text }}</span></div>
+          <!-- 正文按时间线还原：插话气泡长在模型真听到那句的位置，而不是整段正文的头顶（与 PC 同构） -->
+          <template v-for="row in turnBodyRows(m)" :key="row.key">
+            <div v-if="row.kind === 'steer'" class="tl-steer"><span class="tl-steer-txt">{{ row.text }}</span></div>
+            <AnswerBody v-else class="tl-answer" :content="row.content"
+                        :images="m.images" :sources="m.sources" :msg-index="index"
+                        runnable :session-id="sessionId"
+                        :streaming="!!(m.loading && !m.failed && row.last)"
+                        :viewer="false" @citation="onBodyCitation" @preview="onBodyPreview" />
           </template>
-          <AnswerBody v-if="turnAnswerText(m)" class="tl-answer" :content="turnAnswerText(m)"
-                      :images="m.images" :sources="m.sources" :msg-index="index"
-                      runnable :session-id="sessionId"
-                      :streaming="m.loading && !m.failed"
-                      :viewer="false" @citation="onBodyCitation" @preview="onBodyPreview" />
         </div>
 
         <!-- 智能体提问（askUser）的「待答」态不在气泡里渲染：移动壳与 PC 同语义，把底部输入卡
@@ -437,7 +438,7 @@ import AnswerBody from '../components/AnswerBody.vue'
 import { fmtTokens } from '../utils/token'
 import {
   procOpen, toggleProc, procSlice,
-  turnAnswerText, turnProcessRows, turnSteerRows, turnOpen,
+  turnProcessRows, turnBodyRows, turnOpen,
   thinkSegOpen, toggleThinkSeg, thinkSlice, thinkPeek, thinkGrowing, toolLabel, toolBrief, spawnAnchorOf,
   clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterProcCount,
   clusterAutoOpen, clusterLiveRows, clusterTitle, clusterLiveText, clusterHeadKind, toolDuration,
@@ -630,7 +631,7 @@ const onBodyPreview = (urls, index) => emit('preview', urls, index)
 }
 /* 顶部过程块（统一正文流）：过程与正文彻底分开，展开时整块出现在正文上方 */
 .tl-turn-process { margin: 0 0 10px; }
-/* 插话段：右对齐、与用户气泡同一形状；它属于过程，随过程块一起展开/收起 */
+/* 插话段：右对齐、与用户气泡同一形状；长在正文流里模型听到它的那一处，不随过程块收起 */
 .tl-steer { display: flex; justify-content: flex-end; margin: 8px 0; }
 .tl-steer-txt {
   max-width: 82%; padding: 8px 12px; border-radius: 12px; line-height: 1.6; font-size: 15px;

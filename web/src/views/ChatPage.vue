@@ -188,8 +188,9 @@
               <!-- 整轮用时那一条：它同时是过程块的开关。跑着的时候过程自动展开，答完收起只留正文 -->
               <TurnBar v-if="m.role === 'ai'" :m="m" />
               <!-- 技能命中不再在回答头顶放芯片（点「看这一轮的过程」账本面板仍可回看 skill_hit 投影） -->
-              <!-- 正文 / 过程分离（统一正文流）：正文＝整段 content（turnAnswerText），工具调用只作过程步骤、
-                   不切正文；过程（思考/过程/工具/插话）全收在顶部过程块里，永远不插进正文。 -->
+              <!-- 正文 / 过程分离（统一正文流）：正文＝整段 content，工具调用只作过程步骤、不切正文；
+                   过程（思考/过程/工具）全收在顶部过程块里。唯一例外是插话：它是用户自己说的话，
+                   按时间线里记录的真实位置插在前后两片正文之间，不堆在正文头顶。 -->
               <div v-if="m.role === 'ai'" class="md" :data-msg-index="i">
                 <div v-if="turnOpen(m) && turnProcessRows(m).length" class="tl-turn-process">
                 <template v-for="(seg, si) in turnProcessRows(m)" :key="si">
@@ -417,12 +418,15 @@
                   </div>
                 </template>
                 </div>
-                <template v-for="(seg, si) in turnSteerRows(m)" :key="'st' + si">
-                  <div class="tl-steer"><span class="tl-steer-txt">{{ seg.text }}</span></div>
+                <!-- 正文按时间线还原：无插话＝整段一片，有插话＝在模型真听到那句的位置下刀，
+                     气泡长在前后两片之间。切片拼回去仍是完整 content，流式只跟最后一片。 -->
+                <template v-for="row in turnBodyRows(m)" :key="row.key">
+                  <div v-if="row.kind === 'steer'" class="tl-steer"><span class="tl-steer-txt">{{ row.text }}</span></div>
+                  <AnswerBody v-else class="tl-answer" :content="row.content"
+                              :images="m.images" :sources="m.sources" :msg-index="i"
+                              runnable :session-id="currentSessionId"
+                              :streaming="!!(m.loading && !m.failed && row.last)" />
                 </template>
-                <AnswerBody v-if="turnAnswerText(m)" class="tl-answer" :content="turnAnswerText(m)"
-                            :images="m.images" :sources="m.sources" :msg-index="i"
-                            runnable :session-id="currentSessionId" :streaming="m.loading && !m.failed" />
               </div>
               <!-- 提问与回答同一条排版口径（markdown，breaks:true 所以换行照旧保留）。
                    但**提问走 literal**：图片占位与引用角标都不替换——提问里的 [图片N] / [N]
@@ -1828,7 +1832,7 @@ import { openImages, previewUrl, openSource, hoveredRef } from '../chat/answerVi
 import { approvalArgsText } from '../chat/approval'
 import { toolLabel, toolDesc, toolCallsView, executedCount, toolDuration,
          procOpen, toggleProc, procSlice, thinkSegOpen, toggleThinkSeg, thinkSlice, thinkPeek, thinkGrowing,
-         turnAnswerText, turnProcessRows, turnSteerRows, turnOpen,
+         turnProcessRows, turnBodyRows, turnOpen,
          toolBrief, prettyIo, liveOutput, groupRunning,
          clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterProcCount,
          clusterAutoOpen, clusterLiveRows, clusterTitle, clusterLiveText, clusterHeadKind,
@@ -4922,8 +4926,8 @@ onMounted(async () => {
 .tl-process-block { margin: 2px 0; }
 /* 顶部过程块（统一正文流）：过程与正文彻底分开，展开时整块出现在正文上方 */
 .tl-turn-process { margin: 2px 0 10px; }
-/* 插话段：用户在这一轮还在跑时补的那句，长在模型真听到它的那个位置。右对齐＋与用户气泡同一形状，
-   一眼认得出是自己说的话；它属于过程，随过程块一起展开/收起。 */
+/* 插话段：用户在这一轮还在跑时补的那句，长在模型真听到它的那个位置（前后两片正文之间）。
+   右对齐＋与用户气泡同一形状，一眼认得出是自己说的话；不随过程块收起，始终看得见。 */
 .tl-steer { display: flex; justify-content: flex-end; margin: 8px 0; }
 .tl-steer-txt {
   max-width: 78%; padding: 9px 14px; border-radius: 12px; line-height: 1.65;
