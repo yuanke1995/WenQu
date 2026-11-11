@@ -1198,7 +1198,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         answer = com.wenqu.ai.service.GoalService.stripMarkers(answer);
         finish(cmd, channel, pool, route, hooks.modelRef(), contextWindow, answer, recording,
                 userMessageId, loop.stopped(),
-                loop.timedOut(), ranOutBudget, loop.stalled(), awaiting, machineMs, interactions.humanWaitMs(), wallMs, prepMs,
+                loop.timedOut(), ranOutBudget, loop.stalled(), awaiting, startedAt, interactions.humanWaitMs(), prepMs,
                 session, historyBefore, turnId, planRecord);
         // 站内通知（旁路：内部全捕获，写不进去只记 WARN，绝不影响这一轮收口）：长轮跑完时
         // 人多半已经切走或锁屏，只靠屏幕看得见等于「跑完没人知道」。
@@ -2350,7 +2350,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
          * 在答完的同一秒整体消失。
          */
         String timelineJson(String body, String answerText) {
-            if (body == null || !body.startsWith(answerText == null ? "" : answerText)) {
+            // 裁决唯一出自 BodyReconcile——与 TurnTranscriptRecorder.reconcileBody 同一判据
+            if (body == null || com.wenqu.ai.agentx.turn.BodyReconcile.classify(answerText, body)
+                    == com.wenqu.ai.agentx.turn.BodyReconcile.Verdict.REPLACED) {
                 java.util.List<Map<String, Object>> kept = new java.util.ArrayList<>();
                 synchronized (timeline) {
                     for (Map<String, Object> seg : timeline) {
@@ -4552,9 +4554,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     /**
      * 收尾：落库、下发 done 帧、进问答台账。
      *
-     * @param elapsedMs   机器耗时（墙钟扣掉人在回路的等待）——看板与台账说这个数
+     * @param startedAtMs 开轮那一刻的<b>绝对时刻</b>（服务端钟）。整轮用时不在这里收预采样的数：
+     *                    收尾自己还会跑引用自检这类秒级 LLM 调用，起表点交进来、用时在自检之后
+     *                    只取一次，done/落库/台账才读到的都是同一份含自检的墙钟
      * @param humanWaitMs 这一轮里用户读卡/答题累计的等待，随 done 下发供界面上单独说明
-     * @param wallMs      本轮墙钟（开轮那一刻到收尾），只用来反推本轮真实开始时刻与写日志
      * @param prepMs      开轮前准备那一段（服务端收到提问 → 开轮起表）；0 = 没有请求体的入口，
      *                    此时起表基准就是开轮时刻，整轮墙钟照常下发与落库（不含到达流水线前的等待）
      */
@@ -4563,7 +4566,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                         Recording recording,
                         String userMessageId, boolean stopped, boolean timedOut, boolean budget, boolean stalled,
                         boolean awaiting,
-                        long elapsedMs, long humanWaitMs, long wallMs, long prepMs,
+                        long startedAtMs, long humanWaitMs, long prepMs,
                         AgentSession session, int historyBefore, String turnId,
                         Map<String, Object> planRecord) {
         // 落库这一轮：只发帧不落库的话，界面上点进去就是空会话。
@@ -4629,9 +4632,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // LLM 自检。停止轮与「只有过程没有正文」的半程轮都不跑：那两句标注不是答案，跑了对它们就是白报一条
         // 「未标注引用」（半程轮往往还带着工具召回的来源，正好满足那条 fail-loud 的触发条件）。
         if (!stopped && !timedOut && !budget && !stalled && realAnswer) {
-            // 反推本轮真实开始时刻必须用墙钟：拿机器耗时去减会把开始点往后挪，挪进用户读卡那几分钟里，
-            // 这道防线读到的「本轮」就成了后半截
-            long startedAtMs = System.currentTimeMillis() - wallMs;
             // 这里必须交引用串 {providerId}/{modelId} 而不是 route.modelId()：自检那次调用走
             // DynamicOpenAiChatModel，它只按引用解析路由，裸模型名一律 fail-loud——传错就是这道防线
             // 每轮静默哑火（只剩一条 WARN，正文照旧）。落库和 done 帧用裸名是展示口径，不同。
@@ -4644,6 +4644,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             // 配图清单不在这里回写（Outcome 里根本没有它）。
             pool.applyCitationOutcome(outcome);
         }
+        // 整轮用时只在此取一次——必须在自检之后：自检是收尾里唯一秒级的 LLM 段，用时从绝对起表点
+        // 现算，done/落库/台账读到的墙钟天然含自检，屏幕上秒表不会在答完那一刻往回跳
+        // （旧形状：调用方预采样 wallMs 传进来反推起表点，采样点早于自检，1:25 答完报 11.3 秒）。
+        long wallMs = System.currentTimeMillis() - startedAtMs;
+        long elapsedMs = Math.max(0L, wallMs - humanWaitMs);
         com.wenqu.ai.agent.chat.TurnHandle handle =
                 com.wenqu.ai.agent.chat.TurnRegistry.handle(cmd.getSessionId());
         String framedTurnId = handle == null ? turnId : handle.turnId();
@@ -4726,12 +4731,33 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         if (persist && cmd.getReplaceMessageId() != null && !cmd.getReplaceMessageId().isBlank()) {
             replaceGroup = sessionService.beginAnswerReplace(cmd.getReplaceMessageId());
         }
+        // —— 定稿快照：一次组装，落库/done/台账/webhook 全读这一份 ——
+        // 此前下游各自重读池的活引用（sources/degradations/images 在落库后又取一遍），
+        // 「落库行=done 帧」是靠调用顺序兜着的约定，中间插入任何新逻辑就悄悄分叉；
+        // 警示/降级/改动/版本组曾是 append 之后的四条独立 UPDATE，漏跑一条刷新即对不上账。
+        // 快照取齐之后，本收尾不再触池。degradations 池给的是活引用（自检要在里面登记），这里定格成副本。
+        // 「正文相对流式全文改写过」的事实由 BodyReconcile 一处裁决、随 done 宣告（bodyRewritten），
+        // 前端不再拿 finalContent 与本地累积现场比对出第三套判据。
+        boolean bodyRewritten = com.wenqu.ai.agentx.turn.BodyReconcile.classify(
+                recording.answerText(), body) != com.wenqu.ai.agentx.turn.BodyReconcile.Verdict.UNCHANGED;
+        List<Map<String, Object>> snapSources = pool.sources();
+        List<Map<String, String>> snapDegrades = new java.util.ArrayList<>(pool.degradations());
+        List<String> snapSignedImages = pool.sign(finalImages);
+        String snapWarn = channel.lastWarn();
+        boolean snapRetrievalAttempted = pool.retrievalAttempted();
+        List<String> snapRetrievalKbIds = pool.retrievalKbIds();
+        String snapAgentName = agentNameOf(cmd);
+        String snapSourcesJson = com.alibaba.fastjson2.JSON.toJSONString(snapSources);
+        String snapDegradesJson = snapDegrades.isEmpty() ? null
+                : com.alibaba.fastjson2.JSON.toJSONString(snapDegrades);
+        String snapChangesJson = turnChanges == null ? null
+                : com.alibaba.fastjson2.JSON.toJSONString(turnChanges);
         String assistantMessageId = persist ? sessionService.appendMessage(MessageWrite.builder()
                 .sessionId(cmd.getSessionId())
                 .role("assistant")
                 .content(body)
                 .images(finalImages)
-                .sources(com.alibaba.fastjson2.JSON.toJSONString(pool.sources()))
+                .sources(snapSourcesJson)
                 .thinking(recording.thinkingText())
                 .retrieved(lastRetrieved)
                 .artifacts(artifactsJson)
@@ -4740,36 +4766,26 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 .timeline(recording.timelineJson(body, recording.answerText()))
                 .processText(recording.related.process().isEmpty() ? null : recording.related.process())
                 .agentId(cmd.getAgentId())
-                .agentName(agentNameOf(cmd))
+                .agentName(snapAgentName)
                 .model(route.modelId())
                 .related(relatedChips.isEmpty() ? null : com.alibaba.fastjson2.JSON.toJSONString(relatedChips))
                 .plan(planRecord == null ? null : com.alibaba.fastjson2.JSON.toJSONString(planRecord))
                 .turnId(framedTurnId)
                 .blocks(blocksJson)
+                .warn(snapWarn)
+                .degradationsJson(snapDegradesJson)
+                .changesJson(snapChangesJson)
+                .variantGroup(replaceGroup)
                 .build()) : null;
-        if (replaceGroup != null && assistantMessageId != null) {
-            sessionService.setMessageVariant(assistantMessageId, replaceGroup);
-        }
-        // 每轮文件改动随消息行落库：只存相对路径与行数，点开差异时再找执行器现算
-        if (persist && assistantMessageId != null && turnChanges != null) {
-            sessionService.setMessageChanges(assistantMessageId,
-                    com.alibaba.fastjson2.JSON.toJSONString(turnChanges));
-        }
-        // 警示条也要活过刷新：只随 warn 帧下发的话，用户当场看见「沙盒写入未执行」，
-        // 刷新后就没了——而这一轮确实被沙盒挡下过一次（与 degradations 那条同一个错法）
-        sessionService.saveMessageWarn(assistantMessageId, channel.lastWarn());
-        // 降级条与警示条同一个错法：只随 done 帧下发一次，刷新后「本轮没咨询成其他助手」「模型换过路」
-        // 整块消失。列在这里已定型：引用自检那道防线跑在落库之前。
-        sessionService.persistDegradations(assistantMessageId, pool.degradations());
         // 问答台账：与手写侧 doOnComplete 同一处时机（半程轮不落台账，那是中断轮的收尾语义）。
         // 不接的表现为看板与「未命中问题」列表只统计到切换前那部分流量——分派切了运行时，
         // 运营侧的数却悄悄少了一半，而且没有任何一处会报错。
         if (persist && realAnswer) {
             qaLog.logAsync(cmd.getSessionId(), cmd.getQuestion(), body,
-                    pool.sources().stream().map(x -> String.valueOf(x.get("docId"))).toList(),
-                    !pool.sources().isEmpty(), pool.retrievalAttempted() || !pool.sources().isEmpty(),
+                    snapSources.stream().map(x -> String.valueOf(x.get("docId"))).toList(),
+                    !snapSources.isEmpty(), snapRetrievalAttempted || !snapSources.isEmpty(),
                     elapsedMs,
-                    cmd.isDeepThink(), assistantMessageId, cmd.getAgentId(), pool.retrievalKbIds());
+                    cmd.isDeepThink(), assistantMessageId, cmd.getAgentId(), snapRetrievalKbIds);
         }
         // 载荷用 JSONObject 序列化，不手工拼字符串：控制字符与非法转义序列会让整包失去合法性，
         // 本轮来源清单与外发文本会一起丢掉，「答案可溯源」在外部链路静默失效。
@@ -4784,12 +4800,16 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 .turnId(framedTurnId)
                 .model(route.modelId())
                 .agentId(cmd.getAgentId())
-                .agentName(agentNameOf(cmd))
-                .sources(pool.sources())
+                .agentName(snapAgentName)
+                // 全部读定稿快照：done 与刚落库的消息行必须逐字段同一份，不存在第二池次读取窗口
+                .sources(snapSources)
                 // 定稿配图清单（与 finalContent 的 [图片N] 编号严格同序）：与流式 image 帧同源、
                 // 与落库同一份快照，定稿不再改写清单，故不会「答完图消失」
-                .finalImages(pool.sign(finalImages))
-                .degradations(pool.degradations())
+                .finalImages(snapSignedImages)
+                .degradations(snapDegrades)
+                // 「正文相对流式全文改写过」的权威宣告（BodyReconcile 一处裁决）：
+                // 前端据此决定时间线 text 段失效与否，不再现场比对出第三套判据
+                .bodyRewritten(bodyRewritten)
                 .elapsedMs(elapsedMs)
                 .humanWaitMs(humanWaitMs)
                 // 整轮墙钟与准备段：与落库 tokens.turnWallMs/turnPrepMs 同一对变量，答完与刷新必须逐毫秒相等

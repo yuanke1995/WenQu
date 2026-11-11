@@ -57,12 +57,6 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
     /** 入库原文里的图片占位：[图片] 或 [图片：描述]（尚未编号；填充上下文时替换成编号形态） */
     public static final Pattern IMG_PLACEHOLDER_PATTERN = Pattern.compile("\\[图片(：.*?)?\\]");
 
-    /**
-     * 已编号的图片标记：[图片N] 或 [图片N：描述]。上下文填充与终态越界校验都认这一个语法（单源）——
-     * 与引用编号 [N] 是两套空间，共用一个类是因为图片编号本来就在引用池里（imgIndex）。
-     */
-    public static final Pattern IMG_NUMBER_PATTERN = Pattern.compile("\\[图片\\d+[^\\]]*\\]");
-
     private final ConfigService configService;
     private final RerankService rerankService;
     private final ImageUrlSigner imageUrlSigner;
@@ -481,8 +475,7 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
         }
         if (footnotes.isEmpty()) return result;
         log.info("[MCP] 工具 {} 注册 {} 条引用来源", toolName, footnotes.size());
-        return result + "\n\n（本结果包含以下可溯源来源，回答中引用其内容时，请在对应句子后标注对应编号："
-                + String.join("；", footnotes) + "）";
+        return result + "\n\n" + CitationConvention.mcp(String.join("；", footnotes));
     }
 
     /** 剔除 URL 匹配尾部粘连的标点/括号/引号（markdown 链接与句尾标点会粘进 \S+ 匹配） */

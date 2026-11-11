@@ -39,4 +39,15 @@ public final class MessageWrite {
     final String turnId;
     /** 显示块投影（JSON: {v,turnId,blocks:[...]})；与 content/timeline 同一次写入落库 */
     final String blocks;
+    /**
+     * 本轮警示条（流里只活一次的那份，随 done 下发；不扩进写口就是「当场看得见、刷新就没了」）。
+     * null/空=本轮没有警示。
+     */
+    final String warn;
+    /** 本轮降级事件清单（JSON 数组）；null/空数组=没有降级 */
+    final String degradationsJson;
+    /** 每轮文件改动（JSON：只存相对路径与行数）；null=非本机工作区/没跑/没改动 */
+    final String changesJson;
+    /** 分支版本组键（编辑重发/重新生成）；null=不是被替换的一版 */
+    final String variantGroup;
 }

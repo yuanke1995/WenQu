@@ -603,18 +603,6 @@ const earlierStart = (had, candidate) => {
   if (b <= 0) return a
   return Math.min(a, b)
 }
-/** 收尾那一刻写回气泡的「机器时间」那一份：让 turnMs + 等人时间 等于本地钟量到的整轮墙钟。
- *  <b>只给旧服务端用</b>（done 不带 turnWallMs）：那时服务端只有机器耗时，照抄会让跳着的数字
- *  在答完那一刻变小；新服务端一律以 turnWallMs 为准，不再与本地钟对账。
- *  没有本地起表点（历史消息）时原样返回服务端那份，不拿库里的创建时刻凑。 */
-const settledTurnMs = (serverMs, waitMs, startedAt, settledAt) => {
-  const machine = Math.max(0, Number(serverMs) || 0)
-  const wait = Math.max(0, Number(waitMs) || 0)
-  const a = Number(startedAt) || 0
-  const b = Number(settledAt) || 0
-  const wall = a > 0 && b > a ? b - a : 0
-  return Math.max(machine, wall - wait)
-}
 /** 过程块折叠态：与思考段/簇同一套约定——用户点过就认点过的，没点过时收场收起、历史消息天然收起。
  *  跑着的时候恒展开且**不认用户点过的那一次**：这一条此刻只是跟着秒走的计时器，把正在长的过程
  *  收起来既没有可读的东西、又会把「答案写完之前看不到它在干什么」变成常态。
@@ -1603,7 +1591,7 @@ export {
   clusterAutoOpen, clusterLiveRows, groupHasBar, noteText, noteTag, noteOpen, noteGrowing, toggleNote,
   tailNotesTag, tailNotesGrowing, tailOpen, toggleTail,
   turnAnswerText, turnProcessRows, turnSteerRows, turnOpen, toggleTurn, turnShow, turnWarn, turnExpandable, turnHead, turnTitle, turnElapsedMs, turnWaitMs,
-  resumedStartAt, earlierStart, settledTurnMs,
+  resumedStartAt, earlierStart,
   turnTop, turnToggleable,
   durZh,
   toolBrief, prettyIo, LIVE_TAIL_CHARS, liveOutput, groupRunning, groupHasError,

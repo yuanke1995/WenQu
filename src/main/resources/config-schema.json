@@ -203,7 +203,7 @@
       "type": "switch",
       "tips": "citationCheck",
       "def": true,
-      "note": "生成后剔除与引用内容不符的 [N] 并重编号；多一次校验调用，超时自动跳过",
+      "note": "生成后剔除与引用内容不符的 [N] 并重编号；快调用（自动关思考）通常 1~3 秒，15 秒硬超时、失败自动跳过不阻塞",
       "tier": 2
     },
     {
@@ -2909,7 +2909,7 @@
     "opsCheckupRetentionDays": "巡检报告保留天数（默认 90 天）；0=永久",
     "opsCheckupAlertEnabled": "巡检 fail 时通知管理员；同一项未读合并",
     "retrievalDebugEnabled": "显示检索调试、加入评测集、归属徽标与降级提示；排障入口仅管理员可见",
-    "citationCheck": "生成后让模型核对每条 [N] 是否有来源支撑，剔除不符并重编号；每轮多一次调用",
+    "citationCheck": "生成后让模型核对每条 [N] 是否有来源支撑，剔除不符并重编号；判定走关思考快调用（通常 1~3 秒），15 秒硬超时、失败自动跳过不阻塞",
     "visionEnabled": "视觉模型总开关；关闭后图片不进检索与引用",
     "ocrMinText": "PDF 页文本少于该长度视为扫描件并触发 OCR；0=总是 OCR",
     "ocrEngine": "none=文本抽取 / vision=逐页视觉 OCR / pp_structure_v3、mineru=外部版面解析；失败不回落",
@@ -2999,7 +2999,7 @@
     "retrieval.vectorWeight": "混合检索：向量权重(0~1)",
     "retrieval.keywordWeight": "混合检索：关键词权重(0~1)",
     "context.maxContextHits": "上下文：知识块填充上限(块)",
-    "chat.citationCheckEnabled": "引用自检：剔除无支撑的 [N]；多一次校验调用",
+    "chat.citationCheckEnabled": "引用自检：剔除无支撑的 [N]；一次关思考快调用，15 秒硬超时",
     "rerank.enabled": "是否启用重排；默认开，不可用时按融合分排序",
     "rerank.model": "重排模型；留空回落 rerank.baseUrl，需显式配置",
     "retrieval.vecThreshold": "检索：向量相似度下限(0~1，评估对比后可应用)",

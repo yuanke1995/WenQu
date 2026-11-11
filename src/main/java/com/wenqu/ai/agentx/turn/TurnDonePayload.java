@@ -43,6 +43,12 @@ public final class TurnDonePayload {
         private final Map<String, Object> planRecord;
         private final List<Map<String, Object>> pendingSteers;
         /**
+         * 定稿正文相对流式全文是否被改写过（裁决唯一出自 {@code BodyReconcile}）。
+         * done 显式宣告这一事实，前端不再拿 finalContent 与本地累积现场比对——那是第三套判据，
+         * 与后端两套对账判据的边界从来对不齐（接流回放、丢帧、旧服务端都让比对失真）。
+         */
+        private final boolean bodyRewritten;
+        /**
          * 分支自己的扩展键（工作流的 workflowRun、轮级委派归属）。
          * <p>核心键与序列化特性只在这一处，分支不再各写一份 done；只有<b>确属该分支独有</b>的键才走这里，
          * 且不得与上面的核心键重名——重名会在末尾覆盖核心值。
@@ -79,6 +85,7 @@ public final class TurnDonePayload {
         done.put("artifacts", in.artifacts == null ? List.of() : in.artifacts);
         done.put("related", in.related);
         done.put("thinking", in.thinking);
+        done.put("bodyRewritten", in.bodyRewritten);
         if (in.planRecord != null && "superseded".equals(in.planRecord.get("status"))) {
             done.put("planSuperseded", true);
         }

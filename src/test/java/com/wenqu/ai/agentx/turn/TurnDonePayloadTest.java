@@ -39,10 +39,13 @@ class TurnDonePayloadTest {
                 .artifacts(List.of(Map.of("filename", "a.html")))
                 .related(List.of("下一步"))
                 .thinking("想过了")
+                .bodyRewritten(true)
                 .pendingSteers(List.of(Map.of("text", "补充", "messageId", "s1")))
                 .build();
 
         JSONObject done = TurnDonePayload.build(in);
+        // 改写事实由后端一处裁决、随 done 显式宣告——前端判据的唯一来源，键不许缺席
+        assertThat(done.getBooleanValue("bodyRewritten")).isTrue();
 
         assertThat(done.getString("finalContent")).isEqualTo("最终答案");
         assertThat(done.getString("messageId")).isEqualTo("m1");
@@ -79,6 +82,9 @@ class TurnDonePayloadTest {
         assertThat(done).doesNotContainKeys("blocks", "changes", "planRecord", "pendingSteers",
                 "planSuperseded", "planCancelled");
         assertThat(done.getJSONArray("artifacts")).isEmpty();
+        // 未改写的轮也带键（布尔恒下发，前端拿「无键」只认旧服务端）
+        assertThat(done).containsKeys("bodyRewritten");
+        assertThat(done.getBooleanValue("bodyRewritten")).isFalse();
     }
 
     @Test

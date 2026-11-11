@@ -651,7 +651,7 @@ public class ConfigService {
         // 角色提示词归智能体管
         // （c_ai_agent.system_prompt，问渠内置智能体已自带），未绑定智能体的会话回落内置默认
         // （AppProperties.systemPrompt，yml/env 可覆盖）；附加指令不提供平台/个人层
-        d.put("chat.citationCheckEnabled", "true");         // 引用语义一致性自检（生成后校验：编造/张冠李戴的引用是 RAG 信任根基，默认开；每轮多一次模型调用，超时/失败自动跳过不阻塞）
+        d.put("chat.citationCheckEnabled", "true");         // 引用语义一致性自检（生成后校验：编造/张冠李戴的引用是 RAG 信任根基，默认开；判定走关思考快调用通常 1~3 秒，15 秒硬超时/失败自动跳过不阻塞）
         d.put("chat.toolDescriptionCompact", "true");       // 工具说明精简：把每把工具的说明压到一句话再发给模型（工具能力/参数/执行不变；默认开，关掉恢复完整说明）
         d.put("chat.profileAuto", "true");                  // 聊天档/工作区档自动分流：关掉=所有轮次都走工作区（旧行为，用于回滚）
         d.put("chat.asyncWorkspaceUpgrade", "false");       // 隐式会话文件/执行意图异步升级：首轮聊天档不阻塞，后台建沙盒，下一轮切工作区；默认关

@@ -1288,6 +1288,14 @@ public class SessionService {
             msg.setMentions(w.getMentions());         // @ 引用（轮级注入 → 消息级常驻标注，刷新/历史回显保留）
             msg.setHistoryRefs(w.getHistoryRefs());   // # 历史引用（同上）
             msg.setPlan(w.getPlan());                 // 计划批准卡（刷新/历史按轮重建执行计划卡）
+            // 警示条/降级条/文件改动/版本组随正文同一次 INSERT 落库：
+            // 此前它们是 append 之后的四条独立 UPDATE，「落库行=done 帧」靠调用顺序兜着——
+            // 补写漏一条或读在写前，刷新读到的就是与当场不同的另一份账
+            msg.setWarnMsg(notBlank(w.getWarn()) ? w.getWarn() : null);
+            msg.setDegradations(notBlank(w.getDegradationsJson())
+                    && !"[]".equals(w.getDegradationsJson()) ? w.getDegradationsJson() : null);
+            msg.setChanges(notBlank(w.getChangesJson()) ? w.getChangesJson() : null);
+            msg.setVariantGroup(notBlank(w.getVariantGroup()) ? w.getVariantGroup() : null);
             // 本轮身份：与 c_ai_session_event.turn_id 同源，逐气泡「过程」按它取本行那一轮的账本。
             // 空串归一成 NULL——列语义是「没有关联键」，不留一个既查不到东西又占位的空串
             msg.setTurnId(notBlank(w.getTurnId()) ? w.getTurnId() : null);
@@ -1587,33 +1595,11 @@ public class SessionService {
     }
 
     /**
-     * 每轮文件改动补写到回答消息行（appendMessage 不为此扩参，与 setMessageVariant 同一理由；
-     * 轮末对比要在收尾处等执行器，落库时点在回答落库之后）。
-     * <p>只存相对路径与行数：文件内容留在执行器本机的快照/捕获里，点开差异时再让执行器现算。
-     */
-    public void setMessageChanges(String messageId, String changesJson) {
-        if (messageId == null || messageId.isBlank() || changesJson == null || changesJson.isBlank()) return;
-        try {
-            messageMapper.update(null, new LambdaUpdateWrapper<Message>()
-                    .eq(Message::getId, messageId)
-                    .set(Message::getChanges, changesJson));
-        } catch (Exception e) {
-            // 改动卡写不进去只是这一轮「回头看不见」，回答本体不受影响；日志留痕即可
-            log.warn("[CHANGES] 每轮文件改动写入失败 (messageId={}): {}", messageId, e.getMessage());
-        }
-    }
-
-    /**
-     * 本轮降级事件补写（回答落库后另发一条 UPDATE，只在**真有降级**时调用——正常轮次不产生这次往返）。
-     * <p>为什么不塞进 appendMessage 那串 21 个位置参数：那条签名已经很长，为一个偶发字段
-     * 再加一位会让调用点更难对齐；且降级列表在落库时点之后还会增长（工具链路与换路重试都可能在之后登记）。
-     */
-    /**
      * 本轮降级事件补写到回答消息行（没降级就不写）。
-     * <p>补的是「只在流里活一次」那半只钥匙：降级条此前只随 done 事件下发，刷新/切会话后整块消失——
-     * 用户当时看见「本轮没咨询成其他助手」，回头看不见就成了没发生过，与设置页不许有假开关是同一条底线。
-     * <p>主链路与工作流那条路都要补，
-     * 留两份就是两份「什么时候不补」的判据。
+     * <p>主链路的降级已随 {@code MessageWrite.degradationsJson} 在同一次 INSERT 落库，
+     * 这里只剩工作流那条路还在用——补的是「只在流里活一次」那半只钥匙：降级条此前只随 done
+     * 事件下发，刷新/切会话后整块消失，用户当时看见「本轮没咨询成其他助手」，
+     * 回头看不见就成了没发生过，与设置页不许有假开关是同一条底线。
      */
     public void persistDegradations(String messageId, java.util.List<java.util.Map<String, String>> degradations) {
         if (messageId == null || messageId.isBlank() || degradations == null || degradations.isEmpty()) return;
@@ -1633,23 +1619,6 @@ public class SessionService {
         } catch (Exception e) {
             // 写不进去只影响「刷新后还能不能看到这轮的降级条」，不阻断问答收尾，留痕即可
             log.warn("[DEGRADATION] 降级事件落库失败 (messageId={}): {}", messageId, e.getMessage());
-        }
-    }
-
-    /**
-     * 本轮警示条补写到回答消息行（没警示就不写）。
-     * <p>与降级条同一个错法：warn 帧只随流下发一次，「沙盒写入未执行」「该操作被权限档位拒绝」这类
-     * 当场看得见的异常刷新后整块消失，用户回头读到的是一轮看起来普普通通的回答。
-     * <p>只存最后一条：实时那侧本来就是一颗气泡一个警示位（后发的盖掉前发的），落库这份与它同形。
-     */
-    public void saveMessageWarn(String messageId, String warn) {
-        if (messageId == null || messageId.isBlank() || warn == null || warn.isBlank()) return;
-        try {
-            messageMapper.update(null, new LambdaUpdateWrapper<Message>()
-                    .eq(Message::getId, messageId)
-                    .set(Message::getWarnMsg, warn));
-        } catch (Exception e) {
-            log.warn("[WARN] 警示条落库失败 (messageId={}): {}", messageId, e.getMessage());
         }
     }
 
@@ -1684,8 +1653,8 @@ public class SessionService {
 
     /**
      * 把一条刚落库的用户提问标记为「目标指令回声」（值＝目标 id）。
-     * <p>与 {@code saveMessageWarn} 同一个形状：先按常规写口把正文落进去，再补这一列，
-     * 免得为一条标注去加长参数列（十个入参的 appendMessage 已经是第七个调用点在读）。
+     * <p>先按常规写口把正文落进去、再补这一列的形状：这一列挂在<b>用户消息</b>上，
+     * 而提问落库在控制器同步段、与目标登记并发，等不到 MessageWrite 的扩展窗口。
      * <p>失败只告警：目标本身已经成立，回声只是对话里的一行留痕。
      */
     public void markGoalCommand(String messageId, String goalId) {

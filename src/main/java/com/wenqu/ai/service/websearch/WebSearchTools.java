@@ -309,8 +309,7 @@ public class WebSearchTools {
             sb.append("（另有 ").append(filtered).append(" 条搜索结果与问题相关度不足，未列为引用，不要使用。）\n\n");
         }
         if (sink != null) {
-            sb.append("（回答中引用以上内容时，请在对应句子后用方括号标注上述引用编号，如 [3]；"
-                    + "只能使用上列编号，未列出的编号一律不要输出。联网来源与知识库来源同等对待，都必须标注）");
+            sb.append(com.wenqu.ai.agent.chat.CitationConvention.webSearch());
         }
         return sb.toString().trim();
     }

@@ -3,8 +3,11 @@ package com.wenqu.ai.agent.context;
 // [保留] 问渠检索 / 上下文个性化 —— 框架引擎与共享服务仍依赖，勿删。
 
 import com.wenqu.ai.agent.chat.ChatRunRuntime;
-import com.wenqu.ai.agent.chat.TurnSourceRegistry;
+import com.wenqu.ai.agent.chat.CitationConvention;
 import com.wenqu.ai.service.ConfigService;
+import com.wenqu.ai.service.ModelRegistryService;
+import com.wenqu.ai.thread.ThreadPoolManager;
+import com.wenqu.ai.util.UsageAttr;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.openai.OpenAiChatOptions;
@@ -18,6 +21,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -62,8 +68,8 @@ import java.util.regex.Pattern;
 @Service
 public class CitationIntegrityService {
 
-    /** 正文里的引用标注 [N] */
-    private static final Pattern CITE_PATTERN = Pattern.compile("\\[(\\d+)]");
+    /** 正文里的引用标注 [N]（语法单源见 CitationConvention） */
+    private static final Pattern CITE_PATTERN = CitationConvention.CITE_PATTERN;
     /** 代码段（``` 围栏与行内反引号）：其中的 [N] 是字面量，不参与引用判定 */
     private static final Pattern CODE_SEGMENT = Pattern.compile("```.*?(?:```|\\Z)|`[^`\n]*`", Pattern.DOTALL);
     private static final Pattern IMG_NUM_DIGITS_PATTERN = Pattern.compile("\\d+");
@@ -75,16 +81,22 @@ public class CitationIntegrityService {
     private static final Set<String> ALL_SUPPORTED_VERDICTS =
             Set.of("无", "无。", "全部支撑", "全部支持", "都支撑", "都支持", "均支撑", "均支持");
 
+    /** judge 调用硬超时：自检是定稿前的一次辅助调用，慢思考/网关挂起不许把收尾拖到几十秒 */
+    private static final long JUDGE_TIMEOUT_MS = 15_000L;
+
     private final ConfigService configService;
     private final ChatClient chatClient;
     private final ChatRunRuntime runtime;
+    private final ModelRegistryService modelRegistry;
 
     public CitationIntegrityService(ConfigService configService,
                                     ChatClient chatClient,
-                                    ChatRunRuntime runtime) {
+                                    ChatRunRuntime runtime,
+                                    ModelRegistryService modelRegistry) {
         this.configService = configService;
         this.chatClient = chatClient;
         this.runtime = runtime;
+        this.modelRegistry = modelRegistry;
     }
 
     /** 校验结果：text=定稿正文，sources=裁剪并重编后的来源。图片清单不参与定稿改写，故不在结果里。 */
@@ -153,7 +165,7 @@ public class CitationIntegrityService {
         //    <b>只从正文删标记，绝不裁剪 / 重编 / 回写清单</b>：清单一旦在定稿被改写，
         //    流式 image 帧已下发的图会被 done.finalImages 覆盖成另一份（「回答时有图、答完没图」）。
         int maxImg = ctx.images().size();
-        Matcher im = TurnSourceRegistry.IMG_NUMBER_PATTERN.matcher(answer);
+        Matcher im = CitationConvention.IMG_NUMBER_PATTERN.matcher(answer);
         StringBuilder imgSb = new StringBuilder();
         int bogusImgs = 0;
         while (im.find()) {
@@ -184,12 +196,12 @@ public class CitationIntegrityService {
         //    LLM 之前还有一道机械预筛（见 consistencyCheck 内 2a）：句子与来源零共现的角标
         //    不花这次调用直接剔——那是模型重编号时最典型的形状，交给弱 judge 反而救不回来。
         if (configService.getBoolean("chat.citationCheckEnabled") && !sources.isEmpty()) {
-            // 用量归属：自检跑在流收尾回调线程上，ThreadLocal 身份已不可见——hold 显式带上
-            com.wenqu.ai.util.UsageAttr.hold(com.wenqu.ai.util.UsageAttr.of(
-                    ctx.userId(), ctx.sessionId(), null, "citecheck"));
+            // 用量归属：judge 派发到线程池执行（带硬超时），收尾回调线程的 ThreadLocal 身份
+            // 两边都看不见——attr 显式带上，由 askJudge 在工作线程里 hold
+            UsageAttr.Attr attr = UsageAttr.of(ctx.userId(), ctx.sessionId(), null, "citecheck");
             try {
                 long citeT0 = System.currentTimeMillis();
-                CheckResult cr = consistencyCheck(answer, sources, ctx);
+                CheckResult cr = consistencyCheck(answer, sources, ctx, attr);
                 // 剔除 0 处也打一条：否则"自检开了没、花了多久"完全不可观测（调参时无法确认防线在位）
                 log.info("[CITE-CHECK] 自检完成: 机械剔除 {} 处, LLM 剔除 {} 处, 耗时 {} ms",
                         cr.mechanicalCount(), cr.droppedCount() - cr.mechanicalCount(),
@@ -204,8 +216,6 @@ public class CitationIntegrityService {
             } catch (Exception e) {
                 // fail-loud：自检失败保持原回答（校验是增强，不是必选防线）
                 log.warn("[FAIL-LOUD] 引用一致性自检失败（保持原回答）: {}", e.getMessage());
-            } finally {
-                com.wenqu.ai.util.UsageAttr.clear();
             }
             ctx.stageMs().put("citation", System.currentTimeMillis() - ctx.startTime());
         }
@@ -224,7 +234,8 @@ public class CitationIntegrityService {
         runtime.addDegradation(ctx.degradations(), ctx.degradedCodes(), code, msg);
     }
 
-    private CheckResult consistencyCheck(String answer, List<Map<String, Object>> sources, Ctx ctx) {
+    private CheckResult consistencyCheck(String answer, List<Map<String, Object>> sources,
+                                         Ctx ctx, UsageAttr.Attr attr) throws Exception {
         // 1. 收集每个编号首次出现的"前文句子"（重复引用按首次判定；代码段里的 [数字] 是字面量，不参与判定）
         //    代码段范围必须按<b>当前这份正文</b>重算：前面那道越界剔除删过字符，偏移已经变了
         List<int[]> codeSegs = codeRanges(answer);
@@ -273,18 +284,17 @@ public class CitationIntegrityService {
             prompt.append("   证据（").append(sourceNameOf(sources.get(e.getKey() - 1))).append("）：")
                     .append(snip).append("\n");
         }
-        // maxTokens 256：编号表要放得下 "1,2,...,31"（约 62 token），截断会静默少剔一半；
-        // 思考模型还要给推理留余量。输出"无"时成本不变。
-        String judge = chatClient.prompt()
-                .system("你是回答引用的质检员，只判断引用是否被证据直接支撑，输出最简结果。")
-                .user(prompt.toString())
-                .options(OpenAiChatOptions.builder()
-                        .model(ctx.model())
-                        .temperature(0.0)
-                        .maxTokens(256)
-                        .build())
-                .call()
-                .content();
+        // 辅助调用统一口径：能关思考就关（见 askJudge）。超时那一支只保留机械预筛的结论——
+        // 零共现剔除是确定性判据，不依赖 judge，不该被一次挂起的调用连坐。
+        String judge;
+        try {
+            judge = askJudge(prompt.toString(), ctx.model(), attr);
+        } catch (TimeoutException e) {
+            log.warn("[FAIL-LOUD] 引用质检调用超时（{} ms），本轮仅完成机械预筛", JUDGE_TIMEOUT_MS);
+            degrade(ctx, "citationCheckTimeout",
+                    "引用一致性自检超时，本轮仅完成机械预筛");
+            return rebuild(answer, sources, dropped, dropped.size());
+        }
 
         // 3. 解析质检判定。按 [,，、;；\s] 切 token 再 Integer.parseInt 的做法，解析不出数字就
         //    静默按"全部支撑"放行——judge 回一句"以上均不支撑"、或被 maxTokens 截断、或思考模型
@@ -305,6 +315,46 @@ public class CitationIntegrityService {
 
         // 4. 重建：剔除标记、保留的重编 1..M、来源同步裁剪
         return rebuild(answer, sources, dropped, mechanical);
+    }
+
+    /**
+     * judge 那一次调用：质检只输出编号，是平台口径里的<b>辅助调用——能关思考就关</b>
+     * （{@code reasoningOffBody}，与压缩摘要/评估打分同一修法）。此前它直接吃本轮对话模型且
+     * 不下发关闭字段，默认开思考的模型把整次判定当推理题做，收尾被拖到几十秒。
+     * <p>恒思考族（R1/QwQ）关不掉，放宽 maxTokens 给推理留余量，否则思考吃满预算、content 为空，
+     * 防线静默缺席。编号表要放得下 "1,2,...,31"（约 62 token），256 是关掉思考后的截断保险。
+     * <p>调用派发到线程池并带 {@link #JUDGE_TIMEOUT_MS} 硬超时：收尾不许被一次挂起的辅助调用
+     * 无限期扣住；超时后工作线程上的调用自行了断，用量归属随 attr 带过去。
+     */
+    private String askJudge(String prompt, String model, UsageAttr.Attr attr) throws Exception {
+        OpenAiChatOptions.Builder opts = OpenAiChatOptions.builder().model(model).temperature(0.0);
+        Map<String, Object> off = modelRegistry.reasoningOffBody(model);
+        if (!off.isEmpty()) {
+            opts.extraBody(off).maxTokens(256);
+        } else if (ModelRegistryService.THINK_ALWAYS.equals(modelRegistry.referenceThinking(model))) {
+            opts.maxTokens(1500);
+        } else {
+            opts.maxTokens(256);
+        }
+        Future<String> f = ThreadPoolManager.submit(() -> {
+            UsageAttr.hold(attr);
+            try {
+                return chatClient.prompt()
+                        .system("你是回答引用的质检员，只判断引用是否被证据直接支撑，输出最简结果。")
+                        .user(prompt)
+                        .options(opts.build())
+                        .call()
+                        .content();
+            } finally {
+                UsageAttr.clear();
+            }
+        });
+        try {
+            return f.get(JUDGE_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            f.cancel(true);
+            throw e;
+        }
     }
 
     /**

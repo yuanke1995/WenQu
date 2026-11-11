@@ -28,7 +28,7 @@ import { THINK_CAPS, REASONING_LEVELS, THINK_LEVEL_ON, levelLabel,
          groupSources, ensureTick, alignTick, mergeDoneToolCalls, restoreTimeline, extendTimelineText, extendTimelineProcess,
          pushTimelineTool, pushTimelineArtifact, pushTimelineSteer, pushTimelineThink, extendTimelineThink, ensureThinkSegment,
          snapshotVersion, applyVersion, histItemDigest,
-         resumedStartAt, earlierStart, settledTurnMs,
+         resumedStartAt, earlierStart,
          goalTerminalOf, goalBarVisibleOf, goalPhraseOf, goalStateLabelOf, goalStateClassOf,
          goalBlockReasonOf, goalBarTitleOf, goalBarMetaOf, goalRoundLineOf,
          goalCanPauseOf, goalCanResumeOf, goalCanEditOf, goalCanCancelOf, goalCanClearRecordOf,
@@ -38,6 +38,8 @@ import { THINK_CAPS, REASONING_LEVELS, THINK_LEVEL_ON, levelLabel,
          turnSteerRows,
          rememberAgents, isDispatchTool, consultNameOf, stepBriefOf, TURN_STOP_SUFFIX, applyBlocks } from './projections'
 import { planExecProgress, planAdjustsOf, planVersionOf, planStepCount } from './plan'
+// 起表/配图/done 公共合并语义单源（与分享页共用，分叉史见 streamMerge 头注释）
+import { applyTurnStart, applyImageFrame, applyDoneCore } from './streamMerge'
 // 裁决完卡片立刻让铃铛角标重算（后端会把已处理的待办通知收敛为已读），不等 30s 轮询
 import { emitNotifChanged } from './useNotifications'
 import { planReplannedAtOf, setPlanReplanned } from './planUiState'
@@ -3075,17 +3077,8 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
     // 外壳与引擎各发一帧、同一基准（后者 prepMs 更准），
     // 重锚只校正基准，不会改变已显示的量级。绝对时刻不下发，两端钟差进不来。
     onTurnStart: payload => {
-      let p = null
-      try { p = typeof payload === 'string' ? JSON.parse(payload) : payload } catch (e) { p = null }
-      if (!p || typeof p.wallMs !== 'number') return
-      // 基准只认第一份（外壳那帧最先到）：引擎开轮后那帧同一基准、只是 prepMs 更准，
-      // 再按它重锚会把这一帧在路上的时间从读数里扣掉，秒表往回跳。
-      if (!msg.turnClockFromServer) {
-        msg.time = Date.now() - p.wallMs
-        msg.turnClockFromServer = true
-        alignTick(msg.time)   // 秒针相位对齐到起表点：读数按整秒走，收尾不跳最后一秒
-      }
-      if (typeof p.prepMs === 'number') msg.turnPrepMs = p.prepMs
+      // 服务端起表基准（开流第一帧）：合并语义在 streamMerge.applyTurnStart 单源，与分享页共用
+      applyTurnStart(msg, payload, alignTick)
     },
     onSnapshot: payload => {
       // 接流的第一帧（只有 resume 那条通道会有这一帧）：本轮已产出的东西一次铺进气泡
@@ -3412,12 +3405,8 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       liveScroll()
     },
     onImage: imgs2 => {
-      // 配图清单只有「同源全量替换」一种变更方式：后端 image 帧恒发本轮全量数组。
-      // 解析失败或形状不对时保持已有清单，不用一份可疑数据把已下发的图清空。
-      try {
-        const parsed = JSON.parse(imgs2)
-        if (Array.isArray(parsed)) msg.images = parsed
-      } catch (e) { /* 非法帧不动状态：已下发的图不因解析失败而消失 */ }
+      // 配图全量替换、非法帧不动状态：合并语义在 streamMerge.applyImageFrame 单源，与分享页共用
+      applyImageFrame(msg, imgs2)
     },
     onArtifact: payload => {
       try {
@@ -3718,18 +3707,8 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         // 不补这一笔，提问上方那条线在答完那一刻（liveCompactAt 的 loading 落了）就消失，
         // 刷新读库才回来，用户读成「压没压过要看运气」。
         if (liveCompactedSid.value === sid) msg.tokens = { ...(msg.tokens || {}), compacted: 1 }
-        // 整轮用时（气泡顶部那一条读的数）：只认服务端这一份墙钟——它从收到提问起表（含开轮前
-        // 准备与人在回路），落库的 tokens.turnWallMs 就是同一个数，刷新前后必须一模一样。
-        // 不再与本地钟取大：本地从按下回车起表，比服务端多出的只是一次网络往返；取大会让同一轮
-        // 答完显示 5.3、刷新只剩 5.1（差的是一次远端往返）。
-        // 服务端没有这个键时退回「机器耗时 + 等人」口径。
-        if (typeof p.humanWaitMs === 'number') msg.humanWaitMs = p.humanWaitMs
-        if (typeof p.prepMs === 'number') msg.turnPrepMs = p.prepMs
-        if (typeof p.turnWallMs === 'number') {
-          msg.turnMs = p.turnWallMs
-        } else if (typeof p.elapsedMs === 'number') {
-          msg.turnMs = settledTurnMs(p.elapsedMs, msg.humanWaitMs, msg.time, Date.now())
-        }
+        // 用时/正文/配图/模型/思考等公共字段的合并在下面 applyDoneCore 一处做（streamMerge 单源，
+        // 与分享页共用；墙钟口径的理由写在那边）
         // 本轮作答方归属（不再有会话锁定，done 的 agentId/agentName 就是这一轮实际作答的智能体）
         if (p.agentId) msg.agentId = p.agentId
         if (p.agentName) msg.agentName = p.agentName
@@ -3739,17 +3718,10 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
           msg.agentName = p.delegatedAgentName
           if (p.delegatedAgentId) msg.agentId = p.delegatedAgentId
         }
-        // 生效模型以后端权威解析为准（请求未带覆盖时后端回落个人默认，前端预填值在此校正）
-        if (typeof p.model === 'string' && p.model) msg.model = p.model
-        if (p.thinking) msg.thinking = p.thinking
+        // 公共字段一次合并（正文/配图/来源/模型/思考/用时/消息 ID）；返回的 bodyRewritten
+        // 吃后端权威宣告（BodyReconcile 一处裁决随 done 下发），旧服务端才回退现场比对
+        const bodyRewritten = applyDoneCore(msg, p)
         msg.thinkLoading = false
-        if (typeof p.finalContent === 'string' && p.finalContent !== '') {
-          // 最终正文与流式累积不一致（引用自检重建/related 清理等改写了正文）：文本区间失效，
-          // 以 done 下发的落库版时间线为准（区间已按最终正文夹取）；后端没给时间线才回退底部汇总
-          if (p.finalContent !== msg.content) msg.content = p.finalContent
-        }
-        // 权威清单与流式 image 帧、落库同源（后端定稿不再改写配图清单），只做一次对齐
-        if (Array.isArray(p.finalImages)) msg.images = p.finalImages
         if (Array.isArray(p.artifacts) && p.artifacts.length) msg.artifacts = p.artifacts
         // 每轮文件改动：随 done 下发（本轮没跑/没改动/执行器不在都没有这个键，保留原值不覆盖）
         if (p.changes && typeof p.changes === 'object') msg.changes = p.changes
@@ -3759,7 +3731,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         if (Array.isArray(p.toolCalls) && p.toolCalls.length) mergeDoneToolCalls(msg, p.toolCalls)
         // 时间线以落库版为准：本轮视图与刷新后视图同源（工具/产物下标与终态清单一一对应）
         if (Array.isArray(p.timeline) && p.timeline.length) msg.timeline = restoreTimeline(msg, p.timeline)
-        else if (msg.content !== full) {
+        else if (bodyRewritten) {
           // 正文被引用自检重建、后端没给时间线：只有 text 段的区间失效（正文变了），
           // 思考/过程/工具段各自指向独立的累积文本与卡片对象，仍然有效。
           // 一律清空会让这一轮跑过的操作在答完那一刻整体消失——「已完成」点开只剩一段思考。

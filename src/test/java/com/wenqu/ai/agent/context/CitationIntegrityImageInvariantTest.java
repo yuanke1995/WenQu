@@ -33,7 +33,8 @@ class CitationIntegrityImageInvariantTest {
     private static CitationIntegrityService service() {
         ConfigService cfg = mock(ConfigService.class);
         when(cfg.getBoolean("chat.citationCheckEnabled")).thenReturn(false); // 跳过 LLM 自检，只跑纯字符串检查
-        return new CitationIntegrityService(cfg, mock(ChatClient.class), mock(ChatRunRuntime.class));
+        return new CitationIntegrityService(cfg, mock(ChatClient.class), mock(ChatRunRuntime.class),
+                mock(com.wenqu.ai.service.ModelRegistryService.class));
     }
 
     private static CitationIntegrityService.Ctx ctx(List<String> images) {

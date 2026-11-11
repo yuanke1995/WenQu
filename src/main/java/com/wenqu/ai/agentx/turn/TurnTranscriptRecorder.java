@@ -181,22 +181,23 @@ public final class TurnTranscriptRecorder {
         for (Block block : blocks) {
             if ("text".equals(block.kind)) all.append(block.text);
         }
-        if (all.toString().equals(finalBody)) return;
-
-        if (finalBody.startsWith(all.toString())) {
-            String suffix = finalBody.substring(all.length());
-            if (!suffix.isEmpty()) {
-                Block block = add("text");
-                block.text.append(suffix);
+        String stream = all.toString();
+        // 裁决唯一出自 BodyReconcile——与 timelineJson 同一判据，两边不许各推各的
+        switch (BodyReconcile.classify(stream, finalBody)) {
+            case UNCHANGED -> {
             }
-            return;
-        }
-
-        // 整体替换（引用自检/回退正文）：旧正文块作废，最终正文接在末尾；非文本块保留原位。
-        blocks.removeIf(block -> "text".equals(block.kind));
-        if (!finalBody.isEmpty()) {
-            Block block = add("text");
-            block.text.append(finalBody);
+            case APPENDED -> {
+                Block block = add("text");
+                block.text.append(finalBody.substring(stream.length()));
+            }
+            case REPLACED -> {
+                // 整体替换（引用自检/回退正文）：旧正文块作废，最终正文接在末尾；非文本块保留原位。
+                blocks.removeIf(block -> "text".equals(block.kind));
+                if (!finalBody.isEmpty()) {
+                    Block block = add("text");
+                    block.text.append(finalBody);
+                }
+            }
         }
     }
 

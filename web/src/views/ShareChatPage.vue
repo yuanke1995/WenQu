@@ -130,6 +130,8 @@ import ShareAskPanel from '../components/ShareAskPanel.vue'
 import SharePlanPanel from '../components/SharePlanPanel.vue'
 import { openImages } from '../chat/answerViewer'
 import { fmtSize, alignTick, applyBlocks } from '../chat/projections'
+// 起表/配图/done 公共合并语义单源（与主聊天页共用，分叉史见 streamMerge 头注释）
+import { applyTurnStart, applyImageFrame, applyDoneCore } from '../chat/streamMerge'
 // 取材判定层与主聊天页同源（白名单/限额/被拒文案只有一份，改一处两页同时生效）
 import { MAX_IMAGES, MAX_FILES, MAX_FILE_MB, SUPPORTED_EXTS, REJECT, classifyIntake, rejectText,
          compressImage, pasteFilesOf, isLongPaste, pasteNameOf, isImageFile } from '../chat/intake'
@@ -635,50 +637,30 @@ function resetAiTurn (ai) {
  */
 function shareStreamHandlers (ai) {
   return {
-    // 服务端起表基准（开流第一帧）：秒表锚到服务端收到提问那一刻，收尾与刷新才同一个数
+    // 服务端起表基准（开流第一帧）：合并语义在 streamMerge.applyTurnStart 单源，与主聊天页共用
     onTurnStart: payload => {
-      let p = null
-      try { p = typeof payload === 'string' ? JSON.parse(payload) : payload } catch (e) { p = null }
-      if (!p || typeof p.wallMs !== 'number') return
-      // 基准只认第一份（外壳那帧最先到），后一帧只用来校准 prepMs——重锚会让秒表往回跳
-      if (!ai.turnClockFromServer) {
-        ai.time = Date.now() - p.wallMs
-        ai.turnClockFromServer = true
-        alignTick(ai.time)
-      }
-      if (typeof p.prepMs === 'number') ai.turnPrepMs = p.prepMs
+      applyTurnStart(ai, payload, alignTick)
     },
     onToken: t => {
       ai.content += t
       scrollBottom()
     },
-    // 图片按到达顺序整组下发（[图片N] 的 N 就是这个数组的下标），与主聊天页同口径
+    // 图片按到达顺序整组下发（[图片N] 的 N 就是这个数组的下标）：合并语义在 streamMerge 单源，
+    // 非法帧不动已下发的图（此前这里用的是「清空」旧语义，与主页面早已分叉，现收敛）
     onImage: payload => {
-      try {
-        const parsed = JSON.parse(payload)
-        ai.images = Array.isArray(parsed) ? parsed : []
-      } catch (e) { ai.images = [] }
+      applyImageFrame(ai, payload)
     },
     onDone: d => {
       sending.value = false
       ai.loading = false
-      // done.content 是本轮落库版汇总：sources（角标点开的就是它）、finalImages（正文图）、
-      // finalContent（引用自检/清理后改写过正文时，以它为准，否则 [图片N] 与 [N] 的下标会错位）
+      // done.content 是本轮落库版汇总：公共字段（正文/配图/来源/模型/思考/用时/消息 ID）
+      // 由 streamMerge.applyDoneCore 一次合并，与主聊天页同一份实现
       try {
         const p = JSON.parse(d.content || '{}')
-        if (Array.isArray(p.sources)) ai.sources = p.sources
-        if (Array.isArray(p.finalImages)) ai.images = p.finalImages
-        if (typeof p.finalContent === 'string' && p.finalContent !== '') ai.content = p.finalContent
+        applyDoneCore(ai, p)
         // 终态显示块：与主对话页同源，分享页仍只渲染答案通道
         if (p.blocks && typeof p.blocks === 'object') applyBlocks(ai, p.blocks)
         if (Array.isArray(p.degradations)) ai.degradations = p.degradations
-        // 落库的消息 ID：评价与「重新生成」都要用它（服务端按它校验归属）
-        if (p.messageId) ai.messageId = p.messageId
-        // 整轮用时：与主对话页读同一个数（后端算好的墙钟），那条总览两页才说同一句话。
-        // prepMs 只进悬停说明。
-        if (typeof p.turnWallMs === 'number') ai.turnMs = p.turnWallMs
-        if (typeof p.prepMs === 'number') ai.turnPrepMs = p.prepMs
-        if (typeof p.humanWaitMs === 'number') ai.humanWaitMs = p.humanWaitMs
       } catch (e) { /* 汇总解析失败：正文已在流式里累积完，不影响可读 */ }
       // 首轮由服务端建会话：done 带回 sessionId，持久化供刷新恢复
       if (d && d.sessionId) rememberSession(d.sessionId)
