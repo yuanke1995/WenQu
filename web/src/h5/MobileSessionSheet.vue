@@ -160,10 +160,21 @@ const emit = defineEmits(['close', 'select', 'new-chat', 'changed', 'profile', '
 const router = useRouter()
 const onToggleTheme = () => toggleTheme()
 
-// 这排入口的收起态：默认收起（键不存在即收起），展开与否记本地——sticky 贴底的一整排
-// 按钮会常驻占掉约 220px 的列表高度，收成一行账户条（约 74px）才把位置还给会话。
+// 这排入口的收起态：首次进入展开一次把出口摆出来，之后按用户自己的选择记忆——
+// 没写过 FOOT_KEY 就不算「用户选择」，下次回到默认收起。
+// sticky 贴底的一整排按钮会常驻占掉约 220px 的列表高度，收成一行账户条（约 74px）才把位置还给会话。
 const FOOT_KEY = 'app_h5_foot_open'
-const footOpen = ref((() => { try { return localStorage.getItem(FOOT_KEY) === '1' } catch (e) { return false } })())
+const FOOT_SEEN_KEY = 'app_h5_foot_seen'
+const footOpen = ref((() => {
+  try {
+    const seen = localStorage.getItem(FOOT_SEEN_KEY) === '1'
+    if (!seen) localStorage.setItem(FOOT_SEEN_KEY, '1')
+    return seen ? localStorage.getItem(FOOT_KEY) === '1' : true
+  } catch (e) {
+    // 隐私模式下写不进：每次打开都给一次完整出口，比藏起来好
+    return true
+  }
+})())
 const toggleFoot = () => {
   footOpen.value = !footOpen.value
   try { localStorage.setItem(FOOT_KEY, footOpen.value ? '1' : '0') } catch (e) { /* 忽略：隐私模式下写不进，本次会话内仍然可用 */ }

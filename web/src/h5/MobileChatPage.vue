@@ -16,11 +16,6 @@
       <button class="m-bar-btn" type="button" title="在本会话中查找" aria-label="在本会话中查找" @click="openSearch">
         <search-outlined />
       </button>
-      <!-- 过程回放：PC 的头部「过程」按钮在移动壳的同位入口。账本只服务事后回看，
-           放顶栏而不是收进会话 sheet——「这一轮为什么这么答」是排障动作，不该多跳两层 -->
-      <button class="m-bar-btn" type="button" title="看这个会话是怎么跑出来的" aria-label="看这个会话是怎么跑出来的" @click="openEvents()">
-        <history-outlined />
-      </button>
       <button class="m-bar-btn" type="button" title="新建对话" aria-label="新建对话" @click="createNewSession()">
         <plus-outlined />
       </button>
@@ -388,7 +383,7 @@
         </div>
       </div>
 
-      <div v-else class="m-input-card">
+      <div v-else class="m-input-card m-compose-card">
         <textarea
           ref="ta"
           v-model="text"
@@ -400,7 +395,7 @@
           @input="onComposerInput"
         ></textarea>
         <div class="m-tools">
-          <button class="m-tool" type="button" title="模型与思考" @click="modelOpen = true">
+          <button class="m-tool m-tool-model" type="button" title="模型与思考" @click="modelOpen = true">
             <thunderbolt-outlined :class="{ 'm-tool-on': deepThinkOn }" />
             <span class="m-tool-text">{{ effectiveModelLabel }}</span>
           </button>
@@ -445,7 +440,8 @@
                        :session-id="currentSessionId || ''"
                        @update:open="v => { if (!v) skillDoc = '' }" />
     <MobileRefSheet :open="refOpen" :packages="deliveryPackages" @close="refOpen = false"
-                    @source="openSourceDetail" @open-hitl="focusHitlM" @delivery-view="onRefDelivery" />
+                    @source="openSourceDetail" @open-hitl="focusHitlM" @delivery-view="onRefDelivery"
+                    @events="onRefEvents" />
     <MobileNotifSheet :open="notifOpen" @close="notifOpen = false" />
     <MobileRoundSheet :open="roundOpen" :index="roundIdx" @close="roundOpen = false" @events="openRoundEvents" />
     <!-- 过程回放（事件账本）：顶栏入口看整个会话，单轮 sheet 里的那一项只看那一轮。
@@ -623,7 +619,7 @@ import {
   MenuOutlined, PlusOutlined, CaretDownOutlined, ArrowUpOutlined, ArrowDownOutlined, PauseCircleOutlined,
   PlayCircleOutlined,
   ThunderboltOutlined, PlusCircleOutlined, CloseOutlined, GlobalOutlined, SearchOutlined, UpOutlined, DownOutlined,
-  BellOutlined, ExclamationCircleOutlined, FileTextOutlined, CopyOutlined, HistoryOutlined,
+  BellOutlined, ExclamationCircleOutlined, FileTextOutlined, CopyOutlined,
   CompressOutlined, EditOutlined, DeleteOutlined, LoadingOutlined, AimOutlined,
   StopOutlined, FundProjectionScreenOutlined,
   OrderedListOutlined, CaretRightOutlined
@@ -811,6 +807,11 @@ function openDelivery (pkg) {
 function onRefDelivery (pkg) {
   refOpen.value = false
   openDelivery(pkg)
+}
+/** 「状态与来源」里的「看完整过程」：同一条口径，先收本层再开账本 */
+function onRefEvents () {
+  refOpen.value = false
+  openEvents()
 }
 function openGoalActions () {
   goalCancelAsk.value = false
@@ -2192,5 +2193,35 @@ onUnmounted(() => {
 .m-chip-del::after {
   content: ''; position: absolute; top: 50%; right: -6px; transform: translateY(-50%);
   width: 40px; height: 44px;
+}
+
+/* ==================== 横屏（max-height 500） ====================
+   844×390 实测里顶栏与输入区吃掉约 37%，正文只剩不到 200px。这里只收内容、不缩热区：
+   主操作仍是原尺寸，腾出来的是工具行、第二行副文案与多余内边距。
+   只命中「矮且横」的屏——竖屏、平板横屏（768 高）与 PC 都不触发。 */
+@media (max-height: 500px) and (orientation: landscape) {
+  .m-bar { padding-top: calc(2px + var(--sat, 0px)); padding-bottom: 2px; }
+  .m-bar-btn { width: 40px; height: 40px; }
+  /* 视觉收到 40，命中区仍是 44：左右各让 2px，热区口径不随视觉缩 */
+  .m-bar-btn::after { left: -2px; right: -2px; }
+  .m-bar-title { min-height: 40px; }
+  .m-list { padding: 8px 12px 4px; }
+  .m-find { padding: 2px 8px; }
+  .m-composer { padding: 4px 10px calc(6px + max(0px, var(--sab, 0px) - var(--kb, 0px))); }
+  /* chips 单行横滚：这一排常有两三颗，换行就等于再吃一行正文 */
+  .m-chips { flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; padding-bottom: 6px; scrollbar-width: none; }
+  .m-chips::-webkit-scrollbar { display: none; }
+  /* 目标条与任务清单各收成一行：目标只留身份与主行动，清单只留计数 */
+  .m-goalbar { padding: 4px 6px 4px 10px; margin-bottom: 6px; }
+  .m-gb-progress { display: none; }
+  .m-todo { margin-bottom: 6px; }
+  .m-todo .mt-head { min-height: 40px; }
+  .mt-list { max-height: 72px; }
+  /* 输入卡单行：输入框与工具同一行，模型名并进「+」（那里仍能看到当前模型） */
+  .m-compose-card { display: flex; align-items: flex-end; gap: 8px; padding: 4px 8px; }
+  .m-compose-card .m-ta { flex: 1; min-width: 0; max-height: 44px; padding: 8px 4px; }
+  .m-compose-card .m-tools { flex: none; padding: 0; }
+  .m-compose-card .m-tool-model { display: none; }
+  .m-steer { max-height: 44px; overflow-y: auto; }
 }
 </style>

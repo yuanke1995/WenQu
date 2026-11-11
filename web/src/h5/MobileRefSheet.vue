@@ -3,14 +3,25 @@
        PC 的右栏在移动端收纳到这里的底部 sheet；内容都来自引擎派生数据，不另算口径。 -->
   <BottomSheet :open="open" title="状态与来源" max-height="78dvh" @close="$emit('close')">
     <div class="rs">
+      <!-- 段位锚点：先回答「现在在干嘛」，再回答「材料在哪」。点一级跳到对应分段并展开，
+           顺序按「现在 → 材料 → 资产」，与下面的分段一致。 -->
+      <div class="rs-anchors" role="tablist" aria-label="状态与来源分段">
+        <button v-for="a in anchorList" :key="a.key" type="button" class="rs-anchor"
+                :class="{ on: activeAnchor === a.key }" role="tab" :aria-selected="String(activeAnchor === a.key)"
+                @click="goAnchor(a.key)">{{ a.label }}<i v-if="a.count">{{ a.count }}</i></button>
+      </div>
+
       <!-- ---- 本轮 ----
            气泡里逐步的工具卡一直都在（MobileMsgRow 的过程簇），这一张补的是另一个视角：
            不用上下滚就能看完「走了哪几步、每步做的是什么事、此刻在等谁」。
            判据与 PC 右栏那张卡同一份（roundSummary：卡头那半句、在等谁、失败原因；
            toolBrief：关键入参）——两处不许各写一套。单步耗时两端都不报，整轮用时只在气泡那条状态行。
-           「查看完整过程」不在这儿放：顶栏那颗时钟图标就是它的入口，一个动作只留一个入口。 -->
+           「看完整过程」是这条链路的唯一入口：过程回放收进这张 sheet 后，顶栏不再单占一颗图标。 -->
+      <section ref="secRound" class="rs-block">
+      <div class="rs-section">本轮<span v-if="procHeadTail" class="rs-n">{{ procHeadTail }}</span>
+        <button class="rs-go" type="button" @click="$emit('events')">看完整过程</button>
+      </div>
       <template v-if="procSteps.length || procHold">
-        <div class="rs-section">本轮<span v-if="procHeadTail" class="rs-n">{{ procHeadTail }}</span></div>
         <div v-for="(t, ti) in procSteps" :key="ti" class="rs-step"
              :class="{ run: isRunStep(t), err: t.status === 'error', off: t.denied }">
           <div class="rs-proc">
@@ -34,8 +45,11 @@
           <span>{{ procHold.text }}</span>
         </div>
       </template>
+      <div v-else class="rs-empty">本轮还没有过程记录</div>
+      </section>
 
       <!-- ---- 引用来源 ---- -->
+      <section ref="secRef" class="rs-block">
       <div class="rs-section">引用来源<span v-if="sources.length" class="rs-n">{{ sources.length }} 段</span></div>
       <div v-if="!groups.length" class="rs-empty">本轮还没有引用来源</div>
       <div v-for="g in groups" :key="g.key" class="rs-group">
@@ -56,11 +70,20 @@
           </button>
         </div>
       </div>
+      </section>
 
-      <!-- ---- 本轮用量 ----
+      <!-- ---- 容量：本轮用量 + 本会话累计 ----
            每一行都是网关 usage 回传的实测值；名里带「未缓存/其中」的是上一行的子项，缩进摆，
            不并列成能相加的样子（占用 ≠ 累计送入 ≠ 输出，后者含工具往返重发）。
-           PC 端这块是工具栏圆环 + 悬浮容量卡，手机收进这一节。 -->
+           PC 端这块是工具栏圆环 + 悬浮容量卡，手机收进这一折。 -->
+      <section ref="secCap" class="rs-fold" :class="{ open: fold.cap }">
+        <button class="rs-fold-head" type="button" :aria-expanded="String(fold.cap)" @click="toggleFold('cap')">
+          <clock-circle-outlined class="rs-ic" />
+          <span class="rs-fold-t">上下文容量</span>
+          <span class="rs-fold-v">{{ capSummary }}</span>
+          <caret-right-outlined class="rs-caret" :class="{ open: fold.cap }" />
+        </button>
+        <div v-show="fold.cap" class="rs-fold-body">
       <div class="rs-section">本轮用量</div>
       <div v-if="!tokens" class="rs-empty">本轮还没有用量记录</div>
       <template v-else>
@@ -84,8 +107,18 @@
       <div class="rs-kv"><span>已完成轮次</span><b>{{ sessionTokens.rounds }}</b></div>
       <div v-if="sessionTokens.rounds" class="rs-kv"><span>累计送入</span><b>{{ fmtTokens(sessionTokens.prompt) }} tokens</b></div>
       <div class="rs-kv"><span>检索轮次 / 引用</span><b>{{ sessionRetrieval.rounds }} 轮 · {{ sessionRetrieval.refs }} 段</b></div>
+        </div>
+      </section>
 
-      <!-- ---- 交付 ---- -->
+      <!-- ---- 产物 ---- -->
+      <section ref="secDlv" class="rs-fold" :class="{ open: fold.dlv }">
+        <button class="rs-fold-head" type="button" :aria-expanded="String(fold.dlv)" @click="toggleFold('dlv')">
+          <file-text-outlined class="rs-ic" />
+          <span class="rs-fold-t">产物</span>
+          <span class="rs-fold-v">{{ dlvSummary }}</span>
+          <caret-right-outlined class="rs-caret" :class="{ open: fold.dlv }" />
+        </button>
+        <div v-show="fold.dlv" class="rs-fold-body">
       <template v-if="packages.length">
         <div class="rs-section">交付包<span class="rs-n">{{ packages.length }}</span></div>
         <button v-for="d in packages" :key="d.anchorKey || d.name" type="button" class="rs-dlv"
@@ -98,8 +131,20 @@
           <span class="rs-dlv-go">查看 ›</span>
         </button>
       </template>
+      <div v-else class="rs-empty">本轮还没有产物</div>
+        </div>
+      </section>
 
-      <!-- ---- 沙盒文件：模型写进沙盒、却没交付成产物的文件 ----
+      <!-- ---- 文件：沙盒文件 + 后台进程 ---- -->
+      <section ref="secFile" class="rs-fold" :class="{ open: fold.file }">
+        <button class="rs-fold-head" type="button" :aria-expanded="String(fold.file)" @click="toggleFold('file')">
+          <folder-open-outlined class="rs-ic" />
+          <span class="rs-fold-t">文件</span>
+          <span class="rs-fold-v">{{ fileSummary }}</span>
+          <caret-right-outlined class="rs-caret" :class="{ open: fold.file }" />
+        </button>
+        <div v-show="fold.file" class="rs-fold-body">
+      <!-- 沙盒文件：模型写进沙盒、却没交付成产物的文件 ----
            露脸判据与 PC 右栏那张卡同一条：有文件 / 读失败 / 正在读。读不到必须说出来并给重试——
            静默成空列表会被读成「我让它做的文件没了」。折树也吃引擎那一份：接口给的是摊平的一维
            清单，整条路径摊在一行时名字全被截断，认不出哪份是成品。 -->
@@ -173,6 +218,9 @@
         </div>
         <div class="rs-act-tip">停止会一并结束子进程并释放端口</div>
       </template>
+      <div v-if="!sandboxFiles.length && !sandboxErr && !sandboxLoading && !procCardVisible" class="rs-empty">没有沙盒文件</div>
+        </div>
+      </section>
 
       <!-- ---- 目标（与 PC 摘要条同一份 sessionGoal，同一个 GoalCard 组件；PC 右栏不单列目标卡） ----
            卡片只读：状态、轮次、目标原文与卡住的原因。暂停/继续/改原文/删除都只在输入框上方
@@ -182,9 +230,16 @@
         <GoalCard :card="sessionGoal" />
       </template>
 
-      <!-- ---- 这段对话：分享 / 导出 ----
+      <!-- ---- 分享与导出 ----
            刻意排在最后而非最前：生成外发链接是不可逆的外泄动作，误触成本远高于"多滚一下"。 -->
-      <div class="rs-section">这段对话</div>
+      <section ref="secShare" class="rs-fold" :class="{ open: fold.share }">
+        <button class="rs-fold-head" type="button" :aria-expanded="String(fold.share)" @click="toggleFold('share')">
+          <link-outlined class="rs-ic" />
+          <span class="rs-fold-t">分享与导出</span>
+          <span class="rs-fold-v">{{ shareSummary }}</span>
+          <caret-right-outlined class="rs-caret" :class="{ open: fold.share }" />
+        </button>
+        <div v-show="fold.share" class="rs-fold-body">
       <div class="rs-act-row">
         <!-- 分享展开成面板时不收走导出：两个动作互相独立，替换掉会让"导出"藏进二级深处 -->
         <button class="rs-act" type="button" @click="toggleShare">
@@ -223,13 +278,15 @@
         </button>
         <div class="rs-act-tip">分享页跟随会话最新内容，不是快照</div>
       </template>
+        </div>
+      </section>
     </div>
   </BottomSheet>
 </template>
 
 <script setup>
 import { computed, inject, reactive, ref, watch } from 'vue'
-import { CaretRightOutlined, FileTextOutlined, DownloadOutlined, ShareAltOutlined, FileMarkdownOutlined, CopyOutlined, SwapOutlined, StopOutlined, EyeOutlined, FolderOutlined, FolderOpenOutlined, SaveOutlined, CheckOutlined, LoadingOutlined, CloseCircleOutlined, PauseOutlined } from '@ant-design/icons-vue'
+import { CaretRightOutlined, FileTextOutlined, DownloadOutlined, ShareAltOutlined, FileMarkdownOutlined, CopyOutlined, SwapOutlined, StopOutlined, EyeOutlined, FolderOutlined, FolderOpenOutlined, SaveOutlined, CheckOutlined, LoadingOutlined, CloseCircleOutlined, PauseOutlined, ClockCircleOutlined, LinkOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
 import BottomSheet from './BottomSheet.vue'
 import GoalCard from '../components/GoalCard.vue'
@@ -248,7 +305,7 @@ const props = defineProps({
   /** 本会话的交付包（目标包在前、其余按轮次倒序）：点开共用交付面板 */
   packages: { type: Array, default: () => [] }
 })
-defineEmits(['close', 'source', 'open-hitl', 'delivery-view'])
+defineEmits(['close', 'source', 'open-hitl', 'delivery-view', 'events'])
 
 const engine = inject('wqChat')
 // 目标模式：与 PC 同一份 sessionGoal（会话级一份，横跨多轮），卡片本体共用 GoalCard——状态词、
@@ -278,6 +335,48 @@ const toggleSrc = g => { srcOpen[g.key] = !srcOpenOf(g) }
 const groups = computed(() => groupedSources.value)
 const sources = computed(() => lastSources.value || [])
 const tokens = computed(() => lastTokens.value)
+
+// ==================== 段位锚点 + 折叠 ====================
+// 默认只展开「本轮 + 引用」，容量/产物/文件/分享各收成一行摘要——打开 sheet 首屏先回答
+// 「现在在干嘛、材料在哪」，而不是先落在容量与文件上。摘要里的数全部来自同一份数据，
+// 不另算口径；展开后仍是原来的分段与动作。
+const secRound = ref(null)
+const secRef = ref(null)
+const secCap = ref(null)
+const secDlv = ref(null)
+const secFile = ref(null)
+const secShare = ref(null)
+const fold = reactive({ cap: false, dlv: false, file: false, share: false })
+const activeAnchor = ref('round')
+const toggleFold = key => { fold[key] = !fold[key] }
+const goAnchor = key => {
+  activeAnchor.value = key
+  if (key in fold) fold[key] = true
+  const el = { round: secRound, ref: secRef, cap: secCap, dlv: secDlv, file: secFile, share: secShare }[key]
+  requestAnimationFrame(() => el?.value?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
+}
+const anchorList = computed(() => [
+  { key: 'round', label: '本轮' },
+  { key: 'ref', label: '引用', count: sources.value.length || null },
+  { key: 'cap', label: '容量' },
+  { key: 'dlv', label: '产物', count: props.packages.length || null },
+  { key: 'file', label: '文件', count: sandboxCount.value || null },
+  { key: 'share', label: '分享' }
+])
+const capSummary = computed(() => {
+  if (ctxCapData.value.window > 0) {
+    return `${fmtTokens(ctxCapData.value.used)} / ${fmtWindow(ctxCapData.value.window)}（${ctxCapData.value.pct}%）`
+  }
+  return tokens.value ? '暂无实测用量' : '暂无用量记录'
+})
+const dlvSummary = computed(() => props.packages.length ? `${props.packages.length} 件` : '暂无产物')
+const fileSummary = computed(() => {
+  const bits = []
+  if (sandboxCount.value) bits.push(`${sandboxCount.value} 个文件`)
+  if (procCardVisible.value) bits.push(`${procs.value.length} 个进程`)
+  return bits.length ? bits.join(' · ') : '暂无文件'
+})
+const shareSummary = 'Markdown · 只读链接'
 
 // ==================== 本轮 ====================
 // 判据与 PC 右栏那张卡（RightProcessCard）共用 roundSummary：并重复卡、卡头那半句、
@@ -341,13 +440,53 @@ watch(currentSessionId, () => { built.value = null; shareOpen.value = false; res
 // 每次打开这张 sheet 都重扫一次沙盒目录：sheet 关着的时候引擎只在「一轮收尾 / 切会话」那两拍拉，
 // 而用户点开「沙盒文件」恰恰是要看最新做出来的东西。常驻的 PC 右栏没有这个问题（它一直在屏上，
 // 收尾那一拍已经拉过）。后台进程同理——起了个服务、又自己退了的，重扫才知道。
-watch(() => props.open, v => { if (v) { loadSandboxFiles(); loadSandboxProcs() } })
+watch(() => props.open, v => {
+  if (v) {
+    loadSandboxFiles(); loadSandboxProcs()
+    // 每次打开回到默认层级：本轮与引用常驻，其余收成一行摘要
+    fold.cap = fold.dlv = fold.file = fold.share = false
+    activeAnchor.value = 'round'
+  }
+})
 </script>
 
 <style scoped>
 .rs { display: flex; flex-direction: column; gap: 2px; }
 .rs-section { font-size: 12px; color: var(--app-text3); padding: 12px 2px 4px; display: flex; align-items: center; gap: 6px; }
 .rs-n { font-size: 11px; color: var(--app-text3); }
+/* 段位锚点：先给「现在」与「材料」，资产分段点一下跳到并展开 */
+.rs-anchors {
+  display: flex; gap: 4px; overflow-x: auto; padding: 2px 0 10px;
+  border-bottom: 1px solid var(--app-border); scrollbar-width: none;
+}
+.rs-anchors::-webkit-scrollbar { display: none; }
+.rs-anchor {
+  flex: none; min-height: 32px; padding: 0 10px; border-radius: 999px;
+  border: 1px solid var(--app-border); background: var(--app-panel); color: var(--app-text2);
+  font-size: 12px; display: inline-flex; align-items: center; gap: 4px; touch-action: manipulation;
+}
+.rs-anchor.on { border-color: var(--app-accent-border); background: var(--app-accent-weak); color: var(--app-accent); font-weight: 600; }
+.rs-anchor i { font-style: normal; font-size: 10.5px; color: var(--app-text3); }
+.rs-anchor.on i { color: inherit; }
+.rs-block { display: block; }
+.rs-go {
+  margin-left: auto; min-height: 32px; padding: 0 4px; border: none; background: none;
+  color: var(--app-accent); font-size: 12px; touch-action: manipulation;
+}
+.rs-go:active { opacity: .7; }
+/* 折叠段：标题行仍带关键数值，不展开也读得到容量/产物/文件数 */
+.rs-fold { border-top: 1px solid var(--app-border); }
+.rs-fold-head {
+  display: flex; align-items: center; gap: 8px; width: 100%; min-height: 48px; padding: 0 2px;
+  border: none; background: none; color: var(--app-text); text-align: left; touch-action: manipulation;
+}
+.rs-fold-t { flex: none; font-size: 12.5px; font-weight: 600; }
+.rs-fold-v {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  text-align: right; font-size: 11.5px; color: var(--app-text3); font-variant-numeric: tabular-nums;
+}
+.rs-fold-body { padding-bottom: 8px; }
+.rs-fold-body > .rs-section:first-child { padding-top: 4px; }
 .rs-empty { font-size: 13px; color: var(--app-text3); padding: 6px 2px 10px; }
 .rs-group { border: 1px solid var(--app-border); border-radius: 10px; margin-bottom: 6px; overflow: hidden; }
 .rs-group-head { width: 100%; display: flex; align-items: center; gap: 8px; min-height: 46px; padding: 8px 12px; border: none; background: var(--app-panel-2); color: var(--app-text); font-size: 13px; text-align: left; touch-action: manipulation; }
