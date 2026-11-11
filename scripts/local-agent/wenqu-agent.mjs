@@ -684,6 +684,8 @@ async function opMove({ from, to, replace, userInitiated, turnId }, ctx) {
       await fsp.unlink(src)
     }
   }
+  await markTouched(turnId, src)
+  await markTouched(turnId, dst)
   return { path: dst }
 }
 
@@ -699,6 +701,7 @@ async function opRemove({ path: p, userInitiated, turnId }, ctx) {
   if (!ok) throw err('E_DENIED', '用户拒绝了这次删除')
   deadlineGuard(ctx)
   await fsp.rm(target, { recursive: true, force: false })
+  await markTouched(turnId, target)
   return { removed: true, path: target }
 }
 
@@ -730,6 +733,7 @@ async function opWriteChunk({ path: p, offset, contentBase64, turnId }, ctx) {
   } finally {
     await fh.close()
   }
+  await markTouched(turnId, file)
   return { path: file, bytes: buf.length, offset: off }
 }
 
@@ -754,6 +758,7 @@ async function opWrite({ path: p, content, expectedHash, userInitiated, turnId }
   if (!ok) throw err('E_DENIED', '用户拒绝了这次写入')
   deadlineGuard(ctx)
   await writeAtomic(file, Buffer.from(content || '', 'utf8'), expectedHash)
+  await markTouched(turnId, file)
   return { path: file, bytes: Buffer.byteLength(content || '') }
 }
 
@@ -766,6 +771,7 @@ async function opWriteBytes({ path: p, contentBase64, userInitiated, turnId }, c
   if (!ok) throw err('E_DENIED', '用户拒绝了这次写入')
   deadlineGuard(ctx)
   await writeAtomic(file, buf)
+  await markTouched(turnId, file)
   return { path: file, bytes: buf.length }
 }
 
@@ -885,7 +891,11 @@ async function opExec({ command, timeoutSeconds, userInitiated, turnId }, ctx) {
   if (ctx.deadline && remaining <= 0) throw err('E_TIMEOUT', '服务端等待时限已过，命令未执行')
   const seconds = Math.max(1, Math.min(requested, remaining))
   const shell = shellSpawn(command, ctx)
-  return await new Promise(resolve => {
+  // 命令也会改文件（构建产物、代码生成、git mv…）：记下这条命令的执行时间窗，
+  // 轮末按时间窗把这类改动算作助手自己动的。
+  const st = turnId ? turnStateOf(turnId) : null
+  const fromMs = Date.now()
+  const result = await new Promise(resolve => {
     const child = spawn(shell.cmd, shell.args, { cwd: curRoot(ctx), env: process.env })
     let out = ''
     let truncated = false
@@ -908,6 +918,8 @@ async function opExec({ command, timeoutSeconds, userInitiated, turnId }, ctx) {
       resolve({ output: `启动命令失败：${e.message}`, exitCode: 124, truncated: false })
     })
   })
+  if (st) markExecWindow(st, fromMs, Date.now())
+  return result
 }
 
 // ==================== 每轮文件改动（turn changes） ====================
@@ -944,6 +956,8 @@ const TURN_DIFF_MAX_D = 512
 const TURN_MAX_FILES = 200
 /** 判二进制：前 8000 字节里有没有 NUL。 */
 const BINARY_PROBE_BYTES = 8000
+/** 命令执行窗口的容差（毫秒）：文件系统的 mtime 精度与时钟抖动都可能差一点点。 */
+const EXEC_WINDOW_SLACK_MS = 2000
 
 /** turnId → 本轮状态（内存索引；落盘副本在 TURN_STORE 下，进程重启时由 loadTurnStates 读回）。 */
 const turnStates = new Map()
@@ -985,6 +999,8 @@ async function saveTurnState (state) {
     bytes: state.bytes || 0,
     roots: state.roots,
     drift: [...(state.drift || [])],
+    touched: [...(state.touched || [])],
+    execWindows: (state.execWindows || []).map(w => [w[0], w[1]]),
     postCaptures: [...(state.postCaptures || [])],
     repos: state.repos.map(r => ({
       root: r.root, gitDir: r.gitDir, repoObjects: r.repoObjects,
@@ -1029,6 +1045,11 @@ async function parseTurnState (dir) {
     scratch: dir,
     roots: Array.isArray(raw.roots) ? raw.roots : [],
     drift: new Set(Array.isArray(raw.drift) ? raw.drift : []),
+    // 助手这一轮自己动过的路径：轮末只报这些，别的时间窗内的外部改动不算它的产出
+    touched: new Set(Array.isArray(raw.touched) ? raw.touched : []),
+    execWindows: Array.isArray(raw.execWindows)
+      ? raw.execWindows.filter(w => Array.isArray(w) && w.length === 2).map(w => [Number(w[0]) || 0, Number(w[1]) || 0])
+      : [],
     // 上一轮写后副本：非 git 源文件夹没有 afterTree，用它兜底做用户改动对账
     postCaptures: new Map(Array.isArray(raw.postCaptures)
       ? raw.postCaptures.filter(r => Array.isArray(r) && r.length === 2) : []),
@@ -1246,6 +1267,40 @@ async function snapshotTree (repo) {
   }
 }
 
+/**
+ * 命令也会改文件（构建产物、代码生成、git mv…）。命令执行的时间窗记进 state.execWindows：
+ * 轮末归因时，落在这个窗口里的文件改动算这条命令改的（也就是助手改的）。
+ *
+ * 不用给每条命令各拍一份 git 快照——命令一多，快照的开销和磁盘占用都不划算；
+ * 这里靠「文件的最后修改时间落在命令窗口里」来判断归属，粒度够用且不花钱。
+ */
+function markExecWindow (state, fromMs, toMs) {
+  if (!state.execWindows) state.execWindows = []
+  state.execWindows.push([fromMs, toMs])
+}
+
+/** 这条路径是不是助手这一轮自己动过的（改动卡只列这些）。 */
+async function isTouched (state, abs) {
+  const touched = state.touched
+  if (touched && touched.size) {
+    if (touched.has(abs)) return true
+    if (touched.has(await canonicalPath(abs))) return true
+  }
+  // 命令改的：文件最后修改时间落在某条命令的执行窗口里
+  const windows = state.execWindows
+  if (windows && windows.length) {
+    let mtime = 0
+    try {
+      mtime = (await fsp.stat(abs)).mtimeMs
+    } catch { return false }
+    if (!mtime) return false
+    for (const [from, to] of windows) {
+      if (mtime >= from - EXEC_WINDOW_SLACK_MS && mtime <= to + EXEC_WINDOW_SLACK_MS) return true
+    }
+  }
+  return false
+}
+
 /** 改动前抓一份整文件，按内容哈希落在 scratch/captures（内容寻址：相同内容共享一份）。 */
 async function captureFile (abs, dir) {
   let fh
@@ -1307,6 +1362,20 @@ async function snapshotPostCaptures (state) {
 
 /** 服务端在写类调用上带了 turnId：本轮第一次碰这个路径前抓一份，供轮末比对（内容不出这台电脑）。 */
 const turnStarts = new Map()
+
+/**
+ * 记下「助手这一轮自己动过的文件」（绝对路径；原样与规范化两种形式都存一份）。
+ * 轮末只把这些文件算进改动卡：同一台电脑上并行干活的别的程序（IDE、别的任务）
+ * 落在同一时间窗里的改动不算助手的产出。
+ */
+async function markTouched (turnId, absPath) {
+  const id = String(turnId || '').trim()
+  if (!id) return
+  const st = turnStateOf(id)
+  if (!st) return
+  if (path.isAbsolute(absPath)) st.touched.add(absPath)
+  st.touched.add(await canonicalPath(absPath))
+}
 
 /** 首次写（或命令）时还没有轮状态：先补拍一份轮前快照，再允许改动。
  *  这样即使服务端的 turnStart 还在异步队列里，这一轮也不会漏掉第一个改动。 */
@@ -1661,6 +1730,7 @@ async function opTurnStart ({ turnId, previousTurnId }, ctx) {
     turnId: id, scratch,
     roots: await Promise.all(ctx.rootRecords.map(async r => ({ ...r, path: await canonicalPath(r.path) }))),
     repos: [], captures: new Map(), postCaptures: new Map(), review: new Map(), drift: new Set(),
+    touched: new Set(), execWindows: [],
     createdAt: Date.now(), done: false
   }
   turnStates.set(id, state)
@@ -1727,6 +1797,9 @@ async function opTurnEnd ({ turnId }) {
       for (const entry of parseNumstat(String(diff.stdout))) {
         const abs = path.resolve(repo.root, entry.path)
         if (!insideRoots(state, abs)) continue
+        // 只报助手这一轮自己动过的文件：同一台电脑上别的程序（IDE、并行任务）
+        // 在同一时间窗里的改动不算助手的产出。
+        if (!(await isTouched(state, abs))) continue
         listed.set(abs, {
           display: displayOf(state, abs),
           added: entry.added, deleted: entry.deleted,
