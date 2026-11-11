@@ -105,4 +105,13 @@ public class GraphController {
     public ResultJson clear(@PathVariable("kbId") String kbId) {
         return ResultJson.ok(graphRagService.clear(kbId));
     }
+
+    @Operation(summary = "修复移动文档的图谱归属（存量）", description = "图谱随迁修复上线前被跨库移动过的文档，"
+            + "三元组/实体仍挂在旧库：扫「三元组库 ≠ 文档现库」的数据逐文档迁移（与移动链路同一算法）。"
+            + "幂等可重复执行，纯行级搬运不调 LLM")
+    @Permission("graph:build")
+    @PostMapping("/repair-moved")
+    public ResultJson repairMoved() {
+        return ResultJson.ok(graphRagService.repairMovedDocsGraph());
+    }
 }

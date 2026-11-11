@@ -300,6 +300,8 @@ public class DocumentService {
                         .set(AiDocument::getKbId, targetKbId)
                         .set(AiDocument::getUpdateTime, java.time.LocalDateTime.now()));
                 doc.setKbId(targetKbId);
+                // 图谱随迁：同名复用换库与 moveDoc 同一口径，三元组/实体归属跟着文档走（旧库连带清理）
+                graphRagService.migrateDocGraph(doc.getId(), fromKbId);
                 migrateDocAsync(doc.getId(), fromKbId, targetKbId);
             }
             return doc;

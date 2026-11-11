@@ -63,6 +63,8 @@ public class KnowledgeBaseController {
     private final com.wenqu.ai.config.ConfigSchemaService configSchemaService;
     /** 个人设置值（/param-defaults 对 personal 键取「本人生效值」预填，与检索实际生效口径一致） */
     private final com.wenqu.ai.service.UserConfigService userConfigService;
+    /** 文档跨库移动时图谱数据（三元组/实体）同步随迁——见 moveDoc */
+    private final com.wenqu.ai.service.GraphRagService graphRagService;
 
     private ResourceVisibilityService.Principal principal() {
         return new ResourceVisibilityService.Principal(
@@ -378,7 +380,8 @@ public class KnowledgeBaseController {
     }
 
     @Operation(summary = "移动文档到知识库", description = "body: {kbId}——传空表示移回自己的默认知识库（问渠）；"
-            + "前后两库向量模型不同时自动异步迁移该文档向量；需要对源、目标两个库都有管理权；"
+            + "前后两库向量模型不同时自动异步迁移该文档向量；该文档的图谱三元组/实体同步随迁目标库（旧库连带清理）；"
+            + "需要对源、目标两个库都有管理权；"
             + "官方内置知识库不接受外部文档移入（内容随版本自动同步）")
     @Permission("kb:write")
     @PutMapping("/doc/{docId}")
@@ -406,6 +409,9 @@ public class KnowledgeBaseController {
         requireManage(toKb);
         boolean ok = kbService.moveDoc(docId, toKbId, RequestUser.uid());
         if (ok) {
+            // 图谱随迁（同步、纯行级搬运）：三元组/实体归属改到目标库并清理旧库；
+            // toKbId 传空=移回默认库，migrateDocGraph 按文档现 kbId 解析目标，无需在此重复解析
+            graphRagService.migrateDocGraph(docId, fromKbId);
             documentService.migrateDocAsync(docId, fromKbId, toKbId);
         }
         Map<String, Object> r = new LinkedHashMap<>();

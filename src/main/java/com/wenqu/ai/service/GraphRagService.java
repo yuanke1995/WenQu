@@ -2,6 +2,7 @@ package com.wenqu.ai.service;
 
 import com.alibaba.fastjson2.JSON;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.mapper.AiDocumentMapper;
@@ -24,6 +25,7 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -807,6 +809,153 @@ public class GraphRagService {
         int t = tripleMapper.delete(new LambdaQueryWrapper<GraphTriple>().eq(GraphTriple::getDocId, docId));
         int x = extractMapper.delete(new LambdaQueryWrapper<GraphExtract>().eq(GraphExtract::getDocId, docId));
         if (t + x > 0) log.info("[GRAPH] 文档 {} 图谱数据已清理：三元组 {} / 抽取记录 {}", docId, t, x);
+    }
+
+    // ==================================================================================================
+    // 跨库移动：图谱数据随迁（moveDoc 链路同步调用）
+    // ==================================================================================================
+
+    /**
+     * 文档跨库移动后图谱随迁（**调用方已把文档 kbId 更新为目标库**，本方法按 docId 读现归属）。
+     * 三元组随文档迁入目标库，实体引用重映射：
+     * <ul>
+     *   <li>目标库已有同归一名实体 → 复用（mention_count 累加本文档三元组的引用次数）；</li>
+     *   <li>源库实体不再被其它文档引用 → 整行迁入目标库（id 不变，旧库随之清干净）；</li>
+     *   <li>源库实体仍被其它文档引用 → 目标库复制一份（源库保留原行，互不影响）；</li>
+     *   <li>目标库已存在同 (主,谓,客) → 随迁三元组作重复丢弃（uk_triple 幂等口径）。</li>
+     * </ul>
+     * 抽取账本（c_ai_graph_extract）按 doc/chunk 记账、不挂库，无需改动——移动后目标库构建
+     * 仍按 content_hash 增量跳过已抽块，不白烧 LLM。
+     *
+     * @param fromKbId 移动前的归属库（与现归属相同则视为未移动，直接返回）
+     * @return moved/deduped/movedEntities/reusedEntities/copiedEntities 计数
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public Map<String, Object> migrateDocGraph(String docId, String fromKbId) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("moved", 0);
+        out.put("deduped", 0);
+        out.put("movedEntities", 0);
+        out.put("reusedEntities", 0);
+        out.put("copiedEntities", 0);
+        if (docId == null || docId.isBlank()) return out;
+        AiDocument doc = docMapper.selectById(docId);
+        String toKbId = doc == null ? null : doc.getKbId();
+        if (toKbId == null || toKbId.isBlank() || toKbId.equals(fromKbId)) return out;
+        List<GraphTriple> triples = tripleMapper.selectList(new LambdaQueryWrapper<GraphTriple>()
+                .eq(GraphTriple::getDocId, docId));
+        if (triples.isEmpty()) return out;
+        Set<String> entityIds = new LinkedHashSet<>();
+        Map<String, Integer> refsFromDoc = new HashMap<>();
+        for (GraphTriple t : triples) {
+            entityIds.add(t.getSubjectId());
+            entityIds.add(t.getObjectId());
+            refsFromDoc.merge(t.getSubjectId(), 1, Integer::sum);
+            refsFromDoc.merge(t.getObjectId(), 1, Integer::sum);
+        }
+        // 除本文档外，这些实体还被谁引用（任何库、任何文档都算——保守判定，绝不移走仍被引用的行）
+        Set<String> stillReferenced = new HashSet<>();
+        for (GraphTriple t : tripleMapper.selectList(new LambdaQueryWrapper<GraphTriple>()
+                .and(w -> w.isNull(GraphTriple::getDocId).or().ne(GraphTriple::getDocId, docId))
+                .and(w -> w.in(GraphTriple::getSubjectId, entityIds).or().in(GraphTriple::getObjectId, entityIds)))) {
+            stillReferenced.add(t.getSubjectId());
+            stillReferenced.add(t.getObjectId());
+        }
+        Map<String, String> remap = new HashMap<>();   // 源实体 id → 目标实体 id
+        for (GraphEntity e : entityMapper.selectBatchIds(entityIds)) {
+            if (toKbId.equals(e.getKbId())) {          // 已在目标库（历史混挂数据）：原样复用
+                remap.put(e.getId(), e.getId());
+                continue;
+            }
+            GraphEntity target = entityMapper.selectOne(new LambdaQueryWrapper<GraphEntity>()
+                    .eq(GraphEntity::getKbId, toKbId).eq(GraphEntity::getNameNorm, e.getNameNorm()).last("LIMIT 1"));
+            if (target != null) {
+                int add = refsFromDoc.getOrDefault(e.getId(), 0);
+                if (add > 0) {
+                    target.setMentionCount((target.getMentionCount() == null ? 0 : target.getMentionCount()) + add);
+                    entityMapper.updateById(target);
+                }
+                remap.put(e.getId(), target.getId());
+                out.merge("reusedEntities", 1, (a, b) -> (Integer) a + (Integer) b);
+            } else if (stillReferenced.contains(e.getId())) {
+                GraphEntity copy = new GraphEntity();  // 共享实体：目标库复制一份，源库保留
+                copy.setId(UUID.randomUUID().toString());
+                copy.setKbId(toKbId);
+                copy.setName(e.getName());
+                copy.setNameNorm(e.getNameNorm());
+                copy.setAliases(e.getAliases());
+                copy.setType(e.getType());
+                copy.setMentionCount(refsFromDoc.getOrDefault(e.getId(), 0));
+                copy.setCreateTime(LocalDateTime.now());
+                entityMapper.insert(copy);
+                remap.put(e.getId(), copy.getId());
+                out.merge("copiedEntities", 1, (a, b) -> (Integer) a + (Integer) b);
+            } else {
+                entityMapper.update(null, new LambdaUpdateWrapper<GraphEntity>()   // 独占实体：整行迁入
+                        .eq(GraphEntity::getId, e.getId())
+                        .set(GraphEntity::getKbId, toKbId));
+                remap.put(e.getId(), e.getId());
+                out.merge("movedEntities", 1, (a, b) -> (Integer) a + (Integer) b);
+            }
+        }
+        // 目标库现存边键一次载入（只按迁入实体的目标 id 过滤，量有界），避免逐条 count
+        Set<String> targetKeys = new HashSet<>();
+        Set<String> targetSubjectIds = new HashSet<>(remap.values());
+        if (!targetSubjectIds.isEmpty()) {
+            for (GraphTriple t : tripleMapper.selectList(new LambdaQueryWrapper<GraphTriple>()
+                    .select(GraphTriple::getSubjectId, GraphTriple::getPredicate, GraphTriple::getObjectId)
+                    .eq(GraphTriple::getKbId, toKbId).in(GraphTriple::getSubjectId, targetSubjectIds))) {
+                targetKeys.add(t.getSubjectId() + "|" + t.getPredicate() + "|" + t.getObjectId());
+            }
+        }
+        int moved = 0, deduped = 0;
+        for (GraphTriple t : triples) {
+            String s = remap.getOrDefault(t.getSubjectId(), t.getSubjectId());
+            String o = remap.getOrDefault(t.getObjectId(), t.getObjectId());
+            String key = s + "|" + t.getPredicate() + "|" + o;
+            if (!t.getKbId().equals(toKbId) && !targetKeys.add(key)) {   // 目标库（或本批）已有同边：随迁行作重复删
+                tripleMapper.deleteById(t.getId());
+                deduped++;
+                continue;
+            }
+            tripleMapper.update(null, new LambdaUpdateWrapper<GraphTriple>()
+                    .eq(GraphTriple::getId, t.getId())
+                    .set(GraphTriple::getKbId, toKbId)
+                    .set(GraphTriple::getSubjectId, s)
+                    .set(GraphTriple::getObjectId, o));
+            moved++;
+        }
+        out.put("moved", moved);
+        out.put("deduped", deduped);
+        if (moved + deduped > 0) {
+            log.info("[GRAPH] 文档 {} 图谱随迁: {} → {}（三元组迁 {} / 去重删 {} / 实体 迁{} 复用{} 复制{}）",
+                    docId, fromKbId, toKbId, moved, deduped,
+                    out.get("movedEntities"), out.get("reusedEntities"), out.get("copiedEntities"));
+        }
+        return out;
+    }
+
+    /**
+     * 存量修复（管理员显式动作）：修复上线前被移动过的文档——三元组/实体仍挂在旧库。
+     * 扫「三元组 kb_id ≠ 所属文档现 kb_id」的文档，逐文档走与移动链路同一套 {@link #migrateDocGraph}。
+     * 幂等：修复后再跑查不出不一致行，计数全 0。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public Map<String, Object> repairMovedDocsGraph() {
+        List<Map<String, Object>> mismatches = tripleMapper.mismatchedDocKbPairs();
+        List<Map<String, Object>> details = new ArrayList<>();
+        Map<String, String> firstFromKbByDoc = new LinkedHashMap<>();
+        for (Map<String, Object> r : mismatches) {
+            firstFromKbByDoc.putIfAbsent(str(r.get("docId")), str(r.get("fromKbId")));
+        }
+        for (Map.Entry<String, String> en : firstFromKbByDoc.entrySet()) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("docId", en.getKey());
+            m.putAll(migrateDocGraph(en.getKey(), en.getValue()));
+            details.add(m);
+        }
+        log.info("[GRAPH] 存量图谱归属修复：不一致文档 {} 个", firstFromKbByDoc.size());
+        return Map.of("docs", firstFromKbByDoc.size(), "details", details);
     }
 
     // ==================================================================================================

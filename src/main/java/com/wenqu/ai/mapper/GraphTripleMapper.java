@@ -33,4 +33,9 @@ public interface GraphTripleMapper extends BaseMapper<GraphTriple> {
             + " AND object_id IN <foreach collection='ids' item='id' open='(' separator=',' close=')'>#{id}</foreach>"
             + " GROUP BY subject_id, `predicate`, object_id ORDER BY cnt DESC</script>")
     List<Map<String, Object>> aggregateEdges(@Param("kbId") String kbId, @Param("ids") List<String> ids);
+
+    /** 存量修复扫描（GraphRagService.repairMovedDocsGraph）：三元组挂的库 ≠ 所属文档现库 的 (docId, 旧库id) 对 */
+    @Select("SELECT DISTINCT t.doc_id AS docId, t.kb_id AS fromKbId FROM c_ai_graph_triple t"
+            + " JOIN c_ai_document d ON d.id = t.doc_id WHERE t.kb_id <> d.kb_id")
+    List<Map<String, Object>> mismatchedDocKbPairs();
 }
