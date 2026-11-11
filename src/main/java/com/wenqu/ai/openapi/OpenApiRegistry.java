@@ -57,7 +57,10 @@ public class OpenApiRegistry {
     public void onContextRefreshed() {
         if (initialized) return;
         initialized = true;
-        RequestMappingHandlerMapping mapping = context.getBean(RequestMappingHandlerMapping.class);
+        // 按名称取：actuator 在场时容器里还有第二个同类型 bean（controllerEndpointHandlerMapping），
+        // 按类型取会 NoUniqueBeanDefinitionException 直接炸启动（实机启动抓到的，MockMvc 测试不启全上下文抓不到）
+        RequestMappingHandlerMapping mapping = context.getBean("requestMappingHandlerMapping",
+                RequestMappingHandlerMapping.class);
         List<Endpoint> found = new ArrayList<>();
         List<String> unannotated = new ArrayList<>();
         Set<String> routeKeys = new LinkedHashSet<>();
