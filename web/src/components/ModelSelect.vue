@@ -365,7 +365,15 @@ watch([() => props.modelValue, () => groups.value, inheritText,
 <style scoped>
 /* 非胶囊形态不生成盒子：设置页/表单里的选择器仍按原来的 DOM 关系参与父容器布局 */
 .ms-shell { display: contents; }
-.ms-shell.is-pill { display: inline-block; position: relative; }
+/* 胶囊外壳显式用 flex 居中对齐，不再让 inline-block 的行盒基线参与定位：
+   原来外壳是 inline-block、里面的 a-select 带 vertical-align:middle，胶囊的垂直位置
+   由「行盒基线 + x-height/2」这套间接算法得出，各引擎（尤其 Safari）算出的半像素不同，
+   与工具条里 30px 的发送圆并排时会看出胶囊文字/箭头比发送图标高或低 1~2px。
+   改成 flex 后外壳高度就是胶囊高度（28px），内容由 align-items 居中，三者落在同一条中线。
+   宽度仍由内层 a-select 的内联 width 决定：flex: none 让胶囊在工具条挤的时候保持原宽，
+   与改前 inline-block 的「不收缩、只溢出」表现一致。
+   仍是 inline 级（inline-flex）：放进块级上下文时保持 shrink-to-fit，不撑满整行。 */
+.ms-shell.is-pill { display: inline-flex; align-items: center; flex: none; position: relative; }
 .ms-option {
   display: flex;
   align-items: center;
@@ -469,6 +477,10 @@ watch([() => props.modelValue, () => groups.value, inheritText,
 .ms-pill :deep(.ant-select-selection-item),
 .ms-pill :deep(.ant-select-selection-placeholder) {
   line-height: 26px !important;
+  /* 下移 1px：值/跟随两态文本同字体同行高、墨迹偏移一致（实测两态相对胶囊中心差 <0.1px），
+     必须一起加——只加 item 的话切到「跟随」态文字会上跳 1px。
+     这是用户在 DevTools 里对真实页面试出来的值：加后模型名与档位标记、下拉箭头同一条视觉中线 */
+  margin-top: 1px;
   color: var(--app-text3);
 }
 /* 已指定模型时文字用前景色，「跟随：…」保持灰 */
@@ -491,11 +503,13 @@ watch([() => props.modelValue, () => groups.value, inheritText,
 .ms-pill :deep(.ant-select-selection-search-input) {
   height: 26px !important;
 }
-/* 覆盖层不吃指针事件：点图标/标记等于点胶囊，下拉照常展开 */
+/* 覆盖层不吃指针事件：点图标/标记等于点胶囊，下拉照常展开。
+   下移 0.5px：1x 屏墨迹实测品牌图标比「中」档位标记高约半像素（2x 下两者几何居中一致，
+   差异来自 1x 取整与品牌图形的重心），与标记落在同一视觉中线 */
 .ms-pill-icon {
   position: absolute;
   left: 9px;
-  top: 50%;
+  top: calc(50% + 0.5px);
   transform: translateY(-50%);
   line-height: 0;
   pointer-events: none;
@@ -504,10 +518,10 @@ watch([() => props.modelValue, () => groups.value, inheritText,
   position: absolute;
   /* 30 = 箭头右内缩 11 + 箭头宽 12 + 与箭头留 7 */
   right: 30px;
-  /* 不靠盒居中：汉字墨迹落在 11px 盒的底部，盒居中时它比西文基线低 2px（用户点名的「没对齐」）。
-     上提 2px：墨迹底边正好压在西文基线、视觉中心与模型名的字身中心同高（实测 13px 正文下
-     文字 x-height 中线 y20.5，标记中线同为 20.5） */
-  top: calc(50% - 2px);
+  /* 盒居中即可：2x 截图墨迹重心实测，13px 模型名 256.2、11px 汉字标记盒居中 255.5，
+     差 0.35 CSS px（原上提 2px 反而让标记比文字高 2.4px，用户点名「偏上」）。
+     汉字墨迹虽落在 11px 盒的下半部，但同盒高的西文 x-height 也低于盒中心，正好互相抵消 */
+  top: 50%;
   transform: translateY(-50%);
   font-size: 11px;
   line-height: 1;

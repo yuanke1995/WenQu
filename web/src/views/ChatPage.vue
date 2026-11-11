@@ -1912,7 +1912,8 @@ const thinkPanelFoot = computed(() => {
 const pillLevelRef = computed(() => currentOverrideModel.value || effectiveModel.value)
 const pillLevelBadge = computed(() => {
   const ref = pillLevelRef.value
-  if (!ref || !thinkCapsOf(ref).visible) return ''
+  // 模型登记未加载完成时不挂标记：此时档位只能取到兜底值，先渲染会闪「思」再跳成真实档位
+  if (!ref || !modelIndex.value[ref] || !thinkCapsOf(ref).visible) return ''
   const lv = currentLevelOf(ref)
   if (!lv || lv === 'off') return ''
   return lv === THINK_LEVEL_ON ? '思' : levelLabel(lv)
@@ -5163,7 +5164,9 @@ onMounted(async () => {
 .ctxcap-compact { width: 100%; justify-content: center; }
 
 /* 上下文容量圆环（输入框右下、模型选择器左侧）：与右栏模型行共用同一张容量卡，>80% 警告 / >95% 危险 */
-.ctx-ring { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; margin-right: 4px; border-radius: 50%; cursor: default; transition: background .15s; }
+/* 下移 1px：1x 屏实测圆环几何中心比「中」档位标记高 1px（圆环与标记盒居中基准不同：
+   标记墨迹略低于盒中心、圆环墨迹即盒中心），补齐后与标记同一条视觉中线 */
+.ctx-ring { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; margin-right: 4px; border-radius: 50%; cursor: default; transition: background .15s; transform: translateY(1px); }
 .ctx-ring:hover { background: var(--app-panel-2); }
 .ctx-ring-bg { stroke: var(--app-border); }
 .ctx-ring-val { stroke: var(--app-accent); transition: stroke-dasharray .25s; }
