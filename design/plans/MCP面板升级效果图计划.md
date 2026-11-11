@@ -11,10 +11,10 @@
 
 | 文件 | 说明 |
 |---|---|
-| `docs/mcp-panel-upgrade/mcp-panel-upgrade.html` | 设计稿源：三个 1600×1000 场景纵向排列，场景之间只有一行标题说明 |
-| `docs/mcp-panel-upgrade/assets/mcp-panel-main.png` | 主页全景（6 卡，仅展开 1 张失败卡 + 1 张已连接卡） |
-| `docs/mcp-panel-upgrade/assets/mcp-panel-playground.png` | 试调用弹窗（背景为主页 + 遮罩） |
-| `docs/mcp-panel-upgrade/assets/mcp-panel-stats.png` | 个人调用统计抽屉（背景为主页 + 遮罩） |
+| `design/mockups/mcp-panel-upgrade/MCP面板升级.html` | 设计稿源：三个 1600×1000 场景纵向排列，场景之间只有一行标题说明 |
+| `docs/mcp-panel-upgrade/assets/MCP面板-主界面.png` | 主页全景（6 卡，仅展开 1 张失败卡 + 1 张已连接卡） |
+| `docs/mcp-panel-upgrade/assets/MCP面板-试调用.png` | 试调用弹窗（背景为主页 + 遮罩） |
+| `docs/mcp-panel-upgrade/assets/MCP面板-调用统计.png` | 个人调用统计抽屉（背景为主页 + 遮罩） |
 
 ## 2. 现状分析（已读代码）
 
@@ -107,7 +107,7 @@
 
 ## 5. 实施步骤
 
-1. 写 `docs/mcp-panel-upgrade/mcp-panel-upgrade.html`：内联全部 CSS（token 子集 + 三个场景样式），无外链、无图片，字体走 `-apple-system/PingFang SC`；每个场景是 1600×1000 的 `.scene` 方块，场景外只放一行标题 + 一句说明。
+1. 写 `design/mockups/mcp-panel-upgrade/MCP面板升级.html`：内联全部 CSS（token 子集 + 三个场景样式），无外链、无图片，字体走 `-apple-system/PingFang SC`；每个场景是 1600×1000 的 `.scene` 方块，场景外只放一行标题 + 一句说明。
 2. 渲染脚本临时写到 `/tmp/render-mcp-mockup.mjs`，用 `web/node_modules/playwright` 的 chromium，`deviceScaleFactor: 2`，分别对 `#scene-main`、`#scene-playground`、`#scene-stats` 截图到 `docs/mcp-panel-upgrade/assets/`。
 3. 用 Read 逐张查看 PNG，修掉所有溢出/换行/重叠/滚动条；必要时调场景内边距或文案长度。
 4. 用浏览器打开 HTML 自检（三个场景之间的说明文字不与场景抢视线）。

@@ -21,7 +21,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 智能体评测与发布门禁（plan-agent-eval.md §6.1）。
+ * 智能体评测与发布门禁（智能体评测立项方案.md §6.1）。
  * <p>
  * 资产口径：评测数据按<b>智能体归属</b>隔离——读端点要求智能体对当前用户可读
  * （{@code AgentService.get}，含共享范围），写端点与「运行回归」要求可管理（谁建归谁，

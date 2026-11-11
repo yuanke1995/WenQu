@@ -8,7 +8,7 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 /**
- * 服务账号（批次 C3，方案 design/plans/rbac-upgrade-plan.md §3 批次 C3）：
+ * 服务账号（批次 C3，方案 design/plans/RBAC升级方案.md §3 批次 C3）：
  * 「非人类身份」——其它系统长期调用管理面 / 内部服务互调用的独立账号。
  * <ul>
  *   <li>凭据：{@code X-Service-Token} 头带明文密钥，库中只存 SHA-256（泄露即吊销重建，不解密回显）；</li>

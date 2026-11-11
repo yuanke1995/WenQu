@@ -92,7 +92,7 @@
 - **Mock 宿主 API**：/tmp 独立目录小 mock（GET /orders/{id} + POST /orders，回显收到的 Authorization 头）
 - **E2E**：① 导入 spec→勾选 ops→保存，DB 验 http_tools 含 JWE 密文、GET 回显 mask；② 聊天「查订单 88」→ 工具触发→答案含数据，mock 侧验鉴权头；③ requireApproval=true 出审批卡、批后继续；④ 带 variables 调用答案引用上下文、不带时提示词零变化；⑤ 游客分享开关 0/1 两态；⑥ 版本 diff 出现「HTTP工具集」、回滚恢复；⑦ 闸门：httpTool.enabled=false / tool_http=0 / 游客轮均不挂载
 - **并行 WIP 纪律**：schema.sql / config-schema.json / ConfigDefaults.java / ConfigService.java / api.js 当前有并行会话未提交 hunk——这些文件**只提自己的 hunk**（`git hash-object` + `update-index --cacheinfo`），整文件属于自己才整文件 add；提交后 `git show --stat` 核对
-- **账本**：方案落 `.zcode/plans/plan-agent-http-tools-and-variables.md`，路线图「活跃线」加行；完工回写 commit hash
+- **账本**：方案落 `.zcode/plans/智能体对外能力第一批方案.md`，路线图「活跃线」加行；完工回写 commit hash
 
 ## 提交
 

@@ -102,7 +102,7 @@ description: 问渠三仓（wenqu / dynamic-form / dynamic-form-vue）开发规�
 |---|---|---|
 | 效果图 HTML 原型 | `design/mockups/<线名>/<线名>.html` | 是 |
 | 效果图截图 / 资产 | `design/mockups/<线名>/assets/` | 是 |
-| 方案 / 实施计划 / 评审清单 / 效果图说明 | `design/plans/plan-<线名>.md` | 是 |
+| 方案 / 实施计划 / 评审清单 / 效果图说明 | `design/plans/<线名>.md` | 是 |
 | 一次性验证脚本、抓包、日志、临时导出 | 系统临时目录（`mktemp -d`），结束即删 | 否 |
 | 长期可复用脚本 | `scripts/`（按既有子目录分类） | 是 |
 | 测试夹具 / 回放样本 | `fixtures/` | 是 |
@@ -114,7 +114,7 @@ description: 问渠三仓（wenqu / dynamic-form / dynamic-form-vue）开发规�
 2. **成品与中间物分开**：`design/` 只放成品稿；调试截图、中间渲染、临时导出不进 `design/`。
 3. **一次性产物用完即删**，不留下「等以后清理」的垃圾。
 4. **生成后自检**：跑 `git status --short`，根目录不得出现新条目，`??` 只允许出现在 `design/` 内；命中就按上表挪走或删除。
-5. **命名对齐线名**：同一功能的方案、效果图、账本条目共用路线图「活跃线」的线名（kebab-case），一眼能对上。
+5. **命名对齐线名**：同一功能的方案、效果图、账本条目共用路线图「活跃线」的线名（中文文件名），一眼能对上。
 
 - 单文件原型可直接 `design/mockups/<线名>.html`；带 assets 的用子目录。
 - 新立项：方案与效果图分别落上面两处，账本「活跃线」指向这两个路径。
@@ -127,7 +127,7 @@ description: 问渠三仓（wenqu / dynamic-form / dynamic-form-vue）开发规�
 
 - **开工前**查「活跃线」：撞车检查 + 上下文（这条线为什么做、做到哪、有没有待拍板阻塞）。
 - **完工时**回写：条目补 commit hash + 日期；「待拍板」区落定一项转正一项。
-- **新立项**：方案放 `design/plans/plan-<线名>.md`、效果图放 `design/mockups/<线名>/`（见上节），账本「活跃线」加一行指向它们。
+- **新立项**：方案放 `design/plans/<线名>.md`、效果图放 `design/mockups/<线名>/`（见上节），账本「活跃线」加一行指向它们。
 - 状态变化随手回写，不攒批。
 
 ## 与 CONTRIBUTING / 会话记忆的关系

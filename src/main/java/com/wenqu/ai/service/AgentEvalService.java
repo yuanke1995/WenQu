@@ -38,7 +38,7 @@ import java.util.Set;
 /**
  * 智能体评测编排：套件/用例 CRUD、会话采样、运行启动与闸门、门禁状态、运行对比、保存前检查。
  * <p>
- * 口径（plan-agent-eval.md §3.2/§3.3/§6.1）：门禁状态五态
+ * 口径（智能体评测立项方案.md §3.2/§3.3/§6.1）：门禁状态五态
  * {@code none(无套件) / unevaluated / changed(有变更未评测) / running / pass / below}；
  * 「有变更未评测」= 当前版本号 &gt; 最近成功运行快照的版本号；归属校验：读走
  * {@link AgentService#get}（可读即可见），写与运行走 {@link AgentService#manageable}（谁建归谁）。

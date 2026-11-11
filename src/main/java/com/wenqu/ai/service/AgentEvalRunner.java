@@ -30,7 +30,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * 智能体评测执行器：一题一轮走<b>真实问答流水线</b>（检索/人设/工具/引用与网页问答完全一致，
  * {@code source=eval} 让需人工确认的工具按「无在场通道」语义自动拒绝——评测只读，不执行副作用工具）。
  * <p>
- * 执行口径（plan-agent-eval.md §3.5/§6.2）：
+ * 执行口径（智能体评测立项方案.md §3.5/§6.2）：
  * <ul>
  *   <li>每题 {@code kind=temp} 临时会话，跑完连同消息一起删（finally 兜底），结果表留存答案/引用/指标快照；</li>
  *   <li>专用 daemon 池（2 线程）= 全局并发上限，不占问答流水线线程池；每智能体 1 个运行在 Service 层闸；</li>
