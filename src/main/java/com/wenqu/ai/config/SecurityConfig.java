@@ -107,7 +107,7 @@ public class SecurityConfig implements WebMvcConfigurer {
                 || path.equals("/api/ai/executor/device-code/token")
                 || path.equals("/api/ai/executor/device-code/approve")) return true;
         // 开放契约文档：机器可读，集成方不必先持有 Key 才能读契约
-        if ("GET".equals(method) && "/api/ai/v1/openapi.json".equals(path)) return true;
+        if (isPublicContractEndpoint(method, path)) return true;
         // 公开只读：运行时公开配置、对话页智能体下拉（脱敏只读）
         if ("GET".equals(method) && ("/api/ai/config/public".equals(path)
                 || "/api/ai/agent/available".equals(path))) return true;
@@ -562,6 +562,15 @@ public class SecurityConfig implements WebMvcConfigurer {
         return "POST".equals(method) && path != null && path.startsWith("/api/ai/v1/workflows/webhook/");
     }
 
+    /**
+     * 公开契约文档：免登录、免 Key 可读。注意第 2 层登录门禁的豁免集是逐条枚举的
+     * （isPublicChannelEndpoint 只在第 3 层 RBAC 用），所以这一条要同时挂两层，
+     * 只挂 RBAC 层会被门禁 401 挡在前面（实机启动实测踩到）。
+     */
+    private static boolean isPublicContractEndpoint(String method, String path) {
+        return "GET".equals(method) && "/api/ai/v1/openapi.json".equals(path);
+    }
+
     /** 与身份装载同一口径：OpenAI SDK 的 Bearer sk-… 等价于 X-Api-Key */
     private static String bearerApiKey(HttpServletRequest request) {
         String h = request.getHeader("Authorization");
@@ -657,7 +666,8 @@ public class SecurityConfig implements WebMvcConfigurer {
                     && !isJoinEndpoint(method, path)
                     && !isSandboxCallbackEndpoint(method, path)
                     && !isExecutorEndpoint(method, path)
-                    && !isWorkflowWebhookEndpoint(method, path)) {
+                    && !isWorkflowWebhookEndpoint(method, path)
+                    && !isPublicContractEndpoint(method, path)) {
                 response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
                 response.setContentType("application/json;charset=UTF-8");
                 response.getWriter().write(objectMapper.writeValueAsString(
