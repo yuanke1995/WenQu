@@ -3231,6 +3231,16 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             }
         }
         if (name == null) return;
+        // 模型传的是框架 skillId（{技能名}_{source}，source 是技能根目录或 workspace 标记）：
+        // 命中帧与统计都截回裸名，与点名那一路（emitPickedSkillHits）同口径，否则界面按带路径的
+        // id 反查技能正文会查无此条。
+        int cut = name.lastIndexOf("_/");
+        if (cut > 0) name = name.substring(0, cut);
+        else {
+            int us = name.lastIndexOf('_');
+            if (us > 0) name = name.substring(0, us);
+        }
+        if (name.isEmpty()) return;
         skillStatsStore.recordRead(recording.uid, name, channel.sessionId());
         try {
             channel.emit(RunEventType.SKILL_HIT, com.alibaba.fastjson2.JSON.toJSONString(

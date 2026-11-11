@@ -821,6 +821,18 @@ const turnSteerRows = m => {
 // 没进白名单的句柄类字段（agent_key/task_id 这类指针）永远不该被当成摘要——
 // 那类工具要么在此名单里有正主（agent_send→message），要么入参里本就没别的可亮。
 const TOOL_BRIEF_KEYS = ['command', 'query', 'path', 'dir', 'filename', 'url', 'kbIds', 'message']
+// 读技能正文那把（框架 load_skill_through_path，入参 {skillId, path}）：path 几乎恒是 SKILL.md，
+// 顶栏该亮「读了哪条技能」而不是文件名。skillId 是框架拼的 {name}_{source}（source 为技能根目录
+// 或 workspace 这类短标记），按最后一个下划线截回裸名。
+const SKILL_READ_TOOL_NAMES = new Set(['load_skill_through_path', 'read_skill', 'use_skill'])
+const bareSkillNameOf = id => {
+  const s = String(id || '').trim()
+  if (!s) return ''
+  const i = s.lastIndexOf('_/')
+  if (i > 0) return s.slice(0, i)
+  const j = s.lastIndexOf('_')
+  return j > 0 ? s.slice(0, j) : s
+}
 const oneLine = (s, n) => { const x = String(s).replace(/\s+/g, ' ').trim(); return x.length > n ? x.slice(0, n) + '…' : x }
 const toolBrief = t => {
   // 早产工具卡（后端在模型流式生成入参时就先建卡）：此刻还没有 args，只能报「正在生成多少字」。
@@ -840,6 +852,10 @@ const toolBrief = t => {
     if (who) return oneLine(who, 56)
   }
   if (!obj || typeof obj !== 'object') return oneLine(t.args, 56)
+  if (SKILL_READ_TOOL_NAMES.has(t.name)) {
+    const nm = bareSkillNameOf(obj.skillId || obj.skill_id || obj.skill_name || obj.skillName || obj.name)
+    if (nm) return oneLine(nm, 56)
+  }
   for (const k of TOOL_BRIEF_KEYS) {
     const v = obj[k]
     if (typeof v === 'string' && v.trim()) return oneLine(v, 56)
