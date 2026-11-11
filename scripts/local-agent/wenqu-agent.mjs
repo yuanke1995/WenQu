@@ -911,7 +911,9 @@ async function opExec({ command, timeoutSeconds, userInitiated, turnId }, ctx) {
   const st = turnId ? turnStateOf(turnId) : null
   const fromMs = Date.now()
   const result = await new Promise(resolve => {
-    const child = spawn(shell.cmd, shell.args, { cwd: curRoot(ctx), env: process.env })
+    // detached：直接子进程成为组长，超时要杀时按进程组杀。只 kill 直接子进程在
+    // 「shell 早已退出、nohup 孙进程还活着」的场景里什么也杀不到，回包会一直挂着。
+    const child = spawn(shell.cmd, shell.args, { cwd: curRoot(ctx), env: process.env, detached: true })
     let out = ''
     let truncated = false
     const cap = 1024 * 1024
@@ -921,16 +923,33 @@ async function opExec({ command, timeoutSeconds, userInitiated, turnId }, ctx) {
     }
     child.stdout.on('data', onData)
     child.stderr.on('data', onData)
+    let settled = false
+    let drain = null
     const timer = setTimeout(() => {
-      try { child.kill('SIGKILL') } catch { /* ignore */ }
+      // 进程组杀：nohup 起的常驻孙进程一并带走，避免失控命令留下孤儿
+      try { process.kill(-child.pid, 'SIGKILL') } catch { try { child.kill('SIGKILL') } catch { /* ignore */ } }
+      out += `\n（命令超过 ${seconds} 秒未结束，已被强制终止，未拿到退出码）`
     }, seconds * 1000)
-    child.on('close', code => {
+    const finish = code => {
+      if (settled) return
+      settled = true
       clearTimeout(timer)
-      resolve({ output: out.slice(0, cap), exitCode: typeof code === 'number' ? code : 124, truncated })
-    })
+      if (drain) clearTimeout(drain)
+      // 没拿到退出码（被杀/信号结束）如实回 null，不伪造 124：服务端按「有没有拿到码」
+      // 定性工具卡（拿到=业务结果，没拿到=失败），折码会把「没跑完」读成「超时」。
+      resolve({ output: out.slice(0, cap), exitCode: typeof code === 'number' ? code : null, truncated })
+    }
+    // close 要等「进程退出 + stdio 管道全部关闭」才触发：nohup/后台起常驻服务时，孙进程
+    // 会一直攥着继承来的管道，close 永远不来——这就是「起个后端整轮卡死到服务端判超时」
+    // 的根因。exit 一到就先收 300ms 尾部输出再回；正常命令 close 与 exit 同码、谁先到都收敛。
+    child.on('exit', code => { drain = setTimeout(() => finish(code), 300) })
+    child.on('close', code => finish(code))
     child.on('error', e => {
+      if (settled) return
+      settled = true
       clearTimeout(timer)
-      resolve({ output: `启动命令失败：${e.message}`, exitCode: 124, truncated: false })
+      if (drain) clearTimeout(drain)
+      resolve({ output: `启动命令失败：${e.message}`, exitCode: null, truncated: false })
     })
   })
   if (st) markExecWindow(st, fromMs, Date.now())

@@ -36,13 +36,13 @@ public class SandboxTools {
     /** toolContext 里「工具输出增量回调」的键（Consumer&lt;String&gt;，ChatService 注入 → SSE tool_output 实时下发）。 */
     public static final String CTX_OUTPUT_SINK = "wq_tool_output_sink";
     /**
-     * toolContext 里「基础设施故障上报」的键（Consumer&lt;String&gt;，ChatService 注入）。
+     * toolContext 里「基础设施故障上报」的键（Consumer&lt;String&gt;，问答侧按轮注入）。
      * <p>沙盒不可用（provisioner 没起 / 连不上 / 鉴权被拒）时，工具**不抛异常**——抛出去会掐断
      * 整轮流、让已生成的正文与全部工具记录一起落空。工具照常把失败文本返回给模型让它自行调整，
-     * 同时经此回调把「这次失败是基础设施层、不是命令本身跑失败」告诉 ChatService，
-     * 让工具记录落成 status=error（红色失败）而不是 status=done（绿色对勾）。
-     * <p>不这么做的后果：命令退出码非 0（业务失败）与沙盒压根没通（基础设施故障）都是
-     * "exitCode=1 +一段文本"，记录一律显示成功，排查时完全看不出沙盒没通。
+     * 同时经此回调把「这次失败是基础设施层、不是命令本身跑失败」报给问答侧：
+     * 工具记录据此落成 status=error（红色失败）而不是 status=done（绿色对勾）。
+     * <p>不这么做的后果：run_code 这类返回纯文本的工具基建故障时与正常输出无从区分，
+     * 记录一律显示成功，排查时完全看不出沙盒没通。
      */
     public static final String CTX_INFRA_ERROR_SINK = "wq_tool_infra_error_sink";
 

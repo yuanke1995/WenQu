@@ -158,11 +158,16 @@ public class ExecutorFilesystem extends BaseSandboxFilesystem {
         args.put("timeoutSeconds", seconds);
         ExecutorRegistry.Result r = call("exec", args, (seconds + 30L) * 1000L);
         if (!r.ok()) {
-            // 未执行成功一律 124：0 在这条链路上等于"成功"，模型会据此以为这步做完了
-            return new ExecuteResponse(errorText(r), 124, false);
+            // 基建故障（执行器离线/超时/繁忙/通道异常）如实返回「没有退出码」：框架判 ERROR、卡片落红色失败，
+            // 输出里 E_TIMEOUT 这类错误码原样给模型。绝不伪造退出码——伪造的 124 会把「执行器没回包」
+            // 读成「命令超时」，排查时真假超时混在一起。
+            return new ExecuteResponse(errorText(r), null, false);
         }
         String output = r.data().get("output") == null ? "" : String.valueOf(r.data().get("output"));
-        int exit = (int) asLong(r.data().get("exitCode"));
+        // 执行器回传 null（命令到点被杀、没跑完）同样如实带 null，不折成 124：
+        // 「有没有拿到退出码」是卡片定性的依据（拿到=业务结果，没拿到=失败），折码就把依据抹掉了。
+        Object ec = r.data().get("exitCode");
+        Integer exit = ec instanceof Number n ? (int) n.longValue() : null;
         boolean truncated = Boolean.TRUE.equals(r.data().get("truncated"));
         return new ExecuteResponse(output, exit, truncated);
     }

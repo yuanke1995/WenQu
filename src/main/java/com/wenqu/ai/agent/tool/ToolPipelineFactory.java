@@ -136,11 +136,10 @@ public class ToolPipelineFactory {
                 result2 = result;
             }
 
-            // 3) 工具自己上报的失败（基础设施层：沙盒压根没通）优先定性为 error，
-            //    否则「provisioner 连不上」会显示成绿色对勾，与「命令退出码非 0」混为一谈
-            String note = inv.failureNote();
-            boolean failed = note != null && !note.isBlank();
-            turn.observe(inv, failed ? "error" : "done", failed ? note : result2);
+            // 3) 正常返回一律 done：工具卡的失败定性交给「有没有真的拿到结果」——
+            //    命令退出码非 0 是业务结果（码与输出都原样给了模型），只有基建故障
+            //    （沙盒/执行器没回包）才落 error，那由 agentx 引擎按基建标记与退出码判据定性
+            turn.observe(inv, "done", result2);
             return result2;
         }
     }

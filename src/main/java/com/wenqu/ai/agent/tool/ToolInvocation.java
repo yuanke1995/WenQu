@@ -12,8 +12,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * 与「每次 set 都配上 clear」；工具并行执行或异常路径漏清时，池化线程会把落点带到别的会话，
  * 引用编号注册进别人的回答里。
  * <p>
- * {@link #attributes()} 是给各族 {@link ToolContextEnricher} 放私有信箱的地方（例如沙盒工具
- * 上报基础设施故障的那个引用），生命周期与本对象一致，同样不落到静态字段上。
+ * {@link #attributes()} 是给各族 {@link ToolContextEnricher} 放私有信箱的地方，
+ * 生命周期与本对象一致，同样不落到静态字段上。
  *
  * @author yuanke
  */
@@ -35,8 +35,6 @@ public final class ToolInvocation {
      * 「这一支跑了 N 步工具」会让编排卡读起来像"试了 N 次都不行"，而实际是平台只让它试了几次。
      */
     private volatile boolean denied;
-    /** 首个失败上报即定性（单调：后续上报不覆盖），见 {@link #recordFailure(String)} */
-    private volatile String failureNote;
 
     public ToolInvocation(ToolDescriptor descriptor, String toolName, String arguments) {
         this.descriptor = descriptor;
@@ -87,21 +85,5 @@ public final class ToolInvocation {
 
     public Map<String, Object> attributes() {
         return attributes;
-    }
-
-    /**
-     * 上报「这次调用实际失败了」（工具照常把失败文本返回给模型，但卡片不能显示成绿色成功）。
-     * <p>典型场景：provisioner 连不上——沙盒工具不抛异常（抛出会掐断整轮流、连带已生成正文与
-     * 全部工具记录一起落空），失败文本回给模型是对的，但这条记录必须落成 error。
-     * <p>单调：只认第一份上报，后续不覆盖。否则「基础设施没通」会被紧随其后的业务失败文本顶掉，
-     * 排查时看不出沙盒压根没起来。
-     */
-    public void recordFailure(String reason) {
-        if (reason == null || reason.isBlank()) return;
-        failureNote = failureNote == null ? reason : failureNote;
-    }
-
-    public String failureNote() {
-        return failureNote;
     }
 }

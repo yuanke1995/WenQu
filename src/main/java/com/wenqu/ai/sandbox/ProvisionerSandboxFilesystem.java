@@ -175,12 +175,11 @@ public class ProvisionerSandboxFilesystem extends BaseSandboxFilesystem {
         // 先 execute 后探测的场景实调即可。
         invalidateEmptyProbes();
         String output = r.output == null ? "" : r.output;
-        // 没拿到退出码（沙盒不可达 / 到点还在跑）一律记 124，绝不映射成 0：
-        // 0 在这条链路上等于「成功」，卡片会变绿色对勾、输出是空的，模型据此以为这步做完了。
-        int exitCode = r.exitCode == null ? ProvisionerSandboxBackend.EXIT_NOT_COMPLETED : r.exitCode;
-        // infraError 表示「沙盒压根没通」而非命令跑失败：输出里那句「沙盒不可达」原样带回，
-        // 让模型看见「连不上沙盒」而不是一句空的成功。
-        return new ExecuteResponse(output, exitCode, r.truncated);
+        // 没拿到退出码（沙盒不可达 / 到点还在跑）如实带 null：框架判 ERROR、卡片落红色失败，
+        // 输出里「沙盒不可达/追踪超时」的文案原样给模型。绝不映射成 0（0 在这条链路上等于
+        // 「成功」，卡片会变绿色对勾、模型据此以为这步做完了），也不再折 124——伪造的码会把
+        // 「沙盒没通」读成「命令超时」，排查时真假超时混在一起。
+        return new ExecuteResponse(output, r.exitCode, r.truncated);
     }
 
     /**
@@ -188,9 +187,9 @@ public class ProvisionerSandboxFilesystem extends BaseSandboxFilesystem {
      *
      * <p>框架那份先跑一条检查命令 {@code if [ -e 路径 ]; then echo EXISTS; exit 1; fi}，命中已存在文件就拒写。
      * 但命令里的 {@code exit} 会退出 runtime 那个常驻 shell，这一条既拿不到退出码也拿不到
-     * {@code EXISTS} 那行输出，要白等到 runtime 缺省 120 秒才回「没跑完」；{@link #execute}
-     * 又会把「没拿到码」记成 124（防假成功），框架因此给不出「已存在，去 edit 或换个路径」的
-     * 可操作提示，只回通用 {@code Failed to write file '<路径>'}，模型容易据此误判。
+     * {@code EXISTS} 那行输出，要白等到 runtime 缺省 120 秒才回「没跑完」（{@link #execute}
+     * 如实带 null 退出码，框架给不出「已存在，去 edit 或换个路径」的可操作提示，
+     * 只回通用 {@code Failed to write file '<路径>'}，模型容易据此误判。
      *
      * <p>这里去掉那条前置检查，直接走框架自己的第二步（{@link #uploadFiles}）：
      * {@code /v1/file/upload} 允许覆盖、父目录不存在时自动建，不需要补检查或补 {@code mkdir}。

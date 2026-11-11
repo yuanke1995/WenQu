@@ -3366,9 +3366,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 String callKey = Recording.toolCallKey(toolCallIdOf(data), name);
                 String args = recording.toolInputByKey.remove(callKey);
                 if (args == null) args = recording.lastToolInput;   // 配不上对应的 requested（如从游标中途接流）才沿用
-                // 失败判定：优先读 ToolResultBlock 结构化的 state 字段（JSON 值 "error"），
-                // 不再依赖 Map.toString() 拼出的 "STATE=ERROR" 字符串形状（序列化一变就漏判）。
-                boolean failed = toolResultFailed(data);
+                // 失败定性分三路，一条口径「有没有真的拿到结果」：
+                // ① 本轮有基建故障上报（run_code 沙盒没通这类）→ error，优先于一切；
+                // ② 结果带 executionDetails（execute 一类）→ 只看退出码：拿到码=业务结果
+                //    （非 0 也是 done，码与输出都原样交给了模型），没拿到码=工具失败；
+                // ③ 其余工具 → 结构化 state 判定。
+                boolean failed = recording.hooks.infra().take(name) != null || toolResultFailed(data);
                 // 输出文本只取一次：落库那份和 SSE 那一帧必须是同一串，否则刷新前后两张卡说的不是一件事
                 String resultText = toolResultText(data);
                 // 进度账：失败/被拒的一步没有让任何东西向前走——换一个参数再失败也还是原地踏步
@@ -3453,13 +3456,19 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 先取它会得到 "wenqu" 这种空白归属，工具卡就认不出是哪把工具收的尾。
      */
     /**
-     * 工具结果是否失败：框架的 {@code tool/result} 事件载荷是 {@code {message: Msg}}，Msg 的
-     * {@code content} 里是 {@code ToolResultBlock}，其 {@code state} 字段的 JSON 值为 {@code "error"}
-     * （{@code ToolResultState#ERROR}，而非 {@code "ERROR"}）。
-     * <p>优先按结构化字段判定；退化路径才用旧的 {@code Map.toString()} 拼出的 {@code STATE=ERROR}
-     * 形状兜底（序列化实现一变就漏判，正是原实现的隐患）。
+     * 工具结果是否失败。定性只认「有没有真的拿到结果」，分两层：
+     * <p>① 结果带 {@code executionDetails}（execute 一类）：只看退出码。框架的
+     * {@code ShellExecuteTool} 把<b>任何非 0 退出码</b>都标 {@code ToolResultState.ERROR}，
+     * 但那是业务结果——命令跑了、退出码与输出都原样交给了模型，模型据此调整即可，
+     * 卡片不该红；只有退出码缺失（执行器/沙盒没回包，结果根本没拿到）才是工具失败。
+     * <p>② 其余工具：读 ToolResultBlock 结构化的 {@code state} 字段（JSON 值 {@code "error"}），
+     * 退化路径才用旧 {@code Map.toString()} 拼出的 {@code STATE=ERROR} 形状兜底
+     * （序列化实现一变就漏判，正是原实现的隐患）。executionDetails 存在但读不出 exitCode 键时
+     * 同样退回 state 判定——判据缺字段时保持现状口径，不猜测。
      */
     private static boolean toolResultFailed(Map<String, Object> data) {
+        Boolean byExitCode = exitCodeVerdict(data);
+        if (byExitCode != null) return !byExitCode;
         Object top = data.get("state");
         if (top != null && "error".equalsIgnoreCase(String.valueOf(top))) return true;
         Object message = data.get("message");
@@ -3477,6 +3486,33 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             }
         }
         return str(data).toUpperCase().contains("STATE=ERROR");
+    }
+
+    /**
+     * 按 {@code executionDetails.exitCode} 定性：{@code TRUE}=拿到了退出码（业务结果，含非 0）、
+     * {@code FALSE}=带了 executionDetails 但没拿到码（工具失败）、{@code null}=没有
+     * executionDetails（交给 state 判定）。
+     */
+    private static Boolean exitCodeVerdict(Map<String, Object> data) {
+        for (Object block : resultBlocks(data)) {
+            if (block instanceof Map<?, ?> bm && bm.get("executionDetails") instanceof Map<?, ?> d) {
+                return d.get("exitCode") instanceof Number ? Boolean.TRUE : Boolean.FALSE;
+            }
+        }
+        return null;
+    }
+
+    /** tool/result 载荷里可能挂着结果块的几层：顶层、message、message.content 里的块。 */
+    private static java.util.List<Object> resultBlocks(Map<String, Object> data) {
+        java.util.List<Object> out = new java.util.ArrayList<>();
+        out.add(data);
+        Object message = data.get("message");
+        if (message instanceof Map<?, ?> msg) {
+            out.add(msg);
+            Object content = msg.get("content");
+            if (content instanceof List<?> blocks) out.addAll(blocks);
+        }
+        return out;
     }
 
     /** 被权限档位/重复闸/步数闸拒掉的一步：结果不是干活的产出，不能算作前进。 */
@@ -4311,10 +4347,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     /**
      * 给框架 {@code execute} 的说明补一句「退出码取整条命令链的最后一条」。
      *
-     * <p>模型删完文件后用 {@code ls <path>} 验证，文件不在时 {@code ls} 退出 1，
-     * 整条命令因此被判失败（卡片红色），而删除其实已经成功。工具状态只能看退出码，
-     * 不能从输出里猜「其实成功了」——所以把正确的验证写法教给模型：
-     * {@code test ! -e <path>} 在文件不存在时退出 0。
+     * <p>工具卡状态按「有没有拿到退出码」定性：非 0 退出码是业务结果（卡片完成态，码与输出
+     * 都原样给模型），不再判成工具失败。但 {@code &&} 链会在第一处失败时短路——模型把探测
+     * 命令（查端口、查进程、探端点）用 {@code &&} 串起来时，一项连不上后面的项就不执行了，
+     * 输出不完整。所以把探测写法教给模型：步骤间用 {@code ;} 或给每步补 {@code || true}。
      *
      * <p>顺带说明工作区根：执行器/Sandbox 都以工作区根为 cwd，模型不必每条命令都前缀
      * {@code cd <workspace> &&}；要换目录用 {@code working_directory} 参数。
@@ -4341,9 +4377,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
 
     private static final String EXECUTE_DESCRIPTION_GUIDANCE =
             EXECUTE_DESCRIPTION_MARKER + " in the chain. "
-                    + "After deleting a file, do not verify with `ls <path>`: when the path is gone `ls` exits 1 "
-                    + "and the whole call is reported as failed even though the delete succeeded. "
-                    + "Verify absence with `test ! -e <path> && echo deleted` (exit 0 when the path is absent). "
+                    + "For probe/diagnostic commands (checking ports, processes, endpoints), separate the steps "
+                    + "with `;` or append `|| true` instead of chaining with `&&`: a `&&` chain stops at the "
+                    + "first failing step, so the remaining checks never run and the report is incomplete. "
+                    + "To start a long-running service (dev server, daemon), launch it fully detached and "
+                    + "return immediately: `nohup <cmd> > <log> 2>&1 < /dev/null &` — never run a foreground "
+                    + "service command, it blocks until timeout and holds the executor's reply. "
                     + "Commands already run at the workspace root, so a `cd <workspace>` prefix is unnecessary; "
                     + "use working_directory when a different relative directory is needed.";
 

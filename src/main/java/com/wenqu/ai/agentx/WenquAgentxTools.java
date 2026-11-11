@@ -123,7 +123,27 @@ public class WenquAgentxTools {
                             com.wenqu.ai.agent.subagent.SubAgentConsultService.Ledger consultLedger,
                             RequestUser.Snapshot identity,
                             Map<String, String> overrides, Map<String, String> userOverrides,
-                            RunCodeHolder runCode, StepTrack step) {
+                            RunCodeHolder runCode, StepTrack step, InfraTrack infra) {
+    }
+
+    /**
+     * 本轮「基建故障上报」的登记处：沙盒/子调用没通（不是命令跑失败）时，工具经
+     * {@code CTX_INFRA_ERROR_SINK} 把工具名与故障文本记到这里，引擎在紧接着的那次
+     * {@code tool/result} 定性时取走（取走即清）——该工具卡因此落成 error，而不是
+     * 框架给出的绿色成功。每轮随 {@link TurnHooks} 新建，轮界即清空。
+     */
+    public static final class InfraTrack {
+        private final java.util.concurrent.ConcurrentHashMap<String, String> notes =
+                new java.util.concurrent.ConcurrentHashMap<>();
+
+        public void mark(String toolName, String note) {
+            notes.put(toolName, note == null ? "" : note);
+        }
+
+        /** 取走该工具的基建故障标记；没有返回 null。 */
+        public String take(String toolName) {
+            return toolName == null ? null : notes.remove(toolName);
+        }
     }
 
     /**
@@ -171,7 +191,7 @@ public class WenquAgentxTools {
                               com.wenqu.ai.agent.subagent.SubAgentConsultService.Ledger ledger) {
         return new TurnHooks(cmd.getSessionId(), cmd.getUserId(), modelRef, turnId, spills, ledger,
                 RequestUser.snapshot(), configService.currentOverrides(), configService.currentUserOverrides(),
-                new RunCodeHolder(), new StepTrack());
+                new RunCodeHolder(), new StepTrack(), new InfraTrack());
     }
 
     /**
@@ -906,8 +926,9 @@ public class WenquAgentxTools {
 
     /**
      * 沙盒工具的本轮落点，四个都给：权限档位（写入是否落在允许区）、输出增量（转成
-     * {@code tool_output} 帧，前端「看着它跑」）、基建异常（转成 {@code warn} 帧，与命令退出码
-     * 非 0 是两回事）、大输出外溢（截断前把整份原文落盘，卡片才有「查看完整输出」）。
+     * {@code tool_output} 帧，前端「看着它跑」）、基建异常（登记到本轮 {@link InfraTrack} 供
+     * {@code tool/result} 定性 + 转成 {@code warn} 帧，与命令退出码非 0 是两回事）、
+     * 大输出外溢（截断前把整份原文落盘，卡片才有「查看完整输出」）。
      * 载荷一律交给 fastjson 序列化——沙盒输出里出现引号与换行是常态。
      */
     private Map<String, Object> sandboxContext(String toolName, AgentxTurnSlot.Turn t) {
@@ -931,8 +952,12 @@ public class WenquAgentxTools {
                         com.alibaba.fastjson2.JSON.toJSONString(Map.of("name", toolName,
                                 "delta", delta == null ? "" : delta))));
         m.put(com.wenqu.ai.service.SandboxTools.CTX_INFRA_ERROR_SINK,
-                (java.util.function.Consumer<String>) msg -> t.channel().emit(
-                        com.wenqu.ai.engine.RunEventType.WARN, "沙盒基建异常：" + msg));
+                (java.util.function.Consumer<String>) msg -> {
+                    // 基建故障登记到本轮：引擎在紧接着的那次 tool/result 定性时取走，该工具卡落 error。
+                    // WARN 帧同时发一条——排查时聊天流里也能看见这次故障。
+                    t.hooks().infra().mark(toolName, msg);
+                    t.channel().emit(com.wenqu.ai.engine.RunEventType.WARN, "沙盒基建异常：" + msg);
+                });
         return m;
     }
 
