@@ -53,11 +53,14 @@ public class SubAgentConsultService {
     /**
      * 跑一次咨询所需的父轮上下文（一轮内不变）。
      *
+     * @param parentScopeKbIds 父轮本轮实际解析出的检索库集合（「父 ∪ 子」口径的父侧，随分支下传）；
+     *                    null = 父轮无墙。
      * @param onConsulted 一次咨询真跑通之后的回调（id, 名称）——问答侧用它发「本轮咨询了谁」的可见事件。
      *                    刻意只在成功时回调：失败的咨询没交出任何东西，标成"咨询过"等于虚报工作量。
      */
     public record Ctx(String parentSessionId, String parentTurnId, String userId, String modelRef,
                       boolean guestMode, int depth, String selfAgentId, String preConsultedAgentId,
+                      java.util.Collection<String> parentScopeKbIds,
                       java.util.function.BiConsumer<String, String> onConsulted) {
     }
 
@@ -182,7 +185,7 @@ public class SubAgentConsultService {
         try {
             report = runner.run(new BranchRequest(ctx.parentSessionId(), ctx.parentTurnId(),
                     a.getId(), a.getName(), question, "", ctx.depth() + 1, ctx.userId(),
-                    ctx.modelRef(), ctx.guestMode(), timeoutMs, -1));
+                    ctx.modelRef(), ctx.guestMode(), ctx.parentScopeKbIds(), timeoutMs, -1));
         } catch (Exception e) {
             // 执行器契约是不外抛；真抛了说明契约破了，这里兜住并留真因（CompletableFuture 那类包装的 message 常为 null）
             Throwable cause = e.getCause() != null ? e.getCause() : e;

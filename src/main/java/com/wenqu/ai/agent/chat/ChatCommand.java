@@ -172,6 +172,12 @@ public final class ChatCommand {
     /** 派出这一支的父轮 id：审批卡上翻后刷新恢复要挂回父轮气泡（仅分支轮有值） */
     final String parentTurnId;
     /**
+     * 父轮本轮实际解析出的检索库集合（仅派遣分支轮有值）：子轮范围 = 本集合 ∪ 子智能体绑定库
+     * （「父 ∪ 子」口径，见 {@code RetrievalScopeService}）。null = 父轮无墙或非分支轮——
+     * 子轮随之按普通口径走（登录轮不限库、围墙轮按绑定库）。
+     */
+    final java.util.List<String> parentScopeKbIds;
+    /**
      * 父轮生效的审批档位（auto/ask/off）。仅分支轮有值；子智能体自己<b>未显式</b>设置
      * {@code tool_approval_mode} 时继承它（显式 &gt; 继承 &gt; 预设），避免「父 auto、子落预设 ask」
      * 挂出一张没人看的审批卡。null = 不继承（顶层轮）。

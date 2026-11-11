@@ -22,13 +22,16 @@ package com.wenqu.ai.agent.subagent;
  * @param userId          归属用户：可见性、个人资产（技能/MCP）、成本台账都按他
  * @param modelRef        父轮本轮生效的模型引用（分支沿用同一套模型，不重新裁决）
  * @param guestMode       免登录分享会话：分支继承父轮的收窄口径
+ * @param parentScopeKbIds 父轮本轮实际解析出的检索库集合（「父 ∪ 子」口径的父侧，见 RetrievalScopeService）；
+ *                        null = 父轮无墙——子轮随之不限库。空集合是「父墙存在但为空」，与 null 不同义。
  * @param timeoutMs       这一支的等待上限（超时按失败处理，不拖垮父轮）
  * @param branchIndex     这一支在编排视图里的序号（父轮卡片靠它把实时步骤归到正确那一行）
  * @author yuanke
  */
 public record BranchRequest(String parentSessionId, String parentTurnId, String childAgentId,
                             String childAgentName, String question, String parentBrief, int depth,
-                            String userId, String modelRef, boolean guestMode, long timeoutMs,
+                            String userId, String modelRef, boolean guestMode,
+                            java.util.Collection<String> parentScopeKbIds, long timeoutMs,
                             int branchIndex) {
 
     /** 日志与异常信息里的一行身份（哪个父会话的第几层哪一支） */

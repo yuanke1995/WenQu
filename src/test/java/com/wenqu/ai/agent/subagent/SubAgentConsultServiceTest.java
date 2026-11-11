@@ -155,7 +155,7 @@ class SubAgentConsultServiceTest {
         void preConsulted() {
             SubAgentConsultService.Ctx ctxWithPre = new SubAgentConsultService.Ctx(
                     "parent-sess", "parent-turn", "user-1", "model-v1", false, 0,
-                    "self-agent-id", "agent-zhibao", null);
+                    "self-agent-id", "agent-zhibao", null, null);
             when(agentService.get("agent-zhibao")).thenReturn(targetAgent);
             when(agentService.consultCandidates("self-agent-id")).thenReturn(List.of(targetAgent));
             BranchRunner runner = mock(BranchRunner.class);
@@ -525,7 +525,7 @@ class SubAgentConsultServiceTest {
 
             SubAgentConsultService.Ctx ctxWithCb = new SubAgentConsultService.Ctx(
                     "ps", "pt", "u1", "m1", false, 0,
-                    "self-agent-id", "",
+                    "self-agent-id", "", null,
                     (id, name) -> {
                         callbackCount.incrementAndGet();
                         capturedAgentId[0] = id;
@@ -551,7 +551,7 @@ class SubAgentConsultServiceTest {
             AtomicInteger callbackCount = new AtomicInteger(0);
             SubAgentConsultService.Ctx ctxWithCb = new SubAgentConsultService.Ctx(
                     "ps", "pt", "u1", "m1", false, 0,
-                    "self-agent-id", "",
+                    "self-agent-id", "", null,
                     (id, name) -> callbackCount.incrementAndGet());
 
             service.consult(service.newLedger(), ctxWithCb, runner, null,
@@ -610,7 +610,7 @@ class SubAgentConsultServiceTest {
     private SubAgentConsultService.Ctx ctx() {
         return new SubAgentConsultService.Ctx(
                 "parent-sess", "parent-turn", "user-1", "model-v1", false, 0,
-                "self-agent-id", "", null);
+                "self-agent-id", "", null, null);
     }
 
     private SubAgentConsultService.Ledger newLedger() {

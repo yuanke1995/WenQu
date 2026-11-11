@@ -213,6 +213,9 @@ public class SubAgentBranchRuntime {
                         .parentBrief(req.parentBrief())
                         .parentSessionId(req.parentSessionId())
                         .parentTurnId(parentTurnId)
+                        // 「父 ∪ 子」口径的父侧：父轮本轮的库级墙原样带进子轮的范围解析
+                        .parentScopeKbIds(req.parentScopeKbIds() == null
+                                ? null : List.copyOf(req.parentScopeKbIds()))
                         .inheritedApprovalMode(inheritedApprovalMode)
                         .source(source)
                         .build(), sink);

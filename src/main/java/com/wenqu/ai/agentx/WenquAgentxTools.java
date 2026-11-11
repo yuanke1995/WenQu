@@ -476,8 +476,8 @@ public class WenquAgentxTools {
                                        com.wenqu.ai.engine.RunChannel channel,
                                        ExecutionPolicy policy, TurnHooks hooks,
                                        boolean workspaceMemoryTainted) {
-        KnowledgeRetrievalTool.KbScope scope =
-                retrievalScope.resolve(agentOf(cmd), cmd.getUserId(), cmd.isGuestMode());
+        KnowledgeRetrievalTool.KbScope scope = retrievalScope.resolve(agentOf(cmd), cmd.getUserId(),
+                cmd.isGuestMode(), cmd.getParentScopeKbIds());
         java.util.Set<String> mentionedKbIds = mentionedKbIdsOf(cmd);
         // @ 知识库提及的收窄（此前 mentions 里 kb 类型全仓无消费方，@ 了只留一行名字）：
         // 向量路的 kbIds 只在「没有围墙域」时收成点名的库——围墙域原样保留，域外被点名的库
@@ -753,6 +753,10 @@ public class WenquAgentxTools {
                             // @ 提及强制咨询那一位：框架引擎这一侧没有 mentions 那一段编排，如实留空
                             //（后果只是「模型可以再问一次同一位」，由台账的去重兜住）
                             "",
+                            // 「父 ∪ 子」口径的父侧：父轮本轮解析出的库级墙（内置问渠=默认库+手册库；
+                            // 普通登录轮=null 无墙，子轮随之不限库）
+                            t.scope() == null || t.scope().kbIds() == null
+                                    ? null : List.copyOf(t.scope().kbIds()),
                             (consultedId, consultedName) -> t.channel().emit(
                                     com.wenqu.ai.engine.RunEventType.AGENT_CONSULTED,
                                     com.alibaba.fastjson2.JSON.toJSONString(
