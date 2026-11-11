@@ -1548,8 +1548,7 @@ export const deliverySubjectOf = text => {
  * 产物清单 → 交付包视图（卡片、抽屉、H5 汇总同吃这一份）。
  *
  * <p>meta 由调用方给：{@code name / versionLabel / round / stateLabel / badgeTone / approved /
- * turnIds / anchorKey / scope / shared}。单文件也能成包——聊天里要不要把它画成卡片由调用方定
- * （1 件的普通回答仍走旧的一行，别为了一颗文件支一张大卡）。
+ * turnIds / anchorKey / scope / shared}。单文件也能成包——聊天里要不要把它画成卡片由调用方定。
  */
 export const deliveryOf = (files, meta = {}) => {
   // 分享页的产物没有 url（只有按 token 现换的 seq），登录态产物没有 seq；两者都算有效条目

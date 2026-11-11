@@ -485,33 +485,13 @@
               <!-- 生成态：本轮还没有产物、模型正在生成/交付文件时先占位；完成由下面的卡原位接管 -->
               <ArtifactPendingCard v-if="m.role === 'ai' && artifactPendingOf(m)" :pending="artifactPendingOf(m)" />
               <!-- 交付包：单件与多件共用同一张卡（单件左缩略+动作，多件包形态+清单）；
-                   实时到达的产物播一次入场，历史恢复不播。定位不到交付包的旧消息仍走下面兜底行。 -->
+                   流式中的气泡按消息对象锚定自己的包，第一件产物到达即成卡；
+                   实时到达的产物播一次入场，历史恢复不播。 -->
               <DeliveryCard v-if="m.role === 'ai' && deliveryCardOfMessage(m)"
                             :delivery="deliveryCardOfMessage(m)"
                             :fresh="freshDeliveryOf(m)"
                             @view="openDelivery"
                             @zip="downloadDeliveryZip" />
-              <div v-if="m.role === 'ai' && m.artifacts && m.artifacts.length && !deliveryListHidden(m)" class="artifact-list">
-                <div v-for="(a, ai) in m.artifacts" :key="ai" class="artifact-item">
-                  <file-text-outlined class="artifact-icon" />
-                  <span class="artifact-name" :title="a.filename">{{ a.filename }}</span>
-                  <span v-if="a.description" class="artifact-desc" :title="a.description">{{ a.description }}</span>
-                  <span class="artifact-acts">
-                    <a v-if="canPreview(a)" class="artifact-act" :href="resolveImg(a.url)"
-                       target="_blank" rel="noopener" data-pv
-                       :data-pv-name="a.filename" :data-pv-ext="artifactExt(a)"
-                       :data-pv-kind="previewKindOf(a)"
-                       :data-pv-size="a.size" :data-pv-id="a.id"
-                       :title="'预览 ' + a.filename + '（按住 Ctrl 或中键开成新标签页）'">
-                      <eye-outlined /> 预览
-                    </a>
-                    <a class="artifact-act" :href="resolveImg(a.url)" :download="a.filename"
-                       :title="'下载 ' + a.filename">
-                      <download-outlined /> 下载
-                    </a>
-                  </span>
-                </div>
-              </div>
               <!-- 每轮文件改动卡：这一轮在本机工作区里改了哪些文件、各多少行；行点击进预览台 diff 档。
                    停止/中断的轮也可能改过文件——只要服务端对比出来就照挂，刷新后按消息行的 changes 重建 -->
               <TurnChangesCard v-if="m.role === 'ai' && m.changes" :changes="m.changes" :message-id="m.messageId || ''" />
@@ -1770,7 +1750,6 @@ import { debugRetrieval, deleteMessageGroup, submitFeedback as apiSubmitFeedback
          getSessionWorkspace, getPermissionPresets, setSessionPermission,
          openProjectFolder, updateProjectItem, createSkill } from '../api'
 import { renderMd, resolveImg, onImgError } from '../utils/markdown'
-import { canPreview, artifactExt, previewKindOf } from '../utils/artifactView'
 import { loadSessions, sessionStore } from './store'
 import { exportAnswerMd, exportSessionMarkdown } from './exportMd'
 import { fmtTokens } from '../utils/token'
@@ -3684,7 +3663,7 @@ const {
   goalCanPause, goalCanResume, goalCanEdit, goalCanCancel, goalCanClearRecord,
   goalPreempted, goalVersionLabel, goalProgressPercent,
   goalTerminalCard, goalTerminalTitle, goalTerminalNote, goalTurnStreaming,
-  goalDelivery, deliveryPackages, deliveryCardOfMessage, deliveryListHidden, downloadDeliveryZip, artifactPendingOf, freshDeliveryOf,
+  goalDelivery, deliveryPackages, deliveryCardOfMessage, downloadDeliveryZip, artifactPendingOf, freshDeliveryOf,
   goalEditing, goalEdit, goalEditBusy, goalEditSaveable,
   startGoalInlineEdit, saveGoalEdit,
   // 思考能力 / 档位（悬浮面板消费）
@@ -5111,22 +5090,6 @@ onMounted(async () => {
 .tool-name { font-weight: 500; color: var(--app-text2); }
 .tool-dur { color: var(--app-text3); }
 .tool-fail { color: var(--app-danger); }
-
-.artifact-list { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
-/* 气泡底部的产物卡：文件名占可伸缩的位，预览/下载贴右，窄气泡里先让名字截断 */
-.artifact-item {
-  display: flex; align-items: center; gap: 6px; max-width: 100%;
-  padding: 6px 10px; border: 1px solid var(--app-border); border-radius: 8px;
-  font-size: 12px; color: var(--app-text); background: var(--app-panel-2);
-}
-.artifact-item:hover { border-color: var(--app-accent); background: var(--app-accent-weak); }
-.artifact-icon { color: var(--app-accent); flex: none; }
-.artifact-name { font-weight: 500; color: var(--app-accent); min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.artifact-desc { color: var(--app-text3); font-size: 11px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.artifact-acts { margin-left: auto; flex: none; display: inline-flex; align-items: center; gap: 10px; }
-.artifact-act { display: inline-flex; align-items: center; gap: 3px; color: var(--app-text3); text-decoration: none; white-space: nowrap; }
-.artifact-act:hover { color: var(--app-accent); }
-
 
 /* 手动压缩当场那条分隔线（在 v-for 外面，与上面 .row 里那几条同形） */
 .cn-tail { margin-block: -8px 12px; }

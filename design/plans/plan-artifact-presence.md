@@ -135,7 +135,7 @@
 | `web/src/chat/artifactPending.js`（新增） | `artifactPendingOf(m)` 纯投影（可单测） | 低 |
 | `web/src/chat/projections.js` | 新增 `deliveryCardOf(d)`；转发 `artifactPendingOf` | 低 |
 | `web/src/chat/useChatEngine.js` | 单件也成卡；`onArtifact` 记 `freshArtifactId`；`freshDeliveryOf` | 中：所有对话入口共用 |
-| `web/src/views/ChatPage.vue` | 生成态占位；`fresh` 透传；旧灰条保留为兜底 | 中 |
+| `web/src/views/ChatPage.vue` | 生成态占位；`fresh` 透传；产物只以交付卡呈现 | 中 |
 | `web/src/h5/MobileMsgRow.vue` | 生成态占位；`mobile` 缩略模式 | 低 |
 | `web/src/h5/MobileChatPage.vue` | 传 `pending` / `fresh` | 低 |
 | `web/src/views/ArtifactsPage.vue` | 本地 `pickLines` 换成共享纯函数（无行为变化） | 低 |
@@ -172,8 +172,8 @@ artifact 事件 ──> m.artifacts ──> deliveryOf ──> DeliveryCard(单�
 | 分享页 | ✅ | ❌ 无实时流 | ❌ 类型徽标（下载端点不内联） | 无登录态、无 ZIP |
 | H5 | ✅ | ✅ | image/text；page 降级 | 不在手机上跑 iframe |
 | 刷新/切会话 | ✅ | ❌ | ✅ 懒加载 | 不播入场 |
-| 老消息无 `turnId/messageId` | ❌ 保留旧灰条 | ❌ | ❌ | 交付包无法定位时的兜底 |
-| 产物无 `url/id` | 包内剔除；旧灰条仍显示 | — | 降级 | 不伪造可点链接 |
+| 流式中的气泡（无 `turnId/messageId`） | ✅ | 撤占位 | ✅ | 交付包按消息对象锚定，第一件产物到达即成卡 |
+| 产物无 `url/id` | 包内剔除 | — | 降级 | 不伪造可点链接 |
 | 工具失败/停止 | — | 撤占位 | — | 失败原因在工具卡 |
 
 ---
@@ -189,7 +189,7 @@ artifact 事件 ──> m.artifacts ──> deliveryOf ──> DeliveryCard(单�
 | 分享页缩略不可用 | 下载端点强制 attachment，整卡退回类型徽标；内联需后端出流改造，明确不在本轮 |
 | 分享页 401 / 死链 | 缩略地址一律走 `hrefOf`；文本不取；图片失败降级 |
 | 网页缩略安全 | 复用现有 `sandbox="allow-scripts"`（无同源），不新增权限 |
-| 单件成卡后旧灰条重复 | `deliveryListHidden` 同时收口；无法定位交付包时保留灰条 |
+| 产物出现两种形态 | 交付卡是聊天气泡里产物的唯一形态；交付包按消息对象锚定，流式与落库后同一张卡 |
 | 目标包被拆成单件卡 | `scope === 'goal'` 强制包形态 |
 | 表单 JSON 被误读成真实渲染 | 只画结构示意，不执行、不渲染真实字段；点击进预览台看真内容 |
 

@@ -342,30 +342,13 @@
           </div>
         </div>
 
-        <!-- 产物：预览＝进预览台（与 PC 气泡、产物页、工作区文件同一判据同一待遇），下载走同一份签名地址。
-             两个入口各占一块触屏热区，不靠长按之类的隐藏手势 -->
         <!-- 生成态：本轮还没有产物、正在生成/交付文件时先占位（与 PC 同一份组件） -->
         <ArtifactPendingCard v-if="m.role === 'ai' && pending" :pending="pending" />
-        <!-- 交付包：这一轮的产物收进一张卡（与 PC 同一份 DeliveryCard）；收进卡的轮不再逐行平铺。
+        <!-- 交付包：这一轮的产物收进一张卡（与 PC 同一份 DeliveryCard），第一件产物到达即成卡。
              mobile：缩略不跑网页 iframe，只做图片与文本。 -->
         <DeliveryCard v-if="delivery" :delivery="delivery" mobile :fresh="fresh"
                       @view="$emit('delivery-view', delivery)"
                       @zip="$emit('delivery-zip', delivery)" />
-        <div v-if="m.artifacts && m.artifacts.length && !hideArtifacts" class="artifacts">
-          <div v-for="(a, ai) in m.artifacts" :key="ai" class="artifact">
-            <file-text-outlined class="artifact-ic" /><span class="artifact-name">{{ a.filename }}</span>
-            <span class="artifact-acts">
-              <a v-if="canPreview(a)" class="artifact-act" :href="resolveImg(a.url)"
-                 target="_blank" rel="noopener" data-pv
-                 :data-pv-name="a.filename" :data-pv-ext="artifactExt(a)"
-                 :data-pv-kind="previewKindOf(a)"
-                 :data-pv-size="a.size" :data-pv-id="a.id"
-                 title="预览"><eye-outlined />预览</a>
-              <a class="artifact-act" :href="resolveImg(a.url)" :download="a.filename"
-                 title="下载"><download-outlined />下载</a>
-            </span>
-          </div>
-        </div>
 
         <!-- 每轮文件改动卡：与 PC 气泡同一组件同一数据源（行点击进预览台 diff 档，浮层两端通吃） -->
         <TurnChangesCard v-if="m.role === 'ai' && m.changes" class="tcc-mobile"
@@ -431,13 +414,12 @@ import { computed, inject } from 'vue'
 import {
   CaretRightOutlined, CheckOutlined, CloseCircleOutlined, CopyOutlined, EditOutlined, LikeOutlined,
   DislikeOutlined, ReloadOutlined, RedoOutlined, RobotOutlined, ThunderboltOutlined, SearchOutlined,
-  FileTextOutlined, DownloadOutlined, PaperClipOutlined, ExclamationCircleOutlined, MoreOutlined,
-  QuestionCircleOutlined, CheckCircleOutlined, PauseCircleOutlined, EyeOutlined, AimOutlined,
+  FileTextOutlined, PaperClipOutlined, ExclamationCircleOutlined, MoreOutlined,
+  QuestionCircleOutlined, CheckCircleOutlined, PauseCircleOutlined, AimOutlined,
   LoadingOutlined, DownOutlined, ApiOutlined, BulbOutlined, ClockCircleOutlined
 } from '@ant-design/icons-vue'
 import { resolveImg } from '../utils/markdown'
 import { approvalArgsText, approvalLeftSec } from '../chat/approval'
-import { canPreview, artifactExt, previewKindOf } from '../utils/artifactView'
 // 跑轮中簇帽体的贴底跟随与上下边缘渐隐（与 PC 共用同一份指令）
 import { vFollowBottom, vEdgeFade } from '../chat/followBottom'
 import AnswerBody from '../components/AnswerBody.vue'
@@ -502,8 +484,6 @@ const props = defineProps({
   fresh: { type: Boolean, default: false },
   /** 当前目标的交付包（终态卡上的「查看交付」入口用） */
   goalDelivery: { type: Object, default: null },
-  /** 该轮产物已收进交付包（父级按 deliveryListHidden 算）：不再逐行平铺 */
-  hideArtifacts: { type: Boolean, default: false },
   /** 审批倒计时基准（引擎每秒推进的 approvalNow）：与 PC 的 approvalLeftSecOf 同一份口径 */
   approvalNow: { type: Number, default: 0 },
   /** 计划卡执行进度（planExecProgress 的产物；无清单/不属于本轮时 null） */
@@ -798,14 +778,6 @@ const onBodyPreview = (urls, index) => emit('preview', urls, index)
 .btn-primary:disabled { background: var(--app-accent-disabled); }
 .btn-ghost { border: 1px solid var(--app-border); border-radius: 8px; background: var(--app-panel); color: var(--app-text2); font-size: 13px; padding: 8px 14px; min-height: 36px; display: inline-flex; align-items: center; gap: 5px; touch-action: manipulation; }
 .btn-ghost:active { color: var(--app-accent); border-color: var(--app-accent); }
-
-.artifacts { display: flex; flex-direction: column; gap: 6px; }
-.artifact { display: flex; align-items: center; gap: 8px; padding: 4px 12px; border: 1px solid var(--app-border); border-radius: 10px; background: var(--app-panel); color: var(--app-text2); font-size: 13px; }
-.artifact-ic { flex: none; }
-.artifact-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.artifact-acts { flex: none; display: flex; align-items: center; }
-/* 触屏热区：预览/下载各自够 44px 高，图标加两字标签就是最小可用宽度 */
-.artifact-act { display: inline-flex; align-items: center; gap: 3px; min-height: 44px; padding: 0 6px; color: var(--app-text3); text-decoration: none; font-size: 12px; }
 
 .warn-bar { border: 1px solid var(--app-warn-border); background: var(--app-warn-weak); color: var(--app-warn-text); border-radius: 8px; padding: 8px 10px; font-size: 12px; display: flex; flex-direction: column; gap: 4px; }
 

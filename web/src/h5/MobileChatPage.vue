@@ -107,7 +107,6 @@
           :variant-switching="variantSwitching" :goal="sessionGoal"
           :delivery="deliveryCardOfMessage(m)" :goal-delivery="goalDelivery"
           :pending="artifactPendingOf(m)" :fresh="freshDeliveryOf(m)"
-          :hide-artifacts="deliveryListHidden(m)"
           :approval-now="approvalNow" :progress="planExecProgressOf(m)"
           :adjusts="planAdjustsOfMsg(m)"
           @activate="activeIdx = $event"
@@ -779,7 +778,7 @@ const {
   goalCanPause, goalCanResume, goalCanEdit, goalCanCancel, goalCanClearRecord,
   goalTerminalCard, goalTerminalTitle, goalTerminalNote, goalVersionLabel, goalTurnStreaming, runGoalAction,
   // 交付包：目标跨轮一个包、普通回答按轮一个包（与 PC 同一份引擎口径）
-  goalDelivery, deliveryPackages, deliveryCardOfMessage, deliveryListHidden, downloadDeliveryZip,
+  goalDelivery, deliveryPackages, deliveryCardOfMessage, downloadDeliveryZip,
   artifactPendingOf, freshDeliveryOf,
   goalEditing, goalEdit, goalEditBusy, goalEditSaveable,
   startGoalInlineEdit, saveGoalEdit,

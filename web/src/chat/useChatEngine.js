@@ -952,6 +952,7 @@ const goalDelivery = computed(() => {
   const turnIds = []
   const seen = new Set()
   let anchorKey = ''
+  let anchorMsg = null
   for (const m of messages.value) {
     if (!m || m.role !== 'ai' || !Array.isArray(m.artifacts) || !m.artifacts.length) continue
     const tid = String(m.turnId || '')
@@ -966,6 +967,7 @@ const goalDelivery = computed(() => {
     if (added) {
       if (!turnIds.includes(tid)) turnIds.push(tid)
       anchorKey = m.messageId || tid
+      anchorMsg = m
     }
   }
   if (!files.length) return null
@@ -976,7 +978,7 @@ const goalDelivery = computed(() => {
   const badgeTone = g.status === 'ACHIEVED' ? 'ok'
     : g.status === 'FAILED' ? 'warn'
       : g.status === 'CANCELLED' ? 'muted' : 'live'
-  return deliveryOf(files, {
+  const pkg = deliveryOf(files, {
     name: (deliverySubjectOf(g.objective) || '本次交付') + ' · 交付包',
     versionLabel: 'v' + ((Number(g.objectiveVersion) || 0) + 1),
     round: Number(g.round) || 0,
@@ -988,6 +990,8 @@ const goalDelivery = computed(() => {
     turnIds,
     anchorKey
   })
+  if (pkg) pkg.anchorMsg = anchorMsg
+  return pkg
 })
 
 /** 一条回答（或一个旧目标的多轮）的交付包：普通问答按轮聚合，旧目标按 goalId 聚回一个包。
@@ -1009,7 +1013,7 @@ const turnDeliveries = computed(() => {
     const key = goalId ? 'g:' + goalId : 't:' + (m.messageId || tid || i)
     let g = groups.get(key)
     if (!g) {
-      g = { files: [], turnIds: [], anchorKey: '', firstIndex: i }
+      g = { files: [], turnIds: [], anchorKey: '', anchorMsg: null, firstIndex: i }
       groups.set(key, g)
     }
     for (const a of m.artifacts) {
@@ -1018,6 +1022,7 @@ const turnDeliveries = computed(() => {
     }
     if (tid && !g.turnIds.includes(tid)) g.turnIds.push(tid)
     g.anchorKey = m.messageId || tid
+    g.anchorMsg = m
   }
   for (const g of groups.values()) {
     const pkg = deliveryOf(g.files, {
@@ -1026,7 +1031,10 @@ const turnDeliveries = computed(() => {
       turnIds: g.turnIds,
       anchorKey: g.anchorKey
     })
-    if (pkg) out.push(pkg)
+    if (pkg) {
+      pkg.anchorMsg = g.anchorMsg
+      out.push(pkg)
+    }
   }
   return out
 })
@@ -1039,28 +1047,18 @@ const deliveryPackages = computed(() => {
   return out
 })
 
-const deliveryKeyOf = m => (m && (m.messageId || m.turnId)) || ''
-/** 锚点 → 交付包（渲染时按消息 O(1) 取；不做每行扫包列表，长会话里那是 O(n²)） */
-const deliveryByKey = computed(() => {
+/** 消息 → 交付包（渲染时按消息 O(1) 取；不做每行扫包列表，长会话里那是 O(n²)）。
+ *  键用消息对象本身：流式气泡还没有 messageId/turnId，对象身份就在——第一件产物到达即可锚定自己的包，
+ *  done 落库后仍是同一对象，卡不换、入场动效不重播。 */
+const deliveryByMsg = computed(() => {
   const map = new Map()
-  if (goalDelivery.value && goalDelivery.value.anchorKey) map.set(goalDelivery.value.anchorKey, goalDelivery.value)
-  for (const d of turnDeliveries.value) if (d.anchorKey) map.set(d.anchorKey, d)
+  const g = goalDelivery.value
+  if (g && g.anchorMsg) map.set(g.anchorMsg, g)
+  for (const d of turnDeliveries.value) if (d.anchorMsg) map.set(d.anchorMsg, d)
   return map
 })
-/** 已收进「交付卡」的所有轮：这些轮不再逐行平铺产物。
- *  只有真会画出卡的那些包才算数——普通回答单件不成卡（仍走旧的一行），不能算「已收进」，
- *  否则那一行会在 done 把 turnId 填上的同一刻被隐藏，屏幕上什么都不剩。 */
-const deliveryTurnIds = computed(() => {
-  const set = new Set()
-  if (goalDelivery.value) for (const t of goalDelivery.value.turnIds) set.add(t)
-  for (const d of turnDeliveries.value) {
-    if (d.scope !== 'goal' && d.fileCount < 2) continue
-    for (const t of d.turnIds) set.add(t)
-  }
-  return set
-})
 /** 某条回答对应的交付包（目标包只挂在它最后一轮上；其余按轮各一份） */
-const deliveryOfMessage = m => deliveryByKey.value.get(deliveryKeyOf(m)) || null
+const deliveryOfMessage = m => (m && deliveryByMsg.value.get(m)) || null
 /** 值得支一张卡的消息：单件普通回答也成卡（与多件同一套视觉），目标包保持包形态 */
 const deliveryCardOfMessage = m => deliveryCardOf(deliveryOfMessage(m))
 /** 这张交付卡里是否有「刚刚实时到达」的产物：入场动效只认它，历史恢复不播 */
@@ -1070,12 +1068,6 @@ const freshDeliveryOf = m => {
   const d = deliveryCardOfMessage(m)
   return !!(d && Array.isArray(d.files) && d.files.some(f =>
     String((f && f.id) || '') === String(id) || String((f && f.filename) || '') === String(id)))
-}
-/** 该轮产物是否已经以交付卡形式展示：成卡的才收起逐行清单（定位不到交付包的旧消息仍走兜底行） */
-const deliveryListHidden = m => {
-  if (deliveryCardOfMessage(m)) return true
-  const tid = String((m && m.turnId) || '')
-  return !!tid && deliveryTurnIds.value.has(tid)
 }
 
 /** 一轮交付包的主语：取该轮之前最近一条用户问题（"做一个问渠官网，…" → "问渠官网"） */
@@ -4767,7 +4759,7 @@ onUnmounted(() => {
     goalTerminalCard, goalTerminalTitle, goalTerminalNote, goalTurnStreaming, surrenderGoalStream,
     // 交付包：目标跨轮一个包、普通回答按轮一个包；卡片/抽屉/H5 汇总只认这一份口径
     goalDelivery, turnDeliveries, deliveryPackages, deliveryOfMessage, deliveryCardOfMessage,
-    deliveryListHidden, downloadDeliveryZip, artifactPendingOf, freshDeliveryOf,
+    downloadDeliveryZip, artifactPendingOf, freshDeliveryOf,
     goalEditing, goalEdit, goalEditBusy, goalEditSaveable, startGoalInlineEdit, saveGoalEdit,
     // 思考能力 / 档位
     thinkCapsOf, reasoningLevelsOf, deepThinkMap, deepOnOf, deepThinkOn, levelOptionsOf, currentLevelOf,
