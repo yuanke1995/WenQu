@@ -12,6 +12,8 @@
 npm i @wenqu/sdk
 ```
 
+> 尚未发布到公共 npm；实际分发方式见「[对外分发](#对外分发给其他项目用)」。
+
 本地开发期也可以直接从仓库安装：
 
 ```bash
@@ -278,6 +280,61 @@ API Key 按能力开通 scope，未开通调用对应端点返回 403（`WenquAu
 | `workflow.run` | `workflows/{id}/run` 触发与补查 | 工作流执行 |
 
 给外部系统签发 Key 时按最小能力开通即可。
+
+## 对外分发（给其他项目用）
+
+SDK 暂不发布到公共 npm，对外交付以 tarball 为主，按「打包 → 安装 → 接入」三步走。
+
+### 1. 打包（在 WenQu 仓库）
+
+```bash
+cd sdk/js
+npm ci
+npm run build        # tsc 编译到 dist/
+npm pack             # 产出 wenqu-sdk-0.1.0.tgz
+```
+
+产物只含 `dist/` 与 `package.json`（约 28KB），零运行时依赖，不依赖 node_modules。
+`dist/` 不在版本库里，拿到仓库副本的一方必须先 build 才能 pack。
+
+### 2. 对方项目安装
+
+| 方式 | 命令 | 适用场景 |
+| --- | --- | --- |
+| tarball 拷贝 | `npm i /path/to/wenqu-sdk-0.1.0.tgz` | 推荐，跨机器/跨项目，版本固定 |
+| 本地路径 | `npm i file:/path/to/WenQu/sdk/js` | 同一台机器，目录软链，SDK 重新 build 后即生效 |
+| 私有 registry | `npm publish --registry http://内网地址` 后 `npm i @wenqu/sdk` | 多项目长期共用、CI 也要安装 |
+
+本地路径与 tarball 两种方式都要求 `dist/` 已存在。
+
+公共 npm 发不了：包名 `@wenqu/sdk` 是 scoped 包，需要拥有 `@wenqu` scope（npm 组织）；要上公网需改包名或新建组织。
+
+### 3. 接入
+
+装包前先在问渠「API Key 管理」签发 Key，按需勾选 scope（见「API Key scope」）。
+
+```ts
+import { WenquClient } from "@wenqu/sdk";
+
+const client = new WenquClient({
+  baseUrl: "http://host:8090/ai", // /ai 必须带，SDK 不自动补
+  apiKey: "sk-xxx",
+});
+
+const resp = await client.chat.completions.create({
+  model: "智能体id",
+  messages: [{ role: "user", content: "你好" }],
+});
+```
+
+浏览器场景不要把 Key 放进前端：业务后端转发 `/api/ai/**`，前端用 `nativeRoot` + `headers` 指过去（见「深度集成」）。不想写代码可直接用 `wenqu-embed.js` 或 iframe 嵌入。
+
+### 4. 注意事项
+
+- **纯 ESM**（`"type": "module"`，无 CJS 产物）：CJS 项目里 `require("@wenqu/sdk")` 在 Node < 22.12 会报错，改用 `await import()` 或升级 Node。
+- **Node ≥ 18**；浏览器需支持 `fetch` / `ReadableStream`。
+- **升级**：重新 pack 后重装 tarball。沿用同一版本号时个别 npm 缓存场景需 `--force` 或 `npm cache clean --force`，建议每次 `npm version patch` 再 pack。
+- **类型**：自带 `dist/*.d.ts`，不需要额外安装 `@types`。
 
 ## 开发
 
