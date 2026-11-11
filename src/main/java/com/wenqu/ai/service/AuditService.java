@@ -375,17 +375,27 @@ public class AuditService {
     /**
      * 分页查询（审计页与导出共用同一条件解析，两处不会漂成两套口径）。
      *
+     * @param target 被操作对象（如成员 uid）：<b>与 actor 是两个维度</b>——
+     *               actor 是「谁做的」，target 是「对谁做的」。成员 360 抽屉问的是
+     *               「谁改过他」，用 actor 查出来的是「他做过什么」——两件事，别混。
      * @param tenant 跨租户审阅时点名的租户（仅平台级调用方经 {@code asPlatform} 传进来）；
      *               留空＝按当前登录者的租户看（拦截器自动加条件），不是「看全部」
      */
     public Map<String, Object> query(LocalDateTime from, LocalDateTime to, String actor, String action,
                                      String keyword, String tenant, int page, int size) {
+        return query(from, to, actor, null, action, keyword, tenant, page, size);
+    }
+
+    /** 分页查询（带「被操作对象」维度；target 传空即不过滤） */
+    public Map<String, Object> query(LocalDateTime from, LocalDateTime to, String actor, String target,
+                                     String action, String keyword, String tenant, int page, int size) {
         int p = Math.max(1, page);
         int s = Math.min(500, Math.max(1, size));
         String t = blankToNull(tenant);
         Map<String, Object> out = new LinkedHashMap<>();
-        out.put("total", safeCount(from, to, actor, action, keyword, t));
-        out.put("items", mapper.query(from, to, actor, action, blankToNull(keyword), t, (p - 1) * s, s));
+        out.put("total", safeCount(from, to, actor, target, action, keyword, t));
+        out.put("items", mapper.query(from, to, actor, blankToNull(target), action, blankToNull(keyword), t,
+                (p - 1) * s, s));
         out.put("page", p);
         out.put("size", s);
         out.put("actions", mapper.distinctActions());
@@ -393,10 +403,10 @@ public class AuditService {
         return out;
     }
 
-    private long safeCount(LocalDateTime from, LocalDateTime to, String actor, String action, String keyword,
-                           String tenant) {
+    private long safeCount(LocalDateTime from, LocalDateTime to, String actor, String target, String action,
+                           String keyword, String tenant) {
         try {
-            return mapper.countQuery(from, to, actor, action, blankToNull(keyword), tenant);
+            return mapper.countQuery(from, to, actor, blankToNull(target), action, blankToNull(keyword), tenant);
         } catch (Exception e) {
             log.warn("[AUDIT] 计数失败（列表仍给，总数记 0）: {}", e.getMessage());
             return 0;
@@ -417,7 +427,7 @@ public class AuditService {
         long written = 0;
         int page = 1;
         while (page <= 500) {   // 上限 10 万行：合规导出要的是可预期，不是把库拖去 OOM
-            List<Map<String, Object>> rows = mapper.query(from, to, actor, action, blankToNull(keyword),
+            List<Map<String, Object>> rows = mapper.query(from, to, actor, null, action, blankToNull(keyword),
                     t, (page - 1) * 200, 200);
             if (rows.isEmpty()) break;
             for (Map<String, Object> r : rows) {

@@ -1,0 +1,298 @@
+# 成员管理 UI/UX 与功能升级方案（P0-P2 已落地）
+
+## 0. 结论先行
+
+| 项 | 结论 |
+|---|---|
+| **本次第一步** | 产出本方案 + [`design/mockups/members-upgrade/members-upgrade.html`](file:///Users/wangxi/workspace/WenQu/design/mockups/members-upgrade/members-upgrade.html)（现状对照 + 6 屏高保真效果图）→ **已按方案实现并通过验收**（见 §0.1） |
+| **核心主张** | 把成员管理从「一张用户表」升级为「成员工作台」：**一屏看规模与风险 → 一层下钻到人 → 一处改角色与归属 → 一条闭环到审计** |
+| **最大缺口** | 现状只有全量用户表 + 三个前端筛选：看不到整体规模与风险、看不到一个人的完整身份、批量改不动、变更留不下痕 |
+| **范围** | `/members` 用户页签 + 部门页签 + 邀请在途 + 成员 360 抽屉；**不改鉴权判定链路，不改表结构** |
+| **不做** | 不重写 RBAC（角色/菜单/授权点仍归权限管理）；不改密码与登录策略；不做审批流；不引入新视觉体系（全部沿用 `web/src/views/app.css` 令牌） |
+| **后端最小改动** | ① 成员概览聚合 ② 成员批量操作 ③ 成员列表 CSV 导出 ④ 成员维度审计查询（复用 `/audit`）；其余全部复用现接口 |
+| **最大复用点** | `/user/page`（服务端分页 + 风险口径）、`/role/expiring`、`/role/{code}/members`、`/role/effective/{uid}`、`/tenant/invites`、`/audit` —— **本轮几乎不需要新增表** |
+
+### 0.1 落地状态（2026-11-11）
+
+已按方案实现并通过本地真机验收（后端 8090 + 前端 5801，浏览器逐项操作）：
+
+| # | 升级项 | 状态 | 落地位置 |
+|---|---|---|---|
+| F1 | 概览条 6 张指标卡（数字即筛选） | ✅ | `GET /user/overview` + `MembersPage.vue` |
+| F2 | 用户表改服务端分页（`/user/page`） | ✅ | `MembersPage.vue` |
+| F3 | 筛选扩展：状态 / 认证方式 / 角色来源 / 未分配部门 | ✅ | `/user/page` 扩参（`authSource` / `roleSource` / `unassigned`） |
+| F4 | 角色列显示「角色名 + 手动 / 组映射·不可改」 | ✅ | `/user/page` 下发 `roleSources` + `roleExpires` |
+| F5 | 批量操作条 + 变更摘要 + 逐条结果 | ✅ | `POST /user/batch` + `BatchActionModal.vue` |
+| F6 | 成员 360 抽屉（四段聚合 + 底部操作集） | ✅ | `Member360Drawer.vue` |
+| F7 | 临期授权页顶条 → 点开清单并定位到人 | ✅ | 复用 `/role/expiring` |
+| F8 | 部门页签改「左树 + 右详情 + 成员清单」，未分配单列节点 | ✅ | `/user/overview` 下发 `departmentCounts` |
+| F9 | 邀请与在途独立页签（生成 + 在途 + 已失效清单） | ✅ | 复用 `/tenant/invites` |
+| F10 | 成员列表导出 CSV（当前筛选条件） | ✅ | `GET /user/export` |
+| F11 | 成员变更在抽屉「操作记录」可见 | ✅ | `/audit` 增 `target` 参数（按被操作对象过滤） |
+| F12 | 空态 / 失败态 / 加载态统一 | ✅ | `MembersPage.vue` |
+
+实现口径补充（与方案 §5 的偏差，都是实现期发现并定下的）：
+- 概览卡的「未分配部门」「今日登录」改为**服务端过滤**（`unassigned` / `loggedInToday`），不在当页里筛——页内筛会让总数与概览卡对不上。
+- 批量动作名统一小写比对（前端传驼峰 `setDepartment`，后端小写化后比对，否则整条批量报「不支持的批量操作」）。
+- 批量「追加角色」是在**现有手动角色之上追加**（不是替换）——替换是编辑弹窗的语义，批量里替换会把没勾的角色悄悄清掉。
+- 批量命中 IdP 授予的角色时**该条失败并给原因**（「角色「x」由 IdP 组映射授予，不可改」），不静默跳过。
+- 成员 360 的「有效权限」显示授权点中文名（取 `/role/permission-catalog`）；管理员级通配标记 `(admin:all-allow)` 不在目录里，单独给一句人话。
+- 抽屉「操作记录」查的是 `/audit?target=uid`（**被操作对象**），不是 `actor`（操作人）——「谁改过他」和「他做过什么」是两件事。
+- 审计 detail 落库是键值 JSON，界面上翻成中文（「对象 x · 角色 a、b · 到期 永久」），不甩原始 JSON 给管理员读日志。
+
+---
+
+## 1. 现状诊断（基于代码与截图，非猜测）
+
+### 1.1 现状截图
+
+用户截图已存为 [`assets/current-members.png`](file:///Users/wangxi/workspace/WenQu/design/mockups/members-upgrade/assets/current-members.png)，作为效果图「SCENE 0 · 现状」的对照底图，原件不动。
+
+### 1.2 代码事实
+
+| 编号 | 现状 | 证据 |
+|---|---|---|
+| M1 | 表格 **`:pagination="false"` + 全量 `listUsers()`**：成员涨到几千人就一次性全渲染 | [MembersPage.vue](file:///Users/wangxi/workspace/WenQu/web/src/views/MembersPage.vue#L60-L60)、[api.js](file:///Users/wangxi/workspace/WenQu/web/src/api.js#L1631-L1631) |
+| M2 | 后端 `/user/list` 是**全表下发**，且逐人查角色、逐人查身份来源（N+1 里唯一没有兜底的一条） | [OrgService.java](file:///Users/wangxi/workspace/WenQu/src/main/java/com/wenqu/ai/service/OrgService.java#L143-L181) |
+| M3 | 筛选只有 3 个（搜索 / 部门 / 角色）且**全部前端过滤**：无状态、无认证方式、无角色来源、无风险口径 | [MembersPage.vue](file:///Users/wangxi/workspace/WenQu/web/src/views/MembersPage.vue#L400-L410) |
+| M4 | **没有概览统计**：进页面看不出在册多少、启用多少、有多少未分配部门、多少长期未登录 | [MembersPage.vue](file:///Users/wangxi/workspace/WenQu/web/src/views/MembersPage.vue#L3-L6) |
+| M5 | **没有批量操作**：改部门、追角色、禁用只能逐行点，几十人就是几十次 | [MembersPage.vue](file:///Users/wangxi/workspace/WenQu/web/src/views/MembersPage.vue#L119-L129) |
+| M6 | **看不到「一个人」**：想看某人有哪些角色、来源是手动还是 IdP、绑了哪些认证源、最近做过什么，只能靠点「编辑」弹窗 | [MembersPage.vue](file:///Users/wangxi/workspace/WenQu/web/src/views/MembersPage.vue#L180-L247) |
+| M7 | **角色来源在表格里丢失**：编辑弹窗里 IdP 授予角色会置灰，但列表只显示角色名，不显示「组映射授予·不可改」 | [MembersPage.vue](file:///Users/wangxi/workspace/WenQu/web/src/views/MembersPage.vue#L78-L84) |
+| M8 | **临时授权是唯一「会自己消失」的东西，却只在页顶一条告警**：到期回收没有清单、没有按人下钻的入口 | [MembersPage.vue](file:///Users/wangxi/workspace/WenQu/web/src/views/MembersPage.vue#L8-L18) |
+| M9 | **部门页签是平铺表格 + 树形行**：人数是前端 `users.filter` 算的，部门成员与用户表两个口径各算一遍 | [MembersPage.vue](file:///Users/wangxi/workspace/WenQu/web/src/views/MembersPage.vue#L139-L174)、[MembersPage.vue](file:///Users/wangxi/workspace/WenQu/web/src/views/MembersPage.vue#L436-L436) |
+| M10 | **邀请的在途状态藏在弹窗里**：`/tenant/invites` 已经返回在途邀请（已用次数 / 到期 / 状态），但只在弹窗底部一个小表，页面上看不到「还有 2 条邀请在外面」 | [InviteMemberModal.vue](file:///Users/wangxi/workspace/WenQu/web/src/components/InviteMemberModal.vue#L58-L88)、[TenantInviteService.java](file:///Users/wangxi/workspace/WenQu/src/main/java/com/wenqu/ai/service/TenantInviteService.java#L107-L127) |
+| M11 | **成员变更没有审计视图**：`/audit` 已支持按操作人查，但成员页不提供「这个人最近被改过什么」的入口 | [AuditController.java](file:///Users/wangxi/workspace/WenQu/src/main/java/com/wenqu/ai/controller/AuditController.java#L50-L58) |
+| M12 | **服务端分页能力已存在却没用上**：`/user/page` 支持关键字 + 部门 + 状态 + 锁定 + 连续失败 + 长期未登录 + 今日登录 + 分页，目前只有会话治理面板在用 | [UserController.java](file:///Users/wangxi/workspace/WenQu/src/main/java/com/wenqu/ai/controller/UserController.java#L52-L64)、[api.js](file:///Users/wangxi/workspace/WenQu/web/src/api.js#L1634-L1644) |
+
+### 1.3 管理员真正回答不了的四个问题
+
+1. **现在到底有多少人在用这个系统？** 只有列表，没有规模、没有口径、没有风险人数。
+2. **这个人到底是谁？** 昵称 + 账号 + 一行角色，不足以回答「他为什么有管理员权限」「他的 IdP 绑定还在不在」「他上次被谁改过」。
+3. **一次改十几个人的部门/角色怎么做？** 只能逐个点，且改完没有批量结果摘要。
+4. **出了事怎么追溯？** 成员变更散在审计日志里，没有按人聚合的视图。
+
+---
+
+## 2. 设计目标与原则
+
+1. **首屏先给结论**：进入页面 3 秒内看到「在册 28 · 启用 25 · 在途邀请 2 · 临期授权 1 · 未分配部门 6 · 今日登录 17」，每个数字可点成筛选。
+2. **一层下钻到人**：任何一行都能开「成员 360」抽屉：身份与归属 / 角色与授权 / 认证与登录 / 操作记录四段一次看全。
+3. **来源要写在脸上**：角色列同时显示「管理员级」与「手动 / 组映射·不可改」，不再靠编辑弹窗里的置灰提示。
+4. **批量是主路径不是补充**：改部门、追角色、启用禁用、导出都能一次多选，并给出逐条结果摘要。
+5. **状态要有归属**：临期授权、在途邀请、未分配部门、长期未登录 —— 四类「等一会儿会变的事」在页面上有固定位置。
+6. **沿用现有设计语言**：只用 `app.css` 令牌与 `.app-card / .app-btn / .app-pill / .app-link-btn` 等既有类，不引入新视觉体系；暗色自动继承。
+
+---
+
+## 3. 信息架构
+
+```
+成员管理
+├─ 页头：成员管理 · 管理账号、部门与角色            [邀请成员] [+ 新建用户] [租户与开通 →]
+├─ 概览条：28 在册成员 | 25 启用中 | 2 在途邀请 | 1 临期授权 | 6 未分配部门 | 17 今日登录
+│            （每张卡可点 = 预设筛选；临期/在途两张带警示色）
+├─ 页签：用户 28 | 部门 4 | 邀请与在途 2
+│  ├─ 用户页签
+│  │  ├─ 筛选行：搜索昵称/登录账号 · 全部状态 · 全部认证方式 · 全部部门 · 全部角色来源
+│  │  │            [更多筛选 ▾] · [导出 CSV]
+│  │  ├─ 表格：成员 | 部门 | 角色与来源 | 认证方式 | 状态 | 最近登录 | 操作
+│  │  ├─ 批量条（选中后浮出）：批量改部门 · 批量追加角色 · 批量启用/禁用 · 导出所选 · 清除
+│  │  └─ 分页：服务端分页 /user/page，20/50/100 可切
+│  ├─ 部门页签：左组织树（人数可下钻）+ 右部门详情（描述 / 成员清单 / 编辑 / 删除）
+│  └─ 邀请与在途页签：左「生成邀请链接」表单 + 右「在途邀请」清单（已用 / 到期 / 撤销）
+└─ 成员 360 抽屉（760px）
+   ├─ 身份与归属：部门 / 租户 / 状态 / 连续失败 / 会话代数
+   ├─ 角色与授权：每个角色的来源（手动 / IdP）、临时授权到期、临时授权项
+   ├─ 认证与登录：身份绑定列表（provider + externalId）+ 本地账号状态
+   ├─ 操作记录：listAuditEvents(actor=uid) —— 谁在什么时候改过他
+   └─ 底部：编辑 · 重置密码 · 禁用 · 更多 · 删除
+```
+
+### 3.1 成员 360 抽屉（本轮的核心增量）
+
+| 段 | 内容 | 数据来源 |
+|---|---|---|
+| 身份与归属 | 部门（可点回部门页）、租户、状态、连续登录失败、会话代数、最近登录 | `/user/page` 单条 + 现有 users 数据 |
+| 角色与授权 | 每个角色一行：角色名 + 来源（手动 / 组映射·不可改）+ 临时授权到期 + 有效性判定；底部「临时授权项」单独一段 | `/role/expiring` + `roleSources` + `/role/effective/{uid}` |
+| 认证与登录 | 身份绑定列表（provider 名称 + externalId，可逐源解绑）、本地账号是否可登录 | `identities` + `/identity/providers` |
+| 操作记录 | 最近 10 条审计事件（时间 / 动作 / 操作人 / IP） | `/audit?actor={uid}` |
+
+抽屉底部保留「编辑 / 重置密码 / 禁用 / 更多 / 删除」，与现状的操作集一致——**抽屉是只读聚合面，写操作仍走既有弹窗**，避免同一份表单维护两套。
+
+### 3.2 批量操作
+
+- 勾选行 → 表格上方浮出批量条。
+- 批量改部门 / 批量追加角色：走一个「批量确认弹窗」，先列出**将要发生的变更摘要**（谁的部门从 A 改成 B、谁将新增哪个角色），再执行。
+- 执行结果给**逐条摘要**：成功 N 条 / 失败 M 条 + 失败原因（可展开），不吞错。
+- IdP 组映射授予的角色在批量追加里同样置灰，避免「批量执行但其中几条静默无效」。
+
+### 3.3 部门页签
+
+- 左：组织树，节点显示人数与「未分配」虚拟节点（未分配的人也要能找得到）。
+- 右：选中部门的详情 —— 上级 / 子部门 / 描述 / 成员清单（表格：成员、角色、状态、最近登录）。
+- 编辑/删除部门走既有弹窗；删除仍受后端「部门下有人时拒绝」的保护，界面上提前把人数标出来。
+
+### 3.4 邀请与在途页签
+
+- 左：生成邀请链接表单（角色 / 部门 / 有效期 / 可用次数 / 限定邮箱），沿用 `InviteMemberModal` 已有的全部能力。
+- 右：在途邀请清单（角色·部门 / 已用 / 到期 / 状态 / 撤销），即把现在藏在弹窗底部的表提到页面上。
+- 提示口径保留现状那句「链接只显示一次」「当前不校验邮箱归属」，不粉饰。
+
+---
+
+## 4. 功能升级清单
+
+| # | 升级项 | 前端 | 后端 | 优先级 |
+|---|---|---|---|---|
+| F1 | 概览条 6 张指标卡，每张可点成筛选 | MembersPage | `/user/overview`（新增聚合） | **P0** |
+| F2 | 用户表改服务端分页（`/user/page`），20/50/100 切页 | MembersPage | 复用 `/user/page` | **P0** |
+| F3 | 筛选扩展：状态 / 认证方式 / 角色来源 / 风险口径（锁定、未登录 N 天、今日登录） | MembersPage | `/user/page` 扩参（认证方式、角色来源） | **P0** |
+| F4 | 角色列显示「角色名 + 来源（手动 / 组映射·不可改）」 | MembersPage | 复用 `roleSources` | **P0** |
+| F5 | 批量操作条 + 批量确认弹窗 + 逐条结果摘要 | MembersPage | `/user/batch`（新增） | **P1** |
+| F6 | 成员 360 抽屉（四段聚合 + 底部操作集） | 新组件 `Member360Drawer.vue` | 复用 `/role/expiring`、`/role/effective/{uid}`、`/audit` | **P1** |
+| F7 | 临期授权页顶条 → 可点开清单并按人下钻 | MembersPage | 复用 `/role/expiring` | **P1** |
+| F8 | 部门页签改「左树 + 右详情 + 成员清单」，未分配单列节点 | MembersPage | `/department/list` 增 `userCount`（轻量聚合） | **P1** |
+| F9 | 邀请与在途独立页签（生成 + 在途清单） | MembersPage / InviteMemberModal | 复用 `/tenant/invites` | **P1** |
+| F10 | 成员列表导出 CSV（当前筛选条件） | MembersPage | `/user/export`（新增） | **P2** |
+| F11 | 审计联动：成员变更在抽屉「操作记录」可见 | Member360Drawer | 复用 `/audit?actor=` | **P2** |
+| F12 | 空态/失败态/加载态统一；失效数据明确标注 | MembersPage | 无 | **P2** |
+
+### 4.1 边界（明确不做）
+
+- 不在成员页复制权限管理页的「角色 → 权限点」配置；成员页只回答「这个人有哪些角色」。
+- 不做审批流、不做成员入转调离流程编排。
+- 不做成员级自定义字段 / 标签体系。
+- 不改鉴权判定链路、不改 `@Permission` 口径、不改表结构（除必要的只读聚合查询）。
+
+---
+
+## 5. 接口方案
+
+### 5.1 新增（后端只读聚合 + 两个批量/导出写读端点）
+
+1. **`GET /api/ai/user/overview`**（`@Permission("user:read")`）
+   ```json
+   {
+     "total": 28, "active": 25, "disabled": 3,
+     "unassignedDept": 6, "loggedInToday": 17,
+     "inactive30d": 4, "locked": 1,
+     "pendingInvites": 2, "expiringGrants": 1,
+     "byAuthSource": { "local": 22, "wecom": 4, "oidc": 2 }
+   }
+   ```
+   实现：`OrgService.overview()`，复用 `userMapper` 聚合查询 + `tenantInviteMapper` + `userRoleService.expiringWithinDays(7)`；不参与鉴权缓存。
+
+2. **`POST /api/ai/user/batch`**（`@Permission("user:write")`）
+   ```json
+   { "action": "setDepartment|addRoles|setStatus", "uids": ["a","b"], "departmentId": "d1", "roles": ["admin"], "status": 0 }
+   ```
+   返回 `{ "succeeded": [...], "failed": [{ "uid": "c", "reason": "..." }] }`。
+   实现：逐条调用既有 `updateUser` 语义（保住「全量替换手动角色 + 带到期」的既有契约），失败带原因回传；**不引入第二条写路径**。
+
+3. **`GET /api/ai/user/export`**（`@Permission("user:read")`）
+   参数与 `/user/page` 一致，返回 CSV（复用审计导出的 fetch + blob 写法）。
+
+### 5.2 扩参（`/user/page`）
+
+新增 `authSource`（local / providerId）与 `roleSource`（manual / idp）两个可选筛选，落到 SQL 的 `IN` 条件上；`/user/page` 现有参数与返回口径**保持不变**（`total/items/page/size`，items 字段口径同 `/user/list`），已有调用方（会话治理面板）不受影响。
+
+### 5.3 复用（不新增）
+
+- `/user/page`、`/user/list`、`/department/list`
+- `/role/expiring`、`/role/{code}/members`、`/role/effective/{uid}`、`/role/options`
+- `/identity/providers`、`/tenant/invites`、`/tenant/invites`（生成/撤销）
+- `/audit?actor={uid}&days=30`
+- `/user/{uid}/identity-binding/{providerId}`（逐源解绑）
+
+---
+
+## 6. 实施步骤
+
+### 阶段 0：方案与效果图（本次）
+
+1. 产出 `design/mockups/members-upgrade/members-upgrade.html`：现状对照 + 6 屏高保真效果图。
+2. 复制现状截图为 `assets/current-members.png`。
+3. 通知评审，**不写业务代码**。
+
+### 阶段 1：后端只读聚合
+
+- [OrgService.java](file:///Users/wangxi/workspace/WenQu/src/main/java/com/wenqu/ai/service/OrgService.java)：新增 `overview()`。
+- [UserController.java](file:///Users/wangxi/workspace/WenQu/src/main/java/com/wenqu/ai/controller/UserController.java)：新增 `GET /overview`。
+- [OrgService.java](file:///Users/wangxi/workspace/WenQu/src/main/java/com/wenqu/ai/service/OrgService.java)：`pageUsers` 增 `authSource` / `roleSource` 过滤。
+
+### 阶段 2：前端公共层
+
+- [api.js](file:///Users/wangxi/workspace/WenQu/web/src/api.js)：新增 `getUserOverview`、`batchUsers`、`exportUsersCsv`。
+- 新建 `web/src/components/members/Member360Drawer.vue`（四段聚合）。
+- 新建 `web/src/components/members/BatchActionModal.vue`（变更摘要 + 逐条结果）。
+
+### 阶段 3：主页面改造
+
+- [MembersPage.vue](file:///Users/wangxi/workspace/WenQu/web/src/views/MembersPage.vue)：
+  - 页头加概览条；页签加「邀请与在途」。
+  - 用户表切服务端分页 + 扩展筛选 + 角色来源列 + 批量条。
+  - 部门页签改左树右详情。
+  - 邀请页签复用 `InviteMemberModal` 的表单与在途清单能力。
+
+### 阶段 4：批量与导出
+
+- 后端 `/user/batch` + `/user/export`；前端批量条与结果摘要。
+
+### 阶段 5：验证
+
+- `cd web && npm run build`
+- `mvn -q -DskipTests compile`
+- 浏览器按 §7 验收。
+
+---
+
+## 7. 验收标准
+
+### 7.1 方案与效果图
+
+- [ ] HTML 可直接在浏览器打开，无横向溢出，暗色正常。
+- [ ] 现状对照图与用户上传截图一致。
+- [ ] 每条现状诊断都有代码/截图证据，不写空泛评价。
+- [ ] 效果图中所有数字标注为「示意数据」，不当作真实统计。
+
+### 7.2 功能（实施后）
+
+- [ ] 概览条数字与列表/接口一致；点卡片落到对应筛选。
+- [ ] 用户表走服务端分页，翻页与筛选不丢条件；`/user/list` 不再被成员页全量调用。
+- [ ] 状态 / 认证方式 / 角色来源筛选生效，与后端参数一致。
+- [ ] 角色列区分「手动」与「组映射·不可改」，与编辑弹窗的置灰口径一致。
+- [ ] 批量改部门 / 追加角色：先出变更摘要再执行；失败逐条给原因，IdP 角色不被静默跳过。
+- [ ] 成员 360 抽屉四段都有真实数据；「操作记录」能查到该 uid 的历史变更。
+- [ ] 临期授权能点开清单并跳到对应成员。
+- [ ] 部门树人数与成员清单一致；「未分配」节点能筛出未分配的人。
+- [ ] 在途邀请的已用/到期/状态与 `/tenant/invites` 一致；撤销后立即失效。
+- [ ] 导出 CSV 内容与当前筛选一致。
+- [ ] 空态 / 加载失败 / 权限不足三类状态文案互不混淆，失败可重试。
+
+### 7.3 不回归
+
+- [ ] 会话治理面板（`/user/page` 既有调用方）行为不变。
+- [ ] 临时授权「到期自动回收」语义不变：编辑成员保存仍原样带回 `roleExpires`。
+- [ ] 租户隔离口径不变：平台级可见跨租户成员，租户管理员只见本租户。
+- [ ] 权限管理页的角色↔成员抽屉不受影响。
+
+---
+
+## 8. 风险与回滚
+
+| 风险 | 处理 |
+|---|---|
+| `/user/batch` 引入第二条写路径，绕过既有「全量替换手动角色 + 到期」契约 | 批量内部逐条调用同一写语义，返回逐条结果；不新写 SQL 更新路径 |
+| 概览聚合查询在万人库上慢 | 聚合走索引列（status / last_login_time / department_id），并给 30s 缓存；失败时降级为「—」，列表照常可用 |
+| 成员页切服务端分页后，「部门人数」等前端计算失效 | 人数改为后端聚合口径（F8），不再前端 filter |
+| 抽屉聚合一次打多个接口 | 四段懒加载，首屏只拉身份与角色；每段失败单独提示，不整体阻塞 |
+
+---
+
+## 9. 待确认决策
+
+1. 概览条默认放 6 张卡，是否要按租户管理员口径收敛（普通租户管理员不需要「未分配部门」）。
+2. 批量操作是否需要「撤销上一批」能力（依赖操作审计回放，一期不做）。
+3. 成员 360 抽屉是否允许直接改角色（当前设计为只读聚合 + 跳转编辑弹窗）。
+4. 导出 CSV 是否需要按列自定义（默认全列）。

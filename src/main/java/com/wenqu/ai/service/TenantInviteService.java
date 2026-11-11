@@ -126,6 +126,18 @@ public class TenantInviteService {
         return out;
     }
 
+    /**
+     * 在途邀请数（成员管理页概览条用）：还能用的才算在途。
+     * <p>口径与 {@link #effectiveStatus} 一致——已撤销 / 已过期 / 已用尽都不算。
+     */
+    public long countPending() {
+        long n = 0;
+        for (TenantInvite r : inviteMapper.selectList(new LambdaQueryWrapper<TenantInvite>())) {
+            if ("active".equals(effectiveStatus(r))) n++;
+        }
+        return n;
+    }
+
     public void revoke(String id) {
         TenantInvite inv = inviteMapper.selectById(id);
         if (inv == null) throw new BizException("邀请不存在或已失效");

@@ -79,6 +79,24 @@ public class UserRoleService {
         }
     }
 
+    /**
+     * 批量取多个账号的角色行（按 uid 分组）。
+     * <p>成员页一页 20 人要显示「角色与来源」，逐人查角色行就是 20 次查询——这里一次取回。
+     * <p>过期行当场不认，与 {@link #rolesOf} 的判定口径一致（读侧即滤，不给僵尸角色续命）。
+     */
+    public java.util.Map<String, List<com.wenqu.ai.model.UserRole>> roleRowsOfUids(java.util.Collection<String> uids) {
+        java.util.Map<String, List<com.wenqu.ai.model.UserRole>> out = new java.util.LinkedHashMap<>();
+        if (uids == null || uids.isEmpty()) return out;
+        List<com.wenqu.ai.model.UserRole> rows = mapper.selectList(
+                new LambdaQueryWrapper<com.wenqu.ai.model.UserRole>().in(com.wenqu.ai.model.UserRole::getUid, uids));
+        java.time.LocalDateTime now = java.time.LocalDateTime.now();
+        for (com.wenqu.ai.model.UserRole r : rows) {
+            if (r.getExpireAt() != null && r.getExpireAt().isBefore(now)) continue;
+            out.computeIfAbsent(r.getUid(), k -> new java.util.ArrayList<>()).add(r);
+        }
+        return out;
+    }
+
     /** 用户的角色集合（真实用户无角色行 → ["user"]；SYSTEM/空 → 空表，fail-closed） */
     public List<String> rolesOf(String uid) {
         if (uid == null || uid.isBlank() || com.wenqu.ai.util.RequestUser.SYSTEM.equals(uid)) {

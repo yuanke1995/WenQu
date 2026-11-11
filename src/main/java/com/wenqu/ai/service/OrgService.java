@@ -48,6 +48,8 @@ public class OrgService {
     private final RoleService roleService;
     private final UserRoleService userRoleService;
     private final IdentityService identityService;
+    /** 在途邀请数（成员概览条用）——邀请的「还能用」口径由它单点定义 */
+    private final TenantInviteService tenantInviteService;
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
     private final com.wenqu.ai.mapper.UserRoleMapper userRoleMapper;
     private final AppProperties properties;
@@ -195,26 +197,63 @@ public class OrgService {
     public java.util.Map<String, Object> pageUsers(String keyword, String departmentId, Integer status,
                                                    Boolean locked, Integer minFail, Integer inactiveDays,
                                                    Boolean loggedInToday, int page, int size) {
+        return pageUsers(keyword, departmentId, status, locked, minFail, inactiveDays, loggedInToday,
+                null, null, page, size);
+    }
+
+    /**
+     * 成员分页查询（含成员管理页新增的两个筛选维度）。
+     * <p>{@code authSource}：认证方式——空=不限，{@code local}=本地账号（无外部绑定），否则为认证源 id。
+     * {@code roleSource}：角色来源——空=不限，{@code manual} / {@code idp}。
+     * <p>这两个维度落在关联表上（c_ai_user_identity / c_ai_user_role），走子查询而非把 uid 全量拉回内存
+     * 再 IN 过滤——成员到万级时 IN 列表会撑爆 SQL 长度。
+     */
+    public java.util.Map<String, Object> pageUsers(String keyword, String departmentId, Integer status,
+                                                   Boolean locked, Integer minFail, Integer inactiveDays,
+                                                   Boolean loggedInToday, String authSource, String roleSource,
+                                                   int page, int size) {
+        return pageUsers(keyword, departmentId, status, locked, minFail, inactiveDays, loggedInToday,
+                authSource, roleSource, false, page, size);
+    }
+
+    /**
+     * 成员分页查询（含成员管理页新增的两个筛选维度）。
+     * <p>{@code authSource}：认证方式——空=不限，{@code local}=本地账号（无外部绑定），否则为认证源 id。
+     * {@code roleSource}：角色来源——空=不限，{@code manual} / {@code idp}。
+     * <p>这两个维度落在关联表上（c_ai_user_identity / c_ai_user_role），走子查询而非把 uid 全量拉回内存
+     * 再 IN 过滤——成员到万级时 IN 列表会撑爆 SQL 长度。
+     */
+    public java.util.Map<String, Object> pageUsers(String keyword, String departmentId, Integer status,
+                                                   Boolean locked, Integer minFail, Integer inactiveDays,
+                                                   Boolean loggedInToday, String authSource, String roleSource,
+                                                   boolean unassigned, int page, int size) {
         // 平台级看全部租户的成员，与 listUsersWithRoles 同一口径（跨租户挪人后不能没有找回入口）
         if (com.wenqu.ai.util.RequestUser.superadmin()) {
             return com.wenqu.ai.util.TenantContext.asPlatform(
                     () -> pageUsersScoped(keyword, departmentId, status, locked, minFail, inactiveDays,
-                            loggedInToday, page, size));
+                            loggedInToday, authSource, roleSource, unassigned, page, size));
         }
-        return pageUsersScoped(keyword, departmentId, status, locked, minFail, inactiveDays, loggedInToday, page, size);
+        return pageUsersScoped(keyword, departmentId, status, locked, minFail, inactiveDays, loggedInToday,
+                authSource, roleSource, unassigned, page, size);
     }
 
-    private java.util.Map<String, Object> pageUsersScoped(String keyword, String departmentId, Integer status,
-                                                          Boolean locked, Integer minFail, Integer inactiveDays,
-                                                          Boolean loggedInToday, int page, int size) {
-        int p = Math.max(1, page);
-        int s = Math.min(PAGE_MAX_SIZE, Math.max(1, size));
+    /**
+     * 成员列表的查询条件构造（分页查询与导出共用同一套筛选口径）。
+     */
+    private LambdaQueryWrapper<User> buildMemberQuery(String keyword, String departmentId, Integer status,
+                                                       Boolean locked, Integer minFail, Integer inactiveDays,
+                                                       Boolean loggedInToday, String authSource, String roleSource,
+                                                       boolean unassigned) {
         LambdaQueryWrapper<User> w = new LambdaQueryWrapper<>();
         String kw = keyword == null ? "" : keyword.trim();
         if (!kw.isEmpty()) {
             w.and(q -> q.like(User::getUsername, kw).or().like(User::getUid, kw));
         }
         if (departmentId != null && !departmentId.isBlank()) w.eq(User::getDepartmentId, departmentId);
+        // 未分配部门：空部门 id 也算「未分配」（存的是空串而不是 NULL，两种都要覆盖）
+        if (unassigned) {
+            w.and(q -> q.isNull(User::getDepartmentId).or().eq(User::getDepartmentId, ""));
+        }
         if (status != null) w.eq(User::getStatus, status);
         // 会话治理的风险口径：锁定中 / 连续失败达到阈值 / 长期未登录（从未登录也算长期未登录）
         if (Boolean.TRUE.equals(locked)) w.gt(User::getLockedUntil, LocalDateTime.now());
@@ -226,6 +265,33 @@ public class OrgService {
         if (Boolean.TRUE.equals(loggedInToday)) {
             w.ge(User::getLastLoginTime, java.time.LocalDate.now().atStartOfDay());
         }
+        // 角色来源筛选：挂在该来源角色上的账号（过期行不算——过期即失效）
+        if (roleSource != null && !roleSource.isBlank()) {
+            w.apply("uid IN (SELECT uid FROM c_ai_user_role WHERE granted_by = {0} " +
+                    "AND (expire_at IS NULL OR expire_at > {1}))",
+                    roleSource.trim().toLowerCase(), LocalDateTime.now());
+        }
+        // 认证方式筛选：绑定了该认证源 / 没有任何外部绑定（本地账号）
+        if (authSource != null && !authSource.isBlank()) {
+            String src = authSource.trim();
+            if ("local".equalsIgnoreCase(src)) {
+                // 本地账号 = 无任何外部身份绑定；用 NOT EXISTS 子查询，避免把「有绑定的人」全拉回来做差集
+                w.apply("NOT EXISTS (SELECT 1 FROM c_ai_user_identity i WHERE i.uid = c_ai_user.uid)");
+            } else {
+                w.apply("uid IN (SELECT uid FROM c_ai_user_identity WHERE provider_id = {0})", src);
+            }
+        }
+        return w;
+    }
+
+    private java.util.Map<String, Object> pageUsersScoped(String keyword, String departmentId, Integer status,
+                                                          Boolean locked, Integer minFail, Integer inactiveDays,
+                                                          Boolean loggedInToday, String authSource, String roleSource,
+                                                          boolean unassigned, int page, int size) {
+        int p = Math.max(1, page);
+        int s = Math.min(PAGE_MAX_SIZE, Math.max(1, size));
+        LambdaQueryWrapper<User> w = buildMemberQuery(keyword, departmentId, status, locked, minFail,
+                inactiveDays, loggedInToday, authSource, roleSource, unassigned);
         w.orderByDesc(User::getLastLoginTime).orderByAsc(User::getUsername);
         var pg = userMapper.selectPage(
                 new com.baomidou.mybatisplus.extension.plugins.pagination.Page<User>(p, s), w);
@@ -233,6 +299,8 @@ public class OrgService {
         List<String> uids = new ArrayList<>();
         for (User u : pg.getRecords()) uids.add(u.getUid());
         var identities = identityService.mapOfUids(uids);
+        // 角色行一次取回（逐人查就是 20 次查询/页）
+        var roleRows = userRoleService.roleRowsOfUids(uids);
 
         List<java.util.Map<String, Object>> items = new java.util.ArrayList<>();
         for (User u : pg.getRecords()) {
@@ -245,12 +313,17 @@ public class OrgService {
             //（界面一直写着「组映射授予的角色在成员管理中不可改」，此前没实现：勾了也勾不动 IdP 行，
             // 表现为静默无效）。enabledRoles 取启用角色全集，与 roles 对齐口径。
             java.util.Map<String, String> roleSources = new java.util.LinkedHashMap<>();
-            for (com.wenqu.ai.model.UserRole ur : userRoleMapper.selectList(
-                    new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<com.wenqu.ai.model.UserRole>()
-                            .eq(com.wenqu.ai.model.UserRole::getUid, u.getUid()))) {
+            // 临时授权的到期时刻也一并带出：成员页「角色与来源」列要显示临期天数，
+            // 不用再单独发一次 /role/expiring（那是全租户清单，成员页只关心本页的人）
+            java.util.Map<String, String> roleExpires = new java.util.LinkedHashMap<>();
+            for (com.wenqu.ai.model.UserRole ur : roleRows.getOrDefault(u.getUid(), List.of())) {
                 roleSources.put(ur.getRoleCode(), ur.getGrantedBy());
+                if (ur.getExpireAt() != null) {
+                    roleExpires.put(ur.getRoleCode(), ur.getExpireAt().toString());
+                }
             }
             m.put("roleSources", roleSources);
+            m.put("roleExpires", roleExpires);
             List<java.util.Map<String, Object>> ids = new java.util.ArrayList<>();
             for (var i : identities.getOrDefault(u.getUid(), List.of())) {
                 java.util.Map<String, Object> one = new java.util.LinkedHashMap<>();
@@ -267,6 +340,306 @@ public class OrgService {
         out.put("page", p);
         out.put("size", s);
         return out;
+    }
+
+    /**
+     * 批量操作成员（成员管理页批量条用）。
+     * <p><b>不新开写路径</b>：逐条调用既有的 {@link #updateUserScoped} 语义——
+     * 「全量替换手动角色 + 原样带回到期时刻」的契约只有一处实现，批量走别的路就会漂。
+     * <p>逐条独立成败：一条失败（角色不存在、最后一名管理员、IdP 角色不可改）不影响其它条，
+     * 失败原因逐条回传，前端不吞错。
+     *
+     * @param action {@code setDepartment} / {@code addRoles} / {@code setStatus}
+     * @return {@code {succeeded:[uid...], failed:[{uid, reason}]}}
+     */
+    public java.util.Map<String, Object> batchUsers(String action, List<String> uids,
+                                                    String departmentId, List<String> addRoles, Integer status,
+                                                    boolean onlyIfBlank) {
+        List<String> succeeded = new ArrayList<>();
+        List<java.util.Map<String, Object>> failed = new ArrayList<>();
+        if (uids == null || uids.isEmpty()) {
+            java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
+            out.put("succeeded", succeeded);
+            out.put("failed", failed);
+            return out;
+        }
+        // 动作名统一小写比对（前端可能传驼峰）
+        String act = action == null ? "" : action.trim().toLowerCase();
+        for (String uid : uids) {
+            if (uid == null || uid.isBlank()) continue;
+            try {
+                applyBatchOne(act, uid.trim(), departmentId, addRoles, status, onlyIfBlank);
+                succeeded.add(uid.trim());
+            } catch (Exception e) {
+                java.util.Map<String, Object> one = new java.util.LinkedHashMap<>();
+                one.put("uid", uid.trim());
+                one.put("reason", e.getMessage() == null ? "操作失败" : e.getMessage());
+                failed.add(one);
+            }
+        }
+        java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("succeeded", succeeded);
+        out.put("failed", failed);
+        return out;
+    }
+
+    /**
+     * 单条批量动作：读当前状态 → 算目标状态 → 走既有 updateUserScoped。
+     * <p>「批量追加角色」是在<b>现有手动角色之上</b>追加（不是替换）：替换是编辑弹窗的语义，
+     * 批量里做替换会把没勾的角色悄悄清掉。
+     */
+    private void applyBatchOne(String action, String uid, String departmentId, List<String> addRoles,
+                                Integer status, boolean onlyIfBlank) {
+        if (!"setdepartment".equals(action) && !"addroles".equals(action) && !"setstatus".equals(action)) {
+            throw new BizException("不支持的批量操作：" + action);
+        }
+        User user = userMapper.selectById(uid);
+        if (user == null) throw new BizException("用户不存在");
+        // 当前手动角色与其到期时刻（编辑弹窗的 roleExpires 口径：只有手动行可改）
+        java.util.Map<String, java.time.LocalDateTime> currentExpires = new java.util.LinkedHashMap<>();
+        List<String> currentManual = new ArrayList<>();
+        for (com.wenqu.ai.model.UserRole ur : userRoleMapper.selectList(
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<com.wenqu.ai.model.UserRole>()
+                        .eq(com.wenqu.ai.model.UserRole::getUid, uid)
+                        .eq(com.wenqu.ai.model.UserRole::getGrantedBy, "manual"))) {
+            currentManual.add(ur.getRoleCode());
+            if (ur.getExpireAt() != null) currentExpires.put(ur.getRoleCode(), ur.getExpireAt());
+        }
+        // IdP 授予的角色不可改：批量追加时命中就明确拒绝，不静默跳过
+        java.util.Map<String, String> sources = new java.util.LinkedHashMap<>();
+        for (com.wenqu.ai.model.UserRole ur : userRoleMapper.selectList(
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<com.wenqu.ai.model.UserRole>()
+                        .eq(com.wenqu.ai.model.UserRole::getUid, uid))) {
+            sources.put(ur.getRoleCode(), ur.getGrantedBy());
+        }
+
+        String targetDept = departmentId;
+        Integer targetStatus = status;
+        List<String> targetRoles = null;
+
+        if ("setdepartment".equals(action)) {
+            if (onlyIfBlank && user.getDepartmentId() != null && !user.getDepartmentId().isBlank()) {
+                // 仅填空白：已有部门的成员不动（它本来就不该被改，算成功）
+                return;
+            }
+            if (targetDept == null) targetDept = "";
+            // 部门变了但角色不变：把当前手动角色原样带回
+            targetRoles = currentManual;
+        } else if ("setstatus".equals(action)) {
+            if (targetStatus == null) throw new BizException("缺少目标状态");
+            if (targetStatus != 0 && targetStatus != 1) throw new BizException("非法状态");
+            targetRoles = currentManual;
+        } else {
+            // addRoles：在现有手动角色上追加
+            if (addRoles == null || addRoles.isEmpty()) throw new BizException("没有要追加的角色");
+            List<String> next = new ArrayList<>(currentManual);
+            for (String code : addRoles) {
+                if (code == null || code.isBlank()) continue;
+                String c = code.trim().toLowerCase();
+                String src = sources.get(c);
+                if ("idp".equals(src)) {
+                    throw new BizException("角色「" + c + "」由 IdP 组映射授予，不可改");
+                }
+                if (!next.contains(c)) next.add(c);
+            }
+            targetRoles = next;
+        }
+
+        updateUserScoped(uid, user.getUsername(), targetDept, targetRoles, targetStatus, currentExpires);
+    }
+
+    /**
+     * 导出成员名单为 CSV（与列表同一套筛选条件）。
+     * <p>写 CSV 的行数上限 {@link #EXPORT_MAX_ROWS}：万级名单一次性导出既慢又没人会打开，
+     * 超限时截断并在末尾标注——不能静默只导出一半。
+     */
+    public long exportMembersCsv(String keyword, String departmentId, Integer status, Boolean locked,
+                                  Integer minFail, Integer inactiveDays, Boolean loggedInToday,
+                                  String authSource, String roleSource, java.io.Writer w) throws java.io.IOException {
+        return exportMembersCsv(keyword, departmentId, status, locked, minFail, inactiveDays, loggedInToday,
+                authSource, roleSource, false, w);
+    }
+
+    public long exportMembersCsv(String keyword, String departmentId, Integer status, Boolean locked,
+                                  Integer minFail, Integer inactiveDays, Boolean loggedInToday,
+                                  String authSource, String roleSource, boolean unassigned,
+                                  java.io.Writer w) throws java.io.IOException {
+        if (com.wenqu.ai.util.RequestUser.superadmin()) {
+            final long[] n = new long[1];
+            com.wenqu.ai.util.TenantContext.asPlatform(() -> {
+                try {
+                    n[0] = exportMembersCsvScoped(keyword, departmentId, status, locked, minFail, inactiveDays,
+                            loggedInToday, authSource, roleSource, unassigned, w);
+                } catch (java.io.IOException e) {
+                    throw new IllegalStateException(e);
+                }
+                return null;
+            });
+            return n[0];
+        }
+        return exportMembersCsvScoped(keyword, departmentId, status, locked, minFail, inactiveDays,
+                loggedInToday, authSource, roleSource, unassigned, w);
+    }
+
+    /** 导出行数上限（超出即截断并标注，不静默少导） */
+    public static final int EXPORT_MAX_ROWS = 10000;
+
+    private long exportMembersCsvScoped(String keyword, String departmentId, Integer status, Boolean locked,
+                                         Integer minFail, Integer inactiveDays, Boolean loggedInToday,
+                                         String authSource, String roleSource, boolean unassigned,
+                                         java.io.Writer w)
+            throws java.io.IOException {
+        LambdaQueryWrapper<User> qw = buildMemberQuery(keyword, departmentId, status, locked, minFail,
+                inactiveDays, loggedInToday, authSource, roleSource, unassigned);
+        qw.orderByDesc(User::getLastLoginTime).orderByAsc(User::getUsername);
+        List<User> rows = userMapper.selectList(qw);
+        List<String> uids = new ArrayList<>();
+        for (User u : rows) uids.add(u.getUid());
+        var identities = identityService.mapOfUids(uids);
+        var roleRows = userRoleService.roleRowsOfUids(uids);
+        // 部门名映射（导出里给名字而不是 id）
+        java.util.Map<String, String> deptNames = new java.util.LinkedHashMap<>();
+        for (Department d : listDepartments()) deptNames.put(d.getId(), d.getName());
+
+        w.write("登录账号,昵称,部门,角色,角色来源,认证方式,状态,最近登录\n");
+        long n = 0;
+        for (User u : rows) {
+            if (n >= EXPORT_MAX_ROWS) {
+                w.write("# 已达导出行数上限 " + EXPORT_MAX_ROWS + " 行，后续记录未导出\n");
+                break;
+            }
+            java.util.Map<String, String> sources = new java.util.LinkedHashMap<>();
+            for (com.wenqu.ai.model.UserRole ur : roleRows.getOrDefault(u.getUid(), List.of())) {
+                sources.put(ur.getRoleCode(), ur.getGrantedBy());
+            }
+            List<String> roles = userRoleService.rolesOf(u.getUid());
+            StringBuilder roleText = new StringBuilder();
+            for (String code : roles) {
+                if (roleText.length() > 0) roleText.append(' ');
+                roleText.append(code);
+                String src = sources.get(code);
+                if (src != null) roleText.append('(').append(src).append(')');
+            }
+            StringBuilder authText = new StringBuilder();
+            for (var i : identities.getOrDefault(u.getUid(), List.of())) {
+                if (authText.length() > 0) authText.append(' ');
+                authText.append(i.getProviderId());
+            }
+            if (authText.length() == 0) authText.append("local");
+            String dept = u.getDepartmentId() == null || u.getDepartmentId().isBlank()
+                    ? "未分配" : deptNames.getOrDefault(u.getDepartmentId(), u.getDepartmentId());
+            w.write(csvCell(u.getUid()) + "," + csvCell(u.getUsername()) + "," + csvCell(dept) + ","
+                    + csvCell(roleText.toString()) + "," + csvCell(authText.toString()) + ","
+                    + csvCell(u.getStatus() != null && u.getStatus() == 0 ? "已禁用" : "启用") + ","
+                    + csvCell(u.getLastLoginTime() == null ? "从未登录" : u.getLastLoginTime().toString().replace('T', ' ')) + "\n");
+            n++;
+        }
+        w.flush();
+        return n;
+    }
+
+    /** CSV 单元格转义（引号/逗号/换行） */
+    private static String csvCell(String v) {
+        if (v == null) return "";
+        if (v.indexOf(',') < 0 && v.indexOf('"') < 0 && v.indexOf('\n') < 0 && v.indexOf('\r') < 0) return v;
+        return '"' + v.replace("\"", "\"\"") + '"';
+    }
+
+    /**
+     * 成员域概览（成员管理页首屏统计条）：规模 + 风险 + 在途事项。
+     * <p>只读聚合，不写任何表、不影响鉴权缓存；失败时由前端降级为「—」，列表照常可用。
+     * <p>口径说明：
+     * <ul>
+     *   <li>在途邀请数来自本租户的租户邀请表（{@code effectiveStatus=active}）；</li>
+     *   <li>临期授权 = 7 天内到期的角色绑定行（过期行不算——过期即失效）；</li>
+     *   <li>认证方式分布中「本地账号」= 没有任何外部身份绑定（不能靠总数减，重复绑定会算错）。</li>
+     * </ul>
+     */
+    public java.util.Map<String, Object> memberOverview() {
+        // 平台级看全部租户的成员，与 listUsersWithRoles / pageUsers 同一口径
+        if (com.wenqu.ai.util.RequestUser.superadmin()) {
+            return com.wenqu.ai.util.TenantContext.asPlatform(this::memberOverviewScoped);
+        }
+        return memberOverviewScoped();
+    }
+
+    private java.util.Map<String, Object> memberOverviewScoped() {
+        java.time.LocalDateTime now = java.time.LocalDateTime.now();
+        java.time.LocalDateTime todayStart = java.time.LocalDate.now().atStartOfDay();
+        java.time.LocalDateTime inactiveCutoff = now.minusDays(30);
+
+        java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
+        // 规模与风险：一次聚合算完，不为凑几个数字发六七个请求
+        java.util.Map<String, Object> stats = null;
+        try {
+            stats = userMapper.memberStats(todayStart, inactiveCutoff, now);
+        } catch (Exception e) {
+            log.warn("[MEMBER] 成员概览统计失败（前端降级显示「—」）: {}", e.getMessage());
+        }
+        long total = num(stats, "total");
+        out.put("total", total);
+        out.put("active", num(stats, "active"));
+        out.put("disabled", num(stats, "disabled"));
+        out.put("unassignedDept", num(stats, "unassigned"));
+        out.put("loggedInToday", num(stats, "loggedInToday"));
+        out.put("inactive30d", num(stats, "inactive30d"));
+        out.put("locked", num(stats, "locked"));
+
+        // 在途邀请：只算还能用的（有效且未过期未用尽）
+        try {
+            out.put("pendingInvites", tenantInviteService.countPending());
+        } catch (Exception e) {
+            log.warn("[MEMBER] 在途邀请数统计失败: {}", e.getMessage());
+            out.put("pendingInvites", 0L);
+        }
+        // 临期授权：7 天内到期的角色行
+        try {
+            out.put("expiringGrants", userRoleService.expiringWithinDays(7).size());
+        } catch (Exception e) {
+            log.warn("[MEMBER] 临期授权数统计失败: {}", e.getMessage());
+            out.put("expiringGrants", 0L);
+        }
+        // 认证方式分布：local + 各认证源
+        java.util.Map<String, Long> byAuthSource = new java.util.LinkedHashMap<>();
+        try {
+            long local = userMapper.localAccountCount();
+            byAuthSource.put("local", local);
+            for (java.util.Map<String, Object> row : userMapper.authSourceCounts()) {
+                Object pid = row.get("providerId");
+                if (pid == null) continue;
+                byAuthSource.put(String.valueOf(pid), num(row, "cnt"));
+            }
+        } catch (Exception e) {
+            log.warn("[MEMBER] 认证方式分布统计失败: {}", e.getMessage());
+        }
+        out.put("byAuthSource", byAuthSource);
+
+        // 部门人数分布：部门树的人数徽标（部门页签用）
+        java.util.Map<String, Long> deptCounts = new java.util.LinkedHashMap<>();
+        try {
+            for (java.util.Map<String, Object> row : userMapper.departmentMemberCounts()) {
+                Object did = row.get("departmentId");
+                if (did == null) continue;
+                deptCounts.put(String.valueOf(did), num(row, "cnt"));
+            }
+        } catch (Exception e) {
+            log.warn("[MEMBER] 部门人数分布统计失败: {}", e.getMessage());
+        }
+        out.put("departmentCounts", deptCounts);
+        return out;
+    }
+
+    /** 统计值取值（DB 返回的 SUM 可能为 null——空表时 SUM(CASE...) 是 null 不是 0） */
+    private static long num(java.util.Map<String, Object> row, String key) {
+        if (row == null) return 0L;
+        Object v = row.get(key);
+        if (v == null) return 0L;
+        if (v instanceof Number n) return n.longValue();
+        try {
+            return Long.parseLong(String.valueOf(v));
+        } catch (NumberFormatException e) {
+            return 0L;
+        }
     }
 
     /** 新建用户（必须设置初始密码，否则无法登录；角色须为角色表中启用的角色；落多角色表） */

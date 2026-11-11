@@ -43,12 +43,14 @@ public interface AuditEventMapper extends BaseMapper<AuditEvent> {
             + "<if test='from != null'>AND ts &gt;= #{from}</if>"
             + "<if test='to != null'>AND ts &lt;= #{to}</if>"
             + "<if test='actor != null'>AND actor_uid = #{actor}</if>"
+            + "<if test='target != null'>AND target_id = #{target}</if>"
             + "<if test='action != null'>AND action = #{action}</if>"
             + "<if test='keyword != null'>AND (action like concat('%',#{keyword},'%') or detail like concat('%',#{keyword},'%'))</if>"
             + "<if test='tenantId != null'>AND tenant_id = #{tenantId}</if>"
             + "</where> order by ts desc, id desc limit #{offset}, #{limit}</script>")
     List<Map<String, Object>> query(@Param("from") LocalDateTime from, @Param("to") LocalDateTime to,
-                                    @Param("actor") String actor, @Param("action") String action,
+                                    @Param("actor") String actor, @Param("target") String target,
+                                    @Param("action") String action,
                                     @Param("keyword") String keyword, @Param("tenantId") String tenantId,
                                     @Param("offset") int offset, @Param("limit") int limit);
 
@@ -58,12 +60,14 @@ public interface AuditEventMapper extends BaseMapper<AuditEvent> {
             + "<if test='from != null'>AND ts &gt;= #{from}</if>"
             + "<if test='to != null'>AND ts &lt;= #{to}</if>"
             + "<if test='actor != null'>AND actor_uid = #{actor}</if>"
+            + "<if test='target != null'>AND target_id = #{target}</if>"
             + "<if test='action != null'>AND action = #{action}</if>"
             + "<if test='keyword != null'>AND (action like concat('%',#{keyword},'%') or detail like concat('%',#{keyword},'%'))</if>"
             + "<if test='tenantId != null'>AND tenant_id = #{tenantId}</if>"
             + "</where></script>")
     long countQuery(@Param("from") LocalDateTime from, @Param("to") LocalDateTime to,
-                    @Param("actor") String actor, @Param("action") String action,
+                    @Param("actor") String actor, @Param("target") String target,
+                    @Param("action") String action,
                     @Param("keyword") String keyword, @Param("tenantId") String tenantId);
 
     /** 出现过的动作名（导出/查询页的下拉选项，量级=动作数） */

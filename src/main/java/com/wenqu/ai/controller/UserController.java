@@ -10,6 +10,10 @@ import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.OutputStreamWriter;
+import java.io.Writer;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import com.wenqu.ai.security.Permission;
@@ -41,12 +45,17 @@ public class UserController {
         return ResultJson.ok(orgService.listUsersWithRoles());
     }
 
-    /**
-     * 成员分页查询：万级名单的入口（会话治理）。
-     * <p>刻意不复用 {@code /list}——那份全表下发，成员涨到几万时一次请求既捞不动也发不出。
-     */
+    @Operation(summary = "成员域概览", description = "成员管理页首屏统计条：在册/启用/禁用/未分配部门/今日登录/长期未登录/锁定中，"
+            + "在途邀请数、7 天内临期授权数、认证方式分布、部门人数分布。只读聚合，不参与鉴权判定")
+    @Permission("user:read")
+    @GetMapping("/overview")
+    public ResultJson overview() {
+        return ResultJson.ok(orgService.memberOverview());
+    }
+
     @Operation(summary = "成员分页查询", description = "关键字（昵称/登录账号）与部门、状态在库侧过滤，按最近登录倒序分页；"
             + "另支持会话治理的风险口径：locked=true（锁定中）、minFail（连续失败阈值）、inactiveDays（长期未登录）。"
+            + "authSource=local 表示只看本地账号（无外部身份绑定），否则为认证源 id；roleSource=manual|idp 按角色授予来源过滤。"
             + "返回 {total, items, page, size}，items 字段口径同 /user/list")
     @Permission("user:read")
     @GetMapping("/page")
@@ -57,10 +66,63 @@ public class UserController {
                            @Parameter(description = "只看连续失败次数 ≥ 该值的账号") @RequestParam(value = "minFail", required = false) Integer minFail,
                            @Parameter(description = "只看最近登录早于 N 天前（含从未登录）的账号") @RequestParam(value = "inactiveDays", required = false) Integer inactiveDays,
                            @Parameter(description = "true=只看今天登录过的账号") @RequestParam(value = "loggedInToday", required = false) Boolean loggedInToday,
+                           @Parameter(description = "认证方式：local=本地账号（无外部绑定），否则为认证源 id") @RequestParam(value = "authSource", required = false) String authSource,
+                           @Parameter(description = "角色来源：manual=手动授予 idp=组映射授予") @RequestParam(value = "roleSource", required = false) String roleSource,
+                           @Parameter(description = "true=只看未分配部门的成员") @RequestParam(value = "unassigned", required = false) Boolean unassigned,
                            @RequestParam(value = "page", defaultValue = "1") int page,
                            @RequestParam(value = "size", defaultValue = "20") int size) {
         return ResultJson.ok(orgService.pageUsers(kw, departmentId, status, locked, minFail, inactiveDays,
-                loggedInToday, page, size));
+                loggedInToday, authSource, roleSource, Boolean.TRUE.equals(unassigned), page, size));
+    }
+
+    @Operation(summary = "批量操作成员", description = "{\"action\":\"setDepartment|addRoles|setStatus\", \"uids\":[\"a\",\"b\"], "
+            + "\"departmentId\":\"d1\", \"roles\":[\"admin\"], \"status\":1, \"onlyIfBlank\":false}；"
+            + "逐条独立成败，返回 {succeeded:[uid...], failed:[{uid, reason}]}。IdP 授予的角色不可改，"
+            + "批量追加命中时该条失败并给出原因")
+    @Permission("user:write")
+    @PostMapping("/batch")
+    public ResultJson batch(@RequestBody Map<String, Object> body) {
+        String action = str(body.get("action"));
+        List<String> uids = new ArrayList<>();
+        if (body.get("uids") instanceof List<?> l) {
+            for (Object x : l) {
+                if (x != null) uids.add(String.valueOf(x));
+            }
+        }
+        List<String> roles = null;
+        if (body.get("roles") instanceof List<?> l) {
+            roles = new ArrayList<>();
+            for (Object x : l) {
+                if (x != null) roles.add(String.valueOf(x));
+            }
+        }
+        Integer status = body.get("status") == null ? null : Integer.parseInt(String.valueOf(body.get("status")));
+        boolean onlyIfBlank = Boolean.parseBoolean(String.valueOf(body.get("onlyIfBlank")));
+        return ResultJson.ok(orgService.batchUsers(action, uids, str(body.get("departmentId")), roles, status, onlyIfBlank));
+    }
+
+    @Operation(summary = "导出成员名单 CSV", description = "参数与 /user/page 一致，导出当前筛选条件下的全部成员；"
+            + "行数上限 10000，超出即截断并在文件末尾标注")
+    @Permission("user:read")
+    @GetMapping("/export")
+    public void export(@Parameter(description = "昵称或登录账号关键字") @RequestParam(value = "kw", required = false) String kw,
+                       @Parameter(description = "部门 ID（空=全部）") @RequestParam(value = "departmentId", required = false) String departmentId,
+                       @Parameter(description = "状态：1=启用 0=禁用（空=全部）") @RequestParam(value = "status", required = false) Integer status,
+                       @Parameter(description = "true=只看锁定中的账号") @RequestParam(value = "locked", required = false) Boolean locked,
+                       @Parameter(description = "只看连续失败次数 ≥ 该值的账号") @RequestParam(value = "minFail", required = false) Integer minFail,
+                       @Parameter(description = "只看最近登录早于 N 天前（含从未登录）的账号") @RequestParam(value = "inactiveDays", required = false) Integer inactiveDays,
+                       @Parameter(description = "true=只看今天登录过的账号") @RequestParam(value = "loggedInToday", required = false) Boolean loggedInToday,
+                       @Parameter(description = "认证方式：local=本地账号，否则为认证源 id") @RequestParam(value = "authSource", required = false) String authSource,
+                       @Parameter(description = "角色来源：manual|idp") @RequestParam(value = "roleSource", required = false) String roleSource,
+                       @Parameter(description = "true=只看未分配部门的成员") @RequestParam(value = "unassigned", required = false) Boolean unassigned,
+                       jakarta.servlet.http.HttpServletResponse response) throws java.io.IOException {
+        response.setContentType("text/csv;charset=UTF-8");
+        response.setHeader("Content-Disposition",
+                "attachment; filename=\"wenqu-members-" + java.time.LocalDate.now() + ".csv\"");
+        Writer w = new OutputStreamWriter(response.getOutputStream(), StandardCharsets.UTF_8);
+        orgService.exportMembersCsv(kw, departmentId, status, locked, minFail, inactiveDays, loggedInToday,
+                authSource, roleSource, Boolean.TRUE.equals(unassigned), w);
+        w.flush();
     }
 
     @Operation(summary = "新建用户", description = "{\"uid\":\"alice\",\"username\":\"Alice\",\"password\":\"必填\",\"departmentId\":\"可选\",\"roles\":[\"user\"]}")

@@ -1629,9 +1629,14 @@ export const deleteDocument = id => request(`/document/${id}`, { method: 'DELETE
 
 export const listDepartments = () => request('/department/list')
 export const listUsers = () => request('/user/list')
-/** 成员分页查询（万级名单入口·会话与访问）：关键字/部门/状态与风险口径在库侧过滤，按最近登录倒序。
- *  status 允许 0，判空只认 undefined/空串，别写成 falsy */
-export const pageUsers = ({ kw = '', departmentId = '', status, locked, minFail, inactiveDays, loggedInToday, page = 1, size = 20 } = {}) => {
+/** 成员域概览（成员管理页首屏统计条）：在册/启用/未分配部门/今日登录/在途邀请/临期授权/认证方式分布/部门人数 */
+export const getUserOverview = () => request('/user/overview')
+/** 成员分页查询（成员管理页主列表·服务端分页）：关键字/部门/状态/认证方式/角色来源在库侧过滤。
+ *  status 允许 0，判空只认 undefined/空串，别写成 falsy；
+ *  authSource=local 表示只看本地账号（无外部身份绑定），否则为认证源 id；
+ *  roleSource=manual|idp 按角色授予来源过滤。 */
+export const pageUsers = ({ kw = '', departmentId = '', status, locked, minFail, inactiveDays, loggedInToday,
+  authSource = '', roleSource = '', unassigned = false, page = 1, size = 20 } = {}) => {
   const q = new URLSearchParams({ page: String(page), size: String(size) })
   if (kw) q.set('kw', kw)
   if (departmentId) q.set('departmentId', departmentId)
@@ -1640,7 +1645,35 @@ export const pageUsers = ({ kw = '', departmentId = '', status, locked, minFail,
   if (minFail) q.set('minFail', String(minFail))
   if (inactiveDays) q.set('inactiveDays', String(inactiveDays))
   if (loggedInToday) q.set('loggedInToday', 'true')
+  if (authSource) q.set('authSource', authSource)
+  if (roleSource) q.set('roleSource', roleSource)
+  if (unassigned) q.set('unassigned', 'true')
   return request(`/user/page?${q}`)
+}
+/** 批量操作成员：action=setDepartment|addRoles|setStatus；逐条独立成败，返回 {succeeded, failed:[{uid,reason}]} */
+export const batchUsers = body => request('/user/batch', { method: 'POST', body: JSON.stringify(body) })
+/** 导出成员名单 CSV（当前筛选条件）。走 fetch + blob，与项目其它导出同一套写法 */
+export const exportUsersCsv = async (params = {}) => {
+  const q = new URLSearchParams()
+  if (params.kw) q.set('kw', params.kw)
+  if (params.departmentId) q.set('departmentId', params.departmentId)
+  if (params.status !== undefined && params.status !== null && params.status !== '') q.set('status', String(params.status))
+  if (params.authSource) q.set('authSource', params.authSource)
+  if (params.roleSource) q.set('roleSource', params.roleSource)
+  if (params.unassigned) q.set('unassigned', 'true')
+  if (params.loggedInToday) q.set('loggedInToday', 'true')
+  const res = await fetch(`${BASE}/user/export?${q}`, { headers: authHeaders() })
+  if (!res.ok) throw new Error(`导出失败(${res.status})`)
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `wenqu-members-${new Date().toISOString().slice(0, 10)}.csv`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+  return true
 }
 export const createDepartment = body => request('/department', { method: 'POST', body: JSON.stringify(body) })
 export const updateDepartment = (id, body) => request(`/department/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(body) })

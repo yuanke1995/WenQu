@@ -50,6 +50,7 @@ public class AuditController {
     @GetMapping
     public ResultJson<Map<String, Object>> list(@RequestParam(value = "days", defaultValue = "7") int days,
                                                 @RequestParam(value = "actor", required = false) String actor,
+                                                @RequestParam(value = "target", required = false) String target,
                                                 @RequestParam(value = "action", required = false) String action,
                                                 @RequestParam(value = "keyword", required = false) String keyword,
                                                 @RequestParam(value = "page", defaultValue = "1") int page,
@@ -59,12 +60,14 @@ public class AuditController {
         if (!adminGuard.requirePermission(request, "audit:read")) return ResultJson.error("审计事件仅管理员可查");
         TimeRange range = rangeOf(days);
         String t = crossTenant(tenant, request);
+        // target = 被操作对象（如成员 uid）；与 actor（谁做的）是两个维度——成员 360 用它看「谁改过他」
         if (t == null) {
             return ResultJson.ok(auditService.query(range.from(), range.to(), blankToNull(actor),
-                    blankToNull(action), keyword, page, size));
+                    blankToNull(target), blankToNull(action), keyword, null, page, size));
         }
         return ResultJson.ok(com.wenqu.ai.util.TenantContext.asPlatform(() -> auditService.query(
-                range.from(), range.to(), blankToNull(actor), blankToNull(action), keyword, t, page, size)));
+                range.from(), range.to(), blankToNull(actor), blankToNull(target), blankToNull(action),
+                keyword, t, page, size)));
     }
 
     @Operation(summary = "合规导出（CSV）",
