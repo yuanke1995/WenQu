@@ -187,19 +187,7 @@
           <template #body="{ m, i }">
               <!-- 整轮用时那一条：它同时是过程块的开关。跑着的时候过程自动展开，答完收起只留正文 -->
               <TurnBar v-if="m.role === 'ai'" :m="m" />
-              <!-- 技能命中芯片（skill_hit 帧，见 useChatEngine.onSkillHit）：这一轮按哪条技能做的答，
-                   在回答头顶明说——用了什么不许用户猜。点名注入与模型自读两种来源文案不同；
-                   点芯片原地弹正文（SkillContentModal），不跳走打断对话。刷新后这一档暂无数据源
-                   （技能命中不落消息行，逐轮回看走「看这一轮的过程」账本面板，那里有同一帧的可读投影） -->
-              <div v-if="m.role === 'ai' && m.skillHits && m.skillHits.length" class="skill-hits">
-                <button v-for="(sk, si) in m.skillHits" :key="sk.name" type="button" class="skill-hit-chip"
-                        :title="(sk.source === 'picked' ? '正文已随本轮注入' : '模型按需读取了正文') + ' · 点击查看正文'"
-                        @click="skillDoc = sk.name">
-                  <check-outlined class="shc-ic" />
-                  <span class="shc-name">已按技能「{{ sk.name }}」执行</span>
-                  <span class="shc-src">{{ sk.source === 'picked' ? '正文已随本轮注入' : '模型按需读取了正文' }}</span>
-                </button>
-              </div>
+              <!-- 技能命中不再在回答头顶放芯片（点「看这一轮的过程」账本面板仍可回看 skill_hit 投影） -->
               <!-- 正文 / 过程分离（统一正文流）：正文＝整段 content（turnAnswerText），工具调用只作过程步骤、
                    不切正文；过程（思考/过程/工具/插话）全收在顶部过程块里，永远不插进正文。 -->
               <div v-if="m.role === 'ai'" class="md" :data-msg-index="i">
@@ -5617,17 +5605,6 @@ onMounted(async () => {
   background: var(--app-panel-2); color: var(--app-text3); }
 .skill-flag.off { background: var(--app-danger-weak); color: var(--app-danger-text); }
 .skill-doc-btn { flex: none; font-size: 12px; }
-
-/* 技能命中芯片（回答头顶一行，效果图 SCENE 4 的 hit-chip）：主色弱底 + 弱描边，
-   是「这一轮用了什么」的说明而不是动作，所以不给实心主色 */
-.skill-hits { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; }
-.skill-hit-chip { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px;
-  border-radius: 7px; background: var(--app-accent-weak); border: 1px solid var(--app-accent-border);
-  color: var(--app-accent); font-size: 12px; font-weight: 500; cursor: pointer; max-width: 100%; }
-.skill-hit-chip:hover { filter: brightness(0.97); }
-.shc-ic { flex: none; font-size: 12px; }
-.shc-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.shc-src { font-size: 11px; font-weight: 400; color: var(--app-text3); white-space: nowrap; }
 
 /* 固化为技能弹窗：字段竖排，标签行把「为什么填这个」说小字里，正文给等宽编辑区 */
 .sf-field { margin-bottom: 12px; }
