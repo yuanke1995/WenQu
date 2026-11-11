@@ -1,6 +1,7 @@
 package com.wenqu.ai.skill;
 
 import com.wenqu.ai.sandbox.SandboxPaths;
+import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -13,12 +14,12 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.time.LocalDate;
-import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -47,9 +48,11 @@ import java.util.concurrent.TimeUnit;
  * 天数保留 60 天；recent 最多 20 条；每个 uid 最多 500 个技能条目。
  *
  * <h3>线程模型</h3>
- * 调用方（引擎）在问答线程上调用 {@link #recordRead}，该方法把写入委托给单线程 executor，
- * 返回前不抛异常（写入失败只记日志，不影响问答）。读路径（{@link #summary}/{@link #detail}）
- * 走内存快照，{@link #flush()} 在 executor 里定期跑。
+ * 内存态由调用线程按 uid 加锁维护：{@link #recordRead} 返回时这次读取已经计入内存，
+ * {@link #summary}/{@link #detail} 持同一把锁做只读投影并返回新对象，因此不存在
+ * 「写入还排在队列里」的中间态，也不会有两个线程同时改同一个 LinkedHashMap。
+ * 只有落盘交给单线程 executor：它持锁拷出快照后在锁外做 IO，问答线程不被磁盘写阻塞。
+ * {@link #close()} 在容器停止时取消定时任务并同步刷完剩余数据。
  */
 @Service
 public class SkillStatsStore {
@@ -64,6 +67,8 @@ public class SkillStatsStore {
     private final Path root;
     private final ConcurrentHashMap<String, Object> uidLocks = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Map<String, Object>> memory = new ConcurrentHashMap<>();
+    /** 内存里已变更、尚未落盘的 uid；没变化就不重写文件。 */
+    private final Set<String> dirty = ConcurrentHashMap.newKeySet();
     private final ScheduledExecutorService io = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "skill-stats-io");
         t.setDaemon(true);
@@ -76,169 +81,184 @@ public class SkillStatsStore {
                 .toAbsolutePath().normalize();
         try { Files.createDirectories(root); } catch (IOException ignored) {}
         io.scheduleWithFixedDelay(this::flushAll, 5, 30, TimeUnit.SECONDS);
-        Runtime.getRuntime().addShutdownHook(new Thread(this::flushAll));
     }
 
-    /** 记录一次技能读取（问答线程调用，永不抛异常）。 */
+    /** 容器停止 / 测试收尾：取消定时落盘，把剩余内存数据在当前线程刷完，避免残留线程写已删除的目录。 */
+    @PreDestroy
+    public void close() {
+        io.shutdownNow();
+        flushAll();
+    }
+
+    /** 记录一次技能读取：返回时已计入内存、读路径立即可见，永不抛异常（失败只记日志）。 */
     public void recordRead(String uid, String name, String sessionId) {
         if (uid == null || uid.isBlank() || name == null || name.isBlank()) return;
         try {
-            io.execute(() -> {
-                try {
-                    touch(uid, name, sessionId);
-                } catch (Exception e) {
-                    log.warn("[SKILL-STATS] 记录失败 uid={} skill={}: {}", uid, name, e.toString());
-                }
-            });
+            synchronized (lockFor(uid)) {
+                touch(uid, name, sessionId);
+            }
         } catch (Exception e) {
-            // executor 已关闭（JVM 退出）：忽略
+            log.warn("[SKILL-STATS] 记录失败 uid={} skill={}: {}", uid, name, e.toString());
         }
+    }
+
+    private Object lockFor(String uid) {
+        return uidLocks.computeIfAbsent(uid, k -> new Object());
     }
 
     /** 某用户全部技能的 7/30 天统计（前端列表页用）。 */
     public Map<String, Map<String, Object>> summary(String uid) {
-        Map<String, Object> data = load(uid);
-        Map<String, Map<String, Object>> out = new LinkedHashMap<>();
-        for (Map.Entry<String, Object> e : data.entrySet()) {
-            if (!(e.getValue() instanceof Map<?, ?> m)) continue;
-            out.put(e.getKey(), summarize(m));
+        synchronized (lockFor(uid)) {
+            Map<String, Object> data = loadLocked(uid);
+            Map<String, Map<String, Object>> out = new LinkedHashMap<>();
+            for (Map.Entry<String, Object> e : data.entrySet()) {
+                if (!(e.getValue() instanceof Map<?, ?> m)) continue;
+                out.put(e.getKey(), summarize(m));
+            }
+            return out;
         }
-        return out;
     }
 
     /** 单条技能的 30 天明细（抽屉「使用数据」Tab 用）。 */
     public Map<String, Object> detail(String uid, String name) {
-        Map<String, Object> data = load(uid);
-        Object raw = data.get(name);
-        if (!(raw instanceof Map<?, ?> m)) return Map.of();
-        Map<String, Object> out = new LinkedHashMap<>(summarize(m));
-        // 30 天序列
-        List<Map<String, Object>> series = new ArrayList<>();
-        LocalDate today = LocalDate.now();
-        for (int i = 29; i >= 0; i--) {
-            String d = today.minusDays(i).format(DATE_FMT);
-            int c = 0;
-            Object days = m.get("days");
-            if (days instanceof Map<?, ?> dm) {
-                Object v = dm.get(d);
-                if (v instanceof Number n) c = n.intValue();
-            }
-            Map<String, Object> p = new LinkedHashMap<>();
-            p.put("date", d);
-            p.put("count", c);
-            series.add(p);
-        }
-        out.put("series30d", series);
-        // 最近触发
-        Object recent = m.get("recent");
-        if (recent instanceof List<?> rl) {
-            List<Map<String, Object>> outRecent = new ArrayList<>();
-            for (Object o : rl) {
-                if (o instanceof Map<?, ?> r) {
-                    Map<String, Object> item = new LinkedHashMap<>();
-                    item.put("sessionId", r.get("sessionId"));
-                    item.put("at", r.get("at"));
-                    outRecent.add(item);
+        synchronized (lockFor(uid)) {
+            Map<String, Object> data = loadLocked(uid);
+            Object raw = data.get(name);
+            if (!(raw instanceof Map<?, ?> m)) return Map.of();
+            Map<String, Object> out = new LinkedHashMap<>(summarize(m));
+            // 30 天序列
+            List<Map<String, Object>> series = new ArrayList<>();
+            LocalDate today = LocalDate.now();
+            for (int i = 29; i >= 0; i--) {
+                String d = today.minusDays(i).format(DATE_FMT);
+                int c = 0;
+                Object days = m.get("days");
+                if (days instanceof Map<?, ?> dm) {
+                    Object v = dm.get(d);
+                    if (v instanceof Number n) c = n.intValue();
                 }
+                Map<String, Object> p = new LinkedHashMap<>();
+                p.put("date", d);
+                p.put("count", c);
+                series.add(p);
             }
-            out.put("recent", outRecent);
-        } else {
-            out.put("recent", List.of());
+            out.put("series30d", series);
+            // 最近触发
+            Object recent = m.get("recent");
+            if (recent instanceof List<?> rl) {
+                List<Map<String, Object>> outRecent = new ArrayList<>();
+                for (Object o : rl) {
+                    if (o instanceof Map<?, ?> r) {
+                        Map<String, Object> item = new LinkedHashMap<>();
+                        item.put("sessionId", r.get("sessionId"));
+                        item.put("at", r.get("at"));
+                        outRecent.add(item);
+                    }
+                }
+                out.put("recent", outRecent);
+            } else {
+                out.put("recent", List.of());
+            }
+            return out;
         }
-        return out;
     }
 
     // ==================== 内部 ====================
 
+    /** 只在持有 uid 锁时调用：首次从文件加载，之后走内存。缓存写入集中在锁内，不会互相覆盖。 */
     @SuppressWarnings("unchecked")
-    private Map<String, Object> load(String uid) {
+    private Map<String, Object> loadLocked(String uid) {
         Map<String, Object> cached = memory.get(uid);
         if (cached != null) return cached;
+        Map<String, Object> data = new LinkedHashMap<>();
         Path file = fileFor(uid);
-        if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) {
-            Map<String, Object> empty = new LinkedHashMap<>();
-            memory.put(uid, empty);
-            return empty;
+        if (Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) {
+            try {
+                String text = Files.readString(file);
+                Map<String, Object> parsed = (Map<String, Object>) com.alibaba.fastjson2.JSON.parse(text);
+                if (parsed != null) data = parsed;
+            } catch (Exception e) {
+                log.warn("[SKILL-STATS] 读取失败 uid={}: {}", uid, e.toString());
+            }
         }
-        try {
-            String text = Files.readString(file);
-            Map<String, Object> parsed = (Map<String, Object>) com.alibaba.fastjson2.JSON.parse(text);
-            Map<String, Object> safe = parsed == null ? new LinkedHashMap<>() : parsed;
-            memory.put(uid, safe);
-            return safe;
-        } catch (Exception e) {
-            log.warn("[SKILL-STATS] 读取失败 uid={}: {}", uid, e.toString());
-            Map<String, Object> empty = new LinkedHashMap<>();
-            memory.put(uid, empty);
-            return empty;
-        }
+        memory.put(uid, data);
+        return data;
     }
 
+    /** 只改内存、不做 IO；调用方已持有 uid 锁。真实变更才标记待落盘。 */
     private void touch(String uid, String name, String sessionId) {
-        Object lock = uidLocks.computeIfAbsent(uid, k -> new Object());
-        synchronized (lock) {
-            Map<String, Object> data = load(uid);
-            if (data.size() >= MAX_SKILLS_PER_UID && !data.containsKey(name)) {
-                log.warn("[SKILL-STATS] uid={} 技能条目已达上限 {}，跳过 {}", uid, MAX_SKILLS_PER_UID, name);
-                return;
-            }
-            Object raw = data.computeIfAbsent(name, k -> {
-                Map<String, Object> m = new LinkedHashMap<>();
-                m.put("days", new LinkedHashMap<>());
-                m.put("recent", new ArrayList<>());
-                return m;
-            });
-            if (!(raw instanceof Map<?, ?> r)) return;
-            Map<String, Object> m = (Map<String, Object>) r;
-            String today = LocalDate.now().format(DATE_FMT);
-            Object days = m.get("days");
-            if (days instanceof Map<?, ?> dm) {
-                Map<String, Object> daysMap = new LinkedHashMap<>((Map<String, Object>) dm);
-                Object cur = daysMap.get(today);
-                int n = cur instanceof Number nb ? nb.intValue() : 0;
-                daysMap.put(today, n + 1);
-                // 保留近 60 天
-                LocalDate cutoff = LocalDate.now().minusDays(RETENTION_DAYS);
-                daysMap.keySet().removeIf(k -> {
-                    try { return LocalDate.parse(k).isBefore(cutoff); } catch (Exception ignored) { return false; }
-                });
-                m.put("days", daysMap);
-            }
-            m.put("lastUsedAt", System.currentTimeMillis());
-            // recent 追加（去重同 sessionId 只显示最新）
-            Object recent = m.get("recent");
-            if (recent instanceof List<?> rl) {
-                List<Map<String, Object>> list = new ArrayList<>();
-                for (Object o : rl) {
-                    if (o instanceof Map<?, ?> r2) {
-                        Map<String, Object> item = new LinkedHashMap<>();
-                        item.put("sessionId", r2.get("sessionId"));
-                        item.put("at", r2.get("at"));
-                        list.add(item);
-                    }
-                }
-                list.removeIf(x -> sessionId != null && sessionId.equals(x.get("sessionId")));
-                Map<String, Object> entry = new LinkedHashMap<>();
-                entry.put("sessionId", sessionId);
-                entry.put("at", System.currentTimeMillis());
-                list.add(0, entry);
-                if (list.size() > MAX_RECENT) list = list.subList(0, MAX_RECENT);
-                m.put("recent", list);
-            }
-            memory.put(uid, data);
+        Map<String, Object> data = loadLocked(uid);
+        if (data.size() >= MAX_SKILLS_PER_UID && !data.containsKey(name)) {
+            log.warn("[SKILL-STATS] uid={} 技能条目已达上限 {}，跳过 {}", uid, MAX_SKILLS_PER_UID, name);
+            return;
         }
+        Object raw = data.computeIfAbsent(name, k -> {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("days", new LinkedHashMap<>());
+            m.put("recent", new ArrayList<>());
+            return m;
+        });
+        if (!(raw instanceof Map<?, ?> r)) return;
+        Map<String, Object> m = (Map<String, Object>) r;
+        String today = LocalDate.now().format(DATE_FMT);
+        Object days = m.get("days");
+        if (days instanceof Map<?, ?> dm) {
+            Map<String, Object> daysMap = new LinkedHashMap<>((Map<String, Object>) dm);
+            Object cur = daysMap.get(today);
+            int n = cur instanceof Number nb ? nb.intValue() : 0;
+            daysMap.put(today, n + 1);
+            // 保留近 60 天
+            LocalDate cutoff = LocalDate.now().minusDays(RETENTION_DAYS);
+            daysMap.keySet().removeIf(k -> {
+                try { return LocalDate.parse(k).isBefore(cutoff); } catch (Exception ignored) { return false; }
+            });
+            m.put("days", daysMap);
+        }
+        m.put("lastUsedAt", System.currentTimeMillis());
+        // recent 追加（去重同 sessionId 只显示最新）
+        Object recent = m.get("recent");
+        if (recent instanceof List<?> rl) {
+            List<Map<String, Object>> list = new ArrayList<>();
+            for (Object o : rl) {
+                if (o instanceof Map<?, ?> r2) {
+                    Map<String, Object> item = new LinkedHashMap<>();
+                    item.put("sessionId", r2.get("sessionId"));
+                    item.put("at", r2.get("at"));
+                    list.add(item);
+                }
+            }
+            list.removeIf(x -> sessionId != null && sessionId.equals(x.get("sessionId")));
+            Map<String, Object> entry = new LinkedHashMap<>();
+            entry.put("sessionId", sessionId);
+            entry.put("at", System.currentTimeMillis());
+            list.add(0, entry);
+            if (list.size() > MAX_RECENT) list = list.subList(0, MAX_RECENT);
+            m.put("recent", list);
+        }
+        memory.put(uid, data);
+        dirty.add(uid);
     }
 
+    /** 后台定时 / 关闭时调用：持锁拷出快照后锁外落盘，问答线程不被磁盘 IO 阻塞。 */
     private void flushAll() {
-        for (Map.Entry<String, Map<String, Object>> e : memory.entrySet()) {
+        for (String uid : new ArrayList<>(dirty)) {
+            String text;
+            synchronized (lockFor(uid)) {
+                Map<String, Object> data = memory.get(uid);
+                if (data == null) {
+                    dirty.remove(uid);
+                    continue;
+                }
+                text = com.alibaba.fastjson2.JSON.toJSONString(data);
+            }
             try {
                 Path tmp = Files.createTempFile(root, "stats-", ".tmp");
-                String text = com.alibaba.fastjson2.JSON.toJSONString(e.getValue());
                 Files.writeString(tmp, text);
-                Files.move(tmp, fileFor(e.getKey()),
+                Files.move(tmp, fileFor(uid),
                         StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+                dirty.remove(uid);
             } catch (Exception ex) {
-                log.warn("[SKILL-STATS] 落盘失败 uid={}: {}", e.getKey(), ex.toString());
+                log.warn("[SKILL-STATS] 落盘失败 uid={}: {}", uid, ex.toString());
             }
         }
     }
