@@ -4383,6 +4383,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                     + "To start a long-running service (dev server, daemon), launch it fully detached and "
                     + "return immediately: `nohup <cmd> > <log> 2>&1 < /dev/null &` — never run a foreground "
                     + "service command, it blocks until timeout and holds the executor's reply. "
+                    + "The launch command exiting 0 only means the process was spawned, NOT that the service "
+                    + "is healthy: after starting one, verify with a separate follow-up command, e.g. "
+                    + "`sleep 3; curl -sf http://localhost:<port>/<health-path> || tail -n 50 <log>` "
+                    + "(fallback to the log tail when the endpoint is not reachable yet), and report the "
+                    + "verified state instead of assuming success. "
                     + "Commands already run at the workspace root, so a `cd <workspace>` prefix is unnecessary; "
                     + "use working_directory when a different relative directory is needed.";
 
