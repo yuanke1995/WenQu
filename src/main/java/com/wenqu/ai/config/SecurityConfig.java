@@ -670,8 +670,9 @@ public class SecurityConfig implements WebMvcConfigurer {
                     && !isPublicContractEndpoint(method, path)) {
                 response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
                 response.setContentType("application/json;charset=UTF-8");
-                response.getWriter().write(objectMapper.writeValueAsString(
-                        ResultJson.error(401, "请先登录")));
+                // v1 对外面的 401 同样回 OpenAI 形状（实机测试抓到：门禁层漏分流，401 仍是平台包络）
+                response.getWriter().write(accessErrorJson(path, 401, "authentication_error",
+                        "请先登录", "未提供有效凭据（X-Api-Key 或 Authorization: Bearer sk-…）"));
                 return false;
             }
             // 3. RBAC 判定（fail-closed）：白名单只放「显式公开通道」（isPublicChannelEndpoint，
