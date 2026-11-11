@@ -304,6 +304,25 @@ const extendTimelineThink = (m, from, to) => {
 }
 const thinkSlice = (m, seg) => (m.thinking || '').slice(seg.from, seg.to)
 
+/** 标题行右侧那一行「开头几个字」：块收着的时候也读得出这一段在想什么，不必先点开。
+ *  取原文开头压成一行——换行/连续空白并成一个空格、去掉 markdown 的强调符与行首标记；
+ *  先只看开头 PEEK_RAW_CHARS 个字再压（流式每帧都算，不拿整段正文做正则），
+ *  压完超过 PEEK_CHARS 就硬截，剩下的交给 CSS 省略号按可用宽度收（窄屏不会挤成两行）。 */
+const THINK_PEEK_CHARS = 80
+const THINK_PEEK_RAW_CHARS = 400
+const peekText = (raw, max = THINK_PEEK_CHARS) => {
+  if (!raw) return ''
+  const flat = String(raw).slice(0, THINK_PEEK_RAW_CHARS)
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/^\s*[-*+]\s+/gm, '')
+    .replace(/[*_`~>#]+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!flat) return ''
+  return flat.length > max ? flat.slice(0, max).trimEnd() : flat
+}
+const thinkPeek = (m, seg, max = THINK_PEEK_CHARS) => peekText(thinkSlice(m, seg), max)
+
 /** 此刻正在长的思考段（一轮里同时至多一段在长）：它决定转圈挂在哪儿、哪一段自动展开 */
 const thinkGrowing = (m, seg) => {
   if (!m || !m.loading || !m.thinkLoading || !seg) return false
@@ -513,6 +532,16 @@ const noteOpen = (m, n) => (n.kind === 'think' ? thinkSegOpen(m, n) : procOpen(m
 /** 正在长的那一段：思考有专门的判据，独白的判据就是「流式期它还自动开着」（procOpen 同一把尺） */
 const noteGrowing = (m, n) => (n.kind === 'think' ? thinkGrowing(m, n) : !!(m && m.loading && procOpen(m, n)))
 const toggleNote = (m, n) => (n.kind === 'think' ? toggleThinkSeg(m, n) : toggleProc(m, n))
+/** 行尾那一项的提要：与标题同一类别口径——思考读思考原文，独白读独白原文。 */
+const notePeek = (m, n) => (n.kind === 'think' ? thinkPeek(m, n) : peekText(procSlice(m, n)))
+/** 帽体尾行（思考/独白混排成一组，标题只报类别）的提要：取第一段有内容的开头。 */
+const tailNotesPeek = (m, notes) => {
+  for (const n of notes || []) {
+    const p = notePeek(m, n)
+    if (p) return p
+  }
+  return ''
+}
 
 /** 帽体尾行（挂不到工具上的那批思考/独白）的整组口径：只给类别名（思考+独白混合＝思考与说明）。
  *  字数/段数一律不进标题：几段、一共多少字都在展开后的正文里，宿主还给多段之间画了段界。
@@ -1599,12 +1628,12 @@ export {
   toolDuration, toolRunning, consultChatView, consultNameOf, rememberAgents, extendTimelineText, askUserView,
   isDispatchTool, dispatchTaskOf, spawnAnchorOf, subagentRunsOf, stepBriefOf,
   extendTimelineProcess, procOpen, toggleProc, procSlice, pushTimelineTool, pushTimelineArtifact, pushTimelineSteer,
-  pushTimelineThink, extendTimelineThink, thinkSlice, thinkGrowing, thinkSegOpen, toggleThinkSeg, ensureThinkSegment,
+  pushTimelineThink, extendTimelineThink, thinkSlice, thinkPeek, thinkGrowing, thinkSegOpen, toggleThinkSeg, ensureThinkSegment,
   restoreTimeline, TOOL_BRIEF_KEYS, oneLine,
   clusterize, clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterProcCount,
   clusterKinds, clusterTitle, clusterHeadKind, clusterLiveText, CLUSTER_KIND_DONE, CLUSTER_KIND_LIVE,
-  clusterAutoOpen, clusterLiveRows, groupHasBar, noteText, noteTag, noteOpen, noteGrowing, toggleNote,
-  tailNotesTag, tailNotesGrowing, tailOpen, toggleTail,
+  clusterAutoOpen, clusterLiveRows, groupHasBar, noteText, noteTag, noteOpen, noteGrowing, toggleNote, notePeek,
+  tailNotesTag, tailNotesPeek, tailNotesGrowing, tailOpen, toggleTail,
   turnAnswerText, turnProcessRows, turnSteerRows, turnOpen, toggleTurn, turnShow, turnWarn, turnExpandable, turnHead, turnTitle, turnElapsedMs, turnWaitMs,
   resumedStartAt, earlierStart,
   turnTop, turnToggleable,

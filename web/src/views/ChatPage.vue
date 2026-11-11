@@ -196,8 +196,15 @@
                   <!-- 思考段：这一轮模型在想什么，在过程块里占一行。只有正在长的那一段自动展开，其余折叠。
                        被过程簇收进去的那些不走这一支——它们落在帽体清单里所属那一步的展开详情内（见 projections 的 clusterLiveRows） -->
                   <div v-if="seg.kind === 'think'" class="tl-think-block">
-                    <button class="tl-think-head" type="button" @click="toggleThinkSeg(m, seg)">
+                    <button class="tl-think-head" type="button" :aria-expanded="thinkSegOpen(m, seg)" @click="toggleThinkSeg(m, seg)">
                       <span class="tl-think-title" :class="{ running: thinkGrowing(m, seg) }">深度思考</span>
+                      <!-- 标题右边挂这一段思考的「开头几个字」：块收着也读得出它在想什么，不必先点开；
+                           一行小字、按可用宽度省略，展开时它仍是这段的提要（正文滚长了也当锚点）。
+                           标题与提要之间点一颗分隔点，与工具行的「名称 · 摘要」同一套写法。 -->
+                      <template v-if="thinkPeek(m, seg)">
+                        <span class="tl-live-sep" aria-hidden="true"></span>
+                        <span class="tl-think-peek" :title="thinkPeek(m, seg)">{{ thinkPeek(m, seg) }}</span>
+                      </template>
                       <caret-right-outlined class="tl-caret" :class="{ open: thinkSegOpen(m, seg) }" />
                     </button>
                     <div v-show="thinkSegOpen(m, seg)" v-follow-bottom="thinkGrowing(m, seg)" class="tl-think">
@@ -300,6 +307,11 @@
                                 <span class="tl-ic-c"><down-outlined /></span>
                               </span>
                               <span class="tl-live-name" :class="{ shimmer: tailNotesGrowing(m, lr.tailNotes) }">{{ tailNotesTag(lr.tailNotes) }}</span>
+                              <!-- 尾行右边同样跟上这一段（组）的开头几个字：帽体收着时也读得出它在想什么 -->
+                              <template v-if="tailNotesPeek(m, lr.tailNotes)">
+                                <span class="tl-live-sep" aria-hidden="true"></span>
+                                <span class="tl-live-peek">{{ tailNotesPeek(m, lr.tailNotes) }}</span>
+                              </template>
                             </button>
                           </div>
                           <div v-if="tailOpen(m, seg)" class="tl-live-tail-body">
@@ -1815,13 +1827,13 @@ import { SUPPORTED_EXTS, extOf } from '../chat/intake'
 import { openImages, previewUrl, openSource, hoveredRef } from '../chat/answerViewer'
 import { approvalArgsText } from '../chat/approval'
 import { toolLabel, toolDesc, toolCallsView, executedCount, toolDuration,
-         procOpen, toggleProc, procSlice, thinkSegOpen, toggleThinkSeg, thinkSlice, thinkGrowing,
+         procOpen, toggleProc, procSlice, thinkSegOpen, toggleThinkSeg, thinkSlice, thinkPeek, thinkGrowing,
          turnAnswerText, turnProcessRows, turnSteerRows, turnOpen,
          toolBrief, prettyIo, liveOutput, groupRunning,
          clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterProcCount,
          clusterAutoOpen, clusterLiveRows, clusterTitle, clusterLiveText, clusterHeadKind,
          groupHasBar,
-         tailNotesTag, tailNotesGrowing, tailOpen, toggleTail,
+         tailNotesTag, tailNotesPeek, tailNotesGrowing, tailOpen, toggleTail,
          groupHasError, toolSearchQueries, retrievalLineTitle,
          fanHasBoard, fanHead, fanTitle, fanRowState, fanBudget, fanRun, runBoardText,
          fmtWindow, externalOrigin, sourceName, fmtSourceScore, scoreTitle,
@@ -4925,9 +4937,13 @@ onMounted(async () => {
 /* 思考段：一轮思考一行，长在它发生的位置，避免多轮思考首尾粘成一块读不出时序。
    头部与过程独白同款窄条，展开体保留 markdown 排版。 */
 .tl-think-block { margin: 2px 0; }
-.tl-think-head { display: inline-flex; align-items: center; gap: 5px; border: 0; background: none; padding: 2px 4px; margin: 0 0 2px -4px; border-radius: 4px; cursor: pointer; user-select: none; font-size: 12px; color: var(--app-text3); }
+.tl-think-head { display: flex; align-items: center; gap: 6px; width: calc(100% + 4px); max-width: calc(100% + 4px); min-width: 0; border: 0; background: none; padding: 2px 4px; margin: 0 0 2px -4px; border-radius: 4px; cursor: pointer; user-select: none; font-size: 12px; color: var(--app-text3); text-align: left; }
 .tl-think-head:hover { color: var(--app-text2); background: var(--app-panel-2); }
-.tl-think-title { font-weight: 500; color: var(--app-text2); }
+.tl-think-title { flex: none; font-weight: 500; color: var(--app-text2); }
+/* 标题右边那句「开头几个字」：一行小字、按可用宽度省略——它是这一段思考的提要，
+   不换行也不把标题行撑高（块收着时读得出它在想什么，展开后正文滚长了也还能当锚点）。 */
+.tl-think-peek { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; color: var(--app-text3); }
+.tl-think-head:hover .tl-think-peek { color: var(--app-text2); }
 /* 思考进行中的加载态：标题在主色与次文本之间循环渐变，与会话列表 running 标题同一语言。
    原先这里挂一个三点转圈图标——一行小标题里塞图标既吵，又和它下面正在流的正文重复报进度。
    关动效时退化为常亮主色：状态还在，只是不闪。 */
@@ -4995,6 +5011,8 @@ onMounted(async () => {
 .tl-live-tail-body { margin: 2px 0 4px 22px; max-height: 260px; overflow-y: auto; }
 .tl-live-ic .ic-err { color: var(--app-danger); }
 .tl-live-name { flex: none; color: inherit; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 帽体尾行的提要：与步骤摘要同一套省略口径，一行、按可用宽度收 */
+.tl-live-peek { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: inherit; opacity: .9; }
 .tl-live-row.run .tl-live-name { color: var(--app-text2); }
 /* 标题与摘要之间那颗 2×2 分隔点（DSH .sep）：摘要缺席时整颗跟着缺席 */
 .tl-live-sep { flex: none; width: 2px; height: 2px; border-radius: 1px; margin: 0 2px; background: currentColor; opacity: .55; }

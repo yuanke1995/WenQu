@@ -100,8 +100,14 @@
             <!-- 思考段（簇外）：这一轮在想什么就长在哪一行，只有正在长的那一段自动展开。
                  被过程簇收进去的那些不走这一支——落在帽体清单里所属那一步的展开详情内（与 PC 同一份 clusterLiveRows） -->
             <div v-if="seg.kind === 'think'" class="card think-card">
-              <button class="card-head" type="button" @click.stop="toggleThinkSeg(m, seg)">
+              <button class="card-head" type="button" :aria-expanded="thinkSegOpen(m, seg)" @click.stop="toggleThinkSeg(m, seg)">
                 <span class="card-title">深度思考</span>
+                <!-- 卡头右侧挂这一段思考的开头几个字（与 PC 同构）：收着也读得出它在想什么，
+                     一行、按可用宽度省略，不把 40px 的卡头撑成两行；标题与提要间点一颗分隔点 -->
+                <template v-if="thinkPeek(m, seg)">
+                  <span class="live-sep" aria-hidden="true"></span>
+                  <span class="card-peek">{{ thinkPeek(m, seg) }}</span>
+                </template>
                 <span v-if="thinkGrowing(m, seg)" class="spinner" aria-label="进行中"></span>
                 <caret-right-outlined class="caret" :class="{ open: thinkSegOpen(m, seg) }" />
               </button>
@@ -195,6 +201,11 @@
                           <span class="tl-ic-c"><down-outlined /></span>
                         </span>
                         <span class="live-name" :class="{ shimmer: tailNotesGrowing(m, lr.tailNotes) }">{{ tailNotesTag(lr.tailNotes) }}</span>
+                        <!-- 尾行右边同样跟上这一组的开头几个字（与 PC 同构），中间点一颗分隔点 -->
+                        <template v-if="tailNotesPeek(m, lr.tailNotes)">
+                          <span class="live-sep" aria-hidden="true"></span>
+                          <span class="live-peek">{{ tailNotesPeek(m, lr.tailNotes) }}</span>
+                        </template>
                       </button>
                     </div>
                     <div v-if="tailOpen(m, seg)" class="live-tail-body">
@@ -427,11 +438,11 @@ import { fmtTokens } from '../utils/token'
 import {
   procOpen, toggleProc, procSlice,
   turnAnswerText, turnProcessRows, turnSteerRows, turnOpen,
-  thinkSegOpen, toggleThinkSeg, thinkSlice, thinkGrowing, toolLabel, toolBrief, spawnAnchorOf,
+  thinkSegOpen, toggleThinkSeg, thinkSlice, thinkPeek, thinkGrowing, toolLabel, toolBrief, spawnAnchorOf,
   clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterProcCount,
   clusterAutoOpen, clusterLiveRows, clusterTitle, clusterLiveText, clusterHeadKind, toolDuration,
   groupHasBar,
-  tailNotesTag, tailNotesGrowing, tailOpen, toggleTail,
+  tailNotesTag, tailNotesPeek, tailNotesGrowing, tailOpen, toggleTail,
   prettyIo, liveOutput, groupRunning, groupHasError,
   fanHasBoard, fanHead, fanTitle, fanRowState, fanBudget, fanRun, runBoardText,
   toolCallsView, executedCount, toolSearchQueries, retrievalLineTitle,
@@ -635,6 +646,11 @@ const onBodyPreview = (urls, index) => emit('preview', urls, index)
   color: var(--app-text2); font-size: 13px; min-height: 40px; touch-action: manipulation;
 }
 .card-title { font-weight: 500; }
+/* 思考卡：卡头不换行——标题右侧那一行「开头几个字」按宽度省略，长概要不能把 40px 的卡头
+   撑成两行（与 PC 的 .tl-think-peek 同一套口径） */
+.think-card .card-head { flex-wrap: nowrap; }
+.think-card .card-title { flex: none; }
+.card-peek { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; font-size: 12px; color: var(--app-text3); }
 .card-dim { font-size: 12px; color: var(--app-text3); }
 .card-body { padding: 0 12px 10px; font-size: 13px; }
 .think-md { font-size: 14px; line-height: 1.7; }
@@ -686,6 +702,8 @@ const onBodyPreview = (urls, index) => emit('preview', urls, index)
 .live-row { display: flex; align-items: center; gap: 6px; min-height: 32px; font-size: 13px; color: var(--app-text3); cursor: pointer; }
 .live-ic { color: inherit; }
 .live-name { flex: none; color: inherit; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 帽体尾行的提要：一行小字、按可用宽度省略（与 PC 的 .tl-live-peek 同一套口径） */
+.live-peek { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: inherit; opacity: .9; }
 .live-row.run .live-name { color: var(--app-text2); }
 .live-sep { flex: none; width: 2px; height: 2px; border-radius: 1px; margin: 0 2px; background: currentColor; opacity: .55; }
 .live-brief { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: inherit; }
