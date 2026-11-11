@@ -3418,7 +3418,9 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         liveScroll()
       } catch (e) { /* 忽略 */ }
     },
-    onSteer: payload => { applySteerFrame(payload, msg); liveScroll() },
+    // 插话帧到达时先把 120ms 节流里攒着的正文落屏并封口：位置锚点是「模型听到这句之前
+    // 已经写出的全部正文」，少算这一段 token，气泡就会落在真实插入点前面一点。
+    onSteer: payload => { flushNow(false); applySteerFrame(payload, msg); liveScroll() },
     onToolStatus: rec => {
       try {
         const t = typeof rec === 'string' ? JSON.parse(rec) : rec

@@ -238,9 +238,12 @@ const stepBriefOf = c => {
 //   {kind:'tool', tool}      → 引用 m.toolCalls 里的同一对象（done/error 原地改状态，卡片自动更新）；
 //   {kind:'think'/'process', from, to} → 分别指向 m.thinking / m.processText；
 //   {kind:'steer', text, messageId}    → 用户在本轮跑动中补的那句话。
-// 渲染只分两块：正文＝整段 content（turnAnswerText），过程＝思考/过程/工具段（turnProcessRows）。
+// 渲染分两块：正文＝整段 content（无插话时一次渲染，有插话时按 turnBodyRows 在插话处切片），
+// 过程＝思考/过程/工具段（turnProcessRows，收在顶部过程块）。
 // 工具调用落在句子中间时，前后两半在 content 里本就紧邻，拼起来就是完整一句——不按工具边界切
 // 正文，也不做任何句末标点推断；实时与落库用同一份段数组，刷新前后一致。
+// 插话段不是正文，但它在时间线里有**精确位置**（后端 steer() 先 flush 此前正文再插段），
+// 正文只在插话处下刀，切片拼回去仍是完整的 content，不改动正文内容本身。
 // 时间线随消息落库（正文区间 + 工具/产物下标），历史恢复由 restoreTimeline 重建；旧消息无 timeline
 // 时工具按终态清单成组，正文按整段。data-msg-index 挂在外层 .md 容器上，引用角标逻辑零改动。
 // 注：插话段同时是一条落库用户消息（sequence 排在回答之前）：历史回显时凡 messageId 已被某条时间线
@@ -837,11 +840,53 @@ const turnProcessRows = m => {
   return markGrowingCluster(clusterize(out), m)
 }
 
-/** 插话段单独常驻：那是用户自己说的话，过程块收起时也要看得见（不跟工具卡一起藏起来）。 */
+/** 本轮插话段清单：计划卡「本轮调整」用（那里要的是清单，不是位置）。正文渲染走 turnBodyRows。 */
 const turnSteerRows = m => {
   const tl = Array.isArray(m && m.timeline) ? m.timeline : []
   return tl.filter(s => s && s.kind === 'steer' && String(s.text || '').trim())
     .map(s => ({ kind: 'steer', text: String(s.text), messageId: s.messageId || '' }))
+}
+
+/**
+ * 正文流按时间线还原插话的位置。
+ *
+ * <p>后端在框架把插话写进上下文的那一刻先 flush 此前正文成 text 段、再插 steer 段，
+ * 前端直播（pushTimelineSteer 之后再来的正文另起 text 段）、落库 timeline、blocks 重建
+ * 三条链路都保留了这个交错顺序。所以断点不用猜：扫一遍时间线，text 段的 to 就是
+ * 「这句话被听到之前，模型已经写出多少正文」，遇到 steer 段就在这个下标处下刀。
+ *
+ * <p>没有插话的轮次只返回一整片，渲染路径与从前逐字相同；有插话时切片拼起来仍等于
+ * content，不增不减。key 用切点下标：流式最后一片的起点不变，插话插进来时前面的片
+ * 不换键，长回答不会被整列重挂。last 只标最后一个正文片——流式打字光标只跟它。
+ */
+const turnBodyRows = m => {
+  const content = String((m && m.content) || '')
+  const tl = Array.isArray(m && m.timeline) ? m.timeline : []
+  const cuts = []
+  let read = 0
+  for (const seg of tl) {
+    if (!seg) continue
+    if (seg.kind === 'text') {
+      const to = Number(seg.to) || 0
+      if (to > read) read = Math.min(to, content.length)
+    } else if (seg.kind === 'steer' && String(seg.text || '').trim()) {
+      cuts.push({ at: read, text: String(seg.text), messageId: seg.messageId || '' })
+    }
+  }
+  if (!cuts.length) return content ? [{ kind: 'text', key: 't0', content, last: true }] : []
+  const rows = []
+  let pos = 0
+  cuts.forEach((c, ci) => {
+    const at = Math.min(Math.max(c.at, pos), content.length)
+    if (at > pos) rows.push({ kind: 'text', key: 't' + pos, content: content.slice(pos, at) })
+    rows.push({ kind: 'steer', key: 's' + ci + ':' + (c.messageId || ''), text: c.text })
+    pos = at
+  })
+  if (pos < content.length) rows.push({ kind: 'text', key: 't' + pos, content: content.slice(pos) })
+  for (let i = rows.length - 1; i >= 0; i--) {
+    if (rows[i].kind === 'text') { rows[i].last = true; break }
+  }
+  return rows
 }
 
 // ---- 工具卡片：标题行直接亮出关键参数（命令/路径/检索词），点击展开看完整入参与输出 ----
@@ -1634,7 +1679,7 @@ export {
   clusterKinds, clusterTitle, clusterHeadKind, clusterLiveText, CLUSTER_KIND_DONE, CLUSTER_KIND_LIVE,
   clusterAutoOpen, clusterLiveRows, groupHasBar, noteText, noteTag, noteOpen, noteGrowing, toggleNote, notePeek,
   tailNotesTag, tailNotesPeek, tailNotesGrowing, tailOpen, toggleTail,
-  turnAnswerText, turnProcessRows, turnSteerRows, turnOpen, toggleTurn, turnShow, turnWarn, turnExpandable, turnHead, turnTitle, turnElapsedMs, turnWaitMs,
+  turnAnswerText, turnProcessRows, turnSteerRows, turnBodyRows, turnOpen, toggleTurn, turnShow, turnWarn, turnExpandable, turnHead, turnTitle, turnElapsedMs, turnWaitMs,
   resumedStartAt, earlierStart,
   turnTop, turnToggleable,
   durZh,
