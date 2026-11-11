@@ -1315,11 +1315,15 @@ const ICON_LABELS = {
   alibabacloud: '阿里云',
   huggingface: 'Hugging Face',
   vllm: 'vLLM',
+  mistralai: 'Mistral AI',
+  modelscope: '魔搭 ModelScope',
+  lmstudio: 'LM Studio',
 }
 const iconKeys = computed(() => {
   const label = k => BRAND_PRESETS[k]?.name || ICON_LABELS[k] || BRAND_BADGES[k]?.name || k
   const keys = [{ key: '', name: '自动（按名称）' }]
-  for (const k of Object.keys(BRAND_PATHS)) keys.push({ key: k, name: label(k) })
+  // 'gemini' 只是渲染兜底别名（=googlegemini），枚举时跳过，否则选择器出现两个相同格子
+  for (const k of Object.keys(BRAND_PATHS)) if (k !== 'gemini') keys.push({ key: k, name: label(k) })
   for (const [k, b] of Object.entries(BRAND_BADGES)) keys.push({ key: k, name: b.name || k })
   return keys
 })
