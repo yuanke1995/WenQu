@@ -213,26 +213,31 @@
       </a-spin>
     </div>
 
-    <!-- 新建/编辑供应商 -->
-    <a-modal v-model:open="showEdit" :title="editing ? '编辑供应商' : '新建供应商'"
-             :confirm-loading="saving" :width="560" @ok="save" @cancelled="showEdit = false">
+    <!-- 新建/编辑供应商：品牌快捷区置顶（仅新建，点一下自动填好配置）→ 名称/网关/Key 主流程
+         → 图标弱化成一行（网格收进展开）→ 高级折叠；测试连接进 footer 与保存并列，必填项失焦即校验 -->
+    <a-modal v-model:open="showEdit" :title="editing ? '编辑供应商' : '新建供应商'" :width="560">
+      <!-- 品牌快捷区：把原来藏在图标点击里的预设联动提到第一入口；编辑已有供应商时不显示，避免误点覆盖 -->
+      <div v-if="!editing" class="pv-brand-zone">
+        <div class="pv-brand-head">
+          <span class="pv-brand-label">常用品牌</span>
+          <span class="pv-brand-hint">点一下自动填好名称、图标与网关地址，之后可改</span>
+        </div>
+        <div class="pv-brand-chips">
+          <button v-for="b in brandChips" :key="b.key" type="button"
+                  class="pv-brand-chip" :class="{ on: pickedBrand === b.key }"
+                  @click="onPickBrand(b.key)">
+            <ProviderIcon :icon="b.key" :name="b.label" :size="16" />
+            {{ b.label }}
+          </button>
+          <button type="button" class="pv-brand-chip ghost" @click="onPickBrand('')">自定义 ›</button>
+        </div>
+      </div>
       <a-form :label-col="{ span: 5 }" :wrapper-col="{ span: 18 }">
-        <a-form-item label="名称" required>
-          <a-input v-model:value="form.name" :maxlength="100" placeholder="如：DeepSeek / 智谱GLM / 自托管 Ollama" />
+        <a-form-item label="名称" required :validate-status="nameError ? 'error' : ''" :help="nameError || undefined">
+          <a-input v-model:value="form.name" :maxlength="100" placeholder="如：DeepSeek / 智谱GLM / 自托管 Ollama" @blur="nameTouched = true" />
         </a-form-item>
-        <a-form-item label="图标">
-          <div class="pv-icon-picker">
-            <button v-for="k in iconKeys" :key="k.key" type="button"
-                    class="pv-icon-cell" :class="{ active: form.icon === k.key }"
-                    :title="k.name" @click="onPickIcon(k.key)">
-              <ProviderIcon :icon="k.key" :name="form.name || k.name" :tooltip="k.name" :size="20" />
-            </button>
-          </div>
-          <div class="pv-hint">留空按名称生成；也可贴图片 URL</div>
-          <a-input v-model:value="iconUrl" placeholder="自定义图片 URL（可留空，http(s)://…）" style="margin-top:6px" />
-        </a-form-item>
-        <a-form-item label="网关地址" required>
-          <a-input v-model:value="form.baseUrl" placeholder="如 https://api.deepseek.com；…/v1、…/v4 等版本尾缀可自动识别" />
+        <a-form-item label="网关地址" required :validate-status="urlError ? 'error' : ''" :help="urlError || undefined">
+          <a-input v-model:value="form.baseUrl" placeholder="如 https://api.deepseek.com；…/v1、…/v4 等版本尾缀可自动识别" @blur="urlTouched = true" />
           <div v-if="form.icon === 'ollama' || /^https?:\/\/(localhost|127\.0\.0\.1)/.test(form.baseUrl || '')" class="pv-hint">
             地址由问渠服务器发起访问：localhost 指部署问渠的机器，不是你自己的电脑；Ollama 装在你自己电脑上时，请填它对服务器可达的地址（如 http://192.168.x.x:11434），并让 Ollama 监听 0.0.0.0。
           </div>
@@ -251,6 +256,27 @@
             </template>
           </a-input>
         </a-form-item>
+        <a-form-item label="图标">
+          <!-- 弱化成一行：默认自动按名称生成（左侧预览即最终效果），网格与 URL 收进「从品牌库更换」 -->
+          <div class="pv-icon-row">
+            <ProviderIcon :icon="form.icon" :name="form.name || '?'" :size="22" />
+            <span class="pv-icon-row-text">{{ iconRowText }}</span>
+            <button class="app-link-btn" type="button" @click="iconExpanded = !iconExpanded">
+              {{ iconExpanded ? '收起' : '从品牌库更换' }}
+            </button>
+          </div>
+          <template v-if="iconExpanded">
+            <div class="pv-icon-picker" style="margin-top:8px">
+              <button v-for="k in iconKeys" :key="k.key" type="button"
+                      class="pv-icon-cell" :class="{ active: form.icon === k.key }"
+                      :title="k.name" @click="onPickIcon(k.key)">
+                <ProviderIcon :icon="k.key" :name="form.name || k.name" :tooltip="k.name" :size="20" />
+              </button>
+            </div>
+            <div class="pv-hint">留空按名称生成；也可贴图片 URL</div>
+            <a-input v-model:value="iconUrl" placeholder="自定义图片 URL（可留空，http(s)://…）" style="margin-top:6px" />
+          </template>
+        </a-form-item>
         <a-collapse ghost class="pv-advanced">
           <a-collapse-panel key="adv" header="高级（路径覆盖，一般留空自动识别）">
             <a-form-item label="补全路径" :label-col="{ span: 5 }" :wrapper-col="{ span: 18 }">
@@ -264,13 +290,20 @@
         <a-form-item label="备注">
           <a-input v-model:value="form.remark" :maxlength="255" placeholder="用途/计费说明等" />
         </a-form-item>
-        <a-form-item label=" " :colon="false">
-          <button class="app-link-btn" type="button" :disabled="testing" @click="onTest">
-            {{ testing ? '测试中…' : '测试连接（拉取模型列表）' }}
-          </button>
-          <span v-if="testResult" :class="testResult.ok ? 'pv-test-ok' : 'pv-test-err'">{{ testResult.text }}</span>
-        </a-form-item>
       </a-form>
+      <template #footer>
+        <!-- 测试连接是填完地址后的第一动作，提进 footer 与保存并列；结果就地显示，超长省略 + title 看全文 -->
+        <div class="pv-edit-foot">
+          <button class="app-link-btn" type="button" :disabled="testing" title="拉取一次模型列表，顺带验证地址与 Key" @click="onTest">
+            {{ testing ? '测试中…' : '测试连接' }}
+          </button>
+          <span v-if="testResult" :class="testResult.ok ? 'pv-test-ok' : 'pv-test-err'" :title="testResult.text">{{ testResult.text }}</span>
+          <div class="pv-edit-foot-acts">
+            <button class="app-btn" type="button" @click="showEdit = false">取消</button>
+            <button class="app-btn primary" type="button" :disabled="saving" @click="save">{{ saving ? '保存中…' : '保存' }}</button>
+          </div>
+        </div>
+      </template>
     </a-modal>
 
     <!-- 模型管理 -->
@@ -1261,6 +1294,15 @@ const cssTextSecurity = typeof CSS !== 'undefined' && typeof CSS.supports === 'f
   && CSS.supports('-webkit-text-security', 'disc')
 const apiKeyType = computed(() => (apiKeyVisible.value || cssTextSecurity ? 'text' : 'password'))
 
+// 品牌快捷区与图标弱化行状态：pickedBrand=当前点选的品牌（再点一次取消）；iconExpanded=图标网格展开
+const pickedBrand = ref('')
+const iconExpanded = ref(false)
+// 必填项失焦校验：点保存才报错太晚，blur 即标红（保存时仍兜底校验）
+const nameTouched = ref(false)
+const urlTouched = ref(false)
+const nameError = computed(() => (nameTouched.value && !(form.value.name || '').trim()) ? '请填写供应商名称' : '')
+const urlError = computed(() => (urlTouched.value && !(form.value.baseUrl || '').trim()) ? '请填写网关地址' : '')
+
 function blank() {
   return { name: '', icon: '', baseUrl: '', apiKey: '', completionsPath: '', embeddingsPath: '', remark: '' }
 }
@@ -1306,6 +1348,8 @@ const KNOWN_PRESET_URLS = new Set(Object.values(BRAND_PRESETS).map(p => p.baseUr
 
 const onPickIcon = key => {
   form.value.icon = key
+  // 与品牌快捷区保持同亮：点中的图标是预设品牌时，对应胶囊高亮；非预设/清空则脱离选中态
+  pickedBrand.value = BRAND_PRESETS[key] ? key : ''
   const preset = BRAND_PRESETS[key]
   if (!preset) return
   // 名称：留空才填，不覆盖用户输入
@@ -1321,11 +1365,48 @@ const onPickIcon = key => {
   }
 }
 
+/** 品牌快捷区候选：新建弹窗第一入口，预设 key 与图标库一一对应，点选即带出真实品牌图标 */
+const brandChips = ['deepseek', 'zhipu', 'qwen', 'moonshot', 'doubao', 'openai', 'ollama']
+  .map(k => ({ key: k, label: BRAND_PRESETS[k].name }))
+
+/**
+ * 品牌胶囊点选。与 onPickIcon 的差异在「换品牌」：名称若仍是上一个品牌的预设名
+ * （即用户没手改过）就跟着换，不认「已填过名称就不动」——不然从 DeepSeek 换到智谱，
+ * 地址换过去了名称还写着 DeepSeek。手改过的名称任何时候都不覆盖。
+ * 再点一次取消 / 点「自定义」：只清选中态，填过的内容保留（用户可能已继续手改）。
+ */
+const onPickBrand = key => {
+  if (!key || pickedBrand.value === key) {
+    pickedBrand.value = ''
+    return
+  }
+  const prev = pickedBrand.value
+  pickedBrand.value = key
+  onPickIcon(key)
+  const preset = BRAND_PRESETS[key]
+  if (!preset) return
+  const name = (form.value.name || '').trim()
+  if (!name || (prev && name === BRAND_PRESETS[prev].name)) {
+    form.value.name = preset.name
+  }
+}
+
+/** 图标弱化行的文案：说清当前图标从哪来（按名称自动 / 品牌预设 / 自定义 URL） */
+const iconRowText = computed(() => {
+  const v = form.value.icon
+  if (!v) return '留空按名称自动生成'
+  if (/^https?:\/\//i.test(v)) return '已用自定义图片 URL'
+  return '已选：' + (BRAND_PRESETS[v]?.name || ICON_LABELS[v] || BRAND_BADGES[v]?.name || v)
+})
+
 // 图标输入框只承载自定义图片 URL：内置品牌 key 由上方图标格选择（form.icon 统一存 key 或 URL），
 // 否则 key 原样显示在文本框里会被误认成第二个名称
 const iconUrl = computed({
   get: () => (/^https?:\/\//i.test(form.value.icon || '') ? form.value.icon : ''),
-  set: v => { form.value.icon = (v || '').trim() }
+  set: v => {
+    form.value.icon = (v || '').trim()
+    if (form.value.icon) pickedBrand.value = ''   // 贴自定义 URL 即脱离品牌预设选中态
+  }
 })
 
 const typeOptions = [
@@ -1383,6 +1464,10 @@ const openCreate = () => {
   form.value = blank()
   testResult.value = null
   apiKeyVisible.value = false
+  pickedBrand.value = ''
+  iconExpanded.value = false
+  nameTouched.value = false
+  urlTouched.value = false
   showEdit.value = true
 }
 
@@ -1400,15 +1485,22 @@ const openEdit = p => {
     remark: p.remark || ''
   }
   testResult.value = null
+  // 编辑态没有品牌快捷区，但胶囊选中态仍要归零，图标网格默认收起
+  pickedBrand.value = ''
+  iconExpanded.value = false
+  nameTouched.value = false
+  urlTouched.value = false
   showEdit.value = true
 }
 
 const save = async () => {
   if (!form.value.name || !form.value.name.trim()) {
+    nameTouched.value = true   // 行内校验同步亮红，不只弹一句 toast
     message.warning('请填写供应商名称')
     return
   }
   if (!form.value.baseUrl || !form.value.baseUrl.trim()) {
+    urlTouched.value = true
     message.warning('请填写网关地址')
     return
   }
@@ -2320,6 +2412,38 @@ onMounted(async () => {
 }
 .pv-icon-cell:hover { background: #f0f2f5; }
 .pv-icon-cell.active { border-color: var(--app-accent); background: #e6f4ff; }
+/* ==================== 新建/编辑弹窗：品牌快捷区 / 图标弱化行 / footer ==================== */
+/* 品牌快捷区：弹窗第一入口，点一下自动填名称、图标与网关地址（弱底弱框，不抢必填字段的视线） */
+.pv-brand-zone {
+  margin-bottom: 16px; padding: 10px 12px;
+  border-radius: 8px; background: var(--app-panel-2);
+}
+.pv-brand-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.pv-brand-label { font-size: 13px; font-weight: 600; color: var(--app-text); }
+.pv-brand-hint { font-size: 12px; color: var(--app-text3); }
+.pv-brand-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.pv-brand-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 12px 3px 6px; border-radius: 999px;
+  border: 1px solid var(--app-border); background: var(--app-panel);
+  color: var(--app-text); font-size: 12px; cursor: pointer;
+}
+.pv-brand-chip:hover { border-color: var(--app-accent); }
+.pv-brand-chip.on { border-color: var(--app-accent); color: var(--app-accent); background: var(--app-accent-weak); }
+.pv-brand-chip.ghost { padding: 3px 12px; background: transparent; color: var(--app-text3); }
+/* 图标弱化成一行：虚线框示意「这是可选项」，左侧预览即当前生效图标 */
+.pv-icon-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 10px; border: 1px dashed var(--app-border); border-radius: 8px;
+}
+.pv-icon-row-text {
+  flex: 1; min-width: 0; font-size: 12px; color: var(--app-text3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* footer：测试连接贴左与保存并列，结果就地显示（超长省略，title 看全文） */
+.pv-edit-foot { display: flex; align-items: center; gap: 8px; }
+.pv-edit-foot > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pv-edit-foot-acts { margin-left: auto; display: flex; gap: 8px; flex: none; }
 .pv-test-ok { color: var(--app-ok, var(--app-ok)); font-size: 12px; margin-left: 8px; }
 .pv-test-err { color: var(--app-danger); font-size: 12px; margin-left: 8px; }
 .pv-row-actions { display: flex; align-items: center; gap: 10px; white-space: nowrap; }
