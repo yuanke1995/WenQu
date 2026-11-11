@@ -58,9 +58,6 @@ public class ProjectTurnChangesService {
     /** sessionId → 本轮 turnId：{@code ExecutorFilesystem} 调用期读取，给写类调用带上 turnId。 */
     private final ConcurrentHashMap<String, String> activeTurns = new ConcurrentHashMap<>();
 
-    /** sessionId → 本轮对账的基线轮号：写类调用抢跑时，执行器补拍快照也用它。 */
-    private final ConcurrentHashMap<String, String> activePreviousTurns = new ConcurrentHashMap<>();
-
     /** sessionId → 轮前快照的进行中调用（settle 时等它落定）。 */
     private final ConcurrentHashMap<String, CompletableFuture<Map<String, Object>>> pendingStarts =
             new ConcurrentHashMap<>();
@@ -110,15 +107,8 @@ public class ProjectTurnChangesService {
         return sessionId == null ? null : activeTurns.get(sessionId);
     }
 
-    /** 本会话本轮对账的基线轮号（没有/首轮/已收口返回 null）。 */
-    public String currentPreviousTurnId(String sessionId) {
-        if (sessionId == null) return null;
-        String id = activePreviousTurns.get(sessionId);
-        return id == null || id.isBlank() ? null : id;
-    }
-
-    /** 轮前调用的两件事：上一轮轮号（无则 null）与快照/对账的进行中结果。 */
-    public record Start(String previousTurnId, CompletableFuture<Map<String, Object>> future) {
+    /** 轮前快照与用户改动对账的进行中结果；对账基线由执行器按工作区自行选取，不再按会话下发。 */
+    public record Start(CompletableFuture<Map<String, Object>> future) {
     }
 
     /**
@@ -126,7 +116,7 @@ public class ProjectTurnChangesService {
      * 调用时机必须早于本轮任何写类执行器调用——执行器按队列 FIFO 处理，快照先入队，
      * 执行器端才有 state 可挂「改动前捕获」。
      *
-     * @return 上一轮轮号 + 进行中调用（{@link #driftNote} 与 {@link #settle} 共用）；未发起返回 null
+     * @return 进行中调用（{@link #driftNote} 与 {@link #settle} 共用）；未发起返回 null
      */
     public Start start(String sessionId, String turnId) {
         if (sessionId == null || sessionId.isBlank() || turnId == null || turnId.isBlank()) return null;
@@ -135,39 +125,25 @@ public class ProjectTurnChangesService {
             if (target == null) return null;
             if (!executorFiles.online(target.executorId())) return null;
             activeTurns.put(sessionId, turnId);
-            // 上一轮的轮号从消息表取：排除本轮自己（重试/续跑时本轮提问可能已经落库）；
-            // 取不到（首轮/历史被清）就不做对账，执行器按 supported=false 静默跳过。
-            String previousTurnId = lastTurnIdBefore(sessionId, turnId);
-            if (previousTurnId == null || previousTurnId.isBlank()) activePreviousTurns.remove(sessionId);
-            else activePreviousTurns.put(sessionId, previousTurnId);
             CompletableFuture<Map<String, Object>> f = CompletableFuture.supplyAsync(
-                    () -> executorFiles.turnStart(target.executorId(), target.roots(), turnId, previousTurnId), pool);
+                    () -> executorFiles.turnStart(target.executorId(), target.roots(), turnId), pool);
             pendingStarts.put(sessionId, f);
-            return new Start(previousTurnId, f);
+            return new Start(f);
         } catch (Exception e) {
             log.warn("[CHANGES] 轮前快照发起失败（这轮不出改动卡）session={}: {}", sessionId, e.getMessage());
             return null;
         }
     }
 
-    private String lastTurnIdBefore(String sessionId, String turnId) {
-        try {
-            return messageMapper.selectLastTurnIdBefore(sessionId, turnId);
-        } catch (Exception e) {
-            log.warn("[CHANGES] 上一轮轮号读取失败（本轮不做用户改动对账）session={}: {}",
-                    sessionId, e.getMessage());
-            return null;
-        }
-    }
-
     /**
-     * 轮首用户改动对账的上下文段：执行器把当前工作树与上一轮 afterTree 对比，这里只排版。
-     * 等不到（快照慢/没有上一轮/执行器版本旧）返回空串——对账是增强，不是每轮必需。
+     * 轮首用户改动对账的上下文段：执行器把当前工作树与同工作区最近一轮收口时的 afterTree 对比，
+     * 并剔除其它助手轮自己改的文件，这里只排版。
+     * 等不到（快照慢/没有基线轮/执行器版本旧）返回空串——对账是增强，不是每轮必需。
      *
      * <p>内容全部按「资料」处理：文件路径消毒、diff 套信封，避免用户改过的文件内容反过来注入。
      */
     public String driftNote(String sessionId, Start start, long timeoutMs) {
-        if (start == null || start.previousTurnId() == null || start.previousTurnId().isBlank()) return "";
+        if (start == null) return "";
         Map<String, Object> r;
         try {
             r = start.future().get(Math.max(1, timeoutMs), TimeUnit.MILLISECONDS);
@@ -293,7 +269,6 @@ public class ProjectTurnChangesService {
         if (active != null && !turnId.equals(active)) return null;
         CompletableFuture<Map<String, Object>> f = pendingStarts.remove(sessionId);
         activeTurns.remove(sessionId);
-        activePreviousTurns.remove(sessionId);
         if (f == null && active == null) return null;   // start 没发过（非本机工作区/离线）：零开销直出
         if (f != null) {
             try {

@@ -56,25 +56,12 @@ public class ExecutorFilesystem extends BaseSandboxFilesystem {
     private final LocalJournalStorage journalStorage;
     /** 本会话当前轮的 turnId 供给方（调用期读取；实例可能跨轮被缓存，不能烘焙进构造器）。可为 null。 */
     private final java.util.function.Supplier<String> turnIdSupplier;
-    /**
-     * 本会话当前轮的「上一轮轮号」供给方：写类调用也带上它，执行器在还没收到 turnStart 时
-     * 补拍轮前快照也能做用户改动对账（服务端的 turnStart 与模型第一次写可能抢跑）。
-     * 可为 null。
-     */
-    private final java.util.function.Supplier<String> previousTurnIdSupplier;
-
     public ExecutorFilesystem(ExecutorRegistry registry, String executorId, List<Root> roots, boolean unrestricted) {
-        this(registry, executorId, roots, unrestricted, null, null);
+        this(registry, executorId, roots, unrestricted, null);
     }
 
     public ExecutorFilesystem(ExecutorRegistry registry, String executorId, List<Root> roots, boolean unrestricted,
                               java.util.function.Supplier<String> turnIdSupplier) {
-        this(registry, executorId, roots, unrestricted, turnIdSupplier, null);
-    }
-
-    public ExecutorFilesystem(ExecutorRegistry registry, String executorId, List<Root> roots, boolean unrestricted,
-                              java.util.function.Supplier<String> turnIdSupplier,
-                              java.util.function.Supplier<String> previousTurnIdSupplier) {
         this.registry = Objects.requireNonNull(registry, "registry is required");
         this.executorId = Objects.requireNonNull(executorId, "executorId is required");
         this.roots = roots == null ? List.of() : List.copyOf(roots);
@@ -82,7 +69,6 @@ public class ExecutorFilesystem extends BaseSandboxFilesystem {
                 .orElse(this.roots.isEmpty() ? "/" : this.roots.get(0).path());
         this.unrestricted = unrestricted;
         this.turnIdSupplier = turnIdSupplier;
-        this.previousTurnIdSupplier = previousTurnIdSupplier;
         this.journalStorage = new LocalJournalStorage(LocalJournalStorage.defaultRoot());
     }
 
@@ -144,11 +130,6 @@ public class ExecutorFilesystem extends BaseSandboxFilesystem {
         if (turnIdSupplier != null) {
             String turnId = turnIdSupplier.get();
             if (turnId != null && !turnId.isBlank()) out.put("turnId", turnId);
-        }
-        // 写类调用也带上一轮轮号：执行器先看到写、后看到服务端 turnStart 时，补拍快照也能做对账
-        if (previousTurnIdSupplier != null) {
-            String previous = previousTurnIdSupplier.get();
-            if (previous != null && !previous.isBlank()) out.put("previousTurnId", previous);
         }
         return out;
     }

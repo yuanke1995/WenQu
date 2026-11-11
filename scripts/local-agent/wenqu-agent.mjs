@@ -399,7 +399,6 @@ function callContext (args, deadline) {
     primaryRoot,
     realRoots: roots.map(mark),
     policy: args.policy === 'danger-full-access' ? 'danger-full-access' : 'workspace-write',
-    previousTurnId: String(args.previousTurnId || '').trim(),
     deadline: Number(deadline) || 0
   }
 }
@@ -1383,8 +1382,8 @@ async function ensureTurnState (turnId, ctx) {
   const id = String(turnId || '').trim()
   if (!id || turnStates.has(id)) return
   if (!turnStarts.has(id)) {
-    // 写类调用可能抢在服务端 turnStart 前：请求里也带了上一轮轮号，补拍快照时照样能做用户改动对账
-    const p = opTurnStart({ turnId: id, previousTurnId: ctx && ctx.previousTurnId }, ctx)
+    // 写类调用可能抢在服务端 turnStart 前：执行器按源文件夹自行找基线，补拍快照照样能做对账
+    const p = opTurnStart({ turnId: id }, ctx)
       .catch(e => log('自动补轮前快照失败（本轮只走改动前捕获兜底）:', e.message))
       .finally(() => turnStarts.delete(id))
     turnStarts.set(id, p)
@@ -1608,16 +1607,45 @@ function alternateObjectsEnv (repo, extraDirs) {
   return { ...repo.env, GIT_ALTERNATE_OBJECT_DIRECTORIES: alts.join(path.delimiter) }
 }
 
+/** 同一批源文件夹 = 同一个工作区；执行器按它找对账基线，不再依赖服务端按会话下发的轮号。 */
+function workspaceKeyOf (state) {
+  return (state.roots || []).map(r => String(r.path || '')).filter(Boolean).sort().join('\n')
+}
+
+/** 这批源文件夹里最近一轮已收口的助手轮（含别条会话的轮）；没有则这一轮不做对账。 */
+function baselineTurnOf (state) {
+  const key = workspaceKeyOf(state)
+  if (!key) return null
+  let base = null
+  for (const st of turnStates.values()) {
+    if (st.turnId === state.turnId || !st.done) continue
+    if (workspaceKeyOf(st) !== key) continue
+    if (!base || (st.createdAt || 0) > (base.createdAt || 0)) base = st
+  }
+  return base
+}
+
+/** 基线之后、本轮开场之前，这个路径是不是别的助手轮自己改的（收口轮与进行中的轮都算）。 */
+async function assistantTouchedSince (state, base, abs) {
+  const key = workspaceKeyOf(state)
+  if (!key || !base) return false
+  for (const st of turnStates.values()) {
+    if (st.turnId === state.turnId) continue
+    if ((st.createdAt || 0) < (base.createdAt || 0)) continue
+    if (workspaceKeyOf(st) !== key) continue
+    if (await isTouched(st, abs)) return true
+  }
+  return false
+}
+
 /**
- * 用户改动对账：当前工作树（本轮 turnStart 的快照 tree）vs 上一轮 afterTree。
+ * 用户改动对账：当前工作树（本轮 turnStart 的快照 tree）vs 同一批源文件夹最近一轮收口时的 afterTree。
+ * 同一工作区允许多条会话并发，基线不按会话取；基线之后由其它助手轮自己改过的文件不算用户改动，
+ * 只有无法归因到任何助手轮的改动才记进 state.drift，本轮 write_file 覆盖它之前必须先 read。
  * 只覆盖 git 仓库；非 git 源文件夹没有全量快照，宁可报 supported=false 也不假装没改。
- * 命中的绝对路径记进 state.drift，本轮 write_file 覆盖它之前必须先 read。
  */
-async function detectDrift (state, previousTurnId) {
-  const id = String(previousTurnId || '').trim()
-  if (!id) return { supported: false, files: [] }
-  let base = turnStateOf(id)
-  if (!base) base = await readTurnState(id)
+async function detectDrift (state) {
+  const base = baselineTurnOf(state)
   if (!base || !Array.isArray(base.repos)) return { supported: false, files: [] }
   const baseObjects = path.join(base.scratch, 'objects')
   const byAbs = new Map()
@@ -1673,6 +1701,11 @@ async function detectDrift (state, previousTurnId) {
     }
   }
   if (!matched) return { supported: false, files: [] }
+  // 同一工作区里别的会话/定时任务也是编辑者：基线之后由助手轮自己动过的文件不算「用户改过」，
+  // 否则并发下每条新会话都会撞 E_CONFLICT，写不动文件。
+  for (const abs of [...byAbs.keys()]) {
+    if (await assistantTouchedSince(state, base, abs)) byAbs.delete(abs)
+  }
   // 必要时自动读回 diff：只取小文件、总行数有预算；内容留在本机，随 turnStart 结果回传少量派生文本
   const diffs = []
   let diffLines = 0
@@ -1710,7 +1743,7 @@ async function detectDrift (state, previousTurnId) {
   }
 }
 
-async function opTurnStart ({ turnId, previousTurnId }, ctx) {
+async function opTurnStart ({ turnId }, ctx) {
   const id = String(turnId || '').trim()
   if (!id) throw err('E_INVALID', '缺少 turnId')
   if (turnStates.has(id)) {
@@ -1762,9 +1795,9 @@ async function opTurnStart ({ turnId, previousTurnId }, ctx) {
   }
   log(`turnStart: ${state.repos.length} 个仓库, git=${state.repos.some(r => r.tree) ? '可用' : '不可用'}`)
   // 用户改动对账排在快照之后：current tree 就是本轮开场时的工作树
-  const drift = await detectDrift(state, previousTurnId)
+  const drift = await detectDrift(state)
   state.driftResult = drift
-  if (drift.supported) log(`turnStart 用户改动: 基线=${previousTurnId} 命中 ${drift.total} 个文件`)
+  if (drift.supported) log(`turnStart 用户改动: 命中 ${drift.total} 个文件`)
   state.bytes = await dirBytes(scratch)
   try {
     await saveTurnState(state)

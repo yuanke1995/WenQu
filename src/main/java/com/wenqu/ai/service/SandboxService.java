@@ -305,9 +305,7 @@ public class SandboxService {
                         executorRegistry, boundProject.getExecutorId(), roots, unrestrictedWrites,
                         // 本机工作区：框架的写类调用带当前轮身份，执行器据此做「改动前捕获」（每轮文件改动）。
                         // 供给方调用期读取——文件系统实例可能被框架缓存跨轮复用，不能把 turnId 烘焙进来。
-                        () -> turnChanges.currentTurnId(sessionId),
-                        // 上一轮轮号：模型第一次写可能抢在服务端 turnStart 前，补拍快照时用它做用户改动对账
-                        () -> turnChanges.currentPreviousTurnId(sessionId));
+                        () -> turnChanges.currentTurnId(sessionId));
                 return memoryRouted(executorFs, uid, memoryAgentId);
             }
             // 隐式会话的本机后端：工作区=用户电脑上的会话目录，不建容器。
@@ -319,8 +317,7 @@ public class SandboxService {
                         new ExecutorFilesystem.Root("workspace", sessionWs.rootPath(), true));
                 ExecutorFilesystem executorFs = new ExecutorFilesystem(
                         executorRegistry, sessionWs.executorId(), roots, unrestrictedWrites,
-                        () -> turnChanges.currentTurnId(sessionId),
-                        () -> turnChanges.currentPreviousTurnId(sessionId));
+                        () -> turnChanges.currentTurnId(sessionId));
                 return memoryRouted(executorFs, uid, memoryAgentId);
             }
             if (!sandboxReady) {
