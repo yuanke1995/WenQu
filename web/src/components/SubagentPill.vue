@@ -8,10 +8,7 @@
             :aria-expanded="open ? 'true' : 'false'" :title="tip" :aria-label="tip" @click="toggle">
       <loading-outlined v-if="runningCount" spin class="sap-ic" />
       <apartment-outlined v-else class="sap-ic sap-ic-mut" />
-      <span class="sap-t">{{ runs.length }}</span>
-      <template v-if="runningCount">
-        <span class="sap-sep">·</span><span class="sap-r">在跑 {{ runningCount }}</span>
-      </template>
+      <span class="sap-t">{{ pillLabel }}</span>
       <span v-if="lead" class="sap-d">{{ lead }}</span>
     </button>
 
@@ -58,11 +55,18 @@ const emit = defineEmits(['focus'])
 const open = ref(false)
 const runs = computed(() => subagentRunsOf(props.msg))
 const runningCount = computed(() => runs.value.filter(r => r.running).length)
-// 药丸只剩图标+数字，「这几个字是什么意思」全部落到这一句悬浮里（触屏没有悬浮，点开浮层的
-// 标题「这一轮派出去的助手」就是同一句话的落地版）
+// 悬浮这句说全「派了几位、几位在跑」（触屏没有悬浮，点开浮层的标题「这一轮派出去的助手」
+// 就是同一句话的落地版）
 const tip = computed(() => (runningCount.value
   ? `这一轮派出 ${runs.value.length} 位助手，${runningCount.value} 位还在跑`
   : `这一轮派出的 ${runs.value.length} 位助手`))
+// 药丸文案自带「位/在跑」，不再有裸数字要猜：全在跑就说「N 位在跑」，
+// 跑了一部分才用分数「1/3 在跑」；都收场了就一句「N 位助手」，成败细节在点开的名细里
+const pillLabel = computed(() => {
+  const total = runs.value.length, run = runningCount.value
+  if (!run) return `${total} 位助手`
+  return run === total ? `${run} 位在跑` : `${run}/${total} 位在跑`
+})
 // 药丸上那个跳秒的数：最长（最早起表）那支在跑的。没有在跑的、或在跑的那支没有本地起表点
 // （刷新接上来的），就不给数——宁缺一个读数，不拿服务端的墙上时刻凑一个跨钟的差
 const lead = computed(() => {
@@ -126,8 +130,6 @@ function pick (r) {
 .sap-ic-ok { color: var(--app-ok); }
 .sap-ic-err { color: var(--app-danger); }
 .sap-t { font-weight: 500; color: var(--app-text); font-variant-numeric: tabular-nums; }
-.sap-sep { color: var(--app-border-strong); }
-.sap-r { color: var(--app-text2); }
 .sap-d { color: var(--app-accent); font-variant-numeric: tabular-nums; }
 
 .sap-pop {
