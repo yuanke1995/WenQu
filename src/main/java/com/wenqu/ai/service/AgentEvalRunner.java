@@ -178,7 +178,7 @@ public class AgentEvalRunner {
                 chatService.chat(ChatCommand.of(sessionId, c.getQuestion(), uid)
                         .userImages(List.of()).attachments(List.of()).skills(List.of())
                         .agentId(run.getAgentId())
-                        .source(TurnLease.KIND_EVAL).sourceName("评测 · " + ctx.agentName)
+                        .source(TurnSource.EVAL).sourceName("评测 · " + ctx.agentName)
                         .build(), sink);
                 timeout = !sink.awaitDone(timeoutMs);
             } finally {

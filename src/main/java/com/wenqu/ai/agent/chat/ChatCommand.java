@@ -200,8 +200,8 @@ public final class ChatCommand {
      */
     final java.util.Map<String, String> variables;
     /**
-     * 发起方的展示名（定时任务名 / 工作流子智能体名）。网页问答不传——守卫侧按会话标题展示。
-     * 有了它，工作区被占时的报错才能从含糊的「另一个任务在跑」变成「定时任务『周报』正在跑」。
+     * 发起方的展示名（定时任务名 / 工作流子智能体名）。网页问答不传。
+     * 有了它，通知与账本里这一轮能按「定时任务『周报』」区分来源。
      */
     final String sourceName;
 

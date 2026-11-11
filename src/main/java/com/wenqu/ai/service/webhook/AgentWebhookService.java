@@ -4,7 +4,7 @@ import com.alibaba.fastjson2.JSON;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.wenqu.ai.agent.chat.ChatCommand;
-import com.wenqu.ai.service.TurnLease;
+import com.wenqu.ai.service.TurnSource;
 import com.wenqu.ai.mapper.AgentMapper;
 import com.wenqu.ai.mapper.WebhookDeliveryMapper;
 import com.wenqu.ai.model.Agent;
@@ -37,7 +37,7 @@ import java.util.UUID;
  * <p>
  * <b>挂点与过滤</b>：引擎 finish 的 done 发射之后 + failLoud（开局即败的最小载荷）两处调用。
  * 过滤与 {@code TurnNotifyService} 同一口径但独立实现（取数面不同，不能借它的签名）：
- * 只发 KIND_USER 顶层轮（定时/工作流子轮/咨询子轮/免登录访客/字面量兜底身份一律不发），
+ * 只发用户发起的顶层轮（{@code TurnSource.USER}；定时/工作流子轮/咨询子轮/免登录访客/字面量兜底身份一律不发），
  * 游客轮另有显式闸。
  * <p>
  * <b>异步纪律</b>（对齐 TurnNotifyService）：一切异常只记 WARN 不上抛，投递与重试都不许
@@ -83,7 +83,7 @@ public class AgentWebhookService {
             // 发起方过滤与 TurnNotifyService.turnUid 同口径：null/空=老调用方没登记（按用户轮放行），
             // 只有显式的非 user 来源（定时/工作流子轮/咨询子轮）不发
             String src = cmd.getSource();
-            if (src != null && !src.isBlank() && !TurnLease.KIND_USER.equals(src)) return;
+            if (src != null && !src.isBlank() && !TurnSource.USER.equals(src)) return;
             if (cmd.getParentSessionId() != null && !cmd.getParentSessionId().isBlank()) return;
             if (cmd.isGuestMode()) return;   // 免登录分享轮不发（与工具游客口径一致）
             String uid = cmd.getUserId();

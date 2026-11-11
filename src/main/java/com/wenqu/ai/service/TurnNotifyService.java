@@ -260,7 +260,7 @@ public class TurnNotifyService {
     private String turnUid(ChatCommand cmd) {
         if (cmd == null || cmd.getSessionId() == null || cmd.getSessionId().isBlank()) return null;
         String src = cmd.getSource();
-        if (src != null && !src.isBlank() && !TurnLease.KIND_USER.equals(src)) return null;
+        if (src != null && !src.isBlank() && !TurnSource.USER.equals(src)) return null;
         if (cmd.getParentSessionId() != null && !cmd.getParentSessionId().isBlank()) return null;
         return ownerUid(cmd.getSessionId());
     }

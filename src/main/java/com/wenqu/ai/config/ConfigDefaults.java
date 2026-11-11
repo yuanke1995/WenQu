@@ -222,7 +222,6 @@ public final class ConfigDefaults {
 
     // ---- 沙盒 ----
     public static final int SANDBOX_PROJECT_UPLOAD_MAX_MB = 256;
-    public static final int PROJECT_TURN_GUARD_LEASE_TTL_MS = 7_200_000;
 
     // ---- 通知 ----
     public static final int NOTIFICATION_TURN_MIN_SECONDS = 60;
