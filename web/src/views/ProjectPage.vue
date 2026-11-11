@@ -221,16 +221,22 @@
           <!-- 事项清单（C2）：记下 → 去聊 → 勾掉；进入工作区先看见还欠着的事 -->
           <section class="app-card pj-card pj-item-card">
             <div class="pj-card-head">
+              <button class="pj-card-toggle" type="button"
+                      :title="itemsCollapsed ? '展开事项' : '收起事项'"
+                      @click="toggleItemsCollapsed">
+                <down-outlined v-if="!itemsCollapsed" />
+                <right-outlined v-else />
+              </button>
               <h2 class="pj-card-title">事项
                 <span v-if="openItems.length" class="pj-mini-pill">{{ openItems.length }}</span>
               </h2>
               <span class="pj-spacer"></span>
-              <button class="pj-text-btn" type="button" :disabled="itemBusy"
+              <button v-if="!itemsCollapsed" class="pj-text-btn" type="button" :disabled="itemBusy"
                       @click="itemAdding = !itemAdding; itemDraft = ''">
                 {{ itemAdding ? '取消' : '＋ 记一条' }}
               </button>
             </div>
-            <div class="pj-item-body">
+            <div v-if="!itemsCollapsed" class="pj-item-body">
               <div v-if="itemAdding" class="pj-item-add">
                 <a-input v-model:value="itemDraft" size="small" :maxlength="200"
                          placeholder="这个工作区接下来要做什么？" @press-enter="addItem" />
@@ -271,12 +277,18 @@
           <!-- 记忆 -->
           <section class="app-card pj-card pj-mem-card">
             <div class="pj-card-head">
+              <button class="pj-card-toggle" type="button"
+                      :title="memCollapsed ? '展开工作区记忆' : '收起工作区记忆'"
+                      @click="toggleMemCollapsed">
+                <down-outlined v-if="!memCollapsed" />
+                <right-outlined v-else />
+              </button>
               <h2 class="pj-card-title">工作区记忆</h2>
               <span class="pj-mem-path">.wenqu/MEMORY.md</span>
               <span class="pj-spacer"></span>
-              <button class="app-btn" type="button" @click="openMemory">{{ wmContent ? '编辑' : '添加' }}</button>
+              <button v-if="!memCollapsed" class="app-btn" type="button" @click="openMemory">{{ wmContent ? '编辑' : '添加' }}</button>
             </div>
-            <div class="pj-mem-body">
+            <div v-if="!memCollapsed" class="pj-mem-body">
             <a-spin :spinning="wmLoading">
               <div v-if="wmError" class="pj-empty err">
                 读取失败：{{ wmError }}
@@ -314,7 +326,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import {
   PlusOutlined, FolderFilled, FileTextOutlined, QuestionCircleOutlined,
-  SafetyOutlined, BgColorsOutlined, CheckOutlined, MenuFoldOutlined, MenuUnfoldOutlined
+  SafetyOutlined, BgColorsOutlined, CheckOutlined, MenuFoldOutlined, MenuUnfoldOutlined,
+  DownOutlined, RightOutlined
 } from '@ant-design/icons-vue'
 import hljs from 'highlight.js/lib/common'
 import {
@@ -757,6 +770,25 @@ const saveMemoryIsolated = async v => {
   }
 }
 
+// ---------- 侧栏卡片折叠（按工作区各自记住） ----------
+const collapseKey = (k) => `app_pj_${id.value}_${k}`
+const readCollapse = (k) => {
+  try { return localStorage.getItem(collapseKey(k)) === '1' } catch (e) { return false }
+}
+const writeCollapse = (k, v) => {
+  try { localStorage.setItem(collapseKey(k), v ? '1' : '0') } catch (e) { /* 忽略 */ }
+}
+const itemsCollapsed = ref(readCollapse('items'))
+const toggleItemsCollapsed = () => {
+  itemsCollapsed.value = !itemsCollapsed.value
+  writeCollapse('items', itemsCollapsed.value)
+}
+const memCollapsed = ref(readCollapse('mem'))
+const toggleMemCollapsed = () => {
+  memCollapsed.value = !memCollapsed.value
+  writeCollapse('mem', memCollapsed.value)
+}
+
 // ---------- 事项清单（C2） ----------
 const items = ref([])
 const itemLoading = ref(false)
@@ -1050,12 +1082,19 @@ onUnmounted(() => {
 .pj-skeleton { flex: 1; }
 .pj-side { width: 384px; flex: none; min-height: 0; display: flex; flex-direction: column; gap: 12px; }
 .pj-card { padding: 0; }
-.pj-dir-card { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.pj-dir-card { flex: 1 1 0; min-height: 140px; display: flex; flex-direction: column; overflow: hidden; }
 .pj-files { flex: 1; min-height: 0; overflow: auto; }
-.pj-mem-card { flex: 0 1 auto; max-height: 34%; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.pj-mem-card { flex: 0 1 auto; max-height: 30%; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .pj-mem-body { flex: 1; min-height: 0; overflow: auto; }
-.pj-card-head { display: flex; align-items: center; gap: 8px; padding: 12px 16px; }
+.pj-card-head { flex: none; display: flex; align-items: center; gap: 8px; padding: 12px 16px; }
 .pj-card-title { margin: 0; font-size: 13.5px; font-weight: 600; }
+.pj-card-toggle {
+  flex: none; width: 20px; height: 20px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 0; border-radius: 5px; background: none; cursor: pointer;
+  color: var(--app-text3); font-size: 11px;
+}
+.pj-card-toggle:hover { color: var(--app-accent); background: var(--app-panel-2); }
 .pj-spacer { flex: 1; }
 .pj-text-btn {
   border: 0; background: none; padding: 0; font: inherit; font-size: 12px;
@@ -1192,8 +1231,8 @@ onUnmounted(() => {
 }
 
 /* ---------- 事项清单 ---------- */
-.pj-item-card { margin-top: 12px; }
-.pj-item-body { padding: 0 16px 12px; }
+.pj-item-card { flex: 0 1 auto; max-height: 34%; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.pj-item-body { flex: 1; min-height: 0; overflow: auto; padding: 0 16px 12px; }
 .pj-item-add { display: flex; gap: 8px; margin-bottom: 8px; }
 .pj-item-add .app-btn { flex: none; height: 28px; padding: 0 12px; }
 .pj-item-list { display: flex; flex-direction: column; gap: 2px; }
