@@ -994,11 +994,14 @@ html[data-theme='dark'] .stat.warn { background: var(--app-warn-weak); }
 .skill-tag { font-size: 11px; color: var(--app-text2); background: var(--app-panel-2); border: 1px solid var(--app-border);
   border-radius: 4px; padding: 1px 7px; }
 .skill-tag.src { color: var(--app-text3); }
-.skill-card-desc { font-size: 12px; color: var(--app-text2); line-height: 1.6; margin-top: 7px; min-height: 38px;
-  overflow: hidden;
+/* 描述区恒占 3 行：卡片高度不再随描述长短浮动，数据行与底栏才有统一基线 */
+.skill-card-desc { font-size: 12px; color: var(--app-text2); line-height: 1.6; margin-top: 7px;
+  height: calc(1.6em * 3); flex: none; overflow: hidden;
   display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
 .skill-card-desc.miss { color: var(--app-warn-text); }
-.skill-card-data { display: flex; align-items: center; gap: 8px; margin-top: 9px; font-size: 11px; color: var(--app-text3); }
+/* 数据行恒定 18px：有迷你趋势图（svg 高 18）与没有时行高一致；下边距是底栏的最小间距 */
+.skill-card-data { display: flex; align-items: center; gap: 8px; margin-top: 9px; margin-bottom: 10px;
+  height: 18px; flex: none; font-size: 11px; color: var(--app-text3); }
 .skill-card-data b { color: var(--app-text); font-weight: 600; }
 .skill-card-data .spark { margin-left: auto; flex: none; }
 .skill-card-data.zero b { color: var(--app-warn-text); }
@@ -1007,7 +1010,10 @@ html[data-theme='dark'] .stat.warn { background: var(--app-warn-weak); }
 .spark.cat-code { color: var(--c-code); }
 .spark.cat-design { color: var(--c-design); }
 .spark.cat-general { color: var(--c-general); }
-.skill-card-foot { display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--app-border); margin-top: 10px; padding-top: 9px; cursor: default; }
+/* 底栏恒贴卡片底部：grid 拉伸让同行卡片等高，auto 吃掉描述区留白，
+   开关 / 查看详情 / ⋯ 在整行卡片里落在同一水平线上 */
+.skill-card-foot { display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--app-border);
+  margin-top: auto; padding-top: 9px; flex: none; cursor: default; }
 .foot-dim { font-size: 11px; color: var(--app-text3); }
 .skill-card-foot > .ant-switch { flex: none; }
 .btn-view { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 10px; border-radius: 6px;
