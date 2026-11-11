@@ -297,6 +297,8 @@ const focused = ref(null)        // {id, name}：邻域聚焦模式
 /** 最近一次渲染的入参：重新布局直接用它重算，不再打接口 */
 const lastRender = ref({ data: null, focus: null })
 const VIEW_LIMIT = 300
+/** 漫游缩放级别低于此值时隐藏连线上的关系标签（见 renderFromData 内 graphRoam 处理） */
+const EDGE_LABEL_MIN_ZOOM = 0.8
 /** 默认只画关联度最高的一小撮实体：1000+ 节点全量渲染会糊成毛线团 */
 const nodeLimit = ref(40)
 const nodeLimitOptions = [
@@ -380,7 +382,7 @@ function renderFromData(data, focus) {
   nodes.forEach(n => { nameToId.set(n.name, n.id); idToName.set(n.id, n.name) })
   const degrees = nodes.map(n => Number(n.degree || 1)).sort((a, b) => a - b)
   const maxDegree = Math.max(1, ...degrees)
-  // 只给关联度前 35% 的节点常显标签，其余靠 hover/tooltip；labelLayout hideOverlap 再兜一层
+  // 只给关联度前 35% 的节点常显标签，其余靠 hover/tooltip
   const labelThreshold = degrees[Math.max(0, Math.floor(degrees.length * 0.65))] || 1
   // 节点**不能带 id 字段**：echarts graph 在节点有 id 时以 id 作为 links 的匹配键，
   // 下面按 name 引用的连线会被整体静默丢弃。
@@ -406,6 +408,24 @@ function renderFromData(data, focus) {
       predicate: e.predicate
     }
   }).filter(Boolean)
+  // 同一对实体间的多条平行关系（如 属于+属性为）默认线与标签完全重合、叠成重影
+  // （原先靠 labelLayout 兜底，但该配置会触发 echarts 6.1 边标签缩放爆炸 bug，见下方 edgeLabel 注释）。
+  // 改按无向对分组，给平行边对称递增 curveness 扇形展开：线分开，标签随之分开。
+  const pairCount = new Map()
+  const pairKey = l => (l.source < l.target ? l.source + '\u0000' + l.target : l.target + '\u0000' + l.source)
+  chartLinks.forEach(l => {
+    const k = pairKey(l)
+    pairCount.set(k, (pairCount.get(k) || 0) + 1)
+  })
+  const pairIdx = new Map()
+  chartLinks.forEach(l => {
+    const k = pairKey(l)
+    const n = pairCount.get(k)
+    if (n < 2) return
+    const i = pairIdx.get(k) || 0
+    pairIdx.set(k, i + 1)
+    l.lineStyle = { curveness: (i - (n - 1) / 2) * 0.25 }
+  })
   // 整条关系链：按实体无向遍历求连通分量，记每个节点的分量内 点/线 数据下标
   chainFocusSets = buildChainFocusSets(nodes, edges, chartLinks)
   viewLimit.value = data.limit || VIEW_LIMIT
@@ -430,14 +450,31 @@ function renderFromData(data, focus) {
       links: chartLinks,
       label: { color: cssVar('--app-text'), position: 'right',
         formatter: p => String(p.name || '').length > 14 ? String(p.name).slice(0, 14) + '…' : String(p.name || '') },
-      labelLayout: { hideOverlap: true },
       lineStyle: { color: 'rgba(152,160,170,.55)', curveness: 0.05 },
-      edgeLabel: { show: nodes.length <= 80, fontSize: 10, color: cssVar('--app-text2'), formatter: '{c}' },
+      // 切勿加回 labelLayout（如 hideOverlap）：echarts 6.1 中 edgeLabel.rotate 与 labelLayout
+      // 同时配置时，滚轮缩小会让边标签 scale 按 1/zoom 累积爆炸成巨字且放大不恢复（实测复现）。
+      // 节点标签防重叠已由关联度阈值控制，边标签则靠下方 graphRoam 按缩放级别整体显隐。
+      edgeLabel: { show: nodes.length <= 80, fontSize: 10, color: cssVar('--app-text2'), formatter: '{c}', rotate: 0 },
       edgeSymbol: ['none', 'arrow'], edgeSymbolSize: 6,
       itemStyle: { color: '#4f6ef2' }
     }]
   }, true)
   applyChainFocus()
+  // 缩小到阈值以下时隐藏边标签：rotate:0 的边标签不随缩放变小（固定 10px），
+  // 缩得越小越糊成一团，直接藏掉；放大回来恢复。roamZoom 靠 graphRoam 事件的
+  // payload.zoom（本次缩放系数）累积，与视图坐标系同步；重建图表时自然归 1。
+  let roamZoom = 1
+  chartInstance.on('graphRoam', p => {
+    if (p.zoom == null) return
+    roamZoom *= p.zoom
+    const show = nodes.length <= 80 && roamZoom >= EDGE_LABEL_MIN_ZOOM
+    chartInstance.getZr().storage.traverse(el => {
+      if (el.type !== 'ec-line') return
+      const text = el.parent?.getTextContent?.()
+      if (text) text.ignore = !show
+    })
+    chartInstance.getZr().refresh()
+  })
   // 点节点 = 拉服务端实体详情（完整三元组 + 溯源）+ 聚焦该节点所在的整条关系链
   chartInstance.on('click', p => {
     if (p.dataType === 'node') {
