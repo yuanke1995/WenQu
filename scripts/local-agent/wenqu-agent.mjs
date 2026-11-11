@@ -398,7 +398,8 @@ function callContext (args, deadline) {
     rootRecords,
     primaryRoot,
     realRoots: roots.map(mark),
-    policy: args.policy === 'danger-full-access' ? 'danger-full-access' : 'workspace-write',
+    policy: args.policy === 'danger-full-access' ? 'danger-full-access'
+      : args.policy === 'read-only' ? 'read-only' : 'workspace-write',
     deadline: Number(deadline) || 0
   }
 }
@@ -832,6 +833,18 @@ function profilePath (p) {
   return String(p).replace(/\\/g, '\\\\').replace(/"/g, '\\"')
 }
 
+/** 标准档下命令不该读到的凭据目录，与 Linux 侧 linuxShellArgs 的 --tmpfs 遮罩取同一口径。
+ *  Seatbelt 按真实路径匹配，家目录要先过一遍 realpath，避免软链让 subpath 规则落空。 */
+function sensitiveReadPaths () {
+  const home = os.homedir()
+  return [
+    path.join(home, '.wenqu'), path.join(home, '.ssh'), path.join(home, '.aws'),
+    path.join(home, '.kube'), path.join(home, '.docker'), path.join(home, '.gnupg')
+  ].filter(p => fs.existsSync(p)).map(p => {
+    try { return fs.realpathSync.native(p) } catch { return p }
+  })
+}
+
 function macShellProfile (roots) {
   const writable = [
     ...roots,
@@ -842,8 +855,11 @@ function macShellProfile (roots) {
   const lines = ['(version 1)', '(allow default)', '(deny file-write*)', '(allow file-write*']
   for (const p of writable) lines.push(`  (subpath "${profilePath(p)}")`)
   lines.push(')')
-  // 注意：sandbox-exec 的 deny 会被 (allow default) 盖住，读隔离做不到。
-  // 这里只承诺“写”围栏；读敏感文件仍须靠 standard 默认审批与 autonomous 分层。
+  // SBPL 按「最后一条匹配的规则生效」求值：读掩码必须排在所有 allow 之后，否则会被覆盖。
+  // 只遮凭据目录，不动 /usr/lib、/System 等自举路径，命令仍能正常启动。
+  for (const p of sensitiveReadPaths()) {
+    lines.push(`(deny file-read* (subpath "${profilePath(p)}"))`)
+  }
   return lines.join('\n')
 }
 
@@ -2233,6 +2249,13 @@ const HANDLERS = {
   turnDiff: opTurnDiff
 }
 
+/** 只读档禁止下发的调用：会改用户文件、跑命令、拉起外部程序或浏览器。
+ *  turnStart/turnEnd/turnDiff 只读写执行器自己的轮快照目录，不算用户文件改动，故不在此列。 */
+const MUTATING_OPS = new Set([
+  'write', 'writeBytes', 'writeChunk', 'mkdir', 'move', 'remove',
+  'exec', 'openPath', 'pickDir', 'browser'
+])
+
 async function postResult(id, ok, data, error) {
   const body = ok ? { id, ok: true, data } : { id, ok: false, error }
   // 回传失败重试：服务端在等这条结果，一次网络抖动不能让它白等到超时。
@@ -2378,6 +2401,9 @@ async function executeCall (call) {
   const started = Date.now()
   try {
     const ctx = callContext(args, call.deadline)
+    if (ctx.policy === 'read-only' && MUTATING_OPS.has(call.op)) {
+      throw err('E_SANDBOX_DENIED', `只读档不允许执行 ${call.op}`)
+    }
     deadlineGuard(ctx)
     const data = await handler(args, ctx)
     log(`${call.op} 完成 ${Date.now() - started}ms`, args.path ? args.path : '')
