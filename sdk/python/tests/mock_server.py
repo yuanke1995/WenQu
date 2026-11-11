@@ -10,6 +10,7 @@
 """
 
 from __future__ import annotations
+from urllib.parse import urlsplit
 
 import json
 import threading
@@ -108,8 +109,13 @@ class MockHandler(BaseHTTPRequestHandler):
         self._json(200, {"success": True, "data": data})
 
     def _route_path(self) -> str:
-        """剥离 base_url 携带的 context-path 前缀 /ai，得到与后端路由一致的相对路径。"""
-        path = self.path
+        """取请求行的 path 部分，再剥离 context-path 前缀 /ai，得到与后端路由一致的相对路径。
+
+        请求行既可能是相对形式 ``/ai/api/...``，也可能是绝对形式
+        ``http://host:port/ai/api/...``（keep-alive 连接上客户端复用时会出现）；
+        后者若直接按字符串匹配会漏到「路径不存在」。
+        """
+        path = urlsplit(self.path).path
         if path.startswith("/ai"):
             path = path[len("/ai"):]
         return path

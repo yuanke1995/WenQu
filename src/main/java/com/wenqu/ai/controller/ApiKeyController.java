@@ -46,6 +46,7 @@ public class ApiKeyController {
     private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(ApiKeyController.class);
 
     private final ApiKeyService apiKeyService;
+    private final com.wenqu.ai.openapi.OpenApiRegistry openApiRegistry;
 
     @Operation(summary = "Key 列表", description = "不含明文与哈希，仅前缀与使用/过期状态；谁建归谁（只看得到自己签发的 Key）")
     @Permission("apikey:read")
@@ -110,7 +111,8 @@ public class ApiKeyController {
     public ResultJson scopes() {
         return ResultJson.ok(Map.of(
                 "all", ApiKeyService.ALL_SCOPES,
-                "default", ApiKeyService.DEFAULT_SCOPES));
+                "default", ApiKeyService.DEFAULT_SCOPES,
+                "endpoints", openApiRegistry.scopeEndpoints()));
     }
 
     @Operation(summary = "回显明文", description = "返回该 Key 的明文 apiKey（列表「眼睛」/复制按钮的数据源）；"
@@ -149,6 +151,14 @@ public class ApiKeyController {
         boolean enabled = Boolean.TRUE.equals(body.get("mcpEnabled"));
         apiKeyService.setMcpEnabled(id, enabled);
         return ResultJson.ok(Map.of("id", id, "mcpEnabled", enabled));
+    }
+
+    @Operation(summary = "轮换密钥", description = "旧明文立即作废，返回新明文（只此一次）；"
+            + "Key 的归属、能力范围、有效期与用量台账保持不变，接入方只需换掉明文即可")
+    @Permission("apikey:write")
+    @PostMapping("/{id}/rotate")
+    public ResultJson rotate(@PathVariable("id") String id) {
+        return ResultJson.ok(apiKeyService.rotate(id));
     }
 
     @Operation(summary = "删除 Key", description = "物理删除记录（不再需要时清理；日常吊销建议用停用）")

@@ -1037,6 +1037,8 @@ export const updateApiKey = (id, body) =>
   request(`/api-key/${id}`, { method: 'PUT', body: JSON.stringify(body) })
 /** 回显 Key 明文（列表「眼睛」/复制）：仅创建者，服务端每次落审计日志 */
 export const revealApiKey = id => request(`/api-key/${id}/reveal`)
+/** 轮换密钥：旧明文立即作废，返回新明文（只此一次）；归属/scope/有效期不变 */
+export const rotateApiKey = id => request(`/api-key/${id}/rotate`, { method: 'POST' })
 export const deleteApiKey = id => request(`/api-key/${id}`, { method: 'DELETE' })
 /** scope 名册：全部合法 scope 与默认集（签发/编辑弹窗选项数据源） */
 export const getApiKeyScopes = () => request('/api-key/scopes')

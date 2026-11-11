@@ -8,6 +8,8 @@ import com.wenqu.ai.service.WorkflowService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
+import com.wenqu.ai.openapi.OpenApi;
+import com.wenqu.ai.openapi.OpenApiScopes;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -46,6 +48,7 @@ public class WorkflowApiController {
             + "status / outputs（结束节点出参）/ nodeTraces（节点级输入输出与耗时）/ durationMs。"
             + "失败不抛 500——返回 status=failed 的 run，error 与 trace 可定位失败节点。")
     @Permission("workflow:api")
+    @OpenApi(scope = OpenApiScopes.WORKFLOW_RUN, summary = "触发已发布工作流")
     @PostMapping("/{id}/run")
     public ResultJson run(@PathVariable("id") String id, @RequestBody(required = false) Map<String, Object> body,
                           HttpServletRequest request) {
@@ -64,6 +67,7 @@ public class WorkflowApiController {
     @Operation(summary = "查询运行结果", description = "按 runId 查本次运行的状态与结果（触发方与归属一致的才可见）；"
             + "用于外部系统异步核对（同步触发已直接返回，此接口供补查/回溯）")
     @Permission("workflow:api")
+    @OpenApi(scope = OpenApiScopes.WORKFLOW_RUN, summary = "查询工作流运行结果")
     @GetMapping("/{id}/run/{runId}")
     public ResultJson runDetail(@PathVariable("id") String id, @PathVariable("runId") String runId,
                                 HttpServletRequest request) {
@@ -83,6 +87,7 @@ public class WorkflowApiController {
     @Operation(summary = "Webhook 入站触发", description = "按令牌触发已发布工作流（自动化弹窗里复制完整地址）："
             + "请求体 JSON 整体作为开始节点入参（{{start.key}} 取值来源），异步执行立即返回 {runId, status}；"
             + "队列满报「运行队列已满」可稍后重试")
+    @OpenApi(summary = "Webhook 入站触发（令牌即凭据）", keyAccessible = false)
     @PostMapping("/webhook/{token}")
     public ResultJson webhook(@PathVariable("token") String token,
                               @RequestBody(required = false) Map<String, Object> body) {

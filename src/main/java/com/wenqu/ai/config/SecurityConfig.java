@@ -1,6 +1,8 @@
 package com.wenqu.ai.config;
 
 import com.wenqu.ai.dto.ResultJson;
+import com.wenqu.ai.openapi.OpenApiRegistry;
+import com.wenqu.ai.openapi.RequestIdFilter;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -11,6 +13,8 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 import org.springframework.context.annotation.Configuration;
 
 import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.regex.Pattern;
 
 /**
@@ -36,6 +40,7 @@ public class SecurityConfig implements WebMvcConfigurer {
     private final com.wenqu.ai.service.ApiKeyService apiKeyService;
     private final UserContextInterceptor userContextInterceptor;
     private final com.wenqu.ai.service.RoleService roleService;
+    private final OpenApiRegistry openApiRegistry;
 
     /** 请求属性名：本次请求通过 API Key 认证（权限固定为问答链路，不参与管理员判定） */
     public static final String ATTR_API_KEY_ID = "ai.apiKeyId";
@@ -101,6 +106,8 @@ public class SecurityConfig implements WebMvcConfigurer {
         if (path.equals("/api/ai/executor/device-code")
                 || path.equals("/api/ai/executor/device-code/token")
                 || path.equals("/api/ai/executor/device-code/approve")) return true;
+        // 开放契约文档：机器可读，集成方不必先持有 Key 才能读契约
+        if ("GET".equals(method) && "/api/ai/v1/openapi.json".equals(path)) return true;
         // 公开只读：运行时公开配置、对话页智能体下拉（脱敏只读）
         if ("GET".equals(method) && ("/api/ai/config/public".equals(path)
                 || "/api/ai/agent/available".equals(path))) return true;
@@ -296,26 +303,6 @@ public class SecurityConfig implements WebMvcConfigurer {
         // 工作流凭据（个人资产）：http 节点以 {{credential:名称}} 引用；值加密落库、出参脱敏，
         // 控制器一律按 RequestUser.uid() 过滤（看不到也改不了别人的），故与技能/MCP 同口径不要求管理员
         if (path.equals("/api/ai/credential") || path.startsWith("/api/ai/credential/")) return true;
-        // 工作流开放接口：/api/ai/v1/workflows/**——对外系统持 API Key 触发已发布工作流。
-        // 与普通用户白名单同层（API Key 走第 1 层放行分支）；权限面收在 WorkflowService 内：
-        // 工作流对该身份可读才可触发，不可见/未发布一律拒绝，不因端点开放而放宽资源级判定。
-        if (path.startsWith("/api/ai/v1/workflows")) return true;
-        // OpenAI 兼容端点：/api/ai/v1/chat/completions——外部项目持 API Key
-        // 以 OpenAI SDK 语义调用智能体（model=智能体id）。资源级判定在端点内（智能体可见性），
-        // 与 /v1/workflows 同层同口径；刻意不进 isKeyDeniedEndpoint——这个端点就是给 Key 用的。
-        if (path.equals("/api/ai/v1/chat/completions")) return true;
-        // Responses API：与 chat/completions 同层同口径，同样只给 API Key 用
-        if (path.equals("/api/ai/v1/responses")) return true;
-        // Embeddings OpenAI 兼容端点：/api/ai/v1/embeddings——外部项目持 API Key 以 OpenAI SDK
-        // 语义调用问渠登记的向量模型（model=向量模型引用 providerId/modelId）。与 chat/completions
-        // 同层同口径；能力级授权（embedding scope）判在端点内。
-        if (path.equals("/api/ai/v1/embeddings")) return true;
-        // 可用向量模型清单（只读、脱敏）：embeddings 端点 model 参数的数据源
-        if ("GET".equals(method) && path.equals("/api/ai/v1/models/embeddings")) return true;
-        // 知识库对外 API：检索（kb.read）+ 库管理（读 kb.read / 写 kb.write）——scope 判在
-        // KbApiController 内；资源级可见性与网页端点同口径（服务层判定），对外通道不放宽。
-        if ("POST".equals(method) && path.equals("/api/ai/v1/retrieval")) return true;
-        if (path.equals("/api/ai/v1/kbs") || path.startsWith("/api/ai/v1/kbs/")) return true;
         return false;
     }
 
@@ -575,6 +562,34 @@ public class SecurityConfig implements WebMvcConfigurer {
         return "POST".equals(method) && path != null && path.startsWith("/api/ai/v1/workflows/webhook/");
     }
 
+    /** 与身份装载同一口径：OpenAI SDK 的 Bearer sk-… 等价于 X-Api-Key */
+    private static String bearerApiKey(HttpServletRequest request) {
+        String h = request.getHeader("Authorization");
+        if (h == null || !h.regionMatches(true, 0, "Bearer sk-", 0, 10)) return null;
+        String t = h.substring(7).trim();
+        return t.startsWith("sk-") ? t : null;
+    }
+
+    /**
+     * v1 对外端点一律回 OpenAI 形状的错误体（含 code 与 request_id）；内部端点保持平台包络不变。
+     * 两套错误体不再由 SDK 在客户端猜，边界就在命名空间上。
+     */
+    private String accessErrorJson(String path, int status, String type,
+                                   String platformMessage, String openApiMessage) throws Exception {
+        if (!path.startsWith(OpenApiRegistry.PREFIX)) {
+            return objectMapper.writeValueAsString(ResultJson.error(status, platformMessage));
+        }
+        Map<String, Object> err = new LinkedHashMap<>();
+        err.put("message", openApiMessage);
+        err.put("type", type);
+        err.put("code", type);
+        String rid = RequestIdFilter.current();
+        err.put("request_id", rid == null ? "" : rid);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("error", err);
+        return objectMapper.writeValueAsString(out);
+    }
+
     /**
      * 访问控制：API Key 放行 → 登录门禁 → 管理员判定（三层，fail-closed）。
      * <p>身份一律取自 {@link UserContextInterceptor} 装载的登录态，不读取用户自报请求头。</p>
@@ -586,27 +601,33 @@ public class SecurityConfig implements WebMvcConfigurer {
             String path = request.getRequestURI().substring(request.getContextPath().length());
             // 0. SCIM 机器凭据通道：不走 API Key/登录态/RBAC 任何一层，鉴权在 ScimController 入口强校验
             if (isScimEndpoint(path)) return true;
-            // 1. API Key 认证（对外开放问答能力的入口）：带对 X-Api-Key 且命中问答白名单 → 放行。
-            //    未带 / 校验失败的 Key 不在此处拦截，继续走登录门禁与管理员判定。
-            //    身份（RequestUser）已由 UserContextInterceptor 按 Key 的代表账号装载好，这里只管"能碰哪些端点"。
+            // 1. API Key 认证：v1 开放面查契约注册表（未标注 @OpenApi 的路径默认拒绝），
+            //    非 v1 的既有问答链路仍按问答白名单 ∩ 非拒绝名单判定——client.native 与
+            //    业务系统代理形态依赖这条链，不是本轮要迁移的对外契约，原样保留。
+            //    身份（RequestUser）由 UserContextInterceptor 装载，这里只管「能碰哪些端点」。
             String plainKey = request.getHeader("X-Api-Key");
+            if (plainKey == null || plainKey.isBlank()) plainKey = bearerApiKey(request);
             var rec = apiKeyService.verify(plainKey);
-            if (rec != null && !isAuthEndpoint(path) && isPublicUserEndpoint(method, path)
-                    && !isKeyDeniedEndpoint(method, path)) {
+            boolean v1Path = path.startsWith(OpenApiRegistry.PREFIX);
+            boolean keyAllowed = v1Path
+                    ? openApiRegistry.match(method, path).isPresent()
+                    : isPublicUserEndpoint(method, path) && !isKeyDeniedEndpoint(method, path);
+            if (rec != null && !isAuthEndpoint(path) && keyAllowed) {
                 request.setAttribute(ATTR_API_KEY_ID, rec.getId());
                 apiKeyService.touchLastUsed(rec.getId());
                 return true;
             }
-            // 1b. Key 命中问答白名单但在收窄名单里：当场拒绝并说清原因，不静默走到登录门禁去——
+            // 1b. 非 v1 的账号自服务面：当场拒绝并说清原因，不静默走到登录门禁去——
             //     那一层的判据是「这个账号能不能用这个端点」，而代表账号在界面里当然能改自己的密码，
             //     放过去等于让一把 Key 拥有该账号的账号自服务能力（改密/改设置/清会话）。fail-loud 才看得见。
-            if (rec != null && !isAuthEndpoint(path) && isPublicUserEndpoint(method, path)
+            if (!v1Path && rec != null && !isAuthEndpoint(path) && isPublicUserEndpoint(method, path)
                     && isKeyDeniedEndpoint(method, path)) {
                 response.setStatus(HttpServletResponse.SC_FORBIDDEN);
                 response.setContentType("application/json;charset=UTF-8");
-                response.getWriter().write(objectMapper.writeValueAsString(ResultJson.error(403,
+                response.getWriter().write(accessErrorJson(path, 403, "permission_error",
                         "该 API Key 不能访问这个端点：Key 只开放问答链路，账号自服务与能力配置面"
-                                + "（改密/资料/偏好/技能/MCP 配置/共享管理/定时任务/删除会话）请用登录态在界面里做")));
+                                + "（改密/资料/偏好/技能/MCP 配置/共享管理/定时任务/删除会话）请用登录态在界面里做",
+                        "该 API Key 无权访问账号自服务与能力配置面，请用登录态在界面里操作"));
                 return false;
             }
             // 1c. Key 身份的硬边界（fail-closed）：Key 认证的请求没走上面白名单放行的，到此一律 403，
@@ -619,10 +640,13 @@ public class SecurityConfig implements WebMvcConfigurer {
             //     后者会让「JWT + 顺手带了个 Key 头」的管理员请求被误伤。
             if (request.getAttribute(UserContextInterceptor.ATTR_API_KEY_UID) != null) {
                 if (path.equals("/api/ai/auth/me")) return true;
+                // webhook 入站是「令牌即凭据」的公开通道，带不带 Key 都应可达（与改造前同口径）
+                if (isWorkflowWebhookEndpoint(method, path)) return true;
                 response.setStatus(HttpServletResponse.SC_FORBIDDEN);
                 response.setContentType("application/json;charset=UTF-8");
-                response.getWriter().write(objectMapper.writeValueAsString(ResultJson.error(403,
-                        "该 API Key 只开放问答链路（问答 / 会话 / 反馈 / 引用溯源等）：这个端点不对 Key 开放")));
+                response.getWriter().write(accessErrorJson(path, 403, "permission_error",
+                        "该 API Key 只开放问答链路（问答 / 会话 / 反馈 / 引用溯源等）：这个端点不对 Key 开放",
+                        v1Path ? "该端点不在开放契约注册表内，默认拒绝" : "该端点不对 API Key 开放"));
                 return false;
             }
             // 2. 登录门禁：除登录引导端点、游客分享端点、租户开通申请与沙盒脚本回调外，必须持有效登录令牌

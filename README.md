@@ -213,7 +213,7 @@ docker compose up -d
 
 后端监听 `http://localhost:8090/ai`（context-path `/ai`），API 前缀 `/api/ai/*`，
 健康检查：`GET http://localhost:8090/ai/actuator/health`。
-接口文档（Swagger UI）：`http://localhost:8090/ai/swagger-ui/index.html`（springdoc 自动生成；Try-it-out 在线调试需先登录，在 Authorize 中填入 `Bearer <登录令牌>`）。**默认关闭**：`SPRINGDOC_ENABLED` 缺省为 false（接口契约不外泄），需要时 export `SPRINGDOC_ENABLED=true` 开启。同理 docker-compose 默认仅把 8090 绑定到回环地址（`127.0.0.1`），对外直连需 `APP_PUBLISH=8090` 或经 nginx 反向代理。
+接口文档（Swagger UI）：`http://localhost:8090/ai/swagger-ui.html`（springdoc 自动生成；Try-it-out 在线调试需先登录，在 Authorize 中填入 `Bearer <登录令牌>`）。**默认关闭**：`SPRINGDOC_ENABLED` 缺省为 false（接口契约不外泄），需要时 export `SPRINGDOC_ENABLED=true` 开启。同理 docker-compose 默认仅把 8090 绑定到回环地址（`127.0.0.1`），对外直连需 `APP_PUBLISH=8090` 或经 nginx 反向代理。
 
 ### 4. 启动前端
 
@@ -434,7 +434,7 @@ docker compose up -d          # 自包含：redis-stack + meilisearch + 内置 M
 
 ## API 参考
 
-> 完整接口文档见 **Swagger UI**（`SPRINGDOC_ENABLED=true` 时访问 `/ai/swagger-ui/index.html`，随代码自动更新）。当前共 **57 个控制器、504 个 REST 端点**（含 SCIM 入站），另有 MCP 两条非 MVC 路由（`/ai/mcp`、`/ai/mcp/{token}`）与 SAML ACS 等不进控制器统计的协议路由。下表按域给出核心端点速查，完整契约以 Swagger 为准：
+> 完整接口文档见 **Swagger UI**（`SPRINGDOC_ENABLED=true` 时访问 `/ai/swagger-ui.html`，随代码自动更新）。当前共 **57 个控制器、504 个 REST 端点**（含 SCIM 入站），另有 MCP 两条非 MVC 路由（`/ai/mcp`、`/ai/mcp/{token}`）与 SAML ACS 等不进控制器统计的协议路由。下表按域给出核心端点速查；**对外集成方请看机器可读契约** `GET /ai/api/ai/v1/openapi.json`（OpenAPI 3.1，生产默认可读，只含 `/api/ai/v1/**`，由服务端注册表的路径/方法/scope 实时生成），内部全量端点以 Swagger 为准：
 
 | 端点 | 说明 |
 |------|------|

@@ -30,12 +30,16 @@ class WenquAPIError(WenquError):
         status_code: Optional[int] = None,
         error_type: Optional[str] = None,
         payload: Optional[Any] = None,
+        code: Optional[str] = None,
+        request_id: Optional[str] = None,
     ) -> None:
         super().__init__(message)
         self.message = message
         self.status_code = status_code
         self.error_type = error_type
         self.payload = payload
+        self.code = code
+        self.request_id = request_id
 
     def __str__(self) -> str:
         if self.status_code is not None:
@@ -166,12 +170,16 @@ class WenquClient:
 
         message: Optional[str] = None
         error_type: Optional[str] = None
+        code: Optional[str] = None
+        request_id: Optional[str] = None
         if isinstance(payload, dict):
             err = payload.get("error")
             if isinstance(err, dict):
                 # OpenAI 风格：{"error": {"message", "type"}}
                 message = err.get("message")
                 error_type = err.get("type")
+                code = err.get("code")
+                request_id = err.get("request_id")
             elif payload.get("success") is False:
                 # 平台包络：{"success": false, "msg": ...}
                 message = str(payload.get("msg") or payload.get("message") or "")
@@ -181,7 +189,8 @@ class WenquClient:
             text = (response.text or "").strip()
             message = text[:500] if text else f"HTTP {status}"
 
-        kwargs: Dict[str, Any] = {"message": message, "status_code": status, "error_type": error_type, "payload": payload}
+        kwargs: Dict[str, Any] = {"message": message, "status_code": status, "error_type": error_type,
+                                 "payload": payload, "code": code, "request_id": request_id}
         if status in (401, 403):
             return WenquAuthError(**kwargs)
         if status == 429:

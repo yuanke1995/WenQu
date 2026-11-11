@@ -3,6 +3,7 @@ package com.wenqu.ai.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.wenqu.ai.common.BizException;
+import com.wenqu.ai.openapi.OpenApiScopes;
 import com.wenqu.ai.mapper.ApiKeyMapper;
 import com.wenqu.ai.model.ApiKey;
 import com.wenqu.ai.service.ResourceVisibilityService.Principal;
@@ -58,22 +59,20 @@ public class ApiKeyService {
     // 白名单管「Key 能不能碰这类端点」，scope 管「这把 Key 被授权了哪几类能力」。
 
     /** 问答（/api/ai/chat、OpenAI 兼容端点、Responses） */
-    public static final String SCOPE_CHAT = "chat";
+    public static final String SCOPE_CHAT = OpenApiScopes.CHAT;
     /** 向量化（/api/ai/v1/embeddings） */
-    public static final String SCOPE_EMBEDDING = "embedding";
+    public static final String SCOPE_EMBEDDING = OpenApiScopes.EMBEDDING;
     /** 知识库只读（检索 API、库详情、文档列表） */
-    public static final String SCOPE_KB_READ = "kb.read";
+    public static final String SCOPE_KB_READ = OpenApiScopes.KB_READ;
     /** 知识库写入（建库、上传文档）——默认不含，签发时显式勾选才放开 */
-    public static final String SCOPE_KB_WRITE = "kb.write";
+    public static final String SCOPE_KB_WRITE = OpenApiScopes.KB_WRITE;
     /** 工作流触发（/api/ai/v1/workflows/{id}/run） */
-    public static final String SCOPE_WORKFLOW_RUN = "workflow.run";
+    public static final String SCOPE_WORKFLOW_RUN = OpenApiScopes.WORKFLOW_RUN;
     /** 全部合法 scope（前端勾选项与后端校验共用这一份名单） */
-    public static final List<String> ALL_SCOPES = List.of(
-            SCOPE_CHAT, SCOPE_EMBEDDING, SCOPE_KB_READ, SCOPE_KB_WRITE, SCOPE_WORKFLOW_RUN);
+    public static final List<String> ALL_SCOPES = OpenApiScopes.ALL;
     /** 默认集：除 kb.write 外全部——存量 Key（scopes=NULL）与新签未收窄的 Key 都落在这里，
      *  与「Key 可走问答/向量/只读/工作流，写库需显式授权」的最小权限口径一致 */
-    public static final List<String> DEFAULT_SCOPES = List.of(
-            SCOPE_CHAT, SCOPE_EMBEDDING, SCOPE_KB_READ, SCOPE_WORKFLOW_RUN);
+    public static final List<String> DEFAULT_SCOPES = OpenApiScopes.DEFAULT;
 
     /** 解析 scopes 列：NULL/空/解析失败一律按默认集（fail-safe 方向与存量行为一致，不静默清空权限） */
     public static List<String> parseScopes(String raw) {
@@ -291,6 +290,33 @@ public class ApiKeyService {
         k.setUpdateTime(LocalDateTime.now());
         mapper.updateById(k);
         log.info("[API-KEY] {} MCP 入口 key={}", enabled ? "授权" : "收回", id);
+    }
+
+    /**
+     * 轮换密钥：旧明文的哈希当场被替换，立即作废；归属、scope、有效期、名称全部不变。
+     * <p>泄露处置不必再「删除重签 + 接入方改配置里的 id」，同一把 Key 的记录继续可审计，
+     * 只有明文本体换了。新明文同 create 一样加密保管，列表「眼睛」可回显。</p>
+     */
+    public Map<String, Object> rotate(String id) {
+        ApiKey existing = mapper.selectById(id);
+        ensureManageable(existing);
+        byte[] buf = new byte[RANDOM_BYTES];
+        RANDOM.nextBytes(buf);
+        String plain = PREFIX + HexFormat.of().formatHex(buf);
+        String prefix = plain.substring(0, PREFIX.length() + 8);
+        LambdaUpdateWrapper<ApiKey> upd = new LambdaUpdateWrapper<ApiKey>()
+                .eq(ApiKey::getId, id)
+                .set(ApiKey::getKeyHash, sha256(plain))
+                .set(ApiKey::getKeyPrefix, prefix)
+                .set(ApiKey::getKeyCipher, crypto.encrypt(plain))
+                .set(ApiKey::getUpdateTime, LocalDateTime.now());
+        mapper.update(null, upd);
+        log.info("[API-KEY] 轮换 {}（{}…），归属与 scope 不变", id, prefix);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("id", id);
+        out.put("keyPrefix", prefix);
+        out.put("apiKey", plain);
+        return out;
     }
 
     /** 物理删除（清理不再需要的 Key） */

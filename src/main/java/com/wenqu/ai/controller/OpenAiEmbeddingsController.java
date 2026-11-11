@@ -13,6 +13,8 @@ import com.wenqu.ai.util.TokenCounter;
 import com.wenqu.ai.util.UsageAttr;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import com.wenqu.ai.openapi.OpenApi;
+import com.wenqu.ai.openapi.OpenApiScopes;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.embedding.Embedding;
@@ -75,6 +77,7 @@ public class OpenAiEmbeddingsController {
                     + "\"encoding_format\": \"float\"(默认)|\"base64\", \"dimensions\": 可选}。"
                     + "model 为向量模型引用（必填，问渠向量按库绑定、无全局默认）；"
                     + "可用清单见 GET /api/ai/v1/models/embeddings。API Key 需开通 embedding scope")
+    @OpenApi(scope = OpenApiScopes.EMBEDDING, summary = "Embeddings（OpenAI 兼容）")
     @PostMapping("/api/ai/v1/embeddings")
     public org.springframework.http.ResponseEntity<?> embeddings(@RequestBody JSONObject body) {
         long start = System.currentTimeMillis();
@@ -208,6 +211,7 @@ public class OpenAiEmbeddingsController {
     @Operation(summary = "可用向量模型清单",
             description = "当前身份可用的 embedding 模型（按归属过滤后的 enabled 供应商 × enabled 模型，"
                     + "分组结构含 ref=providerId/modelId 直接可作 embeddings 请求的 model 参数；不含 baseUrl/apiKey）")
+    @OpenApi(scope = OpenApiScopes.EMBEDDING, summary = "可用向量模型清单")
     @GetMapping("/api/ai/v1/models/embeddings")
     public org.springframework.http.ResponseEntity<?> availableEmbeddingModels() {
         try {
@@ -241,6 +245,9 @@ public class OpenAiEmbeddingsController {
         Map<String, Object> err = new LinkedHashMap<>();
         err.put("message", message == null ? "调用失败" : message);
         err.put("type", type);
+        String rid = com.wenqu.ai.openapi.RequestIdFilter.current();
+        err.put("code", type);
+        err.put("request_id", rid == null ? "" : rid);
         return org.springframework.http.ResponseEntity.status(status)
                 .body(Map.of("error", err));
     }

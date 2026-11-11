@@ -8,18 +8,26 @@ export interface WenquErrorInfo {
   status?: number;
   /** OpenAI 风格错误类型（invalid_request_error / rate_limit_error 等；平台包络错误无此字段） */
   type?: string;
+  /** v1 统一错误体的机器可读码（与 type 同源） */
+  code?: string;
+  /** 全链路请求号：报错时把它带给运维即可定位那一笔 */
+  requestId?: string;
 }
 
 /** 所有问渠 SDK 错误的基类 */
 export class WenquError extends Error {
   readonly status?: number;
   readonly type?: string;
+  readonly code?: string;
+  readonly requestId?: string;
 
   constructor(message: string, info?: WenquErrorInfo) {
     super(message);
     this.name = "WenquError";
     this.status = info?.status;
     this.type = info?.type;
+    this.code = info?.code;
+    this.requestId = info?.requestId;
   }
 }
 
@@ -54,6 +62,8 @@ export class WenquRateLimitError extends WenquApiError {
 export function errorFromStatus(status: number, rawText: string): WenquError {
   let message = `请求失败（HTTP ${status}）`;
   let type: string | undefined;
+  let code: string | undefined;
+  let requestId: string | undefined;
   let parsed: unknown;
   try {
     parsed = JSON.parse(rawText);
@@ -66,6 +76,8 @@ export function errorFromStatus(status: number, rawText: string): WenquError {
     if (openAiError && typeof openAiError.message === "string" && openAiError.message) {
       message = openAiError.message;
       if (typeof openAiError.type === "string") type = openAiError.type;
+      if (typeof openAiError.code === "string") code = openAiError.code;
+      if (typeof openAiError.request_id === "string") requestId = openAiError.request_id;
     } else if (typeof obj.msg === "string" && obj.msg) {
       // 平台包络 {success:false, msg}
       message = obj.msg;
@@ -75,9 +87,10 @@ export function errorFromStatus(status: number, rawText: string): WenquError {
   } else if (rawText) {
     message = rawText.slice(0, 500);
   }
-  if (status === 401 || status === 403) return new WenquAuthError(message, { status, type });
-  if (status === 429) return new WenquRateLimitError(message, { status, type });
-  return new WenquApiError(message, { status, type });
+  const info: WenquErrorInfo = { status, type, code, requestId };
+  if (status === 401 || status === 403) return new WenquAuthError(message, info);
+  if (status === 429) return new WenquRateLimitError(message, info);
+  return new WenquApiError(message, info);
 }
 
 /** 读取失败响应的错误体并构造映射错误 */

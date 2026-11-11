@@ -88,6 +88,9 @@
         </template>
         <template v-else-if="column.key === 'act'">
           <button class="app-link-btn" @click="openEditKey(record)">编辑</button>
+          <a-popconfirm title="轮换后旧明文立即失效，调用方须更新 Key。确认轮换？" ok-text="轮换" cancel-text="取消" @confirm="rotateKey(record)">
+            <button class="app-link-btn" :disabled="rotatingId === record.id">{{ rotatingId === record.id ? '轮换中…' : '轮换' }}</button>
+          </a-popconfirm>
           <a-popconfirm title="删除该 Key？调用方将立即失效" ok-text="删除" cancel-text="取消" @confirm="delKey(record.id)">
             <button class="app-link-btn danger">删除</button>
           </a-popconfirm>
@@ -332,7 +335,7 @@ import dayjs from 'dayjs'
 import { CheckOutlined, CopyOutlined, EyeInvisibleOutlined, EyeOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons-vue'
 import { listApiKeys, createApiKey, setApiKeyDisabled, setApiKeyMcp, deleteApiKey,
          updateApiKey, revealApiKey, getMcpAuditLogs, getMcpAuditSummary,
-         getApiKeyScopes, setApiKeyScopes } from '../api'
+         getApiKeyScopes, setApiKeyScopes, rotateApiKey } from '../api'
 import { authUser } from '../utils/auth'
 import { writeClipboard } from '../utils/clipboard'
 import { publicUrl } from '../utils/publicUrl'
@@ -356,7 +359,7 @@ const keyCols = [
   { title: '近30天用量', key: 'usage30d', width: 110 },
   { title: '创建时间', key: 'created', width: 86 },
   { title: '有效期', key: 'expire', width: 86 },
-  { title: '操作', key: 'act', width: 84 }
+  { title: '操作', key: 'act', width: 124 }
 ]
 const auditCols = [
   { title: '时间', key: 'time', width: 118 },
@@ -589,6 +592,24 @@ const submitEditKey = async () => {
     }
     message.success('已保存'); editOpen.value = false; loadKeys()
   } catch (e) { message.error(e.message || '保存失败') }
+}
+
+// ==================== 轮换（泄露处置：换明文，不换身份与权限） ====================
+const rotatingId = ref('')
+const rotateKey = async (rec) => {
+  rotatingId.value = rec.id
+  try {
+    const r = await rotateApiKey(rec.id)
+    if (!r.success) { message.error(r.msg || '轮换失败'); return }
+    const plain = (r.data && r.data.apiKey) || r.apiKey
+    if (plain) {
+      revealed.value = { ...revealed.value, [rec.id]: plain }
+      plainCache.value = { ...plainCache.value, [rec.id]: plain }
+    }
+    await loadKeys()
+    message.success('已轮换：旧明文立即失效，请复制上方显示的新 Key 给调用方')
+  } catch (e) { message.error(e.message || '轮换失败') }
+  finally { rotatingId.value = '' }
 }
 
 // ==================== 启停 / MCP 授权 / 删除 ====================

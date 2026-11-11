@@ -67,6 +67,7 @@
             </div>
             <div class="doc-note">
               准备工作只有一步：在 <b>个人设置 → API 密钥</b> 创建一把 Key（用途名称 + 有效期 + 能力范围 scope）。Key 恒以签发人本人身份发问——开放的是你自己的智能体、知识库与额度；给哪个系统对接，就用那个系统归属的账号签发。
+              <p style="margin:8px 0 0">机器可读契约：<code>{{ baseUrl }}/api/ai/v1/openapi.json</code>（OpenAPI 3.1，与服务端鉴权判定同源）。</p>
             </div>
           </section>
 

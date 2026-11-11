@@ -16,6 +16,8 @@ import com.wenqu.ai.service.RoleService;
 import com.wenqu.ai.util.RequestUser;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import com.wenqu.ai.openapi.OpenApi;
+import com.wenqu.ai.openapi.OpenApiScopes;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -88,6 +90,7 @@ public class KbApiController {
                     + "\"topK\": 1-50(默认 20), \"minScore\": 0-1(可选，按融合分过滤)}。"
                     + "返回按融合分降序的知识块（含来源文档/库/块序号），不执行重排。"
                     + "API Key 需开通 kb.read scope")
+    @OpenApi(scope = OpenApiScopes.KB_READ, summary = "知识检索（混合检索直通）")
     @PostMapping("/api/ai/v1/retrieval")
     public ResultJson retrieval(@RequestBody JSONObject body) {
         apiKeyService.requireScope(apiKeyIdOf(), ApiKeyService.SCOPE_KB_READ);
@@ -159,6 +162,7 @@ public class KbApiController {
     @Operation(summary = "知识库列表",
             description = "本人可见的知识库（谁建归谁，含个人默认库；官方内置库仅管理员级可见），"
                     + "含每库文档数。API Key 需 kb.read")
+    @OpenApi(scope = OpenApiScopes.KB_READ, summary = "知识库列表")
     @GetMapping("/api/ai/v1/kbs")
     public ResultJson listKbs() {
         apiKeyService.requireScope(apiKeyIdOf(), ApiKeyService.SCOPE_KB_READ);
@@ -174,6 +178,7 @@ public class KbApiController {
 
     @Operation(summary = "知识库详情",
             description = "仅可见库可查（不可见按不存在处理，不泄露存在性）。返回字段为对外精简视图。API Key 需 kb.read")
+    @OpenApi(scope = OpenApiScopes.KB_READ, summary = "知识库详情")
     @GetMapping("/api/ai/v1/kbs/{id}")
     public ResultJson getKb(@PathVariable("id") String id) {
         apiKeyService.requireScope(apiKeyIdOf(), ApiKeyService.SCOPE_KB_READ);
@@ -185,6 +190,7 @@ public class KbApiController {
     @Operation(summary = "库内文档列表",
             description = "该库下本人可见的文档（状态：0 生效 / 1 弃用 / 2 解析中 / 3 解析失败，含进度与失败原因）。"
                     + "API Key 需 kb.read")
+    @OpenApi(scope = OpenApiScopes.KB_READ, summary = "知识库文档列表与解析进度")
     @GetMapping("/api/ai/v1/kbs/{id}/documents")
     public ResultJson listDocs(@PathVariable("id") String id) {
         apiKeyService.requireScope(apiKeyIdOf(), ApiKeyService.SCOPE_KB_READ);
@@ -204,6 +210,7 @@ public class KbApiController {
             description = "body: {\"name\": 必填, \"description\": 可选, \"embeddingRef\": 必填（providerId/modelId，"
                     + "见 GET /api/ai/v1/models/embeddings）, \"icon\"/\"queryParams\"/\"parseParams\": 可选}。"
                     + "创建人=Key 签发人。API Key 需 kb.write")
+    @OpenApi(scope = OpenApiScopes.KB_WRITE, summary = "创建知识库")
     @PostMapping("/api/ai/v1/kbs")
     public ResultJson createKb(@RequestBody Map<String, Object> body) {
         apiKeyService.requireScope(apiKeyIdOf(), ApiKeyService.SCOPE_KB_WRITE);
@@ -219,6 +226,7 @@ public class KbApiController {
             description = "multipart 传 file（docx/pdf/xlsx/ppt/pptx/txt/md/csv，与网页上传同一格式与大小闸）。"
                     + "同步返回文档行（status=2 解析中），解析/分块/向量化走后台队列，"
                     + "进度轮询 GET /api/ai/v1/kbs/{id}/documents。仅可向本人可管的库上传。API Key 需 kb.write")
+    @OpenApi(scope = OpenApiScopes.KB_WRITE, summary = "上传文档")
     @PostMapping("/api/ai/v1/kbs/{id}/documents")
     public ResultJson uploadDoc(@PathVariable("id") String id,
                                 @RequestParam("file") org.springframework.web.multipart.MultipartFile file,

@@ -89,7 +89,9 @@ public class UserContextInterceptor implements HandlerInterceptor {
             return true;
         }
         String token = bearerToken(request);
-        if (token != null) {
+        // OpenAI SDK 默认鉴权头 Bearer sk-… 与 X-Api-Key 是同一把凭据：跳过 JWT 解析，
+        // 落到下面 Key 装载分支统一处理（同一身份、同一 scope、同一硬边界），不在两处各认一套。
+        if (token != null && !token.startsWith("sk-")) {
             Map<String, Object> claims = authService.claimsFromToken(token);
             if (claims == null) return reject(response, "登录状态已失效，请重新登录");
             String uid = String.valueOf(claims.get("sub"));
@@ -142,7 +144,7 @@ public class UserContextInterceptor implements HandlerInterceptor {
         // 身份装在这里、端点判定装在那里，是因为下游一切按 RequestUser 走：会话归属、沙盒工作区、
         // 个人 MCP 与技能、长期记忆、产物归属、模型默认值、租户行级过滤、限流分池全都要一个真 uid，
         // 少装这一步这些能力不是报错，是静默落到 SYSTEM 上（与那几条「弹性线程丢身份」同一个形状）。
-        String plainKey = request.getHeader("X-Api-Key");
+        String plainKey = apiKeyFromHeaders(request);
         if (plainKey != null && !plainKey.isBlank()) {
             com.wenqu.ai.model.ApiKey rec = apiKeyService.verify(plainKey);
             if (rec != null) {
@@ -161,6 +163,10 @@ public class UserContextInterceptor implements HandlerInterceptor {
                         u.getTenantId() == null || u.getTenantId().isBlank()
                                 ? com.wenqu.ai.util.TenantContext.DEFAULT_TENANT : u.getTenantId());
                 return true;
+            }
+            // Bearer 形态的 Key 无效就是明确的 401，不落到 SYSTEM 再让登录门禁给一句「请先登录」
+            if (rec == null && isBearerApiKey(request)) {
+                return reject(response, "API Key 无效、已停用或已过期");
             }
         }
         // 没有真实身份（公开端点 / 登录引导）。SYSTEM 不是可登录账号，roles 为空，不能借它拿权限。
@@ -201,6 +207,19 @@ public class UserContextInterceptor implements HandlerInterceptor {
             // 用户表未就绪/查询异常都不应阻断请求：降级为 SYSTEM 可见范围
             return null;
         }
+    }
+
+    /** 凭据取值：X-Api-Key 优先；OpenAI SDK 默认的 Bearer sk-… 等价为同一把 Key */
+    private static String apiKeyFromHeaders(HttpServletRequest request) {
+        String k = request.getHeader("X-Api-Key");
+        if (k != null && !k.isBlank()) return k.trim();
+        String bearer = bearerToken(request);
+        return bearer != null && bearer.startsWith("sk-") ? bearer : null;
+    }
+
+    private static boolean isBearerApiKey(HttpServletRequest request) {
+        String h = request.getHeader("Authorization");
+        return h != null && h.regionMatches(true, 0, "Bearer sk-", 0, 10);
     }
 
     private static String bearerToken(HttpServletRequest request) {

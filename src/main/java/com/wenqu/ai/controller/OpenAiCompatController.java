@@ -16,6 +16,8 @@ import com.wenqu.ai.service.CollectingSseEmitter;
 import com.wenqu.ai.util.RequestUser;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import com.wenqu.ai.openapi.OpenApi;
+import com.wenqu.ai.openapi.OpenApiScopes;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -81,6 +83,7 @@ public class OpenAiCompatController {
     private static final Pattern AGENT_ID = Pattern.compile("[A-Za-z0-9_-]{8,64}");
 
     @Operation(summary = "Chat Completions（OpenAI 兼容）")
+    @OpenApi(scope = OpenApiScopes.CHAT, summary = "Chat Completions（OpenAI 兼容）")
     @PostMapping("/api/ai/v1/chat/completions")
     public org.springframework.http.ResponseEntity<?> chatCompletions(@RequestBody JSONObject body) {
         long start = System.currentTimeMillis();
@@ -447,6 +450,7 @@ public class OpenAiCompatController {
     // ==================== Responses API ====================
 
     @Operation(summary = "Responses API（OpenAI 兼容）")
+    @OpenApi(scope = OpenApiScopes.CHAT, summary = "Responses API（OpenAI 兼容）")
     @PostMapping("/api/ai/v1/responses")
     public org.springframework.http.ResponseEntity<?> responses(@RequestBody JSONObject body) {
         long start = System.currentTimeMillis();
@@ -749,6 +753,9 @@ public class OpenAiCompatController {
         Map<String, Object> err = new LinkedHashMap<>();
         err.put("message", message);
         err.put("type", type);
+        String rid = com.wenqu.ai.openapi.RequestIdFilter.current();
+        err.put("code", type);
+        err.put("request_id", rid == null ? "" : rid);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("error", err);
         return out;
