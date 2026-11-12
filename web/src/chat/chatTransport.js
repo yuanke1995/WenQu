@@ -6,6 +6,7 @@ export {
   switchMessageVariant, compactSessionApi, sessionHistorySummaryApi, getConfig, getRuntimeConfig,
   listAvailableAgents, listConsultableAgents, listAvailableSkills, getUserPreference,
   approveToolCall, getToolApproval, answerAgentAsk, ignoreAgentAsk, stopChatTurn, steerChatTurn,
+  enqueueSteer, steerQueueList, steerQueued, dropQueued,
   listPendingAsks, listPendingApprovals, resolvePlanApproval, supersedePlanApproval,
   revisePlanApproval, listPendingPlans, updateSessionModelApi, getSessionModelApi,
   listKnowledgeBases, listDocuments, uploadChatAttachment, getSessionTodosApi,
