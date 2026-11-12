@@ -1427,10 +1427,37 @@ export const batchReparseDocuments = ids =>
 /** 运行中插话（steer）：本轮还在跑时补一句方向。这句话交给框架会话自己送进正在跑的那一轮，生效点是
  *  下一次模型调用之前（工具循环由框架持有，掐不断正在执行的这一步）；本轮收尾时模型还没收上的，
  *  会随 done 回落、由前端自动作为下一句发出。
+ *  可带图片（data URL，与正常提问同一套校验）。
  *  返回 {accepted, messageId}，false=没有在跑的轮 / 不是本人的轮 / 框架不收（单条最长 800 字），
  *  调用方把内容放回输入框即可 */
-export const steerChatTurn = (sessionId, text) =>
-  request('/chat/steer', { method: 'POST', body: JSON.stringify({ sessionId, text }) })
+export const steerChatTurn = (sessionId, text, images = []) =>
+  request('/chat/steer', {
+    method: 'POST',
+    body: JSON.stringify(images && images.length ? { sessionId, text, images } : { sessionId, text })
+  })
+
+/** 插话排队（服务端持有）：生成中先入队、不发请求；刷新后由队列投影恢复。 */
+export const enqueueSteer = (sessionId, text, images = []) =>
+  request('/chat/steer/queue', {
+    method: 'POST',
+    body: JSON.stringify(images && images.length ? { sessionId, text, images } : { sessionId, text })
+  })
+
+/** 插话队列投影：还在排队与已送出等模型听到的条目。 */
+export const steerQueueList = sessionId =>
+  request(`/chat/steer/queue?sessionId=${encodeURIComponent(sessionId)}`)
+
+/** 队列里某一条立即发送（送进正在跑的那一轮；没有活轮时留在队列里）。 */
+export const steerQueued = (sessionId, itemId) =>
+  request(`/chat/steer/queue/${encodeURIComponent(itemId)}/steer`, {
+    method: 'POST',
+    body: JSON.stringify({ sessionId })
+  })
+
+/** 丢弃队列里还在排队的一条（已送出的等模型听到，不能假装撤回）。 */
+export const dropQueued = (sessionId, itemId) =>
+  request(`/chat/steer/queue/${encodeURIComponent(itemId)}?sessionId=${encodeURIComponent(sessionId)}`,
+    { method: 'DELETE' })
 
 /** 服务端停止本轮：真停——掐断生成流、后续工具不再执行、已生成内容按「已停止本轮」落库，并解开正在
  *  等的人工裁决（审批/提问/计划），使该会话立刻能发下一问。与 abort 本地通道不同：通道断开在等人作答时

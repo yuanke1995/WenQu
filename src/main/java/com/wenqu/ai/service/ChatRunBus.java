@@ -697,6 +697,20 @@ public class ChatRunBus {
         return cluster.replicaId();
     }
 
+    /** 单副本部署：注册表里不可能有活着的「别的副本」，残留记录一律是上一进程的 */
+    public boolean singleReplica() {
+        return cluster.singleReplica();
+    }
+
+    /**
+     * 摘掉一条不属于本进程的陈旧登记：本副本没有这一轮（不能走 {@link #finish}，那只清内存），
+     * 只能清 Redis 那一份，否则接流方还会一直向那个不存在的宿主要快照。
+     */
+    public void unregisterStale(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) return;
+        cluster.unregisterRun(sessionId);
+    }
+
     /**
      * 组装 data 帧：{@code {"type":..,"content":"..","sessionId":..,"seq":..,"pos":..}}。
      * <p>content 一律按字符串转义，与 {@code ChatService.sendSseEvent} 的手工拼接同形；

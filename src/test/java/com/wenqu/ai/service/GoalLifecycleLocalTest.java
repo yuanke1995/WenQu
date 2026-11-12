@@ -75,7 +75,8 @@ class GoalLifecycleLocalTest {
                     mock(FrameworkSessions.class), sessionService,
                     mock(ArtifactService.class), settings,
                     mock(GoalVerifier.class), mock(GoalPromptBuilder.class),
-                    mock(TurnNotifyService.class));
+                    mock(TurnNotifyService.class),
+                    mock(SteerQueueService.class));
 
             String goalId = UUID.randomUUID().toString().replace("-", "");
             Goal seed = new Goal();

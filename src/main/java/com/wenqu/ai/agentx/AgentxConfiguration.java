@@ -35,6 +35,7 @@ public class AgentxConfiguration {
                                com.wenqu.ai.agent.tool.ToolRegistry toolRegistry,
                                com.wenqu.ai.service.ChatService chatService,
                                com.wenqu.ai.agent.chat.ChatRunRuntime runtime,
+                               com.wenqu.ai.service.SteerQueueService steerQueueService,
                                com.wenqu.ai.service.ProjectService projectService,
                                com.wenqu.ai.service.ProjectFileService projectFileService,
                                com.wenqu.ai.service.ProjectTurnChangesService turnChangeService,
@@ -62,6 +63,8 @@ public class AgentxConfiguration {
                 journalRotation, knowledgeMapper, documentMapper,
                 chatService::resolveTurnModel);
         factory.bindFramework(engine);
+        // 插话待发队列的唤醒口：只在框架 inbox/opened（run 真活着）时 drain，绝不 submit 新一轮
+        engine.bindSteerQueue(steerQueueService);
         // 目标模式跨轮续跑的发起口：控制流归框架，问渠只数轮数——续跑轮由引擎 submit + 跟随
         // （幂等键 goal:{goalId}:{n}，后台轮走收集型通道 + RESUME_POOL，前端按 deep_turn 自动接流）。
         // 走 submitGoalTurn 而非 continueGoalTurn 直接绑：把实例冷启动装配（sessions.open 同步重建
@@ -88,7 +91,9 @@ public class AgentxConfiguration {
         sessions.bindResume(engine);
         // 运行中插话走框架自己的会话 steer（送达点在下一次调模型之前，没收到的本轮不收尾）。
         // 按登记方向留口而不是让 agent.chat 反过来依赖本包：引擎已经用 ChatCommand/TurnRegistry 这套上层类型
-        runtime.bindSteer(sessions::steer);
+        // 图片能不能进模型由这里判：判据是「这条会话常驻实例所用的模型」，与正常轮 visionCapableOf 同源
+        runtime.bindSteer((uid, sid, text, imgs) -> sessions.steer(uid, sid, text, imgs,
+                imgs != null && !imgs.isEmpty() && modelRegistry.visionCapableOf(sessions.modelRefOf(uid, sid))));
         // 咨询子轮要的是「再起一整轮」，走的是带轮级外壳的那个入口（即时落库、会话互斥、断线续跑），
         // 而不是框架引擎的内层循环。按函数注册避免 ChatService↔agentx 构造环
         tools.bindBranchTurn(chatService::chat);

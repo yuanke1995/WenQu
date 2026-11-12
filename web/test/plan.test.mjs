@@ -78,6 +78,31 @@ test('planExecProgress：回退冻结快照时不再显示 running', () => {
   assert.deepEqual(p.items, snapshot.items)
 })
 
+test('planExecProgress：本轮不在跑（暂停/收尾）时 doing 不冒充「进行中」', () => {
+  const card = { status: 'approved' }
+  const todos = { turnId: 't1', items: [
+    { content: 'a', status: 'done' },
+    { content: 'b', status: 'doing' }
+  ] }
+  const paused = planExecProgress(card, todos, 't1', false)
+  assert.deepEqual(paused.items.map(x => x.status), ['done', 'wait'])
+  assert.equal(paused.running, false)
+
+  // 跑着的时候必须还是 doing（否则转圈和「进行第 N 步」都会消失）
+  const live = planExecProgress(card, todos, 't1', true)
+  assert.deepEqual(live.items.map(x => x.status), ['done', 'doing'])
+})
+
+test('planExecProgress：冻结快照里残留的 doing 也落成未完成（暂停后不转圈）', () => {
+  const card = { status: 'approved' }
+  const snapshot = { items: [
+    { text: 'a', status: 'done' },
+    { text: 'b', status: 'doing' }
+  ], done: 1, failed: 0, total: 2 }
+  const p = planExecProgress(card, null, 't1', false, snapshot)
+  assert.deepEqual(p.items.map(x => x.status), ['done', 'wait'])
+})
+
 test('planCardExpanded：本轮在跑时点收起必须真收起（深度执行里点不动的那颗折叠键）', () => {
   // 没表态：执行中自动铺开，跑完收回一行
   assert.equal(planCardExpanded({ live: false, running: true, choice: undefined }), true)

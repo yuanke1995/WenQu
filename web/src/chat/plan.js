@@ -122,6 +122,13 @@ export const planCardExpanded = ({ live, running, choice } = {}) => {
  * 唯一例外：本轮的实时清单正在跑（running）时一律认它——此刻底部常驻清单展示的也是它，
  * 卡内读数不能跑去对另一份快照，否则同屏两个进度数各说各话。
  */
+/**
+ * 清单状态 → 卡上状态：本轮<b>没在跑</b>时，doing 不能继续冒充「进行中」。
+ * 暂停/中断之后没有人接着跑那一步，转圈的读数就是假话；清单本身作为「计划状态」仍保留（等恢复后继续）。
+ */
+const stepStatusOf = (status, live) => status === 'done' ? 'done'
+  : (status === 'failed' ? 'failed' : (status === 'doing' && live ? 'doing' : 'wait'))
+
 export function planExecProgress (card, todos, turnId, running, snapshot = null) {
   if (!card || card.status !== 'approved') return null
   const items = (todos && Array.isArray(todos.items)) ? todos.items : []
@@ -129,8 +136,7 @@ export function planExecProgress (card, todos, turnId, running, snapshot = null)
   if (matched) {
     const mapped = items.map(i => ({
       text: String(i.content || ''),
-      status: i.status === 'done' ? 'done'
-        : (i.status === 'doing' ? 'doing' : (i.status === 'failed' ? 'failed' : 'wait'))
+      status: stepStatusOf(i.status, !!running)
     }))
     return {
       items: mapped,
@@ -144,7 +150,8 @@ export function planExecProgress (card, todos, turnId, running, snapshot = null)
   // 旧卡仍显示它那一轮走到哪儿，而不是变回「已批准 · 共 N 步」。快照是收尾那一刻的事实，不再转圈。
   if (snapshot && Array.isArray(snapshot.items) && snapshot.items.length) {
     return {
-      items: snapshot.items,
+      // 快照永远是「已经停下的那一刻」：里面残留的 doing 也要落成未完成，否则暂停后的卡会一直转圈
+      items: snapshot.items.map(it => ({ text: it.text, status: stepStatusOf(it.status, false) })),
       done: Number(snapshot.done) || 0,
       failed: Number(snapshot.failed) || 0,
       total: Number(snapshot.total) || snapshot.items.length,

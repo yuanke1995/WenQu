@@ -55,24 +55,37 @@ public final class TurnPromptAssembler {
      * <p>只在模型能读图时走这条路——读不了图还硬塞 ImageBlock，上游要么报错要么静默丢图。
      * <p>图片用 {@code Base64Source} 直发原始字节：data URL 已经就是 base64，不必再落盘读回一遍。
      */
-    public Msg buildMultimodalMsg(String text, List<UserImageService.UserImage> imgs) {
+    public static Msg buildMultimodalMsg(String text, List<UserImageService.UserImage> imgs) {
+        List<String> dataUrls = new ArrayList<>();
+        for (UserImageService.UserImage img : imgs) {
+            if (img != null && img.dataUrl() != null) dataUrls.add(img.dataUrl());
+        }
+        return buildMultimodalMsgFromDataUrls(text, dataUrls);
+    }
+
+    /**
+     * 同上，直接吃 data URL：插话（steer）在交付那一刻图片还没落盘——先送框架、后落库，
+     * 拒收时不能留下孤儿图片文件。
+     */
+    public static Msg buildMultimodalMsgFromDataUrls(String text, List<String> dataUrls) {
         List<ContentBlock> blocks = new ArrayList<>();
         blocks.add(TextBlock.builder().text(text).build());
-        for (UserImageService.UserImage img : imgs) {
-            String dataUrl = img.dataUrl();
-            if (dataUrl == null || !dataUrl.startsWith("data:")) continue;
-            int comma = dataUrl.indexOf(',');
-            if (comma <= 0) continue;
-            // data:<mediaType>;base64,<payload>
-            String header = dataUrl.substring(5, comma);
-            int semi = header.indexOf(';');
-            String mediaType = semi < 0 ? header : header.substring(0, semi);
-            if (mediaType.isBlank()) mediaType = "image/jpeg";
-            String payload = dataUrl.substring(comma + 1);
-            if (payload.isBlank()) continue;
-            blocks.add(ImageBlock.builder()
-                    .source(new Base64Source(mediaType, payload))
-                    .build());
+        if (dataUrls != null) {
+            for (String dataUrl : dataUrls) {
+                if (dataUrl == null || !dataUrl.startsWith("data:")) continue;
+                int comma = dataUrl.indexOf(',');
+                if (comma <= 0) continue;
+                // data:<mediaType>;base64,<payload>
+                String header = dataUrl.substring(5, comma);
+                int semi = header.indexOf(';');
+                String mediaType = semi < 0 ? header : header.substring(0, semi);
+                if (mediaType.isBlank()) mediaType = "image/jpeg";
+                String payload = dataUrl.substring(comma + 1);
+                if (payload.isBlank()) continue;
+                blocks.add(ImageBlock.builder()
+                        .source(new Base64Source(mediaType, payload))
+                        .build());
+            }
         }
         // 一张都没解析出来（data URL 形态异常）就退回纯文本：绝不 submit 一个只有 TextBlock 以外的空壳
         if (blocks.size() == 1) return null;

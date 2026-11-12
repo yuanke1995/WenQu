@@ -26,7 +26,8 @@ class ChatRunRuntimeTurnMutexTest {
             mock(ChatRunBus.class),
             mock(SessionEventService.class),
             mock(SessionService.class),
-            store);
+            store,
+            mock(com.wenqu.ai.service.UserImageService.class));
 
     @Test
     void secondTurnIsRejectedUntilReleased() {

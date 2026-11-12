@@ -40,6 +40,14 @@ public final class TurnRecorder {
      */
     public static final String TRUNCATION_SUFFIX = "\n\n> ⏹ 回答在此处被中断，以上为已生成的部分";
 
+    /**
+     * 进程重启后被接续、却已经没有可跑步骤的一轮：旧进程没来得及落正文，新实例手里也没有新内容。
+     * <p>不写这一句，整轮会按「无正文无过程」被判不落库——历史里只剩提问，清单卡却还写着已完成；
+     * 用户读到的是一次没有任何交代的消失。
+     */
+    public static final String RECOVERED_NOTE =
+            "\n\n> ⏹ 这一轮在服务重启时中断，没有留下答复。可以重新发送这条问题，或发一句「继续」接着做";
+
     /** 生成量与正文字数严重不符（内容在生成链路里丢失）时的用户可见标注 */
     public static final String OUTPUT_LOST_SUFFIX =
             "\n\n> ⚠️ 这次回答不完整，有内容在生成过程中丢失，建议重新生成";

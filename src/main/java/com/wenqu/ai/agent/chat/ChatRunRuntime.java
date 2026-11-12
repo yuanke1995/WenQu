@@ -48,17 +48,21 @@ public class ChatRunRuntime {
     private final SessionEventService sessionEventService;
     private final SessionService sessionService;
     private final TurnStateStore turnStateStore;
+    /** 插话带图：交付用内存 data URL，收下之后才落盘拿回显 URL（拒收不留孤儿文件）。 */
+    private final com.wenqu.ai.service.UserImageService userImages;
 
     public ChatRunRuntime(ConfigService configService,
                           ChatRunBus chatRunBus,
                           SessionEventService sessionEventService,
                           SessionService sessionService,
-                          TurnStateStore turnStateStore) {
+                          TurnStateStore turnStateStore,
+                          com.wenqu.ai.service.UserImageService userImages) {
         this.configService = configService;
         this.chatRunBus = chatRunBus;
         this.sessionEventService = sessionEventService;
         this.sessionService = sessionService;
         this.turnStateStore = turnStateStore;
+        this.userImages = userImages;
     }
 
     /** 别的副本转过来的叫停要在本副本（宿主）落地：动作与本地停止同一条路径，不另写一份 */
@@ -147,6 +151,16 @@ public class ChatRunRuntime {
             // 本副本没有这一轮的把手：轮可能跑在别的副本上，转给宿主执行（归属仍按发起者的 uid 判）
             Map<String, String> remote = chatRunBus.remoteRunInfo(sessionId);
             if (remote != null && userId != null && userId.equals(remote.get("userId"))) {
+                if (chatRunBus.singleReplica()) {
+                    // 单副本下这条登记只可能来自已经不在的上一进程（本进程开轮会覆盖它）。
+                    // 转给空气的后果：用户按停止永远没反应，记录还要在 Redis 里挂满 RUN_TTL，
+                    // 接流方也一直向那个不存在的宿主要快照。就地收口并摘登记。
+                    chatRunBus.unregisterStale(sessionId);
+                    sessionService.markTurnStopped(sessionId, "stopped");
+                    log.warn("[SSE] 停止请求命中的宿主已不在（单副本重启遗留），已就地收口: session={} host={}",
+                            sessionId, remote.get("replica"));
+                    return true;
+                }
                 log.info("[SSE] 停止请求转给宿主副本: session={} host={}", sessionId, remote.get("replica"));
                 return chatRunBus.forwardStop(sessionId, userId);
             }
@@ -391,33 +405,120 @@ public class ChatRunRuntime {
      * @return 落库后的消息 ID（前端挂到那条气泡上，刷新后同一条）；没有在跑的轮 / 越权 / 框架拒收返回 null
      */
     public String steerTurn(String sessionId, String userId, String text) {
-        TurnHandle h = sessionId == null ? null : TurnRegistry.handle(sessionId);
-        if (h == null || text == null || text.isBlank() || h.stopped().get()) return null;
-        if (userId == null || !userId.equals(h.userId())) {
-            log.warn("[FAIL-LOUD] 插话被拒（非本人轮次）: session={} uid={}", sessionId, userId);
-            return null;
-        }
+        return steerTurn(sessionId, userId, text, null);
+    }
+
+    /**
+     * 同上，带图。图片的 data URL 直接交给框架拼多模态消息，<b>收下之后</b>才落盘——
+     * 框架拒收时不能留下消息行没引用的孤儿图片文件。
+     */
+    public String steerTurn(String sessionId, String userId, String text, List<String> images) {
+        SteerOutcome o = steerTurnDetailed(sessionId, userId, text, images);
+        return o == null ? null : o.messageId();
+    }
+
+    /**
+     * 同 {@link #steerTurn(String, String, String, List)}，但把框架收据号一并交回：
+     * 待发队列要按收据把「已送出」置成「模型真听到了」。
+     */
+    public SteerOutcome steerTurnDetailed(String sessionId, String userId, String text, List<String> images) {
+        SteerActor actor = steerActor(sessionId, userId);
+        if (actor == null || text == null || text.isBlank()) return null;
         String clean = text.strip();
         String capped = clean.length() > STEER_MAX_CHARS ? clean.substring(0, STEER_MAX_CHARS) + "…" : clean;
         SteerDelivery d = steerDelivery;
         if (d == null) return null;
+        List<String> dataUrls = images == null ? List.of()
+                : images.stream().filter(u -> u != null && u.startsWith("data:")).toList();
         // 送进去的那一份带身份声明，落库与界面给的那一份是用户原话：声明是给模型看的，不是给用户看的
-        String receiptId = d.deliver(userId, sessionId, ChatCommand.decorateSteerQuestion(capped));
+        String receiptId = d.deliver(userId, sessionId, ChatCommand.decorateSteerQuestion(capped), dataUrls);
         if (receiptId == null) {
-            log.info("[STEER] 插话未被接收（这一轮不在执行中）: session={} 字数={}", sessionId, capped.length());
+            log.info("[STEER] 插话未被接收（这一轮不在执行中）: session={} 字数={} 图={}",
+                    sessionId, capped.length(), dataUrls.size());
             return null;
+        }
+        // 框架已经收下这句，落盘才是安全的：只落盘不回读（模型侧字节已在交付那一份里）
+        List<String> imageUrls = null;
+        if (!dataUrls.isEmpty()) {
+            List<String> urls = userImages.processDisplay(dataUrls).stream()
+                    .map(com.wenqu.ai.service.UserImageService.UserImage::url)
+                    .filter(u -> u != null && !u.isBlank()).toList();
+            if (!urls.isEmpty()) imageUrls = urls;
         }
         String messageId = sessionService.appendMessage(MessageWrite.builder()
                 .sessionId(sessionId)
                 .role("user")
                 .content(capped)
-                .turnId(h.turnId())
+                .images(imageUrls)
+                .turnId(actor.turnId())
                 .build());
-        h.steerAcks().add(new TurnHandle.SteerAck(receiptId, capped, messageId));
-        sessionEventService.append(sessionId, h.userId(), h.turnId(), "steer", capped);
-        log.info("[STEER] 插话已送进框架会话（下一次模型调用前生效）: session={} 字数={} msgId={} receipt={}",
-                sessionId, capped.length(), messageId, receiptId);
-        return messageId;
+        SteerReceipts.add(actor.turnId(), new SteerReceipts.SteerAck(receiptId, capped, messageId));
+        sessionEventService.append(sessionId, actor.userId(), actor.turnId(), "steer", capped);
+        log.info("[STEER] 插话已送进框架会话（下一次模型调用前生效）: session={} turn={} 字数={} 图={} msgId={} receipt={}",
+                sessionId, actor.turnId(), capped.length(), dataUrls.size(), messageId, receiptId);
+        return new SteerOutcome(messageId, receiptId, actor.turnId());
+    }
+
+    /** 一条插话的送达结果：队列要用 turnId/receiptId 记状态，前端只关心 messageId。 */
+    public record SteerOutcome(String messageId, String receiptId, String turnId) {
+    }
+
+    /**
+     * 这一会话当前活轮的发起人（队列 drain 用）：目标轮没有把手，只能从运行总线拿。
+     * @return null=没有在跑的轮
+     */
+    public String activeTurnOwner(String sessionId) {
+        if (sessionId == null) return null;
+        ChatRunBus.Run run = chatRunBus.running(sessionId);
+        if (run != null) return run.userId();
+        TurnHandle h = TurnRegistry.handle(sessionId);
+        return h == null ? null : h.userId();
+    }
+
+    /**
+     * 插话的落点身份：<b>活 run 定身份，把手只补 stopped</b>。
+     * <p>为什么不是「把手优先」：用户轮刚收尾、把手还没摘而目标轮已经开跑时，把手身份是<b>已结束的用户轮</b>——
+     * 拿它当身份会把目标轮听到的这句话记到上一轮头上；用户轮被叫停过还会连带误拒目标轮。
+     * <p>反过来，收集型通道（定时/MCP/工作流）的轮不登记运行总线，只能靠把手认；此时把手就是唯一身份。
+     *
+     * @return null=没有在跑的轮 / 不是本人的轮 / 这一轮已被叫停
+     */
+    private SteerActor steerActor(String sessionId, String userId) {
+        if (sessionId == null || userId == null) return null;
+        TurnHandle h = TurnRegistry.handle(sessionId);
+        ChatRunBus.Run run = chatRunBus.running(sessionId);
+        return resolveSteerActor(userId, h, run == null ? null : run.turnId(),
+                run == null ? null : run.userId());
+    }
+
+    /**
+     * 纯判据（便于单测）：活 run 定身份，把手只在「同一轮」时补 stopped。
+     *
+     * @param runTurnId null=没有活 run（收集型通道或已收尾）
+     * @return null=没有在跑的轮 / 不是本人的轮 / 这一轮已被叫停
+     */
+    static SteerActor resolveSteerActor(String userId, TurnHandle h,
+                                        String runTurnId, String runUserId) {
+        if (userId == null) return null;
+        if (runTurnId != null) {
+            if (!userId.equals(runUserId)) {
+                log.warn("[FAIL-LOUD] 插话被拒（非本人轮次）: turn={} uid={}", runTurnId, userId);
+                return null;
+            }
+            // 只有确实是同一轮时才认把手的叫停标记：别的轮的被停状态与这一轮无关
+            boolean stopped = h != null && runTurnId.equals(h.turnId()) && h.stopped().get();
+            return stopped ? null : new SteerActor(runTurnId, runUserId);
+        }
+        if (h == null) return null;
+        if (!userId.equals(h.userId())) {
+            log.warn("[FAIL-LOUD] 插话被拒（非本人轮次）: turn={} uid={}", h.turnId(), userId);
+            return null;
+        }
+        return h.stopped().get() ? null : new SteerActor(h.turnId(), h.userId());
+    }
+
+    /** 这句插话要落进哪一轮：turnId 用于消息行与事件账本归属，userId 用于账本署名。 */
+    record SteerActor(String turnId, String userId) {
     }
 
     /**
@@ -429,7 +530,7 @@ public class ChatRunRuntime {
      * @return 框架的收据号；null=这一轮不收插话（没在跑、已结算、租约过期）
      */
     public interface SteerDelivery {
-        String deliver(String userId, String sessionId, String modelText);
+        String deliver(String userId, String sessionId, String modelText, List<String> imageDataUrls);
     }
 
     private volatile SteerDelivery steerDelivery;

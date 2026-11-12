@@ -121,6 +121,8 @@ public class GoalService {
     private final GoalPromptBuilder promptBuilder;
     /** 目标进终态时喊人回来（旁路：写不进通知不影响目标本身）。跨轮不逐轮报，只在这一处说话 */
     private final TurnNotifyService turnNotify;
+    /** 插话待发队列：目标取消/删除后，还排着的项不能再假装「等轮开跑」 */
+    private final SteerQueueService steerQueue;
 
     /** 续跑驱动（引擎实现，构造期后绑）：控制流归调度器，这里只把一轮交给引擎。 */
     private volatile GoalTurnDriver turnDriver;
@@ -168,7 +170,8 @@ public class GoalService {
                        com.wenqu.ai.agentx.FrameworkSessions sessions,
                        SessionService sessionService, ArtifactService artifactService,
                        GoalSettings settings, GoalVerifier verifier,
-                       GoalPromptBuilder promptBuilder, TurnNotifyService turnNotify) {
+                       GoalPromptBuilder promptBuilder, TurnNotifyService turnNotify,
+                       SteerQueueService steerQueue) {
         this.goalMapper = goalMapper;
         this.roundMapper = roundMapper;
         this.evidenceMapper = evidenceMapper;
@@ -181,6 +184,7 @@ public class GoalService {
         this.verifier = verifier;
         this.promptBuilder = promptBuilder;
         this.turnNotify = turnNotify;
+        this.steerQueue = steerQueue;
     }
 
     /** 续跑驱动（引擎侧实现）。由装配处显式绑定——引擎是那里 new 的，不归 Spring 管。 */
@@ -2109,6 +2113,12 @@ public class GoalService {
         goalMapper.updateById(goal);
         releaseLease(goal);
         appendOutcome(goal, outcome);
+        // 目标走到终态：还排着的插话没有「下一轮」可等了，当场收敛成可见的未送达，不留僵尸行
+        try {
+            steerQueue.dropAllPending(goal.getSessionId());
+        } catch (RuntimeException e) {
+            log.warn("[GOAL] 收敛插话队列失败 goal={}: {}", goal.getId(), e.getMessage());
+        }
         emitState(goal, channel);
         log.info("[GOAL] 目标终态: goal={} status={} reason={}", goal.getId(), status, endReason);
     }

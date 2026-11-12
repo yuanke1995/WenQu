@@ -1288,16 +1288,45 @@ public class FrameworkSessions {
      *         没有在跑的 run、或租约已过期
      */
     public String steer(String userId, String sessionId, String modelText) {
+        return steer(userId, sessionId, modelText, null, false);
+    }
+
+    /**
+     * 带图的插话：图片以 data URL 在<b>内存里</b>拼成多模态消息，不落盘——交付成功之后才由调用方落库，
+     * 框架拒收时不能留下孤儿图片文件。
+     *
+     * @param imageDataUrls 原始 data URL（未落盘）；空/不可读图时退回纯文本插话
+     * @param visionCapable 本轮模型能不能读图（判据由装配方注入，与正常轮同一个口径）
+     */
+    public String steer(String userId, String sessionId, String modelText,
+                        java.util.List<String> imageDataUrls, boolean visionCapable) {
         AgentSession session = peek(userId, sessionId);
         if (session == null) return null;
         try {
-            return session.steer(modelText).inputId();
+            io.agentscope.core.message.Msg multimodal =
+                    (visionCapable && imageDataUrls != null && !imageDataUrls.isEmpty())
+                            ? com.wenqu.ai.agentx.turn.TurnPromptAssembler
+                                    .buildMultimodalMsgFromDataUrls(modelText, imageDataUrls)
+                            : null;
+            return (multimodal != null ? session.steer(java.util.List.of(multimodal)) : session.steer(modelText))
+                    .inputId();
         } catch (RuntimeException e) {
             // 框架对「没有正在跑的轮」抛 IllegalStateException：这不是失败，是插话时机没赶上，
             // 调用方按「未接受」处理（内容退回输入框），不能让人看到 500
             log.info("[agentx] 插话未被框架会话接收 session={}: {}", sessionId, e.toString());
             return null;
         }
+    }
+
+    /**
+     * 这条会话常驻实例的模型引用：插话要按「这一轮能不能读图」决定送不送图片。
+     * @return null=这条会话当前没有进程内实例（插话本来也会被框架拒绝）
+     */
+    public String modelRefOf(String userId, String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) return null;
+        String uid = (userId == null || userId.isBlank()) ? "guest" : userId;
+        Held h = held.get(uid + "|" + sessionId);
+        return h == null ? null : h.modelRef();
     }
 
     public void interrupt(ChatCommand cmd) {

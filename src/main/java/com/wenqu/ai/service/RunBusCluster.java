@@ -4,6 +4,7 @@ import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -58,6 +59,8 @@ public class RunBusCluster {
 
     private final StringRedisTemplate redis;
     private final ReplicaCoordination coord;
+    /** 部署形态：{@code single} 时注册表里不可能有「别的副本」，启动清理才是安全的 */
+    private final String mode;
 
     /** 本副本服务的远端观众：sessionId → 连在本副本、轮却跑在别的副本上的通道 */
     private final Map<String, List<RemoteSub>> remoteSubs = new ConcurrentHashMap<>();
@@ -73,14 +76,21 @@ public class RunBusCluster {
     private record RemoteSub(SseEmitter emitter, String userId, long fromSeq) {
     }
 
-    public RunBusCluster(StringRedisTemplate redis, ReplicaCoordination coord) {
+    public RunBusCluster(StringRedisTemplate redis, ReplicaCoordination coord,
+                         @Value("${wenqu.deployment.mode:single}") String mode) {
         this.redis = redis;
         this.coord = coord;
+        this.mode = mode;
     }
 
     /** 本副本身份标识（写进注册表，宿主据此认出「这条是我自己发的」） */
     public String replicaId() {
         return coord.replicaId();
+    }
+
+    /** 单副本部署：注册表里的宿主只可能是本进程或已死的上一进程，没有第三个副本 */
+    public boolean singleReplica() {
+        return "single".equalsIgnoreCase(mode == null ? "" : mode.trim());
     }
 
     @PostConstruct
@@ -90,7 +100,30 @@ public class RunBusCluster {
         coord.listen(CH_WATCH, this::onWatch);
         coord.listen(CH_SNAP_REQ, this::onSnapshotRequest);
         coord.listen(CH_CMD, this::onCommand);
+        clearStaleRunsOnStartup();
         log.info("[BUS] 跨副本层已就绪 replica={}", replicaId());
+    }
+
+    /**
+     * 单副本启动清理上一次进程留下的轮登记（注册表与观众格）。
+     * <p>不清的后果正是用户看到的那一幕：上一进程登记的宿主还挂在 Redis 里，前端接流一直向那个
+     * 不存在的副本要快照（每 5 秒超时一次，直到 {@link #RUN_TTL} 30 分钟过期），停止请求也被
+     * 转给空气——用户按了没反应，记录下来却什么都做不了。
+     * <p>多副本不做这事：别的副本可能正在跑，删登记等于把它们的轮从总线上摘掉。
+     * 失败只记 WARN：总线本就可降级，不能因为一次清理失败把服务启动拖住。
+     */
+    private void clearStaleRunsOnStartup() {
+        if (!singleReplica()) return;
+        try {
+            // RUN_KEY 前缀同时覆盖 wenqu:run:views:*（观众格也只可能是上一进程写的）
+            Set<String> keys = redis.keys(RUN_KEY + "*");
+            if (keys != null && !keys.isEmpty()) {
+                redis.delete(keys);
+                log.warn("[BUS] 单副本启动清理上次进程遗留轮登记 {} 个", keys.size());
+            }
+        } catch (Exception e) {
+            log.warn("[BUS] 单副本启动清理遗留轮登记失败（不影响启动）: {}", e.toString());
+        }
     }
 
     /** 装配宿主侧能力（由 ChatRunBus 在自己的初始化里调，避免两个 bean 构造期成环） */

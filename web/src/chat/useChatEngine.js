@@ -9,6 +9,7 @@ import { isAdminSync } from '../utils/auth'
 import { message } from 'ant-design-vue'
 import { sendQuestion, resumeChat, getChatRun, newSession, getHistory, deleteSessionApi, switchMessageVariant, compactSessionApi, sessionHistorySummaryApi, getConfig, getRuntimeConfig, listAvailableAgents, listConsultableAgents,
          listAvailableSkills, getUserPreference, approveToolCall, getToolApproval, answerAgentAsk, ignoreAgentAsk, stopChatTurn, steerChatTurn,
+         enqueueSteer, steerQueueList, steerQueued, dropQueued,
          listPendingAsks, listPendingApprovals, resolvePlanApproval, supersedePlanApproval, revisePlanApproval, listPendingPlans, updateSessionModelApi, getSessionModelApi,
          listKnowledgeBases, listDocuments, uploadChatAttachment, getSessionTodosApi,
          listSandboxFiles, downloadSandboxFile, sandboxFileToArtifact,
@@ -620,7 +621,9 @@ const planExecProgressOf = m => {
   const sid = currentSessionId.value
   const turnId = m.turnId || ''
   const live = sessionTodos.value
-  const running = loading.value && m === panelAi.value
+  // 目标已暂停：这一轮即使还在收尾也不再算「正在跑」，卡上不能继续转圈说进行中
+  const goalPaused = !!sessionGoal.value && sessionGoal.value.status === 'PAUSED'
+  const running = loading.value && m === panelAi.value && !goalPaused
   if (live && (!turnId || !live.turnId || live.turnId === turnId)) {
     return planExecProgress(m.planCard, live, turnId, running, m.planCard.execSnapshot)
   }
@@ -2072,71 +2075,30 @@ const stop = createStopTurn({
   notifyWarning: msg => message.warning(msg)
 })
 
-// 运行中插话队列（入队/立即发送/编辑/排序）在 ./steerQueue.js（actions 层）
+// 运行中插话队列（服务端持有、刷新可恢复）在 ./steerQueue.js（actions 层）
 const { steerQueue, steerResend, steer, stageSteer, sendSteer, editSteer, dropSteer, moveSteer, dropApplied,
-        enqueuePlanAdjust, deliverPlanAdjust } = createSteerQueue({
+        restoreSteerQueue, enqueuePlanAdjust, deliverPlanAdjust } = createSteerQueue({
   currentSid: () => currentSessionId.value,
   hasLiveStream: sid => chatStreams.has(sid),
   steerApi: steerChatTurn,
+  enqueueApi: enqueueSteer,
+  listApi: steerQueueList,
+  steerItemApi: steerQueued,
+  dropApi: dropQueued,
   notify: (msg, level) => (level === 'info' ? message.info(msg) : message.warning(msg)),
   textOf: () => text.value,
   setText: v => { text.value = v }
 })
 
 /**
- * 排队的「调整计划」插话：A 档送达时目标轮刚好在收尾/轮间间隙，这句先挂起，
- * 等目标下一轮开跑（或本机接上目标轮的流）再自动送进框架。
- * 只在发起时那个会话里、且目标还在跑时才投递；一直等不到就放回输入框——原文不丢，
- * 也不悄悄发成新一轮、更不塞进用户后来问的普通轮。
+ * 插话队列的恢复与刷新：队列本身由服务端持有（刷新不丢），前端在三个时刻读一次投影——
+ * 进/切会话、本轮开跑（服务端刚 drain 过）、目标终态（服务端已把排队项收敛）。
+ * 不再有前端重试定时器：drain 由引擎在框架 inbox/opened 时触发。
+ * 只刷新当前会话的「排队/已送出」那段，本地还没同步上去的草稿原样留着。
  */
-const PLAN_ADJUST_TTL_MS = 10 * 60 * 1000
-let planAdjustPumpTimer = null
-let planAdjustDelivering = false
-const planAdjustQueued = computed(() => steerQueue.value.some(s => s.planAdjust && s.queued))
-const returnPlanAdjustToInput = (items, note) => {
-  if (!items.length) return
-  steerQueue.value = steerQueue.value.filter(s => !items.includes(s))
-  const add = items.map(s => s.text).join('\n')
-  const cur = String(text.value || '').trim()
-  text.value = !cur ? add : (cur.includes(add) ? cur : cur + ' ' + add)
-  message.warning(note)
-}
-/** 排队超时：目标可能已经不再推进，不能让它一直挂成一条假状态 */
-const settlePlanAdjustQueue = () => {
-  const sid = currentSessionId.value
-  const now = Date.now()
-  returnPlanAdjustToInput(
-    steerQueue.value.filter(s => s.planAdjust && s.queued && s.sid === sid && now - s.at > PLAN_ADJUST_TTL_MS),
-    '这句调整一直没赶上可插话的轮，已放回输入框')
-}
-const pumpPlanAdjust = async () => {
-  if (planAdjustDelivering) return
-  settlePlanAdjustQueue()
-  const sid = currentSessionId.value
-  // 只往目标轮里送：目标暂停/终态时宁可等，也不把这句话塞进用户正在问的普通轮
-  if (!sid || !goalRunning.value) return
-  const now = Date.now()
-  const items = steerQueue.value.filter(s => s.planAdjust && s.queued && s.sid === sid
-    && !s.sending && (s.nextAt || 0) <= now)
-  if (!items.length) return
-  planAdjustDelivering = true
-  try { for (const it of items) await deliverPlanAdjust(it) } finally { planAdjustDelivering = false }
-}
-watch(planAdjustQueued, v => {
-  if (v && !planAdjustPumpTimer) planAdjustPumpTimer = setInterval(pumpPlanAdjust, 2500)
-  if (!v && planAdjustPumpTimer) { clearInterval(planAdjustPumpTimer); planAdjustPumpTimer = null }
-}, { immediate: true })
-// 轮/目标一开跑就试第一下，不等满一拍
-watch([goalRunning, loading], ([g, l]) => { if (g || l) pumpPlanAdjust() })
-// 目标走到终态：这一会话不会再有轮来接这句，当场放回输入框
-watch(goalTerminal, v => {
-  if (!v) return
-  const sid = currentSessionId.value
-  returnPlanAdjustToInput(
-    steerQueue.value.filter(s => s.planAdjust && s.queued && s.sid === sid),
-    '目标已结束，这句调整没送进去，已放回输入框')
-})
-onUnmounted(() => { if (planAdjustPumpTimer) clearInterval(planAdjustPumpTimer) })
+watch(currentSessionId, sid => { if (sid) restoreSteerQueue(sid) }, { immediate: true })
+watch(loading, v => { if (v) restoreSteerQueue() })
+watch(goalTerminal, v => { if (v) restoreSteerQueue() })
 
 // ==================== 发送与流式回答（SSE） ====================
 // 主流程在 ./sendFlow.js；这里只装配引擎侧的 refs 与动作。
@@ -2264,8 +2226,10 @@ function flushPendingSteers (backendLeft = [], origin = null) {
  */
 function settleSteerOnLeave () {
   if (!steerQueue.value.length && !steerResend.value.length) return
+  // 只有「还没同步到服务端」的本地草稿需要放回输入框；已经在服务端排队的条目留在那边，
+  // 回这个会话时由队列投影恢复——两处都留一份就会变成同一句话发两遍
   const drafts = steerQueue.value
-    .filter(s => !s.awaiting && !s.sending)
+    .filter(s => s.local && !s.awaiting && !s.sending)
     .map(s => String(s.text || '').trim())
     .filter(Boolean)
   steerQueue.value = []

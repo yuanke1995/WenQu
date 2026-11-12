@@ -9,6 +9,7 @@ import com.wenqu.ai.config.ConfigKeys;
 import com.wenqu.ai.dto.ChatRequest;
 import com.wenqu.ai.dto.ResultJson;
 import com.wenqu.ai.dto.SessionInfo;
+import com.wenqu.ai.dto.SteerRequest;
 import com.wenqu.ai.mapper.KnowledgeMapper;
 import com.wenqu.ai.model.Knowledge;
 import com.wenqu.ai.service.ImageUrlSigner;
@@ -67,6 +68,8 @@ public class ChatController {
     private final com.wenqu.ai.service.SessionEventService sessionEvents;
     /** 计划血缘：把上一版已批准计划与那一轮执行进度拼进重新计划的提示词 */
     private final com.wenqu.ai.service.PlanLineageService planLineage;
+    /** 插话待发队列：服务端持有、刷新可恢复；drain 由引擎在轮开跑时唤醒 */
+    private final com.wenqu.ai.service.SteerQueueService steerQueue;
     /**
      * 轮次控制与存活：「停止本轮」「运行中插话」「有没有一轮在跑」「接流回来」
      * 这四个入口都在它那里——它们问的是这一轮的通道与生死，不是这一轮怎么把答案生成出来。
@@ -189,23 +192,7 @@ public class ChatController {
 
         // 聊天传图上限：数量与单张体积（防 base64 洪峰压垮解码/视觉处理；数据 URL 字符量≈体积×4/3）
         List<String> images = request.getImages();
-        if (images != null && !images.isEmpty()) {
-            int maxImages = Math.max(1, ConfigDefaults.CHAT_MAX_IMAGES_PER_MESSAGE);
-            if (images.size() > maxImages) {
-                throw new BizException("一次最多发送 " + maxImages + " 张图片");
-            }
-            int maxImageMb = Math.max(1, ConfigDefaults.CHAT_MAX_IMAGE_MB);
-            long maxBase64Chars = maxImageMb * 4L * 1024 * 1024 / 3; // base64 膨胀 4/3 后的字符量上限
-            for (String img : images) {
-                int comma = img == null ? -1 : img.indexOf(',');
-                if (comma <= 0 || !img.startsWith("data:image/")) {
-                    throw new BizException("图片格式不正确（需 data:image/* 的 data URL）");
-                }
-                if (img.length() - comma - 1 > maxBase64Chars) { // ≈maxImageMb MB 原图（base64 膨胀 4/3）
-                    throw new BizException("单张图片不能超过 " + maxImageMb + "MB");
-                }
-            }
-        }
+        validateImages(images);
 
         // 附件：请求体只带 fileId（内容已先行上传落盘换号）。
         // 数量上限 + 存在性与归属校验（拿别人的 fileId 一律拒绝）；类型与体积在上传接口已把关，
@@ -478,27 +465,104 @@ public class ChatController {
         }
     }
 
+    /**
+     * 聊天传图校验（正常提问与运行中插话共用一把尺）：数量 + 单张体积 + data URL 形态。
+     * <p>插话以前只收文字，带图的插话被前端整体推迟到下一轮；现在两条链路同一份校验，口径不能再分叉。
+     */
+    private void validateImages(List<String> images) {
+        if (images == null || images.isEmpty()) return;
+        int maxImages = Math.max(1, ConfigDefaults.CHAT_MAX_IMAGES_PER_MESSAGE);
+        if (images.size() > maxImages) {
+            throw new BizException("一次最多发送 " + maxImages + " 张图片");
+        }
+        int maxImageMb = Math.max(1, ConfigDefaults.CHAT_MAX_IMAGE_MB);
+        long maxBase64Chars = maxImageMb * 4L * 1024 * 1024 / 3; // base64 膨胀 4/3 后的字符量上限
+        for (String img : images) {
+            int comma = img == null ? -1 : img.indexOf(',');
+            if (comma <= 0 || !img.startsWith("data:image/")) {
+                throw new BizException("图片格式不正确（需 data:image/* 的 data URL）");
+            }
+            if (img.length() - comma - 1 > maxBase64Chars) { // ≈maxImageMb MB 原图（base64 膨胀 4/3）
+                throw new BizException("单张图片不能超过 " + maxImageMb + "MB");
+            }
+        }
+    }
+
     @Operation(summary = "运行中插话", description = "本轮还在跑时补一句方向（steer）：这句话交给框架会话自己送进<b>正在跑的那一轮</b>，"
             + "生效点是下一次模型调用之前——工具循环由框架持有，做不到掐掉正在执行的这一步。"
             + "它同时被落成一条普通用户消息（用户按了发送、话是自己说的，历史里就该长成用户消息的样子），"
             + "返回的 messageId 供前端挂到那颗气泡上。本轮收尾时还没被模型收上的，随 done 事件回落由前端作为同一句话续发。"
-            + "单条最长 800 字；没有在跑的轮 / 不是本人的轮 / 框架拒收（这一轮已经不在执行中）时返回 accepted=false，"
-            + "前端把内容放回输入框即可。")
+            + "单条最长 800 字；可带图片（images，与正常提问同一套校验）。"
+            + "没有在跑的轮 / 不是本人的轮 / 框架拒收（这一轮已经不在执行中）时返回 accepted=false，前端把内容放回输入框即可。")
     @Permission("chat:use")
     @PostMapping("/chat/steer")
-    public ResultJson steerChatTurn(@RequestBody Map<String, String> body, HttpServletRequest httpRequest) {
-        String sessionId = body == null ? null : body.get("sessionId");
-        String text = body == null ? null : body.get("text");
+    public ResultJson steerChatTurn(@RequestBody SteerRequest body, HttpServletRequest httpRequest) {
+        String sessionId = body == null ? null : body.getSessionId();
+        String text = body == null ? null : body.getText();
         if (sessionId == null || sessionId.isBlank() || text == null || text.isBlank()) {
             return ResultJson.error("缺少会话 ID 或插话内容");
         }
+        List<String> images = body.getImages();
+        validateImages(images);
         rejectApiKeyForWorkspaceSession(httpRequest, sessionId.trim());
         // 插话同样过输入闸：它是用户当场打的一句话，与发问同一身份，不该成为闸外的旁路
         String refused = contentSafety.checkInput(com.wenqu.ai.util.RequestUser.uid(), sessionId, text);
         if (refused != null) return ResultJson.error(refused);
-        String messageId = runtime.steerTurn(sessionId.trim(), com.wenqu.ai.util.RequestUser.uid(), text);
+        String messageId = runtime.steerTurn(sessionId.trim(), com.wenqu.ai.util.RequestUser.uid(), text, images);
         return ResultJson.ok(java.util.Map.of("accepted", messageId != null,
                 "messageId", messageId == null ? "" : messageId));
+    }
+
+    @Operation(summary = "插话排队（服务端持有，刷新可恢复）", description = "生成中先入队、不发请求；"
+            + "drain 由引擎在「这一轮真的开跑」时唤醒，只 steer 进活着的轮，绝不另起一轮。"
+            + "入队时同步过输入闸与传图校验（排队期间不会有人再替它过一遍）。")
+    @Permission("chat:use")
+    @PostMapping("/chat/steer/queue")
+    public ResultJson enqueueSteer(@RequestBody SteerRequest body, HttpServletRequest httpRequest) {
+        String sessionId = body == null ? null : body.getSessionId();
+        String text = body == null ? null : body.getText();
+        if (sessionId == null || sessionId.isBlank() || text == null || text.isBlank()) {
+            return ResultJson.error("缺少会话 ID 或插话内容");
+        }
+        validateImages(body.getImages());
+        rejectApiKeyForWorkspaceSession(httpRequest, sessionId.trim());
+        String refused = contentSafety.checkInput(com.wenqu.ai.util.RequestUser.uid(), sessionId, text);
+        if (refused != null) return ResultJson.error(refused);
+        try {
+            return ResultJson.ok(steerQueue.enqueue(sessionId.trim(), com.wenqu.ai.util.RequestUser.uid(),
+                    text, body.getImages()));
+        } catch (IllegalArgumentException e) {
+            return ResultJson.error(e.getMessage());
+        }
+    }
+
+    @Operation(summary = "插话队列投影", description = "还在排队（PENDING）与已送出等模型听到（STEERED）的条目；刷新/换设备据此恢复。")
+    @Permission("chat:use")
+    @GetMapping("/chat/steer/queue")
+    public ResultJson steerQueue(@Parameter(description = "会话 ID") @RequestParam("sessionId") String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) return ResultJson.error("缺少会话 ID");
+        return ResultJson.ok(steerQueue.list(sessionId.trim(), com.wenqu.ai.util.RequestUser.uid()));
+    }
+
+    @Operation(summary = "插话队列·立即发送", description = "把排队的一条送进正在跑的那一轮；没有活轮时返回 accepted=false，"
+            + "条目留在队列里等下一次轮开跑（不退回输入框、也不静默丢）。")
+    @Permission("chat:use")
+    @PostMapping("/chat/steer/queue/{itemId}/steer")
+    public ResultJson steerQueued(@PathVariable("itemId") String itemId,
+                                  @RequestBody(required = false) Map<String, String> body) {
+        String sessionId = body == null ? null : body.get("sessionId");
+        if (sessionId == null || sessionId.isBlank()) return ResultJson.error("缺少会话 ID");
+        return ResultJson.ok(steerQueue.steerNow(sessionId.trim(), com.wenqu.ai.util.RequestUser.uid(), itemId));
+    }
+
+    @Operation(summary = "插话队列·丢弃", description = "只对还在排队（PENDING）的条目生效；已送出的等模型听到，不能假装撤回。")
+    @Permission("chat:use")
+    @DeleteMapping("/chat/steer/queue/{itemId}")
+    public ResultJson dropQueued(@PathVariable("itemId") String itemId,
+                                 @Parameter(description = "会话 ID") @RequestParam("sessionId") String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) return ResultJson.error("缺少会话 ID");
+        return ResultJson.ok(java.util.Map.of("ok",
+                steerQueue.drop(sessionId.trim(), com.wenqu.ai.util.RequestUser.uid(), itemId)));
     }
 
     @Operation(summary = "断线重连·探测", description = "问这个会话是否还有一轮正在跑（只在内存里判，服务重启后没有）。"

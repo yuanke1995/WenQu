@@ -2,6 +2,7 @@ package com.wenqu.ai.agentx;
 
 import com.wenqu.ai.agent.chat.ChatCommand;
 import com.wenqu.ai.agent.chat.RelatedPrompt;
+import com.wenqu.ai.agent.chat.TurnRecorder;
 import com.wenqu.ai.agent.chat.TurnRegistry;
 import com.wenqu.ai.agent.permission.ExecutionPolicy;
 import com.wenqu.ai.agent.plan.PlanCopy;
@@ -321,9 +322,19 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      */
     private volatile io.agentscope.core.model.transport.OkHttpTransport cachedModelTransport;
 
+    /**
+     * 插话待发队列的信号口（装配期由 {@code AgentxConfiguration} 登记）。
+     * <p>引擎只在「框架确实开跑了」（{@code inbox/opened}）时唤醒它：早一步 steer 必被拒，
+     * 队列就会白等一整轮；晚一步就错过「下一次调模型前」这个唯一送达点。
+     */
+    private volatile com.wenqu.ai.agent.chat.SteerQueueHooks steerQueueHooks;
+
+    public void bindSteerQueue(com.wenqu.ai.agent.chat.SteerQueueHooks hooks) {
+        this.steerQueueHooks = hooks;
+    }
+
     /** 懒建的共享模型传输层（见字段注释）；超时口径沿用原 per-session 配置。 */
-    private io.agentscope.core.model.transport.OkHttpTransport sharedModelTransport() {
-        io.agentscope.core.model.transport.OkHttpTransport t = cachedModelTransport;
+    private io.agentscope.core.model.transport.OkHttpTransport sharedModelTransport() {        io.agentscope.core.model.transport.OkHttpTransport t = cachedModelTransport;
         if (t != null) return t;
         synchronized (this) {
             if (cachedModelTransport != null) return cachedModelTransport;
@@ -761,7 +772,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 框架原生支持多模态：submit(Msg)，Msg 里可混排 TextBlock 与 ImageBlock。
         // buildMultimodalMsg 在图片形态都不可用时会返回 null，那时退回纯文本 submit，不拿 null 去提交
         io.agentscope.core.message.Msg multimodal =
-                (chatSeesImages && !userImgs.isEmpty()) ? promptAssembler.buildMultimodalMsg(modelInput, userImgs) : null;
+                (chatSeesImages && !userImgs.isEmpty()) ? TurnPromptAssembler.buildMultimodalMsg(modelInput, userImgs) : null;
         // 工具面按轮落到框架的组激活集上（判据仍取自老装配那一条 exposes，不另写一份），
         // 并把「配置允许的名单」与「框架真正下发给模型的工具表」逐名比对一次——不一致就发 warn，
         // 静默少一道闸正是这套机制最初要治的病。
@@ -798,11 +809,13 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             // 没有这一帧，「选了技能」这件事在界面上是静默的，用户永远不知道模型到底照没照做。
             emitPickedSkillHits(cmd, channel);
             followTurn(session, cmd, channel, pool, route, hooks, turnId, historyBefore, startCursor,
-                    userMessageId, current, recording, startedAt, prepMs, binding.contextWindow());
+                    userMessageId, current, recording, startedAt, prepMs, binding.contextWindow(), false);
         } finally {
             sessions.releaseFollower(sessionKey);
             // 收口后清掉本轮落点：之后再有工具调用会明确失败，而不是回落到这一轮的池子里
             slot.end(turnId);
+            // 异常/提前退出没走到 done 的轮也要摘收据，否则会一直挂在台账里
+            com.wenqu.ai.agent.chat.SteerReceipts.clear(turnId);
             // 本轮彻底收尾（跟随位已释放）才接目标的下一轮：放在收尾里发会被「已有跟随者」挡掉。
             // 传这一轮的 turnId：服务端据此区分「用户轮收尾」（把让位停下的目标自动接上）
             // 与「目标轮收尾」（不重复接）。
@@ -819,7 +832,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                             ModelRegistryService.ModelRoute route, WenquAgentxTools.TurnHooks hooks,
                             String turnId, int historyBefore, long startCursor, String userMessageId,
                             AgentSession.Task current,
-                            Recording recording, long startedAt, long prepMs, int contextWindow) {
+                            Recording recording, long startedAt, long prepMs, int contextWindow,
+                            boolean recovered) {
+        // 恢复轮只对用户轮生效：目标轮的收尾由 GoalService 记账，多落一条「重启中断」的助手行会跟目标状态打架
+        boolean orphanRecovered = recovered && (turnId == null || !turnId.startsWith("goal:"));
         long machineBudgetMs = turnSeconds() * 1000L;
         // 断流对账的读数起点：主链模型包装器按会话常驻、跨轮复用，本轮的断流次数只能取收尾读数
         // 减开轮读数（见 MeteredModel.abruptCloses）。实例还没建出来时是 null——那一跑连模型都没调，
@@ -875,7 +891,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
 
             @Override
             public long drain(long cursor, long emitFrom) {
-                return AgentscopeChatEngine.this.drain(session, cursor, emitFrom, channel, recording, mirror);
+                return AgentscopeChatEngine.this.drain(session, cursor, emitFrom, turnId, channel, recording, mirror);
             }
 
             @Override
@@ -1004,7 +1020,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 看门狗形同虚设；而引擎自己的墙钟已经进了下一轮比较，必须先把这段补齐再往下走。
         interactions.settle(() -> endHumanWait(channel, recording));
         // 收尾把游标跑到 head：这一轮的尾巴增量不能再漏（镜像传 null——出轮之后没人读状态）
-        drain(session, loop.cursor(), loop.emitFrom(), channel, recording, null);
+        drain(session, loop.cursor(), loop.emitFrom(), turnId, channel, recording, null);
 
         // 计划卡裁决的界面终态：拒绝=deep_plan_cancelled、继续对话=deep_plan_superseded。不补的表现为
         // 用户已经拒了计划，那张卡却还挂着「等待中」（控制流仍归框架判，这里只补留痕帧与 done 标记）
@@ -1201,10 +1217,18 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 收尾标记（【目标完成】/【目标受阻】…）是平台控制信号，落库与下发的正文里不出现：
         // 摘在 onTurnEnd 之后、finish 之前，用户读到的最后一条就是干净的交付说明。
         answer = com.wenqu.ai.service.GoalService.stripMarkers(answer);
+        // 重启接续的轮：旧进程干到哪一步，新实例这边没有记录（Recording 是新的一份），框架侧也没有
+        // 待跑步骤——正文与过程两头空时，收尾判据会把整轮静默丢掉，历史里只剩提问、清单卡还写着已完成。
+        // 这种轮必须落一句话交代清楚；本轮真跑出过东西（正文/工具/思考）就不算「空转」，交给正常收尾。
+        String recoveredNote = orphanRecovered && failure == null && answer.isBlank()
+                && recording.toolCalls.isEmpty() && recording.thinking.isEmpty()
+                && !loop.stopped() && !loop.timedOut() && !ranOutBudget && !loop.stalled()
+                && !loop.neverLaunched() && !superseded && !awaiting
+                ? TurnRecorder.RECOVERED_NOTE : null;
         finish(cmd, channel, pool, route, hooks.modelRef(), contextWindow, answer, recording,
                 userMessageId, loop.stopped(),
                 loop.timedOut(), ranOutBudget, loop.stalled(), awaiting, startedAt, interactions.humanWaitMs(), prepMs,
-                session, historyBefore, turnId, planRecord);
+                session, historyBefore, turnId, planRecord, recoveredNote);
         // 站内通知（旁路：内部全捕获，写不进去只记 WARN，绝不影响这一轮收口）：长轮跑完时
         // 人多半已经切走或锁屏，只靠屏幕看得见等于「跑完没人知道」。
         // 「提前停了」与「没跑成」分两句说：已经写出一半正文的那一轮，用户真读到了东西，
@@ -1304,7 +1328,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                              ModelRegistryService.ModelRoute route, WenquAgentxTools.TurnHooks hooks,
                              ExecutionPolicy policy,
                              AgentSession session, int historyBefore, long startCursor,
-                             Recording recording, int contextWindow) {
+                             Recording recording, int contextWindow, boolean recovered) {
     }
 
     /**
@@ -1433,7 +1457,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         bindFrameworkToolGate(cmd, recording);
         return new Following(cmd, channel, pool, route, hooks, policy, session,
                 session.transcript().messages().size(), session.log().head().seq(), recording,
-                binding.contextWindow());
+                binding.contextWindow(), recover);
     }
 
 /**
@@ -1544,7 +1568,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                         turnId, f.historyBefore(), f.startCursor(), null, current,
                         // 续跑轮 prepMs 传 0：这一跑不是新问答，cmd 里那个「收到提问」的时刻属于
                         // 原来那一拍，拿它当基准会把「人隔了几天才回来答卡」算进开轮前准备。
-                        f.recording(), System.currentTimeMillis(), 0L, f.contextWindow());
+                        f.recording(), System.currentTimeMillis(), 0L, f.contextWindow(), f.recovered());
                 log.info("[agentx] 续跑已收尾 session={}", f.cmd().getSessionId());
             } catch (Exception e) {
                 log.warn("[agentx] 续跑中断 session={}: {}", f.cmd().getSessionId(), e.toString());
@@ -1553,6 +1577,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             } finally {
                 sessions.releaseFollower(sessionKey);
                 slot.end(turnId);
+                // 后台轮异常/提前退出没走到 done 时也要摘收据（正常路径在 followTurn 里已摘，幂等）
+                com.wenqu.ai.agent.chat.SteerReceipts.clear(turnId);
                 // 后台目标轮跑完：只摘掉「这一条会话的这一个轮」——旧目标轮收尾不能把新目标在飞的那一轮摘掉
                 if (turnId != null && turnId.startsWith("goal:")) {
                     backgroundGoalTurns.remove(f.cmd().getSessionId() + "|" + turnId);
@@ -3181,8 +3207,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * <p>上界取进入时的 {@code head} 快照而不是「读到空为止」：事件在跑的过程中持续追加，
      * 没有快照这个循环可以永不返回。快照之后新到的事件交给下一拍。
      */
-    private long drain(AgentSession session, long cursor, long emitFrom, RunChannel channel, Recording recording,
-                       TurnMirror mirror) {
+    private long drain(AgentSession session, long cursor, long emitFrom, String turnId, RunChannel channel,
+                       Recording recording, TurnMirror mirror) {
         SessionLog eventLog = session.log();
         long through = eventLog.head().seq();
         while (cursor < through) {
@@ -3190,7 +3216,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             if (batch.isEmpty()) break;   // seq 有空洞（压缩/迁移）：游标推不动，不在这儿死循环
             for (SessionEvent event : batch) {
                 cursor = Math.max(cursor, event.seq());
-                translate(event, event.seq() > emitFrom ? channel : SILENT_CHANNEL, recording);
+                translate(event, event.seq() > emitFrom ? channel : SILENT_CHANNEL, turnId, recording);
                 if (mirror != null) mirror.observe(event);
             }
         }
@@ -3344,7 +3370,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * <p>刻意不发：{@code run/*}、{@code step/*}、{@code state/checkpoint}、{@code model/dispatch} 这些
      * 没有前端对应物的帧——前端对认不出的事件名会打 warn（{@code api.js:158}），不如不发。
      */
-    private void translate(SessionEvent event, RunChannel channel, Recording recording) {
+    private void translate(SessionEvent event, RunChannel channel, String turnId, Recording recording) {
         // 事件幂等闸：同一轮可能有两条跟随路径（原跟随循环 + ensureFollowing 补位）各自从 Session Log
         // 读事件喂进来，重投的那份若照收，正文就会被整段记录/重发两遍。
         // 框架事件自带轮内单调 seq，这里按「本轮已见 seq」跳过重投件：谁先到谁处理，后到的直接丢。
@@ -3497,6 +3523,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 }
             }
             case "run/end" -> recording.runEnded = true;
+            case "inbox/opened" -> {
+                // 框架的 run 到这里才算真的活着：此前 session.steer 必被拒。排队的插话在这一拍送进去，
+                // 早了会白等一整轮，晚了就错过「下一次调模型前」这个送达点。
+                com.wenqu.ai.agent.chat.SteerQueueHooks hooks = steerQueueHooks;
+                if (hooks != null) hooks.drain(channel.sessionId());
+            }
             case "inbox/applied" -> {
                 // 框架把插话写进会话上下文的凭证（载荷是 {commandIds:[...]}，一次可能收好几条）。
                 // 记在 recording 上而不是只记在镜像里：收尾那一次全量补读传的镜像是 null，
@@ -3507,8 +3539,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                     for (Object id : ids) {
                         String receiptId = String.valueOf(id);
                         if (!recording.markSteerApplied(receiptId)) continue;   // 补读会重读同一条
-                        com.wenqu.ai.agent.chat.TurnHandle.SteerAck ack =
-                                steerAckOf(channel.sessionId(), receiptId);
+                        com.wenqu.ai.agent.chat.SteerQueueHooks queueHooks = steerQueueHooks;
+                        if (queueHooks != null) queueHooks.applied(channel.sessionId(), receiptId);
+                        com.wenqu.ai.agent.chat.SteerReceipts.SteerAck ack =
+                                steerAckOf(turnId, receiptId);
                         if (ack == null) continue;
                         recording.steer(ack.text(), ack.messageId());
                         Map<String, Object> frame = new java.util.LinkedHashMap<>();
@@ -4742,7 +4776,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                         boolean awaiting,
                         long startedAtMs, long humanWaitMs, long prepMs,
                         AgentSession session, int historyBefore, String turnId,
-                        Map<String, Object> planRecord) {
+                        Map<String, Object> planRecord, String recoveredNote) {
         // 落库这一轮：只发帧不落库的话，界面上点进去就是空会话。
         // 走 SessionService 同一入口，不另写一套消息表——会话列表、历史、引用面板都吃这份数据
         String body = answer == null ? "" : answer;
@@ -4786,6 +4820,13 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         body = closeout.text();
         String noticeText = closeout.noticeText();
         boolean persist = closeout.persist();
+        // 重启接续的空转轮：没有正文也没有过程，走上面的判据就是「不落库」，用户面对一条凭空消失的回答。
+        // 落一句中断说明而不是造一条空回答——「这一轮因重启没答完」是用户该知道的事实。
+        if (recoveredNote != null && !persist) {
+            body = recoveredNote;
+            noticeText = recoveredNote;
+            persist = true;
+        }
         // 本轮配图清单的唯一快照：正文 [图片N] → 第 N-1 项。流式 image 帧、done.finalImages、
         // 落库 images 全部出自池的 imgIndex；这里取一次，三处共用同一份。定稿校验只读它判编号
         // 越界，绝不裁剪 / 重编 / 回写——清单一旦在定稿被改写，就会「流式有图、答完没图」。
@@ -4963,7 +5004,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 本轮来源清单与外发文本会一起丢掉，「答案可溯源」在外部链路静默失效。
         // 键序与拼接版逐字一致（下游有多个消费方按名取字段，含前端与子轮回取）。
         // WriteMapNullValue 保持「显式给 null」的语义（缺键会让前端读不到）。
-        List<Map<String, Object>> pendingSteers = awaiting ? null : unsentSteers(handle, turnId, recording);
+        List<Map<String, Object>> pendingSteers = awaiting ? null : unsentSteers(turnId, recording);
         if (pendingSteers != null && pendingSteers.isEmpty()) pendingSteers = null;
         String payload = TurnDonePayload.toJson(TurnDonePayload.Input.builder()
                 .finalContent(body)
@@ -5000,6 +5041,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 .pendingSteers(pendingSteers)
                 .build());
         channel.emit(RunEventType.DONE, payload);
+        // pendingSteers 已经取完，收据到此作废：不收的话按轮攒着，长会话会一直涨
+        com.wenqu.ai.agent.chat.SteerReceipts.clear(turnId);
         // 智能体轮终 webhook 出站（对外能力第二批，旁路）：配置了 callback_url 的智能体把本轮结果
         // 签名推给宿主系统。挂在 done 发射之后——宿主收到的时机与屏幕上「答完了」一致。
         // 状态口径：停/stall=stopped（用户侧行为，宿主同样该知道）、超时/预算耗尽=failed、
@@ -5029,23 +5072,16 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 当场就把它叫停了（见 {@code ranOutBudget}），所以那种收尾也拿得到 {@code run/end}。
      */
     /** 按框架收据找回那句插话（用户原话＋它落库的消息 ID）。收据号本轮唯一，配不上就是本轮没这句话。 */
-    private static com.wenqu.ai.agent.chat.TurnHandle.SteerAck steerAckOf(String sessionId, String receiptId) {
-        com.wenqu.ai.agent.chat.TurnHandle h = sessionId == null ? null : TurnRegistry.handle(sessionId);
-        if (h == null) return null;
-        for (com.wenqu.ai.agent.chat.TurnHandle.SteerAck a : h.steerAcks()) {
-            if (a != null && receiptId.equals(a.receiptId())) return a;
-        }
-        return null;
+    private static com.wenqu.ai.agent.chat.SteerReceipts.SteerAck steerAckOf(String turnId, String receiptId) {
+        return com.wenqu.ai.agent.chat.SteerReceipts.find(turnId, receiptId);
     }
 
-    private static List<Map<String, Object>> unsentSteers(
-            com.wenqu.ai.agent.chat.TurnHandle handle, String turnId, Recording recording) {
+    private static List<Map<String, Object>> unsentSteers(String turnId, Recording recording) {
         List<Map<String, Object>> out = new java.util.ArrayList<>();
         if (!recording.runEnded) return out;
-        if (handle == null || turnId == null || !turnId.equals(handle.turnId())) return out;
-        for (com.wenqu.ai.agent.chat.TurnHandle.SteerAck ack : handle.steerAcks()) {
+        for (com.wenqu.ai.agent.chat.SteerReceipts.SteerAck ack
+                : com.wenqu.ai.agent.chat.SteerReceipts.unsent(turnId, recording.appliedSteers)) {
             if (ack == null || ack.receiptId() == null) continue;
-            if (recording.appliedSteers.contains(ack.receiptId())) continue;
             Map<String, Object> item = new java.util.LinkedHashMap<>();
             item.put("text", ack.text());
             // 随它落库的那条用户消息 ID：前端复用同一颗气泡补发，不另推一条，刷新后也不会变两条
@@ -5053,8 +5089,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             out.add(item);
         }
         if (!out.isEmpty()) {
-            log.info("[STEER] 本轮收下的插话有 {} 条没进上下文，交回前端续发: session={} turn={}",
-                    out.size(), handle.userId(), turnId);
+            log.info("[STEER] 本轮收下的插话有 {} 条没进上下文，交回前端续发: turn={}", out.size(), turnId);
         }
         return out;
     }

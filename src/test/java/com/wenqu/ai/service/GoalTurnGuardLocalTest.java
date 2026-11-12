@@ -77,7 +77,8 @@ class GoalTurnGuardLocalTest {
                     mock(FrameworkSessions.class), mock(SessionService.class),
                     mock(ArtifactService.class), settings,
                     mock(GoalVerifier.class), mock(GoalPromptBuilder.class),
-                    mock(TurnNotifyService.class));
+                    mock(TurnNotifyService.class),
+                    mock(SteerQueueService.class));
 
             // ---- 1. 进行中的轮不算「被叫停」；取消之后同一轮必须判为叫停 ----
             String goalId = seedGoal(goalMapper, "s-guard", GoalService.RUNNING, "EXECUTING");
