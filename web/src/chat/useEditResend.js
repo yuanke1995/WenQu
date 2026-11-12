@@ -27,7 +27,8 @@ export const useEditResend = ctx => {
   const editingMessageId = ref('')
   const editingText = ref('')
   const editingBusy = ref(false)
-  const editingRef = ref(null)
+  // 编辑卡 DOM ref 由布局层持有并共享：命令面板聚焦编辑态时指向同一份元素。
+  const editingRef = ctx.editingRef || ref(null)
   const editImgs = ref([])
   const editAtts = ref([])
   const editMentions = ref([])

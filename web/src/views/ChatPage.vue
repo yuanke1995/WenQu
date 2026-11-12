@@ -1858,1283 +1858,43 @@ import { toolLabel, toolDesc, toolCallsView, executedCount, toolDuration,
          pasteTitle, pasteSub, isPastedText,
          THINK_LEVEL_ON, levelLabel, stopTick, agentBadgeOf, isDispatchTool,
          usageCtxTokens, usageTip, oneLine, toolCardOpen, toggleToolCard, spawnAnchorOf, openDispatchCard } from '../chat/projections'
+import { useChatChrome } from '../chat/useChatChrome'
+import { useCommandPanels } from '../chat/useCommandPanels'
+import { useChatActions } from '../chat/useChatActions'
+import { usePlanPanels } from '../chat/usePlanPanels'
+import { useDeepAsk } from '../chat/useDeepAsk'
 
-// 簇头的活动图标（DSH ProcessGroupHeader 的 activityIcon 同位）：类别 → 图标，收起时常显、悬停/展开让位给下开三角
-const CLUSTER_ICONS = { search: SearchOutlined, tools: ApiOutlined, thinking: BulbOutlined }
-const clusterIconOf = seg => CLUSTER_ICONS[clusterHeadKind(seg)] || BulbOutlined
-
-/** 本轮引用反馈要回填的问题：向上找最近一条用户提问 */
-function questionFor (i) {
-  const list = messages.value || []
-  for (let j = i - 1; j >= 0; j--) {
-    const m = list[j]
-    if (m && m.role === 'user' && m.content) return m.content
-  }
-  return ''
-}
-
+// ===== 布局层装配：页面只保留组件注册、共享 DOM ref 与各视图域的接线 =====
+const page = {}
 const router = useRouter()
 const route = useRoute()
-
-// 深度执行是否已上膛（还没发出去）：靠输入框里那颗 chip 表示，× 退出
-const goalArmed = ref(false)
-// 建目标的请求在飞（startGoal 是异步的：建行 + 框架同步 + 起首轮）。这一窗口里要挡住
-// 重复触发——否则连按第二下 Enter/发送键会落到普通发送，把残留的附件当成普通问题发出去
-const goalStarting = ref(false)
-
-// 工具审批的恢复与定位都在引擎里（useChatEngine 的 handleApprovalDeepLink）：
-// 通知只负责把对话滚到那张内联审批卡并闪一圈；已处理/已失效只提示一句，不再在顶部画横幅。
-
-// 注：智能体提问不走 approval 那种顶部横幅——卡片已落库且等待作答期间断线不中止本轮，
-// 恢复改由引擎在会话加载时按待答记录重建提问卡（hydratePendingAsk），仍挂在底部答题面板原位。
-
-/** 输入框（contenteditable，正文与 chip 同一条流）与它当前挂着的 chip 顺序。
- *  顺序的事实归 DOM，数组归引擎——对账逻辑见下方「输入框内联 chip」一节（要等引擎解构完才能注册 watch）。 */
+// 输入框与编辑卡的 DOM ref 由布局层持有：命令面板与两个域指向同一份元素。
 const composerRef = ref(null)
-const inlineKeys = ref([])
-// ==================== 深度思考面板（宽屏悬浮 / 触屏 sheet）====================
-// 交互与展示口径在 ../chat/useThinkPanel.js（组合式函数）
-const {
-  thinkHoverRef, thinkPanelPos, thinkPanelEl, mThinkOpen, thinkHoverModel, thinkPanelVisible,
-  toggleThinkSheet, onDocPointerDown, thinkPanelCaps, thinkPanelLevelOptions, thinkPanelCurrentLevel,
-  thinkPanelStrengthText, thinkPanelFoot, pillLevelRef, pillLevelBadge, pillLevelTitle, thinkPanelCtxText,
-  onModelOptionHover, scheduleThinkHide, onThinkPanelEnter, onThinkPanelLeave, onModelSelectOpenChange
-} = useThinkPanel({
-  isCoarse, effectiveModel, currentOverrideModel, modelIndex,
-  thinkCapsOf, levelOptionsOf, currentLevelOf, deepOnOf, fmtWindow
-})
-/** 底部「管理智能体」：跳到独立的一级页面 */
-const goManageAgents = () => {
-  agentPickerOpen.value = false
-  router.push('/agents')
-}
-const box = ref(null)
-// 滚动贴底/尾随留白/右轨锚点在 ../chat/useChatScroll.js（messages 与 qaAnchors 声明在本处之后，用惰性 getter）
-const {
-  stickToBottom, tailSpacer, onMessagesScroll, scroll, scrollForce, updateTailSpacer,
-  railVis, railHoverIdx, railPopStyle, railHoverAnchor, showAnchor, gotoAnchor, railActiveIdx, updateRailActive
-} = useChatScroll({
-  box,
-  messagesOf: () => messages.value,
-  qaAnchorsOf: () => qaAnchors.value
-})
-const panelStoredRaw = (() => { try { return localStorage.getItem('app_panel') } catch (e) { return null } })()
-const panelStored = ref(panelStoredRaw !== '0' && window.innerWidth > 1200)
-const panelOpen = computed(() => !isNarrow.value && panelStored.value)
-const mPanelOpen = ref(false)
-const togglePanel = () => {
-  if (isNarrow.value) { mPanelOpen.value = !mPanelOpen.value; return }
-  panelStored.value = !panelStored.value
-  try { localStorage.setItem('app_panel', panelStored.value ? '1' : '0') } catch (e) { /* 忽略：本次会话内仍然可用 */ }
-}
+const editingRef = ref(null)
+const goalArmed = ref(false)
+const goalStarting = ref(false)
+const CLUSTER_ICONS = { search: SearchOutlined, tools: ApiOutlined, thinking: BulbOutlined }
+// 具名引用：命名空间 import 会把整个图标库与 api 模块拖进本页分包。
+const api = { debugRetrieval, deleteMessageGroup, submitFeedback: apiSubmitFeedback,
+              addEvalCase, getSessionShare, enableSessionShare, disableSessionShare,
+              getSessionWorkspace, getPermissionPresets, setSessionPermission,
+              openProjectFolder, updateProjectItem, createSkill }
+const icons = { CompressOutlined, AimOutlined, FileTextOutlined, PlusOutlined,
+                PaperClipOutlined, BookOutlined, HistoryOutlined, ThunderboltOutlined,
+                DatabaseOutlined, RobotOutlined, AppstoreOutlined }
 
-// 右栏「过程」卡的数据：最近一条 AI 消息（含跑轮中 loading 的那条，别用 lastAi——它刻意跳过 loading）。
-// getter 体懒执行，引擎解构在本文件更后面也不影响。
-const processMsg = computed(() => {
-  const list = messages.value || []
-  for (let i = list.length - 1; i >= 0; i--) if (list[i].role === 'ai') return list[i]
-  return null
+// 引擎先装配：所有视图域的 getter 都能安全读取；视图回调经 page 惰性取值。
+const engine = useChatEngine({
+  chatPath: '/chat',
+  planModeEnabled: true,
+  scrollFollow: () => nextTick(() => { page.chrome?.updateTailSpacer?.(); page.chrome?.scroll?.() }),
+  scrollForce: () => nextTick(() => { page.chrome?.updateTailSpacer?.(); page.chrome?.scrollForce?.() }),
+  scrollSoft: () => page.chrome?.scroll?.(),
+  revealApproval: id => page.chrome?.revealApprovalCard?.(id),
+  closePanels: () => page.panels?.closeAllPanels?.(),
+  focusInput: () => page.chrome?.focusInput?.()
 })
 
-// 顶栏药丸点一行：把那张派遣卡摊开（本轮过程/所在簇/所在组条一起，判据在 openDispatchCard），
-// 再滚到它。锚点走卡片上的 data-spawn（服务端起表毫秒 + 工具名，同一位助手不会在同一毫秒被派两次）；
-// 没找到节点就只展开、不假装滚过去了。
-function focusSpawn ({ run, msg }) {
-  const t = run && run.t
-  if (!t) return
-  openDispatchCard(msg, t)
-  const el = box.value && box.value.querySelector('[data-spawn="' + spawnAnchorOf(t) + '"]')
-  if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' })
-}
-
-// 右栏「等你…」那一行的落点：审批卡长在气泡里（滚到那条回答），提问/计划面板顶替打字框（本来就在
-// 屏幕下沿，滚到最近可见即可并把键盘焦点交给第一个选项，键盘导航随即能用）。
-// 落点找不到就不动，不假装跳转。
-function focusHitl (kind) {
-  if (kind === 'approval') {
-    const el = box.value && box.value.querySelector('[data-approval-card]')
-    if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' })
-    return
-  }
-  const panel = document.querySelector('.askp-box, .planp-box')
-  if (!panel) return
-  panel.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-  const first = panel.querySelector('.askp-opt:not([disabled]), .planp-opt:not([disabled])')
-  if (first) first.focus()
-}
-
-// 通知深链落到审批卡：引擎挂好卡后回调这里，滚到那一张并闪一圈（不新增任何常驻 UI）
-function revealApprovalCard (id) {
-  nextTick(() => {
-    const key = String(id || '')
-    const safe = (typeof CSS !== 'undefined' && CSS.escape) ? CSS.escape(key) : key
-    const el = box.value && box.value.querySelector('[data-approval-id="' + safe + '"]')
-    if (!el) return
-    el.scrollIntoView({ block: 'center', behavior: 'smooth' })
-    el.classList.remove('flash')
-    void el.offsetWidth
-    el.classList.add('flash')
-    setTimeout(() => el.classList.remove('flash'), 1800)
-  })
-}
-
-
-
-// ==================== 执行过程（事件账本回放） ====================
-// 事件抽屉/来源折叠/容量浮层在 ../chat/useChatPanels.js
-const {
-  eventsOpen, eventsTurn, eventsMsg, eventsQuestion, eventsTitle, openEvents,
-  srcOpenOf, toggleSrc, ctxCapOpen, ctxCapPos, ctxCapEl, showCtxCap, hideCtxCap, onCtxCapEnter, onCtxCapLeave
-} = useChatPanels()
-// 「在沙盒中运行」按钮的开关不再由本页持有：正文统一走 AnswerBody，runnable 直接写在调用点上
-// （问答页是唯一有会话上下文的消费方；其它页面默认不开——没有会话，按钮点了必然失败）。
-// ===== 右栏「计划」：本会话每轮出过的计划各列一条（待确认置顶，其余最新在前） =====
-// 标签取该轮的用户问题——计划卡没有标题，问题最能认出是哪一份；状态口径与气泡里的计划卡一致。
-// 行上补「第几版 + 几步」：同一任务反复修订时，只靠问题文本分不出哪份是最后一版。
-const sessionPlans = computed(() => buildSessionPlans(messages.value, planStepCount))
-const jumpToPlan = mi => jumpToPlanRow(mi)
-/** 右栏计划行：直接打开完整计划抽屉（与气泡卡脚同一落点），不再只是滚动定位 */
-const openPlanFromRail = p => {
-  const m = messages.value[p.mi]
-  if (!m || !m.planCard) return
-  openPlanViewer(m, p.mi)
-}
-// 免责声明
-const disclaimerVisible = ref(false)
-const DISCLAIMER_TEXT = `
-
-### 一、内容生成方式
-
-本系统的回答由人工智能模型基于知识库检索结果**自动生成**，仅供学习与工作参考，不构成任何形式的专业建议（包括但不限于法律、医疗、财务、投资建议），亦不代表系统开发方与运营方的官方立场。
-
-### 二、准确性不作保证
-
-AI 生成内容可能存在**错误、遗漏、过时或与实际情况不符**之处。知识库内容可能更新滞后，回答引用的资料版本可能与最新版本存在差异。重要信息（如操作规范、数据口径、流程要求、审批条件等）请以**官方文档、正式通知或相关业务部门的确认为准**。
-
-### 三、引用来源说明
-
-回答中标注的引用来源仅用于帮助定位参考资料。受文档分块与摘要机制影响，展示的片段可能与原文存在出入，完整含义请以知识块原文及原始文档为准。
-
-### 四、使用限制
-
-请勿仅依赖本系统的回答做出对个人或组织有重大影响的决策。因使用或依赖本系统内容而产生的任何直接或间接损失，系统提供方不承担责任。请遵守信息安全相关规定，**不要在提问中输入密码、密钥、客户隐私等敏感信息**。
-
-### 五、反馈与改进
-
-如发现回答有误或内容不当，可通过回答下方的反馈按钮告知我们，帮助我们持续改进。`
-
-// ===== 引用角标联动与行跳转在 ../chat/useSourceFocus.js =====
-const { hoverSource, unhoverSource, locateSource, jumpToPlanRow } = useSourceFocus({
-  hoveredRef,
-  messagesOf: () => messages.value,
-  lastAiOf: () => lastAi.value
-})
-// 回答反馈
-const feedbackVisible = ref(false)
-const feedbackSubmitting = ref(false)
-const feedbackText = ref('')
-const feedbackTarget = ref(null)
-const openFeedback = (m, rating) => {
-  if (m.fb != null && m.fb !== rating) {
-    message.warning(`已评价为「${m.fb === 1 ? '有帮助' : '没帮助'}」，同一回答只能选择一项`)
-    return
-  }
-  feedbackTarget.value = { msg: m, rating }
-  feedbackText.value = ''
-  feedbackVisible.value = true
-}
-const doSubmitFeedback = async () => {
-  const t = feedbackTarget.value
-  if (!t || !t.msg.messageId) { message.warning('该回答不可反馈'); return }
-  feedbackSubmitting.value = true
-  try {
-    const r = await apiSubmitFeedback(t.msg.messageId, t.rating, feedbackText.value.trim())
-    if (r.success) { t.msg.fb = t.rating; message.success('感谢反馈'); feedbackVisible.value = false }
-    else message.error(r.msg || '提交失败')
-  } catch (e) { message.error(e.message || '提交失败') }
-  finally { feedbackSubmitting.value = false }
-}
-
-// 全局快捷键：ESC 两段式停止（防误触：清输入的 Esc 不会误杀生成中的回答）/ 清空输入；粘贴发图
-/** 生成中按第一次 Esc 只上膛——按钮切 esc 键帽，2s 内再按才真正停止，超时自动回落 */
-const escArmed = ref(false)
-let escArmTimer = null
-const armEsc = () => {
-  escArmed.value = true
-  clearTimeout(escArmTimer)
-  escArmTimer = setTimeout(() => { escArmed.value = false }, 2000)
-}
-const disarmEsc = () => {
-  escArmed.value = false
-  clearTimeout(escArmTimer)
-}
-const stopNow = () => { disarmEsc(); stop() }
-/** 主输入框占位文案：生成中不再禁用输入，所以文案要说清"这句是插话"，以及它**不会**随 Enter 直接
- *  进模型——Enter 只把它排到输入框上方那条队列，点队列里的「立即发送」或按 ⌘/Ctrl+Enter 才真送。
- *  （早先"一步送达"那一版留下的文案没跟上后来加回的队列，这里按当前行为订正。）
- *  窄屏不写 Enter/Shift+Enter 提示（触屏没有这两个键） */
-const composerPlaceholder = computed(() => {
-  if (loading.value) {
-    // 目标轮在跑：用户打的这句是「插话」，不走排队——先回答你这句，目标随后自动继续
-    if (goalTurnStreaming.value) return '插话：先回答你这句，目标随后自动继续'
-    return isNarrow.value
-      ? '补一句方向（先排到上面，点「立即发送」才送出）'
-      : '补一句方向（Enter 先排到上面 · ⌘/Ctrl+Enter 立刻插进本轮）'
-  }
-  if (goalArmed.value && !sessionGoal.value) return '写下目标，回车开始（助手会自己接着往下推进）'
-  return isNarrow.value
-    ? '问点什么？（@ 引用资料 · / 快捷命令）'
-    : '问点什么？Enter 发送，Shift+Enter 换行（@ 引用资料，/ 快捷命令，# 引用历史问答）'
-})
-const onGlobalKeydown = e => {
-  if (e.isComposing || e.keyCode === 229) return
-  if (previewUrl.value && ['Escape', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return
-  if (e.key === 'Escape') {
-    if (loading.value) {
-      if (escArmed.value) stopNow()
-      else armEsc()
-      return
-    }
-    // 编辑区是 contenteditable 的原生 div：activeElement 直接就是它本身
-    const el = composerRef.value && composerRef.value.rootEl
-    if (el && (document.activeElement === el || el.contains?.(document.activeElement))) {
-      if (text.value) text.value = ''
-      else document.activeElement?.blur?.()
-    }
-  }
-}
-const onGlobalPaste = e => takePastedFiles(e)
-/* 消息区滚动条槽宽实测 → 写入 --chat-sbw，供 .input 右内边距补偿。
-   .messages 是滚动容器、.input 不是，两侧可用宽度天然差一个槽宽，居中基准因此错开半个槽
-   —— 表现为「聊天区域和输入框没对齐」。macOS 覆盖式滚动条槽宽为 0（无需补偿），
-   Windows/Linux 常规滚动条约 8~15px。必须在挂载后测量：首次布局前 clientWidth 尚未稳定。
-   平台/缩放变化时槽宽可能变，故监听 resize 重测。 */
-const syncScrollbarGutter = () => {
-  const el = box.value
-  if (!el) return
-  const gutter = el.offsetWidth - el.clientWidth
-  const host = el.closest('.chat2') || document.documentElement
-  const next = gutter > 0 ? gutter + 'px' : '0px'
-  if (host.style.getPropertyValue('--chat-sbw') !== next) host.style.setProperty('--chat-sbw', next)
-}
-const onWindowResize = () => {
-  updateTailSpacer()
-  if (stickToBottom.value) scroll()
-  // 输入框不需要跟着重测高度：contenteditable 自己长，超过 6 行在框内滚
-  syncScrollbarGutter()
-}
-// 转屏：iOS Safari 从横屏转竖屏时不保证触发 resize 到正确值，单独补一次
-const onOrientationChange = () => { setTimeout(onWindowResize, 120) }
-onUnmounted(() => {
-  window.removeEventListener('keydown', onGlobalKeydown)
-  window.removeEventListener('paste', onGlobalPaste)
-  window.removeEventListener('resize', onWindowResize)
-  window.removeEventListener('orientationchange', onOrientationChange)
-  document.removeEventListener('pointerdown', onDocPointerDown)
-  clearTimeout(escArmTimer)
-  stopTick()
-})
-const focusInput = () => nextTick(() => composerRef.value?.focus())
-const openPreviewFromMsg = (m, index) => {
-  openImages((m.images || []).map(resolveImg), index || 0)
-}
-// 拖进来的文件（含生成中：插话与正常提问同权，材料可以带着，带材料的整条等本轮结束自动发出）。
-// 进出场与「只有真拖着文件才亮提示」的判据都在 ChatInput 里，这里只接文件数组
-const onDropFiles = files => addFiles(files)
-/** 输入框粘贴四分流：文件→附件管线；长文本→「粘贴的文本」附件；自己复制出去的一轮（正文+凭据）→
- *  按 fileId/data URL 原样挂回，不重传；其余按纯文本插进光标处。
- *  编辑区一律拦掉浏览器的默认粘贴（那会把外部 HTML 连样式一起搬进正文），所以正文这步得自己动手。 */
-const onComposerPaste = e => {
-  const done = () => e.stopPropagation()   // 材料已由本框入列，别让 window 级监听再收一遍
-  if (takePastedFiles(e) || takePastedText(e)) return done()
-  const cd = e.clipboardData
-  const plain = (cd && cd.getData ? cd.getData('text/plain') : '') || ''
-  const html = (cd && cd.getData ? cd.getData('text/html') : '') || ''
-  if (html.indexOf('data-wenqu-kind') >= 0) restoreWenquChips(html)
-  if (plain) composerRef.value?.insertText(plain)
-  done()
-}
-// 粘贴卡片点开看全文：原文只留在内存（待发送项与本轮消息），刷新后的历史卡片没有它
-const pasteView = reactive({ open: false, name: '', text: '' })
-const openPasteView = a => {
-  if (!a) return
-  if (!a.text) { message.info('这条粘贴文本的正文未随历史记录保留，无法回看'); return }
-  pasteView.name = a.name
-  pasteView.text = a.text
-  pasteView.open = true
-}
-/** 卡片标题/副标题口径见 chat/projections 的 pasteTitle / pasteSub（两壳共用） */
-const attachInput = ref(null)
-const pickAttachments = () => {
-  if (pendingFiles.value.length >= MAX_FILES) { message.warning(`一次最多上传 ${MAX_FILES} 个附件`); return }
-  attachInput.value?.click()
-}
-/** 选完即收面板：面板正盖着输入框上方的附件 chip，收起来让用户看到已加上（取消选择不关）。
- *  文件与图片同一入口：input 不设 accept（都能选），addFiles 按 MIME 自动分流（图片压缩、其余走附件校验） */
-const onAttachChange = e => {
-  const files = Array.from(e.target.files || [])
-  e.target.value = ''
-  if (!files.length) return
-  addFiles(files)
-  closeAddPanel()
-}
-
-/** 敲 @ 唤起「+」面板并停在「引用」页：不再有独立的 @ 弹窗，两个入口同一块面板。
- *  与点「+」进来的差别只在筛选词从哪来——这里由 syncPanelQuery 实时取正文里「@ 到光标」那一段。
- *  只能逐个关其它面板：调用点（onInputKeydown）刚把 @ 的位置记进 panelTriggerPos/Ch，
- *  closeAllPanels 会顺手抹掉它，筛选词通道就断了（openSlashPanel / openHistPanel 同理）。 */
-const openMentionPanel = () => {
-  slashOpen.value = false
-  histOpen.value = false
-  addTarget.value = 'main'   // 敲 @ 只发生在主输入框，别沿用上次编辑卡留下的写入目标
-  addTab.value = 'ref'
-  addOpen.value = true
-  addHi.value = 0
-  addFromRoot.value = false   // @ 直接落在二级，没有「上一层」，Esc 应整个关闭而不是退回菜单
-  mentionQuery.value = ''
-  ensureRefCandidates()
-}
-/** 弹窗/下拉这类浮层挂在 body 上，不在面板子树里，按「外点」判据会把面板一起收掉：
- *  从技能正文弹窗返回时「+」面板已经没了，得重新点「+」才能接着挑。浮层自己吃掉的那一下不算点了别处。 */
-const OVERLAY_ROOT_CLASSES = ['ant-modal-root', 'ant-dropdown']
-const hitsOverlay = path => path.some(n => n.classList
-    && OVERLAY_ROOT_CLASSES.some(c => n.classList.contains(c)))
-/** 点面板/输入区之外关闭（面板不遮断输入，所以用 document 级监听而不是遮罩层）；
- *  / 命令 / # 历史引用 / + 添加三个面板共用同一关闭监听（同一容器、同一交互约定） */
-const onDocClickForMention = e => {
-  if (!slashOpen.value && !histOpen.value && !addOpen.value) return
-  // 不能用 e.target.closest 判「点在面板里」：一级菜单点进二级时 Vue 当场换掉整个列表分支，
-  // 被点节点被拆下树（parent 链断在 .mention-item），closest 会判成面板外 → 切层的那一下
-  // 自己就把面板关了。composedPath 在事件派发时已定，含换层前的旧祖先链，用它认面板。
-  const path = typeof e.composedPath === 'function' ? e.composedPath() : []
-  if (hitsOverlay(path)) return
-  // 卡片是 ChatInput 的 .ci-box（原先本页自己写 .input-box，抽出组件后跟着改）
-  if (path.some(n => n && n.classList && (n.classList.contains('mention-panel') || n.classList.contains('ci-box')
-      || n.classList.contains('msg-inline-edit')))) return
-  closeAllPanels()
-}
-onMounted(() => document.addEventListener('click', onDocClickForMention))
-onUnmounted(() => document.removeEventListener('click', onDocClickForMention))
-
-// ==================== 面板的共用键盘导航通道 ====================
-// 起因：原来三个面板各自带一个搜索框，敲 @ 时 preventDefault 吞掉字符 + nextTick 把焦点抢进搜索框。
-// 后果是「@ 打不进输入框」，用户无法在任意位置输入该符号（a@b.com、@某人 全部被吞）。
-// 现在反过来：**输入框是唯一输入源**——字符正常落下、焦点全程留在输入框，
-// 面板只做「展示 + 键盘导航」，筛选词实时取「触发字符到光标」之间的正文（syncPanelQuery）。
-// 确认后用 stripTriggerToken 把「触发字符 + 筛选词」这一段从正文里摘掉，不留残渣。
-// @ 弹窗已并进「+」面板（见下方 addOpen 一节）：敲 @ 开的是同一块面板、停在「引用」页，
-// 所以这条键盘通道现在同时服务 / # 两个触发面板与「+」面板；焦点在哪（输入框 / 面板搜索框）都走 onPanelNavKeydown。
-
-/** 触发字符在正文里的位置与字符本身（keydown 时记录：字符尚未进 DOM，插入后下标即为 pos） */
-let panelTriggerPos = -1
-let panelTriggerCh = ''
-
-const panelAnyOpen = () => slashOpen.value || histOpen.value || addOpen.value
-const closeAllPanels = () => {
-  slashOpen.value = false
-  histOpen.value = false
-  addOpen.value = false
-  panelTriggerPos = -1
-  panelTriggerCh = ''
-}
-/** 当前打开面板的候选总数与高亮下标读写（各面板结构一致，抽出来避免各写一遍 if/else） */
-const panelListSize = () => {
-  if (slashOpen.value) return slashFiltered.value.length
-  if (histOpen.value) return histCandidates.value.length
-  if (addOpen.value) return addListSize.value
-  return 0
-}
-// 取回的必须是 ref 本身而非 .value（movePanelHi 还要再读 .value）。
-// 曾把布尔写成 ref，导致 # 面板 getPanelHi().value 为 undefined → 高亮写进 NaN、方向键不动、
-// Enter 落空后把「#」原文当问题发出（鼠标点选不受影响）。
-const getPanelHi = () => (slashOpen.value ? slashHi : histOpen.value ? histHi : addHi)
-const setPanelHi = v => { getPanelHi().value = v }
-// 各面板的可滚列表（同时只渲染一个；取用顺序与 getPanelHi 一致）
-const slashListEl = ref(null)
-const histListEl = ref(null)
-const addListEl = ref(null)
-const panelListEl = () => (slashOpen.value ? slashListEl : histOpen.value ? histListEl : addListEl).value
-/** 高亮滑出列表可视区时把列表滚回来：面板不抢焦点（输入框是唯一输入源），浏览器不会替我们滚，
- *  不管的话 ↑↓ 按过可视区边界就等于「没人被选中」。
- *  手算 scrollTop 而非 scrollIntoView：后者会连祖先滚动容器（对话区）一起滚，方向键一按整页跳位。 */
-const scrollPanelHiIntoView = () => {
-  const list = panelListEl()
-  const item = list && list.querySelector('.mention-item.hi')
-  if (!item) return
-  const lr = list.getBoundingClientRect()
-  const ir = item.getBoundingClientRect()
-  if (ir.top < lr.top) list.scrollTop += ir.top - lr.top
-  else if (ir.bottom > lr.bottom) list.scrollTop += ir.bottom - lr.bottom
-}
-const movePanelHi = dir => {
-  const n = panelListSize()
-  if (!n) return
-  setPanelHi((getPanelHi().value + dir + n) % n)   // 循环滚动
-  nextTick(scrollPanelHiIntoView)
-}
-/** Enter 确认高亮项：/ 命令（插入模板或执行）/ # 历史引用（加 chip）/「+」面板当前页。
- *  返回 false = 没有可确认的候选（筛空了），本次回车交回输入框照常发送，避免"打不中就发不出去" */
-const confirmPanelHi = () => {
-  const i = getPanelHi().value
-  if (slashOpen.value) {
-    const c = slashFiltered.value[i]
-    if (!c) return false
-    // 触发片段（含「别名 + 空格 + 参数」整段）由 runSlashCommand 自己摘，它还得先读参数，这里别抢
-    runSlashCommand(c)
-    return true
-  }
-  if (histOpen.value) {
-    const m = histCandidates.value[i]
-    if (!m) return false
-    stripTriggerToken()
-    toggleHistoryRef(m)
-    closeAllPanels()
-    return true
-  }
-  if (addOpen.value) return confirmAddHi(i)
-  return false
-}
-/** 摘掉「触发字符 + 其后已输入的筛选词」：引用已由 chip 承载，正文里不该残留这段触发文本。
- *  光标随后落回摘除处，用户可继续在原位打字。 */
-const stripTriggerToken = () => {
-  if (panelTriggerPos < 0) return
-  const cp = composerRef.value
-  if (!cp) return
-  const from = panelTriggerPos
-  cp.replaceRange(from, Math.max(composerCaret(), from + 1), '')
-  cp.focus()
-  cp.setCaret(from)
-  panelTriggerPos = -1
-  panelTriggerCh = ''
-}
-
-/** 光标在正文里的下标（chip 算零宽，与 text 同一口径）；焦点不在编辑区时浏览器不保留选区，退回末尾 */
-const composerCaret = () => {
-  const cp = composerRef.value
-  if (!cp) return text.value.length
-  const i = cp.caretIndex()
-  return i < 0 ? text.value.length : i
-}
-/** 面板收掉后焦点回谁那儿：编辑卡开的回卡内正文，其余回主输入框 */
-const focusPanelOwner = () => {
-  if (addOnEdit.value) { editingRef.value?.focus?.(); return }
-  focusInput()
-}
-
-/** 输入框内容/光标变化时同步筛选词与高亮：
- *  - 光标在触发字符之前 → 用户把触发符删了或移开了，收起面板
- *  - 触发字符被改成别的字符 → 同上
- *  - 筛选词里出现空白 → 这个"词"已经结束（@知识库 后面又打了字），收起面板
- *  高亮重置到第一条：候选集变了，原下标已无意义。 */
-const syncPanelQuery = () => {
-  if (!panelAnyOpen() || panelTriggerPos < 0) return
-  const caret = composerCaret()
-  if (caret <= panelTriggerPos || text.value[panelTriggerPos] !== panelTriggerCh) {
-    closeAllPanels()
-    return
-  }
-  const q = text.value.slice(panelTriggerPos + 1, caret)
-  // 空白 = 这个"词"已经结束，收起面板；例外是带参命令的写法（/计划 一句任务）——
-  // 别名打完整后敲的空格是在给命令传任务，此时收起面板就等于把参数那半句丢掉
-  if (/\s/.test(q) && !(slashOpen.value && slashArgPending(q))) { closeAllPanels(); return }
-  if (slashOpen.value) slashQuery.value = q
-  else if (histOpen.value) histQuery.value = q
-  else if (addOpen.value) mentionQuery.value = q   // 敲 @ 开的是「+」面板的引用页，筛选词同样取自正文
-  setPanelHi(0)
-  nextTick(scrollPanelHiIntoView)   // 高亮回到第一条后列表也跟着回去，否则筛完第一条停在可视区外
-}
-
-// ==================== / 快捷命令面板（会话操作） ====================
-const slashOpen = ref(false)
-const slashQuery = ref('')
-const slashHi = ref(0)
-// 命令一律是会话级动作，选中即执行、不往正文插任何东西
-// cmd=英文别名（打 /compact 直接命中，与主流 CLI 同一习惯），args=这行认「别名 + 空格 + 一句任务」
-// 目标是工具条那颗胶囊的键盘入口，计划则以此命令为桌面唯一入口（工具条上不留胶囊，开启态只由正文里那颗 chip 说话）。
-// noGate=不碰正在跑的这一轮（翻模式、只开弹窗），生成中也照样能用；
-// 计划模式的行名按当前状态现写，用户看名字就知道这一下是开还是关
-// 深度执行那条与 /deep 命令共用 goalEntryVisible：智能体关着深度执行、或这条会话已有执行时，命令也不出现
-// 压缩上下文不带参数：要指定摘要要求，走摘要弹窗那行「带要求重新压缩」
-const slashCommands = computed(() => [
-  { key: 'act-compact', cmd: 'compact', icon: CompressOutlined, name: '压缩上下文',
-    desc: '早期对话压缩为摘要，腾出上下文空间',
-    run: () => compactContext() },
-  ...(goalEntryVisible.value ? [{ key: 'act-deep', cmd: 'deep', aliases: ['深度'], icon: AimOutlined, noGate: true, args: true,
-    name: '深度执行', desc: '先出计划，自动跨轮推进',
-    run: args => {
-      const task = String(args || '').trim()
-      if (task) { startGoalNow(task); return }
-      armGoal(!goalArmed.value)
-    } }] : []),
-  { key: 'act-export', icon: FileTextOutlined, name: '导出会话 Markdown',
-    desc: '把当前会话全部问答导出为 .md 文件',
-    run: () => { if (!currentSessionId.value) { message.warning('当前没有可导出的会话'); return } exportSessionMarkdown(currentSessionId.value, currentSessionTitle.value) } },
-  { key: 'act-new', icon: PlusOutlined, name: '新建会话',
-    desc: '开一个空白会话（当前会话保留在侧边栏）',
-    run: () => createNewSession() }
-])
-/** 只能逐个关其它面板，不能调 closeAllPanels：调用点（onInputKeydown）刚把触发字符的位置记进
- *  panelTriggerPos/Ch，closeAllPanels 会顺手抹掉它，筛选词通道就断了。 */
-const openSlashPanel = () => {
-  addOpen.value = false
-  histOpen.value = false
-  slashOpen.value = true
-  slashQuery.value = ''
-  slashHi.value = 0
-  if (panelTriggerCh !== '/') { panelTriggerPos = -1; panelTriggerCh = '' }
-}
-const closeSlashPanel = () => closeAllPanels()
-// slashQuery 直接来自输入框正文（「/ 到光标」之间），不再需要剥唤起键
-const slashQueryNorm = computed(() => slashQuery.value.trim())
-/** 一条命令可用的触发词：英文别名（/deep）与中文别名（/深度）共用同一行 */
-const slashAliasesOf = c => [c.cmd, ...(c.aliases || [])].filter(Boolean).map(a => String(a).toLowerCase())
-/** / 命令的带参判定（/计划 一句任务）：别名打完整后再出现的空白，是在给命令传任务，不是在结束筛选 */
-const slashArgPending = q => {
-  const s = String(q || '').trimStart().toLowerCase()
-  return slashCommands.value.some(c => c.args && slashAliasesOf(c).some(a => s.startsWith(a + ' ')))
-}
-/** 命令参数：筛选词里「别名 + 空格」之后的部分（原文切片，保留用户输入的大小写与用词） */
-const slashArgsOf = c => {
-  const raw = slashQuery.value.trim()
-  const lower = raw.toLowerCase()
-  for (const a of slashAliasesOf(c)) {
-    if (lower.startsWith(a)) return raw.slice(a.length).trim()
-  }
-  return ''
-}
-const slashFiltered = computed(() => {
-  const q = slashQueryNorm.value.toLowerCase()
-  const cmds = slashCommands.value
-  if (!q) return cmds
-  return cmds.filter(c => {
-    const aliases = slashAliasesOf(c)
-    // 别名：前缀补全（/com → 压缩上下文），或「别名 + 空格 + 参数」仍命中该命令
-    if (aliases.some(a => a.startsWith(q) || q.startsWith(a + ' '))) return true
-    return c.name.toLowerCase().includes(q) || c.desc.toLowerCase().includes(q)
-  })
-})
-const runSlashCommand = c => {
-  // 命令会改会话状态，不能和流式回答打架：/ 面板与「+」面板同一道闸。
-  // 挡下时顺手摘掉触发片段，否则「/新建会话」留在正文里，下一按 Enter 就当问题发出去了
-  // noGate 类（计划/目标）例外：只作用于下一轮或只开个弹窗，与正在流的这一轮不相干，胶囊也随时能点
-  if (loading.value && !c.noGate) {
-    stripTriggerToken()
-    closeAllPanels()
-    message.info('生成中，请等这轮回答结束后再执行')
-    return
-  }
-  // 参数先取：下面 stripTriggerToken/closeAllPanels 会把触发片段与筛选词清掉，取晚了就只能拿到空串
-  const args = slashArgsOf(c)
-  // 命令不往正文插任何东西，触发片段必须摘掉，否则留下 "/新建会话" 残渣
-  // （带参的命令同理："/计划 一句任务"整段都要摘走，参数已在上方取到）
-  stripTriggerToken()
-  closeAllPanels()
-  c.run?.(args)
-}
-// ==================== # 历史引用面板（勾选本会话历史问答 → 本轮上下文） ====================
-const histOpen = ref(false)
-const histQuery = ref('')
-const histHi = ref(0)
-const histQueryNorm = computed(() => histQuery.value.trim())
-/** 历史候选口径（# 面板与「+」面板共用）：筛选 + 最近在前 + 最多列 60 条（防超长会话渲染卡顿） */
-const histListOf = (q, pool) => {
-  const s = String(q || '').toLowerCase()
-  const src = pool || histPool.value
-  const list = src.filter(m => !s || String(m.content).toLowerCase().includes(s))
-  return list.slice(-60).reverse()
-}
-const histCandidates = computed(() => histListOf(histQueryNorm.value))
-const histChipLabel = h => h.digest || ''
-const pickHistoryRefByClick = m => {
-  stripTriggerToken()
-  toggleHistoryRef(m)
-  closeAllPanels()
-}
-const openHistPanel = () => {
-  addOpen.value = false
-  slashOpen.value = false
-  histOpen.value = true
-  histQuery.value = ''
-  histHi.value = 0
-}
-const closeHistPanel = () => closeAllPanels()
-
-// ==================== 「+」面板（附件 / 引用资料 / 历史 / 命令） ====================
-// 唯一的候选面板，两个入口共用同一块：主输入框点「+」或敲 @，就地编辑卡点「+」。
-// 入口决定写入目标 addTarget，选中结果、行上的勾选、一级菜单的计数全部经 addStore 这一层读写。
-// 一套交互：搜索 + 数量统计 + Tab 切页 + ↑↓ 选择 + Enter 确认 + Esc 关闭。
-const addOpen = ref(false)
-const addTab = ref('root')
-const addHi = ref(0)
-const addSearchEl = ref(null)
-const addHistQuery = ref('')
-const addCmdQuery = ref('')
-/** 面板写入目标：'main'=主输入框（默认），'edit'=就地编辑卡。开面板时由入口设定，关面板不复用 */
-const addTarget = ref('main')
-// 编辑卡已收起（切会话/取消/发送）就不再算编辑态：面板同时被 cancelEdit 关掉，这里只是双保险
-const addOnEdit = computed(() => addTarget.value === 'edit' && editingIdx.value != null)
-/** 编辑态下面板整块搬进卡内挂载点；主输入框那一份靠 disabled 原地不动（DOM 与之前完全一致） */
-const EDIT_ADD_MOUNT = '.msg-inline-edit .add-mount'
-/** 目标适配器：面板不关心自己往哪写，两套随行内容在这一层对齐 */
-const addStore = computed(() => addOnEdit.value ? {
-  files: editAtts, images: editImgs, mentions: editMentions, skills: editSkills,
-  histPool: editHistPool, histPicked: () => editHistRefs.value,
-  pickFiles: pickEditFiles,
-  toggleSkill: toggleEditSkill, skillOn: n => editSkills.value.includes(n),
-  toggleMention: toggleEditMention, mentionOn: (t, id) => editMentions.value.some(m => m.type === t && m.id === id),
-  toggleHist: toggleEditHistoryRef, histOn: id => editHistRefs.value.some(h => h.messageId === id)
-} : {
-  files: pendingFiles, images: pendingImages, mentions: pendingMentions, skills: pickedSkills,
-  histPool: histPool, histPicked: () => pendingHistoryRefs.value,
-  pickFiles: pickAttachments,
-  toggleSkill, skillOn: n => pickedSkills.value.includes(n),
-  toggleMention, mentionOn: isMentioned,
-  toggleHist: toggleHistoryRef, histOn: isHistPicked
-})
-/** 一级菜单的行：计数与描述按写入目标现算（编辑态没有「下一轮」可取消，措辞跟着改口径）；
- *  kbd 是主输入框的触发符，编辑卡正文不接这些符号所以不显示；快捷命令只属于主输入框——
- *  那些操作会改会话状态，与"改这一问"无关 */
-const addRootRows = computed(() => {
-  const s = addStore.value
-  const edit = addOnEdit.value
-  const scope = edit ? '这一问' : '本轮'
-  const rows = [
-    { key: 'file', name: '上传文件', icon: PaperClipOutlined,
-      desc: edit ? '文件读出正文供模型看，图片压缩后随这一问重发；也可直接粘贴进来（各最多 5 个）'
-                 : '也可直接粘贴或拖进来：文件读出正文供模型看，图片压缩后随本轮提问（各最多 5 个）',
-      badge: () => s.files.value.length + s.images.value.length, run: () => s.pickFiles() },
-    { key: 'ref', name: '引用资料', icon: BookOutlined, kbd: edit ? '' : '@',
-      desc: `知识库 / 文档 / 智能体 / 技能，只对${scope}生效`,
-      badge: () => s.mentions.value.length + s.skills.value.length, run: () => switchAddTab('ref') },
-    { key: 'hist', name: '引用历史问答', icon: HistoryOutlined, kbd: edit ? '' : '#',
-      desc: `勾选本会话的问答作为${scope}上下文（最多 10 条）`,
-      badge: () => s.histPicked().length, run: () => switchAddTab('hist') }
-  ]
-  if (!edit) rows.push({ key: 'cmd', name: '快捷命令', icon: ThunderboltOutlined, kbd: '/',
-    desc: '压缩上下文、深度执行、导出会话、新建会话', badge: () => 0, run: () => switchAddTab('cmd') })
-  return rows
-})
-const addHistPool = computed(() => addStore.value.histPool.value)
-const addHistCandidates = computed(() => histListOf(addHistQuery.value, addHistPool.value))
-const isAddSkillOn = n => addStore.value.skillOn(n)
-const toggleAddSkill = n => addStore.value.toggleSkill(n)
-const isAddMentioned = (t, id) => addStore.value.mentionOn(t, id)
-const toggleAddMention = (t, item) => addStore.value.toggleMention(t, item)
-const isAddHistPicked = id => addStore.value.histOn(id)
-const toggleAddHistoryRef = m => addStore.value.toggleHist(m)
-const ADD_TITLES = { ref: '引用资料', hist: '引用历史问答', cmd: '快捷命令' }
-const REF_SUB_TABS = [
-  { key: 'kb', label: '知识库', icon: DatabaseOutlined, count: () => mentionKbs.value.length },
-  { key: 'doc', label: '文档', icon: FileTextOutlined, count: () => mentionDocs.value.length },
-  { key: 'agent', label: '智能体', icon: RobotOutlined, count: () => mentionAgents.value.length },
-  { key: 'skill', label: '技能', icon: AppstoreOutlined, count: () => skillList.value.length }
-]
-// 搜索框一页一词：切页签不串味（引用页那一份就是 mentionQuery，四个子页签共用，敲 @ 时由正文实时灌进来）
-const addSearchable = computed(() => ['ref', 'hist', 'cmd'].includes(addTab.value))
-const addQuery = computed({
-  get: () => addTab.value === 'ref' ? mentionQuery.value
-    : addTab.value === 'hist' ? addHistQuery.value
-      : addTab.value === 'cmd' ? addCmdQuery.value : '',
-  set: v => {
-    if (addTab.value === 'ref') mentionQuery.value = v
-    else if (addTab.value === 'hist') addHistQuery.value = v
-    else if (addTab.value === 'cmd') addCmdQuery.value = v
-  }
-})
-const addSearchHint = computed(() => ({
-  ref: '搜索知识库、文档、智能体或技能',
-  hist: '筛选历史问答',
-  cmd: '搜索命令'
-}[addTab.value] || ''))
-const addFootHint = computed(() => {
-  const t = addTab.value
-  const edit = addOnEdit.value
-  if (t === 'root') {
-    const nav = '↑↓ 选择 · Enter 进入 · Tab 进/退层 · Esc 关闭'
-    return nav + (edit ? '　|　文件图片也可以直接粘贴进来'
-      : '　|　输入框可直接敲 @ 引用、# 历史、/ 命令；文件也可直接拖进来')
-  }
-  const nav = '↑↓ 选择 · Enter 确认 · Tab 返回 · Esc 关闭'
-  const scope = edit ? '这一问' : '本轮'
-  if (t === 'ref') {
-    if (mentionTab.value === 'skill') {
-      return nav + `　|　选用的技能随${scope}带上` + (edit ? '（一次最多 3 个）' : '，下一轮自动取消（一次最多 3 个）')
-    }
-    return nav + `　|　引用只对${scope}生效：知识库 = 检索只在这些库里找；文档 = 内容直接带入上下文；智能体 = 强制咨询它（它带自己的知识库查一遍，回答仍由当前助手汇总）`
-  }
-  if (t === 'hist') return nav + `　|　勾选的历史问答作为${scope}上下文带给模型（最多 10 条）`
-  return nav + '　|　命令立即执行，计划、目标可跟一句任务'
-})
-const addSkillList = computed(() => {
-  const s = mentionQuery.value.trim().toLowerCase()
-  if (!s) return skillList.value
-  return skillList.value.filter(x => `${x.name || ''} ${x.description || ''}`.toLowerCase().includes(s))
-})
-const addCmdList = computed(() => {
-  const s = addCmdQuery.value.trim().toLowerCase()
-  const cmds = slashCommands.value
-  if (!s) return cmds
-  return cmds.filter(c => `${c.name} ${c.desc || ''} ${slashAliasesOf(c).join(' ')}`.toLowerCase().includes(s))
-})
-/** 引用页当前子页签的候选（点击与 Enter 都读这一份，下标才对得上） */
-const addRefList = computed(() => mentionTab.value === 'kb' ? mentionKbFiltered.value
-  : mentionTab.value === 'agent' ? mentionAgentFiltered.value
-    : mentionTab.value === 'skill' ? addSkillList.value : mentionDocFiltered.value)
-const addListSize = computed(() => addTab.value === 'root' ? addRootRows.value.length
-  : addTab.value === 'ref' ? addRefList.value.length
-    : addTab.value === 'hist' ? addHistCandidates.value.length
-      : addTab.value === 'cmd' ? addCmdList.value.length : 0)
-// 候选集变了，原高亮下标已无意义：回到第一条，并把列表滚回顶部区域
-watch(addQuery, () => { addHi.value = 0; nextTick(scrollPanelHiIntoView) })
-
-const closeAddPanel = () => { addOpen.value = false }
-/** 引用候选懒加载（首次进入引用页才拉）：库/文档走列表接口（共享范围已在后端过滤），
- *  智能体复用工具条下拉的同一份数据（挂载时已开始加载，兜底再拉一次）；技能清单同理兜底 */
-const ensureRefCandidates = () => {
-  if (!mentionKbs.value.length && !mentionDocs.value.length) loadMentionCandidates()
-  if (!agentList.value.length) loadAgents()
-  if (!skillList.value.length) loadSkills()
-}
-/** 可搜索的页签把焦点交给面板内搜索框（打字即筛），否则交回输入框——
- *  两处键盘都走 onPanelNavKeydown，焦点在哪都能继续 ↑↓/Enter/Esc */
-const focusAddSearch = () => nextTick(() => {
-  if (addSearchable.value) { addSearchEl.value?.focus?.(); return }
-  // 退回一级时把焦点交回编辑区：antd 的 focus() 在 keydown 事件流里调用不生效（焦点会落回 BODY，
-  // 后续 Esc 全打空），同一事件流里连原生 focus() 也留不住，必须 setTimeout 挪出事件流；
-  // click 流（点「+」打开）没这问题，多延一拍无害
-  setTimeout(() => {
-    if (addOnEdit.value) { editingRef.value?.focus?.(); return }
-    const cp = composerRef.value
-    if (!cp) return
-    cp.focus()
-    cp.setCaret(text.value.length)
-  }, 0)
-})
-/** 二级页是否由一级菜单进入（区别于敲 @ 直接落在引用页）：决定 Esc 在二级是退回一级还是整个关闭 */
-const addFromRoot = ref(false)
-/** 二级 → 返回一级菜单。@ 触发的筛选片段还挂在正文里时先摘掉（回到一级意味着改由搜索框接手） */
-const backToRoot = () => {
-  if (panelTriggerPos >= 0) stripTriggerToken()
-  addTab.value = 'root'
-  addHi.value = 0
-  focusAddSearch()
-}
-const switchAddTab = k => {
-  if (k !== addTab.value) {
-    // 敲 @ 进来时正文里留着「@ + 筛选词」。切到别的页签就意味着改由搜索框接手筛选，
-    // 所以先把触发片段摘掉（词本身留在 mentionQuery 里，回到「引用」页还能接着筛）
-    if (panelTriggerPos >= 0) stripTriggerToken()
-    addTab.value = k
-    addHi.value = 0
-    addFromRoot.value = true
-    if (k === 'ref') ensureRefCandidates()
-  }
-  focusAddSearch()
-}
-const switchRefTab = k => {
-  mentionTab.value = k
-  addHi.value = 0
-  nextTick(scrollPanelHiIntoView)
-}
-/** 引用资料行确认（四个子页签共用，Enter 与鼠标点击同一条路径）。两种入口两种收尾：
- *  敲 @ 进来的，确认后摘掉触发片段、收面板、焦点回输入框接着打字（引用已由 chip 承载）；
- *  点「+」进来的，勾选后留在面板里继续挑——引用与技能都可多选，收面板等于逼用户反复点开。 */
-const confirmRefRow = (type, item) => {
-  const byTrigger = panelTriggerPos >= 0 && panelTriggerCh === '@'
-  if (byTrigger) { stripTriggerToken(); closeAllPanels() }
-  if (type === 'skill') toggleAddSkill(item.name)
-  else toggleAddMention(type, item)
-  if (byTrigger) focusInput()
-}
-/** Enter 确认「+」面板当前页的高亮项。返回 false = 这一页没有可确认的候选，
- *  本次回车交回输入框照常发送（避免"筛到空了就打不出发不出去"） */
-const confirmAddHi = i => {
-  const t = addTab.value
-  if (t === 'root') {
-    const row = addRootRows.value[i]
-    if (!row) return false
-    row.run()
-    return true
-  }
-  if (t === 'ref') {
-    const item = addRefList.value[i]
-    if (!item) return false
-    confirmRefRow(mentionTab.value, item)
-    return true
-  }
-  if (t === 'hist') {
-    const m = addHistCandidates.value[i]
-    if (!m) return false
-    toggleAddHistoryRef(m)
-    return true
-  }
-  const c = addCmdList.value[i]
-  if (!c) return false
-  runCmdFromAddPanel(c)
-  return true
-}
-/** 两个入口共用的开面板动作：先复位筛选与层级，再按入口标定写入目标 */
-const openAddPanel = target => {
-  closeAllPanels()          // 与 / # 触发面板互斥，开一个收一个
-  addHistQuery.value = ''   // 每次打开从干净筛选开始（一级菜单总是从头展示，不记住上次逛到哪）
-  addCmdQuery.value = ''
-  mentionQuery.value = ''   // 引用页同理：上次敲 @ 筛剩的词不该在重开时还挂着
-  addHi.value = 0
-  addTab.value = 'root'
-  addFromRoot.value = false
-  addTarget.value = target
-  addOpen.value = true
-  focusAddSearch()
-}
-const toggleAddPanel = () => {
-  if (addOpen.value && !addOnEdit.value) { closeAddPanel(); return }
-  openAddPanel('main')
-}
-/** 就地编辑卡的「+」：同一块面板，选中结果落到这张卡的随行内容上 */
-const toggleEditAddPanel = () => {
-  if (addOpen.value && addOnEdit.value) { closeAddPanel(); return }
-  openAddPanel('edit')
-}
-/** 命令页点选：先收面板，执行与生成中的拦截都在 runSlashCommand 里 */
-const runCmdFromAddPanel = c => {
-  closeAddPanel()
-  runSlashCommand(c)
-}
-/** 发送前收起「+」面板：它浮在输入区上方，留着会挡住回答 */
-// ==================== 深度执行入口（模式标记互斥） ====================
-// 两个开关互不知晓时会同时挂着两颗模式 chip，而发送只走其中一条线（目标优先）——
-// 另一颗就成了「看着生效、实际没生效」的漂移。所以互斥在开关时刻做：开启一边当场收掉另一边，
-// 提交路径（startGoalNow）再兜一次底。包装函数只包「开启」，关闭不涉及冲突。
-/** 深度执行上膛统一出口：/deep 命令 toggle 用它；执行态本身就是计划+续跑，不再有第二颗计划开关 */
-const armGoal = v => {
-  goalArmed.value = !!v
-  if (v && planModeOn.value) setPlanMode(false)
-}
-/** 发送时兜底解析 /deep、/深度：面板没开（或命令被直接敲进来）时也能“回车即执行” */
-const inlineSlash = () => {
-  const { matched, task } = parseDeepCommand(text.value)
-  if (!matched) return false
-  if (!goalModeOn.value) { message.info('这个助手没有开启深度执行'); return true }
-  text.value = ''
-  if (task) startGoalNow(task)
-  else armGoal(!goalArmed.value)
-  return true
-}
-const sendNow = async (steerNow = false) => {
-  if (foreignWorkspace.value) {
-    message.warning('这个工作区属于另一台电脑：请在那台电脑上使用（侧栏「这台电脑」可查看当前设备）')
-    return
-  }
-  if (inlineSlash()) { closeAllPanels(); return }
-  if (goalModeOn.value && goalArmed.value && !sessionGoal.value && String(text.value || '').trim()) {
-    goalArmed.value = false
-    // 互斥兜底（开启点已保证收掉，防 localStorage 恢复等边缘残留）：目标这轮带不走计划标记
-    if (planModeOn.value) setPlanMode(false)
-    closeAllPanels()
-    const g = await startGoalNow()
-    // 目标没立成（网络失败/服务端拒绝）：重新上膛，用户再按 Enter 仍走目标这条路
-    // （那句原文已由 startGoalNow 还回输入框）
-    if (!g) goalArmed.value = true
-    return
-  }
-  // 目标创建中：这一下是重复触发（连按 Enter / 发送键），不落到普通发送
-  if (goalStarting.value) return
-  closeAddPanel(); send(steerNow ? { steerNow: true } : {})
-}
-
-// ==================== 插话队列的拖动排序 ====================
-// 队列顺序有意义：收尾结算按它依次发出，用户排的先后就是进模型的先后。
-// 用原生 HTML5 拖拽（队列里最多几条，不值得为此引一个 dnd 库）。
-// 落点记录在 steerDragOver：dragOver 阶段才知道鼠标压在哪一条上，drop 时用它算目标下标
-// （dataTransfer 读不到实时位置，只能这么传）。
-const steerDragIdx = ref(-1)
-const steerDragOver = ref(-1)
-const onSteerDragStart = (i, e) => {
-  steerDragIdx.value = i
-  // 不设 dataTransfer 时 Firefox 不触发 drag；设个占位让拖拽在所有浏览器都成立
-  try { e.dataTransfer.setData('text/plain', String(i)); e.dataTransfer.effectAllowed = 'move' } catch (err) { /* 忽略 */ }
-}
-const onSteerDragOver = i => { steerDragOver.value = i }
-const onSteerDragEnd = () => { steerDragIdx.value = -1; steerDragOver.value = -1 }
-const onSteerDrop = () => {
-  const from = steerDragIdx.value
-  const to = steerDragOver.value
-  if (from >= 0 && to >= 0 && from !== to) moveSteer(from, to)
-  onSteerDragEnd()
-}
-
-/** 插话载荷摘要：只把「带了什么」标出来（与气泡里那版同口径，队列里也要看得见带了材料） */
-function steerExtras (s) {
-  if (!s) return ''
-  const bits = []
-  if (s.images?.length) bits.push(`${s.images.length} 张图`)
-  if (s.atts?.length) bits.push(`+${s.atts.length} 个附件`)
-  if (s.skills?.length) bits.push(`技能 ×${s.skills.length}`)
-  if (s.mentions?.length) bits.push(`@ ${s.mentions.length}`)
-  if (s.historyRefs?.length) bits.push(`# ${s.historyRefs.length}`)
-  if (s.planMode) bits.push('先出计划')
-  return bits.join(' · ')
-}
-// ==================== 会话内查找（Ctrl/⌘+F） ====================
-// 逻辑主体在 src/chat/useChatSearch.js：移动壳顶栏的查找入口用同一份。
-// 两端靠消息行的 [data-row-index] 契约对齐（PC 内联模板与 MobileMsgRow 均已带），
-// 高亮本体共用全局 app.css 的 ::highlight(chat-search) —— Custom Highlight API 不改 DOM，
-// 正文是 v-html 渲染的，插 <mark> 会与重渲染/渲染缓存互相打架。
-// messages / currentSessionId 用 getter 传入：它们来自下方引擎解构（const 声明在本调用点之后）。
-const {
-  searchOpen, searchQuery, searchPos, searchInputRef, matchedIdxs, searchPosShown,
-  openSearch, closeSearch, gotoMatch, paintHighlight: paintSearchHighlight, scrollToMatch
-} = useChatSearch({
-  boxRef: box,
-  messages: () => messages.value
-})
-// Ctrl/⌘+F 打开会话内查找（在聊天页拦下浏览器原生查找，与主流产品一致）；Esc 关闭
-const onSearchHotkey = e => {
-  if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F')) {
-    e.preventDefault()
-    searchOpen.value ? searchInputRef.value?.focus?.() : openSearch()
-  } else if (e.key === 'Escape' && searchOpen.value) {
-    closeSearch()
-  }
-}
-onMounted(() => document.addEventListener('keydown', onSearchHotkey))
-onUnmounted(() => document.removeEventListener('keydown', onSearchHotkey))
-/** Esc 兜底：候选面板开着时点击行（非可聚焦 div，如「+」一级菜单行）焦点会落回 BODY，
- *  keydown 到不了面板的 @keydown 与输入框——在 document 层接住 Esc。焦点还在面板/输入框内时
- *  跳过（onPanelNavKeydown / onInputKeydown 已处理，避免双份关闭）。 */
-const onDocEscKeydown = e => {
-  if (e.key !== 'Escape' || e.isComposing || e.keyCode === 229) return
-  if (!slashOpen.value && !histOpen.value && !addOpen.value) return
-  // 弹窗开着时 Esc 归弹窗自己（ant 收掉它）：这里再收一次会把背后的面板一起撤掉，
-  // 与点弹窗关闭叉号同一口径——回到页面应当还能接着逛面板
-  if (hitsOverlay(e.composedPath())) return
-  const hit = n => n instanceof HTMLElement && (n.closest('.mention-panel') || n.closest('.ci-box'))
-  if (e.composedPath().some(hit)) return
-  e.preventDefault()
-  closeAllPanels()
-  focusInput()
-}
-onMounted(() => document.addEventListener('keydown', onDocEscKeydown))
-onUnmounted(() => document.removeEventListener('keydown', onDocEscKeydown))
-
-// ==================== 会话分享（只读链接） ====================
-// 分享的是"这段对话"：链接持有者可看不可续聊。链接展示的是会话**最新内容**（后端按 token 实时读，
-// 不是快照）——所以弹窗里必须讲清楚，否则用户后续聊到敏感内容时不会意识到分享页也跟着变了。
-// 状态机落到 src/views/shareSession.js：移动「状态与来源」sheet 用同一份（同一会话只有一条分享、
-// 换链接会使旧链接失效，两端必须同口径），这里只留 PC 的显示态与预览动作。
-const shareVisible = ref(false)
-const {
-  loading: shareLoading, info: shareInfo, url: shareUrl,
-  load: loadShare, enable: enableShare, disable: stopShare, copyLink: copyShareLink
-} = useSessionShare({ sessionId: () => currentSessionId.value })
-
-// 顶栏/移动头分享图标的激活态：与侧栏会话行的分享标记**同源**（sessionStore.list[].shared，
-// 后端会话列表按 enabled=1 下发）。开启与停止分享的每个入口（PC 弹窗、移动 sheet、个人设置→
-// 分享管理）都 markSessionShared 回写过这个字段，所以顶栏与侧栏天然同态、也不为图标多发一次请求；
-// 页面刷新后由 loadSessions 的权威值兜底。当前会话不在已加载页里时同样查不到（= 侧栏也看不到它）。
-const shareActive = computed(() =>
-  sessionStore.list.some(s => s.id === currentSessionId.value && !!s.shared))
-
-const openShare = async () => {
-  if (!messages.value.length) { message.info('当前会话还没有内容可分享'); return }
-  shareVisible.value = true
-  await loadShare()
-}
-
-// 侧栏会话菜单「分享」：切会话后打开这个弹窗（菜单在 AppLayout，是本页的兄弟组件，
-// 只能靠 store 信号通信）。**必须等历史到位再开** —— 菜单是「先跳路由再发信号」，
-// 此刻 messages 还是上一条会话的或空的；直接调 openShare 会被 messages.length 守卫挡掉。
-// 轮询上限 2s：异常情况下（历史 403/空）也退出，不能无限等 —— 之后用户可点顶栏图标手动开。
-const consumeShareOpen = async () => {
-  for (let i = 0; i < 40 && !messages.value.length; i++) await new Promise(r => setTimeout(r, 50))
-  await openShare()
-}
-watch(() => sessionStore.shareOpenTick, () => { if (route.path === '/chat') consumeShareOpen() })
-/** 生成或换新链接（后端对已开启的分享再次开启会换 token，旧链接立即失效）。
- *  刻意包一层而非直接指过去：模板 @click 会把 MouseEvent 当第一个实参传进来，
- *  形参取 regenerate 时「生成」会被当成「换新」（!!event === true）。 */
-const doEnableShare = () => enableShare(false)
-const regenerateShareLink = () => enableShare(true)
-const doDisableShare = () => stopShare()
-const openSharedPage = () => { if (shareUrl.value) window.open(shareUrl.value, '_blank', 'noopener') }
-/** 面板键盘导航（/ # 触发面板与「+」面板共用一套；焦点在输入框还是在面板搜索框都走这一个函数）。
- *  返回 true = 本次按键已被面板消费，调用方（onInputKeydown）不要再落到发送分支。 */
-const onPanelNavKeydown = e => {
-  if (e.isComposing || e.keyCode === 229) return false   // 输入法组合中（中文候选未上屏）一律放行
-  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-    e.preventDefault()
-    movePanelHi(e.key === 'ArrowDown' ? 1 : -1)
-    return true
-  }
-  if (e.key === 'Escape') {
-    e.preventDefault()
-    // 「+」面板里由一级菜单进入的二级页，Esc 先退回一级（再按一次才关）；敲 @ 直接落在引用页的
-    // 没有「上一层」，Esc 整个关闭。/ # 面板无层级，Esc 直接关
-    if (addOpen.value && addTab.value !== 'root' && addFromRoot.value) { backToRoot(); return true }
-    closeAllPanels()
-    focusPanelOwner()
-    return true
-  }
-  // Tab 在「+」面板里进/退层级：一级=进入高亮项，二级=退回一级。/ # 面板没有层级，留给原生焦点跳转
-  if (e.key === 'Tab' && addOpen.value) {
-    e.preventDefault()
-    if (addTab.value === 'root') confirmAddHi(addHi.value)
-    else backToRoot()
-    return true
-  }
-  // 有高亮候选才由 Enter 确认；没有候选（筛空了）时 Enter 仍走发送，避免"打不中就发不出去"
-  if (e.key === 'Enter' && !e.shiftKey && confirmPanelHi()) {
-    e.preventDefault()
-    return true
-  }
-  return false
-}
-// 输入框回车发送（Enter 发送，Shift+Enter 换行；输入法组合中不发送）
-const onInputKeydown = e => {
-  if (e.isComposing || e.keyCode === 229) return   // 输入法组合中（中文候选未上屏）一律放行
-  // 面板打开时由输入框接管导航：↑↓ 移动高亮、Enter 确认、Esc 关闭、「+」面板还能 Tab 切页签
-  if (slashOpen.value || histOpen.value || addOpen.value) {
-    if (onPanelNavKeydown(e)) return
-  }
-  // 生成中 ⌘/Ctrl+Enter = 这句排进队列后马上走「立即发送」，一步插进本轮；
-  // 单按 Enter 仍只排队——连打几句、发之前回改的路径还得留着。候选面板开着时先确认候选（上面已拦）。
-  if (loading.value && e.key === 'Enter' && !e.shiftKey && !e.altKey && (e.metaKey || e.ctrlKey)) {
-    e.preventDefault()
-    sendNow(true)
-    return
-  }
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault()
-    sendNow()
-    return
-  }
-  // @ / # 唤起候选面板：**不拦下字符**——它是普通文本，用户要在任意位置都能打出来。
-  // 唤起后焦点留在输入框，筛选词由 syncPanelQuery 从「触发字符到光标」之间的正文实时取。
-  // 触发位置仍限「行首 / 空白后」，避免邮箱 a@b.com、URL 里的 / 误开面板。
-  if ((e.key === '@' || e.key === '#' || e.key === '/') && !e.ctrlKey && !e.metaKey && !e.altKey) {
-    const pos = composerCaret()
-    const before = text.value.slice(0, pos)
-    if (!before || /[\s（(【[]$/.test(before)) {
-      // 记录触发字符即将落在的位置（keydown 时字符还没进 DOM，插入后下标即 pos）
-      panelTriggerPos = pos
-      panelTriggerCh = e.key
-      if (e.key === '@') openMentionPanel()
-      else if (e.key === '#') openHistPanel()
-      else openSlashPanel()
-    }
-    return
-  }
-}
-/** 引用来源折叠行的后缀：「N 段填入上下文」。仅当命中数与引用条数不同才补——
- *  相同的时候再说一遍只是噪音（原实现把这段写死在模板里，抽组件后挪成具名函数） */
-const hitsNote = m => {
-  const t = m && m.tokens
-  const r = m && m.retrieved
-  if (!r || !t || t.hits == null || t.hits <= 0 || t.hits === r.refs) return ''
-  return `（${t.hits} 段填入上下文）`
-}
-
-const copyAnswer = async mi => {
-  const m = messages.value[mi]
-  if (!m || !m.content) { message.warning('该回答无可复制内容'); return }
-  await copyText(m.content.trim())
-}
-/** 复制用户的问题（长会话里把问题转走/复问用） */
-const copyUserMessage = m => {
-  const txt = (m?.content || '').trim()
-  if (!txt) { message.warning('该消息无可复制内容'); return }
-  copyText(txt, '已复制')
-}
-
-// 删除本轮对话（回答 + 同组问题一起软删除）；导出 Markdown（该轮问答）
-const onMoreAction = (key, mi) => {
-  if (key === 'debug') openDebug(mi)
-  else if (key === 'addEval') addToEval(mi)
-  else if (key === 'deleteRound') deleteRound(mi)
-  else if (key === 'export') exportRound(mi)
-  // 逐气泡的过程回放：会话级「过程」列最近几轮，这里按消息行的 turnId 只看这一条回答那一轮
-  else if (key === 'events') {
-    const ai = messages.value[mi]
-    let q = ''
-    for (let i = mi - 1; i >= 0; i--) {
-      const r = messages.value[i]?.role
-      if (r === 'user') { q = messages.value[i].content || ''; break }
-      if (r === 'assistant' || r === 'ai') break
-    }
-    openEvents(ai?.turnId, ai, q)
-  }
-}
-/** 差评回流一键固化：本轮「问题 → 引用的知识块」追加进检索评测集（后端按问题去重） */
-const addToEval = async mi => {
-  const m = messages.value[mi]
-  const kids = [...new Set((m.sources || []).map(s => s.knowledgeId).filter(Boolean))]
-  if (!kids.length) { message.warning('本轮没有可固化的知识块引用'); return }
-  let question = null
-  for (let i = mi - 1; i >= 0; i--) {
-    if (messages.value[i].role === 'user') { question = messages.value[i]; break }
-    if (messages.value[i].role === 'assistant' || messages.value[i].role === 'ai') break
-  }
-  if (!question?.content) { message.warning('找不到本轮对应的提问'); return }
-  try {
-    const r = await addEvalCase(question.content, kids)
-    if (r && r.success !== false) {
-      if (r.data?.added === false) message.info(r.data.reason || '评估集已存在相同问题')
-      else message.success('已加入评测集')
-    } else message.error(r?.msg || '加入评测集失败')
-  } catch (e) { message.error(e.message || '加入评测集失败') }
-}
-// ==================== 固化为技能 ====================
-// 把这一轮「问题→做法」沉淀成一条可复用的 SKILL.md：预填名称/描述/正文骨架，改两行就能用。
-// 技能名跟后端白名单同一判据（汉字/字母/数字/下划线/连字符，≤64 字符）：拿本轮问题剥掉
-// 白名单外的字符当名（剥空则退回 chat-skill-<时刻>），描述取问题前 80 字——那本来就是一句话场景。
-const solidifyOpen = ref(false)
-const solidifyBusy = ref(false)
-const solidifyForm = reactive({ name: '', description: '', content: '' })
-const gotoSkillsPage = () => router.push({ path: '/agents', query: { tab: 'skills' } })
-const solidifySlug = q => {
-  const s = String(q || '').replace(/[^一-鿿A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64)
-  return s || ('chat-skill-' + Date.now().toString(36))
-}
-const openSolidify = mi => {
-  const m = messages.value[mi]
-  if (!m || !m.content) { message.warning('这一轮还没有可固化的回答'); return }
-  let question = ''
-  for (let i = mi - 1; i >= 0; i--) {
-    const r = messages.value[i]?.role
-    if (r === 'user') { question = String(messages.value[i].content || ''); break }
-    if (r === 'assistant' || r === 'ai') break
-  }
-  solidifyForm.name = solidifySlug(question)
-  solidifyForm.description = question.slice(0, 80)
-  solidifyForm.content = '## 适用场景\n' + question +
-    '\n\n## 做法\n1. （把上面回答的关键步骤整理成可复用做法）\n2. …\n\n## 输出要求\n…'
-  solidifyOpen.value = true
-}
-const submitSolidify = async () => {
-  const name = String(solidifyForm.name || '').trim()
-  if (!name) { message.warning('给技能起个名字'); return }
-  if (solidifyBusy.value) return
-  solidifyBusy.value = true
-  try {
-    await createSkill({ name, description: String(solidifyForm.description || '').trim(),
-      content: solidifyForm.content || '', category: '通用' })
-    solidifyOpen.value = false
-    loadSkills()   // 新技能立刻进 @ 点名候选，不用刷新页面
-    // 成功话术带「去技能页查看」出口：固化完的人下一步就是想看看成品长什么样
-    message.success(h('span', null, ['已创建技能「' + name + '」，',
-      h('a', { onClick: gotoSkillsPage }, '去技能页查看')]), 5)
-  } catch (e) {
-    // request 封装把后端 msg 原样挂在 Error.message 上（重名/非法字符都是现成的一句人话）
-    message.error(e.message || '创建技能失败')
-  } finally {
-    solidifyBusy.value = false
-  }
-}
-// 单轮导出：向 mi 前配对最近的用户提问（遇更早回答即停）
-const exportRound = mi => {
-  const m = messages.value[mi]
-  if (!m || !m.content) { message.warning('该回答无可导出内容'); return }
-  let question = null
-  for (let i = mi - 1; i >= 0; i--) {
-    if (messages.value[i].role === 'user') { question = messages.value[i]; break }
-    if (messages.value[i].role === 'assistant' || messages.value[i].role === 'ai') break
-  }
-  exportAnswerMd({ answer: m, question, title: currentSessionTitle.value })
-}
-const deleteRound = async mi => {
-  const mid = messages.value[mi]?.messageId
-  if (!mid) { message.warning('该轮对话不可删除'); return }
-  try {
-    const r = await deleteMessageGroup(mid)
-    if (r.success) {
-      // 本地移除该回答与其前面的用户问题
-      let from = mi
-      if (mi > 0 && messages.value[mi - 1]?.role === 'user') from = mi - 1
-      messages.value.splice(from, mi - from + 1)
-      message.success('已删除本轮对话')
-      loadSessions()
-    } else message.error(r.msg || '删除失败')
-  } catch (e) { message.error(e.message || '删除失败') }
-}
-
-// 检索调试
-const debugVisible = ref(false)
-const debugLoading = ref(false)
-const debugQuestion = ref('')
-const debugResult = ref(null)
-const openDebug = mi => {
-  for (let i = mi - 1; i >= 0; i--) {
-    if (messages.value[i].role === 'user') { debugQuestion.value = messages.value[i].content; break }
-  }
-  debugVisible.value = true
-  runDebug()
-}
-const runDebug = async () => {
-  const q = debugQuestion.value.trim()
-  if (!q) { message.warning('请输入问题'); return }
-  debugLoading.value = true
-  debugResult.value = null
-  try {
-    const r = await debugRetrieval(q)
-    if (r.success) debugResult.value = r.data
-    else message.error(r.msg || '调试失败')
-  } catch (e) { message.error(e.message || '调试失败') }
-  finally { debugLoading.value = false }
-}
-const debugStages = computed(() => {
-  const d = debugResult.value
-  if (!d) return []
-  const map = (items, tagFn) => (items || []).map(it => ({
-    title: it.title || '（无标题）',
-    docName: it.docName || '',
-    snippet: it.snippet || '',
-    tag: tagFn(it)
-  }))
-  return [
-    { name: `关键词命中（${(d.keywordHits || []).length}）`, items: map(d.keywordHits, it => '命中率 ' + (it.hitRate ?? 0)) },
-    { name: `向量命中（${(d.vectorHits || []).length}）`, items: map(d.vectorHits, it => '相似度 ' + (it.score ?? 0)) },
-    { name: `合并后（${(d.merged || []).length}）`, items: map(d.merged, it => '分 ' + (it.score ?? 0)) },
-    { name: `重排后（${(d.reranked || []).length}）` + (d.rerankApplied ? '' : `（${d.rerankSkipReason || '未重排'}）`), items: map(d.reranked, it => '分 ' + (it.score ?? 0)) },
-    { name: `最终上下文（${(d.finalContext || []).length}/8 · 门拦下 ${d.contextGate?.droppedByGate ?? 0} 块）`, items: map(d.finalContext, it => '分 ' + (it.rerankScore ?? it.score ?? 0)) },
-    { name: `被排除（${(d.excluded || []).length}）`, items: map(d.excluded, it => '分 ' + (it.score ?? 0)) }
-  ]
-})
-
-// ==================== 消息编辑重发（页面态与判据在 ../chat/useEditResend.js） ====================
-// 从该轮重新生成，旧分支由后端软删留档；本页只把编辑卡与加号面板接进来。
-const {
-  editingIdx, editingMessageId, editingText, editingBusy, editingRef,
-  editImgs, editAtts, editMentions, editHistRefs, editSkills, editAttachInput,
-  setEditingRef, setEditAttachInputRef, autosizeEditing, probeEditAtts,
-  editMessage, cancelEdit, pickEditFiles, onEditAttachChange, editAddCount,
-  toggleEditSkill, toggleEditHistoryRef, toggleEditMention, onEditPaste,
-  removeEditImage, removeEditAtt, removeEditMention, editHistPool,
-  addEditSkill, removeEditSkill, addEditHistRef, removeEditHistRef,
-  previewEditImage, onEditKeydown, confirmEdit
-} = useEditResend({
-  messages: () => messages.value,
-  setMessages: list => { messages.value = list },
-  loading: () => loading.value,
-  histPool: () => histPool.value,
-  addOpen: () => addOpen.value,
-  addTarget: () => addTarget.value,
-  addOnEdit: () => addOnEdit.value,
-  closeAddPanel: () => closeAddPanel(),
-  onPanelNavKeydown: e => onPanelNavKeydown(e),
-  maxMentions: () => MAX_MENTIONS,
-  maxHistoryRefs: () => MAX_HISTORY_REFS,
-  resend: (...args) => streamAnswer(...args),
-  notify: message,
-  isPastedText, histItemDigest, splitAtts, resolveImg, openImages,
-  addFiles: (files, into) => addFiles(files, into),
-  takePastedFiles: (e, into) => takePastedFiles(e, into),
-  takePastedText: (e, into) => takePastedText(e, into)
-})
-const ask = q => { text.value = q; nextTick(send) }
-
-// ==================== 聊天引擎（逻辑主体在 src/chat/useChatEngine.js） ====================
-// 接缝：滚动/收面板/聚焦经 hooks 回到视图（保持原 DOM 行为），路由落点 chatPath='/chat'。
-// 引擎调用必须放在 scroll/updateTailSpacer/closeAllPanels/focusInput 这些 const 之后（TDZ）。
 const {
   // 输入与发送
   text, canSend, send, stop, steerQueue, sendSteer, editSteer, dropSteer, moveSteer,
@@ -3201,781 +1961,361 @@ const {
   compactSummaryOpen, compactSummary, compactSummaryLoading, openCompactSummary, recompactWith,
   // 「已压缩上下文」分隔线的判据（引擎里，与 H5 共用）：持久那份按消息行标记，另一档补本轮压完到落库之间
   compactDividerAt, liveCompactAt
-} = useChatEngine({
-  chatPath: '/chat',
-  // 计划模式（人在回路）要有裁决入口才放行：本页与移动壳都有计划确认栏，引擎侧按此开关兜底拦下
-  // （localStorage 桌面/移动同源共享，没有确认栏的壳不传，防止它发出没人能批准的计划问答）
-  planModeEnabled: true,
-  scrollFollow: () => nextTick(() => { updateTailSpacer(); scroll() }),
-  scrollForce: () => nextTick(() => { updateTailSpacer(); scrollForce() }),
-  scrollSoft: () => scroll(),
-  revealApproval: revealApprovalCard,
-  closePanels: closeAllPanels,
-  focusInput
-})
+} = engine
 
-// ---- 目标条 / 过程抽屉 / 交付抽屉（动作接线在 ../chat/useGoalPanels.js） ----
+const ask = q => { text.value = q; nextTick(send) }
+
+// 共享上下文：引擎值一律惰性 getter，动作/工具直接传，跨域引用经 page 惰性取值。
+const g = {
+  notify: message, message,
+  router, route, sessionStore, loadSessions,
+  nextTick, now: () => Date.now(),
+  setTimeout, clearTimeout, setInterval, clearInterval,
+  win: window, doc: document, window, document, storage: localStorage,
+  isNarrow, isCoarse,
+  api, apiSubmitFeedback, updateProjectItem,
+  copyText, exportAnswerMd, exportSessionMarkdown, parseDeepCommand,
+  resolveImg, openImages, previewUrl, openSource, hoveredRef,
+  fmtSize, fmtWindow, oneLine, histItemDigest, histItemTitle, isPastedText,
+  pasteTitle, pasteSub, histChipLabel: histItemTitle,
+  clusterHeadKind, spawnAnchorOf, openDispatchCard, stopTick,
+  buildQaAnchors, buildSessionPlans, planStepCount, planStateText,
+  CLUSTER_ICONS, BulbOutlined, icons,
+  MAX_FILES, MAX_MENTIONS, MAX_HISTORY_REFS,
+  useThinkPanel, useChatScroll, useChatPanels, useSourceFocus,
+  useChatSearch, useSessionShare, refreshSetupGuide,
+  messages: () => messages.value,
+  loading: () => loading.value,
+  text: () => text.value,
+  currentSessionId: () => currentSessionId.value,
+  currentSessionTitle: () => currentSessionTitle.value,
+  currentLevelOf, currentOverrideModel: () => currentOverrideModel.value,
+  effectiveModel: () => effectiveModel.value,
+  lastAi: () => lastAi.value,
+  modelIndex: () => modelIndex.value,
+  goalBarVisible: () => goalBarVisible.value,
+  goalModeOn: () => goalModeOn.value,
+  goalTurnStreaming: () => goalTurnStreaming.value,
+  sessionGoal: () => sessionGoal.value,
+  goalTerminal: () => goalTerminal.value,
+  goalEditing: () => goalEditing.value,
+  goalEditBusy: () => goalEditBusy.value,
+  planModeOn: () => planModeOn.value,
+  pendingPlan: () => pendingPlan.value,
+  curPlanCard: () => curPlanCard.value,
+  planExpired: () => planExpired.value,
+  pendingFiles: () => pendingFiles.value,
+  pendingImages: () => pendingImages.value,
+  pendingMentions: () => pendingMentions.value,
+  pickedSkills: () => pickedSkills.value,
+  pendingHistoryRefs: () => pendingHistoryRefs.value,
+  histPool: () => histPool.value,
+  mentionQuery: () => mentionQuery.value,
+  mentionTab: () => mentionTab.value,
+  mentionKbs: () => mentionKbs.value,
+  mentionDocs: () => mentionDocs.value,
+  mentionAgents: () => mentionAgents.value,
+  mentionKbFiltered: () => mentionKbFiltered.value,
+  mentionDocFiltered: () => mentionDocFiltered.value,
+  mentionAgentFiltered: () => mentionAgentFiltered.value,
+  agentList: () => agentList.value,
+  agentPickerOpen: () => agentPickerOpen.value,
+  skillList: () => skillList.value,
+  compactContext: () => compactContext.value,
+  askAutoSubmittable: () => askAutoSubmittable.value,
+  askHintText: () => askHintText.value,
+  askNextUnanswered: () => askNextUnanswered.value,
+  askQuestionAnswered: () => askQuestionAnswered.value,
+  pickedSkillsRef: pickedSkills,
+  // 引擎动作
+  send, stop, streamAnswer, moveSteer, setPlanMode, setThinkLevel,
+  addFiles, attachImage, attachUploaded, takePastedFiles, takePastedText,
+  toggleMention, toggleSkill, toggleHistoryRef, isMentioned, isHistPicked,
+  loadAgents, loadSkills, loadMentionCandidates, createNewSession,
+  submitPlanApproval, revisePlanInPlace, continuePlanConversation,
+  adjustPlanAfterApproval, planExecProgressOf, planAdjustsOfMsg,
+  askSubmitAll, commitAskCustom, pickAskOption, ignoreAsk,
+  startGoal, saveGoalEdit, startGoalInlineEdit, recompactWith, ready,
+  thinkCapsOf, levelOptionsOf, deepOnOf, currentLevelOf,
+  pickAgent, switchBranch, regenerate, retryHistory
+}
+
+// ---- 编辑重发：先建，命令面板要复用它的编辑态列表 ----
+const {
+  editingIdx, editingMessageId, editingText, editingBusy,
+  editImgs, editAtts, editMentions, editHistRefs,
+  editSkills, editAttachInput, setEditingRef, setEditAttachInputRef,
+  autosizeEditing, probeEditAtts, editMessage, cancelEdit,
+  pickEditFiles, onEditAttachChange, editAddCount, toggleEditSkill,
+  toggleEditHistoryRef, toggleEditMention, onEditPaste, removeEditImage,
+  removeEditAtt, removeEditMention, editHistPool, addEditSkill,
+  removeEditSkill, addEditHistRef, removeEditHistRef, previewEditImage,
+  onEditKeydown, confirmEdit
+} = (page.editResend = useEditResend({
+    messages: () => messages.value,
+    setMessages: list => { messages.value = list },
+    loading: () => loading.value,
+    histPool: () => histPool.value,
+    addOpen: () => page.panels?.addOpen.value ?? false,
+    addTarget: () => page.panels?.addTarget.value ?? '',
+    addOnEdit: () => page.panels?.addOnEdit.value ?? false,
+    closeAddPanel: () => page.panels?.closeAddPanel(),
+    onPanelNavKeydown: e => page.panels?.onPanelNavKeydown(e),
+    maxMentions: () => MAX_MENTIONS,
+    maxHistoryRefs: () => MAX_HISTORY_REFS,
+    resend: (...args) => streamAnswer(...args),
+    notify: message, editingRef,
+    isPastedText, histItemDigest, splitAtts, resolveImg, openImages,
+    addFiles: (files, into) => addFiles(files, into),
+    takePastedFiles: (e, into) => takePastedFiles(e, into),
+    takePastedText: (e, into) => takePastedText(e, into)
+  }))
+
+// ---- 命令面板：先于页面壳层，壳层要写它的开合与高亮 ref ----
+const {
+  panelTriggerPos, panelTriggerCh, panelAnyOpen, closeAllPanels,
+  panelListSize, getPanelHi, setPanelHi, slashListEl,
+  histListEl, addListEl, panelListEl, scrollPanelHiIntoView,
+  movePanelHi, confirmPanelHi, stripTriggerToken, composerCaret,
+  focusPanelOwner, syncPanelQuery, onPanelNavKeydown, slashOpen,
+  slashQuery, slashHi, slashCommands, openSlashPanel,
+  closeSlashPanel, slashQueryNorm, slashAliasesOf, slashArgPending,
+  slashArgPendingOf, slashArgsOf, slashArgsOfCmd, slashFiltered,
+  runSlashCommand, histOpen, histQuery, histHi,
+  histQueryNorm, histListOf, histListOfRows, histCandidates,
+  histChipLabel, pickHistoryRefByClick, openHistPanel, closeHistPanel,
+  addOpen, addTab, addHi, addSearchEl,
+  addHistQuery, addCmdQuery, addTarget, addOnEdit,
+  EDIT_ADD_MOUNT, addStore, addRootRows, addHistPool,
+  addHistCandidates, isAddSkillOn, toggleAddSkill, isAddMentioned,
+  toggleAddMention, isAddHistPicked, toggleAddHistoryRef, ADD_TITLES,
+  REF_SUB_TABS, addSearchable, addQuery, addSearchHint,
+  addFootHint, addSkillList, addCmdList, addRefList,
+  addListSize, closeAddPanel, ensureRefCandidates, focusAddSearch,
+  addFromRoot, backToRoot, switchAddTab, switchRefTab,
+  confirmRefRow, confirmAddHi, openAddPanel, toggleAddPanel,
+  toggleEditAddPanel, runCmdFromAddPanel
+} = (page.panels = useCommandPanels({
+    ...g,
+    composerRef, editingRef,
+    mentionQuery, mentionTab, histPool,
+    pendingFiles, pendingImages, pendingMentions, pickedSkills, pendingHistoryRefs,
+    editAtts: page.editResend.editAtts,
+    editImgs: page.editResend.editImgs,
+    editMentions: page.editResend.editMentions,
+    editSkills: page.editResend.editSkills,
+    editHistRefs: page.editResend.editHistRefs,
+    editHistPool: page.editResend.editHistPool,
+    editingIdx: page.editResend.editingIdx,
+    toggleEditMention: page.editResend.toggleEditMention,
+    toggleEditSkill: page.editResend.toggleEditSkill,
+    toggleEditHistoryRef: page.editResend.toggleEditHistoryRef,
+    pickEditFiles: page.editResend.pickEditFiles,
+    focusInput: () => page.chrome?.focusInput?.(),
+    pickAttachments: () => page.chrome?.pickAttachments?.(),
+    armGoal: (...a) => page.actions?.armGoal?.(...a),
+    startGoalNow: (...a) => page.deepask?.startGoalNow?.(...a),
+    goalEntryVisible: () => page.deepask?.goalEntryVisible.value ?? false,
+    goalArmed: () => goalArmed.value,
+    notify: message
+  }))
+
+// ---- 页面壳层：思考/滚动/浮层/来源联动四组 hook 与 chip 同步 ----
+const {
+  clusterIconOf, questionFor, inlineKeys, box,
+  thinkHoverRef, thinkPanelPos, thinkPanelEl, mThinkOpen,
+  thinkHoverModel, thinkPanelVisible, toggleThinkSheet, onDocPointerDown,
+  thinkPanelCaps, thinkPanelLevelOptions, thinkPanelCurrentLevel, thinkPanelStrengthText,
+  thinkPanelFoot, pillLevelRef, pillLevelBadge, pillLevelTitle,
+  thinkPanelCtxText, onModelOptionHover, scheduleThinkHide, onThinkPanelEnter,
+  onThinkPanelLeave, onModelSelectOpenChange, goManageAgents, stickToBottom,
+  tailSpacer, onMessagesScroll, scroll, scrollForce,
+  updateTailSpacer, railVis, railHoverIdx, railPopStyle,
+  railHoverAnchor, showAnchor, gotoAnchor, railActiveIdx,
+  updateRailActive, panelStoredRaw, panelStored, panelOpen,
+  mPanelOpen, togglePanel, processMsg, focusSpawn,
+  focusHitl, revealApprovalCard, eventsOpen, eventsTurn,
+  eventsMsg, eventsQuestion, eventsTitle, openEvents,
+  srcOpenOf, toggleSrc, ctxCapOpen, ctxCapPos,
+  ctxCapEl, showCtxCap, hideCtxCap, onCtxCapEnter,
+  onCtxCapLeave, sessionPlans, jumpToPlan, openPlanFromRail,
+  disclaimerVisible, DISCLAIMER_TEXT, hoverSource, unhoverSource,
+  locateSource, jumpToPlanRow, feedbackVisible, feedbackSubmitting,
+  feedbackText, feedbackTarget, openFeedback, doSubmitFeedback,
+  escArmed, escArmTimer, armEsc, disarmEsc,
+  stopNow, composerPlaceholder, onGlobalKeydown, onGlobalPaste,
+  syncScrollbarGutter, onWindowResize, onOrientationChange, focusInput,
+  openPreviewFromMsg, onDropFiles, onComposerPaste, pasteView,
+  openPasteView, attachInput, pickAttachments, onAttachChange,
+  openMentionPanel, OVERLAY_ROOT_CLASSES, hitsOverlay, onDocClickForMention,
+  qaAnchors, anchorQ, anchorA, GOAL_KEY,
+  fileKeyOf, imgKeyOf, menKeyOf, skillKeyOf,
+  histKeyOf, MENTION_TIP, desiredKeys, chipOf,
+  onKeys, syncChips, onChipClick, restoreWenquChips,
+  todoOpen, srcCardOpen
+} = (page.chrome = useChatChrome({
+    ...g, composerRef,
+    text, pendingFiles, pendingImages, pendingMentions, pickedSkills,
+    pendingHistoryRefs, histPool, agentPickerOpen,
+    goalArmed, goalStarting, mentionQuery,
+    slashOpen: page.panels.slashOpen,
+    histOpen: page.panels.histOpen,
+    addOpen: page.panels.addOpen,
+    addTab: page.panels.addTab,
+    addTarget: page.panels.addTarget,
+    addHi: page.panels.addHi,
+    addFromRoot: page.panels.addFromRoot,
+    closeAddPanel: page.panels.closeAddPanel,
+    closeAllPanels: page.panels.closeAllPanels,
+    ensureRefCandidates: page.panels.ensureRefCandidates,
+    openPlanViewer: (...a) => page.plan?.openPlanViewer?.(...a),
+    openSlashPanel: page.panels.openSlashPanel,
+    openHistPanel: page.panels.openHistPanel,
+    notify: message
+  }))
+
+// ---- 页面动作：发送、插话、查找、分享、复制、固化与调试 ----
+const {
+  inlineSlash, sendNow, steerDragIdx, steerDragOver,
+  onSteerDragStart, onSteerDragOver, onSteerDragEnd, onSteerDrop,
+  steerExtras, searchOpen, searchQuery, searchPos,
+  searchInputRef, matchedIdxs, searchPosShown, openSearch,
+  closeSearch, gotoMatch, paintSearchHighlight, scrollToMatch,
+  onSearchHotkey, onDocEscKeydown, shareVisible, shareLoading,
+  shareInfo, shareUrl, loadShare, enableShare,
+  stopShare, copyShareLink, shareActive, openShare,
+  consumeShareOpen, doEnableShare, regenerateShareLink, doDisableShare,
+  openSharedPage, onInputKeydown, hitsNote, copyAnswer,
+  copyUserMessage, onMoreAction, addToEval, solidifyOpen,
+  solidifyBusy, solidifyForm, gotoSkillsPage, solidifySlug,
+  openSolidify, submitSolidify, exportRound, deleteRound,
+  debugVisible, debugLoading, debugQuestion, debugResult,
+  openDebug, runDebug, debugStages
+} = (page.actions = useChatActions({
+    ...g,
+    box: page.chrome.box,
+    focusInput: page.chrome.focusInput,
+    openEvents: page.chrome.openEvents,
+    openMentionPanel: page.chrome.openMentionPanel,
+    hitsOverlay: page.chrome.hitsOverlay,
+    closeAddPanel: page.panels.closeAddPanel,
+    closeAllPanels: page.panels.closeAllPanels,
+    backToRoot: page.panels.backToRoot,
+    composerCaret: page.panels.composerCaret,
+    confirmAddHi: page.panels.confirmAddHi,
+    confirmPanelHi: page.panels.confirmPanelHi,
+    focusPanelOwner: page.panels.focusPanelOwner,
+    movePanelHi: page.panels.movePanelHi,
+    openSlashPanel: page.panels.openSlashPanel,
+    openHistPanel: page.panels.openHistPanel,
+    onPanelNavKeydown: page.panels.onPanelNavKeydown,
+    setPanelTrigger: (pos, ch) => { panelTriggerPos.value = pos; panelTriggerCh.value = ch },
+    addOpen: () => page.panels.addOpen.value,
+    addTab: () => page.panels.addTab.value,
+    addHi: () => page.panels.addHi.value,
+    addFromRoot: () => page.panels.addFromRoot.value,
+    slashOpen: () => page.panels.slashOpen.value,
+    histOpen: () => page.panels.histOpen.value,
+    goalArmed: () => goalArmed.value,
+    goalStarting: () => goalStarting.value,
+    setGoalArmed: v => { goalArmed.value = !!v },
+    setText: v => { text.value = v },
+    startGoalNow: (...a) => page.deepask?.startGoalNow?.(...a),
+    foreignWorkspace: () => page.workspace?.foreignWorkspace.value ?? false
+  }))
+
+// ---- 目标条 / 交付抽屉 ----
 const {
   goalCancelArmed, goalViewerOpen, deliveryOpen, deliveryTarget,
   armGoalCancel, confirmGoalCancel, openGoalViewer, openDelivery,
   onGoalViewerAction, jumpToGoalTurn
-} = useGoalPanels({
-  goal: () => sessionGoal.value,
-  currentSessionId,
-  messages: () => messages.value,
-  runGoalAction: a => runGoalAction(a),
-  startGoalInlineEdit: () => startGoalInlineEdit(),
-  scrollToRow: i => {
-    const el = box.value?.querySelector(`[data-row-index="${i}"]`)
-    el?.scrollIntoView({ block: 'start', behavior: 'smooth' })
-  }
-})
+} = (page.goalPanels = useGoalPanels({
+    goal: () => sessionGoal.value,
+    currentSessionId,
+    messages: () => messages.value,
+    runGoalAction: a => runGoalAction(a),
+    startGoalInlineEdit: () => startGoalInlineEdit(),
+    scrollToRow: i => {
+      const el = box.value?.querySelector(`[data-row-index="${i}"]`)
+      el?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+    }
+  }))
 
-// 长会话里「翻回前面问过什么」只能靠滚动条盲摸，锚点轨给对话一个可点目录。
-// 刻度只画提问行（role=user）；预览卡两行口径照参考样式：问题深色在上、回答摘录灰字在下。
-// ⚠️ 必须放在引擎解构之后：下面的 watch 会在 setup 当场求值 qaAnchors，而 messages 的
-// const 在解构处才初始化——排在解构之前就是本项目笔记里记过的 TDZ「Cannot access before
-// initialization」（render 期表现为 messages undefined，挂在不相干的 messages.length 上）。
-const qaAnchors = computed(() => buildQaAnchors(messages.value))
-watch(qaAnchors, () => nextTick(updateRailActive), { deep: false })
-/** 预览卡第一行：问题截一行（纯提问为空 = 图片/附件提问，照实说，不装有一行字） */
-const anchorQ = a => oneLine(a.q, 64) || '（随行图片 / 附件提问）'
-/** 预览卡第二行：回答摘录；回答还在跑就说在跑，没有回答行就不占字 */
-const anchorA = a => (a.loading ? '回答生成中…' : (a.hasAi ? oneLine(a.a, 120) : ''))
-/** 轨不常驻：鼠标进聊天区才浮现（.chat2 上的 mouseenter/mouseleave 驱动，轨自己是 chat2 的孩子，
- *  悬到刻度上不会触发 leave）。预览卡渲染在轨外——轨有 overflow 滚动，卡放里面会被横向裁掉
- *  （第一版「悬浮没概览」就是这个原因），改成 fixed 弹层按触发刻度的屏幕坐标定位。 */
-/* 列表换人（新建会话、切会话、拉历史失败清空）必须把视角一起换掉：贴底标志与尾随留白量的都是
-   上一会话的内容。前者留着会让「回到底部」那颗 ↓ 掉进新会话的正文流里；后者不重置会把上一
-   会话那一截留白带进空会话。 */
-watch(() => messages.value, () => nextTick(() => { updateTailSpacer(); scrollForce() }))
-
-// ==================== 当前工作区标识与会话级权限档位（../chat/useSessionWorkspace.js） ====================
-// 头部标识、就绪提示、档位名册、执行器刷新与目录打开都在同一份 hook 里；本页只画形状。
+// ---- 会话工作区与权限档位 ----
 const {
   sessionWorkspace, permissionPresets, sessionPermission, permissionSaving,
   dangerOpen, dangerAck, dangerSaving, workspaceRefreshing,
   effectivePermission, permissionLabel, wsTitle, foreignWorkspace,
-  workspaceSetupHint, skillDocEntry,
-  loadPermissionPresets, applyPermission, pickPermission, confirmDanger,
-  loadSessionWorkspace, goBindWorkspace, openLocalFolder, refreshSessionWorkspace
-} = useSessionWorkspace({
-  currentSessionId,
-  workspaceEpoch,
-  agent: () => currentAgent.value,
-  skillList: () => skillList.value,
-  skillDoc: () => skillDoc.value,
-  localExecutorId: () => localExecutorId(),
-  api: { getSessionWorkspace, getPermissionPresets, setSessionPermission, openProjectFolder },
-  notify: message,
-  router
-})
-// ==================== 输入框内联 chip（正文与引用同一条流） ====================
-// 两条单向通道，避免双向对账打转：
-//  · 数组 → DOM：任一数组变了就把「应有的 chip 集合」推给编辑区（面板勾选、上传完成、命令开计划模式）；
-//  · DOM → 数组：用户在编辑区里删掉一颗 chip（Backspace / 点 ×）等价于取消那条引用。
-// 数据只在数组里，DOM 只管「谁在、排在哪」，所以发给模型的载荷与改造前完全一致。
-const GOAL_KEY = 'goal'
-const fileKeyOf = f => f?.chipKey || ''
-const imgKeyOf = p => p?.chipKey || ''
-const menKeyOf = m => `m:${m.type}:${m.id}`
-const skillKeyOf = n => `s:${n}`
-const histKeyOf = h => `h:${h.messageId}`
-/** 三类 @ 引用的差别（原 chip 行上的说明收进悬浮提示，正文上方不再占一行） */
-const MENTION_TIP = {
-  kb: '本轮检索收窄到该知识库',
-  agent: '本轮会强制咨询这位助手：它带着自己的知识库查一遍，回答仍由当前助手汇总',
-  doc: '该文档内容直接带入本轮上下文'
-}
-/** 数组里现在应该有的 chip（集合语义，顺序由编辑区自己保持） */
-const desiredKeys = () => [
-  ...(goalModeOn.value && goalArmed.value && !sessionGoal.value ? [GOAL_KEY] : []),
-  ...pendingFiles.value.map(fileKeyOf),
-  ...pendingImages.value.map(imgKeyOf),
-  ...pendingMentions.value.map(menKeyOf),
-  ...pickedSkills.value.map(skillKeyOf),
-  ...pendingHistoryRefs.value.map(histKeyOf)
-].filter(Boolean)
-/** key → 画一颗 chip 所需的全部信息（fileId/dataUrl 也在这里，复制时随 text/html 外发） */
-const chipOf = key => {
-  if (!key) return null
-  if (key === GOAL_KEY) {
-    return {
-      kind: 'goal', icon: 'aim', name: '深度执行', head: true,
-      title: '深度执行：写下任务，回车开始（先出计划，助手会自己接着往下推进）',
-      delTitle: '退出深度执行'
-    }
-  }
-  if (/^f\d+$/.test(key)) {
-    const f = pendingFiles.value.find(x => fileKeyOf(x) === key)
-    if (!f) return null
-    const paste = isPastedText(f)
-    return {
-      kind: 'file', icon: 'file', paste,
-      name: paste ? pasteTitle(f.name) : f.name,
-      sub: paste ? pasteSub(f) : (f.uploading ? '上传中…' : (f.error ? '上传失败' : fmtSize(f.size))),
-      state: f.uploading ? 'uploading' : (f.error ? 'err' : (f.expired ? 'expired' : '')),
-      title: f.error || (paste ? '点击查看粘贴的全文' : f.name),
-      delTitle: '移除该附件',
-      fileId: f.fileId || '', mime: f.mime || '', size: f.size || 0
-    }
-  }
-  if (/^p\d+$/.test(key)) {
-    const p = pendingImages.value.find(x => imgKeyOf(x) === key)
-    if (!p) return null
-    return { kind: 'img', icon: 'img', name: '', thumb: p.dataUrl, title: '待发送图片（悬浮可看大图）', delTitle: '移除该图片' }
-  }
-  if (key.startsWith('m:')) {
-    const mm = pendingMentions.value.find(x => menKeyOf(x) === key)
-    if (!mm) return null
-    return {
-      kind: 'mention', mod: mm.type, icon: mm.type === 'doc' ? 'mention' : mm.type, name: mm.name || mm.id,
-      title: MENTION_TIP[mm.type] || '该引用只对本轮生效', delTitle: '移除该引用',
-      mtype: mm.type, id: mm.id
-    }
-  }
-  if (key.startsWith('s:')) {
-    const n = key.slice(2)
-    if (!pickedSkills.value.includes(n)) return null
-    return { kind: 'skill', name: n, avatar: n.slice(0, 1), title: '本轮带上这个技能', delTitle: '移除该技能' }
-  }
-  if (key.startsWith('h:')) {
-    const h = pendingHistoryRefs.value.find(x => histKeyOf(x) === key)
-    if (!h) return null
-    return {
-      kind: 'hist', icon: 'hist', name: histChipLabel(h) || h.messageId,
-      title: '作为本轮上下文带给模型', delTitle: '移除该引用', messageId: h.messageId
-    }
-  }
-  return null
-}
-/** DOM 报回来的顺序 → 数组剪枝（谁被用户删了就取消谁）。
- *  只剪「上一次在 DOM 里、这一次不在了」的：数组刚被程序化加过条目时 DOM 还没同步（syncChips 走 nextTick），
- *  拿全量集合去比就会把刚加上的那条当作用户删掉的剪掉——粘贴还原附件就是这么丢的。 */
-const onKeys = keys => {
-  const keep = new Set(keys)
-  const removed = inlineKeys.value.filter(k => !keep.has(k))
-  inlineKeys.value = keys
-  if (!removed.length) return
-  const gone = new Set(removed)
-  const hit = k => gone.has(k)
-  if (pendingFiles.value.some(f => hit(fileKeyOf(f)))) pendingFiles.value = pendingFiles.value.filter(f => !hit(fileKeyOf(f)))
-  if (pendingImages.value.some(p => hit(imgKeyOf(p)))) pendingImages.value = pendingImages.value.filter(p => !hit(imgKeyOf(p)))
-  if (pendingMentions.value.some(m => hit(menKeyOf(m)))) pendingMentions.value = pendingMentions.value.filter(m => !hit(menKeyOf(m)))
-  if (pendingHistoryRefs.value.some(h => hit(histKeyOf(h)))) pendingHistoryRefs.value = pendingHistoryRefs.value.filter(h => !hit(histKeyOf(h)))
-  if (pickedSkills.value.some(n => hit(skillKeyOf(n)))) pickedSkills.value = pickedSkills.value.filter(n => !hit(skillKeyOf(n)))
-  // 深度执行 chip 是可删的模式标记：删掉它 = 退出深度执行
-  if (gone.has(GOAL_KEY)) goalArmed.value = false
-}
-/** 数组 → 编辑区：增的插到光标处、减的摘掉节点，顺带重画（上传进度/体积/失败态都在 chip 上） */
-const syncChips = () => {
-  const cp = composerRef.value
-  if (!cp) return
-  cp.sync(desiredKeys())
-  cp.repaint()
-  inlineKeys.value = cp.domKeys()
-}
-watch([pendingFiles, pendingImages, pendingMentions, pickedSkills, pendingHistoryRefs, planModeOn, goalModeOn, goalArmed, goalBarVisible, () => sessionGoal.value?.status], syncChips, { deep: true })
-/** 点附件 chip：粘贴文本卡点开看全文（其余类型的点开没意义，文件名全名已在悬浮提示里） */
-const onChipClick = key => {
-  if (key === GOAL_KEY) { focusInput(); return }
-  const d = chipOf(key)
-  if (d && d.kind === 'file' && d.paste) openPasteView(pendingFiles.value.find(x => fileKeyOf(x) === key))
-}
-/** 粘回自己复制出去的一轮：附件按 fileId 直接挂回（不重传），图片按 data URL 挂回，引用/技能/历史走各自开关。
- *  只认 data-wenqu-* 属性，正文仍取 text/plain——所以从别的应用粘进来的是纯文本，不会带进一堆标签。 */
-const restoreWenquChips = html => {
-  let doc = null
-  try { doc = new DOMParser().parseFromString(html, 'text/html') } catch (e) { return false }
-  const nodes = Array.from(doc.querySelectorAll('[data-wenqu-kind]'))
-  if (!nodes.length) return false
-  let n = 0
-  for (const el of nodes) {
-    const k = el.getAttribute('data-wenqu-kind')
-    if (k === 'file' && attachUploaded({ name: el.getAttribute('data-wenqu-name'), mime: el.getAttribute('data-wenqu-mime'),
-      size: Number(el.getAttribute('data-wenqu-size') || 0), fileId: el.getAttribute('data-wenqu-file-id') })) n++
-    else if (k === 'img' && attachImage(el.getAttribute('data-wenqu-dataurl'))) n++
-    else if (k === 'mention') {
-      const type = el.getAttribute('data-wenqu-mtype')
-      const id = el.getAttribute('data-wenqu-id')
-      const name = el.getAttribute('data-wenqu-name')
-      if (type && id && !isMentioned(type, id)) { toggleMention(type, { id, name, fileName: name }); n++ }
-    } else if (k === 'skill') {
-      const name = el.getAttribute('data-wenqu-name')
-      if (name && !pickedSkills.value.includes(name)) { toggleSkill(name); n++ }
-    } else if (k === 'hist') {
-      const id = el.getAttribute('data-wenqu-id')
-      const hit = id && histPool.value.find(m => String(m.messageId) === String(id))
-      if (hit && !isHistPicked(hit.messageId)) { toggleHistoryRef(hit); n++ }
-    }
-  }
-  return n > 0
-}
+  workspaceSetupHint, skillDocEntry, loadPermissionPresets, applyPermission,
+  pickPermission, confirmDanger, loadSessionWorkspace, goBindWorkspace,
+  openLocalFolder, refreshSessionWorkspace
+} = (page.workspace = useSessionWorkspace({
+    currentSessionId,
+    workspaceEpoch,
+    agent: () => currentAgent.value,
+    skillList: () => skillList.value,
+    skillDoc: () => skillDoc.value,
+    localExecutorId: () => localExecutorId(),
+    api: { getSessionWorkspace, getPermissionPresets, setSessionPermission, openProjectFolder },
+    notify: message,
+    router
+  }))
 
-// 输入框上方那条「任务清单」：默认收起，只留卡头那行计数（几已完成/几待处理一眼可见），
-// 逐条内容点开再看。长任务里清单常有十行，摊开会常驻占掉输入区上方一整块。
-const todoOpen = ref(false)
+// ---- 计划视图与批准后调整 ----
+const {
+  planOpen, planHeadText, mentionNames, historyRefPreview,
+  planViewer, openPlanViewer, closePlanViewer, onViewerApprove,
+  onViewerRevise, onViewerSupersede, onViewerLocate, planMsgOfViewer,
+  planTaskTitleOf, planViewerMsg, planViewerProgress, onViewerStop,
+  planViewerAdjusts, onViewerAdjust, onViewerLocateSource, locatePlanCardById,
+  planAdjust, openPlanAdjust, closePlanAdjust, submitPlanAdjust,
+  locateReplanned, locatePlanSource, planEditPlaceholder, onPlanPanelKeydown
+} = (page.plan = usePlanPanels({
+    messages: () => messages.value,
+    currentSessionId, currentSessionTitle, curPlanCard, planExpired,
+    pendingPlan, pendingMentions, isNarrow,
+    sessionPlans: page.chrome.sessionPlans,
+    planStateText, planExecProgressOf, planAdjustsOfMsg,
+    submitPlanApproval, revisePlanInPlace, continuePlanConversation,
+    adjustPlanAfterApproval,
+    jumpToPlan: page.chrome.jumpToPlan,
+    stopNow: page.chrome.stopNow,
+    notify: message
+  }))
 
-// 右栏「引用来源」卡折叠态：默认展开（核查答案是最高频动作，保持现状不变，
-// 只是给来源多时一个收起整卡的出口）
-const srcCardOpen = ref(true)
+// ---- 深度执行、提问面板与初始化 ----
+const {
+  goalEntryVisible, startGoalNow, onGoalEditKeydown, pendingAsk,
+  askQueueCount, askPage, askCustomRef, askNow,
+  askHi, askCustomPlaceholder, askTimer, curAsk,
+  askPanelHint, askRemaining, askExpired, askCountdownText,
+  askOptionParts, focusAskRow, onPick, commitCustomAt,
+  advanceAfterSelect, onAskCustomKeydown, onAskPanelKeydown, csumInstrOpen,
+  csumInstr, applyRecompact, initialize
+} = (page.deepask = useDeepAsk({
+    ...g,
+    text, goalEditing, goalStarting, goalEditBusy,
+    editingIdx: page.editResend.editingIdx,
+    editingMessageId: page.editResend.editingMessageId,
+    cancelEdit: page.editResend.cancelEdit,
+    searchOpen: page.actions.searchOpen,
+    searchQuery: page.actions.searchQuery,
+    searchPos: page.actions.searchPos,
+    paintSearchHighlight: page.actions.paintSearchHighlight,
+    scrollToMatch: page.actions.scrollToMatch,
+    onGlobalKeydown: page.chrome.onGlobalKeydown,
+    onGlobalPaste: page.chrome.onGlobalPaste,
+    onDocPointerDown: page.chrome.onDocPointerDown,
+    onWindowResize: page.chrome.onWindowResize,
+    onOrientationChange: page.chrome.onOrientationChange,
+    syncScrollbarGutter: page.chrome.syncScrollbarGutter,
+    hideThinkPanel: page.chrome.hideThinkPanel,
+    disarmEsc: page.chrome.disarmEsc,
+    focusInput: page.chrome.focusInput,
+    loadPermissionPresets: page.workspace.loadPermissionPresets,
+    notify: message
+  }))
 
-// ===== 右栏「计划」折叠态 =====
-// **必须声明在 useChatEngine 解构之后**：下面的 watch 会立即求值 sessionPlans 的 getter，
-// 而 sessionPlans 依赖引擎解构出的 messages。若这段排在解构之前，getter 会在
-// messages 的 const 还未初始化时被调用，抛 TDZ「Cannot access 'S' before initialization」
-// （表现为 ChatPage 渲染函数内报错）。
-//
-// 计划卡默认折叠（沉底），但**有待确认计划时自动展开**：
-// 计划模式在等人批准，藏起来等于让「模型在等你裁决」这件事消失在侧栏底部——
-// 这是少数「折叠起来会出事」的状态，故用 watch 顶开而非让用户自己发现。
-const planOpen = ref(false)
-const planHeadText = computed(() => {
-  const list = sessionPlans.value
-  if (list.some(p => p.status === 'pending')) return '待确认'
-  if (list.some(p => p.status === 'drafting')) return '生成中'
-  return list[0] ? planStateText(list[0].status) : ''
-})
-watch(() => sessionPlans.value.map(p => p.status).join(','),
-  (cur, prev) => {
-    // 只在「出现了待确认/生成中」时自动展开；用户手动收起后不反复弹回（除非状态真的又变成待确认）
-    if (cur === prev) return
-    if (/pending|drafting/.test(cur)) planOpen.value = true
-  })
-
-// 空态引导用：本轮 @ 引用的资料名（副标题会说明「只在这些资料里找答案」）
-const mentionNames = computed(() => pendingMentions.value.map(m => m.name || m.id))
-
-// # 历史问答引用气泡预览（历史回显用）：截断内容做 chip 文案
-const historyRefPreview = hr => {
-  const c = (hr && hr.content) || ''
-  const plain = c.replace(/\s+/g, ' ').trim()
-  if (!plain) return '历史问答'
-  return plain.length > 20 ? plain.slice(0, 20) + '…' : plain
-}
-
-// ==================== 计划确认栏（替换聊天输入框） ====================
-// 待批准期间打字框整块顶替为确认栏（模型在等裁决，此刻也没法发新消息），与提问面板同构：
-// 编号选项 = 1. 确认（点即按原稿执行）/ 2. 继续对话（写对计划的修改要求，非空才能送）。
-// 继续对话=意见作为一条用户消息发出（同一会话继续对话）：本版计划作废（已被取代），
-// 新一轮完整走一遍（重新检索），模型带着上一版计划按意见重做——可反复，直到「确认」才执行。
-// 计划正文同时在气泡里只读展示。底部「取消」= 提问面板的「忽略」。
-// 挂卡判据、超时锁与倒计时（pendingPlan / curPlanCard / planExpired / planCountdownText）在引擎里，
-// 与移动壳共用一份。
-
-// ==================== 计划视图（完整计划 / 版本轨 / 裁决） ====================
-// 卡片只出三段式摘要，完整正文与版本记录在右侧抽屉（H5 由移动壳挂同一个 PlanViewer）。
-// 抽屉里的 card 是**同一个对象**引用：批准/修订/流式增量都实时反映，不需要复制一份状态。
-const planViewer = reactive({ open: false, card: null, sid: '', pkey: '', mi: -1, title: '', version: -1, tab: 'plan' })
-/** 打开某轮的完整计划；version=null 表示按上次停留版本/当前版；tab='exec' 直接落到执行页签 */
-const openPlanViewer = (m, i, version = null, tab = 'plan') => {
-  if (!m || !m.planCard) return
-  planViewer.card = m.planCard
-  planViewer.sid = currentSessionId.value || ''
-  planViewer.pkey = m.planCard.id || ('i' + i)
-  planViewer.mi = i
-  planViewer.title = planTaskTitleOf(i)
-  planViewer.version = Number.isInteger(version) ? version : -1
-  planViewer.tab = tab === 'exec' ? 'exec' : 'plan'
-  planViewer.open = true
-}
-const closePlanViewer = () => { planViewer.open = false }
-/** 抽屉里的裁决：动作都回引擎，抽屉只负责收口自身状态 */
-const onViewerApprove = () => {
-  const m = planMsgOfViewer()
-  if (!m) return
-  submitPlanApproval(m, 'approve')
-  closePlanViewer()
-}
-const onViewerRevise = t => {
-  const m = planMsgOfViewer()
-  if (!m) return
-  revisePlanInPlace(m, t)
-}
-const onViewerSupersede = async t => {
-  const m = planMsgOfViewer()
-  if (!m) return
-  closePlanViewer()
-  await continuePlanConversation(m, t)
-}
-const onViewerLocate = () => {
-  const mi = planViewer.mi
-  closePlanViewer()
-  if (mi >= 0 && mi < messages.value.length && messages.value[mi]?.planCard === planViewer.card) jumpToPlan(mi)
-}
-/** 抽屉当前挂在哪条消息上：按计划卡对象反查（切会话后自动失效） */
-const planMsgOfViewer = () => {
-  if (!planViewer.card || planViewer.sid !== (currentSessionId.value || '')) return null
-  return messages.value.find(m => m && m.planCard === planViewer.card) || null
-}
-/** 计划标题：取它前面最近一条用户提问的第一行（截断到 60 字） */
-const planTaskTitleOf = i => {
-  for (let j = Math.min(i, messages.value.length) - 1; j >= 0; j--) {
-    const m = messages.value[j]
-    if (m && m.role === 'user' && String(m.content || '').trim()) {
-      const line = String(m.content).trim().split('\n')[0]
-      return line.length > 60 ? line.slice(0, 60) + '…' : line
-    }
-  }
-  return currentSessionTitle.value || ''
-}
-// 切会话后抽屉里的卡已经不在当前消息流里：收起来，避免把上一会话的计划批到新会话
-watch(currentSessionId, () => { planViewer.open = false })
-
-/** 抽屉当前那条消息与它的执行进度（执行页签用；切会话/消息流变化时一起失效） */
-const planViewerMsg = computed(() => planMsgOfViewer())
-const planViewerProgress = computed(() => {
-  const m = planViewerMsg.value
-  return m ? planExecProgressOf(m) : null
-})
-/** 执行页签的「停止执行」：与输入框旁的停止同一入口（先撤 Esc 待命，再真停服务端） */
-const onViewerStop = () => { stopNow() }
-/** 抽屉里的本轮调整记录（执行页签） */
-const planViewerAdjusts = computed(() => {
-  const m = planViewerMsg.value
-  return m ? planAdjustsOfMsg(m) : []
-})
-/** 抽屉里点「调整计划」：面板盖在抽屉上，成功后一起收 */
-const onViewerAdjust = () => {
-  const m = planViewerMsg.value
-  if (m) openPlanAdjust(m, true)
-}
-/** 抽屉卡头的血缘标：回到旧计划的执行记录 */
-const onViewerLocateSource = () => {
-  const id = planViewer.card && planViewer.card.adjustFrom && planViewer.card.adjustFrom.cardId
-  closePlanViewer()
-  locatePlanCardById(id)
-}
-/** 按计划卡 id 在消息流里定位（旧卡「查看新一轮」与新卡「调整自 v1」共用） */
-const locatePlanCardById = id => {
-  if (!id) return
-  const mi = messages.value.findIndex(m => m && m.planCard && m.planCard.id === id)
-  if (mi >= 0) jumpToPlan(mi)
-}
-
-// ==================== 批准后调整计划（A 插话 / B 停止并重新计划） ====================
-// 面板只负责编辑与二次确认；这里的接线只做三件事：按当前状态算默认档与代价、把提交交给引擎、
-// 成功收口（必要时连抽屉一起关）／失败留在面板上并给可执行的下一步。
-const planAdjust = reactive({
-  open: false, m: null, fromViewer: false,
-  running: false, done: 0, doing: 0, total: 0, failed: 0, stepLabel: '',
-  busy: false, error: '', suggestReplan: false
-})
-/* 面板打开期间本轮结束/新清单到达：running 跟着消息对象走，选项与二次确认不撒谎 */
-watch(() => planAdjust.m && planAdjust.m.loading, v => {
-  if (!planAdjust.open) return
-  planAdjust.running = !!v
-})
-// 切会话：面板与它挂的那条消息一起作废，避免把意见发到新会话
-watch(currentSessionId, () => {
-  planAdjust.open = false
-  planAdjust.m = null
-  planAdjust.error = ''
-  planAdjust.suggestReplan = false
-})
-const openPlanAdjust = (m, fromViewer = false) => {
-  const c = m && m.planCard
-  if (!c || c.status !== 'approved' || c.restored) return
-  if (c.replannedBy || c.replannedAt) return
-  const prog = planExecProgressOf(m)
-  const items = (prog && prog.items) || []
-  const doingAt = items.findIndex(i => i.status === 'doing')
-  planAdjust.m = m
-  planAdjust.fromViewer = !!fromViewer
-  planAdjust.running = !!m.loading
-  planAdjust.done = prog ? prog.done : 0
-  planAdjust.doing = doingAt >= 0 ? 1 : 0
-  planAdjust.total = prog ? prog.total : 0
-  planAdjust.failed = prog ? prog.failed : 0
-  planAdjust.stepLabel = doingAt >= 0
-    ? `第 ${doingAt + 1} 步「${items[doingAt].text}」`
-    : ''
-  planAdjust.busy = false
-  planAdjust.error = ''
-  planAdjust.suggestReplan = false
-  planAdjust.open = true
-}
-const closePlanAdjust = () => {
-  if (planAdjust.busy) return
-  planAdjust.open = false
-  planAdjust.m = null
-  planAdjust.error = ''
-  planAdjust.suggestReplan = false
-}
-const submitPlanAdjust = async ({ text, mode }) => {
-  if (planAdjust.busy) return
-  const m = planAdjust.m
-  if (!m) return
-  planAdjust.busy = true
-  planAdjust.error = ''
-  planAdjust.suggestReplan = false
-  let r
-  try {
-    r = await adjustPlanAfterApproval(m, text, mode)
-  } catch (e) {
-    r = { ok: false, reason: 'error' }
-  }
-  planAdjust.busy = false
-  if (!r || !r.ok) {
-    const reason = r && r.reason
-    planAdjust.error = reason === 'ended'
-      ? '这一轮刚好结束了。要改计划，请改用「停止并重新计划」。'
-      : reason === 'stop-failed'
-        ? '这一轮没停下来，先不要重新计划。可以稍后再试。'
-        : reason === 'busy'
-          ? '还有一轮在跑，等它结束再调整。'
-          : reason === 'restored'
-          ? '这张计划是恢复的，请回到发起它的设备调整。'
-          : reason === 'model'
-            ? '还没有可用模型，请先在右上角选择模型。'
-            : reason === 'empty'
-              ? '先写下要改什么。'
-              : '提交失败，请重试。'
-    if (reason === 'ended') planAdjust.suggestReplan = true
-    return
-  }
-  const wasRunning = planAdjust.running
-  const fromViewer = planAdjust.fromViewer
-  planAdjust.open = false
-  planAdjust.m = null
-  planAdjust.error = ''
-  planAdjust.suggestReplan = false
-  if (fromViewer) closePlanViewer()
-  message.info(mode === 'replan'
-    ? (wasRunning ? '已停止本轮，正在按新意见重新计划' : '正在按新意见重新计划')
-    : '已送到正在执行的一轮，下一步开始前生效')
-}
-const locateReplanned = m => {
-  const id = m && m.planCard && m.planCard.replannedBy && m.planCard.replannedBy.cardId
-  locatePlanCardById(id)
-}
-const locatePlanSource = m => {
-  const id = m && m.planCard && m.planCard.adjustFrom && m.planCard.adjustFrom.cardId
-  locatePlanCardById(id)
-}
-
-// 与移动壳共用一份；卡片本体（三段式与旧计划收一行）收在共用组件 components/PlanCard.vue 里。
-// 这里只剩 PC 特有的意见框文案与键盘直达。
-const planEditPlaceholder = computed(() => isNarrow.value
-  ? '要改什么？同一轮内按意见升版…'
-  : '要改什么？同一轮内按意见升版，不新增气泡…（Enter 提交，Shift+Enter 换行）')
-/** 计划意见框回车=直接提交修改（与主输入框同一口径：Shift 留给换行，输入法选字的回车不算提交）。
- *  恢复态卡没有本设备的流，回车改走「转到对话修改」，与按钮的降级口径一致 */
-const onPlanPanelKeydown = e => {
-  if (e.isComposing || e.keyCode === 229) return
-  const c = curPlanCard.value
-  if (!c || c.busy || planExpired.value) return
-  if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
-    const q = String(c.editText || '').trim()
-    if (!q) return
-    e.preventDefault()
-    if (c.restored) continuePlanConversation(pendingPlan.value, q)
-    else revisePlanInPlace(pendingPlan.value, q)
-  }
-}
-
-// ==================== 深度执行（内部仍是目标实体） ====================
-// 深度执行是一句跨轮自动推进的原文：助手自己接着跑，宣布完成后自动停。
-// 用户能做的只有改原文、停止/继续、删除（都在输入框顶部那条执行条上）。
-// 会话级一份（横跨多轮），不挂气泡；状态与轮次都在输入框顶部那条执行条上说，右栏不再单列目标卡。
-
-// 入口显隐：当前智能体允许深度执行 + 本会话还没有执行（终态后允许再起一条）
-const goalEntryVisible = computed(() => goalModeOn.value && (!sessionGoal.value || goalTerminal.value))
-
-// ---- 一句话创建（/deep 与工具条入口共用）：不弹表单，取正文直接进入深度执行 ----
-// 深度执行只有一句原文：建行后助手就开始推进，第一个字打下去就已经在跑了。
-const startGoalNow = async (prefill) => {
-  const obj = String(prefill != null ? prefill : (text.value || '')).trim()
-  if (!obj) {
-    message.info('先在输入框写下这件事要做到什么，或打 /deep 深度')
-    focusInput()
-    return null
-  }
-  // 深度执行接管这一轮：挂着的旧计划标记当场收掉，避免两颗模式标记同时亮。
-  // /deep 命令、sendNow 都汇到这一个出口，在这里收一遍就全覆盖；静默收掉，不弹提示
-  if (planModeOn.value) setPlanMode(false)
-  // 先清框、后建目标：建目标是一次异步请求（建行 + 框架同步 + 起首轮，冷启动要几秒），
-  // 等它回来再清，用户会盯着满框文字和一颗亮着的发送键，以为这一句没发出去。
-  // 与普通发送同口径：text 在请求发出前就清掉。prefill 路径（/deep 深度）的
-  // 正文已由触发处摘走，这里不重复清。
-  if (prefill == null) text.value = ''
-  goalStarting.value = true
-  try {
-    const g = await startGoal(obj)
-    // 建失败就把那句还回来：目标没立成框却空了，用户只能凭记忆重打。
-    // 这期间用户又打了字就不还——不覆盖他新写的东西
-    if (!g && prefill == null && !String(text.value || '').trim()) text.value = obj
-    return g
-  } finally {
-    goalStarting.value = false
-  }
-}
-
-// ---- 就地编辑的键盘与聚焦：Enter 保存、Shift+Enter 换行、Esc 取消（与计划面板同一套键）----
-// Esc 要 stopPropagation：目标在跑时全局那条 Esc 是「两下停止本轮」，取消一次编辑不该顺手把它 armed。
-const onGoalEditKeydown = e => {
-  if (e.isComposing || e.keyCode === 229) return
-  if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
-    e.preventDefault()
-    saveGoalEdit()
-  } else if (e.key === 'Escape') {
-    e.preventDefault()
-    e.stopPropagation()
-    if (!goalEditBusy.value) goalEditing.value = false
-  }
-}
-// 点「编辑」就是要改这句话：聚焦并把插入点放到文末（停在句首看着像框没接上）
-watch(goalEditing, on => {
-  if (!on) return
-  nextTick(() => {
-    const el = document.querySelector('[data-goal-bar] textarea')
-    if (!(el instanceof HTMLTextAreaElement)) return
-    el.focus()
-    el.setSelectionRange(el.value.length, el.value.length)
-  })
-})
-
-// ==================== 智能体提问面板（替换聊天输入框） ====================
-// 当前会话存在挂起中的提问时，底部聊天输入框整块替换为提问面板（模型在等答案，此刻也没法发新消息）；
-// 答复后工具终态到达（msg.ask 清空），面板撤下、输入框回归，问答记录以工具卡形态留在气泡原位。
-// 键盘：Tab/↑↓ 在「选项+自定义输入行」间循环，回车/空格确认（输入框内回车=提交自定义答案）。
-const pendingAsk = computed(() => {
-  const list = messages.value
-  for (let i = list.length - 1; i >= 0; i--) {
-    const m = list[i]
-    if (m && m.role === 'ai' && m.ask) return m
-  }
-  return null
-})
-// 同一轮里排在当前卡之后的待答卡数（并行工具调用能一次挂出两张提问卡，一张一答轮着来）
-const askQueueCount = computed(() => ((pendingAsk.value && pendingAsk.value.askQueue) || []).length)
-const askPage = ref(0)              // 当前翻页（0 基）：一卡多问逐题展示
-const askCustomRef = ref(null)
-const askNow = ref(Date.now())      // 倒计时心跳（仅挂起中有 deadline 时走表）
-const askHi = ref(null)             // 键盘高亮行（0..n-1=选项，n=自定义）；null=不高亮（推荐项不预选）
-const askCustomPlaceholder = computed(() => isNarrow.value
-  ? '输入你的回答…'
-  : '输入你的回答…（Enter 确认）')
-let askTimer = null
-// 当前展示的问题（随翻页切换）；越界时回退到最后一题
-const curAsk = computed(() => {
-  const a = pendingAsk.value?.ask
-  if (!a || !a.questions.length) return { topic: '', question: '', options: [], multi: false }
-  const p = Math.min(askPage.value, a.questions.length - 1)
-  return a.questions[p] || { topic: '', question: '', options: [], multi: false }
-})
-// 面板底部那句提示：措辞与判据都在引擎那一份（askHintText），两端一字不差
-const askPanelHint = computed(() => {
-  const a = pendingAsk.value?.ask
-  return a ? askHintText(a, askPage.value) : ''
-})
-// 剩余毫秒 / 是否已超时 / 倒计时文本（mm:ss）
-const askRemaining = computed(() => {
-  const a = pendingAsk.value?.ask
-  if (!a || !a.deadline) return 0
-  return Math.max(0, a.deadline - askNow.value)
-})
-const askExpired = computed(() => {
-  const a = pendingAsk.value?.ask
-  return !!(a && a.deadline && !a.answered && askRemaining.value <= 0)
-})
-const askCountdownText = computed(() => {
-  const a = pendingAsk.value?.ask
-  if (!a || !a.deadline || a.answered) return ''
-  const s = Math.ceil(askRemaining.value / 1000)
-  const mm = String(Math.floor(s / 60)).padStart(2, '0')
-  const ss = String(s % 60).padStart(2, '0')
-  return mm + ':' + ss
-})
-watch(() => pendingAsk.value?.ask, (a) => {
-  askPage.value = 0
-  askHi.value = null
-  // 仅在有 deadline 时启心跳；归零后停止（由 onToolStatus 收卡，或用户已提交）
-  if (a && a.deadline) {
-    // 挂卡的这一刻就先对表：后台标签页里 1s 心跳会被节流到分钟级，不校准则首屏倒计时
-    // 按上一次 askNow 的旧值算，能比真实剩余多出好几分钟
-    askNow.value = Date.now()
-    if (!askTimer) askTimer = setInterval(() => { askNow.value = Date.now() }, 1000)
-  } else if (askTimer) {
-    clearInterval(askTimer); askTimer = null
-  }
-  nextTick(() => { const el = askCustomRef.value; if (el && el.focus) el.focus() })
-}, { flush: 'post' })
-// 手动翻页 / 自动跳题后清掉键盘高亮，避免高亮行号与新题不符
-watch(askPage, () => { askHi.value = null })
-watch(askExpired, (exp) => { if (exp && askTimer) { clearInterval(askTimer); askTimer = null } })
-// 选项展示拆分：「关键词：说明」→ 关键词加粗 + 说明弱化；无冒号时整句作为关键词
-const askOptionParts = (op) => {
-  const s = String(op || '')
-  const i = s.search(/[：:]/)
-  return i > 0 ? { kw: s.slice(0, i), rest: s.slice(i + 1).replace(/^[：:]\s*/, '') } : { kw: s, rest: '' }
-}
-// 高亮移动时同步焦点：落到自定义输入行→聚焦（可直接打字），落到选项行→失焦（避免误输入）
-const focusAskRow = () => {
-  const n = (curAsk.value.options || []).length
-  nextTick(() => {
-    const el = askCustomRef.value
-    if (!el) return
-    if (askHi.value === n) el.focus()
-    else if (document.activeElement === el) el.blur()
-  })
-}
-// 点一个候选：单选=记录选择并自动跳到下一道未答题；多选=就地勾上/取消、留在本题。
-// 多选题不跳题是刻意的：勾完一个就翻页，用户会以为这一题答完了、后面的项没地方勾
-const onPick = (oi) => {
-  const m = pendingAsk.value
-  if (!m || !m.ask || m.ask.busy || m.ask.answered || askExpired.value) return
-  pickAskOption(m, askPage.value, oi)
-  if (curAsk.value.multi) return
-  askHi.value = null
-  advanceAfterSelect(askPage.value)
-}
-// 确认某题自定义答案：回车（doAdvance=true）确认并跳下一题；失焦只确认不跳题，
-// 避免「先打字再点某个选项」时 blur 先触发跳题、导致随后的 click 记到别的题上。
-// 多选题同样不跳题——自定义那行在多选里只是其中一个勾选项，不是本题的结尾
-const commitCustomAt = (page, doAdvance) => {
-  const m = pendingAsk.value
-  if (!m || !m.ask || m.ask.busy || m.ask.answered || askExpired.value) return
-  commitAskCustom(m, page)
-  const q = m.ask.questions[page]
-  if (doAdvance && q && !q.multi && askQuestionAnswered(m.ask, page)) {
-    askHi.value = null
-    advanceAfterSelect(page)
-  }
-}
-// 选完本题后跳到下一道未答题；都答完则停在末题（等待自动提交）。「答了没」只问引擎那一份判据
-const advanceAfterSelect = (page) => {
-  const a = pendingAsk.value?.ask
-  if (!a) return
-  const next = askNextUnanswered(a, page)
-  askPage.value = next >= 0 ? next : a.questions.length - 1
-}
-// 整卡都是单选且都答过 → 自动提交（只触发一次：提交后 answered/busy 置位，条件不再满足）。
-// 卡里含多选题时这条永不成立，等用户自己点提交——「勾了第一个」和「勾完了」在状态上没有区别
-watch(() => {
-  const a = pendingAsk.value?.ask
-  return !!(a && !a.busy && !a.answered && !askExpired.value && askAutoSubmittable(a))
-}, (done) => { if (done) askSubmitAll(pendingAsk.value) })
-const onAskCustomKeydown = e => {
-  if (e.isComposing || e.keyCode === 229) return   // 输入法选字的回车不算提交
-  if (e.key === 'Enter') {
-    e.preventDefault()
-    e.stopPropagation()
-    commitCustomAt(askPage.value, true)
-  }
-}
-const onAskPanelKeydown = (e) => {
-  const a = pendingAsk.value?.ask
-  if (!a || a.busy || a.answered || askExpired.value) return
-  const total = (curAsk.value.options || []).length + 1   // 最后一格=自定义输入行
-  const inInput = e.target && e.target.tagName === 'INPUT'
-  const page = askPage.value
-  // 没有高亮时以「本题已勾的最后一项」为起点（多选按勾选顺序往上/往下走才连得上）
-  const picked = a.picks[page] || []
-  const last = a.customOn[page] ? total - 1 : (picked.length ? picked[picked.length - 1] : -1)
-  const cur = askHi.value == null ? last : askHi.value
-  if (e.key === 'ArrowDown' || (e.key === 'Tab' && !e.shiftKey)) {
-    askHi.value = (cur + 1) % total
-    focusAskRow()
-    e.preventDefault()
-  } else if (e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey)) {
-    askHi.value = (cur - 1 + total) % total
-    focusAskRow()
-    e.preventDefault()
-  } else if (!inInput && (e.key === 'Enter' || e.key === ' ')) {
-    // 回车/空格=点当前高亮行：单选是选中它，多选是勾上/取消它（同一个入口，规则在引擎那份 pickAskOption）；
-    // 自定义输入行里的回车由 onAskCustomKeydown 处理，免得两处分歧
-    if (askHi.value == null) { e.preventDefault(); return }
-    if (askHi.value < (curAsk.value.options || []).length) onPick(askHi.value)
-    else commitCustomAt(page)
-    e.preventDefault()
-  }
-}
-
-// ==================== 摘要弹窗的「带要求重新压缩」（弹窗开关与数据快照在引擎，PC/H5 共用） ====================
-const csumInstrOpen = ref(false)
-const csumInstr = ref('')
-const applyRecompact = async () => {
-  // 压完了才收起输入行：没得压/失败的原因引擎已就地提示，输入留着方便改一句再试
-  if (await recompactWith(csumInstr.value.trim())) csumInstrOpen.value = false
-}
-
-// 开始回答即收起悬浮思考面板（loading 声明后才能 watch，getter 在 watch 调用时同步执行）
-watch(() => loading.value, v => { if (v) hideThinkPanel() })
-watch(loading, v => { if (!v) disarmEsc() })
-// 切会话/消息增删后旧 Range 已失效：重算（数组引用变化即触发；流式增量不重算，避免每 token 全量扫描）
-watch(messages, () => {
-  if (!searchOpen.value || !searchQuery.value.trim()) return
-  searchPos.value = 0 // 换会话后从头开始，避免停在上一个会话的偏移上
-  nextTick(() => { paintSearchHighlight(); scrollToMatch() })
-})
-// 编辑卡按下标定位，而切会话/新建/切分支/删当前会话都会整体替换 messages。不绑回原消息
-// 就会让编辑卡跟到另一个会话的第 N 条上，点发送则把新分支开在错的会话里（还会截断它的视图）
-watch(messages, () => {
-  if (editingIdx.value == null) return
-  if ((messages.value[editingIdx.value] || {}).messageId !== editingMessageId.value) cancelEdit()
-})
-// Mermaid/ECharts 图表的补画在 AnswerBody 里（每个 .md 容器画自己那份）：
-// 流式期间也画——echarts 半截 JSON 有截断探测兜底（pending→补全自愈），mermaid 落
-// 「接收中」提示等流结束补画，节流与流结束边沿的处理都在 AnswerBody 的 watch 里。
-
-onMounted(async () => {
-  window.addEventListener('keydown', onGlobalKeydown)
-  window.addEventListener('paste', onGlobalPaste)
-  window.addEventListener('resize', onWindowResize)
-  window.addEventListener('orientationchange', onOrientationChange)
-  // 触屏深度思考 sheet 的「点外部关闭」。用 pointerdown 而非 click：touch 设备上
-  // click 在 touchend 之后才派发，面板内的 @mousedown.stop.prevent 拦不住它
-  document.addEventListener('pointerdown', onDocPointerDown)
-  refreshSetupGuide()  // 欢迎区引导卡状态（TTL 去重：AppLayout 挂载时已 force 过，通常直接复用）
-  loadPermissionPresets()
-  await ready()
-  // 「带着一句要问的话来」：工作区事项的「去聊」带 ask 进来，落进输入框等用户确认发送。
-  // 不自动发——事项措辞是给清单看的一句话，发给模型前该让用户过目改写。消费后摘掉参数，
-  // 刷新不再重复预填。只填空输入框：万一路径上有别的东西已经写了字，不覆盖
-  const askPrefill = String(route.query.ask || '')
-  if (askPrefill && !String(text.value || '').trim()) {
-    text.value = askPrefill
-    focusInput()
-    router.replace({ path: '/chat', query: { ...route.query, ask: undefined } }).catch(() => {})
-  }
-  // 「去对话点名试用」带进来的技能名（技能抽屉「测试」Tab 的跳转契约：query {skill: 技能名}）：
-  // 把这条技能钉进本轮已选技能，用户补一句问题就能试。先摘参数防刷新/来回导航重复加；
-  // 清单是引擎挂载时拉的，可能还没回来、也可能拉在技能刚创建之前——查不到就重拉一次再认，
-  // 仍不在清单里才忽略并提醒一句
-  const skillPick = String(route.query.skill || '')
-  if (skillPick) {
-    router.replace({ path: '/chat', query: { ...route.query, skill: undefined } }).catch(() => {})
-    let hit = skillList.value.find(s => s && s.name === skillPick)
-    if (!hit) { await loadSkills(); hit = skillList.value.find(s => s && s.name === skillPick) }
-    if (!hit) message.warning(`技能「${skillPick}」不在当前可用清单，已忽略点名`)
-    else if (hit.selectable === false) message.warning(`技能「${skillPick}」是工作区只读技能，不能在对话中点名`)
-    else if (!pickedSkills.value.includes(skillPick)) toggleSkill(skillPick)
-  }
-  // 智能体管理页「试一试」带进来的预选（query {agent: 智能体id}）：本会话下一问起按它作答。
-  // 更换助手不需要新建会话，与选择器既有口径一致。先摘参数防刷新重复覆盖用户的手动换人；
-  // 清单可能还没拉或刚建的新智能体不在里面——查不到就重拉一次再认，仍不在才提醒
-  const agentPick = String(route.query.agent || '')
-  if (agentPick) {
-    router.replace({ path: '/chat', query: { ...route.query, agent: undefined } }).catch(() => {})
-    let hit = agentList.value.find(a => String(a.id) === agentPick)
-    if (!hit) { await loadAgents(); hit = agentList.value.find(a => String(a.id) === agentPick) }
-    if (hit) pickAgent(hit.id)
-    else message.warning('这位智能体不能直接选用（可能已删除，或是供委派的子智能体）')
-  }
-  // 工作区事项「去聊」带来的关联标记：把这条事项与当前会话绑上，
-  // 下次再点「去聊」就接回同一条对话，而不是每次另起一条（绑定失败不挡对话）
-  const itemId = String(route.query.itemId || '')
-  const itemProjectId = String(route.query.itemProjectId || '')
-  if (itemId && itemProjectId) {
-    if (currentSessionId.value) {
-      updateProjectItem(itemProjectId, itemId, { sessionId: currentSessionId.value }).catch(() => {})
-    }
-    router.replace({ path: '/chat', query: { ...route.query, itemId: undefined, itemProjectId: undefined } }).catch(() => {})
-  }
-  // ready 后会话已加载、消息区进入稳态布局，此时测出的滚动条槽宽才准
-  nextTick(syncScrollbarGutter)
-})
 </script>
 
 <style scoped>
