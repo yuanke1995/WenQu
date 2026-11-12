@@ -1830,13 +1830,15 @@ import { chipLabelOf } from '../chat/thinking'
 import { useThinkPanel } from '../chat/useThinkPanel'
 import { buildQaAnchors } from '../chat/chatAnchors'
 import { buildSessionPlans, planStateText } from '../chat/planPanel'
-import { resolveEffectivePermission, permissionLabelOf } from '../chat/permission'
 import { useSourceFocus } from '../chat/useSourceFocus'
 import { useChatScroll } from '../chat/useChatScroll'
 import { useChatPanels } from '../chat/useChatPanels'
 import { parseDeepCommand } from '../chat/deepCommand'
 import TurnChangesCard from '../components/TurnChangesCard.vue'
 import { splitAtts } from '../chat/attachments'
+import { useEditResend } from '../chat/useEditResend'
+import { useGoalPanels } from '../chat/useGoalPanels'
+import { useSessionWorkspace } from '../chat/useSessionWorkspace'
 import { SUPPORTED_EXTS, extOf } from '../chat/intake'
 // 正文浮层的共享状态：右栏来源联动（hoveredRef / 点角标定位）与灯箱开关要用
 import { openImages, previewUrl, openSource, hoveredRef } from '../chat/answerViewer'
@@ -3098,264 +3100,36 @@ const debugStages = computed(() => {
   ]
 })
 
-// ==================== 消息编辑重发（从该轮重新生成，旧分支可回看切换） ====================
-// 就地编辑：点「编辑」后编辑卡原位替换该气泡（右对齐紧凑卡），确认后从这一轮整段重新生成——
-// 被编辑消息及其后的旧分支由后端软删留档（variant_group/variant_tail），可随时切回。
-// 编辑重发与直接回填输入框（旧行为，发起新一轮）是两个入口：这里走 editMessageId 分支链路。
-const editingIdx = ref(null)
-const editingMessageId = ref('')
-const editingText = ref('')
-const editingBusy = ref(false)
-const editingRef = ref(null)
-// 随行内容：从原消息播种，编辑期内可增删（图片/附件与主输入框同构同管线）。
-// 「原封不动地编辑」= 原问题带过的每一项都能在编辑卡里看到、改、删：图片 / 文档附件 /
-// @ 引用 / # 历史引用 / 技能。深度思考不进编辑卡（它是模型侧的算力档位、没有可编辑内容，
-// 重发时沿用原轮）。
-const editImgs = ref([])      // [{ dataUrl }]
-const editAtts = ref([])      // [{ name, mime, size, fileId, uploading, error }]，attachData+attachments 合并态
-const editMentions = ref([])  // [{ type, id, name, kbId }]
-const editHistRefs = ref([])  // [{ messageId, role, digest }]，# 历史引用
-const editSkills = ref([])    // [技能名]
-const editAttachInput = ref(null)
-// v-for 内的模板 ref 走函数式（ref 属性在循环里会聚集成数组，取值麻烦）
-const setEditingRef = el => { editingRef.value = el }
-const setEditAttachInputRef = el => { editAttachInput.value = el }
-
-// 输入区自适应高度：起步单行随内容长高，超过 200px 内部滚动（与紧凑卡外形匹配）
-const autosizeEditing = () => {
-  const el = editingRef.value
-  if (!el) return
-  el.style.height = 'auto'
-  el.style.height = Math.min(el.scrollHeight, 200) + 'px'
-}
-
-/** 编辑卡打开后问服务端一次：带凭据的那些到底还在不在，把真被清理的标出来。
- *  问不到就**不改界面**也不静默当没查到——带死凭据发出去后端会明确拒，比把还能用的文件说成没了代价小。 */
-const probeEditAtts = async () => {
-  const at = editAtts.value
-  const withId = at.filter(f => f.fileId && !f.probed)
-  if (!withId.length) return
-  let split
-  try {
-    split = await splitAtts(withId.map(f => ({ name: f.name, mime: f.mime, size: f.size, fileId: f.fileId })))
-  } catch (e) {
-    message.warning(`附件状态没查到（${e.message || '请求失败'}），重发时若文件已过期会明确报错`)
-    return
-  }
-  if (editAtts.value !== at) return   // 期间已切到别的消息/收起卡片：这份结果作废
-  const deadIds = new Set(split.dead.map(d => d.fileId))
-  at.forEach(f => {
-    if (!f.fileId) return
-    f.probed = true
-    if (deadIds.has(f.fileId)) f.expired = true
-  })
-}
-
-const editMessage = mi => {
-  if (loading.value || editingBusy.value) return
-  const m = messages.value[mi]
-  if (!m || m.role !== 'user') return
-  if (!m.messageId) { message.warning('该消息尚未落库（流式回答中），请稍后再编辑'); return }
-  // 已有编辑框在别处打开：切换目标
-  editingIdx.value = mi
-  editingMessageId.value = m.messageId
-  editingText.value = m.content
-  // 编辑卡里的附件条：attachData（重发载荷 {name,mime,fileId}）与 attachments（展示 {name,mime,size}）合并。
-  //
-  // 三种形态必须分开说（一律写成「已失效」会把还能用的也说没了）：
-  //  · 带 fileId 且服务端确认字节还在 → 原样带走。刷新/切会话回来也一样，凭据现在随消息一起落库。
-  //  · 带 fileId 但服务端说没了 → 「已过保留期」（默认 24h 周期清理），要重传。
-  //  · 没 fileId（凭据开始落库之前发的存量消息）→ 「不可重发」，也要重传。
-  // 中间那种得问过服务端才敢下结论，判定与缓存见 chat/attachments.js。
-  const metaByName = new Map((m.attachments || []).map(a => [a.name, a]))
-  const rows = (m.attachData || []).map(a => {
-    const meta = metaByName.get(a.name) || {}
-    // paste/text 只在展示侧（本轮内存消息）有：不带回来编辑卡就退化成普通文件条，也点不开全文
-    return { size: meta.size, paste: isPastedText(meta), text: meta.text, uploading: false, error: '', ...a }
-  })
-  const noHandle = (m.attachments || [])
-    .filter(a => !rows.some(r => r.name === a.name))
-    .map(a => ({ name: a.name, mime: a.mime, size: a.size, paste: isPastedText(a), text: a.text,
-                  fileId: '', uploading: false, unavailable: true, error: '' }))
-  editAtts.value = [...rows, ...noHandle]
-  probeEditAtts()
-  editMentions.value = [...(m.mentions || [])]
-  // # 历史引用 / 技能：都是纯元信息（消息 ID、技能名），没有过期问题，可原样带回。
-  // digest 走 histItemDigest 重算——历史回放的消息带上它，编辑卡的标题/摘要才能正常显示。
-  editHistRefs.value = (m.historyRefs || [])
-    .filter(h => h && h.messageId)
-    .map(h => ({ messageId: h.messageId, role: h.role, digest: histItemDigest(h) }))
-  editSkills.value = Array.isArray(m.skills) ? [...m.skills] : []
-  // 历史回放的图片只剩带签名的服务端 URL，直接重发会被 imgs 的 data: 过滤丢掉。
-  // 抓回字节转成 data URL 就能像本会话图片一样原样带走（签名有效期内 fetch 得到）。
-  // fetch 失败（签名过期/文件已清）就退回留 URL，编辑卡仍能看见，只是重发时不带。
-  const seedImgs = (m.images || []).map(u => ({ dataUrl: u }))
-  editImgs.value = seedImgs
-  seedImgs.forEach((it, i) => {
-    if (String(it.dataUrl || '').startsWith('data:')) return
-    fetchToDataUrl(resolveImg(it.dataUrl))
-      .then(d => { if (editingIdx.value === mi && editImgs.value[i] === it) it.dataUrl = d })
-      .catch(() => { /* 抓不回来就保持 URL 原样，灯箱里仍可看 */ })
-  })
-  nextTick(() => { autosizeEditing(); editingRef.value?.focus() })
-}
-/** 服务端图片 URL → data URL（编辑重发需要 data: 才能带上；失败抛给调用方决定回退策略） */
-const fetchToDataUrl = async url => {
-  const r = await fetch(url)
-  if (!r.ok) throw new Error('HTTP ' + r.status)
-  const b = await r.blob()
-  return await new Promise((resolve, reject) => {
-    const fr = new FileReader()
-    fr.onload = () => resolve(fr.result)
-    fr.onerror = () => reject(new Error('读取失败'))
-    fr.readAsDataURL(b)
-  })
-}
-const cancelEdit = () => {
-  editingIdx.value = null
-  editingMessageId.value = ''
-  editingText.value = ''
-  editImgs.value = []; editAtts.value = []; editMentions.value = []
-  editHistRefs.value = []; editSkills.value = []
-  // 面板此刻正挂在这张卡里：卡没了它也就没了落脚点，一起收掉
-  if (addOpen.value && addTarget.value === 'edit') closeAddPanel()
-}
-
-// ---- 编辑卡的随行内容操作：管线完全复用主输入框，只换目标列表 ----
-const pickEditFiles = () => editAttachInput.value?.click()
-const onEditAttachChange = e => {
-  const files = Array.from(e.target.files || [])
-  e.target.value = ''
-  if (!files.length) return
-  addFiles(files, { images: editImgs, files: editAtts })
-  closeAddPanel()   // 与主输入框同口径：选完即收面板，让加上的附件条露出来
-}
-// 「+」面板在编辑态下的写入端：勾选/计数都按这张卡自己的列表算，规则与主输入框一致
-// （技能最多 3 个、引用可多选但智能体单选一替换、历史引用最多 10 条）
-const editAddCount = computed(() => editImgs.value.length + editAtts.value.length
-  + editMentions.value.length + editSkills.value.length + editHistRefs.value.length)
-const toggleEditSkill = n => (editSkills.value.includes(n) ? removeEditSkill(n) : addEditSkill(n))
-const toggleEditHistoryRef = m => {
-  const i = editHistRefs.value.findIndex(h => h.messageId === m.messageId)
-  if (i >= 0) { editHistRefs.value.splice(i, 1); return }
-  addEditHistRef(m.messageId)
-}
-const toggleEditMention = (type, item) => {
-  const hit = editMentions.value.findIndex(mm => mm.type === type && mm.id === item.id)
-  if (hit >= 0) { editMentions.value.splice(hit, 1); return }
-  // 智能体委派是单主语：一轮只能由一个智能体作答，再选一个=替换（与主输入框同规则）
-  if (type === 'agent') editMentions.value = editMentions.value.filter(mm => mm.type !== 'agent')
-  else if (editMentions.value.length >= MAX_MENTIONS) {
-    message.warning(`一次最多引用 ${MAX_MENTIONS} 个知识库/文档/智能体`)
-    return
-  }
-  // 载荷形状与主输入框一致（type/id/name/kbId），重发时原样带给后端
-  editMentions.value.push({
-    type,
-    id: item.id,
-    name: type === 'doc' ? item.fileName : item.name,
-    kbId: type === 'doc' ? (item.kbId || '') : ''
-  })
-}
-const onEditPaste = e => {
-  const into = { images: editImgs, files: editAtts }
-  // 截住冒泡：window 级粘贴监听会把材料挂到主输入框去
-  if (takePastedFiles(e, into) || takePastedText(e, into)) e.stopPropagation()
-}
-const removeEditImage = i => editImgs.value.splice(i, 1)
-const removeEditAtt = i => editAtts.value.splice(i, 1)
-const removeEditMention = i => editMentions.value.splice(i, 1)
-// ---- 编辑卡内的技能 / # 历史引用增删（与主输入框同一份候选，改的是编辑态列表） ----
-/** # 引用的候选：本会话已落库、有 messageId、正文非空的消息。排除正在编辑的这一轮本身
- *  （引用自己没意义，且它马上会被软删重建，messageId 也就不成立了）。 */
-const editHistPool = computed(() => histPool.value
-  .filter(m => m.messageId !== (messages.value[editingIdx.value] || {}).messageId))
-const addEditSkill = name => {
-  if (editSkills.value.includes(name)) return
-  if (editSkills.value.length >= 3) { message.warning('一次最多选用 3 个技能'); return }
-  editSkills.value.push(name)
-}
-const removeEditSkill = name => { editSkills.value = editSkills.value.filter(n => n !== name) }
-const addEditHistRef = mid => {
-  if (editHistRefs.value.some(h => h.messageId === mid)) return
-  if (editHistRefs.value.length >= MAX_HISTORY_REFS) { message.warning(`一次最多引用 ${MAX_HISTORY_REFS} 条历史消息`); return }
-  const m = histPool.value.find(x => x.messageId === mid)
-  if (!m) return
-  editHistRefs.value.push({ messageId: mid, role: m.role, digest: histItemDigest(m) })
-}
-const removeEditHistRef = i => editHistRefs.value.splice(i, 1)
-const previewEditImage = pi => {
-  openImages(editImgs.value.map(p => resolveImg(p.dataUrl)), pi)
-}
-// 键盘：Enter 发送 / Shift+Enter 换行 / Esc 取消；输入法组合中的 Enter/Esc 是候选操作，放行给 IME
-const onEditKeydown = e => {
-  if (e.isComposing || e.keyCode === 229) return
-  // 「+」面板开着时，卡内正文就是导航输入源（与主输入框同一套：↑↓ 移高亮、Enter 勾选、
-  // Esc 先退层/关面板，不会被下面的"Esc 取消整张卡"抢走）
-  if (addOpen.value && addOnEdit.value && onPanelNavKeydown(e)) return
-  if (e.key === 'Enter') {
-    if (!e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); confirmEdit() }
-    return
-  }
-  if (e.key === 'Escape') { e.preventDefault(); cancelEdit() }
-}
-
-const confirmEdit = () => {
-  const mi = editingIdx.value
-  if (mi == null || editingBusy.value) return
-  const old = messages.value[mi]
-  const txt = editingText.value.trim()
-  if (!old || old.role !== 'user') { cancelEdit(); return }
-  if (editAtts.value.some(f => f.uploading)) { message.warning('附件还在上传中，请稍候再发送'); return }
-  // 附件只带 fileId（与主输入框 send 同口径），没传完/失败的丢弃
-  const okAtts = editAtts.value.filter(f => f.fileId && !f.error)
-  const atts = okAtts.map(f => ({ name: f.name, mime: f.mime, fileId: f.fileId }))
-  const attsMeta = okAtts.map(f => ({ name: f.name, mime: f.mime, size: f.size, paste: !!f.paste, text: f.text }))
-  const imgsAll = editImgs.value.map(p => p.dataUrl)
-  // 只有 data: 图能重发。本会话发的图本身就是 data:；历史回放的图正由 openEdit 异步抓成
-  // data:，抓取失败的那个仍是 URL——此时不能让它把「其他已抓好的图」一起废掉，
-  // 所以逐张过滤而不是整体判空。
-  const imgs = imgsAll.filter(u => u.startsWith('data:'))
-  const mentionsNew = [...editMentions.value]
-  const histRefsNew = editHistRefs.value.map(h => h.messageId)
-  const skillsNew = [...editSkills.value]
-  // 失效附件（原始文件已过保留期）不能重发：fileId 已被后端清理，带回去必 400。
-  // 但只要它还在编辑卡里，就不能算「内容为空」——用户至少还能改文字后重发。
-  if (!txt && !imgsAll.length && !atts.length && !editAtts.value.length) { message.warning('内容不能为空'); return }
-  // 什么都没改=没有分支语义，直接收起，不打无谓的重发（文本/图片/附件/@ 引用/# 引用/技能任一变了才重发）
-  const listEq = (a, b) => a.length === b.length && a.every((x, k) => x === b[k])
-  const attEq = (a, b) => a.length === b.length && a.every((x, k) => x.name === b[k].name && x.mime === b[k].mime && x.fileId === b[k].fileId)
-  const mentionEq = (a, b) => a.length === b.length && a.every((x, k) => x.type === b[k].type && x.id === b[k].id)
-  const histRefEq = (a, b) => a.length === b.length && a.every((x, k) => x === b[k])
-  const skillEq = (a, b) => a.length === b.length && a.every((x, k) => x === b[k])
-  if (txt === old.content && listEq(imgsAll, old.images || [])
-      && attEq(atts, Array.isArray(old.attachData) ? old.attachData : [])
-      && mentionEq(mentionsNew, Array.isArray(old.mentions) ? old.mentions : [])
-      && histRefEq(histRefsNew, (old.historyRefs || []).map(h => h.messageId))
-      && skillEq(skillsNew, Array.isArray(old.skills) ? old.skills : [])) { cancelEdit(); return }
-  if (loading.value) { message.warning('当前正在回答，请先停止或稍候'); return }
-  const editMessageId = old.messageId
-  if (!editMessageId) { message.warning('该消息尚未落库，暂不能编辑重发'); return }
-  cancelEdit()
-  // 本地视图截断到该轮之前：旧分支整体交给后端软删留档，本地不再渲染（切回走分支切换接口+重拉历史）
-  // 深度思考沿用原轮（编辑卡里没有这一项：它是算力档位，没有可编辑内容）
-  const deep = !!old.deepThink
-  messages.value = messages.value.slice(0, mi)
-  // 新分支的用户消息：正文/图片/附件/@ 引用/# 引用/技能全部以编辑后的为准；
-  // 版本计数 +1（旧值缺省=首次编辑即 2 版）
-  const verN = (old.variantCount || 1) + 1
-  const nu = reactive({
-    role: 'user', content: txt,
-    images: imgsAll, attachments: attsMeta, attachData: atts,
-    skills: skillsNew, mentions: mentionsNew, historyRefs: (old.historyRefs || []).filter(h => histRefsNew.includes(h.messageId)),
-    deepThink: deep,
-    time: Date.now(), messageId: null,
-    variantCount: verN, variantIndex: verN
-  })
-  messages.value.push(nu)
-  streamAnswer(txt, imgs, null, false, 1, deep, atts, skillsNew, mentionsNew, null,
-    histRefsNew.map(mid => ({ messageId: mid })), editMessageId, nu)
-}
+// ==================== 消息编辑重发（页面态与判据在 ../chat/useEditResend.js） ====================
+// 从该轮重新生成，旧分支由后端软删留档；本页只把编辑卡与加号面板接进来。
+const {
+  editingIdx, editingMessageId, editingText, editingBusy, editingRef,
+  editImgs, editAtts, editMentions, editHistRefs, editSkills, editAttachInput,
+  setEditingRef, setEditAttachInputRef, autosizeEditing, probeEditAtts,
+  editMessage, cancelEdit, pickEditFiles, onEditAttachChange, editAddCount,
+  toggleEditSkill, toggleEditHistoryRef, toggleEditMention, onEditPaste,
+  removeEditImage, removeEditAtt, removeEditMention, editHistPool,
+  addEditSkill, removeEditSkill, addEditHistRef, removeEditHistRef,
+  previewEditImage, onEditKeydown, confirmEdit
+} = useEditResend({
+  messages: () => messages.value,
+  setMessages: list => { messages.value = list },
+  loading: () => loading.value,
+  histPool: () => histPool.value,
+  addOpen: () => addOpen.value,
+  addTarget: () => addTarget.value,
+  addOnEdit: () => addOnEdit.value,
+  closeAddPanel: () => closeAddPanel(),
+  onPanelNavKeydown: e => onPanelNavKeydown(e),
+  maxMentions: () => MAX_MENTIONS,
+  maxHistoryRefs: () => MAX_HISTORY_REFS,
+  resend: (...args) => streamAnswer(...args),
+  notify: message,
+  isPastedText, histItemDigest, splitAtts, resolveImg, openImages,
+  addFiles: (files, into) => addFiles(files, into),
+  takePastedFiles: (e, into) => takePastedFiles(e, into),
+  takePastedText: (e, into) => takePastedText(e, into)
+})
 const ask = q => { text.value = q; nextTick(send) }
 
 // ==================== 聊天引擎（逻辑主体在 src/chat/useChatEngine.js） ====================
@@ -3440,58 +3214,21 @@ const {
   focusInput
 })
 
-// ---- 目标条上的两处交互状态：取消二次确认（就地长开，不弹层）与过程抽屉 ----
-const goalCancelArmed = ref(false)
-const goalViewerOpen = ref(false)
-const armGoalCancel = () => { goalCancelArmed.value = true }
-const confirmGoalCancel = async () => {
-  goalCancelArmed.value = false
-  await runGoalAction('cancel')
-}
-const openGoalViewer = () => { goalViewerOpen.value = true }
-// ---- 交付抽屉：卡片、目标条、终态卡三处入口都落到同一份包（ref 里存当前要看的那一包） ----
-const deliveryOpen = ref(false)
-const deliveryTarget = ref(null)
-const openDelivery = pkg => {
-  if (!pkg) return
-  deliveryTarget.value = pkg
-  deliveryOpen.value = true
-}
-// 抽屉里的动作回本页同一条动作出口：修改走条子的就地编辑；取消先收起抽屉、在条上做二次确认
-const onGoalViewerAction = async (action) => {
-  if (action === 'edit') {
-    goalViewerOpen.value = false
-    startGoalInlineEdit()
-    return
+// ---- 目标条 / 过程抽屉 / 交付抽屉（动作接线在 ../chat/useGoalPanels.js） ----
+const {
+  goalCancelArmed, goalViewerOpen, deliveryOpen, deliveryTarget,
+  armGoalCancel, confirmGoalCancel, openGoalViewer, openDelivery,
+  onGoalViewerAction, jumpToGoalTurn
+} = useGoalPanels({
+  goal: () => sessionGoal.value,
+  currentSessionId,
+  messages: () => messages.value,
+  runGoalAction: a => runGoalAction(a),
+  startGoalInlineEdit: () => startGoalInlineEdit(),
+  scrollToRow: i => {
+    const el = box.value?.querySelector(`[data-row-index="${i}"]`)
+    el?.scrollIntoView({ block: 'start', behavior: 'smooth' })
   }
-  if (action === 'cancel') {
-    goalViewerOpen.value = false
-    goalCancelArmed.value = true
-    return
-  }
-  await runGoalAction(action)
-  if (action === 'delete') goalViewerOpen.value = false
-}
-/** 从过程抽屉跳到某一轮：按 turnId 找回那条回答，再滚到它对应的提问行 */
-const jumpToGoalTurn = (turnId) => {
-  goalViewerOpen.value = false
-  const list = messages.value || []
-  const aiIdx = list.findIndex(m => m && m.turnId === turnId)
-  if (aiIdx < 0) return
-  let userIdx = aiIdx
-  while (userIdx > 0 && list[userIdx] && list[userIdx].role !== 'user') userIdx--
-  const el = box.value?.querySelector(`[data-row-index="${userIdx}"]`)
-  el?.scrollIntoView({ block: 'start', behavior: 'smooth' })
-}
-// 目标换了一条（另起/删除）或离开可见档时，确认态必须撤下：留着它，下一次点「取消」会跳过二次确认
-watch(() => sessionGoal.value && (sessionGoal.value.goalId + ':' + sessionGoal.value.status), () => {
-  goalCancelArmed.value = false
-})
-// 换会话时把过程抽屉一并收起：它读的是「当前会话的当前目标」，不关会拿 B 会话的会话号去读 A 的目标账本
-watch(currentSessionId, () => {
-  goalViewerOpen.value = false
-  deliveryOpen.value = false
-  deliveryTarget.value = null
 })
 
 // 长会话里「翻回前面问过什么」只能靠滚动条盲摸，锚点轨给对话一个可点目录。
@@ -3513,172 +3250,26 @@ const anchorA = a => (a.loading ? '回答生成中…' : (a.hasAi ? oneLine(a.a,
    会话那一截留白带进空会话。 */
 watch(() => messages.value, () => nextTick(() => { updateTailSpacer(); scrollForce() }))
 
-// ==================== 当前工作区标识（聊天页头部） ====================
-// 把「我在哪个工作区」摆在标题旁边，点一下进工作区页（目录/记忆/隔离都在那一页）。
-// 取数口径与后端 SessionService.workspaceOfSession 同源（session → project），
-// 切换会话即刷新；没挂工作区的会话接口也会返回档位等字段（projectId 为空），
-// 头部标识按 projectId 判断显示，不看接口有没有 data，不用侧栏分组猜。
-const sessionWorkspace = ref(null)
-// ---------- 会话级权限档位（本机工作区的文件/命令能干什么） ----------
-const permissionPresets = ref([])
-/** 当前会话选的档位码；''=这条会话还没选过，按智能体自己的档位执行。切会话时从 sessionWorkspace 恢复。 */
-const sessionPermission = ref('')
-const permissionSaving = ref(false)
-/** 完全权限二次确认：勾选「已了解风险」才能启用（DSH 同款闸门） */
-const dangerOpen = ref(false)
-const dangerAck = ref(false)
-const dangerSaving = ref(false)
-// 档位解析口径在 ../chat/permission.js（纯函数）
-const effectivePermission = computed(() => resolveEffectivePermission(
-  permissionPresets.value, sessionPermission.value,
-  currentAgent.value && currentAgent.value.permissionPreset))
-const permissionLabel = computed(() => permissionLabelOf(permissionPresets.value, effectivePermission.value))
-const loadPermissionPresets = async () => {
-  try {
-    const r = await getPermissionPresets()
-    permissionPresets.value = (r && r.success && Array.isArray(r.data)) ? r.data : []
-  } catch (e) {
-    permissionPresets.value = []
-  }
-}
-const applyPermission = async code => {
-  const sid = currentSessionId.value
-  if (!sid) return false
-  permissionSaving.value = true
-  try {
-    await setSessionPermission(sid, code)
-    sessionPermission.value = code
-    return true
-  } catch (e) {
-    message.error('切换权限失败：' + (e.message || '请重试'))
-    return false
-  } finally {
-    permissionSaving.value = false
-  }
-}
-const pickPermission = async key => {
-  if (permissionSaving.value) return
-  // 完全权限：先过风险确认，勾选后才能启用；取消就什么都不改
-  if (key === 'autonomous') {
-    // 已经是这一档（智能体自己就是完全权限）时不再弹确认——那一问等于什么都没变
-    if (effectivePermission.value === 'autonomous') return
-    dangerAck.value = false
-    dangerOpen.value = true
-    return
-  }
-  await applyPermission(key)
-}
-const confirmDanger = async () => {
-  if (!dangerAck.value || dangerSaving.value) return
-  dangerSaving.value = true
-  try {
-    const ok = await applyPermission('autonomous')
-    if (ok) dangerOpen.value = false
-  } finally {
-    dangerSaving.value = false
-  }
-}
-// 正文弹窗按名字现取清单里的那条：停用/恢复后清单重拉，弹窗里的按钮状态才会跟着翻面
-// （存条目快照会一直显示改动前的那一份）
-const skillDocEntry = computed(() => skillList.value.find(s => s.name === skillDoc.value) || {})
-const wsTitle = computed(() => {
-  const w = sessionWorkspace.value
-  if (!w) return ''
-  let t = '当前工作区：' + w.name
-  if (w.archived) t += '（已归档）'
-  return t + '（点开进工作区页）'
+// ==================== 当前工作区标识与会话级权限档位（../chat/useSessionWorkspace.js） ====================
+// 头部标识、就绪提示、档位名册、执行器刷新与目录打开都在同一份 hook 里；本页只画形状。
+const {
+  sessionWorkspace, permissionPresets, sessionPermission, permissionSaving,
+  dangerOpen, dangerAck, dangerSaving, workspaceRefreshing,
+  effectivePermission, permissionLabel, wsTitle, foreignWorkspace,
+  workspaceSetupHint, skillDocEntry,
+  loadPermissionPresets, applyPermission, pickPermission, confirmDanger,
+  loadSessionWorkspace, goBindWorkspace, openLocalFolder, refreshSessionWorkspace
+} = useSessionWorkspace({
+  currentSessionId,
+  workspaceEpoch,
+  agent: () => currentAgent.value,
+  skillList: () => skillList.value,
+  skillDoc: () => skillDoc.value,
+  localExecutorId: () => localExecutorId(),
+  api: { getSessionWorkspace, getPermissionPresets, setSessionPermission, openProjectFolder },
+  notify: message,
+  router
 })
-// ==================== 本会话沙盒目录 ====================
-// 取数、判据（sessionSandboxActive）、折树与三个重拉时机都在 chat/useChatEngine.js 里统一一份：
-// PC 这张卡与移动壳共用，本页只留右栏那张卡的摆法。
-// 后台进程那一族（procs / procErr / procCardVisible / killProc / 秒针）也在引擎里，
-// 下载与存为产物（sandboxDownload / sandboxTake）同样住在引擎里——两端那张卡要的是同一个动作、同一句失败话术。
-// 折树（sandboxTree / sandboxRows）、计数与体积文案（sandboxCount / sandboxBytes / sandboxRest / sbSize）
-// 全在引擎那一份里：PC 这张卡与移动壳「状态与来源」里那段读的是同一批值。
-
-const loadSessionWorkspace = async sid => {
-  if (!sid) return
-  try {
-    const r = await getSessionWorkspace(sid)
-    sessionWorkspace.value = (r && r.data) || null
-  } catch (e) {
-    sessionWorkspace.value = null   // 标识是增强信息：取不到不打扰聊天
-  }
-}
-
-watch(currentSessionId, async sid => {
-  sessionWorkspace.value = null
-  sessionPermission.value = ''
-  await loadSessionWorkspace(sid)
-}, { immediate: true })
-
-// 「新建对话」领走的那条空会话 id 不变、归属却改了（服务端把它改挂到这次点名的工作区），
-// 上面按 sid 变化的判据不会动；不补这一下，工作区行点＋进来的会话既没有头部标识也没有权限档位药丸。
-watch(workspaceEpoch, () => loadSessionWorkspace(currentSessionId.value))
-
-/** 会话落在另一台电脑的工作区：历史照常能看，但不能在这台电脑上发问（文件读写会派到那台电脑） */
-const foreignWorkspace = computed(() => {
-  const ws = sessionWorkspace.value
-  const id = localExecutorId()
-  return !!(ws && ws.isLocal && id && ws.executorId && ws.executorId !== id)
-})
-
-/** 工作区没准备好时的一句话（空=不展示）：没绑目录优先于执行器离线——先得有目录才谈连没连上 */
-const workspaceSetupHint = computed(() => {
-  const ws = sessionWorkspace.value
-  if (!ws || ws.implicit) return ''
-  if (foreignWorkspace.value) {
-    return `「${ws.name || '这个工作区'}」的文件夹在另一台电脑上，这台电脑不能继续使用。`
-  }
-  if (!ws.roots || !ws.roots.length) {
-    return `「${ws.name || '这个工作区'}」还没绑定本机文件夹，文件与命令暂不可用。`
-  }
-  if (ws.isLocal && ws.executorOnline === false) {
-    return '本机执行器不在线，文件与命令暂不可用。'
-  }
-  return ''
-})
-const goBindWorkspace = () => {
-  const pid = sessionWorkspace.value && sessionWorkspace.value.projectId
-  if (!pid) return
-  router.push('/project/' + pid)
-}
-
-/** 右栏文件卡里点目录行尾那枚「在电脑上打开」：让那台电脑用系统文件管理器打开这个文件夹。
- *  路径直接给文件卡那套虚拟路径（别名/相对路径），与预览、下载同一条认路规矩；
- *  离线是最常见的失败原因，所以失败话术直接指向它，而不是干巴巴一句「失败」。 */
-const openLocalFolder = async path => {
-  const pid = sessionWorkspace.value && sessionWorkspace.value.projectId
-  if (!pid) return
-  try {
-    await openProjectFolder(pid, path || '')
-  } catch (e) {
-    message.warning(e.message || '打开失败：先确认那台电脑上的执行器在线')
-  }
-}
-const workspaceRefreshing = ref(false)
-const refreshSessionWorkspace = async () => {
-  const sid = currentSessionId.value
-  if (!sid || workspaceRefreshing.value) return
-  workspaceRefreshing.value = true
-  try {
-    const r = await getSessionWorkspace(sid)
-    sessionWorkspace.value = (r && r.data) || null
-    if (sessionWorkspace.value && sessionWorkspace.value.executorOnline) message.success('执行器已连上')
-    else message.warning('还没连上：去那台电脑的终端确认 wenqu-agent 正在运行')
-  } catch (e) {
-    message.warning('检查失败：' + (e.message || '请稍后再试'))
-  } finally {
-    workspaceRefreshing.value = false
-  }
-}
-
-// 会话级权限档位跟着会话走：切会话就恢复那条会话自己的选择（没选过=按这位智能体的档位显示）。
-// 隐式会话同样认这个档位：它的工作区目录在本机执行器上（离线时是云端沙盒），不是「没有目录」。
-watch(sessionWorkspace, ws => {
-  sessionPermission.value = ws && ws.permissionPreset ? String(ws.permissionPreset) : ''
-}, { immediate: true })
-
 // ==================== 输入框内联 chip（正文与引用同一条流） ====================
 // 两条单向通道，避免双向对账打转：
 //  · 数组 → DOM：任一数组变了就把「应有的 chip 集合」推给编辑区（面板勾选、上传完成、命令开计划模式）；
