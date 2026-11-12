@@ -51,7 +51,10 @@ export const applyBlocks = (m, payload) => {
       timeline.push({ kind: 'artifact', i: artifacts.length - 1 })
     } else if (b.kind === 'steer') {
       const text = typeof b.text === 'string' ? b.text : ''
-      if (text) timeline.push({ kind: 'steer', text, messageId: String(b.messageId || '') })
+      if (!text) continue
+      const seg = { kind: 'steer', text, messageId: String(b.messageId || '') }
+      if (Array.isArray(b.images) && b.images.length) seg.images = b.images
+      timeline.push(seg)
     }
   }
   // 产物按 id/URL 合并：接流快照的 blocks 在本轮收尾前不含 artifact block，直接覆盖会把

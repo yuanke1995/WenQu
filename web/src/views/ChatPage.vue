@@ -422,7 +422,14 @@
                 <!-- 正文按时间线还原：无插话＝整段一片，有插话＝在模型真听到那句的位置下刀，
                      气泡长在前后两片之间。切片拼回去仍是完整 content，流式只跟最后一片。 -->
                 <template v-for="row in turnBodyRows(m)" :key="row.key">
-                  <div v-if="row.kind === 'steer'" class="tl-steer"><span class="tl-steer-txt">{{ row.text }}</span></div>
+                  <div v-if="row.kind === 'steer'" class="tl-steer">
+                  <div class="tl-steer-col">
+                  <div v-if="row.images && row.images.length" class="tl-steer-imgs">
+                  <img v-for="(src, ii) in row.images" :key="ii" :src="src" alt="插话图片" loading="lazy" />
+                  </div>
+                  <span class="tl-steer-txt">{{ row.text }}</span>
+                  </div>
+                  </div>
                   <AnswerBody v-else class="tl-answer" :content="row.content"
                               :images="m.images" :sources="m.sources" :msg-index="i"
                               runnable :session-id="currentSessionId"
@@ -2540,8 +2547,11 @@ const {
 /* 插话段：用户在这一轮还在跑时补的那句，长在模型真听到它的那个位置（前后两片正文之间）。
    右对齐＋与用户气泡同一形状，一眼认得出是自己说的话；不随过程块收起，始终看得见。 */
 .tl-steer { display: flex; justify-content: flex-end; margin: 8px 0; }
+.tl-steer-col { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; max-width: 78%; }
+.tl-steer-imgs { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.tl-steer-imgs img { max-width: 132px; max-height: 132px; border-radius: 10px; border: 1px solid var(--app-border); object-fit: cover; }
 .tl-steer-txt {
-  max-width: 78%; padding: 9px 14px; border-radius: 12px; line-height: 1.65;
+  max-width: 100%; padding: 9px 14px; border-radius: 12px; line-height: 1.65;
   background: var(--app-panel-2); color: var(--app-text);
   white-space: pre-wrap; word-break: break-word;
 }

@@ -2129,7 +2129,7 @@ function applySteerFrame (payload, msg) {
   const id = f.messageId || ''
   dropApplied(id)
   if (id) messages.value = messages.value.filter(m => !(m.role === 'user' && m.messageId === id))
-  pushTimelineSteer(msg, t, id)
+  pushTimelineSteer(msg, t, id, Array.isArray(f.images) ? f.images : [])
 }
 
 /** 按原载荷把一条插话作为完整新一轮发出（与计划「继续对话」同一条通路）

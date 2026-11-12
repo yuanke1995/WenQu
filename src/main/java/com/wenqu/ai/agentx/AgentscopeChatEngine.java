@@ -2434,12 +2434,14 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
          * <p>只在这句话真被应用时才留痕：没赶上的那句由 {@code done.pendingSteers} 交回前端，
          * 作为新一轮的问题重新出现——它没进过这一轮，就不该长在这一轮的回答里。
          */
-        void steer(String text, String messageId) {
+        void steer(String text, String messageId, java.util.List<String> images) {
             flushTimelineText(answerText.length());
             Map<String, Object> seg = new java.util.LinkedHashMap<>();
             seg.put("kind", "steer");
             seg.put("text", text);
             seg.put("messageId", messageId == null ? "" : messageId);
+            // 带图插话：图也要长在这一段上。否则独立用户气泡被这段顶掉后，图在界面上就凭空消失
+            if (images != null && !images.isEmpty()) seg.put("images", images);
             timeline.add(seg);
             transcript.steer(text, messageId);
         }
@@ -3523,9 +3525,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 }
             }
             case "run/end" -> recording.runEnded = true;
-            case "inbox/opened" -> {
+            case "run/start", "inbox/opened" -> {
                 // 框架的 run 到这里才算真的活着：此前 session.steer 必被拒。排队的插话在这一拍送进去，
                 // 早了会白等一整轮，晚了就错过「下一次调模型前」这个送达点。
+                // 两个事件都认：inbox 的提交路由不同（有的后端只把 run/* 写进主日志），
+                // drain 自身按「有没有活轮 + 有没有排队项」幂等，重复唤醒不会重发。
                 com.wenqu.ai.agent.chat.SteerQueueHooks hooks = steerQueueHooks;
                 if (hooks != null) hooks.drain(channel.sessionId());
             }
@@ -3544,10 +3548,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                         com.wenqu.ai.agent.chat.SteerReceipts.SteerAck ack =
                                 steerAckOf(turnId, receiptId);
                         if (ack == null) continue;
-                        recording.steer(ack.text(), ack.messageId());
+                        recording.steer(ack.text(), ack.messageId(), ack.images());
                         Map<String, Object> frame = new java.util.LinkedHashMap<>();
                         frame.put("text", ack.text());
                         frame.put("messageId", ack.messageId() == null ? "" : ack.messageId());
+                        if (ack.images() != null && !ack.images().isEmpty()) frame.put("images", ack.images());
                         emit(channel, RunEventType.STEER, com.alibaba.fastjson2.JSON.toJSONString(frame));
                     }
                 }

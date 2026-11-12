@@ -6,7 +6,8 @@ export const turnAnswerText = m => String((m && m.content) || '')
 export const turnSteerRows = m => {
   const tl = Array.isArray(m && m.timeline) ? m.timeline : []
   return tl.filter(s => s && s.kind === 'steer' && String(s.text || '').trim())
-    .map(s => ({ kind: 'steer', text: String(s.text), messageId: s.messageId || '' }))
+    .map(s => ({ kind: 'steer', text: String(s.text), messageId: s.messageId || '',
+                 images: Array.isArray(s.images) ? s.images : [] }))
 }
 
 /**

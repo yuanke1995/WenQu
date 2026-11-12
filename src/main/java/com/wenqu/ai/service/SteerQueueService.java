@@ -113,6 +113,9 @@ public class SteerQueueService implements SteerQueueHooks {
         // 崩溃窗口兜底：抢到之后进程没了、又没有回执的行，重新排队（宁可重发也不能静默丢）
         mapper.reviveStale(sessionId, STALE_SECONDS);
         List<SteerItem> items = mapper.pendingOf(sessionId);
+        if (items.isEmpty()) return;
+        log.info("[STEER-QUEUE] 本轮开跑，处理排队插话: session={} owner={} pending={}",
+                sessionId, uid, items.size());
         int sent = 0;
         for (SteerItem it : items) {
             if (!"PENDING".equals(it.getStatus()) || !uid.equals(it.getUserId())) continue;

@@ -452,7 +452,8 @@ public class ChatRunRuntime {
                 .images(imageUrls)
                 .turnId(actor.turnId())
                 .build());
-        SteerReceipts.add(actor.turnId(), new SteerReceipts.SteerAck(receiptId, capped, messageId));
+        SteerReceipts.add(actor.turnId(), new SteerReceipts.SteerAck(receiptId, capped, messageId,
+                imageUrls == null ? List.of() : imageUrls));
         sessionEventService.append(sessionId, actor.userId(), actor.turnId(), "steer", capped);
         log.info("[STEER] 插话已送进框架会话（下一次模型调用前生效）: session={} turn={} 字数={} 图={} msgId={} receipt={}",
                 sessionId, actor.turnId(), capped.length(), dataUrls.size(), messageId, receiptId);

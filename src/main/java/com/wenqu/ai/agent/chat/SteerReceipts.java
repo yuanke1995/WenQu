@@ -27,8 +27,9 @@ public final class SteerReceipts {
      * @param receiptId 框架 steer 的收据号（与 {@code inbox/applied} 里那些 commandId 同一个词）
      * @param text      用户原话（交回前端续发时要的就是这句，不带模型侧那句声明）
      * @param messageId 随它落库的那条用户消息 ID：前端补发时复用同一颗气泡，刷新后也不会变两条
+     * @param images    随这句插话一起发出去的回显 URL：回答时间线里的那段要跟用户气泡一样能看见图
      */
-    public record SteerAck(String receiptId, String text, String messageId) {
+    public record SteerAck(String receiptId, String text, String messageId, List<String> images) {
     }
 
     /** 同时保留多少轮的收据：正常只有 1~2 轮在飞，超出的都是没走到收尾就断掉的轮 */

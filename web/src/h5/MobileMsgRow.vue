@@ -301,7 +301,14 @@
           </div>
           <!-- 正文按时间线还原：插话气泡长在模型真听到那句的位置，而不是整段正文的头顶（与 PC 同构） -->
           <template v-for="row in turnBodyRows(m)" :key="row.key">
-            <div v-if="row.kind === 'steer'" class="tl-steer"><span class="tl-steer-txt">{{ row.text }}</span></div>
+            <div v-if="row.kind === 'steer'" class="tl-steer">
+              <div class="tl-steer-col">
+                <div v-if="row.images && row.images.length" class="tl-steer-imgs">
+                  <img v-for="(src, ii) in row.images" :key="ii" :src="src" alt="插话图片" loading="lazy" />
+                </div>
+                <span class="tl-steer-txt">{{ row.text }}</span>
+              </div>
+            </div>
             <AnswerBody v-else class="tl-answer" :content="row.content"
                         :images="m.images" :sources="m.sources" :msg-index="index"
                         runnable :session-id="sessionId"
@@ -634,8 +641,11 @@ const onBodyPreview = (urls, index) => emit('preview', urls, index)
 .tl-turn-process { margin: 0 0 10px; }
 /* 插话段：右对齐、与用户气泡同一形状；长在正文流里模型听到它的那一处，不随过程块收起 */
 .tl-steer { display: flex; justify-content: flex-end; margin: 8px 0; }
+.tl-steer-col { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; max-width: 82%; }
+.tl-steer-imgs { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.tl-steer-imgs img { max-width: 112px; max-height: 112px; border-radius: 10px; border: 1px solid var(--app-border); object-fit: cover; }
 .tl-steer-txt {
-  max-width: 82%; padding: 8px 12px; border-radius: 12px; line-height: 1.6; font-size: 15px;
+  max-width: 100%; padding: 8px 12px; border-radius: 12px; line-height: 1.6; font-size: 15px;
   background: var(--app-panel-2); color: var(--app-text);
   white-space: pre-wrap; word-break: break-word;
 }

@@ -144,6 +144,9 @@
               <div v-for="(a, ai) in adjusts" :key="ai" class="pv-adjust-row">
                 <span class="pv-adjust-st">已送达</span>
                 <span class="pv-adjust-t">{{ a.text }}</span>
+                <span v-if="a.images && a.images.length" class="pv-adjust-imgs">
+                  <img v-for="(src, ii) in a.images" :key="ii" :src="src" alt="调整附图" loading="lazy" />
+                </span>
               </div>
               <p class="pv-adjusts-note">只影响未执行部分，已完成的不重做。</p>
             </div>
@@ -616,6 +619,8 @@ onUnmounted(() => {
 .pv-adjust-row { display: flex; align-items: flex-start; gap: 7px; margin-top: 6px; font-size: 11.5px; line-height: 1.6; color: var(--app-text); }
 .pv-adjust-st { flex: none; font-size: 10px; color: var(--app-ok); }
 .pv-adjust-t { min-width: 0; overflow-wrap: anywhere; }
+.pv-adjust-imgs { flex: none; display: inline-flex; gap: 4px; }
+.pv-adjust-imgs img { width: 34px; height: 34px; object-fit: cover; border-radius: 6px; border: 1px solid var(--app-border); }
 .pv-adjusts-note { margin: 7px 0 0; font-size: 10.5px; line-height: 1.6; color: var(--app-text3); }
 .pv-bar { height: 4px; border-radius: 999px; background: var(--app-panel-2); overflow: hidden; }
 .pv-bar i { display: block; height: 100%; border-radius: 999px; background: var(--app-ok); transition: width .3s ease; }

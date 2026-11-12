@@ -34,6 +34,15 @@ test('插话段：同 messageId 幂等，空文本忽略', () => {
   assert.equal(m.timeline[0].text, '插话')
 })
 
+test('带图插话：图片随这一段一起回显（独立用户气泡被顶掉后，图不能消失）', () => {
+  const m = {}
+  pushTimelineSteer(m, '看这张', 'm1', ['https://img/a.png'])
+  assert.deepEqual(m.timeline[0].images, ['https://img/a.png'])
+  // 恢复路径同样带图
+  const back = restoreTimeline(m, [{ kind: 'steer', text: '看这张', messageId: 'm1', images: ['https://img/a.png'] }])
+  assert.deepEqual(back[0].images, ['https://img/a.png'])
+})
+
 test('恢复：按索引取回工具对象，缺索引跳过，相邻过程段合并，思考不合并', () => {
   const m = { toolCalls: [{ name: 'a' }, { name: 'b' }] }
   const out = restoreTimeline(m, [

@@ -127,7 +127,7 @@
       <!-- 执行中调整：只放一条摘要（最近一条），完整记录在抽屉执行页；点它直接落到执行页签 -->
       <button v-if="adjusts.length" type="button" class="pc-adjusts" @click="emit('open', null, 'exec')">
         <span class="pc-adjusts-lab">本轮调整 {{ adjusts.length }}</span>
-        <span class="pc-adjusts-txt" :title="lastAdjust">最近：{{ lastAdjust }}</span>
+        <span class="pc-adjusts-txt" :title="lastAdjust">最近：{{ lastAdjust }}<template v-if="lastAdjustImages"> · 含 {{ lastAdjustImages }} 张图</template></span>
         <span class="pc-adjusts-go">查看</span>
       </button>
 
@@ -276,6 +276,12 @@ const canAdjust = computed(() => props.card.status === 'approved'
 const lastAdjust = computed(() => {
   const rows = props.adjusts || []
   return rows.length ? String(rows[rows.length - 1].text || '') : ''
+})
+/** 最近一条调整带了几张图：计划卡只做摘要，图本身在执行详情里按条展示 */
+const lastAdjustImages = computed(() => {
+  const rows = props.adjusts || []
+  const last = rows.length ? rows[rows.length - 1] : null
+  return last && Array.isArray(last.images) ? last.images.length : 0
 })
 /** 新计划的血缘标：基于哪一版旧计划、那一轮已执行到 N/M（旧卡没有这个字段） */
 const lineage = computed(() => {
