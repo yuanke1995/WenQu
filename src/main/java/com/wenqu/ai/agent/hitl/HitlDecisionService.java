@@ -180,14 +180,13 @@ public class HitlDecisionService {
                                        String toolName, String requestArgs) {
         recordFrameworkPending(id, sessionId, userId, turnId, toolName, requestArgs, null, null);
     }
-
     /** 带父链的版本（子助手分支）：父会话/父轮用于审批卡上翻后的恢复与通知。 */
-    public void recordFrameworkPending(String id, String sessionId, String userId, String turnId,
-                                       String toolName, String requestArgs,
-                                       String parentSessionId, String parentTurnId) {
-        if (id == null || id.isBlank()) return;
+    public boolean recordFrameworkPending(String id, String sessionId, String userId, String turnId,
+                                          String toolName, String requestArgs,
+                                          String parentSessionId, String parentTurnId) {
+        if (id == null || id.isBlank()) return false;
         try {
-            if (toolApprovalMapper.selectById(id) != null) return;
+            if (toolApprovalMapper.selectById(id) != null) return false;
             ToolApproval rec = new ToolApproval();
             rec.setId(id);
             rec.setSessionId(sessionId);
@@ -204,8 +203,14 @@ public class HitlDecisionService {
                     : (requestArgs.length() > argCap ? requestArgs.substring(0, argCap) : requestArgs));
             rec.setCreatedAt(java.time.LocalDateTime.now());
             toolApprovalMapper.insert(rec);
+            return true;
+        } catch (org.springframework.dao.DuplicateKeyException dup) {
+            // 并发两个跟随者同时宣布同一张卡：先落库的那个负责发帧，这里明确回「已存在」
+            return false;
         } catch (Exception e) {
+            // 落库失败不阻塞本轮，但刷新后这张卡取不回——帧照发，用户当场仍能处理
             log.warn("[AGENTX] 框架待办落库失败（不阻塞本轮，但刷新后这张卡取不回）: {}", e.getMessage());
+            return true;
         }
     }
 

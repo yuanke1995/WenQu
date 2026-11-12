@@ -178,6 +178,10 @@ public class ChatService {
      */
     private final com.wenqu.ai.engine.ChatEngineFactory chatEngines;
     private final UserRoleService userRoleService;
+    /** 目标模式：用户轮开始前让在飞的目标轮让位（目标轮与用户轮共用同一把会话轮锁）。 */
+    private final GoalService goalService;
+    /** 让位等待上限：目标轮是协作式中断，等它放开轮锁；超时如实拒绝而不是并发跑两轮。 */
+    private static final long GOAL_YIELD_WAIT_MS = 5_000L;
     /** 内容安全输入闸：命中即不发起本轮，与模型出口的出口闸共用一份判据 */
     private final com.wenqu.ai.service.contentsafety.ContentSafetyService contentSafety;
 
@@ -265,7 +269,8 @@ public class ChatService {
                       com.wenqu.ai.engine.ChatEngineFactory chatEngines,
                       com.wenqu.ai.service.contentsafety.ContentSafetyService contentSafety,
                       UserRoleService userRoleService,
-                      com.wenqu.ai.agent.subagent.SubAgentBranchRuntime branchRuntime) {
+                      com.wenqu.ai.agent.subagent.SubAgentBranchRuntime branchRuntime,
+                      GoalService goalService) {
         this.sessionService = sessionService;
         this.configService = configService;
         this.chatAttachments = chatAttachments;
@@ -285,6 +290,28 @@ public class ChatService {
         this.contentSafety = contentSafety;
         this.userRoleService = userRoleService;
         this.branchRuntime = branchRuntime;
+        this.goalService = goalService;
+    }
+
+    /**
+     * 抢会话轮锁。目标轮在飞（刚被让位）时给它一个协作式退出的窗口：
+     * 目标轮挂在一张审批卡上时，跟随循环下一拍（200ms）就能看见叫停标记并收尾。
+     * <p>只在这种情况下等：平时抢不到就是「真的有一轮在答」，立刻如实拒绝，不拖用户。
+     */
+    private boolean beginTurnYielding(String sessionId, boolean preempted) {
+        if (runtime.tryBeginTurn(sessionId)) return true;
+        if (!preempted) return false;
+        long deadline = System.currentTimeMillis() + GOAL_YIELD_WAIT_MS;
+        while (System.currentTimeMillis() < deadline) {
+            try {
+                Thread.sleep(100L);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+            if (runtime.tryBeginTurn(sessionId)) return true;
+        }
+        return false;
     }
 
     /**
@@ -314,9 +341,13 @@ public class ChatService {
         // 会话轮级互斥：同一会话同时只允许一轮在跑。并发两问会历史交错、ArtifactService EMITTERS
         // 相互覆盖（后轮覆盖前轮，先完成者注销掉后轮的推送）、首问智能体绑定竞态。断线后台续跑
         // 与 askUser 等待期同样占坑——等待作答时再发新消息正是要挡的交错。限频/归属校验已在上游。
-        if (!runtime.tryBeginTurn(sessionId)) {
+        // 目标轮现在也占同一把锁（见 GoalService.bindSessionGate）：用户说话先让目标轮让位，
+        // 等它真正退出再抢锁——不是并发跑两轮，也不是把用户的话直接拒掉。
+        boolean preempted = goalService.preemptForUserTurn(sessionId, userId);
+        if (!beginTurnYielding(sessionId, preempted)) {
             rejectTurn(emitter, cmd, sessionId, userId, null,
-                    "该会话上一轮还在回答中，请等回答结束或先停止本轮，再发送新消息");
+                    preempted ? "目标轮正在让位，请稍后重发这条消息"
+                              : "该会话上一轮还在回答中，请等回答结束或先停止本轮，再发送新消息");
             return;
         }
         // 本轮身份在这一刻起可用（早于流状态构造）：账本的每条事件都挂得到同一个 turnId

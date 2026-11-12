@@ -631,6 +631,17 @@ public class WenquAgentxTools {
     }
 
     /**
+     * 平台默认作答智能体 id（未设返回 null）。
+     * <p>与问答侧 {@code ChatService.resolveTurnAgent} 的回落同源：用户在问答页直接说话时
+     * 请求里没有 agentId，当轮按默认智能体作答；续跑轮必须落到同一个身份上，
+     * 否则同一会话会出现「用户轮 auto、目标轮逐次确认」。
+     */
+    public String defaultAgentId() {
+        Agent a = agentService.defaultAgent();
+        return a == null ? null : a.getId();
+    }
+
+    /**
      * 本轮是否「不使用知识库」（{@code c_ai_agent.knowledge_disabled=1}，纯角色智能体）。
      * <p>判据与 {@link #agentOf} 同源：无智能体绑定 = false（平台默认档照常检索）。
      * <p><b>为什么必须在挂载点收口</b>：该开关的语义是「整条跳过检索链路」（见 {@code Agent#knowledgeDisabled}

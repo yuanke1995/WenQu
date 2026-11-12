@@ -138,7 +138,9 @@ public final class SpringAiToolAdapter extends ToolBase {
         }
         // 污点策略：本轮读过外部内容后，会跑任意代码/命令的工具必须回到人面前确认一次。
         // 与 approvalRequired 分开——它是「这一档本来就要问」，这里问的是「这一轮上下文可能被污染」。
-        if (taintSensitive && isTainted()) {
+        // 「一次」是真的只问一次：批准后工具执行时会在 callAsync 里置 taintApproved，
+        // 本轮后续命令不再重复弹卡（否则一个目标轮 20 条命令就是 20 张卡）。
+        if (taintSensitive && isTainted() && !isTaintApproved()) {
             if (!approvalCanAsk) {
                 return Mono.just(PermissionDecision.deny("本轮已读取过外部内容，而本轮回合没有可应答的确认通道，"
                         + "脚本/命令类工具按最保守处理不执行：" + getName()));
@@ -163,6 +165,8 @@ public final class SpringAiToolAdapter extends ToolBase {
     @Override
     public Mono<ToolResultBlock> callAsync(ToolCallParam param) {
         return Mono.fromCallable(() -> {
+                    // 能跑到这里=这一次调用已被放行（含「污点确认」获批）：本轮不再为污点重复问人
+                    if (taintSensitive && isTainted()) markTaintApproved();
                     Map<String, Object> input = param.getInput() == null
                             ? Collections.emptyMap() : param.getInput();
                     // 每次调用现搭一份上下文：这把工具在同一轮里可能被并发调多次，
@@ -201,6 +205,16 @@ public final class SpringAiToolAdapter extends ToolBase {
     private boolean isTainted() {
         AgentxTaint t = taint == null ? null : taint.get();
         return t != null && t.tainted();
+    }
+
+    private boolean isTaintApproved() {
+        AgentxTaint t = taint == null ? null : taint.get();
+        return t != null && t.taintApproved();
+    }
+
+    private void markTaintApproved() {
+        AgentxTaint t = taint == null ? null : taint.get();
+        if (t != null) t.markTaintApproved();
     }
 
     private static String rootMessage(Throwable e) {

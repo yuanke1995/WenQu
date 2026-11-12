@@ -1066,7 +1066,7 @@ async function startGoal (objective) {
     if (i >= 0) messages.value.splice(i, 1)
   }
   try {
-    const r = await startGoalApi(sid, obj)
+    const r = await startGoalApi(sid, obj, currentAgentId.value || '')
     if (r && r.success === false) { dropEcho(); message.warning(r.msg || '目标创建失败'); return null }
     if (r && r.data) {
       setGoal(sid, { ...r.data })

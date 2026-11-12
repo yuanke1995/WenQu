@@ -250,12 +250,12 @@ public class FrameworkSessions {
      * @param toolName 确认类填真实工具名；提问卡填 {@code askUser}；计划卡填 {@code planApproval}（与手写侧同词，
      *                 恢复端点就是按这两个名字分流的）
      */
-    public void recordPending(ChatCommand cmd, String sessionKey, String turnId, String requestId,
-                              String toolName, String requestArgs) {
-        if (requestId == null || requestId.isBlank()) return;
+    public boolean recordPending(ChatCommand cmd, String sessionKey, String turnId, String requestId,
+                                 String toolName, String requestArgs) {
+        if (requestId == null || requestId.isBlank()) return false;
         pendingOwner.put(requestId, sessionKey);
         // 分支轮的父会话/父轮一并落库：审批卡上翻后，父会话刷新与通知都要靠它找回这张卡
-        hitl.recordFrameworkPending(requestId, cmd.getSessionId(), cmd.getUserId(), turnId, toolName, requestArgs,
+        return hitl.recordFrameworkPending(requestId, cmd.getSessionId(), cmd.getUserId(), turnId, toolName, requestArgs,
                 cmd.getParentSessionId(), cmd.getParentTurnId());
     }
 

@@ -125,8 +125,42 @@ public class GoalService {
     /** 续跑驱动（引擎实现，构造期后绑）：控制流归调度器，这里只把一轮交给引擎。 */
     private volatile GoalTurnDriver turnDriver;
 
+    /**
+     * 会话轮级互斥（引擎侧实现，构造期后绑）：目标轮与用户轮共用同一把锁。
+     * <p>为什么目标轮也要过这把锁：仓库里原本有两把——用户轮拿 {@code tryBeginTurn}，
+     * 目标轮只拿跟随位，于是「用户插话」与「目标续跑」真的能同时跑（线上 17:42–17:45 两轮并行、
+     * 同一张审批卡发两次、同一 turn 落两条回答）。DSH 的口径是「自动轮只在整个 agent 空闲时起跑」，
+     * 这里用同一把会话锁兑现它：抢不到就让位重试，绝不并行。
+     */
+    public interface SessionGate {
+        boolean acquire(String sessionId);
+
+        void release(String sessionId);
+    }
+
+    private volatile SessionGate sessionGate;
+    /**
+     * 本进程里「目标轮握着哪几个会话的轮锁」。
+     * <p>只做两件事：让释放幂等（起轮异常与跟随收尾可能各兜一次），以及保证绝不去释放
+     * <b>别人（用户轮）</b>刚抢到的锁——晚到的重复释放会把用户的轮锁删掉，那比泄漏更难查。
+     */
+    private final java.util.Set<String> gateHeld = ConcurrentHashMap.newKeySet();
+    /** 目标轮让位重试间隔：用户轮通常一轮几十秒，按节拍重抢比死等简单，也不会占着租约空转。 */
+    private static final long GATE_RETRY_SECONDS = 2L;
+
     /** 每目标一把锁：用户动作与轮次结算不许并发。跨实例由 DB 租约兜底。 */
     private final Map<String, ReentrantLock> locks = new ConcurrentHashMap<>();
+
+    /**
+     * 已被叫停的目标轮（turnId → 置上时刻）：取消/暂停/删除与用户插话让位时写入。
+     * <p>为什么不能只靠 {@code session.interrupt()}：本轮还没真正起跑时它是空操作（runId 为空），
+     * 返回值也说明不了什么；跨副本时会话实例根本不在本进程。跟随循环与起轮路径要的是一个
+     * <b>可复读</b>的判据，而不是「尽力喊一嗓子」。
+     */
+    private final Map<String, Long> abortedTurns = new ConcurrentHashMap<>();
+    /** 跨副本/重启的兜底复查节流：turnId → 上次查库时刻。 */
+    private final Map<String, Long> abortRecheckedAt = new ConcurrentHashMap<>();
+    private static final long ABORT_RECHECK_MS = 1000L;
 
     public GoalService(GoalMapper goalMapper, GoalRoundMapper roundMapper,
                        com.wenqu.ai.mapper.GoalEvidenceMapper evidenceMapper,
@@ -152,6 +186,32 @@ public class GoalService {
     /** 续跑驱动（引擎侧实现）。由装配处显式绑定——引擎是那里 new 的，不归 Spring 管。 */
     public void bindTurnDriver(GoalTurnDriver driver) {
         this.turnDriver = driver;
+    }
+
+    /** 绑定会话轮级互斥（引擎侧 ChatRunRuntime 的同一把锁）。 */
+    public void bindSessionGate(SessionGate gate) {
+        this.sessionGate = gate;
+    }
+
+    /** 已释放的会话轮锁：正常路径由跟随循环收尾释放，起轮阶段的早退分支也走这里。 */
+    public void releaseSession(String sessionId) {
+        SessionGate gate = this.sessionGate;
+        if (gate == null || sessionId == null || sessionId.isBlank()) return;
+        if (!gateHeld.remove(sessionId)) return;   // 幂等：本进程没握着这把锁就不动它
+        try {
+            gate.release(sessionId);
+        } catch (RuntimeException e) {
+            log.warn("[GOAL] 释放会话轮锁失败 session={}: {}", sessionId, e.toString());
+        }
+    }
+
+    /**
+     * 用户轮开始前的让位：在飞的目标轮停掉并转暂停（用户优先）。
+     * <p>幂等：没有在飞的目标轮、目标不在进行中、或轮次行还没建出来时都是安全的空操作。
+     * <p>返回后调用方需要等会话锁释放（目标轮是协作式中断，不见得当场退出）。
+     */
+    public boolean preemptForUserTurn(String sessionId, String userId) {
+        return noteUserTurn(sessionId, userId, null);
     }
 
     /** 跨轮续跑的发起口（实现里做 submit + 跟随，见 AgentscopeChatEngine#submitGoalTurn）。 */
@@ -183,6 +243,9 @@ public class GoalService {
             goal.setSessionId(sessionId);
             goal.setUserId(uid);
             goal.setAgentId(agentId);
+            // 作答方钉到会话上：目标轮按「目标行 → 会话列 → 平台默认」解析，会话列空着就会
+            // 掉回平台默认档（用户轮 auto、目标轮逐次确认）。只在未绑定时写，不覆盖用户已选。
+            if (agentId != null && !agentId.isBlank()) sessionService.pinAgentIfAbsent(sessionId, agentId);
             goal.setObjective(text);
             goal.setStatus(RUNNING);
             goal.setPhase(GoalPhase.QUEUED);
@@ -243,7 +306,10 @@ public class GoalService {
             if (!ACTIVE.contains(goal.getStatus())) {
                 throw new IllegalStateException("只有进行中的目标可以停止");
             }
-            if (roundMapper.runningOf(goalId) != null) interruptRunningGoalTurn(goal);
+            if (roundMapper.runningOf(goalId) != null) {
+                markRunningRoundAborted(goal);
+                interruptRunningGoalTurn(goal);
+            }
             goal.setStatus(PAUSED);
             goal.setPhase(GoalPhase.QUEUED);
             goal.setEndReason("stopped");
@@ -378,12 +444,75 @@ public class GoalService {
 
     /** 结束前把在飞的那一轮收掉：打断执行、把轮标记为 INTERRUPTED（终态只写一次）。 */
     private void interruptRunningRound(Goal goal) {
+        markRunningRoundAborted(goal);
         GoalRound running = roundMapper.runningOf(goal.getId());
         if (running == null) return;
         interruptRunningGoalTurn(goal);
         running.setStatus(GoalRound.INTERRUPTED);
         running.setEndedAt(LocalDateTime.now());
         roundMapper.updateById(running);
+    }
+
+    /**
+     * 把目标「当前这一轮」标记为叫停。优先认在飞的轮次行；还没建行时退回目标上的 last_turn_id
+     * （起轮时先写它再提交，正是取消与起跑赛跑的那个窗口）。
+     */
+    private void markRunningRoundAborted(Goal goal) {
+        GoalRound running = roundMapper.runningOf(goal.getId());
+        String turnId = running != null && running.getTurnId() != null
+                ? running.getTurnId() : goal.getLastTurnId();
+        if (turnId != null && !turnId.isBlank()) markTurnAborted(turnId);
+    }
+
+    private void markTurnAborted(String turnId) {
+        if (turnId == null || turnId.isBlank()) return;
+        long now = System.currentTimeMillis();
+        if (abortedTurns.size() > 512) {
+            // 兜底清理：取消后从未起跑的轮不会再有收尾回调来摘标记
+            abortedTurns.entrySet().removeIf(e -> now - e.getValue() > 3_600_000L);
+            abortRecheckedAt.entrySet().removeIf(e -> now - e.getValue() > 3_600_000L);
+        }
+        abortedTurns.put(turnId, now);
+        log.info("[GOAL] 目标轮已标记为叫停: turn={}", turnId);
+    }
+
+    /**
+     * 这一轮真的收场了，摘掉叫停标记。
+     * <p>不能放在 {@code onRoundSettled} 里清：那里早于收尾的产物结算与落库，
+     * 提前清掉会让「已叫停的一轮」又把产物交付出去（线上「取消了还产出东西」正是这条路径）。
+     */
+    public void clearTurnAbort(String turnId) {
+        if (turnId == null || turnId.isBlank()) return;
+        abortedTurns.remove(turnId);
+        abortRecheckedAt.remove(turnId);
+    }
+
+    /**
+     * 这一轮目标轮是不是已经被叫停（应当尽快退出、不再产生任何交付）。
+     * <p>判据两段：进程内标记（取消/暂停当场置）→ 每 {@value #ABORT_RECHECK_MS}ms 读一次库
+     * （跨副本与重启兜底）：目标不在 ACTIVE、或阶段已不是执行中，即视为叫停。
+     * <p>非目标轮恒为 false：用户轮有自己的停止把手，不走这条。
+     */
+    public boolean goalTurnAborted(String turnId) {
+        if (!isGoalTurn(turnId)) return false;
+        if (abortedTurns.containsKey(turnId)) return true;
+        long now = System.currentTimeMillis();
+        Long last = abortRecheckedAt.get(turnId);
+        if (last != null && now - last < ABORT_RECHECK_MS) return false;
+        abortRecheckedAt.put(turnId, now);
+        Goal fresh;
+        try {
+            fresh = reload(goalIdOfTurn(turnId));
+        } catch (RuntimeException e) {
+            // 目标已不存在：没有再继续的理由，按叫停处理（否则这条轮会跑完再交付）
+            abortedTurns.put(turnId, now);
+            return true;
+        }
+        boolean alive = ACTIVE.contains(fresh.getStatus())
+                && (GoalPhase.EXECUTING.equals(fresh.getPhase())
+                    || GoalPhase.COMPLETION_CHECK.equals(fresh.getPhase()));
+        if (!alive) abortedTurns.put(turnId, now);
+        return !alive;
     }
 
     // ==================== 调度器钩子 ====================
@@ -570,7 +699,13 @@ public class GoalService {
                 releaseLease(fresh);
                 return;
             }
-            launchRoundLocked(fresh);
+            try {
+                launchRoundLocked(fresh);
+            } catch (RuntimeException e) {
+                // 起轮中途炸了（提示词/建行/提交）：会话锁还回去，否则这条会话在租约期内发不出新问题
+                releaseSession(fresh.getSessionId());
+                throw e;
+            }
         }
     }
 
@@ -587,6 +722,18 @@ public class GoalService {
             fail(goal, FAILED, "budget", "轮次预算已用完（" + max + " 轮）；未完成项见任务状态", null);
             return;
         }
+        // 先抢会话轮锁再建轮次行：抢不到说明用户轮正在这条会话里答着，自动轮让位。
+        // 不在这里抢、等引擎提交前才发现，就会留下一条 RUNNING 轮次行白占轮号（线上那条取消后
+        // 仍起跑的轮次就是这么来的）。让位不消耗轮号：下一拍调度器重抢。
+        if (!acquireSession(goal.getSessionId())) {
+            goal.setPhase(GoalPhase.QUEUED);
+            goal.setNextRunAt(LocalDateTime.now().plusSeconds(GATE_RETRY_SECONDS));
+            goalMapper.updateById(goal);
+            releaseLease(goal);
+            log.info("[GOAL] 会话正被用户轮占用，目标轮让位重试: goal={}", goal.getId());
+            return;
+        }
+        boolean handedOff = false;
         boolean recovery = GoalPhase.RECOVERING.equals(goal.getPhase());
         boolean completionCheck = c.isCompletionCheck();
         // 进展指纹在开跑前落一次：收尾时比较，判断这一轮到底有没有新增事实/产物/计划。
@@ -632,6 +779,8 @@ public class GoalService {
                 n, goal.getId(), recovery, completionCheck);
         try {
             driver.continueTurn(goal, input, n);
+            // 正常路径：锁的归属交给跟随循环收尾释放（见引擎 startFollowing 的 finally）
+            handedOff = true;
         } catch (RuntimeException e) {
             log.warn("[GOAL] 目标轮提交失败: goal={} n={} {}", goal.getId(), n, e.toString());
             // 不要把轮次先改成 FAILED 再交给 onRoundSettled——那边只处理 RUNNING 的轮，
@@ -640,7 +789,28 @@ public class GoalService {
             round.setSummary(e.getMessage());
             onRoundSettled(goal.getSessionId(), goal.getUserId(), turnId, 0, 0, null,
                     "", false, false, e.getMessage());
+        } finally {
+            if (!handedOff) releaseSession(goal.getSessionId());
         }
+    }
+
+    /** 抢会话轮锁；未绑定（单测/降级）时保持旧行为——不拦。 */
+    private boolean acquireSession(String sessionId) {
+        SessionGate gate = this.sessionGate;
+        if (gate == null || sessionId == null || sessionId.isBlank()) return true;
+        try {
+            boolean ok = gate.acquire(sessionId);
+            if (ok) gateHeld.add(sessionId);
+            return ok;
+        } catch (RuntimeException e) {
+            log.warn("[GOAL] 抢占会话轮锁失败 session={}: {}", sessionId, e.toString());
+            return false;
+        }
+    }
+
+    /** 引擎在跟随位重试支路上重抢会话锁（首次由起轮路径抢，等位期间已还给用户轮）。 */
+    public boolean acquireSessionForTurn(String sessionId) {
+        return acquireSession(sessionId);
     }
 
     // ==================== 轮次结算 ====================
@@ -934,13 +1104,16 @@ public class GoalService {
      * 用户自己那一轮开跑时调用：后台目标轮还在飞就让位（用户优先），目标转暂停。
      * <p>没有在飞的目标轮就不动——目标在队列里等调度，不需要为用户的一句话让位。
      */
-    public void noteUserTurn(String sessionId, String uid, RunChannel channel) {
+    public boolean noteUserTurn(String sessionId, String uid, RunChannel channel) {
         Goal goal = currentGoal(sessionId);
-        if (goal == null || !ACTIVE.contains(goal.getStatus())) return;
-        if (roundMapper.runningOf(goal.getId()) == null) return;
+        if (goal == null || !ACTIVE.contains(goal.getStatus())) return false;
+        if (roundMapper.runningOf(goal.getId()) == null) return false;
         synchronized (lockFor(goal.getId())) {
             goal = reload(goal.getId());
-            if (!ACTIVE.contains(goal.getStatus())) return;
+            if (!ACTIVE.contains(goal.getStatus())) return false;
+            // 先落「叫停」标记再喊 interrupt：interrupt 是协作式的，轮挂在一张审批卡上时
+            // 框架那边没有活着的 run 可打断；跟随循环靠这个标记在下一拍退出。
+            markRunningRoundAborted(goal);
             interruptRunningGoalTurn(goal);
             goal.setStatus(PAUSED);
             goal.setPhase(GoalPhase.QUEUED);
@@ -950,6 +1123,7 @@ public class GoalService {
             releaseLease(goal);
             emitState(goal, channel);
             log.info("[GOAL] 用户插话，目标循环让位转暂停: goal={}", goal.getId());
+            return true;
         }
     }
 
@@ -1047,6 +1221,16 @@ public class GoalService {
                                  String remainingJson, Boolean blocked, String blockedReason) {
         GoalRound round = turnId == null ? null : roundMapper.byTurnId(turnId);
         if (round == null) return "当前没有进行中的目标轮次，目标申请未记录。";
+        // 执行期鉴权（对齐 DSH 的 authority-at-execution）：只认「还在跑的目标 + 还在跑的这一轮」。
+        // 少了这两道，用户取消/停止之后，在飞的那一轮仍能把「已完成」写进来——线上就出现过
+        // 取消 4 秒后目标照跑、17:50 照收完成申请、17:52 照发交付正文。
+        if (!GoalRound.RUNNING.equals(round.getStatus())) {
+            return "这一轮已经结束（被叫停或已收尾），目标申请未记录。";
+        }
+        Goal owner = get(round.getGoalId());
+        if (owner == null || !ACTIVE.contains(owner.getStatus())) {
+            return "目标已结束，目标申请未记录。";
+        }
         GoalProposal p = new GoalProposal();
         p.setSummary(clip(summary, MAX_PROPOSAL_SUMMARY_CHARS));
         p.setBlocked(Boolean.TRUE.equals(blocked));
@@ -1089,6 +1273,10 @@ public class GoalService {
         if (round == null) return "当前没有进行中的目标轮次，记录未保存。";
         Goal goal = get(round.getGoalId());
         if (goal == null) return "当前没有进行中的目标轮次，记录未保存。";
+        // 与 goal_submit 同一道执行期鉴权：终态目标的轮不得再改跨轮续跑状态
+        if (!ACTIVE.contains(goal.getStatus()) || !GoalRound.RUNNING.equals(round.getStatus())) {
+            return "目标已结束，记录未保存。";
+        }
         synchronized (lockFor(goal.getId())) {
             goal = reload(goal.getId());
             GoalContinuation c = continuation(goal);
@@ -1723,9 +1911,7 @@ public class GoalService {
 
     private static boolean isGoalTurn(String turnId) {
         return turnId != null && turnId.startsWith("goal:");
-    }
-
-    static String goalIdOfTurn(String turnId) {
+    }    static String goalIdOfTurn(String turnId) {
         if (!isGoalTurn(turnId)) return null;
         String rest = turnId.substring("goal:".length());
         int colon = rest.indexOf(':');

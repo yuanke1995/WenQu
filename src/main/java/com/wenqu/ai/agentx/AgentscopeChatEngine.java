@@ -922,7 +922,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
 
             @Override
             public boolean stopRequested() {
-                return tools.stopRequested(cmd);
+                // 用户轮的停止把手 + 目标轮自己的叫停判据。目标轮没有 TurnHandle（后台起跑），
+                // 只读用户那把手会让「取消目标」永远停不下来——线上那条取消后又跑了 4 分钟就是它。
+                return tools.stopRequested(cmd) || goalService.goalTurnAborted(turnId);
             }
 
             @Override
@@ -1338,10 +1340,23 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      */
     private Following openForContinuation(String sessionId, String userId, String turnId, boolean recover,
                                           String guestUid, boolean planFirst) {
+        return openForContinuation(sessionId, userId, turnId, recover, guestUid, planFirst, null);
+    }
+
+    /**
+     * @param agentOverride 指定本轮作答方（目标续跑轮传目标行上的智能体）。空白=沿用会话列的解析。
+     *                      <p>为什么目标轮必须显式带：会话列在「用户在问答页直接说话」的会话里
+     *                      通常是空的（当轮才解析默认智能体），续跑轮只读会话列就会拿不到作答方，
+     *                      权限档位随之掉回平台默认（用户轮 auto、目标轮逐次确认）。
+     */
+    private Following openForContinuation(String sessionId, String userId, String turnId, boolean recover,
+                                          String guestUid, boolean planFirst, String agentOverride) {
         if (sessionId == null || sessionId.isBlank()) return null;
+        String resolvedAgentId = agentOverride == null || agentOverride.isBlank()
+                ? agentIdOfSession(sessionId) : agentOverride;
         ChatCommand cmd = ChatCommand.builder().sessionId(sessionId).question("")
                 .userId(userId == null || userId.isBlank() ? "guest" : userId)
-                .agentId(agentIdOfSession(sessionId))
+                .agentId(resolvedAgentId)
                 .guestMode(guestUid != null && !guestUid.isBlank())
                 .planMode(planFirst)
                 .guestUid(guestUid)
@@ -1533,6 +1548,14 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 if (turnId != null && turnId.startsWith("goal:")) {
                     backgroundGoalTurns.remove(f.cmd().getSessionId() + "|" + turnId);
                 }
+                // 目标轮占的是与用户轮同一把会话轮锁（GoalService.launchRound 抢的），
+                // 跟着跟随循环一起还回去——不还，这条会话在 130 分钟租约内再也发不出新问题。
+                if (turnId != null && turnId.startsWith("goal:")) {
+                    goalService.releaseSession(f.cmd().getSessionId());
+                    // 叫停标记留到这一轮真正收场之后才摘：产物结算与落库都在 finish 里，
+                    // 提早摘掉会让「已取消的一轮」把产物又交付出去。
+                    goalService.clearTurnAbort(turnId);
+                }
                 onSettled.run();
                 // 跟随位释放之后再接下一轮（放在收尾里发会被「已有跟随者」挡掉，目标循环走不到第三轮）。
                 // 传这一轮的 turnId，服务端据此区分用户轮收尾与目标轮收尾（让位停下的目标会自动接上）。
@@ -1566,31 +1589,61 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 后台轮在实例就绪后登记总线、由前端轮询接流。内部重试（reserveFollower 抢不到）仍走 GOAL_RETRY 调度，不经此池。
      */
     public void submitGoalTurn(com.wenqu.ai.model.Goal goal, String input, int n) {
-        GOAL_KICK.execute(() -> {
-            try {
-                continueGoalTurn(goal, input, n, 0);
-            } catch (RuntimeException e) {
-                log.warn("[GOAL] 目标轮异步发起失败: goal={} n={} {}", goal.getId(), n, e.toString());
-                // 不把目标留在 EXECUTING 等租约过期：起轮阶段就失败，立刻转暂停让用户看见。
-                goalService.markContinueFailed(goal, e.getMessage());
-            }
-        });
+        try {
+            GOAL_KICK.execute(() -> {
+                try {
+                    continueGoalTurn(goal, input, n, 0);
+                } catch (RuntimeException e) {
+                    log.warn("[GOAL] 目标轮异步发起失败: goal={} n={} {}", goal.getId(), n, e.toString());
+                    // 不把目标留在 EXECUTING 等租约过期：起轮阶段就失败，立刻转暂停让用户看见。
+                    goalService.markContinueFailed(goal, e.getMessage());
+                    // 起轮阶段异常可能发生在任何一步：会话锁在这里兜一次，避免整条会话被锁死
+                    goalService.releaseSession(goal.getSessionId());
+                }
+            });
+        } catch (RuntimeException rejected) {
+            // 执行池已关闭（停机中）：这一轮没提交出去，锁与目标状态都要当场收掉
+            log.warn("[GOAL] 目标轮执行池拒绝提交: goal={} {}", goal.getId(), rejected.toString());
+            goalService.markContinueFailed(goal, rejected.getMessage());
+            goalService.releaseSession(goal.getSessionId());
+        }
     }
 
     private void continueGoalTurn(com.wenqu.ai.model.Goal goal, String input, int n, int attempt) {
         String sessionId = goal.getSessionId();
         String uid = goal.getUserId();
         String turnId = com.wenqu.ai.service.GoalService.GOAL_TURN_ID_PREFIX + goal.getId() + ":" + n;
+        // 重试支路：等跟随位时把会话锁还给了用户轮，重新起跑要重新抢一次，抢不到继续让位。
+        if (attempt > 0) {
+            if (!goalService.acquireSessionForTurn(sessionId)) {
+                if (attempt >= GOAL_RETRY_MAX) {
+                    goalService.markContinueFailed(goal, "会话一直被用户轮占用，目标轮没排上");
+                    return;
+                }
+                GOAL_RETRY.schedule(() -> continueGoalTurn(goal, input, n, attempt + 1),
+                        GOAL_RETRY_DELAY_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
+                return;
+            }
+        }
         // 提交前复查：从「上一次收尾决定起下一轮」到这一行之间，用户可能刚停止/删除/改了目标。
         // 不复查就会把一轮已经没人要的续跑放出去（界面上表现为「删了目标它还在跑」）。
         if (!goalService.runnable(goal)) {
             log.info("[GOAL] 目标已不在进行中，取消这一轮续跑: goal={} n={}", goal.getId(), n);
+            goalService.releaseSession(sessionId);
             return;
         }
         boolean recover = "ORPHANED".equals(goal.getErrorClass());
-        Following f = openForContinuation(sessionId, uid, turnId, recover, null, n == 1);
+        Following f = openForContinuation(sessionId, uid, turnId, recover, null, n == 1, goalAgentId(goal));
         if (f == null) {
             goalService.markContinueFailed(goal, "会话实例装配不出来（模型/路由解析失败）");
+            goalService.releaseSession(sessionId);
+            return;
+        }
+        // 冷启动装配可能十几秒：这段时间里用户完全可能已经取消/停止。复查一次再提交，
+        // 否则就是线上那条「17:48:32 取消、17:48:39 照常起跑」。
+        if (!goalService.runnable(goal) || goalService.goalTurnAborted(turnId)) {
+            log.info("[GOAL] 装配期间目标已被取消/停止，丢弃这一轮续跑: goal={} n={}", goal.getId(), n);
+            goalService.releaseSession(sessionId);
             return;
         }
         String sessionKey = sessions.key(f.cmd());
@@ -1601,26 +1654,38 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             if (attempt >= GOAL_RETRY_MAX) {
                 log.warn("[GOAL] 续跑抢不到跟随位，转暂停: goal={} n={}", goal.getId(), n);
                 goalService.markContinueFailed(goal, "上一轮还在收尾，没抢到跟随位");
+                goalService.releaseSession(sessionId);
                 return;
             }
             log.info("[GOAL] 上一轮还在收尾，{}/{} 次后重试续跑: goal={} n={}", attempt + 1,
                     GOAL_RETRY_MAX, goal.getId(), n);
+            // 等位期间把会话锁还回去：攥着锁等 30 秒，用户这期间连一句话都发不出去。
+            goalService.releaseSession(sessionId);
             GOAL_RETRY.schedule(() -> continueGoalTurn(goal, input, n, attempt + 1),
                     GOAL_RETRY_DELAY_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
             return;
         }
         try {
+            // 提交前最后一道：跟随位是异步抢的，等位/重试期间目标可能已被取消
+            if (!goalService.runnable(goal) || goalService.goalTurnAborted(turnId)) {
+                log.info("[GOAL] 抢到跟随位时目标已不在进行中，取消提交: goal={} n={}", goal.getId(), n);
+                sessions.releaseFollower(sessionKey);
+                goalService.releaseSession(sessionId);
+                return;
+            }
             AgentSession.Task task = f.session().submit(
                     com.wenqu.ai.service.GoalService.GOAL_TURN_ID_PREFIX + goal.getId() + ":" + n, input);
             backgroundGoalTurns.add(sessionId + "|" + turnId);
             // 先登记总线再发帧：deep_turn 到浏览器时，它探测 /chat/run 必须已经探得到这一轮
             java.util.concurrent.atomic.AtomicBoolean alive = openGoalTurnRun(f, sessionId, uid, turnId);
             goalService.emitTurn(goal, n, turnId, f.channel());
+            // 从这里起，会话锁归跟随循环的 finally 释放（与 follower 同一次收尾）
             startFollowing(f, task, () -> alive.set(false), true);
         } catch (RuntimeException e) {
             log.warn("[GOAL] 续跑轮提交失败: goal={} n={} {}", goal.getId(), n, e.toString());
             goalService.markContinueFailed(goal, e.getMessage());
             sessions.releaseFollower(sessionKey);
+            goalService.releaseSession(sessionId);
         }
     }
 
@@ -2924,6 +2989,19 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     }
 
     /**
+     * 目标续跑轮的作答方：目标行 → 会话列 → 平台默认智能体。
+     * <p>三段缺一不可：目标行是「建目标时是谁在答」，会话列是这轮问答的兜底，
+     * 平台默认是最后一格。少了它，续跑轮就没有智能体绑定，权限档位与审批方式都会回落平台默认，
+     * 用户看到的正是「智能体明明设了自动执行，目标模式仍然逐条弹确认卡」。
+     */
+    private String goalAgentId(com.wenqu.ai.model.Goal goal) {
+        String id = goal == null ? null : goal.getAgentId();
+        if (id == null || id.isBlank()) id = agentIdOfSession(goal == null ? null : goal.getSessionId());
+        if (id == null || id.isBlank()) id = tools.defaultAgentId();
+        return id;
+    }
+
+    /**
      * 本轮的**工作背景段**：工作区目录的文件简报（目录里有什么，模型才知道该去读哪份）。
      * <p>取不到就缺席：目录不共用/读失败不注入读不到的清单——不能因为工作背景读失败就把整轮打挂，
      * 也不能凭空塞「这是兜底容器」的噪声（每轮都是纯 token 成本）。
@@ -3660,7 +3738,14 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             }
             channel.emit(RunEventType.APPROVAL_REQUIRED,
                     com.alibaba.fastjson2.JSON.toJSONString(approvalCard));
-            sessions.recordPending(cmd, sessionKey, turnId, entry.getKey(), tool, args);
+            // 先落库、只有真的插入了才发帧：同一 approvalId 两个跟随者各宣布一次时，
+            // 数据库侧本来就是幂等的，而 emit 侧原来没有闸——线上那张卡就是这么发了两遍。
+            boolean inserted = sessions.recordPending(cmd, sessionKey, turnId, entry.getKey(), tool, args);
+            if (!inserted) {
+                log.info("[AGENTX] 审批卡已存在，跳过重复下发: session={} approval={}",
+                        cmd.getSessionId(), entry.getKey());
+                continue;
+            }
             // 审批卡同样等人：正文带展示名（与那张卡同源的一个词）。名字没收过就只报会话，
             // 绝不拿裸工具名冒充展示名
             turnNotify.onApprovalPending(cmd, entry.getKey(), str(approvalCard.get("label")));
@@ -4688,7 +4773,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         long elapsedMs = Math.max(0L, wallMs - humanWaitMs);
         com.wenqu.ai.agent.chat.TurnHandle handle =
                 com.wenqu.ai.agent.chat.TurnRegistry.handle(cmd.getSessionId());
-        String framedTurnId = handle == null ? turnId : handle.turnId();
+        // 目标轮用自己的轮号，不借会话上那把用户轮的把手：借了之后同一 turnId 会落两条 assistant
+        // （用户轮一条、目标轮一条），前端按 turnId 去重就分不开。
+        String framedTurnId = turnId != null && turnId.startsWith("goal:")
+                ? turnId : (handle == null ? turnId : handle.turnId());
         Map<String, Object> tokens = usageOf(session, historyBefore, pool, contextWindow);
         // 收尾这一发是终值（与 done 里的 tokens 同一份快照）；流式期间那几发见 emitLiveUsage，
         // 两拨都出自 usageOf，不做第二套估算
@@ -4747,6 +4835,13 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         if (lastRetrieved != null) channel.emit(RunEventType.RETRIEVED, lastRetrieved);
         java.util.List<java.util.Map<String, Object>> artifactItems =
                 artifactService.settleArtifacts(cmd.getSessionId());
+        // 目标已被叫停的一轮不交付产物：目标取消后那一拍仍可能把在飞工具写出来的产物结算进正文，
+        // 用户看到的就是「明明取消了，还是产出了东西」。产物账照常消费，只是不进这一轮交付。
+        if (goalService.goalTurnAborted(turnId) && !artifactItems.isEmpty()) {
+            log.info("[GOAL] 目标轮已被叫停，丢弃本轮产物交付: session={} turn={} count={}",
+                    cmd.getSessionId(), turnId, artifactItems.size());
+            artifactItems = List.of();
+        }
         String artifactList = com.alibaba.fastjson2.JSON.toJSONString(artifactItems);
         String artifactsJson = "[]".equals(artifactList) ? null : artifactList;
         // 产物是收尾才结算的：先入 blocks 再落库，保证历史时间线里同一份产物不丢

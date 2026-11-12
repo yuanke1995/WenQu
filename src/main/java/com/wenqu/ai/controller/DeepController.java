@@ -30,9 +30,11 @@ import com.wenqu.ai.security.Permission;
 public class DeepController {
 
     private final GoalService goalService;
+    private final com.wenqu.ai.service.AgentService agentService;
 
-    public DeepController(GoalService goalService) {
+    public DeepController(GoalService goalService, com.wenqu.ai.service.AgentService agentService) {
         this.goalService = goalService;
+        this.agentService = agentService;
     }
 
     @Operation(summary = "开始深度执行", description = "把一件事交给目标模式：{sessionId,objective}。"
@@ -47,7 +49,14 @@ public class DeepController {
             return ResultJson.error("缺少 sessionId");
         }
         try {
-            Goal goal = goalService.start(sessionId, uid, str(body.get("agentId")),
+            // 作答方与当轮问答同一口径：调用方带了就用它，没带回落平台默认智能体。
+            // 目标行落空会让续跑轮掉回平台默认权限档（智能体 auto 不生效），所以这里必须补。
+            String agentId = str(body.get("agentId"));
+            if (agentId == null || agentId.isBlank()) {
+                var def = agentService.defaultAgent();
+                agentId = def == null ? null : def.getId();
+            }
+            Goal goal = goalService.start(sessionId, uid, agentId,
                     str(body.get("objective")), null);
             return ResultJson.ok(goalService.view(goal), "目标已开始");
         } catch (IllegalArgumentException | IllegalStateException e) {

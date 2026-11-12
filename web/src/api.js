@@ -1449,10 +1449,10 @@ export const getSessionTodosApi = (sessionId, turnId = '') =>
  *  建行即开跑，系统自己跨轮推进到完成；轮数上限只是兜底安全阈值，不是给用户的预算。
  *  返回目标视图模型 {goalId,status,objective,round,maxRounds,hint,endReason,blockedReason,live,createdAt,startedAt,endedAt}。
  *  多余的入参忽略（老调用方仍会多传两个）。 */
-export const startGoalApi = (sessionId, objective) =>
+export const startGoalApi = (sessionId, objective, agentId) =>
   request('/chat/deep', {
     method: 'POST',
-    body: JSON.stringify({ sessionId, objective })
+    body: JSON.stringify({ sessionId, objective, agentId: agentId || null })
   })
 
 /** 目标模式：目标动作。action=pause（停止）|resume（继续）|edit（改目标原文，带 objective）|cancel（取消）|delete（删除记录）。

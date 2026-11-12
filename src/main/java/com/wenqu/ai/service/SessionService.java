@@ -1172,6 +1172,21 @@ public class SessionService {
             if (locked == null) {
                 throw new IllegalStateException("会话行不可用: " + sessionId);
             }
+            // 同一轮的助手消息只落一条：目标轮与用户轮曾并行跟随同一个会话，两个跟随者各收尾一次，
+            // 历史里就会出现同一个 turnId 的两条 assistant（用户看到「同一句话答了两遍」）。
+            // 在会话行锁内查重，并发写在这里被串行化，判据才可靠。
+            if ("assistant".equals(role) && notBlank(w.getTurnId())) {
+                Message existing = messageMapper.selectOne(new LambdaQueryWrapper<Message>()
+                        .eq(Message::getSessionId, sessionId)
+                        .eq(Message::getTurnId, w.getTurnId())
+                        .eq(Message::getRole, "assistant")
+                        .last("LIMIT 1"));
+                if (existing != null) {
+                    log.info("[MSG] 同一轮已有助手消息，跳过重复落库: session={} turn={} msg={}",
+                            sessionId, w.getTurnId(), existing.getId());
+                    return existing.getId();
+                }
+            }
 
             int seq = messageMapper.maxSequencePhysical(sessionId) + 1;
             Message msg = new Message();
@@ -1346,6 +1361,20 @@ public class SessionService {
         sessionMapper.update(null, new LambdaUpdateWrapper<Session>()
                 .eq(Session::getId, sessionId)
                 .set(Session::getModel, m.isEmpty() ? null : m));
+    }
+
+    /**
+     * 会话作答智能体落库（只在还没绑定时写）。
+     * <p>为什么续跑要它：目标轮与通知续跑轮按「目标行 → 会话列 → 平台默认」解析作答方，
+     * 会话列一直为空就会掉回平台默认档——同一个会话里，用户轮按智能体设的「自动执行」跑，
+     * 目标轮却按平台默认档逐次弹确认卡。这里补的是会话级身份这一格，权限判定本身不改。
+     */
+    public void pinAgentIfAbsent(String sessionId, String agentId) {
+        if (sessionId == null || sessionId.isBlank() || agentId == null || agentId.isBlank()) return;
+        sessionMapper.update(null, new LambdaUpdateWrapper<Session>()
+                .eq(Session::getId, sessionId)
+                .and(w -> w.isNull(Session::getAgentId).or().eq(Session::getAgentId, ""))
+                .set(Session::getAgentId, agentId));
     }
 
 
