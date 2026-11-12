@@ -3739,6 +3739,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             approvalCard.put("tool", tool);
             approvalCard.put("args", args);
             approvalCard.put("timeoutMs", configService.getInt("chat.approvalTimeoutMs", 600000));
+            // 「为什么问人」与执行期守卫同一份判据：卡上不写理由时，用户看到的就是一张无缘无故的拦截卡
+            String reason = approvalReason(cmd, tool, firstNonNull(toolInputOf(data.get("call")),
+                    firstNonNull(toolInputOf(data.get("toolUse")), toolInputOf(data))));
+            if (!reason.isEmpty()) approvalCard.put("reason", reason);
             displayNames.putDisplayFields(approvalCard, cmd.getUserId(), tool);
             // 工具表没收过这个名字（MCP 动态工具常见）：补一句说明，让用户至少知道这张卡在问什么，
             // 而不是光秃秃一个英文名——但绝不拿工具名冒充展示名（前端会把它当「后端认真取过」）
@@ -3749,7 +3753,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                     com.alibaba.fastjson2.JSON.toJSONString(approvalCard));
             // 先落库、只有真的插入了才发帧：同一 approvalId 两个跟随者各宣布一次时，
             // 数据库侧本来就是幂等的，而 emit 侧原来没有闸——线上那张卡就是这么发了两遍。
-            boolean inserted = sessions.recordPending(cmd, sessionKey, turnId, entry.getKey(), tool, args);
+            boolean inserted = sessions.recordPending(cmd, sessionKey, turnId, entry.getKey(), tool, args, reason);
             if (!inserted) {
                 log.info("[AGENTX] 审批卡已存在，跳过重复下发: session={} approval={}",
                         cmd.getSessionId(), entry.getKey());
@@ -3759,6 +3763,34 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             // 绝不拿裸工具名冒充展示名
             turnNotify.onApprovalPending(cmd, entry.getKey(), str(approvalCard.get("label")));
         }
+    }
+
+    /**
+     * 审批卡上的「为什么问」：与执行期守卫同一份判据——本机文件/命令工具由污点护栏接管
+     * （读过外部内容后遇到删除/覆盖/外发/越界写），其余工具按本轮审批档要求确认。
+     * 空串 = 没有可说清的理由，卡片沿用默认提示。
+     * <p>不在这里再判一次「像不像写操作」：工具性质在登记处，强制确认在 {@link AgentxNativeToolGuard}。
+     */
+    @SuppressWarnings("unchecked")
+    private String approvalReason(ChatCommand cmd, String tool, Object inputObj) {
+        AgentxTurnSlot.Turn t = sessions.turnSlot(cmd).current();
+        if (t == null) return "";
+        AgentxNativeToolGuard.Kind kind = nativeGuardKind(tool);
+        if (kind != null) {
+            Map<String, Object> input = inputObj instanceof Map ? (Map<String, Object>) inputObj : null;
+            String note = AgentxNativeToolGuard.forcedAskNote(kind, input, t.policy(), t.taint(),
+                    workspaceRootsOf(cmd));
+            if (note != null) return note;
+        }
+        return "当前要求执行前确认：这一步会改动外部状态。";
+    }
+
+    /** 框架原生工具里会被污点护栏强制确认的那三把；其余（MCP/脚本等）不归它管。 */
+    private static AgentxNativeToolGuard.Kind nativeGuardKind(String tool) {
+        if (FrameworkToolLabels.FilesystemToolNames.EXECUTE.equals(tool)) return AgentxNativeToolGuard.Kind.EXEC;
+        if (FrameworkToolLabels.FilesystemToolNames.WRITE_FILE.equals(tool)) return AgentxNativeToolGuard.Kind.WRITE;
+        if (FrameworkToolLabels.FilesystemToolNames.EDIT_FILE.equals(tool)) return AgentxNativeToolGuard.Kind.EDIT;
+        return null;
     }
 
     /**

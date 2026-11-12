@@ -184,6 +184,18 @@ public class HitlDecisionService {
     public boolean recordFrameworkPending(String id, String sessionId, String userId, String turnId,
                                           String toolName, String requestArgs,
                                           String parentSessionId, String parentTurnId) {
+        return recordFrameworkPending(id, sessionId, userId, turnId, toolName, requestArgs,
+                parentSessionId, parentTurnId, "");
+    }
+
+    /**
+     * 带「为什么问」的版本：审批卡的说明与实时帧同文案，刷新/换设备恢复时不丢。
+     * <p>reason 非空时 request_args 存成 {@code {approvalReason, args}}（列是 TEXT，不改表）；
+     * 空 reason 与旧记录同形（裸 args），恢复侧两种都认。
+     */
+    public boolean recordFrameworkPending(String id, String sessionId, String userId, String turnId,
+                                          String toolName, String requestArgs,
+                                          String parentSessionId, String parentTurnId, String reason) {
         if (id == null || id.isBlank()) return false;
         try {
             if (toolApprovalMapper.selectById(id) != null) return false;
@@ -199,8 +211,16 @@ public class HitlDecisionService {
             // 计划卡整份计划都在 request_args 里（恢复待批卡时要按它重建正文）；2000 字上限会把计划
             // 与血缘字段一起截掉。列本身已是 TEXT，这里给计划一张更宽的额度，其余审批仍按 2000。
             int argCap = "planApproval".equals(toolName) ? 16000 : 2000;
-            rec.setRequestArgs(requestArgs == null ? ""
-                    : (requestArgs.length() > argCap ? requestArgs.substring(0, argCap) : requestArgs));
+            String stored = requestArgs == null ? "" : requestArgs;
+            if (stored.length() > argCap) stored = stored.substring(0, argCap);
+            // 先截 args 再包外壳：从中间截断 JSON 会让恢复侧的解析直接失败
+            if (reason != null && !reason.isBlank()) {
+                JSONObject wrapped = new JSONObject();
+                wrapped.put("approvalReason", reason);
+                wrapped.put("args", stored);
+                stored = wrapped.toJSONString();
+            }
+            rec.setRequestArgs(stored);
             rec.setCreatedAt(java.time.LocalDateTime.now());
             toolApprovalMapper.insert(rec);
             return true;
@@ -212,6 +232,28 @@ public class HitlDecisionService {
             log.warn("[AGENTX] 框架待办落库失败（不阻塞本轮，但刷新后这张卡取不回）: {}", e.getMessage());
             return true;
         }
+    }
+
+    /**
+     * 工具审批的 request_args 两种形状都认：{@code {approvalReason, args}} 的包装（带理由的卡）
+     * 或裸 args（旧记录、提问卡与计划卡不走这里）。
+     *
+     * @return {@code [args, reason]}；裸 args 的 reason 为空串，解析失败原样当 args（不吞内容）
+     */
+    static String[] splitApprovalRequestArgs(String stored) {
+        String args = stored == null ? "" : stored;
+        if (!args.stripLeading().startsWith("{")) return new String[]{args, ""};
+        try {
+            JSONObject obj = JSON.parseObject(args);
+            if (obj != null && obj.containsKey("approvalReason")) {
+                return new String[]{
+                        obj.getString("args") == null ? "" : obj.getString("args"),
+                        obj.getString("approvalReason") == null ? "" : obj.getString("approvalReason")};
+            }
+        } catch (Exception ignored) {
+            // 包装被截断/不是合法 JSON：按裸 args 展示，至少命令还在
+        }
+        return new String[]{args, ""};
     }
 
     /** 按 ID 取那条待办记录（框架恢复路径要用：归属会话/用户/轮次都只在这张表里）。不存在返回 null。 */
@@ -507,7 +549,11 @@ public class HitlDecisionService {
                 // 展示名与实时审批卡同源（注册中心）：恢复出来的卡片若只给英文名，用户在同一张卡上
                 // 会先看到「运行命令」、刷新后看到「execute」
                 toolRegistry.putDisplayFields(item, rec.getToolName());
-                item.put("args", rec.getRequestArgs() == null ? "" : rec.getRequestArgs());
+                // request_args 可能是「args + 为什么问」的包装（见 recordFrameworkPending），
+                // 两种形状都认：旧记录是裸 args，恢复出来的卡与实时卡同文案
+                String[] parts = splitApprovalRequestArgs(rec.getRequestArgs());
+                item.put("args", parts[0]);
+                if (!parts[1].isBlank()) item.put("reason", parts[1]);
                 item.put("timeoutMs", window);
                 item.put("remainingMs", remaining);
                 item.put("createdAt", createdMs);

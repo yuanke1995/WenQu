@@ -127,33 +127,52 @@ public final class AgentxNativeToolGuard extends ToolBase {
      */
     private PermissionDecision forcedConfirmation(Map<String, Object> input) {
         AgentxTurnSlot.Turn turn = slot == null ? null : slot.current();
+        ExecutionPolicy policy = turn == null ? null : turn.policy();
         AgentxTaint taint = turn == null ? null : turn.taint();
+        String note = forcedAskNote(kind, input, policy, taint, roots);
+        if (note == null) return null;
+        if (kind == Kind.EXEC) {
+            String command = input == null ? "" : String.valueOf(input.get("command"));
+            return ask(note + "请先确认：\n" + abbreviate(command));
+        }
+        return ask(note + "请先确认这是你要的结果。");
+    }
+
+    /**
+     * 强制确认的理由，同时也是审批卡上「为什么问」的说明：null = 本层不需要问人。
+     * <p>与 {@link #forcedConfirmation} 共用这一份判据，审批卡不另抄一套规则；
+     * 卡片文案里不回显命令正文（正文本来就在卡上的参数块里）。
+     *
+     * @param policy 本轮权限档位（越界写只在完全权限档才值得确认）
+     * @param taint  本轮污点（没读过外部内容就不接管）
+     * @param roots  工作区根（越界判断用；空表按任何绝对路径都越界处理）
+     */
+    static String forcedAskNote(Kind kind, Map<String, Object> input, ExecutionPolicy policy,
+                                AgentxTaint taint, List<String> roots) {
         if (taint == null || !taint.tainted()) return null;
         if (kind == Kind.EXEC) {
             String command = input == null ? null : String.valueOf(input.get("command"));
             if (command == null || command.isBlank() || "null".equals(command)) return null;
             boolean destructive = AgentxDestructiveCommands.isDestructive(command);
             // 工作区内修改档下越界写会被执行器/OS 沙箱直接拒绝，问了也批不了；只有完全权限档才值得确认。
-            boolean outside = turn.policy() != null
-                    && turn.policy().sandboxMode() == SandboxMode.DANGER_FULL_ACCESS
+            boolean outside = policy != null
+                    && policy.sandboxMode() == SandboxMode.DANGER_FULL_ACCESS
                     && AgentxDestructiveCommands.writesOutside(command, roots);
             boolean exfil = AgentxDestructiveCommands.exfiltrates(command);
             if (!destructive && !outside && !exfil) return null;
-            String what = destructive ? "删除/覆盖数据的命令"
+            String what = destructive ? "删除或覆盖数据"
                     : outside ? "写到工作区之外" : "把本地数据发到外部";
-            return ask("本轮已读取过外部内容（" + sources(taint) + "）。这条命令会" + what
-                    + "，直接执行有被资料里藏着的指令利用的风险。请先确认：\n" + abbreviate(command));
+            return "本轮已读取过外部内容（" + sources(taint) + "）。这条命令会" + what
+                    + "，直接执行有被资料里藏着的指令利用的风险。";
         }
         if (kind == Kind.WRITE || kind == Kind.EDIT) {
-            ExecutionPolicy policy = turn.policy();
             // 工作区内修改档下越界写本来就会被执行器拒绝；这里只管「完全权限」这一档——
             // 那是唯一放行越界写的地方，必须在读过外部内容后回到人面前确认一次。
             if (policy == null || policy.sandboxMode() != SandboxMode.DANGER_FULL_ACCESS) return null;
             String path = input == null ? null : String.valueOf(input.get("path"));
             if (path == null || path.isBlank() || "null".equals(path)) return null;
             if (!AgentxDestructiveCommands.outside(path, roots)) return null;
-            return ask("本轮已读取过外部内容（" + sources(taint) + "）。这一步要写到工作区之外："
-                    + path + "。请先确认这是你要的结果。");
+            return "本轮已读取过外部内容（" + sources(taint) + "）。这一步要写到工作区之外：" + path + "。";
         }
         return null;
     }

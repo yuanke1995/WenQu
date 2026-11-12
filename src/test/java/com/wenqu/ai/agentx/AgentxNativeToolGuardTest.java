@@ -64,6 +64,21 @@ class AgentxNativeToolGuardTest {
                 .isEqualTo(PermissionBehavior.ALLOW);
     }
 
+    @Test
+    @DisplayName("审批卡理由与守卫同源：文件重定向算覆盖写，普通命令没有理由")
+    void forcedAskNoteExplainsRedirect() {
+        ExecutionPolicy p = ExecutionPolicy.of(PermissionPreset.STANDARD, "auto", "/Users/me/work", null);
+        AgentxTaint t = taint(true);
+        String note = AgentxNativeToolGuard.forcedAskNote(AgentxNativeToolGuard.Kind.EXEC,
+                Map.of("command", "python3 -m http.server 8765 >/tmp/wq_preview.log 2>&1"), p, t, ROOTS);
+        assertThat(note).isNotNull().contains("本轮已读取过外部内容").contains("覆盖");
+        assertThat(AgentxNativeToolGuard.forcedAskNote(AgentxNativeToolGuard.Kind.EXEC,
+                Map.of("command", "ls -la"), p, t, ROOTS)).isNull();
+        // 没标脏就没有强制确认，理由也不该冒出来
+        assertThat(AgentxNativeToolGuard.forcedAskNote(AgentxNativeToolGuard.Kind.EXEC,
+                Map.of("command", "rm -rf build"), p, taint(false), ROOTS)).isNull();
+    }
+
     private static PermissionBehavior decision(AgentxNativeToolGuard guard, Map<String, Object> input) {
         var ctx = PermissionContextState.builder().mode(PermissionMode.DEFAULT).build();
         return guard.checkPermissions(input, ctx).block().getBehavior();

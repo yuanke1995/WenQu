@@ -252,11 +252,20 @@ public class FrameworkSessions {
      */
     public boolean recordPending(ChatCommand cmd, String sessionKey, String turnId, String requestId,
                                  String toolName, String requestArgs) {
+        return recordPending(cmd, sessionKey, turnId, requestId, toolName, requestArgs, "");
+    }
+
+    /**
+     * 带「为什么问」的版本（审批卡）：reason 一并落库，刷新/换设备恢复出来的卡与实时卡同文案。
+     * <p>空 reason 与旧口径逐字一致（request_args 原样存），存量记录不需要迁移。
+     */
+    public boolean recordPending(ChatCommand cmd, String sessionKey, String turnId, String requestId,
+                                 String toolName, String requestArgs, String reason) {
         if (requestId == null || requestId.isBlank()) return false;
         pendingOwner.put(requestId, sessionKey);
         // 分支轮的父会话/父轮一并落库：审批卡上翻后，父会话刷新与通知都要靠它找回这张卡
         return hitl.recordFrameworkPending(requestId, cmd.getSessionId(), cmd.getUserId(), turnId, toolName, requestArgs,
-                cmd.getParentSessionId(), cmd.getParentTurnId());
+                cmd.getParentSessionId(), cmd.getParentTurnId(), reason);
     }
 
 
