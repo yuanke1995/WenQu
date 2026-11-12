@@ -57,6 +57,9 @@ public class Menu {
     /** 内置菜单: 1=预置不可删除 */
     private Integer builtin;
 
+    /** 企业面专属: 1=仅 enterprise 档下发、且只出现在 enterprise 档的菜单管理列表 */
+    private Integer enterpriseOnly;
+
     @TableLogic
     private Integer deleted;
 

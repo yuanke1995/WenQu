@@ -133,6 +133,13 @@ public class RbacSeedRunner implements ApplicationRunner {
     /** 质量页合并后隐藏的旧入口：保留菜单行/API 归属，只不再下发侧栏。 */
     private static final List<String> HIDDEN_MENUS = List.of("menu-dashboard", "menu-agents-tab-eval");
 
+    /**
+     * 企业面专属菜单：standard 档不下发、也不出现在菜单管理页（V3 列 enterprise_only）。
+     * 判据与后端 {@code @EnterpriseOnly} 对齐：多租户（/tenants）、安全运维（审计）、服务账号。
+     */
+    private static final Set<String> ENTERPRISE_MENUS = Set.of(
+            "menu-tenants", "menu-security", "menu-audit-events", "menu-service-accounts");
+
     /** user 角色默认可见的内置菜单 id（个人资产类与问答类一致，默认对所有人开放） */
     private static final List<String> USER_MENUS =
             List.of("menu-chat", "menu-agents", "menu-market", "menu-knowledge", "menu-artifacts", "menu-stats",
@@ -190,6 +197,7 @@ public class RbacSeedRunner implements ApplicationRunner {
             m.setSortOrder(Integer.valueOf(d[4]));
             m.setVisible(Integer.valueOf(d[5]));
             m.setBuiltin(1);
+            m.setEnterpriseOnly(ENTERPRISE_MENUS.contains(d[0]) ? 1 : 0);
             m.setCreateTime(now);
             menuMapper.insert(m);
             menuAdded++;
@@ -213,6 +221,7 @@ public class RbacSeedRunner implements ApplicationRunner {
             m.setSortOrder(Integer.valueOf(d[3]));
             m.setVisible(1);
             m.setBuiltin(1);
+            m.setEnterpriseOnly(ENTERPRISE_MENUS.contains(d[0]) ? 1 : 0);
             m.setCreateTime(now);
             menuMapper.insert(m);
             existingMenuIds.add(d[0]);
@@ -229,6 +238,16 @@ public class RbacSeedRunner implements ApplicationRunner {
         // 旧「数据看板」菜单与智能体评测 Tab 保留行、只隐藏，避免删行连带丢 API 归属。
         if (syncBuiltinMenu(new String[]{"menu-evaluation", "质量", "ExperimentOutlined", "/quality", "50", "1"})) {
             seeded = true;
+        }
+        // 企业面标记：按 id 校正存量行（新增内置菜单若属于企业面，不依赖手写 SQL）
+        for (String mid : ENTERPRISE_MENUS) {
+            Menu m = menuMapper.selectById(mid);
+            if (m != null && !Integer.valueOf(1).equals(m.getEnterpriseOnly())) {
+                m.setEnterpriseOnly(1);
+                menuMapper.updateById(m);
+                seeded = true;
+                log.info("[RbacSeed] 已标记企业面专属菜单 {}", mid);
+            }
         }
         for (String mid : HIDDEN_MENUS) {
             Menu m = menuMapper.selectById(mid);

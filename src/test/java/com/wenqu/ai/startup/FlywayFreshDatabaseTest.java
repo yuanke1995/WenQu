@@ -18,7 +18,7 @@ import java.util.Set;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * 在真 MySQL 空库上验证迁移脚本：V1 建出核心表、V2 删除 chatflow 列，第二次 migrate 不再执行。
+ * 在真 MySQL 空库上验证迁移脚本：V1 建出核心表、V2 删除 chatflow 列、V3 给菜单加企业面标记，第二次 migrate 不再执行。
  * Docker 不可用时自动跳过；有 Docker 的 CI/开发机直接跑。
  */
 @Tag("container")
@@ -39,13 +39,14 @@ class FlywayFreshDatabaseTest {
                 .load();
 
         MigrateResult first = flyway.migrate();
-        assertThat(first.migrationsExecuted).as("空库应执行 V1 + V2").isEqualTo(2);
+        assertThat(first.migrationsExecuted).as("空库应执行 V1 + V2 + V3").isEqualTo(3);
 
         Set<String> tables = tables();
         assertThat(tables).contains(
                 "c_ai_session", "c_ai_message", "c_ai_session_event",
                 "c_ai_goal", "c_ai_usage_log", "flyway_schema_history");
         assertThat(columns("c_ai_agent")).as("V2 已删除 chatflow 列").doesNotContain("workflow_id");
+        assertThat(columns("c_ai_menu")).as("V3 已加企业面标记列").contains("enterprise_only");
 
         MigrateResult second = flyway.migrate();
         assertThat(second.migrationsExecuted).as("二次启动不应重复执行基线").isZero();

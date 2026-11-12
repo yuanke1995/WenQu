@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wenqu.ai.common.BizException;
+import com.wenqu.ai.config.DeploymentGuard;
 import com.wenqu.ai.mapper.MenuApiMapper;
 import com.wenqu.ai.mapper.MenuMapper;
 import com.wenqu.ai.mapper.RoleMenuMapper;
@@ -46,9 +47,22 @@ public class MenuService {
     private final RoleService roleService;
     private final UserMapper userMapper;
     private final UserRoleService userRoleService;
+    private final DeploymentGuard deploymentGuard;
 
     /** 偏好 JSON 解析专用：字段名固定、类型固定，不受全局 ObjectMapper 配置影响 */
     private static final ObjectMapper PREF_MAPPER = new ObjectMapper();
+
+    /**
+     * 企业面菜单过滤：standard 档不下发、也不出现在菜单管理列表。
+     * 与后端 {@code @EnterpriseOnly} 对齐——菜单可见面必须和接口准入面一致，
+     * 否则管理员能看到并授权一个点进去就 404 的入口。
+     */
+    private List<Menu> scoped(List<Menu> all) {
+        if ("enterprise".equals(deploymentGuard.profile())) return all;
+        return all.stream()
+                .filter(m -> !Integer.valueOf(1).equals(m.getEnterpriseOnly()))
+                .toList();
+    }
 
     // ==================== 下发（/auth/me 热路径） ====================
 
@@ -72,10 +86,10 @@ public class MenuService {
      * order 里失效的 id 跳过、剩余按菜单表原序补后，绝不丢菜单或清空侧栏。
      */
     public List<Map<String, Object>> visibleMenusFor(java.util.Collection<String> roles, String prefJson) {
-        List<Menu> all = menuMapper.selectList(new LambdaQueryWrapper<Menu>()
+        List<Menu> all = scoped(menuMapper.selectList(new LambdaQueryWrapper<Menu>()
                 .eq(Menu::getVisible, 1)
                 .orderByAsc(Menu::getSortOrder)
-                .orderByAsc(Menu::getCreateTime));
+                .orderByAsc(Menu::getCreateTime)));
         if (all.isEmpty()) return List.of();
 
         Set<String> allowed;
@@ -281,8 +295,8 @@ public class MenuService {
 
     /** 当前角色集可见的菜单 id 集合（visible=1 ∩ 各角色授权并集；管理员级 = 全部 visible） */
     public Set<String> visibleMenuIdsOf(java.util.Collection<String> roles) {
-        List<Menu> all = menuMapper.selectList(new LambdaQueryWrapper<Menu>()
-                .eq(Menu::getVisible, 1).select(Menu::getId));
+        List<Menu> all = scoped(menuMapper.selectList(new LambdaQueryWrapper<Menu>()
+                .eq(Menu::getVisible, 1)));
         Set<String> ids = new LinkedHashSet<>();
         for (Menu m : all) ids.add(m.getId());
         if (roleService.isAdminAny(roles)) return ids;
@@ -327,9 +341,9 @@ public class MenuService {
 
     /** 全量菜单（含隐藏，平铺；前端组树） */
     public List<Menu> list() {
-        return menuMapper.selectList(new LambdaQueryWrapper<Menu>()
+        return scoped(menuMapper.selectList(new LambdaQueryWrapper<Menu>()
                 .orderByAsc(Menu::getSortOrder)
-                .orderByAsc(Menu::getCreateTime));
+                .orderByAsc(Menu::getCreateTime)));
     }
 
     public Menu get(String id) {
