@@ -103,7 +103,8 @@ export const useChatChrome = ctx => {
     thinkHoverRef, thinkPanelPos, thinkPanelEl, mThinkOpen, thinkHoverModel, thinkPanelVisible,
     toggleThinkSheet, onDocPointerDown, thinkPanelCaps, thinkPanelLevelOptions, thinkPanelCurrentLevel,
     thinkPanelStrengthText, thinkPanelFoot, pillLevelRef, pillLevelBadge, pillLevelTitle, thinkPanelCtxText,
-    onModelOptionHover, scheduleThinkHide, onThinkPanelEnter, onThinkPanelLeave, onModelSelectOpenChange
+    onModelOptionHover, scheduleThinkHide, onThinkPanelEnter, onThinkPanelLeave, onModelSelectOpenChange,
+    hideThinkPanel
   } = useThinkPanel({
     isCoarse: asRef(ctx.isCoarse, false),
     effectiveModel: asRef(ctx.effectiveModel, ''),
@@ -436,6 +437,7 @@ AI 生成内容可能存在**错误、遗漏、过时或与实际情况不符**�
 
   const todoOpen = ref(false)
   const srcCardOpen = ref(true)
+  const goalOpen = ref(true)
 
   // 副作用只在组件 setup 内注册：无实例时不挂全局监听、不排卸载回调。
   const inSetup = !!getCurrentInstance()
@@ -470,6 +472,7 @@ AI 生成内容可能存在**错误、遗漏、过时或与实际情况不符**�
     toggleThinkSheet, onDocPointerDown, thinkPanelCaps, thinkPanelLevelOptions, thinkPanelCurrentLevel,
     thinkPanelStrengthText, thinkPanelFoot, pillLevelRef, pillLevelBadge, pillLevelTitle, thinkPanelCtxText,
     onModelOptionHover, scheduleThinkHide, onThinkPanelEnter, onThinkPanelLeave, onModelSelectOpenChange,
+    hideThinkPanel,
     goManageAgents,
     stickToBottom, tailSpacer, onMessagesScroll, scroll, scrollForce, updateTailSpacer,
     railVis, railHoverIdx, railPopStyle, railHoverAnchor, showAnchor, gotoAnchor, railActiveIdx, updateRailActive,
@@ -489,6 +492,6 @@ AI 生成内容可能存在**错误、遗漏、过时或与实际情况不符**�
     qaAnchors, anchorQ, anchorA,
     GOAL_KEY, fileKeyOf, imgKeyOf, menKeyOf, skillKeyOf, histKeyOf, MENTION_TIP,
     desiredKeys, chipOf, onKeys, syncChips, onChipClick, restoreWenquChips,
-    todoOpen, srcCardOpen
+    todoOpen, srcCardOpen, goalOpen
   }
 }

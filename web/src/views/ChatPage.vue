@@ -729,7 +729,7 @@
 
       <!-- 输入区：卡片外壳 / 正文与 chip 同流 / 工具条 / 拖拽落点全在 chat/ChatInput.vue，
            与公开分享页共用同一份实现（改一次两页同时生效）。这里只往插槽里填本页自己的东西：
-           卡片外的插话队列、卡片内正文上方的目标条、智能体胶囊、模型与思考、三块面板，
+           卡片外的一列（任务清单 / 目标条 / 插话队列）、智能体胶囊、模型与思考、三块面板，
            以及顶替态的两张卡（提问 / 计划确认栏）。 -->
       <ChatInput
         ref="composerRef" v-model="text" :resolve="chipOf" :placeholder="composerPlaceholder"
@@ -786,6 +786,84 @@
                 <span v-if="t.status === 'doing' && loading" class="tb-run-tag">执行中</span>
               </div>
             </div>
+          </div>
+          <!-- 目标条（DSH 式的一行目标 chip）：与任务清单同一族——独立成一张卡浮在输入卡片正上方，
+               不进卡片内部。它讲的是「这件事做到哪了」，不是要发出去的话；提问/计划面板顶替打字框时
+               卡片内容整块换掉，目标条不该跟着消失。顺序：任务清单 → 目标条 → 插话队列。
+               只做三件事：看清目标（原文单行省略，跑了几轮/停因收进进度行）、改目标原文、
+               停止(pause)/继续(resume)/删除(clear)。达成或取消后整条撤下（结果只在消息流里看，
+               右栏不单列目标卡），其余状态一律只读。就地编辑在第一行长开：原文换成自适应高文本域
+               （去框，与计划面板的自定义输入行同一口径），保存/取消用文字按钮——只读行那颗 ✕ 是
+               「删除目标」，编辑行不能再拿 ✕ 表示「取消」，同一个字形两种含义会点错。
+               进度与动作两行随头部折叠键收起，收起后整条只剩身份行。 -->
+          <div v-if="goalBarVisible" class="goal-bar" :class="{ editing: goalEditing, collapsed: !goalOpen }" data-goal-bar>
+            <!-- 取消二次确认就地长开（不弹层）：说清「取消 ≠ 删除」，点错一次也回得来 -->
+            <div v-if="goalCancelArmed" class="gb-confirm">
+              <div class="gb-confirm-t">取消这次深度执行？</div>
+              <div class="gb-confirm-s">已经跑出来的内容、历史与过程都会保留；以后想看，终态卡还在这儿。</div>
+              <div class="gb-confirm-actions">
+                <button type="button" class="gb-btn ghost" @click="goalCancelArmed = false">继续推进</button>
+                <button type="button" class="gb-btn danger" @click="confirmGoalCancel">取消执行</button>
+              </div>
+            </div>
+            <!-- 第一行：身份（胶囊 + 原文 + 版本 + 状态 + 折叠键） -->
+            <div class="gb-row gb-identity">
+              <span v-if="!goalEditing" class="gb-pill" title="深度执行：先出计划，助手会自己接着往下推进，直到宣布完成">
+                <aim-outlined /><span>深度</span>
+              </span>
+              <template v-if="!goalEditing">
+                <span class="gb-objective" :title="goalBarTitle">{{ sessionGoal.objective }}</span>
+                <span class="gb-ver" :title="'任务原文第 ' + goalVersionLabel + ' 版'">{{ goalVersionLabel }}</span>
+                <span class="gb-state" :class="'st-' + goalStateClass" :title="goalBarMeta">{{ goalStateLabel }}</span>
+                <button type="button" class="gb-toggle" :class="{ open: goalOpen }"
+                        :title="goalOpen ? '收起目标详情' : '展开目标详情'"
+                        :aria-label="goalOpen ? '收起目标详情' : '展开目标详情'"
+                        :aria-expanded="goalOpen" @click="toggleGoalBar">
+                  <caret-right-outlined />
+                </button>
+              </template>
+              <template v-else>
+                <a-textarea v-model:value="goalEdit.objective" class="gb-edit-input"
+                            :bordered="false" :auto-size="{ minRows: 1, maxRows: 6 }" :maxlength="4000"
+                            placeholder="写下这件事要做到什么"
+                            title="Enter 保存 · Shift+Enter 换行 · Esc 取消"
+                            @keydown="onGoalEditKeydown" />
+                <span class="gb-actions gb-edit-actions">
+                  <button type="button" class="gb-btn ghost" :disabled="goalEditBusy"
+                          title="放弃这次修改，目标原文不变（Esc）" @click="goalEditing = false">取消</button>
+                  <button type="button" class="gb-btn primary" :disabled="goalEditBusy || !goalEditSaveable"
+                          :title="goalEditSaveable ? '保存目标（Enter）' : '改几个字才能保存'"
+                          @click="saveGoalEdit">{{ goalEditBusy ? '保存中…' : '保存' }}</button>
+                </span>
+              </template>
+            </div>
+            <!-- 第二行：进度（轮次 + 细进度条 + 停因/让位提示 + 过程入口）；token/时间只放详情抽屉 -->
+            <div v-if="!goalEditing && goalOpen" class="gb-row gb-progress">
+              <span class="gb-round">{{ goalRoundLine }}</span>
+              <span v-if="goalProgressPercent != null" class="gb-track" :title="'预算已用 ' + goalProgressPercent + '%'">
+                <i :style="{ width: goalProgressPercent + '%' }" />
+              </span>
+              <span v-if="goalBarMeta" class="gb-hint">{{ goalBarMeta }}</span>
+              <button v-if="goalDelivery" type="button" class="gb-more-link"
+                      :title="'打开交付包：' + goalDelivery.fileCount + ' 件'"
+                      @click="openDelivery(goalDelivery)">产出 {{ goalDelivery.fileCount }} 件 ›</button>
+              <button type="button" class="gb-more-link" @click="openGoalViewer">查看过程 ›</button>
+            </div>
+            <!-- 第三行：动作（主行动 + 修改 + 取消）；删除记录只在终态卡上出现 -->
+            <div v-if="!goalEditing && goalOpen" class="gb-row gb-actions-row">
+              <button v-if="goalCanPause" type="button" class="gb-btn primary"
+                      title="暂停执行：先停在这里，已经跑出来的部分都留着（可以再继续）"
+                      @click="runGoalAction('pause')">暂停执行</button>
+              <button v-else-if="goalCanResume" type="button" class="gb-btn primary"
+                      :title="goalPreempted ? '立即继续：不等这一轮答完，现在就接着推进目标' : '继续执行：接着往下推'"
+                      @click="runGoalAction('resume')">{{ goalPreempted ? '立即继续' : '继续执行' }}</button>
+              <button v-if="goalCanEdit" type="button" class="gb-btn ghost" title="修改任务原文（保存后从这一版继续）"
+                      @click="startGoalInlineEdit">修改任务</button>
+              <button v-if="goalCanCancel" type="button" class="gb-btn danger-weak"
+                      title="取消执行：结束并留痕，历史与过程都保留（以后还能回看）"
+                      @click="armGoalCancel">取消执行</button>
+            </div>
+            <span v-if="goalBarError" class="gb-error" role="alert">{{ goalBarError }}</span>
           </div>
           <!-- 插话队列：生成中你在输入框里按发送，先落到这里排队，点「立即发送」才真发给模型；
                按 ⌘/Ctrl+Enter 发出去的那句＝入队后自动替你点这一下。
@@ -923,76 +1001,6 @@
           而 input 挂在计划面板容器下（不在 .ci-box/.mention-panel 内），外点关闭监听会误判成
           「点在面板外」把「+」面板关掉——表现为选择框还开着、背后面板没了，取消选择后面板也回不来 -->
         </template>
-        <!-- 目标条（DSH 式的一行目标 chip）：渲染在输入卡片内部、正文之上，与正文之间只用一条
-             极浅的分隔线分开——它已经是卡片的一部分，外面再套一层边框/底色就成了卡里套卡。
-             只做三件事：看清目标（原文单行省略，跑了几轮/停因收进悬浮行）、改目标原文、
-             停止(pause)/继续(resume)/删除(clear)。达成或取消后整条撤下（结果只在消息流里看，右栏不单列目标卡），
-             其余状态一律只读。就地编辑也在同一行长开：原文换成自适应高文本域（去框，与计划面板
-             的自定义输入行同一口径），保存/取消用文字按钮——只读行那颗 ✕ 是「删除目标」，
-             编辑行不能再拿 ✕ 表示「取消」，同一个字形两种含义会点错。 -->
-        <div v-if="goalBarVisible" class="goal-bar" :class="{ editing: goalEditing }" data-goal-bar>
-          <!-- 取消二次确认就地长开（不弹层）：说清「取消 ≠ 删除」，点错一次也回得来 -->
-          <div v-if="goalCancelArmed" class="gb-confirm">
-            <div class="gb-confirm-t">取消这次深度执行？</div>
-            <div class="gb-confirm-s">已经跑出来的内容、历史与过程都会保留；以后想看，终态卡还在这儿。</div>
-            <div class="gb-confirm-actions">
-              <button type="button" class="gb-btn ghost" @click="goalCancelArmed = false">继续推进</button>
-              <button type="button" class="gb-btn danger" @click="confirmGoalCancel">取消执行</button>
-            </div>
-          </div>
-          <!-- 第一行：身份（胶囊 + 原文 + 版本 + 状态） -->
-          <div class="gb-row gb-identity">
-            <span v-if="!goalEditing" class="gb-pill" title="深度执行：先出计划，助手会自己接着往下推进，直到宣布完成">
-              <aim-outlined /><span>深度</span>
-            </span>
-            <template v-if="!goalEditing">
-              <span class="gb-objective" :title="goalBarTitle">{{ sessionGoal.objective }}</span>
-              <span class="gb-ver" :title="'任务原文第 ' + goalVersionLabel + ' 版'">{{ goalVersionLabel }}</span>
-              <span class="gb-state" :class="'st-' + goalStateClass" :title="goalBarMeta">{{ goalStateLabel }}</span>
-            </template>
-            <template v-else>
-              <a-textarea v-model:value="goalEdit.objective" class="gb-edit-input"
-                          :bordered="false" :auto-size="{ minRows: 1, maxRows: 6 }" :maxlength="4000"
-                          placeholder="写下这件事要做到什么"
-                          title="Enter 保存 · Shift+Enter 换行 · Esc 取消"
-                          @keydown="onGoalEditKeydown" />
-              <span class="gb-actions gb-edit-actions">
-                <button type="button" class="gb-btn ghost" :disabled="goalEditBusy"
-                        title="放弃这次修改，目标原文不变（Esc）" @click="goalEditing = false">取消</button>
-                <button type="button" class="gb-btn primary" :disabled="goalEditBusy || !goalEditSaveable"
-                        :title="goalEditSaveable ? '保存目标（Enter）' : '改几个字才能保存'"
-                        @click="saveGoalEdit">{{ goalEditBusy ? '保存中…' : '保存' }}</button>
-              </span>
-            </template>
-          </div>
-          <!-- 第二行：进度（轮次 + 细进度条 + 停因/让位提示 + 过程入口）；token/时间只放详情抽屉 -->
-          <div v-if="!goalEditing" class="gb-row gb-progress">
-            <span class="gb-round">{{ goalRoundLine }}</span>
-            <span v-if="goalProgressPercent != null" class="gb-track" :title="'预算已用 ' + goalProgressPercent + '%'">
-              <i :style="{ width: goalProgressPercent + '%' }" />
-            </span>
-            <span v-if="goalBarMeta" class="gb-hint">{{ goalBarMeta }}</span>
-            <button v-if="goalDelivery" type="button" class="gb-more-link"
-                    :title="'打开交付包：' + goalDelivery.fileCount + ' 件'"
-                    @click="openDelivery(goalDelivery)">产出 {{ goalDelivery.fileCount }} 件 ›</button>
-            <button type="button" class="gb-more-link" @click="openGoalViewer">查看过程 ›</button>
-          </div>
-          <!-- 第三行：动作（主行动 + 修改 + 取消）；删除记录只在终态卡上出现 -->
-          <div v-if="!goalEditing" class="gb-row gb-actions-row">
-            <button v-if="goalCanPause" type="button" class="gb-btn primary"
-                    title="暂停执行：先停在这里，已经跑出来的部分都留着（可以再继续）"
-                    @click="runGoalAction('pause')">暂停执行</button>
-            <button v-else-if="goalCanResume" type="button" class="gb-btn primary"
-                    :title="goalPreempted ? '立即继续：不等这一轮答完，现在就接着推进目标' : '继续执行：接着往下推'"
-                    @click="runGoalAction('resume')">{{ goalPreempted ? '立即继续' : '继续执行' }}</button>
-            <button v-if="goalCanEdit" type="button" class="gb-btn ghost" title="修改任务原文（保存后从这一版继续）"
-                    @click="startGoalInlineEdit">修改任务</button>
-            <button v-if="goalCanCancel" type="button" class="gb-btn danger-weak"
-                    title="取消执行：结束并留痕，历史与过程都保留（以后还能回看）"
-                    @click="armGoalCancel">取消执行</button>
-          </div>
-          <span v-if="goalBarError" class="gb-error" role="alert">{{ goalBarError }}</span>
-        </div>
         <!-- 卡片内、正文之上：+ 面板 / @ 引用面板 / 斜杠面板 -->
         <!-- / 快捷命令面板（敲 / 唤起）：会话级动作，选中即执行 -->
         <div v-if="slashOpen" class="mention-panel">
@@ -2080,9 +2088,9 @@ const {
   focusPanelOwner, syncPanelQuery, onPanelNavKeydown, slashOpen,
   slashQuery, slashHi, slashCommands, openSlashPanel,
   closeSlashPanel, slashQueryNorm, slashAliasesOf, slashArgPending,
-  slashArgPendingOf, slashArgsOf, slashArgsOfCmd, slashFiltered,
+  slashArgsOf, slashFiltered,
   runSlashCommand, histOpen, histQuery, histHi,
-  histQueryNorm, histListOf, histListOfRows, histCandidates,
+  histQueryNorm, histListOf, histCandidates,
   histChipLabel, pickHistoryRefByClick, openHistPanel, closeHistPanel,
   addOpen, addTab, addHi, addSearchEl,
   addHistQuery, addCmdQuery, addTarget, addOnEdit,
@@ -2152,7 +2160,7 @@ const {
   fileKeyOf, imgKeyOf, menKeyOf, skillKeyOf,
   histKeyOf, MENTION_TIP, desiredKeys, chipOf,
   onKeys, syncChips, onChipClick, restoreWenquChips,
-  todoOpen, srcCardOpen
+  todoOpen, srcCardOpen, goalOpen
 } = (page.chrome = useChatChrome({
     ...g, composerRef,
     text, pendingFiles, pendingImages, pendingMentions, pickedSkills,
@@ -2240,6 +2248,13 @@ const {
       el?.scrollIntoView({ block: 'start', behavior: 'smooth' })
     }
   }))
+
+// 目标条折叠：收起时只留身份行（原文/版本/状态），进程与动作键藏起来；
+// 收起同时撤掉取消确认，避免确认条孤零零挂在收起的行下面
+function toggleGoalBar() {
+  goalOpen.value = !goalOpen.value
+  if (!goalOpen.value) goalCancelArmed.value = false
+}
 
 // ---- 会话工作区与权限档位 ----
 const {
@@ -3217,7 +3232,7 @@ const {
 /* 网格行高动画的两个必要条件：唯一子容器 + min-height:0（否则子项按内容撑开，收不到 0 高） */
 .rp-group-body-in { min-height: 0; overflow: hidden; }
 .rp-src-sub { padding: 3px 0 3px 20px; font-size: 11.5px; color: var(--app-text2); }
-@media (prefers-reduced-motion: reduce) { .rp-group-body, .tl-caret { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .rp-group-body, .tl-caret, .gb-toggle .anticon { transition: none; } }
 .rp-src:hover .rp-src-name { color: var(--app-accent); }
 .rp-src-ic { color: var(--app-accent); font-size: 12px; flex: none; }
 .rp-src-name { font-size: 12px; color: var(--app-text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -3454,18 +3469,24 @@ const {
 .p-stop:hover:not(:disabled) { background: var(--app-danger-weak); border-color: var(--app-danger-border); }
 
 /* ==================== 目标模式 ==================== */
-/* 目标条坐在输入卡片内部、正文之上：它已经是卡片的一部分，不再画第二层边框/底色/阴影，
-   只用一条极浅的下分隔线把自己和正文分开。三段式——
-   ① 身份：目标 pill、原文（单行省略）、版本、状态；② 进度：轮次、细进度条、停因/让位提示、过程入口；
-   ③ 动作：主行动（暂停/继续）+ 修改 + 取消。token、时间这类细节只进详情抽屉，不占版面。
+/* 目标条与任务清单同一族：独立成一张卡浮在输入卡片正上方（--chat-col 同宽同基准、圆角 14px、
+   同款描边/底色/阴影），不画进卡片内部——它说的是「这件事推到哪了」，不是要发出去的话；
+   提问/计划面板顶替打字框时卡片内容整块换掉，目标条不该跟着消失。
+   三段式——① 身份：目标 pill、原文（单行省略）、版本、状态、折叠键；
+   ② 进度：轮次、细进度条、停因/让位提示、过程入口；③ 动作：主行动（暂停/继续）+ 修改 + 取消。
+   token、时间这类细节只进详情抽屉，不占版面；②③ 随折叠键收起，收起后只剩身份行一张薄卡。
    就地编辑在第一行长开：原文换成自适应高文本域，保存/取消钉在行尾。 */
 .goal-bar {
+  box-sizing: border-box; max-width: var(--chat-col);
+  margin: 0 auto 8px; padding: 9px 12px 10px;
   display: flex; flex-direction: column; gap: 6px;
-  box-sizing: border-box; width: 100%; min-width: 0;
-  padding: 0 0 8px; margin-bottom: 8px;
-  border-bottom: 1px solid var(--app-border);
+  min-width: 0;
+  border: 1px solid var(--app-border); border-radius: 14px;
+  background: var(--app-panel); box-shadow: var(--app-shadow-sm);
 }
 .gb-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+/* 收起后只剩身份行：底内边距收成与任务清单卡头同一档（9px），两张薄卡叠在一起才等高 */
+.goal-bar.collapsed { padding-bottom: 9px; }
 .goal-bar.editing .gb-row { align-items: flex-start; }
 /* 目标 pill：这一行讲的是「目标」而不是普通正文，给一个弱强调的胶囊做锚点。
    编辑态不留它——那一行整行都是目标原文，胶囊只会把文本域往右挤 */
@@ -3508,6 +3529,17 @@ const {
   font-size: 12px; line-height: 18px; color: var(--app-text3); cursor: pointer; white-space: nowrap;
 }
 .gb-more-link:hover { color: var(--app-accent); }
+/* 折叠键：钉在身份行行尾（原文是弹性宽度，它自然靠右）。收起后目标条只剩这一行，
+   所以要给一个实心的可点热区，而不是一个 10px 的裸箭头 */
+.gb-toggle {
+  flex: none; width: 22px; height: 22px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; border-radius: 6px; background: transparent;
+  color: var(--app-text3); cursor: pointer;
+}
+.gb-toggle:hover { background: var(--app-panel-2); color: var(--app-text); }
+.gb-toggle .anticon { font-size: 10px; line-height: 1; transition: transform .15s; }
+.gb-toggle.open .anticon { transform: rotate(90deg); }
 /* 动作行：主行动用实心，修改用描边，取消用弱危险（不抢主行动，也不能藏得太深） */
 .gb-actions-row { gap: 6px; }
 .gb-actions { flex: none; display: flex; align-items: center; gap: 6px; }
