@@ -110,6 +110,10 @@ const server = http.createServer(async (req, res) => {
     const wantsRich = userText.includes('[[RICHTEXT]]');
     // 一句话被工具调用劈开：前半句 → 工具 → 后半句，用来验「正文一条流」不按工具边界切正文
     const wantsSplit = userText.includes('[[SPLIT]]');
+    // 深度执行 e2e：第 1 轮先出计划 → 批准后 goal_note 留缺口 → 第 2 轮 goal_submit 完成。
+    // 轮次从目标提示词的「轮次：n/max」认。
+    const wantsGoal = userText.includes('[[GOAL]]');
+    const goalRound2 = /轮次：2\//.test(userText);
     // 已经调过哪些工具：按 assistant 消息里的 tool_calls 认（tool 结果消息本身不带名字）
     const calledTools = msgs.flatMap((m) => (m.tool_calls || []).map((t) => t.function?.name)).filter(Boolean);
 
@@ -121,6 +125,62 @@ const server = http.createServer(async (req, res) => {
         choices: [{ index: 0, message: { role: 'assistant', content: '{}\n' }, finish_reason: 'stop' }],
         usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 },
       }));
+      return;
+    }
+
+    if (wantsGoal) {
+      const emitTool = async (name, args) => {
+        res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+        chunk(res, id, model, { role: 'assistant', tool_calls: [{
+          index: 0, id: 'call_mock_goal_' + name + '_' + Date.now(), type: 'function',
+          function: { name, arguments: JSON.stringify(args) },
+        }] });
+        await sleep(120);
+        chunk(res, id, model, {}, 'tool_calls');
+        res.write('data: [DONE]\n\n');
+        res.end();
+      };
+      if (goalRound2) {
+        if (calledTools.includes('goal_submit')) {
+          res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+          chunk(res, id, model, { role: 'assistant' });
+          chunk(res, id, model, { content: '验收已提交。' });
+          await sleep(80);
+          chunk(res, id, model, {}, 'stop');
+          res.write('data: [DONE]\n\n');
+          res.end();
+          return;
+        }
+        await emitTool('goal_submit', {
+          summary: '两轮推进完成（mock 验收）',
+          evidence: JSON.stringify([{ kind: 'text', ref: 'mock-e2e', note: 'mock 网关模拟的验收证据' }]),
+        });
+        return;
+      }
+      if (!calledTools.includes('plan_write')) {
+        await emitTool('plan_write', { content: '## 计划\n1. 第一轮记录缺口\n2. 第二轮提交验收' });
+        return;
+      }
+      if (!calledTools.includes('plan_exit')) {
+        await emitTool('plan_exit', { summary: '按两步推进' });
+        return;
+      }
+      if (!calledTools.includes('goal_note')) {
+        await emitTool('goal_note', {
+          stage: 'EXECUTE',
+          summary: '第一轮完成，留下一项缺口',
+          remaining: JSON.stringify(['第二轮提交验收证据']),
+        });
+        return;
+      }
+      // 工具结果已回传：给一句正文收尾，避免下一轮带着未消费的 tool_call 进来
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+      chunk(res, id, model, { role: 'assistant' });
+      chunk(res, id, model, { content: '第一轮完成，缺口已记录；下一轮提交验收。' });
+      await sleep(80);
+      chunk(res, id, model, {}, 'stop');
+      res.write('data: [DONE]\n\n');
+      res.end();
       return;
     }
 

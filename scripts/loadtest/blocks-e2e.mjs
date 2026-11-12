@@ -619,10 +619,10 @@ async function main() {
       const events = await chatStream(user, {
         sessionId: pSession, question: '[[PLAN]] 计划卡用例：先出计划，批准后执行。', model: ref, planMode: true,
       }, async (type, data) => {
-        if (type !== 'plan_approval' || approved || !data?.planApprovalId) return
+        if (type !== 'deep_plan_approval' || approved || !data?.planApprovalId) return
         approved = true
         await new Promise((ok) => setTimeout(ok, 400))
-        const r = await api(`/api/ai/plan-approval/${data.planApprovalId}`, {
+        const r = await api(`/api/ai/deep/plan-approval/${data.planApprovalId}`, {
           method: 'POST', token: user,
           body: planMode === 'supersede'
             ? { approved: false, supersede: true, plan: '先按另一个方向做' }
@@ -633,7 +633,7 @@ async function main() {
       const row = await historyRow(user, pSession, events)
       const done = events.find((e) => e.type === 'done')?.data
       const problems = []
-      if (!approved) problems.push('没收到 plan_approval 卡')
+      if (!approved) problems.push('没收到 deep_plan_approval 卡')
       if (!done) problems.push('批准后这一轮没有 done')
       if (planMode === 'approve') {
         if (done && done.planRecord?.status !== 'approved') {
@@ -650,7 +650,7 @@ async function main() {
           problems.push(`取代后 done.planRecord.status 应为 superseded，实际 ${done.planRecord?.status}`)
         }
         if (done && done.planSuperseded !== true) problems.push('取代后 done 缺 planSuperseded=true')
-        if (!events.some((e) => e.type === 'plan_superseded')) problems.push('流里没有 plan_superseded 帧')
+        if (!events.some((e) => e.type === 'deep_plan_superseded')) problems.push('流里没有 deep_plan_superseded 帧')
       }
       if (!(row?.blocks?.blocks ?? []).length) problems.push('落库没有 blocks')
       console.log(`\n[plan] ${JSON.stringify({
