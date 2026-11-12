@@ -184,7 +184,7 @@ const showStop = computed(() => props.sending && !(props.steerable && props.canS
         <div class="ci-left">
           <slot name="left-lead" />
           <button v-if="canAttach" class="app-icon-btn ci-attach" :class="{ 'ci-btn-on': attachOn }"
-                  :title="attachTitle" @click="emit('attach')">
+                  :title="attachTitle" :aria-label="attachTitle" @click="emit('attach')">
             <plus-outlined />
           </button>
           <slot name="left" />
@@ -192,10 +192,12 @@ const showStop = computed(() => props.sending && !(props.steerable && props.canS
         <div class="ci-right">
           <slot name="right" />
           <button v-if="sending && canSend && steerable" class="ci-send"
-                  :title="sendTitle || '插话（Enter 同效：先排到输入框上方 · Ctrl/⌘+Enter 立刻插进本轮）'" @click="emit('send')">
+                  :title="sendTitle || '插话（Enter 同效：先排到输入框上方 · Ctrl/⌘+Enter 立刻插进本轮）'"
+                       :aria-label="sendTitle || '插话（Enter 同效：先排到输入框上方 · Ctrl/⌘+Enter 立刻插进本轮）'" @click="emit('send')">
             <arrow-up-outlined />
           </button>
-          <button v-else-if="showStop" class="ci-send stop" :title="stopArmed ? '再按一次 Esc 停止生成' : '点击停止生成'" @click="emit('stop')">
+          <button v-else-if="showStop" class="ci-send stop" :title="stopArmed ? '再按一次 Esc 停止生成' : '点击停止生成'"
+                             :aria-label="stopArmed ? '再按一次 Esc 停止生成' : '点击停止生成'" @click="emit('stop')">
             <span v-if="stopArmed" class="ci-esc">esc</span>
             <pause-circle-outlined v-else />
           </button>
@@ -302,5 +304,10 @@ const showStop = computed(() => props.sending && !(props.steerable && props.canS
   .ci-toolbar .ant-btn { min-width: 34px; min-height: 34px; }
   .ci-toolbar .app-icon-btn { min-width: 36px; min-height: 36px; }
   .ci-send { width: 44px; height: 44px; font-size: 16px; }
+}
+
+/* H5 P2：≤1024 触屏/窄桌面补齐输入区共用控件热区 */
+@media (max-width: 1024px) {
+  .ci-attach, .ci-send { min-width: 44px; min-height: 44px; }
 }
 </style>

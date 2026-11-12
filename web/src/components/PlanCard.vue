@@ -10,7 +10,7 @@
     <div v-if="!expanded && !isLive" class="pc-line-wrap">
       <button type="button" class="pc-line" :title="lineTitle" @click="toggleLine">
         <ordered-list-outlined class="pc-ic" />
-        <span class="pc-line-t">执行计划</span>
+        <span class="pc-line-t">{{ deep ? '深度执行' : '执行计划' }}</span>
         <span class="pc-ver">v{{ version }}</span>
         <span class="pc-state" :class="'st-' + stateTone">{{ stateText }}</span>
         <span class="pc-line-meta">
@@ -27,7 +27,7 @@
     <template v-else>
       <div class="pc-head">
         <ordered-list-outlined class="pc-ic" />
-        <span class="pc-title">执行计划</span>
+        <span class="pc-title">{{ deep ? '深度执行' : '执行计划' }}</span>
         <span v-if="chain.length > 1" class="pc-vers">
           <template v-for="(vi, xi) in shownVers" :key="vi">
             <button type="button" class="pc-vbtn" :class="{ on: vi === chain.length - 1 }"
@@ -132,6 +132,8 @@ import { planLineOpenOf, setPlanLineOpen } from '../chat/planUiState'
 const props = defineProps({
   /** 引擎挂在这一轮助手消息上的计划卡记录：{plan,status,versions,feedback,id} */
   card: { type: Object, required: true },
+  /** 深度执行上下文：这张卡就是本次执行的过程卡（不再另起一张） */
+  deep: { type: Boolean, default: false },
   /** 会话 id + 本条计划在本会话里的稳定键：旧计划的展开态按这两个维度记住 */
   sid: { type: String, default: '' },
   pkey: { type: [String, Number], default: '' },

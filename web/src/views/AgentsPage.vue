@@ -94,11 +94,7 @@
                 <p class="ap-desc" :title="a.description || ''">{{ a.description || '未填写描述' }}</p>
                 <div class="ap-meta">
                   <span class="ap-meta-i" title="资料范围"><database-outlined />{{ scopeText(a) }}</span>
-                  <!-- 绑定了工作流的智能体，回答由工作流产出（卡片上一眼可见） -->
-                  <span v-if="a.workflowId" class="ap-meta-i is-accent" :title="'回答由工作流产出：' + workflowName(a.workflowId)">
-                    <partition-outlined />工作流 {{ workflowName(a.workflowId) }}
-                  </span>
-                  <span v-else-if="capSummary(a)" class="ap-meta-i" :title="capSummaryTitle(a)"><control-outlined />{{ capSummary(a) }}</span>
+                  <span v-if="capSummary(a)" class="ap-meta-i" :title="capSummaryTitle(a)"><control-outlined />{{ capSummary(a) }}</span>
                   <span v-if="delegText(a)" class="ap-meta-i ap-meta-link" title="在委派编排视图中查看完整链路" @click.stop="topoOpen = true">
                     <apartment-outlined />{{ delegText(a) }}
                   </span>
@@ -145,9 +141,9 @@
         <div class="ap-head-main">
           <h1 class="app-page-title ap-title">{{ form.name || '未命名智能体' }}</h1>
           <div class="ap-head-chips">
-            <span v-if="runMode !== 'workflow'" class="ap-head-chip">{{ summaryScope }}</span>
+            <span class="ap-head-chip">{{ summaryScope }}</span>
             <span v-if="modeChip" class="ap-head-chip">{{ modeChip }}</span>
-            <span v-if="runMode !== 'workflow'" class="ap-head-chip" :class="{ 'is-accent': capsOverriddenCount > 0 }">
+            <span class="ap-head-chip" :class="{ 'is-accent': capsOverriddenCount > 0 }">
               {{ capsOverriddenCount ? `${capsOverriddenCount} 处与系统默认不同` : '能力全部跟随系统默认' }}
             </span>
           </div>
@@ -181,22 +177,7 @@
               <a-segmented v-model:value="runMode" :options="runModeOptions" class="ap-mode-seg" @change="onRunModeChange" />
               <p class="ap-hint ap-mode-note">{{ runModeHint }}</p>
 
-              <div v-if="runMode === 'workflow'" class="ap-mode-extra">
-                <a-select v-model:value="form.workflowId" :options="workflowOptions" allow-clear show-search
-                          option-filter-prop="label" style="width:100%" placeholder="选择一个已发布的工作流" />
-                <div v-if="form.workflowId && !workflowOptions.some(w => w.value === form.workflowId)"
-                     class="ap-hint" style="color: var(--app-warn-text)">
-                  当前绑定的工作流不在已发布列表里；重新选择一个，或先到「工作流」页发布它。
-                </div>
-                <div v-if="!workflowOptions.length" class="ap-hint">
-                  还没有已发布的工作流 —— 先到「工作流」页保存并发布一个，再回来绑定。
-                </div>
-                <div v-else class="ap-hint">
-                  绑定后回答由工作流产出：人设、资料与工具配置不再参与，名称与描述仍用于列表展示。
-                </div>
-              </div>
-
-              <div v-else-if="runMode === 'sub'" class="ap-mode-extra">
+              <div v-if="runMode === 'sub'" class="ap-mode-extra">
                 <label class="ap-field-label">被委派时怎么做</label>
                 <a-select v-model:value="form.subagentMode" :options="branchModeOptions" allow-clear
                           style="width:100%" :placeholder="branchModePlaceholder" />
@@ -246,7 +227,7 @@
                 <a-textarea v-model:value="form.description" :maxlength="500" :rows="2"
                             placeholder="写清职责范围与典型问题（如：负责《操作手册》的界面操作与表单填写问题）" />
               </a-form-item>
-              <div v-if="runMode !== 'workflow'" class="ap-field ap-field-last">
+              <div class="ap-field ap-field-last">
                 <div class="ap-prompt-head">
                   <label class="ap-field-label" style="margin:0">系统提示词</label>
                   <!-- 布局三档：编辑=全宽书写（长提示词不用挤半栏），分屏=边写边看，预览=纯阅读；选择记住，下次进来保持 -->
@@ -264,13 +245,10 @@
                            :theme="mdTheme" class="ap-md-editor ap-md-preview" />
                 <div class="ap-hint">支持 Markdown，⌘S 保存</div>
               </div>
-              <div v-else class="ap-hint ap-field">
-                工作流模式下不使用系统提示词；切回问答助手后这份内容仍在。
-              </div>
             </section>
 
             <!-- 资料范围 -->
-            <section class="app-card" v-if="runMode !== 'workflow'">
+            <section class="app-card">
               <h2 class="app-card-title"><database-outlined class="ap-sec-ic" />资料范围</h2>
               <template v-if="form.isBuiltin === 1">
                 <div class="ap-kb-fixed"><span class="ap-chip">「问渠」知识库</span><span class="ap-chip">问渠使用手册</span></div>
@@ -304,7 +282,7 @@
             </section>
 
             <!-- 能力 -->
-            <section class="app-card" v-if="runMode !== 'workflow'">
+            <section class="app-card">
               <div class="ap-sec-head">
                 <h2 class="app-card-title"><control-outlined class="ap-sec-ic" />能力</h2>
                 <span class="ap-head-diff" :class="{ diff: capsOverriddenCount > 0 }">
@@ -318,13 +296,13 @@
               <div class="ap-cap-list">
                 <template v-for="g in CAP_GROUPS" :key="g">
                   <div class="ap-cap-grp-h">{{ g }}</div>
-                  <!-- 目标模式：资源级二态（没有「跟随」档），这一格就是唯一判据 -->
+                  <!-- 深度执行：资源级二态（没有「跟随」档），这一格就是唯一判据 -->
                   <div v-if="g === '执行与交付'" class="ap-cap" :class="{ overridden: form.goalEnabled === 0 }">
                     <span class="ap-cap-ic"><aim-outlined /></span>
                     <div class="ap-cap-l">
-                      <div class="ap-cap-name">目标模式 <span v-if="form.goalEnabled === 0" class="ap-cap-badge">已关闭</span></div>
-                      <div class="ap-cap-desc" title="允许把这个助手交出去做长任务：输入框打 /goal 即可把一件事交出去，助手会自己跨轮推进、做完就停；关掉时入口与目标面板都不出现。">
-                        把长任务交出去，助手自己推进、做完就停
+                      <div class="ap-cap-name">允许深度执行 <span v-if="form.goalEnabled === 0" class="ap-cap-badge">已关闭</span></div>
+                      <div class="ap-cap-desc" title="允许把这个助手交出去做长任务：输入框打 /deep 即可把一件事交出去，先出计划、助手自己跨轮推进、做完就停；关掉时入口与执行面板都不出现。">
+                        把长任务交出去：先出计划，自己推进、做完就停
                       </div>
                     </div>
                     <div class="ap-seg">
@@ -384,7 +362,7 @@
             </section>
 
             <!-- 高级设置：与能力平级的独立卡片；常用治理常显，专家选项折叠 -->
-            <section class="app-card" v-if="runMode !== 'workflow'">
+            <section class="app-card">
               <div class="ap-sec-head">
                 <h2 class="app-card-title"><setting-outlined class="ap-sec-ic" />高级设置</h2>
                 <span class="ap-hint">治理与执行策略{{ advOverriddenCount ? ` · ${advOverriddenCount} 处与系统默认不同` : ' · 全部跟随系统默认' }}</span>
@@ -474,7 +452,7 @@
               <div class="ap-sum-row"><span>执行</span><b>{{ summaryExecution }}</b></div>
               <div class="ap-sum-row"><span>委派</span><b>{{ summaryDelegation }}</b></div>
               <div class="ap-sum-row"><span>默认</span><b>{{ form.isDefault ? '是' : '否' }}</b></div>
-              <div v-if="overrideCount && runMode !== 'workflow'" class="ap-diff">
+              <div v-if="overrideCount" class="ap-diff">
                 <span>与系统默认不同 {{ overrideCount }} 处</span>
                 <button class="app-link-btn" @click="resetOverrides">恢复跟随</button>
               </div>
@@ -843,7 +821,7 @@ import {
 import { listAgents, createAgent, updateAgent, deleteAgent, batchDeleteAgents, setAgentDefault, listKnowledgeBases,
          listAvailableSkills, getMcpStatus, listSubAgents, getToolCatalog, getPermissionPresets,
          getAgentConfigDefaults,
-         getAgentPublish, publishAgent, revokeAgentPublish, listWorkflows, createWorkflowFromAgent,
+         getAgentPublish, publishAgent, revokeAgentPublish, createWorkflowFromAgent,
          listAgentVersions, rollbackAgent, agentEvalGateCheck, agentEvalStartRun } from '../api'
 import EvalGateModal from '../components/agent/EvalGateModal.vue'
 import ProviderIcon from '../components/ProviderIcon.vue'
@@ -1101,9 +1079,7 @@ const branchModeDefaultLabel = computed(() => {
 /** 留空即跟随平台默认档：把默认档直接写进触发器，用户不点开、不读灰字也知道会怎么走 */
 const branchModePlaceholder = computed(() =>
   '跟随系统默认' + (branchModeDefaultLabel.value ? `（${branchModeDefaultLabel.value}）` : ''))
-/** 工作流列表与可绑定选项（只列已发布版本） */
-const workflowRows = ref([])
-const workflowOptions = ref([])
+/** 工作流工具与可委派选项共用本页数据 */
 const OPTION_REFS = { skillOptions, mcpOptions }
 const optionsOf = c => OPTION_REFS[c.optionsKey]?.value || []
 
@@ -1112,8 +1088,8 @@ const editingId = ref('')
 // 侧栏「最近保存」：列表接口带回的更新时间（新建时为空，不显示该卡）
 const editingUpdatedAt = ref('')
 const scopeMode = ref('all')
-// 编辑视图的运行方式：main=问答助手 / sub=子智能体 / workflow=工作流。
-// 它只影响「哪些配置参与」与保存时写回 isSubagent/workflowId，不新增后端字段。
+// 编辑视图的运行方式：main=问答助手 / sub=可被委派。
+// 它只影响「哪些配置参与」与保存时写回 isSubagent，不新增后端字段。
 const runMode = ref('main')
 // 「专家选项」折叠（原生 details 的 open 态），默认收起
 const advOpen = ref(false)
@@ -1136,7 +1112,7 @@ const blankForm = () => ({
   // 轮终回调（v2 对外能力第二批）：URL 明文；密钥不回显（callbackSecretSet 只表「已配置」）
   callbackUrl: '', callbackSecret: '', callbackSecretSet: false,
   memoryMode: '',  // ''=跟随用户级记忆 / '1'=专属 / '2'=叠加（对外能力第二批·agent 级记忆）
-  // 目标模式（资源级二态）：1=开 0=关。平台级总闸已去掉，这一格是唯一判据。
+  // 深度执行（资源级二态）：1=开 0=关。平台级总闸已去掉，这一格是唯一判据。
   goalEnabled: 1,
   // 有副作用工具（沙盒/MCP）执行审批：''=跟随档位（默认） auto=自动执行 ask=执行前确认 off=禁用
   toolApprovalMode: '',
@@ -1154,9 +1130,7 @@ const blankForm = () => ({
   // 被委派时怎么做：null=跟随系统默认（agent.subagentMode）
   subagentMode: null,
   // 检索开关覆盖：只留“这一轮要不要重排”（阈值/权重/召回量归知识库或全局，不在这里配）
-  qpRerank: 'inherit',
-  // 绑定的工作流 ID（空 = 不绑定，按模型/知识库/工具配置作答）
-  workflowId: null
+  qpRerank: 'inherit'
 })
 /** 全局重排开关当前状态（''=拿不到值） */
 const rerankInheritState = computed(() => {
@@ -1205,18 +1179,16 @@ const promptPane = ref(['edit', 'split', 'preview'].includes(localStorage.getIte
   ? localStorage.getItem(PROMPT_PANE_KEY) : 'split')
 watch(promptPane, v => localStorage.setItem(PROMPT_PANE_KEY, v))
 
-// 运行方式：决定页面里哪些配置参与，以及保存时 isSubagent / workflowId 怎么写。
+// 运行方式：决定页面里哪些配置参与，以及保存时 isSubagent 怎么写。
 const runModeOptions = computed(() => [
   { label: '问答助手', value: 'main' },
-  { label: '子智能体', value: 'sub', disabled: form.value.isBuiltin === 1 },
-  { label: '工作流', value: 'workflow' }
+  { label: '可被委派', value: 'sub', disabled: form.value.isBuiltin === 1 }
 ])
 const runModeHint = computed(() => {
-  if (runMode.value === 'workflow') return '回答由工作流产出；人设、资料与工具配置不再参与。'
   if (runMode.value === 'sub') return '不能直接选用，只能被主智能体委派去查资料或办事。'
   return '对话页可直接选用；人设、资料与能力都按本页配置生效。'
 })
-const modeChip = computed(() => runMode.value === 'sub' ? '子智能体' : (runMode.value === 'workflow' ? '工作流' : ''))
+const modeChip = computed(() => runMode.value === 'sub' ? '可被委派' : '')
 const onRunModeChange = v => {
   // 内置「问渠」固定为主智能体：即便分段控件被绕过，也不让它落成子智能体
   if (v === 'sub' && form.value.isBuiltin === 1) { runMode.value = 'main'; return }
@@ -1250,7 +1222,6 @@ const matchKw = a => {
   if (String(a.name || '').toLowerCase().includes(kw) || String(a.description || '').toLowerCase().includes(kw)) return true
   const hay = [
     capSummary(a), scopeText(a),
-    a.workflowId ? workflowName(a.workflowId) : '',
     ...splitList(a.mcps).map(r => String(r).split('/').pop()),
     ...splitList(a.skills).map(r => String(r).split('/').pop()),
     ...splitList(a.knowledgeBaseIds).map(id => kbOptions.value.find(k => String(k.value) === String(id))?.label || '')
@@ -1327,11 +1298,10 @@ const capSummaryParts = a => {
       if (n) parts.push(`技能 ${n}`)
     } else parts.push(c.label)
   }
-  if (a.goalEnabled === 0) parts.push('目标模式关')
+  if (a.goalEnabled === 0) parts.push('深度执行关')
   return parts
 }
 const capSummary = a => {
-  if (a.workflowId) return ''
   const parts = capSummaryParts(a)
   if (!parts.length) return '能力跟随系统'
   return parts.length > 3 ? parts.slice(0, 3).join(' · ') + ` 等 ${parts.length} 项` : parts.join(' · ')
@@ -1350,7 +1320,6 @@ const parentsMap = computed(() => {
   return map
 })
 const delegText = a => {
-  if (a.workflowId) return ''
   if (isSub(a)) {
     const ps = parentsMap.value[String(a.id)] || []
     if (!ps.length) return '暂无人委派'
@@ -1388,7 +1357,7 @@ const EXPORT_KEYS = ['name', 'icon', 'description', 'systemPrompt', 'knowledgeBa
   'toolKnowledge', 'toolBuiltin', 'toolArtifact', 'toolWebsearch', 'toolHttp', 'httpTools',
   'toolWorkflow', 'workflowTools', 'toolMcp', 'mcps', 'toolSkill', 'skills',
   'goalEnabled', 'toolApprovalMode', 'permissionPreset', 'toolDeny', 'maxToolSteps', 'memoryMode',
-  'callbackUrl', 'queryParams', 'isSubagent', 'subAgentIds', 'subagentMode', 'workflowId']
+  'callbackUrl', 'queryParams', 'isSubagent', 'subAgentIds', 'subagentMode']
 const agentExportConfig = a => Object.fromEntries(EXPORT_KEYS.filter(k => a[k] !== undefined).map(k => [k, a[k]]))
 const downloadJson = (obj, filename) => {
   const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' })
@@ -1460,11 +1429,6 @@ const onImportFile = ev => {
 }
 
 // ==================== 委派编排视图（拓扑：主智能体 → 子智能体委派关系，纯前端渲染） ====================
-/** 绑定工作流时卡片上显示的名字（工作流已删除/不可见则显示 id，不谎报） */
-const workflowName = id => {
-  const w = workflowRows.value.find(x => String(x.id) === String(id))
-  return w ? (w.name || id) : `#${id}` + '（不可用）'
-}
 const topoOpen = ref(false)
 const topoHover = ref('')   // 悬停的节点 key（'m'+id / 's'+id，用于高亮相关委派链路）
 const TOPO = { pad: 16, rowH: 64, rowGap: 14, nodeW: 216, gapG: 80, subW: 248 }
@@ -1849,7 +1813,6 @@ const recentSavedText = computed(() => {
 })
 const summaryScope = computed(() => {
   if (form.value.isBuiltin === 1) return '「问渠」知识库'
-  if (runMode.value === 'workflow') return '由工作流接管'
   if (scopeMode.value === 'none') return '不使用知识库'
   if (scopeMode.value !== 'pick') return '全部知识库'
   const n = (form.value.knowledgeBaseIds || []).length
@@ -1857,8 +1820,7 @@ const summaryScope = computed(() => {
 })
 /** 能力摘要只列显式覆盖的项；没有任何覆盖时说明其余跟随全局 */
 const summaryCapsList = computed(() => {
-  if (runMode.value === 'workflow') return '由工作流接管'
-  const goal = form.value.goalEnabled === 0 ? '目标模式关闭' : '目标模式'
+  const goal = form.value.goalEnabled === 0 ? '深度执行关闭' : '深度执行'
   const parts = []
   for (const c of CAPS) {
     if (capOn(c)) {
@@ -1884,11 +1846,9 @@ const approvalLabelOf = () => {
   return approvalOptions.value.find(x => x.value === v)?.label || '跟随档位'
 }
 const summaryExecution = computed(() => {
-  if (runMode.value === 'workflow') return '由工作流接管'
   return `${presetLabelOf()} · ${approvalLabelOf()}`
 })
 const summaryDelegation = computed(() => {
-  if (runMode.value === 'workflow') return '由工作流接管'
   if (runMode.value === 'sub') {
     const own = BRANCH_MODE_LABELS[form.value.subagentMode]
     return `被委派：${own || '跟随默认' + (branchModeDefaultLabel.value ? `（${branchModeDefaultLabel.value}）` : '')}`
@@ -1942,10 +1902,8 @@ const reload = async () => {
     const me = await ensureAuth()
     isAdmin.value = me.admin
     // 全局默认值走 /agent/config-defaults（登录用户可读），不再按身份分叉拉管理端的 /config
-    const [ar, dr, sr, mr, xr, wr] = await Promise.all([
+    const [ar, dr, sr, mr, xr] = await Promise.all([
       listAgents(), listKnowledgeBases(), listAvailableSkills().catch(() => null), getMcpStatus(), listSubAgents(),
-      // 工作流是个人资产端点（非管理端点），普通用户可安全并行拉取；失败只影响绑定下拉
-      listWorkflows().catch(() => null),
       // 能力名册：结果写进 denyOptions / toolCatalogError，失败不阻断本页其余加载
       loadToolCatalog(),
       // 权限档位名册：同上，失败写 presetError，界面上给重试入口
@@ -1953,10 +1911,6 @@ const reload = async () => {
       // 全局默认值：同上，失败写 agentDefaultsError，界面上给重试入口
       loadAgentDefaults()
     ])
-    // /workflow/list 的 data 是分栏对象 { mine:[] }（非数组），必须摊平再用，
-    // 否则下面 .filter/.find 直接抛 "is not a function"（WorkflowPanel 同源数据按 mine 解）
-    const wd = (wr && wr.success && wr.data) || {}
-    workflowRows.value = wd.mine || []
     if (ar.success && ar.data) agents.value = ar.data
     // 批量勾选与现存列表对账：已被删掉的 id 从选中集合里清掉（避免批量操作撞「不存在」）
     const alive = new Set(agents.value.map(x => x.id))
@@ -1996,10 +1950,6 @@ const reload = async () => {
           : '')
       }))
     }
-    // 可绑定的工作流（只列已发布的——绑定未发布会在后端被拒，不如下拉里就不给）
-    workflowOptions.value = workflowRows.value
-      .filter(w => w.status === 'published')
-      .map(w => ({ value: w.id, label: (w.name || w.id) + (w.publishedVersion != null ? `（v${w.publishedVersion}）` : '') }))
   } catch (e) { message.error(e.message || '加载失败') }
   finally { loading.value = false }
 }
@@ -2038,7 +1988,7 @@ const openEdit = a => {
   editingId.value = a.id
   editingUpdatedAt.value = a.updateTime || a.createTime || ''
   const sub = a.isSubagent === 1 || a.isSubagent === true
-  runMode.value = sub ? 'sub' : (a.workflowId ? 'workflow' : 'main')
+  runMode.value = sub ? 'sub' : 'main'
   advOpen.value = false
   iconOpen.value = false
   const kbs = splitList(a.knowledgeBaseIds)
@@ -2079,8 +2029,6 @@ const openEdit = a => {
     isSubagent: sub ? 1 : 0,
     subAgentIds: splitList(a.subAgentIds),
     subagentMode: a.subagentMode || null,
-    // 绑定的工作流（未绑定 → null；下拉里只列已发布的工作流）
-    workflowId: a.workflowId || null,
     // 检索开关（只有重排三态；旧版存量的阈值/权重键由后端忽略并在下次保存时清除）
     qpRerank: parseQueryParams(a.queryParams)
   }
@@ -2180,9 +2128,6 @@ const tri = v => (v === '' || v == null ? null : Number(v))
 const save = async () => {
   const f = form.value
   if (!f.name.trim()) { message.warning('请填写名称'); return }
-  if (runMode.value === 'workflow' && !String(f.workflowId || '').trim()) {
-    message.warning('先选择一个已发布的工作流'); return
-  }
   const payload = {
     name: f.name.trim(),
     // 图标：空串 → 后端归一为 null（默认展示）；'wenqu'=问渠品牌标；emoji 原样存。
@@ -2229,14 +2174,12 @@ const save = async () => {
     // 「设为默认」是页头的独立星标动作，保存不带 isDefault：否则每次保存都会把默认位清掉
     isSubagent: runMode.value === 'sub' ? 1 : 0,
     // 子智能体没有委派对象；问答助手一个都没选 → 空串（后端归一为 null → 编排走多视角策略）。
-    // 工作流模式不参与委派，但仍保留已存名单：切回问答助手时不用重新配
+    // 子智能体不参与委派，但仍保留已存名单：切回问答助手时不用重新配
     subAgentIds: runMode.value === 'sub' ? null : (f.subAgentIds || []).join(','),
     // 被委派时怎么做：只有子智能体有这一项，切回其它模式要显式清空
     subagentMode: runMode.value === 'sub' ? (f.subagentMode || null) : null,
     // 检索开关覆盖：跟随全局 → 空串 → 后端存 null；开启/关闭写 rerank.enabled
-    queryParams: buildQueryParams(f.qpRerank),
-    // 工作流绑定：只有「工作流」模式保留；空串 → 后端归一为 null（解绑）
-    workflowId: runMode.value === 'workflow' ? (f.workflowId || '') : ''
+    queryParams: buildQueryParams(f.qpRerank)
   }
   // 多实例能力：模式 →（总开关三态 + 具体项）
   //   指定 → 开关置 1 + 项列表；一项都没选则等同「不使用」

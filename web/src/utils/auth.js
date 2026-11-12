@@ -56,6 +56,9 @@ export function tenantStateSync () {
 /** 当前用户可见菜单（会话内缓存；未拉取身份前为 null） */
 export const menusSync = () => (cached ? cached.menus : null)
 
+/** 部署档位：standard=个人/小团队（企业面隐藏），enterprise=企业面全开。 */
+export const profileSync = () => (cached ? (cached.profile || 'standard') : 'standard')
+
 /** 菜单树里是否包含某路径（路由守卫用：授权菜单页放行） */
 export function menuHasPath (path) {
   const menus = menusSync()
@@ -80,11 +83,12 @@ export async function ensureAuth (force = false) {
       superadmin: Boolean(info.superadmin),
       tenant: info.tenant || 'default',
       tenantName: info.tenantName || info.tenant || 'default',
+      profile: info.profile || 'standard',
       menus: Array.isArray(info.menus) ? info.menus : []
     }
     try { localStorage.setItem('ai_role', cached.admin ? 'admin' : 'user') } catch (e) { /* ignore */ }
   } catch (e) {
-    cached = { user: '', username: '', role: '', admin: false, superadmin: false, tenant: '', tenantName: '', menus: [] }
+    cached = { user: '', username: '', role: '', admin: false, superadmin: false, tenant: '', tenantName: '', profile: 'standard', menus: [] }
   }
   authUser.value = cached
   return cached

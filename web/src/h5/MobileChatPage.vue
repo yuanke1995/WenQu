@@ -210,7 +210,7 @@
            是「此刻正在发生什么」，与目标条同一族（目标条也常驻在这儿）。 -->
       <SubagentPill mobile :msg="panelAi" @focus="focusSpawn" />
 
-      <!-- 目标条（常驻摘要条，与 PC 那一条同一套词汇与判据）：横跨多轮的目标不属于哪一颗气泡，
+      <!-- 深度执行条（常驻摘要条，与 PC 那一条同一套词汇与判据）：横跨多轮的目标不属于哪一颗气泡，
            所以常驻在输入卡正上方。第一行只留身份 + 主行动（暂停/继续）+「更多」，
            轮次与提示落到第二行——触屏没有 hover，PC 收在悬浮里的东西在这儿必须落在地上。
            「更多」进底部 sheet：修改原文、看过程、取消（结束并留痕）、删除记录（仅终态）。 -->
@@ -223,11 +223,11 @@
           <span class="m-gb-objective">{{ sessionGoal.objective }}</span>
           <span class="m-gb-ver">{{ goalVersionLabel }}</span>
           <button v-if="goalCanPause" type="button" class="m-gb-btn" :disabled="sessionGoal.busy"
-                  title="暂停目标（可以再继续）" aria-label="暂停目标（可以再继续）" @click="runGoalAction('pause')"><pause-circle-outlined /></button>
+                  title="暂停执行（可以再继续）" aria-label="暂停执行（可以再继续）" @click="runGoalAction('pause')"><pause-circle-outlined /></button>
           <button v-else-if="goalCanResume" type="button" class="m-gb-btn" :disabled="sessionGoal.busy"
-                  title="继续目标" aria-label="继续目标" @click="runGoalAction('resume')"><play-circle-outlined /></button>
+                  title="继续执行" aria-label="继续执行" @click="runGoalAction('resume')"><play-circle-outlined /></button>
           <!-- 第一行只留主行动 + 「更多」；修改/过程/取消/删除记录全进底部 sheet -->
-          <button type="button" class="m-gb-btn more" title="更多目标操作" aria-label="更多目标操作"
+          <button type="button" class="m-gb-btn more" title="更多执行操作" aria-label="更多执行操作"
                   @click="openGoalActions">···</button>
         </div>
         <div class="m-gb-progress">
@@ -549,20 +549,20 @@
     <!-- ==================== 目标改订（与 PC 条子里的就地编辑同一批字段、同一个保存出口） ====================
          只改「这件事要做到什么」：目标没有验收标准那套东西要维护，也不提供另起一条的口径
          ——换一句就地把原文改掉，保存后从下一轮起按新的继续跑。 -->
-    <BottomSheet :open="goalEditing" title="改目标" max-height="78dvh" @close="goalEditing = false">
+    <BottomSheet :open="goalEditing" title="改任务" max-height="78dvh" @close="goalEditing = false">
       <div class="m-goale">
         <div class="m-goale-label">这件事要做到什么</div>
         <textarea v-model="goalEdit.objective" class="m-goale-ta" rows="4" maxlength="4000"
                   placeholder="写清楚要达成什么；助手会自己一轮轮往下推进"></textarea>
         <div class="m-goale-foot">
-          <span class="m-goale-hint">保存后从下一轮起按新目标继续</span>
+          <span class="m-goale-hint">保存后从下一轮起按新任务继续</span>
           <button class="m-rec-btn primary" type="button" :disabled="goalEditBusy || !goalEditSaveable"
                   @click="saveGoalEdit">保存</button>
         </div>
       </div>
     </BottomSheet>
     <!-- 目标操作：第一行只留主行动，其余动作收在这里（触屏点不开 hover，也不能把四颗图标挤在一行） -->
-    <BottomSheet :open="goalActionsOpen" title="目标操作" max-height="60dvh" @close="goalActionsOpen = false">
+    <BottomSheet :open="goalActionsOpen" title="深度执行操作" max-height="60dvh" @close="goalActionsOpen = false">
       <div class="m-goalact">
         <button v-if="goalDelivery" type="button" class="m-goalact-row" @click="actFromGoalSheet('delivery')">
           <folder-open-outlined class="m-goalact-ic" />
@@ -571,7 +571,7 @@
         </button>
         <button v-if="goalCanEdit" type="button" class="m-goalact-row" @click="actFromGoalSheet('edit')">
           <edit-outlined class="m-goalact-ic" />
-          <span class="m-goalact-t">修改目标</span>
+          <span class="m-goalact-t">修改任务</span>
           <span class="m-goalact-s">保存后从下一轮按新原文继续</span>
         </button>
         <button type="button" class="m-goalact-row" @click="actFromGoalSheet('view')">
@@ -581,15 +581,15 @@
         </button>
         <button v-if="!goalCancelAsk && goalCanCancel" type="button" class="m-goalact-row danger" @click="goalCancelAsk = true">
           <stop-outlined class="m-goalact-ic" />
-          <span class="m-goalact-t">取消目标</span>
+          <span class="m-goalact-t">取消执行</span>
           <span class="m-goalact-s">结束并留痕：历史与过程都保留</span>
         </button>
         <div v-if="goalCancelAsk" class="m-goalact-confirm">
-          <div class="m-goalact-ct">取消这条目标？</div>
+          <div class="m-goalact-ct">取消这次深度执行？</div>
           <div class="m-goalact-cs">已经跑出来的内容、历史与过程都会保留；以后想看，终态卡还在这儿。</div>
           <div class="m-goalact-ca">
             <button type="button" class="m-rec-btn ghost" @click="goalCancelAsk = false">继续推进</button>
-            <button type="button" class="m-rec-btn danger" @click="actFromGoalSheet('cancel')">取消目标</button>
+            <button type="button" class="m-rec-btn danger" @click="actFromGoalSheet('cancel')">取消执行</button>
           </div>
         </div>
         <button v-if="goalCanClearRecord" type="button" class="m-goalact-row danger" @click="actFromGoalSheet('delete')">

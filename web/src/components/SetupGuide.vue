@@ -95,6 +95,34 @@
       </div>
     </template>
 
+    <!-- ④ 本机执行器：标准档才有，可选、工具调用需要（仅抽屉清单显示） -->
+    <template v-if="scope === 'all' && executorVisible">
+      <div class="sg-group">可选增强 · 工具调用</div>
+      <div v-if="executorReady" class="sg-item done">
+        <span class="sg-badge ok" aria-hidden="true">✓</span>
+        <div class="sg-main">
+          <div class="sg-title"><span class="sr-only">已完成：</span>启动本机执行器</div>
+          <div class="sg-done-line">
+            <span>已连接 {{ executorOnlineCount }} 台执行器</span>
+            <button class="app-link-btn" type="button" :disabled="refreshingExec" @click="refreshExecutors">刷新</button>
+          </div>
+        </div>
+      </div>
+      <div v-else class="sg-item optional">
+        <span class="sg-badge lock">4</span>
+        <div class="sg-main">
+          <div class="sg-title">启动本机执行器<span class="sg-use">工具调用</span></div>
+          <div class="sg-desc">在需要读写文件、执行命令的电脑上启动执行器；首次会打印授权码，在「授权本机」页确认后即可使用工具。</div>
+          <div class="sg-actions">
+            <button class="app-btn sg-btn ghost" type="button" @click="goHelp">查看启动说明</button>
+            <button class="app-link-btn" type="button" :disabled="refreshingExec" @click="refreshExecutors">
+              {{ refreshingExec ? '检测中…' : '我已启动，刷新' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </template>
+
     <!-- 底部：卡片只留「稍后再说」；抽屉补文档入口 -->
     <div class="sg-foot">
       <template v-if="variant === 'card'">
@@ -115,6 +143,7 @@ import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { setUserPreference } from '../api.js'
 import { canManageProviders, chatReady, chatDoneCount, defaultReady, embeddingReady,
+         executorOnlineCount, executorReady, executorVisible,
          guideSnoozed, snoozeGuide, refreshSetupGuide, setupGuide } from '../utils/setupGuide.js'
 import ModelSelect from './ModelSelect.vue'
 
@@ -168,6 +197,19 @@ const goAddChat = () => leave('/agents?tab=providers&action=new-provider&type=ch
 const goAddEmbedding = () => leave('/agents?tab=providers&action=add-model&type=embedding&from=setup')
 const goManage = () => leave('/agents?tab=providers')
 const goHelp = () => leave('/help')
+
+// 执行器状态刷新：用户启动执行器后不必整页刷新，点一下重新对账
+const refreshingExec = ref(false)
+const refreshExecutors = async () => {
+  refreshingExec.value = true
+  try {
+    await refreshSetupGuide(true)
+    if (executorReady.value) message.success('执行器已连接')
+    else message.info('还没检测到在线执行器：确认它已启动并完成授权')
+  } finally {
+    refreshingExec.value = false
+  }
+}
 
 // ② 选完即存：setUserPreference 为部分更新（缺省字段不动），不会误清其他偏好字段
 const picking = ref(false)

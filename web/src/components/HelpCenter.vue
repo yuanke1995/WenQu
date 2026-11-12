@@ -211,4 +211,9 @@ onBeforeUnmount(() => document.removeEventListener('click', onArticleClick))
   .help-body { grid-template-columns: 1fr; }
   .help-nav { position: static; max-height: 200px; }
 }
+
+/* H5 P2：≤1024 触屏/窄桌面统一主操作热区 44px */
+@media (max-width: 1024px) {
+  button { min-width: 44px; min-height: 44px; }
+}
 </style>

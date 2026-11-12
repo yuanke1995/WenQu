@@ -99,7 +99,7 @@ export const NOTIF_LABELS = {
   'agentEval.failed': '评测失败',
   'tool.approval': '工具审批待决',
   'tool.ask': '智能体提问待答',
-  'plan.approval': '执行计划待确认',
+  'plan.approval': '深度执行计划待确认',
   'chat.turn.done': '一轮跑完',
   'chat.turn.failed': '一轮没跑成',
   'goal.achieved': '目标达成',
@@ -202,7 +202,7 @@ export function notifTarget (n, { mobile = false } = {}) {
   if (n.refType === 'session' && n.refId) return { path: chatPath, query: { sid: n.refId } }
   if (n.refType === 'provider' && n.refId) return { path: '/agents', query: { tab: 'providers' } }
   if (n.refType === 'ops') return '/security'
-  if (n.refType === 'dashboard') return { path: '/dashboard', query: { tab: 'overview' } }
+  if (n.refType === 'dashboard') return { path: '/quality', query: { view: 'dashboard', tab: 'overview' } }
   if (n.type === 'tenant.request') {
     return { path: '/tenants', query: { tab: 'requests' } }
   }
@@ -210,7 +210,7 @@ export function notifTarget (n, { mobile = false } = {}) {
     return { path: '/tenants', query: { tab: 'tenants' } }
   }
   if (n.refType === 'quota' || n.type === 'quota') {
-    return { path: '/dashboard', query: { tab: 'cost' } }
+    return { path: '/quality', query: { view: 'dashboard', tab: 'cost' } }
   }
   return null
 }

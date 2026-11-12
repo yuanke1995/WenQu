@@ -63,7 +63,7 @@ export class NativeChat {
   /**
    * 发起一轮对话（POST /chat，SSE 全程消费）。
    * 终止帧：done（onDone 带引用/产物/用量全量）或 error（onError）；
-   * ask_user / plan_approval / approval_required 不是终态——服务端挂着这一轮等人工裁决，
+   * ask_user / deep_plan_approval / approval_required 不是终态——服务端挂着这一轮等人工裁决，
    * 流继续开着，答完卡（answerAsk/resolvePlan/resolveApproval）后同一根流长出后续内容。
    */
   send(params: NativeSendParams, handlers: NativeStreamHandlers = {}): NativeTurnHandle {
@@ -181,7 +181,7 @@ export class NativeChat {
    * 作废继续对话 {supersede:true,plan:"意见"}；拒绝 {approved:false}＝本轮终止。
    */
   resolvePlan(planApprovalId: string, decision: { approved?: boolean; revise?: boolean; supersede?: boolean; plan?: string }): Promise<unknown> {
-    return this.client.nativeEnvelopeRequest(`plan-approval/${encodeURIComponent(planApprovalId)}`, {
+    return this.client.nativeEnvelopeRequest(`deep/plan-approval/${encodeURIComponent(planApprovalId)}`, {
       method: "POST",
       body: JSON.stringify(decision),
     });
@@ -190,7 +190,7 @@ export class NativeChat {
   /** 待批准计划恢复（含版本链） */
   async pendingPlans(sessionId: string): Promise<Array<PlanApprovalCard & { live?: boolean; expired?: boolean }>> {
     const data = await this.client.nativeEnvelopeRequest<{ items?: unknown }>(
-      `plan-approval/pending?sessionId=${encodeURIComponent(sessionId)}`,
+      `deep/plan-approval/pending?sessionId=${encodeURIComponent(sessionId)}`,
     );
     return Array.isArray(data?.items) ? (data.items as Array<PlanApprovalCard & { live?: boolean; expired?: boolean }>) : [];
   }
@@ -306,14 +306,14 @@ export class NativeChat {
             case "plan":
               handlers.onPlan?.(parsed);
               break;
-            case "plan_delta":
+            case "deep_plan_delta":
               handlers.onPlanDelta?.(typeof frame.content === "string" ? frame.content : "");
               break;
-            case "plan_approval":
+            case "deep_plan_approval":
               handlers.onPlanApproval?.(parsed as PlanApprovalCard);
               break;
-            case "plan_cancelled":
-            case "plan_superseded":
+            case "deep_plan_cancelled":
+            case "deep_plan_superseded":
               handlers.onPlanTerminal?.(frame.type, parsed);
               break;
             case "todo":
@@ -331,7 +331,7 @@ export class NativeChat {
             case "image":
               handlers.onImage?.(parsed);
               break;
-            case "goal_state":
+            case "deep_state":
               handlers.onGoalState?.(parsed);
               break;
             case "snapshot": {
@@ -357,7 +357,7 @@ export class NativeChat {
               return;
             default:
               // thinking_done/tool_output/runcode_progress/subagent_step/agent_* /compact_state/
-              // steer/turn_start/goal_turn 等新事件经 onEvent 透出，SDK 不拦（契约只增不删）
+              // steer/turn_start/deep_turn 等新事件经 onEvent 透出，SDK 不拦（契约只增不删）
               break;
           }
         }

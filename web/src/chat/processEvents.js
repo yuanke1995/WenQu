@@ -4,26 +4,20 @@
 //
 // 边界：只做展示投影，不改变后端契约、不参与智能体回答。合并掉的快照仍可展开看逐帧。
 import { toolDuration, toolLabel, toolBrief } from './projections'
+import { SSE_LABELS, SSE_TONES } from './eventContract.generated.js'
 
-const LABELS = {
-  tool: '工具', approval: '工具审批', approval_required: '工具待批准', ask_user: '提问卡',
-  plan: '本轮步骤', plan_approval: '计划待批准', plan_cancelled: '计划未批准',
-  plan_superseded: '计划被取代', artifact: '产物', subagent: '子智能体',
-  subagent_route: '派遣路由', agent: '智能体', agent_delegated: '委派作答', agent_consulted: '智能体咨询',
-  retrieved: '检索', usage: '用量', todo: '任务清单', error: '失败', warn: '提醒',
-  skill_hit: '技能命中',
-  steer: '中途插话', stop: '用户停止', interrupted: '中断收尾', detach: '断线中止',
-  goal_state: '目标态', goal_turn: '目标续跑', goal_verify: '完成申请',
-  goal_note: '目标进展', goal_outcome: '目标结果', done: '本轮结束'
+// SSE 事件的文案/色调由后端 RunEventType 生成；这里只补「账本里有、但不属于 SSE 帧」的展示类型。
+const LEDGER_LABELS = {
+  tool: '工具', approval: '工具审批', subagent: '子智能体', subagent_route: '派遣路由',
+  agent: '智能体', stop: '用户停止', interrupted: '中断收尾', detach: '断线中止',
+  deep_verify: '完成申请', deep_note: '深度执行进展', deep_outcome: '深度执行结果'
 }
-const TONES = {
-  tool: 'tool', retrieved: 'retr', usage: 'use', artifact: 'art',
-  ask_user: 'card', approval: 'card', approval_required: 'card',
-  plan: 'card', plan_approval: 'card', plan_cancelled: 'card', plan_superseded: 'card',
-  subagent: 'sub', subagent_route: 'sub', agent: 'sub', agent_delegated: 'sub', agent_consulted: 'sub',
-  error: 'err', warn: 'warn', stop: 'err', interrupted: 'warn', detach: 'warn',
-  done: 'done'
+const LEDGER_TONES = {
+  tool: 'tool', approval: 'card', subagent: 'sub', subagent_route: 'sub', agent: 'sub',
+  stop: 'err', interrupted: 'warn', detach: 'warn'
 }
+const LABELS = { ...SSE_LABELS, ...LEDGER_LABELS }
+const TONES = { ...SSE_TONES, ...LEDGER_TONES }
 const SNAPSHOT_TYPES = new Set(['usage', 'retrieved'])
 
 const parse = v => {
@@ -142,9 +136,9 @@ function nodeFilters (e) {
     case 'approval':
     case 'approval_required':
     case 'plan':
-    case 'plan_approval':
-    case 'plan_cancelled':
-    case 'plan_superseded': return ['card']
+    case 'deep_plan_approval':
+    case 'deep_plan_cancelled':
+    case 'deep_plan_superseded': return ['card']
     case 'error':
     case 'stop': return ['err']
     default: return ['other']
@@ -183,10 +177,10 @@ function eventNode (e) {
   if (type === 'plan' && Array.isArray(data)) {
     return { kind: 'event', tone, label, at, title: '计划 ' + data.length + ' 步', summary: humanize(data) }
   }
-  if (type === 'plan_approval') {
+  if (type === 'deep_plan_approval') {
     return { kind: 'event', tone, label, at, title: '计划待你批准', summary: '等待你的裁决' }
   }
-  if (type === 'plan_cancelled' || type === 'plan_superseded') {
+  if (type === 'deep_plan_cancelled' || type === 'deep_plan_superseded') {
     return { kind: 'event', tone, label, at, title: label, summary: '' }
   }
   if (type === 'todo') {

@@ -1,29 +1,20 @@
 <template>
-  <!-- 「+」菜单 sheet：顶部一块「本轮模式」（计划开关 / 定为目标），下面技能 / 引用(@) / 历史(#) / 附件
-       四个分页。PC 上 @ 与 # 由输入框敲字符唤起（桌面习惯），计划走 /plan、目标走 /goal；移动端这些
-       键盘路径都没有，这些入口统一收进这里。选中项与计划开启态以 chip 形式回显在输入框上方
+  <!-- 「+」菜单 sheet：顶部一块「本轮模式」（深度执行），下面技能 / 引用(@) / 历史(#) / 附件
+       四个分页。PC 上 @ 与 # 由输入框敲字符唤起（桌面习惯），深度执行走 /deep；移动端这些
+       键盘路径都没有，这些入口统一收进这里。选中项以 chip 形式回显在输入框上方
        （由主壳渲染），本 sheet 只管挑选。 -->
   <BottomSheet :open="open" :title="TABS.find(t => t.key === tab).title" max-height="78dvh" @close="$emit('close')">
     <div class="as">
       <!-- ==================== 本轮模式 ====================
-           计划是一颗开关（只管下一轮要不要先出计划，开启态由主壳那颗 chip 回显；发出去即消费，
-           chip 跟着输入框里的其它本轮内容一起消失）；目标是一行动作
-           （点了就把输入框那句交出去建目标开跑，没有正文就在主壳里提示先写一句）。工具条上不放它们——
-           四颗药丸固定要 360px，360px 屏会把送出键挤出输入卡。 -->
+           深度执行是唯一模式入口：点了就把输入框那句交出去，先出计划、自动续跑，
+           没有正文就在主壳里提示先写一句。工具条上不放它——四颗药丸固定要 360px，
+           360px 屏会把送出键挤出输入卡。 -->
       <div class="as-mode">
-        <button class="as-row" type="button" @click="setPlanMode(!planModeOn)">
-          <ordered-list-outlined class="as-ic" />
-          <span class="as-main">
-            <span class="as-name">计划模式</span>
-            <span class="as-desc">先出计划，批准后再回答</span>
-          </span>
-          <span class="as-sw" :class="{ on: planModeOn }" aria-hidden="true" />
-        </button>
         <button v-if="goalModeOn && (!sessionGoal || goalTerminal)" class="as-row" type="button" @click="$emit('goal')">
           <aim-outlined class="as-ic" />
           <span class="as-main">
-            <span class="as-name">定为目标</span>
-            <span class="as-desc">自动续跑，可随时停止</span>
+            <span class="as-name">深度执行</span>
+            <span class="as-desc">先出计划，自动续跑，可随时停止</span>
           </span>
         </button>
       </div>
@@ -170,10 +161,9 @@ const {
   histPool, isHistPicked, toggleHistoryRef,
   pendingFiles, pendingImages, addFiles, removePendingFile, removePendingImage,
   pendingHistoryRefs, pendingMentions,
-  // 本轮模式：计划开关与目标入口都吃引擎那份共享状态（ai_plan_mode 两端同源，见主壳 chip）。
-  // 目标入口的显隐与 PC 同一条判据：这一条会话已有活目标时不再出现（换目标走条子上的编辑/删除），
-  // 目标结束后可以再定一条新的。
-  planModeOn, setPlanMode, goalModeOn, sessionGoal, goalTerminal
+  // 深度执行入口吃引擎那份共享状态。显隐与 PC 同一条判据：这一条会话已有活执行时
+  // 不再出现（换任务走执行条上的编辑/删除），结束之后可以再起一条新的。
+  goalModeOn, sessionGoal, goalTerminal
 } = engine
 
 // 历史引用候选：PC 侧在视图层（histQuery/histCandidates 未进引擎），移动壳按同一口径本地实现

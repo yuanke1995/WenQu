@@ -1295,4 +1295,9 @@ onUnmounted(() => {
   .pj-file-row { grid-template-columns: 20px minmax(0, 1fr) 70px; }
   .pj-col-time { display: none; }
 }
+
+/* H5 P2：≤1024 触屏/窄桌面统一主操作热区 44px */
+@media (max-width: 1024px) {
+  button, .m-ch-btn, .perm-pill, .agent-pill, .ci-attach, .app-btn { min-width: 44px; min-height: 44px; }
+}
 </style>

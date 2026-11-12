@@ -7,6 +7,7 @@
  */
 import { announce } from './utils/tabSync'
 import { clearUnreachable, ensureNetworkWatch, markRequestOutcome } from './utils/netState'
+import { CHAT_EVENT_CB } from './chat/eventContract.generated.js'
 
 const BASE = import.meta.env.VITE_API_BASE || '/proxy/api/ai'
 
@@ -138,44 +139,10 @@ function upload(path, formData, onProgress) {
 }
 
 /**
- * ==================== SSE 事件表（登录态与游客分享共用）====================
- * 「事件名 → 回调名」只在这里声明一次。两条链路（sendQuestion / sendShareMessage）各自只管传输与收尾，
- * 派发统一走 dispatchChatEvent，新增事件只需在这里登记一处。
- * 终止事件 done / error 刻意不进表：两条链路的收尾语义不同（分享链路的 sessionId 在事件信封上，
- * 且要摘掉 visibilitychange 监听）。
+ * SSE 事件表（登录态与游客分享共用）由后端 RunEventType 生成，
+ * 见 chat/eventContract.generated.js；新增事件只改后端枚举再跑生成器。
+ * 终止事件 done / error 刻意不进表：两条链路的收尾语义不同。
  */
-const CHAT_EVENT_CB = {
-  token: 'onToken', plan: 'onPlan', usage: 'onUsage',
-  retrieved: 'onRetrieved', thinking: 'onThinking', thinking_done: 'onThinkingDone',
-  image: 'onImage', warn: 'onWarn', artifact: 'onArtifact',
-  tool_status: 'onToolStatus', tool_output: 'onToolOutput', process: 'onProcess',
-  runcode_progress: 'onRunCodeProgress',
-  // skill_hit＝本轮有一条技能被读取（点名注入或模型按需读取）：前端据此在回答区渲染
-  // 「已按技能 X 执行」芯片；进账本，刷新后回看同样能重建
-  skill_hit: 'onSkillHit',
-  // subagent_step：分支那一支正在跑的第几步。它原来写进的「编排面板」（msg.subagents）随派遣路由
-  // 一起退场了，现在这份实时帧只喂一个去处——顶栏那颗子智能体药丸与派遣卡上的一行文案
-  // （见 useChatEngine.onSubagentStep）；仍不落库，刷新后退回卡片上的「跑了 N 步工具」
-  subagent_step: 'onSubagentStep',
-  // agent_consulted 登记在表里但不配回调：派遣过程由那张工具卡呈现（框架驱使后是 agent_spawn），
-  // 事件仍照发（账本逐帧排查用），留名只为不被判成「未识别事件」
-  agent_delegated: 'onAgentDelegated', agent_consulted: 'onAgentConsulted',
-  approval_required: 'onApprovalRequired', ask_user: 'onAskUser',
-  plan_delta: 'onPlanDelta', plan_approval: 'onPlanApproval', plan_cancelled: 'onPlanCancelled',
-  plan_superseded: 'onPlanSuperseded', todo: 'onTodo', snapshot: 'onSnapshot',
-  // turn_start＝本轮的服务端起表基准（时长形式）：开流第一帧把秒表锚到服务端收到提问那一刻，
-  // 收尾换成落库那份墙钟时才不会掉一个网络往返。
-  turn_start: 'onTurnStart',
-  // compact_state＝轮内框架自动压缩的开始/结束：那两次摘要模型调用的内容全被按 purpose 滤掉，
-  // 不带这一帧，压缩那二十多秒界面上一个字都没有，用户读成「卡住了」
-  compact_state: 'onCompactState',
-  // 目标模式（Goal Mode）：goal_state 是目标态的唯一帧（阶段迁移/轮次推进/停因），
-  // 进总线镜像——断线重连靠它重建目标面板；goal_turn 是跨轮续跑开了新的一轮，前端据此自动接流
-  goal_state: 'onGoalState', goal_turn: 'onGoalTurn',
-  // steer＝这句插话被框架写进了正在跑的这一轮（下一次调模型之前那一刻），不是「用户按了发送」——
-  // 那一刻由 /chat/steer 自己回执。前端据此把队列里等它的那条撤下，并长进本轮回答的时间线里。
-  steer: 'onSteer'
-}
 
 /**
  * 「这一帧要不要应用」的序号守卫（主链路与分享链路共用一条判据）。
@@ -1412,14 +1379,14 @@ export const listSharePendingAsks = (token, sessionId, visitorId) =>
 
 /** 游客裁决计划卡：与提问卡同一套两跳归属（卡片行记发布者 uid，不能按 uid 认） */
 export const answerSharePlan = (token, planApprovalId, visitorId, payload) =>
-  request(`/share/${encodeURIComponent(token)}/plan-approval/${encodeURIComponent(planApprovalId)}?visitorId=${encodeURIComponent(visitorId)}`, {
+  request(`/share/${encodeURIComponent(token)}/deep/plan-approval/${encodeURIComponent(planApprovalId)}?visitorId=${encodeURIComponent(visitorId)}`, {
     method: 'POST',
     body: JSON.stringify(payload || {})
   })
 
 /** 游客待批计划（刷新后取回卡片与版本链） */
 export const listSharePendingPlans = (token, sessionId, visitorId) =>
-  request(`/share/${encodeURIComponent(token)}/plan-approval/pending?sessionId=${encodeURIComponent(sessionId)}&visitorId=${encodeURIComponent(visitorId)}`)
+  request(`/share/${encodeURIComponent(token)}/deep/plan-approval/pending?sessionId=${encodeURIComponent(sessionId)}&visitorId=${encodeURIComponent(visitorId)}`)
 
 export const submitShareFeedback = (token, payload) =>
   request(`/share/${encodeURIComponent(token)}/feedback`, {
@@ -1483,7 +1450,7 @@ export const getSessionTodosApi = (sessionId, turnId = '') =>
  *  返回目标视图模型 {goalId,status,objective,round,maxRounds,hint,endReason,blockedReason,live,createdAt,startedAt,endedAt}。
  *  多余的入参忽略（老调用方仍会多传两个）。 */
 export const startGoalApi = (sessionId, objective) =>
-  request('/chat/goal', {
+  request('/chat/deep', {
     method: 'POST',
     body: JSON.stringify({ sessionId, objective })
   })
@@ -1491,7 +1458,7 @@ export const startGoalApi = (sessionId, objective) =>
 /** 目标模式：目标动作。action=pause（停止）|resume（继续）|edit（改目标原文，带 objective）|cancel（取消）|delete（删除记录）。
  *  返回目标视图模型（摘要条/目标卡直接可用）。 */
 export const goalActionApi = (goalId, action, extra) =>
-  request(`/chat/goal/${encodeURIComponent(goalId)}`, {
+  request(`/chat/deep/${encodeURIComponent(goalId)}`, {
     method: 'POST',
     body: JSON.stringify({ action, ...(extra || {}) })
   })
@@ -1499,17 +1466,17 @@ export const goalActionApi = (goalId, action, extra) =>
 /** 目标模式：会话里还活着的目标（RUNNING/PAUSED；切会话、刷新时条子与目标卡的回捞入口，
  *  重启/换副本后 live:false + DB 那份）。返回 {goal:视图模型|null} */
 export const getPendingGoalApi = sessionId =>
-  request(`/chat/goal/pending?sessionId=${encodeURIComponent(sessionId)}`)
+  request(`/chat/deep/pending?sessionId=${encodeURIComponent(sessionId)}`)
 
 /** 目标模式：会话当前/最近一条目标（含已达成/已删除的终态记录；读 DB 不读框架）。
  *  注意形状与上面那个不同：**直接返回视图模型**（没有 goal 那一层套），没有目标时 data 为 null */
 export const getSessionGoalApi = sessionId =>
-  request(`/chat/session/${encodeURIComponent(sessionId)}/goal`)
+  request(`/chat/session/${encodeURIComponent(sessionId)}/deep`)
 
 /** 目标模式：按 goal_id 聚合的过程账本（过程面板深链，一个目标覆盖多轮）。
  *  返回 [{id,type,turnId,payload,at}] 正序 */
 export const getGoalEventsApi = (sessionId, goalId) =>
-  request(`/chat/session/${encodeURIComponent(sessionId)}/goal/events?goalId=${encodeURIComponent(goalId)}`)
+  request(`/chat/session/${encodeURIComponent(sessionId)}/deep/events?goalId=${encodeURIComponent(goalId)}`)
 
 /** 工具执行审批（人在回路）：裁决 approval_required 事件下发的请求；仅本轮用户本人可批 */
 export const approveToolCall = (approvalId, approved) =>
@@ -1533,26 +1500,26 @@ export const listPendingAsks = sessionId =>
 /** 执行计划裁决（计划模式，人在回路）：批准可带编辑后的计划全文（空串=按模型原稿执行）；
  *  拒绝（approved:false）=本轮终止。仅本轮用户本人可裁决 */
 export const resolvePlanApproval = (planApprovalId, approved, plan = '') =>
-  request(`/plan-approval/${encodeURIComponent(planApprovalId)}`, { method: 'POST', body: JSON.stringify({ approved, plan }) })
+  request(`/deep/plan-approval/${encodeURIComponent(planApprovalId)}`, { method: 'POST', body: JSON.stringify({ approved, plan }) })
 
 /** 执行计划「继续对话」取代：用户带着修改意见继续对话，本版计划作废（服务端随即收口本轮，前端随后
  *  把那条意见作为用户消息发出，新一轮按意见重做计划）。意见全文一并带上，落在待办终态的 answer 里。
  *  仅本轮用户本人可裁决 */
 export const supersedePlanApproval = (planApprovalId, feedback = '') =>
-  request(`/plan-approval/${encodeURIComponent(planApprovalId)}`, { method: 'POST', body: JSON.stringify({ supersede: true, plan: feedback }) })
+  request(`/deep/plan-approval/${encodeURIComponent(planApprovalId)}`, { method: 'POST', body: JSON.stringify({ supersede: true, plan: feedback }) })
 
 /** 执行计划「同一轮退回重出」（计划模式，人在回路）：用户不满意本版，带上修改意见让模型在同一轮内
- *  产出下一版（可反复），消息流不新增气泡；返回后新一轮计划仍走 plan_delta / plan_approval 事件。
+ *  产出下一版（可反复），消息流不新增气泡；返回后新一轮计划仍走 deep_plan_delta / deep_plan_approval 事件。
  *  仅本轮用户本人可裁决 */
 export const revisePlanApproval = (planApprovalId, feedback = '') =>
-  request(`/plan-approval/${encodeURIComponent(planApprovalId)}`, { method: 'POST', body: JSON.stringify({ revise: true, plan: feedback }) })
+  request(`/deep/plan-approval/${encodeURIComponent(planApprovalId)}`, { method: 'POST', body: JSON.stringify({ revise: true, plan: feedback }) })
 
 /** 待批准计划（卡片恢复入口）：列本人该会话仍挂起的执行计划批准卡。
  *  返回 {items:[{planApprovalId,plan,versions:[{plan,feedback}],timeoutMs,remainingMs,createdAt,expired,live}]}；
  *  versions=本轮退回重出的版本链（feedback=产出该版的用户意见）；live=false 表示唤醒句柄已随进程重启消失，
  *  批准送不到模型 */
 export const listPendingPlans = sessionId =>
-  request(`/plan-approval/pending?sessionId=${encodeURIComponent(sessionId)}`)
+  request(`/deep/plan-approval/pending?sessionId=${encodeURIComponent(sessionId)}`)
 
 /** 知识块级启停用（status: 0=生效 1=停用，停用后不参与召回） */
 export const updateKnowledgeStatus = (id, status) =>
@@ -2303,7 +2270,7 @@ export const getMailDeliveries = (status = '', limit = 50) =>
 // 工具审批恢复：按 approvalId 取本人审批记录（tool.approval 通知点击后重建审批卡）
 export const getToolApproval = id => request(`/tool-approval/${encodeURIComponent(id)}`)
 
-// 会话内待批准的工具执行审批（与 /ask-user/pending、/plan-approval/pending 同口径）：
+// 会话内待批准的工具执行审批（与 /ask-user/pending、/deep/plan-approval/pending 同口径）：
 // 刷新或断线接回这一轮时重建那张 120 秒时限的审批卡，否则本轮豁免宽限一直等而界面什么都看不见
 export const listPendingApprovals = sid => request(`/tool-approval/pending?sessionId=${encodeURIComponent(sid)}`)
 

@@ -226,7 +226,7 @@
            卡片只读：状态、轮次、目标原文与卡住的原因。暂停/继续/改原文/删除都只在输入框上方
            那条摘要条上（一个动作只留一个入口），这里不再摆验收/收尾/另起目标那一套。 -->
       <template v-if="sessionGoal">
-        <div class="rs-section">目标</div>
+        <div class="rs-section">深度执行</div>
         <GoalCard :card="sessionGoal" />
       </template>
 

@@ -1,6 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { message } from 'ant-design-vue'
-import { ensureAuth, isAdminSync, isLoggedIn, menuHasPath } from './utils/auth'
+import { ensureAuth, isAdminSync, isLoggedIn, menuHasPath, profileSync } from './utils/auth'
 import { preferMobileShell } from './h5/mobile'
 import { authVeil, coverAuthVeil, revealAuthVeil } from './utils/authTransition'
 
@@ -68,9 +68,8 @@ const routes = [
   // 安全与运维（管理员面）：系统巡检（运行状态体检）/ 会话治理（强制下线）/ 平台公告（停机/升级通知）
   { path: '/security', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/SecurityOpsPage.vue')) }], meta: { requiresAdmin: true, title: '安全与运维' } },
   { path: '/permissions', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/PermissionsPage.vue')) }], meta: { requiresAdmin: true, title: '权限管理' } },
-  { path: '/dashboard', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/DashboardPage.vue')) }], meta: { requiresAdmin: true, title: '数据看板' } },
+  { path: '/quality', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/QualityPage.vue')) }], meta: { title: '质量' } },
   { path: '/settings', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/SettingsPage.vue')) }], meta: { requiresAdmin: true, title: '系统设置' } },
-  { path: '/evaluation', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/EvaluationPage.vue')) }], meta: { requiresAdmin: true, title: '检索评估' } },
   // 未知路径统一回到对话页
   { path: '/:pathMatch(.*)*', redirect: '/chat' }
 ]
@@ -113,6 +112,12 @@ router.beforeEach(async to => {
   // 反向同判：在 /m/chat 上放大窗口/接上鼠标后回到 PC 布局。
   if (to.path === '/chat' && preferMobileShell()) return { path: '/m/chat', query: to.query, replace: true }
   if (to.path === '/m/chat' && !preferMobileShell()) return { path: '/chat', query: to.query, replace: true }
+  // 标准档：企业面整体不出现（多租户/安全运维）。后端管理端点仍由 RBAC 兜底，
+  // 这里先保证用户不会从一个可见入口走进去。
+  if (profileSync() === 'standard' && (to.path === '/tenants' || to.path === '/security')) {
+    message.info('当前部署为标准档，企业级功能未启用')
+    return { path: '/chat', replace: true }
+  }
   if (!to.meta.requiresAdmin) return true
   if (isAdminSync() || menuHasPath(to.path)) return true
   message.warning('暂无该功能的访问权限（可联系管理员在权限管理中为角色授权）')

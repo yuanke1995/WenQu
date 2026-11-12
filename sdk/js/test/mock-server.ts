@@ -527,12 +527,12 @@ async function routeNative(sub: string, method: string, req: IncomingMessage, re
     envelopeOk(res, { items: [{ askId: "ask-1", questions: [{ question: "选哪个方案？", options: ["A", "B"] }], timeoutMs: 600000, remainingMs: 500000, live: true }] });
     return;
   }
-  if (sub === "/plan-approval/p-1" && method === "POST") {
+  if (sub === "/deep/plan-approval/p-1" && method === "POST") {
     const body = JSON.parse(((await readBody(req)).toString("utf8") || "{}")) as Record<string, unknown>;
     envelopeOk(res, { received: true, decision: body });
     return;
   }
-  if (sub === "/plan-approval/pending" && method === "GET") {
+  if (sub === "/deep/plan-approval/pending" && method === "GET") {
     envelopeOk(res, { items: [{ planApprovalId: "p-1", plan: { steps: ["第一步"] }, timeoutMs: 600000, live: true }] });
     return;
   }

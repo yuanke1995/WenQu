@@ -1597,4 +1597,9 @@ watch(current, v => { if (v === 'notify') refreshPushState().then(refreshCap).ca
   /* 触屏没有 hover：结构化编辑的行内「编辑/删除」常显 */
   .mem-line-acts { opacity: 1; }
 }
+
+/* H5 P2：≤1024 触屏/窄桌面统一主操作热区 44px */
+@media (max-width: 1024px) {
+  button, .pf-nav-item, .pf-emoji-opt, .app-btn, .app-link-btn { min-width: 44px; min-height: 44px; }
+}
 </style>

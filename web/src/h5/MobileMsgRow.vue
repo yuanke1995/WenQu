@@ -11,10 +11,10 @@
       <!-- ==================== 用户消息 ==================== -->
       <template v-if="m.role === 'user'">
         <!-- 目标指令回声的身份胶囊：压在气泡上方，不占正文那行（与 PC 共用外壳同一形状、
-             与输入框上方那条目标条同源）。/goal 那串字收进悬浮行；状态词只在这一条就是当前目标时才给 -->
+             与输入框上方那条目标条同源）。/deep 那串字收进悬浮行；状态词只在这一条就是当前目标时才给 -->
         <div v-if="m.goalCommand || m.goalPending" class="cmd-pill"
              :class="cmdState ? 'st-' + cmdState.cls : ''" :title="goalEchoTipOf(goal, m.goalCommand)">
-          <aim-outlined class="cmd-ic" /><span>目标</span><span v-if="cmdState"> · {{ cmdState.label }}</span>
+          <aim-outlined class="cmd-ic" /><span>深度</span><span v-if="cmdState"> · {{ cmdState.label }}</span>
         </div>
         <div class="ububble">
           <div v-if="m.content" class="u-text">{{ m.content }}</div>
@@ -324,7 +324,7 @@
         <!-- 执行计划卡（人在回路）：与 PC 同一份组件；裁决入口在底部确认栏，这里只读留痕。
              .stop：卡在卡片里的「查看完整计划/修改记录」不该顺手把整行选中 -->
         <div v-if="m.planCard" @click.stop>
-          <PlanCard :card="m.planCard" :sid="sessionId" :pkey="m.planCard.id || index"
+          <PlanCard :card="m.planCard" :deep="!!goal" :sid="sessionId" :pkey="m.planCard.id || index"
                     :progress="progress" :artifact-count="(m.artifacts || []).length"
                     :adjusts="adjusts"
                     @open="(v, tab) => emit('open-plan', { m, index, version: v, tab })"

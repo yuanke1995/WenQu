@@ -89,11 +89,11 @@ function questionFor (i) {
       <!-- 目标指令回声：身份胶囊压在气泡上方，不占正文那一行（与输入框上方那条目标条同源）。
            这行不是一等回答的提问，复制/编辑重发/重新生成对它没有意义，动作行里的按键由页面按 m.goalCommand 撤掉
            （时间不撤——「什么时候定的这个目标」得能在对话里读出来）。
-           /goal 那串字不再露在界面上，收进悬浮行；状态词只在这一条就是当前目标时才给（见 goalEchoStateOf）。 -->
+           /deep 那串字不再露在界面上，收进悬浮行；状态词只在这一条就是当前目标时才给（见 goalEchoStateOf）。 -->
       <div v-if="m.role === 'user' && (m.goalCommand || m.goalPending)"
            class="cmd-pill" :class="cmdState(m) ? 'st-' + cmdState(m).cls : ''"
            :title="goalEchoTipOf(goal, m.goalCommand)">
-        <aim-outlined class="cmd-ic" /><span>目标</span><span v-if="cmdState(m)"> · {{ cmdState(m).label }}</span>
+        <aim-outlined class="cmd-ic" /><span>深度</span><span v-if="cmdState(m)"> · {{ cmdState(m).label }}</span>
       </div>
       <div class="bubble" :class="m.role">
         <!-- 提问随行材料（图片/附件）：与主对话页、分享页共用同一个叶子 -->

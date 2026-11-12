@@ -3,7 +3,7 @@
             :closable="true" :body-style="{ padding: '0' }" @close="$emit('close')">
     <template #title>
       <div class="gv-head">
-        <span class="gv-title">目标过程</span>
+        <span class="gv-title">深度执行过程</span>
         <span v-if="goal" class="gv-state" :class="'st-' + stateClass">{{ stateLabel }}</span>
       </div>
     </template>
@@ -56,10 +56,10 @@
       </section>
     </div>
     <div v-if="goal" class="gv-foot">
-      <button v-if="canPause" type="button" class="gv-btn" @click="$emit('action', 'pause')">暂停目标</button>
-      <button v-else-if="canResume" type="button" class="gv-btn" @click="$emit('action', 'resume')">继续目标</button>
-      <button v-if="canEdit" type="button" class="gv-btn" @click="$emit('action', 'edit')">修改目标</button>
-      <button v-if="canCancel" type="button" class="gv-btn quiet" @click="$emit('action', 'cancel')">取消目标</button>
+      <button v-if="canPause" type="button" class="gv-btn" @click="$emit('action', 'pause')">暂停执行</button>
+      <button v-else-if="canResume" type="button" class="gv-btn" @click="$emit('action', 'resume')">继续执行</button>
+      <button v-if="canEdit" type="button" class="gv-btn" @click="$emit('action', 'edit')">修改任务</button>
+      <button v-if="canCancel" type="button" class="gv-btn quiet" @click="$emit('action', 'cancel')">取消执行</button>
       <button v-if="canDelete" type="button" class="gv-btn quiet" @click="$emit('action', 'delete')">删除记录</button>
     </div>
   </a-drawer>
@@ -132,14 +132,14 @@ const rounds = computed(() => {
   for (const e of events.value || []) {
     const turnId = e.turnId || ''
     const type = e.type || ''
-    if (type !== 'goal_turn' && type !== 'goal_note') continue
+    if (type !== 'deep_turn' && type !== 'deep_note') continue
     const key = turnId || ('evt-' + e.id)
     let row = byTurn.get(key)
     if (!row) {
       row = { turnId, n: roundNoOf(turnId), at: e.at || '', summary: '', badges: [] }
       byTurn.set(key, row)
     }
-    if (type === 'goal_turn') {
+    if (type === 'deep_turn') {
       const p = parsePayload(e.payload)
       row.n = Number(p.n) || row.n
       row.at = p.startedAt ? new Date(Number(p.startedAt)).toISOString() : row.at

@@ -316,7 +316,7 @@
           <a-input v-model:value="menuForm.name" :maxlength="50" placeholder="如 数据看板" />
         </a-form-item>
         <a-form-item label="路由路径">
-          <a-input v-model:value="menuForm.path" placeholder="如 /dashboard（留空 = 仅作分组节点）" />
+          <a-input v-model:value="menuForm.path" placeholder="如 /quality（留空 = 仅作分组节点）" />
         </a-form-item>
         <a-form-item label="图标">
           <a-select v-model:value="menuForm.icon" allow-clear show-search style="width:100%"

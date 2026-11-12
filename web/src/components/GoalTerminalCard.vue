@@ -1,5 +1,5 @@
 <template>
-  <!-- 终态卡：挂在「设为目标」那条用户回声下（按 goalId 认），刷新后由历史重建。
+  <!-- 终态卡：挂在「深度执行」那条用户回声下（按 goalId 认），刷新后由历史重建。
        完成/未完成/取消都留一张，说清「留下了什么」；动作只保留回看与后续选择。 -->
   <div class="gt-card" :class="'gt-' + tone">
     <div class="gt-head">
@@ -12,8 +12,8 @@
     <div class="gt-actions">
       <button v-if="hasDelivery" type="button" class="gt-btn" @click="$emit('delivery')">查看交付</button>
       <button type="button" class="gt-btn" @click="$emit('view')">查看过程</button>
-      <button v-if="canEdit" type="button" class="gt-btn" @click="$emit('edit')">修改目标</button>
-      <button v-else type="button" class="gt-btn" @click="$emit('restart')">重新设定目标</button>
+      <button v-if="canEdit" type="button" class="gt-btn" @click="$emit('edit')">修改任务</button>
+      <button v-else type="button" class="gt-btn" @click="$emit('restart')">重新设定任务</button>
       <button type="button" class="gt-btn quiet" @click="$emit('delete')">删除记录</button>
     </div>
   </div>

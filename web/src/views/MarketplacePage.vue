@@ -196,7 +196,7 @@
                   <button class="app-link-btn" @click="toggleOnline(it)">{{ it.online ? '下架' : '重新上架' }}</button>
                 </template>
                 <template v-else-if="it.mine && tab !== 'installed'">
-                  <button class="app-link-btn" @click="openMeta(it)">编辑信息</button>
+                  <button class="app-link-btn" @click="openMeta(it)">编辑上架信息</button>
                   <button class="app-link-btn" @click="toggleOnline(it)">{{ it.online ? '下架' : '重新上架' }}</button>
                   <button class="app-link-btn danger" @click="removeItem(it)">删除</button>
                 </template>
@@ -272,6 +272,7 @@
         </div>
 
         <div class="key-modal-foot">
+          <button v-if="detail.mine && detail.itemType !== 'mcp'" class="app-btn ghost" @click="goManageAsset(detail)">管理原资产</button>
           <button v-if="detail.itemType !== 'mcp' && detail.online" class="app-btn ghost" @click="download(detail)">下载物品包</button>
           <!-- MCP：按四态分流（与卡片同口径）；非 MCP 走原有安装流（作者也能装：上架后自己装一遍验证是常事） -->
           <template v-if="detail.itemType === 'mcp' && detail.online">
@@ -420,6 +421,21 @@ const openMcpModal = it => {
 }
 /** 「去 MCP 页」统一落智能体中心的 MCP 外部工具页签 */
 const goMcpPanel = () => router.push({ path: '/agents', query: { tab: 'mcp' } })
+
+/** 市场只管分发：内容维护回 /agents 对应的资产页。 */
+const managePathOf = it => {
+  switch (it && it.itemType) {
+    case 'skill': return '/agents?tab=skills'
+    case 'agent': return '/agents?tab=agents'
+    case 'workflow': return '/agents?tab=workflow'
+    case 'mcp': return '/agents?tab=mcp'
+    default: return '/agents'
+  }
+}
+const goManageAsset = it => {
+  detailOpen.value = false
+  router.push(managePathOf(it))
+}
 
 /** fork 类物品（应用模板/工作流）的卡片主操作文案：装新版 > 安装 > 再装一份 */
 const copyLabel = it => (it.hasUpdate ? '装新版' : (it.installed ? '再装一份' : '安装'))

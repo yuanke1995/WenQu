@@ -909,4 +909,19 @@ onBeforeUnmount(() => {
   background: var(--app-panel-2); border: 1px solid var(--app-border); border-radius: 8px;
   padding: 12px; font-size: 12px; line-height: 1.7;
 }
+
+/* H5-11：≤1024 触屏改全屏工作台；三栏纵向堆叠（图在上、实体列表与详情在下），
+   画布 roam:true 已支持拖拽/滚轮/双指缩放，节点详情落到图下方的底部区域。 */
+@media (max-width: 1024px) {
+  :global(.kb-graph-workspace .ant-modal) { top: 0; max-width: 100vw !important; width: 100vw !important; margin: 0; padding-bottom: 0; }
+  :global(.kb-graph-workspace .ant-modal-content) { height: 100dvh; border-radius: 0; display: flex; flex-direction: column; }
+  :global(.kb-graph-workspace .ant-modal-header) { flex: none; }
+  :global(.kb-graph-workspace .ant-modal-body) { flex: 1; overflow: auto !important; padding: 8px !important; }
+  .gx-shell { height: auto; }
+  .gx-body { flex-direction: column; gap: 8px; }
+  .gx-left { width: auto; max-height: 28vh; }
+  .gx-center { flex: none; height: 52vh; }
+  .gx-right { width: auto; max-height: 42vh; margin-top: 4px; }
+  .graph-toolbar { gap: 6px; }
+}
 </style>

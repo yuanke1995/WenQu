@@ -448,4 +448,10 @@ html[data-enter='land'] .login-wrap {
   /* 表单项间距略收，让首屏在 iPhone SE 这类小屏上不出现滚动条 */
   .login-card :deep(.ant-form-item) { margin-bottom: 14px; }
 }
+
+/* H5-13：窄屏主按钮热区 44px */
+@media (max-width: 1024px) {
+  .app-btn.login-btn { min-height: 44px; }
+  a { display: inline-flex; align-items: center; min-height: 44px; }
+}
 </style>

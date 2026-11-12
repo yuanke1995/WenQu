@@ -599,7 +599,7 @@ import { deleteSessionApi, logoutApi, renameSessionApi, pinSession, favoriteSess
 import { useNotifications, notifBucket, notifTarget } from '../chat/useNotifications'
 import NotificationList from '../components/notification/NotificationList.vue'
 import { themeState, toggleTheme } from '../utils/theme'
-import { authUser, ensureAuth, isAdminSync, isSuperadminSync, clearAuth, tenantStateSync } from '../utils/auth'
+import { authUser, ensureAuth, isAdminSync, isSuperadminSync, clearAuth, tenantStateSync, profileSync } from '../utils/auth'
 import { localExecutorId, setLocalExecutorId } from '../utils/localExecutor'
 import { marketUpdateCount, refreshMarketUpdates } from '../utils/marketUpdates'
 import { chatDone, chatDoneCount, chatReady, defaultReady, embeddingReady, pendingCount,
@@ -679,8 +679,12 @@ const navMenus = ref([])
  * 某一项占不占侧栏位是菜单表的数据：visible=0 的行服务端不下发，tab/hidden 型在此处不渲染。
  * 刻意不为某个路径开前端例外 —— 那样管理员在「权限管理」里把菜单改回显示也没用，只能改代码。
  */
+const ENTERPRISE_NAV_PATHS = new Set(['/tenants', '/security'])
+
 const sidebarMenusOf = menus => (menus || [])
   .filter(m => m && (m.renderAs === 'group' || (m.renderAs !== 'tab' && m.renderAs !== 'hidden' && m.path)))
+  // 标准档把企业面整体收掉：侧栏不出现，直链由路由守卫拦回对话页。
+  .filter(m => profileSync() !== 'standard' || !ENTERPRISE_NAV_PATHS.has(m.path))
 
 async function reloadMenus () {
   const info = await ensureAuth(true)
@@ -1834,7 +1838,8 @@ const goNotifSettings = () => { notifOpen.value = false; router.push('/profile?p
 const tenantPending = ref(0)
 let tenantPendingTimer = null
 async function refreshTenantPending () {
-  if (!isSuperadminSync()) return
+  // 标准档没有租户面：企业端点直接 404，轮询只会每页刷一条 console 错误
+  if (!isSuperadminSync() || profileSync() === 'standard') return
   try {
     const r = await getTenantPendingCount()
     if (r && r.success) tenantPending.value = (r.data && r.data.count) || 0
@@ -2488,4 +2493,15 @@ watch(() => route.fullPath, () => {
 .ctx-menu .ant-menu-item .anticon { font-size: 13px; }
 .ctx-menu .ant-menu-item-danger { color: var(--app-danger); }
 .ctx-menu .ant-menu-item-divider { margin: 4px 0; }
+
+/* H5 P2：≤1024 触屏/窄桌面把侧栏与顶栏图标补到 44px 热区（≥1025 桌面尺寸不变） */
+@media (max-width: 1024px) {
+  .nav-item { min-height: 44px; }
+  .app-icon-btn { min-width: 44px; min-height: 44px; }
+  .side-sec-head { min-height: 44px; }
+  .side-sec-op { min-width: 44px; min-height: 44px; }
+  .side-inline-btn { min-height: 44px; }
+  .foot-user { min-height: 44px; }
+  .help-fab { min-width: 44px; min-height: 44px; }
+}
 </style>

@@ -684,7 +684,7 @@ function shareStreamHandlers (ai) {
         scrollBottom()
       } catch (e) { /* 形状不对就当没收到，不能让一张坏卡把整页打挂 */ }
     },
-    onPlanApproval: payload => {
+    onDeepPlanApproval: payload => {
       try {
         const p = typeof payload === 'string' ? JSON.parse(payload) : payload
         if (!p || !p.planApprovalId) return

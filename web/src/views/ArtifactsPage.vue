@@ -1417,4 +1417,9 @@ onBeforeUnmount(() => {
   .art-origin { max-width: 140px; }
   .art-src { max-width: 180px; }
 }
+
+/* H5 P2：≤1024 触屏/窄桌面统一主操作热区 44px */
+@media (max-width: 1024px) {
+  button, select, .art-seg-btn, .art-chip, .app-btn, .app-btn.small { min-width: 44px; min-height: 44px; }
+}
 </style>

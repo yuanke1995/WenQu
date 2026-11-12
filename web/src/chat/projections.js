@@ -6,6 +6,9 @@
 import { ref } from 'vue'
 import { chatStreams } from '../views/store'
 import { fmtTokens } from '../utils/token'
+import { fmtSize } from '../utils/format'
+import { durZh } from '../utils/duration'
+import { turnElapsedMs as elapsedAt, turnPrepMs, turnWaitMs, resumedStartAt, earlierStart, turnTitle as titleAt } from './turnTiming'
 // 粘贴文本附件的名字前缀：产地是取材层（./intake.js），这里借用并原样再导出。
 // 本模块只用它来「认回」这类附件（isPastedText），并不定义它
 import { PASTE_TEXT_BASE } from './intake'
@@ -13,64 +16,14 @@ import { PASTE_TEXT_BASE } from './intake'
 // （检索知识库 / 读取技能正文 / 提交计划待批准），对象用站内已有名词，不用机制名与口语。
 // **首选后端下发的名字**：工具卡与审批载荷都带 label/hint 字段（源自工具注册中心的描述符），
 // 下面的两张表只在载荷没带名字时用。新增工具不再需要在这里补一行就能显示中文名。
-const TOOL_LABELS = {
-  searchKnowledge: '检索知识库',
-  // AgentScope 框架引擎的知识检索工具（与上面 searchKnowledge 同一能力，工具名不同）
-  search_knowledge: '检索知识库',
-  presentArtifact: '生成产物',
-  deliver_artifact: '交付产物',
-  askUser: '向用户提问',
-  readSkill: '读取技能正文',
-  webSearch: '联网搜索',
-  execute: '执行命令',
-  read_file: '读取文件',
-  write_file: '写入文件',
-  edit_file: '编辑文件',
-  grep_files: '检索内容',
-  glob_files: '按模式查找文件',
-  list_files: '列出目录',
-  ls: '列出目录'
-}
-// 悬停一句话说明（这个工具到底在干什么；未收录的不显示 title）
-const TOOL_DESCS = {
-  searchKnowledge: '在你上传的知识库里检索相关资料片段',
-  presentArtifact: '把内容整理成可下载的文件',
-  deliver_artifact: '把生成的文件存进会话，可查看下载',
-  askUser: '向你提出问题（可多选的题会标出），点选或输入答案后继续回答',
-  readSkill: '按需加载某个技能的详细说明',
-  webSearch: '上网搜索相关资料，结果会作为引用来源',
-  execute: '在隔离的执行环境里跑一条命令，把输出带回来',
-  read_file: '读取文件内容',
-  write_file: '新建或覆盖文件',
-  edit_file: '替换文件里的某段内容',
-  grep_files: '按关键词在文件里搜，跨很多文件一起找',
-  glob_files: '按文件名规律找文件，比如「所有 .md」',
-  list_files: '列出某个目录下有哪些文件',
-  ls: '列出某个目录下的文件'
-}
-// ⚠️ 与 McpClientService 的 clientInfo name 对应。Spring AI 的 SyncMcpToolCallback 用
-// clientInfo.name 经 McpToolUtils.prefixedToolName → shorten() 生成前缀。只认现行前缀 "w_q_"
-// （w_q_sql_query）；历史值 "wen_qu" 不做兼容——库里的旧前缀键已由 SchemaMigrator 启动时
-// 归一成裸名，与后端 McpToolLabelService#stripPrefix 同一条规则。
-const MCP_CLIENT_PREFIX = 'w_q_'
-const bareToolName = n => n.startsWith(MCP_CLIENT_PREFIX) ? n.slice(MCP_CLIENT_PREFIX.length) : n
-const toolLabel = (n, label) => {
-  // 后端下发的展示名优先（工具注册中心 → tool_status / approval 载荷），拿不到才用本地这份兜底。
-  // 但当它只是工具裸名时不算展示名——那会让英文裸名顶掉本地映射（一次调用全显示
-  // search_knowledge/consultAgent…）。此时走本地映射。
-  if (label && label !== n && label !== bareToolName(n)) return label
-  if (TOOL_LABELS[n]) return TOOL_LABELS[n]
-  // MCP 工具记录名带 clientInfo 前缀：先去前缀再试一次映射，未映射的展示裸名
-  const bare = bareToolName(n)
-  return TOOL_LABELS[bare] || label || bare
-}
-const toolDesc = (n, hint) => (hint || TOOL_DESCS[n] || TOOL_DESCS[bareToolName(n)] || '')
+// 工具卡展示口径在 ./tools.js（纯模块），这里只转出。
+export { TOOL_LABELS, TOOL_DESCS, bareToolName, toolLabel, toolDesc, executedCount, toolDuration, toolRunning } from './tools.js'
+
 const toolCallsView = list => Array.isArray(list) ? list : []
 /** 「执行了 N 个操作」的计数口径：只数真执行过的。
  *  被守卫在执行前挡下的那几条（denied，如本轮工具步数已用完）工具体一次没跑，
  *  卡片仍留一行说明为什么没跑，但计入操作数会把「平台只让它试了 4 次」读成「它试了 8 次还没找到」。
  *  denied 由后端 ToolPipelineFactory 在被守卫挡下时写入工具卡（框架引擎路径同源）。 */
-const executedCount = list => (Array.isArray(list) ? list : []).filter(t => t && !t.denied).length
 // ==================== askUser（向用户提问）问答记录 ====================
 // 工具入参 args 为 {questions:[{topic?,question,options}]} JSON 字符串；
 // result=批量答案：多问题为与问题下标对齐的 JSON 数组字符串，单问题退化为纯文本
@@ -84,154 +37,13 @@ const executedCount = list => (Array.isArray(list) ? list : []).filter(t => t &&
 //  ② answers 数组比问题短的历史数据：只渲染有答案的前 N 问。
 // 未作答的题回给模型的是一句处置指令（前缀由后端 buildCombinedAnswer 固定），卡片里收成「未作答」，
 // 不把模型口径的长句原样摊给用户
-const UNANSWERED_PREFIX = '（用户未回答这一题'
-const askAnswerLabel = a => (typeof a === 'string' && a.startsWith(UNANSWERED_PREFIX)) ? '未作答' : a
-// 整条被全角括号包住 ⇒ 后端写给模型的系统说明，不是用户敲的答案（用户答案不会带这层壳）
-const askNoticeText = s => typeof s === 'string' && s.length > 1
-  && s.startsWith('（') && s.endsWith('）') && !s.startsWith(UNANSWERED_PREFIX)
-const askUserView = t => {
-  let questions = []
-  try {
-    const j = JSON.parse(t?.args || 'null')
-    if (j && Array.isArray(j.questions)) {
-      questions = j.questions.map(x => ({
-        topic: x.topic || '',
-        question: x.question || '',
-        options: Array.isArray(x.options) ? x.options : null,
-        multi: x.multi === true || String(x.multi) === 'true'
-      }))
-    }
-  } catch (e) { /* 入参截断：仅显示答案 */ }
-  const raw = (t && t.result) || ''
-  let answers = null
-  try { const p = JSON.parse(raw); if (Array.isArray(p)) answers = p } catch (e) { /* 非数组：单问退化为纯文本 */ }
-  if (!questions.length) {
-    return { topic: '', question: '', options: null, answer: askAnswerLabel(raw), notice: true }
-  }
-  // ① 没发出去的卡：result 是说明文本，按单条展示（问句压根没问过，不配一行「问」）
-  if (!answers) {
-    if (questions.length === 1 && !askNoticeText(raw)) answers = [raw]
-    else return { topic: '', question: '', options: null, answer: raw, notice: true }
-  }
-  // ② 截断过的历史数据：只渲染有答案的部分
-  const list = questions.slice(0, answers.length).map((q, i) => ({
-    topic: q.topic, question: q.question, options: q.options, multi: q.multi,
-    // 多问答案=JSON 数组；单问=纯文本，已在 ① 里补成单元素数组
-    answer: askAnswerLabel(answers[i])
-  }))
-  // many=一卡多问（一张卡里几个问句）；multi=一题多选（一题能勾几个候选）。两个词各管一件事
-  return { many: true, questions: list }
-}
+// 提问卡投影在 ./askUser.js（纯模块），这里只转出。
+export { askUserView, askAnswerLabel, askNoticeText } from './askUser.js'
+
 /** 耗时文案：<1s 用 ms，1~60s 留一位小数，≥60s 换成「3m46s」，≥60m 再换成「1h2m」——226.0s 这种长小数读不出量级 */
-const toolDuration = ms => {
-  if (ms < 1000) return ms + 'ms'
-  const tenths = Math.round(ms / 100)
-  if (tenths < 600) return (tenths / 10).toFixed(1) + 's'
-  const secs = Math.round(tenths / 10)
-  if (secs < 3600) {
-    const s = secs % 60
-    return Math.floor(secs / 60) + 'm' + (s ? s + 's' : '')
-  }
-  const m = Math.round(secs / 60) % 60
-  return Math.floor(Math.round(secs / 60) / 60) + 'h' + (m ? m + 'm' : '')
-}
-// 是否有正在执行的工具（沙盒命令/MCP 可长时间阻塞）：执行中不显示裸 spin，并在工具条实时计时
-const toolRunning = m => Array.isArray(m?.toolCalls) && m.toolCalls.some(t => t.status === 'start')
-// 智能体 id → 名称：由引擎在拉到助手列表时登记一份，供刷新后从工具入参还原「咨询了谁」用。
-// 刻意不要求每个调用方都把 agentList 传进来——移动端的消息行拿不到它，
-// 靠参数透传会变成"PC 有名字、H5 只有 id"，那种半截功能最容易被当成 bug 反复返工。
-const agentNames = new Map()
-const rememberAgents = list => {
-  if (!Array.isArray(list)) return
-  list.forEach(a => { if (a && a.id && a.name) agentNames.set(a.id, a.name) })
-}
-// ==================== 派遣助手（委派助手执行）子对话 ====================
-// 一次派遣在聊天区的那份问答：我们问它什么 + 它答了什么 + 它据哪些资料。
-// 数据来自后端随工具卡落库的 subChat（SubAgentConsultService.render 那份），所以刷新、换设备、
-// 历史回看与实时同构——刻意不依赖只活一次的 SSE。
-// 工具名两代都认：自研派遣那把叫 consultAgent（历史消息里仍是它），框架驱使后叫 agent_spawn。
-const CONSULT_TOOL_NAMES = new Set(['consultAgent', 'agent_spawn'])
-// 被咨询那位的名字：优先后端随卡带的那一份，退回按入参 id 查本轮登记过的助手清单
-const consultNameOf = t => {
-  const n = t?.subChat?.agentName
-  if (n) return n
-  let id = ''
-  try {
-    const o = JSON.parse(t?.args || 'null')
-    id = o?.agent_id || o?.agentId || ''
-  } catch (e) { return '' }
-  return agentNames.get(id) || ''
-}
-/** 工具卡上的子对话视图；null = 这条记录没有子对话（老消息、或咨询没跑到出结果），退回普通工具卡 */
-const consultChatView = t => {
-  const s = t?.subChat
-  if (!s || typeof s !== 'object') return null
-  const status = s.status || 'done'
-  return {
-    id: s.agentId || '',
-    name: s.agentName || consultNameOf(t),
-    question: s.question || '',
-    answer: s.answer || '',
-    steps: Number(s.toolSteps) || 0,
-    // 干活视角的执行时间线（落库那份）：{n=工具名, l=中文名, ms=单步耗时, d=被挡下, s=done|error}
-    stepList: (Array.isArray(s.steps) ? s.steps : []).map(x => (x && typeof x === 'object') ? {
-      name: String(x.n || ''),
-      label: String(x.l || ''),
-      ms: Number(x.ms) || 0,
-      denied: !!x.d,
-      st: x.s === 'error' ? 'error' : 'done'
-    } : null).filter(Boolean),
-    dur: toolDuration(Number(s.elapsedMs) || 0),
-    sources: (Array.isArray(s.sources) ? s.sources : []).filter(x => x && x.ref),
-    // 产物：{f,u,s,e} 明细（可点）
-    artifacts: (Array.isArray(s.artifacts) ? s.artifacts : []).filter(a => a && typeof a === 'object').map(a => ({
-      name: String(a.f || ''), url: a.u ? String(a.u) : '', size: Number(a.s) || 0, ext: String(a.e || '')
-    })),
-    failed: status !== 'done',
-    timeout: status === 'timeout',
-    error: s.error || ''
-  }
-}
-/** 这把工具是不是「派一位助手出去」——顶栏药丸、卡片头与引擎挂锚点共用这一把判据 */
-const isDispatchTool = name => CONSULT_TOOL_NAMES.has(name)
-/** 派遣任务原文：跑完之后有 subChat.question，跑之前只有模型写进入参的那句 task */
-const dispatchTaskOf = t => {
-  const q = t?.subChat?.question
-  if (q) return String(q)
-  try { return String(JSON.parse(t?.args || 'null')?.task || '') } catch (e) { return '' }
-}
-/** 卡片上的定位锚：药丸点一行要滚到它。同一位助手不会在同一毫秒被派两次（台账按位去重） */
-const spawnAnchorOf = t => (Number(t?.startedAtMs) || 0) + '-' + (t?.name || '')
-/**
- * 顶栏「子智能体」那一排：把这一条消息里的派遣卡摊成一支一行。
- * 数据源就是工具卡自己那份（startedAtMs / elapsedMs / subChat 随后端同一帧来），不另起取数——
- * 刷新与后台轮重连接的是同一个消息对象，药丸自然跟着有数，不需要第二条轮询。
- * 两处刻意留的缺口（都宁可空着一行，不凑一个数出来）：
- *  - liveStart 是**本地**收到 start 帧那一刻。服务端那把 startedAtMs 是服务端墙上时刻，拿它减本地
- *    秒表会把两边的钟偏差算进用户眼里（同 turnElapsedMs 的起表口径）。刷新接上来的那一支没有这个
- *    锚点 ⇒ 只报「在跑」不报秒数，跑完仍给服务端量出的那份耗时。
- *  - live 走 subagent_step 转发，那份只活一次不落库 ⇒ 刷新后这一行空着，退回卡片上的「跑了 N 步」。
- */
-const subagentRunsOf = m => {
-  if (!m || !Array.isArray(m.toolCalls)) return []
-  return toolCallsView(m.toolCalls).filter(t => isDispatchTool(t.name)).map(t => ({
-    t,
-    name: consultNameOf(t) || '另一位助手',
-    task: dispatchTaskOf(t),
-    running: t.status === 'start',
-    failed: t.status === 'error' || !!(t.subChat && t.subChat.status && t.subChat.status !== 'done'),
-    live: t.status === 'start' ? String(t._live || '') : '',
-    liveStart: Number(t._liveStart) || 0,
-    elapsedMs: Number((t.subChat && t.subChat.elapsedMs) || t.elapsedMs) || 0
-  }))
-}
-/** 分支里那一步的一行文案：工具名 + 关键参数，与主管线工具卡同一把尺（两处共用，别各写一遍） */
-const stepBriefOf = c => {
-  if (!c || !c.name) return ''
-  const brief = toolBrief(c)
-  const label = toolLabel(c.name, c.label)
-  return brief ? label + ' · ' + brief : label
-}
+// 委派/咨询口径在 ./consult.js（纯模块），这里只转出。
+export { rememberAgents, consultNameOf, consultChatView, isDispatchTool, dispatchTaskOf, spawnAnchorOf, subagentRunsOf } from './consult.js'
+
 // ==================== 时间线（正文一条流，工具只作过程步骤） ====================
 // timeline 是事件段数组：
 //   {kind:'text', from, to}  → 指向 m.content 的切片区间（不复制文本，done 换正文时自动跟随）；
@@ -249,116 +61,17 @@ const stepBriefOf = c => {
 // 注：插话段同时是一条落库用户消息（sequence 排在回答之前）：历史回显时凡 messageId 已被某条时间线
 // 段用掉的，那颗独立气泡就退场（见 useChatEngine 的 steerSegmentIds），一处留痕就够。
 
-const extendTimelineText = (m, from, to) => {
-  if (!m) return
-  const tl = Array.isArray(m.timeline) ? m.timeline : (m.timeline = [])
-  const last = tl[tl.length - 1]
-  if (last && last.kind === 'text' && last.to === from) last.to = to
-  else tl.push({ kind: 'text', from, to })
-}
-
-// 过程独白段带区间：指向 m.processText（与正文分流的独立累积），连续追加自动延伸末段
-const extendTimelineProcess = (m, from, to) => {
-  if (!m) return
-  const tl = Array.isArray(m.timeline) ? m.timeline : (m.timeline = [])
-  const last = tl[tl.length - 1]
-  if (last && last.kind === 'process' && last.to === from) last.to = to
-  else tl.push({ kind: 'process', from, to })
-}
+// 时间线写入口/恢复在 ./timelineWrite.js（纯模块），这里只转出。
+export { extendTimelineText, extendTimelineProcess, pushTimelineThink, extendTimelineThink, pushTimelineTool, pushTimelineArtifact, pushTimelineSteer, restoreTimeline } from './timelineWrite.js'
 
 // 过程独白折叠态：键用段起点 from（流式期间 to 随增量增长、from 稳定；过程块每帧重算，
 // 段对象本身不保状态，与工具卡 _open 存在 toolCalls 对象上同理，这里挂在消息上）。
 // 用户点过就认点过的（true/false 写死在 _procOpen 上）；没点过时：流式期间自动展开「正在长的那一段」
 // （过程按 token 增量下发，展开才看得见它逐字长出，而不是等闭合标签到达整块蹦出），本轮结束自动收起
 // ——与思考段同款（thinkGrowing 流式期展开那一段，收场后自动折叠），历史消息恒折叠。
-const procOpen = (m, seg) => {
-  const marked = m && m._procOpen ? m._procOpen[seg.from] : undefined
-  if (marked === true) return true
-  if (marked === false) return false
-  if (!m || !m.loading) return false
-  const tl = Array.isArray(m.timeline) ? m.timeline : []
-  for (let i = tl.length - 1; i >= 0; i--) {
-    if (tl[i] && tl[i].kind === 'process') return (Number(tl[i].from) || 0) === (Number(seg.from) || 0)
-  }
-  return false
-}
-const toggleProc = (m, seg) => {
-  if (!m._procOpen) m._procOpen = {}
-  m._procOpen[seg.from] = !procOpen(m, seg)
-}
-
-// ==================== 思考段（每一轮模型思考就地长在它发生的位置） ====================
-/* 一轮问答常有多次思考（每次调工具/出正文前各一次）：按轮成段进时间线，
- * 好让人读得出「这一段是在哪一步想的」；区间指向 m.thinking 的偏移
- * （与 process 段指向 processText 同一套写法，不复制文本、不做第二份存储）。
- * 段的边界由引擎侧的 thinkSegOpen 决定：thinking_done / 正文 / 工具事件一到就断段，
- * 下一片思考另起一段——光靠「区间是否相接」判不出来，两次思考之间可能一个字正文都没出。 */
-const pushTimelineThink = (m, from, to) => {
-  if (!m) return
-  const tl = Array.isArray(m.timeline) ? m.timeline : (m.timeline = [])
-  tl.push({ kind: 'think', from, to })
-}
-const extendTimelineThink = (m, from, to) => {
-  if (!m) return
-  const tl = Array.isArray(m.timeline) ? m.timeline : (m.timeline = [])
-  const last = tl[tl.length - 1]
-  if (last && last.kind === 'think' && last.to === from) last.to = to
-  else tl.push({ kind: 'think', from, to })
-}
-const thinkSlice = (m, seg) => (m.thinking || '').slice(seg.from, seg.to)
-
-/** 标题行右侧那一行「开头几个字」：块收着的时候也读得出这一段在想什么，不必先点开。
- *  取原文开头压成一行——换行/连续空白并成一个空格、去掉 markdown 的强调符与行首标记；
- *  先只看开头 PEEK_RAW_CHARS 个字再压（流式每帧都算，不拿整段正文做正则），
- *  压完超过 PEEK_CHARS 就硬截，剩下的交给 CSS 省略号按可用宽度收（窄屏不会挤成两行）。 */
-const THINK_PEEK_CHARS = 80
-const THINK_PEEK_RAW_CHARS = 400
-const peekText = (raw, max = THINK_PEEK_CHARS) => {
-  if (!raw) return ''
-  const flat = String(raw).slice(0, THINK_PEEK_RAW_CHARS)
-    .replace(/```[\s\S]*?```/g, ' ')
-    .replace(/^\s*[-*+]\s+/gm, '')
-    .replace(/[*_`~>#]+/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-  if (!flat) return ''
-  return flat.length > max ? flat.slice(0, max).trimEnd() : flat
-}
-const thinkPeek = (m, seg, max = THINK_PEEK_CHARS) => peekText(thinkSlice(m, seg), max)
-
-/** 此刻正在长的思考段（一轮里同时至多一段在长）：它决定转圈挂在哪儿、哪一段自动展开 */
-const thinkGrowing = (m, seg) => {
-  if (!m || !m.loading || !m.thinkLoading || !seg) return false
-  const tl = Array.isArray(m.timeline) ? m.timeline : []
-  for (let i = tl.length - 1; i >= 0; i--) {
-    if (tl[i] && tl[i].kind === 'think') return (Number(tl[i].from) || 0) === (Number(seg.from) || 0)
-  }
-  return false
-}
-/** 折叠态与 procOpen 同款约定：键用段起点 from，用户点过就认点过的；没点过时只自动展开
- *  正在长的那一段（看得见它逐字长出），本轮收尾后一律收起，历史消息恒折叠。
- *  名字带 Seg 是必须的：MobileModelSheet 里已有一个同名局部函数管「思考开关」，两者不是一回事。 */
-const thinkSegOpen = (m, seg) => {
-  const marked = m && m._thinkOpen ? m._thinkOpen[seg.from] : undefined
-  if (marked === true) return true
-  if (marked === false) return false
-  return thinkGrowing(m, seg)
-}
-const toggleThinkSeg = (m, seg) => {
-  if (!m._thinkOpen) m._thinkOpen = {}
-  m._thinkOpen[seg.from] = !thinkSegOpen(m, seg)
-}
-
-/** 有思考全文却没有就地段：在时间线头部补一整段。
- *  覆盖正文被引用自检整体重建导致时间线作废、以及接流快照只给全文不给分段。
- *  退化成「思考在回答之前」这个位置，也不能整块看不见。 */
-const ensureThinkSegment = m => {
-  if (!m || !m.thinking) return m
-  const tl = Array.isArray(m.timeline) ? m.timeline : (m.timeline = [])
-  if (tl.some(s => s && s.kind === 'think')) return m
-  tl.unshift({ kind: 'think', from: 0, to: m.thinking.length })
-  return m
-}
+// 思考/过程段的折叠与提要口径在 ./segments.js（纯模块），这里只转出并按需使用。
+export { procOpen, toggleProc, procSlice, thinkSlice, thinkPeek, thinkGrowing, thinkSegOpen, toggleThinkSeg, ensureThinkSegment } from './segments.js'
+import { procOpen, toggleProc, procSlice, thinkSlice, thinkPeek, thinkGrowing, thinkSegOpen, toggleThinkSeg, ensureThinkSegment, peekText } from './segments.js'
 
 // ==================== 过程簇（连续思考/过程/工具的二次折叠） ====================
 /* 为什么需要这一层：模型一轮里常是「思考→工具→思考→工具」交替，而过程块遇 think/process 段
@@ -380,142 +93,9 @@ const ensureThinkSegment = m => {
  * 簇键用序号 c{N}（N = res.length）。序号稳定性论证：时间线只追加不重排，text 段到来时
  * 已 flush 的簇其 res 下标不会变动，新簇一律追加在尾部，故历史键不会错位到别的簇上。
  * （对比用 from 做键不成立：工具段与独白段的下标来自两套独立空间。）*/
-const CLUSTER_RUN = { think: 1, process: 1, group: 1 }
-const clusterize = out => {
-  const res = []
-  let run = []
-  const flush = () => {
-    if (!run.length) return
-    if (run.length === 1 && run[0].kind !== 'group') res.push(run[0])
-    else res.push({ kind: 'cluster', segs: run, key: 'c' + res.length })
-    run = []
-  }
-  for (const seg of out) {
-    if (seg && CLUSTER_RUN[seg.kind]) { run.push(seg); continue }
-    flush()
-    res.push(seg)
-  }
-  flush()
-  return res
-}
-
-/** 簇内正在长的那一簇（仅末尾簇）标记 grow：流式期自动展开它，本轮结束自动收起，
- *  与 procOpen / thinkSegOpen 同款约定；用户点过就以用户为准（m._clOpen）。 */
-const markGrowingCluster = view => {
-  for (const s of view) if (s.kind === 'cluster') s.grow = false
-  const last = view[view.length - 1]
-  if (last && last.kind === 'cluster') last.grow = true
-  return view
-}
-
-const clusterOpen = (m, cl) => {
-  const marked = m && m._clOpen ? m._clOpen[cl.key] : undefined
-  if (marked === true) return true
-  if (marked === false) return false
-  return !!(m && m.loading && cl.grow)
-}
-/** 这一簇是「自动开着」还是「用户点开」的：自动开着＝正在跑的这一簇、用户没碰过它。
- *  只有这一种情况下展开只给当前这一步（见 turnProcessRows）——跑着的时候簇会长到几十段，
- *  全展开就又退回聚簇前的那一排标题行，簇头等于白加。用户主动点开则照旧给全量。 */
-const clusterAutoOpen = (m, cl) => {
-  const marked = m && m._clOpen ? m._clOpen[cl.key] : undefined
-  return marked === undefined && !!(m && m.loading && cl.grow)
-}
-const toggleCluster = (m, cl) => {
-  if (!m) return
-  if (!m._clOpen) m._clOpen = {}
-  m._clOpen[cl.key] = !clusterOpen(m, cl)
-}
-
-/** 簇内工具（跨多个 group 汇总）：头部的操作数与状态图标都从这里派生 */
-const clusterTools = cl => {
-  const out = []
-  for (const s of cl?.segs || []) if (s && s.kind === 'group' && s.tools) out.push(...s.tools)
-  return out
-}
-const clusterRunning = cl => clusterTools(cl).some(t => t.status === 'start')
-const clusterHasError = cl => clusterTools(cl).some(t => t.status === 'error')
-/** 簇内「说了几段」的计数：过程独白与思考段同属一类（一个工具都没跑时它是簇头唯一的信息量，
- *  只数独白会让纯思考簇报成「0 段说明」）。 */
-const clusterProcCount = cl => (cl?.segs || []).filter(s => s && (s.kind === 'process' || s.kind === 'think')).length
-
-// ---- 簇头标题（DSH 的 processTitle 文案法则，问渠词表）----
-/* 折叠簇头不再报「已执行 N 个操作」：数字要展开数一遍才有感，而罗列**做过什么**一眼就读完
- * （「已检索知识库并调用工具」「已完成分析，已检索知识库等」）。簇内的事归三类：
- * 检索（kb/检索词类工具）、调用工具（其余工具）、分析（思考与过程独白）。 */
-const CLUSTER_KIND_DONE = { search: '已检索知识库', tools: '已调用工具', thinking: '已完成分析' }
-const CLUSTER_KIND_LIVE = { search: '正在检索知识库', tools: '正在调用工具', thinking: '正在分析' }
-const clusterKindOfTool = t => {
-  const s = String((t && (t.name || t.label)) || '')
-  return /search|kb|检索|知识库|知识/i.test(s) ? 'search' : 'tools'
-}
-/** 簇内按发生顺序去重的类别表：罗列与簇头图标都按这个顺序取。 */
-const clusterKinds = cl => {
-  const seen = []
-  for (const s of cl?.segs || []) {
-    if (!s) continue
-    if (s.kind === 'think' || s.kind === 'process') { if (!seen.includes('thinking')) seen.push('thinking'); continue }
-    if (s.kind === 'group') for (const t of s.tools || []) {
-      const k = clusterKindOfTool(t)
-      if (!seen.includes(k)) seen.push(k)
-    }
-  }
-  return seen
-}
-/** 折叠态标题：1 类直说；2 类「A并B」（共享「已」字头时第二个省掉前缀，与 DSH 同一条法则）；
- *  3 类以上取前三个顿号罗列再收「等」。 */
-const clusterTitle = cl => {
-  const kinds = clusterKinds(cl)
-  if (!kinds.length) return CLUSTER_KIND_DONE.thinking
-  if (kinds.length === 1) return CLUSTER_KIND_DONE[kinds[0]]
-  if (kinds.length === 2) {
-    const a = CLUSTER_KIND_DONE[kinds[0]]
-    const b = CLUSTER_KIND_DONE[kinds[1]]
-    return b.startsWith('已') ? a + '并' + b.slice(1) : a + '并' + b
-  }
-  return kinds.slice(0, 3).map(k => CLUSTER_KIND_DONE[k]).join('，') + '等'
-}
-/** 簇头的类别（定图标与跑动标题）：按簇内已出现的类别累计取第一个，只增不减。
- *  不再跟着「当前在跑的那把工具」走——读取文件一起一落就会在检索/工具之间来回切，簇头闪。 */
-const clusterHeadKind = cl => clusterKinds(cl)[0] || 'thinking'
-/** 跑动中的标题（shimmer 那一句）；收尾等待期回退到折叠标题。
- *  进行中的这一簇（m.loading && cl.grow）恒亮「正在…」+ 扫光；类别按累计集合生成，
- *  只在「出现新类别」时变一次，不随每条工具起止在「正在检索知识库/正在调用工具」之间来回闪。
- *  整轮收尾（m.loading 置否）才回退到「已调用工具」。 */
-const clusterLiveText = (m, cl) => {
-  if (!(clusterRunning(cl) || (m && m.loading && cl.grow))) return null
-  const kinds = clusterKinds(cl)
-  if (!kinds.length) return CLUSTER_KIND_LIVE.thinking
-  if (kinds.length === 1) return CLUSTER_KIND_LIVE[kinds[0]]
-  const live = kinds.slice(0, 2).map(k => CLUSTER_KIND_LIVE[k].replace(/^正在/, ''))
-  return '正在' + live.join('并') + (kinds.length > 2 ? '等' : '')
-}
-
-/** 跑轮中帽体的轻量清单（一行一步）：自动开着的簇不再把全量工具卡摊到顶层（那会把页面撑长），
- *  改由簇分支就地渲染一个固定高度帽体，里面是这份轻量行——图标 + 动词 + 参数摘要，
- *  与右栏过程卡同一份口径（toolLabel/toolBrief/toolDuration）。思考/独白段不单独占行，
- *  并到它之后第一个工具行的展开详情里（与点开态的挂法一致）；还没换来工具的尾部思考自成一节
- *  （它正是「当前这一步」，不能因为还没有工具就看不见）。 */
-const clusterLiveRows = cl => {
-  const rows = []
-  let notes = null
-  let n = 0
-  for (const s of cl?.segs || []) {
-    if (!s) continue
-    if (s.kind === 'think' || s.kind === 'process') { (notes || (notes = [])).push(s); continue }
-    if (s.kind === 'group') {
-      for (const t of s.tools || []) {
-        const row = { t, idx: ++n }
-        if (notes) { row.notes = notes; notes = null }
-        rows.push(row)
-      }
-    }
-  }
-  // 末尾还挂不出去的思考/独白（还没换来工具的那一段）：整组留着，行上按组渲染——
-  // 同组里更早的那几段也要在这一行可见。
-  if (notes) rows.push({ tailNotes: notes })
-  return rows
-}
+// 过程聚簇在 ./processCluster.js（纯模块），这里只转出并供 turnProcessRows 使用。
+export { CLUSTER_RUN, clusterize, markGrowingCluster, clusterOpen, clusterAutoOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterProcCount, clusterKinds, clusterTitle, clusterHeadKind, clusterLiveText, clusterLiveRows, CLUSTER_KIND_DONE, CLUSTER_KIND_LIVE } from './processCluster.js'
+import { clusterize, markGrowingCluster } from './processCluster.js'
 
 /** 展开态的簇＝「一行一步」轻量清单（clusterLiveRows）：思考段与过程独白段不再各占一行标题，
  *  落进它之后第一个工具那一行的展开详情（那里本来就是「想了这些才动手」的那个位置）。
@@ -524,46 +104,8 @@ const clusterLiveRows = cl => {
 
 /** 这一组要不要出自己的组条（＝它是并行批次）。组条在不在，决定行尾那一项挂在组条上
  *  还是挂在首张卡上——判据只写这一处，两端模板共用。 */
-const groupHasBar = seg => (seg?.tools || []).length > 1
-
-/** 行尾那一项（思考/独白）的四个口径统一出口：模板两端各写一遍 kind 判断必然漂移。
- *  标签只写类别名，不写字数/段数：量级展开后自己看得到，写进标题就得在「单段 vs 整组合计」
- *  之间选口径，口径一变留下的就是「1369 字 等 2 段」这类自相矛盾的文案。 */
-const noteText = (m, n) => (n.kind === 'think' ? thinkSlice(m, n) : procSlice(m, n))
-const noteTag = n => (n.kind === 'think' ? '深度思考' : '过程说明')
-const noteOpen = (m, n) => (n.kind === 'think' ? thinkSegOpen(m, n) : procOpen(m, n))
-/** 正在长的那一段：思考有专门的判据，独白的判据就是「流式期它还自动开着」（procOpen 同一把尺） */
-const noteGrowing = (m, n) => (n.kind === 'think' ? thinkGrowing(m, n) : !!(m && m.loading && procOpen(m, n)))
-const toggleNote = (m, n) => (n.kind === 'think' ? toggleThinkSeg(m, n) : toggleProc(m, n))
-/** 行尾那一项的提要：与标题同一类别口径——思考读思考原文，独白读独白原文。 */
-const notePeek = (m, n) => (n.kind === 'think' ? thinkPeek(m, n) : peekText(procSlice(m, n)))
-/** 帽体尾行（思考/独白混排成一组，标题只报类别）的提要：取第一段有内容的开头。 */
-const tailNotesPeek = (m, notes) => {
-  for (const n of notes || []) {
-    const p = notePeek(m, n)
-    if (p) return p
-  }
-  return ''
-}
-
-/** 帽体尾行（挂不到工具上的那批思考/独白）的整组口径：只给类别名（思考+独白混合＝思考与说明）。
- *  字数/段数一律不进标题：几段、一共多少字都在展开后的正文里，宿主还给多段之间画了段界。
- *  转圈交给 tailNotesGrowing（真的还在长才转），开合交给 tailOpen，点开看整组正文。 */
-const tailNotesTag = notes => {
-  const ns = notes || []
-  if (!ns.length) return ''
-  const kinds = new Set(ns.map(n => n.kind))
-  return kinds.size > 1 ? '思考与说明' : (ns[0].kind === 'process' ? '过程说明' : '深度思考')
-}
-/** 尾行整组是否正在长（真在长才转圈；答完了就是静止的一行） */
-const tailNotesGrowing = (m, notes) => (notes || []).some(n => noteGrowing(m, n))
-/** 帽体尾行的开合态：挂在消息上（段对象每帧重算，状态不能挂段上），键用簇的 key。 */
-const tailOpen = (m, cl) => !!(m && cl && m._tailOpen && m._tailOpen[cl.key])
-const toggleTail = (m, cl) => {
-  if (!m || !cl) return
-  if (!m._tailOpen) m._tailOpen = {}
-  m._tailOpen[cl.key] = !tailOpen(m, cl)
-}
+// 分组条与行尾思考/独白口径在 ./notes.js（纯模块），这里只转出。
+export { groupHasBar, noteText, noteTag, noteOpen, noteGrowing, toggleNote, notePeek, tailNotesTag, tailNotesPeek, tailNotesGrowing, tailOpen, toggleTail } from './notes.js'
 
 // ==================== 「整轮用时」那一条（跑着在正文末尾，答完在回答顶上） ====================
 // 一轮回答的耗时只报这一处：多处各挂一个数会一屏六个读数、互相打架（组条是首尾跨度、
@@ -571,219 +113,31 @@ const toggleTail = (m, cl) => {
 // 答完回到回答顶上收成一条总览，点开才回到交错时序。
 /** 整轮用时（中文长格式）：35 分 19 秒 / 6 分 26 秒 / 40.5 秒。它现在独占一行标题，
  *  要的是读出量级，不是 toolDuration 那种给行尾小 chip 用的紧凑写法（226.0s 读不出是几分）。 */
-const durZh = ms => {
-  const n = Math.max(0, Number(ms) || 0)
-  if (n < 1000) return '不到 1 秒'
-  const tenths = Math.round(n / 100)
-  if (tenths < 600) return (tenths % 10 ? (tenths / 10).toFixed(1) : String(tenths / 10)) + ' 秒'
-  const secs = Math.round(tenths / 10)
-  if (secs < 3600) {
-    const s = secs % 60
-    return Math.floor(secs / 60) + ' 分' + (s ? ' ' + s + ' 秒' : '')
-  }
-  const m = Math.round(secs / 60) % 60
-  return Math.floor(Math.round(secs / 60) / 60) + ' 小时' + (m ? ' ' + m + ' 分' : '')
-}
-/** 这一轮此刻的用时。跑的时候用「服务端起表点」跟着 tick 走（服务端 turn_start/快照给基准，
- *  本地只负责外推）；收尾后只读服务端那一份，历史没走过 done，只认 tokens 落库那份。
- *  两处都没有就返回 0、界面不报数：不拿工具跨度凑一个数出来，那是「跑了多久工具」不是
- *  「这一轮用了多久」，凑出来的数比空白更容易被当成事实读。 */
-// 气泡顶部只报一种数：从发出提问到答完的整轮墙钟（含开轮前准备与人在回路等待）。
-// 现场 done 写回的 turnMs 与历史落库的 tokens.turnWallMs 两处同源。报墙钟不报机器时间：
-// 屏幕上跳着的那一份本来就是墙钟，收尾改成机器时间会让数字在答完那一刻变小，刷新后更会直接
-// 换一本账。
-const turnElapsedMs = m => {
-  if (!m) return 0
-  // 跑动中按整秒报：秒针的相位与服务端起表点天然错开（起表基准要等首帧才到，比秒针晚几百毫秒），
-  // 不取整就会一直显示 0.8、1.8 这种非整秒读数——秒表本来就是 1 秒一跳。
-  // 向下取整而不是四舍五入：读数永远不超过收尾那份服务端值，答完那一刻不会往回掉。
-  if (m.loading) {
-    return Math.floor(Math.max(0, nowTick.value - (Number(m.time) || nowTick.value)) / 1000) * 1000
-  }
-  return Number(m.turnMs) || Number(m.tokens && m.tokens.turnWallMs) || 0
-}
-/** 其中开轮前那一段（限流/校验/会话补建/实例装配/日志对账）：不单独占一个数，
- *  但要在悬停里交代——否则用户会把准备时间全算到模型头上。 */
-const turnPrepMs = m => {
-  if (!m) return 0
-  return Number(m.turnPrepMs) || Number(m.tokens && m.tokens.turnPrepMs) || 0
-}
-/** 其中被「等你答题/批准」盖掉的时长：不单独占一个数，但要在悬停里说清楚——不然一轮答得慢，
- *  账全算在模型头上。 */
-const turnWaitMs = m => {
-  if (!m) return 0
-  return Number(m.humanWaitMs) || Number(m.tokens && m.tokens.humanWaitMs) || 0
-}
-/** 接流起表点：把服务端快照里「这一轮到此刻已经跑掉的毫秒」换算成本地钟上的开轮时刻。
- *  刷新接上的那一轮，本地 time 记的是接上那一刻，不换算的话秒表从 0 重新起跳——已经跑掉的
- *  那段在用户眼里不算数（症状：「正在溯源，用时 2 秒」在刷新后从头再跳一遍）。
- *  给的是时长而不是绝对时刻：nowTick 与本地开轮时刻都在客户端钟上，拿服务端绝对时刻相减会把
- *  两边的钟偏差直接算进用户眼里；时长只差快照那一帧在路上的时间。缺这个数（旧服务端/空快照）
- *  时返回 clientNow，即维持「从接上起表」的老行为，不编一个过去时刻出来。 */
-const resumedStartAt = (elapsedMs, clientNow) => {
-  const now = Number(clientNow) || 0
-  const ran = Number(elapsedMs) || 0
-  return ran > 0 ? Math.max(0, now - ran) : now
-}
-/** 两个起表点取更早的那一个（0/缺 = 没有那一份，直接取另一份）。
- *  接流时服务端换算出的起表点与本地已有的起表点谁早用谁：目标排队那颗占位气泡从按下回车起表，
- *  比「总线登记那一刻」还早——取新的会让跳着的秒数往回跳，用户读成计时坏了。 */
-const earlierStart = (had, candidate) => {
-  const a = Number(had) || 0
-  const b = Number(candidate) || 0
-  if (a <= 0) return b
-  if (b <= 0) return a
-  return Math.min(a, b)
-}
-/** 过程块折叠态：与思考段/簇同一套约定——用户点过就认点过的，没点过时收场收起、历史消息天然收起。
- *  跑着的时候恒展开且**不认用户点过的那一次**：这一条此刻只是跟着秒走的计时器，把正在长的过程
- *  收起来既没有可读的东西、又会把「答案写完之前看不到它在干什么」变成常态。
- *  另外「重新生成」复用同一个消息对象，跑着时忽略标记也就顺手挡住了上一版留下的旧开合态。 */
-const turnOpen = m => {
-  if (!m) return false
-  if (m.loading) return true
-  const marked = m._turnOpen
-  if (marked === true) return true
-  if (marked === false) return false
-  // 没有正文可读的轮次（只跑工具/被叫停）：过程块默认展开，否则整条消息只剩一行「已完成」
-  return !turnAnswerText(m) && turnProcessRows(m).length > 0
-}
-const toggleTurn = m => { if (m) m._turnOpen = !turnOpen(m) }
-/** 这条底下到底有没有过程可展开：有时间线过程段、或有无时间线时的兜底工具列表。
- *  没有就别挂折叠三角——点开一片空比不挂更坏。 */
-const turnExpandable = m => {
-  if (!m) return false
-  return turnProcessRows(m).length > 0
-}
-/** 本轮终态标注的原文（与后端 {@code TurnRecorder} 同一组常量，逐字一致）。
- *  这里只留「界面要认得它」所需的那几份：正文里出现了就是服务端说过这件事，不再由别处补第二遍。
- */
-export const TURN_STOP_SUFFIX = '\n\n> ⏹ 已停止本轮，以上为已生成的部分'
-const TURN_TRUNC_SUFFIX = '\n\n> ⏹ 回答在此处被中断，以上为已生成的部分'
-const TURN_BUDGET_SUFFIX = '\n\n> ⏹ 已到整轮时间上限，后面的步骤没有执行。发一句「继续」可以接着做'
-const TURN_TIMEOUT_SUFFIX = '\n\n> ⏹ 等待确认超时，这一轮没有继续执行'
+/** 跑动中的秒表读 nowTick（模块内唯一的响应式状态），纯计算在 ./turnTiming.js。 */
+const turnElapsedMs = m => elapsedAt(m, nowTick.value)
+const turnTitle = m => titleAt(m, nowTick.value)
 
-/** 这一轮正文尾部带的是哪一种终态标注（没有则空串）。
- *  认的是我们自己写下的整串字面量，不是拿关键词猜——猜出来的判据会在文案改字那天静默失效。 */
-const turnMarker = m => {
-  const c = m && typeof m.content === 'string' ? m.content : ''
-  if (!c) return ''
-  if (c.endsWith(TURN_STOP_SUFFIX)) return 'stopped'
-  if (c.endsWith(TURN_BUDGET_SUFFIX)) return 'budget'
-  if (c.endsWith(TURN_TIMEOUT_SUFFIX)) return 'timeout'
-  if (c.endsWith(TURN_TRUNC_SUFFIX)) return 'truncated'
-  return ''
-}
+// 折叠/可见性判据在 ./turnFold.js（纯模块），这里只转出并按 nowTick 包装耗时。
+export { turnOpen, toggleTurn, turnExpandable, turnWarn } from './turnFold.js'
+import { turnOpen, toggleTurn, turnExpandable, turnWarn, turnShow as foldShow, turnToggleable as foldToggleable } from './turnFold.js'
 
-/** 这一刻点它有没有意义：只有答完（这一条当总览用）之后才给开关，跑着的时候它是一行状态。 */
-const turnToggleable = m => turnShow(m) && !!(m && !m.loading) && turnExpandable(m)
-/** 这条要不要占一行：跑着（它就是这一轮的进行中指示）、有数可报、或确有过程可展开。
- *  三样都不占的（比如什么都没跑出来就失败）不报——错误卡自己会说。 */
-const turnShow = m => !!(m && m.loading) || turnElapsedMs(m) > 0 || turnExpandable(m)
-/** 此刻是不是异常态（连接断了在自动重试）：这一条是本轮唯一的状态行，异常也说在同一句里，
- *  不另起一行——模板据此换警示配色。 */
-const turnWarn = m => !!(m && m.loading && m.retrying)
+// 终态标注与识别在 ./turnStatus.js（纯模块），这里只转出并供本模块内部使用。
+export { TURN_STOP_SUFFIX, TURN_TRUNC_SUFFIX, TURN_BUDGET_SUFFIX, TURN_TIMEOUT_SUFFIX, turnMarker } from './turnStatus.js'
+import { turnMarker } from './turnStatus.js'
+
+const turnShow = m => foldShow(m, turnElapsedMs(m))
+const turnToggleable = m => foldToggleable(m, turnElapsedMs(m))
+
 /** 收尾只报用时，不报步数：步数数的是 toolCalls，展开出来的却是时间线那一份。引用自检改过正文时
  *  整条时间线作废（后端 timelineJson 返回 null），那句「5 步操作」点开会是一片空——一个兑不了现的数。 */
-/** 终态标注 → 状态行那一档的说法（只此一处，PC/H5/分享页共用） */
-const TURN_MARKER_HEAD = {
-  stopped: '这一轮已停止', budget: '这一轮已到时间上限',
-  timeout: '这一轮等待确认超时', truncated: '这一轮中断'
-}
-const turnHead = m => {
-  const ms = turnElapsedMs(m)
-  const dur = ms ? '，用时 ' + durZh(ms) : ''
-  // 进行中这一句是本轮唯一的状态行，压缩那二十多秒也说在这儿（不再另起一条分隔线——一轮里
-  // 框架可以压好几次，另起的那条每压完一次撤走、下一次又长出来，看着就是反复弹出）
-  if (m && m.loading) return (m.retrying ? '连接中断，正在自动重试' : m.compacting ? '正在压缩上下文' : '正在溯源') + dur + ' …'
-  // 终态要说清是哪一种：叫停、到时间上限、等确认超时都不算「完成」，也不该报成「中断」。
-  // 判据取正文尾注那一份（当场与刷新后同源），兜不住的是正文为空那一支——由引擎在确认停掉时打旗标
-  const mark = m ? turnMarker(m) : ''
-  const spoken = mark === 'truncated' || !!(m && (m.errorCard || m.failed))
-  if (spoken) return (TURN_MARKER_HEAD[mark] || '这一轮中断') + dur
-  if (mark) return TURN_MARKER_HEAD[mark] + dur
-  // 正文为空那一支没有尾注可认（服务端不落正文），认引擎与计划卡打下的旗标
-  if (m && (m.stoppedTurn || m.planStopped)) return '这一轮已停止' + dur
-  return '已完成' + dur
-}
-/** 过程块开关固定在回答顶部：跑着时它是状态行，答完是总览（DSH TurnProcessNodeView 同款）。
- *  turnTop 只决定「已答完且没有过程可展开」时用无三角的纯文字行；跑动中走状态行形态。 */
-const turnTop = m => !!(m && !m.loading) && turnShow(m)
+// 状态行标题在 ./turnSummary.js（纯模块），这里只按 nowTick 包装耗时。
+import { turnHead as headOf, turnTop as topOf } from './turnSummary.js'
+const turnHead = m => headOf(m, turnElapsedMs(m))
+const turnTop = m => topOf(m, turnElapsedMs(m))
+
 /** 悬停说明：口径只在这一处描述，PC 与 H5 共用（两处各写一遍必然写歪） */
-const turnTitle = m => {
-  const ms = turnElapsedMs(m)
-  if (!ms) return '从发出提问到答完实际用的时间'
-  const prep = turnPrepMs(m)
-  const wait = turnWaitMs(m)
-  const parts = []
-  if (prep > 0) parts.push('开始回答前的准备 ' + durZh(prep))
-  const rest = Math.max(0, ms - prep - wait)
-  if (rest > 0) parts.push('模型与工具 ' + durZh(rest))
-  if (wait > 0) parts.push('等你答题或批准 ' + durZh(wait))
-  return '从发出提问到答完一共 ' + durZh(ms) + (parts.length ? '，其中' + parts.join('、') : '')
-}
-
-// 段的起点都是块边界（flush 锚点），显示时按区间取原文，不碰区间下标。
-const procSlice = (m, seg) => (m.processText || '').slice(seg.from, seg.to)
-
 // 工具段带下标 i：与后端落库口径一致（工具终态在 toolCalls 里的位置），
 // 实时态另存对象引用（status 原地更新，卡片自动从转圈变完成）
-const pushTimelineTool = (m, tool) => {
-  if (!m) return
-  const tl = Array.isArray(m.timeline) ? m.timeline : (m.timeline = [])
-  tl.push({ kind: 'tool', tool, i: Array.isArray(m.toolCalls) ? m.toolCalls.length - 1 : 0 })
-}
-
-// 产物段：只存下标（产物清单可能被 done 整体覆盖，存引用会失效），渲染时取 m.artifacts[i]
-const pushTimelineArtifact = (m, index) => {
-  if (!m) return
-  const tl = Array.isArray(m.timeline) ? m.timeline : (m.timeline = [])
-  tl.push({ kind: 'artifact', i: index })
-}
-
-// 插话段：文本自带（它同时是一条独立用户消息，但界面只许在这一处显示）。
-// 同一条收据可能被读两遍（收尾那次全量补读），按 messageId 幂等。
-const pushTimelineSteer = (m, text, messageId) => {
-  if (!m || !text) return
-  const tl = Array.isArray(m.timeline) ? m.timeline : (m.timeline = [])
-  const id = messageId || ''
-  if (id && tl.some(s => s && s.kind === 'steer' && s.messageId === id)) return
-  tl.push({ kind: 'steer', text, messageId: id })
-}
-
-/** 用后端落库/下发的段数组重建时间线：文本段直接用区间，工具段与产物段按下标取回对象。
- *  下标取不到（数据缺失）就跳过该段，不造数。
- *  相邻过程段合并：过程独白按 token 增量成段，早期落库数据里一段独白被切成上百个碎片段，
- *  逐个渲染就是几十个「执行过程」折叠头。相邻（上一段 to === 本段 from）合并成一段是无损的——
- *  processText 区间本就连贯；中间夹着工具/文本段则不合并，交错顺序如实保留。 */
-const restoreTimeline = (m, segs) => {
-  const out = []
-  for (const s of segs || []) {
-    if (!s || !s.kind) continue
-    if (s.kind === 'text') {
-      out.push({ kind: 'text', from: Number(s.from) || 0, to: Number(s.to) || 0 })
-    } else if (s.kind === 'think') {
-      // 思考段不合并相邻区间：后端每段就是一次「想完再动手」，合成一段等于把分段又抹平
-      out.push({ kind: 'think', from: Number(s.from) || 0, to: Number(s.to) || 0 })
-    } else if (s.kind === 'process') {
-      const from = Number(s.from) || 0
-      const to = Number(s.to) || 0
-      const last = out[out.length - 1]
-      if (last && last.kind === 'process' && last.to === from) last.to = to
-      else out.push({ kind: 'process', from, to })
-    } else if (s.kind === 'tool') {
-      const t = (m.toolCalls || [])[Number(s.i) || 0]
-      if (t) out.push({ kind: 'tool', i: Number(s.i) || 0, tool: t })
-    } else if (s.kind === 'artifact') {
-      out.push({ kind: 'artifact', i: Number(s.i) || 0 })
-    } else if (s.kind === 'steer') {
-      const t = String(s.text || '')
-      if (t) out.push({ kind: 'steer', text: t, messageId: String(s.messageId || '') })
-    }
-  }
-  return out
-}
-
 // blocks → 现有视图字段的投影独立成纯模块（./blocks.js），这里只做转发，
 // 保持 ChatPage / ShareChatPage 的既有 import 路径不变。
 export { applyBlocks } from './blocks'
@@ -796,172 +150,16 @@ export { applyBlocks } from './blocks'
  * 过程＝思考/过程/工具段，按发生顺序聚簇渲染在过程块里，永远不插进正文。
  * 运行中与落库用同一份段数组（后端给每个非空 text 段标 channel=answer），刷新前后一致。 */
 
-const turnAnswerText = m => String((m && m.content) || '')
+// 正文分段与插话位置在 ./turnBody.js（纯模块），这里只转出。
+export { turnAnswerText, turnSteerRows, turnBodyRows } from './turnBody.js'
 
-/** 过程块：时间线里的全部思考/过程/工具段，按发生顺序聚簇。
- *  text 段一律属于正文流，不进过程块；不做任何句子推断。 */
-const turnProcessRows = m => {
-  const tl = Array.isArray(m && m.timeline) ? m.timeline : []
-  const out = []
-  let group = null
-  const flushGroup = () => { if (group) { out.push(group); group = null } }
-  for (const seg of tl) {
-    if (!seg) continue
-    if (seg.kind === 'text' || seg.kind === 'artifact') continue
-    if (seg.kind === 'tool') {
-      if (!seg.tool) continue
-      if (!group) group = { kind: 'group', tools: [] }
-      group.tools.push(seg.tool)
-      continue
-    }
-    if (seg.kind === 'think') {
-      flushGroup()
-      const tlen = String((m && m.thinking) || '').length
-      const f = Math.min(Number(seg.from) || 0, tlen)
-      const t = Math.min(Number(seg.to) || 0, tlen)
-      if (t > f) out.push({ kind: 'think', from: f, to: t })
-      continue
-    }
-    if (seg.kind === 'process') {
-      flushGroup()
-      const plen = String((m && m.processText) || '').length
-      const f = Math.min(Number(seg.from) || 0, plen)
-      const t = Math.min(Number(seg.to) || 0, plen)
-      if (t > f) out.push({ kind: 'process', from: f, to: t })
-      continue
-    }
-  }
-  flushGroup()
-  if (!out.length && m && Array.isArray(m.toolCalls) && m.toolCalls.length) {
-    // 正文重建回退：没有时间线可依，工具按终态清单成组展示
-    const tools = toolCallsView(m.toolCalls)
-    if (tools.length) out.push({ kind: 'group', tools })
-  }
-  return markGrowingCluster(clusterize(out), m)
-}
+// 过程块投影在 ./turnProcess.js（纯模块），这里只转出并供折叠态使用。
+export { turnProcessRows } from './turnProcess.js'
+import { turnProcessRows } from './turnProcess.js'
 
-/** 本轮插话段清单：计划卡「本轮调整」用（那里要的是清单，不是位置）。正文渲染走 turnBodyRows。 */
-const turnSteerRows = m => {
-  const tl = Array.isArray(m && m.timeline) ? m.timeline : []
-  return tl.filter(s => s && s.kind === 'steer' && String(s.text || '').trim())
-    .map(s => ({ kind: 'steer', text: String(s.text), messageId: s.messageId || '' }))
-}
+// 工具摘要/实时输出在 ./toolBrief.js（纯模块），这里只转出。
+export { TOOL_BRIEF_KEYS, oneLine, toolBrief, prettyIo, LIVE_TAIL_CHARS, liveOutput, stepBriefOf } from './toolBrief.js'
 
-/**
- * 正文流按时间线还原插话的位置。
- *
- * <p>后端在框架把插话写进上下文的那一刻先 flush 此前正文成 text 段、再插 steer 段，
- * 前端直播（pushTimelineSteer 之后再来的正文另起 text 段）、落库 timeline、blocks 重建
- * 三条链路都保留了这个交错顺序。所以断点不用猜：扫一遍时间线，text 段的 to 就是
- * 「这句话被听到之前，模型已经写出多少正文」，遇到 steer 段就在这个下标处下刀。
- *
- * <p>没有插话的轮次只返回一整片，渲染路径与从前逐字相同；有插话时切片拼起来仍等于
- * content，不增不减。key 用切点下标：流式最后一片的起点不变，插话插进来时前面的片
- * 不换键，长回答不会被整列重挂。last 只标最后一个正文片——流式打字光标只跟它。
- */
-const turnBodyRows = m => {
-  const content = String((m && m.content) || '')
-  const tl = Array.isArray(m && m.timeline) ? m.timeline : []
-  const cuts = []
-  let read = 0
-  for (const seg of tl) {
-    if (!seg) continue
-    if (seg.kind === 'text') {
-      const to = Number(seg.to) || 0
-      if (to > read) read = Math.min(to, content.length)
-    } else if (seg.kind === 'steer' && String(seg.text || '').trim()) {
-      cuts.push({ at: read, text: String(seg.text), messageId: seg.messageId || '' })
-    }
-  }
-  if (!cuts.length) return content ? [{ kind: 'text', key: 't0', content, last: true }] : []
-  const rows = []
-  let pos = 0
-  cuts.forEach((c, ci) => {
-    const at = Math.min(Math.max(c.at, pos), content.length)
-    if (at > pos) rows.push({ kind: 'text', key: 't' + pos, content: content.slice(pos, at) })
-    rows.push({ kind: 'steer', key: 's' + ci + ':' + (c.messageId || ''), text: c.text })
-    pos = at
-  })
-  if (pos < content.length) rows.push({ kind: 'text', key: 't' + pos, content: content.slice(pos) })
-  for (let i = rows.length - 1; i >= 0; i--) {
-    if (rows[i].kind === 'text') { rows[i].last = true; break }
-  }
-  return rows
-}
-
-// ---- 工具卡片：标题行直接亮出关键参数（命令/路径/检索词），点击展开看完整入参与输出 ----
-// message 收在末位：它是「本次调用的载荷文本」这一通用语义（agent_send 追加的那句话、
-// MCP 通知类的正文），不是某把工具的专名；排在后面保证带 path/query 的工具行为不变。
-// 没进白名单的句柄类字段（agent_key/task_id 这类指针）永远不该被当成摘要——
-// 那类工具要么在此名单里有正主（agent_send→message），要么入参里本就没别的可亮。
-const TOOL_BRIEF_KEYS = ['command', 'query', 'path', 'dir', 'filename', 'url', 'kbIds', 'message']
-// 读技能正文那把（框架 load_skill_through_path，入参 {skillId, path}）：path 几乎恒是 SKILL.md，
-// 顶栏该亮「读了哪条技能」而不是文件名。skillId 是框架拼的 {name}_{source}（source 为技能根目录
-// 或 workspace 这类短标记），按最后一个下划线截回裸名。
-const SKILL_READ_TOOL_NAMES = new Set(['load_skill_through_path', 'read_skill', 'use_skill'])
-const bareSkillNameOf = id => {
-  const s = String(id || '').trim()
-  if (!s) return ''
-  const i = s.lastIndexOf('_/')
-  if (i > 0) return s.slice(0, i)
-  const j = s.lastIndexOf('_')
-  return j > 0 ? s.slice(0, j) : s
-}
-const oneLine = (s, n) => { const x = String(s).replace(/\s+/g, ' ').trim(); return x.length > n ? x.slice(0, n) + '…' : x }
-const toolBrief = t => {
-  // 早产工具卡（后端在模型流式生成入参时就先建卡）：此刻还没有 args，只能报「正在生成多少字」。
-  // 文件名这类摘要由后端边生成边从入参前缀里捞（brief），捞到之前就只说正在生成。
-  if (t && t.preparing) {
-    const n = Number(t.chars) || 0
-    const state = n > 0 ? '正在生成 ' + n.toLocaleString() + ' 字' : '正在生成内容'
-    return t.brief ? oneLine(t.brief, 40) + ' · ' + state : state
-  }
-  if (!t?.args) return ''
-  let obj = null
-  try { obj = JSON.parse(t.args) } catch (e) { return oneLine(t.args, 56) } // 非 JSON（MCP 兼容）：纯文本截断
-  // 派遣助手：标题行亮出「问的是谁」——一串智能体 id 对用户没有信息量，
-  // 完整问答就在下面那张子对话卡里
-  if (CONSULT_TOOL_NAMES.has(t.name)) {
-    const who = consultNameOf(t)
-    if (who) return oneLine(who, 56)
-  }
-  if (!obj || typeof obj !== 'object') return oneLine(t.args, 56)
-  if (SKILL_READ_TOOL_NAMES.has(t.name)) {
-    const nm = bareSkillNameOf(obj.skillId || obj.skill_id || obj.skill_name || obj.skillName || obj.name)
-    if (nm) return oneLine(nm, 56)
-  }
-  for (const k of TOOL_BRIEF_KEYS) {
-    const v = obj[k]
-    if (typeof v === 'string' && v.trim()) return oneLine(v, 56)
-    if (Array.isArray(v) && v.length) return oneLine(JSON.stringify(v), 56)
-  }
-  for (const k of Object.keys(obj)) { // 兜底：第一个非空字符串字段（跳过 content/newString 等大文本字段）
-    if (k === 'content' || k === 'newString') continue
-    const v = obj[k]
-    if (typeof v === 'string' && v.trim()) return oneLine(v, 56)
-  }
-  return oneLine(t.args, 48)
-}
-const prettyIo = s => {
-  if (s == null || s === '') return ''
-  try { const o = JSON.parse(s); return o && typeof o === 'object' ? JSON.stringify(o, null, 2) : String(s) } catch (e) { return String(s) }
-}
-// 运行中卡片显示实时输出（tool_output 增量累积，只展示尾部避免无界增长）；结束后显示最终全文
-const LIVE_TAIL_CHARS = 4000
-const liveOutput = t => {
-  if (t.status === 'start') {
-    // 早产卡：这次调用还在生成入参，没有真正的输出可看，给一句可展开的进度说明
-    if (t.preparing) {
-      const n = Number(t.chars) || 0
-      return n > 0 ? '正在生成内容…（已写入 ' + n.toLocaleString() + ' 字）' : '正在生成内容…'
-    }
-    // 运行中：只有前端本地累积的 liveOutput（不落库），后端的 result 此刻还没写
-    if (!t.liveOutput) return ''
-    return (t.outputTruncated ? '…（前面输出已省略）\n' : '') + t.liveOutput.slice(-LIVE_TAIL_CHARS)
-  }
-  // 终态：后端落库字段只有 result（工具卡输出统一写 result，无 output 这一说）
-  return t.result != null ? t.result : ''
-}
 // ==================== 工具卡折叠：头部那颗开关到底管到哪些块 ====================
 /* 普通卡：头部只管下面的入参/输出原文（默认收起，点开才见）。
  * 派遣卡（带 subChat）：一问一答就挂在头部正下方、且默认展开——它是这张卡的正文；
@@ -969,732 +167,91 @@ const liveOutput = t => {
  * 用户读成「展开/收缩坏了」，而且角标收着、底下却挂着一坨展开内容，开关在说谎。
  * 口径：派遣卡的折叠态默认算「开」（子对话可见），首次点击是收起；显式点开（true）那一份
  * 连入参/输出原文一起给——默认给排版好的正文，「展开」给全量，两层不打架。 */
-const toolCardOpen = t => {
-  if (!t) return false
-  return t.subChat ? t._open !== false : !!t._open
-}
-const toggleToolCard = t => {
-  if (!t) return
-  t._open = t.subChat ? t._open === false : !t._open
-}
-/**
- * 让一张工具卡在正文里真的看得见：本轮过程整条 → 所在簇 → 所在组条 → 卡片自己，四层依次摊开。
- * 顶栏「子智能体」药丸点一行要走这一趟——派遣卡通常长在折叠着的「执行了 N 个操作」里面，
- * 只点开卡片自己那一层等于点了没反应（PC 与移动壳共用这一个出口，两层判据分两处写必然漂移）。
- */
-const openDispatchCard = (m, t) => {
-  if (!m || !t) return
-  const show = () => { if (!toolCardOpen(t)) toggleToolCard(t) }
-  if (!turnOpen(m)) m._turnOpen = true
-  for (const s of turnProcessRows(m)) {
-    const segs = s.kind === 'cluster' ? (s.segs || []) : [s]
-    for (const g of segs) {
-      if (!g || g.kind !== 'group' || !Array.isArray(g.tools) || g.tools.indexOf(t) < 0) continue
-      if (s.kind === 'cluster' && !clusterOpen(m, s)) toggleCluster(m, s)
-      if (g.tools.length > 1 && g.tools[0]._groupOpen !== true) g.tools[0]._groupOpen = true
-      show()
-      return
-    }
-  }
-  // 时间线里没有它（正文重建失败退回兜底列表那条路）：只管把卡片本身点开
-  show()
-}
+// 工具卡开合与定位在 ./toolCard.js（纯模块），这里只转出。
+export { toolCardOpen, toggleToolCard, openDispatchCard } from './toolCard.js'
+
 /**
  * run_code 的扇出看板：实时帧与终态清单同一个形状（后端 buildFanOut 一处组），
  * 所以这几条判据只写一遍，PC 与移动壳的模板都走它们。
  * 字段：total 已完成条数、inFlight 在途条数、items 清单、omitted 未列出数、
  * used/max 本轮额度、parallel 并发上限、delivered 脚本交回的产物数。
  */
-const fanHasBoard = f => !!f && ((Number(f.total) || 0) > 0 || (Number(f.inFlight) || 0) > 0)
-const fanHead = t => {
-  const f = t.fanOut
-  if (!fanHasBoard(f)) return ''
-  if (t.status === 'start') {
-    const run = Number(f.inFlight) || 0
-    return `子调用 ${Number(f.total) || 0} 次${run ? ' · 在途 ' + run : ''}`
-  }
-  return `扇出 ${Number(f.total) || 0} 次`
-}
-const fanTitle = f => `扇出 ${Number(f.total) || 0} 次工具调用` +
-  ((Number(f.inFlight) || 0) > 0 ? `（还有 ${f.inFlight} 条在跑）` : '')
-const fanRowState = s => s.status === 'start' ? `在跑×${Number(s.running) || 1}` : toolDuration(s.elapsedMs)
-/**
- * run_code 这次运行的收尾类型：后端把结果结构化成 run{kind,exit,ms,calls,maxCalls,truncated}
- * 挂在卡片上。正常结束不额外刷屏（卡片头已有耗时与扇出数），只把「没跑成」的三种说出来——
- * 一律显示成绿色对勾的话，只有去读正文的人才知道脚本其实没跑完。
- */
-const fanRun = t => {
-  const r = t.run
-  if (!r || r.kind === 'ok') return ''
-  if (r.kind === 'exit') return `退出码 ${r.exit}：脚本可能没跑完`
-  if (r.kind === 'timeout') return '追踪超时：脚本可能还在后台跑'
-  if (r.kind === 'infra') return '执行环境不可用（不是脚本写错）'
-  return '运行未完成'
-}
-/**
- * 并发水位总览：脚本跑着的时候，不点开卡片也能看出跑了多少、在途几条。
- * 数据来自实时进度帧（后端每秒合并一帧），落在消息级 runBoard 上，随本段脚本结束清空。
- */
-const runBoardText = m => {
-  const f = m && m.runBoard
-  const total = Number(f && f.total) || 0
-  const run = Number(f && f.inFlight) || 0
-  if (!total && !run) return ''
-  const bits = [`子调用 ${total}/${Number(f.max) || '?'} 次`]
-  if (run) bits.push(`在途 ${run}`)
-  if (Number(f.delivered) > 0) bits.push(`交付 ${f.delivered} 个文件`)
-  return '脚本运行中 · ' + bits.join(' · ')
-}
-const fanBudget = f => {
-  if (!f || !f.max) return ''
-  const bits = [`本轮额度 ${Number(f.used) || 0}/${f.max}`]
-  if (f.parallel) bits.push(`并发上限 ${f.parallel}`)
-  if (f.delivered) bits.push(`交付 ${f.delivered} 个文件`)
-  return bits.join(' · ')
-}
-const groupRunning = g => g.tools.some(t => t.status === 'start')
-const groupHasError = g => g.tools.some(t => t.status === 'error')
+// 扇出看板/运行水位在 ./runBoard.js（纯模块），这里只转出。
+export { fanHasBoard, fanHead, fanTitle, fanRowState, fanRun, runBoardText, fanBudget, groupRunning, groupHasError } from './runBoard.js'
 
-/** done 汇总的工具终态合并进现有数组（原地改，保住 timeline 里的对象引用与实时到达的顺序） */
-const mergeDoneToolCalls = (m, doneCalls) => {
-  if (!m) return
-  if (!Array.isArray(m.toolCalls)) m.toolCalls = []
-  const list = m.toolCalls
-  for (const d of doneCalls) {
-    // 先找还挂在「进行中」的那一张：正常流是 start 帧建卡、终态帧就地改状态，done 这份只补全文。
-    const live = [...list].reverse().find(x => x.name === d.name && x.status === 'start')
-      // 找不到就认「同名、已终态、且这一份还没认领过」的那一张——实时帧早就把这张卡改成 done 了，
-      // done 这份该把全文并到它身上。少了这一路，落库那份会被当成一次新调用 push 进去，同一件事
-      // 在界面上算两遍：「执行了 N 个操作」和总览那半步的步数当场翻倍。
-      // 正向扫：两份都是到达顺序，倒着配会把重复同名调用的入参/输出串到别的卡上。
-      || list.find(x => x.name === d.name && !x._merged)
-    if (live) {
-      live._merged = true
-      live.status = d.status || 'done'
-      live.elapsedMs = d.elapsedMs || live.elapsedMs || 0
-      // 起点跟着终态那份走：done 汇总是落库那一份的同源数据，实时帧万一漏了这张卡的重发，
-      // 缺起点就等于这一张永远不进跨度；等待账同理，缺了就把人读卡的时间算进机器时间
-      if (d.startedAtMs) live.startedAtMs = d.startedAtMs
-      if (d.waitedMs) live.waitedMs = d.waitedMs
-      if (d.args) live.args = d.args // done 汇总带全文（≤8KB），覆盖实时 200 字摘要
-      if (d.error) live.error = d.error
-      if (d.attempts != null) live.attempts = d.attempts
-      if (d.result != null) live.result = d.result
-      // 咨询卡（子智能体/取数助手）的终态一问一答：done 这份带全量 subChat（与落库同源），
-      // 漏搬就是「实时帧丢了这张卡或没带 subChat，done 这份又没补」→ 当场看不见、刷新才长出结果
-      if (d.subChat) live.subChat = d.subChat
-      // 外溢留存标识必须跟着搬：实时流里的 tool_status 只是短摘要副本（不带 spillId），
-      // 全文是 done 这份才有——漏搬的后果是「历史刷新后卡片有『查看完整输出』、当场没有」
-      if (d.spillId) live.spillId = d.spillId
-      if (d.argsSpillId) live.argsSpillId = d.argsSpillId
-      // 扇出清单与运行结果只有终态那份才带全（实时进度帧只覆盖跑到那一刻）：漏搬的后果是
-      // 「当场看得见、刷新后反而没了」，而 kind=timeout/infra 这种收尾漏掉就等于把失败显示成成功
-      if (d.fanOut) live.fanOut = d.fanOut
-      if (d.run) live.run = d.run
-    } else {
-      // 这张卡是 done 那份自己带来的（实时那帧丢了）：同样标成已认领，否则下一条同名汇总会
-      // 并进它身上，把两次调用合成一张卡（翻倍的反方向错法）
-      list.push({ ...d, _merged: true })
-    }
-  }
-}
-// 整轮用时的秒针：1s 一跳的 tick 驱动重渲染，让"卡住"变成可见的进行中（顶部那条跟着走）
-const nowTick = ref(Date.now())
-let tickTimer = null
-let alignTimer = null
-/** 挂表引用数：主对话页由引擎开轮时 ensureTick；分享页没有引擎，由正在跑的那一条 TurnBar 自己挂。
- *  两边都不再需要（没有在跑的流、也没有挂表的进行中行）才停表——否则分享页「正在溯源」的秒数永远不动。 */
-let tickHolders = 0
-const ensureTick = () => {
-  if (tickTimer) return
-  tickTimer = setInterval(() => {
-    nowTick.value = Date.now()
-    if (!chatStreams.size && !tickHolders) { clearInterval(tickTimer); tickTimer = null }
-  }, 1000)
-}
-/** 把秒针相位对齐到本轮的起表点：从 anchor 起每满 1 秒报一次。
- *  秒针按页面加载相位跳，起表点要等首帧才到（晚几百毫秒）；不对齐的话读数慢半拍、
- *  收尾那一刻还会直接跳过最后一秒。
- *  对齐只改「什么时候报」，不改读数来源；秒针是全局的，同一会话至多一轮在跑，不存在争相位。 */
-const alignTick = anchor => {
-  const a = Number(anchor) || 0
-  if (!a) return
-  if (alignTimer) { clearTimeout(alignTimer); alignTimer = null }
-  if (tickTimer) { clearInterval(tickTimer); tickTimer = null }
-  const wait = 1000 - (((Date.now() - a) % 1000) + 1000) % 1000
-  alignTimer = setTimeout(() => {
-    alignTimer = null
-    // 等对齐的这一拍里别的消费方可能又起了表：清掉重来，否则相位还是旧的
-    if (tickTimer) { clearInterval(tickTimer); tickTimer = null }
-    nowTick.value = Date.now()
-    ensureTick()
-  }, wait)
-}
-/** 挂一次表，返回摘表的那只手（TurnBar 卸载或这一轮答完时调用） */
-const holdTick = () => {
-  tickHolders++
-  ensureTick()
-  let held = true
-  return () => { if (held) { held = false; tickHolders = Math.max(0, tickHolders - 1) } }
-}
-// 组件卸载时停表（纯模块挂不了 onUnmounted，由消费方在 onUnmounted 里调用）
-const stopTick = () => {
-  if (tickTimer) { clearInterval(tickTimer); tickTimer = null }
-  if (alignTimer) { clearTimeout(alignTimer); alignTimer = null }
-}
-// 精确检索工具实际使用的检索词（模型可主动改词做二次检索，与主链路 retrieved 的词不同源）。
-// 从 toolCalls 终态记录的 args 派生：实时路径 start 记录带 args（done 合并后保留），历史恢复是 done 记录带 args，两路都覆盖
-const toolSearchQueries = m => {
-  if (!Array.isArray(m?.toolCalls)) return []
-  const qs = []
-  for (const t of m.toolCalls) {
-    if (t.name !== 'searchKnowledge' || t.status === 'start') continue
-    try { const q = JSON.parse(t.args || '{}').query; if (q) qs.push(q) } catch (e) { /* args 非 JSON 时忽略 */ }
-  }
-  return qs
-}
-// 检索状态行文案（PC + 移动壳共用一份判据，两端不许各自内联拼「搜索 N 个关键词」）。
-// 关键词数为 0 时整段不输出：提问被停用词表与单字规则滤净时（"怎么用"/"为什么呢"/"1+1" 这类）
-// jieba 提不出主词元，但向量召回照跑、refs 照有，这个 0 对用户是噪音，看着像检索没生效。
-// 返回 '' = 本轮没有任何可展示的检索信息，调用方据此整行不渲染（只剩一个空箭头更糟）。
-const retrievalLineTitle = m => {
-  const r = m?.retrieved || null
-  const keywords = r ? (r.keywords || 0) : 0
-  const refs = r ? (r.refs || 0) : (Array.isArray(m?.sources) ? m.sources.length : 0)
-  let s = keywords > 0 ? `搜索 ${keywords} 个关键词` : ''
-  if (refs > 0) s += (s ? '，' : '') + `参考 ${refs} 段资料`
-  // 主链路没检索出内容、但模型主动做过精确检索：展开后仍有检索词可看，给个不空的标题
-  if (!s && toolSearchQueries(m).length) s = '精确检索'
-  return s
-}
+
+// 工具终态合并在 ./toolCalls.js（纯模块），这里只转出。
+export { mergeDoneToolCalls } from './toolCalls.js'
+
+// 秒针与挂表生命周期在 ./chatTick.js（模块），这里只转出。
+export { nowTick, ensureTick, alignTick, holdTick, stopTick } from './chatTick.js'
+import { nowTick } from './chatTick.js'
+
+// 检索词与状态行在 ./retrieval.js（纯模块），这里只转出。
+export { toolSearchQueries, retrievalLineTitle } from './retrieval.js'
+
 /** 深度思考按模型库登记的能力三态：none=不支持(隐藏) switchable=可开关 always=恒思考(锁定)；
  *  模型不在模型库（遗留裸名）按可开关处理。开关记忆按模型分开存（ai_deep_think: {ref:0|1}，
  *  __default 是所有模型的初始默认）。 */
-const THINK_CAPS = {
-  none: { visible: false, locked: false, on: false },
-  switchable: { visible: true, locked: false, on: null }, // on=null → 读按模型记忆
-  always: { visible: true, locked: true, on: true }
-}
-// ==================== 回答归属徽标的智能体头像 ====================
-/**
- * 「由「X」回答」徽标左侧的图标数据源：从可用智能体列表里按 id（优先）或名称回查该条消息的归属智能体，
- * 交给 components/AgentAvatar.vue 渲染（品牌标 / emoji / 默认机器人三态由它统一解析，不在视图里各写一套）。
- *
- * 为什么按 id 与名称双路：历史消息只保证有 agentName（落库快照），实时流式轮才有 agentId；
- * 而「@ 提及的智能体作答」这类委派轮，agentId 指向被委派者、与列表项对得上，历史恢复时按名称也能命中。
- *
- * 查不到（智能体已被删除/不可见、只有名称快照对不上）返回 null —— AgentAvatar 缺省即默认机器人，不出现空洞。
- */
-const agentBadgeOf = (agents, agentId, agentName) => {
-  const list = Array.isArray(agents) ? agents : []
-  if (agentId) {
-    const byId = list.find(a => a && a.id === agentId)
-    if (byId) return byId
-  }
-  if (agentName) return list.find(a => a && a.name === agentName) || null
-  return null
-}
-// ==================== 思考等级（低/中/高/超高/极致，按模型支持档位给选项） ====================
-/** 档位展示名与顺序（与后端 REASONING_LEVEL_LIST 同序，弱→强） */
-const REASONING_LEVELS = [
-  { value: 'low', label: '低' },
-  { value: 'medium', label: '中' },
-  { value: 'high', label: '高' },
-  { value: 'xhigh', label: '超高' },
-  { value: 'max', label: '极致' }
-]
-/** ON=开启思考（不带强度：模型未登记档位时用），off=关闭思考；其余为具体档位 */
-const THINK_LEVEL_ON = '__on__'
-const levelLabel = v => REASONING_LEVELS.find(x => x.value === v)?.label || '默认强度'
+// 归属徽标在 ./agentBadge.js（纯模块），这里只转出。
+export { agentBadgeOf } from './agentBadge.js'
+
+// 思考能力/档位在 ./thinking.js（纯模块），这里只转出。
+export { THINK_CAPS, REASONING_LEVELS, THINK_LEVEL_ON, levelLabel } from './thinking.js'
+
 /** K/M 口径窗口格式化：按整除自动选进制——2 的幂登记值走 1024 进制（131072→128K、1048576→1M），
  *  十进制登记值走 1000 进制（100000→100K、200000→200K），两边都不整除才落 1024 一位小数 */
-const fmtWindow = n => {
-  if (!n || n <= 0) return ''
-  for (const base of [1048576, 1000000]) {
-    if (n >= base) {
-      const m = n / base
-      if (m % 1 === 0) return m + 'M'
-      if (m < 10 && (m * 10) % 1 === 0) return m.toFixed(1) + 'M'
-    }
-  }
-  if (n >= 1024) {
-    // 两种进制都整除时（如 128000）优先 1000 进制——官方口径是 128K 而非 125K
-    if (n % 1000 === 0) return n / 1000 + 'K'
-    if (n % 1024 === 0) return n / 1024 + 'K'
-    const k = n / 1024
-    return (k >= 100 ? Math.round(k) : Math.round(k * 10) / 10) + 'K'
-  }
-  return String(n)
-}
-/** 本轮结束时的上下文占用：与容量圆环、右栏用量同一个分子（缺占用才回落计费输入，取数式同右栏容量卡）。
- *  气泡上那一个数用它，不用 total——total 是本轮内每次模型调用输入的累加，工具往返会把同一份上下文
- *  反复送进去，几轮下来能到占用的两三倍。拿它当「这一轮用了多少」摆在「上下文 · 输出」旁边，
- *  两个数永远加不上，用户只会读成数字算错了。 */
-const usageCtxTokens = t => (!t || typeof t !== 'object') ? 0 : (Number(t.context) || Number(t.prompt) || 0)
-/** 用量悬停明细：三个数各起各的名、各占一行，谁也不跟谁相加（占用 ≠ 累计送入 ≠ 输出）。
- *  只报名字和数，不写解释——消费方要把 tooltip 渲染成多行：antd 的 title 是纯文本，
- *  需 overlay-inner-style 的 pre-line。 */
-const usageTip = t => {
-  if (!t || typeof t !== 'object') return ''
-  const n = v => fmtTokens(Number(v) || 0)
-  const segs = [`上下文占用 ${n(usageCtxTokens(t))} tokens`]
-  if (Number(t.prompt) > 0) segs.push(`本轮累计送入 ${n(t.prompt)} tokens`)
-  segs.push(`输出 ${n(t.output)} tokens`)
-  return segs.join('\n')
-}
+// 窗口与用量口径在 ./usage.js（纯模块，可直接 Node 测试），这里只转出。
+export { fmtWindow, usageCtxTokens, usageTip } from './usage.js'
+
 /** 分组内核：入参 sources 数组，返回按 key 分好的组（外部来源 WEB/MCP 单独成组） */
-const groupSources = sources => {
-  const groups = []
-  const byKey = new Map()
-  // 外部来源（联网/MCP）单独成组，名称与知识库文档区分——它们没有 fileName/docId，
-  // 落进「手动补充的知识」兜底组会名不副实
-  const groupOf = s => {
-    if (s.origin === 'WEB') return { key: '__web', fileName: '联网来源', icon: 'web' }
-    if (s.origin === 'MCP') return { key: '__mcp', fileName: 'MCP 来源', icon: 'mcp' }
-    return {
-      key: s.docId || '__manual_' + (s.fileName || 'x'),
-      fileName: s.fileName || (s.docId ? '来源文档不可用' : '手动补充的知识'),
-      icon: 'doc'
-    }
-  }
-  for (const s of sources) {
-    const gi = groupOf(s)
-    let g = byKey.get(gi.key)
-    if (!g) {
-      g = { key: gi.key, fileName: gi.fileName, icon: gi.icon, items: [] }
-      byKey.set(gi.key, g)
-      groups.push(g)
-    }
-    g.items.push(s)
-  }
-  return groups
-}
-// 引用来源详情弹窗
-/** 外部来源（联网/MCP）：有原网页地址，展示站点名+标题，弹窗不给库内原文 */
-const externalOrigin = s => s.origin === 'WEB' || s.origin === 'MCP'
-/** 来源条目展示名：外部来源（origin=WEB/MCP）用站点名，库内来源用文件名 */
-const sourceName = s => externalOrigin(s)
-  ? (s.siteName || (s.origin === 'MCP' ? 'MCP 来源' : '联网来源')) + (s.title ? ' §' + s.title : '')
-  : (s.fileName || (s.docId ? '来源文档不可用' : '手动补充的知识')) + (s.title ? ' §' + s.title : '')
-const fmtSourceScore = s => {
-  const v = s ? (s.rerankScore != null ? s.rerankScore : s.score) : null
-  return (v == null || isNaN(Number(v))) ? '' : Number(v).toFixed(2)
-}
-// 分值口径：rerankScore=按本轮问题重排出的相关度（联网来源过相关度门后同样有），
-// 其缺失回落服务商分（WEB）/ 检索融合分（库内）；MCP 无相关度分，不出标签
-const scoreTitle = s => {
-  if (!s) return ''
-  if (s.rerankScore != null) return '重排相关度 ' + s.rerankScore
-  if (s.origin === 'WEB') return '服务商相关度 ' + s.score
-  if (s.origin === 'MCP') return ''
-  return '检索融合分 ' + s.score
-}
-const fmtSize = n => {
-  if (!n && n !== 0) return ''
-  if (n < 1024) return n + ' B'
-  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB'
-  return (n / 1024 / 1024).toFixed(1) + ' MB'
-}
+// 引用来源的口径在 ./sources.js（纯模块，可直接 Node 测试），这里只转出。
+export { groupSources, externalOrigin, sourceName, fmtSourceScore, scoreTitle } from './sources.js'
+
 /** 长文本粘贴转成的附件名（不带扩展名部分；实际文件名补 .txt）。
  *  落库元信息只保留名称/类型/体积，所以刷新后靠这个前缀把卡片形态认回来。
  *  字面量定义在 ./intake.js（取材侧才是它的产地），本模块只借用（见顶部 import），
  *  并照旧由文件末尾的 export 块对外提供——同一个字符串写两处，改一处忘一处就会出现
  *  「粘贴卡片认不回来」而代码看起来完全正常 */
-/** 一条附件元信息是否来自长文本粘贴 */
-const isPastedText = a => !!a && (a.paste === true || String(a.name || '').startsWith(PASTE_TEXT_BASE))
-/** 粘贴文本卡片的标题：去掉 .txt 后缀（文件名就叫「粘贴的文本」，扩展名没有信息量） */
-const pasteTitle = name => String(name || '').replace(/\.txt$/i, '')
-/** 卡片副标题：体积 + 字数；上传中/失败时换成状态文案（两壳共用一份口径） */
-const pasteSub = f => {
-  if (!f) return ''
-  if (f.uploading) return '上传中…'
-  if (f.error) return '上传失败'
-  if (f.expired) return f.text ? '正文未随历史保留' : '已过保留期'
-  if (f.unavailable) return '不可重发'
-  return [fmtSize(f.size), f.text ? f.text.length + ' 字' : ''].filter(Boolean).join(' · ')
-}
-const histItemTitle = m => String(m.content).replace(/[#*`>\-\n]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60)
-const histItemDigest = histItemTitle
-const fmtMsgTime = ts => {
-  if (!ts) return ''
-  const d = new Date(ts)
-  if (isNaN(d.getTime())) return ''
-  const now = new Date()
-  const hm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0')
-  if (d.toDateString() === now.toDateString()) return '今天 ' + hm
-  const yest = new Date(now)
-  yest.setDate(now.getDate() - 1)
-  if (d.toDateString() === yest.toDateString()) return '昨天 ' + hm
-  return String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0') + ' ' + hm
-}
-/** 错误分类文案。kind 由 api.js 给出（'interrupted'=断线/超时/连接被掐断），优先于按文本猜测：
- *  中断类在后端已把半程回答按截断态落库，文案要告诉用户「内容没丢」并说明重新生成会重新计费。 */
-const errorBrief = (raw, kind) => {
-  const s = String(raw || '')
-  // 'spoken'——服务端 error 帧里那句人话（emitRunFailure 挑好的：额度该充值、断流发「继续」、
-  //  平台配额找管理员）。再按文本分类一遍会把它落进兜底「生成失败，可重试或更换模型」，
-  //  后端指好的方向就全白写了（断流轮的「重新生成」按钮恰是最不该按的那个）——原样返回。
-  if (kind === 'spoken') return s.trim() || '生成失败，可重试或更换模型'
-  if (kind === 'interrupted') {
-    if (/timeout|timed?\s*out|长时间未收到响应/i.test(s)) return '响应超时：连接已中断'
-    if (/提前关闭/.test(s)) return '连接已断开：回答未正常结束'
-    return '连接已中断：回答未正常结束'
-  }
-  if (/AbortError|aborted?/i.test(s)) return '生成已停止'
-  // 额度不足必须在 429 分支**之前**判：网关的额度耗尽常返回 429 + insufficient_quota，
-  // 先命中「限流」就会给出「等一会就好」的误导建议——而额度问题等多久都不会自己好
-  if (/额度不足|余额不足|套餐已到期|配额耗尽|insufficient.?quota|billing|payment required|arrearage|out of credit|insufficient balance/i.test(s)) {
-    return '模型服务额度不足：请到「模型供应商」充值，或改用其他模型'
-  }
-  if (/timeout|timed?\s*out/i.test(s)) return '请求超时：模型服务响应过慢或网络不稳定，可重试'
-  if (/Failed to fetch|NetworkError|network/i.test(s)) return '网络连接失败：请检查网络或代理设置'
-  if (/401|Unauthorized/i.test(s)) return '鉴权失败：登录已过期，请重新登录'
-  if (/429|rate\s*limit/i.test(s)) return '请求过于频繁：模型服务限流，稍后重试'
-  if (/5\d{2}|Bad Gateway|Service Unavailable/i.test(s)) return '模型服务异常：稍后重试，或到「模型供应商」检查该供应商状态'
-  return '生成失败，可重试或更换模型'
-}
+// 附件卡片口径在 ./attachments.js（纯模块，可直接 Node 测试），这里只转出。
+export { isPastedText, pasteTitle, pasteSub } from './attachmentCard.js'
+
+// 消息文本（历史标题/时间/错误文案）在 ./messageText.js（纯模块），这里只转出。
+export { histItemTitle, histItemDigest, fmtMsgTime, errorBrief } from './messageText.js'
 
 /** 「这一轮没答成」那几条降级 code（后端 emitRunFailure 同时走 degrade 与 error 帧两条通道）。
  *  数据一条不删、照旧落库照旧下发；这里只决定「同一件事在这一屏画几遍」。 */
-const FAIL_SPOKEN_CODES = new Set(['streamError', 'modelQuotaExhausted', 'tenantQuotaExhausted',
-  'modelUnresponsive', 'upstreamStreamCut', 'frameworkNotLaunched'])
-/** 降级条该画哪几条：这一行自己已经挂了错误卡时，失败原因由卡说，不在条上再画一遍。
- *  <p>判据只认<b>这一行</b>的错误卡，不认 m.failed——分享页把失败记在 failed 上却画不出错误卡，
- *  拿 failed 当判据等于把游客侧唯一的原因出口一起删掉（那是消音，不是去重）。 */
-const degradationItems = m => {
-  const list = Array.isArray(m && m.degradations) ? m.degradations : []
-  if (!m || !m.errorCard) return list
-  return list.filter(d => !(d && FAIL_SPOKEN_CODES.has(d.code)))
-}
-/** 与正文尾注说同一件终态的那几句警示（后端把 warn 帧与尾注两条通道各写了一遍，措辞不同）。
- *  只列我们自己写得出的整句、且<b>只在正文确实带了对应终态标注时</b>才并掉——
- *  拿关键词猜或无条件屏蔽，会把无关警示一起吃掉，那是消音不是去重。 */
-const TERMINAL_WARN_LINES = ['本轮已超时结束，等你确认的那一步已作废']
-/** 警示条那一句要不要单列：同一件终态正文里已经写过了就不再并排画第二遍。 */
-const degradationWarn = m => {
-  const w = m && typeof m.warnMsg === 'string' ? m.warnMsg.trim() : ''
-  if (!w) return ''
-  const c = m && typeof m.content === 'string' ? m.content : ''
-  if (c.includes(w)) return ''
-  if (TERMINAL_WARN_LINES.includes(w) && turnMarker(m) === 'timeout') return ''
-  return w
-}
+// 降级/警示口径在 ./degradation.js（纯模块），这里只转出。
+export { degradationItems, degradationWarn } from './degradation.js'
+
 // ==================== 重新生成多版本（同一问题的多次回答可来回切换） ====================
 // 语义：v1 是首次回答；每次「重新生成」把新完成的回答追加为新版本，气泡底部出现 ‹ 1/2 › 切换器。
 // 版本只存在于当前会话内存里：历史接口按「一题一答」返回，重新生成时后端会把旧回答软删（见
 // replaceMessageId），所以刷新后看到的是最后一版——想保留哪一版就切到哪一版再刷新是不成立的，
 // 这一点在切换器上有提示，不做假承诺。
-const snapshotVersion = m => ({
-  content: m.content || '',
-  sources: m.sources || [],
-  related: m.related || [],
-  thinking: m.thinking || '',
-  timeline: m.timeline || [],
-  artifacts: m.artifacts || [],
-  toolCalls: m.toolCalls || [],
-  plan: m.plan || null,
-  processText: m.processText || '',
-  degradations: m.degradations || [],
-  warnMsg: m.warnMsg || '',
-  retrieved: m.retrieved || null,
-  doneTime: m.doneTime || null,
-  // 整轮用时随版本走：不带上就是「切回第 1 版，气泡里那一版的过程配着第 2 版的用时」
-  turnMs: m.turnMs || 0,
-  turnPrepMs: m.turnPrepMs || 0,
-  humanWaitMs: m.humanWaitMs || 0,
-  model: m.model || ''
-})
-const applyVersion = (m, v) => {
-  m.content = v.content
-  m.sources = v.sources
-  m.related = v.related
-  m.thinking = v.thinking
-  m.timeline = v.timeline
-  m.artifacts = v.artifacts
-  m.toolCalls = v.toolCalls
-  m.plan = v.plan
-  m.processText = v.processText
-  m.degradations = v.degradations
-  m.warnMsg = v.warnMsg
-  m.retrieved = v.retrieved
-  m.doneTime = v.doneTime
-  m.turnMs = v.turnMs || 0
-  m.turnPrepMs = v.turnPrepMs || 0
-  m.humanWaitMs = v.humanWaitMs || 0
-  // 模型随版本走：切回旧版本时分隔记录按那一版当时用的模型比对，不串到最新一轮的模型
-  m.model = v.model || ''
-}
-// 切换器双数据源的边界判定/文案：内存 versions（本会话重新生成）优先，其次持久 variant（历史恢复/编辑重发）
-const verLocal = m => Array.isArray(m.versions) && m.versions.length > 1
-const canSwitchPrev = m => verLocal(m) ? (m.vIndex || 0) > 0 : (m.variantIndex || 1) > 1
-const canSwitchNext = m => verLocal(m)
-  ? (m.vIndex || 0) < m.versions.length - 1
-  : (m.variantIndex || 1) < (m.variantCount || 1)
-const verLabel = m => verLocal(m)
-  ? `${(m.vIndex || 0) + 1}/${m.versions.length}`
-  : `${m.variantIndex || 1}/${m.variantCount || 1}`
+// 多版本快照/切换口径在 ./versions.js（纯模块），这里只转出。
+export { snapshotVersion, applyVersion, verLocal, canSwitchPrev, canSwitchNext, verLabel } from './versions.js'
 
-// ==================== 目标模式的状态口径 ====================
-// 形状对齐 DSH 的目标：一个跨轮自动推进的目标 + 一个阶段，没有验收标准、没有人工确认、
-// 没有逐条核验、没有倒计时。用户的动作只剩三个：改目标原文、停止/继续、删除。
-// 摘要条、右栏/移动详情面、目标卡三处共用同一套词与同一份判据：各处各写一遍必然漂移
-// （同一条目标，条子说一个词、卡里说另一个词就是那种）。入参一律是目标视图模型本身，不读任何 .value。
-// 后端状态：QUEUED/RUNNING/PAUSED/VERIFYING/WAITING_APPROVAL/
-// WAITING_EVENT/ACHIEVED/FAILED/CANCELLED。老行的其余状态读取时已归一。
-/** 不再往下推的那几档：详情面转只读，条子也不再露 */
-const GOAL_ENDED = ['ACHIEVED', 'CANCELLED', 'FAILED', 'ENDED_INCOMPLETE']
-/** 还归用户管的几档：条子在这些档上出现（暂停/等待也是「用户可以接着处理」的活目标） */
-const GOAL_LIVE = ['QUEUED', 'RUNNING', 'PAUSED', 'VERIFYING', 'WAITING_APPROVAL', 'WAITING_EVENT']
-/** 条子可见的范围：FAILED 也要能看见（否则用户没有入口点「继续」把预算/核验失败的目标救回来） */
-const GOAL_VISIBLE = [...GOAL_LIVE, 'FAILED']
-/** 正在往前的几档：暂停/等待不算「在跑」，但都还是活目标 */
-const GOAL_MOVING = ['QUEUED', 'RUNNING', 'VERIFYING', 'WAITING_APPROVAL', 'WAITING_EVENT']
-/** 「已让位」不是独立状态，而是暂停的一种成因：用户插话/提问把后台轮挤开了，答完会自动接回 */
-const goalPreemptedOf = g => !!g && g.status === 'PAUSED' && g.endReason === 'preempted'
-
-const goalTerminalOf = g => !!g && GOAL_ENDED.includes(g.status)
-const goalBarVisibleOf = g => !!g && GOAL_VISIBLE.includes(g.status)
-const goalPhraseOf = g => {
-  const s = g && g.status
-  if (g && g.phase === 'COMPLETION_CHECK') return '确认中的目标'
-  if (GOAL_MOVING.includes(s)) return '进行中的目标'
-  if (s === 'PAUSED') return goalPreemptedOf(g) ? '已让位的目标' : '已暂停的目标'
-  if (s === 'ACHIEVED') return '已完成的目标'
-  if (GOAL_ENDED.includes(s)) return '已结束的目标'
-  return ''
-}
-const goalStateLabelOf = g => {
-  const s = g && g.status
-  if (g && g.stale && GOAL_LIVE.includes(s)) return '待恢复'
-  if (g && g.phase === 'COMPLETION_CHECK') return '确认中'
-  if (s === 'VERIFYING') return '核验中'
-  if (s === 'WAITING_APPROVAL') return '待确认'
-  if (s === 'WAITING_EVENT') return '等待中'
-  if (s === 'QUEUED' || s === 'RUNNING') return '进行中'
-  if (s === 'PAUSED') return goalPreemptedOf(g) ? '已让位' : '已暂停'
-  if (s === 'ACHIEVED') return '已完成'
-  if (s === 'FAILED') return '未完成'
-  if (s === 'CANCELLED' || s === 'ENDED_INCOMPLETE') return '已取消'
-  return ''
-}
-const goalStateClassOf = g => {
-  const s = g && g.status
-  if (g && g.stale && GOAL_LIVE.includes(s)) return 'paused'
-  if (GOAL_MOVING.includes(s)) return 'running'
-  if (s === 'PAUSED') return 'paused'
-  if (s === 'ACHIEVED') return 'achieved'
-  if (s === 'FAILED') return 'failed'
-  if (s === 'CANCELLED' || s === 'ENDED_INCOMPLETE') return 'cancelled'
-  return ''
-}
-/** 条子上那一行轮次：只说自动续跑已经跑到第几轮。
- *  安全上限（maxRounds）是兜底机制、不是给用户的预算，不对用户展示——到了上限由停因那行说。 */
-const goalRoundLineOf = g => {
-  if (!g) return ''
-  const round = Number(g.round) || 0
-  if (round <= 0) return '准备开始'
-  return `第 ${round} 轮`
-}
-/** 停下来的原因：只说「为什么在这儿停住」，与用户自己按的暂停分开说（后者不给原因行）。
- *  轮数上限那条只在真停住（PAUSED）时才说：继续跑之后 endReason 清掉之前，这句话不该挂在一个正在跑的目标上。 */
-const goalBlockReasonOf = g => {
-  if (!g) return ''
-  const reason = g.endReason || ''
-  if (reason === 'round-limit') {
-    return g.status === 'PAUSED' ? `已到自动推进上限（${goalRoundLineOf(g)}），先停在这里` : ''
-  }
-  if (reason === 'blocked') return `受阻：${String(g.blockedReason || '').trim() || '助手报告目标无法继续'}`
-  if (reason === 'budget') return '已达到本次目标的预算上限，先停在这里'
-  if (reason === 'no-progress') return '连续几轮没有实质进展，先停在这里'
-  if (reason === 'verification-failed') return '连续提交的证据都没通过核验，先停在这里'
-  if (reason === 'completion-unconfirmed') return '连续完成检查仍未提交完成或剩余项，先停在这里'
-  if (reason === 'orphaned') return '上一次执行中断，已停下；可以继续恢复'
-  if (reason === 'turn-failed' && g.blockedReason) return `这一轮没跑完：${String(g.blockedReason).trim()}`
-  return ''
-}
-/** 摘要条的悬浮行：条子放不下的那些字（目标原文、轮次、后端给的那句提示、等待原因、停因）一次给全 */
-const goalBarTitleOf = g => {
-  if (!g) return ''
-  return [g.objective, goalRoundLineOf(g), g.hint, g.waitingReason, goalBlockReasonOf(g)].filter(Boolean).join('\n')
-}
-/** 条子第二行那句话：先给「这句答完自动继续」这类提示，再说等待谁、最后说为什么停。
- *  触屏与 PC 同一条判据——两处各拼一份，同一条目标就会在两端说出两句不同的话。 */
-const goalBarMetaOf = g => {
-  if (!g) return ''
-  return [g.hint, g.waitingReason, goalBlockReasonOf(g)].filter(Boolean).join(' · ')
-}
-const goalCanPauseOf = g => !!g && GOAL_MOVING.includes(g.status)
-const goalCanResumeOf = g => !!g && (g.status === 'PAUSED' || g.status === 'FAILED' || (g.stale && GOAL_LIVE.includes(g.status)))
-const goalCanEditOf = g => !!g && (GOAL_LIVE.includes(g.status) || g.status === 'FAILED')
-/** 取消：只要还在推进（含未完成）就能结束它并留痕；终态不再给这个动作 */
-const goalCanCancelOf = g => !!g && (GOAL_VISIBLE.includes(g.status) || g.status === 'QUEUED' || g.status === 'RUNNING')
-/** 删除记录：只有终态可删（取消与删除是两件事，见 design/mockups/goal-mode-ux） */
-const goalCanClearRecordOf = g => !!g && GOAL_ENDED.includes(g.status)
-/** 目标原文版本：v1 是初版；改过一次后条子与终态卡都要说清当前读的是第几版 */
-const goalVersionLabelOf = g => {
-  if (!g) return ''
-  return 'v' + (Number(g.objectiveVersion) || 0) + 1
-}
-/** 进度细条：取后端预算百分比；没有预算口径时按轮次占比兜底，都没有就不画 */
-const goalProgressPercentOf = g => {
-  const b = g && g.budget
-  if (!b) return null
-  const pct = Number(b.percent)
-  return Number.isFinite(pct) ? Math.max(0, Math.min(100, Math.round(pct * 100))) : null
-}
-/** 终态卡挂在「设为目标」那条回声下：已完成/未完成/已取消都留一张，删除记录后由 sessionGoal=null 一并消失 */
-const goalTerminalCardOf = g => !!g && (g.status === 'ACHIEVED' || g.status === 'FAILED' || g.status === 'CANCELLED' || g.status === 'ENDED_INCOMPLETE') && !(g.status === 'CANCELLED' && g.endReason === 'cleared')
-/** 终态卡的标题词：与状态词同一套，不再另起一套「成功/失败」 */
-const goalTerminalTitleOf = g => {
-  const s = g && g.status
-  if (s === 'ACHIEVED') return '目标已完成'
-  if (s === 'FAILED') return '目标未完成'
-  if (s === 'CANCELLED' || s === 'ENDED_INCOMPLETE') return '目标已取消'
-  return ''
-}
-/** 终态卡下面那句：说清「留下了什么」，避免用户以为取消把东西也删了 */
-const goalTerminalNoteOf = g => {
-  const s = g && g.status
-  const rounds = Number(g && g.budget && g.budget.rounds) || Number(g && g.round) || 0
-  if (s === 'ACHIEVED') return rounds > 0 ? `共 ${rounds} 轮完成，过程与产物都保留` : '过程与产物都保留'
-  if (s === 'FAILED') return '停在未完成：改一下目标就能接着跑；删除记录只撤下这张卡'
-  if (s === 'CANCELLED' || s === 'ENDED_INCOMPLETE') return rounds > 0 ? `共 ${rounds} 轮后取消，历史与过程保留` : '已取消，历史与过程保留'
-  return ''
-}
-/** 完成申请的核验结果那一句：只在这份事实面上出现，两端（详情卡 / 回声悬浮）同一个出口 */
-const goalOutcomeLineOf = g => {
-  const o = g && g.outcome
-  if (!o) return ''
-  if (o.state === 'COMPLETED') {
-    const n = (o.evidence || []).length
-    return n > 0 ? `证据已核验（${n} 条）` : '已完成'
-  }
-  if (o.state === 'CANCELLED') return o.reason === 'cleared' ? '记录已删除' : '已取消'
-  if (o.remaining && o.remaining.length) return `未完成 ${o.remaining.length} 项`
-  return ''
-}
-/** 回声气泡那颗胶囊的状态词。
- *  <p>只给「这一条回声就是当前那个目标」说状态：库里那列存的是 goalId，旧目标的态没有读端，
- *  换过目标之后旧回声退回只标身份——不拿别的目标的态去给这一行编一个状态。
- *  <p>goalId 为空（乐观气泡那几秒、服务端还没回目标号）同样不给词，只给身份。 */
-const goalEchoStateOf = (g, goalId) => {
-  if (!g || !goalId || g.goalId !== goalId) return null
-  const label = goalStateLabelOf(g)
-  return label ? { label, cls: goalStateClassOf(g) } : null
-}
-/** 回声的悬浮行：命令原文（界面上不再露出 /goal 那串字）+ 条子放不下的那些数 */
-const goalEchoTipOf = (g, goalId) => {
-  const head = '/goal 目标指令：这一句被设成了本会话的目标，助手会自己接着推进直到宣布完成'
-  if (!g || !goalId || g.goalId !== goalId) return head
-  return [head, goalRoundLineOf(g), g.hint, goalBlockReasonOf(g), goalOutcomeLineOf(g)].filter(Boolean).join('\n')
-}
+import {
+  goalPreemptedOf, goalTerminalOf, goalBarVisibleOf, goalPhraseOf, goalStateLabelOf, goalStateClassOf, goalRoundLineOf, goalBlockReasonOf, goalBarTitleOf, goalBarMetaOf, goalCanPauseOf, goalCanResumeOf, goalCanEditOf, goalCanCancelOf, goalCanClearRecordOf, goalVersionLabelOf, goalProgressPercentOf, goalTerminalCardOf, goalTerminalTitleOf, goalTerminalNoteOf, goalOutcomeLineOf, goalEchoStateOf, goalEchoTipOf
+} from './deepState.js'
 
 // ==================== 交付包（产物清单的聚合口径） ====================
-/* 一组产物收成一个交付包（有入口、有分组、有体量），卡片与抽屉都吃这一份；
- * 目标模式再在包上面加版本与验收，普通问答只少这两样，形状不许另起一套。 */
+// 聚合逻辑在 ./delivery.js（纯模块，可直接 Node 测试）；这里只转出，消费方导入路径不变。
+export {
+  deliveryTagOf, deliveryEntryOf, deliverySubjectOf, deliveryOf, deliveryCardOf
+} from './delivery.js'
 
-/** 产物在交付包里的角色：决定分组与卡片标签（入口会由 {@link deliveryOf} 改写） */
-export const deliveryTagOf = filename => {
-  const name = String(filename || '')
-  if (/^(robots\.txt|sitemap\.xml|favicon\.(svg|ico|png))$/i.test(name)) return '站点文件'
-  if (/\.(svg|ico|webmanifest)$/i.test(name) || /\.xml$/i.test(name)) return '站点文件'
-  if (/\.html?$/i.test(name)) return '页面'
-  if (/\.(md|markdown|pdf|docx|txt)$/i.test(name)) return '文档'
-  return '文件'
-}
-/** 主入口：index.html → README → 任一 html → 第一件（没有入口也允许，不是所有交付都有站点） */
-export const deliveryEntryOf = files => {
-  const list = files || []
-  return list.find(f => /^index\.html?$/i.test(String(f.filename || ''))) ||
-    list.find(f => /^readme\.(md|markdown|txt)$/i.test(String(f.filename || ''))) ||
-    list.find(f => /\.html?$/i.test(String(f.filename || ''))) ||
-    list[0] || null
-}
-/** 交付包名的主语：目标原文/问题去掉指令词与后半句（"做一个问渠官网，…" → "问渠官网"） */
-export const deliverySubjectOf = text => {
-  let head = String(text || '').split(/[，,。；;：:\n]/)[0].trim()
-  for (let i = 0; i < 3; i++) {
-    head = head.replace(/^(请|帮我|帮忙|给我|做一个|做个|写一个|写个|生成|搭建|创建|设计|实现)/, '').trim()
-  }
-  return head.slice(0, 24)
-}
-/**
- * 产物清单 → 交付包视图（卡片、抽屉、H5 汇总同吃这一份）。
- *
- * <p>meta 由调用方给：{@code name / versionLabel / round / stateLabel / badgeTone / approved /
- * turnIds / anchorKey / scope / shared}。单文件也能成包——聊天里要不要把它画成卡片由调用方定。
- */
-export const deliveryOf = (files, meta = {}) => {
-  // 分享页的产物没有 url（只有按 token 现换的 seq），登录态产物没有 seq；两者都算有效条目
-  const raw = (files || []).filter(f => f && (f.url || f.seq != null))
-  if (!raw.length) return null
-  const withTag = raw.map(f => ({ ...f, tag: deliveryTagOf(f.filename) }))
-  const entry = deliveryEntryOf(withTag)
-  if (entry) entry.tag = '入口'
-  const total = withTag.reduce((s, f) => s + (Number(f.size) || 0), 0)
-  const keyOf = f => f
-    ? (f.id != null ? 'id:' + f.id : (f.seq != null ? 'seq:' + f.seq : (f.url || 'name:' + f.filename)))
-    : ''
-  const pages = withTag.filter(f => f.tag === '页面' && (!entry || keyOf(f) !== keyOf(entry)))
-  const docs = withTag.filter(f => f.tag === '文档')
-  const site = withTag.filter(f => f.tag === '站点文件')
-  const other = withTag.filter(f => f.tag === '文件')
-  const groups = [
-    { key: 'entry', label: '入口', files: entry ? [entry] : [], closed: false },
-    { key: 'pages', label: '内容页', files: pages, closed: false },
-    { key: 'docs', label: '文档', files: docs, closed: false },
-    { key: 'site', label: '站点文件', files: site, closed: true },
-    { key: 'other', label: '其他', files: other, closed: true }
-  ].filter(g => g.files.length)
-  return {
-    ...meta,
-    entry,
-    files: withTag,
-    fileCount: withTag.length,
-    sizeLabel: fmtSize(total),
-    pageCount: pages.length,
-    siteCount: site.length,
-    groups,
-    turnIds: meta.turnIds || [],
-    anchorKey: meta.anchorKey || '',
-    stateLabel: meta.stateLabel || '',
-    badgeTone: meta.badgeTone || ''
-  }
-}
-
-/** 生成态投影：实现移入纯模块 artifactPending，便于 Node 单测；这里保留同一条引用 */
 export { artifactPendingOf } from './artifactPending'
 
-/** 交付包是否值得支一张卡：现在单件也成卡，只要包里有文件 */
-export const deliveryCardOf = d => (d && Array.isArray(d.files) && d.files.length ? d : null)
 
 export {
-  TOOL_LABELS, TOOL_DESCS, bareToolName, toolLabel, toolDesc, toolCallsView, executedCount,
-  toolDuration, toolRunning, consultChatView, consultNameOf, rememberAgents, extendTimelineText, askUserView,
-  isDispatchTool, dispatchTaskOf, spawnAnchorOf, subagentRunsOf, stepBriefOf,
-  extendTimelineProcess, procOpen, toggleProc, procSlice, pushTimelineTool, pushTimelineArtifact, pushTimelineSteer,
-  pushTimelineThink, extendTimelineThink, thinkSlice, thinkPeek, thinkGrowing, thinkSegOpen, toggleThinkSeg, ensureThinkSegment,
-  restoreTimeline, TOOL_BRIEF_KEYS, oneLine,
-  clusterize, clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterProcCount,
-  clusterKinds, clusterTitle, clusterHeadKind, clusterLiveText, CLUSTER_KIND_DONE, CLUSTER_KIND_LIVE,
-  clusterAutoOpen, clusterLiveRows, groupHasBar, noteText, noteTag, noteOpen, noteGrowing, toggleNote, notePeek,
-  tailNotesTag, tailNotesPeek, tailNotesGrowing, tailOpen, toggleTail,
-  turnAnswerText, turnProcessRows, turnSteerRows, turnBodyRows, turnOpen, toggleTurn, turnShow, turnWarn, turnExpandable, turnHead, turnTitle, turnElapsedMs, turnWaitMs,
+  toolCallsView,
+  turnHead, turnShow, turnToggleable, turnTitle, turnElapsedMs, turnWaitMs, turnPrepMs,
   resumedStartAt, earlierStart,
-  turnTop, turnToggleable,
-  durZh,
-  toolBrief, prettyIo, LIVE_TAIL_CHARS, liveOutput, groupRunning, groupHasError,
-  toolCardOpen, toggleToolCard, openDispatchCard,
-  fanHasBoard, fanHead, fanTitle, fanRowState, fanBudget, fanRun, runBoardText,
-  mergeDoneToolCalls, nowTick, ensureTick, holdTick, stopTick, alignTick, toolSearchQueries,
-  retrievalLineTitle,
-  THINK_CAPS, REASONING_LEVELS, THINK_LEVEL_ON, levelLabel, fmtWindow,
-  usageCtxTokens, usageTip,
-  groupSources, externalOrigin, sourceName,
-  fmtSourceScore, scoreTitle, fmtSize, histItemTitle, histItemDigest, fmtMsgTime, errorBrief, agentBadgeOf,
-  degradationItems, degradationWarn,
-  pasteTitle, pasteSub, isPastedText, PASTE_TEXT_BASE,
-  snapshotVersion, applyVersion, verLocal, canSwitchPrev, canSwitchNext, verLabel,
+  turnTop,
+  fmtSize,
+  PASTE_TEXT_BASE,
   goalTerminalOf, goalBarVisibleOf, goalPhraseOf, goalStateLabelOf, goalStateClassOf,
   goalBlockReasonOf, goalBarTitleOf, goalBarMetaOf, goalRoundLineOf,
   goalCanPauseOf, goalCanResumeOf, goalCanEditOf, goalCanCancelOf, goalCanClearRecordOf,

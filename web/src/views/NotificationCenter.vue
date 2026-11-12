@@ -544,4 +544,9 @@ onUnmounted(() => {
   .nc-search { flex: 1; min-width: 180px; }
   .nc-select { width: 140px; }
 }
+
+/* H5-13：≤1024 页签热区 44px（开关属于紧凑控件，不在此列） */
+@media (max-width: 1024px) {
+  .nc-tab { min-width: 44px; min-height: 44px; }
+}
 </style>

@@ -11,8 +11,8 @@
 // 失败静默保留旧状态；首次未加载成功时 loaded=false，消费方据此不显示任何引导
 // （宁可不引导，不误报——绝不能给已配好的存量用户弹出假引导）。
 import { computed, reactive, ref } from 'vue'
-import { getUserPreference, listAvailableModels, listProviders } from '../api.js'
-import { isAdminSync, menuHasPath } from './auth.js'
+import { getUserPreference, listAvailableModels, listExecutors, listProviders } from '../api.js'
+import { isAdminSync, menuHasPath, profileSync } from './auth.js'
 
 const TTL_MS = 15000
 
@@ -21,6 +21,7 @@ export const setupGuide = reactive({
   chatModels: [],         // [{ ref, displayName, providerName }]
   embeddingCount: 0,
   defaultModel: '',       // /user/preference 的 defaultModel 原始引用
+  executors: [],          // 本机执行器清单（含 online）：标准档引导用
   providers: [],          // [{ name, typeCounts }]：仅可管理供应商的用户可见，用于区分空态
   providersKnown: false   // true=已成功拿到供应商列表（含空数组）；false=未获取/无权限
 })
@@ -37,6 +38,12 @@ export const pendingCount = computed(() => (chatReady.value ? 0 : 1) + (defaultR
 
 // ---------- 可选层判定（知识库） ----------
 export const embeddingReady = computed(() => setupGuide.embeddingCount > 0)
+
+// ---------- 可选层判定（工具调用：本机执行器） ----------
+// 只在标准档（个人/小团队本机部署）提示；企业档多为服务器部署，本机执行器不是必选项。
+export const executorVisible = computed(() => profileSync() === 'standard')
+export const executorOnlineCount = computed(() => setupGuide.executors.filter(e => e && e.online).length)
+export const executorReady = computed(() => executorOnlineCount.value > 0)
 
 // 能否自行登记供应商：没有「智能体」菜单的用户只能看到联系管理员的说明
 export const canManageProviders = computed(() => Boolean(isAdminSync() || menuHasPath('/agents')))
@@ -66,9 +73,10 @@ let inflight = null // 并发去重：AppLayout force 与页面 TTL 刷新同时
 async function fetchOnce() {
   try {
     const known = Boolean(isAdminSync() || menuHasPath('/agents'))
-    const [groups, prefRes] = await Promise.all([
+    const [groups, prefRes, execRes] = await Promise.all([
       listAvailableModels(),
-      getUserPreference()
+      getUserPreference(),
+      executorVisible.value ? listExecutors().catch(() => null) : Promise.resolve(null)
     ])
     const chatModels = []
     let embeddingCount = 0
@@ -80,6 +88,7 @@ async function fetchOnce() {
     }
     setupGuide.chatModels = chatModels
     setupGuide.embeddingCount = embeddingCount
+    setupGuide.executors = (execRes && Array.isArray(execRes.data)) ? execRes.data : []
     setupGuide.defaultModel = (prefRes && prefRes.data && prefRes.data.defaultModel) || ''
     // 供应商列表只为区分空态：仅在没有聊天模型时拉，且 5 分钟内不重复拉
     // （/provider 会带用量与引用统计，不能跟着 15s TTL 频繁请求）

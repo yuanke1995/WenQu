@@ -353,7 +353,7 @@ export interface WorkflowRun {
 
 /** SSE 事件帧外壳：content 是字符串（结构化载荷为「字符串套 JSON」，SDK 已尽力解一层） */
 export interface NativeFrame {
-  /** 事件名（token/thinking/tool_status/artifact/ask_user/plan_approval/done/error…，契约只增不删） */
+  /** 事件名（token/thinking/tool_status/artifact/ask_user/deep_plan_approval/done/error…，契约只增不删） */
   type: string;
   content?: string | null;
   sessionId?: string;
@@ -433,7 +433,7 @@ export interface ApprovalCard {
   [k: string]: unknown;
 }
 
-/** plan_approval 卡片（人在回路·执行计划） */
+/** deep_plan_approval 卡片（人在回路·执行计划） */
 export interface PlanApprovalCard {
   planApprovalId: string;
   /** 计划正文（步骤清单，结构以后端为准） */
@@ -481,11 +481,11 @@ export interface NativeStreamHandlers {
   onApprovalRequired?: (card: ApprovalCard) => void;
   /** plan 事件：整份计划（结构以后端为准） */
   onPlan?: (plan: unknown) => void;
-  /** plan_delta 事件：计划流式增量 */
+  /** deep_plan_delta 事件：计划流式增量 */
   onPlanDelta?: (delta: string) => void;
   onPlanApproval?: (card: PlanApprovalCard) => void;
-  /** plan_cancelled / plan_superseded */
-  onPlanTerminal?: (type: "plan_cancelled" | "plan_superseded", payload: unknown) => void;
+  /** deep_plan_cancelled / deep_plan_superseded */
+  onPlanTerminal?: (type: "deep_plan_cancelled" | "deep_plan_superseded", payload: unknown) => void;
   onTodo?: (payload: unknown) => void;
   onRetrieved?: (payload: unknown) => void;
   onUsage?: (payload: unknown) => void;

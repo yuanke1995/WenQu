@@ -181,4 +181,9 @@ onMounted(async () => {
   .sh-foot { margin: 20px 0 16px; padding-top: 12px; }
   .sh-brand { display: inline-flex; align-items: center; min-height: 44px; }
 }
+
+/* H5-13：≤1024 品牌链接补 44px 热区 */
+@media (max-width: 1024px) {
+  .sh-brand { display: inline-flex; align-items: center; min-height: 44px; }
+}
 </style>

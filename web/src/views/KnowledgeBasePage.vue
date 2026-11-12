@@ -6,7 +6,7 @@
         <span class="head-hint-plain">文档的容器，检索按库隔离</span>
       </div>
       <div class="head-acts">
-        <a-input-search v-model:value="search" placeholder="搜索知识库、描述…" allow-clear style="width:200px" />
+        <a-input-search ref="searchRef" v-model:value="search" placeholder="搜索知识库、描述…" allow-clear style="width:200px" />
         <a-radio-group v-model:value="view" size="small" button-style="solid">
           <a-radio-button value="grid"><appstore-outlined /></a-radio-button>
           <a-radio-button value="table"><unordered-list-outlined /></a-radio-button>
@@ -100,7 +100,7 @@
               </div>
               <span class="menu-wrap" @click.stop>
                 <a-dropdown :trigger="['click']">
-                  <button class="app-icon-btn"><more-outlined /></button>
+                  <button class="app-icon-btn" title="更多操作" aria-label="更多操作"><more-outlined /></button>
                   <template #overlay>
                     <a-menu @click="({ key }) => onCardMenu(key, kb)">
                       <a-menu-item key="probe">试检索</a-menu-item>
@@ -240,7 +240,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { useRouter } from 'vue-router'
 import {
@@ -356,10 +356,15 @@ const filtered = computed(() => {
   return arr
 })
 
+const searchRef = ref(null)
 onMounted(() => {
   load()
   refreshSetupGuide()  // 未配向量模型时在页头给出添加入口（TTL 去重，通常直接复用侧栏已拉到的状态）
   ensureAuth().then(me => { myUid.value = me.user || '' }).catch(() => {})
+  // antd Input.Search 的图标按钮不接收 aria-label：挂载后补一个可及名称（H5-10）
+  nextTick(() => {
+    searchRef.value?.$el?.querySelector('.ant-input-search-button')?.setAttribute('aria-label', '搜索知识库')
+  })
 })
 
 async function load () {
@@ -643,4 +648,10 @@ function lastUsed (kb) {
 .t-desc { font-size: 10.5px; color: var(--app-text3); margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 300px; }
 .t-act { display: inline-flex; gap: 2px; }
 :deep(.ant-table-row) { cursor: pointer; }
+/* H5 P2：窄屏主操作热区统一到 44px（图标按钮也补宽），桌面尺寸不变 */
+@media (max-width: 1024px) {
+  :deep(.ant-btn), :deep(.ant-dropdown-trigger) { min-width: 44px; min-height: 44px; }
+  .app-btn { min-height: 44px; }
+  .app-link-btn { min-height: 44px; display: inline-flex; align-items: center; }
+}
 </style>

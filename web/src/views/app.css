@@ -370,3 +370,14 @@ html[data-leave='pull'] .app-root {
     transform-origin: calc(100% - 24px) calc(var(--sat, 0px) + 24px);
   }
 }
+
+/* H5 P2：≤1024 触屏/窄桌面统一主操作热区 44px（≥1025 桌面尺寸不变） */
+@media (max-width: 1024px) {
+  .app-btn { min-height: 44px; }
+  .app-link-btn { min-height: 44px; display: inline-flex; align-items: center; }
+  .app-icon-btn { min-width: 44px; min-height: 44px; }
+  /* 项目页内嵌聊天壳的共用控件（子组件，页面 scoped 样式够不到） */
+  .m-ch-btn, .perm-pill, .agent-pill, .ci-attach { min-width: 44px; min-height: 44px; }
+  /* 输入区附件键在各聊天壳里尺寸不一致，触屏统一兜底（组件 scoped 样式优先级更高） */
+  .app-icon-btn.ci-attach { min-width: 44px !important; min-height: 44px !important; }
+}
