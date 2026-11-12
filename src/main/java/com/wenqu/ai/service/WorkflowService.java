@@ -276,7 +276,6 @@ public class WorkflowService {
             WorkflowDsl dsl = parseDsl(dslText);
             List<String> errors = validator.validate(dsl);
             if (!errors.isEmpty()) throw new BizException("工作流校验未通过：" + String.join("；", errors));
-            checkSubagentAgentCycle(dsl, row.getId());
             assertCompilable(dsl);
             row.setDsl(dslText.trim());
         }
@@ -567,7 +566,6 @@ public class WorkflowService {
         WorkflowDsl dsl = parseDsl(row.getDsl());
         List<String> errors = validator.validate(dsl);
         if (!errors.isEmpty()) throw new BizException("工作流校验未通过，无法发布：" + String.join("；", errors));
-        checkSubagentAgentCycle(dsl, row.getId());
         assertCompilable(dsl);
         int version = nextVersion(row.getId());
         WorkflowVersion v = new WorkflowVersion();
@@ -638,7 +636,6 @@ public class WorkflowService {
         List<String> errors = validator.validate(dsl);
         if (!errors.isEmpty()) throw new BizException("版本 v" + targetVersion + " 的工作流定义已不符合当前校验规则，无法回滚："
                 + String.join("；", errors));
-        checkSubagentAgentCycle(dsl, row.getId());
         int version = nextVersion(row.getId());
         WorkflowVersion v = new WorkflowVersion();
         v.setId(UUID.randomUUID().toString());
@@ -784,29 +781,6 @@ public class WorkflowService {
             if ("approval".equals(n.getType())) {
                 throw new BizException(triggerName + "不支持人工审核节点（节点「" + n.getId()
                         + "」）：审核需要人在回路的交互面，请在画布调试运行中处理，或从发布版本里移除该节点");
-            }
-        }
-    }
-
-    /**
-     * 编译闸前置（防环）：subagent 节点引用的智能体若<b>绑定了本工作流</b>，就是
-     * 智能体→工作流→智能体→工作流 的直接自环——保存/发布当场拦截并指名，不让「画得出、
-     * 跑起来互相递归到防环上限才报错」的问题留到运行时（复用编译闸前置先例 1c98ce4c 的口径）。
-     * 跨工作流的间接环由运行入口的嵌套深度上限兜住（{@link #runForAgent}），这里只拦
-     * 最直白、也最容易无意画出来的那一种。
-     */
-    private void checkSubagentAgentCycle(WorkflowDsl dsl, String selfWorkflowId) {
-        if (selfWorkflowId == null || selfWorkflowId.isBlank() || dsl.getNodes() == null) return;
-        for (WorkflowDsl.Node n : dsl.getNodes()) {
-            if (!"subagent".equals(n.getType()) || n.getConfig() == null) continue;
-            Object agentIdRaw = n.getConfig().get("agentId");
-            String agentId = agentIdRaw == null ? "" : String.valueOf(agentIdRaw).trim();
-            if (agentId.isEmpty()) continue;
-            com.wenqu.ai.model.Agent agent = agentService.get(agentId);
-            if (agent != null && selfWorkflowId.equals(agent.getWorkflowId())) {
-                throw new BizException("校验未通过：子智能体节点「" + n.getId() + "」引用的智能体「"
-                        + agent.getName() + "」已绑定本工作流——这会形成 智能体→工作流→智能体 的相互递归，"
-                        + "请换用别的智能体，或解绑该智能体的这条工作流");
             }
         }
     }

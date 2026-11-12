@@ -80,7 +80,6 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
     private final TenantMapper tenantMapper;
     private final ConfigService configService;
     private final ResourceVisibilityService resourceVisibilityService;
-    private final com.wenqu.ai.mapper.WorkflowMapper workflowMapper;
     private final RoleService roleService;
     /** 工具注册中心：保存工具黑名单时逐个核对名字真存在（认不出直接拒，与权限档位码同口径） */
     private final com.wenqu.ai.agent.tool.ToolRegistry toolRegistry;
@@ -131,7 +130,6 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         m.put("subAgentIds", "可委派的子智能体");
         m.put("subagentMode", "被委派时的执行方式");
         m.put("queryParams", "检索开关覆盖（是否重排）");
-        m.put("workflowId", "绑定工作流");
         VERSION_FIELDS = Collections.unmodifiableMap(m);
     }
 
@@ -589,8 +587,6 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         // 被咨询时的执行形态（null=跟随平台默认档）
         if (b.containsKey("subagentMode")) uw.set(Agent::getSubagentMode, a.getSubagentMode());
         if (b.containsKey("isDefault")) uw.set(Agent::getIsDefault, a.getIsDefault());
-        // M4：绑定的工作流（chatflow）；空串/null = 解绑（显式置空，NOT_NULL 策略下 updateById 不管）
-        if (b.containsKey("workflowId")) uw.set(Agent::getWorkflowId, a.getWorkflowId());
         // 检索开关覆盖（rerank.enabled；可清空：null = 全部继承全局设置）
         if (b.containsKey("queryParams")) uw.set(Agent::getQueryParams, a.getQueryParams());
         uw.set(Agent::getUpdateTime, a.getUpdateTime());
@@ -787,26 +783,8 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
             }
         }
         if (body.containsKey("isDefault")) a.setIsDefault(toTri(body.get("isDefault")));
-        // 绑定工作流（chatflow）——非空时校验「存在 + 对当前用户可读 + 已发布」，
-        // 未发布直接拒绝：绑定后对话才报错不如配置时就说清楚（fail-loud，不做运行时静默回退）
-        if (body.containsKey("workflowId")) a.setWorkflowId(assertBindableWorkflow(body.get("workflowId")));
         if (body.containsKey("queryParams")) a.setQueryParams(asText(body.get("queryParams"), 2000));
         return a;
-    }
-
-    /** 可绑定的工作流 id：空/null = 解绑；非空必须是存在、可读且已发布的工作流 */
-    private String assertBindableWorkflow(Object v) {
-        String id = asText(v, 50);
-        if (id == null) return null;
-        var wf = workflowMapper.selectById(id);
-        if (wf == null) throw new BizException("工作流不存在：" + id);
-        if (!resourceVisibilityService.canRead(principal(), wf.getUid())) {
-            throw new BizException(403, "无权绑定该工作流");
-        }
-        if (!"published".equals(wf.getStatus())) {
-            throw new BizException("工作流「" + wf.getName() + "」尚未发布：请先在画布发布，再绑定到智能体");
-        }
-        return id;
     }
 
     /**
@@ -1117,7 +1095,6 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         uw.set(Agent::getSubAgentIds, raw(cfg.get("subAgentIds")));
         uw.set(Agent::getSubagentMode, raw(cfg.get("subagentMode")));
         uw.set(Agent::getQueryParams, raw(cfg.get("queryParams")));
-        uw.set(Agent::getWorkflowId, raw(cfg.get("workflowId")));
         uw.set(Agent::getUpdateTime, LocalDateTime.now());
         mapper.update(null, uw);
     }

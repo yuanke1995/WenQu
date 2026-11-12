@@ -1,5 +1,7 @@
 package com.wenqu.ai.service;
 
+import com.wenqu.ai.config.ConfigKeys;
+
 import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.dto.ChatRequest;
 import lombok.RequiredArgsConstructor;
@@ -82,9 +84,8 @@ public class ChatAttachmentService {
      * 在气泡里回显、并在编辑重发时凭 fileId 原样带走。体积取自上传侧落盘的元信息（{@link ChatUploadService#stat}），
      * 不在这里重读文件。
      * <p>空列表返回 null（不落库这一列），与「本轮没有附件」同义。
-     * <p><b>为什么单独一条出口</b>：附件元信息要写进用户消息的那一行，但落库发生在两条互不相干的路径上
-     * （框架引擎 {@code AgentscopeChatEngine} 与工作流 {@code ChatflowBridge}），两处各写一遍取体积的
-     * 逻辑迟早漂移。共用这一个方法，两条路径都拿同一份口径。
+     * <p><b>为什么单独一条出口</b>：附件元信息要写进用户消息的那一行；取体积的逻辑收在这里，
+     * 调用点不各自重写，口径不漂移。
      */
     public String metasJson(List<ChatRequest.Attachment> attachments, String uid) {
         if (attachments == null || attachments.isEmpty()) return null;
@@ -111,7 +112,7 @@ public class ChatAttachmentService {
     public List<PreparedAttachment> prepare(List<ChatRequest.Attachment> attachments, String uid) {
         List<PreparedAttachment> out = new ArrayList<>();
         if (attachments == null || attachments.isEmpty()) return out;
-        int maxChars = Math.max(500, configService.getInt("chat.attachmentMaxChars", 8000));
+        int maxChars = Math.max(500, configService.getInt(ConfigKeys.CHAT_ATTACHMENT_MAX_CHARS, 8000));
         for (ChatRequest.Attachment a : attachments) {
             String name = sanitizeName(a.getName());
             try {
@@ -133,7 +134,7 @@ public class ChatAttachmentService {
      */
     public String buildContextText(List<PreparedAttachment> prepared) {
         if (prepared == null || prepared.isEmpty()) return "";
-        int totalMax = Math.max(1000, configService.getInt("chat.attachmentTotalChars", 24000));
+        int totalMax = Math.max(1000, configService.getInt(ConfigKeys.CHAT_ATTACHMENT_TOTAL_CHARS, 24000));
         StringBuilder sb = new StringBuilder();
         int used = 0;
         List<PreparedAttachment> dropped = new ArrayList<>();

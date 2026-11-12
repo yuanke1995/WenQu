@@ -24,13 +24,12 @@ import java.util.LinkedHashMap;
 
 /**
  * 问答运行时门面：一轮问答的<b>外壳</b>都在这里——
- * 会话轮级互斥、断线续跑总线、身份/偏好装载、分派（工作流旁路 / AgentScope 框架引擎）。
+ * 会话轮级互斥、断线续跑总线、身份/偏好装载、分派（单一 AgentScope 框架引擎）。
  * <p>推理循环、工具派发、上下文压缩、计划工具面已全部由 AgentScope 框架引擎（{@code agentx} 包）
- * 原生接管；本类不再持有任何生成侧状态，只保留两件框架不提供的事：
- * ① 轮级外壳（互斥、把手、看门狗、断线接流，经 {@link ChatRunRuntime}）；
- * ② 工作流旁路（{@code ChatflowBridge}）——绑定工作流的智能体由 end 节点出参当回答。
+ * 原生接管；本类不再持有任何生成侧状态，只保留轮级外壳（互斥、把手、看门狗、断线接流，
+ * 经 {@link ChatRunRuntime}）。
  * <p>检索执行在 {@code HybridRetrievalService}/{@code RerankService}，卡片在
- * {@code HitlDecisionService}，会话状态在框架侧——本类只回答「这一轮谁来做、从哪条路做」。
+ * {@code HitlDecisionService}，会话状态在框架侧——本类只回答「这一轮谁来做」。
  *
  * @author yuanke
  */
@@ -64,7 +63,7 @@ public class ChatService {
      * 只在载荷不超过 1500 字时解析——大计划不整段塞进回放响应。
      */
     private static final Set<String> LEDGER_OBJECT_EVENT_TYPES = Set.of(
-            "artifact", "ask_user", "approval_required", "plan", "plan_approval",
+            "artifact", "ask_user", "approval_required", "plan", "deep_plan_approval",
             "agent_delegated", "agent_consulted", "subagent_route");
 
     /**
@@ -152,15 +151,7 @@ public class ChatService {
     private final ProjectService projectService;
     /** 智能体配置（4.1）：对话页下拉选中后，按智能体覆盖模型/提示词/工具/知识库范围 */
     private final AgentService agentService;
-    /** 游客分享的 chatflow 安全闸：判定绑定工作流是否只含只读节点 */
-    private final com.wenqu.ai.mapper.WorkflowMapper workflowMapper;
     private final ModelRegistryService modelRegistryService;
-    /**
-     * 工作流服务（智能体绑定工作流时取用）。走 ObjectProvider <b>惰性</b>获取而不是直接注入：
-     * {@code WorkflowService → WorkflowEngine → ChatService} 已是一条依赖链（子智能体节点复用问答管线），
-     * 这里再直接注入就成环（Spring Boot 3 默认禁止循环依赖，启动直接失败）。惰性取用把这个
-     * 「只有绑定了工作流的智能体才用得到」的反向依赖推迟到调用时，依赖图保持单向。
-     */
 
     /** 会话事件账本：结构性事件按写入顺序留痕（工具/人在回路/编排/轮终态/停止）。旁路语义，不进模型输入 */
     private final SessionEventService sessionEventService;
@@ -182,17 +173,8 @@ public class ChatService {
     private final com.wenqu.ai.agent.subagent.SubAgentBranchRuntime branchRuntime;
 
     /**
-     * chatflow 桥：智能体绑定了工作流的那条路——每轮把问题送进图，end 节点出参就是回答。
-     * 这一条路没有生成流，所以桥完全不碰任何运行时状态袋，只吃通道与会话落库。
-     */
-    private final com.wenqu.ai.agent.chatflow.ChatflowBridge chatflow;
-
-
-    /**
-     * 问答外壳与工作流桥：常规问答已全部交给 AgentScope 框架引擎（见 {@code agentx} 包），
-     * 本类保留承担「轮级外壳」（会话轮级互斥、断线续跑、身份与个人覆盖装载）以及工作流（Chatflow）旁路
-     * ——绑定工作流的智能体由工作流 end 节点的出参当回答，这条路由工作流执行、是 AgentScope 不提供的
-     * 个性化能力，经 {@link #runWorkflowBoundTurn} 处理。
+     * 问答外壳：常规问答已全部交给 AgentScope 框架引擎（见 {@code agentx} 包），
+     * 本类保留承担「轮级外壳」（会话轮级互斥、断线续跑、身份与个人覆盖装载）。
      */
     private final com.wenqu.ai.engine.ChatEngineFactory chatEngines;
     private final UserRoleService userRoleService;
@@ -211,130 +193,8 @@ public class ChatService {
         warmUpToolSchemas();
     }
 
-    /**
-     * 这个智能体是否由工作流产出回答（绑定是智能体的属性；未指定智能体/默认入口一律不算）。
-     * <p>读不到绑定时按「没绑」处理并 fail-loud：宁可让分派照常选引擎，也不要把一轮钉死在旧运行时上——
-     * 猜错的两种后果里，「图被跳过」是看得见的错，「引擎不该换却没换」只是少了一半灰度。
-     */
-    private boolean workflowBoundOf(String agentId) {
-        if (agentId == null || agentId.isBlank()) return false;
-        try {
-            com.wenqu.ai.model.Agent a = agentService.get(agentId);
-            return a != null && a.getWorkflowId() != null && !a.getWorkflowId().isBlank();
-        } catch (Exception e) {
-            log.warn("[FAIL-LOUD] 智能体的工作流绑定读不出来，本轮按常规分派: agent={} {}", agentId, e.toString());
-            return false;
-        }
-    }
 
-    /**
-     * 游客轮绑定的工作流是否只读安全：节点全在 start/end/llm/retrieval/condition/loop/template。
-     * 未绑定、查不到、解析失败一律按「不安全」处理（fail-closed），只有明确只读才放行。
-     */
-    private boolean guestSafeBoundWorkflow(com.wenqu.ai.model.Agent agent) {
-        try {
-            if (agent == null || agent.getWorkflowId() == null || agent.getWorkflowId().isBlank()) return false;
-            com.wenqu.ai.model.Workflow row = workflowMapper.selectById(agent.getWorkflowId());
-            return com.wenqu.ai.service.workflowtool.WorkflowToolService.isGuestSafe(row);
-        } catch (Exception e) {
-            log.warn("[FAIL-LOUD] 游客工作流安全判定失败（按不可用处理）: {}", e.toString());
-            return false;
-        }
-    }
 
-    /**
-     * {@link ChatflowBridge} 跑那张图 —— <b>之后不再有任何推理逻辑</b>。
-     *
-     * <p>出口仍用本轮那条 emitter，深度思考由入口处裁决好传入（工作流节点用自己的模型）。
-     */
-    private void runWorkflowBoundTurn(ChatCommand cmd, com.wenqu.ai.engine.RunChannel channel) {
-        final SseEmitter emitter = channel.emitter();
-        final String sessionId = cmd.getSessionId();
-        final String question = cmd.getQuestion();
-        final List<String> userImages = cmd.getUserImages();
-        final List<ChatRequest.Attachment> attachments = cmd.getAttachments();
-        final List<ChatRequest.Mention> mentions = cmd.getMentions();
-        final String agentId = cmd.getAgentId();
-        final String userId = cmd.getUserId();
-        final boolean guestMode = cmd.isGuestMode();
-        final boolean regenerate = cmd.isRegenerate();
-        final String replaceMessageId = cmd.getReplaceMessageId();
-        final String editVariantGroup = cmd.getEditVariantGroup();
-        final boolean planMode = cmd.isPlanMode();
-        final boolean branchTurn = cmd.branchTurn();
-
-        final long startTime = System.currentTimeMillis();
-        // 本轮身份：取自 chat() 入口登记的把手，随消息落库挂上——逐气泡的「过程」按它取这一轮的事件账本
-        final String turnId = runtime.turnIdOf(sessionId);
-        // 个人偏好一次取齐（工作流的 memoryModel 用）
-        final com.wenqu.ai.model.User prefUser = loadPrefUser(userId);
-        // 本轮生效模型（请求覆盖 > 会话已存覆盖 > 个人默认）。解析链与框架引擎共用 resolveTurnModel，
-        // 撞上一个已经不能用的模型时它负责决定「清掉会话选择并说明」还是「不发起、告诉用户去哪儿改」。
-        final TurnModel turnModel = resolveTurnModel(cmd);
-        if (turnModel.unusableMessage() != null) {
-            rejectTurn(emitter, cmd, sessionId, userId, turnId, turnModel.unusableMessage());
-            return;
-        }
-        final String resolvedModel = turnModel.ref();
-        if (resolvedModel.isBlank()) {
-            rejectTurn(emitter, cmd, sessionId, userId, turnId,
-                    "未指定模型：请在对话右上角选择模型，或在个人设置中配置默认模型");
-            return;
-        }
-        // 本轮全部降级/兜底事件（fail-loud：随 done 下发，前端渲染警示条；code 去重，同类只报一次）。
-        // 声明在智能体解析之前：会话锁定的智能体若已不可用，需要就地登记提示而不是静默改用全局配置
-        List<Map<String, String>> degradations = new ArrayList<>();
-        Set<String> degradedCodes = new HashSet<>();
-        if (turnModel.fallbackNotice() != null) {
-            runtime.addDegradation(degradations, degradedCodes, "modelFallback", turnModel.fallbackNotice());
-        }
-        // @ 智能体：不换成它作答，而是要求它被咨询一次。
-        // 用户显式点名的咨询不受平台侧编排开关影响：这条是用户指令。
-        final Agent forcedConsult = resolveDelegatedAgent(mentions, degradations, degradedCodes);
-        final Agent agent = resolveTurnAgent(agentId, degradations, degradedCodes);
-        final boolean consultSelf = forcedConsult != null && agent != null
-                && forcedConsult.getId().equals(agent.getId());
-        if (forcedConsult != null && !consultSelf) {
-            log.info("[AGENT] 会话 {} 本轮强制咨询 @ 提及的智能体 {}（{}）",
-                    sessionId, forcedConsult.getId(), forcedConsult.getName());
-            emitAgentDelegated(emitter, forcedConsult, sessionId);
-        } else if (consultSelf) {
-            runtime.addDegradation(degradations, degradedCodes, "consultSelf",
-                    "你 @ 的就是本轮作答的助手，无需再咨询自己，已直接按它的资料回答");
-        }
-        if (agent != null) {
-            log.info("[AGENT] 本轮使用智能体 {}（{}）", agent.getId(), agent.getName());
-            // 会话行记一笔"最近作答方"（供分享页按智能体列会话与访客回收用）
-            sessionService.recordTurnAgent(sessionId, agent.getId(), agent.getName());
-        }
-        // 游客分享 + chatflow：只放行只读工作流（B 档）。含副作用节点的一律拒绝本轮，
-        // 不放行等于把业务流程的执行权借给匿名访问者（工具路径另有 provider 侧同口径过滤）
-        if (guestMode && agent != null && !guestSafeBoundWorkflow(agent)) {
-            rejectTurn(emitter, cmd, sessionId, userId, turnId,
-                    "这个智能体绑定的工作流包含副作用节点，游客暂不可使用（请登录后再试）");
-            return;
-        }
-        // 智能体绑定工作流（chatflow）——回答由工作流产出，整条不走常规检索/生成链路。
-        // 图片/附件在此路径下不参与（工作流只接收文本入参），显式登记为降级提示而不是静默丢弃。
-        if ((userImages != null && !userImages.isEmpty()) || (attachments != null && !attachments.isEmpty())) {
-            runtime.addDegradation(degradations, degradedCodes, "workflowInputIgnored",
-                    "该智能体由工作流驱动，本轮的图片/附件不会传入工作流（工作流当前只接收文本入参）");
-        }
-        if (planMode) {
-            runtime.addDegradation(degradations, degradedCodes, "planWorkflowUnsupported",
-                    "该智能体由工作流驱动，计划模式不生效，本轮按工作流直接执行");
-        }
-        // memoryModel 用本轮已经取到的那份个人偏好（工作流节点用自己的模型，长期记忆按个人默认提取）
-        chatflow.runWorkflowChat(sessionId, question, userId,
-                prefUser == null ? null : prefUser.getDefaultModel(),
-                emitter, startTime, degradations, degradedCodes,
-                agent, guestMode, branchTurn, regenerate, replaceMessageId, editVariantGroup,
-                null,
-                // 同上：上传归属者（免登录分享时是访客）
-                chatAttachments.metasJson(attachments, cmd.uploadOwnerUid()),
-                (mentions == null || mentions.isEmpty()) ? null : com.alibaba.fastjson2.JSON.toJSONString(mentions),
-                cmd.getWfDepth());
-    }
 
     /**
      * 启动期单线程预热工具 schema：@Tool 回调的 inputSchema 由 victools/Jackson 首次
@@ -394,7 +254,6 @@ public class ChatService {
                       KnowledgeRetrievalTool knowledgeRetrievalTool,
                       AskUserTools askUserTools,
                       AgentService agentService,
-                      com.wenqu.ai.mapper.WorkflowMapper workflowMapper,
                       KnowledgeBaseService knowledgeBaseService,
                       com.wenqu.ai.mapper.UserMapper userMapper,
                       ModelRegistryService modelRegistryService,
@@ -403,7 +262,6 @@ public class ChatService {
                       SessionEventService sessionEventService,
                       ChatRunBus chatRunBus,
                       ChatRunRuntime runtime,
-                      com.wenqu.ai.agent.chatflow.ChatflowBridge chatflow,
                       com.wenqu.ai.engine.ChatEngineFactory chatEngines,
                       com.wenqu.ai.service.contentsafety.ContentSafetyService contentSafety,
                       UserRoleService userRoleService,
@@ -415,7 +273,6 @@ public class ChatService {
         this.knowledgeRetrievalTool = knowledgeRetrievalTool;
         this.askUserTools = askUserTools;
         this.agentService = agentService;
-        this.workflowMapper = workflowMapper;
         this.knowledgeBaseService = knowledgeBaseService;
         this.userMapper = userMapper;
         this.userConfigService = userConfigService;
@@ -424,7 +281,6 @@ public class ChatService {
         this.sessionEventService = sessionEventService;
         this.chatRunBus = chatRunBus;
         this.runtime = runtime;
-        this.chatflow = chatflow;
         this.chatEngines = chatEngines;
         this.contentSafety = contentSafety;
         this.userRoleService = userRoleService;
@@ -537,13 +393,9 @@ public class ChatService {
                 // 把手挂在会话上——约 5 分钟后被看门狗补发一条假「已到整轮时间上限」、runStatus 长达
                 // 一个宽限期报「在跑」），现在两个分支各自跑完都收，异常路径的 catch 也收。
                 try {
-                    // 绑定了工作流的智能体<b>不进任何一条推理循环</b>：那条路由工作流 end 节点的出参当回答
-                    // （ChatflowBridge 的口径是「整条不走常规检索/生成，人设/库界/工具都不参与」）。
-                    if (workflowBoundOf(cmd.getAgentId())) {
-                        runWorkflowBoundTurn(cmd, dispatchChannel);
-                    } else {
-                        chatEngines.select(cmd).chat(cmd, dispatchChannel);
-                    }
+                    // 单一问答路径：AgentScope 框架引擎。chatflow 绑定已退役，工作流只以「工具」或
+                    // 自动化入口存在，不再接管某条智能体的整轮回答。
+                    chatEngines.select(cmd).chat(cmd, dispatchChannel);
                     // 框架引擎同步跑完整轮：方法返回即本轮已终结（待办/计划批准期间引擎是在循环里
                     // 阻塞等待的，不会提前返回）。必须在这里摘轮次把手 + 收掉总线 run——总线 run 的
                     // turnAlive 判的是「TurnRegistry 里的把手是否还是本轮」，不摘就恒为真：会话被永久
@@ -551,9 +403,8 @@ public class ChatService {
                     TurnRegistry.removeHandle(sessionId);
                     chatRunBus.finish(sessionId);
                 } catch (Exception e) {
-                    // 引擎/桥自己会把可预期的失败收成 error+done 帧（failLoud / ChatflowBridge 三支），
-                    // 走到这里的是它们没接住的崩坏——不收口的话用户对着输入框干转到 300s 看门狗兜底，
-                    // 把手与总线 run 也悬到宽限 sweep 才清。补发与 failLoud 同形的 error+done，再统一收尾
+                    // 引擎会把可预期的失败收成 error+done 帧；走到这里的是它没接住的崩坏——
+                    // 不收口的话用户对着输入框干转到 300s 看门狗兜底，把手与总线 run 也悬到宽限 sweep 才清。
                     log.error("[FAIL-LOUD] 本轮问答引擎执行异常: session={} turn={}", sessionId, turnId, e);
                     try {
                         dispatchChannel.emit(com.wenqu.ai.engine.RunEventType.ERROR,

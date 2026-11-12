@@ -4,6 +4,7 @@ import com.wenqu.ai.agent.chat.ChatCommand;
 import com.wenqu.ai.service.AuditService;
 import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.config.ConfigDefaults;
+import com.wenqu.ai.config.ConfigKeys;
 import com.wenqu.ai.dto.ChatRequest;
 import com.wenqu.ai.dto.ResultJson;
 import com.wenqu.ai.dto.ShareChatRequest;
@@ -108,11 +109,15 @@ public class ShareController {
     /**
      * 在资源归属人的租户里跑一段：游客请求没有身份，未绑定时租户拦截器不拼谓词（读全平台）、
      * 插入按 DB 默认落 default。按发布者租户显式绑定后，读写的租户口径与登录态一致。
-     * 取不到归属（脏数据/成员被删）时不强行绑定——退回未绑定态，不阻断访问。
+     * <p><b>取不到归属时 fail-closed</b>：不再退回未绑定态——那等于让游客请求跨租户读全平台。
+     * 对外表现与分享失效一致（404），不泄露账号/租户状态。
      */
     private <T> T inOwnerTenant(String uid, java.util.function.Supplier<T> body) {
         String tenant = uid == null || uid.isBlank() ? null : tenantService.tenantOf(uid);
-        return tenant == null || tenant.isBlank() ? body.get() : com.wenqu.ai.util.TenantContext.as(tenant, body);
+        if (tenant == null || tenant.isBlank()) {
+            throw new BizException(404, "分享链接无效或已停止访问");
+        }
+        return com.wenqu.ai.util.TenantContext.as(tenant, body);
     }
 
     /**
@@ -448,12 +453,12 @@ public class ShareController {
 
     /** 本轮附件数量上限 */
     private int maxAttachmentsPerMessage() {
-        return Math.max(1, configService.getInt("chat.maxAttachmentsPerMessage", 5));
+        return Math.max(1, configService.getInt(ConfigKeys.CHAT_MAX_ATTACHMENTS_PER_MESSAGE, 5));
     }
 
     /** 单个附件体积上限（MB） */
     private int maxAttachmentMb() {
-        return Math.max(1, configService.getInt("chat.maxAttachmentMb", 15));
+        return Math.max(1, configService.getInt(ConfigKeys.CHAT_MAX_ATTACHMENT_MB, 15));
     }
 
     /**
@@ -695,10 +700,10 @@ public class ShareController {
     @Operation(summary = "游客裁决计划卡", description = "批准（{approved:true,plan:可选编辑后全文}）/ "
             + "退回重出（{revise:true,plan:修改意见}）/ 继续对话（{supersede:true,plan:修改意见}）/ "
             + "拒绝（{approved:false}）。归属按「卡片行 → 会话 → 访客」两跳认。")
-    @PostMapping("/{token}/plan-approval/{planApprovalId}")
+    @PostMapping("/{token}/deep/plan-approval/{planApprovalId}")
     public ResultJson guestResolvePlan(
             @Parameter(description = "分享令牌") @PathVariable("token") String token,
-            @Parameter(description = "计划批准 ID（plan_approval 事件下发）")
+            @Parameter(description = "计划批准 ID（deep_plan_approval 事件下发）")
             @PathVariable("planApprovalId") String planApprovalId,
             @Parameter(description = "访客 ID（客户端随机）") @RequestParam("visitorId") String visitorId,
             @RequestBody Map<String, Object> body,
@@ -728,7 +733,7 @@ public class ShareController {
 
     @Operation(summary = "游客待批计划（恢复）", description = "刷新或换设备后按会话取回仍挂在 PENDING 的计划卡（含版本链）。"
             + "归属先按访客认会话，再列该会话的卡。")
-    @GetMapping("/{token}/plan-approval/pending")
+    @GetMapping("/{token}/deep/plan-approval/pending")
     public ResultJson guestPendingPlans(
             @Parameter(description = "分享令牌") @PathVariable("token") String token,
             @Parameter(description = "会话 ID") @RequestParam("sessionId") String sessionId,

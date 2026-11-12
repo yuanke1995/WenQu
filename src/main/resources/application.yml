@@ -7,6 +7,12 @@ server:
     encoding:
       force-response: true
 
+# 部署形态：当前版本只支持单副本；profile 决定企业面是否出现（standard / enterprise）
+wenqu:
+  deployment:
+    mode: ${WENQU_DEPLOYMENT_MODE:single}
+    profile: ${WENQU_DEPLOYMENT_PROFILE:standard}
+
 spring:
   application:
     name: wenqu
@@ -39,10 +45,13 @@ spring:
       minimum-idle: ${DB_POOL_MIN_IDLE:10}
       connection-timeout: ${DB_POOL_TIMEOUT_MS:10000}
 
-  # 启动时自动执行 schema.sql 建表（CREATE TABLE IF NOT EXISTS，重复执行安全）
-  sql:
-    init:
-      mode: always
+  # 数据库结构由 Flyway 管理：空库首次启动执行 V1 基线；存量库 baseline 到 V1，不再重放历史清理 DML。
+  # 新增结构变更一律加 V2+ 迁移，不再改 V1、也不再让应用每次启动跑 schema.sql。
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    baseline-version: 1
 
   # Redis Stack（向量存储）
   data:

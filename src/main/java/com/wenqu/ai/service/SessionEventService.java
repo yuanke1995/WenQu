@@ -28,7 +28,7 @@ import java.util.Set;
  * 而这些过程只活在两条地方——SSE 流（断开即蒸发）和助手消息里的 JSON blob（只有终态快照，
  * 没有先后与耗时口径）。有了按写入顺序可枚举的事件行，停止/断线重连/过程回放才有共同的底座可挂。
  * <p>
- * 边界（刻意的）：<b>只服务回放与审计，不进模型输入</b>；正文与 token/thinking/plan_delta 这类
+ * 边界（刻意的）：<b>只服务回放与审计，不进模型输入</b>；正文与 token/thinking/deep_plan_delta 这类
  * 高频增量不落本表，仍由消息表承担。
  *
  * @author yuanke
@@ -47,8 +47,17 @@ public class SessionEventService {
     private final MessageMapper messageMapper;
     private final ConfigService configService;
 
+    /** 事件落库失败计数：只做告警可见性，不阻断问答（事件是回放旁路，不是回答内容） */
+    private final java.util.concurrent.atomic.AtomicLong appendFailures =
+            new java.util.concurrent.atomic.AtomicLong();
+
+    public long appendFailures() {
+        return appendFailures.get();
+    }
+
     /**
-     * 记一条事件。<b>写失败绝不影响问答</b>：吞掉异常只留一行 warn（与产物、站内通知那类旁路同口径）。
+     * 记一条事件。<b>写失败不影响问答，但必须可见</b>：返回 null + ERROR 日志 + 累计计数，
+     * 不再只留一行 warn 让数据残缺在监控里消失。
      * <p>开关 {@code trace.sessionEventEnabled} 默认开；关掉后一行都不写。
      */
     public Long append(String sessionId, String userId, String turnId, String type, String payload) {
@@ -93,7 +102,9 @@ public class SessionEventService {
             sessionEventMapper.insert(event);
             return event.getId();
         } catch (Exception e) {
-            log.warn("[EVENT] 会话事件落库失败（不影响问答）: type={} session={} {}", type, sessionId, e.getMessage());
+            long failures = appendFailures.incrementAndGet();
+            log.error("[ALERT][EVENT] 会话事件落库失败（累计 {} 次）type={} session={} {}",
+                    failures, type, sessionId, e.getMessage(), e);
             return null;
         }
     }

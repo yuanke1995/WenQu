@@ -1,10 +1,11 @@
 -- ============================================
--- 问渠 WenQu —— AI 智能体工作台 数据库表结构
+-- 问渠 WenQu —— AI 智能体工作台 数据库基线（Flyway V1）
 -- 数据库: wenqu_ai（库名经 DB_NAME 按环境配置；已有存量库改名需数据迁移）
 --
--- 存量库升级：无需手动执行 ALTER。启动时 SchemaMigrator 会解析本文件，
--- 自动为存量表补齐缺失的「列」与「索引」（幂等，失败仅告警不阻塞启动）；
--- 新表由 spring.sql.init 的 CREATE TABLE IF NOT EXISTS 创建。
+-- 本文件只在空库首次启动由 Flyway 执行一次；存量库由 baseline-on-migrate=true 标记为 V1，
+-- 不再重放。新增结构变更一律追加 V2+ 迁移，不改本文件。
+-- 文件中的退役清理语句只对空库执行，均为空操作；存量库不会重放。
+-- 存量库的列/索引补齐仍由 SchemaMigrator 读同一份文件做（只加不删，幂等）；
 -- 大表补索引耗时较久时，可用 ai-app.schema-auto-index=false 关闭索引自动补齐，改由运维在窗口期执行。
 -- ============================================
 
@@ -1385,8 +1386,8 @@ CREATE TABLE IF NOT EXISTS `c_ai_market_install_log` (
 
 -- ============================================
 -- 退役清理（全框架化 P3：技能与记忆改由文件系统 + 框架工具承载）
--- 本文件由 spring.sql.init 在每次启动时逐条执行，故这四条 DROP 是幂等的：表不存在就是空操作。
--- 为什么必须写在这里而不是「删掉建表语句就完事」：schema.sql 只管建表，存量库里已经存在的表
+-- V1 基线只在空库首次启动执行一次：这四条 DROP 对空库是空操作；存量库由 baseline-on-migrate 跳过本文件。
+-- 为什么必须写在这里而不是「删掉建表语句就完事」：V1 基线只管建表，存量库里已经存在的表
 --   不会因为语句被删而消失；而只要建表语句还在，删掉的表下次启动就被重建（实测踩过：16:45 手工
 --   DROP，16:47 重启后四张表原样复活、0 行挂着当僵尸表）。写显式 DROP 才能让新老库一起干净。
 -- 数据去向：技能正文 → 内置技能目录（classpath 随版本分发，启动时落盘到 user-data/skills-builtin）
@@ -1415,7 +1416,7 @@ DROP TABLE IF EXISTS `c_ai_rbac_shadow_diff`;
 -- 退役配置键清理（2026-10：全框架化收口 + 死键盘点）
 -- 这些键已从 defaults() / config-schema.json 删除，代码里没有任何读取点（rerank.model 例外：
 -- 它是 schema personalOnly 键，全局行按设计永远不会被读取）；存量库里的旧行只会让
--- 「改库能生效」的错觉继续存在，故每次启动幂等删除。新增键不要再往这里加——
+-- 「改库能生效」的错觉继续存在，故在基线上清一次（空库为空操作）。新增键不要再往这里加——
 -- 只有确认「无读取方」的退役键才进来。
 -- ============================================
 DELETE FROM `c_ai_config` WHERE `config_key` IN (
@@ -1462,7 +1463,7 @@ DELETE FROM `c_ai_config` WHERE `config_key` IN (
     -- 技能/记忆：面板与自研存储退役后留下的死配置
     -- 注意 skill.remoteAllowedHosts 不在此列：它是活配置（defaults() 登记、设置页可编辑，
     -- UserSkillStore/SkillController 真读它做 URL 安装白名单）。曾经误列进本名单，
-    -- 而本脚本由 spring.sql.init 在建连接池时执行、早于 ConfigService.ensureDefaults()，
+    -- 而本基线由 Flyway 在应用上下文启动前执行、早于 ConfigService.ensureDefaults()，
     -- 于是每次重启删行→ensureDefaults 按空默认值补回＝管理员白名单每次重启被清零（远程安装静默关闭）。
     -- 本键永久禁入退役名单：它是安全策略白名单，「设置页看不见/挪到工程参数分层」都不等于「无读取点」。
     'skill.injectMaxChars', 'skill.maxFileChars',
@@ -1508,7 +1509,7 @@ DELETE FROM `c_ai_config` WHERE `config_key` IN (
     'mcp.enabled', 'mcp.servers',
     -- 记忆向量化改为平台内置模型（个人层入口已下线）
     'memory.embeddingRef',
-    -- rerank.model 是 personalOnly（无全局层）：历史全局行永远不会被读取，每次启动清掉；
+    -- rerank.model 是 personalOnly（无全局层）：历史全局行永远不会被读取，基线上清掉；
     -- ensureDefaults 也已跳过 personalOnly，不会再种回来
     'rerank.model',
     -- 旧子智能体并行编排 / 访客共享会话
@@ -1520,7 +1521,7 @@ DELETE FROM `c_ai_config` WHERE `config_key` IN (
     'retrieval.relatedCount', 'chat.sampleQuestionsEnabled', 'chat.sampleQuestions',
     'agent.personalDefault', 'agent.permissionPreset.personalMax',
     -- 2026-11 设置页参数退役批次：以下键不再作为可编辑参数（值固定为 ConfigDefaults 常量，读取点直取常量），
-    -- 库里旧行每次启动幂等删除
+    -- 库里旧行在基线上清一次（空库为空操作）
     -- chat
     'chat.turnResumeScanMs', 'chat.maxImagesPerMessage', 'chat.maxImageMb', 'chat.maxQuestionChars', 'chat.uploadRetentionHours', 'chat.uploadCleanupIntervalMs', 'chat.agentscopeMaxIters', 'chat.sessionLogArchive.enabled', 'chat.sessionLogArchive.keepDays', 'chat.sessionLogArchive.cleanupIntervalMs', 'chat.agentscopeJournalRotateEvents', 'chat.agentscopeJournalRotateKeepDays', 'chat.goal.nextRoundDelayMs', 'chat.goal.maxCompletionChecks', 'chat.goal.maxVerifyFailures', 'chat.goal.maxRetries', 'chat.goal.maxRecoveries', 'chat.goal.retryBaseSeconds', 'chat.goal.retryMaxSeconds', 'chat.goal.softBudgetRatio', 'chat.goal.claimBatch', 'chat.goal.workers', 'chat.goal.initialTickDelayMs', 'chat.goal.tickMs', 'chat.goal.leaseSeconds', 'chat.goal.heartbeatStaleSeconds', 'chat.goal.staleGraceSeconds', 'chat.goal.verifyLocalFiles', 'chat.scratchRetentionHours', 'chat.scratchCleanupIntervalMs', 'chat.asyncWorkspaceMax',
     -- vision

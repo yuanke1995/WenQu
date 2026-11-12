@@ -1,5 +1,7 @@
 package com.wenqu.ai.service;
 
+import com.wenqu.ai.config.ConfigKeys;
+
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
@@ -503,7 +505,7 @@ public class TenantRequestService {
     // ==================== 自动开通 / SLA ====================
 
     private boolean autoApproveHit(String domain, String email) {
-        if (!configService.getBoolean("tenant.autoApprove.enabled", false)) return false;
+        if (!configService.getBoolean(ConfigKeys.TENANT_AUTO_APPROVE_ENABLED, false)) return false;
         String raw = configService.get("tenant.autoApprove.domains");
         if (raw == null || raw.isBlank()) return false;
         String candidate = domain;

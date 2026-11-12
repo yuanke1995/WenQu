@@ -42,8 +42,7 @@ import java.util.Set;
  * </ol>
  * <p>
  * 执行身份在<b>装配期</b>定死：工具回调跑在框架的工具线程上，ThreadLocal 身份（RequestUser）不可靠，
- * 故 mount 时按触发者 uid 现查部门/角色构造 {@link WorkflowService.Principal} 随闭包携带——
- * 与 ChatflowBridge 在流水线线程上取 {@code Principal.current()} 语义一致，只是换了个可靠的位置。
+ * 故 mount 时按触发者 uid 现查部门/角色构造 {@link WorkflowService.Principal} 随闭包携带。
  * 实例按 (uid, sessionId) 常驻且工具面在 build 期固化，同一实例内身份恒为同一人，无漂移窗口。
  *
  * @author yuanke
@@ -62,7 +61,7 @@ public class WorkflowToolService {
     /**
      * 工作流嵌套深度上限（含本次运行）：1=智能体轮直接调工作流、2=工作流的子智能体再调一层。
      * 与工作流事件链深 {@code WorkflowEventChainRegistry.MAX_CHAIN_DEPTH} 同档——
-     * 深一层就允许，再深一律拒绝。改动它要同时过一遍防环 E2E（工具路径 + chatflow 路径）。
+     * 深一层就允许，再深一律拒绝。改动它要同时过一遍防环 E2E（工具路径）。
      */
     public static final int MAX_WF_DEPTH = 2;
 

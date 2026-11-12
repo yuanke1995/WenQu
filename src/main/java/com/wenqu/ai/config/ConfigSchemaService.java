@@ -191,6 +191,39 @@ public class ConfigSchemaService {
     }
 
     /**
+     * schema 声明的基础默认值（存储层口径），供 {@code ConfigService.defaults()} 作为基座。
+     * <p>与 {@link #defStoredValue(String)} 的区别：这里额外收字符串/选择类字段，只用于“默认值底稿”；
+     * 启动对账仍用 {@code defStoredValue} 的旧口径，避免把动态 env 项误报成漂移。
+     */
+    public Map<String, String> storedDefaults() {
+        Map<String, String> out = new LinkedHashMap<>();
+        for (JSONObject j : rawFields) {
+            String key = j.getString("backendKey");
+            if (key == null || key.isBlank()) continue;
+            String type = j.getString("type");
+            String val = null;
+            if ("switch".equals(type)) {
+                Boolean d = j.getBoolean("def");
+                val = d == null ? null : String.valueOf(d);
+            } else if ("number".equals(type)) {
+                java.math.BigDecimal d = j.getBigDecimal("def");
+                if (d != null) {
+                    java.math.BigDecimal factor = j.getBigDecimal("factor");
+                    if (factor != null && factor.compareTo(java.math.BigDecimal.ZERO) != 0) {
+                        d = d.multiply(factor);
+                    }
+                    val = d.stripTrailingZeros().toPlainString();
+                }
+            } else {
+                Object raw = j.get("def");
+                if (raw instanceof String s) val = s;
+            }
+            if (val != null) out.put(key, val);
+        }
+        return out;
+    }
+
+    /**
      * schema 表单默认值折算到存储层口径：number 乘 factor（字段声明了才折算，未声明不折算），
      * switch 出 "true"/"false"；未登记 def 或非数值/开关类型返回 null。
      * <p>用途：启动对账比对 schema def 与 {@code ConfigService.defaults()} 是否同值——

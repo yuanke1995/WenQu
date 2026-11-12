@@ -199,6 +199,8 @@ public final class ConfigDefaults {
     // ---- 智能体内部参数 ----
     public static final int AGENT_MAX_TOOL_STEPS = 0;
     public static final int AGENT_VERSION_KEEP = 20;
+    /** 轮终 webhook 首发失败后的重试次数上限（与 c_ai_config 的 agentWebhook.retryMax 同源） */
+    public static final int AGENT_WEBHOOK_RETRY_MAX = 4;
 
     // ---- 评估与评测 ----
     public static final String AGENT_EVAL_GATE_MODE = "hint";

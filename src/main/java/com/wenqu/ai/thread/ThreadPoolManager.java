@@ -2,6 +2,9 @@ package com.wenqu.ai.thread;
 
 import lombok.extern.slf4j.Slf4j;
 
+import com.wenqu.ai.util.RequestUser;
+import com.wenqu.ai.util.TenantContext;
+
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -77,7 +80,7 @@ public class ThreadPoolManager {
             log.error("[ThreadPool] 队列已满，任务被丢弃: {}，{}", runnable.getClass().getName(), getPoolStatus());
             return false;
         }
-        pool.execute(runnable);
+        pool.execute(wrap(runnable));
         return true;
     }
 
@@ -87,7 +90,7 @@ public class ThreadPoolManager {
             log.error("线程池已关闭，无法提交任务");
             return null;
         }
-        return pool.submit(callable);
+        return pool.submit(wrap(callable));
     }
 
     // 提交Runnable（如需返回值可传入result）
@@ -96,7 +99,59 @@ public class ThreadPoolManager {
             log.error("线程池已关闭，无法提交任务");
             return null;
         }
-        return pool.submit(runnable, result);
+        return pool.submit(wrap(runnable), result);
+    }
+
+    /**
+     * 身份与租户随任务一起走。
+     *
+     * <p>本池的线程会被不同请求复用：提交侧捕获 {@link RequestUser} 快照与已绑定租户，
+     * 工作线程先清上下文再恢复，任务结束再清一次。少了这一步，异步落库/补写会以
+     * {@code SYSTEM} 身份运行，租户解析退化——要么按「未绑定」跨租户读写，要么把行落到 default。
+     */
+    private record Context(RequestUser.Snapshot user, String tenant) {
+    }
+
+    private static Context capture() {
+        return new Context(RequestUser.snapshot(), TenantContext.boundTenant());
+    }
+
+    private static Runnable wrap(Runnable task) {
+        Context ctx = capture();
+        return () -> {
+            RequestUser.clear();
+            TenantContext.clear();
+            try {
+                if (ctx.tenant() != null) TenantContext.bind(ctx.tenant());
+                try (AutoCloseable ignored = RequestUser.restore(ctx.user())) {
+                    task.run();
+                }
+            } catch (RuntimeException | Error e) {
+                throw e;
+            } catch (Exception e) {
+                throw new IllegalStateException("恢复请求上下文失败", e);
+            } finally {
+                RequestUser.clear();
+                TenantContext.clear();
+            }
+        };
+    }
+
+    private static <T> Callable<T> wrap(Callable<T> task) {
+        Context ctx = capture();
+        return () -> {
+            RequestUser.clear();
+            TenantContext.clear();
+            try {
+                if (ctx.tenant() != null) TenantContext.bind(ctx.tenant());
+                try (AutoCloseable ignored = RequestUser.restore(ctx.user())) {
+                    return task.call();
+                }
+            } finally {
+                RequestUser.clear();
+                TenantContext.clear();
+            }
+        };
     }
 
     // 优雅关闭线程池

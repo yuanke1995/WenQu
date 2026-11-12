@@ -2,6 +2,7 @@ package com.wenqu.ai.parser;
 
 import com.wenqu.ai.config.AppProperties;
 import com.wenqu.ai.config.ConfigDefaults;
+import com.wenqu.ai.config.ConfigKeys;
 import com.wenqu.ai.model.Chunk;
 import com.wenqu.ai.service.ConfigService;
 import com.wenqu.ai.service.VisionService;
@@ -427,7 +428,7 @@ public class DocxParser implements DocumentParser {
         }
 
         // 数量上限截断（防图片爆炸导致视觉描述数小时；配置保存即生效）
-        int maxImages = configService.getInt("chunk.maxImages", ConfigDefaults.CHUNK_MAX_IMAGES);
+        int maxImages = configService.getInt(ConfigKeys.CHUNK_MAX_IMAGES, ConfigDefaults.CHUNK_MAX_IMAGES);
         if (maxImages > 0 && imageCount[0] >= maxImages) {
             if (imageCount[0] == maxImages) {
                 log.warn("[{}] 图片数量达到上限 {}，后续图片不再提取描述", docId, maxImages);
@@ -522,7 +523,7 @@ public class DocxParser implements DocumentParser {
      */
     private int countImages(XWPFDocument document) {
         int total = 0;
-        int maxImages = configService.getInt("chunk.maxImages", ConfigDefaults.CHUNK_MAX_IMAGES);
+        int maxImages = configService.getInt(ConfigKeys.CHUNK_MAX_IMAGES, ConfigDefaults.CHUNK_MAX_IMAGES);
         Set<Long> seen = new HashSet<>();
         outer:
         for (IBodyElement element : document.getBodyElements()) {

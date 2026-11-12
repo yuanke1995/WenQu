@@ -15,8 +15,8 @@ import java.util.regex.Pattern;
  * 模型照抄进计划正文，用户批准的就不是「它给我做成什么样」，而是「它在沙盒里怎么落地文件」。
  * <p><b>两处各自管什么</b>：{@link #guidance()} 让模型不写；{@link #stripInternalPaths} 在模型仍写时
  * 保证用户看不见。兜底只作用于<b>权威稿</b>（计划卡正文、落库的 {@code plan} 列与版本链）——
- * 流式预览（{@code plan_delta}）是按字节切片的，逐片替换会把半截路径拼成乱码，
- * 而前端在 {@code plan_approval} 到达时以权威稿覆盖累积流式内容，所以预览段不处理，交给提示词。
+ * 流式预览（{@code deep_plan_delta}）是按字节切片的，逐片替换会把半截路径拼成乱码，
+ * 而前端在 {@code deep_plan_approval} 到达时以权威稿覆盖累积流式内容，所以预览段不处理，交给提示词。
  * <p>不剥工具名：正则猜「哪个词是工具名」要靠名单，名单必然随工具增减而漂移；工具名归提示词管。
  *
  * @author yuanke

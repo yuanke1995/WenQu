@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.config.ConfigDefaults;
+import com.wenqu.ai.config.ConfigKeys;
 import com.wenqu.ai.mapper.AiDocumentMapper;
 import com.wenqu.ai.mapper.GraphEntityMapper;
 import com.wenqu.ai.mapper.GraphExtractMapper;
@@ -491,7 +492,7 @@ public class GraphRagService {
         AiDocument doc = k.getDocId() == null ? null : docMapper.selectById(k.getDocId());
         if (doc == null || !kbId.equals(doc.getKbId())) throw new BizException(404, "知识块不存在");
         String content = k.getContent() == null ? "" : k.getContent();
-        int max = Math.max(500, configService.getInt("graphrag.chunkViewMaxChars", 4000));
+        int max = Math.max(500, configService.getInt(ConfigKeys.GRAPHRAG_CHUNK_VIEW_MAX_CHARS, 4000));
         boolean truncated = content.length() > max;
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("id", k.getId());

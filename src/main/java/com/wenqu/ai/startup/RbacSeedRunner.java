@@ -68,8 +68,7 @@ public class RbacSeedRunner implements ApplicationRunner {
             new String[]{"menu-members", "成员管理", "TeamOutlined", "/members", "40", "1"},
             new String[]{"menu-tenants", "租户与开通", "ApartmentOutlined", "/tenants", "45", "1"},
             new String[]{"menu-security", "安全与运维", "SafetyCertificateOutlined", "/security", "46", "1"},
-            new String[]{"menu-dashboard", "数据看板", "BarChartOutlined", "/dashboard", "50", "1"},
-            new String[]{"menu-evaluation", "检索评估", "ExperimentOutlined", "/evaluation", "60", "1"},
+            new String[]{"menu-evaluation", "质量", "ExperimentOutlined", "/quality", "50", "1"},
             new String[]{"menu-permissions", "权限管理", "SafetyOutlined", "/permissions", "70", "1"},
             new String[]{"menu-settings", "系统设置", "SettingOutlined", "/settings", "80", "1"}
     );
@@ -115,7 +114,6 @@ public class RbacSeedRunner implements ApplicationRunner {
             new String[]{"menu-agents-tab-mcp", "MCP 外部工具", "/agents?tab=mcp", "40", "menu-agents"},
             new String[]{"menu-agents-tab-workflow", "工作流", "/agents?tab=workflow", "50", "menu-agents"},
             new String[]{"menu-agents-tab-scheduled", "定时任务", "/agents?tab=scheduled", "60", "menu-agents"},
-            new String[]{"menu-agents-tab-eval", "评测", "/agents?tab=eval", "70", "menu-agents"},
             IDENTITY_TAB_MENU,
             SERVICE_ACCOUNT_TAB_MENU,
             AUDIT_TAB_MENU,
@@ -132,13 +130,16 @@ public class RbacSeedRunner implements ApplicationRunner {
      */
     private static final List<String> RETIRED_MENUS = List.of("menu-help", "menu-oidc-providers");
 
+    /** 质量页合并后隐藏的旧入口：保留菜单行/API 归属，只不再下发侧栏。 */
+    private static final List<String> HIDDEN_MENUS = List.of("menu-dashboard", "menu-agents-tab-eval");
+
     /** user 角色默认可见的内置菜单 id（个人资产类与问答类一致，默认对所有人开放） */
     private static final List<String> USER_MENUS =
             List.of("menu-chat", "menu-agents", "menu-market", "menu-knowledge", "menu-artifacts", "menu-stats",
-                    // 智能体的 7 个 Tab：按项绑定，进智能体即默认可见
+                    "menu-evaluation",
+                    // 智能体的 Tab：按项绑定，进智能体即默认可见（评测已并入「质量」页）
                     "menu-agents-tab-providers", "menu-agents-tab-agents", "menu-agents-tab-skills",
-                    "menu-agents-tab-mcp", "menu-agents-tab-workflow", "menu-agents-tab-scheduled",
-                    "menu-agents-tab-eval");
+                    "menu-agents-tab-mcp", "menu-agents-tab-workflow", "menu-agents-tab-scheduled");
 
     private final RoleMapper roleMapper;
     private final MenuMapper menuMapper;
@@ -224,6 +225,20 @@ public class RbacSeedRunner implements ApplicationRunner {
         // 内置 Tab 行只在缺失时插入，存量库那一行可能仍是旧 path/parent；
         // 这里做一次幂等同步（只改结构两列，不删角色绑定）。
         if (syncBuiltinTab(AUDIT_TAB_MENU)) seeded = true;
+        // 质量页合并：menu-evaluation 原地复用为「质量」（保留 id 与 API 归属），
+        // 旧「数据看板」菜单与智能体评测 Tab 保留行、只隐藏，避免删行连带丢 API 归属。
+        if (syncBuiltinMenu(new String[]{"menu-evaluation", "质量", "ExperimentOutlined", "/quality", "50", "1"})) {
+            seeded = true;
+        }
+        for (String mid : HIDDEN_MENUS) {
+            Menu m = menuMapper.selectById(mid);
+            if (m != null && (m.getVisible() == null || m.getVisible() != 0)) {
+                m.setVisible(0);
+                menuMapper.updateById(m);
+                seeded = true;
+                log.info("[RbacSeed] 已隐藏旧入口菜单 {}", mid);
+            }
+        }
         // user 角色基础菜单：按项补齐。已绑定的项不重复写，故对管理员的既有绑定零影响。
         Set<String> userMenuIds = new HashSet<>(roleMenuMapper.menuIdsOfRole("user"));
         List<String> userMenuAdded = USER_MENUS.stream().filter(userMenuIds::add).collect(Collectors.toList());
@@ -265,6 +280,28 @@ public class RbacSeedRunner implements ApplicationRunner {
         m.setSortOrder(sort);
         menuMapper.updateById(m);
         log.info("[RbacSeed] 已同步内置 Tab 菜单 {} -> {}（父 {}）", d[0], d[2], d[4]);
+        return true;
+    }
+
+    /** 幂等同步内置侧栏菜单的结构字段（名称/图标/路径/排序/可见性）；只改元数据，不碰角色绑定。 */
+    private boolean syncBuiltinMenu(String[] d) {
+        Menu m = menuMapper.selectById(d[0]);
+        if (m == null) return false;
+        int sort = Integer.parseInt(d[4]);
+        int visible = Integer.parseInt(d[5]);
+        boolean changed = !java.util.Objects.equals(m.getName(), d[1])
+                || !java.util.Objects.equals(m.getIcon(), d[2])
+                || !java.util.Objects.equals(m.getPath(), d[3])
+                || !java.util.Objects.equals(m.getSortOrder(), sort)
+                || !java.util.Objects.equals(m.getVisible(), visible);
+        if (!changed) return false;
+        m.setName(d[1]);
+        m.setIcon(d[2]);
+        m.setPath(d[3]);
+        m.setSortOrder(sort);
+        m.setVisible(visible);
+        menuMapper.updateById(m);
+        log.info("[RbacSeed] 已同步内置菜单 {} -> {}（{}）", d[0], d[3], d[1]);
         return true;
     }
 
@@ -363,7 +400,7 @@ public class RbacSeedRunner implements ApplicationRunner {
         seedPresetRole("readonly-admin", "只读管理员", "内置：全部页面可见，全部动作只读（写类端点 403）",
                 readonlyPerms, validMenuIds, validMenuIds);
         seedPresetRole("ops-admin", "运维管理员", "内置：运维域（巡检/追踪/审计/统计/索引维护），不碰业务配置",
-                opsPerms, java.util.Set.of("menu-dashboard", "menu-settings", "menu-audit-events", "menu-stats",
+                opsPerms, java.util.Set.of("menu-settings", "menu-audit-events", "menu-stats",
                         "menu-evaluation", "menu-security"), validMenuIds);
     }
 

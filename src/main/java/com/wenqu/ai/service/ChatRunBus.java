@@ -66,13 +66,12 @@ public class ChatRunBus {
      * 镜像给迟到者的「状态型」事件：只留最后一份值，随快照一起给（给它们发增量没有意义）。
      * <p>前端把 {@code snapshot.events} 按普通事件重放，所以这里存的必须是<b>事件原文的 content</b>，
      * 与实时下发时喂给回调的值同源（plan/todo/retrieved/usage/warn 是 JSON 串）。
-     * <p>compact_state 进镜像的理由与 goal_state 同一条：压缩是那二十多秒里唯一的进度说明，
+     * <p>compact_state 进镜像的理由与 deep_state 同一条：压缩是那二十多秒里唯一的进度说明，
      * 中途刷新的人只拿快照重建，不镜像就会接上一个「正在生成回答却一个字没有」的轮，
      * 而这条轮其实还在压缩。
      */
-    private static final List<String> MIRROR_TYPES =
-            List.of("plan", "todo", "retrieved", "usage", "warn", "goal_state", "compact_state",
-                    "runcode_progress");
+    /** 进断线镜像的事件名由 RunEventType 单点声明。 */
+    private static final java.util.Set<String> MIRROR_TYPES = com.wenqu.ai.engine.RunEventType.mirrorNames();
 
     /** 工具实时输出只保留尾部这么多字符（与前端 liveOutput 的展示上限同一个量级） */
     private static final int TOOL_OUTPUT_KEEP = 65_536;

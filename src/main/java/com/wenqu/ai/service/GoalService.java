@@ -21,6 +21,7 @@ import com.wenqu.ai.model.SessionEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -205,6 +206,9 @@ public class GoalService {
             GoalContinuation c = GoalContinuation.of(text);
             c.setObjectiveVersion(0);
             goal.setContinuationJson(c.toJson());
+            // 新会话直接 /deep：会话行由本方法兜底建在「发起人」名下。交给后台目标轮去建的话，
+            // 那里没有请求身份，占位会话会落到 system，用户打开自己刚起的执行会「无权访问」。
+            sessionService.ensureOwnedOrCreate(sessionId, uid);
             goalMapper.insert(goal);
             // 对话里留一行回声：换过目标之后，光靠 c_ai_goal 一行读不出「什么时候定了什么目标」
             echoGoalCommand(sessionId, goal.getId(), text);
@@ -230,6 +234,7 @@ public class GoalService {
     }
 
     /** 停止（DSH: pause）：停下自动续跑，状态与进度都留着；正在跑的目标轮会被打断。 */
+    @Transactional(rollbackFor = Exception.class)
     public Goal pause(String goalId, String uid, RunChannel channel) {
         Goal goal = own(goalId, uid);
         synchronized (lockFor(goalId)) {
@@ -254,6 +259,7 @@ public class GoalService {
     }
 
     /** 继续（DSH: resume）：从停下那一轮之后接着跑；受阻原因/结果一并清掉。 */
+    @Transactional(rollbackFor = Exception.class)
     public Goal resume(String goalId, String uid, RunChannel channel) {
         Goal goal = own(goalId, uid);
         synchronized (lockFor(goalId)) {
@@ -291,6 +297,7 @@ public class GoalService {
     }
 
     /** 改目标原文（DSH: edit）：版本递增；正在跑的下一轮用新原文，在飞那一轮不受影响。 */
+    @Transactional(rollbackFor = Exception.class)
     public Goal edit(String goalId, String uid, String objective, RunChannel channel) {
         Goal goal = own(goalId, uid);
         String text = normalizeObjective(objective);
@@ -336,6 +343,7 @@ public class GoalService {
 
     /** 取消（DSH: cancel）：结束这次推进并留痕——目标条收起，终态卡留在消息流里，
      *  过程账本与历史内容全部可回看。与「删除记录」分开：取消不是抹掉。 */
+    @Transactional(rollbackFor = Exception.class)
     public Goal cancel(String goalId, String uid, RunChannel channel) {
         Goal goal = own(goalId, uid);
         synchronized (lockFor(goalId)) {
@@ -353,6 +361,7 @@ public class GoalService {
     }
 
     /** 删除记录（DSH: delete）：只有终态可删；界面/回显一并消失，历史与已跑出来的内容仍留在会话里。 */
+    @Transactional(rollbackFor = Exception.class)
     public Goal deleteRecord(String goalId, String uid, RunChannel channel) {
         Goal goal = own(goalId, uid);
         synchronized (lockFor(goalId)) {
@@ -1049,7 +1058,7 @@ public class GoalService {
         round.setSummary(clip(summary, MAX_SUMMARY_CHARS));
         roundMapper.updateById(round);
         sessionEventService.append(goalSessionId(round.getGoalId()), goalUserId(round.getGoalId()),
-                turnId, round.getGoalId(), "goal_verify",
+                turnId, round.getGoalId(), "deep_verify",
                 JSON.toJSONString(Map.of(
                         "blocked", p.isBlocked(),
                         "summary", p.getSummary() == null ? "" : p.getSummary(),
@@ -1093,7 +1102,7 @@ public class GoalService {
             goal.setContinuationJson(c.toJson());
             goalMapper.updateById(goal);
             sessionEventService.append(goal.getSessionId(), goal.getUserId(), turnId, goal.getId(),
-                    "goal_note", JSON.toJSONString(Map.of(
+                    "deep_note", JSON.toJSONString(Map.of(
                             "stage", c.getStage(),
                             "plan", c.getPlan().size(),
                             "facts", c.getFacts().size(),
@@ -1180,7 +1189,7 @@ public class GoalService {
     }
 
     /**
-     * 前端视图模型（右栏、目标条、goal_state 帧共用同一份）。
+     * 前端视图模型（右栏、目标条、deep_state 帧共用同一份）。
      * <p>新增 phase/stale/budget/outcome/evidenceCount/lastEventId：前端据此区分「在跑」「等审批」
      * 「进程挂了待恢复」「证据核验通过」——不再靠 status 一档猜。
      */
@@ -1315,11 +1324,11 @@ public class GoalService {
 
     // ==================== 帧 ====================
 
-    /** goal_state：账本（带 goal_id）+ 通道或总线。 */
+    /** deep_state：账本（带 goal_id）+ 通道或总线。 */
     public void emitState(Goal goal, RunChannel channel) {
         String frame = JSON.toJSONString(view(goal));
         Long id = sessionEventService.append(goal.getSessionId(), goal.getUserId(), goal.getLastTurnId(),
-                goal.getId(), "goal_state", frame);
+                goal.getId(), "deep_state", frame);
         if (id != null) {
             goal.setLastEventId(id);
             try {
@@ -1331,19 +1340,19 @@ public class GoalService {
         }
         if (channel != null) {
             try {
-                channel.emit(RunEventType.GOAL_STATE, frame);
+                channel.emit(RunEventType.DEEP_STATE, frame);
             } catch (Exception e) {
                 log.warn("[GOAL] 目标态帧下发失败（不影响状态）: goal={} {}", goal.getId(), e.getMessage());
             }
             if (channel.emitter() instanceof com.wenqu.ai.service.CollectingSseEmitter) {
-                chatRunBus.publishMirrorToSession(goal.getSessionId(), "goal_state", frame);
+                chatRunBus.publishMirrorToSession(goal.getSessionId(), "deep_state", frame);
             }
         } else {
-            chatRunBus.publishMirrorToSession(goal.getSessionId(), "goal_state", frame);
+            chatRunBus.publishMirrorToSession(goal.getSessionId(), "deep_state", frame);
         }
     }
 
-    /** goal_turn：后台轮开跑（进账本不进镜像——它是帧不是状态）。 */
+    /** deep_turn：后台轮开跑（进账本不进镜像——它是帧不是状态）。 */
     public void emitTurn(Goal goal, int n, String turnId, RunChannel channel) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("goalId", goal.getId());
@@ -1353,15 +1362,15 @@ public class GoalService {
         m.put("reason", "continuation");
         String frame = JSON.toJSONString(m);
         sessionEventService.append(goal.getSessionId(), goal.getUserId(), turnId,
-                goal.getId(), "goal_turn", frame);
+                goal.getId(), "deep_turn", frame);
         if (channel != null) {
             try {
-                channel.emit(RunEventType.GOAL_TURN, frame);
+                channel.emit(RunEventType.DEEP_TURN, frame);
             } catch (Exception e) {
                 log.warn("[GOAL] 目标轮帧下发失败（不影响执行）: goal={} {}", goal.getId(), e.getMessage());
             }
         } else {
-            chatRunBus.publishToSession(goal.getSessionId(), "goal_turn", frame);
+            chatRunBus.publishToSession(goal.getSessionId(), "deep_turn", frame);
         }
     }
 
@@ -1525,7 +1534,7 @@ public class GoalService {
 
     private void appendOutcome(Goal goal, GoalOutcome outcome) {
         sessionEventService.append(goal.getSessionId(), goal.getUserId(), goal.getLastTurnId(),
-                goal.getId(), "goal_outcome", outcome.toJson());
+                goal.getId(), "deep_outcome", outcome.toJson());
     }
 
     // ==================== 内部：进展/预算/续跑上下文 ====================

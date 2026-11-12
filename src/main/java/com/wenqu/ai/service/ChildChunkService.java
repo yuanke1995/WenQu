@@ -2,6 +2,7 @@ package com.wenqu.ai.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wenqu.ai.config.ConfigDefaults;
+import com.wenqu.ai.config.ConfigKeys;
 import com.wenqu.ai.mapper.KnowledgeChildMapper;
 import com.wenqu.ai.mapper.KnowledgeMapper;
 import com.wenqu.ai.model.Knowledge;
@@ -48,7 +49,7 @@ public class ChildChunkService {
     private static final int MAX_CHILD_SIZE = 2000;
 
     private int childSize() {
-        return Math.max(MIN_CHILD_SIZE, Math.min(MAX_CHILD_SIZE, configService.getInt("parse.childSize", ConfigDefaults.PARSE_CHILD_SIZE)));
+        return Math.max(MIN_CHILD_SIZE, Math.min(MAX_CHILD_SIZE, configService.getInt(ConfigKeys.PARSE_CHILD_SIZE, ConfigDefaults.PARSE_CHILD_SIZE)));
     }
 
     /**

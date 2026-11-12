@@ -3,6 +3,7 @@ package com.wenqu.ai.service;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.wenqu.ai.common.BizException;
+import com.wenqu.ai.common.TenantResolutionException;
 import com.wenqu.ai.mapper.TenantMapper;
 import com.wenqu.ai.mapper.UserMapper;
 import com.wenqu.ai.model.Tenant;
@@ -41,8 +42,6 @@ public class TenantService {
     private static final Pattern ID = Pattern.compile("^[a-z0-9][a-z0-9_-]{1,31}$");
     /** 成员归属缓存 TTL：与请求身份缓存同档（60 秒），改归属是低频动作，最迟一分钟后各副本跟上 */
     private static final long CACHE_TTL_MS = 60_000;
-    /** 缓存里「查过，确实没有这个账号」的记号（不缓存 null，否则每次都重查一遍） */
-    private static final String MISS = "__no_such_user__";
 
     private final TenantMapper tenantMapper;
     private final UserMapper userMapper;
@@ -298,25 +297,29 @@ public class TenantService {
      * 不要求每个重放点都记得再绑一次（漏一处等于那条线程能看全平台，正是要防的静默错位）。
      * <p>查得到但归属为空时按 {@code default} 处理——存量行加列时由数据库默认值回填，真出现空值
      * 也是「这个账号还没搬」，不是「它可以看所有租户」。
+     * <p><b>查不动归属时 fail-closed</b>：不缓存、不返回 null，直接抛出
+     * {@link TenantResolutionException}。返回 null 会让调用方按「未绑定」放行，等于一次 DB 抖动
+     * 换来整条请求跨租户读写；账号确实不存在时同样不缓存负结果，让下一次请求重新判定。
      */
     public String tenantOf(String uid) {
         if (uid == null || uid.isBlank() || com.wenqu.ai.util.RequestUser.SYSTEM.equals(uid)) return null;
         Cached hit = userTenantCache.get(uid);
         if (hit != null && hit.expireAt() > System.currentTimeMillis()) {
-            return MISS.equals(hit.tenantId()) ? null : hit.tenantId();
+            return hit.tenantId();
         }
-        String tid = null;
+        User u;
         try {
-            User u = userMapper.selectById(uid);
-            if (u != null) {
-                tid = u.getTenantId() == null || u.getTenantId().isBlank()
-                        ? TenantContext.DEFAULT_TENANT : u.getTenantId();
-            }
+            u = userMapper.selectById(uid);
         } catch (Exception e) {
-            // 查不动归属时不猜：留 null 让这条线程按未绑定走（与改造前一致），并留痕可查
-            log.warn("[TENANT] 成员归属查询失败（本轮按未绑定处理）uid={} {}", uid, e.toString());
+            log.error("[TENANT] 成员归属查询失败，拒绝本次请求 uid={}", uid, e);
+            throw new TenantResolutionException("租户归属解析失败，请稍后重试");
         }
-        userTenantCache.put(uid, new Cached(tid == null ? MISS : tid, System.currentTimeMillis() + CACHE_TTL_MS));
+        String tid = u == null ? null
+                : (u.getTenantId() == null || u.getTenantId().isBlank()
+                ? TenantContext.DEFAULT_TENANT : u.getTenantId());
+        if (tid != null) {
+            userTenantCache.put(uid, new Cached(tid, System.currentTimeMillis() + CACHE_TTL_MS));
+        }
         return tid;
     }
 

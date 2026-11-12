@@ -10,7 +10,7 @@ import java.time.LocalDateTime;
 /**
  * 会话事件账本的一条记录（结构性事件：工具、人在回路三张卡、产物、子智能体编排、轮终态、用户停止）。
  * <p>
- * 定位与边界：本表只服务<b>过程回放与审计</b>，<b>不参与模型输入</b>——正文与 token/thinking/plan_delta
+ * 定位与边界：本表只服务<b>过程回放与审计</b>，<b>不参与模型输入</b>——正文与 token/thinking/deep_plan_delta
  * 增量仍在消息表与流里，进本表只会把账本写爆又不带信息量。自增主键即全局写入顺序，
  * 回放时按 {@code (session_id, turn_id)} 聚合、按 id 排序即可还原一轮的执行轨迹。
  *

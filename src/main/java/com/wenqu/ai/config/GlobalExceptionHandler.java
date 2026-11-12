@@ -1,6 +1,7 @@
 package com.wenqu.ai.config;
 
 import com.wenqu.ai.common.BizException;
+import com.wenqu.ai.common.TenantResolutionException;
 import com.wenqu.ai.dto.ResultJson;
 import com.wenqu.ai.openapi.OpenApiRegistry;
 import com.wenqu.ai.openapi.RequestIdFilter;
@@ -38,6 +39,13 @@ public class GlobalExceptionHandler {
     public ResponseEntity<?> handleBiz(BizException e, HttpServletRequest request) {
         int code = e.getCode() >= 400 && e.getCode() < 600 ? e.getCode() : HttpStatus.BAD_REQUEST.value();
         return error(request, code, e.getMessage());
+    }
+
+    /** 租户归属解析失败：fail-closed，503（查询故障）或 403（真实身份却没有归属） */
+    @ExceptionHandler(TenantResolutionException.class)
+    public ResponseEntity<?> handleTenantResolution(TenantResolutionException e, HttpServletRequest request) {
+        log.error("租户归属解析失败: {}", e.getMessage());
+        return error(request, e.getCode(), e.getMessage());
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
@@ -84,6 +92,17 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<?> handleUnknown(Exception e, HttpServletResponse response, HttpServletRequest request) {
+        // MyBatis/持久层会把租户解析异常包一层，这里向下找 cause，保住 403/503 的语义
+        Throwable cause = e;
+        while (cause != null) {
+            if (cause instanceof TenantResolutionException tre) {
+                log.error("租户归属解析失败（包装异常）: {}", tre.getMessage());
+                return isEventStream(response) || response.isCommitted()
+                        ? ResponseEntity.status(tre.getCode()).build()
+                        : error(request, tre.getCode(), tre.getMessage());
+            }
+            cause = cause.getCause();
+        }
         log.error("系统异常", e);
         // SSE 通道（或响应已提交）写不回 JSON：强行序列化必然再抛一次转换失败并刷屏，只记日志
         if (isEventStream(response) || response.isCommitted()) {

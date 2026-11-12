@@ -3,6 +3,8 @@ package com.wenqu.ai.agent.chat;
 // [保留] 问渠轮次台账 / 个性化提示词 —— AgentScope 框架不提供等价能力，框架引擎(agentx)与共享服务仍依赖此文件，勿当作已退役的控制流删除。
 
 import com.alibaba.fastjson2.JSON;
+import com.wenqu.ai.common.BizException;
+import com.wenqu.ai.engine.RunEventType;
 import com.wenqu.ai.service.ChatRunBus;
 import com.wenqu.ai.service.ConfigService;
 import com.wenqu.ai.service.MessageWrite;
@@ -45,15 +47,18 @@ public class ChatRunRuntime {
     private final ChatRunBus chatRunBus;
     private final SessionEventService sessionEventService;
     private final SessionService sessionService;
+    private final TurnStateStore turnStateStore;
 
     public ChatRunRuntime(ConfigService configService,
                           ChatRunBus chatRunBus,
                           SessionEventService sessionEventService,
-                          SessionService sessionService) {
+                          SessionService sessionService,
+                          TurnStateStore turnStateStore) {
         this.configService = configService;
         this.chatRunBus = chatRunBus;
         this.sessionEventService = sessionEventService;
         this.sessionService = sessionService;
+        this.turnStateStore = turnStateStore;
     }
 
     /** 别的副本转过来的叫停要在本副本（宿主）落地：动作与本地停止同一条路径，不另写一份 */
@@ -73,12 +78,24 @@ public class ChatRunRuntime {
      * @return true=占到了；false=上一轮还在跑（调用方按「上一轮还在回答中」回错）
      */
     public boolean tryBeginTurn(String sessionId) {
-        return TURN_IN_FLIGHT.putIfAbsent(sessionId, Boolean.TRUE) == null;
+        if (sessionId == null || sessionId.isBlank()) return false;
+        try {
+            return turnStateStore.tryAcquire(sessionId);
+        } catch (Exception e) {
+            log.error("[TURN] 抢占轮锁失败 session={}", sessionId, e);
+            throw new BizException(503, "会话状态存储不可用，请稍后重试");
+        }
     }
 
     /** 放开会话互斥（流水线线程走到底时调；被拒的请求没占到坑，也就不调） */
     public void endTurnMutex(String sessionId) {
-        TURN_IN_FLIGHT.remove(sessionId);
+        if (sessionId == null || sessionId.isBlank()) return;
+        try {
+            turnStateStore.release(sessionId);
+        } catch (Exception e) {
+            // 释放失败交给租约 TTL；这里必须留痕，不能静默当已释放
+            log.error("[TURN] 释放轮锁失败 session={}", sessionId, e);
+        }
     }
 
     /** 登记通道的断开标记（发送失败与生命周期回调都改它，各等待点据此短路后续 LLM/检索开销） */
@@ -302,11 +319,6 @@ public class ChatRunRuntime {
     private static final java.util.concurrent.ConcurrentHashMap<SseEmitter, java.util.concurrent.atomic.AtomicBoolean> ACTIVE_SSE =
             new java.util.concurrent.ConcurrentHashMap<>();
 
-    /** 会话轮级互斥标记：sessionId → 在跑。随轮进出（chat 入口/流水线 finally），进程重启即清空
-     *  （与挂起恢复管道同为内存态，语义一致） */
-    private static final java.util.concurrent.ConcurrentHashMap<String, Boolean> TURN_IN_FLIGHT =
-            new java.util.concurrent.ConcurrentHashMap<>();
-
     /**
      * 本轮 turnId（消息落库时挂的关联键）：取自 {@code chat()} 入口登记的把手。
      * <p>把手已随终态摘除时返回 null——这条消息就没有过程可回放，前端按「本行无过程记录」处理，
@@ -451,15 +463,13 @@ public class ChatRunRuntime {
      * 会话事件账本收录的「结构性事件」白名单（其余 SSE 类型不落账本）。
      * <p>刻意不含 {@code done}：轮终态快照本就随助手消息落库（正文/时间线/工具列表/用量），
      * 账本再存一份只是把大 JSON 截断成半截文本，没有增量信息。也不含 token/thinking/process/
-     * stage/image/plan_delta/keepalive 这类高频增量——它们会让账本行数淹没真正的执行轨迹。
+     * stage/image/deep_plan_delta/keepalive 这类高频增量——它们会让账本行数淹没真正的执行轨迹。
      * （一轮的进行中提示只保留「整轮用时」那一条。）
      * <p>{@code tool_status} 单独走 {@link #toolLedgerPayload}：一次调用只记终态一行，
      * start/preparing 帧不落账本，参数与输出压成摘要——完整原文仍由消息表与工具卡承载。
      */
-    private static final java.util.Set<String> LEDGER_SSE_TYPES = java.util.Set.of(
-            "approval_required", "ask_user", "plan", "plan_approval", "plan_cancelled", "plan_superseded",
-            "artifact", "agent_delegated", "agent_consulted",
-            "retrieved", "usage", "error", "warn", "skill_hit");
+    /** 进账本的事件名由 RunEventType 单点声明，这里不再手抄一份。 */
+    private static final java.util.Set<String> LEDGER_SSE_TYPES = RunEventType.sseLedgerNames();
 
     /** 工具终态帧的 SSE 类型；落账本时统一记成 {@code tool}，前端不必认识两个名字。 */
     private static final String TOOL_STATUS_SSE_TYPE = "tool_status";
@@ -556,7 +566,7 @@ public class ChatRunRuntime {
                                 String ledgerUserId, String ledgerTurnId, boolean ledger) {
         // 账本按「事件是否发生」记，不按「是否送达」记：断线转后台续跑的那一轮，恰恰是最需要事后回放的
         // 过程（卡片、编排、裁决都在那一刻之后产生，而通道已经没了）。只收结构性事件
-        // （{@link #LEDGER_SSE_TYPES}）——token/thinking/plan_delta 这类增量与心跳没有超出消息表的信息量。
+        // （{@link #LEDGER_SSE_TYPES}）——token/thinking/deep_plan_delta 这类增量与心跳没有超出消息表的信息量。
         // 调用方显式传 ledger=false 时即使 type 在白名单里也跳过（流式中间帧专用）。
         TurnHandle handle = ownHandle(emitter, sessionId);
         String turnId = ledgerTurnId != null ? ledgerTurnId : handle == null ? null : handle.turnId();

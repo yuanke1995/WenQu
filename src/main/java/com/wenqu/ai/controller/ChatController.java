@@ -5,6 +5,7 @@ import com.wenqu.ai.agent.chat.ChatCommand;
 import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.config.AdminGuard;
 import com.wenqu.ai.config.ConfigDefaults;
+import com.wenqu.ai.config.ConfigKeys;
 import com.wenqu.ai.dto.ChatRequest;
 import com.wenqu.ai.dto.ResultJson;
 import com.wenqu.ai.dto.SessionInfo;
@@ -52,6 +53,8 @@ import com.wenqu.ai.security.Permission;
 public class ChatController {
 
     private final ChatService chatService;
+    /** 部署档位：随身份下发，前端据此隐藏企业面。 */
+    private final com.wenqu.ai.config.DeploymentGuard deploymentGuard;
     /**
      * 人在回路裁决：三张卡——工具执行审批、askUser 提问、执行计划批准——
      * 的裁决提交与跨设备恢复都走这里。问答运行时不代管卡片，本控制器也不向它要卡片。
@@ -150,6 +153,7 @@ public class ChatController {
         if (tenant == null || tenant.isBlank()) tenant = com.wenqu.ai.util.TenantContext.DEFAULT_TENANT;
         me.put("tenant", tenant);
         me.put("tenantName", tenantService.nameOf(tenant));
+        me.put("profile", deploymentGuard.profile());
         // 平台级与否随身份一起下发：界面上「批准开通申请」这类入口要按它决定出不出现，
         // 让人点了才知道没权限是最差的一种提示
         me.put("superadmin", com.wenqu.ai.util.RequestUser.superadmin());
@@ -208,7 +212,7 @@ public class ChatController {
         // 这里不再按 base64 字符量估算——口径的变化正是这次改造的目的（body 从 ~100MB 降到几十字节）
         List<ChatRequest.Attachment> attachments = request.getAttachments();
         if (attachments != null && !attachments.isEmpty()) {
-            int maxAtt = Math.max(1, configService.getInt("chat.maxAttachmentsPerMessage", 5));
+            int maxAtt = Math.max(1, configService.getInt(ConfigKeys.CHAT_MAX_ATTACHMENTS_PER_MESSAGE, 5));
             if (attachments.size() > maxAtt) {
                 throw new BizException("一次最多上传 " + maxAtt + " 个附件");
             }
@@ -353,7 +357,7 @@ public class ChatController {
     private List<ChatRequest.Mention> validateMentions(List<ChatRequest.Mention> mentions,
                                                        HttpServletRequest httpRequest) {
         if (mentions == null || mentions.isEmpty()) return null;
-        int max = Math.max(1, configService.getInt("chat.maxMentionsPerMessage", 10));
+        int max = Math.max(1, configService.getInt(ConfigKeys.CHAT_MAX_MENTIONS_PER_MESSAGE, 10));
         if (mentions.size() > max) {
             throw new BizException("一次最多引用 " + max + " 个知识库/文档/智能体");
         }
@@ -422,7 +426,7 @@ public class ChatController {
     private List<ChatRequest.HistoryRef> validateHistoryRefs(String sessionId,
                                                              List<ChatRequest.HistoryRef> refs) {
         if (refs == null || refs.isEmpty()) return null;
-        int max = Math.max(1, configService.getInt("chat.maxHistoryRefsPerMessage", 10));
+        int max = Math.max(1, configService.getInt(ConfigKeys.CHAT_MAX_HISTORY_REFS_PER_MESSAGE, 10));
         if (refs.size() > max) {
             throw new BizException("一次最多引用 " + max + " 条历史消息");
         }
@@ -713,18 +717,18 @@ public class ChatController {
         return ResultJson.ok(chatService.listSessionEvents(sessionId, com.wenqu.ai.util.RequestUser.uid(), turns, turn));
     }
 
-    @Operation(summary = "执行计划裁决（计划模式）", description = "批准/退回重出/继续对话取代/拒绝 plan_approval 事件下发的执行计划（人在回路）："
+    @Operation(summary = "深度执行计划裁决", description = "批准/退回重出/继续对话取代/拒绝 deep_plan_approval 事件下发的执行计划（人在回路）："
             + "批准可带编辑后的计划全文（body {approved:true,plan:\"...\"}，plan 空串=按模型原稿执行）；"
             + "退回重出（body {revise:true,plan:\"修改意见\"}）＝用户不满意本版，同一轮内模型按意见产出下一版，"
             + "可反复直到批准/拒绝/超时；继续对话（body {supersede:true,plan:\"修改意见\"}）＝用户带着修改意见继续对话，本版作废"
             + "（意见全文同时记进待办终态；本轮随即收口，前端随后把意见作为用户消息发出，新一轮按意见重做计划）；拒绝（approved:false）或超时=本轮终止。"
             + "仅本轮用户本人可裁决；记录持久化在 c_ai_tool_approval（tool_name=planApproval，"
             + "PENDING→REVISED/APPROVED/REJECTED/SUPERSEDED/TIMEOUT/STOPPED/INTERRUPTED），等待期间断开不中止本轮，"
-            + "刷新/换设备后仍可经 /plan-approval/pending 取回卡片（含版本链）继续裁决。")
+            + "刷新/换设备后仍可经 /deep/plan-approval/pending 取回卡片（含版本链）继续裁决。")
     @Permission("chat:approve")
-    @PostMapping("/plan-approval/{planApprovalId}")
+    @PostMapping("/deep/plan-approval/{planApprovalId}")
     public ResultJson resolvePlanApproval(
-            @Parameter(description = "计划批准 ID（plan_approval 事件下发）") @PathVariable("planApprovalId") String planApprovalId,
+            @Parameter(description = "计划批准 ID（deep_plan_approval 事件下发）") @PathVariable("planApprovalId") String planApprovalId,
             @RequestBody Map<String, Object> body) {
         boolean approved = Boolean.TRUE.equals(body.get("approved"));
         boolean revise = Boolean.TRUE.equals(body.get("revise"));
@@ -739,7 +743,7 @@ public class ChatController {
         if (frameworkSessions.respondPlanApproval(planApprovalId, approved,
                 revise ? plan : (supersede ? supersedeReason : (approved ? null : "用户拒绝了这版计划")),
                 approved ? "approve" : (supersede ? "supersede" : (revise ? "revise" : "reject")))) {
-            // 界面终态（supersede/reject）由框架引擎那侧的循环取走并补发 plan_superseded / plan_cancelled
+            // 界面终态（supersede/reject）由框架引擎那侧的循环取走并补发 deep_plan_superseded / deep_plan_cancelled
             // 与带标记的 done——不在这里直接收轮：控制流归框架持有
             return ResultJson.ok(approved ? "已批准" : "已退回");
         }
@@ -754,7 +758,7 @@ public class ChatController {
             + "{planApprovalId,plan,timeoutMs,remainingMs,createdAt,expired,live}；live=false 表示唤醒句柄已不在"
             + "（进程重启），批准送不到模型。")
     @Permission("chat:approve")
-    @GetMapping("/plan-approval/pending")
+    @GetMapping("/deep/plan-approval/pending")
     public ResultJson listPendingPlans(
             @Parameter(description = "会话 ID") @RequestParam("sessionId") String sessionId) {
         return ResultJson.ok(java.util.Map.of("items",

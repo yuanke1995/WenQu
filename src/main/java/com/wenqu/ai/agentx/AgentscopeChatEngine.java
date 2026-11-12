@@ -213,6 +213,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     private final RedisProperties redisProperties;
     /** 问答台账（看板、坏例、未命中问题都吃这张表）——分派换运行时不该把它换成只有一半流量。 */
     private final com.wenqu.ai.service.QaLogService qaLog;
+    /** 收尾持久化（消息落库 + 问答台账）：两件事同一次调用，判据只在一处。 */
+    private final com.wenqu.ai.agent.chat.TurnPersister persister;
     /**
      * 框架模型出口的用量台账：主对话/子智能体/记忆提炼/上下文压缩都经 {@link MeteredModel} 记一行。
      * <p>原记账出口（{@code DynamicOpenAiChatModel}）只覆盖 Spring AI 侧，
@@ -246,7 +248,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     /** 智能体轮终 webhook 出站（对外能力第二批，旁路）：配置了回调地址的智能体每轮结束推送结果 */
     private final com.wenqu.ai.service.webhook.AgentWebhookService agentWebhookService;
 
-    /** 运行总线：后台续跑轮要登记上去，前端才能按 goal_turn 帧自动接流 */
+    /** 运行总线：后台续跑轮要登记上去，前端才能按 deep_turn 帧自动接流 */
     private final com.wenqu.ai.service.ChatRunBus chatRunBus;
 
     /**
@@ -269,7 +271,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     /**
      * 目标轮异步发起池：把 {@link #continueGoalTurn} 的同步重活（openForContinuation 重建整个 AgentScope
      * 实例——模型客户端 / MCP / 记忆 / 153 篇索引 / 沙盒供给，冷启动可达数十秒）从调用方线程挪走。
-     * <p>不归 Spring 管的引擎自己起一个固定池：POST /goal 建行即回包（目标条 / 角标 / 左侧会话列表立刻出现），
+     * <p>不归 Spring 管的引擎自己起一个固定池：POST /deep 建行即回包（目标条 / 角标 / 左侧会话列表立刻出现），
      * 后台轮在实例就绪后登记运行总线，由前端 2.5s 轮询接流。池宽 4：单条冷启动装配很慢，但不能让一条新目标的
      * 实例重建堵住其它目标/会话的续跑——同一会话的并发由 {@code reserveFollower} 挡住（抢不到走 GOAL_RETRY）。
      */
@@ -394,6 +396,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         this.citations = citations;
         this.redisProperties = redisProperties;
         this.qaLog = qaLog;
+        this.persister = new com.wenqu.ai.agent.chat.TurnPersister(sessionService, qaLog);
         this.displayNames = new ToolDisplayNames(toolRegistry, mcpToolLabelService);
         this.skillRepository = skillRepository;
         this.skillStatsStore = skillStatsStore;
@@ -1001,15 +1004,15 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 收尾把游标跑到 head：这一轮的尾巴增量不能再漏（镜像传 null——出轮之后没人读状态）
         drain(session, loop.cursor(), loop.emitFrom(), channel, recording, null);
 
-        // 计划卡裁决的界面终态：拒绝=plan_cancelled、继续对话=plan_superseded。不补的表现为
+        // 计划卡裁决的界面终态：拒绝=deep_plan_cancelled、继续对话=deep_plan_superseded。不补的表现为
         // 用户已经拒了计划，那张卡却还挂着「等待中」（控制流仍归框架判，这里只补留痕帧与 done 标记）
         String planOutcomeRaw = sessions.takePlanOutcome(sessions.key(cmd));
         TurnInteractionCoordinator.PlanOutcome planOutcome =
                 TurnInteractionCoordinator.planOutcome(planOutcomeRaw);
         boolean superseded = planOutcome == TurnInteractionCoordinator.PlanOutcome.SUPERSEDED;
-        if (superseded) channel.emit(RunEventType.PLAN_SUPERSEDED, "{}");
+        if (superseded) channel.emit(RunEventType.DEEP_PLAN_SUPERSEDED, "{}");
         else if (planOutcome == TurnInteractionCoordinator.PlanOutcome.CANCELLED) {
-            channel.emit(RunEventType.PLAN_CANCELLED, "{}");
+            channel.emit(RunEventType.DEEP_PLAN_CANCELLED, "{}");
         }
         // 整轮机器预算用尽而循环是自己退的：屏幕上这一轮已经收尾，框架那一跑却还活着——不叫停，
         // 下一步与下一段钱就记在没有人跟的那一跑上。中断是协作式的：整轮那道闸打不断在途调用，
@@ -1208,16 +1211,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // `failure`——那是上游原始串（「HTTP transport error during streaming: HTTP request failed
         // with status 403…」，英文、带响应体碎片），用户在铃铛里读不出「该充值还是该换模型」，
         // 而用户自己叫停的那一轮也会被报成故障。原始串留给日志，不进通知。
-        String earlyExit = spokenFailure;
-        if (earlyExit == null && loop.neverLaunched()) earlyExit = "这一轮模型没有被调用，请重试或新建一条会话再问";
-        if (earlyExit == null && loop.timedOut()) earlyExit = "等你确认的那一步超时，这一轮没有继续执行";
-        if (earlyExit == null && ranOutBudget) {
-            earlyExit = com.wenqu.ai.agent.chat.TurnRecorder.TURN_BUDGET_NOTE;
-        }
-        if (earlyExit == null && loop.stalled()) {
-            earlyExit = com.wenqu.ai.agent.chat.TurnRecorder.STALL_NOTE;
-        }
-        if (earlyExit == null && cutByMaxIters) earlyExit = "推理步数已用满，活没干完就停了";
+        String earlyExit = com.wenqu.ai.agent.chat.TurnCloseout.earlyExitReason(
+                spokenFailure, loop.neverLaunched(), loop.timedOut(), ranOutBudget, loop.stalled(), cutByMaxIters);
         turnNotify.onTurnSettled(cmd, turnId, machineMs, recording.toolCallList().size(),
                 loop.stopped() || loop.stalled(), awaiting, earlyExit, !answer.isBlank(),
                 turnId != null && turnId.startsWith(com.wenqu.ai.service.GoalService.GOAL_TURN_ID_PREFIX));
@@ -1327,7 +1322,13 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      *                已经不存在的 writer（2 分钟租约），表现为「目标卡在 EXECUTING 不动」。
      */
     private Following openForContinuation(String sessionId, String userId, String turnId, boolean recover) {
-        return openForContinuation(sessionId, userId, turnId, recover, null);
+        return openForContinuation(sessionId, userId, turnId, recover, null, false);
+    }
+
+    /** 深度执行第 1 轮先出计划：与手动计划模式共用同一道 plan 门禁，批准后才继续执行。 */
+    private Following openForContinuation(String sessionId, String userId, String turnId, boolean recover,
+                                          String guestUid) {
+        return openForContinuation(sessionId, userId, turnId, recover, guestUid, false);
     }
 
     /**
@@ -1336,12 +1337,13 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      *                 「访客接不回」和「访客拿到更多能力」都在这一个参数上。
      */
     private Following openForContinuation(String sessionId, String userId, String turnId, boolean recover,
-                                          String guestUid) {
+                                          String guestUid, boolean planFirst) {
         if (sessionId == null || sessionId.isBlank()) return null;
         ChatCommand cmd = ChatCommand.builder().sessionId(sessionId).question("")
                 .userId(userId == null || userId.isBlank() ? "guest" : userId)
                 .agentId(agentIdOfSession(sessionId))
                 .guestMode(guestUid != null && !guestUid.isBlank())
+                .planMode(planFirst)
                 .guestUid(guestUid)
                 .build();
         com.wenqu.ai.service.ChatService.TurnModel turn = modelResolver.apply(cmd);
@@ -1551,7 +1553,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * <p>幂等：{@code idempotencyKey = "goal:{goalId}:{n}"}，turnId 由框架按 key 派生
      * （{@code UUID.nameUUIDFromBytes}）——进程重启后重发同一 key 不会重复起轮。
      *
-     * <p>接流：后台轮登记上运行总线（收集型 emitter 当发起通道），goal_turn 帧随后下发，
+     * <p>接流：后台轮登记上运行总线（收集型 emitter 当发起通道），deep_turn 帧随后下发，
      * 前端据此自动 {@code GET /chat/run} 探测 + {@code GET /chat/resume} 接上下一轮。
      */
     public void continueGoalTurn(com.wenqu.ai.model.Goal goal, String input, int n) {
@@ -1560,7 +1562,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
 
     /**
      * 目标轮异步发起入口（目标续跑驱动 {@code GoalTurnDriver} 绑定的就是它）：把 {@link #continueGoalTurn} 的
-     * 同步重活（实例冷启动装配）挪出调用方线程——POST /goal 建行即回包，目标条 / 角标 / 左侧会话列表立即出现，
+     * 同步重活（实例冷启动装配）挪出调用方线程——POST /deep 建行即回包，目标条 / 角标 / 左侧会话列表立即出现，
      * 后台轮在实例就绪后登记总线、由前端轮询接流。内部重试（reserveFollower 抢不到）仍走 GOAL_RETRY 调度，不经此池。
      */
     public void submitGoalTurn(com.wenqu.ai.model.Goal goal, String input, int n) {
@@ -1586,7 +1588,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             return;
         }
         boolean recover = "ORPHANED".equals(goal.getErrorClass());
-        Following f = openForContinuation(sessionId, uid, turnId, recover);
+        Following f = openForContinuation(sessionId, uid, turnId, recover, null, n == 1);
         if (f == null) {
             goalService.markContinueFailed(goal, "会话实例装配不出来（模型/路由解析失败）");
             return;
@@ -1611,7 +1613,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             AgentSession.Task task = f.session().submit(
                     com.wenqu.ai.service.GoalService.GOAL_TURN_ID_PREFIX + goal.getId() + ":" + n, input);
             backgroundGoalTurns.add(sessionId + "|" + turnId);
-            // 先登记总线再发帧：goal_turn 到浏览器时，它探测 /chat/run 必须已经探得到这一轮
+            // 先登记总线再发帧：deep_turn 到浏览器时，它探测 /chat/run 必须已经探得到这一轮
             java.util.concurrent.atomic.AtomicBoolean alive = openGoalTurnRun(f, sessionId, uid, turnId);
             goalService.emitTurn(goal, n, turnId, f.channel());
             startFollowing(f, task, () -> alive.set(false), true);
@@ -2208,7 +2210,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
          * 当前这一版计划正在流式产出的正文（{@code plan/changed} 的 PLAN_DELTA 增量累积）。
          * <p>与 {@link #planMarkdown} 不同：后者是 plan_write 入参里的整份稿，只有工具请求那一刻才有；
          * 接流快照要回答「此刻屏幕上那张计划卡里写到哪了」，只能用这份增量缓冲。
-         * 新的 plan_approval 落地后清空（权威稿以 planVersions 最后一版为准）。
+         * 新的 deep_plan_approval 落地后清空（权威稿以 planVersions 最后一版为准）。
          */
         private final StringBuffer planDraft = new StringBuffer();
         /** 正在等用户裁决最新一版计划（快照据此区分「生成中」与「待确认」） */
@@ -3397,14 +3399,14 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 }
             }
             case "plan/changed" -> {
-                // 问渠的计划卡认两种帧：plan（整份步骤列表）与 plan_delta（流式追加）。
+                // 问渠的计划卡认两种帧：plan（整份步骤列表）与 deep_plan_delta（流式追加）。
                 // 框架这里给的是变更后的计划，能解析成列表就发整份，否则退成增量文本
                 Object plan = firstNonNull(data.get("steps"), firstNonNull(data.get("plan"), data.get("content")));
                 if (plan instanceof List<?> list && !list.isEmpty()) {
                     channel.emit(RunEventType.PLAN, com.alibaba.fastjson2.JSON.toJSONString(list));
                 } else if (!str(plan).isBlank()) {
                     recording.planDelta(str(plan));
-                    emit(channel, RunEventType.PLAN_DELTA, str(plan));
+                    emit(channel, RunEventType.DEEP_PLAN_DELTA, str(plan));
                 }
             }
             case "run/end" -> recording.runEnded = true;
@@ -3581,7 +3583,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             // 题面至少能呈现，绝不静默吞掉
             String kind = str(data.get("kind"));
             if ("confirmation".equals(kind) && tool.startsWith("plan_")) {
-                // 计划模式的退出确认走问渠的计划卡（plan_approval），不是普通工具审批卡：
+                // 计划模式的退出确认走问渠的计划卡（deep_plan_approval），不是普通工具审批卡：
                 // 两者在界面上是两张不同的卡，用户在那里能看到整份计划
                 Map<String, Object> planCard = new java.util.LinkedHashMap<>();
                 String rawPlan = planTextOf(toolInputOf(data.get("call")),
@@ -3596,7 +3598,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 planCard.put("planApprovalId", entry.getKey());
                 planCard.put("plan", planText);
                 planCard.put("timeoutMs", configService.getInt("chat.planTimeoutMs", 3600000));
-                // 血缘随 plan_approval 一起下发：这张新计划是基于哪一版旧计划、带过来多少执行进度。
+                // 血缘随 deep_plan_approval 一起下发：这张新计划是基于哪一版旧计划、带过来多少执行进度。
                 // 断线接流/换设备时没有原始 userMsg，只能靠帧自身带；待批卡则从 request_args 里取同一份。
                 if (cmd.getPlanBaseId() != null && !cmd.getPlanBaseId().isBlank()) {
                     planCard.put("planBaseId", cmd.getPlanBaseId());
@@ -3612,7 +3614,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                     // 新一版已挂出待确认：退回重出状态到此结束（下一次 revise 由裁决入口重新置位）
                     sessions.markPlanPending(sessionKey);
                 }
-                channel.emit(RunEventType.PLAN_APPROVAL, com.alibaba.fastjson2.JSON.toJSONString(planCard));
+                channel.emit(RunEventType.DEEP_PLAN_APPROVAL, com.alibaba.fastjson2.JSON.toJSONString(planCard));
                 // 落同一张 c_ai_tool_approval（tool_name=planApproval）：不落的话刷新后这张卡取不回来。
                 // 血缘也一起存进 request_args：待批准的新计划刷新后要能显示「调整自 vN」，
                 // 而此刻还没有助手消息行可挂 plan 记录（那张卡要等本轮收尾才落库）。
@@ -4446,14 +4448,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 提问卡超时后这一轮本来就不该走到这里（走的是「按未作答继续」那条），所以这里出现的多半是
      * 计划卡或审批卡——用「确认」统称即可，不必替用户猜是哪一种。
      */
-    private static String interruptMarker(boolean stopped, boolean timedOut, boolean budget, boolean stalled) {
-        if (stopped) return com.wenqu.ai.agent.chat.TurnRecorder.STOP_SUFFIX;
-        if (budget) return com.wenqu.ai.agent.chat.TurnRecorder.BUDGET_SUFFIX;
-        if (stalled) return com.wenqu.ai.agent.chat.TurnRecorder.STALL_SUFFIX;
-        if (timedOut) return "\n\n> ⏹ 等待确认超时，这一轮没有继续执行";
-        return com.wenqu.ai.agent.chat.TurnRecorder.TRUNCATION_SUFFIX;
-    }
-
     /**
      * 接流快照：本轮到此刻已经产出的东西，一次交全给总线（见 {@code ChatRunBus#attach}）。
      * <p>字段名与前端 {@code applyTurnSnapshot} 一一对齐，且与「刷新后读历史」那份同源同形：
@@ -4653,30 +4647,19 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             log.warn("[FAIL-LOUD] 模型把工具调用写成正文 {} 字（已剥离、未执行）: session={}",
                     leakedCall.length(), cmd.getSessionId());
         }
-        boolean realAnswer = !body.isBlank();
         // 半程轮有过程就落库、连过程都没有就不落（与手写侧 persistPartialAnswer 同一道守卫）：
         // 「正文非空」单独判会让只跑了工具的轮整条蒸发，而真空轮落一条空消息只是污染历史。
+        boolean realAnswer = !body.isBlank();
         boolean hasProcess = !recording.toolCalls.isEmpty() || recording.thinking.length() > 0;
         boolean supersededRound = planRecord != null && "superseded".equals(planRecord.get("status"));
         // 尾标进了正文的那一支，同句话再结构化入一块（noticeText 非空即「本轮被中断」的事实）：
         // 两边都写：正文里留一份，blocks 里的 notice 给刷新/分享与渲染用。
-        String noticeText = "";
-        if (!realAnswer && hasProcess) {
-            // 被「继续对话」取代的那一轮正文留空：计划卡角标已经写着「已被取代」，再补一句中断
-            // 标注就是把同一件事说两遍（与手写引擎同一口径）
-            // 只有正文本来就空的那一支才去分隔符：非空正文必须带着「\n\n」拼在尾段，
-            // 少了它引用块会粘回最后一句、">" 原样印在屏幕上
-            if (!supersededRound) {
-                noticeText = interruptMarker(stopped, timedOut, budget, stalled).trim();
-                body = noticeText;
-            }
-        } else if (realAnswer && (stopped || timedOut || budget || stalled)) {
-            // 半程正文：标注追加在尾部（与手写侧同一口径——用户要看得见「这句只有半截」）
-            String marker = interruptMarker(stopped, timedOut, budget, stalled);
-            body = body + marker;
-            noticeText = marker;
-        }
-        boolean persist = realAnswer || (hasProcess && !awaiting);
+        com.wenqu.ai.agent.chat.TurnCloseout.Body closeout =
+                com.wenqu.ai.agent.chat.TurnCloseout.settleBody(body, hasProcess, supersededRound,
+                        stopped, timedOut, budget, stalled, awaiting);
+        body = closeout.text();
+        String noticeText = closeout.noticeText();
+        boolean persist = closeout.persist();
         // 本轮配图清单的唯一快照：正文 [图片N] → 第 N-1 项。流式 image 帧、done.finalImages、
         // 落库 images 全部出自池的 imgIndex；这里取一次，三处共用同一份。定稿校验只读它判编号
         // 越界，绝不裁剪 / 重编 / 回写——清单一旦在定稿被改写，就会「流式有图、答完没图」。
@@ -4685,7 +4668,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 引用完整性校验：悬空角标剔除、「有来源却没标 [N]」的 fail-loud、「编号对上了但语义不支撑」的
         // LLM 自检。停止轮与「只有过程没有正文」的半程轮都不跑：那两句标注不是答案，跑了对它们就是白报一条
         // 「未标注引用」（半程轮往往还带着工具召回的来源，正好满足那条 fail-loud 的触发条件）。
-        if (!stopped && !timedOut && !budget && !stalled && realAnswer) {
+        if (com.wenqu.ai.agent.chat.TurnCloseout.citationsApplicable(stopped, timedOut, budget, stalled, realAnswer)) {
             // 这里必须交引用串 {providerId}/{modelId} 而不是 route.modelId()：自检那次调用走
             // DynamicOpenAiChatModel，它只按引用解析路由，裸模型名一律 fail-loud——传错就是这道防线
             // 每轮静默哑火（只剩一条 WARN，正文照旧）。落库和 done 帧用裸名是展示口径，不同。
@@ -4778,7 +4761,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         Map<String, Object> viewBlocks = blocksJson == null ? null
                 : (cmd.isGuestMode() ? TurnBlocks.answerOnly(blocksJson)
                 : com.alibaba.fastjson2.JSON.parseObject(blocksJson));
-        // 重新生成的分支手术（与工作流路径 ChatflowBridge 同口径）：先软删被替换的旧回答并登记
+        // 重新生成的分支手术：先软删被替换的旧回答并登记
         // 版本组，新回答落库后挂同一组，刷新后才有 ‹ n/N › 可切。只在真要落库这一轮时做：
         // 等待/失败轮不落库，旧回答就不该被动。
         String replaceGroup = null;
@@ -4806,41 +4789,40 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 : com.alibaba.fastjson2.JSON.toJSONString(snapDegrades);
         String snapChangesJson = turnChanges == null ? null
                 : com.alibaba.fastjson2.JSON.toJSONString(turnChanges);
-        String assistantMessageId = persist ? sessionService.appendMessage(MessageWrite.builder()
+        // 消息落库与问答台账收成一次调用（TurnPersister）：两件事共用同一份定稿快照与落库判据。
+        String assistantMessageId = persister.persist(com.wenqu.ai.agent.chat.TurnPersister.Input.builder()
                 .sessionId(cmd.getSessionId())
-                .role("assistant")
-                .content(body)
-                .images(finalImages)
-                .sources(snapSourcesJson)
+                .body(body)
+                .finalImages(finalImages)
+                .sourcesJson(snapSourcesJson)
                 .thinking(recording.thinkingText())
                 .retrieved(lastRetrieved)
-                .artifacts(artifactsJson)
-                .toolCalls(recording.toolCallsJson())
-                .tokens(tokens.isEmpty() ? null : com.alibaba.fastjson2.JSON.toJSONString(tokens))
-                .timeline(recording.timelineJson(body, recording.answerText()))
+                .artifactsJson(artifactsJson)
+                .toolCallsJson(recording.toolCallsJson())
+                .tokensJson(tokens.isEmpty() ? null : com.alibaba.fastjson2.JSON.toJSONString(tokens))
+                .timelineJson(recording.timelineJson(body, recording.answerText()))
                 .processText(recording.related.process().isEmpty() ? null : recording.related.process())
                 .agentId(cmd.getAgentId())
                 .agentName(snapAgentName)
                 .model(route.modelId())
-                .related(relatedChips.isEmpty() ? null : com.alibaba.fastjson2.JSON.toJSONString(relatedChips))
-                .plan(planRecord == null ? null : com.alibaba.fastjson2.JSON.toJSONString(planRecord))
+                .relatedJson(relatedChips.isEmpty() ? null : com.alibaba.fastjson2.JSON.toJSONString(relatedChips))
+                .planJson(planRecord == null ? null : com.alibaba.fastjson2.JSON.toJSONString(planRecord))
                 .turnId(framedTurnId)
-                .blocks(blocksJson)
+                .blocksJson(blocksJson)
                 .warn(snapWarn)
                 .degradationsJson(snapDegradesJson)
                 .changesJson(snapChangesJson)
                 .variantGroup(replaceGroup)
-                .build()) : null;
-        // 问答台账：与手写侧 doOnComplete 同一处时机（半程轮不落台账，那是中断轮的收尾语义）。
-        // 不接的表现为看板与「未命中问题」列表只统计到切换前那部分流量——分派切了运行时，
-        // 运营侧的数却悄悄少了一半，而且没有任何一处会报错。
-        if (persist && realAnswer) {
-            qaLog.logAsync(cmd.getSessionId(), cmd.getQuestion(), body,
-                    snapSources.stream().map(x -> String.valueOf(x.get("docId"))).toList(),
-                    !snapSources.isEmpty(), snapRetrievalAttempted || !snapSources.isEmpty(),
-                    elapsedMs,
-                    cmd.isDeepThink(), assistantMessageId, cmd.getAgentId(), snapRetrievalKbIds);
-        }
+                .persist(persist)
+                .realAnswer(realAnswer)
+                .question(cmd.getQuestion())
+                .hitDocIds(snapSources.stream().map(x -> String.valueOf(x.get("docId"))).toList())
+                .hasCitation(!snapSources.isEmpty())
+                .retrievalAttempted(snapRetrievalAttempted || !snapSources.isEmpty())
+                .elapsedMs(elapsedMs)
+                .deepThink(cmd.isDeepThink())
+                .kbIds(snapRetrievalKbIds)
+                .build());
         // 载荷用 JSONObject 序列化，不手工拼字符串：控制字符与非法转义序列会让整包失去合法性，
         // 本轮来源清单与外发文本会一起丢掉，「答案可溯源」在外部链路静默失效。
         // 键序与拼接版逐字一致（下游有多个消费方按名取字段，含前端与子轮回取）。
@@ -4887,8 +4869,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 状态口径：停/stall=stopped（用户侧行为，宿主同样该知道）、超时/预算耗尽=failed、
         // 其余=completed；卡片还开着等人答的轮不算终态，不发。
         if (!awaiting) {
-            String webhookStatus = (stopped || stalled) ? "stopped"
-                    : (timedOut || budget ? "failed" : "completed");
+            String webhookStatus = com.wenqu.ai.agent.chat.TurnCloseout.webhookStatus(
+                    stopped, stalled, timedOut, budget);
             agentWebhookService.onTurnFinished(cmd, framedTurnId, webhookStatus, null,
                     body, assistantMessageId, tokens, artifactItems, elapsedMs);
         }

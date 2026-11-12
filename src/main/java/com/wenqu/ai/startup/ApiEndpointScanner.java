@@ -152,7 +152,7 @@ public class ApiEndpointScanner implements ApplicationRunner {
             Map.entry("audit:read", "查看审计事件"),
             Map.entry("audit:verify", "校验审计链"),
             Map.entry("chat:approve", "审批对话操作"),
-            Map.entry("chat:goal", "使用目标模式"),
+            Map.entry("chat:goal", "使用深度执行"),
             Map.entry("chat:tool-output", "调用工具输出"),
             Map.entry("chat:use", "使用对话"),
             Map.entry("config:manage", "修改系统配置"),

@@ -1,6 +1,7 @@
 package com.wenqu.ai.service;
 
 import com.wenqu.ai.config.ConfigDefaults;
+import com.wenqu.ai.config.ConfigKeys;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
@@ -42,7 +43,7 @@ public class RerankService {
     /** 最近一次失败时间戳（失败冷却：短暂故障后自动恢复，避免永久禁用） */
     private volatile long lastFailTs = 0L;
     /** 失败冷却时长：rerank.failCooldownMs 可调（设置页/DB），默认 60s */
-    private long failCooldownMs() { return configService.getInt("rerank.failCooldownMs", 60_000); }
+    private long failCooldownMs() { return configService.getInt(ConfigKeys.RERANK_FAIL_COOLDOWN_MS, 60_000); }
 
     public RerankService(ConfigService configService, ModelRegistryService modelRegistryService) {
         this.configService = configService;
@@ -63,7 +64,7 @@ public class RerankService {
     }
 
     private int timeoutMillis() {
-        int t = configService.getInt("rerank.timeoutMillis");
+        int t = configService.getInt(ConfigKeys.RERANK_TIMEOUT_MILLIS);
         return t > 0 ? t : 5000;
     }
 

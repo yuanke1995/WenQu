@@ -1,5 +1,7 @@
 package com.wenqu.ai.service;
 
+import com.wenqu.ai.config.ConfigKeys;
+
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
@@ -105,12 +107,12 @@ public class KeywordIndexService {
     }
 
     private int timeoutMillis() {
-        int t = configService.getInt("keyword.timeoutMillis", properties.getKeyword().getTimeoutMillis());
+        int t = configService.getInt(ConfigKeys.KEYWORD_TIMEOUT_MILLIS, properties.getKeyword().getTimeoutMillis());
         return t > 0 ? t : 1000;
     }
 
     private long failCooldownMs() {
-        return configService.getInt("keyword.failCooldownMs", 60_000);
+        return configService.getInt(ConfigKeys.KEYWORD_FAIL_COOLDOWN_MS, 60_000);
     }
 
     /**

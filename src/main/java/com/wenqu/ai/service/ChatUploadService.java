@@ -1,6 +1,7 @@
 package com.wenqu.ai.service;
 
 import com.wenqu.ai.config.ConfigDefaults;
+import com.wenqu.ai.config.ConfigKeys;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
 import com.wenqu.ai.common.BizException;
@@ -64,7 +65,7 @@ public class ChatUploadService {
         if (!ChatAttachmentService.supportedExt(name)) {
             throw new BizException("暂不支持的附件类型：" + name + "（支持 PDF / Word / Excel / PPT / 文本与代码文件）");
         }
-        long maxBytes = Math.max(1, configService.getInt("chat.maxAttachmentMb", 15)) * 1024L * 1024L;
+        long maxBytes = Math.max(1, configService.getInt(ConfigKeys.CHAT_MAX_ATTACHMENT_MB, 15)) * 1024L * 1024L;
         if (file.getSize() > maxBytes) {
             throw new BizException("单个附件不能超过 " + (maxBytes / 1024 / 1024) + "MB：" + name);
         }

@@ -1,6 +1,9 @@
 package com.wenqu.ai.controller;
 
+import com.wenqu.ai.config.ConfigKeys;
+
 import com.wenqu.ai.config.AdminGuard;
+import com.wenqu.ai.config.EnterpriseOnly;
 import com.wenqu.ai.dto.ResultJson;
 import com.wenqu.ai.service.TenantDiskInventory;
 import com.wenqu.ai.service.TenantService;
@@ -58,6 +61,7 @@ public class TenantController {
                     + "平台级管理员看全量；租户级管理员只看自家一行——别家客户的存在与名字不外泄")
     @Permission("tenant:read")
     @GetMapping
+    @EnterpriseOnly
     public ResultJson<List<Map<String, Object>>> list(HttpServletRequest request) {
         if (!adminGuard.requirePermission(request, "tenant:read")) return ResultJson.error("租户管理仅管理员可查看");
         List<Map<String, Object>> rows = tenantService.listWithCounts();
@@ -74,6 +78,7 @@ public class TenantController {
                     + "新租户初始为空：成员要从「成员管理」里把账号归属改过来")
     @Permission("tenant:manage")
     @PostMapping
+    @EnterpriseOnly
     public ResultJson<Map<String, Object>> create(@RequestBody Map<String, String> body,
                                                   HttpServletRequest request) {
         requirePlatform(request);
@@ -92,6 +97,7 @@ public class TenantController {
             description = "{\"enabled\":true|false}。停用只挡该租户成员登录，数据一律保留；默认租户不能停用")
     @Permission("tenant:manage")
     @PostMapping("/{id}/status")
+    @EnterpriseOnly
     public ResultJson status(@PathVariable("id") String id, @RequestBody Map<String, Object> body,
                              HttpServletRequest request) {
         requirePlatform(request);
@@ -105,6 +111,7 @@ public class TenantController {
                     + "他已产出的会话、知识库、工作流留在原租户（要合并资源走显式的资源转移，不藏在改归属里）")
     @Permission("tenant:manage")
     @PostMapping("/member")
+    @EnterpriseOnly
     public ResultJson moveMember(@RequestBody Map<String, String> body, HttpServletRequest request) {
         requirePlatform(request);
         tenantService.moveMember(body == null ? null : body.get("uid"),
@@ -161,6 +168,7 @@ public class TenantController {
     @Operation(summary = "待审申请数量", description = "侧栏角标用；管理员可读，非平台级返回 0")
     @Permission("tenant:read")
     @GetMapping("/requests/pending-count")
+    @EnterpriseOnly
     public ResultJson<Map<String, Object>> pendingCount(HttpServletRequest request) {
         if (!adminGuard.requirePermission(request, "tenant:read")) return ResultJson.error("无权限");
         long n = com.wenqu.ai.util.RequestUser.superadmin() ? requestService.pendingCount() : 0;
@@ -172,6 +180,7 @@ public class TenantController {
                     + "reset=true 生成新口令、旧口令立即失效，并写入审计")
     @Permission("tenant:manage")
     @PostMapping("/requests/{id}/deliver")
+    @EnterpriseOnly
     public ResultJson<Map<String, Object>> deliver(@PathVariable("id") String id,
                                                    @RequestBody(required = false) Map<String, Object> body,
                                                    HttpServletRequest request) {
@@ -191,6 +200,7 @@ public class TenantController {
     @Operation(summary = "平台租户概览", description = "租户总量 / 启停归档 / 待审 / 本月新增 / 最久等待")
     @Permission("tenant:read")
     @GetMapping("/overview")
+    @EnterpriseOnly
     public ResultJson<Map<String, Object>> overview(HttpServletRequest request) {
         requireSuper(request);
         return ResultJson.ok(tenantService.overview());
@@ -199,6 +209,7 @@ public class TenantController {
     @Operation(summary = "租户详情", description = "注册信息 + 品牌 + 套餐 + 计数；平台级或本租户管理员")
     @Permission("tenant:read")
     @GetMapping("/{id}")
+    @EnterpriseOnly
     public ResultJson<Map<String, Object>> detail(@PathVariable("id") String id, HttpServletRequest request) {
         requireTenantReadable(id, request);
         return ResultJson.ok(tenantService.detail(id));
@@ -207,6 +218,7 @@ public class TenantController {
     @Operation(summary = "租户用量", description = "成员/知识库/文档/会话/本月 tokens/套餐上限；平台级或本租户管理员")
     @Permission("tenant:read")
     @GetMapping("/{id}/usage")
+    @EnterpriseOnly
     public ResultJson<Map<String, Object>> usage(@PathVariable("id") String id, HttpServletRequest request) {
         requireTenantReadable(id, request);
         return ResultJson.ok(tenantService.usage(id));
@@ -215,6 +227,7 @@ public class TenantController {
     @Operation(summary = "更新租户套餐与企业域名", description = "{\"plan\":\"trial|standard|dedicated\",\"domain\":\"company.com\"}；仅平台级")
     @Permission("tenant:manage")
     @PostMapping("/{id}/plan")
+    @EnterpriseOnly
     public ResultJson updatePlan(@PathVariable("id") String id, @RequestBody Map<String, String> body,
                                  HttpServletRequest request) {
         requirePlatform(request);
@@ -226,6 +239,7 @@ public class TenantController {
     @Operation(summary = "自动开通设置", description = "{\"enabled\":true,\"domains\":\"a.com,b.com\"}；仅平台级")
     @Permission("tenant:manage")
     @GetMapping("/auto-approve")
+    @EnterpriseOnly
     public ResultJson<Map<String, Object>> autoApprove(HttpServletRequest request) {
         requireSuper(request);
         return ResultJson.ok(autoApproveView());
@@ -234,6 +248,7 @@ public class TenantController {
     @Operation(summary = "保存自动开通设置", description = "默认关闭；开启后命中域名白名单的申请会自动开通（口令邮件送达）")
     @Permission("tenant:manage")
     @PostMapping("/auto-approve")
+    @EnterpriseOnly
     public ResultJson saveAutoApprove(@RequestBody Map<String, Object> body, HttpServletRequest request) {
         requireSuper(request);
         boolean enabled = body != null && Boolean.parseBoolean(String.valueOf(body.getOrDefault("enabled", false)));
@@ -247,6 +262,7 @@ public class TenantController {
     @Operation(summary = "开通申请清单", description = "status 留空=全部（待审优先由前端排）；仅平台级管理员可看")
     @Permission("tenant:read")
     @GetMapping("/requests")
+    @EnterpriseOnly
     public ResultJson<List<Map<String, Object>>> requests(@RequestParam(value = "status", required = false) String status,
                                                           HttpServletRequest request) {
         requireSuper(request);
@@ -258,6 +274,7 @@ public class TenantController {
                     + "申请人没填期望标识时必须在这里给一个。")
     @Permission("tenant:manage")
     @PostMapping("/requests/{id}/approve")
+    @EnterpriseOnly
     public ResultJson<Map<String, Object>> approveRequest(@PathVariable("id") String id,
                                                           @RequestBody(required = false) Map<String, String> body,
                                                           HttpServletRequest request) {
@@ -269,6 +286,7 @@ public class TenantController {
     @Operation(summary = "驳回开通申请", description = "驳回不动任何数据，只把这一单结掉并留说明")
     @Permission("tenant:manage")
     @PostMapping("/requests/{id}/reject")
+    @EnterpriseOnly
     public ResultJson<Map<String, Object>> rejectRequest(@PathVariable("id") String id,
                                                          @RequestBody(required = false) Map<String, String> body,
                                                          HttpServletRequest request) {
@@ -307,6 +325,7 @@ public class TenantController {
                     + "Redis 键形态，以及不随租户走的全局部分。备份脚本按这份清单取数，路径规则不在脚本里重抄一遍。仅平台级可用。")
     @Permission("tenant:read")
     @GetMapping("/{id}/inventory")
+    @EnterpriseOnly
     public ResultJson<Map<String, Object>> inventory(@PathVariable("id") String id, HttpServletRequest request) {
         if (!adminGuard.requirePermission(request, "tenant:read")) return ResultJson.error("租户落点清单仅平台级管理员可查");
         if (!com.wenqu.ai.util.RequestUser.superadmin()) {
@@ -320,6 +339,7 @@ public class TenantController {
     @Operation(summary = "归档租户", description = "归档=只读：成员不可登录、数据保留、可导出、可恢复；默认租户不能归档")
     @Permission("tenant:manage")
     @PostMapping("/{id}/archive")
+    @EnterpriseOnly
     public ResultJson archive(@PathVariable("id") String id, HttpServletRequest request) {
         requirePlatform(request);
         tenantService.setArchived(id, true);
@@ -329,6 +349,7 @@ public class TenantController {
     @Operation(summary = "恢复归档租户", description = "恢复为启用状态；成员即可重新登录")
     @Permission("tenant:manage")
     @PostMapping("/{id}/restore")
+    @EnterpriseOnly
     public ResultJson restore(@PathVariable("id") String id, HttpServletRequest request) {
         requirePlatform(request);
         tenantService.setArchived(id, false);
@@ -340,6 +361,7 @@ public class TenantController {
                     + "平台级可改任意租户（需 tenant:manage）；租户管理员凭 tenant:read 只能改自己这一家")
     @Permission("tenant:read")
     @PostMapping("/{id}/brand")
+    @EnterpriseOnly
     public ResultJson updateBrand(@PathVariable("id") String id, @RequestBody Map<String, String> body,
                                   HttpServletRequest request) {
         if (!adminGuard.requirePermission(request, "tenant:read")) {
@@ -364,6 +386,7 @@ public class TenantController {
     @Operation(summary = "生成开通邀请", description = "平台预批准；返回 path=/open/{token}，明文 token 仅此一次")
     @Permission("tenant:manage")
     @PostMapping("/open-invites")
+    @EnterpriseOnly
     public ResultJson<Map<String, Object>> createOpenInvite(@RequestBody(required = false) Map<String, Object> body,
                                                             HttpServletRequest request) {
         requireSuper(request);
@@ -377,6 +400,7 @@ public class TenantController {
     @Operation(summary = "开通邀请清单", description = "不返回 token 明文；状态按有效期/次数实时折算")
     @Permission("tenant:read")
     @GetMapping("/open-invites")
+    @EnterpriseOnly
     public ResultJson<List<Map<String, Object>>> openInvites(HttpServletRequest request) {
         requireSuper(request);
         return ResultJson.ok(openInviteService.list());
@@ -385,6 +409,7 @@ public class TenantController {
     @Operation(summary = "撤销开通邀请")
     @Permission("tenant:manage")
     @PostMapping("/open-invites/{id}/revoke")
+    @EnterpriseOnly
     public ResultJson revokeOpenInvite(@PathVariable("id") String id, HttpServletRequest request) {
         requireSuper(request);
         openInviteService.revoke(id);
@@ -415,7 +440,7 @@ public class TenantController {
     /** 自动开通设置视图（配置缺失按关闭/空清单展示） */
     private Map<String, Object> autoApproveView() {
         Map<String, Object> out = new LinkedHashMap<>();
-        out.put("enabled", configService.getBoolean("tenant.autoApprove.enabled", false));
+        out.put("enabled", configService.getBoolean(ConfigKeys.TENANT_AUTO_APPROVE_ENABLED, false));
         String domains = configService.get("tenant.autoApprove.domains");
         out.put("domains", domains == null ? "" : domains);
         return out;

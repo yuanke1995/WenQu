@@ -1,17 +1,34 @@
 {
-  "capturedAt": "2026-11-06T10:12:40.259Z",
+  "capturedAt": "2026-11-12T05:03:38.580Z",
   "events": [
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
     {
       "type": "snapshot",
       "data": {
-        "content": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测",
+        "content": "压测压测压测压测压测压测压测压测压测压测压测压测压测",
         "processText": "",
+        "thinkingOpen": false,
         "toolCalls": [],
         "timeline": [
           {
-            "from": 0,
-            "to": 32,
-            "kind": "text"
+            "kind": "text",
+            "to": 26,
+            "from": 0
           }
         ],
         "blocks": {
@@ -20,7 +37,7 @@
             {
               "kind": "text",
               "channel": "answer",
-              "text": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测",
+              "text": "压测压测压测压测压测压测压测压测压测压测压测压测压测",
               "id": "b1"
             }
           ]
@@ -31,52 +48,55 @@
         "images": [],
         "artifacts": [],
         "model": "mock-chat",
-        "turnId": "3cb6470aa4814f8ba20c6ab9f0e9003d",
-        "elapsedMs": 2256,
-        "wallMs": 2452,
-        "prepMs": 196,
-        "uid": "yuanke",
-        "seq": 18,
-        "beganAt": 1793959951809,
+        "turnId": "ff0ed78f0341411e805ff66b4dce419f",
+        "elapsedMs": 1653,
+        "wallMs": 1833,
+        "prepMs": 180,
+        "uid": "e2eadmin",
+        "seq": 14,
+        "beganAt": 1794459810730,
+        "toolOutputs": {},
+        "preparing": [],
+        "subagentSteps": [],
         "events": {}
       }
     }
   ],
   "message": {
-    "turnId": "3cb6470aa4814f8ba20c6ab9f0e9003d",
+    "turnId": "ff0ed78f0341411e805ff66b4dce419f",
     "sequence": 2,
     "role": "assistant",
     "sources": [],
-    "createTime": "2026-11-06T18:12:35",
+    "createTime": "2026-11-12T13:03:33",
     "blocks": {
       "v": 1,
-      "turnId": "3cb6470aa4814f8ba20c6ab9f0e9003d",
+      "turnId": "ff0ed78f0341411e805ff66b4dce419f",
       "blocks": [
         {
           "kind": "text",
           "channel": "answer",
-          "text": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测",
+          "text": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测",
           "id": "b1"
         }
       ]
     },
-    "messageId": "1d339dccdcea8d9bdc0be7b9070f893b",
+    "messageId": "ff047e564a2f83537bfdeafb11d3165f",
     "timeline": [
       {
         "kind": "text",
         "from": 0,
-        "to": 56
+        "to": 80
       }
     ],
     "tokens": {
       "thinkingChars": 0,
-      "turnElapsedMs": 3057,
+      "turnElapsedMs": 3082,
       "profile": "chat",
-      "turnWallMs": 3253,
-      "turnPrepMs": 196
+      "turnWallMs": 3262,
+      "turnPrepMs": 180
     },
     "model": "mock-chat",
-    "content": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测"
+    "content": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测"
   },
   "guestMessage": null
 }

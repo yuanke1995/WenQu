@@ -2,6 +2,7 @@ package com.wenqu.ai.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.wenqu.ai.config.ConfigDefaults;
+import com.wenqu.ai.config.ConfigKeys;
 import com.wenqu.ai.mapper.AiDocumentMapper;
 import com.wenqu.ai.mapper.KnowledgeMapper;
 import com.wenqu.ai.model.AiDocument;
@@ -41,7 +42,7 @@ import java.util.stream.Collectors;
 public class HybridRetrievalService {
 
     /** 全局默认（召回量/超时）：库级参数只覆盖阈值与两路权重，见 {@link KbParamCodec} */
-    private long keywordTimeoutMs() { return configService.getInt("retrieval.keywordTimeoutMs", 800); }
+    private long keywordTimeoutMs() { return configService.getInt(ConfigKeys.RETRIEVAL_KEYWORD_TIMEOUT_MS, 800); }
     private int keywordLimit() { return configService.getInt("retrieval.keywordLimit", 20); }
 
     private final KbVectorStoreRegistry kbVectorStores;

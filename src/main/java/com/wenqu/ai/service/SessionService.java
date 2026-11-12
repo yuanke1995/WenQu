@@ -4,6 +4,7 @@ import com.alibaba.fastjson2.JSON;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.config.AppProperties;
 import com.wenqu.ai.dto.SessionInfo;
 import com.wenqu.ai.dto.SessionPage;
@@ -14,11 +15,9 @@ import com.wenqu.ai.model.Message;
 import com.wenqu.ai.model.Project;
 import com.wenqu.ai.model.Session;
 import com.wenqu.ai.model.SessionShare;
-import com.wenqu.ai.thread.ThreadPoolManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 import com.wenqu.ai.util.PreviewTypes;
 import com.wenqu.ai.util.RequestUser;
@@ -33,11 +32,11 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 
 /**
- * 会话管理（MySQL + Redis 双层存储）
- * <p>
- * 写入：MySQL 持久化 → Redis 缓存（写穿透）
- * 读取：MySQL 优先 → Redis 兜底
- * 删除：MySQL 软删除 + Redis 清理
+ * 会话管理。
+ *
+ * <p><b>MySQL 是消息的唯一事实源</b>：写入只走 MySQL，失败重试一次后 fail-loud；
+ * 不再写 Redis 消息副本，也没有读侧合并/补写。Redis 只承载会话运行态、空会话锁等可丢缓存。
+ * 删除：MySQL 软删除 + 清理遗留 Redis 键。
  *
  * @author yuanke
  */
@@ -47,6 +46,14 @@ import java.time.ZoneId;
 public class SessionService {
 
     private static final String KEY_PREFIX = "wenqu:session:";
+
+    /** 消息最终落库失败计数：只用于告警/排查；补偿靠对账任务报告，不写第二事实源 */
+    private final java.util.concurrent.atomic.AtomicLong messagePersistFailures =
+            new java.util.concurrent.atomic.AtomicLong();
+
+    public long messagePersistFailures() {
+        return messagePersistFailures.get();
+    }
 
     /** 会话种类：用户发起的对话（默认值，进会话列表） */
     public static final String KIND_CHAT = "chat";
@@ -80,15 +87,6 @@ public class SessionService {
      * 这样「对话」才真正不属于任何工作区，而不是悄悄挂到兜底容器。
      */
     public static final String NO_PROJECT = "__none__";
-
-    /**
-     * 原子追加：RPUSH 消息 → LTRIM 保留最近 max 条 → 重置 EXPIRE
-     */
-    private static final DefaultRedisScript<Long> APPEND_SCRIPT = new DefaultRedisScript<>(
-            "redis.call('RPUSH', KEYS[1], ARGV[1]);" +
-                    "redis.call('LTRIM', KEYS[1], -tonumber(ARGV[2]), -1);" +
-                    "redis.call('EXPIRE', KEYS[1], tonumber(ARGV[3]));" +
-                    "return 1;", Long.class);
 
     private final StringRedisTemplate redisTemplate;
     private final AppProperties properties;
@@ -443,6 +441,24 @@ public class SessionService {
             throw new com.wenqu.ai.common.BizException(401, "请先登录");
         }
         return userId;
+    }
+
+    /**
+     * 会话存在则必须归当前用户（他人会话 403），不存在则补建到当前用户名下。
+     * 用于「用户直接传一个 sessionId 进来」的入口（如 /chat/deep）：不能先补建再静默失败，
+     * 否则别人的 sessionId 会被当成自己的目标会话继续写。
+     */
+    public String ensureOwnedOrCreate(String sessionId, String userId) {
+        Session session = sessionMapper.selectById(sessionId);
+        if (session != null) {
+            String owner = session.getUserId() == null || session.getUserId().isBlank()
+                    ? RequestUser.SYSTEM : session.getUserId();
+            if (!owner.equals(requireUser(userId))) {
+                throw new com.wenqu.ai.common.BizException(403, "无权访问该会话");
+            }
+            return sessionId;
+        }
+        return ensureSession(sessionId, userId);
     }
 
     /**
@@ -945,14 +961,17 @@ public class SessionService {
             log.warn("删除会话时停用分享失败 session={}: {}", sessionId, e.getMessage());
         }
         try {
-            sessionMapper.deleteById(sessionId);
-            // 同步软删除该会话下的所有消息
-            LambdaUpdateWrapper<Message> wrapper = new LambdaUpdateWrapper<>();
-            wrapper.set(Message::getDeleted, 1)
-                    .eq(Message::getSessionId, sessionId);
-            messageMapper.update(null, wrapper);
+            transactionTemplate.executeWithoutResult(status -> {
+                sessionMapper.deleteById(sessionId);
+                // 同步软删除该会话下的所有消息
+                LambdaUpdateWrapper<Message> wrapper = new LambdaUpdateWrapper<>();
+                wrapper.set(Message::getDeleted, 1)
+                        .eq(Message::getSessionId, sessionId);
+                messageMapper.update(null, wrapper);
+            });
         } catch (Exception e) {
-            log.warn("删除会话 MySQL 操作失败: {}", e.getMessage());
+            log.error("[ALERT][SESSION] 删除会话 MySQL 操作失败 session={}", sessionId, e);
+            throw new BizException(503, "删除会话失败，请稍后重试");
         }
         try {
             redisTemplate.delete(KEY_PREFIX + sessionId);
@@ -979,84 +998,21 @@ public class SessionService {
     }
 
     /**
-     * 获取会话完整历史（MySQL 优先；MySQL 非空时合并 Redis 中未落库的降级消息，空时 Redis 兜底）
+     * 获取会话完整历史。MySQL 是消息的唯一事实源；读取失败 fail-loud（503），
+     * 不再用空的假历史掩盖 DB 故障。
      */
     public List<Map<String, Object>> getHistory(String sessionId) {
-        List<Map<String, Object>> fromMysql = readFromMysql(sessionId);
-        if (!fromMysql.isEmpty()) {
-            // MySQL 非空也可能缺最近消息：写侧瞬时失败降级 Redis 的消息标记 mysqlPending，此处补合并并异步补写，
-            // 避免"MySQL 有旧数据即不回读 Redis"导致降级窗口内的新消息对用户永久不可见（Redis 30 分钟过期后彻底丢失）
-            return mergeRedisPending(sessionId, fromMysql);
-        }
-        // MySQL 无数据，从 Redis 读取
-        List<Map<String, Object>> fromRedis = readRange(sessionId, 0, -1);
-        if (!fromRedis.isEmpty()) {
-            // 异步 backfill 到 MySQL（新线程，不阻塞当前请求）
-            backfillToMysql(sessionId, fromRedis);
-        }
-        return fromRedis;
+        return readFromMysql(sessionId);
     }
 
     /**
-     * 获取最近 N 轮对话（MySQL 直读最近 N 轮，Redis 兜底/合并）
+     * 获取最近 N 轮对话（MySQL 直读）。
      * 返回 null 表示"读取失败"（fail-loud：调用方需区分"无历史"与"历史读取失败"，不得静默当无历史）
      */
     public List<Map<String, Object>> getRecentHistory(String sessionId, int rounds) {
-        List<Map<String, Object>> recent = readRecentFromMysql(sessionId, rounds);
-        if (recent == null) return null; // 读失败：显式失败信号，调用方 fail-loud
-        if (!recent.isEmpty()) {
-            return mergeRedisPending(sessionId, recent);
-        }
-        // MySQL 无数据，从 Redis 读取（Redis 已按 maxHistory 裁剪）
-        List<Map<String, Object>> fromRedis = readRange(sessionId, 0, -1);
-        if (!fromRedis.isEmpty()) {
-            // 异步 backfill 到 MySQL（新线程，不阻塞当前请求）
-            backfillToMysql(sessionId, fromRedis);
-        }
-        return fromRedis;
+        return readRecentFromMysql(sessionId, rounds);
     }
 
-    /**
-     * 合并 Redis 降级消息：仅追加标记了 mysqlPending 且尚未补写进 MySQL 的条目。
-     * 判定基准为 msgId（降级消息自带全局唯一 ID）——已补写（msgId 已落库）跳过。
-     * 补写异步幂等执行（backfillInsert 按 msgId 判重，多副本并发合并同一批也不会重复插入）。
-     */
-    private List<Map<String, Object>> mergeRedisPending(String sessionId, List<Map<String, Object>> fromMysql) {
-        try {
-            List<Map<String, Object>> cached = readRange(sessionId, 0, -1);
-            if (cached.isEmpty()) return fromMysql;
-            List<Map<String, Object>> pending = cached.stream()
-                    .filter(m -> Boolean.TRUE.equals(m.get("mysqlPending")))
-                    .collect(Collectors.toList());
-            if (pending.isEmpty()) return fromMysql;
-
-            // MySQL 已有消息的 messageId 集合（toMessageMap 输出字段）
-            Set<String> mysqlIds = fromMysql.stream()
-                    .map(m -> m.get("messageId"))
-                    .filter(Objects::nonNull)
-                    .map(String::valueOf)
-                    .collect(Collectors.toSet());
-            List<Map<String, Object>> merged = new ArrayList<>(fromMysql);
-            List<Map<String, Object>> toBackfill = new ArrayList<>();
-            for (Map<String, Object> m : pending) {
-                String msgId = m.get("msgId") == null ? null : String.valueOf(m.get("msgId"));
-                if (msgId == null) continue;                 // 无 msgId 的旧格式降级消息不再支持
-                if (mysqlIds.contains(msgId)) continue;      // 已补写：不重复展示/补写
-                m.put("messageId", msgId);                   // 展示侧暴露与 SSE done 一致的消息 ID
-                merged.add(m);
-                toBackfill.add(m);
-                mysqlIds.add(msgId);
-            }
-            if (!toBackfill.isEmpty()) {
-                List<Map<String, Object>> need = toBackfill;
-                ThreadPoolManager.execute(() -> backfillToMysql(sessionId, need));
-            }
-            return merged;
-        } catch (Exception e) {
-            log.warn("合并 Redis 降级消息失败 (session={}): {}", sessionId, e.getMessage());
-            return fromMysql;
-        }
-    }
 
     /** 消息判重键：role + content，content 为空（纯图消息）时附加图片序列，防止同文本合法重复被误判 */
     static String messageKey(Object role, Object content, Object images) {
@@ -1125,19 +1081,18 @@ public class SessionService {
     }
 
     /**
-     * 追加消息（MySQL 持久化 → Redis 缓存），返回消息 ID（用于反馈关联）。
-     * <p>入参对象化：此前 14 个 telescoping 重载把 21 个位置参数一路传到底，新增一列要补一层重载，
-     * 相邻同类型实参写反编译器也不会拦。这里只保留 {@link MessageWrite} 一个写口。
+     * 追加消息：只写 MySQL，失败重试一次后 fail-loud。
+     * <p>不再有 Redis 降级副本：降级写会让同一事实出现两个来源，补写/合并/过期任何一处
+     * 出问题都表现为「消息丢了或重复」。消息保不住就让请求明确失败，由调用方提示重试。
      */
     public String appendMessage(MessageWrite write) {
         if (write == null) return null;
         String sessionId = write.getSessionId();
         try {
             return appendToMysql(write);
-        } catch (Exception e) {
-            log.warn("MySQL 追加消息失败 (session={}): {}", sessionId, e.getMessage());
+        } catch (Exception first) {
+            log.warn("[MSG] MySQL 追加消息失败，300ms 后重试 session={}: {}", sessionId, first.getMessage());
         }
-        // 瞬时故障（连接中断/主备切换等）短延时重试一次，多数抖动可自愈，避免直接进入 Redis 降级分叉
         try {
             Thread.sleep(300);
         } catch (InterruptedException ie) {
@@ -1146,58 +1101,11 @@ public class SessionService {
         try {
             return appendToMysql(write);
         } catch (Exception e) {
-            log.warn("MySQL 追加消息重试仍失败 (session={}): {}", sessionId, e.getMessage());
+            long failures = messagePersistFailures.incrementAndGet();
+            log.error("[ALERT][MSG] 消息最终落库失败（累计 {} 次）session={} turn={}",
+                    failures, sessionId, write.getTurnId(), e);
+            throw new BizException(503, "消息保存失败，请稍后重试");
         }
-
-        // Redis 缓存（MySQL 持续不可用也不影响前端体验；mysqlPending 标记使读侧能合并补写，防消息丢失）
-        try {
-            Map<String, Object> redisMsg = new HashMap<>();
-            redisMsg.put("role", write.getRole());
-            redisMsg.put("content", write.getContent());
-            redisMsg.put("mysqlPending", true);
-            if (notBlank(write.getTurnId())) {
-                redisMsg.put("turnId", write.getTurnId()); // 本轮身份（降级缓存也带，补写 MySQL 后过程回放不断线）
-            }
-            // 降级消息自带全局唯一 msgId：补写 MySQL 时按 id 幂等（同一消息不重复插；
-            // 且不再被「与历史消息同文」误判为重复——用户复读完全相同的问题也各自补写，不丢失）
-            redisMsg.put("msgId", UUID.randomUUID().toString().replace("-", ""));
-            if (notBlank(write.getThinking())) {
-                redisMsg.put("thinking", write.getThinking());
-            }
-            if (write.getImages() != null && !write.getImages().isEmpty()) {
-                redisMsg.put("images", write.getImages());
-            }
-            putJsonArray(redisMsg, "sources", write.getSources(), Map.class);
-            putJson(redisMsg, "retrieved", write.getRetrieved());
-            putJsonArray(redisMsg, "related", write.getRelated(), String.class);
-            putJson(redisMsg, "artifacts", write.getArtifacts());
-            putJson(redisMsg, "toolCalls", write.getToolCalls());
-            putJsonArray(redisMsg, "attachments", write.getAttachments(), Map.class);
-            putJson(redisMsg, "tokens", write.getTokens());
-            putJsonArray(redisMsg, "timeline", write.getTimeline(), Map.class);
-            if (notBlank(write.getProcessText())) {
-                redisMsg.put("processText", write.getProcessText()); // 过程独白全文（降级缓存也带，读侧原样透出）
-            }
-            if (notBlank(write.getAgentId())) {
-                redisMsg.put("agentId", write.getAgentId());   // 智能体归属（降级缓存同样带：补写 MySQL 后归属不丢）
-                redisMsg.put("agentName", write.getAgentName() == null ? "" : write.getAgentName());
-            }
-            if (notBlank(write.getModel())) {
-                redisMsg.put("model", write.getModel());       // 生效模型（与 tokens 同口径随降级缓存携带）
-            }
-            putJsonArray(redisMsg, "mentions", write.getMentions(), Map.class);
-            putJsonArray(redisMsg, "historyRefs", write.getHistoryRefs(), Map.class);
-            putJson(redisMsg, "plan", write.getPlan());
-            putJson(redisMsg, "blocks", write.getBlocks()); // 显示块（降级缓存也带，补写 MySQL 后新前端不退化）
-            String json = objectMapper.writeValueAsString(redisMsg);
-            int max = properties.getSession().getMaxHistory() * 2;
-            long expireSeconds = properties.getSession().getExpireMinutes() * 60L;
-            redisTemplate.execute(APPEND_SCRIPT, Collections.singletonList(KEY_PREFIX + sessionId),
-                    json, String.valueOf(max), String.valueOf(expireSeconds));
-        } catch (Exception e) {
-            log.warn("Redis 追加消息失败 (session={}): {}", sessionId, e.getMessage());
-        }
-        return null;
     }
 
     private static boolean notBlank(String s) {
@@ -1928,8 +1836,8 @@ public class SessionService {
 
             return messages.stream().map(this::toMessageMap).collect(Collectors.toList());
         } catch (Exception e) {
-            log.warn("MySQL 读取会话历史失败 (session={}): {}", sessionId, e.getMessage());
-            return Collections.emptyList();
+            log.error("[ALERT][MSG] MySQL 读取会话历史失败 session={}", sessionId, e);
+            throw new BizException(503, "会话历史读取失败，请稍后重试");
         }
     }
 
@@ -2095,205 +2003,8 @@ public class SessionService {
         return map;
     }
 
-    /**
-     * 从 Redis 读取指定范围的消息
-     */
-    private List<Map<String, Object>> readRange(String sessionId, long start, long end) {
-        List<String> jsons = redisTemplate.opsForList().range(KEY_PREFIX + sessionId, start, end);
-        if (jsons == null || jsons.isEmpty()) return Collections.emptyList();
-        try {
-            return jsons.stream().map(j -> {
-                try {
-                    return objectMapper.readValue(j,
-                            new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
-                } catch (Exception e) {
-                    return null;
-                }
-            }).filter(Objects::nonNull).toList();
-        } catch (Exception e) {
-            log.warn("Failed to read session history: {}", e.getMessage());
-            return Collections.emptyList();
-        }
-    }
 
-    /**
-     * 将 Redis 数据异步补写到 MySQL（线程池后台执行，不阻塞会话读取）
-     */
-    private void backfillToMysql(String sessionId, List<Map<String, Object>> messages) {
-        ThreadPoolManager.execute(() -> {
-            try {
-                int added = backfillInsert(sessionId, messages);
-                if (added > 0) {
-                    log.info("Backfill 完成: session={}, messages={}", sessionId, added);
-                }
-            } catch (Exception e) {
-                log.warn("Backfill 失败 (session={}): {}", sessionId, e.getMessage());
-            }
-        });
-    }
 
-    /**
-     * 幂等补写消息：优先按 msgId（降级消息自带全局唯一 ID）判重——已落库跳过，同一消息并发补写不重复；
-     * 无 msgId 的旧格式回退按 (role, content, images) 判重（空库回填共用此方法）。
-     * 事务内锁会话行取物理 max 序号，与并发 append 不撞号；序号/标题随插随更。
-     *
-     * @return 实际插入条数
-     */
-    private int backfillInsert(String sessionId, List<Map<String, Object>> messages) {
-        if (messages == null || messages.isEmpty()) return 0;
-        try {
-            return transactionTemplate.execute(status -> {
-                Session locked = sessionMapper.selectForUpdate(sessionId);
-                if (locked == null) {
-                    Session placeholder = new Session();
-                    placeholder.setId(sessionId);
-                    placeholder.setMessageCount(0);
-                    try {
-                        sessionMapper.insert(placeholder);
-                    } catch (Exception ignored) {
-                    }
-                    locked = sessionMapper.selectForUpdate(sessionId);
-                }
-
-                // 判重基准：1) 带 msgId 的消息一次性查库（含软删行——软删消息撤销窗口内不得同 ID 重插撞主键，
-                // 已落库的跳过，保证幂等）；2) 旧格式（无 msgId）沿用 role+content+images 键
-                List<String> msgIds = messages.stream()
-                        .map(m -> m.get("msgId"))
-                        .filter(Objects::nonNull)
-                        .map(String::valueOf)
-                        .collect(Collectors.toList());
-                Set<String> existingIds = msgIds.isEmpty() ? Collections.emptySet()
-                        : new HashSet<>(messageMapper.selectExistingIdsIncludingDeleted(msgIds));
-                Set<String> contentKeys = new HashSet<>(messageMapper.selectList(
-                                new LambdaQueryWrapper<Message>().eq(Message::getSessionId, sessionId))
-                        .stream()
-                        .map(m -> messageKey(m.getRole(), m.getContent(), m.getImages()))
-                        .toList());
-                String title = locked == null || locked.getTitle() == null || locked.getTitle().isBlank()
-                        ? null : locked.getTitle();
-                int seq = messageMapper.maxSequencePhysical(sessionId);
-                int added = 0;
-                for (Map<String, Object> m : messages) {
-                    String role = String.valueOf(m.getOrDefault("role", ""));
-                    String content = String.valueOf(m.getOrDefault("content", ""));
-                    Object imagesObj = m.get("images");
-                    String imagesJson = imagesObj instanceof List<?> list && !list.isEmpty()
-                            ? JSON.toJSONString(list) : null;
-                    String msgId = m.get("msgId") == null ? null : String.valueOf(m.get("msgId"));
-                    if (msgId != null) {
-                        if (existingIds.contains(msgId)) continue; // 同一消息已补写：幂等跳过
-                    } else if (contentKeys.contains(messageKey(role, content, imagesJson))) {
-                        continue; // 旧格式无 ID：按内容判重（历史行为）
-                    }
-
-                    Message msg = new Message();
-                    if (msgId != null) {
-                        msg.setId(msgId); // 与 Redis 侧 ID 一致：后续合并/幂等可追溯
-                    }
-                    msg.setSessionId(sessionId);
-                    msg.setRole(role);
-                    msg.setContent(capForColumn(content, CONTENT_COLUMN_MAX_CHARS));
-                    msg.setImages(imagesJson);
-                    Object thinkingObj = m.get("thinking");
-                    if (thinkingObj != null) {
-                        // 降级缓存里的 thinking 是未截断原文：直接落 TEXT 列会导致整行落库失败
-                        msg.setThinking(capForTextColumn(String.valueOf(thinkingObj)));
-                    }
-                    Object sourcesObj = m.get("sources");
-                    if (sourcesObj != null) {
-                        msg.setSources(JSON.toJSONString(sourcesObj));
-                    }
-                    Object relatedObj = m.get("related");
-                    if (relatedObj != null) {
-                        msg.setRelated(JSON.toJSONString(relatedObj));
-                    }
-                    Object artifactsObj = m.get("artifacts");
-                    if (artifactsObj != null) {
-                        msg.setArtifacts(JSON.toJSONString(artifactsObj));
-                    }
-                    Object toolCallsObj = m.get("toolCalls");
-                    if (toolCallsObj != null) {
-                        msg.setToolCalls(JSON.toJSONString(toolCallsObj));
-                    }
-                    Object attachmentsObj = m.get("attachments");
-                    if (attachmentsObj != null) {
-                        msg.setAttachments(JSON.toJSONString(attachmentsObj));
-                    }
-                    Object tokensObj = m.get("tokens");
-                    if (tokensObj != null) {
-                        msg.setTokens(JSON.toJSONString(tokensObj));
-                    }
-                    Object timelineObj = m.get("timeline");
-                    if (timelineObj != null) {
-                        msg.setTimeline(JSON.toJSONString(timelineObj));
-                    }
-                    Object processTextObj = m.get("processText");
-                    if (processTextObj != null) {
-                        msg.setProcessText(capForTextColumn(String.valueOf(processTextObj)));
-                    }
-                    Object modelObj = m.get("model");
-                    if (modelObj != null) {
-                        msg.setModel(String.valueOf(modelObj));
-                    }
-                    Object agentIdObj = m.get("agentId");
-                    if (agentIdObj != null) {
-                        msg.setAgentId(String.valueOf(agentIdObj));
-                        msg.setAgentName(m.get("agentName") == null ? "" : String.valueOf(m.get("agentName")));
-                    }
-                    Object blocksObj = m.get("blocks");
-                    if (blocksObj != null) {
-                        msg.setBlocks(JSON.toJSONString(blocksObj));
-                    }
-                    Object mentionsObj = m.get("mentions");
-                    if (mentionsObj != null) {
-                        msg.setMentions(JSON.toJSONString(mentionsObj)); // @ 引用（Redis 降级消息补写 MySQL 时带回）
-                    }
-                    Object historyRefsObj = m.get("historyRefs");
-                    if (historyRefsObj != null) {
-                        msg.setHistoryRefs(JSON.toJSONString(historyRefsObj)); // # 历史引用（同上）
-                    }
-                    Object planObj = m.get("plan");
-                    if (planObj != null) {
-                        msg.setPlan(JSON.toJSONString(planObj)); // 计划批准卡（Redis 降级消息补写 MySQL 时带回）
-                    }
-                    Object retrievedObj = m.get("retrieved");
-                    if (retrievedObj != null) {
-                        msg.setRetrieved(String.valueOf(retrievedObj));
-                    }
-                    Object turnIdObj = m.get("turnId");
-                    if (turnIdObj != null) {
-                        String tid = String.valueOf(turnIdObj);
-                        msg.setTurnId(tid.isBlank() ? null : tid); // 本轮身份（Redis 降级消息补写 MySQL 后过程回放仍定位到轮）
-                    }
-                    msg.setSequence(++seq);
-                    messageMapper.insert(msg);
-                    if (msgId != null) {
-                        existingIds.add(msgId);
-                    } else {
-                        contentKeys.add(messageKey(role, content, imagesJson));
-                    }
-                    added++;
-                    if (title == null && "user".equals(role) && !content.isBlank()) {
-                        title = content.length() > 50 ? content.substring(0, 50).trim() : content.trim();
-                    }
-                }
-
-                // 同步会话计数/标题（仅非软删行；计数取 max 防止合并场景回写缩水——仅展示用）
-                if (added > 0 && locked != null && (locked.getDeleted() == null || locked.getDeleted() == 0)) {
-                    Session update = new Session();
-                    update.setId(sessionId);
-                    int base = locked.getMessageCount() == null ? 0 : locked.getMessageCount();
-                    update.setMessageCount(Math.max(base, seq));
-                    if (title != null) update.setTitle(title);
-                    sessionMapper.updateById(update);
-                }
-                return added;
-            });
-        } catch (Exception e) {
-            log.warn("补写消息到 MySQL 失败 (session={}): {}", sessionId, e.getMessage());
-            return 0;
-        }
-    }
 
     /**
      * 过期数据清理（ScheduleCenter 周期触发）：物理清除逻辑删除标记且超过保留期的会话与消息，

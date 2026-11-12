@@ -39,6 +39,7 @@ public class SecurityConfig implements WebMvcConfigurer {
     private final ObjectMapper objectMapper;
     private final com.wenqu.ai.service.ApiKeyService apiKeyService;
     private final UserContextInterceptor userContextInterceptor;
+    private final DeploymentGuard deploymentGuard;
     private final com.wenqu.ai.service.RoleService roleService;
     private final OpenApiRegistry openApiRegistry;
 
@@ -58,6 +59,9 @@ public class SecurityConfig implements WebMvcConfigurer {
     public void addInterceptors(InterceptorRegistry registry) {
         // 身份先行：解析登录令牌 → RequestUser（ThreadLocal）；AccessControlInterceptor 后续据「是否已登录」与角色判定
         registry.addInterceptor(userContextInterceptor)
+                .addPathPatterns("/api/**");
+        // 标准档企业端点直接 404：先于角色判定，避免标准档管理员从错误码看出平台还藏着什么能力
+        registry.addInterceptor(new EnterpriseOnlyInterceptor(deploymentGuard))
                 .addPathPatterns("/api/**");
         registry.addInterceptor(new AccessControlInterceptor())
                 .addPathPatterns("/api/**");
@@ -173,20 +177,19 @@ public class SecurityConfig implements WebMvcConfigurer {
         // GET /ask-user/pending 是卡片恢复入口（会话加载时取自己的待答提问），同样只按 uid 过滤。
         if (("POST".equals(method) || "GET".equals(method)) && (path.equals("/api/ai/ask-user")
                 || path.startsWith("/api/ai/ask-user/"))) return true;
-        // 执行计划裁决（计划模式，人在回路）：POST /plan-approval/{id} 与上两条同口径——归属由
+        // 深度执行的人在回路（计划裁决 + 目标卡）：POST /deep/plan-approval/{id} 归属由
         // resolvePlanApproval 按"裁决人 uid == 发起轮次用户"严格校验；等待窗口默认 10 分钟，
-        // 放行保证等待期间 JWT 过期能拿到干净的「已失效」错误。GET /plan-approval/pending 是
+        // 放行保证等待期间 JWT 过期能拿到干净的「已失效」错误。GET /deep/plan-approval/pending 是
         // 卡片恢复入口（会话加载时取自己的待批准计划），同样只按 uid 过滤。
-        if (("POST".equals(method) || "GET".equals(method)) && (path.equals("/api/ai/plan-approval")
-                || path.startsWith("/api/ai/plan-approval/"))) return true;
-        // 目标模式（第五张人在回路卡）：POST /chat/goal（设为目标，创建即开始）、POST /chat/goal/{id}（暂停/
-        // 继续/改标准/现在验收/人工勾选）、GET /chat/goal/pending（目标卡恢复）、GET /chat/session/{id}/goal
-        // 与 /chat/session/{id}/goal/events（右栏面板与过程深链）——归属一律按登录 uid 严格校验
-        // （目标行带 user_id，非本人一律拒）；放行是为了普通用户能用（不放行则目标模式对多数人是坏的，
-        // 管理员靠直通看不出来）。会话路径挂在 /chat/session 下，不在上面的 /api/ai/session/ 白名单里，
+        if (("POST".equals(method) || "GET".equals(method)) && (path.equals("/api/ai/deep/plan-approval")
+                || path.startsWith("/api/ai/deep/plan-approval/"))) return true;
+        // 深度执行：POST /chat/deep（创建即开始）、POST /chat/deep/{id}（暂停/继续/改目标）、
+        // GET /chat/deep/pending（目标卡恢复）、GET /chat/session/{id}/deep 与 .../deep/events
+        // （右栏面板与过程深链）——归属一律按登录 uid 严格校验（目标行带 user_id，非本人一律拒）；
+        // 放行是为了普通用户能用。会话路径挂在 /chat/session 下，不在上面的 /api/ai/session/ 白名单里，
         // 得单列。
         if (("POST".equals(method) || "GET".equals(method))
-                && (path.equals("/api/ai/chat/goal") || path.startsWith("/api/ai/chat/goal/"))) return true;
+                && (path.equals("/api/ai/chat/deep") || path.startsWith("/api/ai/chat/deep/"))) return true;
         if (("GET".equals(method) || "POST".equals(method))
                 && (path.equals("/api/ai/chat/session") || path.startsWith("/api/ai/chat/session/"))) return true;
         if ("POST".equals(method) && path.equals("/api/ai/feedback")) return true;

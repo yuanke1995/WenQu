@@ -1,5 +1,7 @@
 package com.wenqu.ai.controller;
 
+import com.wenqu.ai.config.EnterpriseOnly;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.wenqu.ai.model.GroupRoleMapping;
 import com.wenqu.ai.model.IdentityProvider;
@@ -37,6 +39,7 @@ import java.util.Map;
  * @author yuanke
  */
 @Slf4j
+@EnterpriseOnly
 @RestController
 @RequestMapping(ScimService.BASE_PATH)
 @RequiredArgsConstructor

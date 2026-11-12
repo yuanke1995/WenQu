@@ -29,7 +29,9 @@ import com.wenqu.ai.util.RequestUser;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -118,6 +120,8 @@ public class MarketService {
 
     /** 物品包根目录（与 user-data 同域，可配）。 */
     private final Path payloadRoot;
+    /** 只包住多表写：payload 打包与快照文件写在事务外，避免把 zip I/O 一起挂进事务。 */
+    private final TransactionTemplate tx;
 
     public MarketService(
             @Value("${wenqu.market.payload-dir:user-data/market}") String payloadDir,
@@ -129,8 +133,9 @@ public class MarketService {
             KnowledgeBaseMapper kbMapper, UserMcpMapper userMcpMapper,
             McpClientService mcpClientService,
             ResourceVisibilityService visibility, UserRoleService userRoleService,
-            AuditService audit) {
+            AuditService audit, PlatformTransactionManager txManager) {
         this.audit = audit;
+        this.tx = new TransactionTemplate(txManager);
         this.payloadRoot = Paths.get(payloadDir == null || payloadDir.isBlank()
                 ? "user-data/market" : payloadDir).toAbsolutePath().normalize();
         this.itemMapper = itemMapper;
@@ -519,7 +524,6 @@ public class MarketService {
      * 更新要求内容指纹真的变化，并且必须填写「这次改了什么」——装过的人会看到这段说明；
      * 只改卡片文案请走 {@link #updateMeta}，不会产生新版本。</p>
      */
-    @Transactional(rollbackFor = Exception.class)
     public Map<String, Object> publish(String uid, String type, String ref,
                                        String summary, String description, String tags, String version,
                                        String releaseNote) {
@@ -611,15 +615,22 @@ public class MarketService {
                 throw new BizException("请填写这次改了什么，装过的人会看到这段说明");
             }
         }
-        if (update) {
-            itemMapper.updateById(item);
-        } else {
-            itemMapper.insert(item);
-        }
-        recordVersion(item, update ? note : (note.isEmpty() ? "首次上架" : note));
-        audit.record("[AUDIT] 市场上架 uid={} item={} type={} key={} version={} update={}",
-                uid, item.getId(), t, itemKey, finalVersion, update);
-        return view(item, null, Map.of(), uid);
+        final MarketItem target = item;
+        final String targetKey = itemKey;
+        final boolean isUpdate = update;
+        final String release = note;
+        MarketItem saved = tx.execute(status -> {
+            if (isUpdate) {
+                itemMapper.updateById(target);
+            } else {
+                itemMapper.insert(target);
+            }
+            recordVersion(target, isUpdate ? release : (release.isEmpty() ? "首次上架" : release));
+            audit.record("[AUDIT] 市场上架 uid={} item={} type={} key={} version={} update={}",
+                    uid, target.getId(), t, targetKey, finalVersion, isUpdate);
+            return target;
+        });
+        return view(saved, null, Map.of(), uid);
     }
 
     /**
@@ -902,16 +913,6 @@ public class MarketService {
                 warnings.add("技能未安装（装上后引用即生效，可在技能市场找找）：" + String.join("、", missing));
             }
         }
-        // 绑定工作流：模板附带 DSL 时 fork 一份新的再重链。副本建完立即<b>发布</b>——
-        // 能绑到模板作者智能体上的工作流必然是已发布态（草稿绑不上），副本保持同态，
-        // 否则 AgentService.create 的绑定校验会当场拒绝这次安装
-        JSONObject wfPayload = payload.getJSONObject("workflow");
-        if (wfPayload != null && str(wfPayload, "dsl") != null && !str(wfPayload, "dsl").isBlank()) {
-            Workflow wf = workflowService.create(str(wfPayload, "name"),
-                    str(wfPayload, "description"), str(wfPayload, "dsl"));
-            workflowService.publish(wf.getId(), "市场模板安装");
-            cfg.put("workflowId", wf.getId());
-        }
         // 快照键与 AgentService.create(toEntity) 的 body 口径一致；权限档位原样保留——
         // 超出平台上限时运行时钳制（与作者本人跑起来的行为一致，见 PermissionPolicyResolver）
         return agentService.create(cfg);
@@ -1028,24 +1029,13 @@ public class MarketService {
         return out.toByteArray();
     }
 
-    /** 智能体 → 应用模板载荷：配置快照（VERSION_FIELDS 白名单，剔除 fork 后必断链的引用）+ 可选绑定工作流 DSL。 */
+    /** 智能体 → 应用模板载荷：配置快照（VERSION_FIELDS 白名单，剔除 fork 后必断链的引用）。 */
     private String agentPayloadJson(String uid, Agent a) {
         JSONObject cfg = JSON.parseObject(agentService.configJson(a));
         // subAgentIds 引用别的智能体 id，装到谁名下都必断链——模板里带上只会制造幽灵引用
         cfg.remove("subAgentIds");
-        // workflowId 不进快照：安装时按附带 DSL 重链新副本
-        cfg.remove("workflowId");
-        JSONObject wfPayload = null;
-        Workflow wf = workflowService.getOwnOrNull(a.getWorkflowId());
-        if (wf != null) {
-            wfPayload = new JSONObject();
-            wfPayload.put("name", wf.getName());
-            wfPayload.put("description", wf.getDescription() == null ? "" : wf.getDescription());
-            wfPayload.put("dsl", wf.getDsl() == null ? "" : wf.getDsl());
-        }
         JSONObject payload = new JSONObject();
         payload.put("agent", cfg);
-        payload.put("workflow", wfPayload);
         return payload.toJSONString(JSONWriter.Feature.WriteMapNullValue);
     }
 

@@ -1,5 +1,7 @@
 package com.wenqu.ai.controller;
 
+import com.wenqu.ai.config.EnterpriseOnly;
+
 import com.wenqu.ai.dto.ResultJson;
 import com.wenqu.ai.config.AdminGuard;
 import com.wenqu.ai.service.AuditService;
@@ -33,6 +35,7 @@ import com.wenqu.ai.security.Permission;
  * @author yuanke
  */
 @Slf4j
+@EnterpriseOnly
 @RestController
 @RequestMapping("/api/ai/audit")
 @RequiredArgsConstructor

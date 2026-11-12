@@ -14,14 +14,14 @@
 | `POST /api/ai/chat/attachment`、`/attachment/live` | 附件上传换 fileId / 批量校验附件是否仍可重发 |
 | `POST /api/ai/tool-approval/{approvalId}`、`GET /tool-approval/pending` | 工具执行确认裁决 / 待裁决卡恢复 |
 | `POST /api/ai/ask-user/{askId}`、`GET /ask-user/pending` | 回答智能体提问 / 待答提问卡恢复 |
-| `POST /api/ai/plan-approval/{planApprovalId}`、`GET /plan-approval/pending` | 执行计划裁决（批准可带修改后全文 / 取消 / `supersede` 继续对话）/ 待批准计划恢复 |
+| `POST /api/ai/deep/plan-approval/{planApprovalId}`、`GET /deep/plan-approval/pending` | 深度执行计划裁决（批准可带修改后全文 / 取消 / `supersede` 继续对话）/ 待批准计划恢复 |
 | `POST /api/ai/session/{id}/compact`、`GET /session/{id}/history-summary` | 手动压缩上下文（可带摘要要求）/ 当前生效摘要 |
 | `GET /api/ai/session/{id}/events`、`GET /session/{id}/todos` | 会话事件账本（按轮过程回放）/ 任务清单快照 |
 | `GET /api/ai/tool-output/{spillId}`、`GET /tool-output/{spillId}/search` | 工具大输出留存原文读回 / 在原文中检索 |
 | `GET /api/ai/sessions`、`POST /session/new`、`GET /session/{id}`、`PUT /session/{id}/rename\|pin\|favorite\|model\|project\|permission`、`DELETE /session/{id}`、`DELETE /sessions`、`POST /sessions/batch-delete` | 会话列表（游标分页 + 搜索）/ 新建 / 历史恢复 / 重命名 / 置顶 / 收藏 / 模型覆盖 / 移动工作区 / 会话级权限档位 / 删除 / 清空 / 批量删除 |
 | `GET+POST+DELETE /api/ai/session/{id}/share`、`GET /session-shares`、`DELETE /session-shares/{sessionId}[/record]` | 会话只读分享：查询 / 开启 / 关闭 / 管理 |
 | `DELETE /api/ai/message-group/{assistantMessageId}`、`POST /message-group/undo`、`POST /message-group/switch` | 删除本轮 / 撤销删除 / 切换回答版本 |
-| `POST /api/ai/chat/goal`、`POST /chat/goal/{goalId}`、`GET /chat/goal/pending`、`GET /chat/session/{id}/goal[/events]` | 目标模式：创建 / 动作（`pause`·`resume`·`edit`·`clear`）/ 待处理恢复 / 目标视图与过程账本 |
+| `POST /api/ai/chat/deep`、`POST /chat/deep/{goalId}`、`GET /chat/deep/pending`、`GET /chat/session/{id}/deep[/events]` | 深度执行：创建 / 动作（`pause`·`resume`·`edit`·`cancel`·`delete`）/ 待处理恢复 / 执行视图与过程账本 |
 | `GET /api/ai/auth/me` | 当前身份、权限与菜单树 |
 | `POST /api/ai/feedback`、`GET /analytics/summary`、`GET /analytics/badcases` | 赞踩反馈 / 看板聚合 / 差评样本 |
 
@@ -103,7 +103,7 @@
 | `process` | 工具模式下过程独白增量 |
 | `tool_status` / `tool_output` | 工具状态 / 沙盒命令输出实时流 |
 | `approval_required` | 有副作用工具等待确认（批准与拒绝经 `tool-approval` 端点） |
-| `plan_delta` / `plan_approval` | 计划文本增量 / 计划待确认（含 `planApprovalId`、计划全文与超时） |
+| `deep_plan_delta` / `deep_plan_approval` | 深度执行计划文本增量 / 计划待确认（含 `planApprovalId`、计划全文与超时） |
 | `plan_cancelled` / `plan_superseded` | 计划未批准（取消或超时）/ 被「继续对话」取代 |
 | `subagent_step` / `agent_delegated` / `agent_consulted` | 被委派分支的实时步骤 / 本轮由谁作答 / 本轮咨询过谁 |
 | `artifact` | 产物交付落盘（卡片字段） |

@@ -143,17 +143,22 @@ public class FrameworkSessions {
     /** 跨副本协调：实例租约、跟随位互斥、人在回路答复转投 */
     private final AgentxCluster cluster;
 
+    /** 计划裁决/退回意见/强制压缩这簇跨轮瞬时状态：Redis 里活过重启。 */
+    private final TransientSessionState transientState;
+
     public FrameworkSessions(
             com.wenqu.ai.agent.hitl.HitlDecisionService hitl,
             com.wenqu.ai.service.SandboxService sandboxService,
             SessionLogArchive archive,
             AgentxCluster cluster,
-            com.wenqu.ai.service.ConfigService configService) {
+            com.wenqu.ai.service.ConfigService configService,
+            TransientSessionState transientState) {
         this.hitl = hitl;
         this.sandboxService = sandboxService;
         this.archive = archive;
         this.cluster = cluster;
         this.configService = configService;
+        this.transientState = transientState;
     }
 
     /** 持有者侧执行方：答复在别的副本点下来时，由<b>持有实例的这个进程</b>照本地路径跑一遍 */
@@ -302,7 +307,7 @@ public class FrameworkSessions {
         Held current = held.get(key);
         // /compact 强制压缩那一实例的 triggerMessages(1) 只应作用一轮：下次开轮丢掉它、用默认配置重建。
         // 两个标记都要取走（用 | 而不是 ||，否则第二个 remove 被短路、标记永久留着）。
-        boolean stale = rebuildAfterCompact.remove(key) | staleConfigKeys.remove(key);
+        boolean stale = transientState.consumeRebuildAfterCompact(key) | staleConfigKeys.remove(key);
         if (stale && current != null) {
             closeQuietly(key, current);
             held.remove(key);
@@ -725,21 +730,8 @@ public class FrameworkSessions {
     }
 
     /**
-     * 计划卡裁决后的「界面要定格成什么样」：批准/退回重出/继续对话/拒绝 在问渠界面上是四种终态，
-     * 而框架只认 approve/reject 两态。这里把界面语义按会话留下一份，引擎收尾时取走补发对应帧——
-     * 不补的表现为计划卡在用户已经拒绝之后还挂着「等待中」。
-     */
-    private final Map<String, String> planOutcomes = new ConcurrentHashMap<>();
-
-    /**
-     * 计划「退回重出」的界面状态：用户已提交修改、新稿还没开始/还在写时为 true；
-     * 新的 plan_approval 落地时由引擎 {@link #markPlanPending(String)} 复位。
-     * <p>快照要靠它区分「等确认 v2」与「正在按意见重出 v3」——两者 recording 侧都表现为
-     * pending + 无草稿，只有这个状态能分开。
-     */
-    private final Set<String> planRevising = ConcurrentHashMap.newKeySet();
-    /** 产出当前这一版计划的「修改意见」（进计划版本链的 feedback） */
-    private final Map<String, String> planFeedbacks = new ConcurrentHashMap<>();
+    // 计划卡的界面终态/退回状态/修改意见：跨轮瞬时状态，统一落 TransientSessionState（Redis）。
+    // 进程重启后仍在——计划卡不会因为一次重启丢掉「已拒绝/已取代」的定格。
 
     /** 计划卡的裁决：批准走 approve，其余按拒绝并把用户意见作为理由送回模型。 */
     public boolean respondPlanApproval(String planApprovalId, boolean approved, String reason) {
@@ -764,7 +756,7 @@ public class FrameworkSessions {
             //  引擎按会话键取不到，卡片就在「已拒绝」之后仍挂着「等待中」）
             if (sessionKey == null || resume(planApprovalId, "plan", approved, why, null) == null) return false;
             pendingOwner.remove(planApprovalId);
-            planOutcomes.put(sessionKey, outcome == null ? "reject" : outcome);
+            transientState.putPlanOutcome(sessionKey, outcome);
             notePlanOutcomeState(sessionKey, outcome, why);
             return true;
         }
@@ -781,7 +773,7 @@ public class FrameworkSessions {
         pendingOwner.remove(planApprovalId);
         hitl.resolveFrameworkPending(planApprovalId, approved ? "APPROVED"
                 : "supersede".equals(outcome) ? "SUPERSEDED" : "REJECTED", null, why);
-        planOutcomes.put(sessionKey, outcome == null ? "reject" : outcome);
+        transientState.putPlanOutcome(sessionKey, outcome);
         notePlanOutcomeState(sessionKey, outcome, why);
         log.info("[agentx] 计划卡已裁决 id={} approved={} outcome={}", planApprovalId, approved, outcome);
         ensureFollowing(planApprovalId);
@@ -792,41 +784,36 @@ public class FrameworkSessions {
     private void notePlanOutcomeState(String sessionKey, String outcome, String reason) {
         if (sessionKey == null) return;
         if ("revise".equals(outcome)) {
-            planRevising.add(sessionKey);
-            if (reason != null && !reason.isBlank()) planFeedbacks.put(sessionKey, reason);
+            transientState.planRevising(sessionKey, true, reason);
         } else {
-            planRevising.remove(sessionKey);
+            transientState.planRevising(sessionKey, false, null);
         }
     }
 
-    /** 新的 plan_approval 已落地：退回重出状态结束，等待用户裁决这一版。 */
+    /** 新的 deep_plan_approval 已落地：退回重出状态结束，等待用户裁决这一版。 */
     public void markPlanPending(String sessionKey) {
         if (sessionKey == null) return;
-        planRevising.remove(sessionKey);
-        planFeedbacks.remove(sessionKey);
+        transientState.clearPlanRevision(sessionKey);
     }
 
     /** 这一会话此刻是否处于「已提交修改、新稿还没落地」的等待期 */
     public boolean isPlanRevising(String sessionKey) {
-        return sessionKey != null && planRevising.contains(sessionKey);
+        return transientState.isPlanRevising(sessionKey);
     }
 
     /** 最近一次「退回重出」提交的修改意见（产出下一版计划的那条） */
     public String peekPlanFeedback(String sessionKey) {
-        return sessionKey == null ? null : planFeedbacks.get(sessionKey);
+        return transientState.peekPlanFeedback(sessionKey);
     }
 
     /** 引擎取走并清掉本轮的计划裁决（一次裁决只对应一次定格）。 */
     public String takePlanOutcome(String sessionKey) {
-        if (sessionKey == null) return null;
-        planRevising.remove(sessionKey);
-        planFeedbacks.remove(sessionKey);
-        return planOutcomes.remove(sessionKey);
+        return transientState.takePlanOutcome(sessionKey);
     }
 
     /** 只看不取：跟随循环要在「还在跑」的时候就知道用户点了继续对话，取走了收尾就没得发帧。 */
     public String peekPlanOutcome(String sessionKey) {
-        return sessionKey == null ? null : planOutcomes.get(sessionKey);
+        return transientState.peekPlanOutcome(sessionKey);
     }
 
     /**
@@ -932,7 +919,7 @@ public class FrameworkSessions {
      * <p>值=用户给这一次压缩的摘要要求（空串＝没提要求）：随强制压缩一起进那一个实例的摘要提示词，
      * 取走即清，不会串到之后的轮次（{@link #markRebuildAfterCompact} 保证强制配置只作用一次）。
      */
-    private final java.util.Map<String, String> compactRequests = new ConcurrentHashMap<>();
+    // 强制压缩的「下一次提问生效」指令：同样落 TransientSessionState（Redis），取走即清。
 
     /**
      * 手动 /compact 在框架引擎下的<b>就地压缩</b>。
@@ -1128,7 +1115,7 @@ public class FrameworkSessions {
     /** 登记一次强制压缩并丢掉常驻实例（下一轮会带新配置重建；会话状态在 stateStore 里，不丢历史）。 */
     public void requestCompact(String userId, String sessionId, String instruction) {
         String key = (userId == null || userId.isBlank() ? "guest" : userId) + "|" + sessionId;
-        compactRequests.put(key, instruction == null ? "" : instruction.trim());
+        transientState.putCompactRequest(key, instruction);
         Held h = held.remove(key);
         if (h != null) {
             order.remove(key);
@@ -1145,7 +1132,7 @@ public class FrameworkSessions {
      * @return 用户给这一次压缩的摘要要求（空串＝没提）；null=没有待生效的强制压缩
      */
     public String takeCompactRequest(String sessionKey) {
-        return sessionKey == null ? null : compactRequests.remove(sessionKey);
+        return transientState.takeCompactRequest(sessionKey);
     }
 
     /**
@@ -1153,10 +1140,8 @@ public class FrameworkSessions {
      * {@code triggerMessages(1)} 会烤进常驻实例，若不复位会被该会话后续每一轮继承（每轮都压）。
      * 标记后，下一轮 {@link #open} 会丢掉这个实例、用默认压缩配置重建，保证「/compact 只压一次」。
      */
-    private final java.util.Set<String> rebuildAfterCompact = ConcurrentHashMap.newKeySet();
-
     public void markRebuildAfterCompact(String sessionKey) {
-        if (sessionKey != null) rebuildAfterCompact.add(sessionKey);
+        transientState.markRebuildAfterCompact(sessionKey);
     }
 
     /**
@@ -1207,8 +1192,7 @@ public class FrameworkSessions {
             frameworkToolGates.remove(key);
             turnSlots.remove(key);
             followers.remove(key);
-            compactRequests.remove(key);
-            rebuildAfterCompact.remove(key);
+            transientState.clear(key);
             staleConfigKeys.remove(key);
             if (h != null) {
                 closeQuietly(key, h);

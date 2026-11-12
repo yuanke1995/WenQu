@@ -1,5 +1,7 @@
 package com.wenqu.ai.service;
 
+import com.wenqu.ai.config.ConfigKeys;
+
 import com.huaban.analysis.jieba.JiebaSegmenter;
 import com.huaban.analysis.jieba.SegToken;
 import jakarta.annotation.PostConstruct;
@@ -53,8 +55,8 @@ public class KeywordExtractor {
             '的', '了', '吗', '呢', '吧', '啊', '么', '是', '在', '和', '与', '请', '我', '你', '它', '这', '那');
 
     /** 原词最大数 / 原词+子词元总上限（控制 LIKE OR 数量与 SQL 开销）；retrieval.keywordMax* 可调 */
-    private int maxTerms() { return configService.getInt("retrieval.keywordMaxTerms", 6); }
-    private int maxTotal() { return configService.getInt("retrieval.keywordMaxTotal", 12); }
+    private int maxTerms() { return configService.getInt(ConfigKeys.RETRIEVAL_KEYWORD_MAX_TERMS, 6); }
+    private int maxTotal() { return configService.getInt(ConfigKeys.RETRIEVAL_KEYWORD_MAX_TOTAL, 12); }
 
     /**
      * 提取检索词元（jieba 主词元优先，子词元补充；空输入返回空列表）

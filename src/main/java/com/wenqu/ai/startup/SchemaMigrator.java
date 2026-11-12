@@ -20,14 +20,14 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * 存量库 schema 演进：启动时解析 classpath 的 schema.sql（CREATE TABLE 定义），
+ * 存量库 schema 演进：启动时解析 classpath 的 V1 基线（CREATE TABLE 定义），
  * 与 information_schema 比对，缺失的**列**与**索引**自动 ALTER 补上（幂等：先查再补）。
  * <p>
- * 解决"存量表加列/加索引需手动 ALTER"的运维痛点——schema.sql 变更后老库启动即自动升级，
+ * 解决"存量表加列/加索引需手动 ALTER"的运维痛点——V1 基线变更后老库启动即自动升级，
  * 避免新装库与存量库结构漂移。补列/补索引失败仅告警不阻塞启动（保证只读/降级场景可用）。
  * <p>
  * 边界：只补列、补索引与创建缺失表；不改列类型、不删除列、不重建同名索引。
- * 同名索引若定义与 schema.sql 不一致只告警，需运维手工处理。
+ * 同名索引若定义与 V1 基线不一致只告警，需运维手工处理。
  * 大表补索引可能耗时较久，可用 ai-app.schema-auto-index=false 关闭索引自动补齐。
  */
 @Slf4j
@@ -37,8 +37,14 @@ import java.util.regex.Pattern;
 @Order(0)
 public class SchemaMigrator implements ApplicationRunner {
 
-    private static final Pattern CREATE_TABLE = Pattern.compile(
-            "CREATE TABLE IF NOT EXISTS\\s+`([^`]+)`\\s*\\(([\\s\\S]*?)\\)\\s*ENGINE", Pattern.CASE_INSENSITIVE);
+    /** Flyway V1 基线：与迁移脚本同一份文件，存量库补列/补索引时读取 */
+    private static final String SCHEMA_RESOURCE = "db/migration/V1__baseline.sql";
+
+    /** 已由 V2+ 迁移主动删除的列：SchemaMigrator 读 V1 时不得把它们补回来。 */
+    private static final java.util.Set<String> RETIRED_COLUMNS = java.util.Set.of(
+            "c_ai_agent.workflow_id");
+
+    private static final Pattern CREATE_TABLE = Pattern.compile(            "CREATE TABLE IF NOT EXISTS\\s+`([^`]+)`\\s*\\(([\\s\\S]*?)\\)\\s*ENGINE", Pattern.CASE_INSENSITIVE);
     private static final Pattern COLUMN_LINE = Pattern.compile(
             "^\\s*`([^`]+)`\\s+(.+?)\\s*,?$");
     /** 索引定义：[UNIQUE] KEY `名` (`列`[ DESC][, `列`...]) */
@@ -67,11 +73,11 @@ public class SchemaMigrator implements ApplicationRunner {
         }
     }
 
-    /** 解析 schema.sql → 逐表比对补列、补索引 */
+    /** 解析 V1 基线→ 逐表比对补列、补索引 */
     void migrate() {
         Map<String, TableDef> tables = parseSchema();
         if (tables.isEmpty()) {
-            log.warn("[SchemaMigrator] 未解析到任何建表定义（classpath schema.sql 不可读？）");
+            log.warn("[SchemaMigrator] 未解析到任何建表定义（classpath V1 基线不可读？）");
             return;
         }
         int addedCols = 0, addedIdx = 0;
@@ -79,7 +85,7 @@ public class SchemaMigrator implements ApplicationRunner {
             String table = e.getKey();
             List<String> existingCols = queryColumns(table);
             if (existingCols == null) {
-                // 整表缺失（schema.sql 新增表的存量库）：先按原始语句建表（CREATE TABLE IF NOT EXISTS 幂等），
+                // 整表缺失（V1 基线新增表的存量库）：先按原始语句建表（CREATE TABLE IF NOT EXISTS 幂等），
                 // 再走常规补列/补索引流程。建表失败才告警跳过——否则新增表在存量库永远不生效。
                 log.info("[SchemaMigrator] 检测到新表 {}，执行建表", table);
                 existingCols = createTable(table, e.getValue().ddl()) ? queryColumns(table) : null;
@@ -89,6 +95,7 @@ public class SchemaMigrator implements ApplicationRunner {
                 continue;
             }
             for (Map.Entry<String, String> col : e.getValue().columns().entrySet()) {
+                if (RETIRED_COLUMNS.contains(table + "." + col.getKey())) continue;
                 if (!existingCols.contains(col.getKey())) {
                     if (addColumn(table, col.getKey(), col.getValue())) addedCols++;
                 }
@@ -136,7 +143,7 @@ public class SchemaMigrator implements ApplicationRunner {
         }
     }
 
-    /** 整表缺失时建表（schema.sql 原始语句，幂等）；成功返回 true */
+    /** 整表缺失时建表（V1 基线原始语句，幂等）；成功返回 true */
     private boolean createTable(String table, String ddl) {
         if (ddl == null || ddl.isBlank()) {
             log.warn("[SchemaMigrator] 表 {} 缺少建表语句，无法自动创建", table);
@@ -179,7 +186,7 @@ public class SchemaMigrator implements ApplicationRunner {
     }
 
     /**
-     * 解析 schema.sql 的 CREATE TABLE 块（classpath 读取，兼容 jar 部署）。
+     * 解析 V1 基线的 CREATE TABLE 块（classpath 读取，兼容 jar 部署）。
      * 同时保留原始建表语句：新增表（存量库整表缺失）需先建表，之后才能继续补列/补索引。
      */
     Map<String, TableDef> parseSchema() {
@@ -212,7 +219,7 @@ public class SchemaMigrator implements ApplicationRunner {
     }
 
     private String readSchemaFile() {
-        try (InputStream in = getClass().getClassLoader().getResourceAsStream("schema.sql")) {
+        try (InputStream in = getClass().getClassLoader().getResourceAsStream(SCHEMA_RESOURCE)) {
             if (in == null) return null;
             BufferedReader r = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8));
             StringBuilder sb = new StringBuilder();
@@ -220,7 +227,7 @@ public class SchemaMigrator implements ApplicationRunner {
             while ((line = r.readLine()) != null) sb.append(line).append("\n");
             return sb.toString();
         } catch (Exception e) {
-            log.warn("[SchemaMigrator] schema.sql 读取失败: {}", e.getMessage());
+            log.warn("[SchemaMigrator] V1 基线读取失败: {}", e.getMessage());
             return null;
         }
     }

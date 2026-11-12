@@ -1,19 +1,59 @@
 {
-  "capturedAt": "2026-11-06T10:12:31.790Z",
+  "capturedAt": "2026-11-12T05:03:30.716Z",
   "events": [
     {
       "type": "turn_start",
       "data": {
-        "prepMs": 10,
-        "wallMs": 10
+        "wallMs": 9,
+        "prepMs": 9
       }
     },
     {
       "type": "turn_start",
       "data": {
-        "prepMs": 139,
-        "wallMs": 139
+        "wallMs": 139,
+        "prepMs": 139
       }
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
     },
     {
       "type": "token",
@@ -123,45 +163,45 @@
       "type": "usage",
       "data": {
         "thinkingChars": 0,
-        "turnElapsedMs": 2534,
+        "turnElapsedMs": 2562,
         "profile": "chat",
-        "turnWallMs": 2673,
+        "turnWallMs": 2701,
         "turnPrepMs": 139
       }
     },
     {
       "type": "done",
       "data": {
-        "finalContent": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测\n\n> ⏹ 已停止本轮，以上为已生成的部分",
-        "messageId": "b3ffee8115c01078672656e4e2231711",
-        "userMessageId": "87fe474be8979769a7de138b63199643",
-        "turnId": "47643142992a42419fcc63ccb036c489",
+        "finalContent": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测\n\n> ⏹ 已停止本轮，以上为已生成的部分",
+        "messageId": "29ebb439c1f02daeba7caf0e0260596b",
+        "userMessageId": "cbdd75310133bbaf71bde744d2b79324",
+        "turnId": "a26b7c5cd7f54c018a2235df4eee065d",
         "model": "mock-chat",
         "agentId": null,
         "agentName": null,
         "sources": [],
         "finalImages": [],
         "degradations": [],
-        "elapsedMs": 2534,
+        "elapsedMs": 2562,
         "humanWaitMs": 0,
-        "turnWallMs": 2673,
+        "turnWallMs": 2701,
         "prepMs": 139,
         "tokens": {
           "thinkingChars": 0,
-          "turnElapsedMs": 2534,
+          "turnElapsedMs": 2562,
           "profile": "chat",
-          "turnWallMs": 2673,
+          "turnWallMs": 2701,
           "turnPrepMs": 139
         },
         "toolCalls": [],
         "blocks": {
           "v": 1,
-          "turnId": "47643142992a42419fcc63ccb036c489",
+          "turnId": "a26b7c5cd7f54c018a2235df4eee065d",
           "blocks": [
             {
               "kind": "text",
               "channel": "answer",
-              "text": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测",
+              "text": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测",
               "id": "b1"
             },
             {
@@ -180,24 +220,25 @@
         },
         "artifacts": [],
         "related": [],
-        "thinking": null
+        "thinking": null,
+        "bodyRewritten": true
       }
     }
   ],
   "message": {
-    "turnId": "47643142992a42419fcc63ccb036c489",
+    "turnId": "a26b7c5cd7f54c018a2235df4eee065d",
     "sequence": 2,
     "role": "assistant",
     "sources": [],
-    "createTime": "2026-11-06T18:12:30",
+    "createTime": "2026-11-12T13:03:29",
     "blocks": {
       "v": 1,
-      "turnId": "47643142992a42419fcc63ccb036c489",
+      "turnId": "a26b7c5cd7f54c018a2235df4eee065d",
       "blocks": [
         {
           "kind": "text",
           "channel": "answer",
-          "text": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测",
+          "text": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测",
           "id": "b1"
         },
         {
@@ -214,27 +255,27 @@
         }
       ]
     },
-    "messageId": "b3ffee8115c01078672656e4e2231711",
+    "messageId": "29ebb439c1f02daeba7caf0e0260596b",
     "timeline": [
       {
         "kind": "text",
         "from": 0,
-        "to": 73
+        "to": 93
       }
     ],
     "tokens": {
       "thinkingChars": 0,
-      "turnElapsedMs": 2534,
+      "turnElapsedMs": 2562,
       "profile": "chat",
-      "turnWallMs": 2673,
+      "turnWallMs": 2701,
       "turnPrepMs": 139
     },
     "model": "mock-chat",
-    "content": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测\n\n> ⏹ 已停止本轮，以上为已生成的部分"
+    "content": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测\n\n> ⏹ 已停止本轮，以上为已生成的部分"
   },
   "guestMessage": {
     "role": "assistant",
-    "content": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测\n\n> ⏹ 已停止本轮，以上为已生成的部分",
+    "content": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测\n\n> ⏹ 已停止本轮，以上为已生成的部分",
     "time": null,
     "blocks": {
       "v": 1,
@@ -243,7 +284,7 @@
           "id": "b1",
           "kind": "text",
           "channel": "answer",
-          "text": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测"
+          "text": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测"
         },
         {
           "id": "b3",

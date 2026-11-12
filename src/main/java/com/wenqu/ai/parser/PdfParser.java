@@ -3,6 +3,7 @@ package com.wenqu.ai.parser;
 import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.config.AppProperties;
 import com.wenqu.ai.config.ConfigDefaults;
+import com.wenqu.ai.config.ConfigKeys;
 import com.wenqu.ai.model.Chunk;
 import com.wenqu.ai.parser.ocr.OcrEngine;
 import com.wenqu.ai.parser.ocr.PageMarkdown;
@@ -41,7 +42,7 @@ import java.util.stream.Collectors;
 public class PdfParser implements DocumentParser {
 
     /** 文本少于该长度判定为扫描件（图片型 PDF），触发 OCR；parse.ocrMinText 可调 */
-    private int ocrMinText() { return configService.getInt("parse.ocrMinText", ConfigDefaults.PARSE_OCR_MIN_TEXT); }
+    private int ocrMinText() { return configService.getInt(ConfigKeys.PARSE_OCR_MIN_TEXT, ConfigDefaults.PARSE_OCR_MIN_TEXT); }
 
     private final AppProperties properties;
     private final VisionService visionService;

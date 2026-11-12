@@ -1,6 +1,7 @@
 package com.wenqu.ai.service;
 
 import com.wenqu.ai.config.ConfigDefaults;
+import com.wenqu.ai.config.ConfigKeys;
 import com.wenqu.ai.util.RequestUser;
 
 import com.alibaba.fastjson2.JSON;
@@ -29,6 +30,8 @@ import org.springframework.ai.vectorstore.redis.RedisVectorStore;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.File;
@@ -78,6 +81,8 @@ import java.time.LocalDateTime;
 public class DocumentService {
     /** 统一审计事件：同一份格式串派生日志与结构化事件，不再两处抄 */
     private final AuditService audit;
+    /** 核心 DB 删除的事务边界（向量/文件在事务外，见 purge 注释）。 */
+    private final PlatformTransactionManager txManager;
 
 
     private final AiDocumentMapper documentMapper;
@@ -1170,7 +1175,7 @@ public class DocumentService {
             // 不入库、不进指纹，因此邻块变动不会连锁改变本块指纹（chunk.overlap 可调，0=关闭）
             int overlap = configService.getInt("chunk.overlap", properties.getChunk().getOverlap());
             // 截断保护：超大文档只保留前 maxChunks 块（防止 embedding 调用数万次/解析失控）
-            int maxChunks = configService.getInt("chunk.maxChunks", ConfigDefaults.CHUNK_MAX_CHUNKS);
+            int maxChunks = configService.getInt(ConfigKeys.CHUNK_MAX_CHUNKS, ConfigDefaults.CHUNK_MAX_CHUNKS);
             int truncatedChunks = 0;
             if (maxChunks > 0 && chunks.size() > maxChunks) {
                 // fail-loud：截断不再静默——计数入终态 desc（"截断保留前N/共M块"）
@@ -1698,16 +1703,15 @@ public class DocumentService {
         } catch (Exception e) {
             log.warn("[{}] GraphRAG 清理失败（不影响删除）: {}", docId, e.getMessage());
         }
-        knowledgeMapper.delete(new LambdaQueryWrapper<Knowledge>().eq(Knowledge::getDocId, docId));
-        documentMapper.hardDelete(docId);
-        keywordIndexService.deleteByDoc(docId); // 关键词索引同步（best-effort）
-        // 清理版本快照
-        try {
+        // 核心 DB 删除收进一个事务：知识块 / 版本快照 / 文档行要么一起消失，要么一起保留等重试。
+        // 向量与文件不可事务化，仍按「先向量后 DB」；失败可重试，不会留下不可追溯的孤儿。
+        new TransactionTemplate(txManager).executeWithoutResult(status -> {
+            knowledgeMapper.delete(new LambdaQueryWrapper<Knowledge>().eq(Knowledge::getDocId, docId));
             versionMapper.delete(new LambdaQueryWrapper<com.wenqu.ai.model.AiDocumentVersion>()
                     .eq(com.wenqu.ai.model.AiDocumentVersion::getDocId, docId));
-        } catch (Exception e) {
-            log.warn("清理版本快照失败: {}", e.getMessage());
-        }
+            documentMapper.hardDelete(docId);
+        });
+        keywordIndexService.deleteByDoc(docId); // 关键词索引同步（best-effort）
         documentMetaCache.invalidate(docId);
         // 引用关系清理（纯派生数据，随文档删除）
         cleanupImages(docId);

@@ -4,6 +4,7 @@ import com.alibaba.fastjson2.JSON;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.wenqu.ai.agent.chat.ChatCommand;
+import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.service.TurnSource;
 import com.wenqu.ai.mapper.AgentMapper;
 import com.wenqu.ai.mapper.WebhookDeliveryMapper;
@@ -326,7 +327,7 @@ public class AgentWebhookService {
 
     /** 首发失败后的重试次数上限（agentWebhook.retryMax，0=失败即耗尽；负数按 0） */
     private int retryMax() {
-        return Math.max(0, configService.getInt("agentWebhook.retryMax", RETRY_BACKOFF_MS.length));
+        return Math.max(0, configService.getInt("agentWebhook.retryMax", ConfigDefaults.AGENT_WEBHOOK_RETRY_MAX));
     }
 
     private static int nz(Integer v) {

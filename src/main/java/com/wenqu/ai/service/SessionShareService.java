@@ -259,7 +259,6 @@ public class SessionShareService {
      */
     public List<Map<String, Object>> publicHistory(String sessionId) {
         List<Map<String, Object>> history = sessionService.getHistory(sessionId);
-        if (history == null) return List.of();
         List<Map<String, Object>> out = new ArrayList<>();
         int artSeq = 0;
         for (Map<String, Object> m : history) {
@@ -363,7 +362,6 @@ public class SessionShareService {
         if (share == null) return null;
         String sessionId = share.getSessionId();
         List<Map<String, Object>> history = sessionService.getHistory(sessionId);
-        if (history == null) return null;
         int cur = 0;
         for (Map<String, Object> m : history) {
             if (!"assistant".equals(String.valueOf(m.get("role")))) continue;

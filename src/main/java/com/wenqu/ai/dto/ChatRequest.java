@@ -105,7 +105,7 @@ public class ChatRequest {
     private boolean deepThink;
 
     @Schema(description = "计划模式（人在回路）：true=模型先只产出一份执行计划（计划轮不执行任何工具，"
-            + "流式 plan_delta 下发），经 plan_approval 事件交用户批准/编辑后再按计划进入正式回答轮；"
+            + "流式 deep_plan_delta 下发），经 deep_plan_approval 事件交用户批准/编辑后再按计划进入正式回答轮；"
             + "拒绝或超时=本轮终止。本轮没有启用的工具时自动降级为普通回答（登记降级提示）")
     private boolean planMode;
 

@@ -1,5 +1,7 @@
 package com.wenqu.ai.controller;
 
+import com.wenqu.ai.config.EnterpriseOnly;
+
 import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.dto.ResultJson;
 import com.wenqu.ai.model.ServiceAccount;
@@ -30,6 +32,7 @@ import java.util.Map;
  *
  * @author yuanke
  */
+@EnterpriseOnly
 @RestController
 @RequestMapping("/api/ai/service-account")
 @RequiredArgsConstructor

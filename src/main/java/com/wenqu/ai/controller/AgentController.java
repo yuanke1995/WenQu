@@ -44,6 +44,8 @@ import com.wenqu.ai.security.Permission;
 public class AgentController {
 
     private final AgentService agentService;
+    /** 评测门禁：block 档下保存/发布由服务端统一拦截，API 层绕不过。 */
+    private final com.wenqu.ai.service.AgentEvalService agentEvalService;
     private final com.wenqu.ai.service.AgentShareService agentShareService;
     private final com.wenqu.ai.service.ModelRegistryService modelRegistryService;
     /** MCP 连接池读口：游客名单校验「是不是发布者自己登记且启用的 server」用 */
@@ -190,6 +192,7 @@ public class AgentController {
     @PutMapping("/{id}")
     public ResultJson update(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
         if (!canManage(agentService.get(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");
+        agentEvalService.assertSaveAllowed(id);
         return ResultJson.ok(agentService.update(id, body));
     }
 
@@ -310,6 +313,7 @@ public class AgentController {
     @PostMapping("/{id}/publish")
     public ResultJson publish(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
         if (!canManage(agentService.get(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");
+        agentEvalService.assertSaveAllowed(id);
         boolean enabled = Boolean.parseBoolean(String.valueOf(body.get("enabled")));
         boolean mcpEnabled = Boolean.parseBoolean(String.valueOf(body.get("mcpEnabled")));
         boolean guestImages = Boolean.parseBoolean(String.valueOf(body.get("guestImages")));

@@ -58,6 +58,15 @@ public final class TenantContext {
     }
 
     /**
+     * 当前线程<b>显式绑定</b>的租户；不触发归属解析。
+     * <p>跨线程捕获用：提交任务时把已绑定的租户原样带走，没绑定就让工作线程按
+     * 恢复后的身份自行解析，避免在提交侧多做一次 DB 查询。
+     */
+    public static String boundTenant() {
+        return CURRENT.get();
+    }
+
+    /**
      * 当前租户；未绑定返回 null（不兜底成 default：漏绑要能在诊断里看出来）。
      * <p>没显式绑定时按线程上的身份去查归属（见 {@link #resolver}）。查归属这件事本身要走数据库，
      * 而那条 SQL 又会被租户拦截器问一遍「当前租户是谁」——所以有一层重入闸：解析过程中一律回 null，
@@ -102,6 +111,15 @@ public final class TenantContext {
     /** 是否处于平台视图（跨租户管理动作） */
     public static boolean inPlatformView() {
         return Boolean.TRUE.equals(PLATFORM.get());
+    }
+
+    /**
+     * 是否正在解析成员归属。
+     * <p>解析本身要查 {@code c_ai_user}，那条内部查询不能再被租户闸要求「先有租户」——
+     * 否则递归。拦截器据此放行解析期内部查询。
+     */
+    public static boolean resolving() {
+        return Boolean.TRUE.equals(RESOLVING.get());
     }
 
     /** 当前线程是否限定了租户（已绑定且不在平台视图里）——读侧判据与诊断用 */

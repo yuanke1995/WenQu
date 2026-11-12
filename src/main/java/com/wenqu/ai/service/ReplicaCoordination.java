@@ -119,6 +119,15 @@ public class ReplicaCoordination {
         }
     }
 
+    /**
+     * 抢占租约，Redis 不可用时直接抛出。
+     * <p>给轮级互斥这类不能混淆「别人持有」与「存储挂了」的场景用；普通集群协调仍走
+     * {@link #acquire} 的按未抢到处理。
+     */
+    public boolean acquireOrThrow(String key, Duration ttl) {
+        return Boolean.TRUE.equals(redis.opsForValue().setIfAbsent(key, replicaId, ttl));
+    }
+
     /** 强制占住（权威那一路用：新一轮的提问者就是比续跑跟随者优先，覆盖不报错） */
     public void claim(String key, Duration ttl) {
         try {

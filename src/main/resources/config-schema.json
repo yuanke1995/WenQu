@@ -174,7 +174,7 @@
     },
     {
       "key": "goal",
-      "title": "目标模式（长任务）",
+      "title": "深度执行（长任务）",
       "sections": [
         "推进与轮次",
         "预算与恢复",
@@ -1278,6 +1278,24 @@
       "tips": "agentEvalEnabled",
       "def": true,
       "note": "智能体「评测」页签总开关；关闭后评测端点全部拒绝",
+      "tier": 3
+    },
+    {
+      "backendKey": "agentEval.gateMode",
+      "panel": "maintenance",
+      "section": 1,
+      "group": "agentEval",
+      "key": "gateMode",
+      "path": "agentEval.gateMode",
+      "label": "评测门禁",
+      "type": "select",
+      "def": "hint",
+      "width": 240,
+      "options": [
+        { "value": "hint", "label": "只提示（保存前弹检查）" },
+        { "value": "block", "label": "拦截（低于门槛/有变更未重测时拒绝保存与发布）" }
+      ],
+      "note": "block 档由服务端在保存/发布时校验，API 层无法绕过；hint 档只弹检查不拦",
       "tier": 3
     },
     {

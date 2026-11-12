@@ -1,6 +1,8 @@
 package com.wenqu.ai.config;
 
 import com.baomidou.mybatisplus.extension.plugins.handler.TenantLineHandler;
+import com.wenqu.ai.common.TenantResolutionException;
+import com.wenqu.ai.util.RequestUser;
 import com.wenqu.ai.util.TenantContext;
 import net.sf.jsqlparser.expression.Expression;
 import net.sf.jsqlparser.expression.StringValue;
@@ -81,8 +83,18 @@ public class WenquTenantLineHandler implements TenantLineHandler {
         if (tableName == null) return true;
         String t = tableName.toLowerCase(java.util.Locale.ROOT);
         if (GLOBAL_TABLES.contains(t)) return true;
-        // 平台视图与未绑定线程：不注入谓词（前者是显式的跨租户管理动作，后者是系统任务）
-        return TenantContext.inPlatformView() || TenantContext.current() == null;
+        if (TenantContext.inPlatformView()) return true;
+        // 归属解析自身的内部查询（如按 uid 查 c_ai_user）必须放行，否则递归
+        if (TenantContext.resolving()) return true;
+        String tenant = TenantContext.current();
+        if (tenant != null) return false;
+        // 未绑定只对真正的系统线成立（启动/调度/清理任务本就要跨租户遍历）。
+        // 带真实身份却没有租户 = 归属解析失败或账号已无归属，必须 fail-closed：
+        // 退化成「不注入谓词」等于让这条请求读写全平台，正是要堵的静默错位。
+        if (!RequestUser.isSystem()) {
+            throw new TenantResolutionException(403, "当前请求缺少租户归属，已拒绝跨租户访问");
+        }
+        return true;
     }
 
     /**

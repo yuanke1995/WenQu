@@ -3,70 +3,122 @@ package com.wenqu.ai.engine;
 // [保留] 引擎抽象与前端事件契约 —— AgentScope 框架引擎经 RunChannel/RunEvent 向问渠前端发事件，前端只认这套事件名与契约，不是死代码，勿删。
 
 /**
- * 问答这一轮往前端推的事件词汇表。
- * <p>名字与 {@code ChatRunRuntime.sendSseEvent} 的 type 实参一一对应，是<b>前端契约</b>而不是内部枚举：
- * 改名等于断约，所以每条都钉死 SSE 事件名，与 {@code ChatRunRuntime.sendSseEvent} 的 type 实参、
- * {@code web/src/api.js} 的 CHAT_EVENT_CB 三处对账（多一条、少一条、拼错都判红）。
- * <p>这张表存在的原因：框架引擎产出的是 AgentScope 的 30 类 SessionLog 事件，必须在适配层
- * 收敛到同一张表上，前端才不用跟着框架的事件名走。手写运行时与灰度分流已随平移下线。
+ * 问答这一轮往前端推的事件词汇表，也是前后端事件契约的唯一真源。
+ *
+ * <p>每条事件自带：SSE 名、前端回调名、账本展示文案/色调、是否进 SSE 账本、是否进断线镜像。
+ * {@code ChatRunRuntime} 的 ledger 名单、{@code ChatRunBus} 的 mirror 名单、前端
+ * {@code CHAT_EVENT_CB / SSE_LABELS / SSE_TONES} 都由本枚举派生——新增事件只改这里，
+ * 再跑一次契约生成器。
+ *
+ * <p>三条硬约束：
+ * <ul>
+ *   <li>{@code sseName} 是契约值，改名等于断约；</li>
+ *   <li>{@code sseLedger} 只描述「这条 SSE 帧要不要进会话事件账本」，目标态另有 GoalService 的
+ *       专用账本，不在这里重复标记；</li>
+ *   <li>{@code callback} 为 null 表示前端不做常规派发（done/error 由两条链路的收尾逻辑单独处理）。</li>
+ * </ul>
  */
 public enum RunEventType {
 
-    TOKEN("token"),
-    PROCESS("process"),
-    WARN("warn"),
-    THINKING("thinking"),
-    THINKING_DONE("thinking_done"),
-    TOOL_STATUS("tool_status"),
-    TOOL_OUTPUT("tool_output"),
-    RUNCODE_PROGRESS("runcode_progress"),
-    SUBAGENT_STEP("subagent_step"),
-    AGENT_DELEGATED("agent_delegated"),
-    AGENT_CONSULTED("agent_consulted"),
-    APPROVAL_REQUIRED("approval_required"),
-    ASK_USER("ask_user"),
-    PLAN("plan"),
-    PLAN_DELTA("plan_delta"),
-    PLAN_APPROVAL("plan_approval"),
-    PLAN_CANCELLED("plan_cancelled"),
-    PLAN_SUPERSEDED("plan_superseded"),
-    TODO("todo"),
-    /** 目标态变更（目标模式）：状态机迁移/标准裁决/验证结果/预算变化的唯一帧。
-     *  进镜像（断线重连要能重建目标面板）与账本（按 goal_id 聚合）。 */
-    GOAL_STATE("goal_state"),
-    /** 目标跨轮续跑开了新的一轮（后台轮）：前端据此自动接流。进账本，不进镜像（帧不是状态）。 */
-    GOAL_TURN("goal_turn"),
-    RETRIEVED("retrieved"),
-    /** 本轮有一条技能被读取（点名注入或模型按需读取）。content: {name, source=picked|model}。
-     *  进账本——刷新后回看要能重建「已按技能 X 执行」芯片；同一轮同一技能可能多条（多次读取），
-     *  前端按 name 合并成一颗芯片。 */
-    SKILL_HIT("skill_hit"),
-    USAGE("usage"),
-    /** 轮内自动压缩的开始/结束（框架 {@code compaction/start|end}）。
-     *  不发这一帧，压缩那二十多秒在界面上是纯静默：压缩走的是 SUMMARY 用途的模型调用，
-     *  它的思考与正文都被按 purpose 滤掉，没有一帧到达前端。 */
-    COMPACT_STATE("compact_state"),
-    IMAGE("image"),
-    ARTIFACT("artifact"),
-    /** 运行中插话<b>被模型听到</b>的那一刻（框架 {@code inbox/applied}）。不是「用户按了发送」——
-     *  那一刻由 {@code POST /chat/steer} 自己回执，这条只对应「送进这一轮的上下文」，故带正文与消息 ID。 */
-    STEER("steer"),
-    /** 本轮的服务端起表基准（时长形式）：开流第一帧下发，前端据此把秒表锚到服务端收到提问那一拍，
-     *  收尾换成落库那份墙钟时才不会掉一个网络往返。只给时长、不给绝对时刻——两端钟差不会进入读数。
-     *  外壳（请求入口）与引擎（开轮起表）各发一次，同一基准，后一次 prepMs 更准。 */
-    TURN_START("turn_start"),
-    SNAPSHOT("snapshot"),
-    DONE("done"),
-    ERROR("error");
+    TOKEN("token", "onToken", null, null, false, false),
+    PROCESS("process", "onProcess", "过程", null, false, false),
+    WARN("warn", "onWarn", "提醒", "warn", true, true),
+    THINKING("thinking", "onThinking", null, null, false, false),
+    THINKING_DONE("thinking_done", "onThinkingDone", null, null, false, false),
+    TOOL_STATUS("tool_status", "onToolStatus", "工具", "tool", true, false),
+    TOOL_OUTPUT("tool_output", "onToolOutput", null, "tool", false, false),
+    RUNCODE_PROGRESS("runcode_progress", "onRunCodeProgress", null, null, false, true),
+    SUBAGENT_STEP("subagent_step", "onSubagentStep", null, "sub", false, false),
+    AGENT_DELEGATED("agent_delegated", "onAgentDelegated", "委派作答", "sub", true, false),
+    AGENT_CONSULTED("agent_consulted", "onAgentConsulted", "智能体咨询", "sub", true, false),
+    APPROVAL_REQUIRED("approval_required", "onApprovalRequired", "工具待批准", "card", true, false),
+    ASK_USER("ask_user", "onAskUser", "提问卡", "card", true, false),
+    PLAN("plan", "onPlan", "本轮步骤", "card", true, true),
+    DEEP_PLAN_DELTA("deep_plan_delta", "onDeepPlanDelta", null, null, false, false),
+    DEEP_PLAN_APPROVAL("deep_plan_approval", "onDeepPlanApproval", "深度执行计划待批准", "card", true, false),
+    DEEP_PLAN_CANCELLED("deep_plan_cancelled", "onDeepPlanCancelled", "深度执行计划未批准", "card", true, false),
+    DEEP_PLAN_SUPERSEDED("deep_plan_superseded", "onDeepPlanSuperseded", "深度执行计划被取代", "card", true, false),
+    TODO("todo", "onTodo", "任务清单", null, false, true),
+    /** 深度执行态变更：进镜像（断线重连要能重建执行面板）；账本由 GoalService 按执行 ID 单独写。 */
+    DEEP_STATE("deep_state", "onDeepState", "深度执行态", null, false, true),
+    /** 深度执行跨轮续跑开了新的一轮（后台轮）：前端据此自动接流。 */
+    DEEP_TURN("deep_turn", "onDeepTurn", "深度执行续跑", null, false, false),
+    RETRIEVED("retrieved", "onRetrieved", "检索", "retr", true, true),
+    /** 本轮有一条技能被读取（点名注入或模型按需读取）；刷新后回看要能重建「已按技能 X 执行」芯片。 */
+    SKILL_HIT("skill_hit", "onSkillHit", "技能命中", null, true, false),
+    USAGE("usage", "onUsage", "用量", "use", true, true),
+    /** 轮内自动压缩的开始/结束：不发这一帧，压缩那二十多秒在界面上是纯静默。 */
+    COMPACT_STATE("compact_state", "onCompactState", "上下文压缩", null, false, true),
+    IMAGE("image", "onImage", null, null, false, false),
+    ARTIFACT("artifact", "onArtifact", "产物", "art", true, false),
+    /** 运行中插话被模型听到的那一刻（框架 inbox/applied），不是「用户按了发送」。 */
+    STEER("steer", "onSteer", "中途插话", null, false, false),
+    /** 本轮服务端起表基准：开流第一帧下发，前端据此锚定秒表。 */
+    TURN_START("turn_start", "onTurnStart", null, null, false, false),
+    SNAPSHOT("snapshot", "onSnapshot", null, null, false, false),
+    DONE("done", null, "本轮结束", "done", false, false),
+    ERROR("error", null, "失败", "err", true, false);
 
     private final String sseName;
+    private final String callback;
+    private final String label;
+    private final String tone;
+    private final boolean sseLedger;
+    private final boolean mirror;
 
-    RunEventType(String sseName) {
+    RunEventType(String sseName, String callback, String label, String tone,
+                 boolean sseLedger, boolean mirror) {
         this.sseName = sseName;
+        this.callback = callback;
+        this.label = label;
+        this.tone = tone;
+        this.sseLedger = sseLedger;
+        this.mirror = mirror;
     }
 
     /** 发到前端的那条 SSE 的 event name——契约值，别按 Java 命名习惯改。 */
     public String sseName() {
         return sseName;
+    }
+
+    /** 前端派发回调名；null=由链路收尾逻辑单独处理（done/error）。 */
+    public String callback() {
+        return callback;
+    }
+
+    /** 账本/过程面板展示文案；null=不单列一行，落到兜底文案。 */
+    public String label() {
+        return label;
+    }
+
+    /** 过程面板色调；null=默认。 */
+    public String tone() {
+        return tone;
+    }
+
+    /** 这条 SSE 帧是否进会话事件账本。 */
+    public boolean sseLedger() {
+        return sseLedger;
+    }
+
+    /** 这条 SSE 帧是否进断线重连镜像。 */
+    public boolean mirror() {
+        return mirror;
+    }
+
+    /** 进 SSE 账本的事件名集合（ChatRunRuntime 用）。 */
+    public static java.util.Set<String> sseLedgerNames() {
+        return java.util.Arrays.stream(values())
+                .filter(RunEventType::sseLedger)
+                .map(RunEventType::sseName)
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+    }
+
+    /** 进断线镜像的事件名集合（ChatRunBus 用）。 */
+    public static java.util.Set<String> mirrorNames() {
+        return java.util.Arrays.stream(values())
+                .filter(RunEventType::mirror)
+                .map(RunEventType::sseName)
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
     }
 }

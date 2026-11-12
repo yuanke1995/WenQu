@@ -176,7 +176,7 @@ public class OpenAiCompatController {
 
         String sessionId = sessionService.createTempSession(uid);
         try {
-            // 历史逐条落库（同形 ChatflowBridge 的 appendMessage 口径），本轮按正常管线跑
+            // 历史逐条落库，本轮按正常管线跑
             for (String[] h : history) {
                 sessionService.appendMessage(MessageWrite.builder()
                         .sessionId(sessionId).role(h[0]).content(h[1]).build());
