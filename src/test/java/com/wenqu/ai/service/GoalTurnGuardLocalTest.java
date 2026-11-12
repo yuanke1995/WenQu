@@ -86,6 +86,33 @@ class GoalTurnGuardLocalTest {
             assertThat(service.goalTurnAborted(turnId)).isFalse();
             assertThat(service.goalTurnAborted("plain-user-turn")).isFalse();
 
+            // 1b. 正常收尾窗口：轮次已 SETTLED、目标已排下一轮/已完成——这不是叫停，
+            //     收尾时的产物交付必须照常（线上两轮产物就是在这里被误丢的）。
+            GoalRound settled = roundMapper.byTurnId(turnId);
+            settled.setStatus("SETTLED");
+            roundMapper.updateById(settled);
+            Goal nextRound = goalMapper.selectById(goalId);
+            nextRound.setPhase(GoalService.QUEUED);
+            goalMapper.updateById(nextRound);
+            service.clearTurnAbort(turnId);
+            assertThat(service.goalTurnAborted(turnId)).isFalse();
+
+            Goal achieved = goalMapper.selectById(goalId);
+            achieved.setStatus(GoalService.ACHIEVED);
+            achieved.setPhase("DONE");
+            goalMapper.updateById(achieved);
+            service.clearTurnAbort(turnId);
+            assertThat(service.goalTurnAborted(turnId)).isFalse();
+
+            // 再把这一轮恢复成在跑，验证取消判定
+            Goal back = goalMapper.selectById(goalId);
+            back.setStatus(GoalService.RUNNING);
+            back.setPhase("EXECUTING");
+            goalMapper.updateById(back);
+            GoalRound again = roundMapper.byTurnId(turnId);
+            again.setStatus(GoalRound.RUNNING);
+            roundMapper.updateById(again);
+
             service.cancel(goalId, "u-guard", null);
             assertThat(service.goalTurnAborted(turnId)).isTrue();
 

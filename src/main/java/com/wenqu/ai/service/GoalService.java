@@ -508,11 +508,26 @@ public class GoalService {
             abortedTurns.put(turnId, now);
             return true;
         }
-        boolean alive = ACTIVE.contains(fresh.getStatus())
-                && (GoalPhase.EXECUTING.equals(fresh.getPhase())
-                    || GoalPhase.COMPLETION_CHECK.equals(fresh.getPhase()));
-        if (!alive) abortedTurns.put(turnId, now);
-        return !alive;
+        // 先看轮次行：它才是「这一轮还在不在跑」的第一手事实。
+        // 只看目标阶段会把「刚收完尾、正在核验/排下一轮」误判成叫停——线上就是这么把两轮产物
+        // 在收尾时全丢了的（20:24/20:27 两条「已被叫停，丢弃本轮产物交付」）。
+        GoalRound round = roundMapper.byTurnId(turnId);
+        boolean aborted;
+        if (round == null) {
+            // 轮次行还没建：只有目标已经是终态/被删才算叫停（取消与起跑赛跑的那个窗口）
+            aborted = CANCELLED.equals(fresh.getStatus());
+        } else if (GoalRound.INTERRUPTED.equals(round.getStatus())) {
+            aborted = true;
+        } else if (GoalRound.RUNNING.equals(round.getStatus())) {
+            aborted = !(ACTIVE.contains(fresh.getStatus())
+                    && (GoalPhase.EXECUTING.equals(fresh.getPhase())
+                        || GoalPhase.COMPLETION_CHECK.equals(fresh.getPhase())));
+        } else {
+            // SETTLED / FAILED：这一轮是正常收尾，产物该交付
+            aborted = CANCELLED.equals(fresh.getStatus());
+        }
+        if (aborted) abortedTurns.put(turnId, now);
+        return aborted;
     }
 
     // ==================== 调度器钩子 ====================

@@ -105,4 +105,27 @@ public class LocalBrowserTools {
     public String localBrowserScreenshot(ToolContext ctx) {
         return call(ctx, "browser_take_screenshot", Map.of());
     }
+
+    /**
+     * 收掉本机浏览器窗口。
+     * <p>headed 浏览器是用户桌面上真实存在的窗口：验完页面不收，它会一直挂在那里，
+     * 用户以为「关不掉」（执行器原本只有 5 分钟空闲兜底）。目标轮收尾时由引擎顺手调一次。
+     */
+    @Tool(description = "关闭你电脑上的浏览器窗口。页面核对/截图做完、确认不需要它时调用。")
+    public String localBrowserClose(ToolContext ctx) {
+        return call(ctx, "browser_close", Map.of());
+    }
+
+    /** 尽力而为地关掉该用户的本机浏览器：没开、执行器离线、上游不认这一调用都当成功，不抛。 */
+    public void closeQuietly(String uid) {
+        if (uid == null || uid.isBlank()) return;
+        String executorId = onlineExecutor(uid);
+        if (executorId == null) return;
+        try {
+            executorRegistry.call(executorId, "browser",
+                    Map.of("tool", "browser_close", "args", Map.of()), 15_000L);
+        } catch (RuntimeException e) {
+            log.debug("[LOCAL_BROWSER] 收尾关闭浏览器失败（忽略） uid={}: {}", uid, e.toString());
+        }
+    }
 }

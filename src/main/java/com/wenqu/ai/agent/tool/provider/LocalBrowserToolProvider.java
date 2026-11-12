@@ -50,7 +50,11 @@ public class LocalBrowserToolProvider implements ToolFamilyProvider {
                 desc("localBrowserSnapshot", "读取本机浏览器页面", "读取当前页面结构化快照，含元素 ref"),
                 desc("localBrowserClick", "点击本机浏览器元素", "按快照 ref 点击当前页面元素"),
                 desc("localBrowserType", "填写本机浏览器输入框", "按快照 ref 向输入框填文字"),
-                desc("localBrowserScreenshot", "本机浏览器截图", "对当前页面截图留证"));
+                desc("localBrowserScreenshot", "本机浏览器截图", "对当前页面截图留证"),
+                // 关闭是收尾动作，不额外要确认：目标轮收尾本来就会自动关一次
+                new ToolDescriptor("localBrowserClose", ToolFamily.LOCAL_BROWSER,
+                        "关闭本机浏览器", "关闭本机浏览器", "关掉你电脑上的浏览器窗口",
+                        SideEffect.EXTERNAL, null, false, false, null));
     }
 
     private static ToolDescriptor desc(String name, String label, String hint) {

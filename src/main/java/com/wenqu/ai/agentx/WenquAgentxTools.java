@@ -64,6 +64,8 @@ public class WenquAgentxTools {
     private final com.wenqu.ai.agent.runcode.RunCodeSubCallRuntime subCall;
     /** 引用来源的文件名兜底查询：工具首命中的文档不在主检索映射里，靠它按 docId 补查（见 {@link #newPool}）。 */
     private final com.wenqu.ai.service.DocumentMetaCache documentMetaCache;
+    /** 本机浏览器：目标轮收尾时把 headed 窗口收掉（用户桌面上真实存在的窗口，不能一直挂着）。 */
+    private final com.wenqu.ai.service.LocalBrowserTools localBrowserTools;
     /**
      * 问答侧的「跑一整轮」入口（分支执行器要它起子轮）。用函数注册而不是注入 {@code ChatService}：
      * 认一个可调用口、不认那个上帝类本身，否则构造环与「框架引擎反过来依赖问渠编排」这两件事同时发生。
@@ -83,7 +85,8 @@ public class WenquAgentxTools {
                             com.wenqu.ai.agent.subagent.SubAgentConsultService consultService,
                             com.wenqu.ai.agent.subagent.SubAgentBranchRuntime branchRuntime,
                             com.wenqu.ai.agent.runcode.RunCodeSubCallRuntime subCall,
-                            com.wenqu.ai.service.DocumentMetaCache documentMetaCache) {
+                            com.wenqu.ai.service.DocumentMetaCache documentMetaCache,
+                            com.wenqu.ai.service.LocalBrowserTools localBrowserTools) {
         this.knowledgeRetrieval = knowledgeRetrieval;
         this.retrievalScope = retrievalScope;
         this.agentService = agentService;
@@ -102,6 +105,13 @@ public class WenquAgentxTools {
         this.branchRuntime = branchRuntime;
         this.subCall = subCall;
         this.documentMetaCache = documentMetaCache;
+        this.localBrowserTools = localBrowserTools;
+    }
+
+    /** 收掉用户机器上的浏览器窗口（没有在跑的执行器时是空操作）。 */
+    public void closeLocalBrowser(String uid) {
+        if (localBrowserTools == null) return;
+        localBrowserTools.closeQuietly(uid);
     }
 
     /** 由 {@code AgentxConfiguration} 在装配期登记：{@code ChatService::chat}（含轮级互斥外壳的那个入口）。 */
@@ -867,8 +877,6 @@ public class WenquAgentxTools {
                     // 检索/联网/文档几族的信封在各自工具内，不在这里重复。
                     provider.family() == com.wenqu.ai.agent.tool.ToolFamily.MCP
                             || provider.family() == com.wenqu.ai.agent.tool.ToolFamily.SANDBOX,
-                    // 沙盒脚本（run_code）会跑任意代码：污点时即使档位 auto 也要问一次
-                    provider.family() == com.wenqu.ai.agent.tool.ToolFamily.SANDBOX,
                     () -> {
                         AgentxTurnSlot.Turn t = slot.current();
                         return t == null ? null : t.taint();

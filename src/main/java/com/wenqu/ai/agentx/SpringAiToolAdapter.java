@@ -68,11 +68,6 @@ public final class SpringAiToolAdapter extends ToolBase {
     private final boolean untrustedResult;
     /** 本轮污点（实例跨轮常驻，调用期现取；可为 null = 不需要标脏）。 */
     private final Supplier<AgentxTaint> taint;
-    /**
-     * 这把工具会跑任意代码/命令（沙盒脚本）：本轮读过外部内容后，即使档位是「自动执行」也要问一次。
-     * <p>与 {@link #untrustedResult} 分开：MCP 只是数据出口，不因为它读过资料就把每次远端调用都挂卡。
-     */
-    private final boolean taintSensitive;
 
     /** 固定档位入口（测试与「实例只活一轮」的调用方用）：等价于 {@code () -> policy}。 */
     public SpringAiToolAdapter(ToolCallback callback, boolean readOnly,
@@ -86,14 +81,14 @@ public final class SpringAiToolAdapter extends ToolBase {
                                Supplier<ExecutionPolicy> policy, boolean approvalRequired,
                                boolean approvalCanAsk) {
         this(callback, readOnly, contextSupplier, policy, approvalRequired, approvalCanAsk,
-                false, false, null);
+                false, null);
     }
 
     public SpringAiToolAdapter(ToolCallback callback, boolean readOnly,
                                Supplier<Map<String, Object>> contextSupplier,
                                Supplier<ExecutionPolicy> policy, boolean approvalRequired,
                                boolean approvalCanAsk, boolean untrustedResult,
-                               boolean taintSensitive, Supplier<AgentxTaint> taint) {
+                               Supplier<AgentxTaint> taint) {
         super(callback.getToolDefinition().name(), callback.getToolDefinition().description(),
                 schemaOf(callback), readOnly, true, false, null, false, false);
         this.callback = callback;
@@ -102,7 +97,6 @@ public final class SpringAiToolAdapter extends ToolBase {
         this.approvalRequired = approvalRequired;
         this.approvalCanAsk = approvalCanAsk;
         this.untrustedResult = untrustedResult;
-        this.taintSensitive = taintSensitive;
         this.taint = taint;
     }
 
@@ -136,21 +130,10 @@ public final class SpringAiToolAdapter extends ToolBase {
         if (current.denies(getName())) {
             return Mono.just(PermissionDecision.deny("该工具已被本轮档位点名禁用：" + getName()));
         }
-        // 污点策略：本轮读过外部内容后，会跑任意代码/命令的工具必须回到人面前确认一次。
-        // 与 approvalRequired 分开——它是「这一档本来就要问」，这里问的是「这一轮上下文可能被污染」。
-        // 「一次」是真的只问一次：批准后工具执行时会在 callAsync 里置 taintApproved，
-        // 本轮后续命令不再重复弹卡（否则一个目标轮 20 条命令就是 20 张卡）。
-        if (taintSensitive && isTainted() && !isTaintApproved()) {
-            if (!approvalCanAsk) {
-                return Mono.just(PermissionDecision.deny("本轮已读取过外部内容，而本轮回合没有可应答的确认通道，"
-                        + "脚本/命令类工具按最保守处理不执行：" + getName()));
-            }
-            return Mono.just(PermissionDecision.builder()
-                    .behavior(io.agentscope.core.permission.PermissionBehavior.ASK)
-                    .message("本轮已读取过外部内容，执行脚本/命令可能改动工作区数据，需要你先确认。")
-                    .decisionReason("safety: taint-command")
-                    .build());
-        }
+        // 审批口径只有一处来源：本轮生效的权限档位（会话栏 > 智能体 > 平台默认）与工具的登记性质。
+        // 这里不再按「污点」自行加一道 ASK：它会在「自动执行」档下凭空多出确认卡（线上一条普通命令
+        // 就弹了卡），而外部内容带来的破坏性风险由 AgentxNativeToolGuard 兜（只对删除/覆盖/外发/越界写
+        // 这类命令要人确认）。DSH 同样没有「读入外部内容 → 审批升级」这一层。
         PermissionMode mode = context == null ? null : context.getMode();
         if (approvalRequired && mode != PermissionMode.DONT_ASK) {
             if (!approvalCanAsk) {
@@ -165,8 +148,6 @@ public final class SpringAiToolAdapter extends ToolBase {
     @Override
     public Mono<ToolResultBlock> callAsync(ToolCallParam param) {
         return Mono.fromCallable(() -> {
-                    // 能跑到这里=这一次调用已被放行（含「污点确认」获批）：本轮不再为污点重复问人
-                    if (taintSensitive && isTainted()) markTaintApproved();
                     Map<String, Object> input = param.getInput() == null
                             ? Collections.emptyMap() : param.getInput();
                     // 每次调用现搭一份上下文：这把工具在同一轮里可能被并发调多次，
@@ -205,16 +186,6 @@ public final class SpringAiToolAdapter extends ToolBase {
     private boolean isTainted() {
         AgentxTaint t = taint == null ? null : taint.get();
         return t != null && t.tainted();
-    }
-
-    private boolean isTaintApproved() {
-        AgentxTaint t = taint == null ? null : taint.get();
-        return t != null && t.taintApproved();
-    }
-
-    private void markTaintApproved() {
-        AgentxTaint t = taint == null ? null : taint.get();
-        if (t != null) t.markTaintApproved();
     }
 
     private static String rootMessage(Throwable e) {

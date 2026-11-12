@@ -1398,6 +1398,15 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         for (String surfaceProblem : sessions.applyToolSurface(cmd, tools.turnGroupedNames(cmd, policy), policy)) {
             channel.emit(RunEventType.WARN, surfaceProblem);
         }
+        // 深度执行第 1 轮：进计划位（与手动计划模式同一道 plan 门禁）。这里原来只把 planFirst
+        // 传下来却没进计划位，于是 UI 承诺的「先出计划」从来没有兑现过——第一轮直接开干。
+        if (planFirst) {
+            boolean engaged = sessions.setPlanMode(cmd, true);
+            log.info("[GOAL] 第 1 轮进入计划位: session={} engaged={}", sessionId, engaged);
+            if (!engaged) {
+                channel.emit(RunEventType.WARN, "计划模式未能启用（框架侧未进入计划位），本轮直接执行");
+            }
+        }
         // 目标续跑也要先收拾「上一轮没被框架记成结束」的遗留：删掉旧目标/暂停旧目标时，
         // 它可能刚好有一轮进了收件箱还没启动；不归档，新目标的第一轮会一直排在那条死轮后面。
         if (turnId != null && turnId.startsWith("goal:")) {
@@ -4968,6 +4977,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                     stopped, stalled, timedOut, budget);
             agentWebhookService.onTurnFinished(cmd, framedTurnId, webhookStatus, null,
                     body, assistantMessageId, tokens, artifactItems, elapsedMs);
+        }
+        // 目标轮收尾顺手收掉用户机器上的 headed 浏览器：它是桌面上真实存在的窗口，
+        // 不收就一直挂着（执行器只有 5 分钟空闲兜底），用户体感就是「关不掉」。
+        if (turnId != null && turnId.startsWith("goal:")) {
+            tools.closeLocalBrowser(cmd.getUserId());
         }
         // done 之后必须收通道：手写侧是 runChat 自己 completeEmitter；不收的话帧都到了、
         // 连接却挂着直到看门狗 300s 超时截断，前端「这一轮结束」要等五分钟才落地

@@ -21,13 +21,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class AgentxTaint {
 
     private final AtomicBoolean tainted = new AtomicBoolean(false);
-    /**
-     * 本轮是否已经为「污点」确认过一次。
-     * <p>判据的落点是「批准之后工具真的被执行了」（适配器在 {@code callAsync} 里置它），
-     * 而不是「弹过卡」——卡也可能被拒、也可能超时。置上之后同一轮不再为污点重复问：
-     * 注释一直写的是「确认一次」，实现却是每调一次命令问一次，20 条命令就是 20 张卡。
-     */
-    private final AtomicBoolean taintApproved = new AtomicBoolean(false);
     /** 触发来源（排障用，最多留几个；不参与判定）。 */
     private final Set<String> sources = ConcurrentHashMap.newKeySet();
 
@@ -38,15 +31,6 @@ public final class AgentxTaint {
 
     public boolean tainted() {
         return tainted.get();
-    }
-
-    /** 污点确认已通过（一次），本轮后续命令不再重复问人。 */
-    public void markTaintApproved() {
-        taintApproved.set(true);
-    }
-
-    public boolean taintApproved() {
-        return taintApproved.get();
     }
 
     public Set<String> sources() {
