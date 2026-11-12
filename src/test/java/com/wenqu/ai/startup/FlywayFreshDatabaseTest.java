@@ -18,8 +18,7 @@ import java.util.Set;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * S1-1 起点：在真 MySQL 空库上验证 Flyway V1 基线。
- * <p>覆盖 S0-1 尚未实测的「空库首次执行」路径：V1 能建出核心表，第二次 migrate 不再执行。
+ * 在真 MySQL 空库上验证迁移脚本：V1 建出核心表、V2 删除 chatflow 列，第二次 migrate 不再执行。
  * Docker 不可用时自动跳过；有 Docker 的 CI/开发机直接跑。
  */
 @Tag("container")
@@ -40,12 +39,13 @@ class FlywayFreshDatabaseTest {
                 .load();
 
         MigrateResult first = flyway.migrate();
-        assertThat(first.migrationsExecuted).isEqualTo(1);
+        assertThat(first.migrationsExecuted).as("空库应执行 V1 + V2").isEqualTo(2);
 
         Set<String> tables = tables();
         assertThat(tables).contains(
                 "c_ai_session", "c_ai_message", "c_ai_session_event",
                 "c_ai_goal", "c_ai_usage_log", "flyway_schema_history");
+        assertThat(columns("c_ai_agent")).as("V2 已删除 chatflow 列").doesNotContain("workflow_id");
 
         MigrateResult second = flyway.migrate();
         assertThat(second.migrationsExecuted).as("二次启动不应重复执行基线").isZero();
@@ -57,6 +57,18 @@ class FlywayFreshDatabaseTest {
              Statement s = c.createStatement();
              ResultSet rs = s.executeQuery(
                      "select table_name from information_schema.tables where table_schema = database()")) {
+            while (rs.next()) out.add(rs.getString(1).toLowerCase());
+        }
+        return out;
+    }
+
+    private static Set<String> columns(String table) throws Exception {
+        Set<String> out = new LinkedHashSet<>();
+        try (Connection c = DriverManager.getConnection(MYSQL.getJdbcUrl(), MYSQL.getUsername(), MYSQL.getPassword());
+             Statement s = c.createStatement();
+             ResultSet rs = s.executeQuery(
+                     "select column_name from information_schema.columns "
+                             + "where table_schema = database() and table_name = '" + table + "'")) {
             while (rs.next()) out.add(rs.getString(1).toLowerCase());
         }
         return out;
