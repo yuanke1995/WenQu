@@ -70,6 +70,9 @@ services:
       # 容器部署一律按非 local profile 起：登录令牌密钥缺失要当场失败，而不是悄悄用随机密钥上线
       # （随机密钥在多副本下各签各验＝登录随机 401，重启还会作废全员令牌与图片签名地址）
       SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-prod}
+      # 部署档位：standard=标准档（企业面隐藏），enterprise=企业档（多租户/SSO/审计/配额全开）。
+      # 启动期读取，改值需重建 app 容器；标准档下 @EnterpriseOnly 端点一律 404。
+      WENQU_DEPLOYMENT_PROFILE: ${WENQU_DEPLOYMENT_PROFILE:-standard}
       # 容器时区：智能体/工作流定时任务按此时区求值（不设则默认 UTC，与北京时间差 8 小时）
       TZ: ${TZ:-Asia/Shanghai}
       # 数据库连接（默认连上方内置 mysql 服务；外部库改 DB_HOST/DB_PORT/DB_NAME/DB_USERNAME）
