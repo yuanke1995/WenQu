@@ -21,10 +21,14 @@ function write () {
 }
 const slot = (sid, pkey) => String(sid || '') + '|' + String(pkey == null ? '' : pkey)
 
-/** 旧计划行是否展开（默认收起） */
-export const planLineOpenOf = (sid, pkey) => {
+/**
+ * 用户对这条计划卡展开/收起的显式选择：true/false，没点过是 undefined。
+ * <p>为什么不用布尔默认值：展开态还有「待确认/本轮正在跑」这类自动展开。把「没点过」压成 false，
+ * 卡片就分不清「用户想收起」和「用户没表态」，自动展开期间点收起会被当成「展开」记下来，收不起来。
+ */
+export const planLineChoiceOf = (sid, pkey) => {
   const v = read()[slot(sid, pkey)]
-  return !!(v && v.lineOpen)
+  return (v && typeof v.lineOpen === 'boolean') ? v.lineOpen : undefined
 }
 export const setPlanLineOpen = (sid, pkey, open) => {
   const c = read()

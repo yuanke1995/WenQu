@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  planOutline, planStepCount, diffSteps, planExecProgress
+  planOutline, planStepCount, diffSteps, planExecProgress, planCardExpanded
 } from '../src/chat/plan.js'
 
 test('planOutline：目标 + 顶层步骤，缩进子项并入上一步', () => {
@@ -76,4 +76,16 @@ test('planExecProgress：回退冻结快照时不再显示 running', () => {
   assert.equal(p.total, 1)
   assert.equal(p.running, false)
   assert.deepEqual(p.items, snapshot.items)
+})
+
+test('planCardExpanded：本轮在跑时点收起必须真收起（深度执行里点不动的那颗折叠键）', () => {
+  // 没表态：执行中自动铺开，跑完收回一行
+  assert.equal(planCardExpanded({ live: false, running: true, choice: undefined }), true)
+  assert.equal(planCardExpanded({ live: false, running: false, choice: undefined }), false)
+  // 用户点过：以用户为准，正在跑也照收；重挂后读回同一份选择仍是收起
+  assert.equal(planCardExpanded({ live: false, running: true, choice: false }), false)
+  assert.equal(planCardExpanded({ live: false, running: true, choice: true }), true)
+  assert.equal(planCardExpanded({ live: false, running: false, choice: false }), false)
+  // 待确认/生成中恒展开：裁决入口不能被收起
+  assert.equal(planCardExpanded({ live: true, running: false, choice: false }), true)
 })

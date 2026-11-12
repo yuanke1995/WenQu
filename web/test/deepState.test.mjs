@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import {
   goalStateLabelOf, goalStateClassOf, goalRoundLineOf, goalBlockReasonOf,
   goalProgressPercentOf, goalTerminalCardOf, goalTerminalTitleOf, goalTerminalNoteOf,
-  goalCanPauseOf, goalCanResumeOf, goalCanEditOf
+  goalCanPauseOf, goalCanResumeOf, goalCanEditOf, goalVersionLabelOf
 } from '../src/chat/deepState.js'
 
 test('深度执行：状态词与色调覆盖六档', () => {
@@ -48,4 +48,11 @@ test('深度执行：终态卡与动作判据', () => {
   assert.equal(goalCanPauseOf({ status: 'RUNNING' }), true)
   assert.equal(goalCanResumeOf({ status: 'PAUSED' }), true)
   assert.equal(goalCanEditOf({ status: 'ACHIEVED' }), false)
+})
+
+test('深度执行：目标版本号按数值相加，不拼成 v01', () => {
+  assert.equal(goalVersionLabelOf(null), '')
+  assert.equal(goalVersionLabelOf({ objectiveVersion: 0 }), 'v1')
+  assert.equal(goalVersionLabelOf({ objectiveVersion: 2 }), 'v3')
+  assert.equal(goalVersionLabelOf({}), 'v1')
 })

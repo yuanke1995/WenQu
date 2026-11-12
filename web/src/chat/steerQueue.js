@@ -18,8 +18,8 @@ export const createSteerQueue = ({ currentSid, hasLiveStream, steerApi, notify, 
    * 服务端同时把它落成一条普通用户消息。
    * @returns 消息 ID（前端拿它认队列里那一条，并在模型收到这句时撤下）；null=没有在跑的轮 / 框架不收这句 / 超出单条字数上限
    */
-  const steer = async q => {
-    const sid = currentSid()
+  const steer = async (q, sidArg = '') => {
+    const sid = sidArg || currentSid()
     const content = String(q || '').trim()
     if (!sid || !content) return null
     try {
@@ -30,6 +30,41 @@ export const createSteerQueue = ({ currentSid, hasLiveStream, steerApi, notify, 
       notify(e?.message || '插话没送出去')
       return null
     }
+  }
+
+  /**
+   * 计划「调整计划」的排队：A 档提交时这一轮暂时收不下（目标轮刚收尾/轮间间隙），
+   * 不把原文退回去让用户重打，而是挂着等下一轮开跑再送。
+   * 条目带 sid：投递目标由发起时那个会话决定，不看投递时刻的当前会话。
+   */
+  const enqueuePlanAdjust = (text, sid) => {
+    const content = String(text || '').trim()
+    if (!content || !sid) return null
+    const item = reactive({ text: content, planAdjust: true, queued: true, sid,
+                            sending: false, awaiting: false, attempts: 0,
+                            at: Date.now(), nextAt: 0 })
+    steerQueue.value = [...steerQueue.value, item]
+    return item
+  }
+
+  /**
+   * 把排队的调整送进正在跑的那一轮：成功转「已送出，等这一轮听到」，
+   * 失败留在队列里等下一拍（退避由调用方的节奏 + nextAt 控制）。
+   */
+  const deliverPlanAdjust = async item => {
+    if (!item || !item.planAdjust || !item.queued || item.sending) return false
+    item.sending = true
+    const id = await steer(item.text, item.sid)
+    item.sending = false
+    if (!id) {
+      item.attempts += 1
+      item.nextAt = Date.now() + Math.min(2000 + item.attempts * 1000, 12000)
+      return false
+    }
+    item.queued = false
+    item.awaiting = true
+    item.messageId = id
+    return true
   }
 
   /**
@@ -58,6 +93,12 @@ export const createSteerQueue = ({ currentSid, hasLiveStream, steerApi, notify, 
    */
   const sendSteer = async item => {
     if (!item || item.sending) return
+    // 调整计划的排队项：手动点「立即发送」＝马上再试一次，失败继续排队（不退回输入框）
+    if (item.planAdjust) {
+      const ok = await deliverPlanAdjust(item)
+      if (!ok) notify('还没赶上可插话的一轮，这句继续排队等下一轮开跑', 'info')
+      return
+    }
     if (steerNeedsNextRound(item)) {
       item.deferred = true
       notify('这句带着材料，本轮的上下文已经定型——等这轮结束就自动接着发', 'info')
@@ -112,5 +153,6 @@ export const createSteerQueue = ({ currentSid, hasLiveStream, steerApi, notify, 
     steerQueue.value = steerQueue.value.filter(s => !(s.awaiting && s.messageId === id))
   }
 
-  return { steerQueue, steerResend, steer, stageSteer, sendSteer, editSteer, dropSteer, moveSteer, dropApplied }
+  return { steerQueue, steerResend, steer, stageSteer, sendSteer, editSteer, dropSteer, moveSteer, dropApplied,
+           enqueuePlanAdjust, deliverPlanAdjust }
 }

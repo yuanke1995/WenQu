@@ -117,6 +117,20 @@ test('调整入口：replan 走重新计划，否则走插话', async () => {
   assert.deepEqual(await adjustPlanAfterApproval(m, '改', 'steer', ctx), { ok: true })
 })
 
+test('插话调整送不进去：能排队就排队，排不了才把原因交回面板', async () => {
+  const m = { planCard: { status: 'approved' }, loading: true }
+  const queued = []
+  const base = { messages: () => [m], loading: () => true, steer: async () => '' }
+  const r = await adjustPlanAfterApproval(m, ' 改方向 ', 'steer',
+    { ...base, queuePlanAdjust: t => { queued.push(t); return { text: t } } })
+  assert.deepEqual(r, { ok: true, queued: true })
+  assert.deepEqual(queued, ['改方向'])
+
+  assert.equal((await adjustPlanAfterApproval(m, '改', 'steer', base)).reason, 'ended')
+  assert.equal((await adjustPlanAfterApproval(m, '改', 'steer',
+    { ...base, queuePlanAdjust: () => null })).reason, 'ended')
+})
+
 const replanMake = ({ loading = true, hasStream = true, stopRet = true, settleClears = true } = {}) => {
   const calls = { stop: 0, settle: 0, mark: [], launch: [] }
   const c = { id: 'p1', status: 'approved' }

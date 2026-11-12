@@ -100,7 +100,7 @@ export const goalCanClearRecordOf = g => !!g && GOAL_ENDED.includes(g.status)
 /** 目标原文版本：v1 是初版；改过一次后条子与终态卡都要说清当前读的是第几版 */
 export const goalVersionLabelOf = g => {
   if (!g) return ''
-  return 'v' + (Number(g.objectiveVersion) || 0) + 1
+  return 'v' + ((Number(g.objectiveVersion) || 0) + 1)
 }
 /** 进度细条：取后端预算百分比；没有预算口径时按轮次占比兜底，都没有就不画 */
 export const goalProgressPercentOf = g => {
@@ -151,7 +151,7 @@ export const goalEchoStateOf = (g, goalId) => {
 }
 /** 回声的悬浮行：命令原文（界面上不再露出 /goal 那串字）+ 条子放不下的那些数 */
 export const goalEchoTipOf = (g, goalId) => {
-  const head = '/deep 深度执行指令：这一句被设成了本会话的任务，助手会先出计划、再自己接着推进直到宣布完成'
+  const head = '/deep 深度执行指令：这一句被设成了本会话的任务，助手会自己跨轮推进直到宣布完成'
   if (!g || !goalId || g.goalId !== goalId) return head
   return [head, goalRoundLineOf(g), g.hint, goalBlockReasonOf(g), goalOutcomeLineOf(g)].filter(Boolean).join('\n')
 }

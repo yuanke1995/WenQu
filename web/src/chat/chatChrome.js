@@ -95,7 +95,7 @@ export const chipDescriptorOf = (key, state, deps = {}) => {
   if (key === GOAL_KEY) {
     return {
       kind: 'goal', icon: 'aim', name: '深度执行', head: true,
-      title: '深度执行：写下任务，回车开始（先出计划，助手会自己接着往下推进）',
+      title: '深度执行：写下任务，回车开始（跨轮自动推进，直到完成）',
       delTitle: '退出深度执行'
     }
   }

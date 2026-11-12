@@ -632,6 +632,25 @@ const planExecProgressOf = m => {
 const planAdjustsOfMsg = m => planAdjustsOf(m && m.planCard, turnSteerRows(m))
 
 /**
+ * 计划模式正在推进：最新一轮挂着还没收口的计划卡（等人确认，或已批准但还没跑完）。
+ * 进度由计划卡自己承载，任务清单不再另占一栏——计划模式的原型里就没有底部清单。
+ * 只认最新那条助手消息：旧计划执行完、用户又开始普通提问时，清单该露还得露。
+ */
+const planModeDriving = computed(() => {
+  const list = messages.value
+  let ai = null
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (list[i] && list[i].role === 'ai') { ai = list[i]; break }
+  }
+  const c = ai && ai.planCard
+  if (!c || c.replannedBy || c.replannedAt) return false
+  if (c.status === 'pending' || c.status === 'drafting') return true
+  if (c.status !== 'approved') return false
+  const p = planExecProgressOf(ai)
+  return !!(p && (p.running || p.done < p.total))
+})
+
+/**
  * 清单计数行：只报非零的几档（「3 已完成 · 1 进行中 · 5 待处理」）。
  * 不报「x/y」那种分数：它看不出进行中那一项是谁，而长任务里用户问的正是「现在卡在哪」。
  */
@@ -667,6 +686,8 @@ const todoAllDone = computed(() => {
  * <p>两端同吃这一份派生态，页面只留折叠态这种纯 UI 开关。
  */
 const todoBarVisible = computed(() => {
+  // 计划模式：进度已在计划卡上，清单不重复占一栏（与计划模式原型一致）
+  if (planModeDriving.value) return false
   const doc = sessionTodos.value
   const items = (doc && doc.items) || []
   if (!items.length) return false
@@ -1306,7 +1327,10 @@ const replanAfterApproval = (m, raw) => replanAfterApprovalImpl(m, raw, {
 })
 
 const adjustPlanAfterApproval = (m, text, mode) => adjustPlanAfterApprovalImpl(m, text, mode,
-  { replan: (mm, t) => replanAfterApproval(mm, t), messages: () => messages.value, loading: () => loading.value, steer: q => steer(q) })
+  { replan: (mm, t) => replanAfterApproval(mm, t), messages: () => messages.value, loading: () => loading.value, steer: q => steer(q),
+    // 送不进去时的落点：只有目标还在跑（深度执行会自己起下一轮）才值得排队；否则把原因交回面板
+    queuePlanAdjust: t => goalRunning.value
+      ? enqueuePlanAdjust(t, currentSessionId.value) : null })
 
 /**
  * 智能体提问（一卡多问）：在某题上点一个候选——只记录选择，不提交（提交由 askSubmitAll 一次性批量完成）。
@@ -1560,6 +1584,7 @@ const hydratePendingApprovals = async (sid, onlyId = '') => {
     // 恢复出来的卡若给整窗，用户会以为还有两分钟，实际下一秒就超时按拒绝了
     const card = {
       id: item.approvalId, tool: item.tool, label: item.label, hint: item.hint, args: item.args,
+      reason: item.reason || '',
       subagent: item.subagent || (item.parentSessionId ? { kind: 'subagent', agent: '子助手' } : null),
       timeoutMs: remainMs, deadline: remainMs > 0 ? Date.now() + remainMs : 0, busy: false, restored: true
     }
@@ -2048,7 +2073,8 @@ const stop = createStopTurn({
 })
 
 // 运行中插话队列（入队/立即发送/编辑/排序）在 ./steerQueue.js（actions 层）
-const { steerQueue, steerResend, steer, stageSteer, sendSteer, editSteer, dropSteer, moveSteer, dropApplied } = createSteerQueue({
+const { steerQueue, steerResend, steer, stageSteer, sendSteer, editSteer, dropSteer, moveSteer, dropApplied,
+        enqueuePlanAdjust, deliverPlanAdjust } = createSteerQueue({
   currentSid: () => currentSessionId.value,
   hasLiveStream: sid => chatStreams.has(sid),
   steerApi: steerChatTurn,
@@ -2056,6 +2082,61 @@ const { steerQueue, steerResend, steer, stageSteer, sendSteer, editSteer, dropSt
   textOf: () => text.value,
   setText: v => { text.value = v }
 })
+
+/**
+ * 排队的「调整计划」插话：A 档送达时目标轮刚好在收尾/轮间间隙，这句先挂起，
+ * 等目标下一轮开跑（或本机接上目标轮的流）再自动送进框架。
+ * 只在发起时那个会话里、且目标还在跑时才投递；一直等不到就放回输入框——原文不丢，
+ * 也不悄悄发成新一轮、更不塞进用户后来问的普通轮。
+ */
+const PLAN_ADJUST_TTL_MS = 10 * 60 * 1000
+let planAdjustPumpTimer = null
+let planAdjustDelivering = false
+const planAdjustQueued = computed(() => steerQueue.value.some(s => s.planAdjust && s.queued))
+const returnPlanAdjustToInput = (items, note) => {
+  if (!items.length) return
+  steerQueue.value = steerQueue.value.filter(s => !items.includes(s))
+  const add = items.map(s => s.text).join('\n')
+  const cur = String(text.value || '').trim()
+  text.value = !cur ? add : (cur.includes(add) ? cur : cur + ' ' + add)
+  message.warning(note)
+}
+/** 排队超时：目标可能已经不再推进，不能让它一直挂成一条假状态 */
+const settlePlanAdjustQueue = () => {
+  const sid = currentSessionId.value
+  const now = Date.now()
+  returnPlanAdjustToInput(
+    steerQueue.value.filter(s => s.planAdjust && s.queued && s.sid === sid && now - s.at > PLAN_ADJUST_TTL_MS),
+    '这句调整一直没赶上可插话的轮，已放回输入框')
+}
+const pumpPlanAdjust = async () => {
+  if (planAdjustDelivering) return
+  settlePlanAdjustQueue()
+  const sid = currentSessionId.value
+  // 只往目标轮里送：目标暂停/终态时宁可等，也不把这句话塞进用户正在问的普通轮
+  if (!sid || !goalRunning.value) return
+  const now = Date.now()
+  const items = steerQueue.value.filter(s => s.planAdjust && s.queued && s.sid === sid
+    && !s.sending && (s.nextAt || 0) <= now)
+  if (!items.length) return
+  planAdjustDelivering = true
+  try { for (const it of items) await deliverPlanAdjust(it) } finally { planAdjustDelivering = false }
+}
+watch(planAdjustQueued, v => {
+  if (v && !planAdjustPumpTimer) planAdjustPumpTimer = setInterval(pumpPlanAdjust, 2500)
+  if (!v && planAdjustPumpTimer) { clearInterval(planAdjustPumpTimer); planAdjustPumpTimer = null }
+}, { immediate: true })
+// 轮/目标一开跑就试第一下，不等满一拍
+watch([goalRunning, loading], ([g, l]) => { if (g || l) pumpPlanAdjust() })
+// 目标走到终态：这一会话不会再有轮来接这句，当场放回输入框
+watch(goalTerminal, v => {
+  if (!v) return
+  const sid = currentSessionId.value
+  returnPlanAdjustToInput(
+    steerQueue.value.filter(s => s.planAdjust && s.queued && s.sid === sid),
+    '目标已结束，这句调整没送进去，已放回输入框')
+})
+onUnmounted(() => { if (planAdjustPumpTimer) clearInterval(planAdjustPumpTimer) })
 
 // ==================== 发送与流式回答（SSE） ====================
 // 主流程在 ./sendFlow.js；这里只装配引擎侧的 refs 与动作。
@@ -2161,7 +2242,7 @@ function flushPendingSteers (backendLeft = [], origin = null) {
     resendSteer(left, left.sid ? { sid: left.sid, agentId: left.agentId } : null)
     return
   }
-  const next = steerQueue.value.find(s => !s.sending)
+  const next = steerQueue.value.find(s => !s.sending && !s.planAdjust)
   if (!next) return
   steerQueue.value = steerQueue.value.filter(s => s !== next)
   sendSteerRound(next, origin)

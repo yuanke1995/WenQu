@@ -23,6 +23,7 @@
         <div class="gv-track-line">
           <span v-for="v in versions" :key="v" class="gv-ver" :class="{ cur: v === goalVersion }">v{{ v }}</span>
         </div>
+        <div class="gv-note">当前按 {{ version }} 执行；此前跑过的轮次按旧版执行并保留。</div>
       </section>
       <!-- 预算：token/时间/工具次数只在详情里给，条子上只留轮次与细进度 -->
       <section v-if="budgetRows.length" class="gv-sec">
@@ -37,8 +38,9 @@
       <section class="gv-sec">
         <div class="gv-sec-t">轮次</div>
         <div v-if="!rounds.length" class="gv-empty">{{ loading ? '读取中…' : '还没有跑到任何一轮' }}</div>
-        <div v-for="r in rounds" :key="r.turnId || r.n" class="gv-round">
+        <div v-for="r in rounds" :key="r.turnId || r.n" class="gv-round" :class="r.tone">
           <div class="gv-round-head">
+            <span class="gv-round-dot">{{ r.n }}</span>
             <span class="gv-round-n">第 {{ r.n }} 轮</span>
             <span v-if="r.at" class="gv-round-at">{{ shortTime(r.at) }}</span>
             <button v-if="r.turnId" type="button" class="gv-jump" @click="$emit('jump', r.turnId)">跳到这一轮 ›</button>
@@ -50,17 +52,21 @@
         </div>
       </section>
       <!-- 结果：完成证据 / 未完成缺口 / 取消留痕，与终态卡说同一件事 -->
-      <section v-if="outcomeLines.length" class="gv-sec">
+      <section class="gv-sec">
         <div class="gv-sec-t">结果</div>
         <div v-for="(line, li) in outcomeLines" :key="li" class="gv-out-line">{{ line }}</div>
+        <div v-if="!outcomeLines.length" class="gv-out-empty">
+          {{ goalTerminal ? '这次执行没有提交完成申请。' : '还没有提交完成申请；目标会在证据齐备后自己停下。' }}
+        </div>
       </section>
     </div>
     <div v-if="goal" class="gv-foot">
-      <button v-if="canPause" type="button" class="gv-btn" @click="$emit('action', 'pause')">暂停执行</button>
-      <button v-else-if="canResume" type="button" class="gv-btn" @click="$emit('action', 'resume')">继续执行</button>
+      <button v-if="canCancel" type="button" class="gv-btn danger" @click="$emit('action', 'cancel')">取消执行</button>
       <button v-if="canEdit" type="button" class="gv-btn" @click="$emit('action', 'edit')">修改任务</button>
-      <button v-if="canCancel" type="button" class="gv-btn quiet" @click="$emit('action', 'cancel')">取消执行</button>
       <button v-if="canDelete" type="button" class="gv-btn quiet" @click="$emit('action', 'delete')">删除记录</button>
+      <span class="gv-spacer"></span>
+      <button v-if="canPause" type="button" class="gv-btn primary" @click="$emit('action', 'pause')">暂停执行</button>
+      <button v-else-if="canResume" type="button" class="gv-btn primary" @click="$emit('action', 'resume')">继续执行</button>
     </div>
   </a-drawer>
 </template>
@@ -99,6 +105,10 @@ const canResume = computed(() => goalCanResumeOf(props.goal))
 const canEdit = computed(() => goalCanEditOf(props.goal))
 const canCancel = computed(() => goalCanCancelOf(props.goal))
 const canDelete = computed(() => goalCanClearRecordOf(props.goal))
+const goalTerminal = computed(() => {
+  const s = props.goal && props.goal.status
+  return s === 'ACHIEVED' || s === 'FAILED' || s === 'CANCELLED' || s === 'ENDED_INCOMPLETE'
+})
 
 const pctOf = (used, max) => {
   const m = Number(max) || 0
@@ -167,6 +177,18 @@ const rounds = computed(() => {
   })
   let next = out.reduce((max, r) => Math.max(max, Number(r.n) || 0), 0) + 1
   for (const r of out) if (!Number(r.n)) r.n = next++
+  // 轮次行状态：跑过的打绿点，当前轮转圈/让位；失败目标的最后一轮标警示
+  const g = props.goal || {}
+  const cur = Number(g.round) || 0
+  const preempted = g.status === 'PAUSED' && g.endReason === 'preempted'
+  const moving = ['RUNNING', 'QUEUED', 'VERIFYING', 'WAITING_APPROVAL', 'WAITING_EVENT'].includes(g.status)
+  for (const r of out) {
+    if (goalTerminal.value) r.tone = 'ok'
+    else if (cur && r.n < cur) r.tone = 'ok'
+    else if (cur && r.n === cur) r.tone = preempted ? 'warn' : (moving ? 'run' : 'warn')
+    else r.tone = ''
+  }
+  if (g.status === 'FAILED' && out.length) out[out.length - 1].tone = 'warn'
   return out
 })
 
@@ -241,15 +263,21 @@ watch(() => props.goal && (props.goal.goalId + ':' + props.goal.status), () => {
 .gv-track-line { display: flex; flex-wrap: wrap; gap: 6px; }
 .gv-ver { font-size: 12px; line-height: 20px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--app-border); color: var(--app-text3); }
 .gv-ver.cur { color: var(--app-accent); border-color: var(--app-accent); background: var(--app-accent-weak); }
+.gv-note { font-size: 10.5px; line-height: 1.6; color: var(--app-text3); }
 .gv-budget { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--app-text3); }
 .gv-budget-k { flex: none; width: 44px; }
 .gv-budget-bar { flex: 1; height: 4px; border-radius: 999px; background: var(--app-border); overflow: hidden; }
 .gv-budget-bar i { display: block; height: 100%; background: var(--app-accent); border-radius: 999px; }
 .gv-budget-v { flex: none; width: 92px; text-align: right; color: var(--app-text2); }
 .gv-empty { font-size: 12px; color: var(--app-text3); }
-.gv-round { padding: 8px 10px; border-radius: 8px; background: var(--app-panel-2); display: flex; flex-direction: column; gap: 4px; }
+.gv-round { padding: 9px 0; border-bottom: 1px dashed var(--app-border); display: flex; flex-direction: column; gap: 4px; }
+.gv-round:last-child { border-bottom: none; }
 .gv-round-head { display: flex; align-items: center; gap: 8px; }
-.gv-round-n { font-size: 13px; font-weight: 600; color: var(--app-text); }
+.gv-round-dot { flex: none; width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--app-border); background: var(--app-panel); color: var(--app-text3); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 9.5px; display: inline-flex; align-items: center; justify-content: center; }
+.gv-round.ok .gv-round-dot { border-color: var(--app-ok-border, #cfe4d3); background: var(--app-ok-weak); color: var(--app-ok); }
+.gv-round.run .gv-round-dot { border-color: var(--app-accent-border); background: var(--app-accent-weak); color: var(--app-accent); }
+.gv-round.warn .gv-round-dot { border-color: var(--app-warn-border); background: var(--app-warn-weak); color: var(--app-warn-text); }
+.gv-round-n { font-size: 12px; font-weight: 600; color: var(--app-text); }
 .gv-round-at { font-size: 11px; color: var(--app-text3); }
 .gv-jump { margin-left: auto; border: none; background: transparent; padding: 0; font-size: 12px; color: var(--app-text3); cursor: pointer; }
 .gv-jump:hover { color: var(--app-accent); }
@@ -257,6 +285,8 @@ watch(() => props.goal && (props.goal.goalId + ':' + props.goal.status), () => {
 .gv-badges { display: flex; flex-wrap: wrap; gap: 6px; }
 .gv-badge { font-size: 11px; line-height: 18px; padding: 0 6px; border-radius: 5px; background: var(--app-panel); color: var(--app-text3); }
 .gv-out-line { font-size: 12px; line-height: 18px; color: var(--app-text2); word-break: break-word; }
+.gv-out-empty { font-size: 11px; line-height: 1.65; color: var(--app-text3); border: 1px solid var(--app-border); background: var(--app-panel-2); border-radius: 8px; padding: 9px 10px; }
+.gv-spacer { flex: 1; }
 .gv-foot {
   position: sticky; bottom: 0; display: flex; flex-wrap: wrap; gap: 8px;
   padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
@@ -268,6 +298,10 @@ watch(() => props.goal && (props.goal.goalId + ':' + props.goal.status), () => {
   font-size: 12px; color: var(--app-text2); cursor: pointer;
 }
 .gv-btn:hover { color: var(--app-accent); border-color: var(--app-accent); background: var(--app-accent-weak); }
+.gv-btn.primary { background: var(--app-accent); border-color: var(--app-accent); color: #fff; font-weight: 600; }
+.gv-btn.primary:hover { background: var(--app-accent-hover); color: #fff; }
+.gv-btn.danger { color: var(--app-danger); border-color: transparent; background: none; }
+.gv-btn.danger:hover { color: var(--app-danger); border-color: var(--app-danger-border, #efc8c0); background: var(--app-danger-weak); }
 .gv-btn.quiet { color: var(--app-text3); }
 .gv-btn.quiet:hover { color: var(--app-danger); border-color: transparent; background: var(--app-danger-weak); }
 </style>

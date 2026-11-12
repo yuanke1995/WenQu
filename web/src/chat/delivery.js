@@ -35,7 +35,22 @@ export const deliverySubjectOf = text => {
 export const deliveryOf = (files, meta = {}) => {
   const raw = (files || []).filter(f => f && (f.url || f.seq != null))
   if (!raw.length) return null
-  const withTag = raw.map(f => ({ ...f, tag: deliveryTagOf(f.filename) }))
+  // 同一个文件可能被重复交付（每次 deliver_artifact 都新建一行产物）。包内同名只留最后一次：
+  // 否则清单里躺着两行同名文件，入口还会按文件名挑到最早那份旧版本。位置沿用首次出现的位置。
+  const byName = new Map()
+  const deduped = []
+  for (const f of raw) {
+    const name = String(f.filename || '')
+    if (!name) { deduped.push(f); continue }
+    const at = byName.get(name)
+    if (at === undefined) {
+      byName.set(name, deduped.length)
+      deduped.push(f)
+    } else {
+      deduped[at] = f
+    }
+  }
+  const withTag = deduped.map(f => ({ ...f, tag: deliveryTagOf(f.filename) }))
   const entry = deliveryEntryOf(withTag)
   if (entry) entry.tag = '入口'
   const total = withTag.reduce((s, f) => s + (Number(f.size) || 0), 0)

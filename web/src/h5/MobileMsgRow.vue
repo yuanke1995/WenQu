@@ -346,6 +346,7 @@
               {{ approvalLeftOf(a) > 0 ? '剩 ' + approvalLeftOf(a) + ' 秒' : '已超时' }}
             </span>
           </div>
+          <p v-if="a.reason" class="approval-why">{{ a.reason }}</p>
           <pre v-if="approvalArgsText(a.args)" class="io-pre">{{ approvalArgsText(a.args) }}</pre>
           <div class="approval-actions">
             <span class="approval-hint">{{ approvalLeftOf(a) > 0 ? '批准后立即执行这一步' : '已超时，本轮将按拒绝继续' }}</span>
@@ -791,6 +792,8 @@ const onBodyPreview = (urls, index) => emit('preview', urls, index)
 .approval-raw { font-size: 10.5px; color: var(--app-text3); font-family: "SF Mono", Menlo, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 34%; }
 .approval-clock { flex: 0 0 auto; margin-left: auto; display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--app-warn-text); background: var(--app-panel); border: 1px solid var(--app-warn-border); border-radius: 5px; padding: 1px 6px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .approval-clock.over { color: var(--app-text3); background: var(--app-panel-2); border-color: var(--app-border); }
+/* 「为什么问」：一句话，读得懂，弱化在参数块之上 */
+.approval-why { margin: 0; font-size: 11.5px; line-height: 1.6; color: var(--app-warn-text); }
 .approval-actions { display: flex; align-items: center; gap: 8px; width: 100%; }
 .approval-hint { font-size: 11.5px; color: var(--app-text3); margin-right: auto; }
 .btn-primary { border: none; border-radius: 8px; background: var(--app-accent); color: #fff; font-size: 13px; padding: 8px 14px; min-height: 36px; touch-action: manipulation; }

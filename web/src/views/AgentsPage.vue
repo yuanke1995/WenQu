@@ -301,8 +301,8 @@
                     <span class="ap-cap-ic"><aim-outlined /></span>
                     <div class="ap-cap-l">
                       <div class="ap-cap-name">允许深度执行 <span v-if="form.goalEnabled === 0" class="ap-cap-badge">已关闭</span></div>
-                      <div class="ap-cap-desc" title="允许把这个助手交出去做长任务：输入框打 /deep 即可把一件事交出去，先出计划、助手自己跨轮推进、做完就停；关掉时入口与执行面板都不出现。">
-                        把长任务交出去：先出计划，自己推进、做完就停
+                      <div class="ap-cap-desc" title="允许把这个助手交出去做长任务：输入框打 /deep 即可把一件事交出去，助手自己跨轮推进、做完就停；关掉时入口与执行面板都不出现。">
+                        把长任务交出去：跨轮自动推进，做完就停
                       </div>
                     </div>
                     <div class="ap-seg">

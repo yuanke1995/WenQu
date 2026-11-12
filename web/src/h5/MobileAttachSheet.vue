@@ -6,7 +6,7 @@
   <BottomSheet :open="open" :title="TABS.find(t => t.key === tab).title" max-height="78dvh" @close="$emit('close')">
     <div class="as">
       <!-- ==================== 本轮模式 ====================
-           深度执行是唯一模式入口：点了就把输入框那句交出去，先出计划、自动续跑，
+           深度执行是唯一模式入口：点了就把输入框那句交出去，跨轮自动推进，
            没有正文就在主壳里提示先写一句。工具条上不放它——四颗药丸固定要 360px，
            360px 屏会把送出键挤出输入卡。 -->
       <div class="as-mode">
@@ -14,7 +14,7 @@
           <aim-outlined class="as-ic" />
           <span class="as-main">
             <span class="as-name">深度执行</span>
-            <span class="as-desc">先出计划，自动续跑，可随时停止</span>
+            <span class="as-desc">跨轮自动推进，可随时停止</span>
           </span>
         </button>
       </div>

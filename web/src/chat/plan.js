@@ -105,6 +105,17 @@ export function planChain (card) {
 }
 
 /**
+ * 计划卡是否铺开成三段式（否则收成一行）。
+ * live（待确认/生成中）恒展开：那是裁决入口，藏起来等于把「计划要批」摁掉。
+ * 批准之后看用户表态：点过就按点的（本轮正在跑也照收），没点过则在执行中自动铺开、跑完收回一行。
+ * 「没点过」必须是 undefined 而不是 false，否则自动展开期间点收起会被记成「展开」，那颗折叠键就按不动。
+ */
+export const planCardExpanded = ({ live, running, choice } = {}) => {
+  if (live) return true
+  return choice === undefined ? !!running : !!choice
+}
+
+/**
  * 计划批准后的执行进度：拿会话任务清单当数据源（清单本来就是这一轮的执行项）。
  * 只有「计划已批准 + 清单存在 + 清单属于这一轮」才返回进度；否则 null——
  * 卡片退回计划步骤预览，绝不按工具调用数去编造「第几步已完成」。

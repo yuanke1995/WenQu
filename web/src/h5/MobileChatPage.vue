@@ -226,20 +226,22 @@
                   title="暂停执行（可以再继续）" aria-label="暂停执行（可以再继续）" @click="runGoalAction('pause')"><pause-circle-outlined /></button>
           <button v-else-if="goalCanResume" type="button" class="m-gb-btn" :disabled="sessionGoal.busy"
                   title="继续执行" aria-label="继续执行" @click="runGoalAction('resume')"><play-circle-outlined /></button>
-          <!-- 第一行只留主行动 + 「更多」；修改/过程/取消/删除记录全进底部 sheet -->
-          <button type="button" class="m-gb-btn more" title="更多执行操作" aria-label="更多执行操作"
-                  @click="openGoalActions">···</button>
         </div>
         <div class="m-gb-progress">
           <span class="m-gb-round">{{ goalRoundLine }}</span>
-          <span v-if="goalProgressPercent != null" class="m-gb-track" :title="'预算已用 ' + goalProgressPercent + '%'">
-            <i :style="{ width: goalProgressPercent + '%' }" />
+          <span v-if="mGoalElapsedText" class="m-gb-extra">{{ mGoalElapsedText }}</span>
+          <span v-if="goalProgressPercent != null" class="m-gb-budget">
+            <span class="m-gb-track" :title="'预算已用 ' + goalProgressPercent + '%'"><i :style="{ width: goalProgressPercent + '%' }" /></span>
+            <span>{{ goalProgressPercent }}%</span>
           </span>
           <button v-if="goalDelivery" type="button" class="m-gb-dlv"
                   :title="'打开交付包：' + goalDelivery.fileCount + ' 件'"
                   @click="openDelivery(goalDelivery)">产出 {{ goalDelivery.fileCount }} 件</button>
           <span v-if="goalBarError" class="m-gb-error" role="alert">{{ goalBarError }}</span>
           <span v-else-if="goalBarMeta" class="m-gb-meta">{{ goalBarMeta }}</span>
+          <!-- 第二行只留元信息 + 「更多」；修改/过程/取消/删除记录全进底部 sheet -->
+          <button type="button" class="m-gb-more" title="更多执行操作" aria-label="更多执行操作"
+                  @click="openGoalActions">更多</button>
         </div>
       </div>
 
@@ -277,13 +279,14 @@
            版式是文字一行、动作一行：360px 屏上把三颗 44px 热区挤到文字同一侧会吞掉整句话。 -->
       <div v-if="steerQueue.length" class="m-steer">
         <div v-for="(it, qi) in steerQueue" :key="qi" class="ms-item"
-             :class="{ sending: it.sending, deferred: it.deferred, awaiting: it.awaiting }">
+             :class="{ sending: it.sending, deferred: it.deferred, awaiting: it.awaiting, queued: it.queued }">
           <div class="ms-txt">{{ it.text }}</div>
           <div class="ms-foot">
             <span v-if="it.deferred" class="ms-state">本轮结束后自动发出</span>
             <span v-else-if="it.sending" class="ms-state">发送中…</span>
             <span v-else-if="it.awaiting" class="ms-state">已送出，等这一轮听到</span>
-            <template v-else>
+            <span v-else-if="it.queued" class="ms-state">排队中：目标轮开跑时自动送达</span>
+            <template v-if="!it.deferred && !it.sending && !it.awaiting">
               <button class="ms-act ghost" type="button" title="丢弃这条" aria-label="丢弃这条" @click="dropSteer(it)"><delete-outlined /></button>
               <button class="ms-act" type="button" title="取回输入框改" aria-label="取回输入框改" @click="editSteer(it)"><edit-outlined /></button>
               <button class="ms-go" type="button" @click="sendSteer(it)">立即发送</button>
@@ -343,42 +346,36 @@
       <div v-else-if="pendingPlan" class="m-input-card m-planp">
         <div class="m-planp-head">
           <span class="m-planp-tag">执行计划</span>
+          <span class="m-planp-ver">v{{ ((curPlanCard.versions || []).length) + 1 }}</span>
           <span v-if="planExpired" class="m-planp-state warn">已超时，本轮将停止</span>
           <span v-else class="m-planp-state">{{ curPlanCard.revising ? '修改中…' : '待确认' }}</span>
           <span v-if="planCountdownText" class="m-planp-timer" :class="{ warn: planExpired }">{{ planCountdownText }}</span>
         </div>
-        <div class="m-planp-opts">
-          <button type="button" class="m-planp-opt" :disabled="curPlanCard.busy || planExpired"
-                  @click="submitPlanApproval(pendingPlan, 'approve')">
-            <span class="m-planp-no">1.</span>
-            <span class="m-planp-kw">确认</span>
-            <span class="m-planp-rest">直接按此计划开始执行</span>
-          </button>
-          <div class="m-planp-opt m-planp-custom">
-            <span class="m-planp-no">2.</span>
-            <textarea v-model="curPlanCard.editText" class="m-planp-ta" rows="2" :maxlength="8000"
-                      :disabled="curPlanCard.busy || planExpired || curPlanCard.restored"
-                      :placeholder="curPlanCard.restored ? '这张卡是恢复的，请用「转到对话修改」' : '要改什么？同一轮内按意见升版…'"></textarea>
-          </div>
+        <textarea v-model="curPlanCard.editText" class="m-planp-ta" rows="2" :maxlength="8000"
+                  :disabled="curPlanCard.busy || planExpired"
+                  :placeholder="curPlanCard.restored ? '这张卡是恢复的，修改意见会作为新消息发出…' : '不满意？写下要改什么…'"></textarea>
+        <div class="m-planp-acts">
+          <template v-if="!curPlanCard.restored">
+            <button class="m-rec-btn warn" type="button"
+                    :disabled="curPlanCard.busy || planExpired || !(curPlanCard.editText || '').trim()"
+                    @click="revisePlanInPlace(pendingPlan, curPlanCard.editText)">提修改意见</button>
+            <button class="m-rec-btn primary" type="button" :disabled="curPlanCard.busy || planExpired"
+                    @click="submitPlanApproval(pendingPlan, 'approve')">确认执行</button>
+          </template>
+          <button v-else class="m-rec-btn primary" type="button"
+                  :disabled="curPlanCard.busy || planExpired || !(curPlanCard.editText || '').trim()"
+                  @click="continuePlanConversation(pendingPlan, curPlanCard.editText)">转到对话修改</button>
         </div>
         <div class="m-planp-foot">
-          <span class="m-planp-hint">不处理会超时并停止本轮</span>
+          <span class="m-planp-hint">修改会在同一轮生成新版本；确认后才开始动手</span>
           <span class="m-planp-actions">
-            <button class="m-rec-btn ghost" type="button" :disabled="curPlanCard.busy"
-                    @click="stop()">停止本轮</button>
-            <button class="m-rec-btn ghost" type="button" :disabled="curPlanCard.busy || planExpired"
-                    @click="submitPlanApproval(pendingPlan, 'cancel')">取消</button>
-            <button v-if="curPlanCard.restored" class="m-rec-btn primary" type="button"
+            <button v-if="!curPlanCard.restored" class="m-planp-link" type="button"
                     :disabled="curPlanCard.busy || planExpired || !(curPlanCard.editText || '').trim()"
                     @click="continuePlanConversation(pendingPlan, curPlanCard.editText)">转到对话修改</button>
-            <template v-else>
-              <button class="m-rec-btn ghost" type="button"
-                      :disabled="curPlanCard.busy || planExpired || !(curPlanCard.editText || '').trim()"
-                      @click="continuePlanConversation(pendingPlan, curPlanCard.editText)">转到对话修改</button>
-              <button class="m-rec-btn primary" type="button"
-                      :disabled="curPlanCard.busy || planExpired || !(curPlanCard.editText || '').trim()"
-                      @click="revisePlanInPlace(pendingPlan, curPlanCard.editText)">提交修改</button>
-            </template>
+            <button class="m-planp-link" type="button" :disabled="curPlanCard.busy || planExpired"
+                    @click="submitPlanApproval(pendingPlan, 'cancel')">退出计划</button>
+            <button class="m-planp-link quiet" type="button" :disabled="curPlanCard.busy"
+                    @click="stop()">停止本轮</button>
           </span>
         </div>
       </div>
@@ -554,10 +551,15 @@
         <div class="m-goale-label">这件事要做到什么</div>
         <textarea v-model="goalEdit.objective" class="m-goale-ta" rows="4" maxlength="4000"
                   placeholder="写清楚要达成什么；助手会自己一轮轮往下推进"></textarea>
+        <div class="m-goale-hint">
+          <span class="m-vrail"><span>{{ goalVersionLabel }}</span><span class="arr">→</span><span class="on">{{ mGoalNextVersion }}</span></span>
+          <span>下一轮起按新任务执行 · 已跑的 <b>{{ mGoalRounds }} 轮</b> 保留</span>
+          <span class="warn">正在跑的这一轮不受影响</span>
+        </div>
         <div class="m-goale-foot">
-          <span class="m-goale-hint">保存后从下一轮起按新任务继续</span>
+          <button class="m-rec-btn ghost" type="button" :disabled="goalEditBusy" @click="goalEditing = false">取消</button>
           <button class="m-rec-btn primary" type="button" :disabled="goalEditBusy || !goalEditSaveable"
-                  @click="saveGoalEdit">保存</button>
+                  @click="saveGoalEdit">保存为新版</button>
         </div>
       </div>
     </BottomSheet>
@@ -572,7 +574,7 @@
         <button v-if="goalCanEdit" type="button" class="m-goalact-row" @click="actFromGoalSheet('edit')">
           <edit-outlined class="m-goalact-ic" />
           <span class="m-goalact-t">修改任务</span>
-          <span class="m-goalact-s">保存后从下一轮按新原文继续</span>
+          <span class="m-goalact-s">从下一轮生效 · 已跑的 {{ mGoalRounds }} 轮保留</span>
         </button>
         <button type="button" class="m-goalact-row" @click="actFromGoalSheet('view')">
           <fund-projection-screen-outlined class="m-goalact-ic" />
@@ -586,7 +588,7 @@
         </button>
         <div v-if="goalCancelAsk" class="m-goalact-confirm">
           <div class="m-goalact-ct">取消这次深度执行？</div>
-          <div class="m-goalact-cs">已经跑出来的内容、历史与过程都会保留；以后想看，终态卡还在这儿。</div>
+          <div class="m-goalact-cs">停止自动推进，已经跑出的 <b>{{ mGoalRounds }} 轮</b>、正文与过程都会保留；以后想看，终态卡还在这儿。</div>
           <div class="m-goalact-ca">
             <button type="button" class="m-rec-btn ghost" @click="goalCancelAsk = false">继续推进</button>
             <button type="button" class="m-rec-btn danger" @click="actFromGoalSheet('cancel')">取消执行</button>
@@ -794,6 +796,24 @@ const {
 // 四颗图标挤一行会互相误触）。取消在 sheet 内做二次确认——说清「取消 ≠ 删除」。
 const goalActionsOpen = ref(false)
 const goalCancelAsk = ref(false)
+// 目标条第二行：已跑时长 / 已跑轮次 / 下一版号；与 PC 同一份预算字段，不在这里另算口径
+const mGoalElapsedText = computed(() => {
+  const b = sessionGoal.value && sessionGoal.value.budget
+  const ms = Number(b && b.ms) || 0
+  if (ms <= 0) return ''
+  const s = Math.round(ms / 1000)
+  if (s < 60) return `已跑 ${s} 秒`
+  const m = Math.floor(s / 60)
+  return m < 60 ? `已跑 ${m} 分${s % 60 ? ' ' + (s % 60) + ' 秒' : ''}` : `已跑 ${Math.floor(m / 60)} 小时${m % 60 ? ' ' + (m % 60) + ' 分' : ''}`
+})
+const mGoalRounds = computed(() => {
+  const g = sessionGoal.value
+  return Number(g && g.budget && g.budget.rounds) || Number(g && g.round) || 0
+})
+const mGoalNextVersion = computed(() => {
+  const n = Number(sessionGoal.value && sessionGoal.value.objectiveVersion) || 0
+  return 'v' + (n + 2)
+})
 const goalViewerOpen = ref(false)
 // 交付包面板：卡片/目标条/终态卡三处入口都落到同一包；底部 sheet 与 PC 抽屉同一份内容
 const deliveryOpen = ref(false)
@@ -1038,7 +1058,9 @@ const submitPlanAdjust = async ({ text, mode }) => {
   if (fromViewer) closePlanViewer()
   message.info(mode === 'replan'
     ? (wasRunning ? '已停止本轮，正在按新意见重新计划' : '正在按新意见重新计划')
-    : '已送到正在执行的一轮，下一步开始前生效')
+    : (r.queued
+      ? '这一轮暂时收不下，已排队：目标轮下一次开跑时自动送达'
+      : '已送到正在执行的一轮，下一步开始前生效'))
 }
 const onViewerApprove = () => {
   const m = viewerMsg()
@@ -1763,6 +1785,7 @@ onUnmounted(() => {
 .m-rec-btn.primary { background: var(--app-accent); border-color: var(--app-accent); color: #fff; }
 .m-rec-btn.primary:disabled { background: var(--app-accent-disabled); border-color: var(--app-accent-disabled); }
 .m-rec-btn.ghost { border-style: dashed; color: var(--app-text3); }
+.m-rec-btn.warn { color: var(--app-warn-text); border-color: var(--app-warn-border); background: var(--app-panel); font-weight: 600; }
 .m-rec-btn.danger { background: var(--app-danger); border-color: var(--app-danger); color: #fff; }
 
 /* ---- 消息流 ---- */
@@ -1906,34 +1929,34 @@ onUnmounted(() => {
 .m-askp-no { flex: none; color: var(--app-text3); font-variant-numeric: tabular-nums; }
 .m-askp-kw { font-weight: 600; }
 .m-askp-rec { font-weight: 600; color: var(--app-ok); }
-/* —— 计划确认栏（与提问面板同形，顶替输入卡）：正文在气泡的执行计划卡里，这里只放裁决 —— */
-.m-planp { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
-.m-planp-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.m-planp-tag { flex: none; font-size: 12px; line-height: 1; padding: 5px 9px; border-radius: 999px; background: var(--app-warn-weak); border: 1px solid var(--app-warn-border); color: var(--app-warn-text); }
-.m-planp-state { font-size: 12px; color: var(--app-warn-text); }
+/* —— 计划确认栏（与提问面板同形，顶替输入卡）：正文在气泡的执行计划卡里，这里只放裁决 ——
+   版式对齐 plan-mode-ux：头部身份 + 意见框 + 两个主按钮 + 脚注次要入口。 */
+.m-planp { padding: 12px; display: flex; flex-direction: column; gap: 8px; background: var(--app-warn-weak); border-color: var(--app-warn-border); }
+.m-planp-head { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.m-planp-tag { flex: none; font-size: 10.5px; line-height: 1; padding: 4px 8px; border-radius: 999px; background: var(--app-panel); border: 1px solid var(--app-warn-border); color: var(--app-warn-text); }
+.m-planp-ver { flex: none; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9.5px; line-height: 16px; padding: 0 5px; border-radius: 999px; border: 1px solid var(--app-warn-border); background: var(--app-panel); color: var(--app-warn-text); }
+.m-planp-state { font-size: 11.5px; font-weight: 600; color: var(--app-warn-text); }
 .m-planp-state.warn { color: var(--app-warn); }
-.m-planp-timer { flex: none; margin-left: auto; font-size: 12px; color: var(--app-text3); font-variant-numeric: tabular-nums; }
+.m-planp-timer { flex: none; margin-left: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px; color: var(--app-text2); font-variant-numeric: tabular-nums; }
 .m-planp-timer.warn { color: var(--app-warn); }
-.m-planp-opts { display: flex; flex-direction: column; gap: 6px; }
-.m-planp-opt { display: flex; align-items: flex-start; gap: 8px; width: 100%; text-align: left; background: none; border: none; border-radius: 8px; padding: 10px 8px; min-height: 44px; font-size: 14px; line-height: 1.55; color: var(--app-text); touch-action: manipulation; }
-.m-planp-opt:active { background: var(--app-panel); }
-.m-planp-opt:disabled { opacity: 0.55; }
-.m-planp-no { flex: none; color: var(--app-text3); font-variant-numeric: tabular-nums; }
-.m-planp-kw { font-weight: 600; }
-.m-planp-rest { color: var(--app-text2); }
-.m-planp-custom { border: 1px solid var(--app-border); background: var(--app-panel); align-items: flex-start; }
-.m-planp-ta { flex: 1; min-width: 0; border: none; outline: none; background: none; resize: none; font: inherit; font-size: 14px; line-height: 1.55; color: var(--app-text); padding: 0; }
-.m-planp-ta:disabled { color: var(--app-text3); }
-.m-planp-foot { display: flex; flex-direction: column; gap: 8px; }
-.m-planp-hint { font-size: 12px; color: var(--app-text3); }
-.m-planp-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.m-planp-ta { width: 100%; border: 1px solid var(--app-border); border-radius: 8px; background: var(--app-panel); outline: none; resize: none; font: inherit; font-size: 13px; line-height: 1.55; color: var(--app-text); padding: 7px 9px; }
+.m-planp-ta:focus { border-color: var(--app-accent); box-shadow: 0 0 0 2px var(--app-accent-weak); }
+.m-planp-ta:disabled { color: var(--app-text3); background: var(--app-panel-2); }
+.m-planp-acts { display: flex; gap: 8px; }
+.m-planp-acts .m-rec-btn { flex: 1; }
+.m-planp-foot { display: flex; flex-direction: column; gap: 4px; }
+.m-planp-hint { font-size: 11px; color: var(--app-text3); line-height: 1.5; }
+.m-planp-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.m-planp-link { border: 0; background: none; padding: 0; font-size: 11px; color: var(--app-warn-text); cursor: pointer; }
+.m-planp-link.quiet { color: var(--app-text3); }
+.m-planp-link:disabled { opacity: .5; cursor: default; }
 /* 目标条（常驻摘要条，与 PC 那一条同一套词汇与判据）：压在输入卡正上方，两行——
    第一行状态药丸＋目标原文（单行截断）＋三颗图标动作，第二行是 PC 收在悬浮里的那些数（触屏没有 hover）。 */
 .m-goalbar {
-  display: flex; flex-direction: column; gap: 2px;
-  border: 0; border-radius: 12px; background: var(--app-panel);
-  padding: 6px 6px 6px 10px; margin-bottom: 8px;
-  box-shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 8px 20px -10px rgba(16, 24, 40, .10);
+  display: flex; flex-direction: column; gap: 5px;
+  border: 1px solid var(--app-border); border-radius: 10px; background: var(--app-panel);
+  padding: 8px 9px 9px; margin-bottom: 8px;
+  box-shadow: 0 2px 8px rgba(16, 24, 40, .04);
 }
 .m-gb-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
 /* 状态药丸是只读的：状态词由引擎那一份给出，颜色只表达「在跑 / 停住」，不接受点按，
@@ -1950,7 +1973,7 @@ onUnmounted(() => {
 .m-gb-pill.st-failed { background: var(--app-danger-weak); border-color: var(--app-danger-border, var(--app-border)); color: var(--app-danger); }
 .m-gb-pill.st-cancelled { color: var(--app-text3); }
 .m-gb-ic { flex: none; font-size: 12px; }
-.m-gb-objective { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; line-height: 22px; color: var(--app-text2); }
+.m-gb-objective { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 600; line-height: 18px; color: var(--app-text); }
 /* 版本：改过原文就换一版；窄条上只报第几版，不抢原文 */
 .m-gb-ver { flex: none; font-size: 10.5px; line-height: 16px; padding: 0 5px; border-radius: 5px; background: var(--app-panel-2); color: var(--app-text3); }
 .m-gb-acts { flex: none; display: flex; align-items: center; gap: 2px; }
@@ -1964,9 +1987,11 @@ onUnmounted(() => {
 .m-gb-btn:active:not(:disabled) { background: var(--app-panel-2); color: var(--app-text2); }
 .m-gb-btn:disabled { opacity: .4; }
 /* 第二行：轮次 + 细进度条 + 停因/让位提示（PC 收在悬浮里的数，触屏上落到地上） */
-.m-gb-progress { display: flex; align-items: center; gap: 8px; min-width: 0; padding-left: 2px; }
-.m-gb-round { flex: none; font-size: 11px; line-height: 16px; padding: 0 5px; border-radius: 5px; border: 1px solid var(--app-border); color: var(--app-text3); white-space: nowrap; }
-.m-gb-track { flex: none; width: 60px; height: 3px; border-radius: 999px; background: var(--app-border); overflow: hidden; }
+.m-gb-progress { display: flex; align-items: center; gap: 7px; min-width: 0; padding-left: 1px; flex-wrap: wrap; }
+.m-gb-round { flex: none; font-size: 10px; line-height: 16px; padding: 0 5px; border-radius: 5px; border: 1px solid var(--app-border); color: var(--app-text3); white-space: nowrap; }
+.m-gb-extra { flex: none; font-size: 10px; color: var(--app-text3); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.m-gb-budget { flex: none; display: inline-flex; align-items: center; gap: 4px; font-size: 10px; color: var(--app-text3); font-variant-numeric: tabular-nums; }
+.m-gb-track { flex: none; width: 52px; height: 3px; border-radius: 999px; background: var(--app-border); overflow: hidden; }
 .m-gb-track i { display: block; height: 100%; border-radius: 999px; background: var(--app-accent); transition: width .25s ease; }
 /* 产出入口：第二行里唯一可点的数，用浅蓝胶囊把它从停因灰字里拎出来 */
 .m-gb-dlv {
@@ -1977,6 +2002,7 @@ onUnmounted(() => {
 }
 .m-gb-meta { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; line-height: 16px; color: var(--app-text3); font-variant-numeric: tabular-nums; }
 .m-gb-error { flex: 1; min-width: 0; font-size: 11.5px; line-height: 16px; color: var(--app-danger); word-break: break-word; }
+.m-gb-more { margin-left: auto; flex: none; border: none; background: none; padding: 0; font-size: 10px; line-height: 16px; color: var(--app-accent); }
 /* 目标操作 sheet：一行一个动作，说明写在标题下面；危险动作（取消/删除）单独一档色 */
 .m-goalact { display: flex; flex-direction: column; gap: 2px; padding: 4px 0 8px; }
 .m-goalact-row {
@@ -2067,8 +2093,14 @@ onUnmounted(() => {
 .m-goale { display: flex; flex-direction: column; gap: 8px; }
 .m-goale-label { font-size: 12.5px; font-weight: 600; color: var(--app-text2); margin-top: 4px; }
 .m-goale-ta { width: 100%; box-sizing: border-box; border: 1px solid var(--app-border); border-radius: 10px; background: var(--app-panel); color: var(--app-text); font: inherit; font-size: 15px; line-height: 1.55; padding: 8px 10px; resize: none; }
-.m-goale-foot { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
-.m-goale-hint { flex: 1; font-size: 12px; color: var(--app-text3); }
+.m-goale-foot { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.m-goale-hint { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 10.5px; line-height: 1.6; color: var(--app-text3); }
+.m-goale-hint b { color: var(--app-accent); font-weight: 600; }
+.m-goale-hint .warn { color: var(--app-warn-text); }
+.m-vrail { display: inline-flex; align-items: center; gap: 3px; }
+.m-vrail span { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9.5px; padding: 1px 5px; border-radius: 4px; border: 1px solid var(--app-border); color: var(--app-text3); }
+.m-vrail span.on { background: var(--app-accent-weak); border-color: var(--app-accent-border); color: var(--app-accent); font-weight: 700; }
+.m-vrail .arr { border: none; color: var(--app-text3); }
 .m-askp-rest { color: var(--app-text2); margin-left: 8px; flex: 1; min-width: 0; }
 .m-askp-custom { align-items: center; }
 .m-askp-input { flex: 1; min-width: 0; border: none; outline: none; background: transparent; font-size: 15px; color: var(--app-text); padding: 0; }

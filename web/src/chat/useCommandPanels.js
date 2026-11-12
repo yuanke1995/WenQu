@@ -128,7 +128,7 @@ export const useCommandPanels = (ctx = {}) => {
       desc: '早期对话压缩为摘要，腾出上下文空间',
       run: () => ctx.compactContext() },
     ...(ctx.goalEntryVisible() ? [{ key: 'act-deep', cmd: 'deep', aliases: ['深度'], icon: AimOutlined,
-      noGate: true, args: true, name: '深度执行', desc: '先出计划，自动跨轮推进',
+      noGate: true, args: true, name: '深度执行', desc: '跨轮自动推进，直到完成',
       run: args => {
         const task = String(args || '').trim()
         if (task) { ctx.startGoalNow(task); return }

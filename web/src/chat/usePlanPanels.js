@@ -192,7 +192,9 @@ export const usePlanPanels = ctx => {
     if (fromViewer) closePlanViewer()
     notify.info(mode === 'replan'
       ? (wasRunning ? '已停止本轮，正在按新意见重新计划' : '正在按新意见重新计划')
-      : '已送到正在执行的一轮，下一步开始前生效')
+      : (r.queued
+        ? '这一轮暂时收不下，已排队：目标轮下一次开跑时自动送达'
+        : '已送到正在执行的一轮，下一步开始前生效'))
   }
   const locateReplanned = m => {
     const id = m && m.planCard && m.planCard.replannedBy && m.planCard.replannedBy.cardId

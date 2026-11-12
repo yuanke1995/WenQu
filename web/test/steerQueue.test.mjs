@@ -126,3 +126,42 @@ test('steer 帧应用后撤下对应等待条目', () => {
   assert.equal(a.q.steerQueue.value.length, 0)
   a.q.dropApplied('')
 })
+
+test('计划调整排队：投递认发起会话，成功后转「等这一轮听到」', async () => {
+  // 当前会话已切到 s2：投递仍回到发起时那个会话 s1
+  const a = setup({ sid: 's2' })
+  const item = a.q.enqueuePlanAdjust('  再加一个栏目 ', 's1')
+  assert.equal(item.text, '再加一个栏目')
+  assert.equal(item.queued, true)
+  assert.equal(a.calls.api.length, 0)
+
+  assert.equal(await a.q.deliverPlanAdjust(item), true)
+  assert.deepEqual(a.calls.api, [['s1', '再加一个栏目']])
+  assert.equal(item.queued, false)
+  assert.equal(item.awaiting, true)
+  assert.equal(item.messageId, 'id1')
+})
+
+test('计划调整排队：投递失败留在队列等下一拍，不退回输入框', async () => {
+  const a = setup({ steerRet: { data: { accepted: false } } })
+  const item = a.q.enqueuePlanAdjust('改方向', 's1')
+  assert.equal(await a.q.deliverPlanAdjust(item), false)
+  assert.equal(item.queued, true)
+  assert.equal(item.attempts, 1)
+  assert.ok(item.nextAt > 0)
+  assert.equal(a.q.steerQueue.value.length, 1)
+
+  // 手动点「立即发送」也是同一个排队项：失败继续等，别把原文塞回输入框
+  a.text.value = '正在打的字'
+  await a.q.sendSteer(item)
+  assert.equal(item.queued, true)
+  assert.equal(a.text.value, '正在打的字')
+  assert.equal(a.calls.notes[0][0], 'info')
+})
+
+test('计划调整排队：空文本或没有会话不入队', () => {
+  const a = setup()
+  assert.equal(a.q.enqueuePlanAdjust('  ', 's1'), null)
+  assert.equal(a.q.enqueuePlanAdjust('x', ''), null)
+  assert.equal(a.q.steerQueue.value.length, 0)
+})

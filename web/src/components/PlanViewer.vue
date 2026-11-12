@@ -23,6 +23,7 @@
               <button v-if="lineageLabel" type="button" class="pv-src" title="回到旧计划的执行记录"
                       @click="emit('locate-source')">{{ lineageLabel }} ↗</button>
               <span v-if="chain.length > 1" class="pv-rev">已修改 {{ chain.length - 1 }} 次</span>
+              <span v-if="countdown && card.status === 'pending'" class="pv-timer" :class="{ warn: expired }">◷ {{ countdown }}</span>
               <span v-if="card.auto" class="pv-auto">自动开启</span>
             </div>
           </div>
@@ -62,6 +63,17 @@
 
         <div ref="bodyEl" class="pv-body">
           <template v-if="tab === 'plan'">
+          <!-- 原始计划独占正文：结构区（版本说明/意见/变更摘要/步骤）整块让位，
+               从正文顶部开始读，不再挤在步骤下面那 280px 的滚动框里 -->
+          <template v-if="rawMode">
+            <div class="pv-raw-head">
+              <span class="pv-raw-lab">原始计划 · v{{ sel + 1 }}</span>
+              <button type="button" class="pv-raw-back" @click="toggleRaw(false)">返回结构视图</button>
+            </div>
+            <div class="md pv-fullmd pv-raw-doc" v-html="renderMd(planText(v.plan), [])"></div>
+          </template>
+
+          <template v-else>
           <div class="pv-meta">
             <span class="pv-chip" :class="{ cur: isCurrent }">
               {{ isCurrent ? (card.status === 'pending' ? '当前待确认版' : '当前版') : '历史版本 · 只读' }}
@@ -107,10 +119,10 @@
           <div v-if="!outline.steps.length" class="md pv-fullmd"
                v-html="renderMd(planText(v.plan) || '（计划为空）', [])"></div>
 
-          <details v-if="outline.steps.length && planText(v.plan)" class="pv-raw">
-            <summary>查看原始计划</summary>
-            <div class="md pv-fullmd" v-html="renderMd(planText(v.plan), [])"></div>
-          </details>
+          <div v-if="outline.steps.length && planText(v.plan)" class="pv-raw">
+            <button type="button" class="pv-raw-toggle" @click="toggleRaw(true)">查看原始计划</button>
+          </div>
+          </template>
           </template>
 
           <!-- ---------- 执行页签：卡上看结果，这里看过程 ---------- -->
@@ -278,7 +290,10 @@ const props = defineProps({
   /** 执行进度（planExecProgress 的产物）：步骤与状态以任务清单为准 */
   progress: { type: Object, default: null },
   /** 本轮调整记录（执行中插话）：[{text,messageId}]；执行页签并列展示 */
-  adjusts: { type: Array, default: () => [] }
+  adjusts: { type: Array, default: () => [] },
+  /** 待确认倒计时（与卡片、底部确认栏同源同值） */
+  countdown: { type: String, default: '' },
+  expired: { type: Boolean, default: false }
 })
 const emit = defineEmits(['close', 'approve', 'revise', 'supersede', 'locate', 'stop',
                           'adjust', 'locate-source'])
@@ -290,6 +305,8 @@ const diffOn = ref(true)
 const opinion = ref('')
 const opinionOpen = ref(false)
 const tab = ref('plan')
+/** 原始计划独屏：打开后结构区整块隐藏，正文从顶部开始读 */
+const rawMode = ref(false)
 
 const chain = computed(() => planChain(props.card))
 const busy = computed(() => !!(props.card && props.card.busy))
@@ -403,7 +420,16 @@ const dur = ms => {
 function switchTab (t) {
   if (t === 'exec' && !hasExec.value) return
   tab.value = t
+  rawMode.value = false
   if (t === 'plan') opinionOpen.value = false
+  if (bodyEl.value) bodyEl.value.scrollTop = 0
+}
+
+/** 切到原始计划/回到结构视图：先把视图换掉再从正文顶部开始读 */
+async function toggleRaw (on) {
+  rawMode.value = on
+  opinionOpen.value = false
+  await nextTick()
   if (bodyEl.value) bodyEl.value.scrollTop = 0
 }
 
@@ -412,6 +438,7 @@ function pick (i) {
   if (i < 0 || i >= n) return
   sel.value = i
   opinionOpen.value = false
+  rawMode.value = false
   setPlanViewerVersion(props.sid, props.pkey, i)
   if (bodyEl.value) bodyEl.value.scrollTop = 0
 }
@@ -424,6 +451,7 @@ function reset () {
   diffOn.value = true
   opinion.value = ''
   opinionOpen.value = false
+  rawMode.value = false
   tab.value = (props.initialTab === 'exec' && hasExec.value) ? 'exec' : 'plan'
   if (bodyEl.value) bodyEl.value.scrollTop = 0
 }
@@ -508,6 +536,8 @@ onUnmounted(() => {
 .pv-state.st-ok { color: var(--app-ok); }
 .pv-state.st-drafting, .pv-state.st-muted { color: var(--app-text3); }
 .pv-rev, .pv-auto { padding-left: 8px; border-left: 1px solid var(--app-border); }
+.pv-timer { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10.5px; color: var(--app-text2); font-variant-numeric: tabular-nums; }
+.pv-timer.warn { color: var(--app-warn); }
 .pv-src { border: 1px solid var(--app-accent-border); background: var(--app-accent-weak); color: var(--app-accent);
   border-radius: 4px; padding: 1px 6px; font-size: 10.5px; line-height: 1.5; cursor: pointer; }
 .pv-src:hover { border-color: var(--app-accent); }
@@ -559,8 +589,14 @@ onUnmounted(() => {
 .pv-del s { color: var(--app-danger, #cf1322); }
 .pv-fullmd { margin-top: 4px; font-size: 12.5px; }
 .pv-raw { margin-top: 14px; padding-top: 10px; border-top: 1px dashed var(--app-border); }
-.pv-raw summary { font-size: 11.5px; color: var(--app-text3); cursor: pointer; }
-.pv-raw .pv-fullmd { max-height: 280px; overflow-y: auto; padding-right: 4px; }
+.pv-raw-toggle { border: 0; background: none; padding: 0; font-size: 11.5px; color: var(--app-text3); cursor: pointer; }
+.pv-raw-toggle:hover { color: var(--app-accent); }
+/* 原始计划独屏：标题行 + 全文，正文自己滚（不再套 280px 小窗） */
+.pv-raw-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.pv-raw-lab { font-size: 10.5px; font-weight: 600; letter-spacing: .04em; color: var(--app-text3); }
+.pv-raw-back { margin-left: auto; border: 1px solid var(--app-border); background: var(--app-panel); border-radius: 6px; padding: 2px 8px; font-size: 11px; color: var(--app-text2); cursor: pointer; white-space: nowrap; }
+.pv-raw-back:hover { border-color: var(--app-accent); color: var(--app-accent); }
+.pv-raw-doc { margin-top: 0; }
 
 /* ---------- 页签 ---------- */
 .pv-tabs { display: flex; gap: 2px; padding: 0 18px; border-bottom: 1px solid var(--app-border); background: var(--app-panel); }

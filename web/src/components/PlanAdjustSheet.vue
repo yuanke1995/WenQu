@@ -64,7 +64,7 @@
                 <span class="pa-radio" aria-hidden="true"></span>
                 <span class="pa-mode-main">
                   <span class="pa-mode-t">插话调整 · 不中断 <em class="pa-tag">推荐</em></span>
-                  <span class="pa-mode-d">这句话在<b>下一次调模型之前</b>送到正在跑的这一轮。当前步骤不会停，<b>已完成的步骤不会重做</b>；计划正文不变，调整记在本轮执行记录里。</span>
+                  <span class="pa-mode-d">这句话在<b>下一次调模型之前</b>送到正在跑的这一轮。当前步骤不会停，<b>已完成的步骤不会重做</b>；计划正文不变，调整记在本轮执行记录里。若这一轮刚好收尾，这句会<b>排队，等下一轮开跑时自动送达</b>。</span>
                 </span>
               </button>
               <button type="button" class="pa-mode" :class="{ on: mode === 'replan' }"

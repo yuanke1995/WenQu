@@ -41,6 +41,18 @@ test('交付包：分组、入口标记、体量与单件成卡', () => {
   assert.equal(deliveryCardOf(d), d)
 })
 
+test('交付包：同名文件重复交付只留最后一次，入口不指旧版本', () => {
+  const d = deliveryOf([
+    { filename: 'index.html', url: '/old', size: 1024 },
+    { filename: 'about.html', url: '/about', size: 512 },
+    { filename: 'index.html', url: '/new', size: 2048 }
+  ], { name: '官网 · 交付' })
+  assert.equal(d.fileCount, 2)
+  assert.equal(d.files.filter(f => f.filename === 'index.html').length, 1)
+  assert.equal(d.entry.url, '/new')
+  assert.equal(d.sizeLabel, '2.5 KB')
+})
+
 test('交付包：无有效产物返回 null；seq 条目也算有效', () => {
   assert.equal(deliveryOf([]), null)
   assert.equal(deliveryOf([{ filename: 'x.md' }]), null)

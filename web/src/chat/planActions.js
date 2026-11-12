@@ -77,9 +77,19 @@ export const steerPlanAdjustment = async (m, raw, ctx) => {
   return { ok: true }
 }
 
-/** 面板统一入口：A 插话调整 / B 停止并重新计划。 */
-export const adjustPlanAfterApproval = (m, text, mode, ctx) =>
-  mode === 'replan' ? ctx.replan(m, text) : steerPlanAdjustment(m, text, ctx)
+/** 面板统一入口：A 插话调整 / B 停止并重新计划。
+ *  A 档这次送不进去（目标轮刚收尾 / 轮间间隙 / 另一轮在跑）时不报错——交给调用方排队，
+ *  等这一会话重新有可插话的轮再送；只有排不了队（目标已不在跑）才把原因交回面板。 */
+export const adjustPlanAfterApproval = async (m, text, mode, ctx) => {
+  if (mode === 'replan') return ctx.replan(m, text)
+  const r = await steerPlanAdjustment(m, text, ctx)
+  if (r.ok) return r
+  if ((r.reason === 'ended' || r.reason === 'busy') && ctx.queuePlanAdjust) {
+    const item = ctx.queuePlanAdjust(String(text || '').trim())
+    if (item) return { ok: true, queued: true }
+  }
+  return r
+}
 
 /**
  * 批准后调整：停止并重新计划。旧卡冻结当前进度后保留记录，意见作为新一轮问题发出；

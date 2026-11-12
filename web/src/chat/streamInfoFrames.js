@@ -52,6 +52,7 @@ export const applyApprovalCardFrame = (msg, raw, onScroll = () => {}) => {
     const j = typeof raw === 'string' ? JSON.parse(raw) : raw
     const timeoutMs = Number(j.timeoutMs) || 120000
     const card = { id: j.approvalId, tool: j.tool, label: j.label, hint: j.hint, args: j.args,
+      reason: j.reason || '',
       subagent: j.subagent || null, timeoutMs, deadline: Date.now() + timeoutMs, busy: false }
     const list = (Array.isArray(msg.approvals) ? msg.approvals : []).filter(x => x && x.id !== card.id)
     list.push(card)
