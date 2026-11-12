@@ -31,7 +31,7 @@ class ProjectTurnChangesServiceTest {
     @Test
     @DisplayName("对账上下文：列出文件与 diff，连续两轮出现的文件才提示沉淀工作区记忆")
     void driftNoteFormatsAndDetectsRepeats() {
-        ProjectTurnChangesService svc = new ProjectTurnChangesService(null, null, null, null, null);
+        ProjectTurnChangesService svc = new ProjectTurnChangesService(null, null, null, null);
         Map<String, Object> drift = Map.of(
                 "supported", true,
                 "total", 1,
@@ -56,7 +56,7 @@ class ProjectTurnChangesServiceTest {
     @Test
     @DisplayName("对账上下文：没有快照/空结果/没有文件都不注入")
     void driftNoteSkipsWhenNoDrift() {
-        ProjectTurnChangesService svc = new ProjectTurnChangesService(null, null, null, null, null);
+        ProjectTurnChangesService svc = new ProjectTurnChangesService(null, null, null, null);
         assertThat(svc.driftNote("s2", null, 1000)).isEmpty();
         assertThat(svc.driftNote("s2", new ProjectTurnChangesService.Start(
                 CompletableFuture.completedFuture(Map.of())), 1000)).isEmpty();

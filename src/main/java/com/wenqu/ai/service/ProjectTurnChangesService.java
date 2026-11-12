@@ -46,7 +46,6 @@ public class ProjectTurnChangesService {
     private final ExecutorFiles executorFiles;
     private final MessageMapper messageMapper;
     private final SessionMapper sessionMapper;
-    private final SessionWorkspaceService sessionWorkspace;
 
     /** 单线程发轮前快照：不阻塞问答主链路，FIFO 保证快照先于本轮第一次写到达执行器队列。 */
     private final ExecutorService pool = Executors.newSingleThreadExecutor(r -> {
@@ -73,33 +72,27 @@ public class ProjectTurnChangesService {
     private final ConcurrentHashMap<String, Map<String, Integer>> driftStreaks = new ConcurrentHashMap<>();
 
     public ProjectTurnChangesService(ProjectService projectService, ExecutorFiles executorFiles,
-                                     MessageMapper messageMapper, SessionMapper sessionMapper,
-                                     SessionWorkspaceService sessionWorkspace) {
+                                     MessageMapper messageMapper, SessionMapper sessionMapper) {
         this.projectService = projectService;
         this.executorFiles = executorFiles;
         this.messageMapper = messageMapper;
         this.sessionMapper = sessionMapper;
-        this.sessionWorkspace = sessionWorkspace;
     }
 
-    /** 这台执行器上要拍快照的一组根：显式本机工作区，或隐式会话的本机会话目录。 */
+    /** 这台执行器上要拍快照的一组根：只认显式本机工作区。 */
     private record FsTarget(String executorId, List<ProjectRoot> roots) {
     }
 
+    /**
+     * 改动卡与用户改动对账是<b>工作区</b>的能力：只认显式本机工作区。
+     * 会话隐式本机目录（快速对话被钉到本机会话目录）不算——没挂工作区的会话不该出这张卡，
+     * 也不该为它做轮前/轮后快照。
+     */
     private FsTarget targetOf(String sessionId) {
         Project p = projectService.projectOfSession(sessionId);
-        if (p != null && projectService.isLocal(p)) {
-            List<ProjectRoot> roots = projectService.rootsOf(p);
-            return roots.isEmpty() ? null : new FsTarget(p.getExecutorId(), roots);
-        }
-        SessionWorkspaceService.Workspace ws = sessionWorkspace == null
-                ? null : sessionWorkspace.existingLocal(sessionId);
-        if (ws == null) return null;
-        ProjectRoot root = new ProjectRoot();
-        root.setAlias("workspace");
-        root.setPath(ws.rootPath());
-        root.setPrimaryRoot(ProjectRoot.PRIMARY);
-        return new FsTarget(ws.executorId(), List.of(root));
+        if (p == null || !projectService.isLocal(p)) return null;
+        List<ProjectRoot> roots = projectService.rootsOf(p);
+        return roots.isEmpty() ? null : new FsTarget(p.getExecutorId(), roots);
     }
 
     /** 本会话当前轮的 turnId（没有进行中的轮返回 null）。 */
