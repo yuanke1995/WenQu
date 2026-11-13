@@ -133,8 +133,9 @@ public class McpController {
         return ResultJson.ok(Map.of("id", row.getId(), "name", row.getName()));
     }
 
-    @Operation(summary = "编辑 MCP 服务", description = "body: {name?, url?, type?, enabled?, headers?, clearHeaders?}；只传要改的字段。"
-            + "headers 不传 = 保持原值，传对象 = 整块替换，clearHeaders=true = 清除凭据；改完自动重连")
+    @Operation(summary = "编辑 MCP 服务", description = "body: {name?, url?, type?, enabled?, headers?, clearHeaders?, mergeHeaders?, removedHeaderKeys?}；只传要改的字段。"
+            + "headers 不传 = 保持原值，传对象 = 整块替换，clearHeaders=true = 清除凭据；"
+            + "mergeHeaders=true = 逐键合并（headers 里值非空覆盖同名键、值空沿用已存值，removedHeaderKeys 删键，键名大小写不敏感）；改完自动重连")
     @Permission("mcp:write")
     @PutMapping("/servers/{id}")
     public ResultJson update(@PathVariable("id") String id, @RequestBody Map<String, Object> body,
@@ -153,7 +154,13 @@ public class McpController {
         if (body.containsKey("type")) row.setType(normalizeType(text(body, "type")));
         if (body.containsKey("enabled")) row.setEnabled(Boolean.TRUE.equals(body.get("enabled")) ? 1 : 0);
         boolean clearHeaders = Boolean.TRUE.equals(body.get("clearHeaders"));
-        if (!clearHeaders && body.containsKey("headers")) {
+        if (!clearHeaders && Boolean.TRUE.equals(body.get("mergeHeaders"))) {
+            // 逐键合并：明文只在这一瞬间存在，合并结果重新整块加密；合并后为空 = 清除
+            String merged = McpHeaders.merge(cryptoService.decrypt(row.getHeaders()),
+                    body.get("headers"), body.get("removedHeaderKeys"));
+            if (merged == null) clearHeaders = true;
+            else row.setHeaders(cryptoService.encrypt(merged));
+        } else if (!clearHeaders && body.containsKey("headers")) {
             String headers = McpHeaders.normalize(body.get("headers"));
             // 「替换为空」与「清除」同义：都要求把可空列显式置 null（updateById 会跳过 null）
             if (headers == null) clearHeaders = true;
@@ -279,7 +286,8 @@ public class McpController {
     }
 
     @Operation(summary = "测试连接", description = "临时连接一个 MCP 服务（不落配置），返回是否可达与工具清单；用于\"先测再存\"。"
-            + "headers 不传且给了 serverId 时，使用该服务已保存的凭据（编辑态回显只有键名，拿不到明文）")
+            + "headers 不传且给了 serverId 时，使用该服务已保存的凭据（编辑态回显只有键名，拿不到明文）；"
+            + "mergeHeaders=true 且给了 serverId 时，按编辑弹窗的逐键合并口径（headers 值空沿用已存值、removedHeaderKeys 删键）先合并再测")
     @Permission("mcp:write")
     @PostMapping("/probe")
     public ResultJson probe(@RequestBody Map<String, Object> body) {
@@ -287,8 +295,15 @@ public class McpController {
         // 前者没给才回落到已保存凭据（编辑态回显只有键名，拿不到明文）
         boolean headersExplicit = body.containsKey("headers");
         String headersJson = headersExplicit ? McpHeaders.normalize(body.get("headers")) : null;
+        String serverId = text(body, "serverId");
+        if (Boolean.TRUE.equals(body.get("mergeHeaders")) && serverId != null && !serverId.isBlank()) {
+            UserMcp row = visible(serverId);
+            headersJson = McpHeaders.merge(cryptoService.decrypt(row.getHeaders()),
+                    body.get("headers"), body.get("removedHeaderKeys"));
+            headersExplicit = true; // 合并结果为 null = 明确不带凭据（与「清除后测试」同义）
+        }
         return ResultJson.ok(mcpClientService.probe(text(body, "url"), text(body, "type"), headersJson,
-                headersExplicit, RequestUser.uid(), text(body, "serverId")));
+                headersExplicit, RequestUser.uid(), serverId));
     }
 
     @Operation(summary = "批量导入 MCP 服务", description = "body: {servers:[{name,url,type?,headers?}]}；逐条按单条口径校验"

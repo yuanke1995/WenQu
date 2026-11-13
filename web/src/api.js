@@ -899,11 +899,13 @@ export const getMcpStatus = (retry, verifyOnline, withTools) => {
   return request('/mcp/status' + (qs.length ? '?' + qs.join('&') : ''))
 }
 export const reloadMcp = () => request('/mcp/reload', { method: 'POST' })
-/** 测试连接：headers 传 undefined = 不带（编辑态用 serverId 让后端取已保存凭据）；传 {} = 明确不带凭据 */
-export const probeMcp = (url, type, headers, serverId) => {
+/** 测试连接：headers 传 undefined = 不带（编辑态用 serverId 让后端取已保存凭据）；传 {} = 明确不带凭据；
+ *  merge = {removedHeaderKeys} 时走逐键合并（headers 值空沿用已存值），由服务端合并后测试 */
+export const probeMcp = (url, type, headers, serverId, merge) => {
   const body = { url, type }
   if (headers !== undefined) body.headers = headers
   if (serverId) body.serverId = serverId
+  if (merge) { body.mergeHeaders = true; body.removedHeaderKeys = merge.removedHeaderKeys || [] }
   return request('/mcp/probe', { method: 'POST', body: JSON.stringify(body) })
 }
 export const addMcpServer = body => request('/mcp/servers', { method: 'POST', body: JSON.stringify(body) })

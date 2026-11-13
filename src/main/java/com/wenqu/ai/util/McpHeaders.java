@@ -89,6 +89,43 @@ public final class McpHeaders {
         return json;
     }
 
+    /**
+     * 逐键合并（编辑弹窗「留空即沿用已存值」）：以已保存的明文 JSON 为底，先按 removedKeys
+     * 删键（大小写不敏感），再按 updates 顺序覆盖——值非空 = 覆盖同名键，值空 = 沿用已存值
+     * （键不存在则跳过）。结果仍走 {@link #normalize} 严格校验；合并后为空返回 null（= 无凭据）。
+     * <p>
+     * 与建连的宽松解析不同，这里是写路径：已存凭据解不开时直接报错，不能把「解密失败」
+     * 静默当成「没有凭据」合并掉，否则用户只想加一个头却丢了原有密钥。
+     */
+    public static String merge(String oldJson, Object updates, Object removedKeys) {
+        Map<String, String> saved = parse(oldJson);
+        if (oldJson != null && !oldJson.isBlank() && saved.isEmpty()) {
+            throw new BizException("已保存的凭据无法解密，请先「清除全部凭据」再重新填写");
+        }
+        Map<String, String> out = new LinkedHashMap<>(saved);
+        if (removedKeys instanceof List<?> list) {
+            for (Object k : list) {
+                if (k != null) removeIgnoreCase(out, String.valueOf(k).trim());
+            }
+        }
+        if (updates instanceof Map<?, ?> map) {
+            for (Map.Entry<?, ?> e : map.entrySet()) {
+                String key = e.getKey() == null ? "" : String.valueOf(e.getKey()).trim();
+                if (key.isEmpty()) continue;
+                String value = e.getValue() == null ? "" : String.valueOf(e.getValue());
+                if (value.isEmpty()) continue;
+                // 覆盖沿用已存键名的大小写（HTTP 头不区分大小写，但键名回显不该被改写）
+                String existing = out.keySet().stream().filter(k -> k.equalsIgnoreCase(key)).findFirst().orElse(null);
+                out.put(existing != null ? existing : key, value);
+            }
+        }
+        return normalize(out);
+    }
+
+    private static void removeIgnoreCase(Map<String, String> map, String key) {
+        map.keySet().removeIf(k -> k.equalsIgnoreCase(key));
+    }
+
     /** 宽松解析（建连用）：解不开/格式不对一律返回空 map，绝不抛异常打断建连 */
     public static Map<String, String> parse(String json) {
         if (json == null || json.isBlank()) return Map.of();
