@@ -48,7 +48,7 @@ public class ToolApproval {
     /** 待审批工具名（沙盒/MCP） */
     private String toolName;
 
-    /** 状态: PENDING / APPROVED / REJECTED / TIMEOUT */
+    /** 状态: PENDING / APPROVED / REJECTED / TIMEOUT；提问卡另有 CONTINUED（前台等待结束、仍可答）与 ANSWERED */
     private String status;
 
     /** 工具入参摘要（截断 2000 字符，审计与回溯用；提问类记录存 {question,options} JSON） */

@@ -989,7 +989,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
 
             @Override
             public boolean answerTimedOutAsk(Map<String, SessionEvent> pending) {
-                return AgentscopeChatEngine.this.answerTimedOutAsk(pending, cmd);
+                return AgentscopeChatEngine.this.answerTimedOutAsk(pending, cmd, recording);
             }
 
             @Override
@@ -1992,32 +1992,33 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     }
 
     /**
-     * 提问卡等满预算：把「这一题用户没回答」当成答案送回原工具，让模型接着往下走，
-     * <b>不</b>把这一轮掐掉。
-     * <p>与手写侧 {@code ChatService} 的超时分支同一语义（那边是
-     * {@code buildCombinedAnswer(..., "TIMEOUT")} 回一句「用户未回答这一题」）：超时是「用户不在」，
-     * 不是「用户拒绝」，也不是「这一轮作废」；否则一次提问没人答，整轮就没了。
+     * 提问卡前台等待到点：把「还没收到作答，问题仍可答」送回原工具，让模型接着往下走，
+     * <b>不</b>把这一轮掐掉，也<b>不</b>把这张卡作废。
+     * <p>与 DSH 的 timed 提问同语义：超时是 pending，不是用户跳过——卡片留在界面上仍可作答，
+     * 答案稍后作为一条新的用户消息送进会话（跑着就插话、空闲就新一轮）。写成「用户未回答」
+     * 会让模型连下一轮都不再问。
      * <p>走 {@code respondRaw} 而不是 {@code respondAsk}：后者末尾会 {@code ensureFollowing} 补起跟随者，
      * 而这里本来就有一个活着的跟随循环在跑，补第二个会有两个循环读同一条会话、各落一条助手消息。
      */
-    private boolean answerTimedOutAsk(Map<String, SessionEvent> pending, ChatCommand cmd) {
+    private boolean answerTimedOutAsk(Map<String, SessionEvent> pending, ChatCommand cmd, Recording recording) {
         String sessionKey = sessions.key(cmd);
         for (Map.Entry<String, SessionEvent> e : pending.entrySet()) {
             Map<String, Object> data = e.getValue().data() == null ? Map.of() : e.getValue().data();
             if ("confirmation".equals(str(data.get("kind")))) continue;
-            String unanswered = "（用户未回答这一题（等待超时，界面没有收到作答）。"
-                    + "请基于已有信息自行判断，不要替用户假定选择，也不要重复提问。）";
+            String notice = TurnInteractionCoordinator.ASK_PENDING_NOTICE;
             try {
-                if (sessions.respondRaw(sessionKey, e.getKey(), "ask", true, null, unanswered) == null) {
+                if (sessions.respondRaw(sessionKey, e.getKey(), "ask", true, null, notice) == null) {
                     continue;   // 这条待办接不动，试下一条
                 }
             } catch (Exception ex) {
-                log.warn("[agentx] 提问超时回送未作答失败 {} session={}: {}", e.getKey(),
+                log.warn("[agentx] 提问超时回送 pending 失败 {} session={}: {}", e.getKey(),
                         cmd.getSessionId(), ex.toString());
                 continue;
             }
-            sessions.markAskTimedOut(e.getKey(), unanswered);
-            log.info("[agentx] 提问等待超时，按未作答送回模型继续本轮: requestId={} session={}",
+            sessions.markAskContinued(e.getKey(), notice);
+            // 随后那条 tool/result 要带上「这张卡仍可答」，否则前端按终态把提问面板撤了
+            recording.markAskContinued(e.getKey());
+            log.info("[agentx] 提问前台等待结束，按 pending 送回模型继续本轮（卡片仍可答）: requestId={} session={}",
                     e.getKey(), cmd.getSessionId());
             return true;
         }
@@ -2297,6 +2298,22 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         boolean markSteerApplied(String receiptId) {
             return receiptId != null && !receiptId.isBlank() && appliedSteers.add(receiptId);
         }
+
+        /**
+         * 前台等待到点、按 pending 送回模型的那几张提问卡（按框架待办号＝工具调用号记）。
+         * <p>它们随后那条 {@code tool/result} 要带 {@code askContinued}：前端据此把提问面板留着仍可答，
+         * 而不是按终态撤卡——撤了就等于「超时＝用户跳过」，正是 DSH 明确分开的那两件事。
+         */
+        private final Set<String> continuedAsks = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+        void markAskContinued(String requestId) {
+            if (requestId != null && !requestId.isBlank()) continuedAsks.add(requestId);
+        }
+
+        boolean isAskContinued(String toolCallId) {
+            return toolCallId != null && continuedAsks.contains(toolCallId);
+        }
+
         /**
          * 本轮 {@code plan_write} 工具写入的计划正文（框架 {@code PlanWriteTool} 的入参 {@code content}）。
          * <p><b>为什么必须单独攒</b>：框架的计划正文走 {@code plan_write} 落到工作区 {@code plans/PLAN.md}，
@@ -3506,8 +3523,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 long elapsed = beganAt <= 0L ? 0L
                         : Math.max(0L, System.currentTimeMillis() - beganAt - covered);
                 java.util.Map<String, Object> subChat = recording.toolCall(name, failed ? "error" : "done", args, elapsed, beganAt, charged, resultText);
+                // 前台等待到点的提问：这一帧不是「问完了」，卡片仍可答（答案稍后作为新发言送达）
                 emit(channel, RunEventType.TOOL_STATUS, toolCard(recording.uid, name, failed ? "error" : "done",
-                        elapsed, beganAt, charged, args, resultText, subChat, recording.hooks.step().index()));
+                        elapsed, beganAt, charged, args, resultText, subChat, recording.hooks.step().index(),
+                        false, 0L, null, recording.isAskContinued(toolCallIdOf(data))));
             }
             case "tool/decision" -> {
                 // 权限判定由框架说出（字段 decision=allowed|denied）：拒绝必须让用户看见，
@@ -5483,17 +5502,20 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     private String toolCard(String uid, String name, String status, long elapsedMs, long startedAtMs, long waitedMs,
                             String args, String result, java.util.Map<String, Object> subChat, int stepId) {
         return toolCard(uid, name, status, elapsedMs, startedAtMs, waitedMs, args, result, subChat, stepId,
-                false, 0L, null);
+                false, 0L, null, false);
     }
 
     /**
-     * 工具卡载荷的完整版：在上一份的基础上多一组「早产进度」字段（{@code preparing/chars/brief}）。
+     * 工具卡载荷的完整版：在上一份的基础上多一组「早产进度」字段（{@code preparing/chars/brief}）
+     * 与 {@code askContinued}。
      * <p>{@code preparing=true} 表示这次调用还在生成入参、工具尚未开始执行；前端把这张卡渲染成进行中，
      * 并在正式 {@code tool/requested} 帧到达时原地升级（不新增第二张卡）。
+     * <p>{@code askContinued=true} 表示这张提问卡的前台等待已到点、按 pending 送回了模型：卡片仍可作答，
+     * 前端据此保留提问面板，而不是按终态撤卡。
      */
     private String toolCard(String uid, String name, String status, long elapsedMs, long startedAtMs, long waitedMs,
                             String args, String result, java.util.Map<String, Object> subChat, int stepId,
-                            boolean preparing, long chars, String brief) {
+                            boolean preparing, long chars, String brief, boolean askContinued) {
         StringBuilder sb = new StringBuilder("{\"name\":\"").append(esc(name)).append("\"");
         String label = displayNames.label(uid, name);
         if (label != null) sb.append(",\"label\":\"").append(esc(label)).append("\"");
@@ -5526,6 +5548,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 咨询卡（子智能体/取数助手等）的终态一问一答：直播与刷新同一份 subChat（落库那份同源），
         // 漏发就是「直播只见一张空卡、刷新才长出结果」——与下方 done 帧、刷新读库三条路径必须同构
         if (subChat != null && !subChat.isEmpty()) sb.append(",\"subChat\":").append(com.alibaba.fastjson2.JSON.toJSONString(subChat));
+        if (askContinued) sb.append(",\"askContinued\":true");
         return sb.append("}").toString();
     }
 
@@ -5594,7 +5617,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             emit(channel, RunEventType.TOOL_STATUS,
                     toolCard(recording.uid, tick.name(), "start", 0L, tick.startedAtMs(), 0L,
                             null, null, null, recording.hooks.step().index(),
-                            true, tick.chars(), tick.brief()));
+                            true, tick.chars(), tick.brief(), false));
         } catch (RuntimeException gone) {
             // 通道已收（用户切走/刷新）：这一帧发不出去不影响正文与工具结果，别让跟随循环因此收场
             log.debug("[agentx] 早产工具卡帧没发出去（通道已收）: session={} tool={}",

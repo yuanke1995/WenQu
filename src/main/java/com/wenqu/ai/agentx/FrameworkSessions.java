@@ -860,15 +860,14 @@ public class FrameworkSessions {
     }
 
     /**
-     * 提问卡等满预算、已按「未作答」把答案送回模型：把那一行落成 TIMEOUT 并摘掉归属。
-     * <p>与 {@link #markPendingTerminal} 的区别是那条给「整轮作废」用——它把这条会话还挂着的所有待办
-     * 一锅端了；这里只处理这一张提问卡，且答案要留审计（模型收到的那句「用户未回答这一题」）。
-     * 状态仍记 TIMEOUT 而不是 ANSWERED：用户确实没答，审计要看得出来。
+     * 提问卡前台等待到点、已按 pending 把说明送回模型：这一行不作废，落成 {@code CONTINUED}
+     * （DSH 的同名状态）——卡片仍可答，答案不再回灌那次工具调用，而是作为一条用户消息 steer 进会话。
+     * <p>摘掉归属：框架那条待办已经结算，本轮收尾的「一锅端」不该再碰它。
      */
-    public void markAskTimedOut(String requestId, String unanswered) {
+    public void markAskContinued(String requestId, String notice) {
         if (requestId == null) return;
         pendingOwner.remove(requestId);
-        hitl.resolveFrameworkPending(requestId, "TIMEOUT", null, unanswered);
+        hitl.markAskContinued(requestId, notice);
     }
 
     /**

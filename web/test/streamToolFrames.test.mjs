@@ -124,3 +124,12 @@ test('实时输出：超上限保留尾部并标记截断', () => {
   assert.ok(msg.toolCalls[0].liveOutput.endsWith('END'))
   assert.equal(msg.toolCalls[0].outputTruncated, true)
 })
+
+test('终态：askContinued 的提问卡不撤，转成仍可答的 continued 态', () => {
+  const msg = { ask: { id: 'a1', deadline: Date.now() + 30000 } }
+  const { ctx, calls } = ctxOf()
+  applyToolStatus(msg, { name: 'askUser', status: 'done', askContinued: true }, ctx)
+  assert.equal(calls.retired, 0)
+  assert.equal(msg.ask.continued, true)
+  assert.equal(msg.ask.deadline, 0)
+})

@@ -255,7 +255,7 @@ public final class TurnFollowLoop {
                 }
                 if (decision == TurnInteractionCoordinator.Decision.ASK_TIMEOUT
                         && hooks.answerTimedOutAsk(waiting)) {
-                    hooks.warn("提问等待超时，已按「未作答」继续（不会替你选答案）");
+                    hooks.warn("提问前台等待结束，本轮先继续；这张卡仍可作答，答完会作为新发言送达");
                     ctx.interactions().askTimeoutAccepted(hooks::endHumanWait);
                     continue;
                 }

@@ -1752,6 +1752,8 @@ const askCtx = () => ({
   answerApi: answerAgentAsk, ignoreApi: ignoreAgentAsk, notify: message, emitNotifChanged,
   retireAskCard: m => retireAskCard(m), stopRestoredPoll: () => stopRestoredPoll(),
   pollRestoredAnswer: sid => pollRestoredAnswer(sid), switchSession: sid => switchSession(sid),
+  // 迟到作答（DSH continued）：走与用户亲手打字完全同一条发送出口（跑着就插话、空闲就新一轮）
+  deliverContinuedAnswer: t => { text.value = t; send() },
   currentSid: () => currentSessionId.value, scrollSoft: () => hooks.scrollSoft?.()
 })
 const askSubmitAll = m => submitAskImpl(m, askCtx())

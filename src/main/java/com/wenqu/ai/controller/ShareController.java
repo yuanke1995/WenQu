@@ -681,8 +681,12 @@ public class ShareController {
         agentShareService.resolveGuest(token);
         String visitorUid = AgentShareService.visitorUid(visitorId);
         sessionService.assertOwned(sessionId.trim(), visitorUid);
-        return ResultJson.ok(Map.of("items", ChatController.markFrameworkLive(
-                hitl.listPendingAsksForSession(sessionId.trim()), frameworkSessions)));
+        // 只列还在前台等待的卡：CONTINUED（超时后仍可答）那张的答案要作为一条用户消息 steer 进会话，
+        // 分享页没有这条出口——列出来就是一张点了必失败的卡，游客直接在输入框里说即可
+        var items = hitl.listPendingAsksForSession(sessionId.trim()).stream()
+                .filter(x -> !Boolean.TRUE.equals(x.get("continued")))
+                .toList();
+        return ResultJson.ok(Map.of("items", ChatController.markFrameworkLive(items, frameworkSessions)));
     }
 
     /**

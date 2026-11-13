@@ -739,7 +739,8 @@ public class HitlDecisionService {
             LambdaQueryWrapper<ToolApproval> q = new LambdaQueryWrapper<ToolApproval>()
                     .eq(ToolApproval::getSessionId, sessionId)
                     .eq(ToolApproval::getToolName, "askUser")
-                    .eq(ToolApproval::getStatus, "PENDING")
+                    // CONTINUED = 前台等待已结束但问题仍可答（DSH 的同名状态）：一样要能取回来作答
+                    .in(ToolApproval::getStatus, "PENDING", "CONTINUED")
                     .orderByAsc(ToolApproval::getCreatedAt);
             if (uid != null && !uid.isBlank()) {
                 q.eq(ToolApproval::getUserId, uid);
@@ -748,9 +749,11 @@ public class HitlDecisionService {
             for (ToolApproval rec : rows) {
                 List<QItem> qs = parseQuestions(rec.getRequestArgs());
                 if (qs.isEmpty()) continue;
+                boolean continued = "CONTINUED".equals(rec.getStatus());
                 long createdMs = rec.getCreatedAt() == null ? 0L
                         : rec.getCreatedAt().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli();
-                long remaining = createdMs > 0 ? Math.max(0L, createdMs + window - System.currentTimeMillis()) : window;
+                long remaining = continued ? 0L
+                        : (createdMs > 0 ? Math.max(0L, createdMs + window - System.currentTimeMillis()) : window);
                 Map<String, Object> item = new LinkedHashMap<>();
                 item.put("askId", rec.getId());
                 // 归属轮次：恢复出来的卡片要挂回它自己那一轮的气泡（NULL=补列前的存量，前端按原口径处理）
@@ -760,8 +763,10 @@ public class HitlDecisionService {
                 item.put("remainingMs", remaining);
                 item.put("createdAt", createdMs);
                 // 已过期但还没被超时路径收尾（超时分支落终态需要工具线程醒一次）：不再当作可答卡片重建
-                item.put("expired", remaining <= 0);
-                item.put("live", pendingAsks.containsKey(rec.getId()));
+                item.put("expired", !continued && remaining <= 0);
+                item.put("continued", continued);
+                // CONTINUED 卡答了照样有人接：答案作为一条用户消息 steer 进会话，不依赖那次工具调用的句柄
+                item.put("live", continued || pendingAsks.containsKey(rec.getId()));
                 out.add(item);
                 if (out.size() >= 10) break; // 一卡最多 6 问、一轮最多 3 卡，10 条封顶纯属防御
             }
@@ -789,6 +794,60 @@ public class HitlDecisionService {
             return true;
         } catch (Exception e) {
             log.warn("[ASK] 提问裁决落库失败: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * 提问卡前台等待到点：落 {@code CONTINUED}——<b>不是终态</b>，卡片仍可答。
+     * <p>与 {@code TIMEOUT} 的区别就是 DSH 那条「超时是 pending，不是跳过」：模型收到的是
+     * 「问题仍可答」的说明，用户回来作答时答案作为一条新的用户消息送进会话，而不是回灌那次工具调用。
+     * {@code resolvedAt} 留空：这张卡还没被裁决。
+     */
+    public boolean markAskContinued(String askId, String notice) {
+        try {
+            ToolApproval rec = askId == null ? null : toolApprovalMapper.selectById(askId);
+            if (rec == null || !"askUser".equals(rec.getToolName()) || !"PENDING".equals(rec.getStatus())) {
+                return false;
+            }
+            toolApprovalMapper.update(null, new LambdaUpdateWrapper<ToolApproval>()
+                    .eq(ToolApproval::getId, askId)
+                    .eq(ToolApproval::getStatus, "PENDING")
+                    .set(ToolApproval::getStatus, "CONTINUED")
+                    .set(ToolApproval::getAnswer, notice));
+            return true;
+        } catch (Exception e) {
+            log.warn("[ASK] 提问转 pending 落库失败: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * 迟到作答：把 {@code CONTINUED} 那张卡收尾。答案只入审计——模型侧由客户端把整批答案
+     * 作为一条用户消息 steer 进会话（DSH 的 {@code answer_to_pending_question}）。
+     * <p>没有「忽略」这一档：DSH 里跳过就是<b>空答案的那一题</b>，仍是一批作答，不是另一个人工动作。
+     *
+     * @return true = 这一行确实被本次收尾；false = 不存在/非本人/不是 CONTINUED（重复提交天然幂等）
+     */
+    public boolean closeContinuedAsk(String askId, String uid, List<String> answers) {
+        try {
+            ToolApproval rec = askId == null ? null : toolApprovalMapper.selectById(askId);
+            if (rec == null || !"askUser".equals(rec.getToolName()) || !"CONTINUED".equals(rec.getStatus())) {
+                return false;
+            }
+            if (uid == null || !uid.equals(rec.getUserId())) {
+                log.warn("[ASK] 迟到作答人非本轮用户，拒绝: askId={} by={}", askId, uid);
+                return false;
+            }
+            toolApprovalMapper.update(null, new LambdaUpdateWrapper<ToolApproval>()
+                    .eq(ToolApproval::getId, askId)
+                    .eq(ToolApproval::getStatus, "CONTINUED")
+                    .set(ToolApproval::getStatus, "ANSWERED")
+                    .set(ToolApproval::getAnswer, JSON.toJSONString(answers == null ? List.of() : answers))
+                    .set(ToolApproval::getResolvedAt, LocalDateTime.now()));
+            return true;
+        } catch (Exception e) {
+            log.warn("[ASK] 迟到作答收尾失败: {}", e.getMessage());
             return false;
         }
     }

@@ -105,9 +105,44 @@ export const askCustomPicked = (a, page) => !!(a && a.customOn[page])
 /** 面板底部提示：说清本题怎么选、整卡何时送出，收尾统一「没答的题不替你选」。 */
 export const askHintText = (a, page) => {
   if (!a) return ''
+  if (a.continued) return '这一轮已经先往下做了；现在作答会作为一条用户消息发给它'
   const qs = a.questions || []
   const cur = qs[page]
   if (cur && cur.multi) return '可勾多个，再点一次取消；没答的题不替你选'
   if (qs.some(q => q && q.multi)) return '选完自动跳下一题；卡里有可多选的题，答完要点提交；没答的题不替你选'
   return '选完自动跳下一题，全部选完自动提交；没答的题不替你选'
+}
+
+/**
+ * 迟到作答发出去的那条用户消息（DSH {@code answer_to_pending_question} 同形）：
+ * 模型侧拿到的是一段紧凑 JSON，带本次调用号与原题；界面侧由 {@link pendingAnswerText} 配对展示。
+ * <p>每题一项、与问题下标对齐；没答的那题 selected 为空＝用户跳过（DSH 的 skip 语义）。
+ */
+export const continuedAnswerPayload = a => {
+  if (!a || !Array.isArray(a.questions)) return ''
+  return JSON.stringify({
+    kind: 'answer_to_pending_question',
+    tool: 'askUser',
+    callId: a.id,
+    questions: a.questions.map(q => ({
+      question: q.question || '',
+      ...(Array.isArray(q.options) && q.options.length ? { options: q.options } : {})
+    })),
+    answers: a.questions.map((q, i) => ({ selected: askAnswerText(a, i) }))
+  })
+}
+
+/** 用户气泡里那条迟到作答的展示文案；不是这种消息就返回 null（调用方照旧显示原文）。 */
+export const pendingAnswerText = content => {
+  if (typeof content !== 'string' || !content.startsWith('{')) return null
+  let j = null
+  try { j = JSON.parse(content) } catch (e) { return null }
+  if (!j || j.kind !== 'answer_to_pending_question' || !Array.isArray(j.answers)) return null
+  const qs = Array.isArray(j.questions) ? j.questions : []
+  const lines = j.answers.map((ans, i) => {
+    const q = (qs[i] && qs[i].question) || ''
+    const v = String((ans && ans.selected) || '').trim()
+    return `「${q}」：${v || '（跳过）'}`
+  })
+  return '回答刚才的问题：\n' + lines.join('\n')
 }

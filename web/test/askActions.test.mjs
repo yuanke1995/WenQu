@@ -74,3 +74,18 @@ test('忙碌/已答的卡不重复提交', async () => {
   await submitAsk(m, ctx)
   assert.equal(a.answered, true)
 })
+
+test('continued 卡提交：收尾那一行后把整批答案作为用户消息送出，不轮询后台回答', async () => {
+  const sent = []
+  const { a, m, calls, ctx } = make({ deliverContinuedAnswer: t => sent.push(t) })
+  a.continued = true
+  a.restored = true
+  await submitAsk(m, ctx)
+  assert.equal(calls.retire, 1)
+  assert.equal(calls.poll.length, 0)
+  assert.equal(sent.length, 1)
+  const j = JSON.parse(sent[0])
+  assert.equal(j.kind, 'answer_to_pending_question')
+  assert.equal(j.callId, 'a1')
+  assert.deepEqual(j.answers, [{ selected: 'A' }])
+})

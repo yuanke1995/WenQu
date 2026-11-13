@@ -26,10 +26,11 @@ public final class AskUserTool extends ToolBase {
     public static final String NAME = "askUser";
 
     public AskUserTool() {
-        super(NAME, "向用户提出必须由他拍板的问题并等待作答（人在回路）。只在「不问就无法继续」或"
-                + "「两种做法方向不同」时用；能给推荐项就把推荐放第一项。默认单选，只有用户可能同时要几项时"
-                + "才把该题标 multi。用户超时未答会返回未作答，此时基于已有信息继续推进，"
-                + "不要把默认当成用户的选择，也不要反复提问。",
+        super(NAME, "就缺失的信息、偏好或要拍板的事，向用户提出简短、直接、自足的问题。"
+                + "用用户能懂的说法，默认他不知道后台做了什么、也不认识内部名词。"
+                + "某一题的答案为空，表示用户跳过了这一题：带着「没答」继续，不要再问同一题，"
+                + "也不要把跳过当成许可。返回 pending 则表示超时前没收到这一批作答，用户仍然可以作答。"
+                + "能给推荐项就把推荐放第一项；默认单选，只有用户可能同时要几项时才把该题标 multi。",
                 Map.of("type", "object", "properties", Map.of(
                                 "question", Map.of("type", "string",
                                         "description", "要问用户的问题：一句话交代背景与要决定的事"),

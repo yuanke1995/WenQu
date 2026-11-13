@@ -303,7 +303,8 @@
           <span v-if="mAskQueueCount" class="m-askp-state">还有 {{ mAskQueueCount }} 张待答</span>
           <span class="m-askp-q">{{ mCurAsk.question }}</span>
           <span v-if="mCurAsk.multi" class="m-askp-multi">可多选</span>
-          <span v-if="mAskExpired" class="m-askp-state warn">已超时</span>
+          <span v-if="pendingAsk.ask.continued" class="m-askp-state">本轮已先继续 · 答完作为用户消息送达</span>
+          <span v-else-if="mAskExpired" class="m-askp-state warn">已超时</span>
           <span v-if="mAskCountdownText" class="m-askp-timer" :class="{ warn: mAskExpired }">{{ mAskCountdownText }}</span>
           <span v-if="pendingAsk.ask.questions.length > 1" class="m-askp-pager">
             <button class="m-askp-page-btn" type="button" :disabled="mAskPage <= 0 || pendingAsk.ask.busy" @click="mAskPage--">‹</button>
@@ -333,7 +334,7 @@
         <div class="m-askp-foot">
           <span class="m-askp-hint">{{ mAskHint }}</span>
           <span class="m-askp-actions">
-            <button class="m-rec-btn ghost" type="button" :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || mAskExpired" @click="ignoreAsk(pendingAsk)">忽略</button>
+            <button v-if="!pendingAsk.ask.continued" class="m-rec-btn ghost" type="button" :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || mAskExpired" @click="ignoreAsk(pendingAsk)">忽略</button>
             <button class="m-rec-btn primary" type="button" :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || mAskExpired" @click="askSubmitAll(pendingAsk)">提交（{{ askAnsweredCount(pendingAsk.ask) }} / {{ pendingAsk.ask.questions.length }}）</button>
           </span>
         </div>

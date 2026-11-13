@@ -86,3 +86,25 @@ test('提示文案：单选/含多选/多选三档', async () => {
   assert.match(mod.askHintText({ questions: [{ options: ['A'] }, { options: ['B'], multi: true }] }, 0), /要点提交/)
   assert.match(mod.askHintText({ questions: [{ options: ['A'], multi: true }] }, 0), /可勾多个/)
 })
+
+test('迟到作答：DSH answer_to_pending_question 同形；空答案＝跳过；气泡配对展示', async () => {
+  const { continuedAnswerPayload, pendingAnswerText } = await import('../src/chat/askUser.js')
+  const a = {
+    id: 'call_1',
+    questions: [{ question: '用哪种录入方式？', options: ['弹窗子表', '表内子表'] }, { question: '还要别的吗？' }],
+    picks: [[0], []], customs: ['', ''], customOn: [false, false]
+  }
+  const payload = continuedAnswerPayload(a)
+  const j = JSON.parse(payload)
+  assert.equal(j.kind, 'answer_to_pending_question')
+  assert.equal(j.tool, 'askUser')
+  assert.equal(j.callId, 'call_1')
+  assert.equal(j.questions.length, 2)
+  assert.deepEqual(j.answers, [{ selected: '弹窗子表' }, { selected: '' }])
+
+  const text = pendingAnswerText(payload)
+  assert.match(text, /「用哪种录入方式？」：弹窗子表/)
+  assert.match(text, /「还要别的吗？」：（跳过）/)
+  assert.equal(pendingAnswerText('普通一句话'), null)
+  assert.equal(pendingAnswerText('{"kind":"别的"}'), null)
+})

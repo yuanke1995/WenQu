@@ -1,5 +1,5 @@
 // 提问卡动作（actions 层）：一次性批量提交 / 忽略（与超时同语义）。
-import { askAnswerText } from './askUser.js'
+import { askAnswerText, continuedAnswerPayload } from './askUser.js'
 
 /** 一卡多问批量提交；未作答的题留空，后端把「这一题没答」回给模型。 */
 export const submitAsk = async (m, ctx) => {
@@ -17,6 +17,14 @@ export const submitAsk = async (m, ctx) => {
       return
     }
     ctx.emitNotifChanged('chat')
+    // 前台等待已结束的卡（DSH continued）：那次工具调用早已结算，整批答案作为一条用户消息
+    // steer 进会话——跑着就插进本轮、空闲就起新一轮，与用户亲手打字同一条出口
+    if (a.continued) {
+      const payload = continuedAnswerPayload(a)
+      ctx.retireAskCard(m)
+      ctx.deliverContinuedAnswer(payload)
+      return
+    }
     a.answered = true
     if (a.restored) {
       // 本设备没有这一轮的流：自己撤卡，气泡交给后台生成并轮询取回

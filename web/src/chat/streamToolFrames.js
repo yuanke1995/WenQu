@@ -69,8 +69,11 @@ export const applyToolStatus = (msg, raw, ctx) => {
       // 用时不在卡片上报，一轮只气泡顶部那一条说一个数
       ctx.ensureTick()
     } else {
-      // askUser 已出终态（用户已答，或超时/忽略后按「未作答」收尾）：问答记录卡接管展示，撤掉提问卡
-      if (t.name === 'askUser' && msg.ask) ctx.retireAskCard(msg)
+      // askUser 已出终态（用户已答，或忽略后按「未作答」收尾）：问答记录卡接管展示，撤掉提问卡。
+      // askContinued 例外：前台等待到点、按 pending 送回了模型，这张卡仍可答——撤了就等于把超时当成用户跳过
+      if (t.name === 'askUser' && msg.ask) {
+        if (t.askContinued) { msg.ask.continued = true; msg.ask.deadline = 0 } else ctx.retireAskCard(msg)
+      }
       if (t.name === 'run_code') msg.runBoard = null
       const list = msg.toolCalls
       // 终态帧认领 start 卡要连同入参一起对：并发派遣时三位助手三张同名卡，只按名字认

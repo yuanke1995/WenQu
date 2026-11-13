@@ -30,3 +30,17 @@ test('挂卡：同 id 去重；已有卡时排队；撤卡后队首顶上', () =
   assert.equal(m.ask, null)
   assert.doesNotThrow(() => retireAskCard(null))
 })
+
+test('continued 卡：不倒计时、仍可答；同 id 转 continued 原地降级不另挂', () => {
+  const c = buildAskCard({ askId: 'a1', timeoutMs: 60000, continued: true, questions: [{ question: 'q' }] }, 5000)
+  assert.equal(c.continued, true)
+  assert.equal(c.deadline, 0)
+
+  const m = {}
+  attachAskCard(m, { askId: 'a1', timeoutMs: 60000, questions: [] }, 30000)
+  assert.ok(m.ask.deadline > 0)
+  assert.equal(attachAskCard(m, { askId: 'a1', continued: true, questions: [] }), false)
+  assert.equal(m.ask.continued, true)
+  assert.equal(m.ask.deadline, 0)
+  assert.equal(m.askQueue, undefined)
+})

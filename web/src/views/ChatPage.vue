@@ -447,7 +447,7 @@
               <!-- 提问与回答同一条排版口径（markdown，breaks:true 所以换行照旧保留）。
                    但**提问走 literal**：图片占位与引用角标都不替换——提问里的 [图片N] / [N]
                    是用户手打的字面量，替换掉会改他的原文、还会让自己的附件多渲染一遍（分享页同此口径） -->
-              <AnswerBody v-else :content="m.content" :msg-index="i"
+              <AnswerBody v-else :content="pendingAnswerText(m.content) || m.content" :msg-index="i"
                           :images="m.role === 'ai' ? m.images : []"
                           :sources="m.role === 'ai' ? m.sources : []"
                           :literal="m.role !== 'ai'"
@@ -957,6 +957,7 @@
           <span class="askp-q">{{ curAsk.question }}</span>
           <span v-if="curAsk.multi" class="askp-multi">可多选</span>
           <span v-if="pendingAsk.ask.answered" class="askp-state ok">已提交，模型继续中…</span>
+          <span v-else-if="pendingAsk.ask.continued" class="askp-state">本轮已先继续 · 答完作为用户消息送达</span>
           <span v-else-if="askExpired" class="askp-state warn">已超时，智能体将自行判断…</span>
           <span v-if="askCountdownText" class="askp-timer" :class="{ warn: askExpired }">
           <clock-circle-outlined /> {{ askCountdownText }}
@@ -994,7 +995,7 @@
           <button class="app-btn ghost small p-stop" type="button"
           title="叫停整轮：不再执行任何工具，已生成的内容按「已停止本轮」保留。与「忽略」不同——忽略会让智能体带着「你没答」继续作答"
           @click="stopNow">停止本轮</button>
-          <button class="app-btn ghost small" :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || askExpired" @click="ignoreAsk(pendingAsk)">忽略</button>
+          <button v-if="!pendingAsk.ask.continued" class="app-btn ghost small" :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || askExpired" @click="ignoreAsk(pendingAsk)">忽略</button>
           <button class="app-btn small" :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || askExpired" @click="askSubmitAll(pendingAsk)">提交（{{ askAnsweredCount(pendingAsk.ask) }} / {{ pendingAsk.ask.questions.length }}）</button>
           </span>
           </div>
@@ -1883,6 +1884,7 @@ import PlanCard from '../components/PlanCard.vue'
 import PlanViewer from '../components/PlanViewer.vue'
 import PlanAdjustSheet from '../components/PlanAdjustSheet.vue'
 import { planStepCount, planExecDetail } from '../chat/plan'
+import { pendingAnswerText } from '../chat/askUser'
 import { chipLabelOf } from '../chat/thinking'
 import { useThinkPanel } from '../chat/useThinkPanel'
 import { buildQaAnchors } from '../chat/chatAnchors'

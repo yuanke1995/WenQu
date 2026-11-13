@@ -317,7 +317,7 @@
                 <span class="tl-steer-txt">{{ row.text }}</span>
               </div>
             </div>
-            <AnswerBody v-else class="tl-answer" :content="row.content"
+            <AnswerBody v-else class="tl-answer" :content="pendingAnswerText(row.content) || row.content"
                         :images="m.images" :sources="m.sources" :msg-index="index"
                         runnable :session-id="sessionId"
                         :streaming="!!(m.loading && !m.failed && row.last)"
@@ -453,6 +453,7 @@ import {
 } from '@ant-design/icons-vue'
 import { resolveImg } from '../utils/markdown'
 import { approvalArgsText, approvalLeftSec } from '../chat/approval'
+import { pendingAnswerText } from '../chat/askUser'
 // 跑轮中簇帽体的贴底跟随与上下边缘渐隐（与 PC 共用同一份指令）
 import { vFollowBottom, vEdgeFade } from '../chat/followBottom'
 import AnswerBody from '../components/AnswerBody.vue'

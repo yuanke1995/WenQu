@@ -99,7 +99,7 @@ class TurnFollowLoopRunTest {
     }
 
     @Test
-    @DisplayName("提问超时：按未作答继续，随后可停止，不置 timedOut")
+    @DisplayName("提问超时：按 pending 继续（卡片仍可答），随后可停止，不置 timedOut")
     void askTimeoutContinues() {
         FakeHooks hooks = new FakeHooks();
         hooks.hasPending = true;
@@ -114,7 +114,7 @@ class TurnFollowLoopRunTest {
 
         assertThat(hooks.begins).isEqualTo(1);
         assertThat(hooks.ends).isEqualTo(1);
-        assertThat(hooks.warns).anyMatch(s -> s.contains("未作答"));
+        assertThat(hooks.warns).anyMatch(s -> s.contains("仍可作答"));
         assertThat(hooks.interrupts).isEqualTo(1);
     }
 

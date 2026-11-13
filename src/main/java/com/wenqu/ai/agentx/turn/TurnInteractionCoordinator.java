@@ -16,6 +16,15 @@ public final class TurnInteractionCoordinator {
 
     public enum Decision {NONE, WAIT, ASK_TIMEOUT, STOP_TIMEOUT}
 
+    /**
+     * 提问前台等待到点回给模型的那一句（DSH {@code pendingNotice} 的中译，语义逐句对齐）：
+     * 超时是 pending，不是跳过；问题仍可答，答案会以一条用户消息送达；不要把这当成许可。
+     */
+    public static final String ASK_PENDING_NOTICE =
+            "（超时前没有收到这一批作答。这是 pending，不是用户跳过。请继续做有用的、不依赖这些答案的工作。"
+                    + "用户仍然可以作答；他们的回复会是一条用户消息，标明 answer_to_pending_question，"
+                    + "并带上本次调用号与原来的问题。不要把这当成许可。）";
+
     /** 计划卡的三种裁决结果：继续对话=取代、拒绝=取消、其余=无终态帧。 */
     public enum PlanOutcome {NONE, SUPERSEDED, CANCELLED}
 

@@ -12,11 +12,15 @@ export function buildAskCard (j, remainingMs) {
     : []
   const n = questions.length
   const ms = Number(remainingMs != null ? remainingMs : j.timeoutMs) || 0
+  // continued = 前台等待已结束但问题仍可答（DSH 的同名状态）：不倒计时、不禁用，
+  // 答完由调用方作为一条用户消息送进会话，而不是回灌那次已经结算的工具调用
+  const continued = !!j.continued
   return {
     id: j.askId,
     questions,
     timeoutMs: Number(j.timeoutMs) || 0,
-    deadline: ms > 0 ? Date.now() + ms : 0,
+    deadline: !continued && ms > 0 ? Date.now() + ms : 0,
+    continued,
     busy: false,
     answered: false,
     restored: !!j.restored,
@@ -30,7 +34,11 @@ export function buildAskCard (j, remainingMs) {
 export function attachAskCard (m, j, remainingMs) {
   if (!m || !j) return false
   const id = j.askId
-  if (m.ask && m.ask.id === id) return false
+  if (m.ask && m.ask.id === id) {
+    // 同一张卡转 continued：原地降级成「仍可答、不倒计时」，不另挂一张
+    if (j.continued && !m.ask.continued) { m.ask.continued = true; m.ask.deadline = 0 }
+    return false
+  }
   const q = Array.isArray(m.askQueue) ? m.askQueue : []
   if (id && q.some(x => x && x.id === id)) return false
   const card = buildAskCard(j, remainingMs)

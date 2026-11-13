@@ -685,7 +685,9 @@ public class ChatController {
             + "答案作为工具结果回给模型继续本轮回答。提问卡持久化在 c_ai_tool_approval（PENDING→终态），"
             + "等待期间客户端断开不中止本轮，故刷新页面/换设备后仍可经 /ask-user/pending 取回卡片作答。"
             + "body 传 {answers:[...]} 为作答（与问题下标对齐）；传 {ignore:true} 为忽略（不作答）。"
-            + "超时与忽略都不替用户选答案。返回 false 表示这次作答没能送达（已收尾，或唤醒句柄随进程重启消失）。")
+            + "超时与忽略都不替用户选答案。返回 false 表示这次作答没能送达（已收尾，或唤醒句柄随进程重启消失）。"
+            + "前台等待已结束的提问卡（CONTINUED）仍可答：本端点只收尾那一行并回 {continued:true}，"
+            + "由客户端把整批答案作为一条用户消息送进会话。")
     @Permission("chat:approve")
     @PostMapping("/ask-user/{askId}")
     public ResultJson answerAgentAsk(
@@ -709,8 +711,13 @@ public class ChatController {
         } else {
             ok = hitl.resolveAsk(askId, answers, uid);
         }
-        if (!ok) return ResultJson.error("提问已结束，这次作答没能送达智能体");
-        return ResultJson.ok(ignore ? "已忽略，智能体将自行判断" : "已提交");
+        if (ok) return ResultJson.ok(ignore ? "已忽略，智能体将自行判断" : "已提交");
+        // 前台等待已结束的那张卡（CONTINUED）：那次工具调用早已结算，答案不再回灌它——
+        // 这里只收尾这一行，由客户端把整批答案作为一条用户消息 steer 进会话（DSH 的 answer_to_pending_question）
+        if (!ignore && hitl.closeContinuedAsk(askId, uid, answers)) {
+            return ResultJson.ok(java.util.Map.of("continued", true, "msg", "已提交，答案将作为用户消息送达"));
+        }
+        return ResultJson.error("提问已结束，这次作答没能送达智能体");
     }
 
     /** 作答请求体 → 与问题下标对齐的答案数组。 */
