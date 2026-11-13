@@ -342,6 +342,10 @@
         <span>共 <b>{{ kbFilteredList.length }}</b> 块</span>
         <span>合计 <b>{{ fmtTokens(kbStatTokens) }}</b> tokens</span>
         <span>平均 <b>{{ kbFilteredList.length ? Math.round(kbStatTokens / kbFilteredList.length) : 0 }}</b></span>
+        <span class="kb-stat-qa" :class="{ zero: !kbQaTotal }"
+              :title="kbQaTotal ? '解析期生成的问答对总数：问法参与召回，答案仅排查展示' : '该文档未生成问答对：解析时未开启问答对增强，或生成失败'">
+          问答对 <b>{{ kbQaTotal }}</b> 条
+        </span>
         <span v-if="kbNoVector" class="kb-stat-warn">未向量化 {{ kbNoVector }} 块</span>
       </div>
       <a-spin :spinning="kbLoading">
@@ -386,6 +390,7 @@
           <a-table-column title="标题" key="title" ellipsis>
             <template #default="{ record }">
               <span><template v-for="(p, pi) in kbHighlightParts(record.title)" :key="pi"><mark v-if="p.hit" class="kb-hl">{{ p.t }}</mark><template v-else>{{ p.t }}</template></template></span>
+              <span v-if="record.qaCount" class="kb-qa-tag" :title="`已生成 ${record.qaCount} 条问答对，展开本行查看`">QA {{ record.qaCount }}</span>
               <a-tag v-if="!record.vectorId" color="orange" style="margin-left:6px;font-size:11px">未向量化</a-tag>
             </template>
           </a-table-column>
@@ -423,6 +428,57 @@
                 <button class="app-link-btn kb-expand-copy" @click.stop="copyKbContent(record)">复制内容</button>
               </div>
               <div class="md kb-expand-md" @click="openKbImgPreview" v-html="kbChunkHtml(record)"></div>
+
+              <!-- 问答对：解析期按块生成。问法参与召回，答案仅排查展示；展开行才按块拉取 -->
+              <div v-if="record.qaCount" class="kb-qa">
+                <div class="kb-qa-head">
+                  <span class="kb-qa-title">问答对</span>
+                  <span class="kb-qa-count">{{ record.qaCount }} 条</span>
+                  <span class="kb-qa-note">问法参与召回，命中后取本块正文作答；答案仅排查展示</span>
+                </div>
+                <div v-if="kbQaState(record.id).loading" class="kb-qa-tip">加载中…</div>
+                <div v-else-if="kbQaState(record.id).error" class="kb-qa-tip err">
+                  {{ kbQaState(record.id).error }}
+                  <button class="app-link-btn" @click.stop="loadKbQa(record.id, true)">重试</button>
+                </div>
+                <template v-else>
+                  <div v-for="qa in kbQaState(record.id).list" :key="qa.id" class="kb-qa-item">
+                    <div class="kb-qa-line">
+                      <span class="kb-qa-k q">问</span>
+                      <span class="kb-qa-q">{{ qa.question }}</span>
+                    </div>
+                    <div class="kb-qa-line">
+                      <span class="kb-qa-k a">答</span>
+                      <span class="kb-qa-a-wrap">
+                        <span class="kb-qa-a" :class="{ open: kbQaOpenAnswers.has(qa.id) }"
+                              :ref="el => setKbQaAnswerRef(qa.id, el)">{{ qa.answer || '（无答案）' }}</span>
+                        <button v-if="kbQaOverflow.has(qa.id)" class="kb-qa-more"
+                                @click.stop="toggleKbQaAnswer(qa.id)">{{ kbQaOpenAnswers.has(qa.id) ? '收起' : '展开' }}</button>
+                      </span>
+                    </div>
+                  </div>
+                </template>
+              </div>
+
+              <!-- 未生成：说明原因与出口（老文档解析时未开启 / 模型调用失败） -->
+              <div v-else class="kb-qa">
+                <div class="kb-qa-head">
+                  <span class="kb-qa-title">问答对</span>
+                  <span class="kb-qa-count zero">0 条</span>
+                  <span class="kb-qa-note">未生成</span>
+                </div>
+                <div class="kb-qa-empty">
+                  <span class="kb-qa-empty-ic">!</span>
+                  <div class="kb-qa-empty-main">
+                    <div class="kb-qa-empty-t">该知识块没有问答对</div>
+                    <div class="kb-qa-empty-d">
+                      解析时「问答对增强」未开启、文本过短（不足 100 字）未生成，或生成时模型调用失败（库主未设置默认聊天模型 / 调用异常）。
+                      在「知识库编辑 → 解析参数」开启后重新解析即可补齐；重解析会重建该文档全部知识块。
+                    </div>
+                  </div>
+                  <button class="app-btn ghost kb-qa-empty-act" @click.stop="reparseKbDoc">重新解析</button>
+                </div>
+              </div>
             </div>
           </template>
         </a-table>
@@ -599,6 +655,7 @@ import { UploadOutlined, SearchOutlined, DownOutlined, LinkOutlined, SettingOutl
 import { useRoute, useRouter } from 'vue-router'
 import { listDocuments, uploadDocumentsBatch, updateDocumentStatus, reparseDocument, deleteDocument,
          batchDeleteDocuments, batchUpdateDocumentStatus, getDocumentStats, listKnowledgeByDoc, getKnowledgeDetail,
+         listKnowledgeQa,
          updateKnowledge, deleteKnowledge, listDocumentVersions, rollbackDocument,
          getRuntimeConfig, batchReparseDocuments, updateKnowledgeStatus, searchKnowledge,
          downloadDocumentSource, listKnowledgeBases, moveDocToKb, importDocumentFromUrl, refreshConfigDocument,
@@ -1520,6 +1577,7 @@ const kbDetailHtml = computed(() =>
 const kbExpandedKeys = ref([])
 const kbExpandedDetail = ref(null)   // 展开块的详情（含签名图片）；未返回前先用列表数据即时渲染
 const onKbExpand = (expanded, record) => {
+  resetKbQaView()
   if (!expanded) {
     kbExpandedKeys.value = []
     kbExpandedDetail.value = null
@@ -1527,10 +1585,12 @@ const onKbExpand = (expanded, record) => {
   }
   kbExpandedKeys.value = [record.id]   // 单块展开：点其他行自动切换
   kbExpandedDetail.value = null
+  if (Number(record.qaCount) > 0) loadKbQa(record.id)
   getKnowledgeDetail(record.id).then(r => {
     // 过期响应防护：仅当该块仍处于展开态才应用（列表刷新/切换后不覆盖）
     if (r.success && kbExpandedKeys.value[0] === record.id) kbExpandedDetail.value = r.data
   }).catch(() => { /* 详情失败不阻塞：用列表数据渲染（图片未签名时降级） */ })
+  nextTick(measureKbQaOverflow)
 }
 const refreshKbExpandedDetail = () => {
   const id = kbExpandedKeys.value[0]
@@ -1538,6 +1598,58 @@ const refreshKbExpandedDetail = () => {
   getKnowledgeDetail(id).then(r => {
     if (r.success && kbExpandedKeys.value[0] === id) kbExpandedDetail.value = r.data
   }).catch(() => {})
+}
+
+// ==================== 问答对（解析期生成，展开行懒加载） ====================
+// 列表只带 qaCount（角标/统计），展开才按块取内容：问答对条数=块数×每块条数，全量拉会明显放大响应
+const kbQaCache = ref({})            // knowledgeId -> { loading, error, list, loaded }
+const kbQaOpenAnswers = ref(new Set())
+const kbQaOverflow = ref(new Set())  // 折叠态下真正溢出的答案 id（决定是否显示「展开」）
+const kbQaAnswerEls = new Map()
+const kbQaState = id => kbQaCache.value[id] || { loading: false, error: '', list: [] }
+const kbQaTotal = computed(() => kbFilteredList.value
+    .reduce((sum, r) => sum + (Number(r.qaCount) || 0), 0))
+const setKbQaAnswerRef = (id, el) => { if (el) kbQaAnswerEls.set(id, el); else kbQaAnswerEls.delete(id) }
+/** 只量折叠态答案：已展开的保留「收起」，不被测量结果抹掉 */
+const measureKbQaOverflow = () => {
+  const next = new Set()
+  kbQaAnswerEls.forEach((el, id) => {
+    if (kbQaOpenAnswers.value.has(id)) { if (kbQaOverflow.value.has(id)) next.add(id); return }
+    if (el.scrollHeight > el.clientHeight + 1) next.add(id)
+  })
+  kbQaOverflow.value = next
+}
+const loadKbQa = async (id, force = false) => {
+  const cur = kbQaCache.value[id]
+  if (!force && cur && (cur.loading || cur.loaded)) return
+  kbQaCache.value[id] = { loading: true, error: '', list: [], loaded: false }
+  try {
+    const r = await listKnowledgeQa(id)
+    const list = r.success && Array.isArray(r.data) ? r.data : []
+    kbQaCache.value[id] = r.success
+      ? { loading: false, error: '', list, loaded: true }
+      : { loading: false, error: r.msg || '加载问答对失败', list: [], loaded: false }
+  } catch (e) {
+    kbQaCache.value[id] = { loading: false, error: e.message || '加载问答对失败', list: [], loaded: false }
+  }
+  nextTick(measureKbQaOverflow)
+}
+const toggleKbQaAnswer = id => {
+  const s = new Set(kbQaOpenAnswers.value)
+  if (s.has(id)) s.delete(id); else s.add(id)
+  kbQaOpenAnswers.value = s
+  nextTick(measureKbQaOverflow)
+}
+const resetKbQaView = () => {
+  kbQaOpenAnswers.value = new Set()
+  kbQaOverflow.value = new Set()
+  kbQaAnswerEls.clear()
+}
+/** 空态出口：先在「知识库编辑」开启问答对增强，重解析才会生成；关掉弹层避免看到过期块 */
+const reparseKbDoc = () => {
+  const id = kbDocId.value
+  kbVisible.value = false
+  reparse(id)
 }
 /** 展开块 HTML：详情已返回用详情（签名图片），否则用列表行数据 */
 const kbChunkHtml = record => {
@@ -1639,6 +1751,8 @@ const openKb = async record => {
   kbCollapsed.value = new Set()
   kbExpandedKeys.value = []
   kbExpandedDetail.value = null
+  kbQaCache.value = {}
+  resetKbQaView()
   try {
     const r = await listKnowledgeByDoc(record.id)
     kbList.value = r.success && Array.isArray(r.data) ? r.data : []
@@ -1777,6 +1891,10 @@ const saveKnowledgeEdit = async () => {
         const rr = await listKnowledgeByDoc(kbDocId.value)
         kbList.value = rr.success && Array.isArray(rr.data) ? rr.data : []
         refreshKbExpandedDetail()   // 正在展开的块同步刷新（含图片签名）
+        // 编辑会重建该块问答对：缓存作废，展开态立即重取
+        const editedId = kbEditForm.value.id
+        delete kbQaCache.value[editedId]
+        if (kbExpandedKeys.value[0] === editedId) loadKbQa(editedId, true)
       }
     } else message.error(r.msg || '更新失败')
   } catch (e) { message.error(e.message || '更新失败') }
@@ -1798,6 +1916,7 @@ const delKnowledge = async id => {
     const r = await deleteKnowledge(id)
     if (r.success) {
       message.success('知识块已删除')
+      delete kbQaCache.value[id]
       if (kbVisible.value) {
         const rr = await listKnowledgeByDoc(kbDocId.value)
         kbList.value = rr.success && Array.isArray(rr.data) ? rr.data : []
@@ -2071,6 +2190,50 @@ const fmtTime = t => {
 .kb-expand-md :deep(li) { margin: 2px 0; }
 .kb-expand-md :deep(img) { max-width: 100%; }
 .kb-expand-md :deep(table) { margin: 8px 0; }
+
+/* 问答对：列表角标 + 统计条 + 展开行区块（解析期生成，问法参与召回，答案仅排查） */
+.kb-qa-tag { flex: none; display: inline-flex; align-items: center; height: 17px; margin-left: 6px; padding: 0 6px;
+  border-radius: 999px; font-size: 9.5px; line-height: 1; color: var(--app-accent);
+  background: var(--app-accent-weak); border: 1px solid var(--app-accent-border); font-variant-numeric: tabular-nums; }
+.kb-stat-qa { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 999px;
+  color: var(--app-accent); background: var(--app-accent-weak); border: 1px solid var(--app-accent-border); }
+.kb-stat-qa b { color: var(--app-accent); }
+.kb-stat-qa.zero { color: var(--app-warn-text); background: var(--app-warn-weak); border-color: var(--app-warn-border); }
+.kb-stat-qa.zero b { color: var(--app-warn-text); }
+.kb-qa { margin-top: 9px; background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 7px; overflow: hidden; }
+.kb-qa-head { display: flex; align-items: center; gap: 7px; padding: 7px 12px; border-bottom: 1px solid var(--app-border);
+  background: linear-gradient(0deg, rgba(46, 107, 230, .045), rgba(46, 107, 230, .045)), var(--app-panel); }
+.kb-qa-title { font-size: 11.5px; font-weight: 600; color: var(--app-text); }
+.kb-qa-count { display: inline-flex; align-items: center; height: 18px; padding: 0 7px; border-radius: 999px;
+  font-size: 10px; color: var(--app-accent); background: var(--app-accent-weak); border: 1px solid var(--app-accent-border);
+  font-variant-numeric: tabular-nums; }
+.kb-qa-count.zero { color: var(--app-text3); background: var(--app-panel-2); border-color: var(--app-border); }
+.kb-qa-note { font-size: 10.5px; color: var(--app-text3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kb-qa-item { padding: 8px 12px 9px; border-bottom: 1px solid var(--app-border); }
+.kb-qa-item:last-child { border-bottom: none; }
+.kb-qa-line { display: flex; align-items: flex-start; gap: 8px; }
+.kb-qa-line + .kb-qa-line { margin-top: 4px; }
+.kb-qa-k { flex: none; width: 17px; height: 17px; margin-top: 1px; border-radius: 5px; font-size: 9.5px; font-weight: 600;
+  display: inline-flex; align-items: center; justify-content: center; }
+.kb-qa-k.q { color: var(--app-accent); background: var(--app-accent-weak); border: 1px solid var(--app-accent-border); }
+.kb-qa-k.a { color: var(--app-text3); background: var(--app-panel-2); border: 1px solid var(--app-border); }
+.kb-qa-q { font-size: 12px; line-height: 1.65; font-weight: 500; color: var(--app-text); }
+.kb-qa-a-wrap { flex: 1; min-width: 0; }
+.kb-qa-a { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  font-size: 11.5px; line-height: 1.7; color: var(--app-text2); white-space: pre-wrap; overflow-wrap: anywhere; }
+.kb-qa-a.open { display: block; overflow: visible; }
+.kb-qa-more { display: block; margin: 2px 0 0 auto; border: none; background: none; padding: 0;
+  color: var(--app-accent); font-size: 11px; cursor: pointer; }
+.kb-qa-tip { padding: 10px 12px; font-size: 11.5px; color: var(--app-text3); }
+.kb-qa-tip.err { color: var(--app-danger-text); }
+.kb-qa-empty { display: flex; align-items: flex-start; gap: 10px; padding: 12px; }
+.kb-qa-empty-ic { flex: none; width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center;
+  justify-content: center; font-size: 12px; font-weight: 700; color: var(--app-warn-text);
+  background: var(--app-warn-weak); border: 1px solid var(--app-warn-border); }
+.kb-qa-empty-main { flex: 1; min-width: 0; }
+.kb-qa-empty-t { font-size: 12px; font-weight: 600; color: var(--app-text2); }
+.kb-qa-empty-d { margin-top: 2px; max-width: 760px; font-size: 11px; line-height: 1.75; color: var(--app-text3); }
+.kb-qa-empty-act { flex: none; height: 24px; font-size: 11px; }
 /* 搜索命中高亮 */
 .kb-hl { background: var(--app-warn-weak); color: inherit; padding: 0 1px; border-radius: 2px; }
 /* 内容摘要：两行显示（不再固定截断 80 字） */

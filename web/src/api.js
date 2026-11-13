@@ -1963,6 +1963,9 @@ export const switchMessageVariant = (messageId, delta) =>
 /** 按文档列出知识块（知识块预览） */
 export const listKnowledgeByDoc = docId => request('/knowledge/list?docId=' + encodeURIComponent(docId))
 
+/** 单个知识块的问答对（解析期生成，只读排查用） */
+export const listKnowledgeQa = id => request(`/knowledge/${id}/qa`)
+
 /** 获取无命中问题列表（按频次降序） */
 export const getUnmatchedQuestions = () => request('/knowledge/unmatched')
 

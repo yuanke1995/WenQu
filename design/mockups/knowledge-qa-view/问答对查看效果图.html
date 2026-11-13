@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>问渠 · 知识块问答对查看 · 效果图</title>
+<style>
+/* ============================================================
+   问渠 · 文档知识块「问答对」查看效果图
+   方案：内联到「文档 → 知识块预览 → 展开行」
+   token 全部取自 web/src/views/app.css（浅色 :root / 暗色 html[data-theme='dark']）
+   ============================================================ */
+:root {
+  --app-bg: #f7f8fa;
+  --app-panel: #ffffff;
+  --app-panel-2: #fafbfc;
+  --app-border: #e6e9ed;
+  --app-border-strong: #d8dde3;
+  --app-text: #1f2329;
+  --app-text2: #5f6570;
+  --app-text3: #98a0aa;
+  --app-accent: #2e6be6;
+  --app-accent-weak: #eef2f7;
+  --app-accent-border: #bcd0f7;
+  --app-ok: #3b8f4e;
+  --app-ok-weak: #eaf5ec;
+  --app-warn: #c77c14;
+  --app-warn-text: #a3691b;
+  --app-warn-weak: #faf3e6;
+  --app-warn-border: #f0dfb6;
+  --app-danger: #d4552e;
+  --app-danger-weak: #fff2f0;
+  --app-danger-border: #ffccc7;
+  --app-danger-text: #cf1322;
+  --app-shadow-lg: 0 18px 48px rgba(16, 24, 40, .18);
+  --scrim: rgba(23, 29, 38, .32);
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+          'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+}
+.dark {
+  --app-bg: #14161a;
+  --app-panel: #1c1f24;
+  --app-panel-2: #22262c;
+  --app-border: #2d323a;
+  --app-border-strong: #3a414b;
+  --app-text: #e6e8eb;
+  --app-text2: #a8aeb8;
+  --app-text3: #767d88;
+  --app-accent: #5b8cf0;
+  --app-accent-weak: #1e2636;
+  --app-accent-border: #33405c;
+  --app-ok: #57a86a;
+  --app-ok-weak: #1b2a20;
+  --app-warn: #d9a03f;
+  --app-warn-text: #d9a03f;
+  --app-warn-weak: #2c2517;
+  --app-warn-border: #4a3c22;
+  --app-danger: #e07a5a;
+  --app-danger-weak: #33201c;
+  --app-danger-border: #5a342a;
+  --app-danger-text: #ff7875;
+  --app-shadow-lg: 0 18px 48px rgba(0, 0, 0, .55);
+  --scrim: rgba(0, 0, 0, .55);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body { font-family: var(--font); background: #e9edf2; color: var(--app-text); font-size: 13px; -webkit-font-smoothing: antialiased; }
+b, strong { font-weight: 600; }
+
+/* ---------------- 设计稿外壳 ---------------- */
+.sheet { width: 1280px; margin: 0 auto; padding: 34px 0 56px; }
+.sheet-title { font-size: 22px; font-weight: 600; letter-spacing: .01em; color: #1f2329; }
+.sheet-sub { margin-top: 8px; font-size: 13px; color: #7b838e; line-height: 1.8; max-width: 1100px; }
+.sheet-sub b { color: #4c535d; font-weight: 500; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.legend .lg { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: #5f6570;
+  background: #fff; border: 1px solid #e6e9ed; border-radius: 999px; padding: 4px 12px; }
+.legend .lg i { font-style: normal; width: 16px; height: 16px; border-radius: 50%; background: var(--app-accent);
+  color: #fff; font-size: 10px; display: inline-flex; align-items: center; justify-content: center; }
+.scene-block { margin-top: 32px; }
+.cap { display: flex; align-items: baseline; gap: 10px; padding: 0 2px 10px; font-size: 13px; color: #5f6570; }
+.cap b { font-size: 11px; font-weight: 600; color: #98a0aa; letter-spacing: .09em; }
+.cap em { font-style: normal; color: #1f2329; font-weight: 600; font-size: 14px; }
+.cap span { color: #98a0aa; font-size: 12px; }
+.scene { position: relative; width: 1280px; overflow: hidden; border-radius: 10px; color: var(--app-text);
+  box-shadow: 0 18px 46px rgba(16, 24, 40, .14); background: var(--app-bg); padding: 28px 0 32px; }
+.scene .scrim { position: absolute; inset: 0; background: var(--scrim); z-index: 1; }
+
+/* 背景里透出的文档页（模糊示意，不参与交互） */
+.page-bg { position: absolute; inset: 0; display: flex; opacity: .85; }
+.pb-side { width: 208px; flex: none; background: var(--app-panel); border-right: 1px solid var(--app-border); padding: 14px 10px; }
+.pb-logo { display: flex; align-items: center; gap: 7px; padding: 0 4px 14px; }
+.pb-mark { width: 20px; height: 20px; border-radius: 5px; background: linear-gradient(135deg, #2e6be6, #6a9bff); }
+.pb-name { width: 62px; height: 8px; border-radius: 4px; background: var(--app-border-strong); }
+.pb-nav { height: 13px; border-radius: 4px; background: var(--app-border); margin: 9px 4px 0; }
+.pb-nav.on { background: var(--app-accent-border); }
+.pb-main { flex: 1; min-width: 0; padding: 16px 24px; background: var(--app-bg); }
+.pb-bar { height: 10px; width: 120px; border-radius: 5px; background: var(--app-border-strong); }
+.pb-toolbar { display: flex; gap: 10px; margin-top: 16px; }
+.pb-chip { height: 22px; width: 92px; border-radius: 5px; background: var(--app-panel); border: 1px solid var(--app-border); }
+.pb-table { margin-top: 14px; background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 8px; overflow: hidden; }
+.pb-th { height: 28px; background: var(--app-panel-2); border-bottom: 1px solid var(--app-border); }
+.pb-tr { height: 36px; border-bottom: 1px solid var(--app-border); display: flex; align-items: center; gap: 18px; padding: 0 14px; }
+.pb-tr:last-child { border-bottom: none; }
+.pb-cell { height: 7px; border-radius: 4px; background: var(--app-border); }
+.pb-cell.w1 { width: 140px; } .pb-cell.w2 { width: 88px; } .pb-cell.w3 { width: 60px; } .pb-cell.w4 { width: 200px; }
+
+/* ---------------- 弹窗 ---------------- */
+.modal { position: relative; z-index: 2; width: 1080px; margin: 0 auto; background: var(--app-panel);
+  border: 1px solid var(--app-border); border-radius: 12px; box-shadow: var(--app-shadow-lg); overflow: hidden; }
+.mo-head { display: flex; align-items: center; gap: 10px; padding: 14px 18px 12px; border-bottom: 1px solid var(--app-border); }
+.mo-t { font-size: 15px; font-weight: 600; }
+.mo-sub { font-size: 11px; color: var(--app-text3); }
+.mo-head .sp { flex: 1; }
+.mo-x { width: 26px; height: 26px; border-radius: 6px; color: var(--app-text3); display: inline-flex;
+  align-items: center; justify-content: center; font-size: 17px; line-height: 1; }
+.mo-body { padding: 12px 18px 0; }
+.mo-foot { display: flex; align-items: center; gap: 8px; padding: 10px 18px; border-top: 1px solid var(--app-border); }
+.mo-foot .sp { flex: 1; }
+.mo-note { font-size: 11px; color: var(--app-text3); display: inline-flex; align-items: center; gap: 5px; }
+
+/* 工具栏 */
+.kb-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.kb-search { flex: 1; height: 30px; display: flex; align-items: center; gap: 8px; padding: 0 10px;
+  border: 1px solid var(--app-border); border-radius: 6px; background: var(--app-panel); color: var(--app-text3); font-size: 12px; }
+.kb-search svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; }
+.seg { display: inline-flex; height: 30px; border: 1px solid var(--app-border-strong); border-radius: 6px; overflow: hidden; background: var(--app-panel); }
+.sg { display: inline-flex; align-items: center; padding: 0 12px; font-size: 12px; color: var(--app-text2); }
+.sg.on { background: var(--app-accent-weak); color: var(--app-accent); font-weight: 500; }
+
+/* 统计条 */
+.kb-stat { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; margin-bottom: 10px; font-size: 12px; color: var(--app-text3); }
+.kb-stat b { color: var(--app-text); font-weight: 500; font-variant-numeric: tabular-nums; }
+.kb-stat .kb-stat-qa { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 999px;
+  color: var(--app-accent); background: var(--app-accent-weak); border: 1px solid var(--app-accent-border); }
+.kb-stat .kb-stat-qa b { color: var(--app-accent); }
+.kb-stat .kb-stat-qa.zero { color: var(--app-warn-text); background: var(--app-warn-weak); border-color: var(--app-warn-border); }
+.kb-stat .kb-stat-qa.zero b { color: var(--app-warn-text); }
+.kb-stat .muted { color: var(--app-text3); }
+
+/* 表格 */
+.tbl { border: 1px solid var(--app-border); border-radius: 8px; overflow: hidden; }
+.trow { display: grid; grid-template-columns: 36px 68px 232px 58px minmax(0, 1fr) 118px; align-items: center;
+  min-height: 42px; border-bottom: 1px solid var(--app-border); font-size: 12px; background: var(--app-panel); }
+.trow > div { padding: 0 9px; min-width: 0; }
+.trow.head { min-height: 30px; background: var(--app-panel-2); color: var(--app-text3); font-size: 11px; font-weight: 500; }
+.trow.head > div { padding: 0 9px; }
+.trow.open { background: #f5f9ff; }
+.dark .trow.open { background: #1a2231; }
+.ta-r { text-align: right; }
+.pill { display: inline-flex; align-items: center; gap: 4px; height: 19px; padding: 0 7px; border-radius: 999px; font-size: 10px; }
+.pill::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.pill.ok { background: var(--app-ok-weak); color: var(--app-ok); }
+.pill.off { background: var(--app-panel-2); color: var(--app-text3); border: 1px solid var(--app-border); }
+.t-title { display: flex; align-items: center; min-width: 0; }
+.t-title .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--app-text); }
+.qa-tag { flex: none; display: inline-flex; align-items: center; gap: 3px; height: 17px; margin-left: 6px;
+  padding: 0 6px; border-radius: 999px; font-size: 9.5px; line-height: 1; color: var(--app-accent);
+  background: var(--app-accent-weak); border: 1px solid var(--app-accent-border); font-variant-numeric: tabular-nums; }
+.qa-tag.zero { color: var(--app-text3); background: var(--app-panel-2); border-color: var(--app-border); }
+.t-snippet { color: var(--app-text2); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.t-tok { color: var(--app-text3); font-variant-numeric: tabular-nums; }
+.rowact { display: flex; align-items: center; gap: 9px; }
+.lnk { font-size: 11.5px; color: var(--app-accent); cursor: pointer; }
+.lnk.danger { color: var(--app-danger-text); }
+.lnk.muted { color: var(--app-text3); }
+
+/* 展开行 */
+.texp { grid-column: 1 / -1; background: var(--app-panel-2); border-bottom: 1px solid var(--app-border); padding: 10px 16px 12px 44px; }
+.exp-meta { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; font-size: 11.5px; color: var(--app-text3); }
+.exp-meta .sp { flex: 1; }
+.exp-path { max-width: 52%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--app-text2);
+  background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 4px; padding: 1px 7px; }
+.exp-md { background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 7px; padding: 10px 13px;
+  font-size: 12.5px; line-height: 1.8; color: var(--app-text); }
+.exp-md .md-h { font-size: 13px; font-weight: 600; margin-bottom: 3px; }
+.exp-md p { margin: 0 0 5px; color: var(--app-text2); }
+.exp-md p:last-child { margin-bottom: 0; }
+.exp-md .fade { color: var(--app-text3); }
+
+/* ---------------- 问答对区块（本次新增） ---------------- */
+.qa-sec { margin-top: 9px; background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 7px; overflow: hidden; }
+.qa-sec-head { display: flex; align-items: center; gap: 7px; padding: 7px 12px; border-bottom: 1px solid var(--app-border);
+  background: linear-gradient(0deg, rgba(46, 107, 230, .045), rgba(46, 107, 230, .045)), var(--app-panel); }
+.qa-sec-title { font-size: 11.5px; font-weight: 600; color: var(--app-text); }
+.qa-sec-count { display: inline-flex; align-items: center; height: 18px; padding: 0 7px; border-radius: 999px;
+  font-size: 10px; color: var(--app-accent); background: var(--app-accent-weak); border: 1px solid var(--app-accent-border);
+  font-variant-numeric: tabular-nums; }
+.qa-sec-count.zero { color: var(--app-text3); background: var(--app-panel-2); border-color: var(--app-border); }
+.qa-sec-note { font-size: 10.5px; color: var(--app-text3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.qa-item { padding: 8px 12px 9px; border-bottom: 1px solid var(--app-border); }
+.qa-item:last-child { border-bottom: none; }
+.qa-line { display: flex; align-items: flex-start; gap: 8px; }
+.qa-line + .qa-line { margin-top: 4px; }
+.qa-k { flex: none; width: 17px; height: 17px; margin-top: 1px; border-radius: 5px; font-size: 9.5px; font-weight: 600;
+  display: inline-flex; align-items: center; justify-content: center; }
+.qa-k.q { color: var(--app-accent); background: var(--app-accent-weak); border: 1px solid var(--app-accent-border); }
+.qa-k.a { color: var(--app-text3); background: var(--app-panel-2); border: 1px solid var(--app-border); }
+.qa-q { font-size: 12px; line-height: 1.65; color: var(--app-text); font-weight: 500; }
+.qa-a { font-size: 11.5px; line-height: 1.7; color: var(--app-text2); display: -webkit-box; -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical; overflow: hidden; }
+.qa-a .more { color: var(--app-accent); margin-left: 3px; white-space: nowrap; }
+.qa-empty { display: flex; align-items: flex-start; gap: 10px; padding: 12px; }
+.qa-empty-ic { flex: none; width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center;
+  justify-content: center; font-size: 12px; font-weight: 700; color: var(--app-warn-text); background: var(--app-warn-weak);
+  border: 1px solid var(--app-warn-border); }
+.qa-empty-main { flex: 1; min-width: 0; }
+.qa-empty-t { font-size: 12px; font-weight: 600; color: var(--app-text2); }
+.qa-empty-d { font-size: 11px; line-height: 1.75; color: var(--app-text3); margin-top: 2px; max-width: 760px; }
+.qa-empty-d b { color: var(--app-text2); font-weight: 500; }
+.btn { display: inline-flex; align-items: center; justify-content: center; height: 26px; padding: 0 11px;
+  border-radius: 6px; border: 1px solid var(--app-accent); background: var(--app-accent); color: #fff; font-size: 11.5px; font-weight: 500; }
+.btn.ghost { background: var(--app-panel); border-color: var(--app-border-strong); color: var(--app-text2); }
+.btn.sm { height: 24px; padding: 0 9px; font-size: 11px; }
+
+/* 角标 */
+.anno { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 50%;
+  background: var(--app-accent); color: #fff; font-size: 10px; font-weight: 600; line-height: 1;
+  box-shadow: 0 0 0 3px rgba(46, 107, 230, .16); margin-left: 1px; }
+.dark .anno { box-shadow: 0 0 0 3px rgba(91, 140, 240, .22); }
+
+/* 分页 */
+.pg { width: 22px; height: 22px; border-radius: 5px; border: 1px solid var(--app-border); background: var(--app-panel);
+  display: inline-flex; align-items: center; justify-content: center; color: var(--app-text3); font-size: 11px; }
+.pg.on { border-color: var(--app-accent-border); background: var(--app-accent-weak); color: var(--app-accent); font-weight: 600; }
+
+/* ---------------- 说明区 ---------------- */
+.design-notes { margin-top: 34px; background: #fff; border: 1px solid #e6e9ed; border-radius: 10px; padding: 18px 22px; }
+.dn-title { font-size: 14px; font-weight: 600; color: #1f2329; margin-bottom: 12px; }
+.dn-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 26px; }
+.dn-item { display: flex; gap: 9px; font-size: 12px; line-height: 1.75; color: #5f6570; }
+.dn-item i { flex: none; font-style: normal; width: 16px; height: 16px; border-radius: 50%; background: var(--app-accent);
+  color: #fff; font-size: 10px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; margin-top: 2px; }
+.dn-item b { color: #1f2329; font-weight: 600; }
+.dn-foot { margin-top: 14px; padding-top: 12px; border-top: 1px dashed #e6e9ed; font-size: 11.5px; color: #98a0aa; line-height: 1.8; }
+.dn-foot code { font-family: var(--mono); font-size: 11px; color: #5f6570; background: #f6f8fa; border: 1px solid #e6e9ed;
+  border-radius: 4px; padding: 0 4px; }
+</style>
+</head>
+<body>
+<div class="sheet">
+  <div class="sheet-title">问渠 · 文档知识块「问答对」查看 · 效果图</div>
+  <div class="sheet-sub">
+    方案一：内联到 <b>文档 → 知识块预览 → 展开行</b>，不新增页面入口。问答对由解析期生成，
+    展示问法与答案；问法参与向量召回，答案仅供排查。列表用轻量角标提示「该块有几条」，展开即见。
+  </div>
+  <div class="legend">
+    <span class="lg"><i>1</i>标题列问答对角标</span>
+    <span class="lg"><i>2</i>统计条汇总</span>
+    <span class="lg"><i>3</i>展开行问答对区块</span>
+    <span class="lg"><i>4</i>未生成空态与出口</span>
+  </div>
+
+  <!-- ==================== SCENE 01 浅色 · 有问答对 ==================== -->
+  <div class="scene-block">
+    <div class="cap"><b>SCENE 01</b><em>浅色 · 展开行查看问答对</em><span>默认形态：答案两行截断，可展开</span></div>
+    <div class="scene">
+      <div class="page-bg" aria-hidden="true">
+        <div class="pb-side">
+          <div class="pb-logo"><span class="pb-mark"></span><span class="pb-name"></span></div>
+          <div class="pb-nav on"></div><div class="pb-nav"></div><div class="pb-nav"></div><div class="pb-nav"></div><div class="pb-nav"></div>
+        </div>
+        <div class="pb-main">
+          <div class="pb-bar"></div>
+          <div class="pb-toolbar"><span class="pb-chip"></span><span class="pb-chip"></span><span class="pb-chip"></span></div>
+          <div class="pb-table">
+            <div class="pb-th"></div>
+            <div class="pb-tr"><span class="pb-cell w1"></span><span class="pb-cell w2"></span><span class="pb-cell w3"></span><span class="pb-cell w4"></span></div>
+            <div class="pb-tr"><span class="pb-cell w1"></span><span class="pb-cell w2"></span><span class="pb-cell w3"></span><span class="pb-cell w4"></span></div>
+            <div class="pb-tr"><span class="pb-cell w1"></span><span class="pb-cell w2"></span><span class="pb-cell w3"></span><span class="pb-cell w4"></span></div>
+            <div class="pb-tr"><span class="pb-cell w1"></span><span class="pb-cell w2"></span><span class="pb-cell w3"></span><span class="pb-cell w4"></span></div>
+          </div>
+        </div>
+      </div>
+      <div class="scrim"></div>
+
+      <div class="modal">
+        <div class="mo-head">
+          <span class="mo-t">知识块预览 · 产品手册-v3.pdf</span>
+          <span class="mo-sub">42 块 · 已解析</span>
+          <span class="sp"></span>
+          <span class="mo-x">×</span>
+        </div>
+        <div class="mo-body">
+          <div class="kb-toolbar">
+            <div class="kb-search">
+              <svg viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.6"/><path d="M10.4 10.4 14 14"/></svg>
+              <span>按标题 / 内容过滤知识块</span>
+            </div>
+            <div class="seg"><span class="sg on">切片列表</span><span class="sg">结构导图</span></div>
+          </div>
+          <div class="kb-stat">
+            <span>共 <b>42</b> 块</span>
+            <span>合计 <b>12.4k</b> tokens</span>
+            <span>平均 <b>296</b></span>
+            <span class="kb-stat-qa">问答对 <b>84</b> 条<span class="anno">2</span></span>
+            <span class="muted">未向量化 <b>0</b> 块</span>
+          </div>
+
+          <div class="tbl">
+            <div class="trow head">
+              <div>#</div><div>状态</div><div>标题</div><div class="ta-r">Token</div><div>内容摘要</div><div>操作</div>
+            </div>
+            <div class="trow">
+              <div class="t-tok">1</div>
+              <div><span class="pill ok">生效</span></div>
+              <div class="t-title"><span class="name">第一章 总则</span><span class="qa-tag">QA 2</span></div>
+              <div class="t-tok ta-r">210</div>
+              <div class="t-snippet">为规范公司劳动用工管理，明确劳动合同双方的权利与义务……</div>
+              <div class="rowact"><span class="lnk">编辑</span><span class="lnk">停用</span><span class="lnk danger">删除</span></div>
+            </div>
+            <div class="trow">
+              <div class="t-tok">2</div>
+              <div><span class="pill ok">生效</span></div>
+              <div class="t-title"><span class="name">2.1 劳动合同的订立</span><span class="qa-tag">QA 2</span></div>
+              <div class="t-tok ta-r">322</div>
+              <div class="t-snippet">建立劳动关系应当订立书面劳动合同，自用工之日起一个月内……</div>
+              <div class="rowact"><span class="lnk">编辑</span><span class="lnk">停用</span><span class="lnk danger">删除</span></div>
+            </div>
+
+            <!-- 展开中的行 -->
+            <div class="trow open">
+              <div class="t-tok">3</div>
+              <div><span class="pill ok">生效</span></div>
+              <div class="t-title"><span class="name">2.3 试用期</span><span class="qa-tag">QA 2<span class="anno">1</span></span></div>
+              <div class="t-tok ta-r">410</div>
+              <div class="t-snippet">劳动合同可以约定试用期，试用期包含在劳动合同期限内……</div>
+              <div class="rowact"><span class="lnk">编辑</span><span class="lnk">停用</span><span class="lnk danger">删除</span></div>
+            </div>
+            <div class="texp">
+              <div class="exp-meta">
+                <span class="exp-path">产品手册-v3.pdf / 第二章 劳动合同的订立 / 2.3 试用期</span>
+                <span>~410 tokens</span>
+                <span>1 图</span>
+                <span class="sp"></span>
+                <span class="lnk">复制内容</span>
+              </div>
+              <div class="exp-md">
+                <div class="md-h">2.3 试用期</div>
+                <p>劳动合同可以约定试用期。试用期包含在劳动合同期限内。劳动合同仅约定试用期的，试用期不成立，该期限为劳动合同期限。</p>
+                <p>同一用人单位与同一劳动者只能约定一次试用期，试用期不得延长或重复约定。<span class="fade">…</span></p>
+              </div>
+
+              <!-- 新增：问答对区块 -->
+              <div class="qa-sec">
+                <div class="qa-sec-head">
+                  <span class="qa-sec-title">问答对</span>
+                  <span class="qa-sec-count">2 条</span>
+                  <span class="anno">3</span>
+                  <span class="qa-sec-note">问法参与召回，命中后取本块正文作答；答案仅排查展示</span>
+                </div>
+                <div class="qa-item">
+                  <div class="qa-line">
+                    <span class="qa-k q">问</span>
+                    <span class="qa-q">试用期最长可以约定多久？</span>
+                  </div>
+                  <div class="qa-line">
+                    <span class="qa-k a">答</span>
+                    <span class="qa-a">劳动合同期限三个月以上不满一年的，试用期不得超过一个月；一年以上不满三年的，不得超过二个月；三年以上固定期限和无固定期限的劳动合同，试用期不得超过六个月。以完成一定工作任务为期限的劳动合同或者劳动合同期限不满三个月的，不得约定试用期。试用期包含在劳动合同期限内。<span class="more">展开</span></span>
+                  </div>
+                </div>
+                <div class="qa-item">
+                  <div class="qa-line">
+                    <span class="qa-k q">问</span>
+                    <span class="qa-q">试用期工资最低按什么标准发放？</span>
+                  </div>
+                  <div class="qa-line">
+                    <span class="qa-k a">答</span>
+                    <span class="qa-a">劳动者在试用期的工资不得低于本单位相同岗位最低档工资或者劳动合同约定工资的百分之八十，并不得低于用人单位所在地的最低工资标准。</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="trow">
+              <div class="t-tok">4</div>
+              <div><span class="pill ok">生效</span></div>
+              <div class="t-title"><span class="name">2.4 劳动合同的解除</span><span class="qa-tag">QA 2</span></div>
+              <div class="t-tok ta-r">528</div>
+              <div class="t-snippet">用人单位与劳动者协商一致，可以解除劳动合同；劳动者提前三十日……</div>
+              <div class="rowact"><span class="lnk">编辑</span><span class="lnk">停用</span><span class="lnk danger">删除</span></div>
+            </div>
+            <div class="trow">
+              <div class="t-tok">5</div>
+              <div><span class="pill off">已停用</span></div>
+              <div class="t-title"><span class="name">旧版 · 试用期条款（历史）</span><span class="qa-tag zero">QA 0</span></div>
+              <div class="t-tok ta-r">388</div>
+              <div class="t-snippet">（该块已停用，不参与召回；问答对随块停用同步失效）</div>
+              <div class="rowact"><span class="lnk">编辑</span><span class="lnk">启用</span><span class="lnk danger">删除</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="mo-foot">
+          <span class="mo-note">问答对由解析生成，重新解析会重建；答案仅用于排查，不进入回答上下文。</span>
+          <span class="sp"></span>
+          <span class="pg">‹</span><span class="pg on">1</span><span class="pg">2</span><span class="pg">3</span><span class="pg">›</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== SCENE 02 暗色 ==================== -->
+  <div class="scene-block">
+    <div class="cap"><b>SCENE 02</b><em>暗色主题 · 同一套 token</em><span>问答对区块不引入新色，跟随 --app-* 变量</span></div>
+    <div class="scene dark">
+      <div class="page-bg" aria-hidden="true">
+        <div class="pb-side">
+          <div class="pb-logo"><span class="pb-mark"></span><span class="pb-name"></span></div>
+          <div class="pb-nav on"></div><div class="pb-nav"></div><div class="pb-nav"></div><div class="pb-nav"></div><div class="pb-nav"></div>
+        </div>
+        <div class="pb-main">
+          <div class="pb-bar"></div>
+          <div class="pb-toolbar"><span class="pb-chip"></span><span class="pb-chip"></span><span class="pb-chip"></span></div>
+          <div class="pb-table">
+            <div class="pb-th"></div>
+            <div class="pb-tr"><span class="pb-cell w1"></span><span class="pb-cell w2"></span><span class="pb-cell w3"></span><span class="pb-cell w4"></span></div>
+            <div class="pb-tr"><span class="pb-cell w1"></span><span class="pb-cell w2"></span><span class="pb-cell w3"></span><span class="pb-cell w4"></span></div>
+            <div class="pb-tr"><span class="pb-cell w1"></span><span class="pb-cell w2"></span><span class="pb-cell w3"></span><span class="pb-cell w4"></span></div>
+          </div>
+        </div>
+      </div>
+      <div class="scrim"></div>
+
+      <div class="modal">
+        <div class="mo-head">
+          <span class="mo-t">知识块预览 · 产品手册-v3.pdf</span>
+          <span class="mo-sub">42 块 · 已解析</span>
+          <span class="sp"></span>
+          <span class="mo-x">×</span>
+        </div>
+        <div class="mo-body">
+          <div class="kb-toolbar">
+            <div class="kb-search">
+              <svg viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.6"/><path d="M10.4 10.4 14 14"/></svg>
+              <span>按标题 / 内容过滤知识块</span>
+            </div>
+            <div class="seg"><span class="sg on">切片列表</span><span class="sg">结构导图</span></div>
+          </div>
+          <div class="kb-stat">
+            <span>共 <b>42</b> 块</span>
+            <span>合计 <b>12.4k</b> tokens</span>
+            <span>平均 <b>296</b></span>
+            <span class="kb-stat-qa">问答对 <b>84</b> 条</span>
+            <span class="muted">未向量化 <b>0</b> 块</span>
+          </div>
+          <div class="tbl">
+            <div class="trow head">
+              <div>#</div><div>状态</div><div>标题</div><div class="ta-r">Token</div><div>内容摘要</div><div>操作</div>
+            </div>
+            <div class="trow">
+              <div class="t-tok">1</div>
+              <div><span class="pill ok">生效</span></div>
+              <div class="t-title"><span class="name">第一章 总则</span><span class="qa-tag">QA 2</span></div>
+              <div class="t-tok ta-r">210</div>
+              <div class="t-snippet">为规范公司劳动用工管理，明确劳动合同双方的权利与义务……</div>
+              <div class="rowact"><span class="lnk">编辑</span><span class="lnk">停用</span><span class="lnk danger">删除</span></div>
+            </div>
+            <div class="trow open">
+              <div class="t-tok">2</div>
+              <div><span class="pill ok">生效</span></div>
+              <div class="t-title"><span class="name">2.3 试用期</span><span class="qa-tag">QA 2</span></div>
+              <div class="t-tok ta-r">410</div>
+              <div class="t-snippet">劳动合同可以约定试用期，试用期包含在劳动合同期限内……</div>
+              <div class="rowact"><span class="lnk">编辑</span><span class="lnk">停用</span><span class="lnk danger">删除</span></div>
+            </div>
+            <div class="texp">
+              <div class="exp-meta">
+                <span class="exp-path">产品手册-v3.pdf / 第二章 劳动合同的订立 / 2.3 试用期</span>
+                <span>~410 tokens</span>
+                <span class="sp"></span>
+                <span class="lnk">复制内容</span>
+              </div>
+              <div class="exp-md">
+                <div class="md-h">2.3 试用期</div>
+                <p>劳动合同可以约定试用期。试用期包含在劳动合同期限内。劳动合同仅约定试用期的，试用期不成立，该期限为劳动合同期限。</p>
+              </div>
+              <div class="qa-sec">
+                <div class="qa-sec-head">
+                  <span class="qa-sec-title">问答对</span>
+                  <span class="qa-sec-count">2 条</span>
+                  <span class="qa-sec-note">问法参与召回，命中后取本块正文作答；答案仅排查展示</span>
+                </div>
+                <div class="qa-item">
+                  <div class="qa-line">
+                    <span class="qa-k q">问</span>
+                    <span class="qa-q">试用期最长可以约定多久？</span>
+                  </div>
+                  <div class="qa-line">
+                    <span class="qa-k a">答</span>
+                    <span class="qa-a">劳动合同期限三个月以上不满一年的，试用期不得超过一个月；一年以上不满三年的，不得超过二个月；三年以上固定期限和无固定期限的劳动合同，试用期不得超过六个月。以完成一定工作任务为期限的劳动合同或者劳动合同期限不满三个月的，不得约定试用期。试用期包含在劳动合同期限内。<span class="more">展开</span></span>
+                  </div>
+                </div>
+                <div class="qa-item">
+                  <div class="qa-line">
+                    <span class="qa-k q">问</span>
+                    <span class="qa-q">试用期工资最低按什么标准发放？</span>
+                  </div>
+                  <div class="qa-line">
+                    <span class="qa-k a">答</span>
+                    <span class="qa-a">劳动者在试用期的工资不得低于本单位相同岗位最低档工资或者劳动合同约定工资的百分之八十，并不得低于用人单位所在地的最低工资标准。</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="trow">
+              <div class="t-tok">3</div>
+              <div><span class="pill ok">生效</span></div>
+              <div class="t-title"><span class="name">2.4 劳动合同的解除</span><span class="qa-tag">QA 2</span></div>
+              <div class="t-tok ta-r">528</div>
+              <div class="t-snippet">用人单位与劳动者协商一致，可以解除劳动合同；劳动者提前三十日……</div>
+              <div class="rowact"><span class="lnk">编辑</span><span class="lnk">停用</span><span class="lnk danger">删除</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="mo-foot">
+          <span class="mo-note">问答对由解析生成，重新解析会重建；答案仅用于排查，不进入回答上下文。</span>
+          <span class="sp"></span>
+          <span class="pg">‹</span><span class="pg on">1</span><span class="pg">2</span><span class="pg">›</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== SCENE 03 空态 ==================== -->
+  <div class="scene-block">
+    <div class="cap"><b>SCENE 03</b><em>未生成 · 空态与出口</em><span>解析时未开启 / 模型调用失败，都能就地解释</span></div>
+    <div class="scene">
+      <div class="page-bg" aria-hidden="true">
+        <div class="pb-side">
+          <div class="pb-logo"><span class="pb-mark"></span><span class="pb-name"></span></div>
+          <div class="pb-nav on"></div><div class="pb-nav"></div><div class="pb-nav"></div><div class="pb-nav"></div><div class="pb-nav"></div>
+        </div>
+        <div class="pb-main">
+          <div class="pb-bar"></div>
+          <div class="pb-toolbar"><span class="pb-chip"></span><span class="pb-chip"></span><span class="pb-chip"></span></div>
+          <div class="pb-table">
+            <div class="pb-th"></div>
+            <div class="pb-tr"><span class="pb-cell w1"></span><span class="pb-cell w2"></span><span class="pb-cell w3"></span><span class="pb-cell w4"></span></div>
+            <div class="pb-tr"><span class="pb-cell w1"></span><span class="pb-cell w2"></span><span class="pb-cell w3"></span><span class="pb-cell w4"></span></div>
+          </div>
+        </div>
+      </div>
+      <div class="scrim"></div>
+
+      <div class="modal">
+        <div class="mo-head">
+          <span class="mo-t">知识块预览 · 员工手册-2024.docx</span>
+          <span class="mo-sub">18 块 · 已解析</span>
+          <span class="sp"></span>
+          <span class="mo-x">×</span>
+        </div>
+        <div class="mo-body">
+          <div class="kb-toolbar">
+            <div class="kb-search">
+              <svg viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.6"/><path d="M10.4 10.4 14 14"/></svg>
+              <span>按标题 / 内容过滤知识块</span>
+            </div>
+            <div class="seg"><span class="sg on">切片列表</span><span class="sg">结构导图</span></div>
+          </div>
+          <div class="kb-stat">
+            <span>共 <b>18</b> 块</span>
+            <span>合计 <b>5.2k</b> tokens</span>
+            <span>平均 <b>289</b></span>
+            <span class="kb-stat-qa zero">问答对 <b>0</b> 条<span class="anno">4</span></span>
+            <span class="muted">未向量化 <b>0</b> 块</span>
+          </div>
+          <div class="tbl">
+            <div class="trow head">
+              <div>#</div><div>状态</div><div>标题</div><div class="ta-r">Token</div><div>内容摘要</div><div>操作</div>
+            </div>
+            <div class="trow open">
+              <div class="t-tok">1</div>
+              <div><span class="pill ok">生效</span></div>
+              <div class="t-title"><span class="name">第一章 入职与试用</span></div>
+              <div class="t-tok ta-r">356</div>
+              <div class="t-snippet">新员工应在入职当日提交身份证明、学历证明及体检报告……</div>
+              <div class="rowact"><span class="lnk">编辑</span><span class="lnk">停用</span><span class="lnk danger">删除</span></div>
+            </div>
+            <div class="texp">
+              <div class="exp-meta">
+                <span class="exp-path">员工手册-2024.docx / 第一章 入职与试用</span>
+                <span>~356 tokens</span>
+                <span class="sp"></span>
+                <span class="lnk">复制内容</span>
+              </div>
+              <div class="exp-md">
+                <div class="md-h">第一章 入职与试用</div>
+                <p>新员工应在入职当日提交身份证明、学历证明及体检报告，并签署劳动合同与保密协议。</p>
+              </div>
+              <div class="qa-sec">
+                <div class="qa-sec-head">
+                  <span class="qa-sec-title">问答对</span>
+                  <span class="qa-sec-count zero">0 条</span>
+                  <span class="qa-sec-note">未生成</span>
+                </div>
+                <div class="qa-empty">
+                  <span class="qa-empty-ic">!</span>
+                  <div class="qa-empty-main">
+                    <div class="qa-empty-t">该知识块没有问答对</div>
+                    <div class="qa-empty-d">
+                      解析时<b>「问答对增强」未开启</b>、文本过短（不足 100 字）未生成，或生成过程中模型调用失败（库主未设置默认聊天模型 / 调用异常）。
+                      在知识库编辑中开启后<b>重新解析</b>即可补齐；重解析会重建该文档全部知识块。
+                    </div>
+                  </div>
+                  <span class="btn ghost sm">重新解析</span>
+                </div>
+              </div>
+            </div>
+            <div class="trow">
+              <div class="t-tok">2</div>
+              <div><span class="pill ok">生效</span></div>
+              <div class="t-title"><span class="name">第二章 考勤与休假</span></div>
+              <div class="t-tok ta-r">412</div>
+              <div class="t-snippet">公司实行标准工时制，员工每日工作八小时，每周工作四十小时……</div>
+              <div class="rowact"><span class="lnk">编辑</span><span class="lnk">停用</span><span class="lnk danger">删除</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="mo-foot">
+          <span class="mo-note">问答对跟随解析参数生成；参数在「知识库编辑 → 解析参数」中按库配置。</span>
+          <span class="sp"></span>
+          <span class="pg">‹</span><span class="pg on">1</span><span class="pg">2</span><span class="pg">›</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 设计说明 ==================== -->
+  <div class="design-notes">
+    <div class="dn-title">设计要点与实现口径</div>
+    <div class="dn-grid">
+      <div class="dn-item"><i>1</i><span><b>入口不新增</b>：沿用「文档 → 知识块」，在展开行正文之后插入「问答对」区块；列表标题列只加轻量角标，避免打扰。</span></div>
+      <div class="dn-item"><i>2</i><span><b>信息层级</b>：问答对标题行标注「N 条」与用途说明；问法为主信息（参与召回），答案降一级展示（仅排查），默认两行截断，仅在溢出时出现「展开」。</span></div>
+      <div class="dn-item"><i>3</i><span><b>可发现性</b>：统计条汇总全文档问答对总数；为 0 时转为警示色，提示「未生成」，而不是静默留空。</span></div>
+      <div class="dn-item"><i>4</i><span><b>空态有出口</b>：给出两类原因（未开启 / 模型失败）与「重新解析」动作，并说明重解析会重建知识块。</span></div>
+      <div class="dn-item"><i>5</i><span><b>只读</b>：问答对由解析生成，不支持逐条编辑；块编辑/停用/删除后问答对由既有链路同步重建或清理。</span></div>
+      <div class="dn-item"><i>6</i><span><b>主题兼容</b>：全部取 --app-* token，浅色/暗色零特判；长答案截断 + 展开，长列表跟随弹层滚动。</span></div>
+    </div>
+    <div class="dn-foot">
+      数据来源：<code>c_ai_knowledge_qa</code>（<code>knowledge_id</code> → <code>question</code> / <code>answer</code>）。
+      接口建议：列表接口返回每块 <code>qaCount</code> 用于角标与统计；展开行按块懒加载问答对，避免一次性拉全量。
+      搜索框可顺带扩展为匹配问法（可选）。
+    </div>
+  </div>
+</div>
+</body>
+</html>

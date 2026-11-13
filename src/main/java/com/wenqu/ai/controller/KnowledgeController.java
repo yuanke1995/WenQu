@@ -12,6 +12,7 @@ import com.wenqu.ai.service.DocumentMetaCache;
 import com.wenqu.ai.service.KeywordExtractor;
 import com.wenqu.ai.service.KeywordIndexService;
 import com.wenqu.ai.service.QaLogService;
+import com.wenqu.ai.service.QaIndexService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -52,6 +53,7 @@ public class KnowledgeController {
     private final AiDocumentMapper documentMapper;
     private final DocumentService documentService;
     private final QaLogService qaLogService;
+    private final QaIndexService qaIndexService;
     private final DocumentMetaCache documentMetaCache;
     private final KeywordExtractor keywordExtractor;
     private final KeywordIndexService keywordIndexService;
@@ -110,6 +112,7 @@ public class KnowledgeController {
             throw new BizException("缺少 docId");
         }
         requireDocReadable(documentMapper.selectById(docId));
+        Map<String, Integer> qaCounts = qaIndexService.countByDoc(docId);
         List<Map<String, Object>> list = knowledgeMapper.selectList(
                         new LambdaQueryWrapper<Knowledge>()
                                 .eq(Knowledge::getDocId, docId)
@@ -123,10 +126,30 @@ public class KnowledgeController {
                     m.put("vectorId", k.getVectorId());   // 空 = 未向量化（前端角标）
                     m.put("status", k.getStatus());       // 块级启停用：0=生效, 1=停用
                     m.put("content", k.getContent());
+                    m.put("qaCount", qaCounts.getOrDefault(k.getId(), 0));   // 解析期生成的问答对条数
                     m.put("images", k.getImages() != null && !k.getImages().isBlank()
                             ? com.alibaba.fastjson2.JSON.parseArray(k.getImages()) : List.of());
                     return m;
                 }).toList();
+        return ResultJson.ok(list);
+    }
+
+    @Operation(summary = "知识块问答对", description = "只读展示解析期生成的问答对：问法参与向量召回，答案仅排查展示；"
+            + "块随文档可读即可查看")
+    @Permission("knowledge:read")
+    @GetMapping("/knowledge/{id}/qa")
+    public ResultJson listQa(
+            @Parameter(description = "知识块 ID") @PathVariable("id") String id) {
+        Knowledge k = knowledgeMapper.selectById(id);
+        if (k == null) throw new BizException(404, "知识块不存在");
+        requireDocReadable(docOfChunk(k));
+        List<Map<String, Object>> list = qaIndexService.listByKnowledge(id).stream().map(qa -> {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", qa.getId());
+            m.put("question", qa.getQuestion());
+            m.put("answer", qa.getAnswer());
+            return m;
+        }).toList();
         return ResultJson.ok(list);
     }
 

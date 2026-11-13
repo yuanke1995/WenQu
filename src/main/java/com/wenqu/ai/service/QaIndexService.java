@@ -4,6 +4,7 @@ import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.wenqu.ai.mapper.KnowledgeQaMapper;
 import com.wenqu.ai.mapper.UserMapper;
 import com.wenqu.ai.model.Knowledge;
@@ -207,6 +208,31 @@ public class QaIndexService {
     private record BlockQa(int index, List<String[]> pairs, boolean failed) {}
 
     // ==================== 向量/行清理与恢复（供文档/块删除、迁移、重嵌调用） ====================
+
+    /** 文档级问答对计数（knowledgeId → 条数）：知识块列表角标与统计用 */
+    public Map<String, Integer> countByDoc(String docId) {
+        if (docId == null || docId.isBlank()) return Map.of();
+        List<Map<String, Object>> rows = qaMapper.selectMaps(new QueryWrapper<KnowledgeQa>()
+                .select("knowledge_id AS knowledgeId", "COUNT(*) AS cnt")
+                .eq("doc_id", docId)
+                .groupBy("knowledge_id"));
+        Map<String, Integer> out = new HashMap<>();
+        for (Map<String, Object> row : rows) {
+            Object knowledgeId = row.get("knowledgeId");
+            Object cnt = row.get("cnt");
+            if (knowledgeId != null && cnt instanceof Number n) out.put(knowledgeId.toString(), n.intValue());
+        }
+        return out;
+    }
+
+    /** 单块问答对（只读排查展示；答案不参与召回） */
+    public List<KnowledgeQa> listByKnowledge(String knowledgeId) {
+        if (knowledgeId == null || knowledgeId.isBlank()) return List.of();
+        return qaMapper.selectList(new LambdaQueryWrapper<KnowledgeQa>()
+                .eq(KnowledgeQa::getKnowledgeId, knowledgeId)
+                .orderByAsc(KnowledgeQa::getCreateTime)
+                .orderByAsc(KnowledgeQa::getId));
+    }
 
     /** 按文档取全部问答对向量 id */
     public List<String> vectorIdsByDoc(String docId) {
