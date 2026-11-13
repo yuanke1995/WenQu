@@ -19,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * 在真 MySQL 空库上验证迁移脚本：V1 建出核心表、V2 删除 chatflow 列、V3 给菜单加企业面标记、
- * V4 建插话待发队列表（含多租户列）、V5 给队列加附件列，第二次 migrate 不再执行。
+ * V4 建插话待发队列表（含多租户列）、V5 给队列加附件列、V6 补定时任务运行配置，第二次 migrate 不再执行。
  * Docker 不可用时自动跳过；有 Docker 的 CI/开发机直接跑。
  */
 @Tag("container")
@@ -40,7 +40,7 @@ class FlywayFreshDatabaseTest {
                 .load();
 
         MigrateResult first = flyway.migrate();
-        assertThat(first.migrationsExecuted).as("空库应执行 V1 + V2 + V3 + V4 + V5").isEqualTo(5);
+        assertThat(first.migrationsExecuted).as("空库应执行 V1 + V2 + V3 + V4 + V5 + V6").isEqualTo(6);
 
         Set<String> tables = tables();
         assertThat(tables).contains(
@@ -52,6 +52,13 @@ class FlywayFreshDatabaseTest {
         assertThat(columns("c_ai_steer_item"))
                 .as("V4 已建插话待发队列（含多租户列与收据列）、V5 已加附件列")
                 .contains("tenant_id", "session_id", "user_id", "status", "receipt_id", "images", "attachments");
+        // V6：定时任务任务级运行配置 + 执行记录可观测字段
+        assertThat(columns("c_ai_scheduled_job"))
+                .as("V6 已加通知偏好/重试/超时/到期")
+                .contains("notify_on", "max_retries", "retry_interval_sec", "timeout_sec", "end_at");
+        assertThat(columns("c_ai_scheduled_run"))
+                .as("V6 已加尝试次数与耗时")
+                .contains("attempt", "duration_ms");
 
         MigrateResult second = flyway.migrate();
         assertThat(second.migrationsExecuted).as("二次启动不应重复执行基线").isZero();
