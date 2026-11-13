@@ -69,6 +69,7 @@ import { applyTodoFrame, applyUsageFrame, applyRetrievedFrame, applySkillHitFram
 import { createStreamLifecycle } from './streamLifecycle.js'
 import { applyTurnSnapshot as reduceTurnSnapshot, settlePreparingCards, finishResumedShell as finishResumedShellImpl, replaySnapshotExtras } from './streamReducer.js'
 import { attachRunningTurn as attachRunningTurnImpl } from './streamAttach.js'
+import { createTurnReconnect } from './turnReconnect.js'
 import { goalAct as goalActImpl } from './goalActions.js'
 import { askAnswerText, askAutoSubmittable, askQuestionAnswered, askAnsweredCount, askNextUnanswered,
          pickAskOption, commitAskCustom, askOptionPicked, askCustomPicked, askHintText } from './askUser.js'
@@ -78,7 +79,7 @@ import { resolveApproval as resolveApprovalImpl } from './approvalActions.js'
 import { submitPlanApproval as submitPlanApprovalImpl, revisePlanInPlace as revisePlanInPlaceImpl,
          steerPlanAdjustment as steerPlanAdjustmentImpl, adjustPlanAfterApproval as adjustPlanAfterApprovalImpl,
          replanAfterApproval as replanAfterApprovalImpl } from './planActions.js'
-import { planExecProgress, planAdjustsOf, planVersionOf, planStepCount } from './plan'
+import { planExecProgress, planTodosOfTurn, planAdjustsOf, planVersionOf, planStepCount } from './plan'
 // 起表/配图/done 公共合并语义单源（与分享页共用，分叉史见 streamMerge 头注释）
 import { applyTurnStart, applyImageFrame, applyDoneCore } from './streamMerge'
 // 裁决完卡片立刻让铃铛角标重算（后端会把已处理的待办通知收敛为已读），不等 30s 轮询
@@ -150,10 +151,15 @@ const { modelLabelOf, modelSwitchInfo, compactDividerAt, liveCompactAt } = creat
 const currentSessionId = ref(null)
 // 「工作区」那一路技能随会话走：换会话必须重拉清单，否则「+」里还是上一个会话的技能（或空着不给看）
 watch(currentSessionId, () => { loadSkills() })
+// 正在重挂的会话（sid）：连接断了、服务端那一轮还活着，见下方 turnReconnect
+const reconnectingSids = new Set()
 // 「当前会话正在回答」：流式记录按会话各存一条（chatStreams，store.js 模块单例，跨路由存活）。
 // 只表示"正在看的这个会话在答"——其它会话后台流不影响新建/切换/发送；
 // 同一会话内仍互斥（输入/重新生成/停止都作用于当前会话），守卫写法不用动。
-const loading = computed(() => chatStreams.has(currentSessionId.value))
+// 正在重挂的会话同样算「在答」：这时本地已经没有流（那条通道死了），但服务端那一轮还在跑、
+// 还占着会话互斥。不把它算进来，输入框会放行一条必被服务端拒掉的新提问。
+const loading = computed(() => chatStreams.has(currentSessionId.value) ||
+  reconnectingSids.has(currentSessionId.value))
 const messages = ref([])
 /**
  * 当前会话的历史**没取回来**的原因（空串=取到了，不论有没有内容）。
@@ -625,7 +631,7 @@ const planExecProgressOf = m => {
   // 目标已暂停：这一轮即使还在收尾也不再算「正在跑」，卡上不能继续转圈说进行中
   const goalPaused = !!sessionGoal.value && sessionGoal.value.status === 'PAUSED'
   const running = loading.value && m === panelAi.value && !goalPaused
-  if (live && (!turnId || !live.turnId || live.turnId === turnId)) {
+  if (live && planTodosOfTurn(live, m, messages.value)) {
     return planExecProgress(m.planCard, live, turnId, running, m.planCard.execSnapshot)
   }
   const hist = turnTodosOf(sid, turnId)
@@ -1770,6 +1776,29 @@ const attachRunningTurn = (sid, reuseMsg) => attachRunningTurnImpl(sid, reuseMsg
   ensureGoalPlaceholder, takeGoalPlaceholder, currentSid: () => currentSessionId.value, streamAnswer
 })
 
+// 断线重挂（与 DSH 同口径）：连接是连接、轮次是轮次。通道断了只说明这条流没了，
+// 服务端那一轮照样在跑——按会话登记一条重挂循环，退避重试到接上、或探到那一轮已收场为止。
+// 循环本体在 ./turnReconnect.js（transport 层，可单测）；这里只注入引擎状态与副作用。
+// （reconnectingSids 声明在 loading 上方：它要参与「这个会话还在答」的判定。）
+const turnReconnect = createTurnReconnect({
+  onDisconnect: (msg, sid) => { msg.retrying = true; msg.loading = true; reconnectingSids.add(sid) },
+  onEnd: sid => reconnectingSids.delete(sid),
+  clearRetrying: msg => { msg.retrying = false },
+  isViewing: sid => currentSessionId.value === sid,
+  hasStream: sid => chatStreams.has(sid),
+  online: () => typeof navigator === 'undefined' || navigator.onLine !== false,
+  attach: async (sid, msg) => (await attachRunningTurn(sid, msg)).status,
+  // 探到那一轮已收场：按历史重显真实结果（绝不挂「本轮失败」）
+  settleByHistory: (msg, sid) => finishResumedShell(msg, null, sid),
+  setTimer: (fn, ms) => setTimeout(fn, ms),
+  clearTimer: t => clearTimeout(t),
+  onOnline: fn => window.addEventListener('online', fn),
+  offOnline: fn => window.removeEventListener('online', fn)
+})
+
+/** 取消该会话的重挂（切走 / 停止本轮 / 页面卸载），返回那颗还没收场的消息 */
+const cancelReconnect = sid => turnReconnect.stop(sid)
+
 // 接流快照 reducer 在 ./streamReducer.js（reducer 层），引擎只注入状态与派生函数。
 /**
  * 收一轮问答的流。resume=true 时这一轮不是本地发起的：接的是服务端还在跑的那一轮
@@ -1798,9 +1827,10 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
   // 后端落库的是模型名那一段，两边写法不同却都叫 model——拿引用去和上一条的落库值比，
   // 同一个模型会被判成「已切换」，done 一到又自己消失（刷新后更是从来没有过这条线）
   const fresh = { role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkLoading: false, time: Date.now(), turnClockFromServer: false, turnMs: 0, humanWaitMs: 0, artifacts: [], toolCalls: [], skillHits: [], plan: null, planCard: null, timeline: [], errorCard: null, model: '', goalWaiting: false }
-  // 目标排队那颗占位气泡交给接流通道时，起表点留在用户按下回车那一刻：服务端那份 elapsedMs
-  // 从登记总线才算起，直接铺会让「用时 8 秒」在接上的一瞬跳回 1 秒——数字变小读成计时坏了
-  const heldStartAt = resume && replaceMsg && replaceMsg.goalWaiting ? Number(replaceMsg.time) || 0 : 0
+  // 接流时被替换的那颗气泡沿用它的起表点：目标占位气泡的起表点是用户按下回车那一刻，
+  // 断线重挂的残影是这一轮真实的开轮时刻——两者都不能在接上的一瞬跳回 0（数字变小读成计时坏了）。
+  // 服务端快照随后会用 elapsedMs 再对一次表（见 streamReducer 的 earlierStart）。
+  const heldStartAt = resume && replaceMsg ? Number(replaceMsg.time) || 0 : 0
   const msg = replaceMsg ? Object.assign(replaceMsg, fresh, { messageId: null, fb: null }) : reactive(fresh)
   if (heldStartAt) msg.time = heldStartAt
   // 用户自己发起一轮（非接流）：占位那一行让位给它，一屏不许有两颗「正在溯源」
@@ -1817,6 +1847,33 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
   const abort = new AbortController()
   const st = { msg, abort }
   chatStreams.set(sid, st)
+
+  // 「服务端受理过这一轮」的唯一证据：它发过帧（POST 通道第一帧是 turn_start，接流第一帧是 snapshot）。
+  // 没受理过 = 这条提问压根没送到，与「通道断了但答案还在跑」是两件事，收尾口径不同。
+  let admitted = false
+  let transportError = ''
+  // 本轮真的失败（服务端 error 帧 / 业务失败 / 提问没送出去）：保半程内容 + 错误卡 + 重新生成。
+  // 断线**不走这里**——那是连接的事，见下面 beginReconnect。
+  const failNow = (error, kind) => failTurn(msg, {
+    error, kind,
+    flushNow: () => flushNow(),
+    settlePreparingCards,
+    settleAbortedPlan,
+    dropStream: () => { if (chatStreams.get(sid) === st) chatStreams.delete(sid) },
+    notify: m => message.error(m),
+    viewing,
+    scroll: () => liveScroll()
+  })
+  // 重挂循环：探测 → 接流 → 退避再试（分支判据在 ./reconnectPolicy.js，循环本体在 ./turnReconnect.js）。
+  // 本函数只负责把这一轮的事实交给它：受理过没有、断的是不是接流通道、没送出去时怎么收尾。
+  const beginReconnect = () => {
+    // 旧通道已经死了：从在跑登记里摘掉它，下一次接流才进得去
+    if (chatStreams.get(sid) === st) chatStreams.delete(sid)
+    turnReconnect.start(sid, msg, {
+      admitted, resume, error: transportError,
+      onFail: e => failNow(e, 'unreachable')
+    })
+  }
   // 顶部那条整轮用时从开流第一秒就要跟着跳，不能等第一张工具卡才起表：纯检索、纯思考那几分钟
   // 同样在跑，没这一句它停在「0 秒」不动，看着像卡死
   ensureTick()
@@ -1841,6 +1898,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
     // 重锚只校正基准，不会改变已显示的量级。绝对时刻不下发，两端钟差进不来。
     onTurnStart: payload => {
       // 服务端起表基准（开流第一帧）：合并语义在 streamMerge.applyTurnStart 单源，与分享页共用
+      admitted = true
       applyTurnStart(msg, payload, alignTick)
     },
     onSnapshot: payload => {
@@ -1852,6 +1910,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         finishResumedShell(msg, st, sid, false)
         return
       }
+      admitted = true
       resetFromContent(msg.content)
       // 快照里属于「运行期增量」的几份：复用实时事件同一套回调重建（./streamReducer.js）
       replayingSnapshot = true
@@ -1866,7 +1925,6 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       if (currentSessionId.value === sid) messages.value = dropSteeredUserRows(messages.value)
       // 快照里的计划卡可能带血缘（调整自 vN）：补一次双向指认，旧卡的「查看新一轮」不必等刷新
       if (msg.planCard) linkPlanLineage(messages.value)
-      streamLifecycle.resetRetry(sid)   // 接上了：重连计数归零（这一轮的通道之后断了还有三次机会）
       liveScroll()
     },
     ...buildTurnRequest({
@@ -1992,13 +2050,13 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
     // 一轮里框架可以压好几次，另起的那条每压完一次撤走、下一次又长出来，还和提问上方的留痕同时挂着。
     onCompactState: payload => applyCompactState(msg, payload, { sid, autoCompactSid, liveCompactedSid, onScroll: liveScroll }),
     onError: (e, kind) => {
-      // 自动重试收紧到「连接压根没建起来」这一种：原条件 `!gotToken` 不区分网络错误与
-      // 服务端 5xx/限流 —— 移动端网络抖动频繁，用户会看到「消息发出去，卡 2.5 秒，
-      // 自己又跑了一遍」，而服务端其实已受理（可能已扣费）。判定用 navigator.onLine
-      // 优先（移动端可靠维护），再退回 fetch 的典型网络错误特征。
+      transportError = String(e || '')
+      // 自动重试收紧到「提问还没送到服务端」这一种：连接压根没建起来，重发就是重发一条没送出去的提问。
+      // 服务端受理过（admitted）就绝不能重发——那会变成一轮全新问答（重复落库、重复计费），
+      // 而它本来只断了一条通道。判定用 navigator.onLine 优先（移动端可靠维护），再退回 fetch 的典型网络错误特征。
       const netDown = (typeof navigator !== 'undefined' && navigator.onLine === false) ||
         /Failed to fetch|NetworkError|ERR_INTERNET|ERR_NETWORK|network ?error/i.test(String(e))
-      if (autoRetry > 0 && !gotToken() && netDown) {
+      if (autoRetry > 0 && !admitted && !gotToken() && netDown) {
         msg.retrying = true
         liveScroll()
         setTimeout(() => {
@@ -2012,37 +2070,12 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         }, 2500)
         return
       }
-      if (resume && kind === 'interrupted') {
-        // 接来的通道断了 ≠ 这一轮失败了：服务端那一轮多半还在跑（宽限期内没停）。
-        // 报「本轮失败」是假消息（用户会重新生成，而后端那一份照样跑完、两份答案打架）——
-        // 静默再接（按会话计数、最多三次、接上即归零），实在接不上就收掉气泡按历史重显
-        if (chatStreams.get(sid) === st) chatStreams.delete(sid)
-        const tries = streamLifecycle.bumpRetry(sid)
-        if (tries > 3) {
-          streamLifecycle.resetRetry(sid)
-          finishResumedShell(msg, st, sid)
-          return
-        }
-        setTimeout(async () => {
-          if (currentSessionId.value !== sid) return
-          // 接不上（这一轮刚好收尾了/服务重启了）必须收尾：这颗气泡是接流来的，本地没有别的
-          // 路径会把它从 loading 里放出来——不接住就是一颗永久转圈的泡，用户只能刷新
-          const attached = await attachRunningTurn(sid, msg)
-          if (!attached) finishResumedShell(msg, null, sid)
-        }, 1500)
-        return
-      }
-      // 收尾口径在 ./turnFail.js（保留半程内容、挂错误卡、收掉各类进行中卡片）
-      failTurn(msg, {
-        error: e, kind,
-        flushNow: () => flushNow(),
-        settlePreparingCards,
-        settleAbortedPlan,
-        dropStream: () => { if (chatStreams.get(sid) === st) chatStreams.delete(sid) },
-        notify: m => message.error(m),
-        viewing,
-        scroll: () => liveScroll()
-      })
+      // 传输断开 ≠ 本轮失败（DSH 同一口径）：服务端那一轮与连接解耦，断线期间它照跑，
+      // 这里只把它重新挂回来。原通道（POST /chat）和接流通道一视同仁——两者断在传输层时
+      // 该做的事完全一样，不再按「是不是接流来的」分叉。
+      if (kind === 'interrupted') { beginReconnect(); return }
+      // 走到这里是本轮真的失败（服务端 error 帧 / 业务失败）：保半程内容 + 错误卡 + 重新生成
+      failNow(e, kind)
     }
   }
   // 传输分岔：本地发起的轮发 POST /chat；接流只开一条 GET /chat/resume 挂到服务端那一轮上，
@@ -2073,7 +2106,12 @@ const stop = createStopTurn({
   currentSid: () => currentSessionId.value,
   streams: chatStreams,
   stopApi: stopChatTurn,
-  notifyWarning: msg => message.warning(msg)
+  notifyWarning: msg => message.warning(msg),
+  // 通道断了、正在重挂时本地已经没有流：停止仍要落到服务端（否则那一轮转后台跑完还占着会话锁）
+  reconnect: {
+    take: sid => cancelReconnect(sid),
+    settle: (msg, sid) => finishResumedShell(msg, null, sid)
+  }
 })
 
 // 运行中插话队列（服务端持有、刷新可恢复）在 ./steerQueue.js（actions 层）
@@ -2696,6 +2734,8 @@ onUnmounted(() => {
   // 恢复态轮询的自停条件只看「会话没变」，组件卸载改变不了它——不摘就是离开聊天页后
   // 每 4s 一次 getHistory 最多再打 45 跳
   stopRestoredPoll()
+  // 重挂循环同理：页面都卸载了，定时器与 online 监听不能留着
+  turnReconnect.stopAll()
 })
 
   return {

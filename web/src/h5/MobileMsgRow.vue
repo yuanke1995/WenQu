@@ -329,9 +329,10 @@
              整块替换成提问面板（见 MobileChatPage 的 m-askp）；答复后问答记录以工具卡形态留在本气泡 -->
 
         <!-- 错误卡：保留半程内容，给分类文案 + 重新生成 -->
-        <div v-if="m.errorCard" class="err-card" :class="{ net: m.errorCard.kind === 'interrupted' }">
+        <div v-if="m.errorCard" class="err-card" :class="{ net: m.errorCard.kind === 'interrupted' || m.errorCard.kind === 'unreachable' }">
           <div class="err-head"><close-circle-outlined /> {{ errorBrief(m.errorCard.message, m.errorCard.kind) }}</div>
           <div v-if="m.errorCard.kind === 'interrupted'" class="err-tip">重新生成会重跑本轮并重新计费。</div>
+          <div v-else-if="m.errorCard.kind === 'unreachable'" class="err-tip">这条提问没有发出去；重新生成会把它重新发送一遍。</div>
           <button class="btn-ghost" @click.stop="$emit('retry', index)"><redo-outlined /> 重新生成</button>
         </div>
 

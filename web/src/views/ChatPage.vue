@@ -457,10 +457,14 @@
           <template #body-after="{ m, i }">
               <!-- 错误卡（独立于正文）：回答中断时保留已流出内容，这里给分类文案 + 重试 + 异常详情折叠。
                    只管回答那一行：什么都没产出的轮次错误挂在提问上，见下面 #actions-after 那一条 -->
-              <div v-if="m.errorCard && m.role === 'ai'" class="msg-error-card" :class="{ net: m.errorCard.kind === 'interrupted' }">
+              <div v-if="m.errorCard && m.role === 'ai'" class="msg-error-card" :class="{ net: m.errorCard.kind === 'interrupted' || m.errorCard.kind === 'unreachable' }">
                 <div class="mec-head"><close-circle-outlined class="mec-ic" /> {{ errorBrief(m.errorCard.message, m.errorCard.kind) }}</div>
                 <div v-if="m.errorCard.kind === 'interrupted'" class="mec-net-tip">
                   已生成的部分已保存。重新生成会重跑本轮并重新计费；若你刚切后台回来，这通常是系统挂起了连接。
+                </div>
+                <!-- 未送达：一个字都还没生成，别套用「已生成的部分已保存」那套话 -->
+                <div v-else-if="m.errorCard.kind === 'unreachable'" class="mec-net-tip">
+                  这条提问没有发出去；重新生成会把它重新发送一遍。
                 </div>
                 <div class="mec-actions">
                   <button class="app-btn ghost small" @click="regenerate(i)"><redo-outlined /> 重新生成</button>
