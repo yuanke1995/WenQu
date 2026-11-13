@@ -642,22 +642,20 @@ const planExecProgressOf = m => {
 const planAdjustsOfMsg = m => planAdjustsOf(m && m.planCard, turnSteerRows(m))
 
 /**
- * 计划模式正在推进：最新一轮挂着还没收口的计划卡（等人确认，或已批准但还没跑完）。
- * 进度由计划卡自己承载，任务清单不再另占一栏——计划模式的原型里就没有底部清单。
- * 只认最新那条助手消息：旧计划执行完、用户又开始普通提问时，清单该露还得露。
+ * 最新一轮挂着计划卡（深度执行 / 执行计划）：这一轮的进度归卡，底部任务清单不再另占一栏。
+ * 计划卡的步骤行读的就是同一份清单，两边都画＝同一份进度说两遍；计划跑完也不放开——
+ * 卡收成一行后仍写着「7/7 已完成」，与底部清单完全重复。
+ * 未批准的卡不算：那张卡只报「未批准」，步骤与进度都不画，清单是唯一还能看到执行项的地方。
+ * 只认最新那条助手消息：旧计划收场、用户又开始普通提问时，新一轮没有计划卡，清单照常露。
  */
-const planModeDriving = computed(() => {
+const planOwnsTodos = computed(() => {
   const list = messages.value
   let ai = null
   for (let i = list.length - 1; i >= 0; i--) {
     if (list[i] && list[i].role === 'ai') { ai = list[i]; break }
   }
   const c = ai && ai.planCard
-  if (!c || c.replannedBy || c.replannedAt) return false
-  if (c.status === 'pending' || c.status === 'drafting') return true
-  if (c.status !== 'approved') return false
-  const p = planExecProgressOf(ai)
-  return !!(p && (p.running || p.done < p.total))
+  return !!(c && c.status !== 'rejected' && !c.replannedBy && !c.replannedAt)
 })
 
 /**
@@ -696,8 +694,8 @@ const todoAllDone = computed(() => {
  * <p>两端同吃这一份派生态，页面只留折叠态这种纯 UI 开关。
  */
 const todoBarVisible = computed(() => {
-  // 计划模式：进度已在计划卡上，清单不重复占一栏（与计划模式原型一致）
-  if (planModeDriving.value) return false
+  // 这一轮的进度已经在计划卡上，清单不重复占一栏
+  if (planOwnsTodos.value) return false
   const doc = sessionTodos.value
   const items = (doc && doc.items) || []
   if (!items.length) return false
