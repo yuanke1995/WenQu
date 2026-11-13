@@ -47,6 +47,21 @@ public class ScheduledJob {
     /** 模型覆盖（{providerId}/{modelId}；空 = 个人默认） */
     private String modelRef;
 
+    /** 通知偏好: all=完成和失败 failure=仅失败 none=不通知 */
+    private String notifyOn;
+
+    /** 失败后最多重试次数（0=不重试） */
+    private Integer maxRetries;
+
+    /** 两次尝试之间的等待秒数 */
+    private Integer retryIntervalSec;
+
+    /** 单轮超时秒数（空 = 跟随全局 scheduled.timeoutMs） */
+    private Integer timeoutSec;
+
+    /** 任务到期时刻（到点自动停用） */
+    private LocalDateTime endAt;
+
     /** 启用: 1=启用 0=停用（停用时 next_run_at 清空） */
     private Integer enabled;
 

@@ -87,6 +87,7 @@ public class Notification {
     public static final String TYPE_SCHEDULE_DONE = "schedule.done";
     /** 定时任务（用户自建的定时智能体任务）执行失败 */
     public static final String TYPE_SCHEDULE_FAILED = "schedule.failed";
+    public static final String TYPE_SCHEDULE_EXPIRED = "schedule.expired";
     /** 检索评估自动体检下滑预警（收件人为管理员级账号） */
     public static final String TYPE_EVAL_DECLINE = "eval.decline";
     /** 检索评估手动/定时运行完成 */

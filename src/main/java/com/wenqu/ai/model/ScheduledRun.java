@@ -31,7 +31,10 @@ public class ScheduledRun {
     /** 触发方式: scheduled | manual */
     private String triggerType;
 
-    /** 状态: running | succeeded | failed */
+    /** 第几次尝试（失败重试时递增；同一轮的首跑为 1） */
+    private Integer attempt;
+
+    /** 状态: running | succeeded | failed | skipped */
     private String status;
 
     /** 回答摘录（前 1000 字符） */
@@ -43,6 +46,9 @@ public class ScheduledRun {
     private LocalDateTime startedAt;
 
     private LocalDateTime finishedAt;
+
+    /** 执行耗时毫秒 */
+    private Integer durationMs;
 
     private LocalDateTime createTime;
 }

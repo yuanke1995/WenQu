@@ -14,19 +14,27 @@ import com.wenqu.ai.model.Project;
 import com.wenqu.ai.model.ScheduledJob;
 import com.wenqu.ai.model.ScheduledRun;
 import com.wenqu.ai.thread.ThreadPoolManager;
+import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.support.CronExpression;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 定时执行智能体：用户自建的计划任务，到点后用「智能体 + 提示词」跑一次完整问答。
@@ -65,6 +73,24 @@ public class ScheduledJobService {
     private static final int SCAN_LIMIT = 20;
     /** run.answer 摘录长度（列表预览用） */
     private static final int ANSWER_PREVIEW = 1000;
+    /** 单任务保留的执行记录条数（与保留天数共同生效） */
+    private static final int RUN_KEEP_PER_JOB = 100;
+    /** 执行记录清理单批行数 */
+    private static final int RUN_PURGE_BATCH = 2000;
+    /** 健康度/最近一次状态一次拉取的上限（个人资产默认上限 20 个任务，够覆盖每任务 100 条） */
+    private static final int RUN_SCAN_LIMIT = 2000;
+    /** 失败重试的边界：次数与间隔都要有上限，否则一个坏任务能长时间占住线程 */
+    private static final int MAX_RETRIES_CAP = 5;
+    private static final int MIN_RETRY_INTERVAL_SEC = 10;
+    private static final int MAX_RETRY_INTERVAL_SEC = 3600;
+    /** 单任务超时边界 */
+    private static final int MIN_TIMEOUT_SEC = 30;
+    private static final int MAX_TIMEOUT_SEC = 86_400;
+    private static final int PREVIEW_MAX_COUNT = 10;
+    /** 通知偏好 */
+    private static final String NOTIFY_ALL = "all";
+    private static final String NOTIFY_FAILURE = "failure";
+    private static final String NOTIFY_NONE = "none";
     /**
      * Spring 的 {@link CronExpression} **只接受 6 段**（含秒），而用户与平台版口径都是标准 5 段
      * （分 时 日 月 周）⇒ 解析前补一个秒位。直接喂 5 段会抛
@@ -85,6 +111,17 @@ public class ScheduledJobService {
     private final NotificationService notificationService;
     /** 正在执行的任务 id（防同一任务上轮未跑完又被触发；单实例内有效） */
     private final Set<String> runningJobs = ConcurrentHashMap.newKeySet();
+    /** 失败重试的延迟队列：重试期间任务仍占着 runningJobs，避免被下一拍或手动触发插队 */
+    private final ScheduledExecutorService retryScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r, "scheduled-job-retry");
+        t.setDaemon(true);
+        return t;
+    });
+
+    @PreDestroy
+    public void shutdownRetries() {
+        retryScheduler.shutdownNow();
+    }
 
     public ScheduledJobService(ScheduledJobMapper jobMapper, ScheduledRunMapper runMapper,
                                ConfigService configService, ChatService chatService,
@@ -105,7 +142,7 @@ public class ScheduledJobService {
 
     // ==================== CRUD ====================
 
-    /** 我的任务列表（时间倒序），附最近一次执行状态 */
+    /** 我的任务列表（时间倒序），附最近一次执行状态、健康度与运行中标记 */
     public List<Map<String, Object>> list(String uid) {
         return list(uid, null);
     }
@@ -120,18 +157,171 @@ public class ScheduledJobService {
             q.eq(ScheduledJob::getProjectId, projectId);
         }
         List<ScheduledJob> jobs = jobMapper.selectList(q);
+        Map<String, List<ScheduledRun>> runsByJob = recentRuns(uid, jobs);
+        Map<String, String> projectNames = projectNames(jobs);
         List<Map<String, Object>> out = new ArrayList<>(jobs.size());
         for (ScheduledJob job : jobs) {
-            Map<String, Object> m = toDto(job);
-            ScheduledRun last = lastRun(job.getId());
-            m.put("lastRun", last == null ? null : runDto(last));
+            List<ScheduledRun> runs = runsByJob.getOrDefault(job.getId(), List.of());
+            Map<String, Object> m = toDto(job, projectNames);
+            attachRunState(m, job, runs);
             out.add(m);
         }
         return out;
     }
 
     public Map<String, Object> detail(String uid, String id) {
-        return toDto(mustOwn(uid, id));
+        ScheduledJob job = mustOwn(uid, id);
+        Map<String, Object> m = toDto(job, projectNames(List.of(job)));
+        attachRunState(m, job, recentRuns(uid, List.of(job)).getOrDefault(job.getId(), List.of()));
+        return m;
+    }
+
+    /**
+     * 页头总览：今天还要跑什么、最近稳不稳、哪几个需要处理。
+     * <p>统计口径与列表卡面同源（都基于同一次执行记录扫描），避免页头说 90%、卡片点阵却是 5/7。
+     */
+    public Map<String, Object> overview(String uid) {
+        List<ScheduledJob> jobs = jobMapper.selectList(new LambdaQueryWrapper<ScheduledJob>()
+                .eq(ScheduledJob::getUid, uid)
+                .eq(ScheduledJob::getDeleted, 0));
+        Map<String, List<ScheduledRun>> runsByJob = recentRuns(uid, jobs);
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime dayStart = LocalDate.now().atStartOfDay();
+        LocalDateTime dayEnd = dayStart.plusDays(1);
+
+        int enabled = 0;
+        int running = 0;
+        int todayRuns = 0;
+        int todayDue = 0;
+        int attention = 0;
+        LocalDateTime next = null;
+        for (ScheduledJob job : jobs) {
+            if (runningJobs.contains(job.getId())) running++;
+            if (Integer.valueOf(1).equals(job.getEnabled())) {
+                enabled++;
+                if (job.getNextRunAt() != null && job.getNextRunAt().isBefore(dayEnd)) {
+                    todayDue++;
+                }
+            }
+            if (job.getNextRunAt() != null && Integer.valueOf(1).equals(job.getEnabled())
+                    && (next == null || job.getNextRunAt().isBefore(next))) {
+                next = job.getNextRunAt();
+            }
+            List<ScheduledRun> runs = runsByJob.getOrDefault(job.getId(), List.of());
+            boolean live = runningJobs.contains(job.getId());
+            Health h = healthOf(runs, live);
+            if (h.consecutiveFailures() >= 2 || (!runs.isEmpty() && "failed".equals(runs.get(0).getStatus()))) {
+                attention++;
+            }
+            for (ScheduledRun run : runs) {
+                LocalDateTime at = run.getStartedAt() == null ? run.getCreateTime() : run.getStartedAt();
+                if (at != null && !at.isBefore(dayStart) && at.isBefore(dayEnd)
+                        && !"running".equals(run.getStatus())) {
+                    todayRuns++;
+                }
+            }
+        }
+
+        int runs7d = 0;
+        int failed7d = 0;
+        int succeeded7d = 0;
+        LocalDateTime cutoff = now.minusDays(7);
+        for (List<ScheduledRun> runs : runsByJob.values()) {
+            for (ScheduledRun run : runs) {
+                LocalDateTime at = run.getCreateTime() == null ? run.getStartedAt() : run.getCreateTime();
+                if (at == null || at.isBefore(cutoff)) continue;
+                runs7d++;
+                if ("failed".equals(run.getStatus())) failed7d++;
+                else if ("succeeded".equals(run.getStatus())) succeeded7d++;
+            }
+        }
+        int rate = 0;
+        int finished = succeeded7d + failed7d;
+        if (finished > 0) rate = Math.round(succeeded7d * 100f / finished);
+
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("total", jobs.size());
+        m.put("enabled", enabled);
+        m.put("running", running);
+        m.put("todayRuns", todayRuns);
+        m.put("todayDue", todayDue);
+        m.put("runs7d", runs7d);
+        m.put("failed7d", failed7d);
+        m.put("successRate7d", finished == 0 ? null : rate);
+        m.put("attention", attention);
+        m.put("nextRunAt", ts(next));
+        return m;
+    }
+
+    /** 周期预览：与调度器共用同一套 cron 解析，避免「预览 09:00、实际 09:01」 */
+    public List<String> preview(String cron, String timezone, int count) {
+        validateCron(cron, timezone);
+        int n = Math.max(1, Math.min(count <= 0 ? 3 : count, PREVIEW_MAX_COUNT));
+        List<String> out = new ArrayList<>(n);
+        LocalDateTime cursor = LocalDateTime.now();
+        for (int i = 0; i < n; i++) {
+            LocalDateTime at = nextRunAt(cron, timezone, cursor);
+            if (at == null) break;
+            out.add(at.toString());
+            cursor = at;
+        }
+        return out;
+    }
+
+    /** 跳过下一次：以 max(now, next_run_at) 为基准推进，不会因为「正好到期」而先补跑一轮 */
+    public Map<String, Object> skipNext(String uid, String id) {
+        ScheduledJob job = mustOwn(uid, id);
+        if (!Integer.valueOf(1).equals(job.getEnabled())) {
+            throw new BizException("任务已停用，没有下一次可跳过");
+        }
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime base = job.getNextRunAt() != null && job.getNextRunAt().isAfter(now)
+                ? job.getNextRunAt() : now;
+        LocalDateTime next = nextRunAt(job.getCron(), job.getTimezone(), base);
+        if (next == null) {
+            throw new BizException("当前规则不会产生下一次执行，请先修改周期");
+        }
+        job.setNextRunAt(next);
+        jobMapper.update(null, new LambdaUpdateWrapper<ScheduledJob>()
+                .eq(ScheduledJob::getId, id)
+                .set(ScheduledJob::getNextRunAt, next));
+        log.info("[SCHEDULED] uid={} 跳过下一次：{}（下次 {}）", uid, job.getName(), next);
+        Map<String, Object> m = toDto(job, projectNames(List.of(job)));
+        attachRunState(m, job, recentRuns(uid, List.of(job)).getOrDefault(job.getId(), List.of()));
+        return m;
+    }
+
+    /** 撤销删除：恢复为停用态，由用户决定要不要重新启用（避免误删后又自动开跑） */
+    public boolean restore(String uid, String id) {
+        int n = jobMapper.restoreDeleted(id, uid);
+        if (n == 0) {
+            throw new BizException("任务不存在或已经恢复");
+        }
+        log.info("[SCHEDULED] uid={} 撤销删除定时任务 {}", uid, id);
+        return true;
+    }
+
+    /**
+     * 执行记录保留清理：超过保留期 + 每任务只留最近 100 条。
+     * <p>结果会话不受影响——执行记录只是索引，正文仍在会话里。
+     */
+    public int purgeRuns() {
+        int days = configService.getInt("scheduled.runRetentionDays",
+                com.wenqu.ai.config.ConfigDefaults.SCHEDULED_RUN_RETENTION_DAYS);
+        if (days <= 0) return 0;
+        LocalDateTime cutoff = LocalDateTime.now().minusDays(days);
+        int total = 0;
+        while (true) {
+            int n = runMapper.purgeExpired(cutoff, RUN_KEEP_PER_JOB, RUN_PURGE_BATCH);
+            total += n;
+            if (n < RUN_PURGE_BATCH) break;
+            if (total > 1_000_000) break;
+        }
+        if (total > 0) {
+            log.info("[SCHEDULED] 执行记录清理：删除 {} 条（早于 {} 或超出每任务最近 {} 条）",
+                    total, cutoff, RUN_KEEP_PER_JOB);
+        }
+        return total;
     }
 
     public Map<String, Object> create(String uid, Map<String, Object> body) {
@@ -293,11 +483,21 @@ public class ScheduledJobService {
                 .orderByAsc(ScheduledJob::getNextRunAt)
                 .last("limit " + SCAN_LIMIT));
         for (ScheduledJob job : due) {
+            if (job.getEndAt() != null && !job.getEndAt().isAfter(now)) {
+                log.info("[SCHEDULED] 任务「{}」已到期（{}），自动停用", job.getName(), job.getEndAt());
+                insertRun(job, "scheduled", "skipped", "任务已到期，自动停用", null, null, 1);
+                jobMapper.update(null, new LambdaUpdateWrapper<ScheduledJob>()
+                        .eq(ScheduledJob::getId, job.getId())
+                        .set(ScheduledJob::getEnabled, 0)
+                        .set(ScheduledJob::getNextRunAt, null));
+                notifyExpired(job);
+                continue;
+            }
             if (isProjectArchived(job.getProjectId())) {
                 // 防御网：正常路径下归档时已联动停用（pauseByArchive），走不到这里；
                 // 真到了说明任务在归档后被异常改回过启用——如实跳过、留一条记录，并自愈式停用
                 log.warn("[SCHEDULED] 任务 {} 归属的工作区已归档，本轮跳过", job.getName());
-                insertRun(job, "scheduled", "skipped", "工作区已归档，本轮跳过", null, null);
+                insertRun(job, "scheduled", "skipped", "工作区已归档，本轮跳过", null, null, 1);
                 jobMapper.update(null, new LambdaUpdateWrapper<ScheduledJob>()
                         .eq(ScheduledJob::getId, job.getId())
                         .set(ScheduledJob::getEnabled, 0)
@@ -309,6 +509,15 @@ public class ScheduledJobService {
             // 必须显式 wrapper 写列：updateById 的默认策略跳过 null 列，cron 永不再命中时 next 为 null
             // 写不进去，next_run_at 停在过去——之后每一拍都重新选中这条任务，整条问答流水线无限重跑
             LocalDateTime next = nextRunAt(job.getCron(), job.getTimezone(), now);
+            if (next == null) {
+                log.warn("[SCHEDULED] 任务「{}」的 cron 不再产生下一次执行，自动停用", job.getName());
+                insertRun(job, "scheduled", "skipped", "规则不再产生下一次执行，已自动停用", null, null, 1);
+                jobMapper.update(null, new LambdaUpdateWrapper<ScheduledJob>()
+                        .eq(ScheduledJob::getId, job.getId())
+                        .set(ScheduledJob::getEnabled, 0)
+                        .set(ScheduledJob::getNextRunAt, null));
+                continue;
+            }
             job.setNextRunAt(next);
             jobMapper.update(null, new LambdaUpdateWrapper<ScheduledJob>()
                     .eq(ScheduledJob::getId, job.getId())
@@ -322,12 +531,17 @@ public class ScheduledJobService {
     public Map<String, Object> runNow(String uid, String jobId) {
         ScheduledJob job = mustOwn(uid, jobId);
         assertProjectActive(job.getUid(), job.getProjectId());
+        if (job.getEndAt() != null && !job.getEndAt().isAfter(LocalDateTime.now())) {
+            throw new BizException("任务已到期，请先修改到期时间");
+        }
         if (!dispatch(job, "manual")) {
             // dispatch 拒还有两种原因：真在执行（id 仍在集合里）vs 队列满被丢弃（id 已回滚）——文案分开说
             throw new BizException(runningJobs.contains(job.getId())
                     ? "该任务正在执行中，请稍候再试" : "线程池繁忙，本轮未派发，请稍候再试");
         }
-        return toDto(job);
+        Map<String, Object> m = toDto(job, projectNames(List.of(job)));
+        attachRunState(m, job, recentRuns(uid, List.of(job)).getOrDefault(job.getId(), List.of()));
+        return m;
     }
 
     /** 提交执行（同一任务串行：上轮没跑完就跳过，并留一条 skipped 记录，便于解释"这轮为什么没输出"） */
@@ -335,23 +549,17 @@ public class ScheduledJobService {
         if (!runningJobs.add(job.getId())) {
             log.warn("[SCHEDULED] 任务 {} 上一轮仍在执行，本轮跳过", job.getName());
             if ("scheduled".equals(trigger)) {
-                insertRun(job, trigger, "skipped", "上一轮仍在执行，本轮跳过", null, null);
+                insertRun(job, trigger, "skipped", "上一轮仍在执行，本轮跳过", null, null, 1);
             }
             return false;
         }
         // execute=false=任务被丢弃且 lambda 永不执行：不回滚 runningJobs 的话 id 永久泄漏，
         // 该任务之后每轮都被判「上一轮仍在执行」直到重启，且丢弃不留任何执行记录
-        if (!ThreadPoolManager.execute(() -> {
-            try {
-                execute(job, trigger);
-            } finally {
-                runningJobs.remove(job.getId());
-            }
-        })) {
+        if (!ThreadPoolManager.execute(() -> runChain(job, trigger, 1))) {
             runningJobs.remove(job.getId());
             log.error("[SCHEDULED] 任务 {} 提交线程池被拒（队列满/池已关闭），本轮未派发", job.getName());
             if ("scheduled".equals(trigger)) {
-                insertRun(job, trigger, "skipped", "线程池繁忙，本轮未派发（下个周期照常触发）", null, null);
+                insertRun(job, trigger, "skipped", "线程池繁忙，本轮未派发（下个周期照常触发）", null, null, 1);
             }
             return false;
         }
@@ -359,13 +567,66 @@ public class ScheduledJobService {
     }
 
     /**
+     * 执行链：跑第 attempt 次；失败且还有重试额度时把下一棒交给延迟队列（重试期间任务仍占 runningJobs）。
+     * <p>只有最终终态才发通知——重试中途发一遍失败、重试成功再发一遍完成，会让人以为失败了两次。
+     */
+    private void runChain(ScheduledJob job, String trigger, int attempt) {
+        boolean handedOff = false;
+        try {
+            ScheduledJob fresh = jobMapper.selectById(job.getId());
+            if (fresh == null) {
+                log.warn("[SCHEDULED] 任务 {} 已被删除，本轮不执行", job.getId());
+                return;
+            }
+            if (attempt > 1 && "scheduled".equals(trigger)
+                    && !Integer.valueOf(1).equals(fresh.getEnabled())) {
+                log.info("[SCHEDULED] 任务「{}」已停用，取消本轮重试", fresh.getName());
+                return;
+            }
+            // 到期与停用同理：第一次尝试后任务已到期，就不再按重试规则继续跑
+            if (attempt > 1 && fresh.getEndAt() != null
+                    && !fresh.getEndAt().isAfter(LocalDateTime.now())) {
+                log.info("[SCHEDULED] 任务「{}」已到期，取消本轮重试", fresh.getName());
+                return;
+            }
+            ScheduledRun run = executeAttempt(fresh, trigger, attempt);
+            int maxRetries = fresh.getMaxRetries() == null ? 0
+                    : Math.max(0, Math.min(fresh.getMaxRetries(), MAX_RETRIES_CAP));
+            if ("failed".equals(run.getStatus()) && attempt <= maxRetries) {
+                int configured = fresh.getRetryIntervalSec() == null ? 60 : fresh.getRetryIntervalSec();
+                int delay = Math.max(MIN_RETRY_INTERVAL_SEC, Math.min(configured, MAX_RETRY_INTERVAL_SEC));
+                final int nextAttempt = attempt + 1;
+                final ScheduledJob target = fresh;
+                try {
+                    retryScheduler.schedule(() -> {
+                        if (!ThreadPoolManager.execute(() -> runChain(target, trigger, nextAttempt))) {
+                            runningJobs.remove(target.getId());
+                            log.error("[SCHEDULED] 任务「{}」重试派发被拒（线程池满），已停止重试", target.getName());
+                        }
+                    }, delay, TimeUnit.SECONDS);
+                    handedOff = true;
+                    log.info("[SCHEDULED] 任务「{}」第 {} 次尝试失败，{} 秒后重试（最多 {} 次）",
+                            fresh.getName(), attempt, delay, maxRetries);
+                } catch (RejectedExecutionException e) {
+                    log.warn("[SCHEDULED] 任务「{}」重试调度被拒，按最终失败收口：{}", fresh.getName(), e.getMessage());
+                }
+            }
+            if (!handedOff) notifyRunOutcome(fresh, run);
+        } catch (Exception e) {
+            log.error("[SCHEDULED] 任务「{}」执行链异常：{}", job.getName(), e.getMessage(), e);
+        } finally {
+            if (!handedOff) runningJobs.remove(job.getId());
+        }
+    }
+
+    /**
      * 跑一轮：懒创建结果会话 → 用收集型通道调问答流水线 → 等结束 → 记录状态。
      * <p>归属身份走参数（{@code userId}）而不是 {@code RequestUser}——流水线跑在独立线程池里，
      * 那里没有请求上下文（这是既有事实，网页问答同理）。
      */
-    private void execute(ScheduledJob job, String trigger) {
+    private ScheduledRun executeAttempt(ScheduledJob job, String trigger, int attempt) {
         long t0 = System.currentTimeMillis();
-        ScheduledRun run = insertRun(job, trigger, "running", null, null, null);
+        ScheduledRun run = insertRun(job, trigger, "running", null, null, null, attempt);
         try {
             // 一个任务一个会话：首轮创建并按任务名命名，之后每轮追加（历史执行连起来看）
             String sessionId = job.getSessionId();
@@ -373,7 +634,10 @@ public class ScheduledJobService {
                 sessionId = sessionService.createSession(job.getUid());
                 sessionService.renameSession(job.getUid(), sessionId, "定时任务 · " + job.getName());
                 job.setSessionId(sessionId);
-                jobMapper.updateById(job);
+                // 只写 session_id：执行期间用户可能改了周期/通知等配置，updateById 会把手里的旧值盖回去
+                jobMapper.update(null, new LambdaUpdateWrapper<ScheduledJob>()
+                        .eq(ScheduledJob::getId, job.getId())
+                        .set(ScheduledJob::getSessionId, sessionId));
             } else {
                 sessionService.ensureSession(sessionId, job.getUid());
             }
@@ -387,7 +651,9 @@ public class ScheduledJobService {
             run.setSessionId(sessionId);
             runMapper.updateById(run);
 
-            int timeoutMs = Math.max(30_000, configService.getInt("scheduled.timeoutMs", 3_600_000));
+            int timeoutMs = job.getTimeoutSec() != null && job.getTimeoutSec() > 0
+                    ? Math.max(MIN_TIMEOUT_SEC, Math.min(job.getTimeoutSec(), MAX_TIMEOUT_SEC)) * 1000
+                    : Math.max(30_000, configService.getInt("scheduled.timeoutMs", 3_600_000));
             CollectingSseEmitter sink = new CollectingSseEmitter();
             try {
                 chatService.chat(ChatCommand.builder()
@@ -412,37 +678,68 @@ public class ScheduledJobService {
         } catch (Exception e) {
             run.setStatus("failed");
             run.setError(trimTo(String.valueOf(e.getMessage()), 500));
-            log.warn("[FAIL-LOUD] 定时任务执行失败 job={} name={}: {}", job.getId(), job.getName(), e.getMessage());
+            log.warn("[FAIL-LOUD] 定时任务执行失败 job={} name={} attempt={}: {}",
+                    job.getId(), job.getName(), attempt, e.getMessage());
         } finally {
-            run.setFinishedAt(LocalDateTime.now());
+            LocalDateTime finished = LocalDateTime.now();
+            run.setFinishedAt(finished);
+            if (run.getStartedAt() != null) {
+                run.setDurationMs((int) Math.min(Integer.MAX_VALUE,
+                        Duration.between(run.getStartedAt(), finished).toMillis()));
+            }
             runMapper.updateById(run);
-            job.setLastRunAt(run.getStartedAt());
-            jobMapper.updateById(job);
-            notifyRunOutcome(job, run);
-            log.info("[SCHEDULED] 任务「{}」执行结束：status={} 用时={}ms session={}",
-                    job.getName(), run.getStatus(), System.currentTimeMillis() - t0, run.getSessionId());
+            // 同样只写 last_run_at，避免把执行期间的用户修改覆盖回旧值
+            jobMapper.update(null, new LambdaUpdateWrapper<ScheduledJob>()
+                    .eq(ScheduledJob::getId, job.getId())
+                    .set(ScheduledJob::getLastRunAt, run.getStartedAt()));
+            log.info("[SCHEDULED] 任务「{}」第 {} 次执行结束：status={} 用时={}ms session={}",
+                    job.getName(), attempt, run.getStatus(), System.currentTimeMillis() - t0, run.getSessionId());
         }
+        return run;
     }
 
     /**
      * 终态站内通知（对齐 notifyRunOutcome 模式；create 旁路语义，失败不影响收口）：
      * 执行全程在后台线程，归属人不在现场——成功告知「结果已就绪」（答案在结果会话里），
      * 失败告知原因。skipped 是「上轮还在跑」的过程说明，落了执行记录即可，不发通知。
+     * <p>按任务的通知偏好过滤：all=完成和失败，failure=仅失败，none=不通知。
      */
     private void notifyRunOutcome(ScheduledJob job, ScheduledRun run) {
+        String pref = job.getNotifyOn() == null ? NOTIFY_ALL : job.getNotifyOn();
+        if (NOTIFY_NONE.equals(pref)) return;
         String status = run.getStatus();
         String sid = run.getSessionId();
+        int attempt = run.getAttempt() == null ? 1 : run.getAttempt();
         if ("succeeded".equals(status)) {
+            if (NOTIFY_FAILURE.equals(pref)) return;
+            String title = attempt > 1
+                    ? "定时任务「" + job.getName() + "」重试后完成"
+                    : "定时任务「" + job.getName() + "」执行完成";
+            String body = attempt > 1
+                    ? "第 " + attempt + " 次尝试成功，本轮结果已写入结果会话，点击查看。"
+                    : "本轮结果已写入结果会话，点击查看。";
             notificationService.create(job.getUid(), Notification.TYPE_SCHEDULE_DONE,
-                    "定时任务「" + job.getName() + "」执行完成",
-                    "本轮结果已写入结果会话，点击查看。",
-                    sid == null ? null : "session", sid);
+                    title, body, sid == null ? null : "session", sid);
         } else if ("failed".equals(status)) {
+            String reason = run.getError() == null ? "执行异常，详情见执行历史。" : run.getError();
+            if (attempt > 1) reason = reason + "（已尝试 " + attempt + " 次）";
             notificationService.create(job.getUid(), Notification.TYPE_SCHEDULE_FAILED,
                     "定时任务「" + job.getName() + "」执行失败",
-                    run.getError() == null ? "执行异常，详情见执行历史。" : run.getError(),
+                    reason,
                     sid == null ? null : "session", sid, "job:" + job.getId(), null);
         }
+    }
+
+    /** 任务到期停用通知：只在不是「不通知」时发；到期是生命周期事件，不是失败 */
+    private void notifyExpired(ScheduledJob job) {
+        String pref = job.getNotifyOn() == null ? NOTIFY_ALL : job.getNotifyOn();
+        if (NOTIFY_NONE.equals(pref)) return;
+        notificationService.create(job.getUid(), Notification.TYPE_SCHEDULE_EXPIRED,
+                "定时任务「" + job.getName() + "」已到期停用",
+                "已到达设定的到期时间，任务自动停用；需要继续运行请修改到期时间并重新启用。",
+                job.getSessionId() == null ? null : "session", job.getSessionId(),
+                // 与失败通知分开去重：同一任务「失败过」和「到期停用」是两件事，合并会只剩一条错类型
+                "job-expired:" + job.getId(), null);
     }
 
     // ==================== cron ====================
@@ -544,6 +841,47 @@ public class ScheduledJobService {
             String ref = str(body.get("modelRef"));
             job.setModelRef(ref.isEmpty() ? null : ref);
         }
+        // ---- 任务级运行配置 ----
+        Object notifyOn = body.get("notifyOn");
+        if (creating || notifyOn != null) {
+            String n = str(notifyOn).toLowerCase();
+            if (n.isEmpty()) n = NOTIFY_ALL;
+            if (!Set.of(NOTIFY_ALL, NOTIFY_FAILURE, NOTIFY_NONE).contains(n)) {
+                throw new BizException("通知偏好只能是 all / failure / none");
+            }
+            job.setNotifyOn(n);
+        }
+        Object maxRetries = body.get("maxRetries");
+        if (creating || maxRetries != null) {
+            int v = intOr(maxRetries, 0);
+            if (v < 0 || v > MAX_RETRIES_CAP) {
+                throw new BizException("失败重试次数需在 0~" + MAX_RETRIES_CAP + " 之间");
+            }
+            job.setMaxRetries(v);
+        }
+        Object retryInterval = body.get("retryIntervalSec");
+        if (creating || retryInterval != null) {
+            int v = intOr(retryInterval, 60);
+            if (v < MIN_RETRY_INTERVAL_SEC || v > MAX_RETRY_INTERVAL_SEC) {
+                throw new BizException("重试间隔需在 " + MIN_RETRY_INTERVAL_SEC + "~" + MAX_RETRY_INTERVAL_SEC + " 秒之间");
+            }
+            job.setRetryIntervalSec(v);
+        }
+        if (body.containsKey("timeoutSec")) {
+            Integer v = nullableInt(body.get("timeoutSec"));
+            if (v != null && (v < MIN_TIMEOUT_SEC || v > MAX_TIMEOUT_SEC)) {
+                throw new BizException("单轮超时需在 " + MIN_TIMEOUT_SEC + "~" + MAX_TIMEOUT_SEC + " 秒之间，留空跟随全局");
+            }
+            job.setTimeoutSec(v);
+        }
+        if (body.containsKey("endAt")) {
+            LocalDateTime v = parseDateTime(body.get("endAt"));
+            if (v != null && !v.isAfter(LocalDateTime.now())) {
+                throw new BizException("到期时间必须晚于当前时间");
+            }
+            job.setEndAt(v);
+        }
+
         if (body.containsKey("deepThink")) {
             job.setDeepThink(bool(body.get("deepThink")) ? 1 : 0);
         } else if (creating) {
@@ -557,37 +895,130 @@ public class ScheduledJobService {
         } else if (creating) {
             job.setEnabled(1);
         }
+        if (creating) {
+            if (job.getNotifyOn() == null) job.setNotifyOn(NOTIFY_ALL);
+            if (job.getMaxRetries() == null) job.setMaxRetries(0);
+            if (job.getRetryIntervalSec() == null) job.setRetryIntervalSec(60);
+        }
     }
 
-    /** 最近一次执行记录（列表页展示状态用） */
-    private ScheduledRun lastRun(String jobId) {
-        List<ScheduledRun> rows = runMapper.selectList(new LambdaQueryWrapper<ScheduledRun>()
-                .eq(ScheduledRun::getJobId, jobId)
+    /** 一次拉取本用户所有任务的最近执行记录，按任务分组；避免列表逐卡查一次（N+1） */
+    private Map<String, List<ScheduledRun>> recentRuns(String uid, List<ScheduledJob> jobs) {
+        if (jobs == null || jobs.isEmpty()) return Map.of();
+        List<String> ids = jobs.stream().map(ScheduledJob::getId).toList();
+        List<ScheduledRun> runs = runMapper.selectList(new LambdaQueryWrapper<ScheduledRun>()
+                .eq(ScheduledRun::getUid, uid)
+                .in(ScheduledRun::getJobId, ids)
                 .orderByDesc(ScheduledRun::getCreateTime)
-                .last("limit 1"));
-        return rows.isEmpty() ? null : rows.get(0);
+                .last("limit " + RUN_SCAN_LIMIT));
+        Map<String, List<ScheduledRun>> out = new HashMap<>();
+        for (ScheduledRun run : runs) {
+            out.computeIfAbsent(run.getJobId(), k -> new ArrayList<>()).add(run);
+        }
+        return out;
     }
+
+    /** 任务归属的工作区名（列表展示 chip 用）；按 projectId 去重查询 */
+    private Map<String, String> projectNames(List<ScheduledJob> jobs) {
+        Map<String, String> out = new HashMap<>();
+        for (ScheduledJob job : jobs) {
+            String pid = job.getProjectId();
+            if (pid == null || pid.isBlank() || out.containsKey(pid)) continue;
+            Project p = projectService.byId(pid);
+            out.put(pid, p == null ? null : p.getName());
+        }
+        return out;
+    }
+
+    /** 卡片需要的「最近一次 + 运行中 + 健康度」统一在这里拼，列表与详情同源 */
+    private void attachRunState(Map<String, Object> m, ScheduledJob job, List<ScheduledRun> runs) {
+        boolean live = runningJobs.contains(job.getId());
+        ScheduledRun last = runs.isEmpty() ? null : runs.get(0);
+        Map<String, Object> lastDto = last == null ? null : runDto(last);
+        if (!live && lastDto != null && "running".equals(lastDto.get("status"))) {
+            // 重启残留的 running 行只影响展示、不改库：否则页面永远转圈，用户以为还在跑
+            lastDto.put("status", "failed");
+            lastDto.put("error", "执行中断或应用重启，本轮未收口");
+        }
+        m.put("lastRun", lastDto);
+        m.put("running", live);
+        m.put("health", healthDto(healthOf(runs, live)));
+    }
+
+    private Health healthOf(List<ScheduledRun> runs, boolean live) {
+        LocalDateTime cutoff = LocalDateTime.now().minusDays(7);
+        int runs7d = 0;
+        int failed7d = 0;
+        int succeeded = 0;
+        int failed = 0;
+        int consecutive = 0;
+        boolean counting = true;
+        List<String> recent = new ArrayList<>(7);
+        for (ScheduledRun run : runs) {
+            String status = run.getStatus();
+            // 没有活线程兜着的 running 视为失败：与卡片上「上次失败」的口径一致
+            if (!live && "running".equals(status)) status = "failed";
+            if (recent.size() < 7) recent.add(status);
+            LocalDateTime at = run.getCreateTime() == null ? run.getStartedAt() : run.getCreateTime();
+            if (at != null && !at.isBefore(cutoff)) {
+                runs7d++;
+                if ("failed".equals(status)) failed7d++;
+            }
+            if ("succeeded".equals(status)) succeeded++;
+            else if ("failed".equals(status)) failed++;
+            if (counting && !"running".equals(status)) {
+                if ("failed".equals(status)) consecutive++;
+                else counting = false;
+            }
+        }
+        int finished = succeeded + failed;
+        Integer rate = finished == 0 ? null : Math.round(succeeded * 100f / finished);
+        return new Health(runs7d, failed7d, rate, consecutive, recent);
+    }
+
+    private Map<String, Object> healthDto(Health h) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("runs7d", h.runs7d());
+        m.put("failed7d", h.failed7d());
+        m.put("successRate7d", h.successRate7d());
+        m.put("consecutiveFailures", h.consecutiveFailures());
+        m.put("recentRuns", h.recentRuns());
+        return m;
+    }
+
+    private record Health(int runs7d, int failed7d, Integer successRate7d,
+                          int consecutiveFailures, List<String> recentRuns) {}
 
     private ScheduledRun insertRun(ScheduledJob job, String trigger, String status,
-                                   String error, String answer, String sessionId) {
+                                   String error, String answer, String sessionId, int attempt) {
         ScheduledRun run = new ScheduledRun();
         run.setJobId(job.getId());
         run.setUid(job.getUid());
         run.setSessionId(sessionId);
         run.setTriggerType(trigger);
+        run.setAttempt(Math.max(1, attempt));
         run.setStatus(status);
         run.setAnswer(answer);
         run.setError(error);
-        run.setStartedAt(LocalDateTime.now());
-        run.setCreateTime(LocalDateTime.now());
-        if (!"running".equals(status)) run.setFinishedAt(LocalDateTime.now());
+        LocalDateTime now = LocalDateTime.now();
+        run.setStartedAt(now);
+        run.setCreateTime(now);
+        if (!"running".equals(status)) {
+            run.setFinishedAt(now);
+            run.setDurationMs(0);
+        }
         runMapper.insert(run);
         return run;
     }
 
     private Map<String, Object> toDto(ScheduledJob job) {
+        return toDto(job, projectNames(List.of(job)));
+    }
+
+    private Map<String, Object> toDto(ScheduledJob job, Map<String, String> projectNames) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("projectId", job.getProjectId() == null ? "" : job.getProjectId());
+        m.put("projectName", job.getProjectId() == null ? null : projectNames.get(job.getProjectId()));
         m.put("id", job.getId());
         m.put("name", job.getName());
         m.put("prompt", job.getPrompt());
@@ -598,7 +1029,13 @@ public class ScheduledJobService {
         m.put("timezone", job.getTimezone());
         m.put("deepThink", Integer.valueOf(1).equals(job.getDeepThink()));
         m.put("modelRef", job.getModelRef());
+        m.put("notifyOn", job.getNotifyOn() == null ? NOTIFY_ALL : job.getNotifyOn());
+        m.put("maxRetries", job.getMaxRetries() == null ? 0 : job.getMaxRetries());
+        m.put("retryIntervalSec", job.getRetryIntervalSec() == null ? 60 : job.getRetryIntervalSec());
+        m.put("timeoutSec", job.getTimeoutSec());
+        m.put("endAt", ts(job.getEndAt()));
         m.put("enabled", Integer.valueOf(1).equals(job.getEnabled()));
+        m.put("running", runningJobs.contains(job.getId()));
         m.put("nextRunAt", ts(job.getNextRunAt()));
         m.put("lastRunAt", ts(job.getLastRunAt()));
         m.put("sessionId", job.getSessionId());
@@ -612,12 +1049,43 @@ public class ScheduledJobService {
         m.put("jobId", run.getJobId());
         m.put("sessionId", run.getSessionId());
         m.put("trigger", run.getTriggerType());
+        m.put("attempt", run.getAttempt() == null ? 1 : run.getAttempt());
         m.put("status", run.getStatus());
         m.put("answer", run.getAnswer());
         m.put("error", run.getError());
         m.put("startedAt", ts(run.getStartedAt()));
         m.put("finishedAt", ts(run.getFinishedAt()));
+        m.put("durationMs", run.getDurationMs());
         return m;
+    }
+
+    private static int intOr(Object o, int def) {
+        if (o == null) return def;
+        try {
+            return Integer.parseInt(String.valueOf(o).trim());
+        } catch (Exception e) {
+            throw new BizException("需要填写数字：" + o);
+        }
+    }
+
+    private static Integer nullableInt(Object o) {
+        String s = str(o);
+        if (s.isEmpty()) return null;
+        try {
+            return Integer.parseInt(s);
+        } catch (Exception e) {
+            throw new BizException("需要填写数字：" + o);
+        }
+    }
+
+    private static LocalDateTime parseDateTime(Object o) {
+        String s = str(o);
+        if (s.isEmpty()) return null;
+        try {
+            return LocalDateTime.parse(s.replace(' ', 'T'));
+        } catch (Exception e) {
+            throw new BizException("时间格式不正确：" + s + "（示例 2026-12-31 18:00:00）");
+        }
     }
 
     private static String ts(LocalDateTime t) {

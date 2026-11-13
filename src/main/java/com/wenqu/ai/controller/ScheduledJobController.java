@@ -39,12 +39,32 @@ public class ScheduledJobController {
 
     private final ScheduledJobService scheduledJobService;
 
-    @Operation(summary = "我的定时任务", description = "按创建时间倒序，附最近一次执行状态")
+    @Operation(summary = "我的定时任务", description = "按创建时间倒序，附最近一次执行状态、运行中标记与近 7 天健康度")
     @Permission("scheduled:read")
     @GetMapping("/list")
     public ResultJson list(
             @org.springframework.web.bind.annotation.RequestParam(value = "projectId", required = false) String projectId) {
         return ResultJson.ok(scheduledJobService.list(RequestUser.uid(), projectId));
+    }
+
+    @Operation(summary = "页头总览", description = "任务数/启用数/运行中/今日已跑与待跑/近 7 天成功率/需关注数")
+    @Permission("scheduled:read")
+    @GetMapping("/overview")
+    public ResultJson overview() {
+        return ResultJson.ok(scheduledJobService.overview(RequestUser.uid()));
+    }
+
+    @Operation(summary = "周期预览", description = "按 cron + timezone 计算接下来 N 次执行时刻；与调度器共用同一套解析")
+    @Permission("scheduled:read")
+    @GetMapping("/preview")
+    public ResultJson preview(@RequestParam("cron") String cron,
+                              @RequestParam(value = "timezone", required = false) String timezone,
+                              @RequestParam(value = "count", required = false, defaultValue = "3") int count) {
+        try {
+            return ResultJson.ok(scheduledJobService.preview(cron, timezone, count));
+        } catch (BizException e) {
+            return ResultJson.error(e.getMessage());
+        }
     }
 
     @Operation(summary = "任务详情")
@@ -149,6 +169,29 @@ public class ScheduledJobController {
             return name == null ? null : String.valueOf(name);
         } catch (Exception e) {
             return null;
+        }
+    }
+
+    @Operation(summary = "撤销删除", description = "软删恢复为停用态（不自动重新启用，避免误删后自动开跑）")
+    @Permission("scheduled:delete")
+    @PostMapping("/{id}/restore")
+    public ResultJson restore(@PathVariable("id") String id) {
+        try {
+            scheduledJobService.restore(RequestUser.uid(), id);
+            return ResultJson.ok(null, "已撤销删除");
+        } catch (BizException e) {
+            return ResultJson.error(e.getMessage());
+        }
+    }
+
+    @Operation(summary = "跳过下一次", description = "把 next_run_at 推进到再下一次；已到期时不先补跑")
+    @Permission("scheduled:write")
+    @PostMapping("/{id}/skip-next")
+    public ResultJson skipNext(@PathVariable("id") String id) {
+        try {
+            return ResultJson.ok(scheduledJobService.skipNext(RequestUser.uid(), id), "已跳过下一次");
+        } catch (BizException e) {
+            return ResultJson.error(e.getMessage());
         }
     }
 

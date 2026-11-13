@@ -592,6 +592,7 @@
                       <a-menu-item v-if="debugEntryVisible && m.sources && m.sources.length" key="addEval"><dislike-outlined style="margin-right:8px" />加入评测集</a-menu-item>
                       <a-menu-item v-if="m.turnId" key="events"><history-outlined style="margin-right:8px" />看这一轮的过程</a-menu-item>
 
+                      <a-menu-item key="schedule"><schedule-outlined style="margin-right:8px" />设为定时任务</a-menu-item>
                       <a-menu-item key="export"><download-outlined style="margin-right:8px" />导出 Markdown</a-menu-item>
                       <a-menu-item key="deleteRound" style="color:#cf1322"><delete-outlined style="margin-right:8px" />删除本轮对话</a-menu-item>
                     </a-menu>
@@ -1819,7 +1820,7 @@ import { LoadingOutlined, DownOutlined, CaretRightOutlined, CheckOutlined, Close
          AppstoreOutlined, ClockCircleOutlined, BookOutlined,
          OrderedListOutlined, LeftOutlined, FolderOpenOutlined, FolderOutlined, ExportOutlined,
          AimOutlined, EyeOutlined, SaveOutlined, ReloadOutlined, BulbOutlined,
-         SafetyCertificateOutlined } from '@ant-design/icons-vue'
+         SafetyCertificateOutlined, ScheduleOutlined } from '@ant-design/icons-vue'
 import { debugRetrieval, deleteMessageGroup, submitFeedback as apiSubmitFeedback,
          addEvalCase, getSessionShare, enableSessionShare, disableSessionShare,
          getSessionWorkspace, getPermissionPresets, setSessionPermission,

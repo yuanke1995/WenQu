@@ -47,6 +47,10 @@ export const moreActionPlan = (key, mi, messages) => {
   if (key === 'addEval') return { kind: 'addEval', mi }
   if (key === 'deleteRound') return { kind: 'deleteRound', mi }
   if (key === 'export') return { kind: 'export', mi }
+  if (key === 'schedule') {
+    const q = findQuestion(messages, mi)
+    return { kind: 'schedule', question: q?.content || '', ai: messages[mi] }
+  }
   if (key === 'events') {
     const ai = messages[mi]
     const q = findQuestion(messages, mi)

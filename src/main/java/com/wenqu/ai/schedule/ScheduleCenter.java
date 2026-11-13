@@ -386,6 +386,14 @@ public class ScheduleCenter {
                 () -> false,
                 () -> scheduledJobService.tick());
 
+        // 定时任务执行记录清理：与其余清理任务同节拍；保留期 scheduled.runRetentionDays（0=不清理），
+        // 每个任务另保最近 100 条——结果会话不删，执行记录只是索引。
+        register("定时任务执行记录清理", "删除超过保留期的定时任务执行记录，并让每个任务只留最近 100 条（保留期 scheduled.runRetentionDays，0=不清理）",
+                "cleanup.intervalMs",
+                this::cleanupIntervalMs,
+                () -> false,
+                () -> scheduledJobService.purgeRuns());
+
         // 文档解析队列扫描：把 c_ai_parse_task 里到期的任务抢占后投给 worker 池执行（内置节拍 5s，不可暂停）。
         // 上传/重解析只往这张表登记一行，解析全靠这里的扫描器推动——批量上传不会因为"队列内存溢出/满"丢任务。
         // 返回本轮抢占数：空跑（无到期任务）不落执行日志；扫描失败上抛落失败行（scan 内部不再吞异常）。
@@ -606,7 +614,7 @@ public class ScheduleCenter {
             Map.entry("检索评估自动体检", List.of("eval.judgeEnabled", "eval.judgeModel", "eval.autoThresholdPct")),
             Map.entry("过期会话/消息清理", List.of("cleanup.recordRetentionDays")),
             Map.entry("产物超期清理", List.of("cleanup.assetRetentionDays")),
-            Map.entry("定时智能体任务", List.of("scheduled.enabled", "scheduled.maxPerUser", "scheduled.timeoutMs")),
+            Map.entry("定时智能体任务", List.of("scheduled.enabled", "scheduled.maxPerUser", "scheduled.timeoutMs", "scheduled.runRetentionDays")),
             Map.entry("文档解析队列扫描", List.of("parse.queue.capacity", "parse.concurrency",
                     "parse.taskLeaseSeconds", "parse.taskTimeoutMs", "parse.embedConcurrency", "parse.ocrGateConcurrency")),
             Map.entry("网页源定时刷新", List.of("web.refreshEnabled")),

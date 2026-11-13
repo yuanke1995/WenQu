@@ -24,6 +24,7 @@ export const NOTIF_ICONS = {
   'web.refresh.failed': CloseCircleFilled,
   'schedule.done': CheckCircleFilled,
   'schedule.failed': CloseCircleFilled,
+  'schedule.expired': ExclamationCircleFilled,
   'eval.decline': ExclamationCircleFilled,
   'agentEval.done': CheckCircleFilled,
   'agentEval.failed': CloseCircleFilled,
@@ -57,6 +58,7 @@ const NOTIF_TONES = {
   'web.refresh.failed': 'err',
   'schedule.done': 'ok',
   'schedule.failed': 'err',
+  'schedule.expired': 'warn',
   'eval.decline': 'warn',
   'agentEval.done': 'ok',
   'agentEval.failed': 'err',
@@ -94,6 +96,7 @@ export const NOTIF_LABELS = {
   'web.refresh.failed': '网页源刷新失败',
   'schedule.done': '定时任务完成',
   'schedule.failed': '定时任务失败',
+  'schedule.expired': '定时任务到期停用',
   'eval.decline': '检索评估下滑',
   'agentEval.done': '评测完成',
   'agentEval.failed': '评测失败',
@@ -139,7 +142,7 @@ export const NOTIF_BUCKETS = {
   done: {
     label: '完成',
     tone: 'ok',
-    types: ['parse.done', 'schedule.done', 'chat.turn.done', 'goal.achieved', 'tenant.approved', 'dashboard.weekly']
+    types: ['parse.done', 'schedule.done', 'schedule.expired', 'chat.turn.done', 'goal.achieved', 'tenant.approved', 'dashboard.weekly']
   }
 }
 export const NOTIF_BUCKET_ORDER = ['action', 'alert', 'done']

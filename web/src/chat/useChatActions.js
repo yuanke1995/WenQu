@@ -191,7 +191,23 @@ export const useChatActions = ctx => {
     else if (plan.kind === 'addEval') addToEval(plan.mi)
     else if (plan.kind === 'deleteRound') deleteRound(plan.mi)
     else if (plan.kind === 'export') exportRound(plan.mi)
+    else if (plan.kind === 'schedule') openSchedule(plan)
     else if (plan.kind === 'events') ctx.openEvents(plan.turnId, plan.ai, plan.question)
+  }
+  /** 从对话创建定时任务：把本轮提问作为指令，智能体随手带走；草稿走 sessionStorage，避免长 prompt 塞 URL */
+  const openSchedule = plan => {
+    const prompt = String(plan.question || '').trim()
+    if (!prompt) { notify.warning('找不到本轮对应的提问'); return }
+    const draft = {
+      name: prompt.replace(/\s+/g, ' ').slice(0, 30),
+      prompt,
+      agentId: plan.ai?.agentId || ''
+    }
+    try {
+      const storage = domWindow?.sessionStorage
+      if (storage) storage.setItem('wenqu.scheduledDraft', JSON.stringify(draft))
+    } catch (e) { /* 隐私模式/配额满时退化为普通跳转 */ }
+    ctx.router.push({ path: '/agents', query: { tab: 'scheduled', draft: '1' } })
   }
   const addToEval = async mi => {
     const kids = evalKnowledgeIds(ctx.messages()[mi])

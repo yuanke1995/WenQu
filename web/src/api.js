@@ -659,6 +659,13 @@ export const deleteArtifactsBatch = ids =>
 // 定时任务（定时执行智能体；个人资产，每人管自己的）
 export const listScheduledJobs = (projectId) =>
   request('/scheduled/list' + (projectId ? '?projectId=' + encodeURIComponent(projectId) : ''))
+/** 页头总览：任务数/启用数/运行中/今日已跑与待跑/近 7 天成功率/需关注数 */
+export const getScheduledOverview = () => request('/scheduled/overview')
+/** 周期预览：与后端调度器共用同一套 cron 解析，返回接下来 N 次执行时刻 */
+export const previewScheduledCron = (cron, timezone, count = 3) => {
+  const q = new URLSearchParams({ cron: cron || '', timezone: timezone || '', count: String(count) })
+  return request('/scheduled/preview?' + q.toString())
+}
 export const createScheduledJob = body => request('/scheduled', { method: 'POST', body: JSON.stringify(body) })
 export const updateScheduledJob = (id, body) =>
   request(`/scheduled/${id}`, { method: 'PUT', body: JSON.stringify(body) })
@@ -666,6 +673,10 @@ export const deleteScheduledJob = id => request(`/scheduled/${id}`, { method: 'D
 export const toggleScheduledJob = (id, enabled) =>
   request(`/scheduled/${id}/enabled`, { method: 'PUT', body: JSON.stringify({ enabled }) })
 export const runScheduledJob = id => request(`/scheduled/${id}/run`, { method: 'POST' })
+/** 跳过下一次（把 next_run_at 推进到再下一次） */
+export const skipScheduledJobNext = id => request(`/scheduled/${id}/skip-next`, { method: 'POST' })
+/** 撤销删除（软删恢复为停用态） */
+export const restoreScheduledJob = id => request(`/scheduled/${id}/restore`, { method: 'POST' })
 export const listScheduledRuns = (id, limit = 20) => request(`/scheduled/${id}/runs?limit=${limit}`)
 // 批量：逐条执行、部分成功是批量固有语义，返回 {succeeded:[id], failed:[{id,name,error}]}
 export const batchDeleteScheduledJobs = ids =>
