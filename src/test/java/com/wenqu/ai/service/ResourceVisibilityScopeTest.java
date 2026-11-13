@@ -241,4 +241,19 @@ class ResourceVisibilityScopeTest {
         assertThat(visibility.canReadBuiltinKb(p, 1, "boss")).isTrue();
         assertThat(visibility.canReadBuiltinKb(p, 0, "boss")).isFalse();
     }
+
+    @Test
+    @DisplayName("管理侧：内置手册库仅管理员可见（createdBy=system 不再把管理员挡在外面）")
+    void builtinKbVisibleToAdminOnManagementSide() {
+        givenScopes(); // 管理员同样没有范围行：createdBy=system 在谁建归谁下恒 NONE
+        var admin = new ResourceVisibilityService.Principal("u1", null, "admin");
+        var user = new ResourceVisibilityService.Principal("u2", null, "user");
+        assertThat(visibility.canReadKbManagement(admin, 1, "system", true)).isTrue();
+        assertThat(visibility.canReadKbManagement(user, 1, "system", false)).isFalse();
+        // 非内置库仍按谁建归谁
+        assertThat(visibility.canReadKbManagement(user, 0, "u2", false)).isTrue();
+        assertThat(visibility.canReadKbManagement(user, 0, "boss", false)).isFalse();
+        // 消费侧口径不变：内置库登录即可读
+        assertThat(visibility.canReadBuiltinKb(user, 1, "system")).isTrue();
+    }
 }

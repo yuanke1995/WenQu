@@ -72,13 +72,10 @@ public class KnowledgeController {
         }
         if (doc.getKbId() != null) {
             var kb = kbService.get(doc.getKbId());
-            if (kb == null || !visibility.canRead(principal(), kb.getCreatedBy())) {
-                throw new BizException("无权访问该文档的知识块");
-            }
             // 官方内置库（手册篇目）：管理侧知识块仅管理员可读（/list 与 /search 共用此门槛）；
             // 普通用户看手册走帮助中心（ManualController 独立只读端点），对话检索也不经本接口
-            if (kb.getBuiltin() != null && kb.getBuiltin() == 1
-                    && !roleService.isAdminAny(RequestUser.roles())) {
+            if (kb == null || !visibility.canReadKbManagement(principal(), kb.getBuiltin(), kb.getCreatedBy(),
+                    roleService.isAdminAny(RequestUser.roles()))) {
                 throw new BizException("无权访问该文档的知识块");
             }
         }

@@ -579,15 +579,16 @@ public class KbInsightsService {
     }
 
     private boolean readableRow(Map<String, Object> row) {
-        if (Integer.valueOf(1).equals(row.get("builtin")) && !admin()) return false;
-        return visibility.canRead(principal(), (String) row.get("createdBy"));
+        return visibility.canReadKbManagement(principal(), (Integer) row.get("builtin"),
+                (String) row.get("createdBy"), admin());
     }
 
     private KnowledgeBase requireReadable(String kbId) {
         KnowledgeBase kb = kbService.get(kbId);
         if (kb == null || Integer.valueOf(1).equals(kb.getDeleted())) throw new BizException("知识库不存在");
-        if (Integer.valueOf(1).equals(kb.getBuiltin()) && !admin()) throw new BizException("知识库不存在");
-        if (!visibility.canRead(principal(), kb.getCreatedBy())) throw new BizException("知识库不存在");
+        if (!visibility.canReadKbManagement(principal(), kb.getBuiltin(), kb.getCreatedBy(), admin())) {
+            throw new BizException("知识库不存在");
+        }
         return kb;
     }
 

@@ -244,4 +244,19 @@ public class ResourceVisibilityService {
         return canRead(p, createdBy);
     }
 
+    /**
+     * 知识库<b>管理侧</b>可读判定（知识库页/文档管理/知识块/库洞察/开放 API）：
+     * 官方内置库（builtin=1，如问渠使用手册）仅管理员级可见，其余按 {@link #canRead}。
+     * <p>内置库 createdBy=system，谁建归谁判定下管理员也拿不到 READ——「仅管理员可见」会退化成
+     * 谁也看不见，故这里对管理员显式放行。消费侧（检索/对话/帮助中心/MCP）不经本方法，
+     * 它们走 {@link #canReadBuiltinKb}：内置库登录即可读，两处口径刻意不同。
+     *
+     * @param admin 调用方经 {@code RoleService.isAdminAny} 判定的管理员级
+     *              （RoleService 依赖本类，不能在此反向注入）
+     */
+    public boolean canReadKbManagement(Principal p, Integer builtin, String createdBy, boolean admin) {
+        if (builtin != null && builtin == 1) return admin;
+        return canRead(p, createdBy);
+    }
+
 }

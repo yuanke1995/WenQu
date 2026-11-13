@@ -88,12 +88,9 @@ public class DocumentController {
         var p = principal();
         if (doc.getKbId() != null) {
             var kb = kbService.get(doc.getKbId());
-            if (kb == null || !visibility.canRead(p, kb.getCreatedBy())) {
-                throw new BizException("文档不存在");
-            }
             // 官方内置库文档（手册篇目）：管理侧仅管理员可读——普通用户的消费入口在帮助中心
             // （ManualController 独立只读端点），不经本接口
-            if (kb.getBuiltin() != null && kb.getBuiltin() == 1 && !admin()) {
+            if (kb == null || !visibility.canReadKbManagement(p, kb.getBuiltin(), kb.getCreatedBy(), admin())) {
                 throw new BizException("文档不存在");
             }
         }
@@ -238,21 +235,18 @@ public class DocumentController {
         List<com.wenqu.ai.model.AiDocument> docs = documentService.list(kbId);
         // 库可见（个人默认库=归属人私有；谁建归谁），双重过滤（库不可见时按空列表处理，不泄露存在性）
         var p = principal();
+        boolean admin = admin();
         if (kbId != null && !kbId.isBlank()) {
             var kb = kbService.get(kbId);
-            if (kb == null || !visibility.canRead(p, kb.getCreatedBy())) {
-                return ResultJson.ok(List.of());
-            }
             // 官方内置库：与 /kb 列表同口径仅管理员可见——不可见按空列表处理，不泄露存在性
-            if (kb.getBuiltin() != null && kb.getBuiltin() == 1 && !admin()) {
+            if (kb == null || !visibility.canReadKbManagement(p, kb.getBuiltin(), kb.getCreatedBy(), admin)) {
                 return ResultJson.ok(List.of());
             }
         }
         var visibleKbIds = new java.util.HashSet<String>();
         for (var kb : kbService.list()) {
-            // 全量视图同样剔除：官方内置库不进普通用户的可见库集合（手册篇目不混进「全部文档」）
-            if (kb.getBuiltin() != null && kb.getBuiltin() == 1 && !admin()) continue;
-            if (visibility.canRead(p, kb.getCreatedBy())) {
+            // 全量视图同口径：官方内置库只进管理员的可见库集合（手册篇目不对普通用户展示）
+            if (visibility.canReadKbManagement(p, kb.getBuiltin(), kb.getCreatedBy(), admin)) {
                 visibleKbIds.add(kb.getId());
             }
         }

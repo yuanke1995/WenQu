@@ -38,7 +38,7 @@ import com.wenqu.ai.security.Permission;
  * </ul>
  * 官方内置库（问渠使用手册，builtin=1）例外：管理页（列表/详情/文档/知识块/回收站）仅管理员级可见——
  * 普通用户的消费入口是帮助中心（/manual 独立只读端点）与对话检索（消费侧登录即可读），不受影响。
- * 管理员照旧全量可见可管。检索链路的可见性过滤由既有检索层负责，与本接口口径同源。
+ * 管理员可见内置库并维护其检索/解析设置；用户资源仍是谁建归谁。检索链路的可见性过滤由既有检索层负责，与本接口口径同源。
  *
  * @author yuanke
  */
@@ -69,6 +69,10 @@ public class KnowledgeBaseController {
     private ResourceVisibilityService.Principal principal() {
         return new ResourceVisibilityService.Principal(
                 RequestUser.uid(), RequestUser.departmentId(), RequestUser.role());
+    }
+
+    private boolean admin() {
+        return roleService.isAdminAny(RequestUser.roles());
     }
 
     /** 校验"能管理该库"（谁建归谁：仅创建者），否则抛业务异常（前端显示具体原因，不触发全局 403 提示） */
@@ -182,13 +186,12 @@ public class KnowledgeBaseController {
         if (uid != null && !uid.isBlank()) kbService.defaultId(uid);
         List<Map<String, Object>> all = kbService.listWithCounts();
         var p = principal();
-        all = all.stream().filter(m -> visibility.canRead(p, (String) m.get("createdBy"))).toList();
+        boolean admin = admin();
         // 官方内置库（问渠使用手册）：知识库管理页仅管理员可见——它是系统资源而非用户资产，
         // 普通用户在这里看到只会误以为可翻可改。消费入口不受影响：帮助中心（/manual 独立只读端点）
-        // 与对话检索链路（read_scope=global）仍全员可读。
-        if (!roleService.isAdminAny(RequestUser.roles())) {
-            all = all.stream().filter(m -> !Integer.valueOf(1).equals(m.get("builtin"))).toList();
-        }
+        // 与对话检索链路仍全员可读。
+        all = all.stream().filter(m -> visibility.canReadKbManagement(
+                p, (Integer) m.get("builtin"), (String) m.get("createdBy"), admin)).toList();
         return ResultJson.ok(all);
     }
 
@@ -198,12 +201,8 @@ public class KnowledgeBaseController {
     public ResultJson get(@PathVariable("id") String id) {
         KnowledgeBase kb = kbService.get(id);
         if (kb == null) return ResultJson.error("知识库不存在");
-        // 官方内置库：详情与列表同口径仅管理员（不可见按不存在处理，不泄露存在性）
-        if (kb.getBuiltin() != null && kb.getBuiltin() == 1
-                && !roleService.isAdminAny(RequestUser.roles())) {
-            return ResultJson.error("知识库不存在");
-        }
-        if (!visibility.canRead(principal(), kb.getCreatedBy())) {
+        // 概览与列表同口径：官方内置库仅管理员（不可见按不存在处理，不泄露存在性）
+        if (!visibility.canReadKbManagement(principal(), kb.getBuiltin(), kb.getCreatedBy(), admin())) {
             return ResultJson.error("知识库不存在");
         }
         return ResultJson.ok(kb);

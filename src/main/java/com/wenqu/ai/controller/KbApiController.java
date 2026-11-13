@@ -75,6 +75,10 @@ public class KbApiController {
         return new ResourceVisibilityService.Principal(RequestUser.uid(), RequestUser.departmentId(), RequestUser.role());
     }
 
+    private boolean admin() {
+        return roleService.isAdminAny(RequestUser.roles());
+    }
+
     private String apiKeyIdOf() {
         var attrs = org.springframework.web.context.request.RequestContextHolder.getRequestAttributes();
         Object v = attrs == null ? null : attrs.getAttribute(
@@ -115,9 +119,7 @@ public class KbApiController {
         for (String id : kbIds) {
             KnowledgeBase kb = kbService.get(id);
             if (kb == null) continue;
-            if (kb.getBuiltin() != null && kb.getBuiltin() == 1 && !roleService.isAdminAny(RequestUser.roles()))
-                continue;
-            if (visibility.canRead(p, kb.getCreatedBy())) visibleKbIds.add(id);
+            if (visibility.canReadKbManagement(p, kb.getBuiltin(), kb.getCreatedBy(), admin())) visibleKbIds.add(id);
         }
         if (!kbIds.isEmpty() && visibleKbIds.isEmpty()) {
             throw new BizException("指定的知识库均不存在或不可见");
@@ -168,9 +170,8 @@ public class KbApiController {
         apiKeyService.requireScope(apiKeyIdOf(), ApiKeyService.SCOPE_KB_READ);
         var p = principal();
         List<Map<String, Object>> all = kbService.listWithCounts().stream()
-                .filter(m -> visibility.canRead(p, (String) m.get("createdBy")))
-                .filter(m -> !(Integer.valueOf(1).equals(m.get("builtin")))
-                        || roleService.isAdminAny(RequestUser.roles()))
+                .filter(m -> visibility.canReadKbManagement(p, (Integer) m.get("builtin"),
+                        (String) m.get("createdBy"), admin()))
                 .map(this::kbBrief)
                 .toList();
         return ResultJson.ok(Map.of("knowledgeBases", all, "total", all.size()));
@@ -197,8 +198,10 @@ public class KbApiController {
         KnowledgeBase kb = mustReadable(id);
         if (kb == null) throw new BizException(404, "知识库不存在");
         var p = principal();
+        boolean builtin = Integer.valueOf(1).equals(kb.getBuiltin());
         List<Map<String, Object>> docs = documentService.list(id).stream()
-                .filter(d -> visibility.canRead(p, d.getCreatedBy()))
+                // 内置库篇目 createdBy=system：管理员随库放行（库本身已在 mustReadable 里判定）
+                .filter(d -> (builtin && admin()) || visibility.canRead(p, d.getCreatedBy()))
                 .map(this::docBrief)
                 .toList();
         return ResultJson.ok(Map.of("documents", docs, "total", docs.size()));
@@ -252,9 +255,7 @@ public class KbApiController {
     private KnowledgeBase mustReadable(String id) {
         KnowledgeBase kb = kbService.get(id);
         if (kb == null) return null;
-        if (kb.getBuiltin() != null && kb.getBuiltin() == 1
-                && !roleService.isAdminAny(RequestUser.roles())) return null;
-        if (!visibility.canRead(principal(), kb.getCreatedBy())) return null;
+        if (!visibility.canReadKbManagement(principal(), kb.getBuiltin(), kb.getCreatedBy(), admin())) return null;
         return kb;
     }
 
