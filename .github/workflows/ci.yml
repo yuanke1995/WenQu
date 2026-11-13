@@ -71,3 +71,16 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e .
           python -m unittest discover -s tests -v
+
+  contract:
+    name: OpenAPI contract (no breaking changes)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      # v1 只增不删：删端点 / 改 scope / 改可达性一律失败；新增需先跑 --update 登记进快照与变更日志
+      - name: v1 contract snapshot check
+        run: node scripts/check-openapi-contract.mjs --check

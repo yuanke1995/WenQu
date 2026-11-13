@@ -1,0 +1,112 @@
+{
+  "version": "v1",
+  "generatedFrom": "src/main/java 的 @OpenApi + Spring 路由注解（与 OpenApiRegistry 同源）",
+  "note": "由 scripts/check-openapi-contract.mjs --update 生成；不要手改",
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/api/ai/v1/kbs",
+      "scope": "kb.read",
+      "summary": "知识库列表",
+      "keyAccessible": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/ai/v1/kbs/{id}",
+      "scope": "kb.read",
+      "summary": "知识库详情",
+      "keyAccessible": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/ai/v1/kbs/{id}/documents",
+      "scope": "kb.read",
+      "summary": "知识库文档列表与解析进度",
+      "keyAccessible": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/ai/v1/me",
+      "scope": "",
+      "summary": "API Key 自检：能力范围、发问身份、限流与近 30 天用量",
+      "keyAccessible": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/ai/v1/models/embeddings",
+      "scope": "embedding",
+      "summary": "可用向量模型清单",
+      "keyAccessible": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/ai/v1/openapi.json",
+      "scope": "",
+      "summary": "开放 API 契约（OpenAPI 3.1）",
+      "keyAccessible": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/ai/v1/workflows/{id}/run/{runId}",
+      "scope": "workflow.run",
+      "summary": "查询工作流运行结果",
+      "keyAccessible": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/ai/v1/chat/completions",
+      "scope": "chat",
+      "summary": "Chat Completions（OpenAI 兼容）",
+      "keyAccessible": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/ai/v1/embeddings",
+      "scope": "embedding",
+      "summary": "Embeddings（OpenAI 兼容）",
+      "keyAccessible": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/ai/v1/kbs",
+      "scope": "kb.write",
+      "summary": "创建知识库",
+      "keyAccessible": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/ai/v1/kbs/{id}/documents",
+      "scope": "kb.write",
+      "summary": "上传文档",
+      "keyAccessible": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/ai/v1/responses",
+      "scope": "chat",
+      "summary": "Responses API（OpenAI 兼容）",
+      "keyAccessible": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/ai/v1/retrieval",
+      "scope": "kb.read",
+      "summary": "知识检索（混合检索直通）",
+      "keyAccessible": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/ai/v1/workflows/{id}/run",
+      "scope": "workflow.run",
+      "summary": "触发已发布工作流",
+      "keyAccessible": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/ai/v1/workflows/webhook/{token}",
+      "scope": "",
+      "summary": "Webhook 入站触发（令牌即凭据）",
+      "keyAccessible": false
+    }
+  ]
+}

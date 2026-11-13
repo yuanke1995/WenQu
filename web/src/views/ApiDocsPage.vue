@@ -215,6 +215,24 @@
             <div class="doc-note">
               这张表是"问答链路"的口径：白名单里新增端点会自动对 Key 开放，但<b>能力配置面</b>（技能 / MCP 配置 / 市场等）被拒绝名单挡住——见「权限与 scope」。
             </div>
+            <h3>v1 开放契约（服务端实时生成）</h3>
+            <p>下表不是手写的：直接读 <code>GET /api/ai/v1/openapi.json</code>，由后端开放契约注册表按
+               <code>@OpenApi</code> 注解实时生成，路径、方法、scope 与网关鉴权判定同源。CI 会拿它对应的源码集合与
+               <code>contract/openapi.v1.json</code> 快照对账，删除端点或改 scope 都会挡下来。</p>
+            <div v-if="contractError" class="doc-note">契约读取失败：{{ contractError }}。这个端点免登录免 Key，正常应可直接读取；请检查服务是否启动。</div>
+            <div v-else-if="!contractRows.length" class="doc-note">契约加载中…</div>
+            <table v-else class="doc-table">
+              <thead><tr><th style="width:76px">方法</th><th style="width:300px">路径</th><th style="width:120px">scope</th><th>说明</th></tr></thead>
+              <tbody>
+                <tr v-for="r in contractRows" :key="r.key">
+                  <td><code>{{ r.method }}</code></td>
+                  <td><code>{{ r.path }}</code></td>
+                  <td>{{ r.scope || '任意有效 Key' }}</td>
+                  <td>{{ r.summary }}<span v-if="!r.keyAccessible" class="doc-pill">令牌通道</span></td>
+                </tr>
+              </tbody>
+            </table>
+            <p class="doc-foot">共 {{ contractRows.length }} 个契约端点 · 契约版本 {{ contractVersion }} · 口径见 contract/README.md</p>
           </section>
 
           <!-- ==================== 5. 工作流触发 ==================== -->
@@ -523,6 +541,31 @@ data: {
   "agentId": "...", "agentName": "..."
 }`
 
+// v1 契约单一真源：页面不维护第二份端点清单，直接读后端实时生成的 openapi.json。
+// 读取失败如实显示原因（这个端点免登录免 Key），不静默留空、也不拿硬编码表兜底。
+const contract = ref(null)
+const contractError = ref('')
+const contractVersion = computed(() => contract.value?.info?.version || '—')
+const contractRows = computed(() => {
+  const paths = contract.value?.paths || {}
+  const out = []
+  for (const [path, item] of Object.entries(paths)) {
+    for (const [method, op] of Object.entries(item)) {
+      if (!['get', 'post', 'put', 'delete', 'patch'].includes(method.toLowerCase())) continue
+      const scope = String(op.description || '').match(/scope:\s*(\S+)/)
+      out.push({
+        key: method.toUpperCase() + ' ' + path,
+        method: method.toUpperCase(), path,
+        scope: scope ? scope[1] : '',
+        summary: op.summary || '',
+        // spec() 里只有 keyAccessible=false 的端点才会显式写 security: []
+        keyAccessible: !Array.isArray(op.security)
+      })
+    }
+  }
+  return out.sort((a, b) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method))
+})
+
 const copied = ref('')
 const copy = async (k, text) => {
   copied.value = (await writeClipboard(text)) ? k : ''
@@ -532,6 +575,10 @@ const copy = async (k, text) => {
 const activeSection = ref(sections[0].id)
 let observer = null
 onMounted(() => {
+  fetch(publicUrl('/ai/api/ai/v1/openapi.json'))
+    .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json() })
+    .then(j => { contract.value = j })
+    .catch(e => { contractError.value = e.message || '未知错误' })
   observer = new IntersectionObserver(entries => {
     entries.forEach(en => {
       if (en.isIntersecting) activeSection.value = en.target.id
@@ -628,6 +675,9 @@ const goSection = id => document.getElementById(id)?.scrollIntoView({ behavior: 
 .doc-table td code { font-size: 11.5px; }
 
 .doc-foot { margin-top: 6px; font-size: 11.5px; color: var(--app-text3); }
+
+.doc-pill { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 4px;
+  font-size: 11px; background: var(--app-warn-weak); color: var(--app-warn-text); }
 
 /* 窄屏：导航收为顶部横排 */
 @media (max-width: 900px) {
