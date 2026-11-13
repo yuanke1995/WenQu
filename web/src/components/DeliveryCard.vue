@@ -24,7 +24,7 @@
             <div class="one-title" :title="oneTitle">{{ oneTitle }}</div>
             <div class="one-actions">
               <template v-if="shared">
-                <a class="dlv-btn primary one-icon-btn" :href="oneHref" target="_blank" rel="noopener"
+                <a class="dlv-btn one-icon-btn" :class="oneCanPreview ? 'quiet' : 'primary'" :href="oneHref" target="_blank" rel="noopener"
                    :title="oneCanPreview ? '打开文件' : '下载'"
                    :aria-label="oneCanPreview ? '打开文件' : '下载'">
                   <export-outlined v-if="oneCanPreview" />
@@ -36,7 +36,7 @@
                 </a>
               </template>
               <template v-else>
-                <a v-if="oneCanPreview" class="dlv-btn primary one-icon-btn" :href="oneHref" target="_blank"
+                <a v-if="oneCanPreview" class="dlv-btn quiet one-icon-btn" :href="oneHref" target="_blank"
                    rel="noopener" v-bind="pvAttrs(one)" title="打开预览" aria-label="打开预览">
                   <eye-outlined />
                 </a>
@@ -72,7 +72,7 @@
         <!-- 动作收进标题行：和单件卡一样只占图标位，不再单独压一条动作栏 -->
         <div class="dlv-head-acts">
           <template v-if="shared">
-            <a v-if="delivery.entry" class="dlv-icon-btn primary"
+            <a v-if="delivery.entry" class="dlv-icon-btn" :class="canPreview(delivery.entry) ? 'quiet' : 'primary'"
                :href="hrefOf(delivery.entry)" target="_blank" rel="noopener"
                :title="entryTip" :aria-label="entryTip">
               <export-outlined v-if="canPreview(delivery.entry)" />
@@ -85,7 +85,7 @@
             </a>
           </template>
           <template v-else>
-            <a v-if="delivery.entry && canPreview(delivery.entry)" class="dlv-icon-btn primary"
+            <a v-if="delivery.entry && canPreview(delivery.entry)" class="dlv-icon-btn quiet"
                :href="hrefOf(delivery.entry)" target="_blank" rel="noopener"
                v-bind="pvAttrs(delivery.entry)" :title="entryTip" aria-label="打开入口">
               <eye-outlined />
@@ -245,10 +245,11 @@ const fileKey = f => {
 </script>
 
 <style scoped>
-/* 交付卡：气泡内宽、浅底白卡；状态色只落在徽标/描边，不整卡换色 */
+/* 交付卡：铺满消息列（列宽已由 --chat-col / 分享栏收口，这里不再另设上限），
+   浅底白卡；状态色只落在徽标/描边，不整卡换色 */
 .dlv {
   margin-top: 9px;
-  max-width: 640px;
+  max-width: 100%;
   border: 1px solid var(--app-border);
   border-radius: 14px;
   background: var(--app-panel);
@@ -399,6 +400,15 @@ a.dlv-thumb:hover { border-color: var(--app-accent-border); }
 .dlv-btn.primary:hover { text-decoration: none; filter: brightness(1.04); }
 .dlv-btn.ghost { background: var(--app-panel); border-color: var(--app-border-2, var(--app-border)); color: var(--app-text2); }
 .dlv-btn.ghost:hover { border-color: var(--app-accent); color: var(--app-accent); }
+/* 预览/打开是主入口，但不做实心蓝块：浅蓝底 + 蓝字，与「我的产物」的预览钮同一档 */
+.dlv-btn.quiet,
+.dlv-icon-btn.quiet {
+  background: var(--app-accent-weak);
+  border-color: var(--app-accent-border);
+  color: var(--app-accent);
+}
+.dlv-btn.quiet:hover,
+.dlv-icon-btn.quiet:hover { border-color: var(--app-accent); }
 .dlv-caret { font-size: 11px; transition: transform .15s; }
 .dlv-caret.up { transform: rotate(180deg); }
 
@@ -438,7 +448,6 @@ a.dlv-thumb:hover { border-color: var(--app-accent-border); }
 .dlv.shared .dlv-facts { opacity: 1; }
 
 @media (max-width: 768px) {
-  .dlv { max-width: 100%; }
   .dlv-thumb { width: 104px; height: 70px; }
   .one-thumb { width: 92px; height: 70px; }
   .one-main { gap: 10px; padding: 9px 11px; }
