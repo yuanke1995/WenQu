@@ -61,6 +61,7 @@ public class BuiltinSkillSeeder implements ApplicationRunner {
         Resource[] resources = new PathMatchingResourcePatternResolver()
                 .getResources("classpath*:" + CLASSPATH_ROOT + "/**");
         int written = 0;
+        int discovered = 0;
         for (Resource r : resources) {
             if (!r.isReadable()) continue;
             String url = r.getURL().toString();
@@ -68,6 +69,7 @@ public class BuiltinSkillSeeder implements ApplicationRunner {
             if (url.endsWith("/")) continue;
             String relative = relativeOf(url);
             if (relative == null || relative.isBlank()) continue;
+            discovered++;
             Path out = target.resolve(relative);
             // 目录穿越防线：技能名来自打包内容，但仍不该有东西能写到目标目录之外
             if (!out.normalize().startsWith(target.normalize())) {
@@ -90,8 +92,9 @@ public class BuiltinSkillSeeder implements ApplicationRunner {
             Files.move(tmp, out, StandardCopyOption.REPLACE_EXISTING);
             written++;
         }
-        if (written == 0 && !Files.isDirectory(target)) {
-            log.warn("[FAIL-LOUD] classpath 里没有任何内置技能（打包缺 skills/ 目录？）target={}", target);
+        if (discovered == 0) {
+            // 可以合法为 0：当前产品不随包分发内置技能。与「打包漏了 skills/」无法区分，故不做 FAIL-LOUD。
+            log.info("[SKILL] 本版未随包分发内置技能（classpath:skills 为空）target={}", target);
         }
         return written;
     }

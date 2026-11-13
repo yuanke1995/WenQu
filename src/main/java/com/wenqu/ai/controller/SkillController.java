@@ -533,24 +533,14 @@ public class SkillController {
 
     // ==================== 分类解析 ====================
 
-    /** 内置技能分类（技能名 → 中文分类）；新增内置技能时同步这张表。 */
-    private static final Map<String, String> BUILTIN_CATEGORY = Map.of(
-            "multi-source-crosscheck", "检索问答",
-            "step-by-step-answering", "回答规范",
-            "web-search-usage", "检索问答");
-
     /**
      * 分类口径：用户技能取 frontmatter category，缺省按名称关键词推断；
-     * 内置取映射表；工作区沉淀固定一档。前端 chips 从行数据里聚合，不另发接口。
+     * 工作区沉淀固定一档。前端 chips 从行数据里聚合，不另发接口。
      */
     private static String categoryOf(String source, String name, UserSkillStore.InstalledSkill meta) {
         if (WenquSkillRepository.SOURCE_WORKSPACE.equals(source)) return "工作区沉淀";
         if (meta != null && meta.category() != null && !meta.category().isBlank()) {
             return meta.category().trim();
-        }
-        if (WenquSkillRepository.SOURCE_BUILTIN.equals(source)) {
-            String c = BUILTIN_CATEGORY.get(name == null ? "" : name.toLowerCase(Locale.ROOT));
-            return c == null ? "通用" : c;
         }
         return guessCategory(name);
     }
