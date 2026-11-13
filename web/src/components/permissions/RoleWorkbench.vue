@@ -59,7 +59,7 @@
         </div>
         <div class="rw-head-sub">
           <span>成员 <b>{{ statOf(activeRole.code).memberCount ?? '—' }}</b></span>
-          <span>可见菜单 <b>{{ statOf(activeRole.code).menuCount ?? '—' }} / {{ menus.length }}</b></span>
+          <span>可见菜单 <b>{{ statOf(activeRole.code).menuCount ?? '—' }} / {{ visibleMenuCount }}</b></span>
           <span>允许 <b>{{ activeRole.adminFlag === 1 ? '全部' : (statOf(activeRole.code).permissionCount ?? '—') }}</b></span>
           <span>禁止 <b>{{ statOf(activeRole.code).denyCount ?? 0 }}</b></span>
           <span>数据范围 <b>{{ scopeText }}</b></span>
@@ -155,6 +155,7 @@ const statsByCode = computed(() => {
   return map
 })
 const statOf = code => statsByCode.value[code] || {}
+const visibleMenuCount = computed(() => (props.menus || []).filter(m => m.visible !== 0).length)
 const activeRole = computed(() => props.roles.find(r => r.code === activeCode.value) || null)
 const activeCount = computed(() => props.roles.filter(r => r.status !== 0).length)
 const emptyCount = computed(() => props.roles.filter(r => r.builtin !== 1 && (statOf(r.code).memberCount ?? 0) === 0).length)

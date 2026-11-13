@@ -130,8 +130,16 @@ public class RbacSeedRunner implements ApplicationRunner {
      */
     private static final List<String> RETIRED_MENUS = List.of("menu-help", "menu-oidc-providers");
 
-    /** 质量页合并后隐藏的旧入口：保留菜单行/API 归属，只不再下发侧栏。 */
-    private static final List<String> HIDDEN_MENUS = List.of("menu-dashboard", "menu-agents-tab-eval");
+    /**
+     * 质量页的页签菜单（renderAs=tab）：检索评估 / 智能体评测 / 数据看板。
+     * <p>评测与数据看板原分别挂在智能体页、顶级行；并入「质量」后页签清单由本表驱动，
+     * {@code menu-agents-tab-eval} 沿用旧 id——接口归属（{@code c_ai_menu_api}）随行保留。</p>
+     */
+    private static final List<String[]> QUALITY_TAB_MENUS = List.of(
+            new String[]{"menu-quality-tab-retrieval", "检索评估", "/quality?view=eval", "10", "menu-evaluation"},
+            new String[]{"menu-agents-tab-eval", "智能体评测", "/quality?view=agent", "20", "menu-evaluation"},
+            new String[]{"menu-dashboard", "数据看板", "/quality?view=dashboard", "30", "menu-evaluation"}
+    );
 
     /**
      * 企业面专属菜单：standard 档不下发、也不出现在菜单管理页（V3 列 enterprise_only）。
@@ -144,7 +152,8 @@ public class RbacSeedRunner implements ApplicationRunner {
     private static final List<String> USER_MENUS =
             List.of("menu-chat", "menu-agents", "menu-market", "menu-knowledge", "menu-artifacts", "menu-stats",
                     "menu-evaluation",
-                    // 智能体的 Tab：按项绑定，进智能体即默认可见（评测已并入「质量」页）
+                    // 智能体的 Tab：按项绑定，进智能体即默认可见；
+                    // 「智能体评测」已并入「质量」页，菜单行 id 沿用 menu-agents-tab-eval，绑定照旧
                     "menu-agents-tab-providers", "menu-agents-tab-agents", "menu-agents-tab-skills",
                     "menu-agents-tab-mcp", "menu-agents-tab-workflow", "menu-agents-tab-scheduled");
 
@@ -185,6 +194,10 @@ public class RbacSeedRunner implements ApplicationRunner {
             log.info("[RbacSeed] 已退役内置菜单 {}", mid);
         }
         if (menuRetired > 0) seeded = true;
+        // 「质量」页签搬家只做一次：旧库里评测行的父还挂在 menu-agents。以旧父为判据，
+        // 结构同步 + 角色绑定迁移跑完后不再触发——管理员后续在权限页的解绑不会被重启恢复。
+        com.wenqu.ai.model.Menu legacyEvalTab = menuMapper.selectById("menu-agents-tab-eval");
+        boolean qualityTabsMoved = legacyEvalTab != null && "menu-agents".equals(legacyEvalTab.getParentId());
         int menuAdded = 0;
         LocalDateTime now = LocalDateTime.now();
         for (String[] d : BUILTIN_MENUS) {
@@ -208,9 +221,11 @@ public class RbacSeedRunner implements ApplicationRunner {
             log.info("[RbacSeed] 已补齐 {} 个内置菜单（共 {} 个）", menuAdded, BUILTIN_MENUS.size());
         }
         // 内置 Tab 菜单：与侧栏菜单同一补齐语义（按 id 补缺失，存在的不动）。
-        // 父菜单（menu-agents / menu-permissions）一定先于本循环存在于 BUILTIN_MENUS，无需再验父存在性。
+        // 父菜单（menu-agents / menu-permissions / menu-evaluation）一定先于本循环存在，无需再验父存在性。
         int tabAdded = 0;
-        for (String[] d : BUILTIN_TAB_MENUS) {
+        List<String[]> tabMenus = new java.util.ArrayList<>(BUILTIN_TAB_MENUS);
+        tabMenus.addAll(QUALITY_TAB_MENUS);
+        for (String[] d : tabMenus) {
             if (existingMenuIds.contains(d[0])) continue;
             Menu m = new Menu();
             m.setId(d[0]);
@@ -229,13 +244,12 @@ public class RbacSeedRunner implements ApplicationRunner {
         }
         if (tabAdded > 0) {
             seeded = true;
-            log.info("[RbacSeed] 已补齐 {} 个内置 Tab 菜单", tabAdded);
+            log.info("[RbacSeed] 已补齐 {} 个内置 Tab 菜单（共 {} 个）", tabAdded, tabMenus.size());
         }
         // 内置 Tab 行只在缺失时插入，存量库那一行可能仍是旧 path/parent；
         // 这里做一次幂等同步（只改结构两列，不删角色绑定）。
         if (syncBuiltinTab(AUDIT_TAB_MENU)) seeded = true;
-        // 质量页合并：menu-evaluation 原地复用为「质量」（保留 id 与 API 归属），
-        // 旧「数据看板」菜单与智能体评测 Tab 保留行、只隐藏，避免删行连带丢 API 归属。
+        // 质量页合并：menu-evaluation 原地复用为「质量」（保留 id 与 API 归属）。
         if (syncBuiltinMenu(new String[]{"menu-evaluation", "质量", "ExperimentOutlined", "/quality", "50", "1"})) {
             seeded = true;
         }
@@ -249,13 +263,33 @@ public class RbacSeedRunner implements ApplicationRunner {
                 log.info("[RbacSeed] 已标记企业面专属菜单 {}", mid);
             }
         }
-        for (String mid : HIDDEN_MENUS) {
-            Menu m = menuMapper.selectById(mid);
-            if (m != null && (m.getVisible() == null || m.getVisible() != 0)) {
-                m.setVisible(0);
-                menuMapper.updateById(m);
+        // 质量页签：存量库把评测/数据看板两行搬到「质量」下并打开可见（只在搬家那一次动 visible），
+        // 新增的「检索评估」行由上面的插入循环补上。
+        int tabsSynced = 0;
+        for (String[] d : QUALITY_TAB_MENUS) {
+            if (syncQualityTab(d, qualityTabsMoved)) tabsSynced++;
+        }
+        if (tabsSynced > 0) {
+            seeded = true;
+            log.info("[RbacSeed] 已同步 {} 条质量页签菜单", tabsSynced);
+        }
+        // 质量页签改为菜单驱动：原先页签是硬编码的，所有能进 /quality 的角色都默认看到「智能体评测」。
+        // 现在按绑定下发，为存量角色补绑一次（INSERT IGNORE，仅搬家那一次触发，不恢复管理员后来的解绑）。
+        if (qualityTabsMoved) {
+            int bound = 0;
+            for (String tenantId : distinctTenants()) {
+                try {
+                    com.wenqu.ai.util.TenantContext.bind(tenantId);
+                    for (String roleCode : roleMenuMapper.roleCodesOfMenu("menu-evaluation")) {
+                        bound += roleMenuMapper.bind(roleCode, "menu-agents-tab-eval");
+                    }
+                } finally {
+                    com.wenqu.ai.util.TenantContext.bind(null);
+                }
+            }
+            if (bound > 0) {
                 seeded = true;
-                log.info("[RbacSeed] 已隐藏旧入口菜单 {}", mid);
+                log.info("[RbacSeed] 质量页签改为菜单驱动：已为 {} 条角色授权补绑「智能体评测」", bound);
             }
         }
         // user 角色基础菜单：按项补齐。已绑定的项不重复写，故对管理员的既有绑定零影响。
@@ -299,6 +333,27 @@ public class RbacSeedRunner implements ApplicationRunner {
         m.setSortOrder(sort);
         menuMapper.updateById(m);
         log.info("[RbacSeed] 已同步内置 Tab 菜单 {} -> {}（父 {}）", d[0], d[2], d[4]);
+        return true;
+    }
+
+    /**
+     * 同步「质量」页签的结构字段（名称/路径/父/排序/渲染位置），并在搬家那一次打开可见性。
+     * <p>之后不再动 visible——管理员在权限页的隐藏调整不该被每次重启恢复。</p>
+     */
+    private boolean syncQualityTab(String[] d, boolean turnVisibleOn) {
+        Menu m = menuMapper.selectById(d[0]);
+        if (m == null) return false;
+        int sort = Integer.parseInt(d[3]);
+        boolean changed = false;
+        if (!java.util.Objects.equals(m.getName(), d[1])) { m.setName(d[1]); changed = true; }
+        if (!java.util.Objects.equals(m.getPath(), d[2])) { m.setPath(d[2]); changed = true; }
+        if (!java.util.Objects.equals(m.getParentId(), d[4])) { m.setParentId(d[4]); changed = true; }
+        if (!"tab".equals(m.getRenderAs())) { m.setRenderAs("tab"); changed = true; }
+        if (!java.util.Objects.equals(m.getSortOrder(), sort)) { m.setSortOrder(sort); changed = true; }
+        if (turnVisibleOn && !Integer.valueOf(1).equals(m.getVisible())) { m.setVisible(1); changed = true; }
+        if (!changed) return false;
+        menuMapper.updateById(m);
+        log.info("[RbacSeed] 已同步质量页签菜单 {} -> {}（父 {}）", d[0], d[2], d[4]);
         return true;
     }
 

@@ -743,6 +743,9 @@ public class RoleService {
                         && memberCounts.getOrDefault(r.getCode(), 0L) == 0)
                 .count();
         long hiddenMenus = menus.stream().filter(m -> m.getVisible() != null && m.getVisible() == 0).count();
+        Set<String> visibleMenuIds = menus.stream()
+                .filter(m -> m.getVisible() == null || m.getVisible() != 0)
+                .map(com.wenqu.ai.model.Menu::getId).collect(java.util.stream.Collectors.toSet());
         long apisWithoutPermission = apis.stream()
                 .filter(a -> a.getPermissionCode() == null || a.getPermissionCode().isBlank()).count();
         long apisWithoutMenu = apis.stream().filter(a -> !boundApiIds.contains(a.getId())).count();
@@ -777,7 +780,7 @@ public class RoleService {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("code", role.getCode());
             m.put("memberCount", memberCounts.getOrDefault(role.getCode(), 0L));
-            m.put("menuCount", (long) roleMenuMapper.menuIdsOfRole(role.getCode()).size());
+            m.put("menuCount", roleMenuMapper.menuIdsOfRole(role.getCode()).stream().filter(visibleMenuIds::contains).count());
             m.put("permissionCount", allowCount);
             m.put("denyCount", denyCount);
             m.put("lastUpdated", role.getUpdateTime());

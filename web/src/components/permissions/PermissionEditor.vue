@@ -31,10 +31,10 @@
           <section class="pe-menus">
             <div class="pe-sec">
               <b>可见菜单</b>
-              <span class="pe-cnt">{{ checkedMenuIds.length }} / {{ menus.length }}</span>
+              <span class="pe-cnt">{{ checkedVisibleCount }} / {{ visibleMenus.length }}</span>
               <span class="pe-spacer"></span>
               <button class="pe-link" type="button" @click="selectAllMenus">全选</button>
-              <button class="pe-link" type="button" @click="checkedMenuIds = []">清空</button>
+              <button class="pe-link" type="button" @click="clearVisibleMenus">清空</button>
             </div>
             <a-tree v-if="menuTreeData.length" class="pe-tree" checkable default-expand-all
                     :selectable="false" :check-strictly="true"
@@ -127,6 +127,11 @@ const baseline = ref({ menuIds: [], perms: {}, exempt: {} })
 
 const stats = computed(() => permissionStats(permState.value))
 
+// 隐藏菜单（visible=0）不进「可见菜单」树；其绑定仍留在 checkedMenuIds，保存时不丢
+const visibleMenus = computed(() => (props.menus || []).filter(m => m.visible !== 0))
+const visibleIdSet = computed(() => new Set(visibleMenus.value.map(m => m.id)))
+const checkedVisibleCount = computed(() => checkedMenuIds.value.filter(id => visibleIdSet.value.has(id)).length)
+
 function toTreeData (list) {
   return (list || []).map(m => ({
     key: m.id,
@@ -137,7 +142,7 @@ function toTreeData (list) {
 }
 
 const menuTreeData = computed(() => {
-  const tree = buildMenuTree(props.menus)
+  const tree = buildMenuTree(visibleMenus.value)
   const k = search.value.trim().toLowerCase()
   if (!k) return toTreeData(tree)
   const hit = n => String(n.name || '').toLowerCase().includes(k) || String(n.path || '').toLowerCase().includes(k)
@@ -244,12 +249,16 @@ async function load () {
 watch(() => [props.role && props.role.code, props.menus.length, props.catalog.length], load, { immediate: true })
 
 function selectAllMenus () {
-  checkedMenuIds.value = props.menus.map(m => m.id)
+  checkedMenuIds.value = [...new Set([...checkedMenuIds.value, ...visibleMenus.value.map(m => m.id)])]
+}
+
+function clearVisibleMenus () {
+  checkedMenuIds.value = checkedMenuIds.value.filter(id => !visibleIdSet.value.has(id))
 }
 
 function onMenuCheck (_keys, e) {
   const on = !!e?.checked
-  const subtree = menuSubtreeIds(props.menus, e?.node?.key)
+  const subtree = menuSubtreeIds(visibleMenus.value, e?.node?.key)
   if (on) checkedMenuIds.value = [...new Set([...checkedMenuIds.value, ...subtree])]
   else checkedMenuIds.value = checkedMenuIds.value.filter(id => !subtree.has(id))
 }
@@ -315,7 +324,7 @@ function confirmReadonlyTemplate () {
     : `允许 ${readCount} 个只读授权点，其余 ${writeCount} 个写类动作保持未授予（不额外禁止，避免压掉本角色以外的授权）。`
   Modal.confirm({
     title: '套用「只读管理员」模板？',
-    content: `${body}可见菜单设为全部 ${props.menus.length} 个。套用后仍可逐项调整，点「保存权限」才生效。`,
+    content: `${body}可见菜单设为全部 ${visibleMenus.value.length} 个。套用后仍可逐项调整，点「保存权限」才生效。`,
     okText: '套用',
     cancelText: '取消',
     onOk: applyReadonlyTemplate
@@ -336,7 +345,10 @@ function applyReadonlyTemplate () {
   }
   permState.value = next
   exemptMap.value = ex
-  checkedMenuIds.value = props.menus.map(m => m.id)
+  checkedMenuIds.value = [...new Set([
+    ...checkedMenuIds.value.filter(id => !visibleIdSet.value.has(id)),
+    ...visibleMenus.value.map(m => m.id)
+  ])]
   message.success('已套用「只读管理员」模板，点「保存权限」生效')
 }
 
@@ -351,7 +363,7 @@ async function save () {
     const r = await saveRolePermissionPoints(props.role.code, checkedMenuIds.value, permissions, denies)
     if (r && r.success === false) throw new Error(r.msg || '保存失败')
     baseline.value = snapshot()
-    message.success(`已保存：菜单 ${checkedMenuIds.value.length} · 允许 ${permissions.length} · 禁止 ${denies.length}`)
+    message.success(`已保存：菜单 ${checkedVisibleCount.value} · 允许 ${permissions.length} · 禁止 ${denies.length}`)
     emit('saved')
   } catch (e) {
     message.error(e.message || '保存失败')

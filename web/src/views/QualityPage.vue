@@ -1,52 +1,80 @@
 <template>
+  <!-- 质量页：Tab 清单由菜单表数据驱动（renderAs=tab 且 parent=menu-evaluation），
+       与「智能体」「权限管理」两页同一套模式：菜单表管「有哪些/叫什么/什么顺序」，
+       本组件只管「每个 key 渲染成什么」（TAB_COMPONENTS 映射）。
+       检索评估/数据看板原为管理员专属、智能体评测原为全员可见——收编后统一按角色绑定下发。 -->
   <div class="app-page quality-page">
     <div class="app-page-head">
       <h3 class="app-page-title">质量</h3>
-      <span class="head-stat">检索评估 · 智能体评测 · 数据看板</span>
+      <span class="head-stat">{{ tabs.map(t => t.name).join(' · ') }}</span>
     </div>
 
-    <a-tabs v-model:activeKey="active" class="quality-tabs" @change="onTab">
-      <a-tab-pane v-for="t in tabs" :key="t.key" :tab="t.label" />
-    </a-tabs>
+    <a-spin v-if="loading" style="display:block;margin:48px auto" />
+    <a-empty v-else-if="!tabs.length" description="没有可用的功能 Tab（请联系管理员授权）"
+             style="margin-top:64px" />
+    <template v-else>
+      <a-tabs v-model:activeKey="active" class="quality-tabs" @change="onTab">
+        <a-tab-pane v-for="t in tabs" :key="t.key" :tab="t.name" />
+      </a-tabs>
 
-    <div class="quality-body">
-      <keep-alive>
-        <component :is="current" />
-      </keep-alive>
-    </div>
+      <div class="quality-body">
+        <keep-alive>
+          <component :is="current" />
+        </keep-alive>
+      </div>
+    </template>
   </div>
 </template>
 
 <script setup>
-import { computed, defineAsyncComponent, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { isAdminSync } from '../utils/auth'
+import { ensureAuth } from '../utils/auth'
 
 const EvaluationPage = defineAsyncComponent(() => import('./EvaluationPage.vue'))
 const AgentEvalPage = defineAsyncComponent(() => import('./AgentEvalPage.vue'))
 const DashboardPage = defineAsyncComponent(() => import('./DashboardPage.vue'))
 
+/** tabKey → 组件。菜单表不知道组件的存在，这张表是数据与视图之间唯一的桥 */
+const TAB_COMPONENTS = {
+  eval: EvaluationPage,
+  agent: AgentEvalPage,
+  dashboard: DashboardPage
+}
+
+/** 从页签菜单的 path（/quality?view=xxx）解析组件映射 key */
+const tabKeyOf = p => {
+  try { return new URLSearchParams(String(p || '').split('?')[1] || '').get('view') } catch (e) { return null }
+}
+
 const route = useRoute()
 const router = useRouter()
+const loading = ref(true)
+/** 可见 Tab 清单：来自 /auth/me 菜单树的 children（已按角色过滤 + sortOrder 排序） */
+const tabs = ref([])
 
-const ALL_TABS = [
-  { key: 'eval', label: '检索评估', component: EvaluationPage, admin: true },
-  { key: 'agent', label: '智能体评测', component: AgentEvalPage, admin: false },
-  { key: 'dashboard', label: '数据看板', component: DashboardPage, admin: true }
-]
+onMounted(async () => {
+  const info = await ensureAuth()
+  const host = (info?.menus || []).find(m => m && m.path === '/quality')
+  tabs.value = ((host && host.children) || [])
+    .filter(c => c && c.renderAs === 'tab')
+    .map(c => ({ id: c.id, key: tabKeyOf(c.path), name: c.name }))
+    .filter(t => t.key && TAB_COMPONENTS[t.key]) // 菜单表里有、代码里还没映射的 Tab 不渲染（升级半程态容错）
+  loading.value = false
+  syncFromRoute()
+})
 
-const tabs = computed(() => isAdminSync() ? ALL_TABS : ALL_TABS.filter(t => !t.admin))
 const active = ref('')
-
+// URL 里的 view 被权限收回（不在可见集合）或非法时回落第一个可见 Tab，避免停在空白页
 const pick = key => {
   const visible = tabs.value
   return visible.some(t => t.key === key) ? key : visible[0]?.key || ''
 }
-
-const current = computed(() => (tabs.value.find(t => t.key === active.value) || tabs.value[0])?.component)
-
+const current = computed(() => {
+  const t = tabs.value.find(x => x.key === active.value) || tabs.value[0]
+  return t ? TAB_COMPONENTS[t.key] : null
+})
 const syncFromRoute = () => { active.value = pick(String(route.query.view || '')) }
-syncFromRoute()
 watch(() => route.query.view, syncFromRoute)
 
 const onTab = key => {
