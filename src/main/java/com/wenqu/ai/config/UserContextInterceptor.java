@@ -54,18 +54,21 @@ public class UserContextInterceptor implements HandlerInterceptor {
     private final com.wenqu.ai.service.UserRoleService userRoleService;
     private final com.wenqu.ai.service.ApiKeyService apiKeyService;
     private final com.wenqu.ai.service.ServiceAccountService serviceAccountService;
+    private final com.wenqu.ai.service.OnlinePresenceService presenceService;
     private final ObjectMapper objectMapper;
 
     public UserContextInterceptor(UserMapper userMapper, AuthService authService,
                                   com.wenqu.ai.service.UserRoleService userRoleService,
                                   com.wenqu.ai.service.ApiKeyService apiKeyService,
                                   com.wenqu.ai.service.ServiceAccountService serviceAccountService,
+                                  com.wenqu.ai.service.OnlinePresenceService presenceService,
                                   ObjectMapper objectMapper) {
         this.userMapper = userMapper;
         this.authService = authService;
         this.userRoleService = userRoleService;
         this.apiKeyService = apiKeyService;
         this.serviceAccountService = serviceAccountService;
+        this.presenceService = presenceService;
         this.objectMapper = objectMapper;
     }
 
@@ -106,6 +109,15 @@ public class UserContextInterceptor implements HandlerInterceptor {
             Object ep = claims.get("ep");
             if (!(ep instanceof Number n) || n.longValue() != want) {
                 return reject(response, "登录状态已失效（账号安全状态已变更或被强制下线），请重新登录");
+            }
+            // 在线口径与令牌有效期同一条：最近一次请求距今超过 24 小时即失效（滑动窗口），
+            // 请求不断就一直有效。Redis 故障时 touch 放行，不把缓存故障放大成全员掉线。
+            long iat = claims.get("iat") instanceof Number t ? t.longValue() : 0L;
+            String tenantId = u.getTenantId() == null || u.getTenantId().isBlank()
+                    ? com.wenqu.ai.util.TenantContext.DEFAULT_TENANT : u.getTenantId();
+            if (!presenceService.touch(tenantId, u.getUid(),
+                    com.wenqu.ai.service.OnlinePresenceService.sessionId(claims, token), iat)) {
+                return reject(response, "登录已超过 24 小时未使用，请重新登录");
             }
             request.setAttribute(ATTR_AUTHENTICATED, Boolean.TRUE);
             // 多角色装载（并集判定口径）：鉴权一律用 roles()，role() 仅展示

@@ -56,9 +56,10 @@ public class AuthController {
         return ResultJson.ok(authService.login(id, body.get("password")), "登录成功");
     }
 
-    @Operation(summary = "退出登录", description = "令牌为无状态，前端清除本地令牌即可；此处仅作语义化端点")
+    @Operation(summary = "退出登录", description = "令牌为无状态，前端清除本地令牌即可；服务端顺手回收当前设备的在线会话")
     @PostMapping("/logout")
-    public ResultJson logout() {
+    public ResultJson logout(@RequestHeader(value = "Authorization", required = false) String authorization) {
+        authService.logoutSession(authorization);
         return ResultJson.ok("已退出");
     }
 

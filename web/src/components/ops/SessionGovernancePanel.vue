@@ -3,6 +3,7 @@
     <!-- 指标 -->
     <div class="metric-grid">
       <div class="app-card metric"><div class="metric-label">在册成员</div><div class="metric-num">{{ statText(stats.total) }}</div><div class="metric-sub">含禁用账号</div></div>
+      <div class="app-card metric"><div class="metric-label">在线用户</div><div class="metric-num ok">{{ statText(presence.count) }}</div><div class="metric-sub">最近 24 小时内有请求</div></div>
       <div class="app-card metric"><div class="metric-label">锁定中</div><div class="metric-num warn">{{ statText(stats.locked) }}</div><div class="metric-sub">连续失败触发 · 重置密码可解锁</div></div>
       <div class="app-card metric"><div class="metric-label">今日登录</div><div class="metric-num">{{ statText(stats.today) }}</div></div>
       <div class="app-card metric"><div class="metric-label">30 天未登录</div><div class="metric-num">{{ statText(stats.inactive) }}</div><div class="metric-sub">含从未登录</div></div>
@@ -44,7 +45,7 @@
       </div>
 
       <a-table class="session-table" :columns="columns" :data-source="rows" row-key="uid" size="small"
-               table-layout="fixed" :loading="loading" :scroll="{ x: 920 }"
+               table-layout="fixed" :loading="loading" :scroll="{ x: 1120 }"
                :row-selection="{ selectedRowKeys: selectedUids, onChange: onSelectChange }"
                :customRow="rowProps"
                :pagination="{ current: page, pageSize: size, total, onChange: onPage, showSizeChanger: false, showTotal: t => `共 ${t} 人` }">
@@ -57,6 +58,16 @@
                 <code class="session-uid">{{ record.uid }}</code>
               </div>
             </div>
+          </template>
+          <template v-else-if="column.key === 'online'">
+            <span v-if="presence.loading || presence.error" class="session-muted" :title="presence.error">—</span>
+            <span v-else class="session-online" :class="{ on: isOnline(record) }">
+              <i></i>{{ isOnline(record) ? '在线' : '离线' }}
+            </span>
+          </template>
+          <template v-else-if="column.key === 'lastActive'">
+            <span v-if="lastActiveOf(record)" :title="fullTime(lastActiveOf(record))">{{ relativeTime(lastActiveOf(record)) }}</span>
+            <span v-else class="session-muted">—</span>
           </template>
           <template v-else-if="column.key === 'department'">
             <span v-if="record.departmentId" class="session-dept">{{ deptName(record.departmentId) }}</span>
@@ -84,7 +95,7 @@
         </template>
       </a-table>
       <div class="session-foot">
-        会话为无状态 JWT：强制下线 = 会话代数 + 1，该账号所有设备立即失效。设备级在线会话（IP / UA / 最后活跃）不在本次范围。
+        在线口径：最近 24 小时内有带令牌请求（Redis 登记，多副本共享），请求不断即持续有效；闲置满 24 小时需重新登录。强制下线 = 会话代数 + 1，该账号所有设备立即失效。
       </div>
     </section>
 
@@ -155,7 +166,7 @@ import { computed, onMounted, ref } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { SearchOutlined } from '@ant-design/icons-vue'
 import {
-  pageUsers, listDepartments, forceLogoutUser, batchForceLogoutUsers, listAuditEvents
+  pageUsers, listDepartments, forceLogoutUser, batchForceLogoutUsers, listAuditEvents, getOpsPresence
 } from '../../api'
 import UserAvatar from '../UserAvatar.vue'
 
@@ -166,12 +177,14 @@ const drawerFooterStyle = { padding: '11px 18px', borderTop: '1px solid var(--ap
 
 const columns = [
   { title: '成员', key: 'member' },
-  { title: '部门', key: 'department', width: 120 },
-  { title: '最近登录', key: 'lastLoginTime', width: 130 },
-  { title: '失败', key: 'fail', width: 70 },
-  { title: '账号状态', key: 'status', width: 110 },
-  { title: '会话代数', key: 'epoch', width: 90 },
-  { title: '操作', key: 'action', width: 150 }
+  { title: '在线', key: 'online', width: 78 },
+  { title: '部门', key: 'department', width: 110 },
+  { title: '最近登录', key: 'lastLoginTime', width: 120 },
+  { title: '最后活跃', key: 'lastActive', width: 110 },
+  { title: '失败', key: 'fail', width: 64 },
+  { title: '账号状态', key: 'status', width: 100 },
+  { title: '会话代数', key: 'epoch', width: 84 },
+  { title: '操作', key: 'action', width: 140 }
 ]
 const statusOptions = [{ value: 1, label: '启用中' }, { value: 0, label: '已禁用' }]
 const riskOptions = [
@@ -201,6 +214,29 @@ const stats = ref({ total: null, locked: null, today: null, inactive: null, fail
 const hasRisk = computed(() => Number(stats.value.locked || 0) > 0
   || Number(stats.value.fail || 0) > 0 || Number(stats.value.inactive || 0) > 0)
 const statText = v => (v === null || v === undefined ? '—' : v)
+
+// 在线口径由后端给（Redis 登记·最近 24 小时内有请求）；读失败时整列显示 —，不能显示成「离线」
+const presence = ref({ count: null, users: {}, loading: true, error: '' })
+const isOnline = r => !presence.value.loading && !presence.value.error && !!presence.value.users[r.uid]
+const lastActiveOf = r => presence.value.users[r.uid] || ''
+async function loadPresence (uids = []) {
+  presence.value = { ...presence.value, loading: true, error: '' }
+  try {
+    const r = await getOpsPresence(uids)
+    if (r.success) {
+      presence.value = {
+        count: r.data.count,
+        users: r.data.users || {},
+        loading: false,
+        error: r.data.warning || ''
+      }
+    } else {
+      presence.value = { ...presence.value, loading: false, error: r.msg || '在线数据不可用' }
+    }
+  } catch (e) {
+    presence.value = { ...presence.value, loading: false, error: e.message || '在线数据不可用' }
+  }
+}
 
 const fmtTime = s => (s ? String(s).replace('T', ' ').slice(0, 19) : '')
 const fullTime = s => (s ? String(s).replace('T', ' ') : '')
@@ -267,7 +303,11 @@ async function loadPage () {
     rows.value = []
     total.value = 0
     loadError.value = e.message || '网络错误'
-  } finally { loading.value = false }
+  } finally {
+    loading.value = false
+    // 名单成功与否都取一次在线快照：列表失败时「在线用户」指标仍应有值
+    loadPresence(rows.value.map(x => x.uid))
+  }
 }
 
 async function loadStats () {
@@ -383,11 +423,12 @@ onMounted(() => {
 
 <style scoped>
 .ops-session { display: flex; flex-direction: column; gap: 10px; }
-.metric-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.metric-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
 .metric { padding: 12px 14px; }
 .metric-label { font-size: 10.5px; color: var(--app-text3); }
 .metric-num { font-size: 23px; font-weight: 700; line-height: 1.2; margin-top: 5px; letter-spacing: -.02em; }
 .metric-num.warn { color: var(--app-warn); }
+.metric-num.ok { color: var(--app-ok); }
 .metric-sub { font-size: 10.5px; color: var(--app-text3); margin-top: 3px; }
 .session-note { display: flex; align-items: center; gap: 10px; margin: 0; padding: 9px 12px; border-radius: 8px; }
 .session-note-ic {
@@ -429,6 +470,10 @@ onMounted(() => {
 .session-name { color: var(--app-text); font-size: 12px; }
 .session-uid { font-size: 10.5px; color: var(--app-text3); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .session-dept { color: var(--app-text2); }
+.session-online { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--app-text3); }
+.session-online i { width: 6px; height: 6px; border-radius: 50%; background: #cfd4dc; flex: none; }
+.session-online.on { color: var(--app-ok); }
+.session-online.on i { background: var(--app-ok); box-shadow: 0 0 0 2px rgba(18, 183, 106, .16); }
 .session-muted { font-size: 11.5px; color: var(--app-text3); }
 .session-fail { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--app-warn-text, #a3691b); font-weight: 600; }
 .session-fail.zero { color: var(--app-text3); font-weight: 400; }
@@ -478,6 +523,9 @@ onMounted(() => {
 .event-detail { color: var(--app-text2); line-height: 1.5; }
 .drawer-foot { display: flex; justify-content: flex-end; gap: 8px; padding-top: 6px; }
 
+@media (max-width: 1200px) {
+  .metric-grid { grid-template-columns: repeat(3, 1fr); }
+}
 @media (max-width: 900px) {
   .metric-grid { grid-template-columns: repeat(2, 1fr); }
   .session-toolbar { gap: 6px; }

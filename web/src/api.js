@@ -1878,6 +1878,10 @@ export const forceLogoutUser = uid =>
 /** 批量强制下线：uids 单次最多 100 个，逐个入审计 */
 export const batchForceLogoutUsers = uids =>
   request('/ops/user/batch-force-logout', { method: 'POST', body: JSON.stringify({ uids }) })
+/** 在线快照（uids 为当页成员；空=只取人数）。返回 {windowHours, count, users:{uid:最后活跃ISO}}，
+ *  口径：最近 24 小时内有带令牌请求。Redis 不可用时 count=null 并带 warning */
+export const getOpsPresence = (uids = []) =>
+  request(`/ops/presence${uids.length ? `?uids=${encodeURIComponent(uids.join(','))}` : ''}`)
 /** 公告管理清单（含下线的，历史可查；带 readCount） */
 export const listAnnouncements = () => request('/ops/announcement')
 /** 发布/更新公告 {id?, title, content, level, enabled, tenantId?, contentFormat, audienceType, audienceIds, startTime, endTime} */

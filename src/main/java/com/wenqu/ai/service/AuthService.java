@@ -41,6 +41,8 @@ public class AuthService {
     private final DeploymentSecrets secrets;
     /** 租户启停判据（停用租户挡登录的那条承诺落在这里与 {@link ExternalUserService#assertUsable}） */
     private final TenantService tenantService;
+    /** 在线会话登记：全端失效的动作要同步把在线索引摘掉，否则面板还会亮着 */
+    private final OnlinePresenceService presence;
 
     /** 运行时解析后的签名密钥（取用规则与多副本一致性由 DeploymentSecrets 兜住） */
     private volatile String resolvedSecret;
@@ -161,6 +163,28 @@ public class AuthService {
         return out;
     }
 
+    /**
+     * 退出登录：令牌本身无状态，回收的是当前设备这条在线会话（其他设备不受影响）。
+     * 退出后令牌在闲置满 24 小时前仍可被重放——这是无状态 JWT 的既有边界，不在这里改。
+     */
+    public void logoutSession(String authorization) {
+        if (authorization == null || !authorization.regionMatches(true, 0, "Bearer ", 0, 7)) return;
+        String token = authorization.substring(7).trim();
+        if (token.isEmpty()) return;
+        Map<String, Object> claims = claimsFromToken(token);
+        if (claims == null) return;
+        String uid = String.valueOf(claims.get("sub"));
+        if (uid.isBlank() || "null".equals(uid)) return;
+        User user = null;
+        try {
+            user = userMapper.selectById(uid);
+        } catch (Exception ignored) {
+            // 账号行刚被删也不影响回收在线记录
+        }
+        presence.offline(uid, OnlinePresenceService.sessionId(claims, token),
+                user == null ? null : user.getTenantId());
+    }
+
     /** 本人改密（校验旧密码） */
     public void changePassword(String uid, String oldPassword, String newPassword) {
         required(uid, "登录账号");
@@ -175,6 +199,7 @@ public class AuthService {
         user.setTokenEpoch(tokenEpoch(user) + 1);
         userMapper.updateById(user);
         UserContextInterceptor.evict(uid);
+        presence.offlineAll(uid, user.getTenantId());
         audit.record("[AUDIT] 修改密码 uid={}（会话代数升至 {}，全端已下线）", uid, user.getTokenEpoch());
     }
 
@@ -194,6 +219,7 @@ public class AuthService {
             user.setTokenEpoch(tokenEpoch(user) + 1);
             userMapper.updateById(user);
             UserContextInterceptor.evict(uid);
+            presence.offlineAll(uid, user.getTenantId());
             audit.record("[AUDIT] 重置密码 uid={}（会话代数升至 {}，全端已下线）", uid, user.getTokenEpoch());
         });
     }
@@ -211,6 +237,7 @@ public class AuthService {
             user.setTokenEpoch(tokenEpoch(user) + 1);
             userMapper.updateById(user);
             UserContextInterceptor.evict(uid);
+            presence.offlineAll(uid, user.getTenantId());
             audit.record("[AUDIT] 强制下线 uid={}（会话代数升至 {}）", uid, user.getTokenEpoch());
         });
     }

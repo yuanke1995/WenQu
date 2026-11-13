@@ -94,6 +94,7 @@ public final class AuthCrypto {
      * <p>会话治理判据在 {@code UserContextInterceptor}：令牌 ep 与用户当前代数不符即失效——
      * 改密 / 强制下线把代数 +1，此人所有已签发令牌（含其他设备）当场作废。
      * 没有 ep 声明的令牌一律无效：本类只签发带 ep 的令牌。
+     * <p>另带随机 {@code jti}：在线登记按「账号 + jti」区分设备，退出登录只回收当前这条会话。
      */
     public static String issueToken(String secret, String issuer, String audience,
                                     String uid, String role, long ttlSeconds, long epoch) {
@@ -107,6 +108,7 @@ public final class AuthCrypto {
         payload.put("iss", issuer);
         payload.put("aud", audience);
         payload.put("ep", epoch);
+        payload.put("jti", randomId());
         payload.put("iat", now);
         payload.put("exp", now + ttlSeconds);
         String signingInput = b64(json(header)) + "." + b64(json(payload));
@@ -160,6 +162,13 @@ public final class AuthCrypto {
 
     private static String b64(byte[] bytes) {
         return B64E.encodeToString(bytes);
+    }
+
+    /** 随机标识（jti）：128 位足够避免碰撞，不参与任何权限判定 */
+    private static String randomId() {
+        byte[] b = new byte[16];
+        RANDOM.nextBytes(b);
+        return B64E.encodeToString(b);
     }
 
     private static String b64(String text) {

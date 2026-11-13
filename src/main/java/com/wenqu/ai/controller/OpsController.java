@@ -42,6 +42,7 @@ public class OpsController {
     private final AuthService authService;
     private final AnnouncementService announcementService;
     private final AdminGuard adminGuard;
+    private final com.wenqu.ai.service.OnlinePresenceService presenceService;
 
     // ==================== 系统巡检 ====================
 
@@ -133,6 +134,24 @@ public class OpsController {
         out.put("failCount", errors.size());
         out.put("errors", errors);
         return ResultJson.ok(out, "已强制下线 " + ok + " 个账号" + (errors.isEmpty() ? "" : "，失败 " + errors.size() + " 个"));
+    }
+
+    @Operation(summary = "在线快照", description = "uids=逗号分隔（当页成员，可空）。返回 {windowHours, count, users:{uid:最后活跃ISO}}。"
+            + "在线口径：最近 24 小时内有带令牌请求；平台管理员看全局，租户管理员看本租户。Redis 读取失败时 count=null")
+    @Permission("ops:read")
+    @GetMapping("/presence")
+    public ResultJson<Map<String, Object>> presence(@RequestParam(value = "uids", required = false) String uids,
+                                                    HttpServletRequest request) {
+        if (!adminGuard.requirePermission(request, "ops:read")) return ResultJson.error("在线数据仅管理员可查看");
+        List<String> uidsWanted = new ArrayList<>();
+        if (uids != null && !uids.isBlank()) {
+            for (String s : uids.split(",")) {
+                String uid = s.trim();
+                if (!uid.isEmpty() && uidsWanted.size() < 500) uidsWanted.add(uid);
+            }
+        }
+        return ResultJson.ok(presenceService.snapshot(com.wenqu.ai.util.RequestUser.superadmin(),
+                com.wenqu.ai.util.TenantContext.current(), uidsWanted));
     }
 
     // ==================== 平台公告 ====================
