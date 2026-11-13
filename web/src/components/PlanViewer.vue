@@ -68,7 +68,7 @@
           <template v-if="rawMode">
             <div class="pv-raw-head">
               <span class="pv-raw-lab">原始计划 · v{{ sel + 1 }}</span>
-              <button type="button" class="pv-raw-back" @click="toggleRaw(false)">返回结构视图</button>
+              <button type="button" class="pv-mode-btn" @click="toggleRaw(false)">返回结构视图</button>
             </div>
             <div class="md pv-fullmd pv-raw-doc" v-html="renderMd(planText(v.plan), [])"></div>
           </template>
@@ -79,6 +79,8 @@
               {{ isCurrent ? (card.status === 'pending' ? '当前待确认版' : '当前版') : '历史版本 · 只读' }}
             </span>
             <span v-if="isHistorical" class="pv-meta-note">历史版本不可批准，请回当前版</span>
+            <button v-if="outline.steps.length && planText(v.plan)" type="button"
+                    class="pv-mode-btn" @click="toggleRaw(true)">查看计划详情</button>
           </div>
 
           <div v-if="v.feedback" class="pv-fb">
@@ -118,10 +120,6 @@
 
           <div v-if="!outline.steps.length" class="md pv-fullmd"
                v-html="renderMd(planText(v.plan) || '（计划为空）', [])"></div>
-
-          <div v-if="outline.steps.length && planText(v.plan)" class="pv-raw">
-            <button type="button" class="pv-raw-toggle" @click="toggleRaw(true)">查看原始计划</button>
-          </div>
           </template>
           </template>
 
@@ -441,7 +439,7 @@ function pick (i) {
   if (i < 0 || i >= n) return
   sel.value = i
   opinionOpen.value = false
-  rawMode.value = false
+  // 原始计划模式跟着版本一起切：读原文的人换版本还是读原文，不弹回结构视图
   setPlanViewerVersion(props.sid, props.pkey, i)
   if (bodyEl.value) bodyEl.value.scrollTop = 0
 }
@@ -591,14 +589,11 @@ onUnmounted(() => {
 .pv-del { margin-top: 9px; padding: 7px 9px; border-radius: 6px; background: var(--app-panel-2); font-size: 11px; color: var(--app-text3); }
 .pv-del s { color: var(--app-danger, #cf1322); }
 .pv-fullmd { margin-top: 4px; font-size: 12.5px; }
-.pv-raw { margin-top: 14px; padding-top: 10px; border-top: 1px dashed var(--app-border); }
-.pv-raw-toggle { border: 0; background: none; padding: 0; font-size: 11.5px; color: var(--app-text3); cursor: pointer; }
-.pv-raw-toggle:hover { color: var(--app-accent); }
-/* 原始计划独屏：标题行 + 全文，正文自己滚（不再套 280px 小窗） */
+/* 原始计划 / 结构视图：两侧的切换按钮都固定在正文顶部右侧 */
+.pv-mode-btn { margin-left: auto; border: 1px solid var(--app-border); background: var(--app-panel); border-radius: 6px; padding: 2px 8px; font-size: 11px; color: var(--app-text2); cursor: pointer; white-space: nowrap; }
+.pv-mode-btn:hover { border-color: var(--app-accent); color: var(--app-accent); }
 .pv-raw-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .pv-raw-lab { font-size: 10.5px; font-weight: 600; letter-spacing: .04em; color: var(--app-text3); }
-.pv-raw-back { margin-left: auto; border: 1px solid var(--app-border); background: var(--app-panel); border-radius: 6px; padding: 2px 8px; font-size: 11px; color: var(--app-text2); cursor: pointer; white-space: nowrap; }
-.pv-raw-back:hover { border-color: var(--app-accent); color: var(--app-accent); }
 .pv-raw-doc { margin-top: 0; }
 
 /* ---------- 页签 ---------- */

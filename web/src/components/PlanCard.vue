@@ -332,7 +332,9 @@ const fallbackText = computed(() => {
   return lines.slice(0, 2).join('\n')
 })
 
-// 收起锚卡片底边、展开锚卡片顶边：点按点之后卡片留在眼前，而不是滑到计划下面
+// 折叠 / 展开都锚卡头：点按点（卡头那颗折叠键、或收起后的整行摘要）停在原地，卡片向下收放，
+// 视角不跟着一上一下（此前收起锚底、展开锚顶，两次方向相反，看起来就是「跳」）。
+// 正常情况下卡头在文档里的位置不变，不需要补差值；只有浏览器把 scrollTop 夹回边界时才补。
 const scrollParentOf = el => {
   for (let n = el?.parentElement; n; n = n.parentElement) {
     const oy = getComputedStyle(n).overflowY
@@ -347,12 +349,10 @@ const toggleLine = async () => {
   lineChoice.value = next
   setPlanLineOpen(props.sid, props.pkey, next)
   if (!root) return
-  const scroller = scrollParentOf(root)
-  const before = root.getBoundingClientRect()
+  const before = root.getBoundingClientRect().top
   await nextTick()
-  const after = root.getBoundingClientRect()
-  const delta = next ? after.top - before.top : after.bottom - before.bottom
-  if (delta) scroller.scrollTop += delta
+  const delta = root.getBoundingClientRect().top - before
+  if (delta) scrollParentOf(root).scrollTop += delta
 }
 </script>
 
@@ -398,7 +398,7 @@ const toggleLine = async () => {
 .pc-vbtn.on { color: var(--app-warn-text); border-color: var(--app-warn-border); background: var(--app-panel); font-weight: 700; }
 .plan-card.plan-approved .pc-vbtn.on { color: var(--app-ok); border-color: var(--app-ok-border, #cfe4d3); }
 .pc-arr { flex: none; font-size: 9px; color: var(--app-text3); }
-.pc-fold { flex: none; margin-left: 2px; border: 0; background: none; padding: 2px; color: var(--app-text3); cursor: pointer; border-radius: 4px; }
+.pc-fold { flex: none; margin-left: auto; border: 0; background: none; padding: 2px; color: var(--app-text3); cursor: pointer; border-radius: 4px; }
 .pc-fold:hover { color: var(--app-accent); background: var(--app-accent-weak); }
 
 /* 旧计划一行摘要（整行可点，热区 ≥ 24px）；行尾的「新一轮」是独立按钮，不与展开按钮嵌套 */
