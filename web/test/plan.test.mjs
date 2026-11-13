@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  planOutline, planStepCount, diffSteps, planExecProgress, planCardExpanded
+  planOutline, planStepCount, diffSteps, planExecProgress, planTodosOfTurn, planCardExpanded
 } from '../src/chat/plan.js'
 
 test('planOutline：目标 + 顶层步骤，缩进子项并入上一步', () => {
@@ -101,6 +101,22 @@ test('planExecProgress：冻结快照里残留的 doing 也落成未完成（暂
   ], done: 1, failed: 0, total: 2 }
   const p = planExecProgress(card, null, 't1', false, snapshot)
   assert.deepEqual(p.items.map(x => x.status), ['done', 'wait'])
+})
+
+test('planTodosOfTurn：新回合气泡还没有轮身份时，不能认上一轮那份清单', () => {
+  // 旧计划执行完 → 用户点「调整计划」发新一轮：旧气泡带 t1，实时清单也还是 t1（6/6）
+  const oldAi = { role: 'ai', turnId: 't1' }
+  const liveAi = { role: 'ai' }            // 本轮气泡：done 之前没有 turnId
+  const todos = { turnId: 't1', items: [{ content: 'x', status: 'done' }] }
+  assert.equal(planTodosOfTurn(todos, liveAi, [{ role: 'user' }, oldAi, { role: 'user' }, liveAi]), false)
+  // 本轮自己写的清单（t2）还没在任何气泡上出现过 → 就是本轮的
+  assert.equal(planTodosOfTurn({ turnId: 't2', items: [] }, liveAi, [oldAi, liveAi]), true)
+  // 历史消息按轮身份严格对：对不上就不认
+  assert.equal(planTodosOfTurn(todos, oldAi, [oldAi]), true)
+  assert.equal(planTodosOfTurn(todos, { role: 'ai', turnId: 't9' }, []), false)
+  // 老服务端清单不带轮身份：无从判断，维持原样认它；没有清单就是不认
+  assert.equal(planTodosOfTurn({ items: [] }, liveAi, []), true)
+  assert.equal(planTodosOfTurn(null, liveAi, []), false)
 })
 
 test('planCardExpanded：本轮在跑时点收起必须真收起（深度执行里点不动的那颗折叠键）', () => {

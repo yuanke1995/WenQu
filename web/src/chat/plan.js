@@ -116,6 +116,22 @@ export const planCardExpanded = ({ live, running, choice } = {}) => {
 }
 
 /**
+ * 会话里那份实时清单是不是这条消息所在轮的。
+ *
+ * <p>为什么需要这条判据：本轮气泡在 done（落库）之前没有 turnId，而清单每轮一写、
+ * 上一轮那份会一直留在会话表里。只按「消息没轮身份」就认它，刚批准的新计划卡会直接读到
+ * 上一轮那份已经 6/6 的清单——卡一出现就铺开成「全部完成」，和「已批准 · 执行中」并排。
+ * 改用消息流反查：清单带着轮身份、而这一轮已经能在消息流里认出另一条气泡时，它就是上一轮留下的。
+ * 老服务端的清单没有轮身份，无从判断，维持原样认它。
+ */
+export const planTodosOfTurn = (todos, msg, list) => {
+  const tid = todos && todos.turnId
+  if (!tid) return !!todos
+  if (msg && msg.turnId) return msg.turnId === tid
+  return !(list || []).some(x => x && x !== msg && x.turnId === tid)
+}
+
+/**
  * 计划批准后的执行进度：拿会话任务清单当数据源（清单本来就是这一轮的执行项）。
  * 只有「计划已批准 + 清单存在 + 清单属于这一轮」才返回进度；否则 null——
  * 卡片退回计划步骤预览，绝不按工具调用数去编造「第几步已完成」。
