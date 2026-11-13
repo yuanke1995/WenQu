@@ -238,11 +238,17 @@
       <div v-else class="dr-body">
         <div class="panel">
           <div class="panel-h">使用该库的智能体 <span class="sub">删除/归档会影响这些助手</span></div>
-          <div v-if="!agents.length" class="mini-empty">还没有智能体绑定这个库</div>
+          <div v-if="agentsError" class="mini-empty">
+            {{ agentsError }}<a-button size="small" type="link" @click="loadAgents">重试</a-button>
+          </div>
+          <div v-else-if="!agents.length" class="mini-empty">还没有智能体绑定这个库</div>
           <div v-for="a in agents" :key="a.id" class="agent-row">
             <span class="agent-avatar">{{ (a.name || '?').slice(0, 1) }}</span>
             <div class="agent-main">
-              <div class="agent-name">{{ a.name }} <a-tag v-if="a.isBuiltin === 1" color="blue" style="margin:0">内置</a-tag></div>
+              <div class="agent-name">{{ a.name }}
+                <a-tag v-if="a.isBuiltin === 1" color="blue" style="margin:0">内置</a-tag>
+                <a-tag v-if="a.bindingKind === 'default'" style="margin:0">默认范围</a-tag>
+              </div>
               <div class="agent-desc">{{ a.description || '暂无描述' }}</div>
             </div>
           </div>
@@ -271,6 +277,7 @@ const emit = defineEmits(['update:open', 'probe', 'docs', 'edit', 'graph', 'chan
 const loading = ref(false)
 const data = ref(null)
 const agents = ref([])
+const agentsError = ref('')
 const docs = ref([])
 const docsLoading = ref(false)
 const docsLoaded = ref(false)
@@ -327,6 +334,8 @@ watch(() => [props.open, props.kb?.id], ([open]) => {
   if (!open || !props.kb?.id) return
   tab.value = 'overview'
   data.value = null
+  agents.value = []
+  agentsError.value = ''
   docs.value = []
   docsLoaded.value = false
   graphInfo.value = props.kb?.graph || {}
@@ -379,16 +388,28 @@ async function load () {
   if (!props.kb?.id) return
   loading.value = true
   try {
-    const [r, a] = await Promise.all([
+    const [r] = await Promise.all([
       getKbInsights(props.kb.id, days.value),
-      getKbAgents(props.kb.id).catch(() => ({ data: [] }))
+      loadAgents()
     ])
     data.value = r.data || null
-    agents.value = a.data || []
   } catch (e) {
     message.error(e.message || '洞察加载失败')
   } finally {
     loading.value = false
+  }
+}
+
+/** 绑定智能体单独一条：失败要显式报错，不能吞成空列表——那会把「读不到」显示成「没人用」 */
+async function loadAgents () {
+  if (!props.kb?.id) return
+  agentsError.value = ''
+  try {
+    const r = await getKbAgents(props.kb.id)
+    agents.value = r.data || []
+  } catch (e) {
+    agents.value = []
+    agentsError.value = e.message || '智能体列表加载失败'
   }
 }
 
@@ -524,7 +545,7 @@ async function onMenu ({ key }) {
 .legend .d.err { background: var(--app-danger); } .legend .d.off { background: #c9cfd6; }
 .legend .muted { color: var(--app-text3); }
 .trend { width: 100%; height: 132px; margin-top: 8px; display: block; }
-.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.two-col { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
 .rank { display: flex; align-items: center; gap: 8px; font-size: 11.5px; margin-top: 7px; }
 .rank .rk { width: 15px; height: 15px; border-radius: 4px; background: var(--app-panel-2); color: var(--app-text3);
   font-size: 9.5px; display: inline-flex; align-items: center; justify-content: center; flex: none; }

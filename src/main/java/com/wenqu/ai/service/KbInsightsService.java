@@ -1,6 +1,7 @@
 package com.wenqu.ai.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.wenqu.ai.agentx.WenquAgentxTools;
 import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.mapper.AgentMapper;
@@ -86,7 +87,7 @@ public class KbInsightsService {
             hitByKb.merge(kbId, st.count(), Long::sum);
             if (st.lastAt() != null) lastByKb.merge(kbId, st.lastAt(), (a, b) -> a.isAfter(b) ? a : b);
         });
-        Map<String, Integer> agentRefs = agentRefsByKb();
+        Map<String, Integer> agentRefs = agentRefsByKb(kbs);
 
         long totalDocs = 0, totalChunks = 0, totalHits = 0, needAttention = 0;
         for (Map<String, Object> m : kbs) {
@@ -330,18 +331,20 @@ public class KbInsightsService {
 
     // ==================== 绑定智能体 ====================
 
-    /** 读当前用户可见、且绑定了该库的智能体（删除影响面/卡片引用数） */
+    /** 读当前用户可见、且会用这个库的智能体（删除影响面/卡片引用数） */
     public List<Map<String, Object>> agents(String kbId) {
-        requireReadable(kbId);
+        KnowledgeBase kb = requireReadable(kbId);
         List<Map<String, Object>> out = new ArrayList<>();
         for (Agent a : agentService.list()) {
-            if (!binds(a, kbId)) continue;
+            String kind = bindingKind(a, kb);
+            if (kind == null) continue;
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("id", a.getId());
             row.put("name", a.getName());
             row.put("icon", a.getIcon());
             row.put("description", a.getDescription());
             row.put("isBuiltin", a.getIsBuiltin());
+            row.put("bindingKind", kind);
             out.add(row);
         }
         return out;
@@ -620,10 +623,20 @@ public class KbInsightsService {
         return documentMapper.selectList(w.orderByDesc(AiDocument::getUpdateTime));
     }
 
-    private Map<String, Integer> agentRefsByKb() {
+    private Map<String, Integer> agentRefsByKb(List<Map<String, Object>> kbs) {
         Map<String, Integer> out = new HashMap<>();
+        Set<String> builtinScoped = kbs.stream()
+                .filter(m -> Integer.valueOf(1).equals(m.get("builtin"))
+                        || Integer.valueOf(1).equals(m.get("isDefault")))
+                .map(m -> String.valueOf(m.get("id")))
+                .collect(Collectors.toSet());
         try {
             for (Agent a : agentMapper.selectList(new LambdaQueryWrapper<Agent>())) {
+                if (WenquAgentxTools.blocksKnowledge(a)) continue;
+                if (Integer.valueOf(1).equals(a.getIsBuiltin())) {
+                    for (String kbId : builtinScoped) out.merge(kbId, 1, Integer::sum);
+                    continue;
+                }
                 String csv = a.getKnowledgeBaseIds();
                 if (csv == null || csv.isBlank()) continue;
                 for (String id : csv.split(",")) {
@@ -637,7 +650,24 @@ public class KbInsightsService {
         return out;
     }
 
-    private boolean binds(Agent a, String kbId) {
+    /**
+     * 该智能体会不会用这个库：{@code "bound"}=显式绑定，{@code "default"}=内置「问渠」的动态范围，
+     * {@code null}=不用。与运行时检索范围（{@code RetrievalScopeService}）同口径——
+     * 内置「问渠」恒检索「使用者的默认库＋官方手册库」，按使用者动态解析、不落在
+     * {@code knowledge_base_ids} 上，只认 CSV 会把它从每个库的影响面里漏掉。
+     * 默认库每人一个，所以任何人的默认库都在这个范围内。
+     * <p>静态纯判据（同 {@code WenquAgentxTools.blocksKnowledge}）：让这条口径可被单测钉住。
+     */
+    static String bindingKind(Agent a, KnowledgeBase kb) {
+        if (WenquAgentxTools.blocksKnowledge(a)) return null;
+        if (Integer.valueOf(1).equals(a.getIsBuiltin())) {
+            return Integer.valueOf(1).equals(kb.getBuiltin())
+                    || Integer.valueOf(1).equals(kb.getIsDefault()) ? "default" : null;
+        }
+        return binds(a, kb.getId()) ? "bound" : null;
+    }
+
+    private static boolean binds(Agent a, String kbId) {
         String csv = a.getKnowledgeBaseIds();
         if (csv == null || csv.isBlank()) return false;
         for (String id : csv.split(",")) {
