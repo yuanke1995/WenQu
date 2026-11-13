@@ -680,17 +680,20 @@ defineExpose({
   text-align: center; background: var(--app-accent); color: var(--app-panel);
 }
 /* @ 引用三类（知识库/文档/智能体）与气泡上的 chip 同一套配色，靠图标与底色区隔。
-   描边一律用 box-shadow 外圈而不是 border-color：基类的右 border 有 7px 宽（给光标让位），
-   border-color 会把整条右边画成 7px 实色。 */
-:deep(.cchip.m-kb) { background: var(--app-accent-weak); }
-:deep(.cchip.m-doc) { background: var(--app-warn-weak); color: var(--app-warn-text); }
-:deep(.cchip.m-agent) { box-shadow: 0 0 0 1px var(--app-accent); }
-:deep(.cchip-hist) { background: var(--app-info-weak); color: var(--app-accent); box-shadow: 0 0 0 1px var(--app-info-border); }
-:deep(.cchip-skill) { background: var(--app-panel-2); color: var(--app-text2); box-shadow: 0 0 0 1px var(--app-border); }
-:deep(.cchip-file.is-err) { background: var(--app-danger-weak); box-shadow: 0 0 0 1px var(--app-danger-border); color: var(--app-danger-text); }
+   底色一律用 background-color，不要用 background 简写：简写会把基类的 background-clip: padding-box
+   重置回 border-box，右侧那 7px「给光标让位」的透明边被底色填满，行尾光标就画在底色上、中间一段被涂掉。
+   描边一律用 inset 内圈 box-shadow，不要用 border-color 或外圈 box-shadow：外圈正好落在 border-box
+   右缘——也就是行尾光标所在的那一列，1px 的圈会把光标切断（技能/历史/智能体/上传失败几类都踩过）。
+   border-color 同理：基类右边框 7px 宽，会被整条画成实色。 */
+:deep(.cchip.m-kb) { background-color: var(--app-accent-weak); }
+:deep(.cchip.m-doc) { background-color: var(--app-warn-weak); color: var(--app-warn-text); }
+:deep(.cchip.m-agent) { box-shadow: inset 0 0 0 1px var(--app-accent); }
+:deep(.cchip-hist) { background-color: var(--app-info-weak); color: var(--app-accent); box-shadow: inset 0 0 0 1px var(--app-info-border); }
+:deep(.cchip-skill) { background-color: var(--app-panel-2); color: var(--app-text2); box-shadow: inset 0 0 0 1px var(--app-border); }
+:deep(.cchip-file.is-err) { background-color: var(--app-danger-weak); box-shadow: inset 0 0 0 1px var(--app-danger-border); color: var(--app-danger-text); }
 :deep(.cchip-file.is-expired) { opacity: .6; color: var(--app-text3); }
 :deep(.cchip-file.is-uploading) { opacity: .75; }
-:deep(.cchip-img) { padding: 1px; background: var(--app-panel-2); }
+:deep(.cchip-img) { padding: 1px; background-color: var(--app-panel-2); }
 :deep(.cchip-thumb) {
   display: block; width: 22px; height: 22px; object-fit: cover; border-radius: 4px;
   border: 1px solid var(--app-border); background: var(--app-panel);

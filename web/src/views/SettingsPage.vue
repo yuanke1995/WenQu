@@ -85,8 +85,10 @@
                    改一处不必猜另一处是否跟着变。 -->
               <a-alert v-if="isMaintConfig" type="info" show-icon
                        message="这里只放不属于任何定时任务的通用参数。某个任务自己的间隔与专属参数（保留期、并发、超时等），在「运行状态」页签展开对应任务就地调整。" />
-              <!-- 整块与上方页签条之间留一条缝：页签条自身 margin-bottom 是 0，贴着会喘不过气 -->
-              <div v-if="cfgGroupsAll.length || engineHiddenCount" class="cfg-fold-wrap">
+              <!-- 整块与上方页签条之间留一条缝：页签条自身 margin-bottom 是 0，贴着会喘不过气。
+                   只在出表单的页签渲染：定时任务的运行状态/日志/索引页签各自有内容，字段块为空，
+                   留在这里会露出一句按了没反应的「显示工程参数」空态 -->
+              <div v-if="showsConfigForm && (cfgGroupsAll.length || engineHiddenCount)" class="cfg-fold-wrap">
                 <!-- 工具条只在两组以上出现：单组面板里搜索和「全部展开」都只是在重复那一个标题 -->
                 <div v-if="showCfgBar" class="cfg-fold-bar">
                   <a-input v-model:value="cfgKeyword" size="small" allow-clear
@@ -1387,6 +1389,8 @@ const cfgKeyword = ref('')
 const closedFolds = ref([])
 const isFoldOpen = title => !closedFolds.value.includes(title)
 const isMaintConfig = computed(() => current.value === 'maintenance' && maintTab.value === 'config')
+/** 当前页签是否渲染参数表单：「定时任务」只有「参数配置」页签出表单，其余页签各走自己的分支 */
+const showsConfigForm = computed(() => current.value !== 'maintenance' || isMaintConfig.value)
 
 /** 已被「运行状态」页签收走的配置键（间隔键 + 各任务 relatedKeys），参数配置页签一律不再渲染 */
 const taskOwnedKeys = computed(() => {
