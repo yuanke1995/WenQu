@@ -24,6 +24,9 @@ export const fmtMsgTime = ts => {
 export const errorBrief = (raw, kind) => {
   const s = String(raw || '')
   if (kind === 'spoken') return s.trim() || '生成失败，可重试或更换模型'
+  // 提问连服务端都没送到（探测确认没有在跑的轮）：这不是「回答断在半路」，
+  // 不能给「已生成的部分已保存」那种话——它一个字都还没生成
+  if (kind === 'unreachable') return '没能连上服务器：这条提问没有发出去，请重试'
   if (kind === 'interrupted') {
     if (/timeout|timed?\s*out|长时间未收到响应/i.test(s)) return '响应超时：连接已中断'
     if (/提前关闭/.test(s)) return '连接已断开：回答未正常结束'

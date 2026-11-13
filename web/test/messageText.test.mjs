@@ -23,12 +23,14 @@ test('消息时间：今天/昨天/更早三档', () => {
   assert.equal(fmtMsgTime('not-a-date'), '')
 })
 
-test('错误文案：spoken/interrupted 优先，额度先于限流，其余按文本分类', () => {
+test('错误文案：spoken/interrupted/unreachable 优先，额度先于限流，其余按文本分类', () => {
   assert.equal(errorBrief('该充值了', 'spoken'), '该充值了')
   assert.equal(errorBrief('', 'spoken'), '生成失败，可重试或更换模型')
   assert.equal(errorBrief('Read timeout', 'interrupted'), '响应超时：连接已中断')
   assert.equal(errorBrief('连接提前关闭', 'interrupted'), '连接已断开：回答未正常结束')
   assert.equal(errorBrief('whatever', 'interrupted'), '连接已中断：回答未正常结束')
+  // 未送达：不能沿用「回答断在半路」那套文案
+  assert.equal(errorBrief('请求失败: Failed to fetch', 'unreachable'), '没能连上服务器：这条提问没有发出去，请重试')
   assert.equal(errorBrief('insufficient_quota 429'), '模型服务额度不足：请到「模型供应商」充值，或改用其他模型')
   assert.equal(errorBrief('429 rate limit'), '请求过于频繁：模型服务限流，稍后重试')
   assert.equal(errorBrief('401 Unauthorized'), '鉴权失败：登录已过期，请重新登录')

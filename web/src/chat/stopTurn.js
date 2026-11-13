@@ -1,11 +1,29 @@
 // 停止本轮（actions 层）：先请服务端真停，再掐本地通道并就地定格工具卡。
 import { closeRunningTools, markStoppedTurn } from './turnCloseout.js'
 
-export const createStopTurn = ({ currentSid, streams, stopApi, notifyWarning }) => () => {
+/**
+ * @param ctx.reconnect 可选：断线重挂中的会话也要停得掉。
+ *   take(sid) → 取消该会话的重挂并返回那颗还没收场的消息（没有则 null）
+ *   settle(msg, sid) → 重挂已取消，按历史重显真实结果
+ */
+export const createStopTurn = ({ currentSid, streams, stopApi, notifyWarning, reconnect }) => () => {
   // 只停当前会话的流；其它会话的后台流不受影响
-  const st = streams.get(currentSid())
-  if (!st) return Promise.resolve(false)
   const sid = currentSid()
+  const st = streams.get(sid)
+  // 通道已经断了、正在重挂：本地已经没有流，但服务端那一轮还在，停止仍要落到服务端——
+  // 不落的后果与「只 abort 不请求」一样：它转后台跑完、还占着会话互斥（下一问会被拒）
+  const pendingMsg = reconnect ? reconnect.take(sid) : null
+  if (!st && !pendingMsg) return Promise.resolve(false)
+  if (!st) {
+    return stopApi(sid).then(() => {
+      reconnect.settle(pendingMsg, sid)
+      return true
+    }).catch(() => {
+      reconnect.settle(pendingMsg, sid)
+      notifyWarning('服务端没能停止本轮，它可能仍在后台跑完')
+      return false
+    })
+  }
   streams.delete(sid)
   // 先请服务端真停：abort 只断本地通道，而通道断开在「正等你作答 / 批准计划」那一轮的语义是
   // **转后台把本轮跑完**，还占着会话互斥直到人工等待超时（表现：按了停止，下一问发不出去、额度照烧）。
