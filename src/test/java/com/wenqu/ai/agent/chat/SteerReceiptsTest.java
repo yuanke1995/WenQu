@@ -14,8 +14,8 @@ class SteerReceiptsTest {
     @Test
     @DisplayName("按 turnId 隔离：两条轮各自的收据互不可见")
     void isolatedByTurn() {
-        SteerReceipts.add("turn-a", new SteerReceipts.SteerAck("r1", "先看 A", "m1", List.of("https://img/a.png")));
-        SteerReceipts.add("turn-b", new SteerReceipts.SteerAck("r2", "先看 B", "m2", List.of()));
+        SteerReceipts.add("turn-a", new SteerReceipts.SteerAck("r1", "先看 A", "m1", List.of("https://img/a.png"), List.of()));
+        SteerReceipts.add("turn-b", new SteerReceipts.SteerAck("r2", "先看 B", "m2", List.of(), List.of()));
 
         assertThat(SteerReceipts.find("turn-a", "r1").text()).isEqualTo("先看 A");
         assertThat(SteerReceipts.find("turn-a", "r2")).isNull();
@@ -29,8 +29,8 @@ class SteerReceiptsTest {
     @DisplayName("unsent 排除已应用的收据（收尾补发只交回模型没听到的那些）")
     void unsentSkipsApplied() {
         SteerReceipts.add("turn-c",
-                new SteerReceipts.SteerAck("r1", "听到的", "m1", List.of()),
-                new SteerReceipts.SteerAck("r2", "没听到的", "m2", List.of()));
+                new SteerReceipts.SteerAck("r1", "听到的", "m1", List.of(), List.of()),
+                new SteerReceipts.SteerAck("r2", "没听到的", "m2", List.of(), List.of()));
 
         List<SteerReceipts.SteerAck> left = SteerReceipts.unsent("turn-c", Set.of("r1"));
         assertThat(left).extracting(SteerReceipts.SteerAck::receiptId).containsExactly("r2");
@@ -44,7 +44,7 @@ class SteerReceiptsTest {
     @DisplayName("轮数上限淘汰最旧的一轮，不无限增长")
     void evictsOldestTurn() {
         for (int i = 0; i < 600; i++) {
-            SteerReceipts.add("turn-" + i, new SteerReceipts.SteerAck("r" + i, "x", "m", List.of()));
+            SteerReceipts.add("turn-" + i, new SteerReceipts.SteerAck("r" + i, "x", "m", List.of(), List.of()));
         }
         assertThat(SteerReceipts.turnCount()).isLessThanOrEqualTo(512);
         assertThat(SteerReceipts.find("turn-0", "r0")).isNull();

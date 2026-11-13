@@ -165,7 +165,8 @@ public class FrameworkSessions {
     @jakarta.annotation.PostConstruct
     void bindClusterAnswers() {
         cluster.bindAnswer("approval", req -> respondLocal(req.getString("requestId"),
-                Boolean.TRUE.equals(req.getBoolean("approved")), req.getString("reason")));
+                Boolean.TRUE.equals(req.getBoolean("approved")), req.getString("reason"),
+                "session".equals(req.getString("scope"))));
         cluster.bindAnswer("ask", req -> respondAskLocal(req.getString("requestId"), req.getString("answer")));
         cluster.bindAnswer("plan", req -> respondPlanLocal(req.getString("requestId"),
                 Boolean.TRUE.equals(req.getBoolean("approved")), req.getString("reason"),
@@ -629,11 +630,12 @@ public class FrameworkSessions {
     /**
      * 答复一张确认卡：本副本持有实例就本地执行，别的副本持有就转投过去。
      *
+     * @param scope {@code "session"} = 本次会话都允许（同一工具后续不再弹卡）；空/null = 只批这一步
      * @return false = 这个审批号不属于框架引擎的任何会话（交回人在回路的旧通道处理）
      */
-    public boolean respond(String approvalId, boolean approved, String reason) {
-        if (routeAnswerElsewhere(approvalId, "approval", approved, reason, null, null)) return true;
-        return respondLocal(approvalId, approved, reason);
+    public boolean respond(String approvalId, boolean approved, String reason, String scope) {
+        if (routeAnswerElsewhere(approvalId, "approval", approved, reason, null, null, scope)) return true;
+        return respondLocal(approvalId, approved, reason, "session".equals(scope));
     }
 
     /**
@@ -643,11 +645,11 @@ public class FrameworkSessions {
      * 只有<b>确实没人持有</b>时才走下面的接续重建路径（与进程重启后接回同一套）。
      */
     private boolean routeAnswerElsewhere(String requestId, String kind, boolean approved,
-                                         String reason, String answer, String outcome) {
+                                         String reason, String answer, String outcome, String scope) {
         String sessionKey = ownerOf(requestId);
         if (sessionKey == null || held.containsKey(sessionKey)) return false;
         if (!cluster.heldElsewhere(sessionKey)) return false;
-        boolean ok = cluster.forwardAnswer(sessionKey, kind, requestId, approved, reason, answer, outcome);
+        boolean ok = cluster.forwardAnswer(sessionKey, kind, requestId, approved, reason, answer, outcome, scope);
         if (ok) {
             pendingOwner.remove(requestId);
             log.info("[agentx] 答复已转投持有副本: kind={} id={} host={}", kind, requestId, cluster.heldBy(sessionKey));
@@ -655,11 +657,29 @@ public class FrameworkSessions {
         return ok;
     }
 
-    private boolean respondLocal(String approvalId, boolean approved, String reason) {
+    /**
+     * 登记「本次会话都允许」：按审批行上的工具名落到这条会话的槽位上。
+     * <p>登记在<b>执行侧</b>（持有实例的副本）才有效——权限判定读的就是那份槽位，所以转投时
+     * scope 也要跟着过去。工具名取库里的那一行，不信客户端传的名字。
+     */
+    private void allowToolForSession(String approvalId, String sessionKey) {
+        String key = sessionKey == null ? ownerOf(approvalId) : sessionKey;
+        var row = hitl.findApproval(approvalId);
+        String tool = row == null ? null : row.getToolName();
+        if (key == null || tool == null || tool.isBlank()) return;
+        turnSlot(key).allowToolForSession(tool);
+        log.info("[agentx] 本次会话都允许: session={} tool={}", key, tool);
+    }
+
+    private boolean respondLocal(String approvalId, boolean approved, String reason, boolean forSession) {
         // 归属不先摘：会话正忙导致这次没投递出去时，用户再点一次还要靠它找回这条会话
         String sessionKey = pendingOwner.get(approvalId);
         Held h = sessionKey == null ? null : held.get(sessionKey);
-        if (h == null) return resume(approvalId, "approval", approved, reason, null) != null;
+        if (h == null) {
+            boolean ok = resume(approvalId, "approval", approved, reason, null) != null;
+            if (ok && forSession && approved) allowToolForSession(approvalId, sessionKey);
+            return ok;
+        }
         // 框架自己找回待办所属的原任务与工具调用并安排接续执行，这里不拼工具 ID、也不再调 resume
         AgentSession.Task resumed;
         try {
@@ -673,6 +693,8 @@ public class FrameworkSessions {
         }
         pendingOwner.remove(approvalId);
         hitl.resolveFrameworkPending(approvalId, approved ? "APPROVED" : "REJECTED", null, reason);
+        // 只在裁决真的投递进去之后登记会话级放行：投递失败时卡片仍挂着，用户还可能改点拒绝
+        if (forSession && approved) allowToolForSession(approvalId, sessionKey);
         log.info("[agentx] 待办已答复 requestId={} approved={} → 接续任务={}",
                 approvalId, approved, resumed == null ? "无" : resumed.commandId());
         ensureFollowing(approvalId);
@@ -714,7 +736,7 @@ public class FrameworkSessions {
      * @return false = 该 askId 不属于框架会话（交回人在回路的旧通道）
      */
     public boolean respondAsk(String askId, String answerText) {
-        if (routeAnswerElsewhere(askId, "ask", true, null, answerText, null)) return true;
+        if (routeAnswerElsewhere(askId, "ask", true, null, answerText, null, null)) return true;
         return respondAskLocal(askId, answerText);
     }
 
@@ -751,7 +773,7 @@ public class FrameworkSessions {
      * @param outcome 界面终态：approve / revise（退回重出）/ supersede（继续对话、本版作废）/ reject（取消本轮）
      */
     public boolean respondPlanApproval(String planApprovalId, boolean approved, String reason, String outcome) {
-        if (routeAnswerElsewhere(planApprovalId, "plan", approved, reason, null, outcome)) return true;
+        if (routeAnswerElsewhere(planApprovalId, "plan", approved, reason, null, outcome, null)) return true;
         return respondPlanLocal(planApprovalId, approved, reason, outcome);
     }
 

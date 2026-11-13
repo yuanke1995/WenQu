@@ -79,6 +79,27 @@ class AgentxNativeToolGuardTest {
                 Map.of("command", "rm -rf build"), p, taint(false), ROOTS)).isNull();
     }
 
+    @Test
+    @DisplayName("选过「本次会话都允许」的工具不再弹卡；别的工具照问")
+    void sessionAllowedToolSkipsAsk() {
+        AgentxTurnSlot slot = slot(taint(true));
+        AgentxNativeToolGuard exec = guard(slot, AgentxNativeToolGuard.Kind.EXEC,
+                ExecutionPolicy.of(PermissionPreset.STANDARD, null, "/Users/me/work", null));
+        assertThat(decision(exec, Map.of("command", "rm -rf build")))
+                .isEqualTo(PermissionBehavior.ASK);
+
+        slot.allowToolForSession("execute");
+        assertThat(decision(exec, Map.of("command", "rm -rf build")))
+                .isEqualTo(PermissionBehavior.ALLOW);
+
+        // 按工具名放行：别把另一把工具也一起放过去
+        AgentxNativeToolGuard write = guard(slot, AgentxNativeToolGuard.Kind.WRITE,
+                ExecutionPolicy.of(PermissionPreset.AUTONOMOUS, null, "/Users/me/work", null));
+        assertThat(write.getName()).isEqualTo("write_file");
+        assertThat(decision(write, Map.of("path", "/etc/hosts", "content", "x")))
+                .isEqualTo(PermissionBehavior.ASK);
+    }
+
     private static PermissionBehavior decision(AgentxNativeToolGuard guard, Map<String, Object> input) {
         var ctx = PermissionContextState.builder().mode(PermissionMode.DEFAULT).build();
         return guard.checkPermissions(input, ctx).block().getBehavior();
@@ -102,13 +123,23 @@ class AgentxNativeToolGuardTest {
         // policy 以轮上的那份为准（guard 读 slot.current().policy()）
         slot.begin(new AgentxTurnSlot.Turn("t1", null, null, null, policy, null,
                 slot.current().taint()));
-        return new AgentxNativeToolGuard(new FakeTool(), kind, slot, ROOTS);
+        // 名字按 kind 取真实工具名：会话级放行是按名字判的，拿 execute 冒充 write_file 就测不到
+        return new AgentxNativeToolGuard(new FakeTool(nameOf(kind)), kind, slot, ROOTS);
+    }
+
+    private static String nameOf(AgentxNativeToolGuard.Kind kind) {
+        return switch (kind) {
+            case EXEC -> "execute";
+            case WRITE -> "write_file";
+            case EDIT -> "edit_file";
+            case DATA -> "read_file";
+        };
     }
 
     /** 只用于权限判定：callAsync 不会被这些用例触发。 */
     private static final class FakeTool extends ToolBase {
-        FakeTool() {
-            super("execute", "", Map.of("type", "object", "properties", Map.of()),
+        FakeTool(String name) {
+            super(name, "", Map.of("type", "object", "properties", Map.of()),
                     false, false, false, null, false, false);
         }
 

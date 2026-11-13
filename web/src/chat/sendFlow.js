@@ -37,6 +37,12 @@ export const createSend = ({
   // （图片/附件/技能/@/#/模型/思考/计划模式）。发给模型要等用户在 chip 上点「立即发送」，
   // 或用 ⌘/Ctrl+Enter 这一档入队后立刻送。
   if (loading.value) {
+    // 只丢了图/附件、没写一句话：插话要的是一句方向，材料是随行内容。没有这句话，
+    // 队列里就没有可送达的内文（后端按文字建行），当场说清楚比静默吞掉强
+    if (!q && (imgs.length || atts.length)) {
+      notifyWarning('插话要带一句话：图片和附件会随这句话一起送达')
+      return
+    }
     const staged = stageSteer({ text: q, images: imgs, atts, attsMeta, skills, mentions, historyRefs,
                       deepThink: deepThinkOn.value, planMode: planModeOn.value })
     if (!staged) return

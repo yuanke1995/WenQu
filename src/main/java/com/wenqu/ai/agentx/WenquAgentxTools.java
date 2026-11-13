@@ -880,7 +880,8 @@ public class WenquAgentxTools {
                     () -> {
                         AgentxTurnSlot.Turn t = slot.current();
                         return t == null ? null : t.taint();
-                    }));
+                    },
+                    () -> slot.toolAllowedForSession(name)));
         }
     }
 

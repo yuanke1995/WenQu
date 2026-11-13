@@ -50,19 +50,23 @@ public class ChatRunRuntime {
     private final TurnStateStore turnStateStore;
     /** 插话带图：交付用内存 data URL，收下之后才落盘拿回显 URL（拒收不留孤儿文件）。 */
     private final com.wenqu.ai.service.UserImageService userImages;
+    /** 插话带附件：按 fileId 现读现抽正文，随这句话一起写进本轮上下文（与本轮提问同一注入口径）。 */
+    private final com.wenqu.ai.service.ChatAttachmentService chatAttachments;
 
     public ChatRunRuntime(ConfigService configService,
                           ChatRunBus chatRunBus,
                           SessionEventService sessionEventService,
                           SessionService sessionService,
                           TurnStateStore turnStateStore,
-                          com.wenqu.ai.service.UserImageService userImages) {
+                          com.wenqu.ai.service.UserImageService userImages,
+                          com.wenqu.ai.service.ChatAttachmentService chatAttachments) {
         this.configService = configService;
         this.chatRunBus = chatRunBus;
         this.sessionEventService = sessionEventService;
         this.sessionService = sessionService;
         this.turnStateStore = turnStateStore;
         this.userImages = userImages;
+        this.chatAttachments = chatAttachments;
     }
 
     /** 别的副本转过来的叫停要在本副本（宿主）落地：动作与本地停止同一条路径，不另写一份 */
@@ -401,27 +405,25 @@ public class ChatRunRuntime {
      * 的样子（前端据此推一条气泡；刷新后由历史接口按同一个 ID 回显同一条）。不引入任何标记列——
      * 它不需要"身份"，它本来就是一条用户消息。顺序是<b>先送框架、后落库</b>：框架不收（这一轮已经
      * 不在跑）就一个字都不写，界面上不会多出一条模型从来没见过的用户消息。
+     * <p>附件（文档类）随这句话一起交付：正文按 fileId 现读现抽，<b>不是</b>「本轮请求构建期定型」的东西，
+     * 因此能赶上正在跑的这一轮；图片的 data URL 直接交给框架拼多模态消息，收下之后才落盘——
+     * 框架拒收时不能留下消息行没引用的孤儿文件。
      *
      * @return 落库后的消息 ID（前端挂到那条气泡上，刷新后同一条）；没有在跑的轮 / 越权 / 框架拒收返回 null
      */
-    public String steerTurn(String sessionId, String userId, String text) {
-        return steerTurn(sessionId, userId, text, null);
-    }
-
-    /**
-     * 同上，带图。图片的 data URL 直接交给框架拼多模态消息，<b>收下之后</b>才落盘——
-     * 框架拒收时不能留下消息行没引用的孤儿图片文件。
-     */
-    public String steerTurn(String sessionId, String userId, String text, List<String> images) {
-        SteerOutcome o = steerTurnDetailed(sessionId, userId, text, images);
+    public String steerTurn(String sessionId, String userId, String text, List<String> images,
+                            List<com.wenqu.ai.dto.ChatRequest.Attachment> attachments) {
+        SteerOutcome o = steerTurnDetailed(sessionId, userId, text, images, attachments);
         return o == null ? null : o.messageId();
     }
 
     /**
-     * 同 {@link #steerTurn(String, String, String, List)}，但把框架收据号一并交回：
+     * 同 {@link #steerTurn(String, String, String, List, List)}，但把框架收据号一并交回：
      * 待发队列要按收据把「已送出」置成「模型真听到了」。
      */
-    public SteerOutcome steerTurnDetailed(String sessionId, String userId, String text, List<String> images) {
+    public SteerOutcome steerTurnDetailed(String sessionId, String userId, String text,
+                                          List<String> images,
+                                          List<com.wenqu.ai.dto.ChatRequest.Attachment> attachments) {
         SteerActor actor = steerActor(sessionId, userId);
         if (actor == null || text == null || text.isBlank()) return null;
         String clean = text.strip();
@@ -430,11 +432,22 @@ public class ChatRunRuntime {
         if (d == null) return null;
         List<String> dataUrls = images == null ? List.of()
                 : images.stream().filter(u -> u != null && u.startsWith("data:")).toList();
+        // 附件正文随这句话一起交给框架：与本轮提问同一条注入口径（抽文本、总量截断、外部内容套信封）。
+        // 交付的是「用户原话 + 附件正文」，落库与界面上给的仍是用户原话。
+        StringBuilder modelText = new StringBuilder(ChatCommand.decorateSteerQuestion(capped));
+        List<com.wenqu.ai.dto.ChatRequest.Attachment> atts =
+                attachments == null ? List.of() : attachments;
+        if (!atts.isEmpty()) {
+            String block = chatAttachments.buildContextText(chatAttachments.prepare(atts, userId));
+            if (!block.isBlank()) {
+                modelText.append('\n').append(com.wenqu.ai.util.UntrustedContent.envelope("附件正文", block));
+            }
+        }
         // 送进去的那一份带身份声明，落库与界面给的那一份是用户原话：声明是给模型看的，不是给用户看的
-        String receiptId = d.deliver(userId, sessionId, ChatCommand.decorateSteerQuestion(capped), dataUrls);
+        String receiptId = d.deliver(userId, sessionId, modelText.toString(), dataUrls);
         if (receiptId == null) {
-            log.info("[STEER] 插话未被接收（这一轮不在执行中）: session={} 字数={} 图={}",
-                    sessionId, capped.length(), dataUrls.size());
+            log.info("[STEER] 插话未被接收（这一轮不在执行中）: session={} 字数={} 图={} 附件={}",
+                    sessionId, capped.length(), dataUrls.size(), atts.size());
             return null;
         }
         // 框架已经收下这句，落盘才是安全的：只落盘不回读（模型侧字节已在交付那一份里）
@@ -445,18 +458,21 @@ public class ChatRunRuntime {
                     .filter(u -> u != null && !u.isBlank()).toList();
             if (!urls.isEmpty()) imageUrls = urls;
         }
+        List<java.util.Map<String, Object>> attMetas = chatAttachments.metas(atts, userId);
         String messageId = sessionService.appendMessage(MessageWrite.builder()
                 .sessionId(sessionId)
                 .role("user")
                 .content(capped)
                 .images(imageUrls)
+                .attachments(attMetas.isEmpty() ? null
+                        : com.alibaba.fastjson2.JSON.toJSONString(attMetas))
                 .turnId(actor.turnId())
                 .build());
         SteerReceipts.add(actor.turnId(), new SteerReceipts.SteerAck(receiptId, capped, messageId,
-                imageUrls == null ? List.of() : imageUrls));
+                imageUrls == null ? List.of() : imageUrls, attMetas));
         sessionEventService.append(sessionId, actor.userId(), actor.turnId(), "steer", capped);
-        log.info("[STEER] 插话已送进框架会话（下一次模型调用前生效）: session={} turn={} 字数={} 图={} msgId={} receipt={}",
-                sessionId, actor.turnId(), capped.length(), dataUrls.size(), messageId, receiptId);
+        log.info("[STEER] 插话已送进框架会话（下一次模型调用前生效）: session={} turn={} 字数={} 图={} 附件={} msgId={} receipt={}",
+                sessionId, actor.turnId(), capped.length(), dataUrls.size(), attMetas.size(), messageId, receiptId);
         return new SteerOutcome(messageId, receiptId, actor.turnId());
     }
 

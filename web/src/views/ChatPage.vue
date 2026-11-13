@@ -427,6 +427,14 @@
                   <div v-if="row.images && row.images.length" class="tl-steer-imgs">
                   <img v-for="(src, ii) in row.images" :key="ii" :src="src" alt="插话图片" loading="lazy" />
                   </div>
+                  <!-- 随这句插话一起送出去的附件：独立用户气泡被这一段顶掉，文件名与体积不能跟着不见 -->
+                  <div v-if="row.attachments && row.attachments.length" class="tl-steer-atts">
+                  <span v-for="(a, ai) in row.attachments" :key="ai" class="tl-steer-att" :title="a.name">
+                  <file-text-outlined class="tl-steer-att-ic" />
+                  <span class="tl-steer-att-name">{{ a.name }}</span>
+                  <span v-if="a.size" class="tl-steer-att-size">{{ fmtSize(a.size) }}</span>
+                  </span>
+                  </div>
                   <span class="tl-steer-txt">{{ row.text }}</span>
                   </div>
                   </div>
@@ -501,8 +509,22 @@
                   <span class="approval-hint">{{ approvalLeftSecOf(a) > 0 ? '批准后立即执行这一步' : '已超时，本轮将按拒绝继续' }}</span>
                   <button class="app-btn ghost small" :disabled="a.busy || approvalLeftSecOf(a) <= 0"
                           @click="resolveApproval(m, a, false)">拒绝</button>
-                  <button class="app-btn small" :disabled="a.busy || approvalLeftSecOf(a) <= 0"
-                          @click="resolveApproval(m, a, true)">批准执行</button>
+                  <!-- 「批准执行」带下拉：主键是默认动作（只批这一步），箭头里多一档「本次会话都允许」——
+                       同一工具后续不再弹卡；箭头单独成键，点主键不会误开菜单 -->
+                  <span class="approval-approve-split">
+                    <button class="app-btn small" :disabled="a.busy || approvalLeftSecOf(a) <= 0"
+                            @click="resolveApproval(m, a, true)">批准执行</button>
+                    <a-dropdown :trigger="['click']" placement="bottomRight">
+                      <button class="app-btn small approval-caret" type="button"
+                              :disabled="a.busy || approvalLeftSecOf(a) <= 0"
+                              title="更多批准方式" aria-label="更多批准方式"><down-outlined /></button>
+                      <template #overlay>
+                        <a-menu @click="() => resolveApproval(m, a, true, 'session')">
+                          <a-menu-item key="session">本次会话都允许</a-menu-item>
+                        </a-menu>
+                      </template>
+                    </a-dropdown>
+                  </span>
                 </div>
               </div>
               <!-- 智能体提问（askUser）的「待答」态不再渲染在气泡里：桌面壳把底部聊天输入框整块
@@ -810,7 +832,7 @@
                进度与动作两行随头部折叠键收起，收起后整条只剩身份行。 -->
           <div v-if="goalBarVisible" class="goal-bar" :class="{ editing: goalEditing }" data-goal-bar>
             <!-- 取消二次确认就地长开（不弹层）：说清「取消 ≠ 删除」，点错一次也回得来 -->
-            <div v-if="goalCancelArmed" class="gb-confirm">
+            <div v-if="goalCancelArmed && goalOpen" class="gb-confirm">
               <div class="gb-confirm-t"><exclamation-circle-outlined /> 取消这次深度执行？</div>
               <div class="gb-confirm-s">停止自动推进，已经跑出的 <b>{{ goalRoundsCount }} 轮</b>、正文与过程都会保留。之后可以在消息流里查看，也可以重新设定目标。</div>
               <div class="gb-confirm-actions">
@@ -827,6 +849,11 @@
               <span v-else class="gb-objective one">修改这件事要做到什么</span>
               <span class="gb-ver" :title="'任务原文第 ' + goalVersionLabel + ' 版'">{{ goalVersionLabel }}</span>
               <span class="gb-state" :class="'st-' + goalStateClass" :title="goalBarMeta">{{ goalStateLabel }}</span>
+              <!-- 折叠键只在只读态出：编辑整段必须摊开；收起后整条只剩这一行身份 -->
+              <button v-if="!goalEditing" type="button" class="gb-fold" :class="{ open: goalOpen }"
+                      :title="goalOpen ? '收起进度与操作' : '展开进度与操作'"
+                      :aria-expanded="goalOpen ? 'true' : 'false'" aria-label="深度执行进度与操作"
+                      @click="toggleGoalBar"><caret-right-outlined /></button>
             </div>
             <!-- 编辑态：就地长开，版本轨与生效时点一起说清 -->
             <div v-if="goalEditing" class="gb-edit">
@@ -849,8 +876,9 @@
                         @click="saveGoalEdit">{{ goalEditBusy ? '保存中…' : '保存为新版' }}</button>
               </div>
             </div>
-            <!-- 第二行：进度（轮次 + 已跑时长 + 预算细条与百分比 + 停因/让位提示 + 过程入口） -->
-            <div v-if="!goalEditing" class="gb-row gb-progress">
+            <!-- 第二行：进度（轮次 + 已跑时长 + 预算细条与百分比 + 停因/让位提示 + 过程入口）；
+                 与动作行一起随身份行的折叠键收起 -->
+            <div v-if="!goalEditing && goalOpen" class="gb-row gb-progress">
               <span class="gb-round">{{ goalRoundLine }}</span>
               <span v-if="goalElapsedText" class="gb-meta">{{ goalElapsedText }}</span>
               <span v-if="goalProgressPercent != null" class="gb-budget" :title="'预算已用 ' + goalProgressPercent + '%'">
@@ -864,7 +892,7 @@
               <button type="button" class="gb-more-link" @click="openGoalViewer">查看过程 ›</button>
             </div>
             <!-- 第三行：动作（主行动靠右；取消与修改退到次级位）；删除记录只在终态卡上出现 -->
-            <div v-if="!goalEditing" class="gb-row gb-actions-row">
+            <div v-if="!goalEditing && goalOpen" class="gb-row gb-actions-row">
               <button v-if="goalCanCancel" type="button" class="gb-btn text-danger"
                       title="取消执行：结束并留痕，历史与过程都保留（以后还能回看）"
                       @click="armGoalCancel">取消执行</button>
@@ -916,6 +944,10 @@
           样式对齐「编号选项 + 自定义输入末项 + 键盘导航 + 忽略/提交」的提问卡；答复后面板撤下、
           输入框回归，问答记录以工具卡形态留在气泡原位 -->
           <div v-if="pendingAsk" class="ci-box askp-box" @keydown="onAskPanelKeydown">
+          <!-- 顶替态没有输入框，chip 无处可画：待发图片/附件画在卡片里，否则拖入的图既看不见也不会随这张卡走 -->
+          <PendingAtts v-if="pendingImages.length || pendingFiles.length" :images="pendingImages" :files="pendingFiles"
+                       :fmt-size="fmtSize" @preview="i => openImages(pendingImages.map(p => p.dataUrl), i)"
+                       @remove-image="removePendingImage" @remove-file="removePendingFile" />
           <div class="askp-head">
           <span class="askp-tag">{{ curAsk.topic || '向用户提问' }}</span>
           <span v-if="askQueueCount" class="askp-state" :title="'这一轮还有 ' + askQueueCount + ' 张卡要答，这张答完接着来'">还有 {{ askQueueCount }} 张待答</span>
@@ -968,6 +1000,9 @@
           版式对齐 plan-mode-ux：头部（执行计划 + 版本 + 状态 + 倒计时）→ 输入行（写意见 + 两个主按钮）→
           脚注（同轮升版说明 + 退出计划 / 转到对话修改 / 停止本轮）。计划正文在气泡里只读展示。 -->
           <div v-else class="ci-box planp-box">
+          <PendingAtts v-if="pendingImages.length || pendingFiles.length" :images="pendingImages" :files="pendingFiles"
+                       :fmt-size="fmtSize" @preview="i => openImages(pendingImages.map(p => p.dataUrl), i)"
+                       @remove-image="removePendingImage" @remove-file="removePendingFile" />
           <div class="planp-head">
           <span class="planp-tag">执行计划</span>
           <span class="planp-ver">v{{ ((curPlanCard.versions || []).length) + 1 }}</span>
@@ -1840,6 +1875,7 @@ import AnswerViewerHost from '../components/AnswerViewerHost.vue'
 import { useChatEngine } from '../chat/useChatEngine'
 import { useChatSearch } from '../chat/useChatSearch'
 import Composer from '../chat/Composer.vue'
+import PendingAtts from '../chat/PendingAtts.vue'
 import PlanCard from '../components/PlanCard.vue'
 import PlanViewer from '../components/PlanViewer.vue'
 import PlanAdjustSheet from '../components/PlanAdjustSheet.vue'
@@ -1963,8 +1999,8 @@ const {
   loadSandboxFiles, toggleSandboxDir, sandboxDownload, sandboxTake, sbSize,
   // 后台进程那一族同样吃引擎：本页只留这张卡的摆法
   procs, procErr, procLoading, procCardVisible, killingTag, loadSandboxProcs, procAge, killProc,
-  // 图片与附件（chip 的删除走编辑区 → onKeys 剪枝，不再需要按下标移除）
-  pendingImages, MAX_FILES, pendingFiles, hasUploadingFile, addFiles,
+  // 图片与附件（输入框里的 chip 删除走编辑区 → onKeys 剪枝；顶替态没有编辑区，由待发条按下标移除）
+  pendingImages, removePendingImage, MAX_FILES, pendingFiles, removePendingFile, hasUploadingFile, addFiles,
   takePastedFiles, takePastedText, attachUploaded, attachImage,
   // @ 引用（面板与筛选词在「+」面板一节，高亮下标用本页自己的 addHi）
   mentionTab, mentionQuery, mentionLoading, mentionKbs, mentionDocs, pendingMentions,
@@ -2283,12 +2319,20 @@ const {
     }
   }))
 
-// 目标条折叠：收起时只留身份行（原文/版本/状态），进程与动作键藏起来；
+// 目标条折叠：收起时只留身份行（原文/版本/状态），进度与动作键藏起来；
 // 收起同时撤掉取消确认，避免确认条孤零零挂在收起的行下面
 function toggleGoalBar() {
   goalOpen.value = !goalOpen.value
   if (!goalOpen.value) goalCancelArmed.value = false
 }
+// 编辑入口不止条子上的按钮（过程抽屉里也能改）：进编辑态一律先摊开，
+// 否则文本域会长在一行收起的条子下面
+watch(goalEditing, v => { if (v) goalOpen.value = true })
+// 折叠是「这一条目标」的本地偏好：换到另一条目标（新会话/重设目标）时回到展开，
+// 免得另一次执行一上来就被上一条的折叠连坐
+watch(() => sessionGoal.value && sessionGoal.value.goalId, (id, prev) => {
+  if (id && id !== prev) goalOpen.value = true
+})
 
 // ---- 会话工作区与权限档位 ----
 const {
@@ -2550,6 +2594,16 @@ const {
 .tl-steer-col { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; max-width: 78%; }
 .tl-steer-imgs { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
 .tl-steer-imgs img { max-width: 132px; max-height: 132px; border-radius: 10px; border: 1px solid var(--app-border); object-fit: cover; }
+/* 随插话送出的文档附件：与输入框里的附件卡同一观感，靠右对齐在插话气泡上方 */
+.tl-steer-atts { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.tl-steer-att {
+  display: inline-flex; align-items: center; gap: 5px; max-width: 260px;
+  padding: 4px 8px; border-radius: 8px; font-size: 12px;
+  background: var(--app-panel-2); border: 1px solid var(--app-border); color: var(--app-text);
+}
+.tl-steer-att-ic { flex: none; font-size: 13px; color: var(--app-accent); }
+.tl-steer-att-name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tl-steer-att-size { flex: none; font-size: 11px; color: var(--app-text3); }
 .tl-steer-txt {
   max-width: 100%; padding: 9px 14px; border-radius: 12px; line-height: 1.65;
   background: var(--app-panel-2); color: var(--app-text);
@@ -3422,6 +3476,11 @@ const {
 .approval-why + .approval-args { margin-top: 6px; }
 .approval-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
 .approval-hint { font-size: 12px; color: var(--app-text3); margin-right: auto; }
+/* 「批准执行」+ 下拉箭头：两种按钮拼成一颗，主键仍是默认动作（只批这一步） */
+.approval-approve-split { display: inline-flex; align-items: stretch; }
+.approval-approve-split > .app-btn:first-child { border-radius: 8px 0 0 8px; }
+.approval-approve-split .app-btn.approval-caret { border-radius: 0 8px 8px 0; padding: 6px 6px; border-left: 1px solid rgba(255, 255, 255, .32); }
+.approval-approve-split .app-btn.approval-caret:disabled { border-left-color: rgba(255, 255, 255, .18); }
 
 /* ==================== 计划模式：执行计划卡 ==================== */
 /* 卡片样式随组件走（两端共用），见 chat/PlanCard.vue；这里只留页面内的计划相关角标 */
@@ -3559,6 +3618,16 @@ const {
 .gb-state.st-achieved { color: var(--app-success, #067647); background: var(--app-success-weak, #ecfdf3); border-color: var(--app-ok-border, #cfe4d3); }
 .gb-state.st-failed { color: var(--app-danger); background: var(--app-danger-weak); border-color: var(--app-danger-border, #efc8c0); }
 .gb-state.st-cancelled { color: var(--app-text3); background: var(--app-panel-2); border-color: var(--app-border); }
+/* 折叠键：行尾一枚 10px 三角，展开时转 90°（与 .tl-caret 同一口径）；
+   热区放到 22px 见方，10px 字形直接当按钮点不准 */
+.gb-fold {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; padding: 0;
+  border: none; border-radius: 6px; background: transparent; color: var(--app-text3); cursor: pointer;
+}
+.gb-fold .anticon { font-size: 10px; line-height: 1; transition: transform .15s; }
+.gb-fold.open .anticon { transform: rotate(90deg); }
+.gb-fold:hover { background: var(--app-panel-2); color: var(--app-text2); }
 /* 进度行 */
 .gb-progress { color: var(--app-text3); flex-wrap: wrap; }
 .gb-round { flex: none; font-size: 11px; line-height: 18px; padding: 0 6px; border-radius: 6px; border: 1px solid var(--app-border); color: var(--app-text2); white-space: nowrap; font-variant-numeric: tabular-nums; }

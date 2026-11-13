@@ -35,7 +35,7 @@ class SteerQueueServiceTest {
         mapper = mock(SteerItemMapper.class);
         sessions = mock(SessionService.class);
         runtime = mock(ChatRunRuntime.class);
-        service = new SteerQueueService(mapper, sessions, runtime);
+        service = new SteerQueueService(mapper, sessions, runtime, mock(ChatAttachmentService.class));
     }
 
     private static SteerItem item(String id, String status) {
@@ -54,7 +54,7 @@ class SteerQueueServiceTest {
     void drainWithoutLiveRunDoesNothing() {
         when(runtime.activeTurnOwner("s1")).thenReturn(null);
         service.drain("s1");
-        verify(runtime, never()).steerTurnDetailed(anyString(), anyString(), anyString(), any());
+        verify(runtime, never()).steerTurnDetailed(anyString(), anyString(), anyString(), any(), any());
         verify(mapper, never()).claim(anyString(), any());
     }
 
@@ -68,7 +68,7 @@ class SteerQueueServiceTest {
         when(mapper.claim(eq("i1"), isNull())).thenReturn(1);
         when(mapper.claim(eq("i2"), isNull())).thenReturn(1);
         // 第一条送达成功（有收据），第二条框架不收（返回 null → 退回排队）
-        when(runtime.steerTurnDetailed(eq("s1"), eq("u1"), eq("改方向"), any()))
+        when(runtime.steerTurnDetailed(eq("s1"), eq("u1"), eq("改方向"), any(), any()))
                 .thenReturn(new ChatRunRuntime.SteerOutcome("m1", "r1", "goal:g:1"), null);
 
         service.drain("s1");
@@ -86,7 +86,7 @@ class SteerQueueServiceTest {
 
         service.drain("s1");
 
-        verify(runtime, never()).steerTurnDetailed(anyString(), anyString(), anyString(), any());
+        verify(runtime, never()).steerTurnDetailed(anyString(), anyString(), anyString(), any(), any());
     }
 
     @Test
@@ -107,7 +107,7 @@ class SteerQueueServiceTest {
     @DisplayName("入队：过会话归属，超长文案按 steer 同一尺子截断")
     void enqueueCapsText() {
         String longText = "x".repeat(900);
-        service.enqueue("s1", "u1", longText, null);
+        service.enqueue("s1", "u1", longText, null, null);
         var captor = org.mockito.ArgumentCaptor.forClass(SteerItem.class);
         verify(mapper).insert(captor.capture());
         assertThat(captor.getValue().getText()).hasSize(801).endsWith("…");

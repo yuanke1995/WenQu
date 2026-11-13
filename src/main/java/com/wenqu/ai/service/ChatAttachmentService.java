@@ -88,14 +88,23 @@ public class ChatAttachmentService {
      * 调用点不各自重写，口径不漂移。
      */
     public String metasJson(List<ChatRequest.Attachment> attachments, String uid) {
-        if (attachments == null || attachments.isEmpty()) return null;
+        List<Map<String, Object>> metas = metas(attachments, uid);
+        return metas.isEmpty() ? null : com.alibaba.fastjson2.JSON.toJSONString(metas);
+    }
+
+    /**
+     * 附件元信息列表（插话收据/时间线段要随帧下发同一份）：
+     * 与 {@link #metasJson} 同口径，空列表返回空列表。
+     */
+    public List<Map<String, Object>> metas(List<ChatRequest.Attachment> attachments, String uid) {
+        if (attachments == null || attachments.isEmpty()) return List.of();
         List<Map<String, Object>> metas = new ArrayList<>(attachments.size());
         for (ChatRequest.Attachment a : attachments) {
             // stat 读不到（已过期/不存在）时体积记 0：气泡仍如实显示文件名，不因为体积取不到就不显示附件
             ChatUploadService.Uploaded st = chatUploadService.stat(a.getFileId(), uid);
             metas.add(metaOf(a, st != null ? st.size() : 0L));
         }
-        return com.alibaba.fastjson2.JSON.toJSONString(metas);
+        return metas;
     }
 
     /** 前端上传校验用：扩展名是否受支持（不受支持的在发送前就拒绝，避免白传 base64） */

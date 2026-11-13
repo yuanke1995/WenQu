@@ -123,6 +123,21 @@ public final class AgentxTurnSlot {
         return toolkit;
     }
 
+    /**
+     * 「本次会话都允许」的工具名：审批卡上选了会话级放行后登记，之后同一工具不再弹卡。
+     * <p>按<b>工具名</b>登记、不放宽到全部工具：放行「执行命令」不该顺带把「写文件」也放过去。
+     * 与轮无关（换轮不清）；槽位被回收、进程重启或换一条会话就重新问人——失败方向是更安全的那一侧。
+     */
+    private final Set<String> sessionApproved = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    public void allowToolForSession(String toolName) {
+        if (toolName != null && !toolName.isBlank()) sessionApproved.add(toolName);
+    }
+
+    public boolean toolAllowedForSession(String toolName) {
+        return toolName != null && !toolName.isBlank() && sessionApproved.contains(toolName);
+    }
+
     /** 此刻进行中的那一轮；没有（轮间空档/已收口）返回 null。 */
     public Turn current() {
         return current;

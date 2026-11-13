@@ -7,7 +7,8 @@ export const turnSteerRows = m => {
   const tl = Array.isArray(m && m.timeline) ? m.timeline : []
   return tl.filter(s => s && s.kind === 'steer' && String(s.text || '').trim())
     .map(s => ({ kind: 'steer', text: String(s.text), messageId: s.messageId || '',
-                 images: Array.isArray(s.images) ? s.images : [] }))
+                 images: Array.isArray(s.images) ? s.images : [],
+                 attachments: Array.isArray(s.attachments) ? s.attachments : [] }))
 }
 
 /**
@@ -26,7 +27,9 @@ export const turnBodyRows = m => {
       const to = Number(seg.to) || 0
       if (to > read) read = Math.min(to, content.length)
     } else if (seg.kind === 'steer' && String(seg.text || '').trim()) {
-      cuts.push({ at: read, text: String(seg.text), messageId: seg.messageId || '' })
+      cuts.push({ at: read, text: String(seg.text), messageId: seg.messageId || '',
+                  images: Array.isArray(seg.images) ? seg.images : [],
+                  attachments: Array.isArray(seg.attachments) ? seg.attachments : [] })
     }
   }
   if (!cuts.length) return content ? [{ kind: 'text', key: 't0', content, last: true }] : []
@@ -35,7 +38,8 @@ export const turnBodyRows = m => {
   cuts.forEach((c, ci) => {
     const at = Math.min(Math.max(c.at, pos), content.length)
     if (at > pos) rows.push({ kind: 'text', key: 't' + pos, content: content.slice(pos, at) })
-    rows.push({ kind: 'steer', key: 's' + ci + ':' + (c.messageId || ''), text: c.text })
+    rows.push({ kind: 'steer', key: 's' + ci + ':' + (c.messageId || ''), text: c.text,
+                images: c.images, attachments: c.attachments })
     pos = at
   })
   if (pos < content.length) rows.push({ kind: 'text', key: 't' + pos, content: content.slice(pos) })

@@ -28,8 +28,11 @@ public final class SteerReceipts {
      * @param text      用户原话（交回前端续发时要的就是这句，不带模型侧那句声明）
      * @param messageId 随它落库的那条用户消息 ID：前端补发时复用同一颗气泡，刷新后也不会变两条
      * @param images    随这句插话一起发出去的回显 URL：回答时间线里的那段要跟用户气泡一样能看见图
+     * @param attachments 随这句插话一起送出的附件元信息（name/mime/size/fileId）：
+     *                    时间线段与用户气泡都要如实显示「这句话还带了哪些材料」
      */
-    public record SteerAck(String receiptId, String text, String messageId, List<String> images) {
+    public record SteerAck(String receiptId, String text, String messageId, List<String> images,
+                           List<Map<String, Object>> attachments) {
     }
 
     /** 同时保留多少轮的收据：正常只有 1~2 轮在飞，超出的都是没走到收尾就断掉的轮 */

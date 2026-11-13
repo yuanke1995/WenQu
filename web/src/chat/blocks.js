@@ -54,6 +54,7 @@ export const applyBlocks = (m, payload) => {
       if (!text) continue
       const seg = { kind: 'steer', text, messageId: String(b.messageId || '') }
       if (Array.isArray(b.images) && b.images.length) seg.images = b.images
+      if (Array.isArray(b.attachments) && b.attachments.length) seg.attachments = b.attachments
       timeline.push(seg)
     }
   }

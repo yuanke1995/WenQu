@@ -35,6 +35,9 @@ public class SteerItem {
     /** JSON 数组：回显 URL（落盘后的地址） */
     private String images;
 
+    /** JSON 数组：[{name,mime,size,fileId}]：随这句话送出的文档附件（排队期间用于回显，送达时按 fileId 现读正文） */
+    private String attachments;
+
     /** PENDING / STEERED / APPLIED / DROPPED */
     private String status;
 

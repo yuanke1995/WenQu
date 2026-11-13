@@ -306,6 +306,14 @@
                 <div v-if="row.images && row.images.length" class="tl-steer-imgs">
                   <img v-for="(src, ii) in row.images" :key="ii" :src="src" alt="插话图片" loading="lazy" />
                 </div>
+                <!-- 随插话送出的文档附件：气泡被这段顶掉后，材料也要留在这里 -->
+                <div v-if="row.attachments && row.attachments.length" class="tl-steer-atts">
+                  <span v-for="(a, ai) in row.attachments" :key="ai" class="tl-steer-att">
+                    <file-text-outlined class="tl-steer-att-ic" />
+                    <span class="tl-steer-att-name">{{ a.name }}</span>
+                    <span v-if="a.size" class="tl-steer-att-size">{{ fmtSize(a.size) }}</span>
+                  </span>
+                </div>
                 <span class="tl-steer-txt">{{ row.text }}</span>
               </div>
             </div>
@@ -360,6 +368,10 @@
             <button class="btn-ghost" :disabled="a.busy || approvalLeftOf(a) <= 0" @click.stop="$emit('approve', m, a, false)">拒绝</button>
             <button class="btn-primary" :disabled="a.busy || approvalLeftOf(a) <= 0" @click.stop="$emit('approve', m, a, true)">批准执行</button>
           </div>
+          <!-- 触屏没有下拉箭头的位置：会话级放行做成动作行下面的一行弱链接（同一工具后续不再弹卡） -->
+          <button class="approval-allowall" type="button"
+                  :disabled="a.busy || approvalLeftOf(a) <= 0"
+                  @click.stop="$emit('approve', m, a, true, 'session')">本次会话都允许</button>
         </div>
 
         <!-- 生成态：本轮还没有产物、正在生成/交付文件时先占位（与 PC 同一份组件） -->
@@ -644,6 +656,15 @@ const onBodyPreview = (urls, index) => emit('preview', urls, index)
 .tl-steer-col { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; max-width: 82%; }
 .tl-steer-imgs { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
 .tl-steer-imgs img { max-width: 112px; max-height: 112px; border-radius: 10px; border: 1px solid var(--app-border); object-fit: cover; }
+.tl-steer-atts { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.tl-steer-att {
+  display: inline-flex; align-items: center; gap: 5px; max-width: 78vw;
+  padding: 4px 8px; border-radius: 8px; font-size: 13px;
+  background: var(--app-panel-2); border: 1px solid var(--app-border); color: var(--app-text);
+}
+.tl-steer-att-ic { flex: none; font-size: 13px; color: var(--app-accent); }
+.tl-steer-att-name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tl-steer-att-size { flex: none; font-size: 11px; color: var(--app-text3); }
 .tl-steer-txt {
   max-width: 100%; padding: 8px 12px; border-radius: 12px; line-height: 1.6; font-size: 15px;
   background: var(--app-panel-2); color: var(--app-text);
@@ -806,6 +827,9 @@ const onBodyPreview = (urls, index) => emit('preview', urls, index)
 .approval-why { margin: 0; font-size: 11.5px; line-height: 1.6; color: var(--app-warn-text); }
 .approval-actions { display: flex; align-items: center; gap: 8px; width: 100%; }
 .approval-hint { font-size: 11.5px; color: var(--app-text3); margin-right: auto; }
+/* 会话级放行：动作行下面一行弱链接，点按面积仍按触屏最小高 */
+.approval-allowall { display: block; margin: 4px 0 0 auto; padding: 6px 0; background: none; border: none; color: var(--app-text2); font-size: 12px; text-decoration: underline; touch-action: manipulation; }
+.approval-allowall:disabled { color: var(--app-text3); text-decoration: none; }
 .btn-primary { border: none; border-radius: 8px; background: var(--app-accent); color: #fff; font-size: 13px; padding: 8px 14px; min-height: 36px; touch-action: manipulation; }
 .btn-primary:disabled { background: var(--app-accent-disabled); }
 .btn-ghost { border: 1px solid var(--app-border); border-radius: 8px; background: var(--app-panel); color: var(--app-text2); font-size: 13px; padding: 8px 14px; min-height: 36px; display: inline-flex; align-items: center; gap: 5px; touch-action: manipulation; }

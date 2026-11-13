@@ -197,25 +197,7 @@ public class ChatController {
         // 附件：请求体只带 fileId（内容已先行上传落盘换号）。
         // 数量上限 + 存在性与归属校验（拿别人的 fileId 一律拒绝）；类型与体积在上传接口已把关，
         // 这里不再按 base64 字符量估算——口径的变化正是这次改造的目的（body 从 ~100MB 降到几十字节）
-        List<ChatRequest.Attachment> attachments = request.getAttachments();
-        if (attachments != null && !attachments.isEmpty()) {
-            int maxAtt = Math.max(1, configService.getInt(ConfigKeys.CHAT_MAX_ATTACHMENTS_PER_MESSAGE, 5));
-            if (attachments.size() > maxAtt) {
-                throw new BizException("一次最多上传 " + maxAtt + " 个附件");
-            }
-            for (ChatRequest.Attachment att : attachments) {
-                if (att == null || att.getFileId() == null || att.getFileId().isBlank()) {
-                    throw new BizException("附件信息不完整（缺少上传标识，请重新上传）");
-                }
-                var meta = chatUploadService.stat(att.getFileId(), userId);
-                if (meta == null) {
-                    throw new BizException("附件不存在或已过期，请重新上传");
-                }
-                // 名称/MIME 以服务端元信息为准：客户端可随意伪造展示名，解析与展示都该信落盘时的记录
-                att.setName(meta.name());
-                att.setMime(meta.mime());
-            }
-        }
+        List<ChatRequest.Attachment> attachments = normalizeAttachments(request.getAttachments(), userId);
 
         // 调用变量（嵌入方随轮传入的业务上下文）：fail-loud 归一（坏键名/超限 400），
         // 收口在 ChatCommand.normalizeVariables——游客链路用同一把尺
@@ -488,11 +470,37 @@ public class ChatController {
         }
     }
 
+    /**
+     * 附件的同步段校验（发问与插话共用一份）：数量上限、fileId 存在且归属调用者，
+     * 名称/MIME 一律以服务端落盘时的元信息为准——客户端可随意伪造展示名，解析与展示都该信记录。
+     * <p>只对非空列表生效；返回同一个列表（已就地归一），空列表原样返回 null。
+     */
+    private List<ChatRequest.Attachment> normalizeAttachments(List<ChatRequest.Attachment> attachments, String userId) {
+        if (attachments == null || attachments.isEmpty()) return attachments;
+        int maxAtt = Math.max(1, configService.getInt(ConfigKeys.CHAT_MAX_ATTACHMENTS_PER_MESSAGE, 5));
+        if (attachments.size() > maxAtt) {
+            throw new BizException("一次最多上传 " + maxAtt + " 个附件");
+        }
+        for (ChatRequest.Attachment att : attachments) {
+            if (att == null || att.getFileId() == null || att.getFileId().isBlank()) {
+                throw new BizException("附件信息不完整（缺少上传标识，请重新上传）");
+            }
+            var meta = chatUploadService.stat(att.getFileId(), userId);
+            if (meta == null) {
+                throw new BizException("附件不存在或已过期，请重新上传");
+            }
+            att.setName(meta.name());
+            att.setMime(meta.mime());
+        }
+        return attachments;
+    }
+
     @Operation(summary = "运行中插话", description = "本轮还在跑时补一句方向（steer）：这句话交给框架会话自己送进<b>正在跑的那一轮</b>，"
             + "生效点是下一次模型调用之前——工具循环由框架持有，做不到掐掉正在执行的这一步。"
             + "它同时被落成一条普通用户消息（用户按了发送、话是自己说的，历史里就该长成用户消息的样子），"
             + "返回的 messageId 供前端挂到那颗气泡上。本轮收尾时还没被模型收上的，随 done 事件回落由前端作为同一句话续发。"
-            + "单条最长 800 字；可带图片（images，与正常提问同一套校验）。"
+            + "单条最长 800 字；可带图片与文档附件（与正常提问同一套校验）：附件正文按 fileId 现读现抽，"
+            + "随这句话在下一次模型调用前写进本轮上下文。"
             + "没有在跑的轮 / 不是本人的轮 / 框架拒收（这一轮已经不在执行中）时返回 accepted=false，前端把内容放回输入框即可。")
     @Permission("chat:use")
     @PostMapping("/chat/steer")
@@ -505,10 +513,17 @@ public class ChatController {
         List<String> images = body.getImages();
         validateImages(images);
         rejectApiKeyForWorkspaceSession(httpRequest, sessionId.trim());
+        String uid = com.wenqu.ai.util.RequestUser.uid();
+        List<ChatRequest.Attachment> attachments;
+        try {
+            attachments = normalizeAttachments(body.getAttachments(), uid);
+        } catch (BizException e) {
+            return ResultJson.error(e.getMessage());
+        }
         // 插话同样过输入闸：它是用户当场打的一句话，与发问同一身份，不该成为闸外的旁路
-        String refused = contentSafety.checkInput(com.wenqu.ai.util.RequestUser.uid(), sessionId, text);
+        String refused = contentSafety.checkInput(uid, sessionId, text);
         if (refused != null) return ResultJson.error(refused);
-        String messageId = runtime.steerTurn(sessionId.trim(), com.wenqu.ai.util.RequestUser.uid(), text, images);
+        String messageId = runtime.steerTurn(sessionId.trim(), uid, text, images, attachments);
         return ResultJson.ok(java.util.Map.of("accepted", messageId != null,
                 "messageId", messageId == null ? "" : messageId));
     }
@@ -530,8 +545,9 @@ public class ChatController {
         if (refused != null) return ResultJson.error(refused);
         try {
             return ResultJson.ok(steerQueue.enqueue(sessionId.trim(), com.wenqu.ai.util.RequestUser.uid(),
-                    text, body.getImages()));
-        } catch (IllegalArgumentException e) {
+                    text, body.getImages(),
+                    normalizeAttachments(body.getAttachments(), com.wenqu.ai.util.RequestUser.uid())));
+        } catch (IllegalArgumentException | BizException e) {
             return ResultJson.error(e.getMessage());
         }
     }
@@ -599,17 +615,21 @@ public class ChatController {
     }
 
     @Operation(summary = "工具执行审批", description = "裁决智能体的工具执行请求（approval_required 事件下发）：仅本轮用户本人可批，"
-            + "拒绝/超时后模型会收到未执行错误并继续回答；审批挂起为内存态，刷新页面即失效")
+            + "拒绝/超时后模型会收到未执行错误并继续回答；审批挂起为内存态，刷新页面即失效。"
+            + "body 传 {approved:true, scope:'session'} 为「本次会话都允许」：同一工具在本次会话内不再弹卡"
+            + "（按工具名放行，不过期到别的工具/别的会话）")
     @Permission("chat:approve")
     @PostMapping("/tool-approval/{approvalId}")
     public ResultJson resolveToolApproval(
             @Parameter(description = "审批请求 ID（approval_required 事件下发）") @PathVariable("approvalId") String approvalId,
-            @RequestBody Map<String, Boolean> body) {
+            @RequestBody Map<String, Object> body) {
         boolean approved = Boolean.TRUE.equals(body.get("approved"));
+        String scope = body.get("scope") == null ? null : String.valueOf(body.get("scope"));
+        String reason = body.get("reason") == null ? null : String.valueOf(body.get("reason"));
         // 框架引擎的待办先走它自己：AgentSession.respond 会找回待办所属的原任务与工具调用并安排
         // 接续执行；不在这套会话里才交回人在回路的旧通道（两条通道不双写同一个审批号）
         boolean ok = frameworkSessions.respond(approvalId, approved,
-                approved ? null : String.valueOf(body.get("reason")))
+                approved ? null : reason, scope)
                 || hitl.resolveApproval(approvalId, approved, com.wenqu.ai.util.RequestUser.uid());
         if (!ok) {
             // 行还是 PENDING 说明只是这一次没投递进去（同一会话上一张卡刚批完、子轮正在执行），

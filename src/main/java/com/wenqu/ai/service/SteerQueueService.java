@@ -38,15 +38,20 @@ public class SteerQueueService implements SteerQueueHooks {
     private final SteerItemMapper mapper;
     private final SessionService sessions;
     private final ChatRunRuntime runtime;
+    /** 附件元信息（含体积）落库口径与本轮提问同一份：队列投影据此回显，送达时按 fileId 现读正文 */
+    private final ChatAttachmentService chatAttachments;
 
-    public SteerQueueService(SteerItemMapper mapper, SessionService sessions, ChatRunRuntime runtime) {
+    public SteerQueueService(SteerItemMapper mapper, SessionService sessions, ChatRunRuntime runtime,
+                             ChatAttachmentService chatAttachments) {
         this.mapper = mapper;
         this.sessions = sessions;
         this.runtime = runtime;
+        this.chatAttachments = chatAttachments;
     }
 
-    /** 入队：只落库，不发请求。图片按原始 data URL 存，排队期间刷新也能恢复并在送达时进模型。 */
-    public Map<String, Object> enqueue(String sessionId, String userId, String text, List<String> images) {
+    /** 入队：只落库，不发请求。图片按原始 data URL 存、附件按元信息存，排队期间刷新也能恢复并在送达时进模型。 */
+    public Map<String, Object> enqueue(String sessionId, String userId, String text, List<String> images,
+                                       List<com.wenqu.ai.dto.ChatRequest.Attachment> attachments) {
         sessions.assertOwned(sessionId, userId);
         String clean = text == null ? "" : text.strip();
         if (clean.isEmpty()) throw new IllegalArgumentException("缺少插话内容");
@@ -59,12 +64,15 @@ public class SteerQueueService implements SteerQueueHooks {
         List<String> imgs = images == null ? List.of()
                 : images.stream().filter(u -> u != null && u.startsWith("data:")).toList();
         item.setImages(imgs.isEmpty() ? null : JSON.toJSONString(imgs));
+        List<Map<String, Object>> metas = chatAttachments.metas(attachments, userId);
+        item.setAttachments(metas.isEmpty() ? null : JSON.toJSONString(metas));
         item.setStatus("PENDING");
         item.setAttempts(0);
         // 显式给时间：插入回包要直接给前端排序用，DB 默认值不会回填到实体
         item.setCreatedAt(java.time.LocalDateTime.now());
         mapper.insert(item);
-        log.info("[STEER-QUEUE] 入队: session={} item={} 字数={} 图={}", sessionId, item.getId(), clean.length(), imgs.size());
+        log.info("[STEER-QUEUE] 入队: session={} item={} 字数={} 图={} 附件={}",
+                sessionId, item.getId(), clean.length(), imgs.size(), metas.size());
         return view(item);
     }
 
@@ -147,7 +155,7 @@ public class SteerQueueService implements SteerQueueHooks {
         if (mapper.claim(item.getId(), null) == 0) return false;
         try {
             ChatRunRuntime.SteerOutcome o = runtime.steerTurnDetailed(
-                    item.getSessionId(), uid, item.getText(), imagesOf(item));
+                    item.getSessionId(), uid, item.getText(), imagesOf(item), attachmentsOf(item));
             if (o == null) {
                 mapper.release(item.getId(), "这一轮不收插话");
                 return false;
@@ -171,6 +179,41 @@ public class SteerQueueService implements SteerQueueHooks {
         }
     }
 
+    /** 落库的附件元信息（[{name,mime,size,fileId}]）→ 送达用的引用（正文由运行时按 fileId 现读）。 */
+    private static List<com.wenqu.ai.dto.ChatRequest.Attachment> attachmentsOf(SteerItem item) {
+        String raw = item.getAttachments();
+        if (raw == null || raw.isBlank()) return List.of();
+        try {
+            List<com.wenqu.ai.dto.ChatRequest.Attachment> out = new ArrayList<>();
+            for (Map<String, Object> m : metaListOf(raw)) {
+                Object fid = m.get("fileId");
+                if (fid == null || String.valueOf(fid).isBlank()) continue;
+                com.wenqu.ai.dto.ChatRequest.Attachment a = new com.wenqu.ai.dto.ChatRequest.Attachment();
+                a.setFileId(String.valueOf(fid));
+                a.setName(m.get("name") == null ? "" : String.valueOf(m.get("name")));
+                a.setMime(m.get("mime") == null ? "" : String.valueOf(m.get("mime")));
+                out.add(a);
+            }
+            return out;
+        } catch (RuntimeException e) {
+            log.warn("[STEER-QUEUE] 附件元信息解析失败（按无附件送达）: {}", e.getMessage());
+            return List.of();
+        }
+    }
+
+    /** 附件元信息 JSON → 列表；坏值按空处理（队列不能因为一行的旧数据送不出去）。 */
+    private static List<Map<String, Object>> metaListOf(String raw) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Object o : JSON.parseArray(raw)) {
+            if (o instanceof Map<?, ?> map) {
+                Map<String, Object> m = new LinkedHashMap<>();
+                map.forEach((k, v) -> m.put(String.valueOf(k), v));
+                out.add(m);
+            }
+        }
+        return out;
+    }
+
     private static String trim(String s) {
         if (s == null) return "送达失败";
         return s.length() > 190 ? s.substring(0, 190) : s;
@@ -181,10 +224,22 @@ public class SteerQueueService implements SteerQueueHooks {
         m.put("id", it.getId());
         m.put("text", it.getText());
         m.put("images", imagesOf(it));
+        m.put("attachments", attachmentsMetaOf(it));
         m.put("status", it.getStatus());
         m.put("attempts", it.getAttempts() == null ? 0 : it.getAttempts());
         m.put("lastError", it.getLastError() == null ? "" : it.getLastError());
         m.put("createdAt", it.getCreatedAt() == null ? 0L : it.getCreatedAt().toInstant(java.time.ZoneOffset.UTC).toEpochMilli());
         return m;
+    }
+
+    /** 投影里的附件元信息（原样回）：前端队列条目要按它显示「+N 个附件」并在取回后能重发。 */
+    private static List<Map<String, Object>> attachmentsMetaOf(SteerItem it) {
+        String raw = it.getAttachments();
+        if (raw == null || raw.isBlank()) return List.of();
+        try {
+            return metaListOf(raw);
+        } catch (RuntimeException e) {
+            return List.of();
+        }
     }
 }

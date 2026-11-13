@@ -2434,7 +2434,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
          * <p>只在这句话真被应用时才留痕：没赶上的那句由 {@code done.pendingSteers} 交回前端，
          * 作为新一轮的问题重新出现——它没进过这一轮，就不该长在这一轮的回答里。
          */
-        void steer(String text, String messageId, java.util.List<String> images) {
+        void steer(String text, String messageId, java.util.List<String> images,
+                   java.util.List<java.util.Map<String, Object>> attachments) {
             flushTimelineText(answerText.length());
             Map<String, Object> seg = new java.util.LinkedHashMap<>();
             seg.put("kind", "steer");
@@ -2442,8 +2443,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             seg.put("messageId", messageId == null ? "" : messageId);
             // 带图插话：图也要长在这一段上。否则独立用户气泡被这段顶掉后，图在界面上就凭空消失
             if (images != null && !images.isEmpty()) seg.put("images", images);
+            // 附件同理：它是这句话的一部分，气泡被顶掉后文件名与体积不能跟着不见
+            if (attachments != null && !attachments.isEmpty()) seg.put("attachments", attachments);
             timeline.add(seg);
-            transcript.steer(text, messageId);
+            transcript.steer(text, messageId, images, attachments);
         }
 
         /**
@@ -3548,11 +3551,14 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                         com.wenqu.ai.agent.chat.SteerReceipts.SteerAck ack =
                                 steerAckOf(turnId, receiptId);
                         if (ack == null) continue;
-                        recording.steer(ack.text(), ack.messageId(), ack.images());
+                        recording.steer(ack.text(), ack.messageId(), ack.images(), ack.attachments());
                         Map<String, Object> frame = new java.util.LinkedHashMap<>();
                         frame.put("text", ack.text());
                         frame.put("messageId", ack.messageId() == null ? "" : ack.messageId());
                         if (ack.images() != null && !ack.images().isEmpty()) frame.put("images", ack.images());
+                        if (ack.attachments() != null && !ack.attachments().isEmpty()) {
+                            frame.put("attachments", ack.attachments());
+                        }
                         emit(channel, RunEventType.STEER, com.alibaba.fastjson2.JSON.toJSONString(frame));
                     }
                 }
@@ -5091,6 +5097,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             item.put("text", ack.text());
             // 随它落库的那条用户消息 ID：前端复用同一颗气泡补发，不另推一条，刷新后也不会变两条
             item.put("messageId", ack.messageId() == null ? "" : ack.messageId());
+            // 附件带着引用一起交回：补发是新一轮，没有这份引用模型就再也看不到那句话带的材料
+            // （图片交回的是展示 URL，补发请求只收 data URL，故不在此列——它已随消息行落库回显）
+            if (ack.attachments() != null && !ack.attachments().isEmpty()) {
+                item.put("attachments", ack.attachments());
+            }
             out.add(item);
         }
         if (!out.isEmpty()) {

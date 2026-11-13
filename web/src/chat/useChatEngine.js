@@ -381,15 +381,16 @@ const addFiles = (files, target, extra) => {
   // 本批已接受的张数要自己累加：compressImage 是异步的，列表长度在循环里不会变，
   // 只看 imgList.value.length 的话一次框选 8 张图会全部通过「最多 5 张」那道判断
   let imgAccepted = 0
-  // 「附件满了」只提示一次：超限的那一批后面往往全是附件，逐个提示会把同一句话刷十几遍。
-  // 但不 break——图片不吃这个上限，后面的图片仍该被收下（break 会把混合批次里的图片一起丢掉）
-  let fileMaxWarned = false
+  // 条数上限被拦的提示一批只报一次：一次框选 8 张图，后 3 张都超「最多 5 张」，
+  // 逐个提示会把同一句话叠三层。类型/体积的提示文案带着文件名，不在此列——那是不同的文件。
+  const warnedOnce = new Set()
   for (const f of files) {
     const verdict = classifyIntake(f, imgList.value.length + imgAccepted, fileList.value.length)
     if (verdict.kind === 'reject') {
-      if (verdict.reason !== REJECT.FILE_MAX || !fileMaxWarned) {
+      const countLimit = verdict.reason === REJECT.IMG_MAX || verdict.reason === REJECT.FILE_MAX
+      if (!countLimit || !warnedOnce.has(verdict.reason)) {
         message.warning(rejectText(verdict))
-        if (verdict.reason === REJECT.FILE_MAX) fileMaxWarned = true
+        if (countLimit) warnedOnce.add(verdict.reason)
       }
       continue
     }
@@ -1011,11 +1012,11 @@ watch(() => sessionStore.autoPickTick, async () => {
   if (route.path === hooks.chatPath) await autoPick()
 })
 // 工具审批动作在 ./approvalActions.js（actions 层）。
-const resolveApproval = (m, card, approved) => resolveApprovalImpl(m, card, approved, {
+const resolveApproval = (m, card, approved, scope) => resolveApprovalImpl(m, card, approved, {
   chatStreams, currentSid: () => currentSessionId.value, notify: message, emitNotifChanged,
   pollRestoredAnswer: sid => pollRestoredAnswer(sid), scrollSoft: () => hooks.scrollSoft?.(),
   approveApi: approveToolCall, approvalLeftSec: approvalLeftSecOf
-})
+}, scope)
 
 /**
  * 待批准的计划卡（两端共用，与提问面板同判据）：倒着找最后一条还挂着 pending 计划的助手消息。
@@ -2087,7 +2088,10 @@ const { steerQueue, steerResend, steer, stageSteer, sendSteer, editSteer, dropSt
   dropApi: dropQueued,
   notify: (msg, level) => (level === 'info' ? message.info(msg) : message.warning(msg)),
   textOf: () => text.value,
-  setText: v => { text.value = v }
+  setText: v => { text.value = v },
+  // 取回队列条目时材料一并回到输入框（图按 data URL 还原，附件按 fileId 挂回）
+  attachImage: u => attachImage(u),
+  attachUploaded: a => attachUploaded(a)
 })
 
 /**
@@ -2129,7 +2133,8 @@ function applySteerFrame (payload, msg) {
   const id = f.messageId || ''
   dropApplied(id)
   if (id) messages.value = messages.value.filter(m => !(m.role === 'user' && m.messageId === id))
-  pushTimelineSteer(msg, t, id, Array.isArray(f.images) ? f.images : [])
+  pushTimelineSteer(msg, t, id, Array.isArray(f.images) ? f.images : [],
+                    Array.isArray(f.attachments) ? f.attachments : [])
 }
 
 /** 按原载荷把一条插话作为完整新一轮发出（与计划「继续对话」同一条通路）
@@ -2164,12 +2169,15 @@ function resendSteer (t, origin = null) {
   const existing = t.messageId
           ? messages.value.find(m => m.role === 'user' && m.messageId === t.messageId)
           : null
+  // 附件带着引用补发：那句话没进过本轮上下文，随行的材料同样没进去，不能只把字再发一遍
+  const attsMeta = Array.isArray(t.attachments) ? t.attachments : []
+  const atts = attsMeta.filter(a => a && a.fileId).map(a => ({ name: a.name, mime: a.mime, fileId: a.fileId }))
   const userMsg = existing || reactive({ role: 'user', content: t.text, images: [],
-                        attachments: [], attachData: [], skills: [], mentions: [], historyRefs: [],
+                        attachments: attsMeta, attachData: atts, skills: [], mentions: [], historyRefs: [],
                         deepThink: false, planMode: false, fromSteer: true,
                         time: Date.now(), messageId: t.messageId || null })
   if (atHome && !existing) messages.value.push(userMsg)
-  streamAnswer(t.text, [], null, false, 1, false, [], [], [], back, '', '', userMsg,
+  streamAnswer(t.text, [], null, false, 1, false, atts, [], [], back, '', '', userMsg,
                false, false, true)
 }
 

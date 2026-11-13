@@ -2,10 +2,12 @@
 // 没点「立即发送」的条目会先落库排队——反悔窗口仍在（删掉/改掉只是一次 DELETE），但它不再随刷新蒸发。
 import { ref, reactive } from 'vue'
 
-/** 带材料的插话只能等本轮结束按新一轮发出（这轮的上下文在请求构建期已定型）。
- *  图片不在此列：steer 已收多模态，图片随这句话在下一次调模型前一起送进去。 */
+/** 这些材料只能等本轮结束按新一轮发出：这一轮的上下文在请求构建期已定型，
+ *  且它们要改的是「这一轮怎么跑/查什么」（检索面、人设、上下文引用），插进去也来不及生效。
+ *  图片与文档附件不在此列：两者都是随这句话交出去的内容，steer 已收多模态与附件正文——
+ *  图片下一次调模型前一起送进去，附件由服务端按 fileId 现读现抽。 */
 export const steerNeedsNextRound = s =>
-  !!(s && (s.atts?.length || s.skills?.length
+  !!(s && (s.skills?.length
         || s.mentions?.length || s.historyRefs?.length || s.planMode))
 
 /**
@@ -16,20 +18,27 @@ export const steerNeedsNextRound = s =>
  */
 export const createSteerQueue = ({ currentSid, hasLiveStream, steerApi,
                                    enqueueApi, listApi, steerItemApi, dropApi,
-                                   notify, textOf, setText }) => {
+                                   notify, textOf, setText, attachImage, attachUploaded }) => {
   const steerQueue = ref([])
   /** 后端交回的「已经说过、模型却没收到」那几条：排在本地队列前面，本轮一空出来就补发 */
   const steerResend = ref([])
 
-  /** 服务端一行 → 界面一条。PENDING=排队中，STEERED=已送出等这一轮听到。 */
-  const fromServer = (row, sidNow) => reactive({
-    id: row.id, text: String(row.text || ''), images: row.images || [],
-    server: true, local: false, sid: sidNow,
-    queued: row.status === 'PENDING',
-    awaiting: row.status === 'STEERED',
-    sending: false, deferred: false, attempts: Number(row.attempts) || 0,
-    lastError: row.lastError || '', at: Number(row.createdAt) || Date.now()
-  })
+  /** 服务端一行 → 界面一条。PENDING=排队中，STEERED=已送出等这一轮听到。
+   *  附件按元信息（name/mime/size/fileId）还原成与本地草稿同一形状：取回重发、随行材料计数都认它。 */
+  const fromServer = (row, sidNow) => {
+    const attsMeta = (row.attachments || []).map(a => ({
+      name: a.name, mime: a.mime || '', size: Number(a.size) || 0, fileId: a.fileId
+    })).filter(a => a.fileId)
+    return reactive({
+      id: row.id, text: String(row.text || ''), images: row.images || [],
+      atts: attsMeta, attsMeta,
+      server: true, local: false, sid: sidNow,
+      queued: row.status === 'PENDING',
+      awaiting: row.status === 'STEERED',
+      sending: false, deferred: false, attempts: Number(row.attempts) || 0,
+      lastError: row.lastError || '', at: Number(row.createdAt) || Date.now()
+    })
+  }
 
   /**
    * 从服务端恢复这个会话的队列。**只替换服务端那一段**：本地还没同步上去的
@@ -69,11 +78,12 @@ export const createSteerQueue = ({ currentSid, hasLiveStream, steerApi,
     }
   }
 
-  /** 把一条本地草稿同步到服务端（失败只记在行上，不弹提示——用户还没点发送）。 */
+  /** 把一条本地草稿同步到服务端（失败只记在行上，不弹提示——用户还没点发送）。
+   *  附件只带引用（fileId）：正文由服务端按号现读，队列行也不能塞文件本体。 */
   const syncEnqueue = async item => {
     if (!enqueueApi || !item || !item.local) return
     try {
-      const r = await enqueueApi(item.sid, item.text, item.images || [])
+      const r = await enqueueApi(item.sid, item.text, item.images || [], item.atts || [])
       const d = r && r.data
       if (d && d.id) {
         item.id = d.id
@@ -150,12 +160,21 @@ export const createSteerQueue = ({ currentSid, hasLiveStream, steerApi,
     return item
   }
 
+  /** 材料一并取回输入框：队列行删掉了，手里这份图/附件引用是唯一还回来的机会，不能只还文字。 */
+  const restoreMaterials = item => {
+    const imgs = item.images || []
+    const atts = item.atts || []
+    imgs.forEach(u => attachImage?.(u))
+    atts.forEach(a => attachUploaded?.({ name: a.name, mime: a.mime, size: a.size, fileId: a.fileId }))
+  }
+
   /** 送不出去时把内容放回输入框（不覆盖正在打的字）——服务端队列也失败了才走这条，保证不丢话。 */
   const returnToInput = item => {
     steerQueue.value = steerQueue.value.filter(s => s !== item)
     const cur = String(textOf() || '')
     if (!cur.trim()) setText(item.text)
     else if (!cur.includes(item.text)) setText(cur.trim() + ' ' + item.text)
+    restoreMaterials(item)
   }
 
   /**
@@ -205,11 +224,12 @@ export const createSteerQueue = ({ currentSid, hasLiveStream, steerApi,
     }
   }
 
-  /** 「修改」：从队列撤掉取回输入框改（服务端那份一并删掉） */
+  /** 「修改」：从队列撤掉取回输入框改（服务端那份一并删掉），图与附件一起取回 */
   const editSteer = item => {
     if (item.server && dropApi) dropApi(item.sid, item.id).catch(() => {})
     steerQueue.value = steerQueue.value.filter(s => s !== item)
     setText(item.text)
+    restoreMaterials(item)
   }
 
   /** 「删除」：丢弃这条还没发出的插话 */

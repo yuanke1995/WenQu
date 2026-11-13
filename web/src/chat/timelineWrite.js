@@ -47,14 +47,15 @@ export const pushTimelineArtifact = (m, index) => {
 }
 
 /** 插话段：同一条收据可能被读两遍，按 messageId 幂等。 */
-export const pushTimelineSteer = (m, text, messageId, images = []) => {
+export const pushTimelineSteer = (m, text, messageId, images = [], attachments = []) => {
   if (!m || !text) return
   const tl = Array.isArray(m.timeline) ? m.timeline : (m.timeline = [])
   const id = messageId || ''
   if (id && tl.some(s => s && s.kind === 'steer' && s.messageId === id)) return
   const seg = { kind: 'steer', text, messageId: id }
-  // 带图插话：图随这一段一起长在回答里（独立用户气泡被这段顶掉，图不能跟着消失）
+  // 带图/带附件的插话：材料随这一段一起长在回答里（独立用户气泡被这段顶掉，材料不能跟着消失）
   if (Array.isArray(images) && images.length) seg.images = images
+  if (Array.isArray(attachments) && attachments.length) seg.attachments = attachments
   tl.push(seg)
 }
 
@@ -84,6 +85,7 @@ export const restoreTimeline = (m, segs) => {
       if (!t) continue
       const seg = { kind: 'steer', text: t, messageId: String(s.messageId || '') }
       if (Array.isArray(s.images) && s.images.length) seg.images = s.images
+      if (Array.isArray(s.attachments) && s.attachments.length) seg.attachments = s.attachments
       out.push(seg)
     }
   }

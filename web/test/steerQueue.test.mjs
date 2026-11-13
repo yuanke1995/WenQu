@@ -21,9 +21,9 @@ const setup = ({
       if (steerRet instanceof Error) throw steerRet
       return steerRet
     },
-    enqueueApi: async (s, t, imgs = []) => {
+    enqueueApi: async (s, t, imgs = [], atts = []) => {
       if (enqueueThrows) throw new Error('queue down')
-      calls.enq.push([s, t, imgs])
+      calls.enq.push([s, t, imgs, atts])
       return { data: { id: 'q1', status: 'PENDING' } }
     },
     listApi: async s => { calls.list.push(s); return { data: rows } },
@@ -40,10 +40,10 @@ const setup = ({
   return { q, calls, text, sidNow }
 }
 
-test('带材料判定：附件/技能/引用/历史/计划模式任一即算，图片已可随本轮插话', () => {
+test('带材料判定：技能/引用/历史/计划模式任一即算；图片与附件已可随本轮插话', () => {
   assert.equal(steerNeedsNextRound({ text: 'x' }), false)
   assert.equal(steerNeedsNextRound({ images: ['data:image/png;base64,x'] }), false)
-  assert.equal(steerNeedsNextRound({ atts: [1] }), true)
+  assert.equal(steerNeedsNextRound({ atts: [{ fileId: 'f1' }] }), false)
   assert.equal(steerNeedsNextRound({ skills: [1] }), true)
   assert.equal(steerNeedsNextRound({ mentions: [1] }), true)
   assert.equal(steerNeedsNextRound({ historyRefs: [1] }), true)
@@ -80,7 +80,7 @@ test('入队：落库排队，不发 steer 请求；无流/空文本不入', asy
   assert.equal(a.q.steerQueue.value.length, 1)
   assert.equal(a.calls.api.length, 0)
   await Promise.resolve()
-  assert.deepEqual(a.calls.enq, [['s1', '插一句', []]])
+  assert.deepEqual(a.calls.enq, [['s1', '插一句', [], []]])
   assert.equal(item.server, true)
   assert.equal(item.id, 'q1')
 
@@ -101,12 +101,24 @@ test('立即发送：服务端队列那条送进本轮，转等待态', async ()
   assert.equal(a.q.steerQueue.value.length, 1)
 })
 
-test('立即发送：带材料转待发，本轮不发', async () => {
+test('立即发送：带附件随本轮插话一起送（附件引用随入队落库）', async () => {
   const a = setup()
-  const item = a.q.stageSteer({ text: '插一句', atts: [{ fileId: 'f1' }] })
+  const item = a.q.stageSteer({ text: '看这份文档', atts: [{ name: 'a.docx', mime: 'application/msword', fileId: 'f1' }] })
+  await Promise.resolve()
+  await a.q.sendSteer(item)
+  assert.equal(item.deferred, false)
+  assert.equal(item.awaiting, true)
+  assert.deepEqual(a.calls.enq[0][0], 's1')
+  assert.deepEqual(a.calls.enq[0][2], [])
+  assert.deepEqual(a.calls.enq[0][3], [{ name: 'a.docx', mime: 'application/msword', fileId: 'f1' }])
+  assert.equal(a.calls.notes.length, 0)
+})
+
+test('立即发送：技能/@/#/计划模式仍需等下一轮（本轮上下文改不了）', async () => {
+  const a = setup()
+  const item = a.q.stageSteer({ text: '换个查法', skills: ['pdf'] })
   await a.q.sendSteer(item)
   assert.equal(item.deferred, true)
-  assert.equal(a.calls.api.length, 0)
   assert.equal(a.calls.steerItem.length, 0)
   assert.equal(a.calls.notes[0][0], 'info')
 })
@@ -118,7 +130,7 @@ test('立即发送：带图随本轮插话一起送（不再 deferred）', async
   await a.q.sendSteer(item)
   assert.equal(item.deferred, false)
   assert.equal(item.awaiting, true)
-  assert.deepEqual(a.calls.enq, [['s1', '看这张图', ['data:image/png;base64,x']]])
+  assert.deepEqual(a.calls.enq, [['s1', '看这张图', ['data:image/png;base64,x'], []]])
 })
 
 test('立即发送：没有活轮时留在队列里等下一轮（不退回输入框）', async () => {
@@ -191,7 +203,7 @@ test('计划调整排队：落库后投递，成功转「等这一轮听到」',
   assert.equal(item.text, '再加一个栏目')
   assert.equal(item.queued, true)
   await Promise.resolve()
-  assert.deepEqual(a.calls.enq, [['s1', '再加一个栏目', []]])
+  assert.deepEqual(a.calls.enq, [['s1', '再加一个栏目', [], []]])
 
   assert.equal(await a.q.deliverPlanAdjust(item), true)
   assert.deepEqual(a.calls.steerItem, [['s1', 'q1']])

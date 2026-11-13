@@ -103,6 +103,12 @@ public final class TurnTranscriptRecorder {
     }
 
     public synchronized void steer(String text, String messageId) {
+        steer(text, messageId, List.of(), List.of());
+    }
+
+    /** 插话块：图与附件都挂在这一段上（独立用户气泡会被这段顶掉，材料不能跟着消失）。 */
+    public synchronized void steer(String text, String messageId, List<String> images,
+                                   List<Map<String, Object>> attachments) {
         if (text == null || text.isEmpty()) return;
         openText = null;
         openProcess = null;
@@ -111,6 +117,8 @@ public final class TurnTranscriptRecorder {
         block.data = new LinkedHashMap<>();
         block.data.put("text", text);
         block.data.put("messageId", messageId == null ? "" : messageId);
+        if (images != null && !images.isEmpty()) block.data.put("images", images);
+        if (attachments != null && !attachments.isEmpty()) block.data.put("attachments", attachments);
     }
 
     public synchronized void artifacts(List<Map<String, Object>> artifacts) {

@@ -31,7 +31,8 @@ import java.util.Map;
  *   <li><b>出口加信封</b>：读文件、grep、列目录、命令输出的文本统一套 {@link UntrustedContent#toolResult}
  *       并标脏本轮；</li>
  *   <li><b>入口加确认</b>：本轮已读过外部内容时，{@code execute} 里的删除/覆盖命令、完全权限档下
- *       写到工作区外的文件工具，返回 {@code ask} 让人在场确认（{@link AgentxTaint}）。</li>
+ *       写到工作区外的文件工具，返回 {@code ask} 让人在场确认（{@link AgentxTaint}）。
+ *       用户在审批卡上选过「本次会话都允许」的那把工具除外（{@link AgentxTurnSlot#toolAllowedForSession}）。</li>
  * </ol>
  *
  * <p>只包这七把：它们是「内容来自用户电脑」的出口。知识检索/联网/文档几族的信封在各自工具内部，
@@ -127,6 +128,8 @@ public final class AgentxNativeToolGuard extends ToolBase {
      */
     private PermissionDecision forcedConfirmation(Map<String, Object> input) {
         AgentxTurnSlot.Turn turn = slot == null ? null : slot.current();
+        // 本会话已对这把工具选过「本次会话都允许」：不再问人（按工具名放行，别的工具照问）
+        if (slot != null && slot.toolAllowedForSession(getName())) return null;
         ExecutionPolicy policy = turn == null ? null : turn.policy();
         AgentxTaint taint = turn == null ? null : turn.taint();
         String note = forcedAskNote(kind, input, policy, taint, roots);

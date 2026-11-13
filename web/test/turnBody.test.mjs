@@ -48,7 +48,7 @@ test('插话清单：只列有正文的 steer 段', () => {
     { kind: 'steer', text: '   ' },
     { kind: 'text', to: 1 },
   ] })
-  assert.deepEqual(list, [{ kind: 'steer', text: 'a', messageId: 'm1', images: [] }])
+  assert.deepEqual(list, [{ kind: 'steer', text: 'a', messageId: 'm1', images: [], attachments: [] }])
 
   // 计划卡「本轮调整」读的就是这份：带图的那条要把图带出去，否则计划里只看到半句话
   const withImg = turnSteerRows({ timeline: [

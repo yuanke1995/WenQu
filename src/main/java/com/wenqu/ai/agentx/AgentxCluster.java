@@ -174,10 +174,13 @@ public class AgentxCluster {
     /**
      * 把一次人工裁决转投给持有实例的副本执行。
      *
+     * @param scope 裁决范围：{@code "session"} = 「本次会话都允许」。必须随转投一起带到持有者，
+     *              放行登记要落在执行侧（权限判定读的是那边的会话槽位）
      * @return true=持有者确认已送达并执行；false=没有持有者、送达超时或持有者执行失败
      */
     public boolean forwardAnswer(String sessionKey, String kind, String requestId,
-                                 boolean approved, String reason, String answer, String outcome) {
+                                 boolean approved, String reason, String answer, String outcome,
+                                 String scope) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("sessionKey", sessionKey);
         payload.put("kind", kind);
@@ -186,6 +189,7 @@ public class AgentxCluster {
         payload.put("reason", reason == null ? "" : reason);
         payload.put("answer", answer == null ? "" : answer);
         payload.put("outcome", outcome == null ? "" : outcome);
+        payload.put("scope", scope == null ? "" : scope);
         payload.put("_replyTo", myReplyChannel);
         JSONObject reply = coord.request(CH_ANSWER, payload, ANSWER_TIMEOUT);
         if (reply == null) {

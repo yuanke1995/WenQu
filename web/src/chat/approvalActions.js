@@ -1,5 +1,6 @@
 // 工具执行审批动作（actions 层）：批准/拒绝，后端以结果回给模型继续回答。
-export const resolveApproval = async (m, card, approved, ctx) => {
+// scope='session' = 本次会话都允许（同一工具后续不再弹卡），其余情况只批这一步。
+export const resolveApproval = async (m, card, approved, ctx, scope) => {
   // 多卡：调用方传具体那张；兼容只传 (m, approved) 的旧调用点（取第一张）
   const a = card && card.id ? card : (m && (m.approvals || [])[0])
   if (!a || a.busy) return
@@ -12,11 +13,14 @@ export const resolveApproval = async (m, card, approved, ctx) => {
   // 恢复态卡：本设备没有这一轮的流，批准后后台生成，轮询到落库再重载
   const background = !!a.restored && !(ctx.chatStreams.get(ctx.currentSid())?.msg === m)
   try {
-    const r = await ctx.approveApi(a.id, approved)
+    const r = await ctx.approveApi(a.id, approved, scope)
     if (r && r.success === false) {
       ctx.notify.warning(r.msg || '审批提交失败')
       a.busy = false
       return
+    }
+    if (approved && scope === 'session') {
+      ctx.notify.success(`已设为本次会话都允许：「${a.label || a.tool}」后续不再询问`)
     }
     ctx.emitNotifChanged('chat')
     if (m && Array.isArray(m.approvals)) m.approvals = m.approvals.filter(x => x.id !== a.id)

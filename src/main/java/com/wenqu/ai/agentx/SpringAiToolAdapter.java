@@ -68,6 +68,11 @@ public final class SpringAiToolAdapter extends ToolBase {
     private final boolean untrustedResult;
     /** 本轮污点（实例跨轮常驻，调用期现取；可为 null = 不需要标脏）。 */
     private final Supplier<AgentxTaint> taint;
+    /**
+     * 本会话是否已对这把工具选过「本次会话都允许」（审批卡上的会话级放行）。
+     * <p>实例跨轮常驻，所以必须是调用期现读的供应器，不能把某一轮的结果烘进来。
+     */
+    private final java.util.function.BooleanSupplier sessionApproved;
 
     /** 固定档位入口（测试与「实例只活一轮」的调用方用）：等价于 {@code () -> policy}。 */
     public SpringAiToolAdapter(ToolCallback callback, boolean readOnly,
@@ -89,6 +94,16 @@ public final class SpringAiToolAdapter extends ToolBase {
                                Supplier<ExecutionPolicy> policy, boolean approvalRequired,
                                boolean approvalCanAsk, boolean untrustedResult,
                                Supplier<AgentxTaint> taint) {
+        this(callback, readOnly, contextSupplier, policy, approvalRequired, approvalCanAsk,
+                untrustedResult, taint, () -> false);
+    }
+
+    public SpringAiToolAdapter(ToolCallback callback, boolean readOnly,
+                               Supplier<Map<String, Object>> contextSupplier,
+                               Supplier<ExecutionPolicy> policy, boolean approvalRequired,
+                               boolean approvalCanAsk, boolean untrustedResult,
+                               Supplier<AgentxTaint> taint,
+                               java.util.function.BooleanSupplier sessionApproved) {
         super(callback.getToolDefinition().name(), callback.getToolDefinition().description(),
                 schemaOf(callback), readOnly, true, false, null, false, false);
         this.callback = callback;
@@ -98,6 +113,7 @@ public final class SpringAiToolAdapter extends ToolBase {
         this.approvalCanAsk = approvalCanAsk;
         this.untrustedResult = untrustedResult;
         this.taint = taint;
+        this.sessionApproved = sessionApproved;
     }
 
     /** 入参 schema：Spring AI 那份 JSON 直接 parse 成框架要的 Map；不是合法 JSON 就当场抛，别静默给个空表。 */
@@ -135,7 +151,9 @@ public final class SpringAiToolAdapter extends ToolBase {
         // 就弹了卡），而外部内容带来的破坏性风险由 AgentxNativeToolGuard 兜（只对删除/覆盖/外发/越界写
         // 这类命令要人确认）。DSH 同样没有「读入外部内容 → 审批升级」这一层。
         PermissionMode mode = context == null ? null : context.getMode();
-        if (approvalRequired && mode != PermissionMode.DONT_ASK) {
+        // 「本次会话都允许」按工具名生效：这一把已被用户在本会话里放行就不再弹卡，其余工具照旧
+        if (approvalRequired && mode != PermissionMode.DONT_ASK
+                && (sessionApproved == null || !sessionApproved.getAsBoolean())) {
             if (!approvalCanAsk) {
                 return Mono.just(PermissionDecision.deny("该工具需要执行前确认，而本轮回合没有可应答的在场通道："
                         + getName() + "（请改用无需确认的能力完成）"));

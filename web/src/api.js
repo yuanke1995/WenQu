@@ -1427,20 +1427,28 @@ export const batchReparseDocuments = ids =>
 /** 运行中插话（steer）：本轮还在跑时补一句方向。这句话交给框架会话自己送进正在跑的那一轮，生效点是
  *  下一次模型调用之前（工具循环由框架持有，掐不断正在执行的这一步）；本轮收尾时模型还没收上的，
  *  会随 done 回落、由前端自动作为下一句发出。
- *  可带图片（data URL，与正常提问同一套校验）。
+ *  可带图片（data URL）与文档附件（fileId，正文由服务端按号现读）——与本轮提问同一套校验。
  *  返回 {accepted, messageId}，false=没有在跑的轮 / 不是本人的轮 / 框架不收（单条最长 800 字），
  *  调用方把内容放回输入框即可 */
-export const steerChatTurn = (sessionId, text, images = []) =>
+export const steerChatTurn = (sessionId, text, images = [], attachments = []) =>
   request('/chat/steer', {
     method: 'POST',
-    body: JSON.stringify(images && images.length ? { sessionId, text, images } : { sessionId, text })
+    body: JSON.stringify({
+      sessionId, text,
+      ...(images && images.length ? { images } : {}),
+      ...(attachments && attachments.length ? { attachments } : {})
+    })
   })
 
-/** 插话排队（服务端持有）：生成中先入队、不发请求；刷新后由队列投影恢复。 */
-export const enqueueSteer = (sessionId, text, images = []) =>
+/** 插话排队（服务端持有）：生成中先入队、不发请求；刷新后由队列投影恢复。附件随行落库，drain 时一并送出。 */
+export const enqueueSteer = (sessionId, text, images = [], attachments = []) =>
   request('/chat/steer/queue', {
     method: 'POST',
-    body: JSON.stringify(images && images.length ? { sessionId, text, images } : { sessionId, text })
+    body: JSON.stringify({
+      sessionId, text,
+      ...(images && images.length ? { images } : {}),
+      ...(attachments && attachments.length ? { attachments } : {})
+    })
   })
 
 /** 插话队列投影：还在排队与已送出等模型听到的条目。 */
@@ -1505,9 +1513,13 @@ export const getSessionGoalApi = sessionId =>
 export const getGoalEventsApi = (sessionId, goalId) =>
   request(`/chat/session/${encodeURIComponent(sessionId)}/deep/events?goalId=${encodeURIComponent(goalId)}`)
 
-/** 工具执行审批（人在回路）：裁决 approval_required 事件下发的请求；仅本轮用户本人可批 */
-export const approveToolCall = (approvalId, approved) =>
-  request(`/tool-approval/${encodeURIComponent(approvalId)}`, { method: 'POST', body: JSON.stringify({ approved }) })
+/** 工具执行审批（人在回路）：裁决 approval_required 事件下发的请求；仅本轮用户本人可批。
+ *  scope='session' = 「本次会话都允许」：同一工具在本次会话内不再弹卡（后端按工具名登记） */
+export const approveToolCall = (approvalId, approved, scope) =>
+  request(`/tool-approval/${encodeURIComponent(approvalId)}`, {
+    method: 'POST',
+    body: JSON.stringify(scope === 'session' ? { approved, scope: 'session' } : { approved })
+  })
 
 /** 智能体提问（人在回路）：回答 ask_user 事件下发的结构化提问；仅本轮用户本人可答，答案作为工具结果回给模型。
  *  answers 为与问题下标对齐的答案数组（一卡多问批量提交）；单问题也可传单元素数组 */

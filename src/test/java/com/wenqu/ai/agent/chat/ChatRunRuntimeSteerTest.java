@@ -1,5 +1,6 @@
 package com.wenqu.ai.agent.chat;
 
+import com.wenqu.ai.service.ChatAttachmentService;
 import com.wenqu.ai.service.ChatRunBus;
 import com.wenqu.ai.service.ConfigService;
 import com.wenqu.ai.service.MessageWrite;
@@ -28,7 +29,8 @@ class ChatRunRuntimeSteerTest {
     private final SessionService sessionService = mock(SessionService.class);
     private final SessionEventService events = mock(SessionEventService.class);
     private final ChatRunRuntime runtime = new ChatRunRuntime(mock(ConfigService.class), bus, events,
-            sessionService, mock(TurnStateStore.class), mock(UserImageService.class));
+            sessionService, mock(TurnStateStore.class), mock(UserImageService.class),
+            mock(ChatAttachmentService.class));
 
     @AfterEach
     void tearDown() {
@@ -52,7 +54,7 @@ class ChatRunRuntimeSteerTest {
         runtime.bindSteer((uid, sid, text, imgs) -> "receipt-1");
         when(sessionService.appendMessage(any())).thenReturn("m1");
 
-        assertThat(runtime.steerTurn("s1", "admin", " 改一下 logo ")).isEqualTo("m1");
+        assertThat(runtime.steerTurn("s1", "admin", " 改一下 logo ", null, null)).isEqualTo("m1");
 
         ArgumentCaptor<MessageWrite> write = ArgumentCaptor.forClass(MessageWrite.class);
         verify(sessionService).appendMessage(write.capture());
@@ -69,7 +71,7 @@ class ChatRunRuntimeSteerTest {
         ChatRunBus.Run live = run("goal:g:1", "someone");
         when(bus.running("s1")).thenReturn(live);
         runtime.bindSteer((uid, sid, text, imgs) -> "receipt-1");
-        assertThat(runtime.steerTurn("s1", "admin", "插一句")).isNull();
+        assertThat(runtime.steerTurn("s1", "admin", "插一句", null, null)).isNull();
         verifyNoInteractions(sessionService);
     }
 
@@ -83,7 +85,7 @@ class ChatRunRuntimeSteerTest {
         when(bus.running("s1")).thenReturn(live);
         runtime.bindSteer((uid, sid, text, imgs) -> "receipt-1");
 
-        assertThat(runtime.steerTurn("s1", "admin", "插一句")).isNull();
+        assertThat(runtime.steerTurn("s1", "admin", "插一句", null, null)).isNull();
         verifyNoInteractions(sessionService);
     }
 
@@ -91,7 +93,7 @@ class ChatRunRuntimeSteerTest {
     @DisplayName("没有活 run 也没有把手 → 拒（收尾后不再假装能插）")
     void noLiveTurnRejected() {
         runtime.bindSteer((uid, sid, text, imgs) -> "receipt-1");
-        assertThat(runtime.steerTurn("s1", "admin", "插一句")).isNull();
+        assertThat(runtime.steerTurn("s1", "admin", "插一句", null, null)).isNull();
         verifyNoInteractions(sessionService);
     }
 }
