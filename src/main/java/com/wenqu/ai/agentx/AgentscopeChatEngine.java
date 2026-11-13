@@ -3079,13 +3079,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 写由模型经沙盒文件工具完成（edit_file / write 到 .wenqu/MEMORY.md），前端面板也可直接编辑。
      */
     /**
-     * 本轮的智能体记忆域（对外能力第二批）：智能体 memory_mode=专属(1)/叠加(2) 且平台总闸开着时
-     * 返回智能体 id——记忆路由换到 {@code {uid}/agents/{agentId}} 专属根（注入/工具读写/flush/合并
-     * 都随根走，框架 WorkspaceContextMiddleware 读的是路由后的那份）；其余（null/0 或总闸关）返回
-     * null = 用户级记忆，行为逐字不变。
+     * 本轮的智能体记忆域（对外能力第二批）：智能体 memory_mode=专属(1)/叠加(2) 时返回智能体 id——
+     * 记忆路由换到 {@code {uid}/agents/{agentId}} 专属根（注入/工具读写/flush/合并都随根走，框架
+     * WorkspaceContextMiddleware 读的是路由后的那份）；其余（null/0）返回 null = 用户级记忆。
      */
     private String memoryAgentIdOf(ChatCommand cmd) {
-        if (!configService.getBoolean("agentMemory.enabled", true)) return null;
         Agent agent = tools.agentOf(cmd);
         if (agent == null || agent.getId() == null) return null;
         Integer mode = agent.getMemoryMode();
@@ -4062,10 +4060,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 .build();
     }
 
-    /** 长期记忆写入口径：平台总闸 ∧ 个人开关（游客/子轮在建实例时另有硬闸，不走这里）。 */
+    /** 长期记忆写入口径：个人开关（游客/子轮在建实例时另有硬闸，不走这里）。 */
     private boolean memoryOn(ChatCommand cmd) {
-        return configService.getBoolean("memory.enabled", true)
-                && orgService.memoryFlushEnabled(cmd.getUserId());
+        return orgService.memoryFlushEnabled(cmd.getUserId());
     }
 
     /**

@@ -40,3 +40,34 @@ jobs:
         run: npm test
       - name: vite build
         run: npm run build
+
+  sdk:
+    name: SDK version / build / tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: sdk/js/package-lock.json
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      # B1 出包闸门：四处版本号必须一致（JS 包清单/版本源，Python 包清单/版本源）
+      - name: SDK version consistency
+        run: node scripts/check-sdk-version.mjs
+      - name: JS SDK strict build & tests
+        working-directory: sdk/js
+        run: |
+          npm ci
+          npm run build
+          npm test
+      - name: Python SDK install & tests
+        working-directory: sdk/python
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m unittest discover -s tests -v

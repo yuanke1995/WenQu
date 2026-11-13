@@ -69,6 +69,20 @@
               准备工作只有一步：在 <b>个人设置 → API 密钥</b> 创建一把 Key（用途名称 + 有效期 + 能力范围 scope）。Key 恒以签发人本人身份发问——开放的是你自己的智能体、知识库与额度；给哪个系统对接，就用那个系统归属的账号签发。
               <p style="margin:8px 0 0">机器可读契约：<code>{{ baseUrl }}/api/ai/v1/openapi.json</code>（OpenAPI 3.1，与服务端鉴权判定同源）。</p>
             </div>
+            <h3>接入选型：先回答三句话</h3>
+            <p>三层不是三条技术路线，差别在<b>谁持凭据、承诺到什么程度</b>。选完再复制代码——浏览器里永远不该出现 API Key。</p>
+            <table class="doc-table">
+              <thead><tr><th style="width:128px">形态</th><th style="width:168px">凭据</th><th style="width:76px">承诺</th><th>什么时候用</th></tr></thead>
+              <tbody>
+                <tr><td><b>L0</b> 零代码嵌入</td><td>分享 token（浏览器不持 Key）</td><td>正式</td><td>官网 / 帮助中心 / 客服台只放一个问答框：<code>wenqu-embed.js</code> 或 iframe</td></tr>
+                <tr><td><b>L1</b> 前端深度集成</td><td>业务后端代理，浏览器零凭据</td><td>实验性</td><td>自家前端要展示审批卡、产物、插话、计划等过程能力；走 native 事件协议</td></tr>
+                <tr><td><b>L2</b> 后端集成</td><td>API Key / 服务账号（只在服务端）</td><td>正式</td><td>业务后端、自动化流程、批处理；v1 REST + webhook + MCP</td></tr>
+              </tbody>
+            </table>
+            <div class="doc-note">
+              选型问三句：只想在页面上放个问答框 → <b>L0</b>；要嵌进自家前端且展示过程能力 → <b>L1</b>；由业务后端调用或要把结果回调回业务 → <b>L2</b>。既要前端体验又要后端事件，L1 + L2 共用同一个后端，Key 仍然只在服务端。
+              <p style="margin:8px 0 0"><b>L0 / L2 正式承诺</b>（只增不删、变更日志、废弃期）；<b>L1 实验性</b>（字段可改，变更提前公告），稳定的 run 契约冻结后才摘标。v1 <code>chat/completions</code> 是<b>收集型单块下发</b>的兼容面，不是逐 token 真增量；长任务与人在回路走 runs，别把两种承诺混用。</p>
+            </div>
           </section>
 
           <!-- ==================== 2. 认证与通用约定 ==================== -->
@@ -98,6 +112,20 @@
             <div class="doc-code"><pre class="doc-pre">{ "success": true, "data": … }        // 成功
 { "success": false, "msg": "原因" }   // 业务失败（HTTP 400/403/429 等）</pre></div>
             <p>SSE 接口（<code>/chat</code>）不同：同步校验失败直接返回 HTTP 4xx JSON；流已建立后的错误以 <code>error</code> 事件下发。</p>
+            <p><b>v1 命名空间例外</b>：<code>/api/ai/v1/**</code> 的错误统一是 OpenAI 形状 <code>{"error":{"message","type","code","request_id"}}</code>，成功响应不走平台包络。</p>
+            <h3>先自检：这把 Key 能干什么</h3>
+            <p>签发后先跑一次 <code>GET /api/ai/v1/me</code>：能力范围、发问身份、限流、近 30 天用量一次看清。任意有效 Key 都能查自己，不需要先开通某个 scope。个人设置 → API 密钥里签出 Key 时也会自动跑一次。</p>
+            <div class="doc-code"><pre class="doc-pre">{{ curlMe }}</pre>
+              <button class="doc-copy" :title="copied === 'curlMe' ? '已复制' : '复制'" @click="copy('curlMe', curlMe)">
+                <check-outlined v-if="copied === 'curlMe'" class="doc-copy-ok" /><copy-outlined v-else />
+              </button>
+            </div>
+            <div class="doc-code"><pre class="doc-pre">{{ meResponse }}</pre></div>
+            <ul>
+              <li><code>actAs</code> 恒为<b>签发人本人</b>（<code>actAsBinding=issuer</code>）：平台没有机器号，也不能把 Key 指到别人。</li>
+              <li><code>limits</code> 是平台按「桶 + 租户 + 账号/IP」分桶的当前配置，<b>不是单把 Key 的独占配额</b>；<code>usage30d.available=false</code> 表示台账暂不可查，不代表 0 次调用。</li>
+              <li>缺 scope、端点未登记、Key 无效时，错误消息直接写明缺什么、去哪个开关开（<code>个人设置 → API 密钥</code> / <code>系统设置 → 开放 API</code>）。</li>
+            </ul>
           </section>
 
           <!-- ==================== 3. 问答接口 ==================== -->
@@ -454,6 +482,20 @@ const curlRetrieval = computed(() => `curl -X POST ${baseUrl.value}/api/ai/v1/re
 const curlKbUpload = computed(() => `curl -X POST ${baseUrl.value}/api/ai/v1/kbs/<kbId>/documents \\
   -H "X-Api-Key: sk-你的Key" \\
   -F "file=@员工手册.docx"`)
+const curlMe = computed(() => `curl ${baseUrl.value}/api/ai/v1/me \\
+  -H "X-Api-Key: sk-你的Key"`)
+// 与 OpenApiMeController 的返回字段逐项对应；chatPerMinute=10 是当前平台默认值
+const meResponse = `{
+  "key": "客服系统对接",
+  "keyPrefix": "sk-3f8a…",
+  "scopes": ["chat", "kb.read"],
+  "actAs": "u_10086",
+  "actAsBinding": "issuer",
+  "limits": { "enabled": true, "windowSeconds": 60, "chatPerMinute": 10, "embeddingPerMinute": 60 },
+  "usage30d": { "available": true, "calls": 128, "tokens": 96240 },
+  "expiresAt": null,
+  "contract": "/api/ai/v1/openapi.json"
+}`
 // SFC 的 script 段以字面量 </scr+ipt> 收尾，示例代码里要出现它只能拼接，不能写死（也无需反斜杠转义——模板字面量里 \/ 不是合法转义）
 const S_CLOSE = '</' + 'script>'
 const embedSnippet = computed(() => `<script src="${publicUrl('/wenqu-embed.js')}">${S_CLOSE}

@@ -80,7 +80,7 @@ public class ScheduleCenter {
      * 以下是扫描器的内置节拍，不做成配置项：它们决定的是「机器多久看一次有没有活」，
      * 不是「管理员希望某件事多久发生一次」。改成参数后每次都要有人猜一个数，
      * 猜小了白烧 CPU、猜大了任务看起来像没在工作，两种都只会在事后被发现。
-     * 需要停某个扫描器请用它的业务总开关（如 {@code web.refreshEnabled}、{@code scheduled.enabled}）。
+     * 需要停某个扫描器，请把对应任务的间隔配成 ≤0，或关掉它所属的业务开关。
      */
     /** 关键词索引对账：双向比对整表不便宜，一小时一轮足够兜住漂移 */
     private static final int KEYWORD_RECONCILE_INTERVAL_MS = 3_600_000;
@@ -377,10 +377,10 @@ public class ScheduleCenter {
                     journalRotation.cleanupRotated();
                 });
 
-        // 定时执行智能体：扫描到期的用户任务并派发（内置节拍 30s；要停用请用 scheduled.enabled）。
+        // 定时执行智能体：扫描到期的用户任务并派发（内置节拍 30s）。
         // 任务体只做"扫描 + 投递到线程池"，实际执行在别的池线程里跑，所以不会被几十秒的长任务拖住。
-        // 返回本轮派发数——空跑（无到期任务/总开关关闭）不落执行日志。
-        registerWork("定时智能体任务", "扫描到期的用户定时任务并派发执行（scheduled.enabled 总开关之下）",
+        // 返回本轮派发数——空跑（无到期任务）不落执行日志。
+        registerWork("定时智能体任务", "扫描到期的用户定时任务并派发执行",
                 null,   // 内置节拍：不做成参数（下面是它真正的家）
                 () -> SCHEDULED_SCAN_INTERVAL_MS,
                 () -> false,
@@ -405,10 +405,10 @@ public class ScheduleCenter {
                 "暂停后：上传与「重新解析」只往队列登记一行，没有扫描器推动——文档会一直停在「排队中/解析中」不再变化，界面上看不出是卡住还是在跑；"
                         + "把间隔改回正数即自动继续，已登记的任务不丢。");
 
-        // 网页源定时刷新：扫描到期且开启自动刷新的 url 文档，重新抓网+同名替换重建（内置节拍 60s；停用请用 web.refreshEnabled）。
+        // 网页源定时刷新：扫描到期且开启自动刷新的 url 文档，重新抓网+同名替换重建（内置节拍 60s）。
         // 复用 importFromUrl 全套入库链路，next_refresh_at 推进保证单实例不重复触发；刷新失败 fail-loud 不中断其他文档。
         // 返回本轮处理数（含刷失败的文档，逐文档失败不使任务行变红）：空跑（无到期文档）不落执行日志。
-        registerWork("网页源定时刷新", "扫描到期且开启自动刷新的 url 文档，重新抓网+同名替换重建（web.refreshEnabled 总开关之下）",
+        registerWork("网页源定时刷新", "扫描到期且开启自动刷新的 url 文档，重新抓网+同名替换重建",
                 null,   // 内置节拍：不做成参数（下面是它真正的家）
                 () -> WEB_REFRESH_SCAN_INTERVAL_MS,
                 () -> false,
@@ -488,7 +488,7 @@ public class ScheduleCenter {
         // 智能体轮终 webhook 重试：扫描到期的 pending 投递行补发（60s/5min/30min/2h 退避，
         // 耗尽置 exhausted 并通知智能体主人）。每次出站先落行再发，进程死在投递中途也由这里补发
         // ——至少一次语义的兜底半边（首发半边在 AgentWebhookService.deliver）。
-        registerWork("智能体回调重试", "扫描到期的轮终 webhook 投递行并按退避补发，耗尽后通知归属人（agentWebhook.enabled 总开关之下）",
+        registerWork("智能体回调重试", "扫描到期的轮终 webhook 投递行并按退避补发，耗尽后通知归属人",
                 null,   // 内置节拍：不做成参数（退避间隔在 AgentWebhookService.RETRY_BACKOFF_MS）
                 () -> 60_000,
                 () -> false,
@@ -614,10 +614,9 @@ public class ScheduleCenter {
             Map.entry("检索评估自动体检", List.of("eval.judgeEnabled", "eval.judgeModel", "eval.autoThresholdPct")),
             Map.entry("过期会话/消息清理", List.of("cleanup.recordRetentionDays")),
             Map.entry("产物超期清理", List.of("cleanup.assetRetentionDays")),
-            Map.entry("定时智能体任务", List.of("scheduled.enabled", "scheduled.maxPerUser", "scheduled.timeoutMs", "scheduled.runRetentionDays")),
+            Map.entry("定时智能体任务", List.of("scheduled.maxPerUser", "scheduled.timeoutMs", "scheduled.runRetentionDays")),
             Map.entry("文档解析队列扫描", List.of("parse.queue.capacity", "parse.concurrency",
                     "parse.taskLeaseSeconds", "parse.taskTimeoutMs", "parse.embedConcurrency", "parse.ocrGateConcurrency")),
-            Map.entry("网页源定时刷新", List.of("web.refreshEnabled")),
             Map.entry("沙盒空闲回收", List.of("sandbox.idleReleaseMinutes")),
             Map.entry("长任务接续扫描", List.of("chat.turnResumeWindowMinutes")),
             Map.entry("工作流运行记录清理", List.of("cleanup.recordRetentionDays")),

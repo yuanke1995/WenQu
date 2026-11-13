@@ -2,6 +2,7 @@
  * @wenqu/sdk 对外出口：WenquClient 与全部类型。
  */
 
+export { SDK_VERSION } from "./version.js";
 export { WenquClient } from "./client.js";
 export type { WenquClientOptions } from "./client.js";
 export { WenquError, WenquApiError, WenquAuthError, WenquRateLimitError } from "./errors.js";

@@ -241,10 +241,33 @@ public class UserContextInterceptor implements HandlerInterceptor {
         return t.isEmpty() ? null : t;
     }
 
+    /**
+     * 401 出口：v1 命名空间必须回 OpenAI 形状的错误体。
+     * <p>身份解析比访问控制更早，这里过去固定写平台包络，导致「Key 无效 / 代表账号异常」这类
+     * 接入期最常见的 401 在 v1 端点上形状与契约不符——SDK 按 {error:{...}} 解析会读空。
+     * 判据与 SecurityConfig.accessErrorJson、GlobalExceptionHandler.error 同源（路径前缀），
+     * 并在 v1 文案里补上「去哪签 Key、怎么自检」，让集成方不用翻文档就能自己修。</p>
+     */
     private boolean reject(HttpServletResponse response, String msg) throws Exception {
         response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
         response.setContentType("application/json;charset=UTF-8");
-        response.getWriter().write(objectMapper.writeValueAsString(ResultJson.error(401, msg)));
+        var attrs = org.springframework.web.context.request.RequestContextHolder.getRequestAttributes();
+        HttpServletRequest req = attrs instanceof org.springframework.web.context.request.ServletRequestAttributes sra
+                ? sra.getRequest() : null;
+        String path = req == null ? "" : req.getRequestURI().substring(req.getContextPath().length());
+        if (!path.startsWith(com.wenqu.ai.openapi.OpenApiRegistry.PREFIX)) {
+            response.getWriter().write(objectMapper.writeValueAsString(ResultJson.error(401, msg)));
+            return false;
+        }
+        Map<String, Object> err = new java.util.LinkedHashMap<>();
+        err.put("message", msg + "；v1 端点需 X-Api-Key 或 Authorization: Bearer sk-…，"
+                + "可在「个人设置 → API 密钥」签发，并用 GET "
+                + com.wenqu.ai.openapi.OpenApiRegistry.PREFIX + "me 自检");
+        err.put("type", "authentication_error");
+        err.put("code", "authentication_error");
+        String rid = com.wenqu.ai.openapi.RequestIdFilter.current();
+        err.put("request_id", rid == null ? "" : rid);
+        response.getWriter().write(objectMapper.writeValueAsString(Map.of("error", err)));
         return false;
     }
 }

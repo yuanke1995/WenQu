@@ -133,8 +133,6 @@ public class AppProperties {
 
     @Data
     public static class Vision {
-        /** 是否启用图片描述（关闭则只提取图片不调模型；设置页 vision.enabled 可改，保存即生效） */
-        private boolean enabled = true;
         /** 单张图片描述超时(ms)（RestClient 构建期读取，需重启生效；与 defaults()/schema 默认 30s 对齐） */
         private int timeoutMillis = 30000;
         /** 图片描述并发度（平台固定 2） */

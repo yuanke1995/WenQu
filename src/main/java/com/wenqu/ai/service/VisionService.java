@@ -77,13 +77,6 @@ public class VisionService {
      */
     private String describe(byte[] imageBytes, String ext, String prompt, String ref) {
         if (imageBytes == null || imageBytes.length == 0) return "";
-        // vision.enabled 配置化（设置页可改，保存即生效；未配置时默认开启）
-        String cfgEnabled = configService.get("vision.enabled");
-        boolean enabled = cfgEnabled == null || cfgEnabled.isBlank() || Boolean.parseBoolean(cfgEnabled.trim());
-        if (!enabled) {
-            log.debug("视觉模型已关闭（vision.enabled=false），跳过图片描述");
-            return "";
-        }
         ModelRegistryService.ModelRoute route = routeFor(ref);
         if (route == null) {
             log.info("[Vision] 未指定视觉模型（{}），跳过图片描述（本图不参与向量召回，解析继续）",
@@ -97,7 +90,7 @@ public class VisionService {
      * OCR 专用严格通道（扫描件 PDF 用）：与 {@link #describe} 的"失败返回空串降级"不同，
      * 本方法 <b>fail-loud 不降级</b>——
      * <ul>
-     *   <li>总开关关闭 / 当前线程未设置解析期扫描件 OCR 模型 / 引用无效 → 抛 IllegalStateException
+     *   <li>当前线程未设置解析期扫描件 OCR 模型 / 引用无效 → 抛 IllegalStateException
      *       （扫描件没有模型就识别不出内容，解析必须失败并告知原因）；</li>
      *   <li>调用失败（重试后仍异常）→ 抛 IllegalStateException（丢页 = 内容静默残缺，不可接受）；</li>
      *   <li>返回 "" 仅表示模型正常响应但判定页上没有文字（空白页/封面图，合法）。</li>
@@ -107,11 +100,6 @@ public class VisionService {
      */
     public String describeOcr(byte[] imageBytes, String ext, String prompt) {
         if (imageBytes == null || imageBytes.length == 0) return "";
-        String cfgEnabled = configService.get("vision.enabled");
-        boolean enabled = cfgEnabled == null || cfgEnabled.isBlank() || Boolean.parseBoolean(cfgEnabled.trim());
-        if (!enabled) {
-            throw new IllegalStateException("视觉模型总开关已关闭（vision.enabled=false），扫描件无法 OCR；请在系统设置开启或为该库更换非扫描文档");
-        }
         String ocrRef = OCR_REF.get();
         if (ocrRef == null || ocrRef.isBlank()) ocrRef = DESC_REF.get();
         ModelRegistryService.ModelRoute route = routeFor(ocrRef);

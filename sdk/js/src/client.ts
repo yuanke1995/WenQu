@@ -11,6 +11,7 @@ import { Retrieval } from "./retrieval.js";
 import { Kbs } from "./kb.js";
 import { Workflows } from "./workflow.js";
 import { NativeChat } from "./native.js";
+import { SDK_VERSION } from "./version.js";
 
 export interface WenquClientOptions {
   /**
@@ -114,6 +115,8 @@ export class WenquClient {
     const headers = new Headers(init.headers);
     for (const [k, v] of Object.entries(await this.resolveExtraHeaders())) headers.set(k, v);
     if (this.apiKey) headers.set("X-Api-Key", this.apiKey);
+    // 版本头固定由 SDK 自己写，且放在附加头之后：调用方注入的同名头不该把版本伪装掉
+    headers.set("X-Wenqu-Sdk-Version", SDK_VERSION);
     let res: Response;
     try {
       res = await this.fetchImpl(url, { ...init, headers });

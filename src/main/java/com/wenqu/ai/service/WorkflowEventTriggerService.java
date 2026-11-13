@@ -15,10 +15,9 @@ import java.util.Map;
  * 位置纪律（与 DocumentService 的旁路约定一致）：
  * <ul>
  *   <li><b>监听侧全兜异常</b>：@EventListener 默认在发布线程（解析收尾线程）同步执行——
- *       本方法体只允许做「读开关 → 链深判断 → 预筛快查 → 扔工作流派发池」四步轻活，
+ *       本方法体只允许做「链深判断 → 预筛快查 → 扔工作流派发池」三步轻活，
  *       任何一步抛错都吞掉只记 log，绝不让解析管线跟着遭殃；</li>
- *   <li><b>总闸</b>：{@code workflow.eventTriggerEnabled}（默认开）——事件触发行为异常时
- *       设置页一键停用，不用改代码不用重启；</li>
+ *   <li><b>订阅粒度</b>：只有显式配置了事件触发器的工作流派发；</li>
  *   <li><b>防环</b>：文档链深查 {@link WorkflowEventChainRegistry}（kb_write 写入的文档有登记），
  *       超过上限不再派发——「写入→解析完成→再触发→再写入」的自环跑到上限自动停。</li>
  * </ul>
@@ -32,14 +31,12 @@ public class WorkflowEventTriggerService {
     private final WorkflowMapper workflowMapper;
     private final WorkflowService workflowService;
     private final WorkflowEventChainRegistry chainRegistry;
-    private final ConfigService configService;
 
     public WorkflowEventTriggerService(WorkflowMapper workflowMapper, WorkflowService workflowService,
-                                       WorkflowEventChainRegistry chainRegistry, ConfigService configService) {
+                                       WorkflowEventChainRegistry chainRegistry) {
         this.workflowMapper = workflowMapper;
         this.workflowService = workflowService;
         this.chainRegistry = chainRegistry;
-        this.configService = configService;
     }
 
     /** 文档解析完成（kb.docIndexed）：按订阅派发。监听侧全兜——发布线程是解析收尾，一行都不许炸 */
@@ -47,7 +44,6 @@ public class WorkflowEventTriggerService {
     public void onDocIndexed(DocIndexedEvent event) {
         if (event == null || event.docId() == null) return;
         try {
-            if (!configService.getBoolean("workflow.eventTriggerEnabled", true)) return;
             // 链深：kb_write 写入的文档有登记（= 写入 run 深度 + 1）；外部上传按 1 层起算。
             // 超上限直接放弃——这一代文档不再产生任何触发
             int depth = chainRegistry.chainDepth(event.docId());

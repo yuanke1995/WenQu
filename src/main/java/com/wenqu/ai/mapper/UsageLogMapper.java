@@ -36,6 +36,17 @@ public interface UsageLogMapper extends BaseMapper<UsageLog> {
     List<Map<String, Object>> statApiKeyUsage(@Param("uid") String uid,
                                               @Param("since") LocalDateTime since);
 
+    /**
+     * 单把 Key 的近 N 天用量（{@code GET /v1/me} 自检用）。
+     * <p>与管理页列表的 {@link #statApiKeyUsage} 同一本账、同一套字段口径（c=次数，t=total_tokens 求和）。
+     * 这里按 api_key_id 精确收窄：自检是外部调用，不该把该用户全部 Key 的账都扫一遍。</p>
+     */
+    @Select("SELECT COUNT(*) AS c, COALESCE(SUM(total_tokens), 0) AS t "
+            + "FROM c_ai_usage_log "
+            + "WHERE api_key_id = #{keyId} AND create_time >= #{since}")
+    Map<String, Object> statOneApiKeyUsage(@Param("keyId") String keyId,
+                                           @Param("since") LocalDateTime since);
+
     /** 每日×模型（近 N 日趋势与模型占比共用；模型为 NULL 归入 NULL key，聚合层映射为「未记录」） */
     @Select("<script>SELECT DATE_FORMAT(create_time, '%Y-%m-%d') AS d, model AS model, "
             + "SUM(total_tokens) AS t FROM c_ai_usage_log "

@@ -37,7 +37,7 @@ class ConfigContractTest {
             "parse.embedBatchSize", "parse.embedRetryCount", "parse.ocrMineruBackend",
             "parse.ocrMineruUri", "parse.ocrPpUri", "parse.ocrTimeoutMs", "parse.recoverStuckOnStartup",
             // 限流、会话、分享配额：部署侧参数
-            "ratelimit.chatPerMinute", "ratelimit.uploadPerMinute", "ratelimit.windowSeconds",
+            "ratelimit.chatPerMinute", "ratelimit.embeddingPerMinute", "ratelimit.uploadPerMinute", "ratelimit.windowSeconds",
             "session.expireMinutes", "session.maxHistory",
             "share.guestDailyTokens", "share.guestDailyTurns", "share.guestDailyTurnsPerVisitor",
             // 沙盒 / 重排 / 检索连接项：随部署环境走
@@ -68,7 +68,7 @@ class ConfigContractTest {
             "rerank.enabled", "rerank.maxHits", "rerank.minHits",
             "retrieval.keywordWeight", "retrieval.lowConfidencePolicy", "retrieval.minContextScore",
             "retrieval.minFusionScore", "retrieval.top1Floor", "retrieval.vectorWeight",
-            "vision.enabled", "vision.prompt", "workflow.maxSteps", "workflow.runQueueCapacity", "agentEval.gateMode"
+            "vision.prompt", "workflow.maxSteps", "workflow.runQueueCapacity", "agentEval.gateMode"
     );
 
     @Test
@@ -86,8 +86,8 @@ class ConfigContractTest {
                 .as("defaults 有而 schema 无：隐藏/部署项必须登记到 HIDDEN_DEFAULTS")
                 .containsExactlyInAnyOrderElementsOf(HIDDEN_DEFAULTS);
 
-        assertThat(schemaKeys).as("schema 字段数变了：同步 README 的设置项口径").hasSize(150);
-        assertThat(defaultsKeys).as("defaults 键数变了：同步 README 的隐藏项口径").hasSize(204);
+        assertThat(schemaKeys).as("schema 字段数变了：同步 README 的设置项口径").hasSize(144);
+        assertThat(defaultsKeys).as("defaults 键数变了：同步 README 的隐藏项口径").hasSize(199);
     }
 
     @Test

@@ -474,10 +474,9 @@ public class DocumentService {
      * 单实例下先推进 next_refresh_at 再执行，天然防重复触发；失败 fail-loud 不中断其他文档。
      *
      * @return 本轮实际处理的文档数（含刷新失败的——逐文档失败已单独告警，不使任务行变红；
-     *         0=空跑——无到期文档或总开关关闭，调用方据此免落执行日志）
+     *         0=空跑——无到期文档，调用方据此免落执行日志）
      */
     public int refreshDueWebSources() {
-        if (!configService.getBoolean("web.refreshEnabled")) return 0;
         LocalDateTime now = LocalDateTime.now();
         List<AiDocument> due = documentMapper.selectList(new LambdaQueryWrapper<AiDocument>()
                 .eq(AiDocument::getFileType, "url")

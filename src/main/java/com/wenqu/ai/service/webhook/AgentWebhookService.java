@@ -80,7 +80,7 @@ public class AgentWebhookService {
                                String finalContent, String messageId, Map<String, Object> tokens,
                                List<Map<String, Object>> artifacts, long elapsedMs) {
         try {
-            if (cmd == null || !enabled()) return;
+            if (cmd == null) return;
             // 发起方过滤与 TurnNotifyService.turnUid 同口径：null/空=老调用方没登记（按用户轮放行），
             // 只有显式的非 user 来源（定时/工作流子轮/咨询子轮）不发
             String src = cmd.getSource();
@@ -186,9 +186,6 @@ public class AgentWebhookService {
 
     /** 扫描补发（ScheduleCenter 调）：到期 pending 行逐条重试；返回本轮处理量（空跑免记日志） */
     public int sweepRetry() {
-        if (!enabled()) {
-            return exhaustAllPending("平台总闸已关闭");
-        }
         List<WebhookDelivery> due = deliveryMapper.selectList(new LambdaQueryWrapper<WebhookDelivery>()
                 .eq(WebhookDelivery::getStatus, WebhookDelivery.STATUS_PENDING)
                 .and(w -> w.isNull(WebhookDelivery::getNextRetryAt)
@@ -214,27 +211,6 @@ public class AgentWebhookService {
             }
         }
         return n;
-    }
-
-    /** 总闸关闭时把存量 pending 行就地耗尽：关掉出站就要真的安静，不留永远排着的重试 */
-    private int exhaustAllPending(String why) {
-        try {
-            List<WebhookDelivery> pending = deliveryMapper.selectList(
-                    new LambdaQueryWrapper<WebhookDelivery>()
-                            .eq(WebhookDelivery::getStatus, WebhookDelivery.STATUS_PENDING)
-                            .last("LIMIT 200"));
-            for (WebhookDelivery row : pending) {
-                deliveryMapper.update(null, new LambdaUpdateWrapper<WebhookDelivery>()
-                        .eq(WebhookDelivery::getId, row.getId())
-                        .set(WebhookDelivery::getStatus, WebhookDelivery.STATUS_EXHAUSTED)
-                        .set(WebhookDelivery::getLastError, why)
-                        .set(WebhookDelivery::getFinishTime, LocalDateTime.now()));
-            }
-            return pending.size();
-        } catch (Exception e) {
-            log.warn("[WEBHOOK] 总闸关闭清理 pending 行失败: {}", e.getMessage());
-            return 0;
-        }
     }
 
     // ==================== 内部 ====================
@@ -319,10 +295,6 @@ public class AgentWebhookService {
             log.warn("[WEBHOOK] 回调密钥解密失败，按无签名出站: {}", e.getMessage());
             return null;
         }
-    }
-
-    private boolean enabled() {
-        return configService.getBoolean("agentWebhook.enabled", true);
     }
 
     /** 首发失败后的重试次数上限（agentWebhook.retryMax，0=失败即耗尽；负数按 0） */

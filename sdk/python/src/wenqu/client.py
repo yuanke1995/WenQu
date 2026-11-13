@@ -6,6 +6,8 @@ from typing import Any, Dict, Optional
 
 import requests
 
+from ._version import __version__
+
 from .chat import ChatNamespace, Responses
 from .embeddings import Embeddings, Models
 from .kb import KnowledgeBases
@@ -85,6 +87,8 @@ class WenquClient:
         self.timeout = timeout
         self._session = session if session is not None else requests.Session()
         self._session.headers["X-Api-Key"] = api_key
+        # 与 JS SDK 同口径：版本头由 SDK 自己写，服务端据此排查契约/客户端错配
+        self._session.headers["X-Wenqu-Sdk-Version"] = __version__
 
         self.chat = ChatNamespace(self)
         self.responses = Responses(self)

@@ -10,6 +10,8 @@
     )
 """
 
+from ._version import __version__
+
 from .client import (
     WenquAPIError,
     WenquAuthError,
@@ -18,7 +20,6 @@ from .client import (
     WenquRateLimitError,
 )
 
-__version__ = "0.1.0"
 
 __all__ = [
     "WenquClient",

@@ -693,7 +693,6 @@ public class ConfigService {
         // vision.baseUrl / vision.apiKey 不注默认值：视觉网关统一来自「模型供应商」表（知识库
         // parse_params.visionRef 引用 → 供应商网关）。这两键既不在可编辑白名单、也没有运行时读取点，
         // 灌进库里只会让"设置值看起来生效"（VisionService.routeFor 对无引用直接跳过，不回落这两键）
-        d.put("vision.enabled", String.valueOf(properties.getVision().isEnabled())); // L12：总开关（设置页可改）
         // 平台内置向量化模型（全局、管理员可编辑、非 personalOnly）：运营方登记一个 embedding 模型引用，
         // 作为全体用户记忆语义能力的统一来源——用户零配置即可获得语义记忆。留空=不提供向量化
         // （记忆去重降级为精确匹配、语义注入关闭）。记忆向量化已不再暴露为个人设置项
@@ -776,6 +775,8 @@ public class ConfigService {
         d.put("ratelimit.enabled", String.valueOf(properties.getRatelimit().isEnabled()));
         d.put("ratelimit.chatPerMinute", String.valueOf(properties.getRatelimit().getChatPerMinute()));
         d.put("ratelimit.uploadPerMinute", String.valueOf(properties.getRatelimit().getUploadPerMinute()));
+        // 嵌入桶由 RateLimitService 按 bucket=embedding 动态读取；/v1/me 自检回显同一键
+        d.put("ratelimit.embeddingPerMinute", "60");
         // 自动体检 LLM 评判（默认关，评估集大时耗时/成本明显）
         // 评判用独立模型（留空=跳过 LLM 自动评判）
         // 自动体检周期(ms，≤0=暂停)
@@ -794,10 +795,8 @@ public class ConfigService {
         d.put("ops.checkupIntervalMs", String.valueOf(ConfigDefaults.OPS_CHECKUP_INTERVAL_MS)); // 自动巡检间隔(ms，≤0=暂停)
         d.put("ops.checkupRetentionDays", String.valueOf(ConfigDefaults.OPS_CHECKUP_RETENTION_DAYS)); // 巡检报告保留天数
         d.put("ops.checkupAlertEnabled", String.valueOf(ConfigDefaults.OPS_CHECKUP_ALERT_ENABLED)); // fail 时给管理员发站内通知
-        // 定时执行智能体总开关
         // 每人定时任务数上限（0=不限）
         // 单次执行超时(ms)
-        // 网页源定时刷新总开关（仅 file_type=url 且文档开启 autoRefresh 才刷新）
         // 原 yml 参数开放为可配置（默认值取 bean，yml/env 可覆盖；再由 syncProperties 回写 AppProperties，
         // 读取点无需改动）。与 chunk / retrieval / ratelimit 同口径：这里写死字面量会让 yml 配置无声失效。
         d.put("images.authEnabled", String.valueOf(properties.getImages().isAuthEnabled()));     // 图片签名鉴权开关（默认开：签名 URL 防盗链）
@@ -839,9 +838,7 @@ public class ConfigService {
         // ---------- 工作流工具（已发布工作流挂载为对话工具；配置存智能体行 workflow_tools）----------
         // 与 httpTool.enabled 同一理由默认开：没有配置工作流的智能体该族天然不挂，闸开着也无工具可出。
         // 工作流工具总开关（需 tool.enabled 总闸开启）
-        // 智能体轮终 webhook 出站总开关（关=不再外推；已有 pending 行由扫描按原排程走完或就地耗尽）
         d.put("agentWebhook.retryMax", String.valueOf(com.wenqu.ai.config.ConfigDefaults.AGENT_WEBHOOK_RETRY_MAX));
-        // 智能体级记忆总闸（关=全部智能体按用户级记忆走，memory_mode 失效）
         // 开放 API 跨域白名单：空=不回 CORS 头；
         // 逗号分隔，如 "https://hr.example.com,https://crm.example.com"。只作用于 /api/ai/v1/**。
         // 技能：内置随版本分发 + 用户自装（user-data/skills-users/{uid}）+ 助手在对话里沉淀到沙盒工作区。

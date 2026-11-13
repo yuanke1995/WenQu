@@ -230,6 +230,15 @@
              :footer="null" :width="580" :mask-closable="false" @cancel="closeCreateKey">
       <template v-if="createStep === 'form'">
         <a-form layout="vertical">
+          <a-form-item label="用途模板">
+            <div class="key-tpl-row">
+              <button v-for="t in KEY_TEMPLATES" :key="t.key" type="button" class="key-tpl"
+                      :class="{ on: createTemplate === t.key }" @click="applyKeyTemplate(t)">
+                {{ t.label }}
+              </button>
+            </div>
+            <div class="key-field-hint">{{ currentTemplateHint }}</div>
+          </a-form-item>
           <a-form-item label="用途名称" required>
             <a-input v-model:value="createForm.name" placeholder="如：报表系统集成 / 运维脚本 / 定时巡检"
                      :maxlength="200" @press-enter="submitCreateKey" />
@@ -277,6 +286,27 @@
           <button class="key-copy" :title="copiedKey ? '已复制' : '复制'" @click="copyCreatedKey">
             <check-outlined v-if="copiedKey" class="key-copy-ok" /><copy-outlined v-else />
           </button>
+        </div>
+        <div class="key-selfcheck">
+          <div class="sc-head">
+            <b>接入自检</b>
+            <span>用刚签出的这把 Key 真实调一次 <code>GET /v1/me</code></span>
+            <button class="app-link-btn" :disabled="selfCheck.state === 'loading'"
+                    @click="runSelfCheck(createdKey.apiKey)">重新自检</button>
+          </div>
+          <div v-if="selfCheck.state === 'loading'" class="sc-body">自检中…</div>
+          <div v-else-if="selfCheck.state === 'error'" class="sc-body err">
+            自检失败：{{ selfCheck.error }}。Key 已创建成功，可复制后手动重试。
+          </div>
+          <template v-else-if="selfCheck.state === 'ok'">
+            <div class="sc-grid">
+              <div><span>能力范围</span><b>{{ (selfCheck.data.scopes || []).join(' / ') || '—' }}</b></div>
+              <div><span>发问身份</span><b>{{ selfCheck.data.actAs || '—' }}（签发人本人）</b></div>
+              <div><span>限流</span><b>{{ selfCheck.data.limits?.enabled ? selfCheck.data.limits.chatPerMinute + ' 次/分（chat 桶）' : '未启用' }}</b></div>
+              <div><span>近 30 天</span><b>{{ selfCheck.data.usage30d?.available ? selfCheck.data.usage30d.calls + ' 次 · ' + selfCheck.data.usage30d.tokens + ' tokens' : '暂不可查' }}</b></div>
+            </div>
+            <div class="sc-hint">已真实通过网关鉴权。限流按平台分桶，不是这把 Key 的独占额度；完整端点清单见 <code>{{ publicUrl('/ai/api/ai/v1/openapi.json') }}</code>。</div>
+          </template>
         </div>
         <div class="key-modal-foot">
           <button class="app-btn" @click="closeCreateKey">我已保存，关闭</button>
@@ -386,6 +416,29 @@ const scopeCatalog = ref({ all: [], default: [] })
 const SCOPE_LABELS = {
   chat: '问答', embedding: '向量化', 'kb.read': '知识库只读',
   'kb.write': '知识库写入', 'workflow.run': '工作流触发'
+}
+/**
+ * 签发向导的用途模板（B4）：四个入口自动预选 scope，省掉「五个勾选项分别是什么意思」。
+ * 「全量」刻意等于后端默认集（不含 kb.write）：写库是唯一会改动资料的能力，仍需显式勾选。
+ * 名单以后端 GET /api-key/scopes 为真源，这里只描述组合，不硬编码合法值。
+ */
+const KEY_TEMPLATES = [
+  { key: 'chat', label: '问答', name: '问答对接', scopes: ['chat'], hint: '只发问：chat。适合业务系统里内嵌一个提问入口。' },
+  { key: 'retrieval', label: '检索', name: '知识检索对接', scopes: ['kb.read'], hint: '只读检索：kb.read。适合把问渠当检索引擎做自己的 RAG。' },
+  { key: 'workflow', label: '工作流', name: '工作流对接', scopes: ['workflow.run'], hint: '触发已发布工作流：workflow.run。适合把固定流程当 RPC 调。' },
+  { key: 'all', label: '全量', name: '系统对接', scopes: null, hint: '平台默认集（除知识库写入外全部）；写库需另行勾选 kb.write。' }
+]
+const createTemplate = ref('')
+const currentTemplateHint = computed(() =>
+  (KEY_TEMPLATES.find(t => t.key === createTemplate.value)?.hint)
+  || '按用途选一个模板自动预选能力范围；选完仍可逐项调整。')
+const applyKeyTemplate = t => {
+  createTemplate.value = t.key
+  createForm.value.scopes = t.scopes ? [...t.scopes] : [...(scopeCatalog.value.default || [])]
+  // 只在名称还空着 / 仍是上一个模板预填名时覆盖，不抢用户已经手改的名字
+  if (!createForm.value.name.trim() || KEY_TEMPLATES.some(x => x.name === createForm.value.name)) {
+    createForm.value.name = t.name
+  }
 }
 const scopeNames = list => (list || scopeCatalog.value.default || []).map(s => SCOPE_LABELS[s] || s)
 const isDefaultScopes = list => {
@@ -523,12 +576,32 @@ const createOpen = ref(false)
 const createStep = ref('form')
 const createForm = ref({ name: '', expireMode: 'never', expireDate: null, scopes: [] })
 const createdKey = ref({ name: '', apiKey: '' })
+/**
+ * 一键自检：刻意用原生 fetch 而不是项目的 request()——自检要模拟「外部系统只带一把 Key」
+ * 的真实调用，不能顺手带上登录 JWT / cookie，否则查到的不是集成方实际会遇到的结果。
+ * 也不解包平台 {success,data}：/v1/me 是 v1 契约，直接回对象，错误是 OpenAI 形状。
+ */
+const selfCheck = ref({ state: 'idle', data: null, error: '' })
+const runSelfCheck = async plain => {
+  if (!plain) return
+  selfCheck.value = { state: 'loading', data: null, error: '' }
+  try {
+    const res = await fetch(publicUrl('/ai/api/ai/v1/me'), { headers: { 'X-Api-Key': plain } })
+    const body = await res.json()
+    if (!res.ok) throw new Error(body?.error?.message || ('HTTP ' + res.status))
+    selfCheck.value = { state: 'ok', data: body, error: '' }
+  } catch (e) {
+    selfCheck.value = { state: 'error', data: null, error: e.message || '自检失败' }
+  }
+}
 const editOpen = ref(false)
 const editForm = ref({ id: '', name: '', expireMode: 'never', expireDate: null, scopes: [] })
 
 const openCreateKey = () => {
   createForm.value = { name: '', expireMode: 'never', expireDate: null, scopes: [...scopeCatalog.value.default] }
   createdKey.value = { name: '', apiKey: '' }
+  createTemplate.value = ''
+  selfCheck.value = { state: 'idle', data: null, error: '' }
   copiedKey.value = false
   createStep.value = 'form'
   createOpen.value = true
@@ -551,6 +624,8 @@ const submitCreateKey = async () => {
       createdKey.value = { name: r.data?.name || createForm.value.name.trim(), apiKey: r.data?.apiKey || '' }
       createStep.value = 'done'
       copiedKey.value = await writeClipboard(createdKey.value.apiKey)
+      // 签出即自检：不等用户点，先证明这把 Key 真能穿过网关（失败也如实显示，不吞）
+      runSelfCheck(createdKey.value.apiKey)
     } else message.error(r.msg || '创建失败')
   } catch (e) { message.error(e.message || '创建失败') }
   finally { keyCreating.value = false }
@@ -788,4 +863,27 @@ onMounted(() => { loadScopeCatalog(); loadKeys() })
 .audit-chip.fail { color: var(--app-danger); background: var(--app-danger-weak); }
 .audit-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
 .audit-pager { display: flex; align-items: center; gap: 12px; margin-top: 10px; justify-content: flex-end; }
+
+/* 用途模板与签发后自检 */
+.key-tpl-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.key-tpl {
+  height: 26px; padding: 0 12px; border: 1px solid var(--app-border); border-radius: 6px;
+  background: var(--app-panel); color: var(--app-text2); font-size: 12px; cursor: pointer;
+}
+.key-tpl:hover { border-color: var(--app-accent-border); color: var(--app-accent); }
+.key-tpl.on { border-color: var(--app-accent); background: var(--app-accent-weak); color: var(--app-accent); font-weight: 600; }
+.key-selfcheck { margin-top: 14px; border: 1px solid var(--app-border); border-radius: 8px; padding: 10px 12px; background: var(--app-panel-2); }
+.sc-head { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--app-text2); flex-wrap: wrap; }
+.sc-head b { color: var(--app-text); font-size: 13px; }
+.sc-head .app-link-btn { margin-left: auto; font-size: 12px; }
+.sc-head code { font-size: 11px; }
+.sc-body { margin-top: 8px; font-size: 12px; color: var(--app-text3); }
+.sc-body.err { color: var(--app-danger); line-height: 1.6; }
+.sc-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px 14px; margin-top: 10px; }
+.sc-grid > div { display: flex; gap: 8px; font-size: 12px; min-width: 0; }
+.sc-grid span { color: var(--app-text3); flex: none; width: 62px; }
+.sc-grid b { color: var(--app-text); font-weight: 600; word-break: break-all; }
+.sc-hint { margin-top: 10px; font-size: 11.5px; color: var(--app-text3); line-height: 1.6; }
+.sc-hint code { font-size: 11px; }
+@media (max-width: 600px) { .sc-grid { grid-template-columns: 1fr; } }
 </style>

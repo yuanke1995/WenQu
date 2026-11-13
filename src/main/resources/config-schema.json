@@ -8,7 +8,6 @@
       "sections": [
         "模型与连接（厂商预设自动填充地址与补全路径）",
         "回答行为与内容",
-        "记忆与上下文",
         "超时与等待",
         "消息图片限制（防 base64 洪峰压垮解码/视觉处理）"
       ]
@@ -17,7 +16,6 @@
       "key": "vision",
       "title": "图片描述（视觉；模型归各知识库解析设置）",
       "sections": [
-        "总开关",
         "识别提示词与并发（文档图与用户传图分开控制）",
         "调用参数（超时 / 重试 / Ollama 推理）",
         "图片描述缓存（改版本号/有效期后需重解析生效）"
@@ -87,22 +85,15 @@
       "key": "agentWebhook",
       "title": "智能体轮终回调（出站）",
       "sections": [
-        "总开关",
         "重试"
-      ]
-    },
-    {
-      "key": "agentMemory",
-      "title": "智能体级记忆（agent 级记忆域）",
-      "sections": [
-        "总开关"
       ]
     },
     {
       "key": "apiOpen",
       "title": "开放 API（外部项目嵌入）",
       "sections": [
-        "跨域"
+        "跨域",
+        "对外集成"
       ]
     },
     {
@@ -223,7 +214,7 @@
       "backendKey": "chat.sseTimeoutMs",
       "hidden": true,
       "panel": "chat",
-      "section": 3,
+      "section": 2,
       "group": "chat",
       "key": "sseTimeoutMs",
       "path": "chat.sseTimeoutMs",
@@ -264,7 +255,7 @@
       "backendKey": "chat.approvalTimeoutMs",
       "hidden": true,
       "panel": "chat",
-      "section": 3,
+      "section": 2,
       "group": "chat",
       "key": "approvalTimeoutMs",
       "path": "chat.approvalTimeoutMs",
@@ -304,7 +295,7 @@
     {
       "backendKey": "chat.turnResumeWindowMinutes",
       "panel": "chat",
-      "section": 3,
+      "section": 2,
       "group": "chat",
       "key": "turnResumeWindowMinutes",
       "path": "chat.turnResumeWindowMinutes",
@@ -323,7 +314,7 @@
       "backendKey": "chat.askTimeoutMs",
       "hidden": true,
       "panel": "chat",
-      "section": 3,
+      "section": 2,
       "group": "chat",
       "key": "askTimeoutMs",
       "path": "chat.askTimeoutMs",
@@ -364,7 +355,7 @@
       "backendKey": "chat.planTimeoutMs",
       "hidden": true,
       "panel": "chat",
-      "section": 3,
+      "section": 2,
       "group": "chat",
       "key": "planTimeoutMs",
       "path": "chat.planTimeoutMs",
@@ -404,7 +395,7 @@
     {
       "backendKey": "chat.modelStallTimeoutMs",
       "panel": "chat",
-      "section": 3,
+      "section": 2,
       "group": "chat",
       "key": "modelStallTimeoutMs",
       "path": "chat.modelStallTimeoutMs",
@@ -505,22 +496,9 @@
       "tier": 3
     },
     {
-      "backendKey": "vision.enabled",
-      "panel": "vision",
-      "section": 0,
-      "group": "vision",
-      "key": "enabled",
-      "path": "vision.enabled",
-      "label": "启用图片描述",
-      "type": "switch",
-      "tips": "visionEnabled",
-      "def": true,
-      "tier": 1
-    },
-    {
       "backendKey": "vision.prompt",
       "panel": "vision",
-      "section": 1,
+      "section": 0,
       "group": "vision",
       "key": "prompt",
       "path": "vision.prompt",
@@ -1492,20 +1470,6 @@
       "tier": 3
     },
     {
-      "backendKey": "memory.enabled",
-      "panel": "chat",
-      "section": 2,
-      "group": "memory",
-      "key": "enabled",
-      "path": "memory.enabled",
-      "label": "自动提炼记忆（平台总闸）",
-      "type": "switch",
-      "tips": "memoryEnabled",
-      "def": true,
-      "note": "关掉后全平台停止自动提炼记忆；已记下的照常提起。个人开关在个人设置",
-      "tier": 1
-    },
-    {
       "backendKey": "agent.subagentMode",
       "panel": "tool",
       "section": 3,
@@ -1527,20 +1491,6 @@
         }
       ],
       "note": "digest=只检索提炼要点（快、省）；full=跑完整问答（能独立办事）",
-      "tier": 2
-    },
-    {
-      "panel": "maintenance",
-      "section": 6,
-      "group": "scheduled",
-      "key": "enabled",
-      "path": "scheduled.enabled",
-      "label": "启用定时执行",
-      "type": "switch",
-      "tips": "scheduledEnabled",
-      "def": true,
-      "note": "总开关：关闭后所有定时任务都不再触发（已到期未跑的也不补跑）",
-      "backendKey": "scheduled.enabled",
       "tier": 2
     },
     {
@@ -1611,20 +1561,6 @@
           "15 分钟"
         ]
       ]
-    },
-    {
-      "backendKey": "web.refreshEnabled",
-      "panel": "maintenance",
-      "section": 7,
-      "group": "web",
-      "key": "refreshEnabled",
-      "path": "web.refreshEnabled",
-      "label": "网页源自动刷新总开关",
-      "type": "switch",
-      "tips": "webRefreshEnabled",
-      "def": true,
-      "note": "开启后标记自动刷新的网页文档按定时规则重新抓取并重建索引",
-      "tier": 3
     },
     {
       "backendKey": "tool.sandbox.enabled",
@@ -1735,22 +1671,9 @@
       "note": "开启后智能体可挂已发布工作流为工具（≤8 个）；嵌套上限 2 层"
     },
     {
-      "backendKey": "agentWebhook.enabled",
-      "panel": "agentWebhook",
-      "section": 0,
-      "group": "agentWebhook",
-      "key": "enabled",
-      "path": "agentWebhook.enabled",
-      "label": "总开关",
-      "type": "switch",
-      "def": true,
-      "tier": 2,
-      "note": "开启后配了轮终回调的智能体每轮结束推送签名结果（持久化重试）"
-    },
-    {
       "backendKey": "agentWebhook.retryMax",
       "panel": "agentWebhook",
-      "section": 1,
+      "section": 0,
       "group": "agentWebhook",
       "key": "retryMax",
       "path": "agentWebhook.retryMax",
@@ -1760,19 +1683,6 @@
       "min": 0,
       "max": 10,
       "note": "首发失败重试次数（退避 60s/5min/30min/2h）；0=不重试"
-    },
-    {
-      "backendKey": "agentMemory.enabled",
-      "panel": "agentMemory",
-      "section": 0,
-      "group": "agentMemory",
-      "key": "enabled",
-      "path": "agentMemory.enabled",
-      "label": "总开关",
-      "type": "switch",
-      "def": true,
-      "tier": 2,
-      "note": "开启后智能体可配记忆域（专属/叠加）；未配置的仍用用户级记忆"
     },
     {
       "backendKey": "apiOpen.allowedOrigins",
@@ -1786,6 +1696,20 @@
       "def": "",
       "tier": 2,
       "note": "允许浏览器直调 /api/ai/v1/** 的来源，逗号分隔；留空=不回跨域头"
+    },
+    {
+      "backendKey": "apiOpen.enabled",
+      "panel": "apiOpen",
+      "section": 1,
+      "group": "apiOpen",
+      "key": "enabled",
+      "path": "apiOpen.enabled",
+      "label": "对外集成总开关",
+      "type": "switch",
+      "tips": "apiOpenEnabled",
+      "def": true,
+      "tier": 2,
+      "note": "关闭后所有 API Key 请求（v1 契约与问答链路）一律拒绝；契约文档 openapi.json 仍可读，MCP 与分享通道各有独立开关。默认开启，不改变既有行为"
     },
     {
       "backendKey": "webSearch.provider",
@@ -1991,20 +1915,6 @@
           "30 分钟"
         ]
       ]
-    },
-    {
-      "backendKey": "workflow.eventTriggerEnabled",
-      "panel": "maintenance",
-      "section": 11,
-      "group": "workflow",
-      "key": "eventTriggerEnabled",
-      "path": "workflow.eventTriggerEnabled",
-      "label": "工作流事件触发总闸",
-      "type": "switch",
-      "tips": "workflowEventTrigger",
-      "def": true,
-      "note": "内部事件触发工作流总闸；关闭即停，保存生效。外部回调/定时/API 不受影响",
-      "tier": 3
     },
     {
       "backendKey": "workflow.maxConcurrentRuns",
@@ -2945,7 +2855,6 @@
     "opsCheckupAlertEnabled": "巡检 fail 时通知管理员；同一项未读合并",
     "retrievalDebugEnabled": "显示检索调试、加入评测集、归属徽标与降级提示；排障入口仅管理员可见",
     "citationCheck": "生成后让模型核对每条 [N] 是否有来源支撑，剔除不符并重编号；判定走关思考快调用（通常 1~3 秒），15 秒硬超时、失败自动跳过不阻塞",
-    "visionEnabled": "视觉模型总开关；关闭后图片不进检索与引用",
     "ocrMinText": "PDF 页文本少于该长度视为扫描件并触发 OCR；0=总是 OCR",
     "ocrEngine": "none=文本抽取 / vision=逐页视觉 OCR / pp_structure_v3、mineru=外部版面解析；失败不回落",
     "chunkStructural": "按标题与段落边界切块并注入章节路径；需重解析",
@@ -2973,15 +2882,13 @@
     "imagesAuthEnabled": "图片 URL 需 HMAC 签名，防盗链；默认开",
     "ocrDpi": "OCR 渲染 DPI（默认 200）；越高越清晰、越慢",
     "toolEnabled": "问渠工具总开关；不控制文件/命令、记忆、技能工具。默认开",
-    "memoryEnabled": "长期记忆总闸；关闭后停止提炼，已记内容照常提起。个人开关也需开",
     "agentSubagentMode": "digest=只检索提炼要点（快、省）；full=跑完整问答（能独立办事）",
     "toolRuncodeEnabled": "允许模型写脚本在沙盒执行并调用本轮工具；需沙盒服务与回调地址配置；审批选「每次问我」时不提供",
     "toolRuncodeMaxSubCalls": "单脚本最多工具调用次数（含被挡）；独立于单轮步数，是账单闸",
-    "scheduledEnabled": "定时任务总闸；关闭后不再触发，也不补跑",
     "scheduledMaxPerUser": "每人最多定时任务数（默认 20）；0=不限",
     "scheduledTimeout": "单轮定时问答最长等待；超时记失败",
     "scheduledRunRetention": "定时任务执行记录保留天数（0=不清理）；每个任务另保留最近 100 条",
-    "webRefreshEnabled": "网页源自动刷新总闸；关闭后不执行，配置保留",
+    "apiOpenEnabled": "对外集成总闸；关闭后所有 API Key 请求一律拒绝，已签发的 Key 保留但调不通。只管 Key 通道，MCP 与分享各有独立开关",
     "toolSandboxEnabled": "控制工作流沙盒节点与沙盒文件接口；聊天文件/命令不受控；需先启动沙盒服务",
     "sandboxCommandTimeout": "单条命令最长执行时间",
     "sandboxIdleRelease": "闲置多久回收沙盒容器；文件保留，0=不回收",
@@ -2993,7 +2900,6 @@
     "mcpServerEnabled": "MCP Server 总开关（默认关）：/ai/mcp/{token} 按智能体暴露；/ai/mcp 为平台级入口，需 API Key",
     "mcpServerAllowedOrigins": "浏览器跨域白名单；留空仅本机回环。本地进程客户端不受限",
     "webSearchProvider": "tavily/bocha=托管服务；generic=自建 SearXNG 或内部服务",
-    "workflowEventTrigger": "内部事件触发工作流总闸；关闭即停。外部回调/定时/API 不受影响",
     "webSearchApiKey": "服务商 API Key，RSA 加密入库；自建实例可留空",
     "webSearchRequireApproval": "开启后联网搜索需按审批模式确认；默认开（会外发并计费）",
     "webSearchEnabled": "联网搜索总开关；需先开「工具调用」",
@@ -3020,7 +2926,6 @@
   "editable": {
     "chat.sseTimeoutMs": "回答超时(毫秒,默认300000,人工作答时间不计入;0=不限制整轮截断)",
     "chat.retrievalDebugEnabled": "默认开：控制检索调试、归属徽标与降级提示；排障入口仅管理员",
-    "vision.enabled": "视觉模型总开关（false 时图片不生成描述）",
     "vision.prompt": "视觉识别提示词",
     "vision.concurrency": "图片描述并发数（保存即生效）",
     "vision.userImageConcurrency": "用户上传图片识别并发数（保存即生效）",
@@ -3083,12 +2988,11 @@
     "config.reloadIntervalMs": "多副本配置同步兜底间隔（毫秒）；≤0=暂停",
     "trace.samplingIntervalMs": "线上对话采样周期(ms，≤0=暂停)",
     "workflow.approvalReapIntervalMs": "工作流审批超时回收间隔(ms，≤0=暂停；暂停后挂起run不落终态)",
-    "scheduled.enabled": "定时执行智能体总开关",
     "scheduled.maxPerUser": "每人定时任务数上限（0=不限）",
     "scheduled.timeoutMs": "定时任务单次执行超时(ms)",
     "scheduled.runRetentionDays": "定时任务执行记录保留天数（0=不清理）",
     "scheduled.scanIntervalMs": "定时任务到期扫描间隔(ms，≤0=暂停)",
-    "web.refreshEnabled": "网页源自动刷新总闸；关闭后不刷新，配置保留",
+    "apiOpen.enabled": "对外集成总开关（关闭后 API Key 通道全部拒绝）",
     "web.refreshScanIntervalMs": "扫描网页文档到期刷新的间隔（默认 60000 毫秒）；≤0=暂停",
     "tool.sandbox.enabled": "沙盒 API 与工作流沙盒节点；聊天文件/命令不受控",
     "sandbox.commandTimeoutSeconds": "沙盒单条命令超时（秒）",
