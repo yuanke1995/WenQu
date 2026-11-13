@@ -33,8 +33,8 @@ test('列表映射：向上找最近用户提问；过程卡取含 loading 的�
 test('占位文案：生成中插话/目标轮、目标上膛、窄屏不提示 Enter', () => {
   assert.equal(composerPlaceholderOf({ loading: true, goalTurnStreaming: true, isNarrow: false, goalArmed: false, hasSessionGoal: false }),
     '插话：先回答你这句，目标随后自动继续')
-  assert.match(composerPlaceholderOf({ loading: true, goalTurnStreaming: false, isNarrow: false, goalArmed: false, hasSessionGoal: false }), /⌘\/Ctrl\+Enter/)
-  assert.match(composerPlaceholderOf({ loading: true, goalTurnStreaming: false, isNarrow: true, goalArmed: false, hasSessionGoal: false }), /立即发送/)
+  assert.match(composerPlaceholderOf({ loading: true, goalTurnStreaming: false, isNarrow: false, goalArmed: false, hasSessionGoal: false }), /Enter 立刻插进本轮/)
+  assert.match(composerPlaceholderOf({ loading: true, goalTurnStreaming: false, isNarrow: true, goalArmed: false, hasSessionGoal: false }), /立刻插进本轮/)
   assert.match(composerPlaceholderOf({ loading: false, goalTurnStreaming: false, isNarrow: false, goalArmed: true, hasSessionGoal: false }), /写下目标/)
   assert.equal(composerPlaceholderOf({ loading: false, goalTurnStreaming: false, isNarrow: false, goalArmed: true, hasSessionGoal: true }).includes('写下目标'), false)
   assert.match(composerPlaceholderOf({ loading: false, goalTurnStreaming: false, isNarrow: true, goalArmed: false, hasSessionGoal: false }), /@ 引用资料/)

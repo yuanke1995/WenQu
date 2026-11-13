@@ -143,7 +143,7 @@ export const createSteerQueue = ({ currentSid, hasLiveStream, steerApi,
   }
 
   /**
-   * 生成中按发送：**只入队，不发请求**（等用户点那条上的「立即发送」，或由 ⌘/Ctrl+Enter 立即发送）。
+   * 生成中按发送：先落服务端队列，紧接着立刻送进正在跑的这一轮（DSH 同口径：按发送就送）。
    * 载荷与正常提问完全同权（图片/附件/技能/@ 引用/# 历史引用/思考/计划模式）。
    * @returns 入队成功的那条（调用方要拿它马上走「立即发送」时就用它）；null=没入成，**输入框必须原样保留**
    */
@@ -216,11 +216,13 @@ export const createSteerQueue = ({ currentSid, hasLiveStream, steerApi,
       }
       // 没有在跑的轮（刚收尾/正等人裁决）：留在队列里，下一轮开跑由服务端 drain 送达
       item.queued = true
-      item.lastError = '这一轮暂时收不下，已排队等下一轮'
+      item.lastError = '这一轮暂时收不下（可能正等你作答），已排队等它继续'
+      notify('这句还没送进本轮：' + item.lastError, 'info')
     } catch (e) {
       item.sending = false
       item.queued = true
-      item.lastError = e?.message || '送达失败'
+      item.lastError = e?.message || '送达失败（已留在队列里）'
+      notify('这句没送出去，已排队：' + item.lastError, 'warning')
     }
   }
 

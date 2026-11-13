@@ -326,11 +326,12 @@ test('composable：sendNow 目标创建兜底、外部工作区拦截与普通�
   c.setText('普通问题')
   await a.sendNow()
   assert.ok(c.log.some(x => x[0] === 'closeAddPanel'))
-  assert.deepEqual(c.log.find(x => x[0] === 'send'), ['send', {}])
+  assert.deepEqual(c.log.find(x => x[0] === 'send'), ['send', undefined])
 
+  // 生成中与空闲同一个出口：插话是否当场送达由 sendFlow 判定，这里不再分两档
   c.log.length = 0
-  await a.sendNow(true)
-  assert.deepEqual(c.log.find(x => x[0] === 'send'), ['send', { steerNow: true }])
+  await a.sendNow()
+  assert.deepEqual(c.log.find(x => x[0] === 'send'), ['send', undefined])
 
   c.log.length = 0
   c.state.goalArmed = true
@@ -466,12 +467,12 @@ test('composable：面板导航与输入框键盘意图', () => {
   const a2 = useChatActions(c2.ctx)
   c2.log.length = 0
   a2.onInputKeydown(ev({ key: 'Enter' }))
-  assert.deepEqual(c2.log.find(x => x[0] === 'send'), ['send', {}])
+  assert.deepEqual(c2.log.find(x => x[0] === 'send'), ['send', undefined])
 
   c2.state.loading = true
   c2.log.length = 0
   a2.onInputKeydown(ev({ key: 'Enter', ctrlKey: true }))
-  assert.deepEqual(c2.log.find(x => x[0] === 'send'), ['send', { steerNow: true }])
+  assert.deepEqual(c2.log.find(x => x[0] === 'send'), ['send', undefined])
 
   c2.state.loading = false
   c2.setText('')

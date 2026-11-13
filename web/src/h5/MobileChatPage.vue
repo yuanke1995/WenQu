@@ -285,7 +285,7 @@
             <span v-if="it.deferred" class="ms-state">本轮结束后自动发出</span>
             <span v-else-if="it.sending" class="ms-state">发送中…</span>
             <span v-else-if="it.awaiting" class="ms-state">已送出，等这一轮听到</span>
-            <span v-else-if="it.queued" class="ms-state">排队中：目标轮开跑时自动送达</span>
+            <span v-else-if="it.queued" class="ms-state">{{ it.lastError || '排队中：等待送达' }}</span>
             <template v-if="!it.deferred && !it.sending && !it.awaiting">
               <button class="ms-act ghost" type="button" title="丢弃这条" aria-label="丢弃这条" @click="dropSteer(it)"><delete-outlined /></button>
               <button class="ms-act" type="button" title="取回输入框改" aria-label="取回输入框改" @click="editSteer(it)"><edit-outlined /></button>
@@ -405,8 +405,8 @@
           <!-- 生成中且框里有字 → 这一点是「插话」；目标轮在跑时它是真正的插话（不排队，先答你这句），
                普通本轮生成中仍是排进队列（不发请求）；没字才是停止本轮。 -->
           <button v-if="loading && canSend" class="m-send" type="button"
-                  :title="goalTurnStreaming ? '插话：先回答你这句，目标随后自动继续' : '插话：先排到上方队列，点那条上的「立即发送」才送进这一轮'"
-                  :aria-label="goalTurnStreaming ? '插话：先回答你这句，目标随后自动继续' : '插话：先排到上方队列，点那条上的「立即发送」才送进这一轮'"
+                  :title="goalTurnStreaming ? '插话：先回答你这句，目标随后自动继续' : '插话：发送后立刻插进本轮'"
+                  :aria-label="goalTurnStreaming ? '插话：先回答你这句，目标随后自动继续' : '插话：发送后立刻插进本轮'"
                   :class="{ interject: goalTurnStreaming }" @click="send()">
             <arrow-up-outlined />
           </button>
@@ -749,8 +749,8 @@ provide('wqChat', engine)
 const {
   text, canSend, send, stop, streamAnswer, messages, loading, currentSessionId, currentSessionTitle,
   panelAi,
-  // 运行中插话：引擎的 send 在 loading 时本来就只入队、不发请求（PC 靠 ⌘/Ctrl+Enter 一步送），
-  // 触屏没有修饰键可组合，所以「立即送」落在队列条目上那颗主按钮——不引入长按之类的隐藏手势
+  // 运行中插话：发送键与 PC 同一个出口（引擎的 send 在生成中当场送进本轮），
+  // 队列条目上那颗主按钮留作「没送达的再送一次」——触屏不引入长按之类的隐藏手势
   steerQueue, sendSteer, editSteer, dropSteer,
   deepThinkOn, effectiveModelLabel, debugDisplayVisible, regenerate, switchBranch, variantSwitching,
   resolveApproval, askSubmitAll, createNewSession, pendingImages, pendingFiles, pickedSkills, pendingMentions,

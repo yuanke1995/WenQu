@@ -55,8 +55,8 @@ const props = defineProps({
   /** 停止键上膛态：里面显示 esc 字样（两段式 Esc 停止） */
   stopArmed: { type: Boolean, default: false },
   /** 生成中那颗发送键的悬浮文案。目标轮在跑时这里要换成「插话：先回答你这句」——
-   *  同一个动作（发一句），普通轮是「排队后立即发送」，目标轮是「让位一轮、答完自动继续」，
-   *  两种语义不能共用一句提示。留空则用默认的排队说明。 */
+   *  同一个动作（发一句），普通轮是「立刻插进本轮」，目标轮是「让位一轮、答完自动继续」，
+   *  两种语义不能共用一句提示。留空则用默认的插话说明。 */
   sendTitle: { type: String, default: '' },
   /**
    * 用 {@code #replace} 插槽顶替整张卡片。
@@ -192,8 +192,8 @@ const showStop = computed(() => props.sending && !(props.steerable && props.canS
         <div class="ci-right">
           <slot name="right" />
           <button v-if="sending && canSend && steerable" class="ci-send"
-                  :title="sendTitle || '插话（Enter 同效：先排到输入框上方 · Ctrl/⌘+Enter 立刻插进本轮）'"
-                       :aria-label="sendTitle || '插话（Enter 同效：先排到输入框上方 · Ctrl/⌘+Enter 立刻插进本轮）'" @click="emit('send')">
+                  :title="sendTitle || '插话（Enter 同效：立刻插进本轮，送不进就排在输入框上方等下一拍）'"
+                       :aria-label="sendTitle || '插话（Enter 同效：立刻插进本轮，送不进就排在输入框上方等下一拍）'" @click="emit('send')">
             <arrow-up-outlined />
           </button>
           <button v-else-if="showStop" class="ci-send stop" :title="stopArmed ? '再按一次 Esc 停止生成' : '点击停止生成'"

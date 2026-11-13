@@ -37,8 +37,8 @@ export const composerPlaceholderOf = ({ loading, goalTurnStreaming, isNarrow, go
   if (loading) {
     if (goalTurnStreaming) return '插话：先回答你这句，目标随后自动继续'
     return isNarrow
-      ? '补一句方向（先排到上面，点「立即发送」才送出）'
-      : '补一句方向（Enter 先排到上面 · ⌘/Ctrl+Enter 立刻插进本轮）'
+      ? '补一句方向（发送后立刻插进本轮）'
+      : '补一句方向（Enter 立刻插进本轮 · Shift+Enter 换行）'
   }
   if (goalArmed && !hasSessionGoal) return '写下目标，回车开始（助手会自己接着往下推进）'
   return isNarrow

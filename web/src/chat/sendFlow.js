@@ -7,7 +7,7 @@ export const createSend = ({
   hasUploadingFile, loading, goalTurnStreaming, surrenderGoalStream, stageSteer, sendSteer,
   setPlanMode, planModeOn, effectiveModel, compactNotice, liveCompactedSid, deepThinkOn,
   closePanels, messages, streamAnswer, notifyWarning
-}) => async (opts = {}) => {
+}) => async () => {
   const q = text.value.trim()
   const imgs = pendingImages.value.map(p => p.dataUrl)
   // 附件只带 fileId（内容已先上传落盘）；未传完的不带走，并明确拦下这次发送——
@@ -32,10 +32,10 @@ export const createSend = ({
   // steer 必然失败）。先断本地这道呈现通道（不请服务端 stop，否则目标会被记成 stopped 而不是 preempted），
   // 后面的普通发送会让后端把目标轮打断并转 PAUSED/preempted，答完再自动接回。
   if (loading.value && goalTurnStreaming.value) surrenderGoalStream()
-  // 生成中再发一句 = 排进插话队列（输入框上方那排 chip），**不发请求**。
-  // 主输入框不再因跑着而禁用：想改方向不该被迫先停止本轮。载荷与正常提问完全同权
-  // （图片/附件/技能/@/#/模型/思考/计划模式）。发给模型要等用户在 chip 上点「立即发送」，
-  // 或用 ⌘/Ctrl+Enter 这一档入队后立刻送。
+  // 生成中再发一句 = 插进正在跑的这一轮（DSH 口径：按发送就送，不等下一轮）。
+  // 主输入框不因跑着而禁用：想改方向不该被迫先停止本轮。载荷与正常提问完全同权
+  // （图片/附件/技能/@/#/模型/思考/计划模式）；这句先落服务端队列、紧接着立即送达，
+  // 送不进（这一轮正等人裁决/下一步还没到）时留在队列里，等本轮继续或下一轮开跑自动送达。
   if (loading.value) {
     // 只丢了图/附件、没写一句话：插话要的是一句方向，材料是随行内容。没有这句话，
     // 队列里就没有可送达的内文（后端按文字建行），当场说清楚比静默吞掉强
@@ -57,7 +57,7 @@ export const createSend = ({
     pendingHistoryRefs.value = []
     // 清完输入框再送：送不进（本轮已收尾/正等人裁决）时 sendSteer 要把这句放回输入框，
     // 放回首尾留着刚打的下半句会把它拼成一句四不像
-    if (opts.steerNow) sendSteer(staged)
+    sendSteer(staged)
     return
   }
   // 无任何可用模型（会话/智能体/个人默认均未配置）时引导配置，不打无谓请求

@@ -35,7 +35,7 @@ export const useChatActions = ctx => {
     return true
   }
 
-  const sendNow = async (steerNow = false) => {
+  const sendNow = async () => {
     if (ctx.foreignWorkspace()) {
       notify.warning('这个工作区属于另一台电脑：请在那台电脑上使用（侧栏「这台电脑」可查看当前设备）')
       return
@@ -51,7 +51,8 @@ export const useChatActions = ctx => {
     }
     if (ctx.goalStarting()) return
     ctx.closeAddPanel()
-    ctx.send(steerNow ? { steerNow: true } : {})
+    // 生成中的「发一句」由 sendFlow 自己判定：插话当场送达，不在这里再分两档
+    ctx.send()
   }
 
   // ==================== 插话队列拖动排序 ====================
@@ -153,9 +154,6 @@ export const useChatActions = ctx => {
       // 面板导航可由调用方注入唯一实现；未注入时用本 composable 的等价版本。
       const nav = ctx.onPanelNavKeydown || onPanelNavKeydown
       if (nav(e)) return
-    }
-    if (ctx.loading() && e.key === 'Enter' && !e.shiftKey && !e.altKey && (e.metaKey || e.ctrlKey)) {
-      e.preventDefault(); sendNow(true); return
     }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault(); sendNow(); return

@@ -57,9 +57,9 @@ test('空载荷（无字/无图/无可用附件）不发', async () => {
   assert.equal(calls.staged.length, 0)
 })
 
-test('生成中：只入队并清空输入，不发流；steerNow 立即送', async () => {
+test('生成中：入队后当场送达并清空输入，不发流', async () => {
   const { send, calls, state, planOn } = setup({ text: ' 插话 ', loading: true })
-  await send({ steerNow: true })
+  await send()
   assert.equal(calls.staged.length, 1)
   const p = calls.staged[0]
   assert.equal(p.text, '插话')
@@ -83,7 +83,7 @@ test('生成中：只入队并清空输入，不发流；steerNow 立即送', as
 
 test('生成中入队失败：不清输入框', async () => {
   const { send, calls, state } = setup({ text: '插话', loading: true, steerStaged: false })
-  await send({ steerNow: true })
+  await send()
   assert.equal(calls.steered.length, 0)
   assert.equal(state.text.value, '插话')
 })

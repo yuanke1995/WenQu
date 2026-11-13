@@ -913,11 +913,9 @@
             </div>
             <span v-if="goalBarError" class="gb-error" role="alert">{{ goalBarError }}</span>
           </div>
-          <!-- 插话队列：生成中你在输入框里按发送，先落到这里排队，点「立即发送」才真发给模型；
-               按 ⌘/Ctrl+Enter 发出去的那句＝入队后自动替你点这一下。
-          没点之前它是**纯本地的**——删掉/改掉/拖动排序都只是改数组，所以反悔是白拿的。
-          拖动排序有意义：收尾结算按这个顺序依次发出，用户排的先后就是进模型的先后。
-          刻意放在输入框正上方（而非气泡里）：它是"还没发出去的话"，离输入框最近才对。 -->
+          <!-- 插话队列：生成中在输入框里按发送＝先落这里、紧接着立刻插进本轮（与 DSH 同口径）。
+          没送达的（这一轮正等人裁决/下一步还没到）留在这里并写明原因，本轮继续或下一轮开跑自动送达；
+          送达前仍可改/删。刻意放在输入框正上方：它是"还没发出去的话"，离输入框最近才对。 -->
           <div v-if="steerQueue.length" class="steer-queue">
           <div v-for="(it, qi) in steerQueue" :key="qi" class="steer-item"
           :class="{ sending: it.sending, deferred: it.deferred, awaiting: it.awaiting, queued: it.queued, dragging: steerDragIdx === qi }"
@@ -932,7 +930,7 @@
           <span v-if="it.deferred" class="steer-state">本轮结束后自动发出</span>
           <span v-else-if="it.sending" class="steer-state">发送中…</span>
           <span v-else-if="it.awaiting" class="steer-state">已送出，等这一轮听到</span>
-          <span v-else-if="it.queued" class="steer-state">排队中：目标轮开跑时自动送达</span>
+          <span v-else-if="it.queued" class="steer-state">{{ it.lastError || '排队中：等待送达' }}</span>
           <template v-if="!it.deferred && !it.sending && !it.awaiting">
           <button class="steer-act primary" type="button"
           title="立刻发给模型（纯文字在下一次生成前生效 · ⌘/Ctrl+Enter 同效）"

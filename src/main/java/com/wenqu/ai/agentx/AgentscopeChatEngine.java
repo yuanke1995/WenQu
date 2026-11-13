@@ -3766,6 +3766,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 turnNotify.onPlanPending(cmd, entry.getKey());
                 continue;
             }
+            // 提问工具被框架记成「确认」是不该发生的（AskUserTool 已声明权限放行）：真出现时留一条日志，
+            // 否则用户拿到的是一张点了也恢复不了的审批卡，线上没法从现象倒推
+            if ("confirmation".equals(kind) && AskUserTool.NAME.equals(tool)) {
+                log.warn("[AGENTX] 提问工具被记成确认待办，按审批卡处理: session={} request={}",
+                        cmd.getSessionId(), entry.getKey());
+            }
             if (!"confirmation".equals(kind)) {
                 Object call = firstNonNull(data.get("call"), data);
                 String askPayload = askCard(entry.getKey(), toolInputOf(call), tool);

@@ -2,6 +2,8 @@ package com.wenqu.ai.agentx;
 
 import com.alibaba.fastjson2.JSON;
 import io.agentscope.core.message.ToolResultBlock;
+import io.agentscope.core.permission.PermissionContextState;
+import io.agentscope.core.permission.PermissionDecision;
 import io.agentscope.core.tool.ToolBase;
 import io.agentscope.core.tool.ToolCallParam;
 import io.agentscope.core.tool.ToolSuspendException;
@@ -51,5 +53,16 @@ public final class AskUserTool extends ToolBase {
         Map<String, Object> input = param.getInput() == null ? Map.of() : param.getInput();
         // 挂起原因带的是本轮要问的题面（框架原样存在待办里，刷新页面/重连仍能看到这张卡）
         return Mono.error(new ToolSuspendException(JSON.toJSONString(input)));
+    }
+
+    /**
+     * 提问不改变任何状态，权限上直接放行。
+     * <p>不覆写就会沿用 {@link ToolBase} 默认的 passthrough，而权限引擎对 passthrough 的默认分支是
+     * <b>执行前确认</b>——模型一提问，用户收到的是「有一个操作等你批准」，点开还恢复不了，
+     * 这一轮就挂在审批上等人到超时。提问卡只能由工具挂起产生，不能先过一道确认。
+     */
+    @Override
+    public Mono<PermissionDecision> checkPermissions(Map<String, Object> input, PermissionContextState context) {
+        return Mono.just(PermissionDecision.allow("提问不改变任何状态"));
     }
 }
