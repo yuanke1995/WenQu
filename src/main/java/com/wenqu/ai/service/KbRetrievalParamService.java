@@ -1,5 +1,6 @@
 package com.wenqu.ai.service;
 
+import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.model.KnowledgeBase;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -17,9 +18,11 @@ import java.util.function.Supplier;
 /**
  * 库级检索参数的解析与生效（“召回池”那一层）。
  *
- * <p>取值链：<b>显式线程覆盖（评估扫参）&gt; 库级 JSON &gt; 全局设置</b>。
+ * <p>取值链：<b>显式线程覆盖（评估扫参）&gt; 库级 JSON &gt; 内置默认常量</b>。
  * 显式覆盖排在最前，是为了让 {@code RetrievalEvaluationService} 的参数扫描仍然能压过库级配置——
  * 否则带自定义阈值的库会让评估扫参静默失效（正是 2026-09 那批“配了不生效”的同款坑）。
+ * 全局设置层已整体退役（2026-11-14）：这些参数的默认值只归知识库弹窗展示的内置常量，
+ * 系统设置不再有全局槽位。
  *
  * <p>库级参数是<b>逐库</b>的：{@link #forScope} 一次解析出本轮涉及的所有库，
  * 由检索层按命中块所属库取用，而不是在回合入口压成一个标量。
@@ -36,9 +39,14 @@ public class KbRetrievalParamService {
      * <p>{@code rerankModel} 只用于展示/诊断：真正生效时由 {@link #withRerankModel} 收敛成
      * 本轮唯一的重排模型（一轮只有一个重排器）。{@code rerankMinHits/rerankMaxHits} 同理：
      * 库级重排窗口，null=未配（走内置默认），随模型同库收敛后经线程覆盖下发给重排器。
+     * <p>召回量两键（{@code vectorTopK/keywordLimit}）在多库轮按参与库取最大值生效（见
+     * HybridRetrievalService）；分域门四键按命中块所属库逐块生效（见 {@link RetrievalGate#applyPerKb}）。
      */
     public record Params(double vecThreshold, double vectorWeight, double keywordWeight, String rerankModel,
-                         Integer rerankMinHits, Integer rerankMaxHits) {
+                         Integer rerankMinHits, Integer rerankMaxHits,
+                         int vectorTopK, int keywordLimit,
+                         double minContextScore, double minFusionScore,
+                         String lowConfidencePolicy, double top1Floor) {
         public boolean hasRerankModel() {
             return rerankModel != null && !rerankModel.isBlank();
         }
@@ -156,7 +164,18 @@ public class KbRetrievalParamService {
         String rerankModel = rw == null || rw.isBlank() ? null : rw.trim();
         return new Params(vt, vw, kw, rerankModel,
                 hitCount(kbParams, KbParamCodec.RERANK_MIN_HITS, 50),
-                hitCount(kbParams, KbParamCodec.RERANK_MAX_HITS, 100));
+                hitCount(kbParams, KbParamCodec.RERANK_MAX_HITS, 100),
+                intNumber(KbParamCodec.VECTOR_TOP_K, kbParams,
+                        ConfigDefaults.RETRIEVAL_VECTOR_TOP_K, 1, 100),
+                intNumber(KbParamCodec.KEYWORD_LIMIT, kbParams,
+                        ConfigDefaults.RETRIEVAL_KEYWORD_LIMIT, 1, 200),
+                number(KbParamCodec.MIN_CONTEXT_SCORE, kbParams,
+                        ConfigDefaults.RETRIEVAL_MIN_CONTEXT_SCORE, 0d, 1d),
+                number(KbParamCodec.MIN_FUSION_SCORE, kbParams,
+                        ConfigDefaults.RETRIEVAL_MIN_FUSION_SCORE, 0d, 1d),
+                policy(kbParams),
+                number(KbParamCodec.TOP1_FLOOR, kbParams,
+                        ConfigDefaults.RETRIEVAL_TOP1_FLOOR, 0d, 1d));
     }
 
     /** 库级重排窗口解析：缺省/非法/超界返回 null（=未配，走内置默认；下限 2 在重排执行端统一钳） */
@@ -177,9 +196,28 @@ public class KbRetrievalParamService {
         Map<String, String> explicit = configService.currentOverrides();
         String raw = explicit.containsKey(key) ? explicit.get(key) : kbParams.get(key);
         Double v = parseDouble(raw);
-        // 显式覆盖/库级值非法时回落全局；全局也非法时 getDouble 自己会兜底到声明默认
-        if (v == null) v = configService.getDouble(key, def);
-        return clamp(v, min, max);
+        // 显式覆盖/库级值非法时回落内置常量（全局默认值层已退役，见 KbParamCodec）
+        return clamp(v == null ? def : v, min, max);
+    }
+
+    /** 整数参数：取值链同 {@link #number}（显式覆盖 > 库级 JSON > 内置常量），越界回落常量 */
+    private int intNumber(String key, Map<String, String> kbParams, int def, int min, int max) {
+        Map<String, String> explicit = configService.currentOverrides();
+        String raw = explicit.containsKey(key) ? explicit.get(key) : kbParams.get(key);
+        Double v = parseDouble(raw);
+        if (v == null || v < min || v > max) return def;
+        return (int) Math.rint(v);
+    }
+
+    /** 低分全灭策略：只认 top1/off，其余（含未配）回落内置默认 */
+    private String policy(Map<String, String> kbParams) {
+        Map<String, String> explicit = configService.currentOverrides();
+        String raw = explicit.containsKey(KbParamCodec.LOW_CONFIDENCE_POLICY)
+                ? explicit.get(KbParamCodec.LOW_CONFIDENCE_POLICY) : kbParams.get(KbParamCodec.LOW_CONFIDENCE_POLICY);
+        if (raw == null) return ConfigDefaults.RETRIEVAL_LOW_CONFIDENCE_POLICY;
+        String v = raw.trim();
+        return "top1".equalsIgnoreCase(v) || "off".equalsIgnoreCase(v)
+                ? v.toLowerCase() : ConfigDefaults.RETRIEVAL_LOW_CONFIDENCE_POLICY;
     }
 
     private static Double parseDouble(String raw) {

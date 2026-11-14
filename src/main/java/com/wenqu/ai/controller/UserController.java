@@ -299,8 +299,8 @@ public class UserController {
         }
     }
 
-    @Operation(summary = "保存个人偏好", description = "扁平的 {配置键: 值}（键必须在 config-schema.json 标记 personal，"
-            + "当前无此类键，任何提交都会被拒）；字段缺省=不修改，空串=清除该项回落系统全局。"
+    @Operation(summary = "保存个人偏好", description = "扁平的 {配置键: 值}（键必须在 config-schema.json 标记 personal）；"
+            + "字段缺省=不修改，空串=清除该项回落内置默认。"
             + "模型引用须归属本人登记（他人供应商拒用）且类型与字段一致；保存即生效（仅对本人问答/本人资源生效）")
     @Permission("self:preference")
     @PutMapping("/settings")

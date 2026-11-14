@@ -459,12 +459,12 @@ function typeStyle (t) {
   return { background: bg, color }
 }
 
-/** 参数覆盖摘要：空=继承全局，非空=解析出几项覆盖（坏 JSON 原样提示） */
+/** 参数覆盖摘要：空=跟随内置默认，非空=解析出几项覆盖（坏 JSON 原样提示） */
 function paramSummary (raw) {
-  if (!raw) return '继承全局'
+  if (!raw) return '跟随内置默认'
   try {
     const n = Object.keys(JSON.parse(raw) || {}).length
-    return n ? `${n} 项已覆盖` : '继承全局'
+    return n ? `${n} 项已覆盖` : '跟随内置默认'
   } catch (e) {
     return '已自定义'
   }

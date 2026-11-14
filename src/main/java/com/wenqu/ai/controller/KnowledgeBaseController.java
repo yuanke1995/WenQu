@@ -53,16 +53,14 @@ public class KnowledgeBaseController {
     private final ResourceVisibilityService visibility;
     /** 管理员级判定（含自定义 admin_flag=1 角色）：官方内置库的管理放行走它 */
     private final RoleService roleService;
-    /** 读取知识库参数的当前全局值（/param-defaults 模板预填用） */
-    private final com.wenqu.ai.service.ConfigService configService;
+    /** 库级检索参数的内置默认（/param-defaults 占位符与新建库预填用） */
+    private final com.wenqu.ai.service.KbRetrievalParamService kbRetrievalParams;
 
     private final com.wenqu.ai.service.KbTransferService kbTransferService;
     /** 知识库洞察/试检索/引用反馈/归档 */
     private final com.wenqu.ai.service.KbInsightsService kbInsightsService;
     /** 参数问号文案（/param-tips；与系统设置页同一份定义源，防两处解释漂移） */
     private final com.wenqu.ai.config.ConfigSchemaService configSchemaService;
-    /** 个人设置值（/param-defaults 对 personal 键取「本人生效值」预填，与检索实际生效口径一致） */
-    private final com.wenqu.ai.service.UserConfigService userConfigService;
     /** 文档跨库移动时图谱数据（三元组/实体）同步随迁——见 moveDoc */
     private final com.wenqu.ai.service.GraphRagService graphRagService;
 
@@ -100,50 +98,36 @@ public class KnowledgeBaseController {
     }
 
     /**
-     * 知识库参数默认值（**普通用户可读**）：新建知识库时以当前全局值为模板预填表单。
-     * <p>为什么不复用 {@code GET /config}：那是管理端点（普通用户 403），而知识库自建已对普通用户开放，
-     * 普通用户却看不到"当前全局值是多少"——正是"设置页写的是新建库预填、实际只有管理员能预填"的根因。
+     * 知识库参数默认值（**普通用户可读**）：新建知识库时预填表单 + 编辑弹窗占位符展示。
+     * <p>为什么不复用 {@code GET /config}：那是管理端点（普通用户 403），而知识库自建已对普通用户开放。
      * 这里只回库级可覆盖的检索参数 + 解析参数（不含 gateway 地址与任何密钥）。
+     * <p>全局默认值层已退役（2026-11-14）：返回的就是内置默认常量/yml 层默认，
+     * 不再读个人层与平台配置——默认值的唯一可调面是知识库本级。
      */
-    @Operation(summary = "知识库参数默认值", description = "库级检索/解析参数的当前生效默认值（新建库模板预填 + 表单占位符展示）；"
-            + "重排模型返回空（模型归库级绑定，选了才重排）；未配的库级键回落内置默认常量")
+    @Operation(summary = "知识库参数默认值", description = "库级检索/解析参数的内置默认值（新建库模板预填 + 表单占位符展示）；"
+            + "重排模型返回空（模型归库级绑定，选了才重排）")
     @Permission("kb:read")
     @GetMapping("/param-defaults")
     public ResultJson paramDefaults() {
         Map<String, String> out = new LinkedHashMap<>();
-        for (String k : DocumentService.PARSE_PARAM_KEYS) out.put(k, effectiveDefault(k));
-        // 库级唯一真源：阈值/两路权重/重排模型与重排窗口（召回池那一层）
-        for (String k : com.wenqu.ai.service.KbParamCodec.KEYS) out.put(k, effectiveDefault(k));
+        out.putAll(documentService.parseParamDefaults());
+        // 库级检索参数内置默认：阈值/两路权重/召回量/分域门 + 重排窗口（召回池那一层）
+        com.wenqu.ai.service.KbRetrievalParamService.Params q = kbRetrievalParams.defaults();
+        out.put(com.wenqu.ai.service.KbParamCodec.VEC_THRESHOLD, String.valueOf(q.vecThreshold()));
+        out.put(com.wenqu.ai.service.KbParamCodec.VECTOR_WEIGHT, String.valueOf(q.vectorWeight()));
+        out.put(com.wenqu.ai.service.KbParamCodec.KEYWORD_WEIGHT, String.valueOf(q.keywordWeight()));
+        out.put(com.wenqu.ai.service.KbParamCodec.RERANK_MODEL, "");
+        out.put(com.wenqu.ai.service.KbParamCodec.RERANK_MIN_HITS, String.valueOf(ConfigDefaults.RERANK_MIN_HITS));
+        out.put(com.wenqu.ai.service.KbParamCodec.RERANK_MAX_HITS, String.valueOf(ConfigDefaults.RERANK_MAX_HITS));
+        out.put(com.wenqu.ai.service.KbParamCodec.VECTOR_TOP_K, String.valueOf(q.vectorTopK()));
+        out.put(com.wenqu.ai.service.KbParamCodec.KEYWORD_LIMIT, String.valueOf(q.keywordLimit()));
+        out.put(com.wenqu.ai.service.KbParamCodec.MIN_CONTEXT_SCORE, String.valueOf(q.minContextScore()));
+        out.put(com.wenqu.ai.service.KbParamCodec.MIN_FUSION_SCORE, String.valueOf(q.minFusionScore()));
+        out.put(com.wenqu.ai.service.KbParamCodec.LOW_CONFIDENCE_POLICY, String.valueOf(q.lowConfidencePolicy()));
+        out.put(com.wenqu.ai.service.KbParamCodec.TOP1_FLOOR, String.valueOf(q.top1Floor()));
+        // 图扩展上限（库级，随「知识图谱」开关展示）：内置默认常量，不占 Params（图扩展不属于召回池层）
+        out.put(com.wenqu.ai.service.KbParamCodec.GRAPH_EXPAND_TOP_K, String.valueOf(ConfigDefaults.GRAPH_EXPAND_TOP_K));
         return ResultJson.ok(out);
-    }
-
-    /**
-     * 参数对请求者的「生效默认值」：personal 键取本人个人值（未设回落全局）；
-     * personalOnly 键（重排模型归库级绑定，无个人设置入口）同样取本人个人值——
-     * 未设即空（personalOnly 无全局层，{@link ConfigService#get} 对其恒返回空，回落分支只为类型统一）。
-     * 个人值与检索链路的个人层同源，预填/展示与其一致：
-     * 预填全局旧值会把个人默认"固化"成库级覆盖，反而覆盖掉用户自己的设置。
-     */
-    private String effectiveDefault(String key) {
-        if (configSchemaService.isPersonal(key) || configSchemaService.isPersonalOnly(key)) {
-            String pv = userConfigService.personalValue(RequestUser.uid(), key);
-            if (pv != null && !pv.isBlank()) return pv;
-        }
-        String v = configService.get(key);
-        if (v == null || v.isBlank()) {
-            // KB-override keys have no platform setting; fall back to constants
-            return switch (key) {
-                case "chunk.maxChunks" -> String.valueOf(ConfigDefaults.CHUNK_MAX_CHUNKS);
-                case "chunk.maxImages" -> String.valueOf(ConfigDefaults.CHUNK_MAX_IMAGES);
-                case "parse.childSize" -> String.valueOf(ConfigDefaults.PARSE_CHILD_SIZE);
-                case "parse.ocrMinText" -> String.valueOf(ConfigDefaults.PARSE_OCR_MIN_TEXT);
-                case "parse.ocrDpi" -> String.valueOf(ConfigDefaults.PARSE_OCR_DPI);
-                case "rerank.minHits" -> String.valueOf(ConfigDefaults.RERANK_MIN_HITS);
-                case "rerank.maxHits" -> String.valueOf(ConfigDefaults.RERANK_MAX_HITS);
-                default -> v;
-            };
-        }
-        return v;
     }
 
     /**

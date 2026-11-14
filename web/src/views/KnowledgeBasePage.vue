@@ -151,7 +151,7 @@
                 {{ modelName(kb.embeddingRef) || '未绑定向量模型' }}
               </span>
               <span v-if="kb.queryParams || kb.parseParams" class="mchip ok">参数已自定义</span>
-              <span v-else class="mchip">继承全局参数</span>
+              <span v-else class="mchip">跟随内置默认</span>
               <span class="ref">{{ kb.agentRefCount ? `被 ${kb.agentRefCount} 个智能体使用` : '未绑定智能体' }}</span>
             </div>
 

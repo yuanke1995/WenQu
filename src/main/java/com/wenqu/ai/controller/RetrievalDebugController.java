@@ -7,6 +7,7 @@ import com.wenqu.ai.mapper.KnowledgeMapper;
 import com.wenqu.ai.model.Knowledge;
 import com.wenqu.ai.service.DocumentMetaCache;
 import com.wenqu.ai.service.HybridRetrievalService;
+import com.wenqu.ai.service.KbRetrievalParamService;
 import com.wenqu.ai.service.KnowledgeBaseService;
 import com.wenqu.ai.service.KeywordExtractor;
 import com.wenqu.ai.service.RerankService;
@@ -149,6 +150,12 @@ public class RetrievalDebugController {
                 m.put("rerankModel", p.rerankModel() == null ? "" : p.rerankModel());
                 m.put("rerankMinHits", p.rerankMinHits());
                 m.put("rerankMaxHits", p.rerankMaxHits());
+                m.put("vectorTopK", p.vectorTopK());
+                m.put("keywordLimit", p.keywordLimit());
+                m.put("minContextScore", p.minContextScore());
+                m.put("minFusionScore", p.minFusionScore());
+                m.put("lowConfidencePolicy", p.lowConfidencePolicy());
+                m.put("top1Floor", p.top1Floor());
                 m.put("configured", kb != null && kb.getQueryParams() != null && !kb.getQueryParams().isBlank());
                 kbParams.put(id, m);
             });
@@ -182,9 +189,10 @@ public class RetrievalDebugController {
         }
         result.put("reranked", reranked.stream().map(this::hitMap).toList());
 
-        // 5. 最终上下文：走与真实问答**同一道相关性门**。
-        double minRerank = configService.getDouble("retrieval.minContextScore", ConfigDefaults.RETRIEVAL_MIN_CONTEXT_SCORE);
-        double minFusion = configService.getDouble("retrieval.minFusionScore", ConfigDefaults.RETRIEVAL_MIN_FUSION_SCORE);
+        // 5. 最终上下文：走与真实问答**同一道相关性门**。分域门已归库级检索参数，
+        //    按命中块所属库取各自的门值（显式覆盖>库级 JSON>内置默认），各库门值见上面 kbParams。
+        Map<String, KbRetrievalParamService.Params> gatePs = kbRetrievalParams.forScope(kbIds);
+        KbRetrievalParamService.Params defP = kbRetrievalParams.defaults();
         List<HybridRetrievalService.Hit> gated = new ArrayList<>();
         int droppedByGate = 0;
         // 重排本轮真执行过时，未进重排窗口的候选不得借融合分混进上下文——与生产同一条规则，
@@ -196,8 +204,9 @@ public class RetrievalDebugController {
                 droppedByGate++;
                 continue;
             }
+            KbRetrievalParamService.Params p = gatePs.getOrDefault(h.kbId(), defP);
             double rankScore = hasRerank ? h.rerankScore() : h.score();
-            double gate = hasRerank ? minRerank : minFusion;
+            double gate = hasRerank ? p.minContextScore() : p.minFusionScore();
             if (gate > 0 && rankScore < gate) {
                 droppedByGate++;
                 continue;
@@ -206,8 +215,6 @@ public class RetrievalDebugController {
             gated.add(h);
         }
         Map<String, Object> gateInfo = new LinkedHashMap<>();
-        gateInfo.put("minRerank", minRerank);
-        gateInfo.put("minFusion", minFusion);
         gateInfo.put("droppedByGate", droppedByGate);
         // 与生产仍有两处已知差别，写出来让看的人自己校正预期，而不是又当成 bug 去查：
         gateInfo.put("note", "面板对全部候选重排，生产只重排融合分 top rerank.maxHits——窗口大小不同会让面板数略多于实际；"

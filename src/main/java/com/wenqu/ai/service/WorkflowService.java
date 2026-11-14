@@ -1041,7 +1041,8 @@ public class WorkflowService {
     public Map<String, Object> configDefaults() {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("chat.temperature", configService.get("chat.temperature"));
-        out.put("retrieval.minContextScore", configService.get("retrieval.minContextScore"));
+        // 检索分门已归知识库级参数（全局默认值层退役）：节点「留空跟随」的是内置默认常量
+        out.put("retrieval.minContextScore", ConfigDefaults.RETRIEVAL_MIN_CONTEXT_SCORE);
         return out;
     }
 

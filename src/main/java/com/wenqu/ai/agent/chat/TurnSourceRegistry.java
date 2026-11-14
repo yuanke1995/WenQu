@@ -7,6 +7,7 @@ import com.wenqu.ai.service.HybridRetrievalService;
 import com.wenqu.ai.service.ImageUrlSigner;
 import com.wenqu.ai.service.RerankService;
 import com.wenqu.ai.service.RetrievalGate;
+import com.wenqu.ai.service.KbRetrievalParamService;
 import com.wenqu.ai.service.KnowledgeRetrievalTool;
 import com.wenqu.ai.service.websearch.WebSearchResult;
 import com.wenqu.ai.service.websearch.WebSearchService;
@@ -59,6 +60,7 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
 
     private final ConfigService configService;
     private final RerankService rerankService;
+    private final KbRetrievalParamService kbRetrievalParams;
     private final ImageUrlSigner imageUrlSigner;
     /** 投递与降级登记的出口（刀 5a：池不再借本轮状态袋的 Deps 拿运行时动作，方向仍然是池→运行时单向） */
     private final ChatRunRuntime runtime;
@@ -108,6 +110,7 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
     }
 
     public TurnSourceRegistry(ConfigService configService, RerankService rerankService,
+                              KbRetrievalParamService kbRetrievalParams,
                               ImageUrlSigner imageUrlSigner, ChatRunRuntime runtime,
                               String sessionId, String question, SseEmitter emitter,
                               List<Map<String, Object>> sources, Map<Integer, String> imgIndex,
@@ -115,6 +118,7 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
                               List<Map<String, String>> degradations, Set<String> degradedCodes) {
         this.configService = configService;
         this.rerankService = rerankService;
+        this.kbRetrievalParams = kbRetrievalParams;
         this.imageUrlSigner = imageUrlSigner;
         this.runtime = runtime;
         this.sessionId = sessionId;
@@ -145,7 +149,7 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
      * 重排分走 {@code retrieval.minContextScore}、未重排的融合分走 {@code retrieval.minFusionScore}，
      * 重排实际执行过则窗口外尾部不借融合门入场；再叠单文档块数配额（CONTEXT_MAX_BLOCKS_PER_DOC，
      * 平台常量默认 0=不限制）、单库块数配额（CONTEXT_MAX_BLOCKS_PER_KB，同口径；面板已有来源也占配额）与单次咨询总量
-     * {@code context.maxContextHits}。重排不可用时不臆造分数，按融合门 + 配额兜底（与主管线
+     * {@code context.maxContextHits}（个人专属键：取本人个人设置值，未设置回落内置默认 8）。重排不可用时不臆造分数，按融合门 + 配额兜底（与主管线
      * 「重排不可用」同语义），并留 info 日志说明本轮未做相关度重排。
      *
      * @return 实际登记（或复用既有编号）的条目，供回报文本列给模型；被门/配额滤掉的不出现在内
@@ -172,13 +176,14 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
                     candidates.size());
         }
 
-        // 2. 分域门 + 配额（数值与主管线上下文填充一致：一个面板一把尺）
-        double minRerankGate = configService.getDouble("retrieval.minContextScore", ConfigDefaults.RETRIEVAL_MIN_CONTEXT_SCORE);
-        double minFusionGate = configService.getDouble("retrieval.minFusionScore", ConfigDefaults.RETRIEVAL_MIN_FUSION_SCORE);
-        // 门判据统一走 RetrievalGate（含低分全灭时保底 top-1），这里不再自己写一遍分数比较
-        RetrievalGate.Result gateResult = RetrievalGate.apply(candidates, minRerankGate, minFusionGate,
-                rerankActive, configService.get("retrieval.lowConfidencePolicy"),
-                configService.getDouble("retrieval.top1Floor", ConfigDefaults.RETRIEVAL_TOP1_FLOOR));
+        // 2. 分域门 + 配额（口径与主管线上下文填充一致：一个面板一把尺）。门值逐库生效——
+        //    按候选块所属库取各自的库级门与保底策略（显式覆盖>库级 JSON>内置默认），统一走 RetrievalGate.applyPerKb
+        Map<String, KbRetrievalParamService.Params> gateKbParams = kbRetrievalParams.forScope(
+                candidates.stream().map(HybridRetrievalService.Hit::kbId)
+                        .filter(k -> k != null && !k.isBlank()).distinct().toList());
+        KbRetrievalParamService.Params defGateParams = kbRetrievalParams.defaults();
+        RetrievalGate.Result gateResult = RetrievalGate.applyPerKb(candidates, rerankActive,
+                kbId -> gateKbParams.getOrDefault(kbId, defGateParams));
         candidates = gateResult.kept();
         if (gateResult.lowConfidence()) {
             log.info("[CONSULT] 父轮问题与咨询来源语义匹配偏低，按 top-1 保底登记 1 条（问题=\"{}\"）", question);

@@ -49,6 +49,7 @@ public class WenquAgentxTools {
     private final ChatRunRuntime runtime;
     private final ConfigService configService;
     private final RerankService rerankService;
+    private final com.wenqu.ai.service.KbRetrievalParamService kbRetrievalParams;
     private final ImageUrlSigner imageUrlSigner;
     private final com.wenqu.ai.service.ToolAssemblyService toolAssembly;
     private final com.wenqu.ai.agent.tool.ToolRegistry toolRegistry;
@@ -74,7 +75,8 @@ public class WenquAgentxTools {
 
     public WenquAgentxTools(KnowledgeRetrievalTool knowledgeRetrieval, RetrievalScopeService retrievalScope,
                             AgentService agentService, ChatRunRuntime runtime, ConfigService configService,
-                            RerankService rerankService, ImageUrlSigner imageUrlSigner,
+                            RerankService rerankService, com.wenqu.ai.service.KbRetrievalParamService kbRetrievalParams,
+                            ImageUrlSigner imageUrlSigner,
                             com.wenqu.ai.service.ToolAssemblyService toolAssembly,
                             com.wenqu.ai.agent.tool.ToolRegistry toolRegistry,
                             com.wenqu.ai.service.TodoService todoService,
@@ -93,6 +95,7 @@ public class WenquAgentxTools {
         this.runtime = runtime;
         this.configService = configService;
         this.rerankService = rerankService;
+        this.kbRetrievalParams = kbRetrievalParams;
         this.imageUrlSigner = imageUrlSigner;
         this.toolAssembly = toolAssembly;
         this.toolRegistry = toolRegistry;
@@ -567,7 +570,7 @@ public class WenquAgentxTools {
         for (org.springframework.ai.tool.ToolCallback cb : surface.rawCallbacks()) {
             String name = cb.getToolDefinition() == null ? null : cb.getToolDefinition().name();
             if (name == null) continue;
-            if (asksHuman && toolRegistry.requiresApproval(name, configService::getBoolean)) continue;
+            if (asksHuman && toolRegistry.requiresApproval(name)) continue;
             forScript.add(cb);
         }
         // 框架原生的只读工具也进脚本名册（批量读文件、跨文件搜索、查记忆与会话日志——
@@ -603,12 +606,11 @@ public class WenquAgentxTools {
      * {@code PermissionPolicyResolver}）。框架引擎这一侧没有 {@code TurnState}，
      * 所以档位在这里现算——它问的是同一个解析器，不是第二套规则。
      */
-    public com.wenqu.ai.agent.permission.ExecutionPolicy policyFor(
-            ChatCommand cmd, java.util.function.BiConsumer<String, String> onClamp) {
+    public com.wenqu.ai.agent.permission.ExecutionPolicy policyFor(ChatCommand cmd) {
         String sessionPreset = cmd.getSessionId() == null ? null : sessionService.permissionPresetOf(cmd.getSessionId());
         com.wenqu.ai.agent.permission.ExecutionPolicy policy =
                 toolAssembly.resolvePermissionPolicy(agentOf(cmd), sessionPreset,
-                        cmd.getInheritedApprovalMode(), cmd.isGuestMode(), onClamp);
+                        cmd.getInheritedApprovalMode(), cmd.isGuestMode());
         if (!cmd.isApiKey()) return policy;
         // API Key 只开放问答：把文件/命令工具按名禁用。装配侧（allowsTool）与执行闸
         // （AgentxFrameworkToolGate.permits）读的是同一份 deny，框架原生工具也拦得住。
@@ -690,7 +692,7 @@ public class WenquAgentxTools {
 
     /** 本轮的引用池（编号唯一真源仍是 {@code TurnSourceRegistry}，本类不另写一份）。 */
     public WenquSourcePool newPool(ChatCommand cmd, SseEmitter emitter) {
-        return new WenquSourcePool(runtime, configService, rerankService, imageUrlSigner,
+        return new WenquSourcePool(runtime, configService, rerankService, kbRetrievalParams, imageUrlSigner,
                 cmd.getSessionId(), cmd.getQuestion(), emitter, documentMetaCache);
     }
 
@@ -870,7 +872,7 @@ public class WenquAgentxTools {
             // 通道（approvalCanAsk=false），不豁免的话名单挂上了也一把调不动，逐个 deny 白烧步数。
             // 名单外的一切照旧：装配期根本不会挂，这里也拦不到。
             boolean needsApproval = asksHuman(policy)
-                    && toolRegistry.requiresApproval(name, configService::getBoolean)
+                    && toolRegistry.requiresApproval(name)
                     && !mc.guestPreapproved(name);
             // 只读标记同样只问登记处那一份等级（读类/纯计算=只读）。未登记的名字按非只读处理，
             // 与上面那条审批口径一致：宁可少给，不给「平台不知道它会干什么」的工具放行。

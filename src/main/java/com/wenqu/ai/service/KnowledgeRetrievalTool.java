@@ -9,6 +9,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 知识库精确检索工具（Function Calling / Tool Calling）。
@@ -252,18 +253,20 @@ public class KnowledgeRetrievalTool {
         // 不可能同时对两者成立；重排本轮实际执行过时，未重排候选不得借融合门入场（单侧约束）。
         // 工具命中会注册进本轮引用来源，弱相关块同样不得借工具链路回流到引用面板。0=关闭对应域的门。
         boolean rerankActive = hits != null && hits.stream().anyMatch(h -> h.rerankScore() != null);
-        double minRerankGate = configService.getDouble("retrieval.minContextScore", ConfigDefaults.RETRIEVAL_MIN_CONTEXT_SCORE);
-        double minFusionGate = configService.getDouble("retrieval.minFusionScore", ConfigDefaults.RETRIEVAL_MIN_FUSION_SCORE);
-        // 分域门 + 低分全灭时保底 top-1：统一收口在 RetrievalGate，四个检索入口共用一份判据
-        RetrievalGate.Result gate = RetrievalGate.apply(hits, minRerankGate, minFusionGate, rerankActive,
-                configService.get("retrieval.lowConfidencePolicy"),
-                configService.getDouble("retrieval.top1Floor", ConfigDefaults.RETRIEVAL_TOP1_FLOOR));
+        // 分域门逐库生效（库级检索参数，显式覆盖>库级 JSON>内置默认）：按命中块所属库取各自的门与保底策略，
+        // 统一收口在 RetrievalGate.applyPerKb，四个检索入口共用一份判据。0=关闭对应域的门。
+        Map<String, KbRetrievalParamService.Params> gateKbParams = kbRetrievalParams.forScope(
+                hits == null ? List.of() : hits.stream().map(Hit::kbId)
+                        .filter(k -> k != null && !k.isBlank()).distinct().toList());
+        KbRetrievalParamService.Params defParams = kbRetrievalParams.defaults();
+        RetrievalGate.Result gate = RetrievalGate.applyPerKb(hits, rerankActive,
+                kbId -> gateKbParams.getOrDefault(kbId, defParams));
         int before = hits == null ? 0 : hits.size();
         hits = gate.kept();
         boolean lowConfidence = gate.lowConfidence();
-        if (before > 0 && (minRerankGate > 0 || minFusionGate > 0)) {
-            log.info("[TOOL-DIAG] 重排/融合分门（rerankActive={} minRerank={} minFusion={} lowConfidence={}）：{} → {} 条",
-                    rerankActive, minRerankGate, minFusionGate, lowConfidence, before, hits.size());
+        if (before > 0) {
+            log.info("[TOOL-DIAG] 分域门（逐库 rerankActive={} lowConfidence={}）：{} → {} 条",
+                    rerankActive, lowConfidence, before, hits.size());
         }
         if (hits == null || hits.isEmpty()) {
             // 透出诊断原因，避免「工具空结果」只能盲猜：向量/关键词路是否失败、库门下推是否失败

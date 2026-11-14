@@ -75,9 +75,27 @@
             <a-form-item label="重排窗口" :tooltip="tip('rerank.maxHits')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
               <a-input-number v-model:value="form.q.rerankMaxHits" :min="2" :max="100" :step="1" :precision="0" style="width:100%" :placeholder="numPh('rerank', 'maxHits')" />
             </a-form-item>
+            <a-form-item label="向量召回条数" :tooltip="tip('retrieval.vectorTopK')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
+              <a-input-number v-model:value="form.q.vectorTopK" :min="1" :max="100" :step="1" :precision="0" style="width:100%" :placeholder="numPh('retrieval', 'vectorTopK')" />
+            </a-form-item>
+            <a-form-item label="关键词召回上限" :tooltip="tip('retrieval.keywordLimit')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
+              <a-input-number v-model:value="form.q.keywordLimit" :min="1" :max="200" :step="1" :precision="0" style="width:100%" :placeholder="numPh('retrieval', 'keywordLimit')" />
+            </a-form-item>
+            <a-form-item label="最低相关分(重排)" :tooltip="tip('retrieval.minContextScore')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
+              <a-input-number v-model:value="form.q.minContextScore" :min="0" :max="1" :step="0.05" style="width:100%" :placeholder="numPh('retrieval', 'minContextScore')" />
+            </a-form-item>
+            <a-form-item label="最低相关分(融合)" :tooltip="tip('retrieval.minFusionScore')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
+              <a-input-number v-model:value="form.q.minFusionScore" :min="0" :max="1" :step="0.05" style="width:100%" :placeholder="numPh('retrieval', 'minFusionScore')" />
+            </a-form-item>
+            <a-form-item label="低分保底" :tooltip="tip('retrieval.lowConfidencePolicy')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
+              <a-select v-model:value="form.q.lowConfidencePolicy" style="width:100%" :options="policyOptions" :placeholder="valPh('retrieval', 'lowConfidencePolicy')" allow-clear />
+            </a-form-item>
+            <a-form-item label="保底最低分" :tooltip="tip('retrieval.top1Floor')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
+              <a-input-number v-model:value="form.q.top1Floor" :min="0" :max="1" :step="0.01" style="width:100%" :placeholder="numPh('retrieval', 'top1Floor')" />
+            </a-form-item>
           </div>
           <div class="kb-hint" style="margin:2px 0 0">
-            阈值、两路权重、重排模型与重排窗口<b>按库生效</b>；绑了重排模型才重排。清空某项 = 跟随内置默认。
+            阈值、两路权重、召回条数、相关度门、重排模型与重排窗口<b>按库生效</b>；绑了重排模型才重排。清空某项 = 跟随内置默认。
           </div>
         </a-collapse-panel>
         <a-collapse-panel key="p">
@@ -165,6 +183,14 @@
           抽取用的聊天模型；留空用库主默认，都没有则不抽取。
         </div>
       </a-form-item>
+      <!-- 图扩展上限（库级，2026-11-14 自平台层下放）：留空=内置默认 5；多库轮取参与库最大值 -->
+      <a-form-item v-if="!isBuiltin && form.graphEnabled" label="图扩展上限" :tooltip="tip('graphrag.expandTopK')">
+        <a-input-number v-model:value="form.q.graphExpandTopK" :min="0" :max="20" :step="1" :precision="0"
+                        style="width:140px" :placeholder="numPh('graphrag', 'expandTopK')" />
+        <div class="kb-hint" style="margin-top:4px">
+          检索时图扩展最多并入几块；0=不扩展。
+        </div>
+      </a-form-item>
     </a-form>
   </a-modal>
 </template>
@@ -213,20 +239,25 @@ const saving = ref(false)
 function blank () {
   return {
     name: '', description: '', icon: '', embeddingRef: '', graphEnabled: false, graphModelRef: '',
-    q: { vectorWeight: null, keywordWeight: null, vecThreshold: null, rerankModel: '', rerankMinHits: null, rerankMaxHits: null },
+    q: { vectorWeight: null, keywordWeight: null, vecThreshold: null, rerankModel: '', rerankMinHits: null, rerankMaxHits: null, vectorTopK: null, keywordLimit: null, minContextScore: null, minFusionScore: null, lowConfidencePolicy: null, top1Floor: null, graphExpandTopK: null },
     p: { maxSize: null, overlap: null, maxChunks: null, maxImages: null, structural: null, structuralRatio: null, headingDepth: null, qaEnabled: null, qaPerChunk: null, childEnabled: null, childSize: null, ocrEngine: null, ocrMinText: null, ocrDpi: null, visionRef: '', ocrRef: '' }
   }
 }
 
 /**
- * 库级检索参数 ↔ 表单：只含库拥有的“召回池”键（阈值 / 两路权重 / 重排模型与重排窗口），空值=继承不写入。
- * 召回量（vectorTopK / keywordLimit）已归全局，重排开关（rerank.enabled）只剩智能体级「强制关」：
+ * 库级检索参数 ↔ 表单：库拥有的“召回池”键（阈值 / 两路权重 / 召回量 / 相关度门 / 重排模型与重排窗口），
+ * 空值=跟随内置默认不写入。重排开关（rerank.enabled）只剩智能体级「强制关」：
  * 重排 = 库绑了模型才重排（见后端 KbParamCodec / ChatService.AGENT_QUERY_PARAM_KEYS）。
  */
 const QUERY_KEYS = {
   vectorWeight: 'retrieval.vectorWeight', keywordWeight: 'retrieval.keywordWeight',
   vecThreshold: 'retrieval.vecThreshold', rerankModel: 'rerank.model',
-  rerankMinHits: 'rerank.minHits', rerankMaxHits: 'rerank.maxHits'
+  rerankMinHits: 'rerank.minHits', rerankMaxHits: 'rerank.maxHits',
+  vectorTopK: 'retrieval.vectorTopK', keywordLimit: 'retrieval.keywordLimit',
+  minContextScore: 'retrieval.minContextScore', minFusionScore: 'retrieval.minFusionScore',
+  lowConfidencePolicy: 'retrieval.lowConfidencePolicy', top1Floor: 'retrieval.top1Floor',
+  // 图扩展上限跟 queryParams 走（键面同在 KbParamCodec.KEYS），但展示在「知识图谱」区块不进检索参数折叠组
+  graphExpandTopK: 'graphrag.expandTopK'
 }
 const PARSE_KEYS = {
   maxSize: 'chunk.maxSize', overlap: 'chunk.overlap', maxChunks: 'chunk.maxChunks',
@@ -253,8 +284,8 @@ function hydrateForm (row) {
   for (const [field, key] of Object.entries(QUERY_KEYS)) {
     const v = q[key]
     if (v === undefined || v === '') continue
-    // 重排模型是可解析引用串，不能走 Number（会得 NaN）；其余三项是数字
-    f.q[field] = field === 'rerankModel' ? String(v) : Number(v)
+    // 重排模型（可解析引用串）与低分保底策略（top1/off）是字符串，不能走 Number（会得 NaN）
+    f.q[field] = (field === 'rerankModel' || field === 'lowConfidencePolicy') ? String(v) : Number(v)
   }
   for (const [field, key] of Object.entries(PARSE_KEYS)) {
     const v = p[key]
@@ -300,7 +331,13 @@ const triOptions = [
   { value: 'false', label: '关' }
 ]
 
-/** 库级 PDF 解析引擎选项（清空=继承全局；速度差异见下方提示） */
+/** 低分全灭保底策略（清空=跟随内置默认 top1） */
+const policyOptions = [
+  { value: 'top1', label: '保留最相关的 1 条' },
+  { value: 'off', label: '不保底' }
+]
+
+/** 库级 PDF 解析引擎选项（清空=跟随内置默认 none；速度差异见下方提示） */
 const ocrEngineOptions = [
   { value: 'none', label: '纯文本层（快，秒级）' },
   { value: 'vision', label: '视觉模型 OCR（逐页识别）' },
@@ -308,9 +345,9 @@ const ocrEngineOptions = [
   { value: 'mineru', label: 'MinerU 版面还原（慢，约 10s/页）' }
 ]
 
-// 全局参数默认值缓存（扁平的「后端键 → 值」）：占位符展示"继承的全局值" + 新建库模板预填。
-// 走 /kb/param-defaults（普通用户可读）而不是管理端点 /config：知识库已对普通用户开放自建，
-// 用 /config 会让普通用户永远看不到默认值（403，还会触发全局误报提示）。
+// 参数内置默认值缓存（扁平的「后端键 → 值」）：占位符展示"内置默认值" + 新建库模板预填。
+// 走 /kb/param-defaults（普通用户可读）而不是管理端点 /config；全局默认值层已退役，
+// 端点返回的就是内置默认常量，默认值的唯一可调面是知识库本级。
 const flatCfg = ref({})
 const loadParamDefaults = async () => {
   if (Object.keys(flatCfg.value).length) return
@@ -336,24 +373,25 @@ const tip = key => paramTips.value[key] || STATIC_TIPS[key] || ''
 // 避免"被折叠藏起来"变成另一种不透明。
 const advActive = ref([])
 const customCount = obj => Object.values(obj).filter(v => v !== null && v !== undefined && v !== '').length
-const customQ = computed(() => (props.kb ? customCount(form.value.q) : 0))
+// 图扩展上限展示在「知识图谱」区块（不在检索参数折叠组里），不计进折叠组标题的自定义数
+const customQ = computed(() => (props.kb ? customCount({ ...form.value.q, graphExpandTopK: null }) : 0))
 const customP = computed(() => (props.kb ? customCount(form.value.p) : 0))
 const flatVal = key => String(flatCfg.value[key] ?? '').trim()
 const gval = (group, key) => flatVal(group + '.' + key)
-/** 数字类占位符：显示当前生效默认值（个人设置 > 系统全局；留空继承它） */
+/** 数字类占位符：显示内置默认值（留空=跟随它） */
 const numPh = (group, key) => {
   const v = gval(group, key)
   return v === '' ? '继承' : `默认 ${v}`
 }
-/** 开关类占位符：显示当前默认状态（开/关） */
+/** 开关类占位符：显示内置默认状态（开/关） */
 const triPh = (group, key) => {
   const v = gval(group, key)
   return v === '' ? '继承' : `默认（${v === 'true' ? '开' : '关'}）`
 }
-/** 枚举类占位符：显示当前默认值（如 ocrEngine） */
+/** 枚举类占位符：显示内置默认值（如 ocrEngine） */
 const valPh = (group, key) => {
   const v = gval(group, key)
-  return v === '' ? '继承默认' : `继承默认（${v}）`
+  return v === '' ? '跟随默认' : `跟随默认（${v}）`
 }
 
 // 重排模型槽位（2026-11-14 起无平台/个人默认层）：库绑了模型才重排，不选=本库不重排，
@@ -388,13 +426,20 @@ const prefillFromGlobal = async () => {
   p.ocrEngine = ocrEngine === '' ? null : ocrEngine
   p.ocrMinText = num(flatVal('parse.ocrMinText'))
   p.ocrDpi = num(flatVal('parse.ocrDpi'))
-  // 检索参数（模板）：预填库拥有的各项（阈值/两路权重/重排窗口）；
-  // 召回量与重排开关不归库，预填了反而会被后端归一清掉。重排模型不预填（库级绑定，选了才重排）
+  // 检索参数（模板）：预填库拥有的各项（阈值/两路权重/召回量/相关度门/重排窗口）。
+  // 重排模型不预填（库级绑定，选了才重排）
   q.vectorWeight = num(flatVal('retrieval.vectorWeight'))
   q.keywordWeight = num(flatVal('retrieval.keywordWeight'))
   q.vecThreshold = num(flatVal('retrieval.vecThreshold'))
   q.rerankMinHits = num(flatVal('rerank.minHits'))
   q.rerankMaxHits = num(flatVal('rerank.maxHits'))
+  q.vectorTopK = num(flatVal('retrieval.vectorTopK'))
+  q.keywordLimit = num(flatVal('retrieval.keywordLimit'))
+  q.minContextScore = num(flatVal('retrieval.minContextScore'))
+  q.minFusionScore = num(flatVal('retrieval.minFusionScore'))
+  const policy = flatVal('retrieval.lowConfidencePolicy')
+  q.lowConfidencePolicy = policy === '' ? null : policy
+  q.top1Floor = num(flatVal('retrieval.top1Floor'))
   q.rerankModel = ''
 }
 
@@ -402,7 +447,7 @@ const prefillFromGlobal = async () => {
 watch(() => props.open, open => {
   if (!open) return
   form.value = props.kb ? hydrateForm(props.kb) : blank()
-  // 每次打开高级参数都收起（默认继承全局，不需要看）；官方内置库例外——它进来就是为了调检索参数
+  // 每次打开高级参数都收起（默认跟随内置默认，不需要看）；官方内置库例外——它进来就是为了调检索参数
   advActive.value = isBuiltin.value ? ['q'] : []
   // 深链带进来的定位键：先把那一组展开（收起状态下目标根本不在 DOM 里），再交给统一的定位器
   const fold = FIX_FOLD[props.fix]

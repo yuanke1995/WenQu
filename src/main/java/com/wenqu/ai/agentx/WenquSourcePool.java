@@ -41,11 +41,12 @@ public final class WenquSourcePool {
     private final Set<String> retrievalKbIds = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     public WenquSourcePool(ChatRunRuntime runtime, ConfigService configService, RerankService rerankService,
+                           com.wenqu.ai.service.KbRetrievalParamService kbRetrievalParams,
                            ImageUrlSigner imageUrlSigner, String sessionId, String question, SseEmitter emitter,
                            com.wenqu.ai.service.DocumentMetaCache docMetaCache) {
         this.runtime = runtime;
         this.imageUrlSigner = imageUrlSigner;
-        this.registry = new TurnSourceRegistry(configService, rerankService, imageUrlSigner, runtime,
+        this.registry = new TurnSourceRegistry(configService, rerankService, kbRetrievalParams, imageUrlSigner, runtime,
                 sessionId, question, emitter, sources, imgIndex, imgDescIndex, degradations, degradedCodes);
         // 工具本轮首次命中的文档不在主检索的 docFileNames 映射里，文件名靠 docMetaCache 按 docId 补查。
         // 手写侧是在 ChatService 里给 st.refs.docMetaCache 赋值；框架这条自己 new 引用池，不注入就恒为 null，

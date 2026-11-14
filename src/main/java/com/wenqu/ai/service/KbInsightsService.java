@@ -417,10 +417,11 @@ public class KbInsightsService {
                 }
             }
 
-            double minRerank = configService.getDouble("retrieval.minContextScore",
-                    ConfigDefaults.RETRIEVAL_MIN_CONTEXT_SCORE);
-            double minFusion = configService.getDouble("retrieval.minFusionScore",
-                    ConfigDefaults.RETRIEVAL_MIN_FUSION_SCORE);
+            // 门值归库级检索参数（显式覆盖>库级 JSON>内置默认；试检索是单库语义，直接取该库）
+            KbRetrievalParamService.Params kbP = kbRetrievalParams.forScope(List.of(kbId))
+                    .getOrDefault(kbId, kbRetrievalParams.defaults());
+            double minRerank = kbP.minContextScore();
+            double minFusion = kbP.minFusionScore();
             List<Map<String, Object>> hits = new ArrayList<>();
             int dropped = 0;
             for (HybridRetrievalService.Hit h : reranked) {
@@ -453,8 +454,7 @@ public class KbInsightsService {
                 hits.add(row);
             }
 
-            KbRetrievalParamService.Params p = kbRetrievalParams.forScope(List.of(kbId))
-                    .getOrDefault(kbId, kbRetrievalParams.defaults());
+            KbRetrievalParamService.Params p = kbP;
             Map<String, Object> params = new LinkedHashMap<>();
             params.put("vecThreshold", p.vecThreshold());
             params.put("vectorWeight", p.vectorWeight());
@@ -462,6 +462,12 @@ public class KbInsightsService {
             params.put("rerankModel", p.rerankModel());
             params.put("rerankMinHits", p.rerankMinHits());
             params.put("rerankMaxHits", p.rerankMaxHits());
+            params.put("vectorTopK", p.vectorTopK());
+            params.put("keywordLimit", p.keywordLimit());
+            params.put("minContextScore", p.minContextScore());
+            params.put("minFusionScore", p.minFusionScore());
+            params.put("lowConfidencePolicy", p.lowConfidencePolicy());
+            params.put("top1Floor", p.top1Floor());
             KnowledgeBase kb = kbService.get(kbId);
             params.put("configured", kb != null && kb.getQueryParams() != null && !kb.getQueryParams().isBlank());
 

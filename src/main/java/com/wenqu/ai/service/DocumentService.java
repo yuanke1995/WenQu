@@ -1315,7 +1315,7 @@ public class DocumentService {
             // 未变块不重生成——其问答对与向量原样保留（diff 复用语义）。
             int qaCount = 0;
             boolean qaFailed = false;
-            if (!newBlocks.isEmpty() && configService.getBoolean("parse.qaEnabled")) {
+            if (!newBlocks.isEmpty() && configService.getBoolean("parse.qaEnabled", true)) {
                 updateProgress(docId, 95, "生成问答对");
                 try {
                     qaCount = qaIndexService.generateForBlocks(docId, newBlocks, storeOf(docId),
@@ -1331,7 +1331,7 @@ public class DocumentService {
             // 纯确定性切分（无 LLM），成本仅子块 embedding；best-effort 同 QA。
             int childCount = 0;
             boolean childFailed = false;
-            if (!newBlocks.isEmpty() && configService.getBoolean("parse.childEnabled")) {
+            if (!newBlocks.isEmpty() && configService.getBoolean("parse.childEnabled", true)) {
                 updateProgress(docId, 95, "生成子块索引");
                 try {
                     childCount = childChunkService.generateForBlocks(docId, newBlocks, storeOf(docId),
@@ -1553,6 +1553,31 @@ public class DocumentService {
             "parse.childSize", "childSize",
             "parse.ocrMinText", "ocrMinText",
             "parse.ocrDpi", "ocrDpi");
+
+    /**
+     * 解析参数内置默认（知识库弹窗占位符 + 新建库预填的唯一展示源）。
+     * <p>全局默认值层已退役（2026-11-14，系统设置不再有「文档解析默认模板」）：
+     * 默认值=yml 层 AppProperties（解析读点的 fallback 同源）+ ConfigDefaults 常量，留空=跟随这里的值。
+     */
+    public Map<String, String> parseParamDefaults() {
+        AppProperties.Chunk c = properties.getChunk();
+        Map<String, String> m = new LinkedHashMap<>();
+        m.put("chunk.maxSize", String.valueOf(c.getMaxSize()));
+        m.put("chunk.overlap", String.valueOf(c.getOverlap()));
+        m.put("chunk.maxChunks", String.valueOf(ConfigDefaults.CHUNK_MAX_CHUNKS));
+        m.put("chunk.maxImages", String.valueOf(ConfigDefaults.CHUNK_MAX_IMAGES));
+        m.put("chunk.structural", String.valueOf(c.isStructural()));
+        m.put("chunk.structuralRatio", String.valueOf(c.getStructuralRatio()));
+        m.put("chunk.headingDepth", String.valueOf(c.getHeadingDepth()));
+        m.put("parse.qaEnabled", "true");
+        m.put("parse.qaPerChunk", "2");
+        m.put("parse.childEnabled", "true");
+        m.put("parse.childSize", String.valueOf(ConfigDefaults.PARSE_CHILD_SIZE));
+        m.put("parse.ocrEngine", "none");
+        m.put("parse.ocrMinText", String.valueOf(ConfigDefaults.PARSE_OCR_MIN_TEXT));
+        m.put("parse.ocrDpi", String.valueOf(ConfigDefaults.PARSE_OCR_DPI));
+        return m;
+    }
 
     /** 知识库 parse_params 里的 visionRef（空=解析时跳过图片描述） */
     private String parseVisionRef(com.wenqu.ai.model.KnowledgeBase kb) {
@@ -1912,10 +1937,10 @@ public class DocumentService {
         try {
             deleteExtrasByKnowledge(List.of(id), k.getDocId());
             VectorStore store = storeOf(k.getDocId());
-            if (configService.getBoolean("parse.qaEnabled")) {
+            if (configService.getBoolean("parse.qaEnabled", true)) {
                 qaIndexService.generateForBlocks(k.getDocId(), List.of(k), store, null, kbOwnerOfDoc(k.getDocId()));
             }
-            if (configService.getBoolean("parse.childEnabled")) {
+            if (configService.getBoolean("parse.childEnabled", true)) {
                 childChunkService.generateForBlocks(k.getDocId(), List.of(k), store, null);
             }
         } catch (Exception e) {
@@ -2140,10 +2165,10 @@ public class DocumentService {
         try {
             deleteExtrasByDoc(docId);
             VectorStore store = storeOf(docId);
-            if (configService.getBoolean("parse.qaEnabled") && !rebuilt.isEmpty()) {
+            if (configService.getBoolean("parse.qaEnabled", true) && !rebuilt.isEmpty()) {
                 qaIndexService.generateForBlocks(docId, rebuilt, store, null, kbOwnerOfDoc(docId));
             }
-            if (configService.getBoolean("parse.childEnabled") && !rebuilt.isEmpty()) {
+            if (configService.getBoolean("parse.childEnabled", true) && !rebuilt.isEmpty()) {
                 childChunkService.generateForBlocks(docId, rebuilt, store, null);
             }
         } catch (Exception e) {

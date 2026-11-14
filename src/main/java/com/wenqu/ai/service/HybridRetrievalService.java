@@ -25,8 +25,8 @@ import java.util.stream.Collectors;
  * <p>
  * 两路召回均只返回生效文档（status=0）的知识块：关键词路 SQL 过滤，向量路按命中块的 docId 批量剔除。
  * <p>
- * - 向量：topK 全局可配（retrieval.vectorTopK，默认 15）+ <b>逐库</b>阈值（retrieval.vecThreshold），
- *   分数按该块所属库的阈值归一化到 0~1（(score-vt)/(1-vt)）
+ * - 向量：topK <b>逐库</b>可调（retrieval.vectorTopK，多库轮补采基准取参与库最大值）
+ *   + 逐库阈值（retrieval.vecThreshold），分数按该块所属库的阈值归一化到 0~1（(score-vt)/(1-vt)）
  * - 关键词：词元 LIKE 召回 + 词频加权（tf×idf，标题词频×2，归一化 0~1）
  * - 融合：向量分 × 向量权重 + 关键词分 × 关键词权重（加权和），双命中叠加各自分量；
  *   两路权重<b>逐库</b>取自知识库检索参数（见 {@link KbParamCodec}），留空继承全局（默认 0.6/0.4）
@@ -41,9 +41,9 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class HybridRetrievalService {
 
-    /** 全局默认（召回量/超时）：库级参数只覆盖阈值与两路权重，见 {@link KbParamCodec} */
+    /** 全局默认（超时）：召回量两键已归库级（见 {@link KbParamCodec}），关键词路按轮取参与库最大值 */
     private long keywordTimeoutMs() { return configService.getInt(ConfigKeys.RETRIEVAL_KEYWORD_TIMEOUT_MS, 800); }
-    private int keywordLimit() { return configService.getInt("retrieval.keywordLimit", 20); }
+    private int keywordLimit() { return configService.getInt(KbParamCodec.KEYWORD_LIMIT, ConfigDefaults.RETRIEVAL_KEYWORD_LIMIT); }
 
     private final KbVectorStoreRegistry kbVectorStores;
     private final KnowledgeMapper knowledgeMapper;
@@ -225,15 +225,18 @@ public class HybridRetrievalService {
 
         // 可见范围过滤（资源共享范围）：当前用户不可见的文档在向量/关键词两路统一剔除
         // 1. 向量召回（放大召回率；按目标知识库的向量模型分组逐库检索后合并）
-        //    adaptiveTopK=true 时按「权限有效召回目标」补采（生产问答）；false 时严格按配置 topK 一次（评估/调试）
+        //    adaptiveTopK=true 时按「权限有效召回目标」补采（生产问答）；false 时严格按库级 topK 一次（评估/调试）
         //    补采还受总闸约束（RETRIEVAL_ACL_TOPK_SUPPLANT，平台固定默认开）：补采顶掉尾部为平台固定行为（见下方 KNN 成本说明）
         boolean supplement = adaptiveTopK && ConfigDefaults.RETRIEVAL_ACL_TOPK_SUPPLANT;
         List<Document> vectorDocs = supplement
-                ? vectorSearch(query, diag, kbIds, Math.max(1, configService.getInt("retrieval.vectorTopK", 15)), params)
+                ? vectorSearch(query, diag, kbIds, roundVectorTopK(params), params)
                 : vectorSearch(query, diag, kbIds, 0, params);
 
-        // 2. 关键词召回（并行，超时兜底）
-        List<Knowledge> kwDocs = keywordSearch(query, diag);
+        // 2. 关键词召回（并行，超时兜底）。关键词路不按库界走，召回上限按轮取参与库最大值
+        //   （单库轮即该库值；显式覆盖已在 Params 解析时折进各库值）
+        int kwLimit = params.values().stream().mapToInt(KbRetrievalParamService.Params::keywordLimit)
+                .max().orElse(ConfigDefaults.RETRIEVAL_KEYWORD_LIMIT);
+        List<Knowledge> kwDocs = keywordSearch(query, diag, kwLimit);
 
         // 3. 批量加载向量命中的知识块元数据（一次 selectBatchIds 替代逐条 selectById）+ 不可召回文档集合
         Map<String, Knowledge> kidMap = loadKnowledgeBatch(vectorDocs);
@@ -552,8 +555,9 @@ public class HybridRetrievalService {
         // 必须在 resolveVectorStores 之后、similaritySearch 之前求值——下推靠它把无权文档挡在 KNN 之外。
         String aclFilter = buildAclFilter(kbIds, diag);
         try {
-            int baseTopK = Math.max(1, configService.getInt("retrieval.vectorTopK", 15));
-            List<Document> first = similaritySearchAcross(stores, query, aclFilter, baseTopK, diag, params);
+            // 初召回各库用各自的库级 topK；补采放大基准取参与库最大值（见 roundVectorTopK）
+            int baseTopK = roundVectorTopK(params);
+            List<Document> first = similaritySearchAcross(stores, query, aclFilter, 0, diag, params);
             if (minWantedHits <= 0 || first.isEmpty()) return first;
 
             int visibleCount = countVisibleHits(first);
@@ -582,6 +586,12 @@ public class HybridRetrievalService {
     /** 补采放大后的 topK 硬上限：防止「几乎全被剔除」时把 KNN 打成重负载 */
     private static final int MAX_TOPK_CAP = 60;
 
+    /** 本轮向量召回基准（补采放大基准）：各库库级 topK 取最大；范围无库时走内置默认 */
+    private int roundVectorTopK(Map<String, KbRetrievalParamService.Params> params) {
+        return params.values().stream().mapToInt(KbRetrievalParamService.Params::vectorTopK)
+                .max().orElse(ConfigDefaults.RETRIEVAL_VECTOR_TOP_K);
+    }
+
     /**
      * 统计本轮向量命中里<b>通过可见性判定</b>的条数（只计数，不做任何权限决策）。
      * 可见性唯一出口 = {@code ResourceVisibilityService}，此处只借用其判定做配额估算；
@@ -606,7 +616,10 @@ public class HybridRetrievalService {
         }
     }
 
-    /** 按 topK 逐库检索并合并（多库时向量空间互不相通，必须逐库查后归并；阈值也逐库取） */
+    /**
+     * 逐库检索并合并（多库时向量空间互不相通，必须逐库查后归并；阈值与召回条数也逐库取）。
+     * {@code topK} 仅补采放大时 >0（强制各库用放大值）；初召回传 0 = 各库用自己的库级 topK。
+     */
     private List<Document> similaritySearchAcross(Map<String, VectorStore> stores, String query,
             String aclFilter, int topK, RetrievalDiag diag,
             Map<String, KbRetrievalParamService.Params> params) {
@@ -615,16 +628,18 @@ public class HybridRetrievalService {
         if (stores.size() == 1) {
             Map.Entry<String, VectorStore> only = stores.entrySet().iterator().next();
             double vt = params.getOrDefault(only.getKey(), defaults).vecThreshold();
+            int k = topK > 0 ? topK : params.getOrDefault(only.getKey(), defaults).vectorTopK();
             return only.getValue().similaritySearch(
-                    buildVectorRequest(query, topK, vt, aclFilter, diag));
+                    buildVectorRequest(query, k, vt, aclFilter, diag));
         }
         // 多库：每库绑定的向量模型不同（向量空间互不相通），逐库检索后合并——同块保留最高分
         Map<String, Document> merged = new LinkedHashMap<>();
         for (Map.Entry<String, VectorStore> e : stores.entrySet()) {
             double vt = params.getOrDefault(e.getKey(), defaults).vecThreshold();
+            int k = topK > 0 ? topK : params.getOrDefault(e.getKey(), defaults).vectorTopK();
             try {
                 for (Document d : e.getValue().similaritySearch(
-                        buildVectorRequest(query, topK, vt, aclFilter, diag))) {
+                        buildVectorRequest(query, k, vt, aclFilter, diag))) {
                     merged.merge(String.valueOf(d.getId()), d, (a, b) ->
                             parseScore(a.getScore()) >= parseScore(b.getScore()) ? a : b);
                 }
@@ -726,12 +741,20 @@ public class HybridRetrievalService {
 
     /** 带诊断的关键词检索（fail-loud：Meili 不可用/降级 MySQL/繁忙跳过写入 diag） */
     public List<Knowledge> keywordSearch(String query, RetrievalDiag diag) {
+        return keywordSearch(query, diag, 0);
+    }
+
+    /**
+     * 带诊断 + 指定召回上限的关键词检索。{@code limit}<=0 时回落 {@link #keywordLimit()}
+     * （显式线程覆盖仍生效）；主检索链路传按轮解析的库级值（参与库最大值）。
+     */
+    public List<Knowledge> keywordSearch(String query, RetrievalDiag diag, int limit) {
         List<String> terms = keywordExtractor.extract(query);
         if (terms.isEmpty()) return List.of();
         // LIMIT 必须在调用线程求值：supplyAsync 内跑在 commonPool 线程，ThreadLocal 参数覆盖（评估扫参）传不进去
-        int limit = keywordLimit();
+        int lim = limit > 0 ? limit : keywordLimit();
         if (keywordIndexService.isAvailable()) {
-            List<Knowledge> hits = keywordSearchMeili(query, terms, limit);
+            List<Knowledge> hits = keywordSearchMeili(query, terms, lim);
             if (!hits.isEmpty()) return hits;
             // 索引空/未重建时不静默返回空，回退 MySQL 保证召回（首次切换引擎未 reindex 的常见场景）
             // 仅调试展示，不扰用户
@@ -742,7 +765,7 @@ public class HybridRetrievalService {
             if (diag != null) diag.keywordFailed();
             log.warn("[FAIL-LOUD] Meilisearch 不可用，关键词降级 MySQL LIKE（{}）", keywordIndexService.debugUnavailableReason());
         }
-        return keywordSearchMysql(terms, limit, diag);
+        return keywordSearchMysql(terms, lim, diag);
     }
 
     /**

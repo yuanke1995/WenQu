@@ -987,7 +987,20 @@ public class GraphRagService {
         if (visibleKbIds == null) return hits;
         scope.retainAll(visibleKbIds);
         if (scope.isEmpty()) return hits;
-        int expandTopK = Math.max(0, configService.getInt("graphrag.expandTopK", 5));
+        // 库级图扩展上限（全局槽位已退役 2026-11-14）：多库轮取参与库最大值，与召回量两键同口径；
+        // 未配/非法值回落内置默认，显式 0=不扩展
+        int expandTopK = graphKbs.stream().filter(kb -> scope.contains(kb.getId()))
+                .mapToInt(kb -> {
+                    String v = KbParamCodec.parse(kb.getQueryParams()).get(KbParamCodec.GRAPH_EXPAND_TOP_K);
+                    if (v == null) return ConfigDefaults.GRAPH_EXPAND_TOP_K;
+                    try {
+                        return Math.max(0, Integer.parseInt(v));
+                    } catch (NumberFormatException e) {
+                        return ConfigDefaults.GRAPH_EXPAND_TOP_K;
+                    }
+                })
+                .max()
+                .orElse(ConfigDefaults.GRAPH_EXPAND_TOP_K);
         if (expandTopK == 0) return hits;
 
         Set<String> existingKIds = hits.stream().map(HybridRetrievalService.Hit::knowledgeId)
