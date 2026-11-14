@@ -242,6 +242,7 @@
 - **编排工具第 2 档安全子集**（2026-11-06）：`AgentxToolSurfaceFilter` 按本轮能力收窄工具表——无活跃目标隐藏 goal_note/goal_submit，无子智能体隐藏 agent_*/task_*/wait_async_results；目标续跑轮按 turnId=goal: 兜底。plan_*/skill_* 保留为功能入口（隐藏等于关功能，且 plan 支持模型中途 plan_enter）。本地 1+1 隐藏 goal 2 把（当前用户有子智能体，agent/task 保留），workspace 文件链路回归通过。提交 4b0a19e5；续跑轮补标 042b8f2e。
 - **journal 读放大**（2026-11-01）：纸表轮收尾空窗 57s 根因修（逐 token 落账回放），chunk 聚合是上游待办。
 - **定时任务**：容量评估完成、dispatch 队列满泄漏（bf434f3b）与 cron 错峰两 bug 已修。
+- **联网搜索 custom 服务商**（2026-11-14）：模型厂商自带搜索 API 各家格式不一，不做预设——新增 `CustomSearchProvider`（id=custom）万能适配器：请求体模板（{{query}}/{{count}}/{{model}} 占位；GET 模式服务地址即 URL 模板、{{query}} 自动 URL 编码）+ 响应点路径取数（customResultsPath/标题/链接/摘要/发布时间五路径），7 个 `webSearch.custom*` 键进 schema（HEAD 口径 137→144，defaults 192→199；与在途退役批次联算后工作区口径 99→106/149→156），tips 带智谱/百炼/OpenAI Responses 三家示例模板照抄改 key 即用；apiKey 非空即 Bearer、缺省不拦（与 generic 同款宽松）；探测 `custom` 分支委托 provider 真打 limit=1。fake 端点三厂商形状 6 测全绿。坑：GET 模板占位符必须 URL 编码（首版漏了，假端点 IllegalArgument 测出）。
 
 ### FormCopilot × 报表系统（三仓联动线，主战场在 dynamic-form / dynamic-form-vue 仓）
 

@@ -2,6 +2,8 @@ package com.wenqu.ai.service;
 
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
+import com.wenqu.ai.service.websearch.CustomSearchProvider;
+import com.wenqu.ai.service.websearch.WebSearchRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
@@ -37,7 +39,8 @@ import java.util.Map;
  *   <li>keyword：GET {baseUrl}/health 探活 + GET {baseUrl}/indexes（带 master key）验证密钥是否被接受。</li>
  *   <li>sandbox：GET {baseUrl}/health 探活 + 带令牌 GET {baseUrl}/api/sandboxes 验证令牌被接受。</li>
  *   <li>webSearch：按 {@code webSearch.provider} 分派各家真实协议打一次最小搜索
- *       （generic=SearXNG 走 GET /search?format=json、tavily/bocha 走 POST 搜索端点），
+ *       （generic=SearXNG 走 GET /search?format=json、tavily/bocha 走 POST 搜索端点、
+ *       custom=委托 CustomSearchProvider 按已保存模板打），
  *       而非只探根路径——SearXNG 未在 settings.yml 开启 json 格式时 /search 会返 403，
  *       只探根路径会把「装好了但不可用」误判成可用。</li>
  * </ul>
@@ -52,6 +55,7 @@ import java.util.Map;
 public class ConnectivityProbeService {
 
     private final ConfigService configService;
+    private final CustomSearchProvider customSearchProvider;
 
     /** 连接超时：探测要快速失败，避免页面长时间转圈 */
     private static final int CONNECT_TIMEOUT_MS = 2000;
@@ -304,9 +308,29 @@ public class ConnectivityProbeService {
                     Map.of("query", PROBE_QUERY, "max_results", 1, "search_depth", "basic"), start, "Tavily", false);
             case "bocha" -> postSearchProbe(base.isBlank() ? DEFAULT_BOCHA_URL : base, key,
                     Map.of("query", PROBE_QUERY, "count", 1, "summary", true, "freshness", "noLimit"), start, "Bocha", true);
+            // custom 的请求体模板/取数路径等读已保存配置（探测表单只带 地址/Key 两个覆盖值），
+            // 直接委托运行时 provider，保证探测口径与真实搜索完全一致
+            case "custom" -> customSearchProbe(base, key, start);
             default -> fail(start, "未知的联网搜索服务商：" + provider
-                    + "（支持 tavily / bocha / generic）");
+                    + "（支持 tavily / bocha / generic / custom）");
         };
+    }
+
+    /**
+     * custom（自定义 HTTP 搜索 API）探测：直接委托 {@link CustomSearchProvider#search} 打一次最小搜索
+     * （limit=1），成功判据是解析出结果数组——模板/路径配置错了会在响应解析处 fail-loud 报出可读原因。
+     */
+    private Map<String, Object> customSearchProbe(String base, String key, long start) {
+        if (base.isBlank()) {
+            return fail(start, "服务地址为空（webSearch.baseUrl 必填）");
+        }
+        try {
+            var results = customSearchProvider.search(
+                    new WebSearchRequest(base, key, READ_TIMEOUT_MS, PROBE_QUERY, 1));
+            return ok(start, "可用（HTTP 200，自定义搜索端点返回 " + results.size() + " 条结果）");
+        } catch (Exception e) {
+            return fail(start, cut(rootMessage(e)));
+        }
     }
 
     /**

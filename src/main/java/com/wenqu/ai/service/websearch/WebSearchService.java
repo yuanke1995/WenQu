@@ -66,11 +66,13 @@ public class WebSearchService {
             }
         }
         if (provider == null) {
-            throw new WebSearchException("未知的联网搜索服务商「" + providerId + "」（可选：tavily / bocha / generic）", true);
+            throw new WebSearchException("未知的联网搜索服务商「" + providerId + "」（可选：tavily / bocha / generic / custom）", true);
         }
         String apiKey = configService.get("webSearch.apiKey");
-        // generic 自建实例通常无鉴权，不强求 key；另两家缺 key 必然 401，与其等服务端报错不如先说清
-        if ((apiKey == null || apiKey.isBlank()) && !"generic".equalsIgnoreCase(provider.id())) {
+        // generic 自建实例通常无鉴权、custom 看厂商口径（有就带、没有等厂商 401），不强求 key；
+        // 其余两家缺 key 必然 401，与其等服务端报错不如先说清
+        if ((apiKey == null || apiKey.isBlank()) && !"generic".equalsIgnoreCase(provider.id())
+                && !"custom".equalsIgnoreCase(provider.id())) {
             throw new WebSearchException("联网搜索未配置 API Key（webSearch.apiKey 为空，服务商 " + provider.id() + " 需要密钥）", true);
         }
         int cap = ConfigDefaults.WEB_SEARCH_MAX_RESULTS;
