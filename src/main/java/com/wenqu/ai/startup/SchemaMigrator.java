@@ -43,7 +43,18 @@ public class SchemaMigrator implements ApplicationRunner {
     /** 已由 V2+ 迁移主动删除的列：SchemaMigrator 读 V1 时不得把它们补回来。 */
     private static final java.util.Set<String> RETIRED_COLUMNS = java.util.Set.of(
             "c_ai_agent.workflow_id",
-            "c_ai_agent.subagent_mode");
+            "c_ai_agent.subagent_mode",
+            "c_ai_goal.budget_tokens",
+            "c_ai_goal.budget_ms",
+            "c_ai_goal.budget_tool_calls",
+            "c_ai_goal.budget_rounds");
+
+    /**
+     * 已由 V2+ 迁移主动 DROP 的表：SchemaMigrator 读 V1 时不得把它们建回来（整表或逐列）。
+     * 退役口径与列一致——V1 基线保持原样（新库 V1 建表、迁移删除），本清单负责拦住增量比对复活已删结构。
+     */
+    private static final java.util.Set<String> RETIRED_TABLES = java.util.Set.of(
+            "c_ai_content_rule");
 
     private static final Pattern CREATE_TABLE = Pattern.compile(            "CREATE TABLE IF NOT EXISTS\\s+`([^`]+)`\\s*\\(([\\s\\S]*?)\\)\\s*ENGINE", Pattern.CASE_INSENSITIVE);
     private static final Pattern COLUMN_LINE = Pattern.compile(
@@ -84,6 +95,7 @@ public class SchemaMigrator implements ApplicationRunner {
         int addedCols = 0, addedIdx = 0;
         for (Map.Entry<String, TableDef> e : tables.entrySet()) {
             String table = e.getKey();
+            if (RETIRED_TABLES.contains(table)) continue;
             List<String> existingCols = queryColumns(table);
             if (existingCols == null) {
                 // 整表缺失（V1 基线新增表的存量库）：先按原始语句建表（CREATE TABLE IF NOT EXISTS 幂等），

@@ -47,7 +47,13 @@ class FlywayFreshDatabaseTest {
         assertThat(tables).contains(
                 "c_ai_session", "c_ai_message", "c_ai_session_event",
                 "c_ai_goal", "c_ai_usage_log", "c_ai_steer_item", "flyway_schema_history");
+        // V15：内容安全退役（V1 基线仍建表、本迁移删除）——新库终态不得再有这张表
+        assertThat(tables).as("V15 已删除内容安全规则表").doesNotContain("c_ai_content_rule");
         assertThat(columns("c_ai_agent")).as("V2 已删除 chatflow 列").doesNotContain("workflow_id");
+        // V16：深度执行预算退役（V1 基线仍建列、本迁移删除；SchemaMigrator 以 RETIRED_COLUMNS 防复活）
+        assertThat(columns("c_ai_goal"))
+                .as("V16 已删除目标预算四列")
+                .doesNotContain("budget_tokens", "budget_ms", "budget_tool_calls", "budget_rounds");
         assertThat(columns("c_ai_menu")).as("V3 已加企业面标记列").contains("enterprise_only");
         // V4：插话待发队列。tenant_id 缺了会被多租户拦截器在运行期打成 Unknown column，必须一起钉住
         assertThat(columns("c_ai_steer_item"))
