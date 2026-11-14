@@ -56,7 +56,7 @@ public class CustomSearchProvider implements WebSearchProvider {
         boolean post = !"GET".equalsIgnoreCase(cfg("webSearch.customMethod"));
         String base = req.baseUrl() == null ? "" : req.baseUrl().trim();
         if (base.isEmpty()) {
-            throw new WebSearchException("自定义搜索服务未配置服务地址（webSearch.baseUrl 必填）", true);
+            throw new WebSearchException("自定义搜索服务未配置服务地址：请在 个人设置 → 联网搜索 填写服务端点地址", true);
         }
         while (base.endsWith("/")) base = base.substring(0, base.length() - 1);
 
@@ -70,8 +70,8 @@ public class CustomSearchProvider implements WebSearchProvider {
         if (post) {
             String tmpl = cfg("webSearch.customBody");
             if (tmpl == null || tmpl.isBlank()) {
-                throw new WebSearchException("自定义搜索服务未配置请求体模板（webSearch.customBody，"
-                        + "如 {\"search_query\":\"{{query}}\",\"count\":{{count}}}）", true);
+                throw new WebSearchException("自定义搜索服务未配置请求体模板：请在 个人设置 → 联网搜索 填写请求体模板"
+                        + "（如 {\"search_query\":\"{{query}}\",\"count\":{{count}}}，示例见该字段的提示）", true);
             }
             String url = render(base, req, model, Escape.NONE);
             resp = SearchHttp.post(url, headers, render(tmpl, req, model, Escape.JSON), req.timeoutMs());

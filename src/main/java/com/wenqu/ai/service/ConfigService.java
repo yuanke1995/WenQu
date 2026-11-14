@@ -1030,7 +1030,8 @@ public class ConfigService {
      * <p>按后缀判定而不是枚举键名——否则每加一个含密钥的配置项（如 OIDC 的 clientSecret）
      * 都要回来补一处判断，漏掉就会明文落库且界面回显完整密钥。</p>
      */
-    private static boolean isSensitiveKey(String key) {
+    /** 敏感键判定（个人层存储/脱敏共用同一口径，见 {@link UserConfigService}） */
+    public static boolean isSensitiveKey(String key) {
         return key != null && (key.endsWith(".apiKey") || key.endsWith(".clientSecret")
                 || key.endsWith(".token") || key.endsWith("Password"));
     }
@@ -1187,7 +1188,8 @@ public class ConfigService {
             String u = pv.get(key);
             if (u != null && !u.isBlank()) {
                 if (out != null) out[0] = Layer.USER_OVERRIDE;
-                return u;
+                // 个人层敏感键（如 webSearch.apiKey）与平台层同口径：密文入库，读取处透明解密
+                return isSensitiveKey(key) ? crypto.decrypt(u) : u;
             }
         }
         if (schema.isPersonalOnly(key)) {

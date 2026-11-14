@@ -808,7 +808,7 @@ export const deleteCredential = id => request(`/credential/${id}`, { method: 'DE
 /** 新建知识库：{name(必填), embeddingRef(必填), description, icon, queryParams, parseParams, graphEnabled, graphModelRef}；
  *  isDefault 由系统管理（默认库每人一个、系统懒创建），提交会被忽略 */
 export const createKnowledgeBase = body => request('/kb', { method: 'POST', body: JSON.stringify(body) })
-/** 编辑知识库：仅更新 body 中出现的字段；queryParams 传空串表示恢复继承全局；isDefault 同上（会被忽略） */
+/** 编辑知识库：仅更新 body 中出现的字段；queryParams 传空串表示清空库级覆盖（恢复跟随内置默认）；isDefault 同上（会被忽略） */
 export const updateKnowledgeBase = (id, body) => request(`/kb/${id}`, { method: 'PUT', body: JSON.stringify(body) })
 /** 删除知识库（默认库或库内仍有文档时后端会拒绝并返回原因） */
 export const deleteKnowledgeBase = id => request(`/kb/${id}`, { method: 'DELETE' })
@@ -1200,7 +1200,7 @@ export const getToolCatalog = () => request('/agent/tool-catalog')
 /** 权限档位名册（登录用户可读）：配置页的档位选项、以及「管理员有没有放开这一档」从这里来，
  *  前端不抄第二份档位表（抄了就等于界面上能选一个后端不给的档位） */
 export const getPermissionPresets = () => request('/agent/permission-presets')
-/** 配置页「跟随默认」当前的默认值（登录用户可读）：{agent.subagentMode, agent.maxToolSteps,
+/** 配置页「跟随默认」当前的默认值（登录用户可读）：{agent.maxToolSteps,
  *  tool.enabled, webSearch.enabled}。值由后端按运行时口径解析后下发，
  *  前端不再判管理员身份去够 /config——那是普通用户 403 的根因（界面上只剩「跟随系统默认」五个字） */
 export const getAgentConfigDefaults = () => request('/agent/config-defaults')
@@ -2078,11 +2078,7 @@ export const compareEvalRuns = (id, base, group) => {
 }
 export const exportEvalRun = (id, format = 'csv') =>
   request(`/eval/runs/${encodeURIComponent(id)}/export?format=${encodeURIComponent(format)}`)
-/** 应用参数组（灰度观察，下滑自动回滚） */
-export const applyEvalGroup = (runId, groupName) =>
-  request('/eval/apply', { method: 'POST', body: JSON.stringify({ runId, groupName }) })
-export const getEvalApplyStatus = () => request('/eval/apply/status')
-export const rollbackEvalApply = () => request('/eval/apply/rollback', { method: 'POST' })
+// （参数组「灰度应用」接口已随检索全局默认值层退役：/eval/apply、/eval/apply/status、/eval/apply/rollback）
 
 /** 身份与权限：返回 { user, admin }——admin=true 时前端展示文档/看板/评估/设置等管理入口 */
 export const getAuthMe = () => request('/auth/me')
@@ -2196,6 +2192,16 @@ export const setUserPreference = payload =>
     method: 'PUT',
     body: JSON.stringify(typeof payload === 'string' ? { defaultModel: payload } : (payload || {}))
   })
+
+// ---- 个人可覆盖配置（个人设置 → 问答偏好；config-schema 标 personal 的字段，当前=知识块填充上限 + 联网搜索整套） ----
+// GET 返回 {fields, tips, values, globals}：values=本人覆盖（按表单 path），globals=系统全局参照；空值=跟随系统
+// 敏感键（如 webSearch.apiKey）values 里是 ******** 掩码，password 控件不回填
+export const getUserSettings = () => request('/user/settings')
+export const saveUserSettings = payload =>
+  request('/user/settings', { method: 'PUT', body: JSON.stringify(payload || {}) })
+// 个人联网搜索连通性探测：按本人已保存的个人搜索配置真实打一次最小搜索（与运行时同口径）
+export const probeUserWebSearch = () =>
+  request('/user/settings/websearch-probe', { method: 'POST' })
 
 // ---- 我的记忆（个人设置 → 我的记忆）：只作用于登录 uid 名下的 MEMORY.md 与 memory/*.md ----
 // agentId 可选（对外能力第二批·agent 级记忆）：非空=该智能体的专属记忆根 {uid}/agents/{agentId}，

@@ -33,9 +33,13 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class UserConfigService {
 
+    /** 敏感键已设置的下发掩码（password 控件不回填真值，前端以此区分「已设置/未设置」） */
+    public static final String SET_MARKER = "********";
+
     private final UserConfigMapper userConfigMapper;
     private final ConfigSchemaService schema;
     private final ConfigService configService;
+    private final ConfigCryptoService crypto;
     /** 模型引用判权（个人设置里的模型必须归属本人登记；类型须与字段声明一致） */
     private final ModelRegistryService modelRegistryService;
 
@@ -78,11 +82,17 @@ public class UserConfigService {
             String key = f.getString("backendKey");
             String tips = f.getString("tips");
             if (tips != null && !tips.isBlank()) tipsKeys.add(tips);
-            globals.put(schema.pathOf(key), configService.get(key));
+            // 敏感键防御性脱敏（当前 personalOnly 键全局层本就取空，这里是防未来口径变化的闸）
+            String g = configService.get(key);
+            globals.put(schema.pathOf(key), ConfigService.isSensitiveKey(key) && !g.isBlank() ? SET_MARKER : g);
         }
         if (uid != null && !uid.isBlank()) {
             for (Map.Entry<String, String> e : overrides(uid).entrySet()) {
-                values.put(schema.pathOf(e.getKey()), e.getValue());
+                // 敏感键（如 webSearch.apiKey）库里是 RSA 密文，绝不下发明文或密文——
+                // 前端 password 控件不回填，占位符提示「已设置」，输入新值才覆盖
+                String masked = ConfigService.isSensitiveKey(e.getKey()) && !e.getValue().isBlank()
+                        ? SET_MARKER : e.getValue();
+                values.put(schema.pathOf(e.getKey()), masked);
             }
         }
         Map<String, Object> out = new LinkedHashMap<>();
@@ -107,7 +117,8 @@ public class UserConfigService {
     }
 
     /**
-     * 保存个人覆盖（字段缺省 = 不修改；空串 = 清除该项、回落全局）。
+     * 保存个人覆盖（字段缺省 = 不修改；空串 = 清除该项、回落默认——personalOnly 键无全局层，
+     * 其余键回落系统全局值）。
      * 校验：仅接受 schema 标记 personal 的键（其余拒绝，防越权写配置）+ 类型/范围校验（与设置页同规则）；
      * 模型类字段追加归属校验——引用必须对本人可用（他人登记的个人供应商拒用，与聊天/向量入口同口径），
      * 且类型须与字段声明的 modelType 一致（重排字段不能填聊天模型），防止存进一个运行时静默失效的引用。
@@ -148,10 +159,11 @@ public class UserConfigService {
                 row = new UserConfig();
                 row.setUid(uid);
                 row.setConfigKey(key);
-                row.setConfigValue(v);
+                // 敏感键与平台层同口径：RSA 密文入库（c_ai_user_config 历史全明文，webSearch.apiKey 是第一个）
+                row.setConfigValue(ConfigService.isSensitiveKey(key) ? crypto.encrypt(v) : v);
                 userConfigMapper.insert(row);
             } else {
-                row.setConfigValue(v);
+                row.setConfigValue(ConfigService.isSensitiveKey(key) ? crypto.encrypt(v) : v);
                 userConfigMapper.updateById(row);
             }
             saved.put(key, v);

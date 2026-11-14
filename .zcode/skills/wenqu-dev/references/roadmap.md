@@ -243,6 +243,7 @@
 - **journal 读放大**（2026-11-01）：纸表轮收尾空窗 57s 根因修（逐 token 落账回放），chunk 聚合是上游待办。
 - **定时任务**：容量评估完成、dispatch 队列满泄漏（bf434f3b）与 cron 错峰两 bug 已修。
 - **联网搜索 custom 服务商**（2026-11-14）：模型厂商自带搜索 API 各家格式不一，不做预设——新增 `CustomSearchProvider`（id=custom）万能适配器：请求体模板（{{query}}/{{count}}/{{model}} 占位；GET 模式服务地址即 URL 模板、{{query}} 自动 URL 编码）+ 响应点路径取数（customResultsPath/标题/链接/摘要/发布时间五路径），7 个 `webSearch.custom*` 键进 schema（HEAD 口径 137→144，defaults 192→199；与在途退役批次联算后工作区口径 99→106/149→156），tips 带智谱/百炼/OpenAI Responses 三家示例模板照抄改 key 即用；apiKey 非空即 Bearer、缺省不拦（与 generic 同款宽松）；探测 `custom` 分支委托 provider 真打 limit=1。fake 端点三厂商形状 6 测全绿。坑：GET 模板占位符必须 URL 编码（首版漏了，假端点 IllegalArgument 测出）。
+- **联网搜索下放个人层**（2026-11-14）：全平台一份 Key 烧平台钱被否，服务商/Key/模板整套下放个人层——10 键标 personalOnly（provider/apiKey/model/custom*，管理页隐藏）、baseUrl 标 personal（个人可自建覆盖，平台内置 SearXNG 地址免费共享）；个人未设置默认 generic（**计费 Key 永不回落平台**）；工具线程重放补齐（WEBSEARCH ToolContext 带TurnHooks 快照、WebSearchTools 入口重放，照 KnowledgeTools 样板——不重放个人 Key 静默失效）；个人层 password 首次落地（c_ai_user_config 密文入库 + resolveChain USER_OVERRIDE 透明解密补缺 + describe 掩码 + 前端不回填）；个人探测端点 POST /user/settings/websearch-probe（装载本人覆盖后走平台 probe，与运行时同口径）；顺手补了上提交遗漏的 webSearch.model 键（{{model}} 占位此前无键可填）。坑：ConfigService.USER_OVERRIDE 是 static ThreadLocal，测试间残留会污染「个人未设置」用例。
 
 ### FormCopilot × 报表系统（三仓联动线，主战场在 dynamic-form / dynamic-form-vue 仓）
 

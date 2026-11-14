@@ -35,6 +35,8 @@ public class UserController {
     private final com.wenqu.ai.service.AuthService authService;
     private final com.wenqu.ai.service.RoleService roleService;
     private final com.wenqu.ai.service.UserConfigService userConfigService;
+    private final com.wenqu.ai.service.ConfigService configService;
+    private final com.wenqu.ai.service.ConnectivityProbeService connectivityProbeService;
     /** 框架会话表：个人偏好里「只能在 build 期定」的那一项（自动提炼记忆）改完要让常驻实例作废。 */
     private final com.wenqu.ai.agentx.FrameworkSessions frameworkSessions;
 
@@ -269,14 +271,32 @@ public class UserController {
         return ResultJson.ok(java.util.Map.of("url", url));
     }
 
-    @Operation(summary = "个人偏好读取", description = "可个人覆盖的字段定义（config-schema.json 标记 personal）"
-            + "+ 本人当前个人值 + 系统全局值（界面展示「跟随系统」参照）。"
-            + "当前 schema 里没有标记 personal 的字段（原「回答偏好」五项已连同它们在系统设置里的全局那一份一起下线），"
-            + "本端点作为配置四档的个人层通道保留，fields 返回空数组")
+    @Operation(summary = "个人偏好读取", description = "可个人设置的字段定义（config-schema.json 标记 personal）"
+            + "+ 本人当前个人值 + 全局参照值（personalOnly 键无全局层，界面展示内置默认）。"
+            + "原「回答偏好」五项已下线；当前在册：知识块填充上限（个人专属）、联网搜索整套"
+            + "（服务商/Key/地址/请求模板——Key 密文存库不下发，敏感项以 ******** 掩码标记已设置）")
     @Permission("self:preference")
     @GetMapping("/settings")
     public ResultJson getSettings() {
         return ResultJson.ok(userConfigService.describe(com.wenqu.ai.util.RequestUser.uid()));
+    }
+
+    @Operation(summary = "联网搜索连通性探测", description = "按本人已保存的个人搜索配置（服务商/Key/地址/模板，"
+            + "与运行时同口径）真实打一次 limit=1 的最小搜索，返回 {available, latencyMs, detail}；"
+            + "个人页失焦即存，探测读到的就是刚保存的值。未配置任何个人搜索时探测的是平台内置 SearXNG")
+    @Permission("self:preference")
+    @PostMapping("/settings/websearch-probe")
+    public ResultJson probeWebSearch() {
+        String uid = com.wenqu.ai.util.RequestUser.uid();
+        // 探测与运行时同一读取口径：装载本人个人覆盖后走平台 probe（provider/baseUrl/key 全部按
+        // 覆盖链解析），探测完即清，不污染请求线程
+        java.util.Map<String, String> ov = userConfigService.overrides(uid);
+        configService.putUserOverrides(ov);
+        try {
+            return ResultJson.ok(connectivityProbeService.probe("webSearch", null, null, null, null));
+        } finally {
+            configService.clearUserOverrides();
+        }
     }
 
     @Operation(summary = "保存个人偏好", description = "扁平的 {配置键: 值}（键必须在 config-schema.json 标记 personal，"

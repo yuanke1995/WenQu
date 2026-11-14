@@ -286,8 +286,17 @@ public class WenquAgentxTools {
             // （框架的 enrichments 只有 KNOWLEDGE/WEBSEARCH/SANDBOX 三条），可直接复用
             if (family == com.wenqu.ai.agent.tool.ToolFamily.WEBSEARCH) {
                 mountFrom(provider, mc, holders, cmd, slot, rawCallbacks, mcpToolNames, policy, approvalCanAsk,
-                        name -> Map.of(com.wenqu.ai.service.websearch.WebSearchTools.CTX_SINK,
-                                slot.require().pool().sink()));
+                        name -> {
+                            var t = slot.require();
+                            // 落点之外再带本轮 hooks 快照：服务商/Key 是个人专属配置（ThreadLocal），
+                            // 工具入口据此重放（WebSearchTools.CTX_HOOKS），不带就静默回落平台内置
+                            java.util.Map<String, Object> ctx = new java.util.HashMap<>(2);
+                            ctx.put(com.wenqu.ai.service.websearch.WebSearchTools.CTX_SINK, t.pool().sink());
+                            if (t.hooks() != null) {
+                                ctx.put(com.wenqu.ai.service.websearch.WebSearchTools.CTX_HOOKS, t.hooks());
+                            }
+                            return ctx;
+                        });
                 continue;
             }
             if (family == com.wenqu.ai.agent.tool.ToolFamily.SANDBOX) {

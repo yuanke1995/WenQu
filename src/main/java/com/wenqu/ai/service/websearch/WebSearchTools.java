@@ -139,9 +139,21 @@ public class WebSearchTools {
      */
     public static final String CTX_SINK = "wenqu.websearch.sink";
 
+    /**
+     * toolContext 键：本轮 {@code TurnHooks} 快照（发起线程捕获的个人层配置等 ThreadLocal）。
+     * <p>服务商/Key/模板是个人专属配置，存在 ThreadLocal 覆盖里；框架把工具派到自己的弹性线程，
+     * 不在这里带快照、不在工具入口重放，个人配置就静默失效回落平台内置——与知识工具同一口径。
+     */
+    public static final String CTX_HOOKS = "wenqu.websearch.hooks";
+
     private static WebSearchSink sinkOf(org.springframework.ai.chat.model.ToolContext ctx) {
         Object v = ctx == null ? null : ctx.getContext().get(CTX_SINK);
         return v instanceof WebSearchSink s ? s : null;
+    }
+
+    private static com.wenqu.ai.agentx.WenquAgentxTools.TurnHooks hooksOf(org.springframework.ai.chat.model.ToolContext ctx) {
+        Object v = ctx == null ? null : ctx.getContext().get(CTX_HOOKS);
+        return v instanceof com.wenqu.ai.agentx.WenquAgentxTools.TurnHooks h ? h : null;
     }
 
     private final WebSearchService webSearchService;
@@ -170,7 +182,24 @@ public class WebSearchTools {
             @ToolParam(description = "搜索关键词或短句，像在搜索引擎里那样写，不要写完整句子") String query,
             @ToolParam(description = "返回结果条数（1~5，默认取系统配置）", required = false) Integer maxResults,
             org.springframework.ai.chat.model.ToolContext toolContext) {
-        return webSearch(query, maxResults, sinkOf(toolContext));
+        com.wenqu.ai.agentx.WenquAgentxTools.TurnHooks hooks = hooksOf(toolContext);
+        if (hooks == null) {
+            return webSearch(query, maxResults, sinkOf(toolContext));
+        }
+        // 弹性线程复用（与知识工具同款 try/finally）：个人层搜索配置（服务商/Key/模板）挂在
+        // ThreadLocal 覆盖里，不重放就静默回落平台内置——重放范围只此调用，用完复原
+        Map<String, String> prevUser = configService.currentUserOverrides();
+        Map<String, String> prevOv = configService.currentOverrides();
+        configService.putUserOverrides(hooks.userOverrides());
+        configService.putOverrides(hooks.overrides());
+        try {
+            return webSearch(query, maxResults, sinkOf(toolContext));
+        } finally {
+            configService.clearOverride();
+            configService.clearUserOverrides();
+            if (!prevOv.isEmpty()) configService.putOverrides(prevOv);
+            if (!prevUser.isEmpty()) configService.putUserOverrides(prevUser);
+        }
     }
 
     /** 显式传落点的版本（无引用体系的调用方传 null） */

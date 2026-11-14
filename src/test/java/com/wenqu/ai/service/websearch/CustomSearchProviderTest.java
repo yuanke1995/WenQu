@@ -163,7 +163,7 @@ class CustomSearchProviderTest {
         assertThatThrownBy(() -> provider(noBody).search(
                 new WebSearchRequest(base(), "", 5000, "x", 1)))
                 .isInstanceOf(WebSearchException.class)
-                .hasMessageContaining("customBody");
+                .hasMessageContaining("请求体模板");
 
         Map<String, String> wrongPath = new HashMap<>();
         wrongPath.put("webSearch.customBody", "{\"q\":\"{{query}}\"}");

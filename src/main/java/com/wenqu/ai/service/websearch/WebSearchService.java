@@ -57,7 +57,9 @@ public class WebSearchService {
             throw new WebSearchException("联网搜索未启用：webSearch.enabled 处于关闭状态", true);
         }
         String providerId = configService.get("webSearch.provider");
-        if (providerId == null || providerId.isBlank()) providerId = "tavily";
+        // 个人层口径：服务商/Key/模板是个人专属键（无全局层），个人未设置一律回落平台内置 SearXNG（免费）——
+        // 平台层存过的计费 Key（tavily/bocha/custom）绝不替个人买单，所以默认不是平台 def 而是 generic
+        if (providerId == null || providerId.isBlank()) providerId = "generic";
         WebSearchProvider provider = null;
         for (WebSearchProvider p : providers) {
             if (p.id().equalsIgnoreCase(providerId.trim())) {
@@ -66,14 +68,17 @@ public class WebSearchService {
             }
         }
         if (provider == null) {
-            throw new WebSearchException("未知的联网搜索服务商「" + providerId + "」（可选：tavily / bocha / generic / custom）", true);
+            throw new WebSearchException("未知的联网搜索服务商「" + providerId + "」"
+                    + "（可在 个人设置 → 联网搜索 重新选择：generic / tavily / bocha / custom）", true);
         }
         String apiKey = configService.get("webSearch.apiKey");
-        // generic 自建实例通常无鉴权、custom 看厂商口径（有就带、没有等厂商 401），不强求 key；
-        // 其余两家缺 key 必然 401，与其等服务端报错不如先说清
+        // generic 平台内置实例通常无鉴权、custom 看厂商口径（有就带、没有等厂商 401），不强求 key；
+        // 其余两家缺 key 必然 401，与其等服务端报错不如先说清。Key 是个人专属键（不回落平台），
+        // 没配就是没配，引导去个人设置
         if ((apiKey == null || apiKey.isBlank()) && !"generic".equalsIgnoreCase(provider.id())
                 && !"custom".equalsIgnoreCase(provider.id())) {
-            throw new WebSearchException("联网搜索未配置 API Key（webSearch.apiKey 为空，服务商 " + provider.id() + " 需要密钥）", true);
+            throw new WebSearchException("联网搜索未配置服务 Key：请在 个人设置 → 联网搜索 填写「"
+                    + providerId + "」的 API Key，或把服务商切换为「generic（平台内置搜索，免费）」", true);
         }
         int cap = ConfigDefaults.WEB_SEARCH_MAX_RESULTS;
         int limit = maxResults == null ? cap : Math.max(1, Math.min(maxResults, cap));
@@ -89,7 +94,8 @@ public class WebSearchService {
         } catch (WebSearchException e) {
             throw e;
         } catch (Exception e) {
-            throw new WebSearchException("联网搜索失败：" + e.getMessage());
+            // 带异常类名：NPE 这类无消息异常裸给 message 会变成「联网搜索失败：null」，排障没方向
+            throw new WebSearchException("联网搜索失败：" + e);
         }
         if (raw == null || raw.isEmpty()) return List.of();
 

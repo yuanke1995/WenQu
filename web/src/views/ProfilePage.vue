@@ -94,7 +94,9 @@
           </div>
         </div>
 
-        <!-- 个人默认聊天模型（选完即存，没有「保存」这一步；「自动提炼记忆」开关在「我的记忆」面板） -->
+        <!-- 问答偏好：个人默认聊天模型（选完即存）+ 个人可覆盖配置（config-schema 标 personal 的
+             字段经 /user/settings 通道下发，schema 加勾选这里自动跟随，没有「保存」这一步）；
+             「自动提炼记忆」开关在「我的记忆」面板 -->
         <div v-else-if="current === 'chat'" class="app-card pf-card">
           <div class="pf-panel-head">
             <h2 class="app-card-title">{{ panelMeta.title }}</h2>
@@ -110,6 +112,41 @@
           </div>
           <p class="pf-sub-hint">{{ panelMeta.tail }}</p>
 
+          <!-- 个人可覆盖配置：值为空=用默认，占位符直接亮出默认值（改了就存，清空即回落）；
+               有全局层的键展示「跟随系统（全局值）」，个人专属键（personalOnly，无全局层）展示「默认（内置默认值）」 -->
+          <div v-for="f in personal.fields" :key="f.path" class="pf-field">
+            <div class="pf-field-head">
+              <span class="pf-label">{{ f.label }}</span>
+              <a-tooltip v-if="personal.tips[f.tips]" :title="personal.tips[f.tips]"
+                         placement="top" :overlay-inner-style="{ whiteSpace: 'pre-line' }">
+                <question-circle-outlined class="pf-tip-icon" />
+              </a-tooltip>
+            </div>
+            <a-input-number v-if="f.type === 'number'" v-model:value="personalDrafts[f.path]"
+                            :min="f.min" :max="f.max" :step="f.step || 1"
+                            :placeholder="personalPlaceholder(f)"
+                            style="width: 160px" @blur="commitPersonal(f)" @pressEnter="commitPersonal(f)" />
+            <a-select v-else-if="f.type === 'select'" v-model:value="personalDrafts[f.path]"
+                      :options="f.options" style="width: 240px" allow-clear
+                      :placeholder="personalPlaceholder(f)" @change="commitPersonal(f)" />
+            <!-- password：服务端永不回填真值（values 里是 ******** 掩码），输入框恒空，输入新值才覆盖 -->
+            <a-input-password v-else-if="f.type === 'password'" v-model:value="personalDrafts[f.path]"
+                              :placeholder="personalPlaceholder(f)" style="width: 260px"
+                              autocomplete="new-password" @blur="commitPersonal(f)" @pressEnter="commitPersonal(f)" />
+            <a-textarea v-else-if="f.type === 'textarea'" v-model:value="personalDrafts[f.path]"
+                        :rows="3" :placeholder="personalPlaceholder(f)" style="width: 520px"
+                        @blur="commitPersonal(f)" />
+            <a-input v-else v-model:value="personalDrafts[f.path]" style="width: 240px" allow-clear
+                     :placeholder="personalPlaceholder(f)" @blur="commitPersonal(f)" @pressEnter="commitPersonal(f)" />
+          </div>
+
+          <!-- 联网搜索组的「测试连接」：按本人已保存的个人配置真打一次最小搜索（与运行时同口径） -->
+          <div v-if="hasWebSearchField" class="pf-row" style="margin-top: 8px; align-items: center">
+            <button class="app-btn ghost small" type="button" :disabled="wsProbing" @click="probeWebSearch">
+              {{ wsProbing ? '测试中…' : '测试连接（按上方已保存的搜索配置）' }}
+            </button>
+            <span class="pf-sub-hint" :style="wsProbeOk ? 'color: var(--app-ok, #2e7d32)' : ''">{{ wsProbeHint }}</span>
+          </div>
         </div>
 
         <!-- 通知与推送：一件事的两半放同一屏——「收哪些类」与「要不要跳出浏览器成为系统级通知」。
@@ -481,7 +518,7 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import {
-  BellOutlined, CameraOutlined, KeyOutlined, ReadOutlined,
+  BellOutlined, CameraOutlined, KeyOutlined, QuestionCircleOutlined, ReadOutlined,
   SafetyCertificateOutlined, SettingOutlined, ShareAltOutlined, UserOutlined
 } from '@ant-design/icons-vue'
 import { authUser, clearAuth, ensureAuth } from '../utils/auth'
@@ -495,7 +532,7 @@ import { changePasswordApi, getUserPreference, setUserPreference, updateMyProfil
          notificationPreferences, notificationSavePreferences, updateMyEmail,
          listMySessionShares, stopShareBySession, purgeShareRecord, enableSessionShare,
          getMemoryOverview, getMemoryContent, saveMemoryMd, compactMemory, clearMyMemory,
-         deleteMemoryDaily, listAgents } from '../api'
+         deleteMemoryDaily, listAgents, getUserSettings, saveUserSettings, probeUserWebSearch } from '../api'
 import ModelSelect from '../components/ModelSelect.vue'
 import ApiKeysPanel from '../components/ApiKeysPanel.vue'
 import UserAvatar from '../components/UserAvatar.vue'
@@ -516,7 +553,7 @@ const navGroups = [
     { key: 'security', label: '账号安全', icon: SafetyCertificateOutlined }
   ] },
   { label: '偏好', items: [
-    { key: 'chat', label: '默认模型', icon: SettingOutlined },
+    { key: 'chat', label: '问答偏好', icon: SettingOutlined },
     { key: 'notify', label: '通知与推送', icon: BellOutlined }
   ] },
   { label: '数据与应用', items: [
@@ -540,7 +577,7 @@ watch(current, () => nextTick(() => {
 
 const PANELS = {
   chat: {
-    field: 'defaultModel', title: '默认模型',
+    field: 'defaultModel', title: '问答偏好',
     hint: '会话未选模型时使用；选择后立即生效。',
     tail: '清空后每次对话需手动选模型；图片需模型支持读图。'
   }
@@ -719,6 +756,82 @@ const saveDefaultModel = async v => {
     refreshSetupGuide(true)  // 个人默认模型变了 → 引导 tag/卡片立即对账
   }
 }
+
+// ---- 个人可覆盖配置（问答偏好）：字段清单由 /user/settings 下发（schema 标 personal 的字段），
+// 改完即存（失焦/回车/切换），清空=回落默认值。仅本人问答生效。
+// switch 类型不渲染：「未设=用默认」与「显式关」两种状态表达不出来，等真出现个人开关字段再定口径
+const personal = ref({ fields: [], values: {}, globals: {}, tips: {} })
+const personalDrafts = ref({})
+// 占位符口径：有全局层的键展示「跟随系统（全局值）」；个人专属键（personalOnly，无全局层，
+// globals 回空）展示「默认（内置默认值）」——平台设置页退役后这类键只有个人设置这一个入口
+const hasGlobalLayer = f => !!(personal.value.globals || {})[f.path]
+const personalPlaceholder = f => {
+  // password 恒空不回填：占位符区分「已设置（输入新值才覆盖）/ 未设置」
+  if (f.type === 'password') {
+    return (personal.value.values || {})[f.path] === '********' ? '已设置（输入新 Key 可覆盖，留空沿用）' : '未设置'
+  }
+  return hasGlobalLayer(f)
+    ? `跟随系统（${personal.value.globals[f.path]}）` : `默认（${f.def}）`
+}
+const loadPersonal = async () => {
+  try {
+    const r = await getUserSettings()
+    const d = (r && r.data) || { fields: [], values: {}, globals: {}, tips: {} }
+    personal.value = d
+    const drafts = {}
+    for (const f of d.fields || []) {
+      const raw = (d.values || {})[f.path]
+      if (f.type === 'password') drafts[f.path] = null   // 敏感项永不回填（values 里只是掩码）
+      else if (raw === undefined || raw === '') drafts[f.path] = null
+      else if (f.type === 'number') drafts[f.path] = Number(raw)
+      else drafts[f.path] = raw
+    }
+    personalDrafts.value = drafts
+  } catch (e) { /* 读取失败按无个人字段渲染：这个面板还有默认模型可管，不必整块报错 */ }
+}
+// 提交单项：清空（null/空串）=回落默认；与已存值相同不提交。成败都回读服务端，输入框以服务端为准
+const commitPersonal = async f => {
+  const draft = personalDrafts.value[f.path]
+  const normalized = draft === null || draft === undefined ? '' : String(draft).trim()
+  // password 只在输入了新值时提交：输入框恒空，误触失焦不能把已存的 Key 清掉（要换厂商先切服务商）
+  if (f.type === 'password' && normalized === '') return
+  const savedRaw = (personal.value.values || {})[f.path] ?? ''
+  if (normalized === String(savedRaw)) return
+  try {
+    await saveUserSettings({ [f.path]: normalized })
+    message.success(normalized === '' && !hasGlobalLayer(f) ? '已清除，用默认值' : '已保存')
+    await loadPersonal()
+  } catch (e) {
+    message.error(e.message || '保存失败')
+    await loadPersonal()
+  }
+}
+
+// ---- 个人联网搜索「测试连接」：端点按本人已存配置打真实最小搜索（服务商/Key/模板与运行时同口径） ----
+const hasWebSearchField = computed(() => (personal.value.fields || []).some(f => f.panel === 'webSearch'))
+const wsProbing = ref(false)
+const wsProbeOk = ref(false)
+const wsProbeHint = ref('')
+const probeWebSearch = async () => {
+  wsProbing.value = true
+  wsProbeHint.value = ''
+  try {
+    const r = await probeUserWebSearch()
+    const d = (r && r.data) || {}
+    wsProbeOk.value = !!d.available
+    wsProbeHint.value = d.available
+      ? `可用（${d.latencyMs ?? '?'}ms）：${d.detail || ''}`
+      : `不可用：${d.detail || '探测失败'}`
+  } catch (e) {
+    wsProbeOk.value = false
+    wsProbeHint.value = e.message || '探测请求失败'
+  } finally {
+    wsProbing.value = false
+  }
+}
+
+// 面板切换才拉（个人设置是常驻页，进页就拉会白跑）；深链直达时 watch 不触发，onMounted 补一次
+watch(current, v => { if (v === 'chat') loadPersonal() })
 
 // ---- 账号安全：修改密码（成功后强制重新登录） ----
 const pwdSaving = ref(false)
@@ -1263,6 +1376,7 @@ onMounted(() => {
   // 深链直达（?panel=xxx）时 watch 不会触发，首拉在这里补齐
   if (current.value === 'shares') loadShares()
   if (current.value === 'memory') loadMemory()
+  if (current.value === 'chat') loadPersonal()
   // 通知这一屏的两个数据源都静默拉：静音清单是本页主内容（失败要报），
   // 推送能力只是环境判定（拿不到就当「还不确定」，不打扰）
   loadMutes()
@@ -1392,6 +1506,8 @@ watch(current, v => { if (v === 'notify') refreshPushState().then(refreshCap).ca
 .pf-field { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--app-border); }
 .pf-field-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
 .pf-field-head .pf-sub-hint { margin: 0; }
+/* 个人可覆盖字段的问号说明（与设置页同一份 tips 文案） */
+.pf-tip-icon { font-size: 12px; color: var(--app-text3); cursor: help; }
 
 /* 图标集：10 列定宽网格（30 个正好三行、不留残行）；去掉逐格边框与白底，只靠 hover / 选中环表达状态 */
 .pf-emoji-pick { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 6px; }
