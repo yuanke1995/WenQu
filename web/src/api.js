@@ -16,11 +16,20 @@ const authToken = () => {
   try { return localStorage.getItem('ai_token') || '' } catch (e) { return '' }
 }
 
-const authHeaders = extra => {
+const authHeaders = (extra, token = authToken()) => {
   const h = { 'Content-Type': 'application/json', ...(extra || {}) }
-  const bt = authToken()
-  if (bt) h['Authorization'] = 'Bearer ' + bt
+  if (token) h['Authorization'] = 'Bearer ' + token
   return h
+}
+
+/**
+ * 只有「本次请求带了令牌、且该令牌仍是当前登录令牌」的 401 才算登录态失效。
+ * 登出后还在飞的定时器/收尾请求没有令牌，当成会话过期会在登录页弹一条假提示；
+ * 旧令牌的请求在新身份登录后才返回时，也不能反过来把新会话清掉。
+ */
+const raiseUnauthorized = token => {
+  if (!token || token !== authToken()) return
+  window.dispatchEvent(new CustomEvent('app:unauthorized'))
 }
 
 /**
@@ -38,10 +47,11 @@ async function request(path, { method = 'GET', body, timeout = 30000, silentForb
     clearUnreachable()
     throw err || new Error(message)
   }
+  const token = authToken()
   try {
     const res = await fetch(BASE + path, {
       method,
-      headers: authHeaders(),
+      headers: authHeaders(null, token),
       body,
       signal: controller.signal
     })
@@ -51,7 +61,7 @@ async function request(path, { method = 'GET', body, timeout = 30000, silentForb
     let data = null
     try { data = await res.json() } catch (e) { /* 非 JSON 响应 */ }
     if (!res.ok) {
-      if (res.status === 401) window.dispatchEvent(new CustomEvent('app:unauthorized'))
+      if (res.status === 401) raiseUnauthorized(token)
       if (res.status === 403 && !silentForbidden) window.dispatchEvent(new CustomEvent('app:forbidden', { detail: data?.msg }))
       const err = new Error(data?.msg || `请求失败(${res.status})`)
       err.status = res.status
@@ -128,7 +138,7 @@ function upload(path, formData, onProgress) {
         if (data && data.success === false) reject(new Error(data.msg || '上传失败'))
         else resolve(data)
       } else {
-        if (xhr.status === 401) window.dispatchEvent(new CustomEvent('app:unauthorized'))
+        if (xhr.status === 401) raiseUnauthorized(bt)
         reject(new Error(data?.msg || `上传失败(${xhr.status})`))
       }
     }
@@ -214,6 +224,8 @@ function dispatchChatEvent (d, handlers) {
 function streamChatSse (start, opts) {
   const { onDone, onError, signal, idleTimeoutMs = 120000 } = opts
   if (typeof onError !== 'function' || typeof onDone !== 'function') return
+  // start 会在本函数返回前同步发起请求，这里取到的就是这次接流实际带上的令牌
+  const token = authToken()
 
   const inner = new AbortController()
   let idleTimedOut = false
@@ -267,7 +279,7 @@ function streamChatSse (start, opts) {
 
   start(inner.signal).then(res => {
     if (!res.ok) {
-      if (res.status === 401) window.dispatchEvent(new CustomEvent('app:unauthorized'))
+      if (res.status === 401) raiseUnauthorized(token)
       res.json().then(d => end(d?.msg || '请求失败: ' + res.status)).catch(() => end('请求失败: ' + res.status))
       return
     }

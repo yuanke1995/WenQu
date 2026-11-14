@@ -3,7 +3,8 @@ import assert from 'node:assert/strict'
 import { ref } from 'vue'
 import { createSessionActions } from '../src/chat/sessionActions.js'
 
-const setup = ({ list = [], streams = new Set(), sid = 's1', createRet = { success: true, data: { sessionId: 'new1' } } } = {}) => {
+const setup = ({ list = [], streams = new Set(), sid = 's1', loggedIn = true,
+  createRet = { success: true, data: { sessionId: 'new1' } } } = {}) => {
   const calls = {
     settle: 0, switch: [], clear: 0, agent: [], route: [], home: 0, focus: 0,
     create: 0, del: [], reload: 0, err: [], ok: []
@@ -28,6 +29,7 @@ const setup = ({ list = [], streams = new Set(), sid = 's1', createRet = { succe
     createApi: async () => { calls.create++; if (createRet instanceof Error) throw createRet; return createRet },
     deleteApi: async s => { calls.del.push(s) },
     reloadSessions: async () => { calls.reload++ },
+    isLoggedIn: () => loggedIn,
     notifyError: m => { calls.err.push(m) },
     notifySuccess: m => { calls.ok.push(m) }
   })
@@ -128,4 +130,27 @@ test('自动落点：有非空会话切过去，否则新建', async () => {
   const none = setup({ list: [] })
   await none.a.autoPick()
   assert.equal(none.calls.create, 1)
+})
+
+test('未登录：新建与自动落点都不发请求、不提示（登出后收尾动作作废）', async () => {
+  const create = setup({ loggedIn: false, list: [{ id: 's0', messageCount: 0 }] })
+  await create.a.createNewSession('ag1')
+  assert.equal(create.calls.create, 0)
+  assert.deepEqual(create.calls.switch, [])
+  assert.deepEqual(create.calls.route, [])
+  assert.deepEqual(create.calls.err, [])
+
+  const pick = setup({ loggedIn: false, list: [{ id: 's9', messageCount: 1 }] })
+  await pick.a.autoPick()
+  assert.deepEqual(pick.calls.switch, [])
+  assert.equal(pick.calls.create, 0)
+})
+
+test('401 失败不叠业务提示（全局 app:unauthorized 已接管）', async () => {
+  const e = new Error('请先登录')
+  e.status = 401
+  const { a, calls } = setup({ createRet: e })
+  await a.createNewSession()
+  assert.equal(calls.create, 1)
+  assert.deepEqual(calls.err, [])
 })

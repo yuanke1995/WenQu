@@ -5,7 +5,7 @@
 // （如 '/m/chat'）与滚动实现复用同一套引擎。纯函数/常量见 ./projections.js。
 import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { isAdminSync } from '../utils/auth'
+import { isAdminSync, isLoggedIn } from '../utils/auth'
 import { message } from 'ant-design-vue'
 import { sendQuestion, resumeChat, getChatRun, newSession, getHistory, deleteSessionApi, switchMessageVariant, compactSessionApi, sessionHistorySummaryApi, getConfig, getRuntimeConfig, listAvailableAgents, listConsultableAgents,
          listAvailableSkills, getUserPreference, approveToolCall, getToolApproval, answerAgentAsk, ignoreAgentAsk, stopChatTurn, steerChatTurn,
@@ -985,6 +985,7 @@ const { createNewSession, deleteSession: handleDeleteSession, autoPick } = creat
   createApi: newSession,
   deleteApi: deleteSessionApi,
   reloadSessions: loadSessions,
+  isLoggedIn,
   notifyError: msg => message.error(msg),
   notifySuccess: msg => message.success(msg)
 })

@@ -18,13 +18,14 @@ import { ref } from 'vue'
  * @param createApi       () => Promise<{success,data?}>
  * @param deleteApi       sid => Promise
  * @param reloadSessions  () => Promise
+ * @param isLoggedIn      () => boolean（登出后 store 复位的收尾动作不许再建会话）
  * @param notifyError     msg => void
  * @param notifySuccess   msg => void
  */
 export const createSessionActions = ({
   creating, workspaceEpoch, currentSid, setCurrentSid, list, streams,
   settleSteer, switchSession, clearView, setAgentMemory, replaceRoute, replaceHome,
-  focusInput, createApi, deleteApi, reloadSessions, notifyError, notifySuccess
+  focusInput, createApi, deleteApi, reloadSessions, isLoggedIn = () => true, notifyError, notifySuccess
 }) => {
   /**
    * 新建会话。presetAgentId：由「切换智能体」触发时带上目标智能体，落为新会话的待选值
@@ -32,6 +33,9 @@ export const createSessionActions = ({
    */
   const createNewSession = async presetAgentId => {
     if (creating.value) return
+    // 登出（清令牌 + 复位 store）之后，挂载/复位引发的收尾动作仍在排队，这里一律作废：
+    // 否则会以无令牌身份发出 /session/new，弹一句「创建会话失败：请先登录」
+    if (!isLoggedIn()) return
     // 落到空/新会话同样是一次「离开」：上一会话排队中的插话对新会话不生效
     settleSteer()
     // 空会话复用排除正在流式的会话：列表里的 messageCount 是快照（首条消息 done 后才刷新），
@@ -64,7 +68,8 @@ export const createSessionActions = ({
         focusInput()
       }
     } catch (e) {
-      notifyError('创建会话失败: ' + (e.message || '未知错误'))
+      // 401 已由全局 app:unauthorized 提示并回登录页，不再叠一条业务失败
+      if (e.status !== 401) notifyError('创建会话失败: ' + (e.message || '未知错误'))
     } finally {
       creating.value = false
     }
@@ -91,6 +96,7 @@ export const createSessionActions = ({
 
   /** 删除当前会话/路由空 sid 后的自动落点：最近一个非空会话，没有就新建 */
   const autoPick = async () => {
+    if (!isLoggedIn()) return
     const first = list().find(s => (s.messageCount ?? 0) > 0)
     if (first) await switchSession(first.id)
     else await createNewSession()
