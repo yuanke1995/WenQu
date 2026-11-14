@@ -183,7 +183,7 @@ public interface ToolMountContext {
         // 游客轮不挂「要等人点确认」的工具：分享页没有审批卡通道（ShareChatPage 不处理
         // approval_required、服务端也没有游客审批端点），挂上去那轮只会静默等到审批超时。
         // 与分支轮同一条口径——要拦的能力让模型看不见，而不是给了再等一个不会来的答复。
-        if (guestMode() && d != null && d.requiresApproval(this::gateOn)) return false;
+        if (guestMode() && d != null && d.requiresApproval()) return false;
         return !branchTurn() || d == null || !d.viewerRequired();
     }
 

@@ -54,12 +54,12 @@ public class LocalBrowserToolProvider implements ToolFamilyProvider {
                 // 关闭是收尾动作，不额外要确认：目标轮收尾本来就会自动关一次
                 new ToolDescriptor("localBrowserClose", ToolFamily.LOCAL_BROWSER,
                         "关闭本机浏览器", "关闭本机浏览器", "关掉你电脑上的浏览器窗口",
-                        SideEffect.EXTERNAL, null, false, false, null));
+                        SideEffect.EXTERNAL, null, false, false));
     }
 
     private static ToolDescriptor desc(String name, String label, String hint) {
         return new ToolDescriptor(name, ToolFamily.LOCAL_BROWSER, label, label, hint,
-                SideEffect.EXTERNAL, null, false, true, null);
+                SideEffect.EXTERNAL, null, false, true);
     }
 
     @Override

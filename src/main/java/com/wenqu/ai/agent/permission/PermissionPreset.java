@@ -25,7 +25,7 @@ public enum PermissionPreset {
     /** 常规：平台默认档，沙盒写操作收束在沙盒目录内；默认逐次确认，智能体显式设 auto 才免确认 */
     STANDARD("standard", "工作区内修改", SandboxMode.WORKSPACE_WRITE, "ask",
             "可在工作区内读写与执行命令，默认逐次确认"),
-    /** 全自主：写入位置不再由平台收束（沙盒层的可写根一并放开）、命令不逐项确认（平台准不准用这一档由 agent.permissionPreset.max 决定） */
+    /** 全自主：写入位置不再由平台收束（沙盒层的可写根一并放开）、命令不逐项确认 */
     AUTONOMOUS("autonomous", "完全权限", SandboxMode.DANGER_FULL_ACCESS, "auto",
             "可读写工作区外的路径，命令不逐项确认");
 

@@ -14,10 +14,9 @@ import java.util.List;
 /**
  * 联网搜索族。
  * <p>
- * 唯一一条「是否需要审批」由配置决定的声明：{@code webSearch.requireApproval}。
- * 它确实会把用户输入发到外网并产生外部计费，性质上与沙盒/MCP 同级，但不默认强制确认——
- * 否则每次搜索都要点一下，联网体验不可用；管理员要收紧时开那一项即可。
- * 迁移前这段判断写在装配处的 if 里，清单页与前端各自另抄了一份，现在只有这一处。
+ * requiresApproval 恒真（2026-11-14 设置项退役前的口径即默认开）：联网是把用户输入发到
+ * 平台之外、可能产生外部计费的唯一一类工具，没审批就等于让模型自主决定花谁的钱——
+ * 所以审批不可关，只受智能体审批模式管辖（off 档不影响联网启停）。
  * <p>
  * guestAllowed=false：匿名访客不暴露联网（游客分支在挂载它之前就返回了）。
  */
@@ -44,7 +43,7 @@ public class WebSearchToolProvider implements ToolFamilyProvider {
     public List<ToolDescriptor> descriptors() {
         return List.of(new ToolDescriptor(WebSearchTools.TOOL_NAME, ToolFamily.WEBSEARCH,
                 "联网搜索", "联网搜索", "上网搜索相关资料，结果会作为引用来源",
-                SideEffect.EXTERNAL, "webSearch.enabled", false, false, "webSearch.requireApproval"));
+                SideEffect.EXTERNAL, "webSearch.enabled", false, true));
     }
 
     /**

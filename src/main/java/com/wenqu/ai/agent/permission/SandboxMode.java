@@ -29,8 +29,7 @@ public enum SandboxMode {
      */
     WORKSPACE_WRITE("workspace-write", "沙盒目录可写", true, true),
     /**
-     * 不受限：路径不收束。给「用户自己搭的智能体要在沙盒目录外读写」留的口，
-     * 由管理员经 {@code agent.permissionPreset.max} 决定平台上准不准用这一档。
+     * 不受限：路径不收束。给「用户自己搭的智能体要在沙盒目录外读写」留的口。
      */
     DANGER_FULL_ACCESS("danger-full-access", "不受限", true, true);
 

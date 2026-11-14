@@ -176,19 +176,6 @@
               </div>
               <a-segmented v-model:value="runMode" :options="runModeOptions" class="ap-mode-seg" @change="onRunModeChange" />
               <p class="ap-hint ap-mode-note">{{ runModeHint }}</p>
-
-              <div v-if="runMode === 'sub'" class="ap-mode-extra">
-                <label class="ap-field-label">被委派时怎么做</label>
-                <a-select v-model:value="form.subagentMode" :options="branchModeOptions" allow-clear
-                          style="width:100%" :placeholder="branchModePlaceholder" />
-                <div v-if="agentDefaultsError" class="ap-pick-empty">
-                  系统默认值加载失败 —— <button type="button" class="app-btn ghost small" @click="loadAgentDefaults">重试</button>
-                </div>
-                <div v-else class="ap-hint">
-                  交要点：只查资料、把要点交回来，快也省；全循环：像一次完整对话那样把事办完，能交付文件与产物，但更慢也更花费。
-                  被委派的那一支不会向人提问，也不会建任务清单。
-                </div>
-              </div>
             </section>
 
             <!-- 身份与角色 -->
@@ -853,14 +840,16 @@ const CAPS = [
     detail: '限定连哪几个 MCP 服务；也可以「不使用」或按名禁用其中几个',
     kind: 'list', modeKey: 'mcpMode', listKey: 'mcps', optionsKey: 'mcpOptions',
     gate: ['tool', 'enabled'] },
-  // HTTP 工具（OpenAPI 导入）：工具集是智能体自有配置（不是个人资产引用），开启后在本行下方管理
+  // HTTP 工具（OpenAPI 导入）：工具集是智能体自有配置（不是个人资产引用），开启后在本行下方管理；
+  // 没有独立全局开关（httpTool.enabled 已退役），只受「工具调用」总闸制约
   { key: 'toolHttp', group: '工具与扩展', label: 'HTTP 工具', desc: '按 OpenAPI 导入宿主 API 工具集', icon: LinkOutlined,
     detail: '导入 OpenAPI 生成工具，模型可自主调用（游客不暴露）',
-    kind: 'switch', path: ['httpTool', 'enabled'], gate: ['tool', 'enabled'] },
-  // 工作流工具：把已发布工作流挂载为对话工具（智能体自有配置），开启后在本行下方勾选
+    kind: 'switch', gate: ['tool', 'enabled'] },
+  // 工作流工具：把已发布工作流挂载为对话工具（智能体自有配置），开启后在本行下方勾选；
+  // 没有独立全局开关（workflowTool.enabled 已退役），只受「工具调用」总闸制约
   { key: 'toolWorkflow', group: '工具与扩展', label: '工作流工具', desc: '把已发布工作流挂为对话工具', icon: PartitionOutlined,
     detail: '已发布工作流（≤8 个），模型按需运行；嵌套上限 2 层，游客不暴露',
-    kind: 'switch', path: ['workflowTool', 'enabled'], gate: ['tool', 'enabled'] },
+    kind: 'switch', gate: ['tool', 'enabled'] },
   // 向用户提问：ask_user 族只有 askUser 一项，配置面是一个三态开关；
   // 存量兼容见 effectiveAskUserTri（保存时恒清 builtinTools，见 save）
   { key: 'toolBuiltin', group: '执行与交付', label: '向用户提问', desc: '人在回路：回答中向你提出问题，答后继续', icon: QuestionCircleOutlined,
@@ -966,16 +955,11 @@ const loadToolCatalog = async () => {
     denyOptions.value = list.map(t => ({
       value: t.name,
       label: (t.familyLabel ? t.familyLabel + ' · ' : '') + (t.label || t.cardLabel || t.name)
-        + (t.platformDenied ? '（平台已停用）' : ''),
-      // 平台停用名单里的项标出来但不禁选：管理员仍可能想在自己的智能体上再显式记一笔（无副作用），
-      // 而"它全局已经不挂了"这件事必须看得见——看不见就会去猜"为什么这个工具怎么都不出现"。
-      title: t.platformDenied ? '平台已在「系统设置 → 工具调用 → 平台停用工具名单」里停用它，本智能体无需重复设置' : ''
     }))
   } catch (e) { toolCatalogError.value = true }
 }
 // 权限档位可选项（来自 /agent/permission-presets）：档位表由后端 PermissionPreset 下发，这里不抄第二份——
-// 抄了就等于界面上能选一个后端不给的档位（管理员收紧后正是这种情形，表现是「选了不生效且没任何提示」）。
-// 被上限禁掉的档位照样列出但置灰并给原因：「这一档管理员没开」与「平台没这档」对用户是两件事。
+// 抄了就等于界面上能选一个后端不给的档位（表现是「选了不生效且没任何提示」）。
 const presetOptions = ref([])
 const presetError = ref(false)
 // 档位名册原样留着：下拉只吃 code/label，而「跟随档位」要点名这一档建议的审批值、
@@ -992,8 +976,7 @@ const loadPermissionPresets = async () => {
     presetOptions.value = list.map(p => ({
       value: p.code,
       label: p.label,
-      disabled: p.available === false,
-      title: p.available === false ? p.unavailableReason : p.summary
+      title: p.summary
     }))
   } catch (e) { presetError.value = true }
 }
@@ -1062,23 +1045,6 @@ const skillDocEntry = computed(() => skillRaw.value.find(s => s.name === skillDo
 const mcpOptions = ref([])
 // 可委派的子智能体下拉（4.3：来自 /agent/sub，仅作为主智能体的委派候选，本身不参与对话）
 const subOptions = ref([])
-// 被委派时的执行方式：两个值都是平台固定的形态，没有"管理员收紧"这类可用性变化，
-// 所以不像权限档位那样拉端点——那端点存在是因为可选项会随上限变，这里不会。
-const BRANCH_MODE_LABELS = { digest: '交要点', full: '全循环' }
-const branchModeOptions = [
-  { value: 'digest', label: '检索要点（交资料）' },
-  { value: 'full', label: '全循环（把事办完）' }
-]
-const branchModeDefaultLabel = computed(() => {
-  // 值由后端按运行时口径解析（认不出按 digest 收口）后下发，前端不再自己判默认档
-  const m = rawOf(['agent', 'subagentMode'])
-  if (m === 'full') return '全循环'
-  if (m === 'digest') return '检索要点'
-  return ''
-})
-/** 留空即跟随平台默认档：把默认档直接写进触发器，用户不点开、不读灰字也知道会怎么走 */
-const branchModePlaceholder = computed(() =>
-  '跟随系统默认' + (branchModeDefaultLabel.value ? `（${branchModeDefaultLabel.value}）` : ''))
 /** 工作流工具与可委派选项共用本页数据 */
 const OPTION_REFS = { skillOptions, mcpOptions }
 const optionsOf = c => OPTION_REFS[c.optionsKey]?.value || []
@@ -1116,7 +1082,7 @@ const blankForm = () => ({
   goalEnabled: 1,
   // 有副作用工具（沙盒/MCP）执行审批：''=跟随档位（默认） auto=自动执行 ask=执行前确认 off=禁用
   toolApprovalMode: '',
-  // 权限档位：null=跟随平台默认档（agent.permissionPreset.default）；可选项来自 /agent/permission-presets
+  // 权限档位：null=跟随平台默认档（standard）；可选项来自 /agent/permission-presets
   permissionPreset: null,
   // 工具黑名单：本轮要拿掉的具体工具名（多选，选项=能力名册全族）；空=不禁用
   toolDeny: [],
@@ -1127,8 +1093,6 @@ const blankForm = () => ({
   mcpMode: 'inherit', mcps: [],
   // 新增时必须给出默认值：save() 会直接读这两个字段，缺失会让整个保存动作抛错
   isSubagent: 0, subAgentIds: [],
-  // 被委派时怎么做：null=跟随系统默认（agent.subagentMode）
-  subagentMode: null,
   // 检索开关覆盖：只有「强制关」一种覆盖语义（重排=库绑了模型才重排，智能体只能关、不能开；
   // 阈值/权重/召回量归知识库，不在这里配）
   qpRerank: 'inherit'
@@ -1353,7 +1317,7 @@ const EXPORT_KEYS = ['name', 'icon', 'description', 'systemPrompt', 'knowledgeBa
   'toolKnowledge', 'toolBuiltin', 'toolArtifact', 'toolWebsearch', 'toolHttp', 'httpTools',
   'toolWorkflow', 'workflowTools', 'toolMcp', 'mcps', 'toolSkill', 'skills',
   'goalEnabled', 'toolApprovalMode', 'permissionPreset', 'toolDeny', 'maxToolSteps', 'memoryMode',
-  'callbackUrl', 'queryParams', 'isSubagent', 'subAgentIds', 'subagentMode']
+  'callbackUrl', 'queryParams', 'isSubagent', 'subAgentIds']
 const agentExportConfig = a => Object.fromEntries(EXPORT_KEYS.filter(k => a[k] !== undefined).map(k => [k, a[k]]))
 const downloadJson = (obj, filename) => {
   const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' })
@@ -1845,10 +1809,7 @@ const summaryExecution = computed(() => {
   return `${presetLabelOf()} · ${approvalLabelOf()}`
 })
 const summaryDelegation = computed(() => {
-  if (runMode.value === 'sub') {
-    const own = BRANCH_MODE_LABELS[form.value.subagentMode]
-    return `被委派：${own || '跟随默认' + (branchModeDefaultLabel.value ? `（${branchModeDefaultLabel.value}）` : '')}`
-  }
+  if (runMode.value === 'sub') return '被委派：跑完整问答，能办事'
   const n = (form.value.subAgentIds || []).length
   return n ? `${n} 个子智能体` : '未启用'
 })
@@ -1936,14 +1897,11 @@ const reload = async () => {
         .filter(s => s.enabled)
         .map(s => ({ name: s.name, connected: !!s.connected }))
     }
-    // 可委派的子智能体：名字后面带上它被派出去会怎么跑（交要点/全循环），
-    // 勾定时就能看出"派出去的是拿资料的还是干活的"，不用一个个点进配置页
+    // 可委派的子智能体
     if (xr && xr.success && Array.isArray(xr.data)) {
       subOptions.value = xr.data.map(s => ({
         value: s.id,
-        label: s.name + (BRANCH_MODE_LABELS[s.subagentMode]
-          ? ` · ${BRANCH_MODE_LABELS[s.subagentMode]}${s.subagentModeInherited ? '(默认)' : ''}`
-          : '')
+        label: s.name
       }))
     }
   } catch (e) { message.error(e.message || '加载失败') }
@@ -2024,7 +1982,6 @@ const openEdit = a => {
     mcpMode: modeOf(a.toolMcp), mcps: splitList(a.mcps),
     isSubagent: sub ? 1 : 0,
     subAgentIds: splitList(a.subAgentIds),
-    subagentMode: a.subagentMode || null,
     // 检索开关（只有重排三态；旧版存量的阈值/权重键由后端忽略并在下次保存时清除）
     qpRerank: parseQueryParams(a.queryParams)
   }
@@ -2172,8 +2129,6 @@ const save = async () => {
     // 子智能体没有委派对象；问答助手一个都没选 → 空串（后端归一为 null → 编排走多视角策略）。
     // 子智能体不参与委派，但仍保留已存名单：切回问答助手时不用重新配
     subAgentIds: runMode.value === 'sub' ? null : (f.subAgentIds || []).join(','),
-    // 被委派时怎么做：只有子智能体有这一项，切回其它模式要显式清空
-    subagentMode: runMode.value === 'sub' ? (f.subagentMode || null) : null,
     // 检索开关覆盖：跟随全局 → 空串 → 后端存 null；开启/关闭写 rerank.enabled
     queryParams: buildQueryParams(f.qpRerank)
   }

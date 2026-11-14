@@ -161,7 +161,7 @@ public class ToolAssemblyService {
             @Override
             public ExecutionPolicy permissionPolicy() {
                 if (turnPolicy != null) return turnPolicy;
-                return resolvePermissionPolicy(agent, guestMode, degradationSink);
+                return resolvePermissionPolicy(agent, guestMode);
             }
 
             @Override
@@ -172,9 +172,8 @@ public class ToolAssemblyService {
     }
 
     /** 档位解析（装配判据与执行守卫的唯一入口）。 */
-    public ExecutionPolicy resolvePermissionPolicy(Agent agent, boolean guestMode,
-                                                   BiConsumer<String, String> onClamp) {
-        return resolvePermissionPolicy(agent, null, guestMode, onClamp);
+    public ExecutionPolicy resolvePermissionPolicy(Agent agent, boolean guestMode) {
+        return resolvePermissionPolicy(agent, null, guestMode);
     }
 
     /**
@@ -182,23 +181,20 @@ public class ToolAssemblyService {
      *
      * @param sessionPresetCode 会话级档位码（null/空=没选过，跟随智能体）
      */
-    public ExecutionPolicy resolvePermissionPolicy(Agent agent, String sessionPresetCode, boolean guestMode,
-                                                   BiConsumer<String, String> onClamp) {
-        return resolvePermissionPolicy(agent, sessionPresetCode, null, guestMode, onClamp);
+    public ExecutionPolicy resolvePermissionPolicy(Agent agent, String sessionPresetCode, boolean guestMode) {
+        return resolvePermissionPolicy(agent, sessionPresetCode, null, guestMode);
     }
 
     /** 带父轮审批档位继承的版本（分支轮用）：继承值仅在智能体未显式设置时生效。 */
     public ExecutionPolicy resolvePermissionPolicy(Agent agent, String sessionPresetCode,
-                                                   String inheritedApprovalMode, boolean guestMode,
-                                                   BiConsumer<String, String> onClamp) {
+                                                   String inheritedApprovalMode, boolean guestMode) {
         return permissionPolicyResolver.resolve(
                 sessionPresetCode,
                 agent == null ? null : agent.getPermissionPreset(),
                 agent == null ? null : agent.getToolApprovalMode(),
                 inheritedApprovalMode,
                 guestMode,
-                agent == null ? null : agent.getToolDeny(),
-                onClamp);
+                agent == null ? null : agent.getToolDeny());
     }
 
     /** 族 → 智能体级三态列（null = 本族没有智能体级开关，跟随全局） */
@@ -214,7 +210,7 @@ public class ToolAssemblyService {
             case SKILL -> agent.getToolSkill();
             case SANDBOX -> null;   // 沙盒暂无智能体级列（c_ai_agent 未建 toolSandbox，见 SandboxTools 类注释）
             // 派遣助手已改由框架的 agent_spawn 驱使（登记见 WenquAgentxTools#consultSubagentTargets），
-            // 问渠侧没有这一族了。要按人/按智能体收口走平台停用名单（tool.deny 按工具名 agent_spawn）。
+            // 问渠侧没有这一族了。
             case TODO, MCP, LOCAL_BROWSER -> null;
         };
     }

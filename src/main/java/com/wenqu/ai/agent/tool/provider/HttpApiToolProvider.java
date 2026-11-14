@@ -58,7 +58,7 @@ public class HttpApiToolProvider implements ToolFamilyProvider {
         }
         Integer flag = mc.agentFlag(ToolFamily.HTTP_API);
         if (flag != null && flag != 1) return List.of();   // 智能体显式关
-        if (flag == null && !mc.gateOn("httpTool.enabled")) return List.of();   // 跟随全局闸
+        // 没有独立全局开关（httpTool.enabled 已退役），只受「工具调用」总闸（masterOn）制约
 
         HttpToolService.Mount mount;
         try {

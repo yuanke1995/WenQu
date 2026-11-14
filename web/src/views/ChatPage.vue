@@ -1257,9 +1257,9 @@
             <template #overlay>
               <a-menu class="perm-menu" :selected-keys="[effectivePermission]"
                       @click="({ key }) => pickPermission(key)">
-                <a-menu-item v-for="p in permissionPresets" :key="p.code" :disabled="p.available === false">
+                <a-menu-item v-for="p in permissionPresets" :key="p.code">
                   <div class="perm-mi-t">{{ p.label }}</div>
-                  <div class="perm-mi-d">{{ p.available === false ? p.unavailableReason : p.summary }}</div>
+                  <div class="perm-mi-d">{{ p.summary }}</div>
                 </a-menu-item>
               </a-menu>
             </template>

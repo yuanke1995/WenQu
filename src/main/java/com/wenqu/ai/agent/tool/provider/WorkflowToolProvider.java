@@ -56,8 +56,7 @@ public class WorkflowToolProvider implements ToolFamilyProvider {
             return List.of();   // 分支轮不挂（见类注释第 2 条）
         }
         Integer flag = mc.agentFlag(ToolFamily.WORKFLOW);
-        if (flag != null && flag != 1) return List.of();   // 智能体显式关
-        if (flag == null && !mc.gateOn("workflowTool.enabled")) return List.of();   // 跟随全局闸
+        if (flag != null && flag != 1) return List.of();   // 智能体显式关（全局开关已退役：不显式关即挂）
 
         WorkflowToolService.Mount mount;
         try {

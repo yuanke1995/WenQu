@@ -6,7 +6,6 @@ import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.mapper.AgentMapper;
 import com.wenqu.ai.model.Agent;
 import com.wenqu.ai.service.ConfigCryptoService;
-import com.wenqu.ai.service.ConfigService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.model.ToolContext;
@@ -35,7 +34,6 @@ import java.util.Set;
 public class HttpToolService {
 
     private final AgentMapper agentMapper;
-    private final ConfigService configService;
     private final ConfigCryptoService cryptoService;
 
     /** 每轮装配产物：{@code problem} 非空 = 配置坏了，provider 据此走轮内可见降级 */
@@ -55,14 +53,13 @@ public class HttpToolService {
             return new Mount(List.of(), "智能体的 HTTP 工具集配置解析失败，本轮未挂载（请重新编辑保存一次）");
         }
         if (sets.isEmpty()) return new Mount(List.of(), null);
-        boolean allowPrivate = configService.getBoolean("httpTool.allowPrivateNetwork", true);
         int fallbackTimeout = ConfigDefaults.HTTP_TOOL_TIMEOUT_MS;
         List<ToolCallback> out = new ArrayList<>();
         for (HttpToolModels.HttpToolset set : sets) {
             if (set.getEnabled() != null && !set.getEnabled()) continue;
             HttpToolExecutor.AuthSpec auth = resolveAuth(set);
             for (HttpToolModels.HttpOp op : set.getOps()) {
-                out.add(new HttpApiToolCallback(set, op, auth, allowPrivate, fallbackTimeout));
+                out.add(new HttpApiToolCallback(set, op, auth, fallbackTimeout));
             }
         }
         return new Mount(List.copyOf(out), null);
@@ -131,15 +128,13 @@ public class HttpToolService {
         private final HttpToolModels.HttpToolset set;
         private final HttpToolModels.HttpOp op;
         private final HttpToolExecutor.AuthSpec auth;
-        private final boolean allowPrivate;
         private final int fallbackTimeout;
 
         HttpApiToolCallback(HttpToolModels.HttpToolset set, HttpToolModels.HttpOp op,
-                            HttpToolExecutor.AuthSpec auth, boolean allowPrivate, int fallbackTimeout) {
+                            HttpToolExecutor.AuthSpec auth, int fallbackTimeout) {
             this.set = set;
             this.op = op;
             this.auth = auth;
-            this.allowPrivate = allowPrivate;
             this.fallbackTimeout = fallbackTimeout;
         }
 
@@ -166,7 +161,7 @@ public class HttpToolService {
                 throw new HttpToolExecutor.HttpToolException("工具参数不是合法 JSON：" + e.getMessage());
             }
             long begin = System.currentTimeMillis();
-            HttpToolExecutor.Result r = HttpToolExecutor.execute(set, op, args, auth, allowPrivate);
+            HttpToolExecutor.Result r = HttpToolExecutor.execute(set, op, args, auth);
             long cost = System.currentTimeMillis() - begin;
             log.info("[HTTP-TOOL] 工具集={} 操作={} 状态={} 耗时={}ms", set.getName(), op.getName(), r.status(), cost);
             String body = r.body() == null || r.body().isBlank() ? "（无响应体）" : r.body();

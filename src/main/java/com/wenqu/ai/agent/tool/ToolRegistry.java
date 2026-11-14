@@ -12,7 +12,6 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.function.Predicate;
 
 /**
  * 工具注册中心：所有族声明的 {@link ToolDescriptor} 在这里汇总成一份，供挂载决策、审批判定、
@@ -165,9 +164,9 @@ public class ToolRegistry {
      * clientInfo 名（可以是 context7、可以是任意串），靠命名规律去认「这是外部工具」迟早漏——
      * 漏一次的结果是有副作用的工具跳过审批，这比多问用户一次严重得多。
      */
-    public boolean requiresApproval(String name, Predicate<String> configOn) {
+    public boolean requiresApproval(String name) {
         ToolDescriptor d = byName.get(name);
-        return d == null || d.requiresApproval(configOn);
+        return d == null || d.requiresApproval();
     }
 
     public List<ToolDescriptor> all() {

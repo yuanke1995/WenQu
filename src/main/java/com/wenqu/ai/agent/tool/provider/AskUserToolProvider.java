@@ -50,7 +50,7 @@ public class AskUserToolProvider implements ToolFamilyProvider {
     private static ToolDescriptor desc(String name, String label, String cardLabel, String cardHint,
                                        boolean viewerRequired) {
         return new ToolDescriptor(name, ToolFamily.ASK_USER, label, cardLabel, cardHint,
-                SideEffect.PURE, null, true, false, null, viewerRequired);
+                SideEffect.PURE, null, true, false, viewerRequired);
     }
 
     /**

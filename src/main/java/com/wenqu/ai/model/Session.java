@@ -100,7 +100,7 @@ public class Session {
      * 是两种活，按智能体级配置一刀切会让用户每换一种活就去改智能体（还会影响别的会话）。
      * 会话级覆盖是 DSH 的形状：permission/preset 是会话事件，选择器就在输入框旁边。
      *
-     * <p>NULL=没在这个会话里选过 → 跟随智能体档位；仍受平台上限 {@code agent.permissionPreset.max} 钳制，
+     * <p>NULL=没在这个会话里选过 → 跟随智能体档位；
      * 游客会话无论选什么都按只读档执行（见 {@code PermissionPolicyResolver}）。
      */
     private String permissionPreset;

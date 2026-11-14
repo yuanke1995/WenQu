@@ -2,7 +2,6 @@ package com.wenqu.ai.service.httptool;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.InetAddress;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -25,8 +24,6 @@ import java.util.Map;
  * <p>
  * URL 组装的安全属性：{@code baseUrl} 来自智能体配置（固定值），操作路径来自导入时解析的规格——
  * 模型只能填参数，<b>不能改写目标主机</b>（这是本工具与「给模型一把任意 HTTP 客户端」的本质区别）。
- * {@code allowPrivateNetwork=false} 时连接前解析目标主机 IP，环回/私网/link-local 一律拒绝
- * （公网多租户部署防借智能体探测内网；自宿主场景默认放行，宿主 API 常在内网）。
  *
  * @author yuanke
  */
@@ -60,11 +57,9 @@ public final class HttpToolExecutor {
      * @param args 模型给的入参（键=inputSchema 属性名；body 键固定为 "body"）
      */
     public static Result execute(HttpToolModels.HttpToolset set, HttpToolModels.HttpOp op,
-                                 Map<String, Object> args, AuthSpec auth,
-                                 boolean allowPrivateNetwork) {
+                                 Map<String, Object> args, AuthSpec auth) {
         Map<String, Object> a = args == null ? Map.of() : args;
         String url = buildUrl(set.getBaseUrl(), op.getPath(), op.getParams(), a);
-        if (!allowPrivateNetwork) assertPublicHost(url);
         HttpRequest.Builder b;
         try {
             b = HttpRequest.newBuilder().uri(URI.create(url));
@@ -159,30 +154,6 @@ public final class HttpToolExecutor {
             return total >= cap ? s + "\n…（响应超过 " + (cap / 1024) + "KB 已截断）" : s;
         } catch (IOException e) {
             throw new HttpToolException("读取响应失败：" + rootMessage(e));
-        }
-    }
-
-    /** 私网防护：解析目标主机全部 IP，任一命中环回/私网/link-local/通配即拒 */
-    private static void assertPublicHost(String url) {
-        String host;
-        try {
-            host = URI.create(url).getHost();
-        } catch (IllegalArgumentException e) {
-            throw new HttpToolException("接口地址不合法：" + url);
-        }
-        if (host == null || host.isBlank()) {
-            throw new HttpToolException("接口地址缺主机名：" + url);
-        }
-        try {
-            for (InetAddress addr : InetAddress.getAllByName(host)) {
-                if (addr.isLoopbackAddress() || addr.isLinkLocalAddress() || addr.isAnyLocalAddress()
-                        || addr.isSiteLocalAddress()) {
-                    throw new HttpToolException("目标地址是内网/本机地址（httpTool.allowPrivateNetwork 已关闭）："
-                            + host);
-                }
-            }
-        } catch (java.net.UnknownHostException e) {
-            throw new HttpToolException("无法解析主机：" + host);
         }
     }
 
