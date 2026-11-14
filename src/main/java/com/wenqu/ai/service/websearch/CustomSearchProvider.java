@@ -3,6 +3,7 @@ package com.wenqu.ai.service.websearch;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
+import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.service.ConfigService;
 import org.springframework.stereotype.Component;
 
@@ -74,7 +75,12 @@ public class CustomSearchProvider implements WebSearchProvider {
                         + "（如 {\"search_query\":\"{{query}}\",\"count\":{{count}}}，示例见该字段的提示）", true);
             }
             String url = render(base, req, model, Escape.NONE);
-            resp = SearchHttp.post(url, headers, render(tmpl, req, model, Escape.JSON), req.timeoutMs());
+            String body = render(tmpl, req, model, Escape.JSON);
+            if (!JSON.isValid(body)) {
+                throw new WebSearchException("自定义搜索请求体模板渲染后不是合法 JSON：请检查 {{query}}/{{model}} "
+                        + "是否落在字符串引号内、模板是否有多余逗号（渲染结果开头：" + head(body) + "）", true);
+            }
+            resp = SearchHttp.post(url, headers, body, req.timeoutMs());
         } else {
             if (!base.contains("{{query}}")) {
                 throw new WebSearchException("自定义搜索服务 GET 模式的服务地址须含 {{query}} 占位符"
@@ -83,22 +89,23 @@ public class CustomSearchProvider implements WebSearchProvider {
             resp = SearchHttp.get(render(base, req, model, Escape.URL), headers, req.timeoutMs());
         }
 
+        String resultsPath = cfg("webSearch.customResultsPath", ConfigDefaults.WEB_SEARCH_CUSTOM_RESULTS_PATH);
         JSONObject obj = JSON.parseObject(resp);
-        JSONArray arr = obj == null ? null : pickArray(obj, cfg("webSearch.customResultsPath"));
+        JSONArray arr = obj == null ? null : pickArray(obj, resultsPath);
         if (arr == null) {
             throw new WebSearchException("自定义搜索服务响应缺少结果数组（webSearch.customResultsPath="
-                    + cfg("webSearch.customResultsPath") + " 取不到，响应开头：" + head(resp) + "）");
+                    + resultsPath + " 取不到，响应开头：" + head(resp) + "）");
         }
         List<WebSearchResult> out = new ArrayList<>();
         for (int i = 0; i < arr.size() && out.size() < req.maxResults(); i++) {
             JSONObject it = arr.getJSONObject(i);
             if (it == null) continue;
-            String u = pickString(it, cfg("webSearch.customUrlPath"));
+            String u = pickString(it, cfg("webSearch.customUrlPath", ConfigDefaults.WEB_SEARCH_CUSTOM_URL_PATH));
             if (u == null || u.isBlank()) continue;
             out.add(new WebSearchResult(
-                    pickString(it, cfg("webSearch.customTitlePath")),
+                    pickString(it, cfg("webSearch.customTitlePath", ConfigDefaults.WEB_SEARCH_CUSTOM_TITLE_PATH)),
                     u.trim(),
-                    pickString(it, cfg("webSearch.customSnippetPath")),
+                    pickString(it, cfg("webSearch.customSnippetPath", ConfigDefaults.WEB_SEARCH_CUSTOM_SNIPPET_PATH)),
                     null,
                     pickString(it, cfg("webSearch.customPublishedPath")),
                     null,
@@ -110,17 +117,25 @@ public class CustomSearchProvider implements WebSearchProvider {
     /** query 占位符的转义口径：JSON 请求体转义引号反斜杠、GET URL 做 URL 编码、URL 模板外原样 */
     private enum Escape { NONE, JSON, URL }
 
-    /** 模板渲染：{{query}} / {{count}} / {{model}} 占位符替换，query 按 {@link Escape} 转义 */
+    /** 模板渲染：{{query}} / {{count}} / {{model}} 占位符替换，query 与 model 都按 {@link Escape} 转义 */
     private static String render(String tmpl, WebSearchRequest req, String model, Escape esc) {
         String q = req.query() == null ? "" : req.query();
-        q = switch (esc) {
-            case JSON -> q.replace("\\", "\\\\").replace("\"", "\\\"");
-            case URL -> java.net.URLEncoder.encode(q, java.nio.charset.StandardCharsets.UTF_8);
-            case NONE -> q;
-        };
+        String m = model == null ? "" : model.trim();
+        q = escape(q, esc);
+        m = escape(m, esc);
         return tmpl.replace("{{query}}", q)
                 .replace("{{count}}", String.valueOf(req.maxResults()))
-                .replace("{{model}}", model == null ? "" : model.trim());
+                .replace("{{model}}", m);
+    }
+
+    /** JSON 转义要连带控制字符（query 里的换行/制表符不转义会直接破坏请求体）；URL 场景整体编码 */
+    private static String escape(String s, Escape esc) {
+        return switch (esc) {
+            case JSON -> s.replace("\\", "\\\\").replace("\"", "\\\"")
+                    .replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t");
+            case URL -> java.net.URLEncoder.encode(s, java.nio.charset.StandardCharsets.UTF_8);
+            case NONE -> s;
+        };
     }
 
     /** 点路径取值：逐段下钻 JSONObject，取不到返回 null（路径段不允许跨数组，结果数组本身由 pickArray 负责） */
@@ -145,8 +160,17 @@ public class CustomSearchProvider implements WebSearchProvider {
     }
 
     private String cfg(String key) {
+        return cfg(key, "");
+    }
+
+    /**
+     * personalOnly 键没有全局层：本人没填时 {@code ConfigService.get} 返回空串，
+     * schema 的 def 只用于个人设置页占位展示。运行时的内置默认值必须由代码常量承担，
+     * 否则界面写着「默认（results）」而实际取不到任何结果。
+     */
+    private String cfg(String key, String fallback) {
         String v = configService.get(key);
-        return v == null ? "" : v.trim();
+        return (v == null || v.isBlank()) ? fallback : v.trim();
     }
 
     /** 报错时带响应开头，便于对着厂商文档排查（截 120 字符） */

@@ -171,7 +171,7 @@ export AI_VAPID_PRIVATE_KEY=              # VAPID 私钥；多副本必须同一
 export AI_VAPID_SUBJECT=mailto:admin@wenqu.local  # 推送服务要求的联系标识
 ```
 
-> **行为参数与模型配置不走环境变量**：检索 / 解析 / 上下文 / 工具 / 联网搜索 / HTTP 工具 / 工作流工具 / 智能体回调与记忆 / 沙盒 / 记忆 / 定时任务 / 通知外发 / 限流等 **90 项**行为参数统一在**系统设置页**维护（其中 1 项个人专属项——知识块填充上限——在**个人设置 → 问答偏好**维护；另有 50 个隐藏/部署项在 `defaults()` 登记，不进设置页）（`config-schema.json` → `c_ai_config`，保存即生效）；聊天 / 视觉 / 向量 / 重排 / OCR 等模型走**模型供应商**登记 + 引用绑定（API Key RSA 加密入库，**无全局兜底**——聊天模型缺失或引用无效会 fail-loud 引导选择）。`application.yml` 不存任何模型网关与密钥。Web Push 的 VAPID 私钥只从环境变量读取；SMTP 口令走设置页（RSA 加密入库、不回显明文）。
+> **行为参数与模型配置不走环境变量**：检索 / 解析 / 上下文 / 工具 / 联网搜索 / HTTP 工具 / 工作流工具 / 智能体回调与记忆 / 沙盒 / 记忆 / 定时任务 / 通知外发 / 限流等 **79 项**行为参数统一在**系统设置页**维护，另有 **11 项个人专属项**（知识块填充上限 + 联网搜索整套：`provider`/`apiKey`/`model`/`custom*`，无全局槽位）在**个人设置**维护；另有 50 个隐藏/部署项在 `defaults()` 登记，不进设置页（`config-schema.json` → `c_ai_config`，保存即生效）；聊天 / 视觉 / 向量 / 重排 / OCR 等模型走**模型供应商**登记 + 引用绑定（API Key RSA 加密入库，**无全局兜底**——聊天模型缺失或引用无效会 fail-loud 引导选择）。`application.yml` 不存任何模型网关与密钥。Web Push 的 VAPID 私钥只从环境变量读取；SMTP 口令走设置页（RSA 加密入库、不回显明文）。
 
 **本机执行器（工作区文件）**：工作区的文件在用户电脑上，需要在**那台电脑**上跑执行器：
 ```bash
@@ -302,7 +302,7 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 - **资料收敛**：交回的资料按**本轮问题**再过一道相关度门与引用配额，未通过的条数如实告知模型；免登录分享页与被委派的助手本身不再向外委派
 - **公开发布**：智能体卡片可发布为 `/s/{token}` 免登录对话与 iframe 嵌入，游客侧可选开放对话模型、允许发图与上传附件；可另开 MCP 端点，停用或撤销立即失效。分享链接有**游客额度闸**：每条分享每日轮次上限、每访客每日轮次上限与每日 token 上限（跨副本 Redis 计数，默认 200 轮 / 20 轮 / 200 万 token），超限返回 429；Redis 不可用时 fail-closed
 - **定时执行**：按 cron（5 段 + 时区）或固定间隔自动执行，结果落进该任务的专属会话；调度中心先推进 `next_run_at` 再执行（单实例防重复），同任务串行防重叠，支持立即执行与执行记录
-- **工具执行确认**：沙盒与 MCP 类有副作用工具可设执行前确认（批准 / 拒绝 / 超时按拒绝）或禁用；联网搜索默认自动执行，管理员可将其纳入审批
+- **工具执行确认**：沙盒与 MCP 类有副作用工具可设执行前确认（批准 / 拒绝 / 超时按拒绝）或禁用；联网搜索不纳入执行前确认，开启后直接执行
 
 ### 工具生态与沙盒执行
 
@@ -314,7 +314,7 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 - **沙盒隔离执行**：模型在隔离 Linux 容器内使用命令执行、读文件、写文件、编辑文件、列目录、检索内容、按模式查找文件与交付产物（后两类由框架原生工具承担，界面统一给中文名），命令输出实时流式回传；作用域挂在会话上，同会话文件跨轮保留，空闲默认 60 分钟回收容器
 - **沙盒脚本**：开启后模型可写一段 Python 或 JavaScript 在沙盒中批量执行本轮已挂载的同类调用（如逐份文档汇总），只把打印结果带回对话；脚本内调用走同一套管控与配额，不是旁路，停止本轮时运行凭据当场作废
 - **权限档位**：仅可查看（只留读文件与列目录，命令执行与写入不进入工具表，外部工具逐项确认）、工作区内修改（可执行命令、在工作区目录内读写，越界写入被拒）、完全权限（不收束路径、不逐项确认；会话选择时需二次确认并标红）。智能体未选档时按平台默认档 standard 执行；每个会话还可以在输入框左侧单独覆盖（DSH 的会话级 permission/preset）
-- **联网搜索**：服务商 Tavily / 博查 / 自建 SearXNG；结果与知识库来源共用 `[N]` 编号进引用体系，并按本轮问题重排过相关度门，低于阈值的不列为引用、不交给模型；重排不可用时明确提示本轮结果未经相关性过滤；单轮调用次数配额可配
+- **联网搜索**：服务商 Tavily / 博查 / 自建 SearXNG；结果与知识库来源共用 `[N]` 编号进引用体系，并按本轮问题重排过相关度门，低于阈值的不列为引用、不交给模型；未绑定重排模型的轮次按关键词下限保守过滤（设计内口径），已绑定但服务不可用时同样兜底并明确提示本轮未做语义筛选；单轮调用次数配额可配
 - **文件与产物**：对话右栏「沙盒文件」卡按目录树列出该会话沙盒目录，可打开、下载或存为产物；「我的产物」页（`/artifacts`）汇总助手主动交付的文件，支持预览、下载（签名 URL）、移动到其他工作区与删除；交付文件按扩展名白名单净化，单份 ≤1MB
 
 ### 技能与市场
@@ -519,7 +519,7 @@ docker compose up -d          # 自包含：redis-stack + meilisearch + 内置 M
 | `GET /api/ai/quota`、`POST /quota`、`DELETE /quota/{id}`、`GET /stats/quota` | 推理配额：规则清单（含本周期用量与进度）/ 新建或覆盖 / 删除 / 成员自查 |
 | `GET /api/ai/stats/usage`、`/stats/cost` | 个人使用统计聚合（统计卡 / 热力图 / 每日趋势 / 模型用量 / 用途分项）/ 费用口径（区间费用、按用户与按模型、未计价 tokens） |
 | `GET /api/ai/trace/list`、`/chat/{id}`、`/workflow/{runId}`、`/pool`、`/stats`、`POST /trace/pool/{id}/label\|dismiss`、`/sample/run` | 执行 Trace：列表与详情 / 采样池 / 采样统计 / 标注回流 / 忽略 / 立即采样 |
-| `GET /api/ai/user/list`、`/user/page`、`/preference`、`/settings`、`POST /user`、`PUT /user/{uid}`、`/{uid}/password`、`/preference`、`/profile`、`/email`、`/settings`、`DELETE /{uid}`、`/{uid}/oidc-binding` | 成员列表 / 成员分页（关键字·部门·状态库侧过滤，供万级名单的「会话治理」用）/ 个人偏好（默认模型、记忆开关）读取与保存 / 个人配置覆盖通道（当前无 personal 字段，端点保留）/ 新建用户 / 编辑成员与重置密码 / 保存资料与头像 / 设置本人通知邮箱 / 删除 / 解绑单点登录 |
+| `GET /api/ai/user/list`、`/user/page`、`/preference`、`/settings`、`POST /user`、`PUT /user/{uid}`、`/{uid}/password`、`/preference`、`/profile`、`/email`、`/settings`、`DELETE /{uid}`、`/{uid}/oidc-binding` | 成员列表 / 成员分页（关键字·部门·状态库侧过滤，供万级名单的「会话治理」用）/ 个人偏好（默认模型、记忆开关）读取与保存 / 个人配置覆盖通道（schema 标记 personal 的 12 个字段，含 11 项个人专属）/ 新建用户 / 编辑成员与重置密码 / 保存资料与头像 / 设置本人通知邮箱 / 删除 / 解绑单点登录 |
 | `GET /api/ai/role/list`、`/options`、`/{code}/permissions`、`POST /role`、`PUT /{code}`、`/{code}/permissions`、`DELETE /{code}` | 角色管理与统一权限读写（权限 = 菜单 + 名下接口，单棵树勾选） |
 | `GET /api/ai/menu/list`、`/my-layout`、`POST /menu`、`PUT /{id}`、`/my-layout`、`DELETE /{id}` | 菜单维护与个人侧栏布局（顺序、显隐）读写 |
 | `GET /api/ai/department/list`、`POST /department`、`PUT /{id}`、`DELETE /{id}` | 部门树维护 |
@@ -616,9 +616,9 @@ spring:
 
 > **模型配置无兜底**：`spring.ai.openai.*` 不配置；聊天 / 视觉 / 向量 / 重排 / OCR 模型引用解析不出时显式报错并引导到可修改的位置，不静默回落任何全局默认。记忆提炼复用本轮会话模型，不单独配置引用。
 
-### 系统设置（90 项行为参数）
+### 系统设置（79 项行为参数 + 11 项个人专属）
 
-设置项 schema 唯一定义源是 `src/main/resources/config-schema.json`：后端据此校验并下发前端渲染设置页，缺失即启动失败。字段按**层级**标注（必需 1 项 / 调优 22 项 / 工程参数 55 项；其中 1 项为个人专属项，不下发管理端设置页、在**个人设置 → 问答偏好**维护），设置页默认全部铺开（工程参数可在面板头整体收起）；另有 50 项内部键只从 `ConfigService.defaults()` 读取、不进设置页（如 `chat.resumeEnabled`、`ratelimit.chatPerMinute`、`sandbox.provisionerUrl`、`share.guestDailyTurns`、`webpush.enabled` 等）。
+设置项 schema 唯一定义源是 `src/main/resources/config-schema.json`：后端据此校验并下发前端渲染设置页，缺失即启动失败。共 90 个字段，按**层级**标注（必需 1 项 / 调优 29 项 / 工程参数 60 项）；其中 11 项 `personalOnly`（知识块填充上限 + 联网搜索整套）不下发管理端设置页、只在**个人设置**维护，管理端可见 79 项。设置页默认全部铺开（工程参数可在面板头整体收起）；另有 50 项内部键只从 `ConfigService.defaults()` 读取、不进设置页（如 `chat.resumeEnabled`、`ratelimit.chatPerMinute`、`sandbox.provisionerUrl`、`share.guestDailyTurns`、`webpush.enabled` 等）。
 
 **归属分层**：
 
@@ -630,18 +630,18 @@ spring:
 
 **敏感项按后缀判定**（`.apiKey` / `.clientSecret` / `.token` / `*Password`）：RSA 加密入库、页面不回显明文（编辑时输入框留空即沿用已存值）、「恢复默认」跳过敏感项。多副本部署时动态配置经 Redis pub/sub 广播即时生效，另有 5 分钟兜底轮询。
 
-按前缀列主要项（括号内为默认值）：
+按前缀列主要项（括号内为出厂默认值）。**唯一真源是 `config-schema.json` 的 `def` 与 `ConfigService.defaults()`**；本表是概览，已退役键不再列出，遇到不一致以真源为准：
 
 | 前缀 | 主要键（默认值） | 生效方式 |
 |------|------------------|----------|
-| `chat.*` | `sseTimeoutMs`(300000)、`approvalTimeoutMs`(120000)、`askTimeoutMs`(600000)、`planTimeoutMs`(600000)、`modelStallTimeoutMs`(60000)、`maxImagesPerMessage`(9)、`maxImageMb`(10)、`uploadRetentionHours`(24)、`uploadCleanupIntervalMs`(1h)、`retrievalDebugEnabled`(true) | 聊天模型走「会话选择 > 个人默认」；行为项保存即生效。「超时与等待」提供**耐心档位**（标准 / 长任务 / 无人值守）一次写齐四个超时，也可逐项微调；`modelStallTimeoutMs` 管的是一次模型调用**停住不动**多久判这条流已断（还在出字就不算，长回答不受约束），故不随档位调整；回答温度、断线重连、流水线线程数为内部键 |
+| `chat.*` | `sseTimeoutMs`(0=不限制)、`approvalTimeoutMs`(600000)、`askTimeoutMs`(3600000)、`planTimeoutMs`(3600000)、`modelStallTimeoutMs`(0=不限制)、`maxImagesPerMessage`(9)、`maxImageMb`(10)、`uploadRetentionHours`(24)、`uploadCleanupIntervalMs`(1h)、`retrievalDebugEnabled`(true) | 聊天模型走「会话选择 > 个人默认」；行为项保存即生效。「超时与等待」提供**耐心档位**（标准 / 长任务 / 无人值守）一次写齐四个超时，也可逐项微调；`modelStallTimeoutMs` 管的是一次模型调用**停住不动**多久判这条流已断（还在出字就不算，长回答不受约束），故不随档位调整；回答温度、断线重连、流水线线程数为内部键 |
 | `memory.*` | `flushThrottleMinutes`(10，0=每轮)、`maxMdTokens`(3000) | 长期记忆的提炼节拍与预算；是否自动提炼由个人设置在个人维度控制；合并时给模型的目标预算按上限的 2/3 推导，写入落盘再按上限强制裁剪；日账保留期沿用框架默认 90 天 |
 | `retrieval.*` / `graphrag.expandTopK` | `keyword.engine`(meilisearch)、`keyword.baseUrl`、`keyword.apiKey`(敏感)；其余检索参数（双路权重、召回量、阈值门槛、低分保底）与图谱扩展规模已下沉**知识库检索设置**逐库生效（`aclTopKSupplant` 为内部键） | 设置页只剩关键词引擎连接；同一组检索参数也可在知识库编辑里逐库覆盖 |
 | `rerank.*` | `timeoutMillis`(5000 生效超时)、`failCooldownMs`(60000 失败冷却) 为内部键 | 重排平台层已退役：重排模型与窗口归知识库检索设置（选了才重排，多库按命中收敛）；`rerank.enabled` 仅剩智能体级「强制关」；未绑模型按融合分排序并提示，不阻塞问答 |
 | `keyword.*` | `engine`(mysql)、`baseUrl`、`apiKey` | 保存即生效；切换引擎需全量重建一次索引；索引对账为内置周期任务（1h），无开关 |
 | `context.*` | —（`maxContextHits` 已下放个人设置 → 问答偏好，默认 8；`maxBlocksPerDoc`(3)、`maxBlocksPerKb`(4) 为平台常量） | 历史压缩由框架按模型窗口触发，无独立开关 |
 | `chunk.*` / `parse.*` / `upload.*` | 分块、问答对与解析参数已全部下沉**知识库解析设置**（新建库按默认模板预填，逐库可改）；平台层只剩 `parse.qaConcurrency`(2) 管问答对生成并发；解析队列与上传参数（`concurrency`(3)、`queue.capacity`(500)、`taskTimeoutMs`(20min)、`upload.maxFileSizeMB`(200) 等）照旧 | 解析参数只影响之后的解析（**需重解析或新上传才生效**） |
-| `vision.*` | `prompt`、`concurrency`(2)、`userImageConcurrency`(2)、`timeoutMillis`(30000)、`retryCount`(1)、`descCacheVersion`("1")、`descCacheTtlDays`(180) | 保存即生效（`timeoutMillis` 需重启）；视觉模型按知识库绑定，无全局键；未绑定模型的知识库解析时跳过图片描述 |
+| `vision.*` | `concurrency`(2)、`userImageConcurrency`(2)、`timeoutMillis`(30000)、`retryCount`(1)、`descCacheVersion`("1")、`descCacheTtlDays`(180) | 保存即生效（`timeoutMillis` 需重启）；`vision.prompt` 已退役，描述提示词固化为平台常量；视觉模型按知识库绑定，无全局键；未绑定模型的知识库解析时跳过图片描述 |
 | `images.*` | `maxWidth`(1280)、`quality`(0.9)、`authExpireSeconds`(3600)、`chatCleanupIntervalMs`(1d)、`chatRetentionMillis`(7d) | 保存即生效 |
 | `tool.*` | `enabled`(true)、`knowledgeRetrieval.maxHits`(5)、`sandbox.enabled`(false)、`runcode.enabled`(false)、`runcode.maxSubCalls`(50)、`maxParallel`(8)、`timeoutSeconds`(120)、`subCallTimeoutMs`(60000)、`spillCleanupIntervalMs`(1h)、`spillMaxMbPerUser`(200) | 保存即生效。知识检索 / 产物交付 / 内置 / 联网搜索 / 任务清单随总闸启用，由智能体三态限定；工具大输出超上限时整份留存供读回，按人配额 |
 | `agent.*` | `maxToolSteps`(15，0=不限制)、`consultMaxPerTurn`(3)、`consultTimeoutMs`(300000)、`versionKeep`(20) | 保存即生效；权限档位取值 research / standard / autonomous（未选档按 standard） |
@@ -651,10 +651,10 @@ spring:
 | `notify.mail.*` | `enabled`(false)、`host`、`port`(587)、`security`(starttls)、`username`、`smtpPassword`(敏感)、`from`、`fromName`(问渠)、`types`(审批 / 提问 / 计划 / 工作流 / 租户申请 / 额度)、`minIntervalMs`(5min 聚合窗口)、`retryDelaysSeconds`(60,300,900)、`webBaseUrl` | 保存即生效；口令 RSA 加密；总闸关闭时全站零外发，站内通知与 Web Push 不受影响 |
 | `ops.*` | `checkupIntervalMs`、`checkupRetentionDays`、`checkupAlertEnabled` | 系统巡检节拍、报告保留期与失败告警；手动巡检不受间隔限制 |
 | `share.guest*`（内部键） | `share.guestDailyTurns`(200)、`share.guestDailyTurnsPerVisitor`(20)、`share.guestDailyTokens`(200 万) | 分享链接的游客轮次与 token 日额度，跨副本 Redis 计数；0=关闭该层 |
-| `webSearch.*` | `enabled`(false)、`provider`(tavily)、`apiKey`(敏感)、`maxResults`(5)、`maxCallsPerTurn`(2)、`baseUrl`、`timeoutMs`(8000)、`snippetChars`(600) | 服务商 tavily / bocha / generic（自建 SearXNG）；保存即生效 |
+| `webSearch.*` | `enabled`(false)、`maxCallsPerTurn`(0=不限)；`provider`(generic)/`apiKey`/`model`/`custom*` 等 11 项是**个人专属**，只在个人设置维护 | 服务商 generic（平台内置 SearXNG，免费兜底）/ tavily / bocha / custom；平台全局 `baseUrl` 只供 generic 使用，个人显式覆盖的服务地址对所有服务商生效且必须指向公网；个人设置失焦即存，探测按钮按已存值真打一次 |
 | `skill.*` | —（平台停用清单与 URL 安装域名白名单已退役：停用只留个人层，在「智能体 → 技能」自助；URL 安装不限制来源域名，服务端仍逐跳公网校验） | 正文读取上限 20000 字为平台常量；技能目录 `WENQU_SKILLS_USERS_DIR` |
 | `chat.goal.*`（深度执行调度参数，代码常量） | 自动推进轮数上限恒 20（`GoalSettings.MAX_ROUNDS`）；其余旋钮值固定在 `ConfigDefaults.GOAL_*`：`nextRoundDelayMs`(2000)、`maxCompletionChecks`(不限)、`maxVerifyFailures`(不限)、`maxRetries`(2)、`maxRecoveries`(3)、`retryBaseSeconds`(15)、`retryMaxSeconds`(120)、`softBudgetRatio`(0.8)、`claimBatch`(5)、`workers`(4)、`tickMs`(2000)、`leaseSeconds`(300)、`heartbeatStaleSeconds`(90)、`staleGraceSeconds`(90)、`verifyLocalFiles`(false)、`initialTickDelayMs`(1000) | 深度执行设置面板已整体退役（2026-11-14）：Token/时长/工具调用三项硬预算机制随设置一并下线；软阈值决定轮数预算用到几成开始在提示里要求收敛；租约与心跳参数由 `GoalScheduler` 用于多副本抢占执行权 |
-| `workflow.*` | `maxSteps`(50)、`runTimeoutSeconds`(600)、`subagentTimeoutMs`(180000)、`maxConcurrentRuns`(4)、`runQueueCapacity`(50)、`runLogRetentionDays`(30)、`runCleanupIntervalMs`(1d)、`approvalReapIntervalMs`(60s)、`scheduleScanIntervalMs`(30s) | 保存即生效；`maxConcurrentRuns` 与 `runQueueCapacity` 需重启 |
+| `workflow.*` | `maxSteps`(1000)、`runTimeoutSeconds`(600)、`subagentTimeoutMs`(180000)、`maxConcurrentRuns`(4)、`runQueueCapacity`(50)、`runLogRetentionDays`(30)、`runCleanupIntervalMs`(1d)、`approvalReapIntervalMs`(60s)、`scheduleScanIntervalMs`(30s) | 保存即生效；`maxConcurrentRuns` 与 `runQueueCapacity` 需重启 |
 | `scheduled.*` | `maxPerUser`(20)、`scanIntervalMs`(30000)、`timeoutMs`(300000) | 定时执行智能体；是否执行由每个任务自己的启用状态决定 |
 | `web.*` | `refreshScanIntervalMs`(60s) | 网页源定时刷新扫描间隔；是否刷新由文档自己的自动刷新开关决定 |
 | `graphrag.*` | `batchChunks`(3)、`maxTriplesPerChunk`(10)；`expandTopK` 已下沉知识库检索设置 | 抽取成本与图扩展规模；开关归知识库 `graph_enabled`（默认关） |
@@ -667,7 +667,7 @@ spring:
 | `mcp.*` | `server.enabled`(**false**)、`server.timeoutMs`(50000)、`server.allowedOrigins`("")、`patrolIntervalMs`(5min) | `server.allowedOrigins` 为空时仅允许本机回环（Origin 校验防 DNS rebinding）；`server.timeoutMs` 压在多数 MCP 客户端自身的 60 秒请求超时之下；`patrolIntervalMs` 为连接健康巡检间隔（0=关闭） |
 | `chat.agentscope*` / `chat.sessionLogArchive.*`（调试设置） | `agentscopeMaxIters`(12，0=不限制)、`agentscopeStateDir`(`user-data/agentscope`)、`agentscopeRedisPrefix`(`agentscope:session:`)、`sessionLogArchive.enabled`(true)、`.keepDays`(90)、`agentscopeJournalRotateEvents`(12000)、`agentscopeJournalRotateKeepDays`(30) | 框架引擎推理步数上限、状态目录与 Redis 前缀、会话事件日志归档与换代；多副本必须把状态与归档目录指向共享卷 |
 
-### 设置页导航（11 个配置面板，90 项参数）
+### 设置页导航（11 个配置面板，79 项参数）
 
 **对话模型**（6）· **检索设置**（3，关键词引擎连接；双路权重 / 召回量 / 阈值 / 保底已下沉知识库检索设置）· **工具调用**（2 页签：总开关 1 / 联网搜索 3（服务商配置已下放个人设置），底部附只读工具名册；沙盒相关设置归「沙盒」面板）· **智能体轮终回调**（1）· **接口限流**（1）· **定时任务**（36，4 页签：参数配置 / 运行状态 / 执行日志 / 索引与健康）· **通知外发（邮件）**（10）· **沙盒**（10，首节「能力开关」）· **MCP 服务（双向）**（3）· **调试设置**（5）。（深度执行面板已整体退役：四项预算旋钮下线，自动推进轮数上限恒为代码常量 20；内容安全面板已随功能整体退役）
 

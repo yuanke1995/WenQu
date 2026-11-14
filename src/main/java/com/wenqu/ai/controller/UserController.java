@@ -291,11 +291,17 @@ public class UserController {
         // 探测与运行时同一读取口径：装载本人个人覆盖后走平台 probe（provider/baseUrl/key 全部按
         // 覆盖链解析），探测完即清，不污染请求线程
         java.util.Map<String, String> ov = userConfigService.overrides(uid);
+        // 池化请求线程可能残留其它链路装载的覆盖层：与工具线程同款，先存再恢复，不能只清
+        java.util.Map<String, String> prevUser = configService.currentUserOverrides();
+        java.util.Map<String, String> prevOv = configService.currentOverrides();
         configService.putUserOverrides(ov);
         try {
             return ResultJson.ok(connectivityProbeService.probe("webSearch", null, null, null, null));
         } finally {
             configService.clearUserOverrides();
+            configService.clearOverride();
+            if (!prevOv.isEmpty()) configService.putOverrides(prevOv);
+            if (!prevUser.isEmpty()) configService.putUserOverrides(prevUser);
         }
     }
 

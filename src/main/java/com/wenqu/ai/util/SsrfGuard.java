@@ -20,6 +20,23 @@ public final class SsrfGuard {
     private SsrfGuard() {
     }
 
+    /**
+     * 校验联网搜索地址模板指向公网：地址里可能带 {@code {{query}}}/{{count}}/{{model}} 占位符
+     * （custom 服务商的 GET URL 模板），直接 {@code URI.create} 会因花括号报错，先把占位符抹掉再解析。
+     * 只用于「由用户填写的个人覆盖地址」；平台全局层配置的内置 SearXNG 是部署方自建基础设施，不走这里。
+     */
+    public static void requirePublicSearchUrl(String urlTemplate) {
+        if (urlTemplate == null || urlTemplate.isBlank()) return;
+        String cleaned = urlTemplate.replaceAll("\\{\\{[a-zA-Z]+\\}\\}", "").trim();
+        URI uri;
+        try {
+            uri = URI.create(cleaned);
+        } catch (IllegalArgumentException e) {
+            throw new BizException("联网搜索服务地址不是合法 URL：" + urlTemplate);
+        }
+        requirePublicHost(uri);
+    }
+
     /** 校验 URI 目标为公网地址，不合法抛 BizException（fail-loud） */
     public static void requirePublicHost(URI uri) {
         String scheme = uri.getScheme();

@@ -50,15 +50,6 @@ public class ChatService {
     public static final Set<String> AGENT_QUERY_PARAM_KEYS = Set.of("rerank.enabled");
 
     /**
-     * 不归智能体层的键：读取时静默忽略（存量 JSON 不报错，也不每轮刷 warn），保存时不写入。
-     * <p>阈值/权重/召回量归知识库或全局；重排模型归知识库（资源归属：谁建库谁付费）。
-     */
-    private static final Set<String> AGENT_QUERY_PARAM_MOVED = Set.of(
-            "retrieval.vectorWeight", "retrieval.keywordWeight", "retrieval.vecThreshold",
-            "retrieval.vectorTopK", "retrieval.keywordLimit",
-            "rerank.model", "rerank.baseUrl");
-
-    /**
      * 事件账本里适合带上小对象的卡片类事件：产物、提问、审批、计划、派遣路由。
      * 只在载荷不超过 1500 字时解析——大计划不整段塞进回放响应。
      */
@@ -79,12 +70,9 @@ public class ChatService {
             for (Map.Entry<String, Object> e : m.entrySet()) {
                 if (e.getKey() == null || e.getValue() == null) continue;
                 if (!AGENT_QUERY_PARAM_KEYS.contains(e.getKey())) {
-                    if (AGENT_QUERY_PARAM_MOVED.contains(e.getKey())) {
-                        // 已归知识库/全局的键：静默忽略（debug 便于排查"为什么配了没变"）
-                        log.debug("[AGENT] 检索参数已迁出智能体层，忽略: {}", e.getKey());
-                    } else {
-                        log.warn("[AGENT] 检索参数键不在白名单内，已忽略: {}", e.getKey());
-                    }
+                    // 白名单之外一律丢弃：阈值/召回量归知识库、重排模型归库主，历史 JSON 里的
+                    // 迁出键与真正的非法键同等处理，不再为存量数据保留静默放行分支
+                    log.warn("[AGENT] 检索参数键不在白名单内，已忽略: {}", e.getKey());
                     continue;
                 }
                 String v = String.valueOf(e.getValue()).trim();

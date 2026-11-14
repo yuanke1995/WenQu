@@ -143,8 +143,17 @@ public class UserConfigService {
                 throw new com.wenqu.ai.common.BizException("不支持个人设置的配置项：" + rawKey);
             }
             String v = e.getValue() == null ? "" : String.valueOf(e.getValue()).trim();
+            // 掩码回写保护：/user/settings 的敏感键只下发 ********，整表回显保存/构造请求
+            // 把掩码原样送回来会把真实 Key 覆盖成加密后的掩码（平台层 update() 同款闸门）
+            if (ConfigService.isSensitiveKey(key) && v.startsWith("****")) continue;
             String err = schema.validate(key, v);
             if (err != null) throw new com.wenqu.ai.common.BizException(err);
+            // 个人填写的服务地址是服务端出站的唯一用户可控入口：入库前就拦住内网/云元数据地址，
+            // 否则一次「测试连接」或联网搜索就会让服务端以自身网络身份打进内网（且跟随重定向能绕过首跳校验）。
+            // 平台全局层的自建 SearXNG 由部署方配置、不走这里；个人要自建请填公网可达地址或用平台内置 generic。
+            if ("webSearch.baseUrl".equals(key) && !v.isEmpty()) {
+                com.wenqu.ai.util.SsrfGuard.requirePublicSearchUrl(v);
+            }
             if (!v.isEmpty() && "model".equals(schema.type(key))) {
                 validateModelRef(key, v, uid, role);
             }

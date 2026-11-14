@@ -42,6 +42,23 @@ public class WebSearchService {
     }
 
     /**
+     * 本轮实际下发给服务商的地址。
+     * <p>平台全局层那一行只服务 generic（部署方自建的免费 SearXNG 兜底），不能顺手串给
+     * tavily/bocha/custom——那会把个人付费厂商的请求连同个人 Key 发到 SearXNG 地址。
+     * 个人显式覆盖的地址才是「用户自己指定的端点」，对任何服务商都生效；它由普通用户填写，
+     * 公网校验放在 {@link com.wenqu.ai.service.UserConfigService#save} 入库前（服务端出站的
+     * 唯一用户可控入口），运行时不再重复判定，以免把部署方自建的回环端点一并挡掉。
+     */
+    public String configuredBaseUrl(String providerId) {
+        String base = configService.get("webSearch.baseUrl");
+        if (base == null || base.isBlank()) return "";
+        if (configService.layerOf("webSearch.baseUrl") == ConfigService.Layer.USER_OVERRIDE) {
+            return base;
+        }
+        return "generic".equalsIgnoreCase(providerId) ? base : "";
+    }
+
+    /**
      * 执行一次搜索。
      *
      * @param query      搜索词
@@ -83,8 +100,8 @@ public class WebSearchService {
         int cap = ConfigDefaults.WEB_SEARCH_MAX_RESULTS;
         int limit = maxResults == null ? cap : Math.max(1, Math.min(maxResults, cap));
         int timeoutMs = ConfigDefaults.WEB_SEARCH_TIMEOUT_MS;
-        String baseUrl = configService.get("webSearch.baseUrl");
-        if (baseUrl != null && baseUrl.startsWith("http://")) {
+        String baseUrl = configuredBaseUrl(provider.id());
+        if (baseUrl.startsWith("http://")) {
             log.warn("[WEB-SEARCH] 服务地址使用 http，搜索词与密钥将以明文传输：{}", baseUrl);
         }
         WebSearchRequest req = new WebSearchRequest(baseUrl, apiKey, timeoutMs, query, limit);

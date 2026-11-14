@@ -112,21 +112,13 @@ ai-app:
   chunk:
     max-size: 800
     overlap: 100
-    # 单文档解析的最大知识块数（0=不限制；防止超大文档 embedding 数万次）
-    max-chunks: 3000
     # 结构感知切分：标题/段落边界优先 + 章节标题路径注入（docx 生效，存量文档需重解析）
     structural: true
     structural-ratio: 0.8
     # 章节标题识别上限层级（1~6；调大后更深层的小节/条目标题独立成块并进章节路径，改后需重解析生效）
     heading-depth: 4
-  # 检索
-  retrieval:
-    # 混合检索融合权重（DB c_ai_config 可覆盖，设置页保存即生效）
-    vector-weight: 0.6
-    keyword-weight: 0.4
-    # 重排平台层已整体退役（2026-11-14）：重排模型与窗口归各知识库检索设置
-    # （rerank.model / rerank.minHits / rerank.maxHits，选了才重排），rerank.enabled
-    # 仅剩智能体级「强制关」。运行时调优走 DB 隐藏键 rerank.timeoutMillis / rerank.failCooldownMs。
+  # 检索/解析参数与重排模型、窗口均已下放知识库检索设置（库级 query_params），
+  # 无库归属的读点回落 ConfigDefaults 内置常量，此处不再有全局默认值槽位。
   # 关键词召回引擎（mysql=LIKE 零依赖但全表扫描；meilisearch=外部索引，中文分词+相关度打分）
   # 切到 meilisearch 后需先 POST /api/ai/search-index/reindex 建索引；服务不可用时自动降级回 mysql
   keyword:

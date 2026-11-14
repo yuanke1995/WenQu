@@ -585,6 +585,15 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
     }
 
     /**
+     * 本轮收敛出的重排模型引用：联网搜索工具跑在弹性线程上，检索工具调用结束即撤掉
+     * {@code rerank.model} 线程覆盖，只有走来源池这条通道才能与咨询/MCP 来源共用同一把尺。
+     */
+    @Override
+    public String roundRerankModel() {
+        return roundRerankModel;
+    }
+
+    /**
      * 本轮问题（工具侧相关度门的判据）：联网搜索结果按它重排后过门，与库内来源同一把尺。
      * <p>由问答侧传入的是<b>改写后的检索查询</b>（多轮指代消解的结果），与主管线判相关的口径一致；
      * 无知识库分支等没有改写查询的路径退化为原句。

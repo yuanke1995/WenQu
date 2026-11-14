@@ -800,9 +800,8 @@ public class ConfigService {
         // 服务地址（留空用服务商默认；generic 必填，如 http://127.0.0.1:8888）
         // 服务 Key（RSA 密文入库；generic 自建可留空）
         // 单轮搜索次数上限（防模型反复搜烧配额；0=不限制）
-        // 「纳入执行审批」设置项已退役（2026-11-14，原默认开）：联网是唯一会向外部第三方发请求、
-        // 可能对用户计费的能力，让模型自主决定花谁的钱不该是默认态——审批恒开、只受智能体
-        // 审批模式管辖（声明在 WebSearchToolProvider，off 档不影响联网启停）。
+        // 「纳入执行审批」设置项已退役（2026-11-14）：联网搜索不再要求执行前确认，
+        // 启停只由全局开关 + 智能体三态决定（声明在 WebSearchToolProvider）。
         // ---------- HTTP 工具（OpenAPI 导入的宿主 API 工具集；配置存智能体行 http_tools）----------
         // 无独立全局开关（httpTool.enabled / httpTool.allowPrivateNetwork 均已退役）：
         // 没有配置工具集的智能体该族天然不挂，只受「工具调用」总闸制约；内网地址一律允许调用。
@@ -1095,6 +1094,16 @@ public class ConfigService {
      */
     public String get(String key) {
         return resolveChain(key, null);
+    }
+
+    /**
+     * 一个键此刻由哪一层说话（轻量版：只跑一次优先级链，不做 {@link #resolve} 的 schema 校验）。
+     * 供出站地址的可信度判定：平台全局层由部署方配置，个人覆盖层由普通用户填写，二者不可混为一谈。
+     */
+    public Layer layerOf(String key) {
+        Layer[] box = new Layer[1];
+        resolveChain(key, box);
+        return box[0] == null ? Layer.UNREGISTERED : box[0];
     }
 
     /** 一个键此刻由哪一层说话（分层可追溯） */
@@ -1513,13 +1522,15 @@ public class ConfigService {
         Map<String, String> defs = defaults();
         Set<String> groups = new LinkedHashSet<>();
         for (String k : defs.keySet()) {
+            // 个人专属键没有全局槽位：回显出来只会得到 editable=true 的空槽位，而保存必被 update() 拒绝
+            if (schema.isPersonalOnly(k)) continue;
             int dot = k.indexOf('.');
             if (dot > 0) groups.add(k.substring(0, dot));
         }
         for (String g : groups) {
             Map<String, Object> items = new LinkedHashMap<>();
             for (Map.Entry<String, String> d : defs.entrySet()) {
-                if (!d.getKey().startsWith(g + ".")) continue;
+                if (!d.getKey().startsWith(g + ".") || schema.isPersonalOnly(d.getKey())) continue;
                 String shortKey = d.getKey().substring(g.length() + 1);
                 Resolution r = resolve(d.getKey());
                 String value = r.value();

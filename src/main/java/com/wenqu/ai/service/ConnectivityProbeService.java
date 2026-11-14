@@ -4,6 +4,7 @@ import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import com.wenqu.ai.service.websearch.CustomSearchProvider;
 import com.wenqu.ai.service.websearch.WebSearchRequest;
+import com.wenqu.ai.service.websearch.WebSearchService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
@@ -56,6 +57,7 @@ public class ConnectivityProbeService {
 
     private final ConfigService configService;
     private final CustomSearchProvider customSearchProvider;
+    private final WebSearchService webSearchService;
 
     /** 连接超时：探测要快速失败，避免页面长时间转圈 */
     private static final int CONNECT_TIMEOUT_MS = 2000;
@@ -300,7 +302,10 @@ public class ConnectivityProbeService {
         // 未设置与运行时同口径回落 generic（WebSearchService：个人专属键没有全局层，
         // 空值走平台内置 SearXNG）；这里若按 schema 的 def 猜 tavily，默认用户一测就报缺 Key
         if (provider.isBlank()) provider = "generic";
-        String base = value(baseUrl, "webSearch.baseUrl");
+        // 表单显式传值（管理端探测，管理员可信）优先；否则走运行时同一口径的服务商地址
+        // （平台内置地址只给 generic，个人覆盖地址出站前过公网校验），保证「测得通」=「跑得通」
+        String base = (baseUrl == null || baseUrl.isBlank())
+                ? webSearchService.configuredBaseUrl(provider) : baseUrl.trim();
         String key = secret(apiKey, "webSearch.apiKey");
 
         return switch (provider.toLowerCase()) {
@@ -329,6 +334,10 @@ public class ConnectivityProbeService {
         try {
             var results = customSearchProvider.search(
                     new WebSearchRequest(base, key, READ_TIMEOUT_MS, PROBE_QUERY, 1));
+            if (results == null || results.isEmpty()) {
+                return fail(start, "自定义搜索端点返回 0 条结果：请检查 customResultsPath 与 "
+                        + "customUrlPath 是否真能取到值（响应形状与路径配置不匹配）");
+            }
             return ok(start, "可用（HTTP 200，自定义搜索端点返回 " + results.size() + " 条结果）");
         } catch (Exception e) {
             return fail(start, cut(rootMessage(e)));

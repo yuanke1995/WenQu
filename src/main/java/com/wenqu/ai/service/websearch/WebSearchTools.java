@@ -44,15 +44,18 @@ public class WebSearchTools {
 
     /**
      * 按本轮问题重排这批结果，返回「片段 → 相关度分」；重排实际没跑成时返回空表（调用方按兜底走）。
+     * <p>模型引用必须显式传本轮收敛结果：联网工具跑在弹性线程上，检索工具调用结束时
+     * {@code rerank.model} 的线程覆盖已撤，两参 {@code rankForced} 会拿不到路由而把
+     * 「库里绑了模型」误判成「未绑定」，语义重排永远不生效。
      */
-    private Map<String, Double> rankByQuery(List<WebSearchResult> results, String gateQuery) {
+    private Map<String, Double> rankByQuery(List<WebSearchResult> results, String gateQuery, String modelRef) {
         List<HybridRetrievalService.Hit> toRank = new ArrayList<>();
         for (WebSearchResult r : results) {
             toRank.add(new HybridRetrievalService.Hit(null, "", r.title(), r.snippet(),
                     List.of(), 0d, null, null, null, null));
         }
         Map<String, Double> scoreBySnippet = new HashMap<>();
-        for (HybridRetrievalService.Hit h : rerankService.rankForced(toRank, gateQuery)) {
+        for (HybridRetrievalService.Hit h : rerankService.rankForced(toRank, gateQuery, modelRef)) {
             if (h.rerankScore() != null) scoreBySnippet.put(h.content(), h.rerankScore());
         }
         return scoreBySnippet;
@@ -131,6 +134,13 @@ public class WebSearchTools {
 
         /** 记录一条降级提示（fail-loud：让用户看见"为什么没搜成"，而不是静默无结果） */
         void degrade(String code, String message);
+
+        /**
+         * 本轮收敛出的重排模型引用（咨询/MCP/联网来源共用同一把尺）；本轮没有库绑定时返回 null。
+         * <p>联网工具在弹性线程执行，读不到检索工具调用期间短暂装载的 {@code rerank.model}
+         * 线程覆盖，必须由本轮来源池（sink）显式带过来。
+         */
+        String roundRerankModel();
     }
 
     /**
@@ -239,9 +249,10 @@ public class WebSearchTools {
         List<WebSearchResult> kept = results;
         int filtered = 0;
         boolean lowConfidence = false;
-        String unavailable = rerankService.debugUnavailableReason();
+        String roundModel = sink != null ? sink.roundRerankModel() : null;
+        String unavailable = rerankService.debugUnavailableReason(roundModel);
         Map<String, Double> scoreBySnippet = unavailable == null
-                ? rankByQuery(results, gateQuery) : Map.of();
+                ? rankByQuery(results, gateQuery, roundModel) : Map.of();
         if (!scoreBySnippet.isEmpty()) {
             double minGate = configService.getDouble("retrieval.minContextScore",
                     ConfigDefaults.RETRIEVAL_MIN_CONTEXT_SCORE);
@@ -258,7 +269,9 @@ public class WebSearchTools {
             }
             // 全灭时按与库内检索同一套策略保底 top-1（只留 1 条并显形低置信），
             // 否则一次绝对门误杀会让「其实有一条沾边」的搜索变成「没搜到」
-            if (kept.isEmpty() && RetrievalGate.top1Enabled(configService.get("retrieval.lowConfidencePolicy"))) {
+            // 检索门四键已整体下放知识库（V13），联网来源无库归属——直接按内置策略常量判定，
+            // 不再读已退役的全局槽位（缺行时 get 返回空串会把 top-1 保底静默关掉）
+            if (kept.isEmpty() && RetrievalGate.top1Enabled(ConfigDefaults.RETRIEVAL_LOW_CONFIDENCE_POLICY)) {
                 double floor = configService.getDouble("retrieval.top1Floor", ConfigDefaults.RETRIEVAL_TOP1_FLOOR);
                 WebSearchResult best = null;
                 Double bestScore = null;
@@ -279,9 +292,17 @@ public class WebSearchTools {
             // 重排没跑成（服务不可用，或这批一条都没拿到分）。此时原样发出去等于把引擎返回的
             // 首页/机场页当资料——法律这类场景「搜到垃圾」比「搜不到」更危险，所以按词面下限
             // 先剔掉明显不沾边的；下限写 0 = 退回旧行为（整批发出 + 一句没过滤）。
+            // 「本轮没绑重排模型」是设计上的正常态（选了才重排），不是故障——只有本该重排却
+            // 没跑成才报，否则每次纯联网问答都挂一条「重排不可用」，会把真正的服务故障淹没掉。
+            // 与知识库检索工具（KnowledgeRetrievalTool）的登记口径一致。
             double floor = ConfigDefaults.WEB_SEARCH_FALLBACK_MIN_OVERLAP;
-            log.warn("[WEB-SEARCH] 重排不可用（{}），本轮改用词面下限 {}",
-                    unavailable == null ? "这批结果没有返回重排分" : unavailable, floor);
+            boolean boundButFailed = roundModel != null && !roundModel.isBlank();
+            if (boundButFailed) {
+                log.warn("[WEB-SEARCH] 重排不可用（{}），本轮改用词面下限 {}",
+                        unavailable == null ? "这批结果没有返回重排分" : unavailable, floor);
+            } else {
+                log.info("[WEB-SEARCH] 本轮未绑定重排模型，按词面下限 {} 过滤（设计内口径，非故障）", floor);
+            }
             if (floor > 0) {
                 List<WebSearchResult> pass = new ArrayList<>();
                 for (WebSearchResult r : results) {
@@ -289,11 +310,11 @@ public class WebSearchTools {
                     else filtered++;
                 }
                 kept = pass;
-                if (sink != null) {
+                if (sink != null && boundButFailed) {
                     sink.degrade("webSearchLexicalOnly", "重排不可用，本轮按关键词匹配过滤（不是语义相关度），"
                             + "已滤掉 " + filtered + " 条与问题不沾边的结果");
                 }
-            } else if (sink != null) {
+            } else if (sink != null && boundButFailed) {
                 sink.degrade("webSearchUnfiltered", "重排不可用，联网搜索结果未经相关性过滤，可能包含不相关来源");
             }
         }

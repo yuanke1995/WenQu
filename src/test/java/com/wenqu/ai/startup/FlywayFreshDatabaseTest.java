@@ -41,7 +41,7 @@ class FlywayFreshDatabaseTest {
                 .load();
 
         MigrateResult first = flyway.migrate();
-        assertThat(first.migrationsExecuted).as("空库应执行 V1~V16").isEqualTo(13);
+        assertThat(first.migrationsExecuted).as("空库应执行 V1~V18（V7~V9、V17 编号空缺）").isEqualTo(14);
 
         Set<String> tables = tables();
         assertThat(tables).contains(

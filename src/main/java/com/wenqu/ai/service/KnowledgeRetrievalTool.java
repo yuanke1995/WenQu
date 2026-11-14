@@ -286,7 +286,9 @@ public class KnowledgeRetrievalTool {
         // 重排没执行 = 引用门退化到融合分门（minFusionScore，默认 0.5）：词面重叠的弱相关块更容易注册进引用面板。
         // 此前工具链路对此完全静默（主链路 rerankIfNeeded 有提示，但只在主链路有命中时才登记），
         // 用户看到一堆与问题不相关的引用却没有任何说明。这里按同一口径登记可见降级。
-        if (!rerankActive && registrar != null) {
+        // 但「本轮没绑模型」是设计上的正常态（选了才重排），不是故障——只有本该重排却没跑成才报，
+        // 否则每次检索都挂一条 warn「重排不可用」，会把真正的服务故障淹没掉。
+        if (!rerankActive && registrar != null && roundRef != null && !roundRef.isBlank()) {
             String reason = rerankService.debugUnavailableReason();
             registrar.degrade("rerankUnavailable",
                     "重排不可用（" + (reason == null ? "本轮未返回重排分" : reason)

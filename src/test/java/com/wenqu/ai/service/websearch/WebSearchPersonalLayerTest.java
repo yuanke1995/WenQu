@@ -66,6 +66,14 @@ class WebSearchPersonalLayerTest {
                 // 绕开真实 getOrDefaultParsed（其兜底链依赖未注入的 schema），按链值直接解析
                 return Boolean.parseBoolean(get(key).trim());
             }
+
+            @Override
+            public Layer layerOf(String key) {
+                // 运行时靠这一层区分「部署方配的平台内置地址」与「用户自己填的服务地址」
+                Map<String, String> ov = currentUserOverrides();
+                if (ov != null && ov.get(key) != null && !ov.get(key).isBlank()) return Layer.USER_OVERRIDE;
+                return platform.containsKey(key) ? Layer.PLATFORM_DB : Layer.CODE_DEFAULT;
+            }
         };
     }
 
@@ -185,9 +193,53 @@ class WebSearchPersonalLayerTest {
                     public int register(WebSearchResult r) { return 1; }
                     public int register(WebSearchResult r, Double s) { return 1; }
                     public void degrade(String c, String m) { }
+                    public String roundRerankModel() { return null; }
                 },
                 WebSearchTools.CTX_HOOKS, new TurnHooks(null, "u1", null, null, null, null,
                         null, Map.of(), Map.of("webSearch.provider", "bocha"), null, null, null))));
         assertThat(out).contains("个人设置").contains("bocha");
+    }
+
+    @Test
+    void webSearchRerankUsesRoundModelFromSink() {
+        // 回归：联网工具跑在弹性线程，检索调用结束时 rerank.model 线程覆盖已撤。
+        // 必须用 sink 带过来的本轮收敛模型走 3 参 rankForced；走 2 参重载会恒定拿不到路由，
+        // 库里绑了模型也报「未绑定重排模型」并退化成词面过滤。
+        platform.put("webSearch.baseUrl", base());
+        ConfigService cfg = stub();
+        AtomicReference<String> seenRef = new AtomicReference<>();
+        java.util.concurrent.atomic.AtomicBoolean usedTwoArg = new java.util.concurrent.atomic.AtomicBoolean(false);
+        com.wenqu.ai.service.RerankService fake = new com.wenqu.ai.service.RerankService(null, null) {
+            @Override
+            public String debugUnavailableReason(String modelRef) {
+                seenRef.set(modelRef);
+                return null;   // 本轮可用，让调用方真的去跑重排
+            }
+
+            @Override
+            public java.util.List<com.wenqu.ai.service.HybridRetrievalService.Hit> rankForced(
+                    java.util.List<com.wenqu.ai.service.HybridRetrievalService.Hit> candidates,
+                    String query, String modelRef) {
+                return candidates;   // 不打分的桩：只要验证走了这条重载
+            }
+
+            @Override
+            public java.util.List<com.wenqu.ai.service.HybridRetrievalService.Hit> rankForced(
+                    java.util.List<com.wenqu.ai.service.HybridRetrievalService.Hit> candidates, String query) {
+                usedTwoArg.set(true);
+                return candidates;
+            }
+        };
+        WebSearchTools tools = new WebSearchTools(service(cfg), cfg, fake);
+        tools.webSearch("问渠", 1, new WebSearchTools.WebSearchSink() {
+            public boolean tryConsumeQuota() { return true; }
+            public String question() { return "问渠"; }
+            public int register(WebSearchResult r) { return 1; }
+            public int register(WebSearchResult r, Double s) { return 1; }
+            public void degrade(String c, String m) { }
+            public String roundRerankModel() { return "vendor:rerank-x"; }
+        });
+        assertThat(seenRef.get()).isEqualTo("vendor:rerank-x");
+        assertThat(usedTwoArg.get()).as("联网搜索不得再用只认线程覆盖的 2 参重载").isFalse();
     }
 }

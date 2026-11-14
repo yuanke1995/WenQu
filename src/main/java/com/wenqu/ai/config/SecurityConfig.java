@@ -230,6 +230,10 @@ public class SecurityConfig implements WebMvcConfigurer {
         // 个人配置覆盖（schema personal 字段）：
         // 只读写本人的 c_ai_user_config（uid 取登录态），键限定为 schema 标记 personal 的字段
         if (path.equals("/api/ai/user/settings")) return true;
+        // 个人联网搜索连通性探测：与 /user/settings 同属 self:preference 授权点。该授权点是整组进出的
+        // （RbacUserRoleSeeder 要求名下全部端点都公开），漏放行会让新租户普通用户的
+        // 偏好/设置/侧栏布局一起 403。API Key 仍由 isKeyDeniedEndpoint 的 /api/ai/user/ 前缀挡住。
+        if ("POST".equals(method) && path.equals("/api/ai/user/settings/websearch-probe")) return true;
         // 自助修改昵称（PUT /user/profile，仅本人：uid 取登录态，Controller 内只动本人 username 列）
         if ("PUT".equals(method) && path.equals("/api/ai/user/profile")) return true;
         if ("PUT".equals(method) && path.matches("/api/ai/user/[^/]+/password")) return true;

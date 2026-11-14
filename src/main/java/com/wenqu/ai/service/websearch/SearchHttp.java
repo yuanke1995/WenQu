@@ -20,9 +20,11 @@ final class SearchHttp {
     /** 连接超时：握手卡住不应拖到读取超时才失败 */
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(10);
 
+    // 不自动跟随重定向：出站地址校验只在入口做一次，自动跟随时中间跳能指向内网/云元数据，
+    // 把「校验过的首跳」变成 SSRF 跳板。搜索服务商的 API 端点都直接返 200，遇到 3xx 一律 fail-loud。
     private static final HttpClient CLIENT = HttpClient.newBuilder()
             .connectTimeout(CONNECT_TIMEOUT)
-            .followRedirects(HttpClient.Redirect.NORMAL)
+            .followRedirects(HttpClient.Redirect.NEVER)
             .build();
 
     private SearchHttp() {
@@ -62,6 +64,11 @@ final class SearchHttp {
     private static String send(HttpRequest request, String url) throws Exception {
         HttpResponse<String> resp = CLIENT.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
         int code = resp.statusCode();
+        if (code >= 300 && code < 400) {
+            String location = resp.headers().firstValue("Location").orElse("(无 Location)");
+            throw new WebSearchException("搜索服务返回重定向 HTTP " + code + " → " + location
+                    + "：出于 SSRF 防护不自动跟随重定向，请在服务地址里直接填写最终端点");
+        }
         if (code < 200 || code >= 300) {
             throw new WebSearchException("搜索服务返回 HTTP " + code + describe(code) + "（" + url + "）");
         }

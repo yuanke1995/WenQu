@@ -835,9 +835,13 @@ const WS_ADV_KEYS = new Set(['customTitlePath', 'customUrlPath', 'customSnippetP
 const wsAdvOpen = ref(false)
 const wsProvider = computed(() => personalDrafts.value['webSearch.provider'] || 'generic')
 const wsProviderLabel = computed(() => WS_PROVIDER_LABELS[wsProvider.value] || wsProvider.value)
+// GET 模式用 URL 模板（服务地址里带 {{query}}），请求体模板完全不参与渲染——
+// 只在 POST 下露出，避免填了不生效还误以为配置好了
+const wsMethod = computed(() => String(personalDrafts.value['webSearch.customMethod'] || 'POST').toUpperCase())
 const wsFieldVisible = f => {
   if (f.panel !== 'webSearch') return true
   if (f.key === 'apiKey') return wsProvider.value !== 'generic'
+  if (f.key === 'customBody') return wsProvider.value === 'custom' && wsMethod.value === 'POST'
   if (WS_CUSTOM_KEYS.has(f.key)) return wsProvider.value === 'custom'
   return true
 }

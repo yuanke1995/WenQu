@@ -228,6 +228,12 @@ public final class ConfigDefaults {
     public static final int WEB_SEARCH_TIMEOUT_MS = 30_000;
     public static final double WEB_SEARCH_FALLBACK_MIN_OVERLAP = 0.2;
     public static final int WEB_SEARCH_SNIPPET_CHARS = 600;
+    // custom 服务商响应路径的内置默认值：这些键是 personalOnly，schema 的 def 只用于个人设置页
+    // 占位展示，resolveChain 对个人专属键不读全局层——运行时缺省必须由代码常量承担
+    public static final String WEB_SEARCH_CUSTOM_RESULTS_PATH = "results";
+    public static final String WEB_SEARCH_CUSTOM_TITLE_PATH = "title";
+    public static final String WEB_SEARCH_CUSTOM_URL_PATH = "url";
+    public static final String WEB_SEARCH_CUSTOM_SNIPPET_PATH = "content";
 
     // ---- HTTP 工具 ----
     public static final int HTTP_TOOL_TIMEOUT_MS = 60_000;
@@ -269,12 +275,6 @@ public final class ConfigDefaults {
     public static final int GOAL_HEARTBEAT_STALE_SECONDS = 90;
     public static final int GOAL_STALE_GRACE_SECONDS = 90;
     public static final boolean GOAL_VERIFY_LOCAL_FILES = false;
-
-    // ---- 内容安全 ----
-    public static final int CONTENT_SAFETY_TIMEOUT_MS = 3000;
-    public static final int CONTENT_SAFETY_REMOTE_CHECK_CHARS = 400;
-    public static final int CONTENT_SAFETY_OUTPUT_HOLD_CHARS = 24;
-    public static final int CONTENT_SAFETY_MAX_SCAN_CHARS = 20_000;
 
     private ConfigDefaults() {
     }

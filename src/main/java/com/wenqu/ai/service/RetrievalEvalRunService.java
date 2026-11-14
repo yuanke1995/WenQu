@@ -662,7 +662,9 @@ public class RetrievalEvalRunService {
         m.put("vecThreshold", p.vecThreshold());
         m.put("keywordLimit", p.keywordLimit());
         m.put("topK", p.topK());
-        m.put("rerankEnabled", p.rerankEnabled());
+        // 只有显式 false 才下发覆盖（见 RetrievalEvaluationService.toOverrides）：true 与 null
+        // 的运行行为完全相同，把三态都写进指纹会让等价参数算出不同的 paramsId
+        m.put("rerankEnabled", Boolean.FALSE.equals(p.rerankEnabled()) ? Boolean.FALSE : null);
         m.put("lowConfidencePolicy", p.lowConfidencePolicy());
         m.put("top1Floor", p.top1Floor());
         return m;

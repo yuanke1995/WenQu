@@ -36,6 +36,8 @@ public class RerankService {
     private final ModelRegistryService modelRegistryService;
     /** 按路由指纹隔离的客户端与探测状态（指纹含超时：超时变化即新状态，免重建比对） */
     private final ConcurrentHashMap<String, RouteState> states = new ConcurrentHashMap<>();
+    /** 状态上限：网关地址/Key/超时轮换会不断产生新指纹，超了整套重建（活跃路由下轮自愈） */
+    private static final int MAX_ROUTE_STATES = 64;
 
     /** 失败冷却时长：rerank.failCooldownMs 可调（DB），默认 60s */
     private long failCooldownMs() { return configService.getInt(ConfigKeys.RERANK_FAIL_COOLDOWN_MS, 60_000); }
@@ -101,7 +103,13 @@ public class RerankService {
     private RouteState stateFor(ModelRegistryService.ModelRoute r) {
         // 版本段尾缀（…/v1、…/v4）自动移入重排路径；无版本段时回落 /v1/rerank
         String[] np = DynamicOpenAiChatModel.normalize(r.baseUrl(), "", "/v1/rerank", "/rerank");
-        String fp = np[0] + "|" + np[1] + "|" + (r.apiKey() == null ? "" : r.apiKey()) + "|" + timeoutMillis();
+        // 指纹只留 Key 的哈希：明文密钥不该作为 HashMap 的 key 常驻堆
+        String fp = np[0] + "|" + np[1] + "|" + Integer.toHexString(Objects.hashCode(r.apiKey()))
+                + "|" + timeoutMillis();
+        if (states.size() > MAX_ROUTE_STATES) {
+            states.clear();
+            log.warn("[Rerank] 路由状态超过 {} 条已重建：请检查供应商地址/Key/超时是否被频繁改动", MAX_ROUTE_STATES);
+        }
         return states.computeIfAbsent(fp, k -> {
             RouteState st = new RouteState(np[0], np[1], r.apiKey(), timeoutMillis());
             log.info("[Rerank] 客户端就绪: {}，模型 {}，超时 {}ms", np[0], r.displayName(), timeoutMillis());
@@ -214,14 +222,26 @@ public class RerankService {
      * 供检索调试展示"为什么没重排"，避免误以为重排已生效
      */
     public String debugUnavailableReason() {
+        return debugUnavailableReason(null);
+    }
+
+    /**
+     * 显式模型引用版：供跑在检索工具线程之外的消费方（联网搜索）判可用性。
+     * 传 null 表示仍在本轮检索调用内，按线程覆盖 {@code rerank.model} 解析路由。
+     */
+    public String debugUnavailableReason(String modelRef) {
         if (forcedOff()) {
             return "重排已强制关闭：智能体检索设置选了「强制关」";
         }
-        // 平台兜底已退役：没绑模型的轮次重排直接不可用，给出明确的绑定指引
-        ModelRegistryService.ModelRoute r = route();
+        boolean explicit = modelRef != null && !modelRef.isBlank();
+        ModelRegistryService.ModelRoute r = explicit
+                ? modelRegistryService.resolveReference(modelRef.trim()) : route();
         if (r == null) {
-            return "未绑定重排模型：重排模型归知识库，选了才重排——"
-                    + "请在命中的知识库检索设置里绑定重排模型";
+            // 平台兜底已退役：没绑模型的轮次重排直接不可用，给出明确的绑定指引
+            return explicit
+                    ? "重排模型引用「" + modelRef.trim() + "」解析失败：请在模型供应商里核对该引用"
+                    : "未绑定重排模型：重排模型归知识库，选了才重排——"
+                            + "请在命中的知识库检索设置里绑定重排模型";
         }
         RouteState st = stateFor(r);
         if (!checkSupport(st)) {

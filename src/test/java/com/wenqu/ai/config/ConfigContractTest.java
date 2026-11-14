@@ -134,6 +134,29 @@ class ConfigContractTest {
     }
 
     @Test
+    void schemaFieldsHaveReadPoints() throws Exception {
+        // 反向检查：上面那个测试只拦「读点里有、三处清单都没有」，拦不住「schema 里有、后端根本不读」。
+        // 2026-11-14 的 checkout 事故让 42 个零读点死字段在设置页挂了一整天而契约测试全绿，
+        // 就是缺这一条。schema 每个字段都必须在后端源码里有字面量读点（ConfigKeys 常量表不算，
+        // 否则「登记了但没人读」同样能蒙混过关）。
+        StringBuilder body = new StringBuilder();
+        try (var files = Files.walk(Path.of("src", "main", "java"))) {
+            for (Path f : files.filter(p -> p.toString().endsWith(".java")
+                    && !p.toString().endsWith("ConfigKeys.java")).toList()) {
+                body.append(Files.readString(f));
+            }
+        }
+        String src = body.toString();
+        Set<String> dead = new java.util.TreeSet<>();
+        for (String key : schemaKeys()) {
+            if (!src.contains("\"" + key + "\"")) dead.add(key);
+        }
+        assertThat(dead)
+                .as("schema 字段零读取点：退役参数必须从 config-schema.json 一起删除")
+                .isEmpty();
+    }
+
+    @Test
     void literalDefaultsMatchSchemaDefs() throws Exception {
         Map<String, String> defs = schemaDefs();
         Map<String, String> literals = literalDefaults();

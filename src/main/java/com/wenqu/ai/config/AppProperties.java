@@ -15,7 +15,6 @@ import org.springframework.stereotype.Component;
 public class AppProperties {
 
     private Chunk chunk = new Chunk();
-    private Retrieval retrieval = new Retrieval();
     private Keyword keyword = new Keyword();
     private Session session = new Session();
     private Images images = new Images();
@@ -45,10 +44,6 @@ public class AppProperties {
         private int maxSize = 800;
         /** 分块重叠字符数 */
         private int overlap = 100;
-        /** 单文档解析的最大知识块数（0=不限制；防止超大文档 embedding 调用数万次） */
-        private int maxChunks = 3000;
-        /** 单文档最多提取图片数（0=不限制；防止图片爆炸导致视觉描述数小时） */
-        private int maxImages = 100;
         /** 结构感知切分：标题/段落边界优先断块 + 章节标题路径注入（docx 生效，需重解析） */
         private boolean structural = true;
         /** 结构切分边界阈值比例（达到 maxSize×该比例时优先在段落边界断块） */
@@ -73,17 +68,6 @@ public class AppProperties {
         private String index = "wenqu-chunks";
         /** 单次请求超时(ms)：关键词路是辅助召回，超时即降级，不宜过大 */
         private int timeoutMillis = 1000;
-    }
-
-    @Data
-    public static class Retrieval {
-        /** 混合检索：向量相似度权重（0~1） */
-        private double vectorWeight = 0.6;
-        /** 混合检索：关键词命中率权重（0~1） */
-        private double keywordWeight = 0.4;
-        // 重排平台层已整体退役（2026-11-14）：重排模型与窗口归知识库检索设置
-        // （rerank.model / rerank.minHits / rerank.maxHits），rerank.enabled 仅剩智能体级
-        // 「强制关」；超时/失败冷却是 DB 隐藏键 rerank.timeoutMillis / rerank.failCooldownMs。
     }
 
     @Data

@@ -61,10 +61,6 @@ public final class KbParamCodec {
             VECTOR_TOP_K, KEYWORD_LIMIT, MIN_CONTEXT_SCORE, MIN_FUSION_SCORE, LOW_CONFIDENCE_POLICY, TOP1_FLOOR,
             GRAPH_EXPAND_TOP_K)));
 
-    /** 已迁出库级的键：读取忽略、保存清除 */
-    public static final Set<String> RETIRED = Set.of(
-            "rerank.enabled", "rerank.baseUrl");
-
     private KbParamCodec() {}
 
     /**
@@ -99,8 +95,4 @@ public final class KbParamCodec {
         return kept.isEmpty() ? null : JSON.toJSONString(kept);
     }
 
-    /** 是否为“已迁出库级”的键（供写入侧区分“退役”与“非法”，日志口径不同） */
-    public static boolean isRetired(String key) {
-        return key != null && RETIRED.contains(key);
-    }
 }

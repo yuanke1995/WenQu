@@ -134,7 +134,7 @@
                       <TimeoutPreset v-if="blk.type === 'timeoutPreset'" :form="form" />
 
                       <!-- 常规字段（SchemaField 全量复用：类型控件/条件显隐/参数说明）。
-                           MCP 的管理界面在「智能体」页的个人 Tab；技能停用清单随本页「技能」页签一起渲染 -->
+                           MCP 的管理界面在「智能体」页的个人 Tab -->
                       <template v-else-if="blk.type === 'field'">
                         <SchemaField :field="blk.field" :form="form" :tips="TIPS"
                                      :source="sources[blk.field.backendKey]" :secret-hints="secretHints">
@@ -504,7 +504,7 @@
                 </div>
               </template>
 
-              <!-- 技能停用清单在上方「技能」页签；MCP 的管理界面在「智能体」页的个人 Tab -->
+              <!-- MCP 的管理界面在「智能体」页的个人 Tab -->
 
             </a-form>
           </div>
@@ -538,8 +538,8 @@ const router = useRouter()
 
 // 分组导航短名
 const NAV_LABELS = {
-  chat: '对话模型', chunk: '文档解析', retrieval: '检索设置',
-  context: '上下文控制', tool: '工具调用', webSearch: '联网搜索',
+  chat: '对话模型', retrieval: '检索设置',
+  tool: '工具调用', webSearch: '联网搜索',
   ratelimit: '接口限流', maintenance: '定时任务',
   sandbox: '沙盒', debug: '调试设置'
 }
@@ -731,8 +731,7 @@ const applyPanelDeepLink = raw => {
   const host = PANEL_CHILD_TAB[key]
   const panel = host || key
   if (!navPanels.value.some(p => p.key === panel)) return
-  if (host === 'retrieval') ragTab.value = key
-  else if (host === 'tool') toolTab.value = key
+  if (host === 'tool') toolTab.value = key
   current.value = panel
   // 全工程参数的面板（「调试设置」整组都是 tier3）落点会是一片空白，看着像页面坏了：
   // 这一组本来就没有常规参数，直接铺开
@@ -1500,8 +1499,7 @@ const fmtCountdown = (due, serverNow) => {
   return Math.ceil(left / 86400000) + ' 天内'
 }
 
-// 进页即拉一次工具全景：不只是给下方清单区用——「平台停用工具名单」的候选项也来自它，
-// 而那个字段在配置表单里，不会触发工具面板的 watch（等切页签才拉会让下拉先空一段）
+// 进页即拉一次配置快照，避免字段清单/默认值比表单渲染晚一拍
 onMounted(() => { fetchAndFill() })
 </script>
 
