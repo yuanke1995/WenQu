@@ -143,9 +143,8 @@ public class SandboxService {
     private volatile boolean scratchDirLogged;
 
     /**
-     * 隐式会话「文件/执行意图 → 工作区档」的异步升级：首轮先走聊天档，后台建沙盒；
-     * 下一轮 isReady 命中后自动切工作区档。独立单线程 + 有界队列 + 全局在飞上限，
-     * 不占问答 attachPool；默认由 chat.asyncWorkspaceUpgrade 关闭。
+     * 热池预热的后台装配池：独立单线程 + 有界队列 + 全局在飞上限，
+     * 不占问答 attachPool。
      */
     private final ThreadPoolExecutor provisionPool = new ThreadPoolExecutor(
             1, 1, 60, TimeUnit.SECONDS, new ArrayBlockingQueue<>(4),
@@ -404,30 +403,6 @@ public class SandboxService {
         }
     }
 
-    /** 隐式会话的沙盒是否已就绪（异步升级的下一轮判据）。只看已有连接，不创建、不阻塞。 */
-    public boolean isReady(String sessionId, String uid) {
-        if (sessionId == null || sessionId.isBlank() || uid == null || uid.isBlank()) {
-            return false;
-        }
-        try {
-            SandboxScope scope = scopeOf(sessionId, uid);
-            // 只查本副本已建好的连接：不取 provider 的 scope 锁——后台 create 正持着它，
-            // 这里再 get/等锁就会把「异步升级」又变成同步等待。
-            return provider.isConnected(scope.scopeId(), uid);
-        } catch (Exception e) {
-            return false;
-        }
-    }
-
-    /**
-     * 隐式会话命中文件/执行意图时调用：后台把沙盒建好，本轮先走聊天档不阻塞。
-     * 下一轮 {@link #isReady} 命中后由引擎切工作区档；失败只记日志，下一轮仍可重试。
-     */
-    public void provisionAsync(String sessionId, String uid) {
-        if (!configService.getBoolean("chat.asyncWorkspaceUpgrade", false)) return;
-        submitProvision(sessionId, uid, "异步升级");
-    }
-
     /**
      * 热池预热：把该用户的用户级沙盒提前建好。
      *
@@ -441,7 +416,7 @@ public class SandboxService {
         submitProvision("pool:" + uid, uid, "热池预热");
     }
 
-    /** 异步升级与热池预热共用的后台装配：单线程有界队列 + 全局在飞上限，去重键为 会话|用户。 */
+    /** 热池预热的后台装配：单线程有界队列 + 全局在飞上限，去重键为 会话|用户。 */
     private void submitProvision(String sessionId, String uid, String label) {
         if (sessionId == null || sessionId.isBlank() || uid == null || uid.isBlank()) return;
         String key = sessionId + "|" + uid;

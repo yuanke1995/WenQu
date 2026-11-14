@@ -73,16 +73,13 @@ public class RbacSeedRunner implements ApplicationRunner {
             new String[]{"menu-settings", "系统设置", "SettingOutlined", "/settings", "80", "1"}
     );
 
-    /** 挂「权限管理」下的页签：认证源、审计事件、内容安全。 */
+    /** 挂「权限管理」下的页签：认证源、审计事件。 */
     private static final String[] IDENTITY_TAB_MENU =
             {"menu-identity-providers", "认证源", "/permissions?tab=identity", "15", "menu-permissions"};
 
     /** 挂「安全与运维」下的页签：审计事件 */
     private static final String[] AUDIT_TAB_MENU =
             {"menu-audit-events", "审计事件", "/security?tab=audit", "40", "menu-security"};
-
-    private static final String[] CONTENT_SAFETY_TAB_MENU =
-            {"menu-content-safety", "内容安全", "/permissions?tab=content", "80", "menu-permissions"};
 
     /**
      * 服务账号：机器身份的管理面板，挂在「认证源」旁边——同一层「谁能调用」的授权对象。
@@ -116,8 +113,7 @@ public class RbacSeedRunner implements ApplicationRunner {
             new String[]{"menu-agents-tab-scheduled", "定时任务", "/agents?tab=scheduled", "60", "menu-agents"},
             IDENTITY_TAB_MENU,
             SERVICE_ACCOUNT_TAB_MENU,
-            AUDIT_TAB_MENU,
-            CONTENT_SAFETY_TAB_MENU
+            AUDIT_TAB_MENU
     );
 
     /**
@@ -127,8 +123,10 @@ public class RbacSeedRunner implements ApplicationRunner {
      * {@code menu-help}：帮助中心 → 前端右下角全局悬浮按钮（HelpFab.vue）。
      * {@code menu-oidc-providers}：OIDC 专属管理页（「单点登录」Tab）→ 由「认证源」统一页签取代
      * （OIDC/SAML/SCIM/LDAP 四类一起管，同一份数据），不做兼容。
+     * {@code menu-content-safety}：内容安全整体退役（2026-11-14），页签与规则清单一并下线。
      */
-    private static final List<String> RETIRED_MENUS = List.of("menu-help", "menu-oidc-providers");
+    private static final List<String> RETIRED_MENUS =
+            List.of("menu-help", "menu-oidc-providers", "menu-content-safety");
 
     /**
      * 质量页的页签菜单（renderAs=tab）：检索评估 / 智能体评测 / 数据看板。

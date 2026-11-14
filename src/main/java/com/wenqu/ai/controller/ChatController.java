@@ -89,8 +89,6 @@ public class ChatController {
 
     /** 每轮文件改动：逐文件差异按需取（内容由本机执行器现算，服务端不留缓存） */
     private final com.wenqu.ai.service.ProjectTurnChangesService turnChanges;
-    /** 内容安全输入闸：插话也是一句用户打进来的话，走同一道闸 */
-    private final com.wenqu.ai.service.contentsafety.ContentSafetyService contentSafety;
     /** 租户：只用于在 /auth/me 里说一句「现在看的是哪个租户的数据」 */
     private final com.wenqu.ai.service.TenantService tenantService;
     private final QaLogService qaLogService;
@@ -520,9 +518,6 @@ public class ChatController {
         } catch (BizException e) {
             return ResultJson.error(e.getMessage());
         }
-        // 插话同样过输入闸：它是用户当场打的一句话，与发问同一身份，不该成为闸外的旁路
-        String refused = contentSafety.checkInput(uid, sessionId, text);
-        if (refused != null) return ResultJson.error(refused);
         String messageId = runtime.steerTurn(sessionId.trim(), uid, text, images, attachments);
         return ResultJson.ok(java.util.Map.of("accepted", messageId != null,
                 "messageId", messageId == null ? "" : messageId));
@@ -530,7 +525,7 @@ public class ChatController {
 
     @Operation(summary = "插话排队（服务端持有，刷新可恢复）", description = "生成中先入队、不发请求；"
             + "drain 由引擎在「这一轮真的开跑」时唤醒，只 steer 进活着的轮，绝不另起一轮。"
-            + "入队时同步过输入闸与传图校验（排队期间不会有人再替它过一遍）。")
+            + "入队时同步校验传图（排队期间不会有人再替它过一遍）。")
     @Permission("chat:use")
     @PostMapping("/chat/steer/queue")
     public ResultJson enqueueSteer(@RequestBody SteerRequest body, HttpServletRequest httpRequest) {
@@ -541,8 +536,6 @@ public class ChatController {
         }
         validateImages(body.getImages());
         rejectApiKeyForWorkspaceSession(httpRequest, sessionId.trim());
-        String refused = contentSafety.checkInput(com.wenqu.ai.util.RequestUser.uid(), sessionId, text);
-        if (refused != null) return ResultJson.error(refused);
         try {
             return ResultJson.ok(steerQueue.enqueue(sessionId.trim(), com.wenqu.ai.util.RequestUser.uid(),
                     text, body.getImages(),
@@ -962,7 +955,7 @@ public class ChatController {
 
     @Operation(summary = "切换会话权限档位",
             description = "body: {preset}。research=仅可查看 / standard=工作区内修改 / autonomous=完全权限；"
-                    + "空串或 follow = 清除会话覆盖、跟随智能体。仍受平台上限 agent.permissionPreset.max 与游客只读闸约束。")
+                    + "空串或 follow = 清除会话覆盖、跟随智能体。游客会话无论选什么都按只读档执行。")
     @Permission("session:write")
     @PutMapping("/session/{sessionId}/permission")
     public ResultJson setSessionPermission(

@@ -4,7 +4,6 @@ package com.wenqu.ai.agent.context;
 
 import com.wenqu.ai.agent.chat.ChatRunRuntime;
 import com.wenqu.ai.agent.chat.CitationConvention;
-import com.wenqu.ai.service.ConfigService;
 import com.wenqu.ai.service.ModelRegistryService;
 import com.wenqu.ai.thread.ThreadPoolManager;
 import com.wenqu.ai.util.UsageAttr;
@@ -84,16 +83,13 @@ public class CitationIntegrityService {
     /** judge 调用硬超时：自检是定稿前的一次辅助调用，慢思考/网关挂起不许把收尾拖到几十秒 */
     private static final long JUDGE_TIMEOUT_MS = 15_000L;
 
-    private final ConfigService configService;
     private final ChatClient chatClient;
     private final ChatRunRuntime runtime;
     private final ModelRegistryService modelRegistry;
 
-    public CitationIntegrityService(ConfigService configService,
-                                    ChatClient chatClient,
+    public CitationIntegrityService(ChatClient chatClient,
                                     ChatRunRuntime runtime,
                                     ModelRegistryService modelRegistry) {
-        this.configService = configService;
         this.chatClient = chatClient;
         this.runtime = runtime;
         this.modelRegistry = modelRegistry;
@@ -195,7 +191,7 @@ public class CitationIntegrityService {
         //    一次额外调用，超时/失败/无引用跳过（保持原回答）；空前文（无法界定句子）的引用放行。
         //    LLM 之前还有一道机械预筛（见 consistencyCheck 内 2a）：句子与来源零共现的角标
         //    不花这次调用直接剔——那是模型重编号时最典型的形状，交给弱 judge 反而救不回来。
-        if (configService.getBoolean("chat.citationCheckEnabled") && !sources.isEmpty()) {
+        if (!sources.isEmpty()) {
             // 用量归属：judge 派发到线程池执行（带硬超时），收尾回调线程的 ThreadLocal 身份
             // 两边都看不见——attr 显式带上，由 askJudge 在工作线程里 hold
             UsageAttr.Attr attr = UsageAttr.of(ctx.userId(), ctx.sessionId(), null, "citecheck");

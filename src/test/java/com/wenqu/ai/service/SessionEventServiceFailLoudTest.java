@@ -17,7 +17,6 @@ class SessionEventServiceFailLoudTest {
     void insertFailureReturnsNullAndCounts() {
         SessionEventMapper mapper = mock(SessionEventMapper.class);
         ConfigService config = mock(ConfigService.class);
-        when(config.getBoolean("trace.sessionEventEnabled", true)).thenReturn(true);
         when(mapper.insert(any(SessionEvent.class))).thenThrow(new RuntimeException("db down"));
         SessionEventService service = new SessionEventService(mapper, mock(MessageMapper.class), config);
 

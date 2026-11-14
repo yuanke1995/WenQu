@@ -13,7 +13,6 @@ export const DOMAIN_LABELS = {
   audit: '审计',
   chat: '对话',
   config: '系统配置',
-  'content-safety': '内容安全',
   credential: '凭据',
   department: '部门',
   'desc-cache': '描述缓存',

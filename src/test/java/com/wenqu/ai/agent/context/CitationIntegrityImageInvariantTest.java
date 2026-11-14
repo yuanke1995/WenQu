@@ -1,7 +1,6 @@
 package com.wenqu.ai.agent.context;
 
 import com.wenqu.ai.agent.chat.ChatRunRuntime;
-import com.wenqu.ai.service.ConfigService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.client.ChatClient;
@@ -16,7 +15,6 @@ import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
 /**
  * 回答定稿的配图清单不变量（回归：「流式有图、答完没图」）。
@@ -31,9 +29,8 @@ import static org.mockito.Mockito.when;
 class CitationIntegrityImageInvariantTest {
 
     private static CitationIntegrityService service() {
-        ConfigService cfg = mock(ConfigService.class);
-        when(cfg.getBoolean("chat.citationCheckEnabled")).thenReturn(false); // 跳过 LLM 自检，只跑纯字符串检查
-        return new CitationIntegrityService(cfg, mock(ChatClient.class), mock(ChatRunRuntime.class),
+        // 用例的 sources 恒为空列表，LLM 自检（来源非空才触发）不会走到，只需纯字符串检查
+        return new CitationIntegrityService(mock(ChatClient.class), mock(ChatRunRuntime.class),
                 mock(com.wenqu.ai.service.ModelRegistryService.class));
     }
 

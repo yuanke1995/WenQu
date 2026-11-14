@@ -453,7 +453,6 @@ import RoleWorkbench from '../components/permissions/RoleWorkbench.vue'
 import EffectivePermissionsModal from '../components/permissions/EffectivePermissionsModal.vue'
 import IdentityProvidersPage from './IdentityProvidersPage.vue'
 import ServiceAccountsPage from './ServiceAccountsPage.vue'
-import ContentSafetyPage from './ContentSafetyPage.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -462,7 +461,6 @@ const router = useRouter()
 const ACCESS_COMPONENTS = {
   identity: IdentityProvidersPage,
   service: ServiceAccountsPage,
-  content: ContentSafetyPage
 }
 const accessTabs = ref([])
 const activeAccess = computed(() => (activeAccessKey.value ? ACCESS_COMPONENTS[activeAccessKey.value] : null))
@@ -518,7 +516,6 @@ onMounted(async () => {
     : [
         { id: 'default-identity', key: 'identity', name: '认证源' },
         { id: 'default-service', key: 'service', name: '服务账号' },
-        { id: 'default-content', key: 'content', name: '内容安全' }
       ]
 })
 

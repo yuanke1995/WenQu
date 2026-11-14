@@ -85,17 +85,6 @@ public final class AgentxTurnSlot {
         return profile;
     }
 
-    /** 异步升级首轮：工作区还没好，本轮聊天档不向模型暴露文件/命令工具（避免 scratch 写了却带不进沙盒）。 */
-    private volatile boolean asyncPending;
-
-    public void noteAsyncPending(boolean value) {
-        this.asyncPending = value;
-    }
-
-    public boolean asyncPending() {
-        return asyncPending;
-    }
-
     /** 本轮是否有活跃目标（用户插话轮也会置真）；目标工具只在此时下发，普通问答不常驻。 */
     private volatile boolean goalActive;
 
@@ -160,7 +149,6 @@ public final class AgentxTurnSlot {
     public void begin(Turn turn) {
         this.current = turn;
         this.profile = null;
-        this.asyncPending = false;
         this.goalActive = false;
     }
 

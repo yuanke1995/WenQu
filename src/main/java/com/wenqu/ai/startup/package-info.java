@@ -46,8 +46,6 @@
  *       <td>扫描 Spring 端点清单入库（供权限页勾选）</td><td>否</td></tr>
  *   <tr><td>{@link com.wenqu.ai.startup.RbacUserRoleSeeder}</td><td>ApplicationRunner @Order(12)</td>
  *       <td>给 {@code user} 角色按问答白名单推导授权点（该租户已有授权点行则整租户跳过）</td><td>否</td></tr>
- *   <tr><td>{@link com.wenqu.ai.startup.ContentSafetySeedRunner}</td><td>ApplicationRunner @Order(6)</td>
- *       <td>逐租户登记两条只告警的个人信息规则（该租户名下已有规则则一条不加）</td><td>否</td></tr>
  *   <tr><td>{@link com.wenqu.ai.startup.MarketBuiltinSeeder}</td><td>ApplicationRunner @Order(20)</td>
  *       <td>官方工作流模板种入市场（幂等；管理员下架过的不复活）</td><td>否</td></tr>
  *   <tr><td>{@link com.wenqu.ai.startup.OrphanTurnRunner}</td><td><b>无启动钩子</b>——由
@@ -59,14 +57,13 @@
  *       <td>官方手册同步：建库 + 逐篇分块向量化</td><td><b>是（手动触发）</b></td></tr>
  * </table>
  *
- * <p>另外两个<b>不在本包但仍会在启动期动数据</b>的（散在 service 里，刻意未搬动——搬动会牵连大量注入关系）：
+ * <p>另一个<b>不在本包但仍会在启动期动数据</b>的（散在 service 里，刻意未搬动——搬动会牵连大量注入关系）：
  * <ul>
  *   <li>{@code DocumentService.recoverStuckParsing}：复位崩溃残留的 status=2 文档
- *       → 开关 {@code parse.recoverStuckOnStartup}（默认开，多副本应置 false）；</li>
- *   <li>{@code ScheduleCenter} 里 {@code keyword.reconcileOnStartup} 为真时的启动首轮
- *       → 关键词索引对账（只比 Meilisearch 与 MySQL，<b>不调任何模型</b>）。</li>
+ *       → 开关 {@code parse.recoverStuckOnStartup}（默认开，多副本应置 false）。</li>
  * </ul>
- * 二者都是<b>不烧额度</b>的幂等操作，且各有开关，故保留。
+ * 它是<b>不烧额度</b>的幂等操作，且有开关，故保留。（关键词索引的启动首轮对账已退役：
+ * 只比 Meilisearch 与 MySQL，由周期任务覆盖，无保留价值。）
  *
  * @author yuanke
  */

@@ -47,9 +47,7 @@ public class TenantService {
     private final UserMapper userMapper;
     private final AuditService audit;
     private final JdbcTemplate jdbcTemplate;
-    private final com.wenqu.ai.startup.ContentSafetySeedRunner contentSafetySeed;
     private final com.wenqu.ai.startup.RbacSeedRunner rbacSeedRunner;
-    private final com.wenqu.ai.service.contentsafety.ContentSafetyService contentSafety;
 
     private record Cached(String tenantId, long expireAt) {
     }
@@ -152,16 +150,6 @@ public class TenantService {
             rbacSeedRunner.seedTenantRoles(t.getId(), java.util.Set.of());
         } catch (Exception e) {
             log.warn("[TENANT] 租户 {} 的角色种子失败（可在权限页手工补建）: {}", t.getId(), e.getMessage());
-        }
-        // 词表按租户各一份，所以新租户一开就给它登记首批只告警示例：
-        // 空表的新租户看不出闸门在不在跑，管理员只能靠真发一句话去猜。失败不阻断开通——
-        // 规则随时能在界面上补，租户开不出来才是事故。
-        try {
-            contentSafetySeed.seedBaseline(tid);
-            contentSafety.invalidateRules();
-        } catch (Exception e) {
-            log.warn("[TENANT] 新租户首批内容安全规则登记失败 tenant={}（可在「权限管理 → 内容安全」里手工补）: {}",
-                    tid, e.toString());
         }
         audit.record("[AUDIT] 租户开通 租户={} 名称={} 联系人={}", tid, t.getName(), nullToEmpty(contact));
         applyPlanQuota(t.getId(), t.getPlan());

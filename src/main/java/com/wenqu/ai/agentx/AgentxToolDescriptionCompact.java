@@ -8,7 +8,6 @@ import io.agentscope.core.middleware.ModelCallInput;
 import io.agentscope.core.model.ToolSchema;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.function.BooleanSupplier;
 import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,16 +24,14 @@ import reactor.core.publisher.Flux;
  * <p><b>只改发出去的那一份文本</b>：挂点在 {@code onModelCall} 的 {@link ModelCallInput#tools()}，
  * 换的是请求里的 {@link ToolSchema#getDescription()}。<b>不碰注册表</b>——工具名、参数 schema、
  * 只读档位、权限判定（{@code ToolBase#checkPermissions} 那套危险路径闸）、执行体、显示名映射
- * 全都在原来的对象上，一个都不动。所以这把开关关掉即恢复原样，不存在「压完权限就松了」这种事。
+ * 全都在原来的对象上，一个都不动，不存在「压完权限就松了」这种事。
  * <b>也不碰参数说明</b>：参数那一段是用得准不准的关键，压它是省小钱冒大险。
  *
  * <p><b>不硬截断</b>：只有「取到第一句、且首句本身就不长」才压。首句里没有句末标点、首句超过
  * {@link #MAX_COMPACT_CHARS}、或压完没省到字的，一律原样发——把一句到一半砍断，模型读到的是
  * 一条说不清自己能力的工具，那比多付几百字更亏。
  *
- * <p><b>开关按调用现读</b>（{@code chat.toolDescriptionCompact}）：会话实例是按 {@code (用户,会话,模型)}
- * 常驻的，middleware 只能在 build 期挂上（见 {@link FrameworkSessions} 的注释），所以挂载与开关解耦——
- * 每次调用问一次配置。设置页改完下一次模型调用就生效，不需要等实例换代。
+ * <p><b>恒开</b>（代码内置无开关，{@code chat.toolDescriptionCompact} 设置项已退役）。
  */
 public final class AgentxToolDescriptionCompact implements MiddlewareBase {
 
@@ -43,19 +40,13 @@ public final class AgentxToolDescriptionCompact implements MiddlewareBase {
     /** 首句超过这个字数就不压了：说明「这一条工具本来就没有一句话版本」，砍断只会读到半句话。 */
     static final int MAX_COMPACT_CHARS = 160;
 
-    private final BooleanSupplier enabled;
-
     /** 首轮生效时 announce 一次：这条通道改了模型看到的东西，不许静默。 */
     private volatile boolean announced;
-
-    public AgentxToolDescriptionCompact(BooleanSupplier enabled) {
-        this.enabled = enabled;
-    }
 
     @Override
     public Flux<AgentEvent> onModelCall(Agent agent, RuntimeContext ctx, ModelCallInput input,
                                         Function<ModelCallInput, Flux<AgentEvent>> next) {
-        if (input == null || !on()) {
+        if (input == null) {
             return next.apply(input);
         }
         List<ToolSchema> compacted;
@@ -73,20 +64,12 @@ public final class AgentxToolDescriptionCompact implements MiddlewareBase {
         return next.apply(new ModelCallInput(input.messages(), compacted, input.options(), input.model()));
     }
 
-    private boolean on() {
-        try {
-            return enabled != null && enabled.getAsBoolean();
-        } catch (Exception e) {
-            return false;   // 读不到配置＝不动模型看到的东西
-        }
-    }
-
     private void announce(int compacted, int total) {
         if (announced) {
             return;
         }
         announced = true;
-        log.info("[agentx] 工具说明精简已生效: 本轮 {} / {} 把工具的说明压到第一句（开关 chat.toolDescriptionCompact）",
+        log.info("[agentx] 工具说明精简已生效: 本轮 {} / {} 把工具的说明压到第一句",
                 compacted, total);
     }
 

@@ -58,7 +58,7 @@ public class SessionEventService {
     /**
      * 记一条事件。<b>写失败不影响问答，但必须可见</b>：返回 null + ERROR 日志 + 累计计数，
      * 不再只留一行 warn 让数据残缺在监控里消失。
-     * <p>开关 {@code trace.sessionEventEnabled} 默认开；关掉后一行都不写。
+     * <p>账本恒开：每轮过程留痕是平台默认行为，不设开关。
      */
     public Long append(String sessionId, String userId, String turnId, String type, String payload) {
         return append(sessionId, userId, turnId, null, type, payload);
@@ -88,7 +88,6 @@ public class SessionEventService {
     private Long doAppend(String sessionId, String userId, String turnId, String goalId,
                           String type, String payload, int payloadMax) {
         if (sessionId == null || sessionId.isBlank() || type == null || type.isBlank()) return null;
-        if (!configService.getBoolean("trace.sessionEventEnabled", true)) return null;
         try {
             SessionEvent event = new SessionEvent();
             event.setSessionId(sessionId);

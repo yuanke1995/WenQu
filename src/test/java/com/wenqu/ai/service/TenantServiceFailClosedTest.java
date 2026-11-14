@@ -4,8 +4,6 @@ import com.wenqu.ai.common.TenantResolutionException;
 import com.wenqu.ai.mapper.TenantMapper;
 import com.wenqu.ai.mapper.UserMapper;
 import com.wenqu.ai.model.User;
-import com.wenqu.ai.service.contentsafety.ContentSafetyService;
-import com.wenqu.ai.startup.ContentSafetySeedRunner;
 import com.wenqu.ai.startup.RbacSeedRunner;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -27,9 +25,7 @@ class TenantServiceFailClosedTest {
             userMapper,
             mock(AuditService.class),
             mock(JdbcTemplate.class),
-            mock(ContentSafetySeedRunner.class),
-            mock(RbacSeedRunner.class),
-            mock(ContentSafetyService.class));
+            mock(RbacSeedRunner.class));
 
     @Test
     void dbFailureThrowsAndIsNotCached() {

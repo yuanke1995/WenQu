@@ -18,12 +18,11 @@ import java.sql.Statement;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
 /**
  * 本地 MySQL 事件账本集成测试：真实 MyBatis-Plus Mapper 写入 c_ai_session_event。
  *
- * <p>覆盖 S1-1 的“事件账本”路径：自增主键即写入顺序、字段完整落库、开关关闭时不写。
+ * <p>覆盖 S1-1 的“事件账本”路径：自增主键即写入顺序、字段完整落库（账本恒开，无开关分支）。
  */
 class SessionEventLedgerLocalTest {
 
@@ -34,7 +33,7 @@ class SessionEventLedgerLocalTest {
     private static final String PASSWORD = System.getProperty("it.mysql.password", "");
 
     @Test
-    void eventIsPersistedWithOrderedIdAndHonorsSwitch() throws Exception {
+    void eventIsPersistedWithOrderedId() throws Exception {
         assumeTrue(canConnect(), "本机 MySQL 不可达，跳过本地集成测试");
         String db = "wenqu_event_it_" + System.currentTimeMillis();
         String dbUrl = BASE_URL.replace("/?", "/" + db + "?");
@@ -48,13 +47,12 @@ class SessionEventLedgerLocalTest {
                     .locations("classpath:db/migration").load().migrate();
             SqlSessionFactory factory = sqlSessionFactory(dbUrl);
 
-            ConfigService enabled = mock(ConfigService.class);
-            when(enabled.getBoolean("trace.sessionEventEnabled", true)).thenReturn(true);
+            ConfigService config = mock(ConfigService.class);
 
             try (SqlSession session = factory.openSession(true)) {
                 SessionEventMapper mapper = session.getMapper(SessionEventMapper.class);
                 SessionEventService service = new SessionEventService(
-                        mapper, mock(MessageMapper.class), enabled);
+                        mapper, mock(MessageMapper.class), config);
 
                 Long id = service.append("s1", "u1", "t1", "tool_status", "{\"name\":\"search\"}");
                 assertThat(id).as("自增主键回填").isNotNull();
@@ -66,13 +64,6 @@ class SessionEventLedgerLocalTest {
                 assertThat(saved.getType()).isEqualTo("tool_status");
                 assertThat(saved.getPayload()).contains("search");
                 assertThat(saved.getCreatedAt()).isNotNull();
-
-                ConfigService disabled = mock(ConfigService.class);
-                when(disabled.getBoolean("trace.sessionEventEnabled", true)).thenReturn(false);
-                SessionEventService off = new SessionEventService(
-                        mapper, mock(MessageMapper.class), disabled);
-                assertThat(off.append("s1", "u1", "t1", "tool_status", "{}")).isNull();
-                assertThat(mapper.selectCount(null)).as("关闭后不再新增").isEqualTo(1);
             }
         } finally {
             try (Connection root = DriverManager.getConnection(BASE_URL, USER, PASSWORD);

@@ -224,8 +224,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     private final com.wenqu.ai.service.UsageLedgerService usageLedger;
     /** 配额闸：框架模型出口前判一次，与 Spring AI 那一路共用同一个服务与同一份判据 */
     private final com.wenqu.ai.service.UsageQuotaService quotaService;
-    /** 内容安全出口闸：同样挂在模型出口，与 Spring AI 那一路共用一份判据 */
-    private final com.wenqu.ai.service.contentsafety.ContentSafetyService contentSafety;
     /**
      * @ 文档提及的正文来源（文档表不存全文，解析产物就是知识块，按 chunkIndex 拼回）。
      * 注入是「@ 了就必须真的给」，取不到要如实说明而不是让模型对着空话硬编（见 docMentionText）。
@@ -379,7 +377,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                                com.wenqu.ai.service.OrgService orgService,
                                com.wenqu.ai.service.UsageLedgerService usageLedger,
                                com.wenqu.ai.service.UsageQuotaService quotaService,
-                               com.wenqu.ai.service.contentsafety.ContentSafetyService contentSafety,
                                com.wenqu.ai.service.GoalService goalService,
                                com.wenqu.ai.service.TurnNotifyService turnNotify,
                           com.wenqu.ai.service.webhook.AgentWebhookService agentWebhookService,
@@ -414,7 +411,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         this.orgService = orgService;
         this.usageLedger = usageLedger;
         this.quotaService = quotaService;
-        this.contentSafety = contentSafety;
         this.goalService = goalService;
         this.turnNotify = turnNotify;
         this.agentWebhookService = agentWebhookService;
@@ -564,8 +560,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             failLoud(cmd, channel, "模型「" + ref + "」未登记或已不可用：请在「智能体 → 模型供应商」里确认该供应商与模型");
             return;
         }
-        ExecutionPolicy policy = tools.policyFor(cmd,
-                (code, message) -> channel.emit(RunEventType.WARN, message));
+        ExecutionPolicy policy = tools.policyFor(cmd);
         // 用户开了新的一轮：目标循环让位（用户优先）——**只有后台续跑轮在飞时**才打断它。
         // 没有后台轮时，用户这一轮就是目标的一轮（它结束后的那一拍会由目标自己续上），
         // 在那时把目标打断等于「用户刚说完话，目标就停了」。
@@ -1394,8 +1389,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 new com.wenqu.ai.service.CollectingSseEmitter();
         RunChannel channel = new com.wenqu.ai.engine.SseRunEventChannel(
                 tools.runtime(), sink, sessionId);
-        ExecutionPolicy policy = tools.policyFor(cmd, (code, message) -> {
-        });
+        ExecutionPolicy policy = tools.policyFor(cmd);
         WenquSourcePool pool = tools.newPool(cmd, sink);
         java.util.concurrent.ConcurrentLinkedQueue<String> spills =
                 new java.util.concurrent.ConcurrentLinkedQueue<>();
@@ -2879,10 +2873,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 默认聊天是这刀的目的：{@code 1+1=?} 这种问题不该为「可能用到文件工具」先付 3 秒沙盒。
      */
     private boolean wantsSandbox(ChatCommand cmd, ExecutionPolicy policy) {
-        if (!configService.getBoolean("chat.profileAuto", true)) {
-            log.info("[PROFILE] profile=workspace reason=auto-off session={}", cmd.getSessionId());
-            return true;
-        }
         String key = sessions.key(cmd);
         // 粘性：已经建过工作区档实例的会话，不因为下一句普通问题降回聊天档——
         // 否则整条会话会在两档之间反复重建，工具面和文件系统也跟着来回换。
@@ -2929,21 +2919,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         if (reason == null) {
             log.info("[PROFILE] profile=chat reason=no-intent session={} q={}",
                     cmd.getSessionId(), briefQuestion(q));
-            return false;
-        }
-        // 隐式会话的异步升级：首轮先走聊天档（宿主 scratch，不阻塞），后台建沙盒；
-        // 下一轮 isReady 命中后自动切工作区档。默认关，配置 chat.asyncWorkspaceUpgrade 打开。
-        if (configService.getBoolean("chat.asyncWorkspaceUpgrade", false)) {
-            String uid = cmd.getUserId();
-            if (sandboxService.isReady(cmd.getSessionId(), uid)) {
-                log.info("[PROFILE] profile=workspace reason=async-ready:{} session={} q={}",
-                        reason, cmd.getSessionId(), briefQuestion(q));
-                return true;
-            }
-            sandboxService.provisionAsync(cmd.getSessionId(), uid);
-            sessions.turnSlot(cmd).noteAsyncPending(true);
-            log.info("[PROFILE] profile=chat reason=async-provisioning:{} session={} q={}",
-                    reason, cmd.getSessionId(), briefQuestion(q));
             return false;
         }
         log.info("[PROFILE] profile=workspace reason={} session={} q={}",
@@ -4042,7 +4017,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      */
     private io.agentscope.harness.agent.memory.MemoryConfig memoryConfig(
             ChatCommand cmd, io.agentscope.core.model.Model auxModel, String modelRef) {
-        io.agentscope.core.model.Model memoryModel = new MeteredModel(auxModel, usageLedger, quotaService, contentSafety,
+        io.agentscope.core.model.Model memoryModel = new MeteredModel(auxModel, usageLedger, quotaService,
                 com.wenqu.ai.util.UsageAttr.of(cmd.getUserId(), cmd.getSessionId(), null, "memory",
                         null, cmd.getShareId()), modelRef);
         int maxMdTokens = Math.max(500, ConfigDefaults.MEMORY_MAX_MD_TOKENS);
@@ -4088,7 +4063,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      */
     private io.agentscope.harness.agent.memory.compaction.CompactionConfig compactionConfig(
             ChatCommand cmd, io.agentscope.core.model.Model auxModel, String modelRef) {
-        io.agentscope.core.model.Model compressModel = new MeteredModel(auxModel, usageLedger, quotaService, contentSafety,
+        io.agentscope.core.model.Model compressModel = new MeteredModel(auxModel, usageLedger, quotaService,
                 com.wenqu.ai.util.UsageAttr.of(cmd.getUserId(), cmd.getSessionId(), null, "compress",
                         null, cmd.getShareId()),
                 modelRef);
@@ -4147,9 +4122,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 沙盒没装配成功时 run_code 也不该挂：文件系统已退回临时目录，挂一把必然失败的工具
                 // 只会让模型白试一步。
                 sandboxEnabled && sessions.sandboxAttached(sessions.key(cmd)),
-                // MCP 是外部连接：聊天档默认不挂（纯问答不等外部连接）；需要外部工具的部署可开
-                // chat.mcpEnabled，仍受 mcp.turnWaitMs 有界等待。
-                sandboxEnabled || configService.getBoolean("chat.mcpEnabled", false));
+                // MCP 是外部连接：只在工作区档（沙盒已装配）挂载，聊天档纯问答不等外部连接
+                // （原 chat.mcpEnabled 调优开关已退役，按默认关收口）。仍受 mcp.turnWaitMs 有界等待。
+                sandboxEnabled);
         // 目标模式的控制工具常驻注册：实例按会话常驻，目标可能在建实例之后才建立，
         // 不能等到目标建立再往 Toolkit 里加工具（那需要重建实例）。非目标轮调用会落空返回。
         holders.add(new GoalTools(goalService, slot));
@@ -4206,7 +4181,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         io.agentscope.core.model.Model auxModel = modelBuilder
                 .generateOptions(auxGenerateOptions(cmd, hooks.modelRef()))
                 .build();
-        io.agentscope.core.model.Model chatModel = new MeteredModel(baseModel, usageLedger, quotaService, contentSafety,
+        io.agentscope.core.model.Model chatModel = new MeteredModel(baseModel, usageLedger, quotaService,
                 com.wenqu.ai.util.UsageAttr.of(cmd.getUserId(), cmd.getSessionId(), null,
                         cmd.branchTurn() ? "subagent" : "chat", cmd.getApiKeyId(), cmd.getShareId()), hooks.modelRef());
         // 主链那份包装器登记到会话表：它是本轮「断流」计数的唯一来源（实例跨轮复用，收尾读差值）
@@ -4304,15 +4279,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 界面上就是「正文一下粘出几百字」。这里把它拆成 200ms 一片（代价见类注释）。
                 .middleware(new AgentxStreamFlushMiddleware())
                 // 工具说明精简：换的是请求里那份 ToolSchema 的描述文本，注册表、参数 schema、
-                // 只读档位与权限判定一律不动（关掉即恢复完整说明）。开关每次调用现读，
-                // 因为实例按会话常驻、middleware 只能在 build 期挂上——见类注释。
-                .middleware(new AgentxToolDescriptionCompact(
-                        () -> configService.getBoolean("chat.toolDescriptionCompact", true)))
-                // 前缀稳定：框架把会话 id / 容器 id 拼在 system prompt 里，每个新会话都会让
-                // 供应商的 prefix cache 从这里断开。只改模型看到的文本，不动运行时状态。
-                .middleware(new PrefixStabilizerMiddleware(
-                        () -> configService.getBoolean("chat.prefixStabilizer", true)))
-                // 异步升级首轮：工作区还没好，不把文件/命令工具暴露给模型，避免 scratch 写了带不进沙盒。
+                // 只读档位与权限判定一律不动。恒开（代码内置无开关）——见类注释。
+                .middleware(new AgentxToolDescriptionCompact())
+                // 工具面闸：无子智能体/无活跃目标时隐藏对应的编排工具，省 schema 降误选。
                 .middleware(new AgentxToolSurfaceFilter(slot, !subagentTargets.isEmpty()))
                 // 框架默认装备子智能体/技能/工作区上下文/tools.json 等旁路能力。
                 //

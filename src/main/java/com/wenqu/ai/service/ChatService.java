@@ -183,10 +183,6 @@ public class ChatService {
     private final GoalService goalService;
     /** 让位等待上限：目标轮是协作式中断，等它放开轮锁；超时如实拒绝而不是并发跑两轮。 */
     private static final long GOAL_YIELD_WAIT_MS = 5_000L;
-    /** 内容安全输入闸：命中即不发起本轮，与模型出口的出口闸共用一份判据 */
-    private final com.wenqu.ai.service.contentsafety.ContentSafetyService contentSafety;
-
-
 
     /** 问答流水线线程池：图片描述 join/检索/深度思考等重活都在独立线程执行，避免占满 Tomcat 请求线程；
      *   chat.pipelineThreads 可调（保存即生效），队列有界，满时快速失败返回"系统繁忙" */
@@ -268,7 +264,6 @@ public class ChatService {
                       ChatRunBus chatRunBus,
                       ChatRunRuntime runtime,
                       com.wenqu.ai.engine.ChatEngineFactory chatEngines,
-                      com.wenqu.ai.service.contentsafety.ContentSafetyService contentSafety,
                       UserRoleService userRoleService,
                       com.wenqu.ai.agent.subagent.SubAgentBranchRuntime branchRuntime,
                       GoalService goalService) {
@@ -288,7 +283,6 @@ public class ChatService {
         this.chatRunBus = chatRunBus;
         this.runtime = runtime;
         this.chatEngines = chatEngines;
-        this.contentSafety = contentSafety;
         this.userRoleService = userRoleService;
         this.branchRuntime = branchRuntime;
         this.goalService = goalService;
@@ -329,15 +323,6 @@ public class ChatService {
         final String agentId = cmd.getAgentId();
         final String userId = cmd.getUserId();
         final boolean guestMode = cmd.isGuestMode();
-
-        // 内容安全输入闸：命中 block 规则就不发起这一轮——一次模型调用都不花，
-        // 用户当场看到「哪条规则拦的」。判据只有一处实现（ContentSafetyService），出口闸在模型出口
-        // （MeteredModel / DynamicOpenAiChatModel），两道闸同一份规则表，与配额闸同一形态。
-        String refused = contentSafety.checkInput(userId, sessionId, cmd.getQuestion());
-        if (refused != null) {
-            rejectTurn(emitter, cmd, sessionId, userId, null, refused);
-            return;
-        }
 
         // 会话轮级互斥：同一会话同时只允许一轮在跑。并发两问会历史交错、ArtifactService EMITTERS
         // 相互覆盖（后轮覆盖前轮，先完成者注销掉后轮的推送）、首问智能体绑定竞态。断线后台续跑

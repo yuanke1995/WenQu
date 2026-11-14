@@ -44,7 +44,6 @@ public class AgentxConfiguration {
                                com.wenqu.ai.service.OrgService orgService,
                                com.wenqu.ai.service.UsageLedgerService usageLedger,
                                com.wenqu.ai.service.UsageQuotaService quotaService,
-                               com.wenqu.ai.service.contentsafety.ContentSafetyService contentSafety,
                                com.wenqu.ai.service.GoalService goalService,
                                com.wenqu.ai.service.TurnNotifyService turnNotify,
                                com.wenqu.ai.service.webhook.AgentWebhookService agentWebhookService,
@@ -58,7 +57,7 @@ public class AgentxConfiguration {
                 sandboxService, consultService, citations, redisProperties, qaLog, toolRegistry, projectService,
                 projectFileService, turnChangeService, skillRepository, skillStatsStore,
                 orgService, usageLedger, quotaService,
-                contentSafety, goalService, turnNotify, agentWebhookService,
+                goalService, turnNotify, agentWebhookService,
                 chatRunBus, mcpToolLabelService,
                 journalRotation, knowledgeMapper, documentMapper,
                 chatService::resolveTurnModel);
