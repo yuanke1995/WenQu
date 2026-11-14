@@ -464,6 +464,7 @@
     },
     {
       "backendKey": "context.maxContextHits",
+      "personal": true,
       "personalOnly": true,
       "panel": "retrieval",
       "section": 0,
