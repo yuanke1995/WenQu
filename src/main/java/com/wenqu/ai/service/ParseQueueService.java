@@ -75,6 +75,9 @@ public class ParseQueueService {
     /** 配置变更时（parse.embedConcurrency）按需增减许可 */
     private final Gate embedGate;
 
+    /** 并发闸的「许可总量」（不是可用量）：热调整时与它比较，避免被在跑任务占用的许可带偏 */
+    private volatile int embedPermits;
+
     /** 批量失败告警阈值：同库窗口内终态失败达到该数即告警一次 */
     private static final int BATCH_ALERT_THRESHOLD = 5;
     /** 批量失败告警窗口（毫秒） */
@@ -111,7 +114,9 @@ public class ParseQueueService {
         this.aiDocumentMapper = aiDocumentMapper;
         this.knowledgeBaseMapper = knowledgeBaseMapper;
         this.notificationService = notificationService;
-        this.embedGate = new Gate(Math.max(1, configService.getInt("parse.embedConcurrency", ConfigDefaults.PARSE_EMBED_CONCURRENCY)));
+        int permits = Math.max(1, configService.getInt("parse.embedConcurrency", ConfigDefaults.PARSE_EMBED_CONCURRENCY));
+        this.embedGate = new Gate(permits);
+        this.embedPermits = permits;
     }
 
     // ==================== 入队 ====================
@@ -132,6 +137,12 @@ public class ParseQueueService {
         task.setNextRunAt(LocalDateTime.now());
         task.setPriority(priority);
         task.setCreateTime(LocalDateTime.now());
+        // 租户跟文档走：自动刷新这类由调度线程入队的任务没有请求身份，不显式带上就会落表默认租户，
+        // 之后执行/退避/终态回收都会因租户不一致而匹配 0 行。
+        AiDocument doc = aiDocumentMapper.selectById(docId);
+        if (doc != null && doc.getTenantId() != null && !doc.getTenantId().isBlank()) {
+            task.setTenantId(doc.getTenantId());
+        }
         parseTaskMapper.insert(task);
         log.info("[PARSE-QUEUE] 入队 task={} doc={} 当前排队 {}", task.getId(), docId, queuedCount());
         return task.getId();
@@ -226,7 +237,7 @@ public class ParseQueueService {
         // 块与向量全量翻倍，交错时序下还会互相当 stale 清掉
         if (!inFlight.add(task.getId())) return;
         try {
-            parseExecutor.submit(() -> runTask(task.getId(), task.getDocId()));
+            parseExecutor.submit(() -> runTask(task.getId(), task.getDocId(), task.getTenantId()));
         } catch (RejectedExecutionException e) {
             inFlight.remove(task.getId());
             // CallerRunsPolicy 基本不会抛（除线程池已 shutdown）；真抛了说明任务手上是有的，
@@ -251,9 +262,22 @@ public class ParseQueueService {
     // ==================== 执行 ====================
 
     /** 任务执行壳：单一职责是「怎么对待失败」，解析本体在 DocumentService */
-    private void runTask(String taskId, String docId) {
+    private void runTask(String taskId, String docId, String tenantId) {
         long start = System.currentTimeMillis();
         handles.put(taskId, new TaskHandle(Thread.currentThread(), start));
+        // 解析线程池是裸 ThreadPoolExecutor，不随任务传递身份/租户。不在这里按任务行绑租户，
+        // 知识块、问答对、子块、版本快照、解析通知都会以系统身份落库 → 落到表默认租户，
+        // 请求侧按租户过滤后全部不可见（预览 0 块、关键词召回丢失、通知收不到）。
+        // 跑完恢复原值，池化线程复用时不把上一个任务的租户带出去。
+        // 租户以文档行为准（文档是写入目标的归属真源）：自动刷新这类由调度线程入队的任务，
+        // 任务行本身可能是默认租户，但文档属于哪个租户就必须写到哪个租户。
+        AiDocument docRow = aiDocumentMapper.selectById(docId);
+        String effectiveTenant = docRow != null && docRow.getTenantId() != null && !docRow.getTenantId().isBlank()
+                ? docRow.getTenantId() : tenantId;
+        String prevTenant = com.wenqu.ai.util.TenantContext.boundTenant();
+        if (effectiveTenant != null && !effectiveTenant.isBlank()) {
+            com.wenqu.ai.util.TenantContext.bind(effectiveTenant);
+        }
         try {
             documentService.runParseTask(taskId, docId);
             parseTaskMapper.markSucceeded(taskId);
@@ -262,6 +286,7 @@ public class ParseQueueService {
         } catch (Throwable e) {
             handleFailure(taskId, docId, e);
         } finally {
+            com.wenqu.ai.util.TenantContext.bind(prevTenant);
             inFlight.remove(taskId);
             handles.remove(taskId);
         }
@@ -335,7 +360,10 @@ public class ParseQueueService {
             log.warn("[PARSE-QUEUE] 任务终态失败（不重试） task={} doc={}: {}", taskId, docId, msg);
         } else {
             try {
-                int backoff = parseTaskMapper.markRetryable(taskId, msg, backoffSeconds(taskId));
+                // 退避秒数要单独留：markRetryable 返回的是 UPDATE 影响行数（恒为 1），
+                // 不能拿它当退避值打日志，否则每次失败都显示「下次退避 1s」。
+                int backoff = backoffSeconds(taskId);
+                parseTaskMapper.markRetryable(taskId, msg, backoff);
                 if (isDead(taskId)) {
                     // markRetryable 的 SQL 在 attempt 触顶时把行直接翻成 dead —— 这一刻它就是终态失败。
                     // 不补通知的话「重试耗尽」是队列里唯一不吭一声的失败口径（fatal 分支才有铃铛与批量告警）
@@ -427,11 +455,22 @@ public class ParseQueueService {
         embedGate.release();
     }
 
-    private void syncEmbedGate() {
+    /**
+     * 并发闸按配置热调整。
+     * <p><b>必须按「许可总量」比较，不能按 availablePermits()</b>：可用量在被占用时会小于总量，
+     * 拿它当总量会在有任务持有时追加许可，把总量越撑越大；随后收缩分支再减就得到负数，
+     * {@code Semaphore.reducePermits(负数)} 会抛<b>无 message</b> 的 IllegalArgumentException，
+     * 表现为「向量化批次失败: null」整篇文档反复重试不成功（实测踩过）。
+     */
+    private synchronized void syncEmbedGate() {
         int want = Math.max(1, configService.getInt("parse.embedConcurrency", ConfigDefaults.PARSE_EMBED_CONCURRENCY));
-        int have = embedGate.availablePermits();
-        if (want > have) embedGate.release(want - have);
-        else if (want < have) embedGate.reduce(want - have);
+        if (want > embedPermits) {
+            embedGate.release(want - embedPermits);
+        } else if (want < embedPermits) {
+            // 参数必须为正：reducePermits 不校验语义，只管抛 IllegalArgumentException
+            embedGate.reduce(embedPermits - want);
+        }
+        embedPermits = want;
     }
 
     // ==================== 配置与统计 ====================

@@ -40,6 +40,8 @@ import java.util.concurrent.Semaphore;
 public class OcrEngineGate {
 
     private final Map<String, Gate> gates = new ConcurrentHashMap<>();
+    /** 每个引擎的「许可总量」（不是可用量）：热调整时与它比较，避免被在跑任务占用的许可带偏 */
+    private final Map<String, Integer> totals = new ConcurrentHashMap<>();
     private final ConfigService configService;
 
     public OcrEngineGate(ConfigService configService) {
@@ -92,15 +94,21 @@ public class OcrEngineGate {
     /**
      * 按配置增减许可数（parse.ocrGateConcurrency，默认 1）。
      * 用 availablePermits 差值增减而不是重建信号量：重建会让排队中的线程对着旧信号量死等。
+     * <p><b>必须按许可总量比较</b>：availablePermits 会被在跑任务占用而偏小，拿它当总量会追加许可、
+     * 把总量越撑越大；收缩时再减就得到负数，{@code reducePermits(负数)} 抛的是<b>无 message</b>
+     * 的 IllegalArgumentException（与向量化闸同一个坑）。
      */
     private void syncPermits(String engineId) {
         int want = Math.max(1, configService.getInt("parse.ocrGateConcurrency", 1));
         Gate gate = gates.computeIfAbsent(engineId, k -> new Gate(want));
-        int have = gate.availablePermits();
-        if (want > have) {
-            gate.release(want - have);
-        } else if (want < have) {
-            gate.reduce(want - have);
+        synchronized (gate) {
+            int total = totals.computeIfAbsent(engineId, k -> want);
+            if (want > total) {
+                gate.release(want - total);
+            } else if (want < total) {
+                gate.reduce(total - want);
+            }
+            totals.put(engineId, want);
         }
     }
 

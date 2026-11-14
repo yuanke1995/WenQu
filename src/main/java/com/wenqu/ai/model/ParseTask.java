@@ -33,6 +33,13 @@ public class ParseTask {
     /** 所属知识库 ID */
     private String kbId;
 
+    /**
+     * 归属租户（入队时由请求线程写入；解析 worker 执行前据此绑定租户上下文）。
+     * <p>没有它，异步解析线程会以「未绑定系统线程」身份落库，知识块/问答对/版本快照
+     * 全部落到表默认租户，请求侧按租户过滤后一条都查不到。
+     */
+    private String tenantId;
+
     /** 状态: 0=queued 待解析, 1=running 执行中, 2=succeeded 成功, 3=retryable 可重试, 4=dead 终态失败 */
     private Integer status;
 

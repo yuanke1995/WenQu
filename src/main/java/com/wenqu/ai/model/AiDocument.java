@@ -20,6 +20,9 @@ public class AiDocument {
     @TableId(type = IdType.ASSIGN_UUID)
     private String id;
 
+    /** 归属租户（解析 worker 据此绑定租户上下文；上传时由请求线程写入） */
+    private String tenantId;
+
     /** 文件名 */
     private String fileName;
 

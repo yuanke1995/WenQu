@@ -1059,11 +1059,19 @@ public class DocumentService {
             } catch (Exception e) {
                 lastErr = e;
                 if (attempt < retryCount) {
-                    log.warn("[FAIL-LOUD] [{}] 向量化批次失败（第 {} 次重试）: {}", tag, attempt + 1, e.getMessage());
+                    log.warn("[FAIL-LOUD] [{}] 向量化批次失败（第 {} 次重试）size={}: {}",
+                            tag, attempt + 1, batch.size(), errText(e), e);
                 }
             }
         }
-        throw lastErr == null ? new IllegalStateException("向量化失败") : new IllegalStateException(lastErr.getMessage(), lastErr);
+        throw lastErr == null ? new IllegalStateException("向量化失败") : new IllegalStateException("向量化批次失败: " + errText(lastErr), lastErr);
+    }
+
+    /** 异常可读描述：message 为空时退回异常类名（HTTP/Redis 客户端常见无 message 的异常） */
+    private static String errText(Throwable e) {
+        if (e == null) return "unknown";
+        String m = e.getMessage();
+        return m == null || m.isBlank() ? e.getClass().getName() : e.getClass().getSimpleName() + ": " + m;
     }
 
     /**
@@ -1099,7 +1107,7 @@ public class DocumentService {
      * 向量化单批写入（fail-loud）：失败自动重试 retryCount 次，仍失败抛异常 → 文档整体失败/回退，
      * 绝不静默丢块（否则文档置成功但部分块仅关键词可召回）。
      */
-    private void vectorAddWithRetry(String docId, List<Document> batch, int retryCount) {
+    private void vectorAddWithRetry(String docId, List<Document> batch, int retryCount, String batchLabel) {
         // 按文档路由向量库（每批解析一次归属；批内同文档，一次 selectById 开销可忽略）
         VectorStore store = storeOf(docId);
         Exception lastErr = null;
@@ -1116,11 +1124,15 @@ public class DocumentService {
             } catch (Exception e) {
                 lastErr = e;
                 if (attempt < retryCount) {
-                    log.warn("[FAIL-LOUD] [{}] 向量化批次失败（第 {} 次重试）: {}", docId, attempt + 1, e.getMessage());
+                    // 打完整堆栈：向量化失败的根因大多是上游异常且常常没有 message（HTTP/Redis），
+                    // 只记 getMessage() 会把真实错误吞成一行 "null"，事后无法定位。
+                    log.warn("[FAIL-LOUD] [{}] 向量化批次失败（第 {} 次重试）batch={} size={}: {}",
+                            docId, attempt + 1, batchLabel, batch.size(), errText(e), e);
                 }
             }
         }
-        throw new RuntimeException("向量化批次失败: " + (lastErr == null ? "unknown" : lastErr.getMessage()), lastErr);
+        throw new RuntimeException("向量化批次失败: " + errText(lastErr)
+                + "（批次 " + batchLabel + "，共 " + batch.size() + " 块）", lastErr);
     }
 
     private void updateProgress(String docId, int progress, String desc) {
@@ -1296,7 +1308,8 @@ public class DocumentService {
                         return;
                     }
                     int end = Math.min(i + batchSize, aiDocs.size());
-                    vectorAddWithRetry(docId, aiDocs.subList(i, end), embedRetry);
+                    vectorAddWithRetry(docId, aiDocs.subList(i, end), embedRetry,
+                            (i + 1) + "-" + end + "/" + aiDocs.size());
                     batchNo++;
                     // 向量化进度：50 → 95（每批精确上报）
                     updateProgress(docId, 50 + Math.min(45, batchNo * 45 / totalBatch), "向量化 " + end + "/" + aiDocs.size());
