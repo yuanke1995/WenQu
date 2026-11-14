@@ -1,0 +1,5 @@
+#!/usr/bin/env sh
+# push 前跑受影响面的 CI 检查（见 scripts/ci-local.sh）。
+# 启用：git config core.hooksPath .githooks
+# 临时跳过：git push --no-verify
+exec "$(git rev-parse --show-toplevel)/scripts/ci-local.sh"
