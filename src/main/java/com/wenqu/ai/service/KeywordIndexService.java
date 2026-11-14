@@ -548,7 +548,7 @@ public class KeywordIndexService {
      * </ul>
      * 按主键拉取不可用（settings 异步任务未落地、索引不是可过滤结构等）时本轮告警跳过，下轮重试；
      * 不再回退到两侧全量拉取的旧算法。
-     * 调度（启动首轮开关 keyword.reconcileOnStartup + 内置节拍的周期，见 ScheduleCenter）
+     * 调度（内置节拍的周期任务，见 ScheduleCenter；原启动首轮开关 keyword.reconcileOnStartup 已退役）
      * 由 schedule 包 ScheduleCenter 驱动；失败只告警不抛，下轮重试。
      */
     public void reconcile() {

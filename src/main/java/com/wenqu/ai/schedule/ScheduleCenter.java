@@ -239,10 +239,12 @@ public class ScheduleCenter {
         // 里的 backendKey 才能在界面暂停）/ 间隔(ms)动态读取（≤0=暂停）/ 启动首轮。
 
         // 关键词索引精确对账：按 (id, contentHash) 双向比对 MySQL 有效块与 Meilisearch 文档，定向修复漂移
+        // （原启动首轮开关 keyword.reconcileOnStartup 已退役：启动对账收敛为单点的多副本口径不再需要开关，
+        //   周期任务已覆盖，启动首轮属于冗余自愈）
         register("关键词索引精确对账", "按 (id, contentHash) 双向比对 MySQL 有效块与 Meilisearch 文档，定向修复索引漂移",
                 null,   // 内置节拍：不做成参数（下面是它真正的家）
                 () -> KEYWORD_RECONCILE_INTERVAL_MS,
-                () -> configService.getBoolean("keyword.reconcileOnStartup"),
+                () -> false,
                 () -> keywordIndexService.reconcile());
         // 聊天图片目录清理：防止 data/images/chat 磁盘缓慢泄漏（保留期 cleanup.tempFileRetentionDays）
         register("聊天图片目录清理", "删除超过保留期的聊天图片文件，防止磁盘缓慢泄漏（保留期 cleanup.tempFileRetentionDays）",
@@ -608,7 +610,6 @@ public class ScheduleCenter {
      * 对照 schema 逐个校验并告警——避免"配了但界面不显示"这类静默失效。
      */
     private static final Map<String, List<String>> TASK_PARAMS = Map.ofEntries(
-            Map.entry("关键词索引精确对账", List.of("keyword.reconcileOnStartup")),
             Map.entry("聊天图片目录清理", List.of("cleanup.tempFileRetentionDays")),
             Map.entry("聊天附件超期清理", List.of("cleanup.tempFileRetentionDays")),
             Map.entry("检索评估自动体检", List.of("eval.judgeEnabled", "eval.judgeModel", "eval.autoThresholdPct")),
