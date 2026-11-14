@@ -53,8 +53,9 @@ spring:
     baseline-on-migrate: true
     baseline-version: 1
     # 一次性迁移用完即删（文件删掉、历史记录保留）：validate 容忍「已应用但本地缺失」的版本，
-    # 否则删过 V7~V9 这类历史迁移后，存量库每次启动都被 validate 卡死
-    ignore-migration-patterns: "*:missing"
+    # 否则删过 V7~V9 这类历史迁移后，存量库每次启动都被 validate 卡死。
+    # missing=中段删除（本地仍有更高版本文件）；future=最高版本被删（本地最高低于已应用版本）——V17 用完即删实测踩中，两个 state 都要登记
+    ignore-migration-patterns: "*:missing,*:future"
 
   # Redis Stack（向量存储）
   data:
