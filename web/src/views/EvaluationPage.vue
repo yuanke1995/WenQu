@@ -46,20 +46,6 @@
           </div>
 
           <template v-else>
-            <div v-if="overview?.paramsStale" class="ev-banner warn">
-              <span class="tag warn">参数已变更</span>
-              <span>线上参数在上次体检后改过，当前红绿灯读的是旧测量。建议重新体检后再对比。</span>
-              <button class="app-link-btn" @click="doHealth">重新体检</button>
-            </div>
-            <div v-if="overview?.apply" class="ev-banner" :class="applyTone">
-              <span class="tag" :class="applyTagTone">{{ applyLabel }}</span>
-              <span>
-                灰度应用「{{ overview.apply.groupName }}」· 观察至 {{ fmtTime(overview.apply.deadline) }}
-                <template v-if="overview.apply.message">· {{ overview.apply.message }}</template>
-              </span>
-              <button v-if="overview.apply.status === 'observing' && canWrite" class="app-link-btn" @click="doRollback">手动回滚</button>
-            </div>
-
             <div class="ev-kpi">
               <div class="app-card ev-health">
                 <div class="ev-card-h">检索健康度 <span class="card-sub">4 项加权</span></div>
@@ -349,8 +335,6 @@
 
               <div v-if="conclusion" class="ev-conclusion">
                 <div>{{ conclusion }}</div>
-                <button v-if="bestGroup && bestGroup.name !== firstGroup?.name && canWrite" class="app-btn"
-                        @click="applyGroup(bestGroup)">应用最佳组</button>
               </div>
 
               <a-table size="small" row-key="name" :data-source="experiment.detail.groups || []"
@@ -373,7 +357,6 @@
                     <span>{{ record.judgeScore == null ? '—' : fmtPct(record.judgeScore) }}</span>
                   </template>
                   <template v-else-if="column.key === 'ops'">
-                    <button v-if="index > 0 && canWrite" class="app-link-btn" @click="applyGroup(record)">应用此组</button>
                     <button class="app-link-btn" @click="loadExperimentResults(record.name)">明细</button>
                   </template>
                   <template v-else>
@@ -660,7 +643,7 @@ import {
   getEvalOverview, getEvalCases, createEvalCase, updateEvalCase, deleteEvalCase,
   importEvalCases, exportEvalCases, startEvalRun, listEvalRuns, getEvalRun,
   getEvalRunResults, cancelEvalRun, setEvalBaseline, compareEvalRuns, exportEvalRun,
-  applyEvalGroup, rollbackEvalApply, evalGenerate, runAnswerEval, answerEvalReport,
+  evalGenerate, runAnswerEval, answerEvalReport,
   getConfig, listKnowledgeBases, searchKnowledge, getAuthMe, runEvalAutoCheck
 } from '../api'
 
@@ -954,20 +937,6 @@ async function doGenerate (direct) {
     title: '重新生成评估集？',
     content: '会基于最近历史问答生成一个新版本；旧版本与历史运行仍保留，不会被覆盖。',
     okText: '生成', cancelText: '取消', onOk: run
-  })
-}
-async function doRollback () {
-  Modal.confirm({
-    title: '回滚灰度应用？',
-    content: '将把参数恢复到应用前快照。',
-    okText: '回滚', cancelText: '取消',
-    onOk: async () => {
-      try {
-        const r = await rollbackEvalApply()
-        if (r.success) { message.success('已回滚'); await loadOverview() }
-        else message.error(r.msg || '回滚失败')
-      } catch (e) { message.error(e.message || '回滚失败') }
-    }
   })
 }
 function openCases (filter) {
@@ -1288,23 +1257,6 @@ const activeSegmentsByTag = computed(() => activeSegments.value?.byTag || [])
 const activeSegmentsByKb = computed(() => activeSegments.value?.byKb || [])
 const activeSegmentsByDocType = computed(() => activeSegments.value?.byDocType || [])
 
-function applyGroup (group) {
-  Modal.confirm({
-    title: `应用「${group.name}」到线上配置？`,
-    content: '参数会立即生效，并进入 24 小时观察期；若下一次体检核心指标明显下滑，会自动回滚并通知管理员。',
-    okText: '应用并观察', cancelText: '取消',
-    onOk: async () => {
-      try {
-        const r = await applyEvalGroup(experiment.runId, group.name)
-        if (r.success) {
-          message.success('已应用，进入观察期')
-          await loadOverview()
-        } else message.error(r.msg || '应用失败')
-      } catch (e) { message.error(e.message || '应用失败') }
-    }
-  })
-}
-
 // ==================== 历史 ====================
 const historyMetrics = [
   { key: 'recall5', label: 'recall@5' },
@@ -1496,19 +1448,6 @@ function runStatusText (s) {
 function runPillTone (s) {
   return { succeeded: 'ok', partial: 'warn', running: 'blue', failed: 'err', cancelled: 'grey' }[s] || 'grey'
 }
-
-const applyTone = computed(() => {
-  const s = overview.value?.apply?.status
-  return s === 'rolledBack' ? 'danger' : s === 'confirmed' ? 'ok' : 'warn'
-})
-const applyTagTone = computed(() => {
-  const s = overview.value?.apply?.status
-  return s === 'rolledBack' ? 'err' : s === 'confirmed' ? 'ok' : 'warn'
-})
-const applyLabel = computed(() => {
-  const s = overview.value?.apply?.status
-  return { observing: '灰度观察中', confirmed: '观察通过', rolledBack: '已自动回滚' }[s] || '灰度应用'
-})
 function download (filename, content, type) {
   const blob = new Blob([content], { type: type || 'text/plain;charset=utf-8' })
   const url = URL.createObjectURL(blob)

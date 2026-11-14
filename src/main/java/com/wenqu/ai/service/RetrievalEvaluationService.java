@@ -105,7 +105,6 @@ public class RetrievalEvaluationService {
     private final NotificationService notificationService;
     private final UserRoleService userRoleService;
     private final RetrievalEvalCatalogService catalogService;
-    private final RetrievalEvalApplyService applyService;
 
     /** 评估执行线程池（daemon；每组参数一个任务，线程局部 override 不污染主线程） */
     private final ExecutorService evalPool = Executors.newFixedThreadPool(4, r -> {
@@ -122,8 +121,7 @@ public class RetrievalEvaluationService {
                                       AppProperties properties, ChatClient chatClient,
                                       NotificationService notificationService,
                                       UserRoleService userRoleService,
-                                      RetrievalEvalCatalogService catalogService,
-                                      RetrievalEvalApplyService applyService) {
+                                      RetrievalEvalCatalogService catalogService) {
         this.retrievalService = retrievalService;
         this.configService = configService;
         this.keywordExtractor = keywordExtractor;
@@ -138,7 +136,6 @@ public class RetrievalEvaluationService {
         this.notificationService = notificationService;
         this.userRoleService = userRoleService;
         this.catalogService = catalogService;
-        this.applyService = applyService;
     }
 
     @jakarta.annotation.PreDestroy
@@ -499,9 +496,6 @@ public class RetrievalEvaluationService {
         long start = System.currentTimeMillis();
         Map<String, Object> report = new LinkedHashMap<>();
         report.put("runTime", now());
-        Map<String, String> paramsNow = currentRetrievalParams();
-        report.put("params", paramsNow);
-        report.put("paramsId", paramsId(paramsNow));
         try {
             EvalSet set = load();
             if (set.cases().isEmpty()) {
@@ -543,7 +537,6 @@ public class RetrievalEvaluationService {
                     report.put("evalSetId", evalSetId);
                     Map<String, Object> prev = parseReport(configService.get("eval.lastReport"));
                     String prevEvalSetId = prev == null ? null : String.valueOf(prev.get("evalSetId"));
-                    String prevParamsId = prev == null ? null : String.valueOf(prev.get("paramsId"));
                     Map<String, Double> prevMetrics = prev == null ? null : castMetrics(prev.get("metrics"));
                     double thresholdPct = Math.max(1, configService.getDouble("eval.autoThresholdPct", 10.0));
                     if (prevEvalSetId != null && !prevEvalSetId.equals(evalSetId)) {
@@ -559,15 +552,6 @@ public class RetrievalEvaluationService {
                         report.put("message", "评估集有 " + result.staleExpected()
                                 + " 个期望标签已失效被剔除（知识库删除/重解析？），本期作为新基线，下次起在此样本上对比");
                         log.info("[Eval] 评估集期望标签漂移 {} 个，本期作为新基线: {}", result.staleExpected(), evalSetId);
-                    } else if (prevParamsId != null && !"null".equals(prevParamsId)
-                            && !prevParamsId.equals(report.get("paramsId"))) {
-                        // 检索参数变了：上期与本期量的不是同一口径，delta 会把「换了阈值」读成「质量涨跌」。
-                        // 与「评估集变更」「期望标签漂移」同一条护栏，只是成因不同。
-                        List<String> changed = paramsDiff(castParams(prev.get("params")), paramsNow);
-                        report.put("message", "检索参数已变更" + (changed.isEmpty() ? ""
-                                : "（" + String.join("、", changed) + "）")
-                                + "，与上期不可比；本期作为新基线，下次起在这组参数上对比");
-                        log.info("[Eval] 检索参数变更，本期作为新基线：{}", changed);
                     } else {
                         Map<String, Object> delta = new LinkedHashMap<>();
                         List<String> declinedItems = new ArrayList<>();
@@ -597,11 +581,6 @@ public class RetrievalEvaluationService {
         }
         report.put("elapsedMs", System.currentTimeMillis() - start);
         configService.putInternal("eval.lastReport", JSON.toJSONString(report));
-        try {
-            applyService.observe(report);
-        } catch (Exception e) {
-            log.debug("[Eval] 灰度应用观察失败（不影响体检）: {}", e.getMessage());
-        }
         // 下滑预警：广播给管理员级账号（体检无人值守跑，红黄灯不在眼前——通知是可感知面；
         // 旁路调用，create/createForAdmins 内部已全捕获，失败不影响体检收口）
         if ("decline".equals(report.get("status"))) {
@@ -617,69 +596,11 @@ public class RetrievalEvaluationService {
 
     /**
      * 最近一次自动体检报告（从未跑过返回 null）。
-     * <p>读的时候补一句「这份结论用的是旧参数」：体检按当时的线上参数跑，之后管理员改了阈值或权重，
-     * 屏上的红绿灯读的却是上一次测量——参数变更到下一次体检之间都是这个状态，所以必须当场说出来，
-     * 而不是等下一次自动体检才把它归入「不可比」。
+     * <p>参数指纹护栏已随检索全局默认值层退役（2026-11-14）：检索参数不再有全局层可改，
+     * 评估集标识与期望标签漂移两道护栏仍覆盖「样本不可比」的情形。
      */
     public Map<String, Object> lastAutoReport() {
-        Map<String, Object> report = parseReport(configService.get("eval.lastReport"));
-        if (report == null || report.isEmpty() || report.get("paramsId") == null) {
-            return report;   // 旧报告没带指纹：不猜它是在什么参数下量的
-        }
-        if (!String.valueOf(report.get("paramsId")).equals(paramsId(currentRetrievalParams()))) {
-            report.put("paramsDrift", paramsDiff(castParams(report.get("params")), currentRetrievalParams()));
-            report.put("paramsStale", true);
-        }
-        return report;
-    }
-
-    /** 体检要盯的参数清单：换掉其中任何一项，上期的 delta 就不再是同口径测量。
-     * （重排键不在此列：重排模型与窗口已归知识库，全局层已退役，见 KbParamCodec。） */
-    private static final List<String> RETRIEVAL_PARAM_KEYS = List.of(
-            "retrieval.vectorWeight", "retrieval.keywordWeight", "retrieval.vecThreshold",
-            "retrieval.keywordLimit", "retrieval.vectorTopK", "retrieval.minContextScore",
-            "retrieval.minFusionScore");
-
-    /** 这份报告当时是在哪些参数下量出来的（与 {@link #paramsId} 同一份清单）。 */
-    private Map<String, String> currentRetrievalParams() {
-        Map<String, String> m = new LinkedHashMap<>();
-        for (String key : RETRIEVAL_PARAM_KEYS) {
-            String v = configService.get(key);
-            m.put(key, v == null ? "" : v);
-        }
-        return m;
-    }
-
-    /** 参数指纹：按固定清单顺序拼出的「键=值」串（顺序稳定，不受 map 迭代序影响）。 */
-    static String paramsId(Map<String, String> params) {
-        StringBuilder sb = new StringBuilder();
-        for (String key : RETRIEVAL_PARAM_KEYS) {
-            if (sb.length() > 0) sb.append('|');
-            sb.append(key).append('=').append(params == null ? "" : params.getOrDefault(key, ""));
-        }
-        return sb.toString();
-    }
-
-    /** 两份参数里变了的那几项，写成「参数：改前 → 改后」，只点名真变了的。 */
-    static List<String> paramsDiff(Map<String, String> before, Map<String, String> after) {
-        List<String> out = new ArrayList<>();
-        for (String key : RETRIEVAL_PARAM_KEYS) {
-            String a = before == null ? null : before.get(key);
-            String b = after == null ? null : after.get(key);
-            if (a != null && !a.equals(b)) out.add(key + "：" + a + " → " + b);
-        }
-        return out;
-    }
-
-    /** 报告里那份 params 反序列化回来值可能是数字——统一转字符串再比。 */
-    private static Map<String, String> castParams(Object raw) {
-        Map<String, String> out = new LinkedHashMap<>();
-        if (raw instanceof Map<?, ?> m) {
-            for (Map.Entry<?, ?> e : m.entrySet()) {
-                out.put(String.valueOf(e.getKey()), e.getValue() == null ? "" : String.valueOf(e.getValue()));
-            }
-        }
-        return out;
+        return parseReport(configService.get("eval.lastReport"));
     }
 
     private Map<String, Object> parseReport(String json) {

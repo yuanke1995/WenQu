@@ -50,7 +50,6 @@ public class RetrievalEvalRunner {
     private final RetrievalEvalRunMapper runMapper;
     private final RetrievalEvalResultMapper resultMapper;
     private final RetrievalEvaluationService evaluationService;
-    private final RetrievalEvalApplyService applyService;
     private final ConfigService configService;
     private final NotificationService notificationService;
     private final UserMapper userMapper;
@@ -87,7 +86,6 @@ public class RetrievalEvalRunner {
     public RetrievalEvalRunner(RetrievalEvalRunMapper runMapper,
                                RetrievalEvalResultMapper resultMapper,
                                RetrievalEvaluationService evaluationService,
-                               RetrievalEvalApplyService applyService,
                                ConfigService configService,
                                NotificationService notificationService,
                                UserMapper userMapper,
@@ -98,7 +96,6 @@ public class RetrievalEvalRunner {
         this.runMapper = runMapper;
         this.resultMapper = resultMapper;
         this.evaluationService = evaluationService;
-        this.applyService = applyService;
         this.configService = configService;
         this.notificationService = notificationService;
         this.userMapper = userMapper;
@@ -299,11 +296,6 @@ public class RetrievalEvalRunner {
         }
         runMapper.updateById(update);
 
-        try {
-            applyService.observe(Map.of("metrics", bestMetrics));
-        } catch (Exception e) {
-            log.debug("[Eval] 灰度应用观察失败（不影响运行）: {}", e.getMessage());
-        }
         notifyOutcome(update, bestMetrics);
         log.info("[Eval] 运行 {} 结束：status={} {}/{} elapsed={}ms",
                 run.getId(), update.getStatus(), ctx.done.get(), ctx.total, update.getElapsedMs());

@@ -1,6 +1,6 @@
 <template>
   <!-- 保存前检查（效果图场景 04）：智能体编辑保存时的轻门禁。
-       口径与后端 gate-check 同源：hint 默认给三动作；block 且低于门槛才真正拦保存 -->
+       口径与后端 gate-check 同源：恒为提示档，只弹检查不拦保存 -->
   <a-modal :open="open" :width="540" :footer="null" :closable="true" destroy-on-close
            @cancel="emit('update:open', false)">
     <template #title>保存前检查</template>
@@ -30,7 +30,7 @@
         <span class="ico">!</span>
         <div>
           <div class="t">低于门槛</div>
-          <div class="s">通过率 {{ pct(info.lastRun?.passRate) }} 低于门槛 {{ pct(info.thresholdRate) }}{{ blocked ? '；门禁模式为阻断，本次保存被拒绝' : '；本次保存仍被允许' }}。</div>
+          <div class="s">通过率 {{ pct(info.lastRun?.passRate) }} 低于门槛 {{ pct(info.thresholdRate) }}；本次保存仍被允许。</div>
         </div>
       </div>
 
@@ -57,19 +57,14 @@
     </div>
 
     <div class="gate-foot">
-      <span class="mode-hint">门禁模式：提示（低于门槛不阻断保存）</span>
+      <span class="mode-hint">仅提示，不阻断保存</span>
       <span class="sp"></span>
-      <template v-if="blocked">
-        <a-button @click="emit('update:open', false)">知道了</a-button>
-      </template>
-      <template v-else>
-        <a-button @click="emit('update:open', false)">取消</a-button>
-        <a-button :disabled="saving" @click="emit('confirm', 'save')">仍然保存</a-button>
-        <a-button type="primary" :loading="saving" :disabled="!info?.hasSuite || !info?.caseCount"
-                  @click="emit('confirm', 'saveAndRun')">
-          {{ info?.hasSuite ? '保存并运行回归' : '保存' }}
-        </a-button>
-      </template>
+      <a-button @click="emit('update:open', false)">取消</a-button>
+      <a-button :disabled="saving" @click="emit('confirm', 'save')">仍然保存</a-button>
+      <a-button type="primary" :loading="saving" :disabled="!info?.hasSuite || !info?.caseCount"
+                @click="emit('confirm', 'saveAndRun')">
+        {{ info?.hasSuite ? '保存并运行回归' : '保存' }}
+      </a-button>
     </div>
   </a-modal>
 </template>
@@ -79,15 +74,13 @@ import { computed } from 'vue'
 
 const props = defineProps({
   open: { type: Boolean, default: false },
-  /** gate-check 响应：{gate, gateMode, thresholdRate, agentVersion, lastRun, changes, hasSuite, caseCount} */
+  /** gate-check 响应：{gate, thresholdRate, agentVersion, lastRun, changes, hasSuite, caseCount} */
   info: { type: Object, default: null },
   saving: { type: Boolean, default: false }
 })
 const emit = defineEmits(['update:open', 'confirm'])
 
 const gateIs = g => props.info?.gate === g
-/** block 模式只在「低于门槛」时真正拦保存；有变更未评测始终提示级（plan §3.3） */
-const blocked = computed(() => props.info?.gateMode === 'block' && gateIs('below'))
 const estMinutes = computed(() => Math.max(1, Math.ceil((props.info?.caseCount || 0) * 3.4 / 60)))
 const pct = v => (v == null ? '—' : (Math.round(v) === v ? v.toFixed(0) : v.toFixed(1)) + '%')
 /** diff 值展示：空值显示「空」，长文本截断 */

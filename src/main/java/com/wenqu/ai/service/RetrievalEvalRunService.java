@@ -43,7 +43,6 @@ public class RetrievalEvalRunService {
     private final RetrievalEvalCatalogService catalog;
     private final RetrievalEvaluationService evaluationService;
     private final RetrievalEvalRunner runner;
-    private final RetrievalEvalApplyService applyService;
     private final ConfigService configService;
 
     public RetrievalEvalRunService(RetrievalEvalRunMapper runMapper,
@@ -52,7 +51,6 @@ public class RetrievalEvalRunService {
                                    RetrievalEvalCatalogService catalog,
                                    RetrievalEvaluationService evaluationService,
                                    RetrievalEvalRunner runner,
-                                   RetrievalEvalApplyService applyService,
                                    ConfigService configService) {
         this.runMapper = runMapper;
         this.resultMapper = resultMapper;
@@ -60,7 +58,6 @@ public class RetrievalEvalRunService {
         this.catalog = catalog;
         this.evaluationService = evaluationService;
         this.runner = runner;
-        this.applyService = applyService;
         this.configService = configService;
     }
 
@@ -116,11 +113,6 @@ public class RetrievalEvalRunService {
     /** 定时体检：复用既有护栏与报告，落一条运行历史供趋势查看。 */
     public Map<String, Object> runScheduledCheck() {
         Map<String, Object> report = evaluationService.runAutoCheck();
-        try {
-            applyService.observe(report);
-        } catch (Exception e) {
-            log.debug("[Eval] 定时体检灰度观察失败: {}", e.getMessage());
-        }
         try {
             RetrievalEvalSet set = catalog.activeSet(null);
             if (set != null && report != null && report.get("metrics") instanceof Map<?, ?> metrics && !metrics.isEmpty()) {
@@ -410,14 +402,12 @@ public class RetrievalEvalRunService {
         out.put("staleExpected", detail.get("staleExpected"));
         out.put("qualityScore", detail.get("qualityScore"));
         out.put("judgeModel", configService.get("eval.judgeModel"));
-        out.put("apply", applyService.status());
         Map<String, Object> auto = evaluationService.lastAutoReport();
         out.put("lastAutoReport", auto);
         out.put("paramsStale", auto != null && Boolean.TRUE.equals(auto.get("paramsStale")));
         out.put("schedule", Map.of(
                 "intervalMs", configService.getInt("eval.autoIntervalMs", 86_400_000),
-                "thresholdPct", configService.getDouble("eval.autoThresholdPct", 10.0),
-                "applyObserveHours", configService.getInt("eval.applyObserveHours", 24)));
+                "thresholdPct", configService.getDouble("eval.autoThresholdPct", 10.0)));
 
         if (set == null) {
             out.put("lastRun", null);
@@ -486,38 +476,9 @@ public class RetrievalEvalRunService {
         return out;
     }
 
-    // ==================== 应用 / 导出 ====================
-
-    public Map<String, Object> applyGroup(JSONObject body) {
-        String runId = body == null ? null : body.getString("runId");
-        String groupName = body == null ? null : body.getString("groupName");
-        if (runId == null || runId.isBlank()) throw new BizException("缺少 runId");
-        RetrievalEvalRun run = runMapper.selectById(runId);
-        if (run == null) throw new BizException(404, "运行不存在");
-        JSONArray groups = parseArray(run.getGroupsJson());
-        JSONObject group = null;
-        for (int i = 0; i < (groups == null ? 0 : groups.size()); i++) {
-            JSONObject g = groups.getJSONObject(i);
-            if (groupName == null || groupName.equals(g.getString("name"))) {
-                group = g;
-                break;
-            }
-        }
-        if (group == null) throw new BizException("该运行里找不到参数组：" + groupName);
-        Map<String, Object> params = group.getJSONObject("params") == null ? Map.of()
-                : new LinkedHashMap<>(group.getJSONObject("params"));
-        Map<String, Object> metrics = group.getJSONObject("metrics") == null ? Map.of()
-                : new LinkedHashMap<>(group.getJSONObject("metrics"));
-        return applyService.apply(run, group.getString("name"), params, metrics);
-    }
-
-    public Map<String, Object> applyStatus() {
-        return applyService.status();
-    }
-
-    public Map<String, Object> rollbackApply() {
-        return applyService.rollback();
-    }
+    // ==================== 导出 ====================
+    // （参数组「灰度应用」已随检索全局默认值层退役（2026-11-14）：全局槽位没了，apply 无处可写。
+    //   评估扫参本身保留——扫参走线程覆盖，对库级参数仍然有效。）
 
     public Map<String, Object> exportRun(String runId, String format) {
         RetrievalEvalRun run = runMapper.selectById(runId);

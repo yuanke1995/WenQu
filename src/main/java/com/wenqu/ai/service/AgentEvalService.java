@@ -6,7 +6,6 @@ import com.alibaba.fastjson2.JSONObject;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.config.ConfigDefaults;
-import com.wenqu.ai.config.ConfigKeys;
 import com.wenqu.ai.mapper.AgentEvalCaseMapper;
 import com.wenqu.ai.mapper.AgentEvalResultMapper;
 import com.wenqu.ai.mapper.AgentEvalRunMapper;
@@ -61,14 +60,12 @@ public class AgentEvalService {
     private final QaFeedbackMapper feedbackMapper;
     private final KnowledgeMapper knowledgeMapper;
     private final com.wenqu.ai.mapper.AiDocumentMapper documentMapper;
-    private final ConfigService configService;
 
     public AgentEvalService(AgentEvalSuiteMapper suiteMapper, AgentEvalCaseMapper caseMapper,
                             AgentEvalRunMapper runMapper, AgentEvalResultMapper resultMapper,
                             AgentService agentService, AgentEvalRunner runner, AgentEvalScorer scorer,
                             MessageMapper messageMapper, QaFeedbackMapper feedbackMapper,
-                            KnowledgeMapper knowledgeMapper, com.wenqu.ai.mapper.AiDocumentMapper documentMapper,
-                            ConfigService configService) {
+                            KnowledgeMapper knowledgeMapper, com.wenqu.ai.mapper.AiDocumentMapper documentMapper) {
         this.suiteMapper = suiteMapper;
         this.caseMapper = caseMapper;
         this.runMapper = runMapper;
@@ -80,7 +77,6 @@ public class AgentEvalService {
         this.feedbackMapper = feedbackMapper;
         this.knowledgeMapper = knowledgeMapper;
         this.documentMapper = documentMapper;
-        this.configService = configService;
     }
 
     // ==================== 套件 ====================
@@ -263,11 +259,8 @@ public class AgentEvalService {
 
     // ==================== 运行 ====================
 
-    /** 启动回归（闸门：总开关 / 套件 / 用例数 / 每智能体 1 个 / 全局并发）；返回 run 行 */
+    /** 启动回归（闸门：套件 / 用例数 / 每智能体 1 个 / 全局并发）；返回 run 行 */
     public AgentEvalRun startRun(String agentId, String trigger, List<String> caseIds, boolean allowSideEffects) {
-        if (!configService.getBoolean("agentEval.enabled", true)) {
-            throw new BizException("智能体评测功能已被管理员停用");
-        }
         if (allowSideEffects) {
             // 安全边界（plan §10）：默认只读评测；「允许副作用工具」需要显式开关——当前仅支持只读，
             // 打开即拒，宁可报错也不静默放宽。
@@ -526,32 +519,7 @@ public class AgentEvalService {
         return gateOf(agentId);
     }
 
-    /**
-     * 保存/发布前的服务端门禁：block 档下「低于门槛 / 有变更未重测」一律拒绝。
-     * <p>前端检查弹窗只是提示，API 层必须同判据兜底，否则绕过页面直接改配置即可跳过评测。
-     */
-    public void assertSaveAllowed(String agentId) {
-        if (agentId == null || agentId.isBlank()) return;
-        String reason = blockReason(gateMode(), gateStatus(agentId));
-        if (reason != null) throw new BizException(409, reason);
-    }
-
-    /** 纯判据：block 档只拦 below/changed；hint 档永不拦。 */
-    static String blockReason(String mode, Map<String, Object> gate) {
-        if (!"block".equalsIgnoreCase(mode)) return null;
-        String state = gate == null ? "" : String.valueOf(gate.get("gate"));
-        if ("below".equals(state)) return "评测门禁未通过：通过率低于门槛，请先重跑评测再保存";
-        if ("changed".equals(state)) return "评测门禁未通过：智能体有变更尚未重测，请先运行评测再保存";
-        return null;
-    }
-
-    /** 当前门禁档位：只认 block，其余一律按 hint（默认）。 */
-    private String gateMode() {
-        String mode = configService.get(ConfigKeys.AGENT_EVAL_GATE_MODE);
-        return "block".equalsIgnoreCase(mode == null ? "" : mode.trim()) ? "block" : "hint";
-    }
-
-    /** 保存前检查：门禁状态 + 本次保存的字段级 diff（不落任何数据） */
+    /** 保存前检查：门禁状态 + 本次保存的字段级 diff（不落任何数据）。门禁恒为提示档：只弹检查不拦保存。 */
     public Map<String, Object> gateCheck(String agentId, Map<String, Object> payload) {
         mustManageable(agentId);
         Map<String, Object> out = gateOf(agentId);
@@ -564,7 +532,6 @@ public class AgentEvalService {
         Map<String, Object> out = new LinkedHashMap<>();
         AgentEvalSuite suite = suiteOf(agentId);
         out.put("hasSuite", suite != null);
-        out.put("gateMode", gateMode());
         out.put("thresholdRate", suite == null ? null : suite.getThresholdRate());
         int version = agentService.currentVersionNumber(agentId);
         out.put("agentVersion", version);
@@ -722,7 +689,6 @@ public class AgentEvalService {
         out.put("trend", trend);
         out.put("recentRuns", recent);
         out.put("todos", todos.size() > 5 ? todos.subList(0, 5) : todos);
-        out.put("gateMode", gateMode());
         return out;
     }
 

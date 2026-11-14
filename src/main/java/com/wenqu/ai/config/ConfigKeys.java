@@ -39,7 +39,4 @@ public final class ConfigKeys {
     public static final String RETRIEVAL_KEYWORD_TIMEOUT_MS = "retrieval.keywordTimeoutMs";
 
     public static final String TENANT_AUTO_APPROVE_ENABLED = "tenant.autoApprove.enabled";
-
-    /** 智能体评测门禁：hint=只提示，block=保存/发布时服务端拦截。 */
-    public static final String AGENT_EVAL_GATE_MODE = "agentEval.gateMode";
 }

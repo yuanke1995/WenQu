@@ -267,38 +267,8 @@ public class EvaluationController {
         }
     }
 
-    // ==================== 灰度应用 ====================
-
-    @Operation(summary = "应用参数组（灰度观察）", description = "body: {runId, groupName}；写入参数并进入观察期，下滑自动回滚")
-    @Permission("eval:write")
-    @PostMapping("/apply")
-    public ResultJson apply(@RequestBody(required = false) JSONObject body) {
-        try {
-            return ResultJson.ok(runService.applyGroup(body));
-        } catch (BizException e) {
-            return ResultJson.error(e.getCode(), e.getMessage());
-        }
-    }
-
-    @Operation(summary = "灰度应用状态")
-    @Permission("eval:read")
-    @GetMapping("/apply/status")
-    public ResultJson applyStatus() {
-        return ResultJson.ok(runService.applyStatus());
-    }
-
-    @Operation(summary = "手动回滚灰度应用")
-    @Permission("eval:write")
-    @PostMapping("/apply/rollback")
-    public ResultJson rollbackApply() {
-        try {
-            return ResultJson.ok(runService.rollbackApply());
-        } catch (BizException e) {
-            return ResultJson.error(e.getCode(), e.getMessage());
-        }
-    }
-
     // ==================== 旧端点兼容 ====================
+    // （参数组「灰度应用」三端点已随检索全局默认值层退役（2026-11-14）：全局槽位没了，apply 无处可写。）
 
     @Operation(summary = "最近自动体检报告", description = "定时体检与手动触发共用；含指标、相对上期变化与红黄绿状态")
     @Permission("eval:read")
