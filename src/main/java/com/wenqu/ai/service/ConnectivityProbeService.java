@@ -297,7 +297,9 @@ public class ConnectivityProbeService {
      */
     private Map<String, Object> webSearchProbe(String baseUrl, String apiKey, long start) {
         String provider = nvl(configService.get("webSearch.provider"));
-        if (provider.isBlank()) provider = "tavily";   // 与 schema 的 def 一致
+        // 未设置与运行时同口径回落 generic（WebSearchService：个人专属键没有全局层，
+        // 空值走平台内置 SearXNG）；这里若按 schema 的 def 猜 tavily，默认用户一测就报缺 Key
+        if (provider.isBlank()) provider = "generic";
         String base = value(baseUrl, "webSearch.baseUrl");
         String key = secret(apiKey, "webSearch.apiKey");
 

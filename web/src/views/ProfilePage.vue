@@ -98,54 +98,96 @@
              字段经 /user/settings 通道下发，schema 加勾选这里自动跟随，没有「保存」这一步）；
              「自动提炼记忆」开关在「我的记忆」面板 -->
         <div v-else-if="current === 'chat'" class="app-card pf-card">
-          <div class="pf-panel-head">
-            <h2 class="app-card-title">{{ panelMeta.title }}</h2>
-            <p class="pf-panel-sub">{{ panelMeta.hint }}</p>
-          </div>
-          <div class="pf-row">
-            <!-- 用组件声明的 v-model（而非 v-model:value——那是透传到根 a-select 的偶然生效路径） -->
-            <ModelSelect v-model="pref[panelMeta.field]" type="chat"
-                         :issue="current === 'chat' ? defaultModelIssue : ''"
-                         inherit-label="不设默认" :width="isNarrow ? '100%' : 360"
-                         :disabled="loading || prefSaving" @change="saveDefaultModel" />
-            <span v-if="prefSaving" class="pf-sub-hint pf-saving-tip">生效中…</span>
-          </div>
-          <p class="pf-sub-hint">{{ panelMeta.tail }}</p>
-
-          <!-- 个人可覆盖配置：值为空=用默认，占位符直接亮出默认值（改了就存，清空即回落）；
-               有全局层的键展示「跟随系统（全局值）」，个人专属键（personalOnly，无全局层）展示「默认（内置默认值）」 -->
-          <div v-for="f in personal.fields" :key="f.path" class="pf-field">
-            <div class="pf-field-head">
-              <span class="pf-label">{{ f.label }}</span>
-              <a-tooltip v-if="personal.tips[f.tips]" :title="personal.tips[f.tips]"
-                         placement="top" :overlay-inner-style="{ whiteSpace: 'pre-line' }">
-                <question-circle-outlined class="pf-tip-icon" />
-              </a-tooltip>
+          <div class="pf-panel-head pf-pref-head">
+            <div>
+              <h2 class="app-card-title">{{ panelMeta.title }}</h2>
+              <p class="pf-panel-sub">{{ panelMeta.hint }}</p>
             </div>
-            <a-input-number v-if="f.type === 'number'" v-model:value="personalDrafts[f.path]"
-                            :min="f.min" :max="f.max" :step="f.step || 1"
-                            :placeholder="personalPlaceholder(f)"
-                            style="width: 160px" @blur="commitPersonal(f)" @pressEnter="commitPersonal(f)" />
-            <a-select v-else-if="f.type === 'select'" v-model:value="personalDrafts[f.path]"
-                      :options="f.options" style="width: 240px" allow-clear
-                      :placeholder="personalPlaceholder(f)" @change="commitPersonal(f)" />
-            <!-- password：服务端永不回填真值（values 里是 ******** 掩码），输入框恒空，输入新值才覆盖 -->
-            <a-input-password v-else-if="f.type === 'password'" v-model:value="personalDrafts[f.path]"
-                              :placeholder="personalPlaceholder(f)" style="width: 260px"
-                              autocomplete="new-password" @blur="commitPersonal(f)" @pressEnter="commitPersonal(f)" />
-            <a-textarea v-else-if="f.type === 'textarea'" v-model:value="personalDrafts[f.path]"
-                        :rows="3" :placeholder="personalPlaceholder(f)" style="width: 520px"
-                        @blur="commitPersonal(f)" />
-            <a-input v-else v-model:value="personalDrafts[f.path]" style="width: 240px" allow-clear
-                     :placeholder="personalPlaceholder(f)" @blur="commitPersonal(f)" @pressEnter="commitPersonal(f)" />
+            <span class="pf-autosave">改动即时保存</span>
           </div>
 
-          <!-- 联网搜索组的「测试连接」：按本人已保存的个人配置真打一次最小搜索（与运行时同口径） -->
-          <div v-if="hasWebSearchField" class="pf-row" style="margin-top: 8px; align-items: center">
-            <button class="app-btn ghost small" type="button" :disabled="wsProbing" @click="probeWebSearch">
-              {{ wsProbing ? '测试中…' : '测试连接（按上方已保存的搜索配置）' }}
-            </button>
-            <span class="pf-sub-hint" :style="wsProbeOk ? 'color: var(--app-ok, #2e7d32)' : ''">{{ wsProbeHint }}</span>
+          <!-- 默认聊天模型：决定「用哪个模型」，与下面决定「怎么检索」的个人配置分开 -->
+          <div class="pf-grp">
+            <div class="pf-grp-head">
+              <h3 class="pf-grp-title">默认聊天模型</h3>
+            </div>
+            <div class="pf-grp-body">
+              <div class="pf-row">
+                <!-- 用组件声明的 v-model（而非 v-model:value——那是透传到根 a-select 的偶然生效路径） -->
+                <ModelSelect v-model="pref[panelMeta.field]" type="chat"
+                             :issue="defaultModelIssue"
+                             inherit-label="不设默认" :width="isNarrow ? '100%' : 360"
+                             :disabled="loading || prefSaving" @change="saveDefaultModel" />
+                <span v-if="prefSaving" class="pf-sub-hint pf-saving-tip">生效中…</span>
+              </div>
+              <p class="pf-grp-hint">{{ panelMeta.tail }}</p>
+            </div>
+          </div>
+
+          <!-- 个人可覆盖配置：按用途分块，块内只渲染当前服务商真正用得到的字段——
+               custom 的请求模板/取数路径对其它服务商无效，全量铺开就是一堆填不了的空框；
+               自定义的 4 个响应字段路径再收进「展开」里。值为空=用默认（占位符亮出继承值），改了就存。 -->
+          <div v-for="g in personalGroups" :key="g.key" class="pf-grp">
+            <div class="pf-grp-head">
+              <div class="pf-grp-head-main">
+                <h3 class="pf-grp-title">
+                  {{ g.title }}
+                  <span v-if="g.key === 'wsAdv' && wsAdvCustomized" class="pf-set-badge">已自定义</span>
+                </h3>
+                <p v-if="g.hint" class="pf-grp-hint">{{ g.hint }}</p>
+              </div>
+              <button v-if="g.collapsible" class="app-link-btn" type="button"
+                      :aria-expanded="wsAdvOpen" @click="wsAdvOpen = !wsAdvOpen">
+                {{ wsAdvOpen ? '收起' : '展开' }}
+              </button>
+            </div>
+            <div v-show="!g.collapsible || wsAdvOpen" class="pf-grp-body" :class="{ 'pf-fld-grid': g.collapsible }">
+              <div v-for="f in g.fields" :key="f.path" class="pf-fld">
+                <div class="pf-fld-head">
+                  <span class="pf-label">{{ f.label }}</span>
+                  <a-tooltip v-if="personal.tips[f.tips]" :title="personal.tips[f.tips]"
+                             placement="top" :overlay-inner-style="{ whiteSpace: 'pre-line' }">
+                    <question-circle-outlined class="pf-tip-icon" />
+                  </a-tooltip>
+                  <span v-if="f.type === 'password' && personal.values[f.path] === '********'"
+                        class="pf-set-badge">已设置</span>
+                </div>
+                <a-input-number v-if="f.type === 'number'" v-model:value="personalDrafts[f.path]"
+                                :min="f.min" :max="f.max" :step="f.step || 1"
+                                :placeholder="personalPlaceholder(f)" class="pf-ctl pf-ctl-sm"
+                                @blur="commitPersonal(f)" @pressEnter="commitPersonal(f)" />
+                <a-select v-else-if="f.type === 'select'" v-model:value="personalDrafts[f.path]"
+                          :options="f.options" class="pf-ctl" allow-clear
+                          :style="{ width: g.collapsible ? '100%' : (f.key === 'provider' ? '360px' : '240px') }"
+                          :placeholder="personalPlaceholder(f)" @change="commitPersonal(f)" />
+                <!-- password：服务端永不回填真值（values 里是 ******** 掩码），输入框恒空，输入新值才覆盖 -->
+                <a-input-password v-else-if="f.type === 'password'" v-model:value="personalDrafts[f.path]"
+                                  :placeholder="personalPlaceholder(f)" class="pf-ctl"
+                                  :style="{ width: g.collapsible ? '100%' : '280px' }"
+                                  autocomplete="new-password" @blur="commitPersonal(f)" @pressEnter="commitPersonal(f)" />
+                <a-textarea v-else-if="f.type === 'textarea'" v-model:value="personalDrafts[f.path]"
+                            :rows="3" class="pf-ctl pf-ctl-block" :placeholder="personalPlaceholder(f)"
+                            @blur="commitPersonal(f)" />
+                <a-input v-else v-model:value="personalDrafts[f.path]" class="pf-ctl" allow-clear
+                         :style="{ width: g.collapsible ? '100%' : (f.width ? f.width + 'px' : '280px') }"
+                         :placeholder="personalPlaceholder(f)" @blur="commitPersonal(f)" @pressEnter="commitPersonal(f)" />
+                <!-- 服务商：直接说清「现在按哪套配置在搜」，清空即回落平台内置 -->
+                <p v-if="f.key === 'provider'" class="pf-fld-note">
+                  {{ hasPersonalValue(f)
+                    ? `当前使用：${wsProviderLabel}（个人配置，费用自理）`
+                    : '当前使用：平台内置 SearXNG（免费）；选了服务商就改用你自己的配置' }}
+                </p>
+                <p v-else-if="g.key === 'ws' && fieldNote(f)" class="pf-fld-note">{{ fieldNote(f) }}</p>
+              </div>
+            </div>
+            <!-- 探测按钮跟在本组配置后面：不用滚到卡片底部再回头对照填了什么 -->
+            <div v-if="g.key === 'ws'" class="pf-grp-foot">
+              <button class="app-btn ghost small" type="button" :disabled="wsProbing" @click="probeWebSearch">
+                {{ wsProbing ? '测试中…' : '测试连接' }}
+              </button>
+              <span class="pf-grp-hint">按上方已保存的配置真搜一次（只取 1 条）</span>
+              <span v-if="wsProbeHint" class="pf-probe-hint" :class="{ ok: wsProbeOk }">{{ wsProbeHint }}</span>
+            </div>
           </div>
         </div>
 
@@ -763,16 +805,83 @@ const saveDefaultModel = async v => {
 const personal = ref({ fields: [], values: {}, globals: {}, tips: {} })
 const personalDrafts = ref({})
 // 占位符口径：有全局层的键展示「跟随系统（全局值）」；个人专属键（personalOnly，无全局层，
-// globals 回空）展示「默认（内置默认值）」——平台设置页退役后这类键只有个人设置这一个入口
+// globals 回空）展示「默认（内置默认值）」——平台设置页退役后这类键只有个人设置这一个入口。
+// 内置默认值为空（地址/Key/模板这类自由文本）时退回字段自带的示例（schema 的 ph），
+// 不再拼出「默认（）」这种既没信息又像没加载完的占位符。
 const hasGlobalLayer = f => !!(personal.value.globals || {})[f.path]
+const hasPersonalValue = f => !!(personal.value.values || {})[f.path]
 const personalPlaceholder = f => {
   // password 恒空不回填：占位符区分「已设置（输入新值才覆盖）/ 未设置」
   if (f.type === 'password') {
-    return (personal.value.values || {})[f.path] === '********' ? '已设置（输入新 Key 可覆盖，留空沿用）' : '未设置'
+    return hasPersonalValue(f) ? '已设置（输入新 Key 可覆盖，留空沿用）' : '未设置'
   }
-  return hasGlobalLayer(f)
-    ? `跟随系统（${personal.value.globals[f.path]}）` : `默认（${f.def}）`
+  if (hasGlobalLayer(f)) return `跟随系统（${personal.value.globals[f.path]}）`
+  const def = f.def === null || f.def === undefined ? '' : String(f.def)
+  if (def !== '') return `默认（${def}）`
+  return f.ph || '未设置'
 }
+
+// ---- 问答偏好分组：字段清单仍由 /user/settings 下发，这里只决定「此刻该露哪些、怎么排」----
+// 当前服务商取草稿（切换即重排、不等保存回读），未设置按运行时口径回落 generic
+// （WebSearchService：personalOnly 键没有全局层，空值一律走平台内置 SearXNG）
+const WS_PROVIDER_LABELS = { generic: '平台内置 SearXNG', tavily: 'Tavily', bocha: '博查', custom: '自定义搜索 API' }
+// 只有 custom 服务商才用得到的字段：请求模板与响应取数路径
+const WS_CUSTOM_KEYS = new Set([
+  'model', 'customMethod', 'customBody', 'customResultsPath',
+  'customTitlePath', 'customUrlPath', 'customSnippetPath', 'customPublishedPath'
+])
+// 响应字段映射是「接任意厂商」才要调的工程参数，默认收起
+const WS_ADV_KEYS = new Set(['customTitlePath', 'customUrlPath', 'customSnippetPath', 'customPublishedPath'])
+const wsAdvOpen = ref(false)
+const wsProvider = computed(() => personalDrafts.value['webSearch.provider'] || 'generic')
+const wsProviderLabel = computed(() => WS_PROVIDER_LABELS[wsProvider.value] || wsProvider.value)
+const wsFieldVisible = f => {
+  if (f.panel !== 'webSearch') return true
+  if (f.key === 'apiKey') return wsProvider.value !== 'generic'
+  if (WS_CUSTOM_KEYS.has(f.key)) return wsProvider.value === 'custom'
+  return true
+}
+const wsAdvCustomized = computed(() =>
+  (personal.value.fields || []).some(f => WS_ADV_KEYS.has(f.key) && hasPersonalValue(f)))
+// 字段备注：这一段本来就只在 custom 下露出，「仅 custom 使用」再逐行重复就是噪音；
+// 去掉这类从句，只留下确实需要人读的信息（占位符、路径语义、加密口径）。
+const fieldNote = f => String(f.note || '')
+  .replace(/^仅\s*custom\s*(服务商)?使用\s*[；;]?\s*/i, '')
+  .replace(/[；;]\s*仅\s*custom\s*(服务商)?使用\s*$/i, '')
+  .trim()
+const personalGroups = computed(() => {
+  const fs = personal.value.fields || []
+  const out = []
+  const retrieval = fs.filter(f => f.panel !== 'webSearch')
+  if (retrieval.length) {
+    out.push({
+      key: 'retrieval',
+      title: '回答检索',
+      hint: '每次回答最多带多少条知识块进上下文；越大信息越全，也越费 token。',
+      fields: retrieval
+    })
+  }
+  const basic = fs.filter(f => f.panel === 'webSearch' && !WS_ADV_KEYS.has(f.key) && wsFieldVisible(f))
+  if (basic.length) {
+    out.push({
+      key: 'ws',
+      title: '联网搜索',
+      hint: '不设置时用平台内置搜索（免费）；填了服务商或 Key 就按你的配置搜，费用自理。',
+      fields: basic
+    })
+  }
+  const adv = fs.filter(f => WS_ADV_KEYS.has(f.key) && wsFieldVisible(f))
+  if (adv.length) {
+    out.push({
+      key: 'wsAdv',
+      title: '响应字段映射',
+      collapsible: true,
+      hint: '结果条目内取标题 / 链接 / 摘要 / 时间的点路径；留空用服务商默认。',
+      fields: adv
+    })
+  }
+  return out
+})
 const loadPersonal = async () => {
   try {
     const r = await getUserSettings()
@@ -808,7 +917,6 @@ const commitPersonal = async f => {
 }
 
 // ---- 个人联网搜索「测试连接」：端点按本人已存配置打真实最小搜索（服务商/Key/模板与运行时同口径） ----
-const hasWebSearchField = computed(() => (personal.value.fields || []).some(f => f.panel === 'webSearch'))
 const wsProbing = ref(false)
 const wsProbeOk = ref(false)
 const wsProbeHint = ref('')
@@ -1508,6 +1616,35 @@ watch(current, v => { if (v === 'notify') refreshPushState().then(refreshCap).ca
 .pf-field-head .pf-sub-hint { margin: 0; }
 /* 个人可覆盖字段的问号说明（与设置页同一份 tips 文案） */
 .pf-tip-icon { font-size: 12px; color: var(--app-text3); cursor: help; }
+
+/* ---- 问答偏好：按用途分块（默认模型 / 检索 / 联网搜索），块内一行一项，块间用分隔线 ---- */
+.pf-grp + .pf-grp { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--app-border); }
+.pf-grp-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.pf-grp-head-main { min-width: 0; }
+.pf-grp-title { margin: 0; font-size: 13px; font-weight: 600; color: var(--app-text); display: flex; align-items: center; gap: 6px; }
+.pf-grp-hint { margin: 3px 0 0; font-size: 11px; line-height: 1.6; color: var(--app-text3); }
+.pf-grp-body { display: flex; flex-direction: column; gap: 12px; }
+.pf-grp-foot { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+.pf-grp-foot .pf-grp-hint { margin: 0; }
+.pf-fld { min-width: 0; }
+.pf-fld-head { display: flex; align-items: center; gap: 5px; margin-bottom: 5px; }
+.pf-fld-note { margin: 5px 0 0; font-size: 11px; line-height: 1.55; color: var(--app-text3); }
+/* 响应字段映射：两列排（窄屏自动回落单列），控件吃满格宽 */
+.pf-fld-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px 16px; }
+.pf-ctl { max-width: 100%; }
+.pf-ctl-sm { width: 160px; }
+.pf-ctl-block { width: 100%; }
+/* 状态胶囊：已设置 / 已自定义 */
+.pf-set-badge {
+  flex: none; font-size: 10px; line-height: 1; color: var(--app-text3);
+  background: var(--app-panel-2); border: 1px solid var(--app-border); border-radius: 999px; padding: 2px 6px;
+}
+/* 探测结果：成功为绿，失败沿用弱灰（错误原因本身已经说明了问题，不必整行飘红） */
+.pf-probe-hint { font-size: 11px; color: var(--app-text3); }
+.pf-probe-hint.ok { color: var(--app-ok, #2e7d32); }
+/* 无「保存」按钮的即时保存说明：放在面板头右侧，替用户回答「改完要不要点保存」 */
+.pf-pref-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.pf-autosave { flex: none; font-size: 11px; color: var(--app-text3); white-space: nowrap; }
 
 /* 图标集：10 列定宽网格（30 个正好三行、不留残行）；去掉逐格边框与白底，只靠 hover / 选中环表达状态 */
 .pf-emoji-pick { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 6px; }
