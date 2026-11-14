@@ -26,10 +26,11 @@ public class RetrievalEvalApplyService {
 
     private static final String APPLY_KEY = "eval.lastApply";
 
-    /** 参与灰度应用/回滚的参数清单（每组参数与线上配置同源） */
+    /** 参与灰度应用/回滚的参数清单（每组参数与线上配置同源）。
+     * （rerank.enabled 不在此列：全局开关已退役，apply 不得再写全局键留下强制关的死配置行。） */
     private static final List<String> KEYS = List.of(
             "retrieval.vectorWeight", "retrieval.keywordWeight", "retrieval.vecThreshold",
-            "retrieval.keywordLimit", "retrieval.vectorTopK", "rerank.enabled",
+            "retrieval.keywordLimit", "retrieval.vectorTopK",
             "retrieval.lowConfidencePolicy", "retrieval.top1Floor");
 
     private final ConfigService configService;
@@ -222,7 +223,6 @@ public class RetrievalEvalApplyService {
             case "vecThreshold" -> "retrieval.vecThreshold";
             case "keywordLimit" -> "retrieval.keywordLimit";
             case "topK" -> "retrieval.vectorTopK";
-            case "rerankEnabled" -> "rerank.enabled";
             case "lowConfidencePolicy" -> "retrieval.lowConfidencePolicy";
             case "top1Floor" -> "retrieval.top1Floor";
             default -> null;

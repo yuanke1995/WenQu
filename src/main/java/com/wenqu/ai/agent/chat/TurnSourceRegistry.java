@@ -94,6 +94,18 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
     public final AtomicInteger mcpCiteCount = new AtomicInteger();
     /** 本轮联网搜索已执行次数（配额 webSearch.maxCallsPerTurn；<=0 不限制） */
     public final AtomicInteger webSearchCalls = new AtomicInteger();
+    /**
+     * 本轮收敛出的重排模型引用（知识库检索工具登记，见 KnowledgeRetrievalTool.SourceRegistrar
+     * #registerRoundRerankModel）：咨询来源并入、MCP 来源评分跑在检索工具线程之外，
+     * rerank.model 的线程覆盖已撤，凭这份轮级登记复用同一模型。null=本轮无重排模型。
+     */
+    public volatile String roundRerankModel;
+
+    /** 检索工具线程回调：登记本轮收敛出的重排模型（重复登记以首次为准，一轮只收敛一次） */
+    public void registerRoundRerankModel(String modelRef) {
+        if (modelRef == null || modelRef.isBlank() || roundRerankModel != null) return;
+        this.roundRerankModel = modelRef.trim();
+    }
 
     public TurnSourceRegistry(ConfigService configService, RerankService rerankService,
                               ImageUrlSigner imageUrlSigner, ChatRunRuntime runtime,
@@ -148,13 +160,16 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
         }
         if (candidates.isEmpty()) return List.of();
 
-        // 1. 按父轮问题批量重排（与主管线 subHits 并入前同口径）
+        // 1. 按父轮问题批量重排（与主管线 subHits 并入前同口径）。
+        // 模型用轮级登记（检索工具收敛后回填）：此处跑在检索工具线程之外，rerank.model
+        // 的线程覆盖已撤，读不到覆盖层；本轮没收敛出模型（或智能体强制关）则按融合分门登记。
         boolean rerankActive = false;
-        if (question != null && !question.isBlank() && rerankService.debugUnavailableReason() == null) {
-            candidates = rerankService.rankForced(candidates, question);
+        if (question != null && !question.isBlank() && roundRerankModel != null) {
+            candidates = rerankService.rankForced(candidates, question, roundRerankModel);
             rerankActive = candidates.stream().anyMatch(h -> h.rerankScore() != null);
         } else {
-            log.info("[CONSULT] 重排不可用，咨询来源按融合分门 + 配额登记（{} 条候选）", candidates.size());
+            log.info("[CONSULT] 重排不可用（本轮无重排模型或已强制关），咨询来源按融合分门 + 配额登记（{} 条候选）",
+                    candidates.size());
         }
 
         // 2. 分域门 + 配额（数值与主管线上下文填充一致：一个面板一把尺）
@@ -438,7 +453,7 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
                 toRank.add(new HybridRetrievalService.Hit(null, "", f[1], f[2],
                         List.of(), 0d, null, null, null, null));
             }
-            for (HybridRetrievalService.Hit h : rerankService.rankForced(toRank, question)) {
+            for (HybridRetrievalService.Hit h : rerankService.rankForced(toRank, question, roundRerankModel)) {
                 if (h.rerankScore() != null) scoreBySnippet.put(h.content(), h.rerankScore());
             }
         }

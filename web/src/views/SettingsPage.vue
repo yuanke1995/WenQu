@@ -53,7 +53,7 @@
                  导航仍只保留一个「检索设置」（与工具调用把「联网搜索」并进去同一个做法）。
                  pane 留空只当页签条，内容在下方按 ragTab 对应的 panel 字段渲染 -->
             <a-tabs v-if="current === 'retrieval'" v-model:activeKey="ragTab" class="sched-tabs">
-              <a-tab-pane key="retrieval" tab="检索与重排" />
+              <a-tab-pane key="retrieval" tab="检索" />
               <a-tab-pane key="context" tab="上下文" />
               <a-tab-pane key="chunk" tab="文档解析" />
               <a-tab-pane key="vision" tab="图片描述" />

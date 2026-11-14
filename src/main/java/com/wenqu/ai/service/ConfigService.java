@@ -616,7 +616,7 @@ public class ConfigService {
     private void ensureDefaults() {
         for (Map.Entry<String, String> e : defaults().entrySet()) {
             // 个人专属键（schema personalOnly）没有全局槽位：种一行全局值也读不到（get 会直接返回空），
-            // 只会在库里留下一条永远不生效的“死配置”。rerank.model 就是这种键，故不灌库。
+            // 只会在库里留下一条永远不生效的“死配置”，故不灌库。
             if (schema.isPersonalOnly(e.getKey())) continue;
             try {
                 Long cnt = configMapper.selectCount(new LambdaQueryWrapper<Config>()
@@ -706,17 +706,11 @@ public class ConfigService {
         d.put("parse.embedRetryCount", String.valueOf(ConfigDefaults.PARSE_EMBED_RETRY_COUNT));                 // 向量化批次失败自动重试次数
         d.put("retrieval.vectorWeight", String.valueOf(properties.getRetrieval().getVectorWeight()));
         d.put("retrieval.keywordWeight", String.valueOf(properties.getRetrieval().getKeywordWeight()));
-        d.put("rerank.enabled", String.valueOf(properties.getRetrieval().getRerank().isEnabled()));
-        // personalOnly：归知识库检索设置绑定，没有全局槽位。保留在 defaults() 只为
-        // snapshot/isLiveKey 能识别这个键；ensureDefaults 会跳过 personalOnly，不再往库里种全局行。
-        // 平台默认重排模型（管理员登记，全平台兜底）：库/智能体覆盖与个人设置都为空时生效，
-        // 仍为空才回落 rerank.baseUrl。与 rerank.model 分开成键，是为了不动 personalOnly 的归属语义
-        // （模型引用只认归属人），又让"一个库都没绑 = 全平台没重排"这个默认态有解。
-        d.put("rerank.baseUrl", properties.getRetrieval().getRerank().getBaseUrl());
-        // 重排窗口两键：设置页可调、保存即生效。
-        // defaults() 与 schema 的 def 同为 ConfigDefaults.RERANK_MIN_HITS/MAX_HITS。
-        d.put("rerank.minHits", String.valueOf(ConfigDefaults.RERANK_MIN_HITS));
-        d.put("rerank.maxHits", String.valueOf(ConfigDefaults.RERANK_MAX_HITS));
+        // 重排平台层已整体退役（2026-11-14）：rerank.enabled（总开关）/rerank.model（个人默认）/
+        // rerank.platformRef（平台默认）/rerank.baseUrl（直连回落）/rerank.minHits/maxHits（窗口）
+        // 都不再有全局槽位——重排模型与窗口归知识库检索设置（KbParamCodec），选了才重排；
+        // rerank.enabled 仅剩智能体级「强制关」（显式 false 经线程覆盖下发）。隐藏键
+        // rerank.timeoutMillis/rerank.failCooldownMs 保留（运行时调优，见下方隐藏键段）。
         d.put("context.maxContextHits", String.valueOf(properties.getContext().getMaxContextHits()));
         // 主检索覆盖使用者全部可见库，没有每库配额就会被"块多且词面泛"的那个库占满名额
         // 读点共用默认值的 key：defaults() 与读点 fallback 共用 ConfigDefaults 常量（改默认值只改常量一处）
@@ -1443,7 +1437,7 @@ public class ConfigService {
     public Map<String, String> resetDefaults(Collection<String> groups) {
         Set<String> panelKeys = schema.panelKeys();
         Set<String> legacyPrefixes = new HashSet<>(List.of(
-                "chat", "vision", "chunk", "parse", "upload", "retrieval", "rerank",
+                "chat", "vision", "chunk", "parse", "upload", "retrieval",
                 "keyword", "context", "ratelimit"));
         Set<String> targetKeys = new HashSet<>();
         Set<String> targetPrefixes = new HashSet<>();

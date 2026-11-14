@@ -420,9 +420,6 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         out.put("agent.maxToolSteps", String.valueOf(ConfigDefaults.AGENT_MAX_TOOL_STEPS));
         out.put("tool.enabled", configService.get("tool.enabled"));
         out.put("webSearch.enabled", configService.get("webSearch.enabled"));
-        // 重排开关归智能体覆盖（场景性），原先只挂在 /kb/param-defaults 上；这里补一份，
-        // 让配置页的默认值只有一个来源——两处读同一个键迟早漂移成两种说法
-        out.put("rerank.enabled", configService.get("rerank.enabled"));
         return out;
     }
 
@@ -587,7 +584,8 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         // 被咨询时的执行形态（null=跟随平台默认档）
         if (b.containsKey("subagentMode")) uw.set(Agent::getSubagentMode, a.getSubagentMode());
         if (b.containsKey("isDefault")) uw.set(Agent::getIsDefault, a.getIsDefault());
-        // 检索开关覆盖（rerank.enabled；可清空：null = 全部继承全局设置）
+        // 检索开关覆盖（rerank.enabled；仅显式 false=强制关有语义，true/缺省=跟随「绑了模型才重排」；
+        // 可清空：null = 跟随）
         if (b.containsKey("queryParams")) uw.set(Agent::getQueryParams, a.getQueryParams());
         uw.set(Agent::getUpdateTime, a.getUpdateTime());
         mapper.update(null, uw);

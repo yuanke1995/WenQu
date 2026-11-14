@@ -40,8 +40,8 @@ class ConfigContractTest {
             "ratelimit.chatPerMinute", "ratelimit.embeddingPerMinute", "ratelimit.uploadPerMinute", "ratelimit.windowSeconds",
             "session.expireMinutes", "session.maxHistory",
             "share.guestDailyTokens", "share.guestDailyTurns", "share.guestDailyTurnsPerVisitor",
-            // 沙盒 / 重排 / 检索连接项：随部署环境走
-            "rerank.baseUrl", "retrieval.searchTimeoutMs",
+            // 沙盒 / 检索连接项：随部署环境走（重排平台层已退役：rerank.baseUrl 直连回落一并下线）
+            "retrieval.searchTimeoutMs",
             "sandbox.callbackBaseUrl", "sandbox.cleanupIntervalMs", "sandbox.deleteTimeoutSeconds",
             "sandbox.keepaliveIntervalSeconds", "sandbox.maxOutputBytes", "sandbox.provisionerUrl",
             "sandbox.token", "sandbox.userDataHostDir", "sandbox.virtualPathPrefix",
@@ -65,7 +65,6 @@ class ConfigContractTest {
             "keyword.apiKey", "keyword.baseUrl", "keyword.engine",
             "ops.checkupAlertEnabled", "ops.checkupIntervalMs", "ops.checkupRetentionDays",
             "parse.embedConcurrency", "ratelimit.enabled",
-            "rerank.enabled", "rerank.maxHits", "rerank.minHits",
             "retrieval.keywordWeight", "retrieval.lowConfidencePolicy", "retrieval.minContextScore",
             "retrieval.minFusionScore", "retrieval.top1Floor", "retrieval.vectorWeight",
             "vision.prompt", "workflow.maxSteps", "workflow.runQueueCapacity", "agentEval.gateMode"
@@ -86,14 +85,17 @@ class ConfigContractTest {
                 .as("defaults 有而 schema 无：隐藏/部署项必须登记到 HIDDEN_DEFAULTS")
                 .containsExactlyInAnyOrderElementsOf(HIDDEN_DEFAULTS);
 
-        assertThat(schemaKeys).as("schema 字段数变了：同步 README 的设置项口径").hasSize(144);
-        assertThat(defaultsKeys).as("defaults 键数变了：同步 README 的隐藏项口径").hasSize(199);
+        assertThat(schemaKeys).as("schema 字段数变了：同步 README 的设置项口径").hasSize(139);
+        assertThat(defaultsKeys).as("defaults 键数变了：同步 README 的隐藏项口径").hasSize(193);
     }
 
     @Test
     void readKeysAreRegistered() throws Exception {
         Set<String> known = new LinkedHashSet<>(schemaKeys());
         known.addAll(defaultsKeys());
+        // 库级键（知识库 query_params 唯一真源 KbParamCodec.KEYS）：无全局槽位、不进 defaults，
+        // 读取点（如 RerankService 的窗口两键）按库收敛取值，登记面就是 KEYS 本身
+        known.addAll(com.wenqu.ai.service.KbParamCodec.KEYS);
 
         Set<String> unknown = new java.util.TreeSet<>();
         Map<String, String> keyConstants = new LinkedHashMap<>();

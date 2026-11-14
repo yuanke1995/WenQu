@@ -9,7 +9,7 @@ const POLL_MS = 80
 const DEFAULT_TIMEOUT = 2500
 
 /**
- * 定位键的合法形状：配置键（rerank.platformRef）、表单槽名（visionRef）。
+ * 定位键的合法形状：配置键（eval.judgeModel）、表单槽名（visionRef）。
  * 键来自 URL query，先卡字符集再进 querySelector——不合法直接当「没有定位要求」，
  * 而不是让一个畸形选择器把整页抛成 SyntaxError。
  */

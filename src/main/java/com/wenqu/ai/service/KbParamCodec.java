@@ -13,12 +13,13 @@ import java.util.Set;
 /**
  * 知识库检索参数的键面（库级唯一真源）。
  *
- * <p><b>为什么库只拥有这四个键</b>：检索参数分两道门——库级定“召回池”（阈值、两路权重、重排模型），
- * 智能体级定“出水”（是否重排、给模型几条）。同一个键只允许一层拥有，两层都写必然有一层被静默压掉；
- * 而跨库的一轮检索里，库级参数只能逐库生效，不能塞进线程级单标量。
+ * <p><b>为什么库只拥有这些键</b>：检索参数分两道门——库级定“召回池”（阈值、两路权重、重排模型、
+ * 重排窗口），智能体级定“出水”（是否重排、给模型几条）。同一个键只允许一层拥有，两层都写必然有一层
+ * 被静默压掉；而跨库的一轮检索里，库级参数只能逐库生效，不能塞进线程级单标量。
  *
- * <p>{@code retrieval.vectorTopK} / {@code retrieval.keywordLimit} / {@code rerank.enabled} /
- * {@code rerank.baseUrl} 分别归全局（召回量）与智能体（重排开关），不在库级白名单内；
+ * <p>重排触发即“库绑了重排模型才重排”：平台总开关与平台/个人默认模型已退役（2026-11-14），
+ * {@code rerank.enabled} 仅剩智能体级「强制关」一种合法取值（显式 {@code false}），
+ * {@code retrieval.vectorTopK} / {@code retrieval.keywordLimit} / {@code rerank.baseUrl} 已退役；
  * 存量 JSON 里残留这些键时读取静默忽略、保存时清除，避免“填了不生效”再次出现。
  *
  * @author yuanke
@@ -33,10 +34,14 @@ public final class KbParamCodec {
     public static final String KEYWORD_WEIGHT = "retrieval.keywordWeight";
     /** 本库绑定的重排模型（资源归属：谁建库谁付费；一轮只有一个重排器，多库按绑定顺序收敛） */
     public static final String RERANK_MODEL = "rerank.model";
+    /** 本库重排触发下限（块）：融合候选少于该数跳过 cross-encoder；空=内置默认（ConfigDefaults.RERANK_MIN_HITS） */
+    public static final String RERANK_MIN_HITS = "rerank.minHits";
+    /** 本库重排窗口（块）：只把融合分前 N 块送重排；空=内置默认（ConfigDefaults.RERANK_MAX_HITS） */
+    public static final String RERANK_MAX_HITS = "rerank.maxHits";
 
     /** 库级可写键（顺序即前端展示顺序；只读集合防调用方误改） */
     public static final Set<String> KEYS = Collections.unmodifiableSet(new LinkedHashSet<>(List.of(
-            VEC_THRESHOLD, VECTOR_WEIGHT, KEYWORD_WEIGHT, RERANK_MODEL)));
+            VEC_THRESHOLD, VECTOR_WEIGHT, KEYWORD_WEIGHT, RERANK_MODEL, RERANK_MIN_HITS, RERANK_MAX_HITS)));
 
     /** 已迁出库级的键：读取忽略、保存清除 */
     public static final Set<String> RETIRED = Set.of(

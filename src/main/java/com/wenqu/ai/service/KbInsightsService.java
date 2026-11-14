@@ -31,6 +31,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
 /**
@@ -398,11 +399,18 @@ public class KbInsightsService {
                 if (merged.size() < 2) {
                     rerankSkip = "命中过少（<2），无需重排";
                 } else {
+                    AtomicReference<String> skipRef = new AtomicReference<>();
                     try {
-                        reranked = kbRetrievalParams.withRerankModel(List.of(kbId), Set.of(kbId),
-                                () -> rerankService.rank(merged, query));
+                        reranked = kbRetrievalParams.withRerankModel(List.of(kbId), Set.of(kbId), () -> {
+                            List<HybridRetrievalService.Hit> r = rerankService.rank(merged, query);
+                            if (r.stream().anyMatch(h -> h.rerankScore() != null)) return r;
+                            // 未生效时取精确原因（须在覆盖作用域内取：此时路由=本库绑定的模型）
+                            String un = rerankService.debugUnavailableReason();
+                            skipRef.set(un != null ? un : "重排未生效（候选不足触发下限或服务不可用）");
+                            return r;
+                        });
                         rerankApplied = reranked.stream().anyMatch(h -> h.rerankScore() != null);
-                        if (!rerankApplied) rerankSkip = "重排未生效（候选不足或服务不可用）";
+                        rerankSkip = skipRef.get();
                     } catch (Exception e) {
                         rerankSkip = "重排失败：" + e.getMessage();
                     }
@@ -452,6 +460,8 @@ public class KbInsightsService {
             params.put("vectorWeight", p.vectorWeight());
             params.put("keywordWeight", p.keywordWeight());
             params.put("rerankModel", p.rerankModel());
+            params.put("rerankMinHits", p.rerankMinHits());
+            params.put("rerankMaxHits", p.rerankMaxHits());
             KnowledgeBase kb = kbService.get(kbId);
             params.put("configured", kb != null && kb.getQueryParams() != null && !kb.getQueryParams().isBlank());
 

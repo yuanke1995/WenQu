@@ -83,18 +83,9 @@ public class AppProperties {
         private double vectorWeight = 0.6;
         /** 混合检索：关键词命中率权重（0~1） */
         private double keywordWeight = 0.4;
-        /** 重排（独立 reranker 服务，OpenAI 兼容 /v1/rerank；Ollama 无 rerank 能力，勿配 Ollama 地址） */
-        private Rerank rerank = new Rerank();
-    }
-
-    @Data
-    public static class Rerank {
-        /** 是否启用重排（rerank.baseUrl 指向外部 OpenAI 兼容 /v1/rerank 服务，或绑定供应商重排模型） */
-        private boolean enabled = false;
-        /** reranker 服务 base-url（OpenAI 兼容，POST /v1/rerank；需显式配置，无本地兜底） */
-        private String baseUrl = "";
-        // 模型名与超时不走 yml：模型引用归知识库检索设置绑定（rerank.model），
-        // 超时是 DB 隐藏键 rerank.timeoutMillis。
+        // 重排平台层已整体退役（2026-11-14）：重排模型与窗口归知识库检索设置
+        // （rerank.model / rerank.minHits / rerank.maxHits），rerank.enabled 仅剩智能体级
+        // 「强制关」；超时/失败冷却是 DB 隐藏键 rerank.timeoutMillis / rerank.failCooldownMs。
     }
 
     @Data

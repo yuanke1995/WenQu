@@ -89,6 +89,11 @@ public final class WenquSourcePool {
             public void degrade(String code, String msg) {
                 runtime.addDegradation(degradations, degradedCodes, code, msg);
             }
+
+            @Override
+            public void registerRoundRerankModel(String modelRef) {
+                registry.registerRoundRerankModel(modelRef);
+            }
         };
     }
 

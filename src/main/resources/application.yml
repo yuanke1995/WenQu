@@ -52,6 +52,9 @@ spring:
     locations: classpath:db/migration
     baseline-on-migrate: true
     baseline-version: 1
+    # 一次性迁移用完即删（文件删掉、历史记录保留）：validate 容忍「已应用但本地缺失」的版本，
+    # 否则删过 V7~V9 这类历史迁移后，存量库每次启动都被 validate 卡死
+    ignore-migration-patterns: "*:missing"
 
   # Redis Stack（向量存储）
   data:
@@ -120,14 +123,9 @@ ai-app:
     # 混合检索融合权重（DB c_ai_config 可覆盖，设置页保存即生效）
     vector-weight: 0.6
     keyword-weight: 0.4
-    # 重排（独立 reranker 服务，OpenAI 兼容 /v1/rerank；由外部供应商网关或自建服务承载，无本地脚本）
-    # 默认开：重排是引用质量的根基（融合分排序会把词面重叠的无关块放进上下文）。
-    # 未绑定重排模型或服务不可用时不会阻塞问答——按融合分排序并 fail-loud 标记 rerankUnavailable，
-    # 且失败有 60s 冷却，不会反复打未启动的服务。设 AI_RERANK_ENABLED=false 可显式关掉。
-    # 模型引用归知识库/智能体检索设置绑定，不在这里配全局模型名；超时见 DB 隐藏键 rerank.timeoutMillis。
-    rerank:
-      enabled: ${AI_RERANK_ENABLED:true}
-      base-url: ${AI_RERANK_BASE_URL:}
+    # 重排平台层已整体退役（2026-11-14）：重排模型与窗口归各知识库检索设置
+    # （rerank.model / rerank.minHits / rerank.maxHits，选了才重排），rerank.enabled
+    # 仅剩智能体级「强制关」。运行时调优走 DB 隐藏键 rerank.timeoutMillis / rerank.failCooldownMs。
   # 关键词召回引擎（mysql=LIKE 零依赖但全表扫描；meilisearch=外部索引，中文分词+相关度打分）
   # 切到 meilisearch 后需先 POST /api/ai/search-index/reindex 建索引；服务不可用时自动降级回 mysql
   keyword:

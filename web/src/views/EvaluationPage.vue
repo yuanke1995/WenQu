@@ -303,9 +303,10 @@
                   </label>
                   <label>保底分 <a-input-number v-model:value="g.top1Floor" size="small" :step="0.01" :placeholder="cur('retrieval.top1Floor')" /></label>
                   <label class="ev-param-switch">重排
-                    <a-switch size="small" :checked="g.rerankEnabled ?? curBool('rerank.enabled')"
-                              @change="v => g.rerankEnabled = v" />
-                    <span v-if="g.rerankEnabled == null" class="ev-muted">跟随当前</span>
+                    <a-switch size="small" :checked="g.rerankEnabled == null ? true : false"
+                              @change="v => g.rerankEnabled = v ? null : false" />
+                    <span v-if="g.rerankEnabled == null" class="ev-muted">跟随（库绑模型才重排）</span>
+                    <span v-else class="ev-muted">强制关</span>
                   </label>
                 </div>
                 <div class="ev-group-diff" :class="{ none: gi === 0 }">{{ groupDiff(g, gi) }}</div>
@@ -716,7 +717,7 @@ function defaultGroup (preset = {}) {
 const PRESETS = {
   kw: { name: '关键词优先', vectorWeight: 0.3, keywordWeight: 0.7 },
   vec: { name: '向量优先', vectorWeight: 0.7, keywordWeight: 0.3 },
-  rerank: { name: '向量+重排', vectorWeight: 0.7, keywordWeight: 0.3, rerankEnabled: true },
+  rerank: { name: '向量+重排', vectorWeight: 0.7, keywordWeight: 0.3, rerankEnabled: null },
   multi: { name: '多路模拟', mode: 'multi' },
   low: { name: '低置信保底', lowConfidencePolicy: 'top1' },
   blank: {}
@@ -742,7 +743,6 @@ function toggleK (k) {
   experiment.kList.sort((a, b) => a - b)
 }
 const cur = k => curCfg.value[k] ?? ''
-const curBool = k => String(curCfg.value[k]) === 'true'
 function flattenConfig (d) {
   const flat = {}
   for (const [g, keys] of Object.entries(d || {})) {
@@ -1134,7 +1134,7 @@ function groupDiff (g, gi) {
   add('阈值', 'vecThreshold', 'retrieval.vecThreshold')
   add('关键词上限', 'keywordLimit', 'retrieval.keywordLimit')
   add('召回', 'topK', 'retrieval.vectorTopK')
-  if (g.rerankEnabled != null && String(g.rerankEnabled) !== String(curBool('rerank.enabled'))) diff.push(`重排 ${curBool('rerank.enabled') ? '开' : '关'} → ${g.rerankEnabled ? '开' : '关'}`)
+  if (g.rerankEnabled === false) diff.push('重排 跟随 → 强制关')
   if (g.lowConfidencePolicy != null && String(g.lowConfidencePolicy) !== cur('retrieval.lowConfidencePolicy')) diff.push(`低置信 ${cur('retrieval.lowConfidencePolicy') || '—'} → ${g.lowConfidencePolicy}`)
   if (g.top1Floor != null && String(g.top1Floor) !== cur('retrieval.top1Floor')) diff.push(`保底分 ${cur('retrieval.top1Floor') || '—'} → ${g.top1Floor}`)
   return diff.length ? `较基线：${diff.join(' · ')}` : '与当前配置一致'
@@ -1164,7 +1164,7 @@ async function runExperiment () {
         name: g.name, mode: g.mode,
         vectorWeight: g.vectorWeight, keywordWeight: g.keywordWeight,
         vecThreshold: g.vecThreshold, keywordLimit: g.keywordLimit, topK: g.topK,
-        rerankEnabled: g.rerankEnabled,
+        rerankEnabled: g.rerankEnabled === false ? false : null,
         lowConfidencePolicy: g.lowConfidencePolicy, top1Floor: g.top1Floor
       })),
       kList: experiment.kList,

@@ -424,7 +424,7 @@
                     <div class="ap-adv-field">
                       <label class="ap-field-label">检索重排</label>
                       <a-select v-model:value="form.qpRerank" :options="rerankOptions" size="small" style="width:100%" />
-                      <div class="ap-hint">低延迟可关；阈值归知识库</div>
+                      <div class="ap-hint">重排由知识库绑定的重排模型决定（选了才重排）；低延迟可在此强制关</div>
                     </div>
                     <div class="ap-adv-field ap-adv-full">
                       <label class="ap-field-label">轮终回调</label>
@@ -1129,37 +1129,33 @@ const blankForm = () => ({
   isSubagent: 0, subAgentIds: [],
   // 被委派时怎么做：null=跟随系统默认（agent.subagentMode）
   subagentMode: null,
-  // 检索开关覆盖：只留“这一轮要不要重排”（阈值/权重/召回量归知识库或全局，不在这里配）
+  // 检索开关覆盖：只有「强制关」一种覆盖语义（重排=库绑了模型才重排，智能体只能关、不能开；
+  // 阈值/权重/召回量归知识库，不在这里配）
   qpRerank: 'inherit'
 })
-/** 全局重排开关当前状态（''=拿不到值） */
-const rerankInheritState = computed(() => {
-  const v = String(agentDefaults.value?.['rerank.enabled'] ?? '').trim()
-  return v === 'true' ? '开启' : (v === 'false' ? '关闭' : '')
-})
-/** 重排三态：「跟随系统」点名系统默认当前开关（读不到就只说跟随系统，不谎报某一侧） */
+/** 重排两态：跟随（库绑了模型才重排）/ 强制关 */
 const rerankOptions = computed(() => [
-  { label: '跟随系统' + (rerankInheritState.value ? `（${rerankInheritState.value}）` : ''), value: 'inherit' },
-  { label: '开启', value: 'on' },
-  { label: '关闭', value: 'off' }
+  { label: '跟随（绑了模型才重排）', value: 'inherit' },
+  { label: '强制关', value: 'off' }
 ])
 
 /**
- * queryParams(JSON 串) → 重排三态。阈值/权重等旧键即使残留在存量 JSON 里也不再读取
- * （后端同样忽略，保存时清除）——读进来只会让用户以为这里还能覆盖库参数。
+ * queryParams(JSON 串) → 重排两态。仅显式 "false" 是强制关；存量 JSON 里的 "true"
+ * （旧「开启」语义）视为跟随——重排已无全局开关可强制开启。阈值/权重等旧键即使残留
+ * 也不再读取（后端同样忽略，保存时清除）——读进来只会让用户以为这里还能覆盖库参数。
  */
 function parseQueryParams (json) {
   let ps = null
   try { ps = json ? JSON.parse(json) : null } catch (e) { ps = null }
   if (ps && ps['rerank.enabled'] !== undefined && ps['rerank.enabled'] !== null) {
-    return String(ps['rerank.enabled']) === 'true' ? 'on' : 'off'
+    return String(ps['rerank.enabled']) === 'false' ? 'off' : 'inherit'
   }
   return 'inherit'
 }
 
-/** 重排三态 → queryParams(JSON 串)；跟随全局返回空串（后端存 null = 全部继承） */
+/** 重排两态 → queryParams(JSON 串)；跟随返回空串（后端存 null = 跟随） */
 function buildQueryParams (rr) {
-  if (rr === 'on' || rr === 'off') return JSON.stringify({ 'rerank.enabled': rr === 'on' ? 'true' : 'false' })
+  if (rr === 'off') return JSON.stringify({ 'rerank.enabled': 'false' })
   return ''
 }
 

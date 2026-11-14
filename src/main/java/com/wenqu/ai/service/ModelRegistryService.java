@@ -286,22 +286,13 @@ public class ModelRegistryService {
         return snap.modelIndex().get(v);
     }
 
-    /*     * 重排路由：rerank.model 引用 → 供应商；遗留 → rerank.baseUrl（OpenAI 兼容 /v1/rerank 服务，需显式配置，无本地兜底）。
-     *  值链：本轮重排模型（知识库按范围收敛后写入线程覆盖，见 KbRetrievalParamService）
-     *  ＞ 个人设置默认（personalOnly，问答线程装载个人值）
-     *  ＞ **平台默认 rerank.platformRef**（管理员登记，非 personalOnly，全平台兜底）
-     *  ＞ 空（回落 rerank.baseUrl；未配置则重排不可用）。
-     *  平台默认层覆盖「归属人未配重排」的情形：不配时重排门（0.6）会退化到融合分门
-     *  （minFusionScore，默认 0.5），词面重叠的无关块更容易进上下文与引用面板。 */
+    /*     * 重排路由：只认本轮库级收敛写入线程覆盖的 rerank.model（知识库按命中库收敛，见
+     *  KbRetrievalParamService.rerankConfFor）。平台默认（rerank.platformRef）、个人默认
+     *  （rerank.model personalOnly）与 rerank.baseUrl 直连回落均已退役（2026-11-14）：
+     *  重排模型唯一来源 = 知识库绑定 → 供应商网关，没绑定的轮次返回 null（重排不可用，
+     *  检索退化到融合分门 minFusionScore）。 */
     public ModelRoute rerankRoute() {
-        String model = nz(configService.get("rerank.model"));
-        ModelRoute r = resolveReference(model);
-        if (r != null) return r;
-        String platform = nz(configService.get("rerank.platformRef"));
-        ModelRoute pr = resolveReference(platform);
-        if (pr != null) return pr;
-        String fallbackModel = model == null || model.isBlank() ? platform : model;
-        return new ModelRoute(null, nz(configService.get("rerank.baseUrl")), null, null, null, fallbackModel, fallbackModel);
+        return resolveReference(nz(configService.get("rerank.model")));
     }
 
     /**

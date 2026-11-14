@@ -64,7 +64,8 @@ public class RetrievalEvaluationService {
             if (vecThreshold != null) m.put("retrieval.vecThreshold", String.valueOf(vecThreshold));
             if (keywordLimit != null) m.put("retrieval.keywordLimit", String.valueOf(keywordLimit));
             if (topK != null) m.put("retrieval.vectorTopK", String.valueOf(topK));
-            if (rerankEnabled != null) m.put("rerank.enabled", String.valueOf(rerankEnabled));
+            // rerankEnabled 仅 false=强制关有语义（重排本就是「库绑了模型才重排」，评测组只能关、不能开）
+            if (Boolean.FALSE.equals(rerankEnabled)) m.put("rerank.enabled", "false");
             if (lowConfidencePolicy != null) m.put("retrieval.lowConfidencePolicy", lowConfidencePolicy);
             if (top1Floor != null) m.put("retrieval.top1Floor", String.valueOf(top1Floor));
             return m;
@@ -93,6 +94,7 @@ public class RetrievalEvaluationService {
     private final ConfigService configService;
     private final KeywordExtractor keywordExtractor;
     private final RerankService rerankService;
+    private final KbRetrievalParamService kbRetrievalParams;
     private final MessageMapper messageMapper;
     private final KnowledgeMapper knowledgeMapper;
     private final AiDocumentMapper documentMapper;
@@ -114,6 +116,7 @@ public class RetrievalEvaluationService {
 
     public RetrievalEvaluationService(HybridRetrievalService retrievalService, ConfigService configService,
                                       KeywordExtractor keywordExtractor, RerankService rerankService,
+                                      KbRetrievalParamService kbRetrievalParams,
                                       MessageMapper messageMapper, KnowledgeMapper knowledgeMapper,
                                       AiDocumentMapper documentMapper, UserMapper userMapper,
                                       AppProperties properties, ChatClient chatClient,
@@ -125,6 +128,7 @@ public class RetrievalEvaluationService {
         this.configService = configService;
         this.keywordExtractor = keywordExtractor;
         this.rerankService = rerankService;
+        this.kbRetrievalParams = kbRetrievalParams;
         this.messageMapper = messageMapper;
         this.knowledgeMapper = knowledgeMapper;
         this.documentMapper = documentMapper;
@@ -371,15 +375,16 @@ public class RetrievalEvaluationService {
         } else {
             merged = retrievalService.search(question);
         }
-        // 重排：命中数在 (minHits, maxHits] 且开启才触发（评估默认不开启，避免共享 rerank 状态干扰生产）
-        boolean rerankOn = configService.getBoolean("rerank.enabled");
-        if (rerankOn && merged.size() > configService.getInt("rerank.minHits", ConfigDefaults.RERANK_MIN_HITS)
-                && merged.size() <= configService.getInt("rerank.maxHits", ConfigDefaults.RERANK_MAX_HITS)) {
-            try {
-                merged = rerankService.rank(merged, question);
-            } catch (Exception e) {
-                log.debug("[Eval] 重排失败回退: {}", e.getMessage());
-            }
+        // 重排：库绑了重排模型才触发（选了才重排，模型与窗口按命中库收敛）；
+        // 评测组的 rerankEnabled=false 经覆盖层强制跳过（RerankService 内部判），失败回退融合分
+        try {
+            final List<HybridRetrievalService.Hit> candidates = merged;
+            List<String> hitKbIds = candidates.stream().map(HybridRetrievalService.Hit::kbId).toList();
+            List<HybridRetrievalService.Hit> ranked = kbRetrievalParams.withRerankModel(
+                    null, hitKbIds, () -> rerankService.rank(candidates, question));
+            if (ranked != null) merged = ranked;
+        } catch (Exception e) {
+            log.debug("[Eval] 重排失败回退: {}", e.getMessage());
         }
         return merged.stream()
                 .map(h -> new HitInfo(h.knowledgeId(), h.docId(), h.title(), h.score()))
@@ -628,11 +633,12 @@ public class RetrievalEvaluationService {
         return report;
     }
 
-    /** 体检要盯的参数清单：换掉其中任何一项，上期的 delta 就不再是同口径测量。 */
+    /** 体检要盯的参数清单：换掉其中任何一项，上期的 delta 就不再是同口径测量。
+     * （重排键不在此列：重排模型与窗口已归知识库，全局层已退役，见 KbParamCodec。） */
     private static final List<String> RETRIEVAL_PARAM_KEYS = List.of(
             "retrieval.vectorWeight", "retrieval.keywordWeight", "retrieval.vecThreshold",
             "retrieval.keywordLimit", "retrieval.vectorTopK", "retrieval.minContextScore",
-            "retrieval.minFusionScore", "rerank.enabled", "rerank.maxHits", "rerank.minHits");
+            "retrieval.minFusionScore");
 
     /** 这份报告当时是在哪些参数下量出来的（与 {@link #paramsId} 同一份清单）。 */
     private Map<String, String> currentRetrievalParams() {

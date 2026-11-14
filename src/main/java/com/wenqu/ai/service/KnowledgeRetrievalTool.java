@@ -49,6 +49,14 @@ public class KnowledgeRetrievalTool {
          */
         void degrade(String code, String msg);
 
+        /**
+         * 登记本轮收敛出的重排模型引用（库级绑定，见 KbRetrievalParamService.rerankConfFor）。
+         * <p>检索工具跑在独立线程上，rerank.model 的线程覆盖随检索调用结束而撤除；
+         * 而咨询来源并入、MCP 来源评分也用同一个重排模型——它们在工具线程之外执行，
+         * 只能凭这份轮级登记复用收敛结果。null/不实现=本轮无重排模型。
+         */
+        default void registerRoundRerankModel(String modelRef) {}
+
         /** 注册结果：imageDescs 与 imageSeqs 同编号空间（无视觉描述的旧文档值为空串） */
         record Registration(int ref, java.util.List<Integer> imageSeqs,
                             java.util.Map<Integer, String> imageDescs) {}
@@ -224,11 +232,20 @@ public class KnowledgeRetrievalTool {
         // 全部混进工具结果并注册进引用面板。rankForced 不受 minHits 窗口限制（工具候选可能不足 6 条），
         // 失败时回退融合分序（rerankScore=null，走下方融合门），与主链路降级语义一致。
         // 重排模型归知识库（库主付费）：在**本轮实际命中**的库里，按范围顺序取第一个绑了模型的库；
-        // 都没绑则由平台默认兜底（rerank.platformRef）。withRerankModel 只在有库级模型时临时覆盖。
+        // 都没绑则本轮不重排（平台兜底已退役，选了才重排）。withRerankModel 只在有库级模型时临时覆盖，
+        // 收敛出的引用同步登记进轮级注册器——咨询来源并入/MCP 来源评分在工具线程之外，
+        // 线程覆盖已撤，它们凭轮级登记复用同一模型。
         final List<Hit> candidates = hits;
         final List<String> hitKbIds = candidates.stream().map(Hit::kbId).toList();
-        hits = kbRetrievalParams.withRerankModel(
-                scope == null ? null : scope.kbIds(), hitKbIds,
+        KbRetrievalParamService.RerankConf conf = kbRetrievalParams.rerankConfFor(
+                scope == null ? null : scope.kbIds(), hitKbIds);
+        String roundRef = conf != null ? conf.ref()
+                : configService.get("rerank.model"); // 覆盖层显式指定（评估/工作流重放）优先级更高，见 rerankConfFor
+        if (roundRef != null && !roundRef.isBlank() && registrar != null) {
+            registrar.registerRoundRerankModel(roundRef.trim());
+        }
+        final KbRetrievalParamService.RerankConf finalConf = conf;
+        hits = kbRetrievalParams.withRerankConf(finalConf,
                 () -> rerankService.rankForced(candidates, query.trim()));
         // 最低相关分门（分域双门，与主链路上下文填充同款语义）：重排分走 retrieval.minContextScore（0.6），
         // 未重排（关闭/失败回退）的融合分走 retrieval.minFusionScore（0.5）——两个分值域分布不同，一个绝对门

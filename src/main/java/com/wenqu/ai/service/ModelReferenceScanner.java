@@ -45,7 +45,7 @@ import java.util.Map;
  *   <li><b>个人默认模型</b>（{@code c_ai_user.default_model}）——该用户每一次未指定模型的问答都会撞上；</li>
  *   <li><b>历史个人配置</b>（{@code c_ai_user_config.config_value} 里的遗留行）——界面不可编辑，
  *       只报不计入可改；</li>
- *   <li><b>系统配置槽位</b>（{@code c_ai_config}，如 rerank.platformRef）——影响全平台；</li>
+ *   <li><b>系统配置槽位</b>（{@code c_ai_config}，如 eval.judgeModel）——影响全平台；</li>
  *   <li><b>游客对话模型</b>（{@code c_ai_agent_share.model_ref}）——公开分享链接的调用方。</li>
  * </ol>
  * 另附<b>会话级覆盖</b>的提示：会话表不逐条扫描（数量大且会话短命），但会在结果里显式说明

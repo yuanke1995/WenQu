@@ -30,9 +30,9 @@ public final class ConfigDefaults {
     public static final double RETRIEVAL_TOP1_FLOOR = 0.05;
     /** 多路检索共识加分（仅评测的多路近似使用） */
     public static final double RETRIEVAL_MULTI_CONSENSUS_BONUS = 0.03;
-    /** rerank.minHits：候选少于该数不触发 cross-encoder（设置页「重排触发下限」可调，此为默认值） */
+    /** rerank.minHits：候选少于该数不触发 cross-encoder（库级「重排触发下限」可调，此为内置默认） */
     public static final int RERANK_MIN_HITS = 6;
-    /** rerank.maxHits：只重排融合分最高的前 N 块（设置页「重排窗口」可调，此为默认值） */
+    /** rerank.maxHits：只重排融合分最高的前 N 块（库级「重排窗口」可调，此为内置默认） */
     public static final int RERANK_MAX_HITS = 15;
 
     // ---- 解析 / 向量化 ----

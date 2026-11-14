@@ -1201,7 +1201,7 @@ export const getToolCatalog = () => request('/agent/tool-catalog')
  *  前端不抄第二份档位表（抄了就等于界面上能选一个后端不给的档位） */
 export const getPermissionPresets = () => request('/agent/permission-presets')
 /** 配置页「跟随默认」当前的默认值（登录用户可读）：{agent.subagentMode, agent.maxToolSteps,
- *  tool.enabled, webSearch.enabled, rerank.enabled}。值由后端按运行时口径解析后下发，
+ *  tool.enabled, webSearch.enabled}。值由后端按运行时口径解析后下发，
  *  前端不再判管理员身份去够 /config——那是普通用户 403 的根因（界面上只剩「跟随系统默认」五个字） */
 export const getAgentConfigDefaults = () => request('/agent/config-defaults')
 export const createAgent = body => request('/agent', { method: 'POST', body: JSON.stringify(body) })

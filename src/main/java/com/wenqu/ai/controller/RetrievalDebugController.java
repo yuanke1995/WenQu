@@ -147,6 +147,8 @@ public class RetrievalDebugController {
                 m.put("vectorWeight", p.vectorWeight());
                 m.put("keywordWeight", p.keywordWeight());
                 m.put("rerankModel", p.rerankModel() == null ? "" : p.rerankModel());
+                m.put("rerankMinHits", p.rerankMinHits());
+                m.put("rerankMaxHits", p.rerankMaxHits());
                 m.put("configured", kb != null && kb.getQueryParams() != null && !kb.getQueryParams().isBlank());
                 kbParams.put(id, m);
             });

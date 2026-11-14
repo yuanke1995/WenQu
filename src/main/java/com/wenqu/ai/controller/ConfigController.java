@@ -6,7 +6,6 @@ import com.wenqu.ai.parser.DocumentParser;
 import com.wenqu.ai.service.ConfigService;
 import com.wenqu.ai.service.ConnectivityProbeService;
 import com.wenqu.ai.service.KeywordIndexService;
-import com.wenqu.ai.service.RerankService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -33,7 +32,6 @@ public class ConfigController {
 
     private final ConfigService configService;
     private final List<DocumentParser> parsers;
-    private final RerankService rerankService;
     private final KeywordIndexService keywordIndexService;
     private final ConnectivityProbeService connectivityProbeService;
     private final com.wenqu.ai.config.ConfigSchemaService configSchemaService;
@@ -165,14 +163,6 @@ public class ConfigController {
             return String.format("%.1fGB", bytes / (1024.0 * 1024 * 1024));
         }
         return String.format("%.0fMB", bytes / (1024.0 * 1024));
-    }
-
-    /** 重排服务可用性探测（设置页"启用重排"开关打开前校验；绕过缓存真实请求） */
-    @Operation(summary = "探测重排服务", description = "强制探测 rerank 服务（/v1/models），返回 available 供前端开启开关前校验")
-    @Permission("config:read")
-    @GetMapping("/rerank/check")
-    public ResultJson checkRerank() {
-        return ResultJson.ok(Map.of("available", rerankService.checkAvailable()));
     }
 
     /** Meilisearch 可用性探测（设置页切换关键词引擎前校验；绕过缓存真实请求） */

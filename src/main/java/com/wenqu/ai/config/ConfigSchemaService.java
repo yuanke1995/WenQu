@@ -377,6 +377,13 @@ public class ConfigSchemaService {
             String text = tipsKey == null ? null : tips.get(tipsKey);
             if (text != null && !text.isBlank()) out.put(key, text);
         }
+        // 不在设置页字段面里的键（如库级 rerank.minHits/maxHits——已下放知识库，设置页无字段）：
+        // 回落 keyDescriptions 同源说明，弹窗问号不因键不在设置页而断文案
+        for (String key : wanted) {
+            if (out.containsKey(key)) continue;
+            String text = help.get(key);
+            if (text != null && !text.isBlank()) out.put(key, text);
+        }
         return out;
     }
 

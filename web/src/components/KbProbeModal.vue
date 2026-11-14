@@ -102,6 +102,8 @@
             <div class="kv"><span>关键词权重</span><b>{{ result.params.keywordWeight }}</b></div>
             <div class="kv"><span>向量阈值</span><b>{{ result.params.vecThreshold }}</b></div>
             <div class="kv"><span>重排模型</span><b>{{ friendlyModel(result.params.rerankModel) }}</b></div>
+            <div class="kv" v-if="result.params.rerankMinHits != null"><span>重排触发下限</span><b>{{ result.params.rerankMinHits }} 块</b></div>
+            <div class="kv" v-if="result.params.rerankMaxHits != null"><span>重排窗口</span><b>{{ result.params.rerankMaxHits }} 块</b></div>
           </div>
 
           <div class="diag-sec">

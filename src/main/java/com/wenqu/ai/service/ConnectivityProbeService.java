@@ -147,7 +147,8 @@ public class ConnectivityProbeService {
      * 同时验证地址、路径、Key、模型名。rerank 服务无 Key 时不带 Authorization.
      */
     private Map<String, Object> rerankProbe(String baseUrl, String apiKey, String model, long start) {
-        String base = value(baseUrl, "rerank.baseUrl");
+        // rerank.baseUrl 全局键已退役：重排探测只认表单显式传入的地址（供应商登记页「先测后存」）
+        String base = baseUrl == null ? "" : baseUrl.trim();
         if (base.isBlank()) return fail(start, "服务地址为空");
         // 仅按显式传入的模型名探测（rerank.model 归知识库检索设置绑定：值随库配置变化，探测不读全局）
         String mdl = model == null || model.isBlank() ? "" : model.trim();

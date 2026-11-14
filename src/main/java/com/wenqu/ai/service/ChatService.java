@@ -40,8 +40,8 @@ public class ChatService {
     /**
      * 智能体可覆盖的检索参数白名单：<b>只留“出水”那一层的开关</b>。
      *
-     * <p>两阶段分工：知识库管“召回池”（阈值、两路权重、重排模型，见
-     * {@link KbParamCodec}），智能体管“这一轮怎么用检索”（要不要重排、给模型几条）。
+     * <p>两阶段分工：知识库管“召回池”（阈值、两路权重、重排模型与窗口，见
+     * {@link KbParamCodec}），智能体管“这一轮怎么用检索”（要不要强制关重排、给模型几条）。
      * 同一个键只归一层：运行时线程覆盖会静默压掉库级配置，
      * 库主调好的阈值须从库级取。
      *
@@ -99,7 +99,8 @@ public class ChatService {
     /**
      * 把本轮智能体的检索开关覆盖装进 {@link ConfigService} 的线程作用域覆盖层。
      * <p>来源是 {@code c_ai_agent.query_params}，白名单见 {@link #AGENT_QUERY_PARAM_KEYS}——
-     * 当前只有 {@code rerank.enabled}（场景性开关）。检索阈值/权重归知识库，由
+     * 当前只有 {@code rerank.enabled}，且仅显式 {@code false}（强制关）有语义：
+     * 重排本就是「库绑了模型才重排」，智能体只能关、不能开。检索阈值/权重归知识库，由
      * {@link KbRetrievalParamService} 逐库生效，<b>不再经这里装载</b>：
      * 库级参数必须按库取用，压成回合级标量会在跨库检索时丢掉各库差异。
      * <p><b>无智能体绑定 / 参数为空时不装载</b>——留着 {@code OVERRIDE} 为空，检索便一路读全局设置，

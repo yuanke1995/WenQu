@@ -67,11 +67,17 @@
               <a-input-number v-model:value="form.q.vecThreshold" :min="0" :max="1" :step="0.05" style="width:100%" :placeholder="numPh('retrieval', 'vecThreshold')" />
             </a-form-item>
             <a-form-item label="重排模型" data-fix="rerankModel" :tooltip="tip('rerank.model')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
-              <ModelSelect v-model="form.q.rerankModel" type="rerank" width="100%" inherit-label="跟随默认" :placeholder="rerankPh" />
+              <ModelSelect v-model="form.q.rerankModel" type="rerank" width="100%" inherit-label="不重排" placeholder="不选=本库不重排" />
+            </a-form-item>
+            <a-form-item label="重排触发下限" :tooltip="tip('rerank.minHits')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
+              <a-input-number v-model:value="form.q.rerankMinHits" :min="2" :max="50" :step="1" :precision="0" style="width:100%" :placeholder="numPh('rerank', 'minHits')" />
+            </a-form-item>
+            <a-form-item label="重排窗口" :tooltip="tip('rerank.maxHits')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
+              <a-input-number v-model:value="form.q.rerankMaxHits" :min="2" :max="100" :step="1" :precision="0" style="width:100%" :placeholder="numPh('rerank', 'maxHits')" />
             </a-form-item>
           </div>
           <div class="kb-hint" style="margin:2px 0 0">
-            阈值与两路权重<b>按库生效</b>；召回量与是否重排由系统设置决定。清空某项 = 跟随系统默认。
+            阈值、两路权重、重排模型与重排窗口<b>按库生效</b>；绑了重排模型才重排。清空某项 = 跟随内置默认。
           </div>
         </a-collapse-panel>
         <a-collapse-panel key="p">
@@ -169,7 +175,6 @@ import { message } from 'ant-design-vue'
 import { createKnowledgeBase, updateKnowledgeBase, getKbParamDefaults, getKbParamTips } from '../api'
 import ModelSelect from './ModelSelect.vue'
 import KbIcon from './KbIcon.vue'
-import { loadModelIndex, modelRefInfo } from '../utils/modelRef'
 import { locateField } from '../utils/fieldLocate'
 
 // 定位键 → 所属高级参数折叠组（'q'=检索参数，'p'=解析参数）；
@@ -208,19 +213,20 @@ const saving = ref(false)
 function blank () {
   return {
     name: '', description: '', icon: '', embeddingRef: '', graphEnabled: false, graphModelRef: '',
-    q: { vectorWeight: null, keywordWeight: null, vecThreshold: null, rerankModel: '' },
+    q: { vectorWeight: null, keywordWeight: null, vecThreshold: null, rerankModel: '', rerankMinHits: null, rerankMaxHits: null },
     p: { maxSize: null, overlap: null, maxChunks: null, maxImages: null, structural: null, structuralRatio: null, headingDepth: null, qaEnabled: null, qaPerChunk: null, childEnabled: null, childSize: null, ocrEngine: null, ocrMinText: null, ocrDpi: null, visionRef: '', ocrRef: '' }
   }
 }
 
 /**
- * 库级检索参数 ↔ 表单：只含库拥有的“召回池”键（阈值 / 两路权重 / 重排模型），空值=继承不写入。
- * 召回量（vectorTopK / keywordLimit）与重排开关（rerank.enabled）已迁出库级：
- * 前者归全局，后者归智能体（见后端 KbParamCodec / ChatService.AGENT_QUERY_PARAM_KEYS）。
+ * 库级检索参数 ↔ 表单：只含库拥有的“召回池”键（阈值 / 两路权重 / 重排模型与重排窗口），空值=继承不写入。
+ * 召回量（vectorTopK / keywordLimit）已归全局，重排开关（rerank.enabled）只剩智能体级「强制关」：
+ * 重排 = 库绑了模型才重排（见后端 KbParamCodec / ChatService.AGENT_QUERY_PARAM_KEYS）。
  */
 const QUERY_KEYS = {
   vectorWeight: 'retrieval.vectorWeight', keywordWeight: 'retrieval.keywordWeight',
-  vecThreshold: 'retrieval.vecThreshold', rerankModel: 'rerank.model'
+  vecThreshold: 'retrieval.vecThreshold', rerankModel: 'rerank.model',
+  rerankMinHits: 'rerank.minHits', rerankMaxHits: 'rerank.maxHits'
 }
 const PARSE_KEYS = {
   maxSize: 'chunk.maxSize', overlap: 'chunk.overlap', maxChunks: 'chunk.maxChunks',
@@ -350,30 +356,16 @@ const valPh = (group, key) => {
   return v === '' ? '继承默认' : `继承默认（${v}）`
 }
 
-// 重排模型槽位的占位点名：库未绑模型时实际生效的默认层 = 个人设置（rerank.model）→ 平台默认
-// （rerank.platformRef）→ 本地 rerank 服务（前端不可知，不展示），口径同 ModelRegistryService.rerankRoute。
-// 是否启用重排由系统设置与智能体决定（库不再管开关），所以这里恒可点名默认模型——
-// 否则"跟随默认"背后到底有没有模型、用谁的模型，用户只能靠猜。模型名优先取可选列表的展示名；
-// 平台层模型可能不在本人可选列表（登记人是管理员），退回引用串的模型段（去供应商 UUID 前缀）。
-const rerankIndex = ref({})
-const rerankPh = computed(() => {
-  const dref = flatVal('rerank.model') || flatVal('rerank.platformRef')
-  if (!dref) return ''
-  const info = rerankIndex.value[dref]
-  if (info && info.displayName) return `默认 ${info.displayName}`
-  const i = dref.indexOf('/')
-  return `默认 ${i === -1 ? dref : dref.slice(i + 1)}`
-})
+// 重排模型槽位（2026-11-14 起无平台/个人默认层）：库绑了模型才重排，不选=本库不重排，
+// 占位符即语义本身，不再点名「默认用的哪个模型」。
 
 /**
- * 新建：以你当前的**生效默认值**为模板预填解析与检索参数（生效顺序：遗留个人值 > 系统全局；保存即固化到本库；
+ * 新建：以当前**生效默认值**为模板预填解析与检索参数（保存即固化到本库；
  * 之后改默认设置不会回溯影响已建库——要跟随就清空对应项后保存，空值即"不写覆盖"）。
- * 任一字段留空 = 该库该项跟随系统全局默认（管理员在「系统设置」修改）。
+ * 任一字段留空 = 该库该项跟随内置默认（重排模型不选 = 本库不重排）。
  */
 const prefillFromGlobal = async () => {
-  // 模型索引一并加载：rerank 引用要先验可解析（停用/他人供应商不在可选列表）再预填，
-  // 否则触发器裸显原始 UUID 长串
-  await Promise.all([loadParamDefaults(), loadModelIndex()])
+  await loadParamDefaults()
   const num = v => (v === undefined || v === null || v === '' ? null : Number(v))
   const q = form.value.q
   const p = form.value.p
@@ -396,13 +388,14 @@ const prefillFromGlobal = async () => {
   p.ocrEngine = ocrEngine === '' ? null : ocrEngine
   p.ocrMinText = num(flatVal('parse.ocrMinText'))
   p.ocrDpi = num(flatVal('parse.ocrDpi'))
-  // 检索参数（模板）：只预填库拥有的四项（阈值/两路权重/重排模型）；
-  // 召回量与重排开关不归库，预填了反而会被后端归一清掉
+  // 检索参数（模板）：预填库拥有的各项（阈值/两路权重/重排窗口）；
+  // 召回量与重排开关不归库，预填了反而会被后端归一清掉。重排模型不预填（库级绑定，选了才重排）
   q.vectorWeight = num(flatVal('retrieval.vectorWeight'))
   q.keywordWeight = num(flatVal('retrieval.keywordWeight'))
   q.vecThreshold = num(flatVal('retrieval.vecThreshold'))
-  const rerankRef = flatVal('rerank.model')
-  q.rerankModel = rerankRef && modelRefInfo(rerankRef) ? rerankRef : ''   // 列表外引用不预填（留空=继承：本地 rerank 服务）
+  q.rerankMinHits = num(flatVal('rerank.minHits'))
+  q.rerankMaxHits = num(flatVal('rerank.maxHits'))
+  q.rerankModel = ''
 }
 
 // 打开时装载：编辑库→回填该库覆盖值；新建→先清空模板再按全局值预填
@@ -416,8 +409,6 @@ watch(() => props.open, open => {
   if (fold && !advActive.value.includes(fold)) advActive.value = [...advActive.value, fold]
   if (props.fix) locateField(props.fix).catch(() => {})
   loadParamTips().catch(() => {})   // 问号文案加载失败不阻塞（只是少个问号）
-  // 重排模型占位点名需要模型索引解析展示名（模块级 10s 缓存，新建模式重复调用无额外请求）
-  loadModelIndex().then(i => { rerankIndex.value = i || {} }).catch(() => {})
   if (props.kb) {
     loadParamDefaults().catch(e => message.error('知识库参数默认值加载失败：' + (e.message || '请刷新重试')))
   } else {

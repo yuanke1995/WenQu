@@ -34,9 +34,11 @@ public class KbRetrievalParamService {
     /**
      * 一个库的生效检索参数。
      * <p>{@code rerankModel} 只用于展示/诊断：真正生效时由 {@link #withRerankModel} 收敛成
-     * 本轮唯一的重排模型（一轮只有一个重排器）。
+     * 本轮唯一的重排模型（一轮只有一个重排器）。{@code rerankMinHits/rerankMaxHits} 同理：
+     * 库级重排窗口，null=未配（走内置默认），随模型同库收敛后经线程覆盖下发给重排器。
      */
-    public record Params(double vecThreshold, double vectorWeight, double keywordWeight, String rerankModel) {
+    public record Params(double vecThreshold, double vectorWeight, double keywordWeight, String rerankModel,
+                         Integer rerankMinHits, Integer rerankMaxHits) {
         public boolean hasRerankModel() {
             return rerankModel != null && !rerankModel.isBlank();
         }
@@ -73,39 +75,60 @@ public class KbRetrievalParamService {
         return out;
     }
 
+    /** 本轮重排收敛结果：模型引用 + 提供该模型的库的重排窗口（null=未配，走内置默认） */
+    public record RerankConf(String ref, Integer minHits, Integer maxHits) {}
+
     /**
-     * 本轮收敛后的重排模型：在<b>实际命中</b>的库里，按范围顺序取第一个配了 {@code rerank.model} 的库。
+     * 本轮收敛后的重排配置：在<b>实际命中</b>的库里，按范围顺序取第一个绑了 {@code rerank.model} 的库，
+     * 重排窗口（{@code rerank.minHits/maxHits}）跟同一个库走。
      *
      * <p>为什么按“命中库”而不是“范围”收敛：范围可以为空（=全部库），若按范围取，
      * 多租户下会选中别人的默认库模型（代打他人额度），也会给只命中手册库的一轮套上法律库的重排模型。
      * 命中块已经过可见性判定，按它收敛既准确又不越权。
      *
-     * <p>返回 null 有三种含义——本轮没有命中、命中的库都没配（走平台默认）、
+     * <p>返回 null 的含义——本轮没有命中、命中的库都没绑模型（不重排，平台兜底已退役）、
      * 或本轮已有显式覆盖（评估/调用方指定，优先级更高）。
      */
-    public String rerankModelFor(Collection<String> kbIds, Collection<String> hitKbIds) {
+    public RerankConf rerankConfFor(Collection<String> kbIds, Collection<String> hitKbIds) {
         if (hitKbIds == null || hitKbIds.isEmpty()) return null;
         if (configService.currentOverrides().containsKey(KbParamCodec.RERANK_MODEL)) return null;
         Set<String> hit = new LinkedHashSet<>(hitKbIds);
         for (KnowledgeBase kb : scope(kbIds)) {
             if (!hit.contains(kb.getId())) continue;
-            String ref = KbParamCodec.parse(kb.getQueryParams()).get(KbParamCodec.RERANK_MODEL);
-            if (ref != null && !ref.isBlank()) return ref;
+            Map<String, String> p = KbParamCodec.parse(kb.getQueryParams());
+            String ref = p.get(KbParamCodec.RERANK_MODEL);
+            if (ref != null && !ref.isBlank()) {
+                return new RerankConf(ref.trim(),
+                        hitCount(p, KbParamCodec.RERANK_MIN_HITS, 50),
+                        hitCount(p, KbParamCodec.RERANK_MAX_HITS, 100));
+            }
         }
         return null;
     }
 
     /**
      * 在“本轮重排模型”作用域内执行一次重排调用。
-     * <p>重排器是整轮共享资源：多库各配一个模型时无法同时成立，故按 {@link #rerankModelFor}
-     * 收敛成一个值，再以线程局部覆盖交给 {@code RerankService}（它按 rerank.model 解析路由）。
-     * 调用结束恢复原覆盖层——池化线程复用，残留会让下一轮继承本轮的模型。
+     * <p>重排器是整轮共享资源：多库各配一个模型时无法同时成立，故按 {@link #rerankConfFor}
+     * 收敛成一个值，再以线程局部覆盖交给 {@code RerankService}（它按 rerank.model 解析路由、
+     * 按 rerank.minHits/maxHits 取窗口）。调用结束恢复原覆盖层——池化线程复用，
+     * 残留会让下一轮继承本轮的模型。
      */
     public <T> T withRerankModel(Collection<String> kbIds, Collection<String> hitKbIds, Supplier<T> call) {
-        String ref = rerankModelFor(kbIds, hitKbIds);
-        if (ref == null) return call.get();
+        return withRerankConf(rerankConfFor(kbIds, hitKbIds), call);
+    }
+
+    /**
+     * 在给定收敛结果的作用域内执行调用（null=无收敛，直接执行——调用方可能自带
+     * rerank.model 覆盖，如评估扫参/工作流重放）。覆盖装/卸口径同 {@link #withRerankModel}。
+     */
+    public <T> T withRerankConf(RerankConf conf, Supplier<T> call) {
+        if (conf == null) return call.get();
+        Map<String, String> ov = new LinkedHashMap<>();
+        ov.put(KbParamCodec.RERANK_MODEL, conf.ref());
+        if (conf.minHits() != null) ov.put(KbParamCodec.RERANK_MIN_HITS, String.valueOf(conf.minHits()));
+        if (conf.maxHits() != null) ov.put(KbParamCodec.RERANK_MAX_HITS, String.valueOf(conf.maxHits()));
         Map<String, String> prev = configService.currentOverrides();
-        configService.putOverrides(Map.of(KbParamCodec.RERANK_MODEL, ref));
+        configService.putOverrides(ov);
         try {
             return call.get();
         } finally {
@@ -131,7 +154,23 @@ public class KbRetrievalParamService {
                 DEFAULT_KEYWORD_WEIGHT, 0d, 1d);
         String rw = kbParams.get(KbParamCodec.RERANK_MODEL);
         String rerankModel = rw == null || rw.isBlank() ? null : rw.trim();
-        return new Params(vt, vw, kw, rerankModel);
+        return new Params(vt, vw, kw, rerankModel,
+                hitCount(kbParams, KbParamCodec.RERANK_MIN_HITS, 50),
+                hitCount(kbParams, KbParamCodec.RERANK_MAX_HITS, 100));
+    }
+
+    /** 库级重排窗口解析：缺省/非法/超界返回 null（=未配，走内置默认；下限 2 在重排执行端统一钳） */
+    private Integer hitCount(Map<String, String> kbParams, String key, int max) {
+        Map<String, String> explicit = configService.currentOverrides();
+        String raw = explicit.containsKey(key) ? explicit.get(key) : kbParams.get(key);
+        if (raw == null || raw.isBlank()) return null;
+        try {
+            int v = Integer.parseInt(raw.trim());
+            if (v < 2 || v > max) return null;
+            return v;
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     private double number(String key, Map<String, String> kbParams, double def, double min, double max) {

@@ -106,22 +106,14 @@ public class KnowledgeBaseController {
      * 这里只回库级可覆盖的检索参数 + 解析参数（不含 gateway 地址与任何密钥）。
      */
     @Operation(summary = "知识库参数默认值", description = "库级检索/解析参数的当前生效默认值（新建库模板预填 + 表单占位符展示）；"
-            + "重排模型返回「本人个人值（未设即空，personalOnly 无全局层）」；rerank.enabled 供智能体表单展示"
-            + "「跟随全局」的当前状态；rerank.platformRef 为平台兜底层，原样返回供前端点名默认模型")
+            + "重排模型返回空（模型归库级绑定，选了才重排）；未配的库级键回落内置默认常量")
     @Permission("kb:read")
     @GetMapping("/param-defaults")
     public ResultJson paramDefaults() {
         Map<String, String> out = new LinkedHashMap<>();
         for (String k : DocumentService.PARSE_PARAM_KEYS) out.put(k, effectiveDefault(k));
-        // 库级唯一真源：阈值/两路权重/重排模型（召回池那一层）
+        // 库级唯一真源：阈值/两路权重/重排模型与重排窗口（召回池那一层）
         for (String k : com.wenqu.ai.service.KbParamCodec.KEYS) out.put(k, effectiveDefault(k));
-        // 重排开关归智能体（场景性），但智能体表单要展示「跟随全局」的当前状态，故一并下发（非敏感布尔值）
-        out.put("rerank.enabled", configService.get("rerank.enabled"));
-        // 平台默认重排模型：库级覆盖与个人设置都没绑重排模型时的兜底层（ModelRegistryService.rerankRoute
-        // 值链的第三跳）。不在库级可覆盖白名单，单独补发——前端「重排模型」槽位空值时据此点名
-        // "默认用的哪个模型"，否则用户无从得知重排到底会不会跑、用谁的模型。
-        // 仅模型引用串，不含网关地址与密钥，同 rerank.model 的外发口径。
-        out.put("rerank.platformRef", configService.get("rerank.platformRef"));
         return ResultJson.ok(out);
     }
 
@@ -146,6 +138,8 @@ public class KnowledgeBaseController {
                 case "parse.childSize" -> String.valueOf(ConfigDefaults.PARSE_CHILD_SIZE);
                 case "parse.ocrMinText" -> String.valueOf(ConfigDefaults.PARSE_OCR_MIN_TEXT);
                 case "parse.ocrDpi" -> String.valueOf(ConfigDefaults.PARSE_OCR_DPI);
+                case "rerank.minHits" -> String.valueOf(ConfigDefaults.RERANK_MIN_HITS);
+                case "rerank.maxHits" -> String.valueOf(ConfigDefaults.RERANK_MAX_HITS);
                 default -> v;
             };
         }

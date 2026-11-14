@@ -19,7 +19,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * 在真 MySQL 空库上验证迁移脚本：V1 建出核心表、V2 删除 chatflow 列、V3 给菜单加企业面标记、
- * V4 建插话待发队列表（含多租户列）、V5 给队列加附件列、V6 补定时任务运行配置，第二次 migrate 不再执行。
+ * V4 建插话待发队列表（含多租户列）、V5 给队列加附件列、V6 补定时任务运行配置、
+ * V10 清理重排平台层全局键（下放知识库；V7~V9 为历史一次性迁移，编号顺延），第二次 migrate 不再执行。
  * Docker 不可用时自动跳过；有 Docker 的 CI/开发机直接跑。
  */
 @Tag("container")
@@ -40,7 +41,7 @@ class FlywayFreshDatabaseTest {
                 .load();
 
         MigrateResult first = flyway.migrate();
-        assertThat(first.migrationsExecuted).as("空库应执行 V1 + V2 + V3 + V4 + V5 + V6").isEqualTo(6);
+        assertThat(first.migrationsExecuted).as("空库应执行 V1~V10").isEqualTo(10);
 
         Set<String> tables = tables();
         assertThat(tables).contains(

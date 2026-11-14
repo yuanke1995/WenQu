@@ -261,9 +261,10 @@ public class Agent {
     private Integer published;
 
     /**
-     * 本智能体的检索开关覆盖（JSON，如 {"rerank.enabled":"false"}；null/空=全部继承全局设置）。
-     * <p><b>只拥有“出水”这一层</b>：是否重排、给模型几条——与资料无关的场景决策。
-     * 检索阈值 / 两路权重 / 召回量 / 重排模型归知识库或全局（见 {@code KbParamCodec}），
+     * 本智能体的检索开关覆盖（JSON，如 {"rerank.enabled":"false"}；null/空=跟随）。
+     * <p><b>只拥有“出水”这一层</b>：是否强制关重排、给模型几条——与资料无关的场景决策。
+     * 重排 = 库绑了模型才重排（选了才重排），智能体只能强制关、不能开；
+     * 检索阈值 / 两路权重 / 召回量 / 重排模型与窗口归知识库（见 {@code KbParamCodec}），
      * 写在这里也不会生效：库级参数必须逐库取用，压成回合级标量会在跨库检索时丢掉各库差异。
      */
     private String queryParams;
