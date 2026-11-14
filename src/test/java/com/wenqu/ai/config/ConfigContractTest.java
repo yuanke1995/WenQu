@@ -46,30 +46,28 @@ class ConfigContractTest {
             "sandbox.keepaliveIntervalSeconds", "sandbox.maxOutputBytes", "sandbox.provisionerUrl",
             "sandbox.token", "sandbox.userDataHostDir", "sandbox.virtualPathPrefix",
             // 读取点历史上直接带魔法默认值的键：统一登记为隐藏默认值
+            // （chunk.maxImages/maxChunks、parse.childSize/ocrDpi/ocrMinText 的全局槽位已随
+            //   检索/解析参数全局默认值层退役（2026-11-14）：defaults() 不再种子，读点 fallback 兜底）
             "chat.maxAttachmentsPerMessage", "chat.maxAttachmentMb", "chat.maxMentionsPerMessage",
             "chat.maxHistoryRefsPerMessage", "chat.attachmentMaxChars", "chat.attachmentTotalChars",
-            "chunk.maxImages", "chunk.maxChunks", "parse.childSize", "parse.ocrDpi", "parse.ocrMinText",
             "graphrag.chunkViewMaxChars", "keyword.timeoutMillis", "keyword.failCooldownMs",
             "rerank.timeoutMillis", "rerank.failCooldownMs", "retrieval.keywordMaxTerms",
             "retrieval.keywordMaxTotal", "retrieval.keywordTimeoutMs", "tenant.autoApprove.enabled",
-            // 设置页已退役、仍运行时生效的键（OpenApiCorsConfig 每请求现读，经库调整）
+            // 设置页已退役、仍运行时生效的键（OpenApiCorsConfig 每请求现读，经库/配置接口调整）
             "apiOpen.allowedOrigins"
     );
 
     /** schema 有 def、但 defaults() 用 env/properties/常量表达式求值的键：不参与字面量比对。 */
     private static final Set<String> DYNAMIC_DEFAULTS = Set.of(
             "agentWebhook.retryMax", "chat.agentscopeStateDir",
-            "chunk.headingDepth", "chunk.maxSize", "chunk.overlap", "chunk.structural",
-            "chunk.structuralRatio", "cleanup.assetRetentionDays", "cleanup.intervalMs",
-            "cleanup.recordRetentionDays", "cleanup.tempFileRetentionDays", "context.maxContextHits",
+            "cleanup.assetRetentionDays", "cleanup.intervalMs",
+            "cleanup.recordRetentionDays", "cleanup.tempFileRetentionDays",
             "dashboard.alertIntervalMs", "dashboard.likeAlertRate", "dashboard.noHitAlertRate",
-            "dashboard.weeklyReportIntervalMs", "images.authEnabled",
+            "dashboard.weeklyReportIntervalMs",
             "keyword.apiKey", "keyword.baseUrl", "keyword.engine",
             "ops.checkupAlertEnabled", "ops.checkupIntervalMs", "ops.checkupRetentionDays",
             "parse.embedConcurrency", "ratelimit.enabled",
-            "retrieval.keywordWeight", "retrieval.lowConfidencePolicy", "retrieval.minContextScore",
-            "retrieval.minFusionScore", "retrieval.top1Floor", "retrieval.vectorWeight",
-            "vision.prompt", "workflow.maxSteps", "workflow.runQueueCapacity", "agentEval.gateMode"
+            "workflow.maxSteps", "workflow.runQueueCapacity"
     );
 
     @Test
@@ -87,8 +85,8 @@ class ConfigContractTest {
                 .as("defaults 有而 schema 无：隐藏/部署项必须登记到 HIDDEN_DEFAULTS")
                 .containsExactlyInAnyOrderElementsOf(HIDDEN_DEFAULTS);
 
-        assertThat(schemaKeys).as("schema 字段数变了：同步 README 的设置项口径").hasSize(141);
-        assertThat(defaultsKeys).as("defaults 键数变了：同步 README 的隐藏项口径").hasSize(196);
+        assertThat(schemaKeys).as("schema 字段数变了：同步 README 的设置项口径").hasSize(132);
+        assertThat(defaultsKeys).as("defaults 键数变了：同步 README 的隐藏项口径").hasSize(182);
     }
 
     @Test
@@ -98,6 +96,9 @@ class ConfigContractTest {
         // 库级键（知识库 query_params 唯一真源 KbParamCodec.KEYS）：无全局槽位、不进 defaults，
         // 读取点（如 RerankService 的窗口两键）按库收敛取值，登记面就是 KEYS 本身
         known.addAll(com.wenqu.ai.service.KbParamCodec.KEYS);
+        // 库级解析参数（parse_params 白名单 DocumentService.PARSE_PARAM_KEYS）：全局槽位已退役，
+        // 解析读点经线程局部覆盖按库生效（configService 读取是覆盖机制的入口），登记面就是白名单本身
+        known.addAll(com.wenqu.ai.service.DocumentService.PARSE_PARAM_KEYS);
 
         Set<String> unknown = new java.util.TreeSet<>();
         Map<String, String> keyConstants = new LinkedHashMap<>();

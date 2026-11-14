@@ -28,7 +28,8 @@ import java.util.Set;
  * 模型配置服务：DB（c_ai_config）存储 + 内存缓存
  * <p>
  * - 启动时表空则从 yml/env 默认值灌入
- * - 可编辑白名单：vision.prompt / 检索与解析参数等，保存即生效；
+ * - 可编辑白名单：检索与解析参数等，保存即生效（图片描述提示词已固化为 ConfigDefaults.VISION_PROMPT，
+ *   原 vision.prompt 设置项 2026-11-14 退役）；
  *   业务模型归属到使用者：知识库绑定向量/解析视觉/检索重排，聊天走会话覆盖>个人默认；
  *   问答对生成与 GraphRAG 抽取均回落库主个人默认聊天模型；
  *   仅 eval.judgeModel 等管理员自用工具保留全局
@@ -434,7 +435,6 @@ public class ConfigService {
             new String[]{"chat.goal.maxCompletionChecks", "2"},
             new String[]{"chat.goal.maxVerifyFailures", "5"},
             new String[]{"ratelimit.enabled", "true"},
-            new String[]{"contentSafety.enabled", "true"},
             new String[]{"agent.maxToolSteps", "15"},
             new String[]{"webSearch.maxCallsPerTurn", "2"},
             new String[]{"webSearch.maxResults", "5"},
@@ -643,11 +643,7 @@ public class ConfigService {
         // （c_ai_agent.system_prompt，问渠内置智能体已自带），未绑定智能体的会话回落内置默认
         // （AppProperties.systemPrompt，yml/env 可覆盖）；附加指令不提供平台/个人层
         // 引用语义一致性自检（生成后校验：编造/张冠李戴的引用是 RAG 信任根基，默认开；判定走关思考快调用通常 1~3 秒，15 秒硬超时/失败自动跳过不阻塞）
-        // 工具说明精简：把每把工具的说明压到一句话再发给模型（工具能力/参数/执行不变；默认开，关掉恢复完整说明）
         // 聊天档/工作区档自动分流：关掉=所有轮次都走工作区（旧行为，用于回滚）
-        // 隐式会话文件/执行意图异步升级：首轮聊天档不阻塞，后台建沙盒，下一轮切工作区；默认关
-        // 聊天档是否挂 MCP 外部工具：默认关（纯问答不等外部连接）；开时仍受 mcp.turnWaitMs 有界等待
-        // 前缀稳定器：把 system prompt 里的会话/容器 id 换成稳定占位，换供应商前缀缓存；关掉即恢复原样
         // 聊天档宿主临时目录；相对路径按应用工作目录解析。多副本必须指向共享卷
         // 断线重连接流恒开，不露在设置页：刷新/换设备要接回在飞的那一轮，关掉没有任何收益。
         // 配置行与默认值仍登记，排障时可直接改库/env 关闭；
@@ -682,46 +678,39 @@ public class ConfigService {
         // 阈值固定 12000 事件（按「起轮税不超过约 1.5 秒」定，不是按轮数定）。
         // 工具大输出留存默认开启；本机工作区是例外——工作区文件原文不落服务端磁盘。
         d.put("tool.spillLocalWorkspace", "false");         // true=本机工作区的工具原文也外溢落盘（默认不落）
-        d.put("vision.prompt", properties.getVision().getPrompt());
+        // vision.prompt 不注默认值：图片描述提示词已固化为平台常量（ConfigDefaults.VISION_PROMPT，
+        // 2026-11-14 拍板），设置项退役——它是缓存键的一部分，改提示词即全量重新描述，不宜随手改
         // vision.baseUrl / vision.apiKey 不注默认值：视觉网关统一来自「模型供应商」表（知识库
         // parse_params.visionRef 引用 → 供应商网关）。这两键既不在可编辑白名单、也没有运行时读取点，
         // 灌进库里只会让"设置值看起来生效"（VisionService.routeFor 对无引用直接跳过，不回落这两键）
         // 平台内置向量化模型（全局、管理员可编辑、非 personalOnly）：运营方登记一个 embedding 模型引用，
         // 作为全体用户记忆语义能力的统一来源——用户零配置即可获得语义记忆。留空=不提供向量化
         // （记忆去重降级为精确匹配、语义注入关闭）。记忆向量化已不再暴露为个人设置项
-        // 分块粒度与标题层级：解析器统一经 configService 读取（d 里必须给出种子，否则丢失 yml 默认），
-        // 知识库 parse_params 的库级覆盖才可能生效（覆盖走线程局部，读 AppProperties 的旁路读不到）
-        d.put("chunk.maxSize", String.valueOf(properties.getChunk().getMaxSize()));
-        d.put("chunk.headingDepth", String.valueOf(properties.getChunk().getHeadingDepth()));
-        d.put("chunk.overlap", String.valueOf(properties.getChunk().getOverlap()));
-        d.put("chunk.structural", String.valueOf(properties.getChunk().isStructural()));
-        d.put("chunk.structuralRatio", String.valueOf(properties.getChunk().getStructuralRatio()));
+        // 分块/解析/检索权重参数的全局槽位已整体退役（2026-11-14）：默认值只归知识库弹窗展示的
+        // 内置常量（解析读点回落 AppProperties、检索走 KbRetrievalParamService 常量），
+        // 库级覆盖照旧经线程局部覆盖层生效（它先于 DB/defaults，删种子不影响）
         d.put("parse.embedRetryCount", String.valueOf(ConfigDefaults.PARSE_EMBED_RETRY_COUNT));                 // 向量化批次失败自动重试次数
-        d.put("retrieval.vectorWeight", String.valueOf(properties.getRetrieval().getVectorWeight()));
-        d.put("retrieval.keywordWeight", String.valueOf(properties.getRetrieval().getKeywordWeight()));
         // 重排平台层已整体退役（2026-11-14）：rerank.enabled（总开关）/rerank.model（个人默认）/
         // rerank.platformRef（平台默认）/rerank.baseUrl（直连回落）/rerank.minHits/maxHits（窗口）
         // 都不再有全局槽位——重排模型与窗口归知识库检索设置（KbParamCodec），选了才重排；
         // rerank.enabled 仅剩智能体级「强制关」（显式 false 经线程覆盖下发）。隐藏键
         // rerank.timeoutMillis/rerank.failCooldownMs 保留（运行时调优，见下方隐藏键段）。
-        d.put("context.maxContextHits", String.valueOf(properties.getContext().getMaxContextHits()));
+        // 知识块填充上限已下放个人层（2026-11-14）：context.maxContextHits 标 personalOnly，
+        // 无全局槽位、不灌库、env/yml 槽位退役——默认 8 由 schema def（个人设置页占位展示）
+        // 与读点 fallback（TurnSourceRegistry/评测证据窗口）共同承担，不再在此登记
+        // （personalOnly 键的空值在 getOrDefaultParsed 里即终态，defaults() 的种子也顶不上去）。
         // 主检索覆盖使用者全部可见库，没有每库配额就会被"块多且词面泛"的那个库占满名额
         // 读点共用默认值的 key：defaults() 与读点 fallback 共用 ConfigDefaults 常量（改默认值只改常量一处）
 
-        // 检索行为参数（设置页可调、保存即生效）
-        // 向量相似度归一化基准/下限
-        d.put("retrieval.minContextScore", String.valueOf(ConfigDefaults.RETRIEVAL_MIN_CONTEXT_SCORE));  // 最低相关分门槛（仅对重排分 0~1 分域生效，对齐 Dify/Coze Score 阈值；0=关）
-        d.put("retrieval.minFusionScore", String.valueOf(ConfigDefaults.RETRIEVAL_MIN_FUSION_SCORE));    // 融合分门槛（未启用重排时生效；调检索权重后需重标定；0=关）
-        d.put("retrieval.lowConfidencePolicy", ConfigDefaults.RETRIEVAL_LOW_CONFIDENCE_POLICY); // 低分全灭时是否保底 top-1（top1/off；默认 top1）
-        d.put("retrieval.top1Floor", String.valueOf(ConfigDefaults.RETRIEVAL_TOP1_FLOOR)); // 保底条目的最低分
+        // 检索门四键（minContextScore/minFusionScore/lowConfidencePolicy/top1Floor）与召回量两键
+        // （vectorTopK/keywordLimit）、两路权重、向量阈值的全局槽位已整体退役（2026-11-14）：
+        // 全部下沉为知识库检索参数（KbParamCodec.KEYS），默认值只归知识库弹窗展示的内置常量；
+        // WebSearch/工作流节点等无库归属读点回落 ConfigDefaults 常量（线程覆盖层照旧最优先）
         // 分享游客日额度：0/负=关闭该层；访客级防换 visitorId 刷
         d.put("share.guestDailyTurns", "0");              // 每条分享每日游客轮次上限
         d.put("share.guestDailyTurnsPerVisitor", "0");     // 每访客每条分享每日轮次上限
         d.put("share.guestDailyTokens", "0");          // 每条分享每日游客 token 上限（台账累加，下一轮前拦）
-        // 向量召回 topK（调优/评估扫参用，下限 1）
-        // 关键词召回上限
         d.put("retrieval.searchTimeoutMs", "8000");        // 混合检索总超时
-        // 重排行为参数
         // 关键词召回引擎（mysql=LIKE；meilisearch=外部索引，中文分词+相关度；index 只走 yml 不入库）
         d.put("keyword.engine", properties.getKeyword().getEngine());
         d.put("keyword.baseUrl", properties.getKeyword().getBaseUrl());
@@ -786,7 +775,6 @@ public class ConfigService {
         // 单次执行超时(ms)
         // 原 yml 参数开放为可配置（默认值取 bean，yml/env 可覆盖；再由 syncProperties 回写 AppProperties，
         // 读取点无需改动）。与 chunk / retrieval / ratelimit 同口径：这里写死字面量会让 yml 配置无声失效。
-        d.put("images.authEnabled", String.valueOf(properties.getImages().isAuthEnabled()));     // 图片签名鉴权开关（默认开：签名 URL 防盗链）
         d.put("session.maxHistory", String.valueOf(properties.getSession().getMaxHistory()));     // 会话保留轮数
         d.put("session.expireMinutes", String.valueOf(properties.getSession().getExpireMinutes())); // 会话过期(分钟)
         // 行为参数（直读 configService，保存即生效）
@@ -800,7 +788,6 @@ public class ConfigService {
         d.put("parse.ocrMineruBackend", env("OCR_MINERU_BACKEND", "pipeline")); // pipeline=CPU 稳 / hybrid-auto-engine=本地 VLM 高精度
         d.put("parse.ocrTimeoutMs", env("OCR_TIMEOUT_MS", String.valueOf(ConfigDefaults.PARSE_OCR_TIMEOUT_MS))); // 版面引擎单次调用超时(ms)
         d.put("ratelimit.windowSeconds", "60");
-        // 内容安全网关：两道闸共用一份规则表（c_ai_content_rule），这里只放闸门参数
         d.put("cache.docMetaTtlSeconds", "600");
         // 问渠工具总开关（只管理问渠注册的工具；AgentScope 原生文件/命令/记忆/技能由权限档位与各自配置控制）
         d.put("tool.mcpCiteMaxRefs", "10");                // MCP 引用注册单轮上限（隐藏参数，DB 可调；无设置页字段）
@@ -808,33 +795,28 @@ public class ConfigService {
         // 注意：webSearch.apiKey 以 .apiKey 结尾 → 走敏感项 RSA 密文入库（isSensitiveKey），改不得命名
         // webSearch.enabled 保持默认关：联网搜索的 provider/baseUrl/apiKey 三个键默认值全为空，
         // 默认开等于让新装用户的模型去调一个必然失败的接口——每轮白烧 token 并把外部错误透给用户。
-        // 但「纳入执行审批」默认开：一旦管理员开了联网，它就是
-        // 唯一一类「向外部第三方发请求、可能计费」的工具，没审批就等于让模型自主决定花谁的钱。
-        // 审批关不掉的只有逐项确认（智能体选自动执行时照常自动跑），不会把联网整个关掉。
         // 联网搜索总开关（需 tool.enabled 总闸开启）
         // 服务商：tavily / bocha / generic（自建 SearXNG）
         // 服务地址（留空用服务商默认；generic 必填，如 http://127.0.0.1:8888）
         // 服务 Key（RSA 密文入库；generic 自建可留空）
         // 单轮搜索次数上限（防模型反复搜烧配额；0=不限制）
-        // 是否纳入"有副作用工具"：true=受智能体 toolApprovalMode=ask 管辖。默认开：联网是唯一会向外部第三方发请求、可能对用户计费的能力，让模型自主决定花谁的钱不该是默认态
+        // 「纳入执行审批」设置项已退役（2026-11-14，原默认开）：联网是唯一会向外部第三方发请求、
+        // 可能对用户计费的能力，让模型自主决定花谁的钱不该是默认态——审批恒开、只受智能体
+        // 审批模式管辖（声明在 WebSearchToolProvider，off 档不影响联网启停）。
         // ---------- HTTP 工具（OpenAPI 导入的宿主 API 工具集；配置存智能体行 http_tools）----------
-        // enabled 默认开不改变任何存量行为：没有配置工具集的智能体该族天然不挂（闸开着也无工具可出），
-        // 与 webSearch「默认关」的理由（不配置必失败）正好相反——这里不配置就没有任何调用发生。
-        // HTTP 工具总开关（需 tool.enabled 总闸开启）
-        // 允许工具集调用内网/环回地址（自宿主场景宿主 API 常在内网；公网多租户部署建议关，防借智能体探测内网）
+        // 无独立全局开关（httpTool.enabled / httpTool.allowPrivateNetwork 均已退役）：
+        // 没有配置工具集的智能体该族天然不挂，只受「工具调用」总闸制约；内网地址一律允许调用。
         // ---------- 工作流工具（已发布工作流挂载为对话工具；配置存智能体行 workflow_tools）----------
-        // 与 httpTool.enabled 同一理由默认开：没有配置工作流的智能体该族天然不挂，闸开着也无工具可出。
+        // 与 HTTP 工具同一理由没有独立全局开关：没有配置工作流的智能体该族天然不挂。
         // 工作流工具总开关（需 tool.enabled 总闸开启）
         d.put("agentWebhook.retryMax", String.valueOf(com.wenqu.ai.config.ConfigDefaults.AGENT_WEBHOOK_RETRY_MAX));
         // 开放 API 跨域白名单：设置页已退役，保留为运行时键（OpenApiCorsConfig 每请求现读）。
         // 空=不回 CORS 头；逗号分隔，如 "https://hr.example.com,https://crm.example.com"。只作用于 /api/ai/v1/**。
         d.put("apiOpen.allowedOrigins", "");
         // 技能：内置随版本分发 + 用户自装（user-data/skills-users/{uid}）+ 助手在对话里沉淀到沙盒工作区。
-        // 平台侧只剩两件事：哪些技能全平台不再用（skill.disabled），以及 URL 安装允许哪些来源域名。
+        // 平台侧不做任何开关：平台停用清单（skill.disabled）与 URL 安装域名白名单
+        // （skill.remoteAllowedHosts）均已退役——停用只留个人层，URL 安装不限制来源域名。
         // 技能正文读取上限是平台常量（SKILL_MAX_FILE_CHARS），不作为设置项。
-        // 停用清单（平台层）
-        // 用户自助安装（粘贴/zip/URL）开启后，URL 安装只允许这些域名（精确匹配；空=关闭远程安装）。
-        // 服务端仍会逐跳做公网校验（SsrfGuard），这里只回答「允许从哪儿拉」。
 
         // ---------- 沙盒（隔离执行环境）----------
         // 语义与问渠新栈的环境变量一一对应（SANDBOX_PROVISIONER_URL / TOKEN / DELETE_TIMEOUT_SECONDS /
@@ -929,11 +911,8 @@ public class ConfigService {
         d.put("chat.maxHistoryRefsPerMessage", "10");
         d.put("chat.attachmentMaxChars", "8000");
         d.put("chat.attachmentTotalChars", "24000");
-        d.put("chunk.maxImages", String.valueOf(ConfigDefaults.CHUNK_MAX_IMAGES));
-        d.put("chunk.maxChunks", String.valueOf(ConfigDefaults.CHUNK_MAX_CHUNKS));
-        d.put("parse.childSize", String.valueOf(ConfigDefaults.PARSE_CHILD_SIZE));
-        d.put("parse.ocrDpi", String.valueOf(ConfigDefaults.PARSE_OCR_DPI));
-        d.put("parse.ocrMinText", String.valueOf(ConfigDefaults.PARSE_OCR_MIN_TEXT));
+        // chunk.maxImages/maxChunks、parse.childSize/ocrDpi/ocrMinText 全局槽位已退役（2026-11-14）：
+        // 默认值只归知识库弹窗（ConfigDefaults 常量经 param-defaults 下发），读点 fallback 兜底
         d.put("graphrag.chunkViewMaxChars", "4000");
         d.put("keyword.timeoutMillis", String.valueOf(properties.getKeyword().getTimeoutMillis()));
         d.put("keyword.failCooldownMs", "60000");
@@ -943,7 +922,6 @@ public class ConfigService {
         d.put("retrieval.keywordMaxTotal", "12");
         d.put("retrieval.keywordTimeoutMs", "800");
         d.put("tenant.autoApprove.enabled", "false");
-        d.put("agentEval.gateMode", ConfigDefaults.AGENT_EVAL_GATE_MODE);
         return d;
     }
 
@@ -959,8 +937,6 @@ public class ConfigService {
         try {
             // chunk.maxSize / chunk.headingDepth 不再回写 AppProperties：解析器已统一从 configService 读取，
             // 再回写一份进 bean 就形成双读取源——库级覆盖只写线程局部，读 bean 的旁路读不到（正是断链根因）
-            AppProperties.Images images = properties.getImages();
-            images.setAuthEnabled(pBool("images.authEnabled", images.isAuthEnabled()));
             AppProperties.Session session = properties.getSession();
             session.setMaxHistory(pInt("session.maxHistory", session.getMaxHistory()));
             session.setExpireMinutes(pInt("session.expireMinutes", session.getExpireMinutes()));
@@ -1426,14 +1402,14 @@ public class ConfigService {
      *   <li>keyword.engine 不触发索引联动（恢复 mysql 后关键词走 MySQL LIKE，Meili 索引可留待后续重建）。</li>
      * </ul>
      *
-     * @param groups 待恢复分组：优先按 schema 面板 key 解析（goal/contentSafety/tool/sandbox 等面板）；
+     * @param groups 待恢复分组：优先按 schema 面板 key 解析（goal/tool/sandbox 等面板）；
      *               不命中面板时回退 backendKey 首段前缀语义（parse/rerank/keyword 这类分组名）
      * @return 实际恢复的键值
      */
     public Map<String, String> resetDefaults(Collection<String> groups) {
         Set<String> panelKeys = schema.panelKeys();
         Set<String> legacyPrefixes = new HashSet<>(List.of(
-                "chat", "vision", "chunk", "parse", "upload", "retrieval",
+                "chat", "chunk", "parse", "upload", "retrieval",
                 "keyword", "context", "ratelimit"));
         Set<String> targetKeys = new HashSet<>();
         Set<String> targetPrefixes = new HashSet<>();

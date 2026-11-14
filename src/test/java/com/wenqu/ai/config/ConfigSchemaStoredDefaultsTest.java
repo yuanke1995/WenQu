@@ -18,9 +18,7 @@ class ConfigSchemaStoredDefaultsTest {
         Map<String, String> defaults = schema.storedDefaults();
 
         assertThat(defaults).isNotEmpty();
-        assertThat(defaults).containsKeys(
-                "chat.citationCheckEnabled", "agentWebhook.retryMax", "keyword.engine");
-        assertThat(defaults.get("chat.citationCheckEnabled")).isEqualTo("true");
+        assertThat(defaults).containsKeys("agentWebhook.retryMax", "keyword.engine");
         assertThat(defaults.get("agentWebhook.retryMax")).isEqualTo("4");
         assertThat(defaults.get("keyword.engine")).isEqualTo("mysql");
         assertThat(defaults.entrySet()).allSatisfy(e -> {

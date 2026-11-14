@@ -8,14 +8,23 @@
       </button>
     </div>
 
-    <!-- 全局分层概览：这一页一共多少项、默认露出多少、收起多少 -->
+    <!-- 全局分层概览：统计带跟着「工程参数」开关的真实状态走——
+         铺开时写「全部可见」，收起时才写收起多少，不能拿一份静态文案冒充当前视图 -->
     <div v-if="schemaLoaded" class="tier-stat">
-      <span class="tier-stat-main"><b>{{ tierStats.visible }}</b> 项可见</span>
-      <span class="key-dim">= {{ tierStats.must }} 必需 · {{ tierStats.tuned }} 调优</span>
-      <span class="tier-stat-off">收起 {{ tierStats.engine }} 项工程参数<span class="key-dim">（占全部 {{ tierStats.total }} 项的 {{ tierStats.pct }}%）</span></span>
+      <template v-if="showEngine">
+        <span class="tier-stat-main"><b>{{ tierStats.total }}</b> 项全部可见</span>
+        <span class="key-dim">= {{ tierStats.must }} 必需 · {{ tierStats.tuned }} 调优 · {{ tierStats.engine }} 工程参数</span>
+        <span class="tier-stat-off">工程参数已铺开<span class="key-dim">（面板头开关可收起）</span></span>
+      </template>
+      <template v-else>
+        <span class="tier-stat-main"><b>{{ tierStats.visible }}</b> 项可见</span>
+        <span class="key-dim">= {{ tierStats.must }} 必需 · {{ tierStats.tuned }} 调优</span>
+        <span class="tier-stat-off">收起 {{ tierStats.engine }} 项工程参数<span class="key-dim">（占全部 {{ tierStats.total }} 项的 {{ tierStats.pct }}%）</span></span>
+      </template>
       <span class="tier-stat-bar" aria-hidden="true">
         <i class="must" :style="{ width: tierStats.mustPct + '%' }"></i>
         <i class="tuned" :style="{ width: tierStats.tunedPct + '%' }"></i>
+        <i v-if="showEngine" class="engine" :style="{ width: tierStats.enginePct + '%' }"></i>
       </span>
     </div>
 
@@ -27,7 +36,7 @@
       <nav class="set-nav">
         <span v-for="p in navPanels" :key="p.key" class="set-nav-item" :class="{ active: current === p.key }" @click="current = p.key">
           {{ groupLabel(p.key) }}
-          <span class="set-nav-count">{{ panelTier(p.key).visible }}/{{ panelTier(p.key).total }}</span>
+          <span class="set-nav-count">{{ (showEngine ? panelTier(p.key).total : panelTier(p.key).visible) }}/{{ panelTier(p.key).total }}</span>
         </span>
       </nav>
 
@@ -49,23 +58,21 @@
           </div>
 
           <div class="app-card set-card">
-            <!-- RAG 参数收进「检索设置」：文档解析 / 图片描述 / 上下文控制并成检索设置里的页签，
+            <!-- RAG 参数收进「检索设置」：检索参数已归各知识库（全局默认值层退役），
+                 检索页签只剩关键词引擎（上下文控制页签已退役：知识块填充上限下放个人设置；
+                 解析并发页签已退役：仅剩的问答对生成并发归「定时任务 → 文档解析队列」，
+                 与解析并发数同节）；
                  导航仍只保留一个「检索设置」（与工具调用把「联网搜索」并进去同一个做法）。
                  pane 留空只当页签条，内容在下方按 ragTab 对应的 panel 字段渲染 -->
             <a-tabs v-if="current === 'retrieval'" v-model:activeKey="ragTab" class="sched-tabs">
-              <a-tab-pane key="retrieval" tab="检索" />
-              <a-tab-pane key="context" tab="上下文" />
-              <a-tab-pane key="chunk" tab="文档解析" />
-              <a-tab-pane key="vision" tab="图片描述" />
+              <a-tab-pane key="retrieval" tab="关键词引擎" />
             </a-tabs>
-            <!-- 工具相关面板的合并入口：总开关与子工具 / 联网搜索 / 技能——
-                 避免左侧导航随工具面板膨胀；技能收进本页页签。
-                 页签风格与「定时任务」一致（a-tabs），pane 留空只当页签条，
-                 内容在下方按 toolTab 对应的 panel 字段渲染 -->
+            <!-- 工具相关面板的合并入口：总开关 / 联网搜索（沙盒相关设置归「沙盒」面板）——
+                 避免左侧导航随工具面板膨胀；页签风格与「定时任务」一致（a-tabs），
+                 pane 留空只当页签条，内容在下方按 toolTab 对应的 panel 字段渲染 -->
             <a-tabs v-if="current === 'tool'" v-model:activeKey="toolTab" class="sched-tabs">
-              <a-tab-pane key="tool" tab="总开关与子工具" />
+              <a-tab-pane key="tool" tab="总开关" />
               <a-tab-pane key="webSearch" tab="联网搜索" />
-              <a-tab-pane key="skills" tab="技能" />
             </a-tabs>
             <!-- 定时任务面板内容多（参数表单 + 任务状态 + 执行日志 + 索引与健康），用页签组织避免一页滚到底。
                  页签风格与「智能体」hub 一致（a-tabs）；pane 留空只当页签条，内容在下方按 maintTab 切换。
@@ -78,7 +85,7 @@
               <a-tab-pane key="index" tab="索引与健康" />
             </a-tabs>
 
-            <a-form :label-col="{ span: 5 }" :wrapper-col="{ span: 18 }" @submit.prevent>
+            <a-form :label-col="{ span: 8 }" :wrapper-col="{ span: 16 }" @submit.prevent>
               <!-- 每个配置面板都按 schema 的分节折叠，默认全展开，点标题收起某一节。
                    「定时任务 → 参数配置」页签**只放不属于任何周期任务的参数**（其余 41 项在
                    「运行状态」表格里就地调整，见那边的展开行）——每个参数只有一个家，
@@ -103,7 +110,7 @@
                        看上去就是「这个面板坏了」——「调试设置」11 项全是 tier3，正是这种 -->
                   <template v-if="cfgKeyword">没有匹配「{{ cfgKeyword }}」的参数</template>
                   <template v-else>
-                    本组 {{ engineHiddenCount }} 项都是工程参数（排障时才用），默认收起。
+                    本组 {{ engineHiddenCount }} 项都是工程参数（排障时才用），当前已收起。
                     <button class="app-link-btn" @click="showEngine = true">显示工程参数</button>
                   </template>
                 </div>
@@ -129,7 +136,7 @@
                       <!-- 常规字段（SchemaField 全量复用：类型控件/条件显隐/参数说明）。
                            MCP 的管理界面在「智能体」页的个人 Tab；技能停用清单随本页「技能」页签一起渲染 -->
                       <template v-else-if="blk.type === 'field'">
-                        <SchemaField :field="blk.field" :form="form" :tips="TIPS" :options="fieldOptions(blk.field)"
+                        <SchemaField :field="blk.field" :form="form" :tips="TIPS"
                                      :source="sources[blk.field.backendKey]" :secret-hints="secretHints">
                           <template v-if="probeKey(blk.field)" #extra>
                             <button class="app-btn ghost small probe-btn" :disabled="probeStates[probeKey(blk.field)].loading" @click="doProbe(probeKey(blk.field))">
@@ -500,75 +507,6 @@
               <!-- 技能停用清单在上方「技能」页签；MCP 的管理界面在「智能体」页的个人 Tab -->
 
             </a-form>
-
-            <!-- 清单（面板最底部）：只读。工具清单归「总开关与子工具」页签，技能名册归「技能」页签，
-                 各看一份、不再在同一屏里重复。
-                 启停统一走上方表单的总开关 / 智能体三态 / 平台停用名单，清单里不再重复放一遍开关 -->
-            <div v-if="current === 'tool' && (toolTab === 'tool' || toolTab === 'skills')" class="tool-inv">
-              <template v-if="toolTab === 'tool'">
-                <div class="tool-inv-head">
-                  <span class="cfg-sub">当前注册的工具（{{ toolInvTotal }} 个 · 名称即模型看到的工具名 · 只读清单）</span>
-                  <a-tooltip title="刷新清单">
-                    <button class="app-icon-btn" aria-label="刷新工具清单" :disabled="toolInvLoading" @click="loadToolInventory">
-                      <reload-outlined />
-                    </button>
-                  </a-tooltip>
-                </div>
-                <a-spin v-if="toolInvLoading" size="small" style="display:block;margin:14px auto" />
-                <div v-else-if="toolInv.length" class="tool-inv-groups">
-                  <div v-for="g in toolInv" :key="g.family" class="tool-inv-group">
-                    <div class="tool-inv-family">
-                      <span class="tool-inv-family-name">{{ g.familyLabel }}</span>
-                      <span class="tool-inv-state" :class="{ on: g.enabled }"
-                            :title="g.enabled ? '本轮可用（仍受总开关、智能体三态与停用名单约束）' : '当前未启用'">
-                        {{ g.enabled ? '可用' : '未启用' }}
-                      </span>
-                    </div>
-                    <div class="tool-inv-items">
-                      <a-tooltip v-for="t in g.tools" :key="t.name" :title="t.description">
-                        <span class="tool-inv-chip" :class="{ sensitive: t.sensitive }">
-                          {{ t.label }}<span v-if="t.sensitive" class="tool-inv-s">敏</span>
-                        </span>
-                      </a-tooltip>
-                    </div>
-                  </div>
-                </div>
-                <div v-else class="key-dim" style="padding:6px 2px">工具清单仅管理员可见（或后端暂未注册任何工具）。</div>
-              </template>
-
-              <!-- 技能名册：与工具清单同一套分组/芯片样式，来源（内置 / 我的 / 工作区）即分组。
-                   已停用的条目照样列出并打标，否则「停用清单」里的名字在页面上找不到对应项 -->
-              <div v-if="toolTab === 'skills'">
-                <div class="tool-inv-head">
-                  <span class="cfg-sub">当前技能（{{ skillTotal }} 个 · 名称即模型看到的技能名 · 平台停用名册）</span>
-                  <a-tooltip title="刷新技能清单">
-                    <button class="app-icon-btn" aria-label="刷新技能清单" :disabled="skillLoading" @click="loadSkillOptions(true)">
-                      <reload-outlined />
-                    </button>
-                  </a-tooltip>
-                </div>
-                <a-spin v-if="skillLoading" size="small" style="display:block;margin:14px auto" />
-                <div v-else-if="skillGroups.length" class="tool-inv-groups">
-                  <div v-for="g in skillGroups" :key="g.source" class="tool-inv-group">
-                    <div class="tool-inv-family">
-                      <span class="tool-inv-family-name">{{ g.label }}</span>
-                      <span class="skill-inv-n">{{ g.skills.length }} 个</span>
-                    </div>
-                    <div class="tool-inv-items">
-                      <a-tooltip v-for="sk in g.skills" :key="sk.name" :title="skillTip(sk)">
-                        <span class="tool-inv-chip" :class="{ 'is-off': sk.disabled }">
-                          {{ sk.name }}<span v-if="sk.disabled" class="tool-inv-s">平台停用</span>
-                        </span>
-                      </a-tooltip>
-                    </div>
-                  </div>
-                </div>
-                <div v-else class="key-dim" style="padding:6px 2px">暂无可列出的技能（需登录；后端未返回技能时为空）。</div>
-                <div class="key-dim" style="padding:6px 2px">
-                  成员自助安装 / 编辑 / 删除 / 个人停用，在「智能体 → 技能」页；这里只维护平台级停用名册。
-                </div>
-              </div>
-            </div>
           </div>
         </a-spin>
       </section>
@@ -583,7 +521,7 @@ import { SaveOutlined, QuestionCircleOutlined, SearchOutlined, ReloadOutlined } 
 import { getConfig, getConfigSchema, saveConfig, resetConfig,
          probeConnectivity,
          getScheduleTasks, triggerScheduleTask, getScheduleRuns, clearScheduleRuns,
-         getToolInventory, listAvailableSkills, listKnowledgeBases,
+         listKnowledgeBases,
          searchIndexStats, searchIndexReindex, searchIndexClear, vectorDiagnose, rebuildKbVectors,
          documentHealth,
          sendMailTest, getMailDeliveries } from '../api'
@@ -600,9 +538,9 @@ const router = useRouter()
 
 // 分组导航短名
 const NAV_LABELS = {
-  chat: '对话模型', vision: '图片描述', chunk: '文档解析', retrieval: '检索设置',
+  chat: '对话模型', chunk: '文档解析', retrieval: '检索设置',
   context: '上下文控制', tool: '工具调用', webSearch: '联网搜索',
-  ratelimit: '接口限流', maintenance: '定时任务', skills: '技能',
+  ratelimit: '接口限流', maintenance: '定时任务',
   sandbox: '沙盒', debug: '调试设置'
 }
 // 导航短名优先；未登记的分组回退到 schema 面板标题的中文主干（取「（」前的主体），
@@ -640,7 +578,8 @@ const tierStats = computed(() => {
     total, must, tuned, visible, engine,
     pct: total ? Math.round(engine * 100 / total) : 0,
     mustPct: total ? must * 100 / total : 0,
-    tunedPct: total ? tuned * 100 / total : 0
+    tunedPct: total ? tuned * 100 / total : 0,
+    enginePct: total ? engine * 100 / total : 0
   }
 })
 
@@ -659,13 +598,15 @@ const panelTier = key => panelTierMap.value[key] || { visible: 0, total: 0 }
 /**
  * 工程参数（tier 3 + hidden）是否铺开。这是**视图偏好**，不是配置值：
  * 只存 localStorage，绝不进 c_ai_config、不进 buildPayload。
+ * 默认铺开（没存过偏好就全显）：被收起的是 72 项，默认藏一半会让人以为参数不存在；
+ * 只有显式点过收起（存 '0'）才保持收起。
  * 全局一个开关而不是逐面板：管理员真要找工程参数，通常是在追一条跨面板的链路
  * （OCR 并发 → 解析队列 → 沙盒），逐面板开关只会逼他来回点。
  * localStorage 在隐私模式下 setItem 会抛，读写两侧都要包。
  */
 const ENGINE_KEY = 'wenqu-settings-engine'
 const readEnginePref = () => {
-  try { return localStorage.getItem(ENGINE_KEY) === '1' } catch { return false }
+  try { return localStorage.getItem(ENGINE_KEY) !== '0' } catch { return true }
 }
 const showEngine = ref(readEnginePref())
 watch(showEngine, v => { try { localStorage.setItem(ENGINE_KEY, v ? '1' : '0') } catch { /* 隐私模式：偏好不落地就算了 */ } })
@@ -761,11 +702,11 @@ async function openMailLog () {
 }
 
 const navPanels = computed(() => {
-  // 「检索设置」在导航里时，把 RAG 链路的其余三组收进它的页签，导航也不再单列
-  const groupRag = PANELS.some(p => p.key === 'retrieval')
-  const ragChildren = new Set(['context', 'chunk', 'vision'])
-  return PANELS.filter(p => p.key !== 'webSearch' && p.key !== 'skills'
-    && (!groupRag || !ragChildren.has(p.key)))
+  // 「检索设置」在导航里时，把 RAG 链路的其余两组收进它的页签，导航也不再单列
+  // （图片描述组已退役：识别提示词固化为平台常量，模型归各知识库解析设置；
+  //   上下文组已退役：知识块填充上限下放个人设置）
+  // 技能组已整组退役（平台停用清单 + 远程安装域名白名单），导航不再单列
+  return PANELS.filter(p => p.key !== 'webSearch')
 })
 
 /** 字段所属节的标题（折叠状态按标题记，与 cfgGroups 同一份口径） */
@@ -778,12 +719,11 @@ const fieldFoldTitle = f => {
 /**
  * ?panel= 深链：别处（模型供应商的「查看引用」清单）要直接把设置页开到能改的那一组。
  * 不做这件事的话，无论引用的是哪个槽位，落点恒是导航第一项，等于把人丢进一整页参数里自己找。
- * schema 里被并页签的子面板（RAG 三组、联网搜索/技能）要先切到宿主面板再选中对应页签。
+ * schema 里被并页签的子面板（联网搜索）要先切到宿主面板再选中对应页签。
  * 必须在字段定义到位后调用——navPanels 空表时任何面板都判不出可见。
  */
 const PANEL_CHILD_TAB = {
-  context: 'retrieval', chunk: 'retrieval', vision: 'retrieval',
-  webSearch: 'tool', skills: 'tool'
+  webSearch: 'tool'
 }
 const applyPanelDeepLink = raw => {
   const key = typeof raw === 'string' ? raw : ''
@@ -975,8 +915,6 @@ const save = async () => {
       else {
         message.success('配置已保存并生效')
         initialPayload.value = buildPayload()
-        // 停用清单变了，清单区的「平台停用」标记要跟着变
-        if (payload.skill && Object.prototype.hasOwnProperty.call(payload.skill, 'disabled')) loadSkillOptions()
       }
     } else message.error(r.msg || '保存失败')
   } catch (e) { message.error(e.message || '保存失败') }
@@ -986,31 +924,13 @@ const save = async () => {
 // ==================== 恢复本组默认 ====================
 const resettingKey = ref('')
 
-/**
- * 面板字段的默认值载荷。技能组不在后端 reset 白名单里（resetDefaults 只认
- * chat/vision/chunk/…/ratelimit），但「技能」页签只有停用清单这一项；
- * 按字段默认值走保存链路，结果与恢复默认一致，也避免按钮点了只弹一句 400。
- */
-const panelDefaultPayload = panel => {
-  const out = {}
-  for (const f of FIELDS.filter(x => x.panel === panel)) {
-    const v = f.type === 'multiselect' ? '' : (f.def == null ? '' : String(f.def))
-    ;(out[f.group] = out[f.group] || {})[f.submitKey || f.key] = v
-  }
-  return out
-}
-
 const doResetGroup = async (key, label) => {
   resettingKey.value = key
   try {
-    const r = key === 'skills'
-      ? await saveConfig(panelDefaultPayload('skills'))
-      : await resetConfig([key])
+    const r = await resetConfig([key])
     if (r.success) {
       message.success(`「${label}」已恢复默认`)
       await fetchAndFill()
-      // 停用清单被清空后，技能名册里的「平台停用」标记也要跟着消失
-      if (key === 'skills') loadSkillOptions()
     } else message.error(r.msg || '恢复失败')
   } catch (e) { message.error(e.message || '恢复失败') }
   finally { resettingKey.value = '' }
@@ -1080,93 +1000,6 @@ watch(
 // 字段又立刻消失，用户永远配不成（死锁），且失败原因被静默吞掉。
 // 可达性校验由保存时的后端执行（ConfigService.update 用**本次提交的值**探测，失败带原因报错），
 // 「测试连接」按钮则走 /config/probe，同样用表单当前值——先测后存，不必先保存。
-
-// ==================== 重嵌入状态 ====================
-
-watch(current, k => {
-  // 工具面板：清单是运行时注册的，进面板时拉最新（后端加过新工具后不用重启前端）
-  if (k === 'tool') loadToolInventory()
-})
-
-// ==================== 工具清单（管理员视角：本平台注册了哪些 @Tool） ====================
-const toolInv = ref([])
-const toolInvLoading = ref(false)
-const toolInvTotal = computed(() => toolInv.value.reduce((n, g) => n + (g.tools?.length || 0), 0))
-const loadToolInventory = async () => {
-  toolInvLoading.value = true
-  try {
-    const r = await getToolInventory()
-    if (r.success) {
-      toolInv.value = r.data || []
-    } else {
-      toolInv.value = []
-      message.warning(r.msg || '工具清单加载失败（该接口仅管理员可用）')
-    }
-  } catch (e) {
-    // 非管理员 403：清单区显示为空，面板其余功能不受影响
-    toolInv.value = []
-  } finally {
-    toolInvLoading.value = false
-  }
-}
-
-// 「平台停用工具名单」（tool.deny，multiselect）的候选：直接用上面这份工具全景，不另开接口。
-// 名字与族名都在 option 的 label 里（optionFilterProp=label ⇒ 中文名和工具名都能搜到）；
-// 历史值里已不在名册上的名字由控件自己补成标签（见 SchemaField 的 multiOptions）。
-const denyOptions = computed(() => toolInv.value.flatMap(g => (g.tools || []).map(t => ({
-  value: t.name,
-  label: (g.familyLabel ? g.familyLabel + ' · ' : '') + (t.label || t.name)
-}))))
-
-// 停用技能是「从名册里选」而不是手写名字：候选来自 /skill/available（内置 + 本人技能；
-// 不带会话就不含工作区那一路——仓库本来也不按停用清单过滤工作区技能）。
-const skillOptions = ref([])
-/** 技能名册（原始条目）：清单区要按来源分组、给停用项打标，不能只留一个下拉候选 */
-const skillList = ref([])
-const skillLoading = ref(false)
-const loadSkillOptions = async (manual = false) => {
-  skillLoading.value = true
-  try {
-    const r = await listAvailableSkills()
-    const list = (r && r.data) || []
-    skillList.value = list
-    const seen = new Set()
-    skillOptions.value = list
-      .filter(s => s && s.name && s.source !== 'workspace' && s.selectable !== false
-        && !seen.has(s.name) && seen.add(s.name))
-      .map(s => ({ value: s.name, label: s.name }))
-  } catch (e) {
-    skillList.value = []
-    skillOptions.value = []
-    if (manual) message.error(e.message || '技能清单加载失败')
-  } finally {
-    skillLoading.value = false
-  }
-}
-const SKILL_SOURCE_LABELS = { builtin: '内置技能', user: '我的技能', workspace: '工作区技能' }
-const skillTotal = computed(() => skillList.value.length)
-/** 按来源分组（内置 → 我的 → 沙盒工作区）；未知来源排在最后，原样显示来源名 */
-const skillGroups = computed(() => {
-  const order = ['builtin', 'user', 'workspace']
-  const groups = new Map()
-  for (const s of skillList.value) {
-    const source = s.source || 'other'
-    if (!groups.has(source)) groups.set(source, [])
-    groups.get(source).push(s)
-  }
-  const rank = source => { const i = order.indexOf(source); return i < 0 ? order.length : i }
-  return [...groups.entries()]
-    .sort((a, b) => rank(a[0]) - rank(b[0]))
-    .map(([source, skills]) => ({ source, label: SKILL_SOURCE_LABELS[source] || source, skills }))
-})
-/** 技能芯片的悬浮说明：描述 + 停用口径 + 来源 */
-const skillTip = s => [
-  s.description,
-  s.platformDisabled ? '平台已停用' : (s.userDisabled ? '你已停用' : ''),
-  s.source === 'workspace' ? '沙盒工作区技能（随会话）' : ''
-].filter(Boolean).join('；') || s.name
-const fieldOptions = f => f.backendKey === 'skill.disabled' ? skillOptions.value : denyOptions.value
-
 
 // ==================== 定时任务管理（ScheduleCenter 快照 + 执行日志） ====================
 // 状态/统计来自内存快照（重启归零），执行历史来自 c_ai_schedule_run（按保留期清理）。
@@ -1669,7 +1502,7 @@ const fmtCountdown = (due, serverNow) => {
 
 // 进页即拉一次工具全景：不只是给下方清单区用——「平台停用工具名单」的候选项也来自它，
 // 而那个字段在配置表单里，不会触发工具面板的 watch（等切页签才拉会让下拉先空一段）
-onMounted(() => { fetchAndFill(); loadToolInventory(); loadSkillOptions() })
+onMounted(() => { fetchAndFill() })
 </script>
 
 <style scoped>
@@ -1700,6 +1533,7 @@ onMounted(() => { fetchAndFill(); loadToolInventory(); loadSkillOptions() })
 .tier-stat-bar i { display: block; height: 100%; }
 .tier-stat-bar .must { background: #2b5fd9; }
 .tier-stat-bar .tuned { background: #8fb0ef; }
+.tier-stat-bar .engine { background: #dfe4ec; }
 /* 运行状态页签：整块不再随内容长高，滚动交给内部表格。
    .set-content 是 flex:1 但无固定高度 ⇒ 它跟着内容长高，overflow-y 永不触发；
    所以这里让 .set-content 自身在 fill 模式下不再滚动，由表格体限高来吸收多余高度。 */
@@ -1713,6 +1547,9 @@ onMounted(() => { fetchAndFill(); loadToolInventory(); loadSkillOptions() })
 .engine-switch--on { background: var(--app-accent-weak); border-color: var(--app-accent-border, #c9d8f7); }
 .engine-switch-hint { color: var(--app-text3); }
 .set-card { padding: 18px 20px 6px; }
+/* 长标签（「聊天档/工作区档自动分流」这类工程参数铺开后才会露出来）兜底折行：
+   antd 默认 nowrap，窄窗口下会直接压到右侧控件上 */
+.set-card :deep(.ant-form-item-label > label) { white-space: normal; line-height: 1.35; height: auto; min-height: 32px; }
 .cfg-sub { font-size: 12px; font-weight: 500; color: var(--app-text3); margin: 14px 0 2px; padding-bottom: 4px; border-bottom: 1px dashed var(--app-border); }
 .tip-icon { color: var(--app-text3); font-size: 12px; cursor: help; }
 .app-btn.small { padding: 3px 10px; font-size: 11px; border-radius: 6px; margin-left: 10px; }
@@ -1842,24 +1679,6 @@ onMounted(() => { fetchAndFill(); loadToolInventory(); loadSkillOptions() })
 .sched-cfgkey { font-size: 11px; margin-top: 2px; }
 .sched-cfgkey code { font-size: 11px; color: var(--app-text3); }
 
-/* 工具清单（工具调用面板 · 最底部）：运行时注册的全景只读视图 + 族级启用开关，敏=有副作用工具；
-   嵌在 set-card 内部，用顶部分隔线与上方表单区分 */
-.tool-inv { margin: 14px 0 0; padding: 14px 0 0; border-top: 1px solid var(--app-border); }
-.tool-inv-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
-.tool-inv-group { padding: 10px 0; border-top: 1px solid var(--app-border); }
-.tool-inv-group:first-of-type { border-top: none; padding-top: 4px; }
-.tool-inv-family { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-.tool-inv-family-name { font-weight: 500; }
-.tool-inv-state { font-size: 12px; padding: 0 8px; border-radius: 4px;
-  background: var(--app-warn-weak); color: var(--app-warn-text); }
-.tool-inv-state.on { background: var(--app-ok-weak); color: var(--app-ok); }
-.tool-inv-items { display: flex; flex-wrap: wrap; gap: 6px; }
-.tool-inv-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px;
-  border-radius: 5px; background: var(--app-panel-2); font-size: 12px; cursor: default; }
-.tool-inv-chip.sensitive { border: 1px solid var(--app-danger-border); }
-.tool-inv-chip.is-off { color: var(--app-text3); background: var(--app-panel); border: 1px dashed var(--app-border); }
-.tool-inv-s { font-size: 10px; color: var(--app-danger-text); }
-.skill-inv-n { font-size: 11px; color: var(--app-text3); background: var(--app-panel-2); border-radius: 999px; padding: 1px 8px; }
 .sched-err {
   display: inline-block; margin-left: 6px; width: 16px; height: 16px; line-height: 16px;
   border-radius: 50%; text-align: center; font-size: 11px; font-weight: 600;

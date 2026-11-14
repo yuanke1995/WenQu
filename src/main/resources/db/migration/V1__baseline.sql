@@ -406,7 +406,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_agent` (
     `memory_mode`     INT          DEFAULT NULL COMMENT '记忆域(对外能力第二批·agent级记忆): NULL/0=跟随全局(用户级记忆) 1=专属(记忆根 {uid}/agents/{agentId}, 不再注入全局) 2=叠加(专属根活跃写+全局只读注入)',
     `is_subagent`     INT           DEFAULT 0 COMMENT '是否子智能体: 0=主智能体（对话页可选） 1=子智能体（供主智能体委派）',
     `sub_agent_ids`   VARCHAR(1000) DEFAULT NULL COMMENT '主智能体可委派的子智能体ID: NULL/空=走默认多视角策略 逗号分隔=用这些',
-    `subagent_mode`   VARCHAR(16)  DEFAULT NULL COMMENT '被当作子智能体咨询时怎么跑(P3a): digest=只并行检索+提炼要点(原有行为) full=跑完整问答管线(自己的知识库/工具/技能/沙盒/产物生效); NULL=跟随平台默认 agent.subagentMode',
+    `subagent_mode`   VARCHAR(16)  DEFAULT NULL COMMENT '已退役(V11): 被当作子智能体咨询时怎么跑(P3a): digest=只并行检索+提炼要点(原有行为) full=跑完整问答管线; NULL=跟随平台默认',
     `knowledge_disabled` INT        DEFAULT 0 COMMENT '不使用知识库: 0=使用（按 knowledge_scope 约束） 1=纯角色智能体（整条跳过检索链路；@ 引用不受影响）',
     `workflow_id`     VARCHAR(50)  DEFAULT NULL COMMENT 'M4：绑定的工作流ID——非空时该智能体的回答由工作流产出（chatflow 语义，跑已发布版本）',
     `is_builtin`      INT           DEFAULT 0 COMMENT '内置标记: 1=系统内置问渠（全局唯一，禁止删除，仅管理员可配置） 0=普通',
@@ -1461,12 +1461,12 @@ DELETE FROM `c_ai_config` WHERE `config_key` IN (
     -- 解析/图谱：模型引用已回落库主默认聊天模型
     'parse.qaModel', 'graphrag.modelRef',
     -- 技能/记忆：面板与自研存储退役后留下的死配置
-    -- 注意 skill.remoteAllowedHosts 不在此列：它是活配置（defaults() 登记、设置页可编辑，
-    -- UserSkillStore/SkillController 真读它做 URL 安装白名单）。曾经误列进本名单，
-    -- 而本基线由 Flyway 在应用上下文启动前执行、早于 ConfigService.ensureDefaults()，
-    -- 于是每次重启删行→ensureDefaults 按空默认值补回＝管理员白名单每次重启被清零（远程安装静默关闭）。
-    -- 本键永久禁入退役名单：它是安全策略白名单，「设置页看不见/挪到工程参数分层」都不等于「无读取点」。
+    -- skill.disabled（平台停用清单）与 skill.remoteAllowedHosts（URL 安装域名白名单）双双退役（2026-11-14）：
+    -- 平台不禁用技能（停用只留个人层）、不限制安装来源域名；两键 0 读取点。
+    -- （remoteAllowedHosts 曾因「每次重启删行→按空默认值补回=白名单被清零、远程安装静默关闭」
+    --   永久禁入本名单；如今设置项整体退役、读取点全删，该顾虑不复存在。）
     'skill.injectMaxChars', 'skill.maxFileChars',
+    'skill.disabled', 'skill.remoteAllowedHosts',
     'memory.maxPerUser', 'memory.maxInjectCount', 'memory.injectBudgetChars',
     'memory.dedupThreshold', 'memory.useSemanticInject', 'memory.platformEmbeddingRef',
     -- 2026-10-21 记忆参数收口：容量只留 memory.maxMdTokens（合并目标由它推导），日账保留期沿用框架默认 90 天
@@ -1544,8 +1544,10 @@ DELETE FROM `c_ai_config` WHERE `config_key` IN (
     'tool.knowledgeRetrieval.maxHits', 'tool.spillCleanupIntervalMs', 'tool.spillMaxMbPerUser', 'tool.runcode.maxParallel', 'tool.runcode.timeoutSeconds', 'tool.runcode.subCallTimeoutMs',
     -- eval
     'eval.answerModel',
-    -- agentEval
-    'agentEval.gateMode', 'agentEval.thresholdRate', 'agentEval.maxCases', 'agentEval.concurrency', 'agentEval.perCaseTimeoutMs', 'agentEval.runTimeoutMs', 'agentEval.judgeModel',
+    -- agentEval（2026-11-14 智能体评测总开关/评测门禁退役：评测恒可用、门禁恒为提示档）
+    'agentEval.enabled', 'agentEval.gateMode', 'agentEval.thresholdRate', 'agentEval.maxCases', 'agentEval.concurrency', 'agentEval.perCaseTimeoutMs', 'agentEval.runTimeoutMs', 'agentEval.judgeModel',
+    -- trace（2026-11-14 会话事件账本开关退役：账本恒开）
+    'trace.sessionEventEnabled',
     -- cleanup
     'cleanup.sessionCleanupIntervalMs', 'cleanup.sessionRetentionDays', 'cleanup.sessionEventRetentionDays', 'cleanup.auditRetentionDays', 'cleanup.toolSpillRetentionDays', 'cleanup.visitorIdleDays',
     -- config
@@ -1604,7 +1606,7 @@ DELETE FROM `c_ai_user_config` WHERE `config_key` IN (
     -- 2026-10-19：这四项的个人覆盖已随字段定义一起删除，存量行永远不会再被读到
     'retrieval.relatedCount', 'chat.sampleQuestionsEnabled', 'chat.sampleQuestions',
     'agent.personalDefault', 'agent.permissionPreset.personalMax',
-    -- 技能停用只剩平台一层：成员那份个人清单不再被 WenquSkillRepository 合并
+    -- 技能停用清单退役（2026-11-14 平台层也退、停用改存 UserSkillStore 目录，c_ai_user_config 行全清）
     'skill.disabled'
 );
 

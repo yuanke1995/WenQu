@@ -22,7 +22,6 @@ class ConfigSchemaRelaxTest {
     void relaxedDefaultsPassValidate() {
         assertThat(schema.validate("chat.sseTimeoutMs", "0")).isNull();
         assertThat(schema.validate("ratelimit.enabled", "false")).isNull();
-        assertThat(schema.validate("contentSafety.enabled", "false")).isNull();
     }
 
     @Test
@@ -37,7 +36,6 @@ class ConfigSchemaRelaxTest {
     @DisplayName("schema def 折算到存储层口径与 defaults() 同步")
     void defStoredValueMatchesRelaxedDefaults() {
         assertThat(schema.defStoredValue("ratelimit.enabled")).isEqualTo("false");
-        assertThat(schema.defStoredValue("contentSafety.enabled")).isEqualTo("false");
     }
 
     @Test
@@ -45,6 +43,12 @@ class ConfigSchemaRelaxTest {
     void panelResolutionCoversRelaxedPanels() {
         assertThat(schema.panelKeys()).doesNotContain("goal");
         assertThat(schema.panelKeys()).contains("tool", "sandbox");
-        assertThat(schema.keysOfPanel("contentSafety")).contains("contentSafety.enabled");
+    }
+
+    @Test
+    @DisplayName("内容安全已整体退役（2026-11-14）：面板与键都不再是可编辑槽位")
+    void contentSafetyFullyRetired() {
+        assertThat(schema.panelKeys()).doesNotContain("contentSafety");
+        assertThat(schema.validate("contentSafety.enabled", "false")).isNotNull();
     }
 }

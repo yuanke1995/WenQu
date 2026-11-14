@@ -155,17 +155,13 @@ ai-app:
     # JPEG 压缩质量（0~1），带透明通道的图自动转 PNG 无损保留
     quality: 0.9
     url-prefix: /ai/images
-    # 图片访问鉴权（HMAC 签名 URL + 过期时间；默认开启——漏配环境变量的独立部署不会裸奔暴露文档截图。
-    # 本地开发如需关闭：在外部 config/application-local.yml 中设 ai-app.images.auth-enabled: false。
-    # 注意这些 images.* 值只在首次启动灌入 c_ai_config；已灌库后以设置页/DB 为准，改 yml 不会覆盖存量值）
-    auth-enabled: ${AI_IMAGES_AUTH_ENABLED:true}
+    # 图片访问鉴权恒开（HMAC 签名 URL + 过期时间，代码内置不再提供开关）——漏配环境变量的独立部署不会裸奔暴露文档截图。
     # 签名有效期（秒）
     auth-expire-seconds: 3600
   # 视觉模型不在此配置：模型按知识库绑定（parse_params.visionRef → 「模型供应商」表），
   # 行为参数（开关/提示词/并发/超时/重试/缓存）统一在系统设置页维护（c_ai_config）
-  # 上下文填充配额（窗口/最大输出按模型声明；安全系数固定 0.7）
-  context:
-    max-context-hits: 8
+  # 上下文填充配额不在此配置：知识块填充上限已下放个人设置（2026-11-14，个人层唯一定义源
+  # config-schema.json 的 def=8），无全局槽位、无 env 覆盖
   # Web Push（浏览器系统级推送）：VAPID 密钥对是**部署级密钥**，与 AI_JWT_SECRET 同类——
   # 只从 env/yml 读，不进设置页也不进 c_ai_config（私钥一旦能在 UI 上改，就等于能被读出来存出去）。
   # 生成一对：POST /ai/api/ai/webpush/keys（仅管理员，只回显不落库），把两串贴进 .env 后重启。

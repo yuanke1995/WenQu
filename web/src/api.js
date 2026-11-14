@@ -893,9 +893,6 @@ export async function downloadDocumentSource (id, fileName) {
   URL.revokeObjectURL(url)
 }
 
-// ==================== 工具清单（管理员：已注册 @Tool 全景，设置页·工具调用面板展示） ====================
-export const getToolInventory = () => request('/tools')
-
 // ==================== MCP 外部工具（个人资产：每人管自己登记的 Server） ====================
 /** retryBroken=true：先对未连上的服务补一次重连再出列表（MCP 页点「刷新」用）；
  *  verifyOnline=true：对已连接服务做在线校验（远程 listTools，慢）——只有 MCP 管理页要"此刻真实状态"
@@ -1792,17 +1789,6 @@ export const getMyQuota = () => request('/stats/quota')
 export const listQuotas = () => request('/quota')
 export const saveQuota = body => request('/quota', { method: 'POST', body: JSON.stringify(body) })
 export const deleteQuota = id => request(`/quota/${id}`, { method: 'DELETE' })
-
-/**
- * 内容安全：规则清单 / 闸门状态 / 试跑。
- * <p>闸门参数（总开关、外部服务、文案）不在这儿，那些走设置页的通用 /config 读写。
- */
-export const listContentRules = () => request('/content-safety')
-export const contentSafetyStatus = () => request('/content-safety/status')
-export const saveContentRule = body => request('/content-safety', { method: 'POST', body: JSON.stringify(body) })
-export const deleteContentRule = id => request(`/content-safety/${id}`, { method: 'DELETE' })
-export const dryRunContentRule = (text, stage) =>
-  request('/content-safety/dry-run', { method: 'POST', body: JSON.stringify({ text, stage }) })
 
 /** 租户（多租户）：清单/开通/启停/成员归属变更 */
 export const listTenants = () => request('/tenant')

@@ -153,15 +153,6 @@
       "sections": [
         "调试开关"
       ]
-    },
-    {
-      "key": "contentSafety",
-      "title": "内容安全（生成内容合规）",
-      "sections": [
-        "两道闸与判定",
-        "外部检查服务（可选的第二层）",
-        "拦截与截断文案"
-      ]
     }
   ],
   "fields": [
@@ -2438,155 +2429,6 @@
       "tier": 3
     },
     {
-      "backendKey": "contentSafety.enabled",
-      "panel": "contentSafety",
-      "section": 0,
-      "group": "contentSafety",
-      "key": "enabled",
-      "path": "contentSafety.enabled",
-      "label": "总开关",
-      "type": "switch",
-      "def": false,
-      "core": true,
-      "tier": 2,
-      "tips": "csEnabled",
-      "note": "默认关；关掉后输入/出口闸都不判"
-    },
-    {
-      "backendKey": "contentSafety.provider",
-      "panel": "contentSafety",
-      "section": 1,
-      "group": "contentSafety",
-      "key": "provider",
-      "path": "contentSafety.provider",
-      "label": "外部检查服务",
-      "type": "select",
-      "def": "local",
-      "tier": 2,
-      "width": 260,
-      "options": [
-        {
-          "value": "local",
-          "label": "local（只用上面的规则清单，不接外部服务）"
-        },
-        {
-          "value": "generic",
-          "label": "generic（通用 HTTP 检查服务，自建或商业服务网关）"
-        }
-      ],
-      "vif": "contentSafety.enabled",
-      "tips": "csProvider",
-      "note": "外部服务是第二层，规则清单永远先判；连不上按清单继续"
-    },
-    {
-      "backendKey": "contentSafety.baseUrl",
-      "panel": "contentSafety",
-      "section": 1,
-      "group": "contentSafety",
-      "key": "baseUrl",
-      "path": "contentSafety.baseUrl",
-      "label": "服务地址",
-      "type": "text",
-      "def": "",
-      "width": 360,
-      "tier": 3,
-      "vif": "contentSafety.provider=generic",
-      "ph": "如 http://127.0.0.1:8811/check",
-      "tips": "csBaseUrl"
-    },
-    {
-      "backendKey": "contentSafety.apiKey",
-      "panel": "contentSafety",
-      "section": 1,
-      "group": "contentSafety",
-      "key": "apiKey",
-      "path": "contentSafety.apiKey",
-      "label": "服务 Key",
-      "type": "password",
-      "def": "",
-      "width": 320,
-      "tier": 3,
-      "vif": "contentSafety.provider=generic",
-      "note": "以加密方式入库；服务无鉴权可留空",
-      "tips": "csApiKey"
-    },
-    {
-      "backendKey": "contentSafety.remoteOnInput",
-      "panel": "contentSafety",
-      "section": 1,
-      "group": "contentSafety",
-      "key": "remoteOnInput",
-      "path": "contentSafety.remoteOnInput",
-      "label": "提问侧调用外部服务",
-      "type": "switch",
-      "def": true,
-      "tier": 3,
-      "vif": "contentSafety.provider=generic",
-      "tips": "csRemoteInput"
-    },
-    {
-      "backendKey": "contentSafety.remoteOnOutput",
-      "panel": "contentSafety",
-      "section": 1,
-      "group": "contentSafety",
-      "key": "remoteOnOutput",
-      "path": "contentSafety.remoteOnOutput",
-      "label": "回答侧调用外部服务",
-      "type": "switch",
-      "def": false,
-      "tier": 3,
-      "vif": "contentSafety.provider=generic",
-      "tips": "csRemoteOutput",
-      "note": "回答按段送检，首字延迟变长；默认关"
-    },
-    {
-      "backendKey": "contentSafety.scanThinking",
-      "panel": "contentSafety",
-      "section": 0,
-      "group": "contentSafety",
-      "key": "scanThinking",
-      "path": "contentSafety.scanThinking",
-      "label": "连思考过程一起判",
-      "type": "switch",
-      "def": true,
-      "tier": 3,
-      "vif": "contentSafety.enabled",
-      "tips": "csScanThinking",
-      "note": "思考过程在界面上是展开给用户看的，所以默认一起判；关掉后只判正文"
-    },
-    {
-      "backendKey": "contentSafety.inputRefusal",
-      "panel": "contentSafety",
-      "section": 2,
-      "group": "contentSafety",
-      "key": "inputRefusal",
-      "path": "contentSafety.inputRefusal",
-      "label": "提问被拒时的回复",
-      "type": "textarea",
-      "def": "",
-      "width": 520,
-      "tier": 3,
-      "vif": "contentSafety.enabled",
-      "tips": "csRefusal",
-      "note": "留空用内置文案；写 {规则} 的位置会被换成命中的规则名"
-    },
-    {
-      "backendKey": "contentSafety.outputSuffix",
-      "panel": "contentSafety",
-      "section": 2,
-      "group": "contentSafety",
-      "key": "outputSuffix",
-      "path": "contentSafety.outputSuffix",
-      "label": "回答被截断时的标注",
-      "type": "textarea",
-      "def": "",
-      "width": 520,
-      "tier": 3,
-      "vif": "contentSafety.enabled",
-      "tips": "csSuffix",
-      "note": "追加在被截断的回答末尾（与「已停止本轮」同一族尾注）；留空用内置文案"
-    },
-    {
       "backendKey": "chat.profileAuto",
       "hidden": true,
       "panel": "chat",
@@ -2885,16 +2727,7 @@
     "toolPermissionPresetDefault": "智能体未选档位时的默认值；默认 standard",
     "toolPermissionPresetMax": "平台上限：超出按上限执行，被禁能力不进工具表。research=全禁沙盒写入",
     "toolDenyGlobal": "选中的工具对全平台不挂；也可直接填外部工具名。无效名启动时报错",
-    "webpushEnabled": "Web Push 总闸；需 VAPID 密钥与设备授权。静音类型不推",
-    "csEnabled": "内容安全总闸；关掉后不拦也不记审计",
-    "csProvider": "规则清单本地判；外部服务为可选第二层",
-    "csBaseUrl": "POST JSON（text/stage/userId/sessionId），返回 blocked/category/reason",
-    "csApiKey": "请求头带 Authorization: Bearer <key>",
-    "csRemoteInput": "提问侧加一次外部检查；默认开",
-    "csRemoteOutput": "回答按段送检，首字延迟变长",
-    "csScanThinking": "思考过程与正文分别累计判定",
-    "csRefusal": "被拦提问不发起模型调用；这句就是用户看到的全部",
-    "csSuffix": "回答截断时追加的尾注；随正文落库"
+    "webpushEnabled": "Web Push 总闸；需 VAPID 密钥与设备授权。静音类型不推"
   },
   "editable": {
     "chat.sseTimeoutMs": "回答超时(毫秒,默认300000,人工作答时间不计入;0=不限制整轮截断)",
