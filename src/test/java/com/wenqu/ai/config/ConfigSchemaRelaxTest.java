@@ -20,8 +20,6 @@ class ConfigSchemaRelaxTest {
     @Test
     @DisplayName("放宽后的 0/false 默认值通过保存校验（min 已同步降到 0）")
     void relaxedDefaultsPassValidate() {
-        assertThat(schema.validate("chat.goal.maxRounds", "0")).isNull();
-        assertThat(schema.validate("chat.goal.maxTokens", "0")).isNull();
         assertThat(schema.validate("chat.sseTimeoutMs", "0")).isNull();
         assertThat(schema.validate("ratelimit.enabled", "false")).isNull();
         assertThat(schema.validate("contentSafety.enabled", "false")).isNull();
@@ -38,17 +36,15 @@ class ConfigSchemaRelaxTest {
     @Test
     @DisplayName("schema def 折算到存储层口径与 defaults() 同步")
     void defStoredValueMatchesRelaxedDefaults() {
-        assertThat(schema.defStoredValue("chat.goal.maxRounds")).isEqualTo("0");
         assertThat(schema.defStoredValue("ratelimit.enabled")).isEqualTo("false");
         assertThat(schema.defStoredValue("contentSafety.enabled")).isEqualTo("false");
     }
 
     @Test
-    @DisplayName("按面板恢复默认：goal 面板只余四项预算旋钮，contentSafety 总闸在面板清单里")
+    @DisplayName("按面板恢复默认：goal 面板已随深度执行预算退役，面板清单里不再有")
     void panelResolutionCoversRelaxedPanels() {
-        List<String> goal = schema.keysOfPanel("goal");
-        assertThat(goal).hasSize(4).contains("chat.goal.maxRounds", "chat.goal.maxTokens");
-        assertThat(schema.panelKeys()).contains("goal", "contentSafety", "tool", "sandbox");
+        assertThat(schema.panelKeys()).doesNotContain("goal");
+        assertThat(schema.panelKeys()).contains("tool", "sandbox");
         assertThat(schema.keysOfPanel("contentSafety")).contains("contentSafety.enabled");
     }
 }

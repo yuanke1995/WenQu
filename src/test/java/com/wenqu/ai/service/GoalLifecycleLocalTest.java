@@ -95,10 +95,6 @@ class GoalLifecycleLocalTest {
             seed.setAttempt(0);
             seed.setNoProgressRounds(0);
             seed.setRecoveryCount(0);
-            seed.setBudgetRounds(40);
-            seed.setBudgetTokens(2_000_000L);
-            seed.setBudgetMs(7_200_000L);
-            seed.setBudgetToolCalls(400);
             seed.setRowVersion(0L);
             seed.setNextRunAt(LocalDateTime.now());
             seed.setCreatedAt(LocalDateTime.now());

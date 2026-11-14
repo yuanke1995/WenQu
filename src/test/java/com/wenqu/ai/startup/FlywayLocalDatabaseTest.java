@@ -15,7 +15,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
- * 本地 MySQL 集成测试：空库执行 Flyway V1~V10（V7~V9 为已删除的历史一次性迁移），验证基线可用、各版改动生效、二次 migrate 为 0。
+ * 本地 MySQL 集成测试：空库执行 Flyway 已入库的迁移（当前 V1~V16 中入库 8 个：V7~V9 编号空缺，V11~V15 随并行退役线另行入库），验证基线可用、各版改动生效、二次 migrate 为 0。
  *
  * <p>不依赖 Docker；本机 3306 不可达时自动跳过。CI 里仍由 {@link FlywayFreshDatabaseTest}
  * （Testcontainers）覆盖。
@@ -46,7 +46,7 @@ class FlywayLocalDatabaseTest {
                     .load();
 
             MigrateResult first = flyway.migrate();
-            assertThat(first.migrationsExecuted).as("空库应执行 V1~V10").isEqualTo(10);
+            assertThat(first.migrationsExecuted).as("空库应执行已入库迁移").isEqualTo(8);
 
             assertThat(tables(url)).contains(
                     "c_ai_session", "c_ai_message", "c_ai_session_event",

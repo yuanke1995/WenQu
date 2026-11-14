@@ -41,7 +41,7 @@ class FlywayFreshDatabaseTest {
                 .load();
 
         MigrateResult first = flyway.migrate();
-        assertThat(first.migrationsExecuted).as("空库应执行 V1~V10").isEqualTo(10);
+        assertThat(first.migrationsExecuted).as("空库应执行已入库迁移").isEqualTo(8);
 
         Set<String> tables = tables();
         assertThat(tables).contains(

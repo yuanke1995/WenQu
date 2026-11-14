@@ -155,15 +155,6 @@
       ]
     },
     {
-      "key": "goal",
-      "title": "深度执行（长任务）",
-      "sections": [
-        "推进与轮次",
-        "预算与恢复",
-        "调度与核验"
-      ]
-    },
-    {
       "key": "contentSafety",
       "title": "内容安全（生成内容合规）",
       "sections": [
@@ -2445,74 +2436,6 @@
       "width": 140,
       "note": "每个 OCR 引擎同时处理的图片数；多线解析时必须同步放开此闸门",
       "tier": 3
-    },
-    {
-      "backendKey": "chat.goal.maxRounds",
-      "panel": "goal",
-      "section": 0,
-      "group": "chat",
-      "key": "goal.maxRounds",
-      "path": "chat.goal.maxRounds",
-      "label": "自动推进轮数上限",
-      "type": "number",
-      "def": 0,
-      "min": 0,
-      "max": 5000,
-      "step": 1,
-      "width": 180,
-      "note": "目标最多自动跑几轮；0=不限（仍受下面预算约束）",
-      "tier": 2
-    },
-    {
-      "backendKey": "chat.goal.maxTokens",
-      "panel": "goal",
-      "section": 1,
-      "group": "chat",
-      "key": "goal.maxTokens",
-      "path": "chat.goal.maxTokens",
-      "label": "Token 预算",
-      "type": "number",
-      "def": 0,
-      "min": 0,
-      "max": 100000000,
-      "step": 100000,
-      "width": 220,
-      "note": "单目标 token 硬预算；0=不限。四项里唯一拦不住烧钱的一项",
-      "tier": 2
-    },
-    {
-      "backendKey": "chat.goal.maxMs",
-      "panel": "goal",
-      "section": 1,
-      "group": "chat",
-      "key": "goal.maxMs",
-      "path": "chat.goal.maxMs",
-      "label": "时长预算（毫秒）",
-      "type": "number",
-      "def": 0,
-      "min": 0,
-      "max": 604800000,
-      "step": 600000,
-      "width": 220,
-      "note": "单目标机器耗时硬预算；0=不限制（默认已不限），手动设值上限 7 天",
-      "tier": 2
-    },
-    {
-      "backendKey": "chat.goal.maxToolCalls",
-      "panel": "goal",
-      "section": 1,
-      "group": "chat",
-      "key": "goal.maxToolCalls",
-      "path": "chat.goal.maxToolCalls",
-      "label": "工具调用预算",
-      "type": "number",
-      "def": 0,
-      "min": 0,
-      "max": 1000000,
-      "step": 10,
-      "width": 180,
-      "note": "单目标累计工具调用硬预算。0=不限制（默认已不限）",
-      "tier": 2
     },
     {
       "backendKey": "contentSafety.enabled",

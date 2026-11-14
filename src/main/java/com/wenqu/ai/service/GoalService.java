@@ -262,10 +262,6 @@ public class GoalService {
             goal.setAttempt(0);
             goal.setNoProgressRounds(0);
             goal.setRecoveryCount(0);
-            goal.setBudgetRounds(settings.maxRounds());
-            goal.setBudgetTokens(settings.maxTokens());
-            goal.setBudgetMs(settings.maxMs());
-            goal.setBudgetToolCalls(settings.maxToolCalls());
             goal.setRowVersion(0L);
             goal.setNextRunAt(now);
             goal.setCreatedAt(now);
@@ -279,8 +275,8 @@ public class GoalService {
             goalMapper.insert(goal);
             // 对话里留一行回声：换过目标之后，光靠 c_ai_goal 一行读不出「什么时候定了什么目标」
             echoGoalCommand(sessionId, goal.getId(), text);
-            log.info("[GOAL] 目标已入队: goal={} session={} 预算 轮次={} token={}",
-                    goal.getId(), sessionId, goal.getBudgetRounds(), goal.getBudgetTokens());
+            log.info("[GOAL] 目标已入队: goal={} session={} 轮数上限={}",
+                    goal.getId(), sessionId, GoalSettings.MAX_ROUNDS);
             emitState(goal, channel);
             return goal;
         }
@@ -736,7 +732,7 @@ public class GoalService {
         }
         GoalContinuation c = continuation(goal);
         int n = Math.max(ni(goal.getTurnCounter()), roundMapper.maxN(goal.getId())) + 1;
-        int max = budgetRounds(goal);
+        int max = GoalSettings.MAX_ROUNDS;
         if (n > max) {
             fail(goal, FAILED, "budget", "轮次预算已用完（" + max + " 轮）；未完成项见任务状态", null);
             return;
@@ -1410,7 +1406,7 @@ public class GoalService {
         m.put("objective", goal.getObjective());
         m.put("objectiveVersion", goal.getObjectiveVersion());
         m.put("round", nz(goal.getTurnCounter()));
-        m.put("maxRounds", budgetRounds(goal));
+        m.put("maxRounds", GoalSettings.MAX_ROUNDS);
         m.put("hint", hintOf(goal));
         m.put("endReason", goal.getEndReason());
         m.put("blockedReason", goal.getBlockedReason());
@@ -1469,36 +1465,18 @@ public class GoalService {
         return false;
     }
 
+    /**
+     * 预算视图：轮次是唯一硬预算（恒 20），token/时长/工具调用只剩用量展示。
+     */
     private Map<String, Object> budgetView(Goal goal) {
         Map<String, Object> b = new LinkedHashMap<>();
-        long tokens = nz(goal.getUsedTokens());
-        long ms = nz(goal.getUsedMs());
-        int tools = (int) nz(goal.getUsedToolCalls());
-        int rounds = ni(goal.getTurnCounter());
-        b.put("tokens", tokens);
-        b.put("maxTokens", shown(budgetTokens(goal)));
-        b.put("ms", ms);
-        b.put("maxMs", shown(budgetMs(goal)));
-        b.put("toolCalls", tools);
-        b.put("maxToolCalls", shown(budgetToolCalls(goal)));
-        b.put("rounds", rounds);
-        b.put("maxRounds", shown(budgetRounds(goal)));
+        b.put("tokens", nz(goal.getUsedTokens()));
+        b.put("ms", nz(goal.getUsedMs()));
+        b.put("toolCalls", (int) nz(goal.getUsedToolCalls()));
+        b.put("rounds", ni(goal.getTurnCounter()));
+        b.put("maxRounds", GoalSettings.MAX_ROUNDS);
         b.put("percent", budgetRatio(goal));
         return b;
-    }
-
-    /**
-     * 不限制的哨兵在出参里说回 0：目标行的 {@code budget_*} 列用 0 表达「用配置默认」，
-     * 界面那侧 0 读作「这一项没有预算」（GoalCard 据此换一种说法，四项全 0 才整行不画）。
-     * 不翻的话界面上是一行「预算：3/2147483647 轮」。
-     */
-    private static int shown(int budget) {
-        return budget >= GoalSettings.UNLIMITED ? 0 : budget;
-    }
-
-    /** {@link #shown(int)} 的 BIGINT 版（token 与毫秒两项）。 */
-    private static long shown(long budget) {
-        return budget >= GoalSettings.UNLIMITED_LONG ? 0L : budget;
     }
 
     private Map<String, Object> outcomeOf(Goal goal) {
@@ -1808,48 +1786,14 @@ public class GoalService {
     }
 
     private String hardBudgetExceeded(Goal goal) {
-        if (nz(goal.getTurnCounter()) >= budgetRounds(goal)) {
-            return "轮次预算已用完（" + budgetRounds(goal) + " 轮）";
-        }
-        if (nz(goal.getUsedTokens()) >= budgetTokens(goal)) {
-            return "Token 预算已用完（已用 " + nz(goal.getUsedTokens()) + " / " + budgetTokens(goal) + "）";
-        }
-        if (nz(goal.getUsedMs()) >= budgetMs(goal)) {
-            return "时长预算已用完（已用 " + (nz(goal.getUsedMs()) / 60_000) + " 分钟）";
-        }
-        if (nz(goal.getUsedToolCalls()) >= budgetToolCalls(goal)) {
-            return "工具调用预算已用完（已用 " + nz(goal.getUsedToolCalls()) + " 次）";
+        if (nz(goal.getTurnCounter()) >= GoalSettings.MAX_ROUNDS) {
+            return "轮次预算已用完（" + GoalSettings.MAX_ROUNDS + " 轮）";
         }
         return null;
     }
 
     private double budgetRatio(Goal goal) {
-        double max = 0;
-        max = Math.max(max, (double) nz(goal.getTurnCounter()) / Math.max(1, budgetRounds(goal)));
-        max = Math.max(max, (double) nz(goal.getUsedTokens()) / Math.max(1, budgetTokens(goal)));
-        max = Math.max(max, (double) nz(goal.getUsedMs()) / Math.max(1, budgetMs(goal)));
-        max = Math.max(max, (double) nz(goal.getUsedToolCalls()) / Math.max(1, budgetToolCalls(goal)));
-        return Math.min(1.0, max);
-    }
-
-    private int budgetRounds(Goal g) {
-        return g != null && g.getBudgetRounds() != null && g.getBudgetRounds() > 0
-                ? g.getBudgetRounds() : settings.maxRounds();
-    }
-
-    private long budgetTokens(Goal g) {
-        return g != null && g.getBudgetTokens() != null && g.getBudgetTokens() > 0
-                ? g.getBudgetTokens() : settings.maxTokens();
-    }
-
-    private long budgetMs(Goal g) {
-        return g != null && g.getBudgetMs() != null && g.getBudgetMs() > 0
-                ? g.getBudgetMs() : settings.maxMs();
-    }
-
-    private int budgetToolCalls(Goal g) {
-        return g != null && g.getBudgetToolCalls() != null && g.getBudgetToolCalls() > 0
-                ? g.getBudgetToolCalls() : settings.maxToolCalls();
+        return Math.min(1.0, (double) nz(goal.getTurnCounter()) / GoalSettings.MAX_ROUNDS);
     }
 
     // ==================== 内部：租约/锁 ====================

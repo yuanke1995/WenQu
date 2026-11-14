@@ -452,7 +452,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 log.info("[agentx] 记忆配置已变更 {}，活跃会话下一轮重建实例", changed);
             }
             // 目标模式已无平台配置项：开关只剩智能体级 goal_enabled 那一格（改它走 agent 重建那条路），
-            // 续跑轮数上限是 GoalSettings（chat.goal.maxRounds，默认 40）。
+            // 续跑轮数上限是 GoalSettings.MAX_ROUNDS（恒 20，代码常量）。
         });
     }
 

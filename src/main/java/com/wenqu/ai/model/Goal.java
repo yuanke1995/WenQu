@@ -134,18 +134,6 @@ public class Goal {
     @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private String waitingReason;
 
-    /** Token 硬预算（0=用配置默认） */
-    private Long budgetTokens;
-
-    /** 机器毫秒硬预算（0=用配置默认） */
-    private Long budgetMs;
-
-    /** 工具调用硬预算（0=用配置默认） */
-    private Integer budgetToolCalls;
-
-    /** 轮次硬预算（0=用配置默认） */
-    private Integer budgetRounds;
-
     /** 乐观锁版本（状态迁移与调度竞争用） */
     private Long rowVersion;
 

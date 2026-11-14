@@ -180,10 +180,6 @@ class GoalTurnGuardLocalTest {
         g.setAttempt(0);
         g.setNoProgressRounds(0);
         g.setRecoveryCount(0);
-        g.setBudgetRounds(40);
-        g.setBudgetTokens(2_000_000L);
-        g.setBudgetMs(7_200_000L);
-        g.setBudgetToolCalls(400);
         g.setRowVersion(0L);
         g.setNextRunAt(LocalDateTime.now().minusSeconds(1));
         g.setCreatedAt(LocalDateTime.now());

@@ -431,10 +431,6 @@ public class ConfigService {
      * 清单与 {@code config-schema.json} 的 def 修订一一对应（A 类 0/false、B1 两键、B2 取上限、share 游客额度）。
      */
     private static final List<String[]> RELAXED_OLD_DEFAULTS = List.of(
-            new String[]{"chat.goal.maxRounds", "40"},
-            new String[]{"chat.goal.maxTokens", "2000000"},
-            new String[]{"chat.goal.maxMs", "7200000"},
-            new String[]{"chat.goal.maxToolCalls", "400"},
             new String[]{"chat.goal.maxCompletionChecks", "2"},
             new String[]{"chat.goal.maxVerifyFailures", "5"},
             new String[]{"ratelimit.enabled", "true"},
@@ -640,9 +636,6 @@ public class ConfigService {
         // 基座来自 config-schema.json（字段定义单一源）；下面只覆盖 env/properties 动态值与隐藏/部署项。
         // 新增一个带 def 的 schema 字段即使不写 d.put，也会自动进入默认值。
         Map<String, String> d = new LinkedHashMap<>(schema.storedDefaults());
-        // 目标模式：与 GoalSettings 的默认值/钳制范围同源；schema 已挂「目标模式」面板。
-        // 为什么必须在这里登记：snapshot() 只遍历 defaults()，漏登记的表单能保存但重开读不回，
-        // 表现就是「改了没生效」。四个预算键一一对应 GoalSettings 的 getter。
         // 回答温度为隐藏参数（知识库问答固定低温度更稳，暴露给最终用户徒增困惑）：
         // 仅 DB 可调（与 tool.mcpCiteMaxRefs 同一口径），无设置页字段、无个人层
         d.put("chat.temperature", env("spring.ai.openai.chat.options.temperature", "0.3"));
@@ -757,9 +750,9 @@ public class ConfigService {
         // 人在回路提问卡等待上限(ms)
         // 单次模型调用的静默判死上限(ms)：0=不判（框架默认 5 分钟），见 AgentscopeChatEngine.modelExecutionConfig
         // 接续窗口(分钟)：只接窗口内没答完的轮
-        // 目标模式：平台层只留四项预算旋钮（轮数/Token/时长/工具调用，defaults() 开头登记，
-        // schema 挂「目标模式」面板）；没有确认卡等待——目标建好就自己往下跑，助手自报完成即停；
-        // 开关只剩智能体级 goal_enabled 那一格，自动续跑上限由 GoalSettings 的 chat.goal.maxRounds 控制（默认 0=不限制）。
+        // 目标模式：平台层已无配置项（深度执行设置面板整体退役，自动推进轮数上限恒为
+        // GoalSettings.MAX_ROUNDS=20）；没有确认卡等待——目标建好就自己往下跑，助手自报完成即停；
+        // 开关只剩智能体级 goal_enabled 那一格。
         // 调试显示总开关（归属徽标 / 路由提示 / 降级提示）。默认开：
         // 它管的已不只是排障项——「无命中 / 改写失败 / 图片剔除」这类降级信息默认不显示，等于系统性地
         // 不告诉用户这一轮检索没按预期发生，与「答得准、也敢被查」的定位直接冲突：产品承诺的是可被
