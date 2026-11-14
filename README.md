@@ -12,7 +12,7 @@
 - **长任务可控**：计划卡只放目标与前三步、完整计划与版本轨进右侧抽屉，执行中可带意见调整；目标模式由输入框顶部目标条驱动自动续跑与证据核验，插话让位后自动接续
 - **答案可溯源**：混合检索 + 引用溯源 + 位置级文档原图展示，每个结论都能回到源头；低分全灭时保留唯一最相关块并显式标注低置信
 - **开放互联**：MCP 双向（接入外部 Server / 对外发布为 MCP Server）、OpenAI 兼容端点（Chat Completions / Responses / 只读 function calling）、智能体轮终回调、工作流开放接口与 Webhook、游客分享页
-- **生产就绪**：多租户生命周期与邀请流、OIDC / SAML / SCIM / LDAP 企业身份、RBAC、密钥加密存储、接口限流、哈希链审计、推理配额、内容安全、系统巡检、邮件与 Web Push 通知、单副本部署（多副本机制已预留）
+- **生产就绪**：多租户生命周期与邀请流、OIDC / SAML / SCIM / LDAP 企业身份、RBAC、密钥加密存储、接口限流、哈希链审计、推理配额、系统巡检、邮件与 Web Push 通知、单副本部署（多副本机制已预留）
 
 ### 核心能力一览
 
@@ -25,10 +25,10 @@
 | 工作区 | 你电脑上的一个或多个真实文件夹 + 一份工作区记忆；文件只在本机（本机执行器读写，服务器不存副本），支持多目录、单层浏览 / 预览 / 下载 / 在电脑上打开 / 应用内编辑；会话级权限档位（仅可查看 / 工作区内修改 / 完全权限）、图标与颜色、会话与自动化在侧栏按工作区归集、记忆隔离；事项清单（记下 → 去聊 → 勾掉）与模板复制（复制事项、记忆骨架、目录别名，不带文件/会话） |
 | 工具与沙盒 | 人在回路提问 + 联网搜索（Tavily / 博查 / SearXNG）+ 技能包 + MCP 工具 + OpenAPI 导入的 HTTP 工具 + 已发布工作流工具 + 本机浏览器；Docker 沙盒隔离执行命令与读写文件（输出实时回传）、后台进程查看与停止、脚本批量执行；产物与沙盒文件整屏预览台 |
 | 可视化工作流 | DSL 唯一真源 + StateGraph 执行引擎、13 类节点（含技能节点与 MCP 工具节点）、画布编辑器与节点级 trace 回放、版本发布 / 回滚、API 触发、Webhook 触发、cron 定时触发、终态回调、运行实时流；游客可跑只读工作流 |
-| 技能与市场 | 技能三层来源（内置 / 我的 / 工作区）、zip 与 URL 安装、平台与个人两级停用；团队内市场分发技能、应用模板与工作流，安装即复制并提示「有更新」 |
+| 技能与市场 | 技能三层来源（内置 / 我的 / 工作区）、zip 与 URL 安装、个人停用；团队内市场分发技能、应用模板与工作流，安装即复制并提示「有更新」 |
 | MCP 双向 | 接入任意外部 MCP Server（请求头凭据加密、JSON 粘贴导入、工具逐条命名、定时健康巡检）；智能体发布为 MCP 端点，平台级 MCP 入口对外提供四项工具；入站与出站调用统一审计 |
 | 多租户与企业身份 | 租户开通 / 启停 / 归档 / 恢复、成员归属、租户品牌、邀请注册、首登引导、自助开通申请；OIDC / SAML / SCIM / LDAP 认证源、组→角色 / 部门映射、目录同步与同步日志、服务账号 |
-| 安全与治理 | RBAC 菜单与接口两级管控、API Key（仅存哈希）、接口限流、数据按归属与租户隔离；内容安全输入 / 输出双闸；推理配额（平台 / 部门 / 成员三档）；哈希链审计、合规导出与链校验；会话治理（强制下线）与平台公告 |
+| 安全与治理 | RBAC 菜单与接口两级管控、API Key（仅存哈希）、接口限流、数据按归属与租户隔离；推理配额（平台 / 部门 / 成员三档）；哈希链审计、合规导出与链校验；会话治理（强制下线）与平台公告 |
 | 开放接入 | OpenAI 兼容 Chat Completions / Responses（真增量流式、usage、只读 function calling）、外部工作流 API 与 Webhook、智能体轮终 Webhook（HMAC 签名 + 持久重试）、MCP 端点、CORS 白名单 |
 | 运维保障 | 系统巡检（数据库 / Redis / 关键词引擎 / 磁盘 / 审计链 / 供应商 / 登录安全态势）、巡检历史与趋势、失败告警；定时任务运行状态与执行日志 |
 | 运营闭环 | 个人使用统计（Token 热力图 / 趋势 / 模型用量 / 用途分项 / 累计费用）、数据看板（无命中率、热门与无命中问题、差评回流、知识缺口补块、执行 Trace、采样池、费用）、检索量化评估（recall@k / MRR / 忠实度与相关性评分）、检索链路分步调试、智能体回归评测与发布门禁 |
@@ -43,11 +43,11 @@
   │  REST + SSE · /api/ai/*
   ▼
 问渠服务端（Java 17 · Spring Boot 3.5 · Spring AI）
-  ├─ 问答管线：混合检索 → 重排 → 上下文组装 → 流式生成 → 内容安全出口闸
+  ├─ 问答管线：混合检索 → 重排 → 上下文组装 → 流式生成
   ├─ 智能体编排：按需委派、计划模式、目标模式（证据核验 + 轮数上限）、人在回路审批
   ├─ 工作流引擎：DSL → StateGraph 翻译执行 + 节点级 trace
   ├─ 开放接入：OpenAI 兼容端点 · 外部工作流 API/Webhook · 智能体轮终回调 · MCP 双向
-  ├─ 企业治理：多租户 · OIDC/SAML/SCIM/LDAP · 服务账号 · 推理配额 · 哈希链审计 · 内容安全
+  ├─ 企业治理：多租户 · OIDC/SAML/SCIM/LDAP · 服务账号 · 推理配额 · 哈希链审计
   ├─ 沙盒调度 · 目标调度 · 定时调度 · 站内通知 · 邮件外发 · Web Push · 系统巡检 · 市场分发 · 配置中心 · RBAC · 限流
   │
   ├─ MySQL …… 业务数据（81 张 c_ai_* 表，Flyway 基线建表）
@@ -171,7 +171,7 @@ export AI_VAPID_PRIVATE_KEY=              # VAPID 私钥；多副本必须同一
 export AI_VAPID_SUBJECT=mailto:admin@wenqu.local  # 推送服务要求的联系标识
 ```
 
-> **行为参数与模型配置不走环境变量**：检索 / 解析 / 上下文 / 工具 / 联网搜索 / HTTP 工具 / 工作流工具 / 智能体回调与记忆 / 沙盒 / 记忆 / 定时任务 / 通知外发 / 内容安全 / 限流等 **141 项**行为参数统一在**系统设置页**维护（另有 55 个隐藏/部署项在 `defaults()` 登记，不进设置页）（`config-schema.json` → `c_ai_config`，保存即生效）；聊天 / 视觉 / 向量 / 重排 / OCR 等模型走**模型供应商**登记 + 引用绑定（API Key RSA 加密入库，**无全局兜底**——聊天模型缺失或引用无效会 fail-loud 引导选择）。`application.yml` 不存任何模型网关与密钥。Web Push 的 VAPID 私钥只从环境变量读取；SMTP 口令走设置页（RSA 加密入库、不回显明文）。
+> **行为参数与模型配置不走环境变量**：检索 / 解析 / 上下文 / 工具 / 联网搜索 / HTTP 工具 / 工作流工具 / 智能体回调与记忆 / 沙盒 / 记忆 / 定时任务 / 通知外发 / 限流等 **132 项**行为参数统一在**系统设置页**维护（其中 1 项个人专属项——知识块填充上限——在**个人设置 → 问答偏好**维护；另有 50 个隐藏/部署项在 `defaults()` 登记，不进设置页）（`config-schema.json` → `c_ai_config`，保存即生效）；聊天 / 视觉 / 向量 / 重排 / OCR 等模型走**模型供应商**登记 + 引用绑定（API Key RSA 加密入库，**无全局兜底**——聊天模型缺失或引用无效会 fail-loud 引导选择）。`application.yml` 不存任何模型网关与密钥。Web Push 的 VAPID 私钥只从环境变量读取；SMTP 口令走设置页（RSA 加密入库、不回显明文）。
 
 **本机执行器（工作区文件）**：工作区的文件在用户电脑上，需要在**那台电脑**上跑执行器：
 ```bash
@@ -284,7 +284,7 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 - **GraphRAG**：库级开关（默认关），解析时抽取「主体-关系-客体」三元组，检索命中后做一跳图扩展并按衰减分并入结果；图谱弹窗提供实体与三元组规模、构建与清空、力导向图（点实体看完整关系链与来源块溯源）
 - **混合检索**：Redis 向量 Top-K 与关键词召回并行，向量分归一化后按权重融合（双命中叠加加分、标题命中奖励）；**重排门 0.6 / 融合门 0.5** 分别作用于重排分与融合分，重排执行过后未经重排的候选不得经融合阈值进入上下文。低分全灭时默认保留唯一最高分块并显式标注「低置信」（`retrieval.lowConfidencePolicy=top1`），避免隐性问答被绝对门全部误杀；重排链路异常时不启用保底
 - **关键词引擎可切换**：默认 `mysql` LIKE 零依赖；切到 `meilisearch` 使用 jieba 中文分词与相关度打分，服务不可用自动降级回 MySQL；切换后需全量重建一次，写索引随解析 / 编辑 / 删除增量同步，并有定时精确对账
-- **上下文工程**：窗口与最大输出按模型声明，登记时校验最大输出小于「窗口 × 0.7」；知识块填充上限、单文档与单库配额可调；历史压缩、逐轮裁剪与 token 计数由框架与 jtokkit 承担
+- **上下文工程**：窗口与最大输出按模型声明，登记时校验最大输出小于「窗口 × 0.7」；知识块填充上限在个人设置可调（默认 8），单文档与单库配额为平台常量；历史压缩、逐轮裁剪与 token 计数由框架与 jtokkit 承担
 
 ### 智能体（`/agents`，全员开放）
 
@@ -294,11 +294,11 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 - **高级设置**（独立卡片，常用治理常显 + 专家选项折叠）：权限档位（仅可查看 / 工作区内修改 / 完全权限）、工具执行确认（跟随档位 / 自动执行 / 执行前确认 / 禁用）、记忆域（跟随用户级记忆 / 专属 / 叠加）、子智能体委派关系；专家选项内含单轮工具步数上限、检索重排强制关、工具黑名单、轮终回调地址与签名密钥。右侧「生效摘要」列出与系统默认不同的 N 处并可一键恢复跟随
 - **配置历史**：每次保存生成版本快照（字段级 diff），可查看历史并回滚到任一版本（回滚产生新版本，不改写历史）
 - **三级记忆域**：智能体可选用户级（与网页问答共用同一份长期记忆）、专属（写入该智能体的独立记忆根）、叠加（专属写入 + 用户全局记忆只读注入）
-- **HTTP 工具集**：粘贴 OpenAPI 3.x JSON / YAML 规格即可预览并勾选接口导入，一个智能体可挂多个工具集；鉴权支持 Bearer / 自定义请求头（值 RSA 加密入库、界面只回显掩码），超时与内网访问由平台开关控制；操作按「工具集名_操作名」进入对话工具表，调用过程与结果在本轮工具卡与过程面板可见
+- **HTTP 工具集**：粘贴 OpenAPI 3.x JSON / YAML 规格即可预览并勾选接口导入，一个智能体可挂多个工具集；鉴权支持 Bearer / 自定义请求头（值 RSA 加密入库、界面只回显掩码），超时为工具集未单独配置时的默认值；操作按「工具集名_操作名」进入对话工具表，调用过程与结果在本轮工具卡与过程面板可见
 - **工作流工具**：把已发布工作流挂载为对话工具，模型按自然语言选择调用；单智能体最多 8 条，工具名为 `wf_*`，运行结果回填对话并留运行记录；嵌套深度上限 2 层、委派分支不挂载，防止「智能体 → 工作流 → 智能体」递归
 - **轮终回调**：智能体配置回调地址后，每轮结束（完成 / 停止 / 失败）向宿主系统 POST 签名事件，载荷含轮次、会话、消息、正文截断、用量与产物，并带接入 API Key 标识便于按来源分流；投递先落台账、失败按 60s / 5min / 30min / 2h 退避重试，耗尽后通知智能体主人
 - **发布前评测门禁**：智能体可建评测套件与用例，跑回归后按「较基线」给出通过 / 低于门槛 / 有变更未评测等门禁状态；保存前检查会列出本次改动与门禁结论（详见「运营闭环与质控」）
-- **按需委派**：当前助手缺少资料而另一位助手的职责范围明显匹配时，模型把该问委派给对方查询——对方在自己的知识范围内执行一条子轮并交回结论与引用；被委派方有**检索要点**（只交资料，开销小）与**全循环**（按完整问答执行、可生成与交付文件）两种形态；顶栏状态条显示本轮派出几位、几位在跑与最长一支耗时，执行中可查看当前步骤
+- **按需委派**：当前助手缺少资料而另一位助手的职责范围明显匹配时，模型把该问委派给对方查询——对方在自己的知识范围内执行一条完整问答子轮并交回结论、文件与引用；顶栏状态条显示本轮派出几位、几位在跑与最长一支耗时，执行中可查看当前步骤
 - **资料收敛**：交回的资料按**本轮问题**再过一道相关度门与引用配额，未通过的条数如实告知模型；免登录分享页与被委派的助手本身不再向外委派
 - **公开发布**：智能体卡片可发布为 `/s/{token}` 免登录对话与 iframe 嵌入，游客侧可选开放对话模型、允许发图与上传附件；可另开 MCP 端点，停用或撤销立即失效。分享链接有**游客额度闸**：每条分享每日轮次上限、每访客每日轮次上限与每日 token 上限（跨副本 Redis 计数，默认 200 轮 / 20 轮 / 200 万 token），超限返回 429；Redis 不可用时 fail-closed
 - **定时执行**：按 cron（5 段 + 时区）或固定间隔自动执行，结果落进该任务的专属会话；调度中心先推进 `next_run_at` 再执行（单实例防重复），同任务串行防重叠，支持立即执行与执行记录
@@ -306,14 +306,14 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 
 ### 工具生态与沙盒执行
 
-- **工具开关**：问渠工具总开关 `tool.enabled` 默认**开**（基础工具开箱即用）；沙盒执行 `tool.sandbox.enabled` 与沙盒脚本 `tool.runcode.enabled` 默认**关**，联网搜索 `webSearch.enabled` 默认**关**，需管理员在系统设置「工具调用」显式开启。HTTP 工具、工作流工具、智能体轮终回调与智能体级记忆默认**开**（没有配置的智能体天然无工具可出）；低风险工具族不再各留平台开关，按智能体三态设置或平台停用名单收口
+- **工具开关**：问渠工具总开关 `tool.enabled` 默认**开**（基础工具开箱即用）；沙盒执行 `tool.sandbox.enabled` 与沙盒脚本 `tool.runcode.enabled` 默认**关**，联网搜索 `webSearch.enabled` 默认**关**，需管理员在系统设置「工具调用」显式开启。HTTP 工具与工作流工具无平台开关（总闸/内网开关已退役、内网地址恒允许调用），智能体轮终回调与智能体级记忆默认**开**（没有配置的智能体天然无工具可出）；低风险工具族不再各留平台开关，按智能体三态设置或平台停用名单收口
 - **工具族**：提问（人在回路）、知识库精确检索（命中块进引用流）、产物交付、技能、任务清单、联网搜索、沙盒执行、MCP 外部工具、HTTP 工具、工作流、本机浏览器共十一类，设置页提供只读工具名册
-- **HTTP 工具**：按智能体导入 OpenAPI 规格（`POST /api/ai/agent/http-tools/preview` 先预览再保存），一个工具集可含多个操作；地址、方法、参数与鉴权来自规格，鉴权值加密入库、运行期才解出；调用受超时、内网访问开关、权限档位与工具黑名单约束
+- **HTTP 工具**：按智能体导入 OpenAPI 规格（`POST /api/ai/agent/http-tools/preview` 先预览再保存），一个工具集可含多个操作；地址、方法、参数与鉴权来自规格，鉴权值加密入库、运行期才解出；调用受超时、权限档位与工具黑名单约束
 - **工作流工具**：智能体可把已发布工作流挂成对话工具（最多 8 条），运行走工作流引擎并受嵌套深度与分支闸约束；游客分享只挂「只读工作流」
 - **本机浏览器**：用户本机执行器在线时挂载 `localBrowser*` 工具，让模型在用户电脑上打开网址、读页面快照、点击、填写与截图，可访问 localhost 与内网；执行器离线时不挂本机族，此时仍可用云端 `browser_*`（只能看公网）；两者工具名不撞，执行器在线时云端浏览器让位，避免两套浏览器给出两种结论
 - **沙盒隔离执行**：模型在隔离 Linux 容器内使用命令执行、读文件、写文件、编辑文件、列目录、检索内容、按模式查找文件与交付产物（后两类由框架原生工具承担，界面统一给中文名），命令输出实时流式回传；作用域挂在会话上，同会话文件跨轮保留，空闲默认 60 分钟回收容器
 - **沙盒脚本**：开启后模型可写一段 Python 或 JavaScript 在沙盒中批量执行本轮已挂载的同类调用（如逐份文档汇总），只把打印结果带回对话；脚本内调用走同一套管控与配额，不是旁路，停止本轮时运行凭据当场作废
-- **权限档位**：仅可查看（只留读文件与列目录，命令执行与写入不进入工具表，外部工具逐项确认）、工作区内修改（可执行命令、在工作区目录内读写，越界写入被拒）、完全权限（不收束路径、不逐项确认；会话选择时需二次确认并标红）。管理员可设**平台上限**（高于上限的按上限执行并在过程面板说明被收紧）与**平台停用工具名单**；每个会话还可以在输入框左侧单独覆盖（DSH 的会话级 permission/preset）
+- **权限档位**：仅可查看（只留读文件与列目录，命令执行与写入不进入工具表，外部工具逐项确认）、工作区内修改（可执行命令、在工作区目录内读写，越界写入被拒）、完全权限（不收束路径、不逐项确认；会话选择时需二次确认并标红）。智能体未选档时按平台默认档 standard 执行；每个会话还可以在输入框左侧单独覆盖（DSH 的会话级 permission/preset）
 - **联网搜索**：服务商 Tavily / 博查 / 自建 SearXNG；结果与知识库来源共用 `[N]` 编号进引用体系，并按本轮问题重排过相关度门，低于阈值的不列为引用、不交给模型；重排不可用时明确提示本轮结果未经相关性过滤；单轮调用次数配额可配
 - **文件与产物**：对话右栏「沙盒文件」卡按目录树列出该会话沙盒目录，可打开、下载或存为产物；「我的产物」页（`/artifacts`）汇总助手主动交付的文件，支持预览、下载（签名 URL）、移动到其他工作区与删除；交付文件按扩展名白名单净化，单份 ≤1MB
 
@@ -369,8 +369,7 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 - **密钥安全**：模型 API Key、MCP 请求头、HTTP 工具凭据、认证源密钥 RSA 加密入库、不回显明文（编辑时留空即沿用已存值）；对外 API Key 与服务账号令牌只存 SHA-256 哈希 + 前 8 位前缀（明文仅签发时返回一次），权限固定为问答链路——即便持有 Key 也访问不了管理端点；图片、产物与工作区文件走 HMAC 签名 URL；RSA 密钥文件不入库、不打进构建产物
 - **运行防护**：问答 / 上传按用户（无身份按 IP）Redis 固定窗口限频，超限返回 429，Redis 不可用自动放行；上传魔数校验、产物文件名白名单净化、隐藏名称拒绝写入；路径逐段校验并按真实路径比对前缀；工作区有轮次正在执行时拒绝改名 / 移动 / 删除该目录内文件；管理操作 `[AUDIT]` 审计
 - **推理配额**：平台 / 部门 / 成员三档，按日或月设 token 与费用上限；可只约束用户主动发起的对话 / 子智能体 / 工作流调用，也可纳入辅助调用；支持「只告警不拦」与超额熔断，规则页直接显示本周期用量与进度；成员可在使用统计里自查受哪几条规则约束
-- **内容安全**：输入闸与输出闸两道，规则支持关键词 / 正则、命中后 `block` 拦截或 `warn` 只告警、按排序先命中先生效；出口闸在流式生成时压住尾部若干字符再放行，`block` 命中即截断并追加平台提示，`warn` 只落审计；可选外部检查服务（按输入 / 输出分别开关、单次送检字数）；规则清单支持试跑（不落库），坏正则在闸门状态里单独列出；平台总闸与外部服务在系统设置维护
-- **审计事件**：统一记录登录、配置、租户、成员、密钥、内容安全与运维动作；支持按时间 / 操作人 / 动作 / 关键字分页查询、跨租户审阅（仅平台级）、CSV 合规导出（最多 10 万行，头部带留存期与链校验结论）与哈希链校验；队列满导致的未入库条数会显式暴露，不静默丢审计
+- **审计事件**：统一记录登录、配置、租户、成员、密钥与运维动作；支持按时间 / 操作人 / 动作 / 关键字分页查询、跨租户审阅（仅平台级）、CSV 合规导出（最多 10 万行，头部带留存期与链校验结论）与哈希链校验；队列满导致的未入库条数会显式暴露，不静默丢审计
 - **侧栏可编辑**：菜单顺序与显隐由数据驱动，管理员可拖拽排序、逐条显示 / 隐藏并恢复默认；隐藏只影响入口显示，不改变权限判定
 
 ### 安全与运维（`/security`）
@@ -421,7 +420,7 @@ docker compose up -d          # 自包含：redis-stack + meilisearch + 内置 M
 4. **删除中断语义**：删除在任意实例生效，其他实例上的解析由 DB 兜底在检查点秒级停止清理
 5. **总并发核算**：解析并发为「副本数 × `parse.concurrency`」，embedding 与视觉模型调用是共享瓶颈
 6. **向量模型换绑为全实例串行**：Redis 分布式锁互斥，锁持有期间向量检索自动降级关键词路；任务每批续期锁，实例崩溃后锁 TTL 自愈
-7. **启动对账/巡检开关需收敛为单点**：多副本上线前把 `keyword.reconcileOnStartup` 置 false（启动对账收敛为单点）
+7. **启动巡检开关需收敛为单点**：多副本上线前把 `parse.recoverStuckOnStartup` 置 false（启动自愈收敛为单点）
 8. **密钥目录必须共享**：默认 `{AI_IMAGES_DIR}/secret`（`AI_SECRETS_DIR` 覆盖），敏感数据用其中 `rsa/vN.key` 的 PEM 私钥做 JWE 信封加密（密钥版本记在密文里）——各副本挂同一目录，否则 A 实例加密的 key 在 B 实例解不开；轮换＝放一把更高版本的 PEM 再重启，此后新写入用新版本；存量密文按自己记录的版本解密、不批量重封，故历史版本的密钥文件必须一直留着（无需停机）
 9. **会话状态与事件日志**：框架会话状态在 Redis；会话事件日志与代次轮换写在宿主 `~/.wenqu/agent-journal`，事件账本内容按会话导出为 JSONL 归档（`chat.sessionLogArchive.*`），归档目录须指向共享卷
 10. **目标模式与定时任务**：目标推进由 `GoalScheduler` 按租约抢占执行（DB 条件更新保证唯一执行权），定时任务调度中心先推进 `next_run_at` 再执行，多副本无需额外中间件
@@ -518,7 +517,6 @@ docker compose up -d          # 自包含：redis-stack + meilisearch + 内置 M
 | `GET /api/ai/ops/announcement`、`POST /announcement`、`DELETE /{id}`、`DELETE /{id}/purge`、`GET /announcement/active`、`POST /announcement/{id}/read` | 平台公告：管理清单 / 发布与更新 / 下线 / 彻底删除 / 当前生效公告 / 标记已读 |
 | `GET /api/ai/audit`、`GET /audit/export`、`GET /audit/verify` | 审计事件：分页查询 / CSV 合规导出 / 哈希链校验 |
 | `GET /api/ai/quota`、`POST /quota`、`DELETE /quota/{id}`、`GET /stats/quota` | 推理配额：规则清单（含本周期用量与进度）/ 新建或覆盖 / 删除 / 成员自查 |
-| `GET /api/ai/content-safety`、`/content-safety/status`、`POST /content-safety`、`DELETE /{id}`、`POST /dry-run` | 内容安全：规则清单 / 闸门状态 / 新建或修改 / 删除 / 试跑（不落库） |
 | `GET /api/ai/stats/usage`、`/stats/cost` | 个人使用统计聚合（统计卡 / 热力图 / 每日趋势 / 模型用量 / 用途分项）/ 费用口径（区间费用、按用户与按模型、未计价 tokens） |
 | `GET /api/ai/trace/list`、`/chat/{id}`、`/workflow/{runId}`、`/pool`、`/stats`、`POST /trace/pool/{id}/label\|dismiss`、`/sample/run` | 执行 Trace：列表与详情 / 采样池 / 采样统计 / 标注回流 / 忽略 / 立即采样 |
 | `GET /api/ai/user/list`、`/user/page`、`/preference`、`/settings`、`POST /user`、`PUT /user/{uid}`、`/{uid}/password`、`/preference`、`/profile`、`/email`、`/settings`、`DELETE /{uid}`、`/{uid}/oidc-binding` | 成员列表 / 成员分页（关键字·部门·状态库侧过滤，供万级名单的「会话治理」用）/ 个人偏好（默认模型、记忆开关）读取与保存 / 个人配置覆盖通道（当前无 personal 字段，端点保留）/ 新建用户 / 编辑成员与重置密码 / 保存资料与头像 / 设置本人通知邮箱 / 删除 / 解绑单点登录 |
@@ -588,8 +586,6 @@ ai-app:
     enabled: ${AI_RATELIMIT_ENABLED:true}
     chat-per-minute: ${AI_RATELIMIT_CHAT:10}
     upload-per-minute: ${AI_RATELIMIT_UPLOAD:10}
-  context:                                 # 上下文填充配额（窗口与最大输出按模型声明，无全局兜底；0.7 系数只用于登记校验）
-    max-context-hits: 8                    # 知识块填充上限
   images:
     dir: ${AI_IMAGES_DIR:./data}           # 数据根目录（源文件 / 图片 / 产物 / 密钥都在此）
     auth-enabled: ${AI_IMAGES_AUTH_ENABLED:true}
@@ -620,15 +616,15 @@ spring:
 
 > **模型配置无兜底**：`spring.ai.openai.*` 不配置；聊天 / 视觉 / 向量 / 重排 / OCR 模型引用解析不出时显式报错并引导到可修改的位置，不静默回落任何全局默认。记忆提炼复用本轮会话模型，不单独配置引用。
 
-### 系统设置（141 项行为参数）
+### 系统设置（132 项行为参数）
 
-设置项 schema 唯一定义源是 `src/main/resources/config-schema.json`：后端据此校验并下发前端渲染设置页，缺失即启动失败。字段按**层级**标注（必需 6 项 / 调优 60 项 / 工程排障 74 项），设置页默认折叠低层项；另有 55 项内部键只从 `ConfigService.defaults()` 读取、不进设置页（如 `chat.resumeEnabled`、`ratelimit.chatPerMinute`、`sandbox.provisionerUrl`、`share.guestDailyTurns`、`webpush.enabled` 等）。
+设置项 schema 唯一定义源是 `src/main/resources/config-schema.json`：后端据此校验并下发前端渲染设置页，缺失即启动失败。字段按**层级**标注（必需 1 项 / 调优 36 项 / 工程参数 61 项；其中 1 项为个人专属项，不下发管理端设置页、在**个人设置 → 问答偏好**维护），设置页默认全部铺开（工程参数可在面板头整体收起）；另有 50 项内部键只从 `ConfigService.defaults()` 读取、不进设置页（如 `chat.resumeEnabled`、`ratelimit.chatPerMinute`、`sandbox.provisionerUrl`、`share.guestDailyTurns`、`webpush.enabled` 等）。
 
 **归属分层**：
 
 | 归属 | 说明 |
 |------|------|
-| 平台全局 | 设置页 139 项全部（重排模型与窗口已下放知识库） |
+| 平台全局 | 设置页 132 项全部（重排模型与窗口、检索/解析参数均已下放知识库） |
 | 个人专属 | 另有个人在「个人设置」里的默认模型、记忆开关、通知静音 / 邮件偏好、通知邮箱（走 `c_ai_user`，不占设置页） |
 | 资源级绑定 | 知识库的向量 / 视觉 / OCR / 重排 / 图谱抽取模型与解析、检索参数；文档的图片理解模型；智能体的人设、能力开关、权限档位、工具确认模式、步数上限、目标模式开关、记忆域、HTTP 工具集、工作流工具、轮终回调；会话的模型覆盖；用户的 MCP 服务、技能与 Web Push 设备 |
 
@@ -642,22 +638,20 @@ spring:
 | `memory.*` | `flushThrottleMinutes`(10，0=每轮)、`maxMdTokens`(3000) | 长期记忆的提炼节拍与预算；是否自动提炼由个人设置在个人维度控制；合并时给模型的目标预算按上限的 2/3 推导，写入落盘再按上限强制裁剪；日账保留期沿用框架默认 90 天 |
 | `retrieval.*` | `vectorWeight`(0.6)、`keywordWeight`(0.4)、`vectorTopK`(15)、`vecThreshold`(0.3)、`keywordLimit`(20)、`minContextScore`(0.6 重排门)、`minFusionScore`(0.5 融合门)、`lowConfidencePolicy`(top1)、`aclTopKSupplant`(true) | 保存即生效；同一组参数也可在知识库编辑里逐库稀疏覆盖；低分全灭时 `top1` 保底唯一最高分块，`off` 关闭保底 |
 | `rerank.*` | `timeoutMillis`(5000 生效超时)、`failCooldownMs`(60000 失败冷却) 为内部键 | 重排平台层已退役：重排模型与窗口归知识库检索设置（选了才重排，多库按命中收敛）；`rerank.enabled` 仅剩智能体级「强制关」；未绑模型按融合分排序并提示，不阻塞问答 |
-| `keyword.*` | `engine`(mysql)、`baseUrl`、`apiKey`、`reconcileIntervalMs`(1h)、`reconcileOnStartup`(false) | 保存即生效；切换引擎需全量重建一次索引 |
-| `context.*` | `maxContextHits`(8)、`maxBlocksPerDoc`(3)、`maxBlocksPerKb`(4) | 保存即生效；历史压缩由框架按模型窗口触发，无独立开关 |
+| `keyword.*` | `engine`(mysql)、`baseUrl`、`apiKey` | 保存即生效；切换引擎需全量重建一次索引；索引对账为内置周期任务（1h），无开关 |
+| `context.*` | —（`maxContextHits` 已下放个人设置 → 问答偏好，默认 8；`maxBlocksPerDoc`(3)、`maxBlocksPerKb`(4) 为平台常量） | 历史压缩由框架按模型窗口触发，无独立开关 |
 | `chunk.*` / `parse.*` / `upload.*` | `maxSize`(800)、`overlap`(100)、`maxChunks`(3000)、`maxImages`(100)、`structural`(true)、`structuralRatio`(0.8)、`headingDepth`(4)、`qaEnabled`(true)、`qaPerChunk`(2)、`childEnabled`(true)、`childSize`(400)、`ocrEngine`(none)、`ocrMinText`(20)、`ocrDpi`(200)、`concurrency`(3)、`queue.capacity`(500)、`taskTimeoutMs`(20min)、`retryMaxAttempts`(3)、`upload.maxFileSizeMB`(200) | **需重解析或新上传才生效**（解析参数只影响之后的解析）；`ocrEngine` 可选 none / vision / pp_structure_v3 / mineru |
 | `vision.*` | `prompt`、`concurrency`(2)、`userImageConcurrency`(2)、`timeoutMillis`(30000)、`retryCount`(1)、`descCacheVersion`("1")、`descCacheTtlDays`(180) | 保存即生效（`timeoutMillis` 需重启）；视觉模型按知识库绑定，无全局键；未绑定模型的知识库解析时跳过图片描述 |
 | `images.*` | `maxWidth`(1280)、`quality`(0.9)、`authEnabled`(true)、`authExpireSeconds`(3600)、`chatCleanupIntervalMs`(1d)、`chatRetentionMillis`(7d) | 保存即生效 |
-| `tool.*` | `enabled`(true)、`knowledgeRetrieval.maxHits`(5)、`sandbox.enabled`(false)、`runcode.enabled`(false)、`runcode.maxSubCalls`(50)、`maxParallel`(8)、`timeoutSeconds`(120)、`subCallTimeoutMs`(60000)、`spillCleanupIntervalMs`(1h)、`spillMaxMbPerUser`(200)、`deny`（平台停用工具名单） | 保存即生效。知识检索 / 产物交付 / 内置 / 联网搜索 / 任务清单随总闸启用，由智能体三态或停用名单限定；工具大输出超上限时整份留存供读回，按人配额 |
-| `agent.*` | `permissionPreset.default`(standard)、`permissionPreset.max`(autonomous)、`maxToolSteps`(15，0=不限制)、`consultMaxPerTurn`(3)、`consultTimeoutMs`(300000)、`subagentMode`(digest)、`versionKeep`(20) | 保存即生效；档位取值 research / standard / autonomous，平台上限之下的智能体按上限执行 |
-| `httpTool.*` | `enabled`(true)、`timeoutMs`(10000)、`allowPrivateNetwork`(true) | HTTP 工具族总闸（仍需 `tool.enabled`）；超时为工具集未单独配置时的默认值；公网多租户部署建议关闭内网访问 |
-| `workflowTool.*` | `enabled`(true) | 工作流工具族总闸（仍需 `tool.enabled`）；没有配置工作流的智能体天然无工具可出 |
+| `tool.*` | `enabled`(true)、`knowledgeRetrieval.maxHits`(5)、`sandbox.enabled`(false)、`runcode.enabled`(false)、`runcode.maxSubCalls`(50)、`maxParallel`(8)、`timeoutSeconds`(120)、`subCallTimeoutMs`(60000)、`spillCleanupIntervalMs`(1h)、`spillMaxMbPerUser`(200) | 保存即生效。知识检索 / 产物交付 / 内置 / 联网搜索 / 任务清单随总闸启用，由智能体三态限定；工具大输出超上限时整份留存供读回，按人配额 |
+| `agent.*` | `maxToolSteps`(15，0=不限制)、`consultMaxPerTurn`(3)、`consultTimeoutMs`(300000)、`subagentMode`(digest)、`versionKeep`(20) | 保存即生效；权限档位取值 research / standard / autonomous（未选档按 standard） |
+| `httpTool.*` | `timeoutMs`(10000) | 无总闸（`httpTool.enabled` 已退役，工具族只受 `tool.enabled` 制约、内网地址恒允许调用）；超时为工具集未单独配置时的默认值 |
 | `agentWebhook.*` | `retryMax`(4) | 智能体轮终回调首发失败后的最大重试次数（退避 60s/5min/30min/2h；0=不重试） |
 | `apiOpen.*` | `allowedOrigins`("") | OpenAI 兼容端点与开放 API 的 CORS 白名单（逗号分隔；空=不放开跨域） |
 | `notify.mail.*` | `enabled`(false)、`host`、`port`(587)、`security`(starttls)、`username`、`smtpPassword`(敏感)、`from`、`fromName`(问渠)、`types`(审批 / 提问 / 计划 / 工作流 / 租户申请 / 额度)、`minIntervalMs`(5min 聚合窗口)、`retryDelaysSeconds`(60,300,900)、`webBaseUrl` | 保存即生效；口令 RSA 加密；总闸关闭时全站零外发，站内通知与 Web Push 不受影响 |
-| `contentSafety.*` | `enabled`(true)、`provider`(local)、`baseUrl`、`apiKey`(敏感)、`timeoutMs`(3000)、`remoteOnInput`(true)、`remoteOnOutput`(false)、`remoteCheckChars`(400)、`outputHoldChars`(24)、`scanThinking`(true)、`maxScanChars`(20000)、`inputRefusal`、`outputSuffix` | 输入 / 输出双闸与可选外部检查服务；出口流式按 `outputHoldChars` 压尾再放行；规则清单在「权限管理 → 内容安全」维护 |
 | `ops.*` | `checkupIntervalMs`、`checkupRetentionDays`、`checkupAlertEnabled` | 系统巡检节拍、报告保留期与失败告警；手动巡检不受间隔限制 |
 | `share.guest*`（内部键） | `share.guestDailyTurns`(200)、`share.guestDailyTurnsPerVisitor`(20)、`share.guestDailyTokens`(200 万) | 分享链接的游客轮次与 token 日额度，跨副本 Redis 计数；0=关闭该层 |
-| `webSearch.*` | `enabled`(false)、`provider`(tavily)、`apiKey`(敏感)、`maxResults`(5)、`maxCallsPerTurn`(2)、`requireApproval`(true)、`baseUrl`、`timeoutMs`(8000)、`snippetChars`(600) | 服务商 tavily / bocha / generic（自建 SearXNG）；保存即生效 |
+| `webSearch.*` | `enabled`(false)、`provider`(tavily)、`apiKey`(敏感)、`maxResults`(5)、`maxCallsPerTurn`(2)、`baseUrl`、`timeoutMs`(8000)、`snippetChars`(600) | 服务商 tavily / bocha / generic（自建 SearXNG）；保存即生效 |
 | `skill.*` | `disabled`（平台停用清单，从当前可用技能多选）、`remoteAllowedHosts`（URL 安装允许的域名，逗号分隔；空=关闭远程安装） | 个人停用在「智能体 → 技能」自助；正文读取上限 20000 字为平台常量；技能目录 `WENQU_SKILLS_USERS_DIR` |
 | `chat.goal.*`（深度执行调度参数，代码常量） | 自动推进轮数上限恒 20（`GoalSettings.MAX_ROUNDS`）；其余旋钮值固定在 `ConfigDefaults.GOAL_*`：`nextRoundDelayMs`(2000)、`maxCompletionChecks`(不限)、`maxVerifyFailures`(不限)、`maxRetries`(2)、`maxRecoveries`(3)、`retryBaseSeconds`(15)、`retryMaxSeconds`(120)、`softBudgetRatio`(0.8)、`claimBatch`(5)、`workers`(4)、`tickMs`(2000)、`leaseSeconds`(300)、`heartbeatStaleSeconds`(90)、`staleGraceSeconds`(90)、`verifyLocalFiles`(false)、`initialTickDelayMs`(1000) | 深度执行设置面板已整体退役（2026-11-14）：Token/时长/工具调用三项硬预算机制随设置一并下线；软阈值决定轮数预算用到几成开始在提示里要求收敛；租约与心跳参数由 `GoalScheduler` 用于多副本抢占执行权 |
 | `workflow.*` | `maxSteps`(50)、`runTimeoutSeconds`(600)、`subagentTimeoutMs`(180000)、`maxConcurrentRuns`(4)、`runQueueCapacity`(50)、`runLogRetentionDays`(30)、`runCleanupIntervalMs`(1d)、`approvalReapIntervalMs`(60s)、`scheduleScanIntervalMs`(30s) | 保存即生效；`maxConcurrentRuns` 与 `runQueueCapacity` 需重启 |
@@ -673,11 +667,11 @@ spring:
 | `mcp.*` | `server.enabled`(**false**)、`server.timeoutMs`(50000)、`server.allowedOrigins`("")、`patrolIntervalMs`(5min) | `server.allowedOrigins` 为空时仅允许本机回环（Origin 校验防 DNS rebinding）；`server.timeoutMs` 压在多数 MCP 客户端自身的 60 秒请求超时之下；`patrolIntervalMs` 为连接健康巡检间隔（0=关闭） |
 | `chat.agentscope*` / `chat.sessionLogArchive.*`（调试设置） | `agentscopeMaxIters`(12，0=不限制)、`agentscopeStateDir`(`user-data/agentscope`)、`agentscopeRedisPrefix`(`agentscope:session:`)、`sessionLogArchive.enabled`(true)、`.keepDays`(90)、`agentscopeJournalRotateEvents`(12000)、`agentscopeJournalRotateKeepDays`(30) | 框架引擎推理步数上限、状态目录与 Redis 前缀、会话事件日志归档与换代；多副本必须把状态与归档目录指向共享卷 |
 
-### 设置页导航（18 个配置面板，141 项参数）
+### 设置页导航（17 个配置面板，132 项参数）
 
-**对话模型**（24）· **检索设置（RAG）**（4 页签：检索 15 / 上下文 3 / 文档解析 19 / 图片描述 8）· **工具调用**（3 页签：总开关与子工具 19 / 联网搜索 10 / 技能 2，底部附只读工具与技能名册）· **HTTP 工具**（3）· **工作流工具**（1）· **智能体轮终回调**（1）· **接口限流**（1）· **定时任务**（76，4 页签：参数配置 / 运行状态 / 执行日志 / 索引与健康）· **通知外发（邮件）**（12）· **沙盒**（9）· **MCP 服务（双向）**（5）· **调试设置**（11）**内容安全**（13）。
+**对话模型**（7）· **检索设置（RAG）**（3 页签：关键词引擎 3 / 上下文 1 / 解析与图片 2；检索与解析参数已归各知识库的检索/解析设置，全局默认值层退役）· **工具调用**（2 页签：总开关 1 / 联网搜索 13，底部附只读工具名册；沙盒相关设置归「沙盒」面板）· **HTTP 工具**（3）· **工作流工具**（1）· **智能体轮终回调**（1）· **接口限流**（1）· **定时任务**（76，4 页签：参数配置 / 运行状态 / 执行日志 / 索引与健康）· **通知外发（邮件）**（12）· **沙盒**（9）· **MCP 服务（双向）**（5）· **调试设置**（11）。（深度执行面板已整体退役：四项预算旋钮下线，自动推进轮数上限恒为代码常量 20）
 
-`webSearch`、`skills` 与 RAG 链路的 `context`、`chunk`、`vision` 五个面板并入宿主面板页签，导航不单列；页头「保存配置」一次性提交全部改动，支持参数搜索与「恢复本组默认」（定时任务、调试设置两组不提供整组恢复）。模型不在设置页登记——统一走「智能体 → 模型供应商」；深度思考也不设全局面板，思考强度在对话页按模型选择。内容安全规则、企业认证源与服务账号在「权限管理」各页签维护；智能体评测在「智能体 → 评测」；审计事件与系统巡检在「安全与运维」。
+`webSearch`、`skills` 与 RAG 链路的 `context`、`chunk` 三个面板并入宿主面板页签，导航不单列；页头「保存配置」一次性提交全部改动，支持参数搜索与「恢复本组默认」（定时任务、调试设置两组不提供整组恢复）。模型不在设置页登记——统一走「智能体 → 模型供应商」；深度思考也不设全局面板，思考强度在对话页按模型选择。企业认证源与服务账号在「权限管理」各页签维护；智能体评测在「智能体 → 评测」；审计事件与系统巡检在「安全与运维」。
 
 ## 后台定时任务
 
@@ -689,7 +683,7 @@ spring:
 | 聊天图片目录清理 | `images.chatCleanupIntervalMs`(1d) | 删除超过 `images.chatRetentionMillis`（7 天）的用户聊天图片 |
 | 聊天附件超期清理 | `chat.uploadCleanupIntervalMs`(1h) | 删除超过 `chat.uploadRetentionHours`（24 小时，0=不清理）的会话附件 |
 | 工具外溢原文清理 | `tool.spillCleanupIntervalMs`(1h) | 删除超过 `cleanup.toolSpillRetentionDays`（7 天，0=不清理）的工具大输出留存原文 |
-| 检索评估自动体检 | `eval.autoIntervalMs`(1d) | 按线上参数跑评估集、落一条 scheduled 运行历史并与上期对比，下滑写预警结论供看板红绿灯；灰度应用观察期内下滑自动回滚（观察期 `eval.applyObserveHours`，默认 24h）；评估集为空自动跳过 |
+| 检索评估自动体检 | `eval.autoIntervalMs`(1d) | 按线上参数跑评估集、落一条 scheduled 运行历史并与上期对比，下滑写预警结论供看板红绿灯；评估集为空自动跳过 |
 | 系统巡检 | `ops.checkupIntervalMs` | 按节拍全面体检并把报告落库；失败时给管理员发站内通知，手动巡检不受间隔限制 |
 | 巡检报告清理 | `ops.checkupRetentionDays` | 删除超过保留期的巡检历史报告（0=永久保留） |
 | 智能体回调重试 | 内置节拍（退避 60s / 5min / 30min / 2h） | 扫描到期的轮终 Webhook 投递行并补发；耗尽后通知智能体主人 |
@@ -742,14 +736,14 @@ WenQu/                               # 工作区根（git 仓库名 WenQu；本�
 │   ├── schedule/                    # ScheduleCenter（周期任务注册、运行状态快照、执行日志）
 │   ├── startup/                     # RbacSeedRunner（菜单与角色幂等补齐）· ApiEndpointScanner（接口清单扫描）·
 │   │                                #   MarketBuiltinSeeder（内置工作流模板）· ManualSeedService（官方手册同步）·
-│   │                                #   ContentSafetySeedRunner（内容安全首批规则）· BrowserCapabilitySeeder（本机浏览器助手）
+│   │                                #   BrowserCapabilitySeeder（本机浏览器助手）
 │   └── util/                        # TokenCounter（jtokkit BPE）· ImageCompressor · RequestUser（登录态）·
 │                                    #   OutboundWebhook（出站投递唯一出口）· TenantContext（租户作用域）
 ├── config/
 │   └── application-local.yml        # 本地开发私有配置（含密钥与数据目录，.gitignore 忽略，不打进构建产物）
 ├── src/main/resources/
 │   ├── application.yml              # 配置（关键密钥无默认值：DB_PASSWORD 缺失 fail-fast）
-│   ├── config-schema.json           # 设置项 schema 唯一定义源（18 面板 / 141 字段，缺失即启动失败）
+│   ├── config-schema.json           # 设置项 schema 唯一定义源（17 面板 / 132 字段，缺失即启动失败）
 │   ├── db/migration/V1__baseline.sql # Flyway V1 基线（空库首次启动执行一次，之后只追加 V2+）
 │   ├── manual/*.md                  # 《问渠使用手册》16 篇（随包分发，同步后成为官方内置知识库）
 │   └── skills/*/SKILL.md            # 内置技能
@@ -786,7 +780,7 @@ WenQu/                               # 工作区根（git 仓库名 WenQu；本�
                                      #   SkillsPage / McpPanel / WorkflowPanel / FlowEditor / WorkflowRunHistory /
                                      #   ScheduledPanel / MarketplacePage / ArtifactsPage / StatsPage / NotificationCenter /
                                      #   ProfilePage / MembersPage / TenantsPage / SecurityOpsPage（巡检 / 会话治理 / 公告 / 审计）/
-                                     #   IdentityProvidersPage / ServiceAccountsPage / PermissionsPage（含内容安全等页签）/ DashboardPage /
+                                     #   IdentityProvidersPage / ServiceAccountsPage / PermissionsPage/ DashboardPage /
                                      #   EvaluationPage / AgentEvalPage（智能体评测）/ SettingsPage / HelpPage / ApiDocsPage /
                                      #   ShareChatPage / SharedSessionPage / JoinPage / TenantApplyPage /
                                      #   LoginPage / OidcCallbackPage / PairDevicePage / HttpErrorPage
@@ -848,7 +842,6 @@ curl -X POST http://localhost:8090/api/ai/v1/chat/completions \
 
 **默认关闭项（安全边界）**
 - `tool.sandbox.enabled` / `tool.runcode.enabled` / `webSearch.enabled` / `mcp.server.enabled` / `notify.mail.enabled` / `webpush.enabled` 默认关闭，需管理员显式开启；**问渠工具总开关 `tool.enabled` 默认开**，基础工具开箱即用；HTTP 工具、工作流工具、智能体轮终回调、智能体级记忆默认开（未配置的智能体天然无能力可出）
-- **内容安全总闸默认开**，按租户各登记两条「个人信息类」只告警示例规则（不预置拦截词表）；拦什么由管理员在「权限管理 → 内容安全」决定，关闭总闸即完全不判
 - 智能体无全局启用开关（全员默认可用）；MCP 客户端无全局开关（每人登记自己的 Server）；MCP 健康巡检默认开（`mcp.patrolIntervalMs` 5 分钟）
 - 高风险工具的范围由**权限档位**（仅可查看 / 工作区内修改 / 完全权限）与逐工具黑名单收敛，管理员另可设平台上限与平台停用名单
 - 沙盒 token：应用侧环境变量 `SANDBOX_PROVISIONER_TOKEN` 须与 provisioner 侧一致且 ≥32 字符（不足 fail-closed 拒绝启用）；token 校验推迟到首次使用，未启用沙盒的部署不因缺 token 起不来
@@ -857,7 +850,7 @@ curl -X POST http://localhost:8090/api/ai/v1/chat/completions \
 
 **配置生效时机**
 - 需重解析或新上传才生效：`chunk.maxSize` / `headingDepth` / `structural` / `overlap` 等解析参数（检索、上下文类参数均保存即生效）
-- `vision.timeoutMillis` 需重启（视觉客户端启动时构建）；`workflow.maxConcurrentRuns`、`workflow.runQueueCapacity`、`chat.goal.workers` 需重启
+- `vision.timeoutMillis` 需重启（视觉客户端启动时构建）；`workflow.maxConcurrentRuns`、`workflow.runQueueCapacity`、`chat.goal.workers`（代码常量）需重启
 - 换绑**向量模型**必然触发该库全量重嵌入（与知识块数成正比），期间向量检索降级关键词路；全量重嵌入只在知识库编辑里换模型时按库触发，无平台级重嵌入口
 - 停用或删除供应商 / 模型不会自动改动选过它的地方：停用成功的当场列出仍在引用的位置并逐条给「去修改」入口，对话页与个人设置会把不可用的选项在原地标红并写明原因
 
