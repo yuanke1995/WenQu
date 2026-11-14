@@ -178,7 +178,7 @@ public class ProjectFileService {
         String ext = PreviewTypes.extOf(str(e.get("name")));
         e.put("preview", PreviewTypes.kindOf(ext));
         if (PreviewTypes.viewContentType(ext) != null && PreviewTypes.viewCapError(ext, size) == null) {
-            e.put("viewUrl", imageUrlSigner.signUrlRequired(VIEW_PATH_PREFIX + encodeViewToken(projectId, virtualPath)));
+            e.put("viewUrl", imageUrlSigner.signUrl(VIEW_PATH_PREFIX + encodeViewToken(projectId, virtualPath)));
         }
     }
 
@@ -187,7 +187,7 @@ public class ProjectFileService {
         String ext = PreviewTypes.extOf(str(e.get("name")));
         e.put("preview", PreviewTypes.kindOf(ext));
         if (PreviewTypes.viewContentType(ext) != null && PreviewTypes.viewCapError(ext, size) == null) {
-            e.put("viewUrl", imageUrlSigner.signUrlRequired(
+            e.put("viewUrl", imageUrlSigner.signUrl(
                     VIEW_PATH_PREFIX + encodeSessionViewToken(sessionId, virtualPath)));
         }
     }
@@ -713,7 +713,7 @@ public class ProjectFileService {
         m.put("size", size);
         m.put("mtime", lastModifiedMillis(file));
         if (PreviewTypes.viewContentType(ext) != null && PreviewTypes.viewCapError(ext, size) == null) {
-            m.put("viewUrl", imageUrlSigner.signUrlRequired(
+            m.put("viewUrl", imageUrlSigner.signUrl(
                     VIEW_PATH_PREFIX + encodeSessionViewToken(sessionId, rel)));
         }
         return m;

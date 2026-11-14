@@ -1,6 +1,5 @@
 package com.wenqu.ai.service;
 
-import com.wenqu.ai.config.AppProperties;
 import com.wenqu.ai.config.ConfigDefaults;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -17,7 +16,7 @@ import java.util.Map;
 
 /**
  * 图片访问签名（HMAC-SHA256）
- * 生产环境（AI_IMAGES_AUTH_ENABLED=true）下图片 URL 带 expire + sig，
+ * 图片 URL 一律带 expire + sig（鉴权恒开，代码内置无开关），
  * 拦截器校验签名与有效期，防止未授权枚举下载文档截图
  *
  * @author yuanke
@@ -28,19 +27,10 @@ public class ImageUrlSigner {
 
     private static final String HMAC_ALGO = "HmacSHA256";
 
-    private final AppProperties properties;
     private final AuthService authService;
 
-    public ImageUrlSigner(AppProperties properties, AuthService authService) {
-        this.properties = properties;
+    public ImageUrlSigner(AuthService authService) {
         this.authService = authService;
-    }
-
-    /**
-     * 是否启用图片鉴权
-     */
-    public boolean isEnabled() {
-        return properties.getImages().isAuthEnabled();
     }
 
     /**
@@ -54,19 +44,6 @@ public class ImageUrlSigner {
      * 于是永远验的是那个已过期的旧签名，卡片依旧 401。故先剥掉 {@code expire}/{@code sig} 再签。
      */
     public String signUrl(String url) {
-        if (!isEnabled()) {
-            return url;
-        }
-        return doSignUrl(url);
-    }
-
-    /**
-     * 与 {@link #signUrl} 同一套签名，但<b>不受 {@code images.authEnabled} 开关影响</b>——总是签出 {@code ?expire=&sig=}。
-     * <p>给「没有有效签名就一律不读」的端点用（工作区文件预览）。这类内容比图片/产物更敏感：它落在整个
-     * 沙盒用户目录下，开关一关就变成可按路径试探的公开读文件口子。{@link #verify} 本来就不看开关，
-     * 所以签发侧也必须有一条不看开关的路，否则关掉开关时这条端点要么裸奔、要么永远 401。
-     */
-    public String signUrlRequired(String url) {
         return doSignUrl(url);
     }
 
@@ -104,12 +81,12 @@ public class ImageUrlSigner {
     }
 
     /**
-     * 批量签名图片 URL 列表（保留原始顺序；未开启鉴权时原样返回）。
+     * 批量签名图片 URL 列表（保留原始顺序）。
      * 用于 SSE 下发/接口响应等"展示层"路径——库里与缓存中始终存原始 URL，
      * 每次响应时重新签名，避免签名过期。
      */
     public List<String> signUrls(List<String> urls) {
-        if (!isEnabled() || urls == null || urls.isEmpty()) {
+        if (urls == null || urls.isEmpty()) {
             return urls;
         }
         return urls.stream().map(this::signUrl).toList();
@@ -120,7 +97,7 @@ public class ImageUrlSigner {
      * 引用弹窗直接 <img> 加载这些 URL，未签名会被鉴权拦截返回 401。
      */
     public List<Map<String, Object>> signSourceImages(List<Map<String, Object>> sources) {
-        if (!isEnabled() || sources == null || sources.isEmpty()) {
+        if (sources == null || sources.isEmpty()) {
             return sources;
         }
         List<Map<String, Object>> out = new ArrayList<>(sources.size());
@@ -146,7 +123,7 @@ public class ImageUrlSigner {
      * <p>入参必须是响应副本（{@code SessionService} 每次查询新建 Map），原地改不会污染缓存。</p>
      */
     public void signMessageMedia(List<Map<String, Object>> messages) {
-        if (!isEnabled() || messages == null || messages.isEmpty()) {
+        if (messages == null || messages.isEmpty()) {
             return;
         }
         for (Map<String, Object> msg : messages) {

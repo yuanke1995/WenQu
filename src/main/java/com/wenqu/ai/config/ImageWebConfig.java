@@ -17,7 +17,7 @@ import java.nio.file.Paths;
 /**
  * 文档图片静态资源映射 + 鉴权拦截
  * 将 /images/** 映射到本地 data/images 目录（配合 context-path=/ai，实际访问 /ai/images/**）
- * 开启 AI_IMAGES_AUTH_ENABLED=true 时校验签名 URL
+ * 图片鉴权恒开，校验签名 URL
  *
  * @author yuanke
  */
@@ -92,7 +92,7 @@ public class ImageWebConfig implements WebMvcConfigurer {
         registry.addInterceptor(new ImageAuthInterceptor(imageUrlSigner))
                 .addPathPatterns("/images/**", "/artifacts/**")
                 // 用户头像是公开展示图（不可猜 UUID，等同聊天图片的暴露级别），从图片鉴权拦截中排除：
-                // 开启 AI_IMAGES_AUTH_ENABLED 时 <img> 不带签名也能加载，避免头像 401
+                // <img> 不带签名也能加载，避免头像 401
                 .excludePathPatterns("/images/avatar/**");
         // 鉴权之后再打隔离头：签名不过根本到不了响应，头也就没必要发
         // 工作区文件的预览地址（/project-files/**，签名校验在控制器里）与产物同一待遇：

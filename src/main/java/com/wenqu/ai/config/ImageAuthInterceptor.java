@@ -9,8 +9,7 @@ import org.springframework.web.servlet.HandlerInterceptor;
 
 /**
  * 图片静态资源鉴权拦截器
- * 生产开启图片鉴权（AI_IMAGES_AUTH_ENABLED=true）时，校验请求中的 expire + sig 签名；
- * 未开启时直接放行（本地开发）
+ * 图片鉴权恒开（代码内置无开关），校验请求中的 expire + sig 签名
  *
  * @author yuanke
  */
@@ -22,9 +21,6 @@ public class ImageAuthInterceptor implements HandlerInterceptor {
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
-        if (!signer.isEnabled()) {
-            return true;
-        }
         String path = request.getRequestURI();
         String expireStr = request.getParameter("expire");
         String sig = request.getParameter("sig");

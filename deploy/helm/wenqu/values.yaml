@@ -94,7 +94,6 @@ config:
   ocrMinerUUri: ""
   ocrMinerUBackend: pipeline
   ocrTimeoutMs: "600000"
-  imagesAuthEnabled: "true"
 
 secrets:
   # 生产建议二选一：create=false + existingSecret 指向外部管理的 Secret（SealedSecret/ESO/Vault Agent）

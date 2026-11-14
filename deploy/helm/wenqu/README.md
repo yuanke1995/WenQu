@@ -55,8 +55,8 @@ helm history wenqu -n wenqu && helm rollback wenqu <REVISION> -n wenqu
 3. **SSE 不被缓冲、不被 60s 读超时掐断**：ingress 注解里已写好；自己再套网关时照抄
    `proxy-buffering=off` 与一小时的读写超时。
 
-多副本上线前把两个启动自愈内部键置 false（`keyword.reconcileOnStartup`、`parse.recoverStuckOnStartup`），
-让启动对账收敛为单点，见手册「多副本部署要求」。
+多副本上线前把启动自愈内部键 `parse.recoverStuckOnStartup` 置 false，
+让启动自愈收敛为单点，见手册「多副本部署要求」。
 
 ## 备份与按租户恢复
 
