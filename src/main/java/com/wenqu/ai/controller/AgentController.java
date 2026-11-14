@@ -104,8 +104,7 @@ public class AgentController {
         return ResultJson.ok(agentService.consultable());
     }
 
-    @Operation(summary = "可委派的子智能体", description = "只返回 is_subagent=1 的智能体（id/name/description/"
-            + "subagentMode 这一支实际怎么跑 + subagentModeInherited 是否跟随平台默认），供主智能体配置页勾选允许委派的对象")
+    @Operation(summary = "可委派的子智能体", description = "只返回 is_subagent=1 的智能体（id/name/description），供主智能体配置页勾选允许委派的对象")
     @Permission("agent:read")
     @GetMapping("/sub")
     public ResultJson subAgents() {
@@ -145,11 +144,11 @@ public class AgentController {
      * 权限档位名册（智能体配置页的档位选项从这里来）。
      * <p>与 {@code /tool-catalog} 同一条访问控制：路径落在 {@code SecurityConfig.isAgentSelfEndpoint}
      * 已放行的「一段路径」分支里，不新增规则。
-     * <p>为什么由后端下发而不是前端写死三个档位：档位列表要随平台上限变化（管理员收紧后哪些档可选），
-     * 前端抄一份的话「管理员禁了全自主、配置页还让人选」就会出现选了不生效且没有任何提示的界面。
+     * <p>为什么由后端下发而不是前端写死三个档位：名册要带审批建议值与「跟随平台默认」的点名，
+     * 前端抄一份就会出现两套回落口径。
      */
     @Operation(summary = "权限档位名册", description = "返回可选档位：code/label/summary/沙盒执行档/审批建议值，"
-            + "以及该档当前是否可用（available）与被平台上限禁掉的原因（unavailableReason）")
+            + "以及 platformDefault（未选档时实际生效的那一档）")
     @Permission("agent:read")
     @GetMapping("/permission-presets")
     public ResultJson permissionPresets() {
@@ -178,8 +177,7 @@ public class AgentController {
             + "permissionPreset(权限档位 research/standard/autonomous，省略=跟随平台默认档)/"
             + "toolDeny(按名禁用的工具，逗号分隔；省略或空=不禁用)/"
             + "skills/mcps/builtinTools(具体项范围：省略=跟随全局、空串=不使用、逗号串=仅这些)/"
-            + "isSubagent(1=子智能体)/subAgentIds(主智能体可委派的子智能体ID)/"
-            + "subagentMode(被委派时怎么跑 digest=检索要点 full=全循环，省略=跟随平台默认 agent.subagentMode)/isDefault；创建者=当前用户")
+            + "isSubagent(1=子智能体)/subAgentIds(主智能体可委派的子智能体ID)/isDefault；创建者=当前用户")
     @Permission("agent:write")
     @PostMapping
     public ResultJson create(@RequestBody Map<String, Object> body) {
@@ -192,7 +190,6 @@ public class AgentController {
     @PutMapping("/{id}")
     public ResultJson update(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
         if (!canManage(agentService.get(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");
-        agentEvalService.assertSaveAllowed(id);
         return ResultJson.ok(agentService.update(id, body));
     }
 
@@ -313,7 +310,6 @@ public class AgentController {
     @PostMapping("/{id}/publish")
     public ResultJson publish(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
         if (!canManage(agentService.get(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");
-        agentEvalService.assertSaveAllowed(id);
         boolean enabled = Boolean.parseBoolean(String.valueOf(body.get("enabled")));
         boolean mcpEnabled = Boolean.parseBoolean(String.valueOf(body.get("mcpEnabled")));
         boolean guestImages = Boolean.parseBoolean(String.valueOf(body.get("guestImages")));

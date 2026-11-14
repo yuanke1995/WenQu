@@ -159,20 +159,15 @@ public class BrowserCapabilitySeeder implements ApplicationRunner {
             String id = tenantId(AGENT_ID, tenant);
             Agent existing = agentMapper.selectById(id);
             if (existing != null) {
-                // 被委派时必须跑完整管线：默认 digest 档只做并行检索与提炼，工具根本不会挂上，
-                // 表现是主助手把它派出去后，它回答「我这台环境里没有可用的浏览器」。
-                // 提示词 likewise 是预置能力的一部分（写明 localBrowserOpen 的正确顺序），随版本归一，
+                // 提示词是预置能力的一部分（写明 localBrowserOpen 的正确顺序），随版本归一，
                 // 否则存量行停留在旧提示词，模型会继续去点地址栏。与内置问渠的图标/用途归一同理。
-                boolean needMode = !"full".equals(existing.getSubagentMode());
                 boolean needPrompt = !SYSTEM_PROMPT.equals(existing.getSystemPrompt());
-                if (needMode || needPrompt) {
-                    var uw = new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<Agent>()
+                if (needPrompt) {
+                    agentMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<Agent>()
                             .eq(Agent::getId, id)
-                            .set(Agent::getUpdateTime, LocalDateTime.now());
-                    if (needMode) uw.set(Agent::getSubagentMode, "full");
-                    if (needPrompt) uw.set(Agent::getSystemPrompt, SYSTEM_PROMPT);
-                    agentMapper.update(null, uw);
-                    log.info("[BROWSER] 租户 {} 的网页操作助手归一（mode={} prompt={}）", tenant, needMode, needPrompt);
+                            .set(Agent::getSystemPrompt, SYSTEM_PROMPT)
+                            .set(Agent::getUpdateTime, LocalDateTime.now()));
+                    log.info("[BROWSER] 租户 {} 的网页操作助手提示词归一", tenant);
                 }
                 return;
             }
@@ -194,8 +189,6 @@ public class BrowserCapabilitySeeder implements ApplicationRunner {
             a.setPermissionPreset("standard");
             a.setMaxToolSteps(30);
             a.setToolDeny(DENIED_TOOLS);
-            // 被委派时跑完整问答管线（工具/沙盒/产物都按本行配置生效），否则浏览器工具挂不上
-            a.setSubagentMode("full");
             a.setIsSubagent(0);
             a.setIsDefault(0);
             a.setCreatedBy("system");

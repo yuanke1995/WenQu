@@ -128,7 +128,6 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         m.put("builtinTools", "内置工具范围");
         m.put("isSubagent", "用途（主/子智能体）");
         m.put("subAgentIds", "可委派的子智能体");
-        m.put("subagentMode", "被委派时的执行方式");
         m.put("queryParams", "检索开关覆盖（是否重排）");
         VERSION_FIELDS = Collections.unmodifiableMap(m);
     }
@@ -371,37 +370,21 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
     /**
      * 可委派的子智能体（供主智能体配置页勾选）。
      * 只返回子智能体（is_subagent=1），且是最小字段——配置页只需要 id 与展示名。
-     * <p>额外带 {@code subagentMode}（这一支实际会怎么跑：digest=检索要点 / full=全循环）与
-     * {@code subagentModeInherited}（它是自己选的还是跟随平台默认）。勾选处要看得见"派出去的是交资料的
-     * 还是真去干活的"——这个差别在配置页是两个下拉框，在委派处只有一行标签。
      */
     public List<Map<String, Object>> subAgents() {
         List<Map<String, Object>> out = new ArrayList<>();
         List<Agent> subs = mapper.selectList(new LambdaQueryWrapper<Agent>()
                 .eq(Agent::getIsSubagent, 1)
                 .orderByDesc(Agent::getCreateTime));
-        // 平台默认档：认不出的配置值按 digest 收口（默认档=引入本字段前的行为，写错了不该顺手放开全循环）
-        com.wenqu.ai.agent.subagent.BranchMode platformDefault = platformBranchMode();
         for (Agent a : subs) {
             if (!readable(a)) continue;
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("id", a.getId());
             m.put("name", a.getName());
             m.put("description", a.getDescription());
-            boolean own = a.getSubagentMode() != null && !a.getSubagentMode().isBlank();
-            m.put("subagentMode", (own
-                    ? com.wenqu.ai.agent.subagent.BranchMode.of(a.getSubagentMode(), platformDefault)
-                    : platformDefault).code());
-            m.put("subagentModeInherited", !own);
             out.add(m);
         }
         return out;
-    }
-
-    /** 平台默认的子智能体执行档（认不出按 digest 收口，见 {@link #subAgents()} 注释） */
-    private com.wenqu.ai.agent.subagent.BranchMode platformBranchMode() {
-        return com.wenqu.ai.agent.subagent.BranchMode.of(configService.get("agent.subagentMode"),
-                com.wenqu.ai.agent.subagent.BranchMode.DIGEST);
     }
 
     /**
@@ -411,12 +394,9 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
      * 干脆显式覆盖一份（覆盖一旦写下就不再跟随管理员后续的调整）。
      * 与 {@code /kb/param-defaults} 同一条口径：只回库级/智能体级能覆盖的那几个键，
      * 且都是枚举码、布尔与整数——不含任何网关地址与密钥。
-     * <p>值按<b>解析后</b>下发（{@code agent.subagentMode} 走 {@link #platformBranchMode()} 的回落），
-     * 前端拿到的就是运行时真正会用的那一档，不必再抄一份回落规则。
      */
     public Map<String, Object> configDefaults() {
         Map<String, Object> out = new LinkedHashMap<>();
-        out.put("agent.subagentMode", platformBranchMode().code());
         out.put("agent.maxToolSteps", String.valueOf(ConfigDefaults.AGENT_MAX_TOOL_STEPS));
         out.put("tool.enabled", configService.get("tool.enabled"));
         out.put("webSearch.enabled", configService.get("webSearch.enabled"));
@@ -581,8 +561,6 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         if (b.containsKey("builtinTools")) uw.set(Agent::getBuiltinTools, a.getBuiltinTools());
         if (b.containsKey("isSubagent")) uw.set(Agent::getIsSubagent, a.getIsSubagent());
         if (b.containsKey("subAgentIds")) uw.set(Agent::getSubAgentIds, a.getSubAgentIds());
-        // 被咨询时的执行形态（null=跟随平台默认档）
-        if (b.containsKey("subagentMode")) uw.set(Agent::getSubagentMode, a.getSubagentMode());
         if (b.containsKey("isDefault")) uw.set(Agent::getIsDefault, a.getIsDefault());
         // 检索开关覆盖（rerank.enabled；仅显式 false=强制关有语义，true/缺省=跟随「绑了模型才重排」；
         // 可清空：null = 跟随）
@@ -762,24 +740,6 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         if (body.containsKey("isSubagent")) a.setIsSubagent(toTri(body.get("isSubagent")));
         // 委派列表为空串/空时归一为 null（= 不启用委派，编排走原有多视角策略）
         if (body.containsKey("subAgentIds")) a.setSubAgentIds(asText(body.get("subAgentIds"), 1000));
-        // 被咨询时的执行形态：null/空=跟随平台默认档 agent.subagentMode。
-        // 认不出的值直接拒绝（与权限档位同口径）：写错的 "full" 静默归 null 会变成"其实跟着平台默认跑要点"，
-        // 而用户以为这个助手能干活——配置页上看着有值、跑的是另一套，这种漂移从界面上看不出来。
-        if (body.containsKey("subagentMode")) {
-            String rawMode = body.get("subagentMode") == null
-                    ? null : String.valueOf(body.get("subagentMode")).trim();
-            if (rawMode == null || rawMode.isEmpty()) {
-                a.setSubagentMode(null);
-            } else {
-                com.wenqu.ai.agent.subagent.BranchMode prev =
-                        com.wenqu.ai.agent.subagent.BranchMode.of(rawMode, null);
-                if (prev == null) {
-                    throw new com.wenqu.ai.common.BizException("被委派时的执行方式无法识别：" + rawMode
-                            + "（可选 digest=检索要点 / full=全循环，留空=跟随平台默认）");
-                }
-                a.setSubagentMode(prev.code());
-            }
-        }
         if (body.containsKey("isDefault")) a.setIsDefault(toTri(body.get("isDefault")));
         if (body.containsKey("queryParams")) a.setQueryParams(asText(body.get("queryParams"), 2000));
         return a;
@@ -1091,7 +1051,6 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         uw.set(Agent::getBuiltinTools, raw(cfg.get("builtinTools")));
         if (!builtin) uw.set(Agent::getIsSubagent, asInt(cfg.get("isSubagent")));
         uw.set(Agent::getSubAgentIds, raw(cfg.get("subAgentIds")));
-        uw.set(Agent::getSubagentMode, raw(cfg.get("subagentMode")));
         uw.set(Agent::getQueryParams, raw(cfg.get("queryParams")));
         uw.set(Agent::getUpdateTime, LocalDateTime.now());
         mapper.update(null, uw);

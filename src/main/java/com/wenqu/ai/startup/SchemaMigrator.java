@@ -42,7 +42,8 @@ public class SchemaMigrator implements ApplicationRunner {
 
     /** 已由 V2+ 迁移主动删除的列：SchemaMigrator 读 V1 时不得把它们补回来。 */
     private static final java.util.Set<String> RETIRED_COLUMNS = java.util.Set.of(
-            "c_ai_agent.workflow_id");
+            "c_ai_agent.workflow_id",
+            "c_ai_agent.subagent_mode");
 
     private static final Pattern CREATE_TABLE = Pattern.compile(            "CREATE TABLE IF NOT EXISTS\\s+`([^`]+)`\\s*\\(([\\s\\S]*?)\\)\\s*ENGINE", Pattern.CASE_INSENSITIVE);
     private static final Pattern COLUMN_LINE = Pattern.compile(

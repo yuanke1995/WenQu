@@ -125,8 +125,7 @@ public class Agent {
     /**
      * 权限档位：把「沙盒能干什么」与「要不要逐项确认」两根旋钮捆成一个具名预设。
      * {@code research}=只读调研 {@code standard}=常规（默认）{@code autonomous}=全自主。
-     * <p>NULL=跟随平台默认档（{@code agent.permissionPreset.default}）；选得比平台上限
-     * （{@code agent.permissionPreset.max}）高时，本轮按上限执行并在过程面板给出降级提示。
+     * <p>NULL=跟随平台默认档（standard）。
      * <p>与 {@link #toolApprovalMode} 的分工：本字段是<b>能力上限</b>（哪些工具会进模型的工具表），
      * 审批模式是<b>逐项问不问</b>。智能体显式设过审批模式时以它为准，没设过才用档位的建议值——
      * 常规档不附建议值，所以未选档的存量智能体两件事都没变。
@@ -213,17 +212,6 @@ public class Agent {
      * 逗号分隔 → 并行执行这些子智能体（各自用自己的提示词与知识库范围）。
      */
     private String subAgentIds;
-
-    /**
-     * 被当作子智能体咨询时怎么跑：{@code digest}=只并行检索并提炼要点（原有行为），
-     * {@code full}=跑完整问答管线（自己的知识库范围、工具、技能、沙盒、产物都按本行配置生效）。
-     * <p>为什么挂在<b>被咨询的那一方</b>而不是派它的主智能体：这一行决定的是"这一支里有没有一个
-     * 完整的智能体在跑"，是它自己的能力形态，不是调用方的偏好——同一个"资料检索员"谁派它都该只查资料，
-     * 而"运维排障"谁派它都该真去跑命令。放在主智能体上就会出现每个主智能体都要重抄一遍同一件事。
-     * <p>NULL=跟随平台默认档（{@code agent.subagentMode}，默认 digest）。
-     * 主智能体自己直接选用时本字段无意义（它跑的就是一条完整问答轮）。
-     */
-    private String subagentMode;
 
     /**
      * 知识库范围解析：空 → null（不限制，用全部文档）；非空 → 允许的 docId 集合。
