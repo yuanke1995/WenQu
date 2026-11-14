@@ -833,8 +833,9 @@ public class ConfigService {
         // 与 httpTool.enabled 同一理由默认开：没有配置工作流的智能体该族天然不挂，闸开着也无工具可出。
         // 工作流工具总开关（需 tool.enabled 总闸开启）
         d.put("agentWebhook.retryMax", String.valueOf(com.wenqu.ai.config.ConfigDefaults.AGENT_WEBHOOK_RETRY_MAX));
-        // 开放 API 跨域白名单：空=不回 CORS 头；
-        // 逗号分隔，如 "https://hr.example.com,https://crm.example.com"。只作用于 /api/ai/v1/**。
+        // 开放 API 跨域白名单：设置页已退役，保留为运行时键（OpenApiCorsConfig 每请求现读）。
+        // 空=不回 CORS 头；逗号分隔，如 "https://hr.example.com,https://crm.example.com"。只作用于 /api/ai/v1/**。
+        d.put("apiOpen.allowedOrigins", "");
         // 技能：内置随版本分发 + 用户自装（user-data/skills-users/{uid}）+ 助手在对话里沉淀到沙盒工作区。
         // 平台侧只剩两件事：哪些技能全平台不再用（skill.disabled），以及 URL 安装允许哪些来源域名。
         // 技能正文读取上限是平台常量（SKILL_MAX_FILE_CHARS），不作为设置项。

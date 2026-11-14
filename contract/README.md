@@ -48,4 +48,4 @@ node scripts/check-openapi-contract.mjs --update   # 改了契约后跑：更新
 |---|---|---|
 | D1 | L1 何时转正 | A3：run 契约冻结并稳定两周后 |
 | D2 | run 默认是否持久会话 | 默认无状态，显式传 `sessionId` 才持久 |
-| D3 | 租户级对外总开关 | 已按「要」落地：`apiOpen.enabled`（系统设置 → 开放 API → 对外集成） |
+| D3 | 租户级对外总开关 | 2026-11-14 退役：`apiOpen.enabled` 设置项已删，Key 通道恒开（各 Key 可单独停用） |

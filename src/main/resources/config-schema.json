@@ -88,14 +88,6 @@
       ]
     },
     {
-      "key": "apiOpen",
-      "title": "开放 API（外部项目嵌入）",
-      "sections": [
-        "跨域",
-        "对外集成"
-      ]
-    },
-    {
       "key": "skills",
       "title": "技能",
       "sections": [
@@ -1603,33 +1595,6 @@
       "note": "首发失败重试次数（退避 60s/5min/30min/2h）；0=不重试"
     },
     {
-      "backendKey": "apiOpen.allowedOrigins",
-      "panel": "apiOpen",
-      "section": 0,
-      "group": "apiOpen",
-      "key": "allowedOrigins",
-      "path": "apiOpen.allowedOrigins",
-      "label": "跨域白名单",
-      "type": "text",
-      "def": "",
-      "tier": 2,
-      "note": "允许浏览器直调 /api/ai/v1/** 的来源，逗号分隔；留空=不回跨域头"
-    },
-    {
-      "backendKey": "apiOpen.enabled",
-      "panel": "apiOpen",
-      "section": 1,
-      "group": "apiOpen",
-      "key": "enabled",
-      "path": "apiOpen.enabled",
-      "label": "对外集成总开关",
-      "type": "switch",
-      "tips": "apiOpenEnabled",
-      "def": true,
-      "tier": 2,
-      "note": "关闭后所有 API Key 请求（v1 契约与问答链路）一律拒绝；契约文档 openapi.json 仍可读，MCP 与分享通道各有独立开关。默认开启，不改变既有行为"
-    },
-    {
       "backendKey": "webSearch.provider",
       "panel": "webSearch",
       "section": 0,
@@ -2803,7 +2768,6 @@
     "scheduledMaxPerUser": "每人最多定时任务数（默认 20）；0=不限",
     "scheduledTimeout": "单轮定时问答最长等待；超时记失败",
     "scheduledRunRetention": "定时任务执行记录保留天数（0=不清理）；每个任务另保留最近 100 条",
-    "apiOpenEnabled": "对外集成总闸；关闭后所有 API Key 请求一律拒绝，已签发的 Key 保留但调不通。只管 Key 通道，MCP 与分享各有独立开关",
     "toolSandboxEnabled": "控制工作流沙盒节点与沙盒文件接口；聊天文件/命令不受控；需先启动沙盒服务",
     "sandboxCommandTimeout": "单条命令最长执行时间",
     "sandboxIdleRelease": "闲置多久回收沙盒容器；文件保留，0=不回收",
@@ -2909,7 +2873,6 @@
     "scheduled.timeoutMs": "定时任务单次执行超时(ms)",
     "scheduled.runRetentionDays": "定时任务执行记录保留天数（0=不清理）",
     "scheduled.scanIntervalMs": "定时任务到期扫描间隔(ms，≤0=暂停)",
-    "apiOpen.enabled": "对外集成总开关（关闭后 API Key 通道全部拒绝）",
     "web.refreshScanIntervalMs": "扫描网页文档到期刷新的间隔（默认 60000 毫秒）；≤0=暂停",
     "tool.sandbox.enabled": "沙盒 API 与工作流沙盒节点；聊天文件/命令不受控",
     "sandbox.commandTimeoutSeconds": "沙盒单条命令超时（秒）",

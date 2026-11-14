@@ -42,8 +42,6 @@ public class SecurityConfig implements WebMvcConfigurer {
     private final DeploymentGuard deploymentGuard;
     private final com.wenqu.ai.service.RoleService roleService;
     private final OpenApiRegistry openApiRegistry;
-    /** 对外集成总闸：读取 apiOpen.enabled（默认开，关闭时 Key 通道一律拒绝） */
-    private final com.wenqu.ai.service.ConfigService configService;
 
     /** 请求属性名：本次请求通过 API Key 认证（权限固定为问答链路，不参与管理员判定） */
     public static final String ATTR_API_KEY_ID = "ai.apiKeyId";
@@ -621,22 +619,6 @@ public class SecurityConfig implements WebMvcConfigurer {
             //    身份（RequestUser）由 UserContextInterceptor 装载，这里只管「能碰哪些端点」。
             String plainKey = request.getHeader("X-Api-Key");
             if (plainKey == null || plainKey.isBlank()) plainKey = bearerApiKey(request);
-            // 0.5 对外集成总闸（D3）：关闭时所有携带 API Key 的请求一律拒绝，v1 契约与
-            //     既有问答链路同口径。契约文档 openapi.json 是只读说明，仍允许读取；MCP 与
-            //     分享通道各有独立开关，不在这里拦，避免误伤登录用户的正常分享对话。
-            //     判据是「请求带了 Key 头」而不是「Key 校验通过」：一把失效的 Key 也该被总闸挡住，
-            //     否则关闭期间仍能用无效 Key 探出端点是否登记。
-            if (plainKey != null && !plainKey.isBlank()
-                    && !isPublicContractEndpoint(method, path)
-                    && !configService.getBoolean("apiOpen.enabled", true)) {
-                response.setStatus(HttpServletResponse.SC_FORBIDDEN);
-                response.setContentType("application/json;charset=UTF-8");
-                response.getWriter().write(accessErrorJson(path, 403, "permission_error",
-                        "对外集成总开关已关闭：请在「系统设置 → 开放 API（外部项目嵌入）→ 对外集成」重新开启",
-                        "该服务已关闭对外集成能力（apiOpen.enabled=false）；请联系管理员在"
-                                + "「系统设置 → 开放 API」开启后再调用"));
-                return false;
-            }
             var rec = apiKeyService.verify(plainKey);
             boolean v1Path = path.startsWith(OpenApiRegistry.PREFIX);
             boolean keyAllowed = v1Path

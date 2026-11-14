@@ -51,7 +51,9 @@ class ConfigContractTest {
             "chunk.maxImages", "chunk.maxChunks", "parse.childSize", "parse.ocrDpi", "parse.ocrMinText",
             "graphrag.chunkViewMaxChars", "keyword.timeoutMillis", "keyword.failCooldownMs",
             "rerank.timeoutMillis", "rerank.failCooldownMs", "retrieval.keywordMaxTerms",
-            "retrieval.keywordMaxTotal", "retrieval.keywordTimeoutMs", "tenant.autoApprove.enabled"
+            "retrieval.keywordMaxTotal", "retrieval.keywordTimeoutMs", "tenant.autoApprove.enabled",
+            // 设置页已退役、仍运行时生效的键（OpenApiCorsConfig 每请求现读，经库调整）
+            "apiOpen.allowedOrigins"
     );
 
     /** schema 有 def、但 defaults() 用 env/properties/常量表达式求值的键：不参与字面量比对。 */
@@ -85,8 +87,8 @@ class ConfigContractTest {
                 .as("defaults 有而 schema 无：隐藏/部署项必须登记到 HIDDEN_DEFAULTS")
                 .containsExactlyInAnyOrderElementsOf(HIDDEN_DEFAULTS);
 
-        assertThat(schemaKeys).as("schema 字段数变了：同步 README 的设置项口径").hasSize(139);
-        assertThat(defaultsKeys).as("defaults 键数变了：同步 README 的隐藏项口径").hasSize(193);
+        assertThat(schemaKeys).as("schema 字段数变了：同步 README 的设置项口径").hasSize(137);
+        assertThat(defaultsKeys).as("defaults 键数变了：同步 README 的隐藏项口径").hasSize(192);
     }
 
     @Test
