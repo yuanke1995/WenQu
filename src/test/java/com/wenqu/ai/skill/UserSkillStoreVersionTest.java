@@ -1,7 +1,6 @@
 package com.wenqu.ai.skill;
 
 import com.wenqu.ai.service.AuditService;
-import com.wenqu.ai.service.ConfigService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -24,8 +23,7 @@ class UserSkillStoreVersionTest {
 
     @BeforeEach
     void setUp() {
-        store = new UserSkillStore(tmp.toString(), Mockito.mock(ConfigService.class),
-                Mockito.mock(AuditService.class));
+        store = new UserSkillStore(tmp.toString(), Mockito.mock(AuditService.class));
     }
 
     @Test

@@ -329,13 +329,11 @@ const catIcon = computed(() => CAT_ICONS[catKey.value])
 
 const pillCls = computed(() => {
   const s = props.skill || {}
-  if (s.disabled) return s.platformDisabled ? 'warn' : 'muted'
-  return 'ok'
+  return s.disabled ? 'muted' : 'ok'
 })
 const pillText = computed(() => {
   const s = props.skill || {}
-  if (s.disabled) return s.platformDisabled ? '平台停用' : '我停用了'
-  return '生效中'
+  return s.disabled ? '我停用了' : '生效中'
 })
 
 const files = computed(() => (detail.value.files || []).filter(f => f.path !== 'SKILL.md'))

@@ -163,7 +163,7 @@ watch(() => props.open, async open => {
       listSkills(), listAgents(), listWorkflows(), listMarketItems({ mine: true, pageSize: 100 })
     ])
     if (!skillRes || !skillRes.success) throw new Error((skillRes && skillRes.msg) || '读取失败')
-    const skills = (skillRes.data?.skills || []).filter(s => s.source === 'user' && !s.platformDisabled)
+    const skills = (skillRes.data?.skills || []).filter(s => s.source === 'user' && !s.disabled)
     const agents = (agentRes?.data || []).filter(a => a.manageable === 1 && a.isBuiltin !== 1)
     // /workflow/list 返回 {mine:[], shared:[]}：可上架=本人的或共享管理命中（与后端 requireManage 同口径）
     const wfAll = [...(wfRes?.data?.mine || []), ...(wfRes?.data?.shared || [])]

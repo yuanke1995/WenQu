@@ -68,18 +68,14 @@ public class WenquSkillRepository implements RuntimeContextSkillRepository {
     private final Path builtinRoot;
     /** 用户自装技能仓库（uid 级宿主目录，可读写）。 */
     private final UserSkillStore userSkillStore;
-    /** 平台级停用清单（{@code skill.disabled}，管理员维护）。 */
-    private final com.wenqu.ai.service.ConfigService configService;
     /** 沙盒工作区那一路的读通道。 */
     private final com.wenqu.ai.service.SandboxService sandboxService;
 
     public WenquSkillRepository(
             @Value("${wenqu.skills.builtin-dir:}") String builtinDir,
-            com.wenqu.ai.service.ConfigService configService,
             com.wenqu.ai.service.SandboxService sandboxService,
             UserSkillStore userSkillStore) {
         this.builtinRoot = resolveBuiltinRoot(builtinDir);
-        this.configService = configService;
         this.sandboxService = sandboxService;
         this.userSkillStore = userSkillStore;
     }
@@ -106,21 +102,17 @@ public class WenquSkillRepository implements RuntimeContextSkillRepository {
     // ==================== RuntimeContextSkillRepository ====================
 
     /**
-     * 清单条目：技能 + 来源 + 是否停用（以及停用来自哪一层）。
-     * <p>停用有两层：平台级 {@code skill.disabled}（管理员）与个人级 {@code .disabled}
-     * （{@link UserSkillStore}，成员自己停）。界面要能分别说明「谁停的」，所以拆成两个标记。
+     * 清单条目：技能 + 来源 + 是否停用。
+     * <p>停用只有一层：个人级 {@code .disabled}（{@link UserSkillStore}，成员自己停）。
+     * 平台级停用清单（原 {@code skill.disabled}）已退役：平台不禁用技能。
      */
-    public record SkillEntry(AgentSkill skill, String source, boolean disabled,
-                             boolean platformDisabled, boolean userDisabled) {
+    public record SkillEntry(AgentSkill skill, String source, boolean disabled) {
     }
 
     public static final String SOURCE_BUILTIN = "builtin";
     /** 用户自装（uid 级宿主目录）。 */
     public static final String SOURCE_USER = "user";
     public static final String SOURCE_WORKSPACE = "workspace";
-
-    /** 停用清单的配置键（只有平台层）。 */
-    public static final String DISABLED_KEY = "skill.disabled";
 
     /** 沙盒工作区技能根（相对沙盒用户数据根）——与框架 {@code skill_manage} 的落点同取一个常量。 */
     private static final String WORKSPACE_SKILLS_DIR =
@@ -147,22 +139,21 @@ public class WenquSkillRepository implements RuntimeContextSkillRepository {
      */
     public List<SkillEntry> catalog(RuntimeContext ctx, String sessionId) {
         Map<String, SkillEntry> byName = new LinkedHashMap<>();
-        Set<String> platformDisabled = nameSet(configService.get(DISABLED_KEY));
         String uid = uidOf(ctx);
         Set<String> userDisabled = (uid == null || userSkillStore == null)
                 ? Set.of() : userSkillStore.disabledNames(uid);
 
         for (AgentSkill s : readAll(builtinRoot)) {
-            byName.put(s.getName(), entry(s, SOURCE_BUILTIN, platformDisabled, userDisabled));
+            byName.put(s.getName(), entry(s, SOURCE_BUILTIN, userDisabled));
         }
         // 沙盒工作区：随会话走，不参与个人停用（换会话本就不在）
         for (AgentSkill s : readWorkspace(ctx, sessionId)) {
-            byName.put(s.getName(), entry(s, SOURCE_WORKSPACE, Set.of(), Set.of()));
+            byName.put(s.getName(), entry(s, SOURCE_WORKSPACE, Set.of()));
         }
         // 用户自装最后并入 = 优先级最高：明确安装的版本压过会话里临时沉淀的同名技能
         if (uid != null && userSkillStore != null) {
             for (AgentSkill s : readAll(userSkillStore.userDir(uid))) {
-                byName.put(s.getName(), entry(s, SOURCE_USER, platformDisabled, userDisabled));
+                byName.put(s.getName(), entry(s, SOURCE_USER, userDisabled));
             }
         }
         return new ArrayList<>(byName.values());
@@ -192,27 +183,10 @@ public class WenquSkillRepository implements RuntimeContextSkillRepository {
         return null;
     }
 
-    private static SkillEntry entry(AgentSkill s, String source,
-                                    Set<String> platformDisabled, Set<String> userDisabled) {
+    private static SkillEntry entry(AgentSkill s, String source, Set<String> userDisabled) {
         String name = s.getName() == null ? "" : s.getName().trim().toLowerCase();
-        boolean platform = !name.isEmpty() && platformDisabled.contains(name);
         boolean user = !name.isEmpty() && userDisabled.contains(name);
-        return new SkillEntry(s, source, platform || user, platform, user);
-    }
-
-    private static Set<String> nameSet(String raw) {
-        Set<String> out = new LinkedHashSet<>();
-        addNames(out, raw);
-        return out;
-    }
-
-    /** 停用清单里的技能名：一行一条，逗号/分号也认；比对忽略大小写与首尾空白。 */
-    private static void addNames(Set<String> into, String raw) {
-        if (raw == null || raw.isBlank()) return;
-        for (String line : raw.split("[\\r\\n,，;；]+")) {
-            String v = line.trim().toLowerCase();
-            if (!v.isEmpty()) into.add(v);
-        }
+        return new SkillEntry(s, source, user);
     }
 
     /**

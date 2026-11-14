@@ -2,7 +2,6 @@ package com.wenqu.ai.controller;
 
 import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.dto.ResultJson;
-import com.wenqu.ai.service.ConfigService;
 import com.wenqu.ai.skill.UserSkillStore;
 import com.wenqu.ai.skill.WenquSkillRepository;
 import com.wenqu.ai.util.RequestUser;
@@ -63,7 +62,6 @@ public class SkillController {
 
     private final WenquSkillRepository skills;
     private final UserSkillStore store;
-    private final ConfigService configService;
     private final com.wenqu.ai.skill.SkillStatsStore stats;
     private final com.wenqu.ai.service.SessionService sessionService;
 
@@ -85,8 +83,8 @@ public class SkillController {
     }
 
     @Operation(summary = "技能管理清单",
-            description = "管理页数据源：来源/停用（平台或本人）/可否编辑删除/体积/文件数/分类/使用统计，"
-                    + "附带远程安装开关、安装限制与页头统计条汇总")
+            description = "管理页数据源：来源/停用（本人）/可否编辑删除/体积/文件数/分类/使用统计，"
+                    + "附带安装限制与页头统计条汇总")
     @Permission("skill:read")
     @GetMapping("/list")
     public ResultJson list(@RequestParam(value = "sessionId", required = false) String sessionId) {
@@ -100,7 +98,6 @@ public class SkillController {
         }
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("skills", rows);
-        data.put("remoteInstall", remoteInstall());
         data.put("limits", store.limits());
         data.put("summary", summarizeRows(rows));
         return ResultJson.ok(data);
@@ -475,8 +472,6 @@ public class SkillController {
         m.put("description", s.getDescription());
         m.put("source", source);
         m.put("disabled", e.disabled());
-        m.put("platformDisabled", e.platformDisabled());
-        m.put("userDisabled", e.userDisabled());
         m.put("selectable", !WenquSkillRepository.SOURCE_WORKSPACE.equals(source));
         m.put("editable", mine);
         m.put("deletable", mine);
@@ -580,21 +575,5 @@ public class SkillController {
     private static boolean flag(Object o) {
         if (o instanceof Boolean b) return b;
         return o != null && "true".equalsIgnoreCase(String.valueOf(o).trim());
-    }
-
-    /** 远程安装开关与允许的域名（空 = 关闭；服务端仍会逐跳校验公网地址）。 */
-    private Map<String, Object> remoteInstall() {
-        String raw = configService == null ? null : configService.get("skill.remoteAllowedHosts");
-        Set<String> hosts = new LinkedHashSet<>();
-        if (raw != null && !raw.isBlank()) {
-            for (String item : raw.split("[,，\\s]+")) {
-                String h = item.trim().toLowerCase(Locale.ROOT);
-                if (!h.isEmpty()) hosts.add(h);
-            }
-        }
-        Map<String, Object> m = new LinkedHashMap<>();
-        m.put("enabled", !hosts.isEmpty());
-        m.put("hosts", new ArrayList<>(hosts));
-        return m;
     }
 }

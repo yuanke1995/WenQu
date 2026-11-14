@@ -3,7 +3,6 @@ package com.wenqu.ai.skill;
 import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.service.AuditService;
 import com.wenqu.ai.sandbox.SandboxPaths;
-import com.wenqu.ai.service.ConfigService;
 import com.wenqu.ai.util.SsrfGuard;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -74,8 +73,8 @@ import java.util.zip.ZipOutputStream;
  * <ul>
  *   <li>技能名白名单（中英文/数字/下划线/连字符），杜绝 {@code ..}/{@code /} 路径穿越；</li>
  *   <li>zip 逐条目校验：绝对路径、{@code ..}、反斜杠、盘符、隐藏文件、深度/条目数/解压总量全部封顶；</li>
- *   <li>URL 安装：仅 http/https + 域名白名单（{@code skill.remoteAllowedHosts}）+ 每跳公网校验
- *       + 3 次重定向上限 + 体积上限；内容只当文本保存，从不执行。</li>
+ *   <li>URL 安装：仅 http/https + 每跳公网校验
+ *       + 3 次重定向上限 + 体积上限；内容只当文本保存，从不执行（来源域名不设限）。</li>
  * </ul>
  *
  * @author yuanke
@@ -120,15 +119,12 @@ public class UserSkillStore {
 
     /** 用户技能根（{@code user-data/skills-users}，可配）。 */
     private final Path root;
-    private final ConfigService configService;
 
     public UserSkillStore(
             @Value("${wenqu.skills.users-dir:user-data/skills-users}") String usersDir,
-            ConfigService configService,
             com.wenqu.ai.service.AuditService audit) {
         this.root = Paths.get(usersDir == null || usersDir.isBlank() ? "user-data/skills-users" : usersDir)
                 .toAbsolutePath().normalize();
-        this.configService = configService;
         this.audit = audit;
     }
 
@@ -1037,7 +1033,6 @@ public class UserSkillStore {
     private String download(URI start) {
         URI current = start;
         for (int hop = 0; hop < 4; hop++) {
-            requireAllowedHost(current);
             SsrfGuard.requirePublicHost(current);
             HttpRequest req = HttpRequest.newBuilder(current)
                     .timeout(Duration.ofSeconds(15))
@@ -1068,35 +1063,6 @@ public class UserSkillStore {
             }
         }
         throw new BizException("重定向次数过多（上限 3 次）");
-    }
-
-    /** 远程安装来源白名单：精确匹配 host（不做后缀匹配，避免 github.com.attacker.net 这类伪装）。 */
-    private void requireAllowedHost(URI uri) {
-        Set<String> allowed = allowedHosts();
-        if (allowed.isEmpty()) {
-            throw new BizException("远程安装未开启：请在「系统设置 → 技能 → 允许远程安装的域名」里配置");
-        }
-        String host = uri.getHost();
-        if (host == null || !allowed.contains(host.toLowerCase(Locale.ROOT))) {
-            throw new BizException("不允许的来源域名：" + (host == null ? uri : host)
-                    + "（允许：" + String.join("、", allowed) + "）");
-        }
-    }
-
-    private Set<String> allowedHosts() {
-        String raw = configService == null ? null : configService.get("skill.remoteAllowedHosts");
-        Set<String> out = new LinkedHashSet<>();
-        if (raw == null || raw.isBlank()) return out;
-        for (String item : raw.split("[,，\\s]+")) {
-            String h = item.trim().toLowerCase(Locale.ROOT);
-            if (!h.isEmpty()) out.add(h);
-        }
-        return out;
-    }
-
-    /** 测试用：暴露白名单校验（不发起请求）。 */
-    void checkAllowedHost(String url) {
-        requireAllowedHost(URI.create(url));
     }
 
     // ==================== 内部：杂项 ====================

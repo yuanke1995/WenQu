@@ -289,26 +289,21 @@
         </a-tab-pane>
 
         <a-tab-pane key="url" tab="从 URL 安装">
-          <a-alert v-if="!remote.enabled" type="warning" show-icon style="margin-bottom:12px"
-                   message="远程安装未开启"
-                   description="需要管理员在「系统设置 → 工具调用 → 技能」里配置「允许远程安装的域名」（精确匹配，逗号分隔）。服务端仍会校验公网地址并限制体积。" />
-          <a-alert v-else type="info" show-icon style="margin-bottom:12px"
-                   :message="'只允许从以下域名安装：' + (remote.hosts || []).join('、')"
-                   description="地址必须指向 SKILL.md 原文（GitHub 页面链接请换成 raw 链接），内容须含 name / description 的 frontmatter。" />
+          <a-alert type="info" show-icon style="margin-bottom:12px"
+                   message="地址必须指向 SKILL.md 原文（GitHub 页面链接请换成 raw 链接），内容须含 name / description 的 frontmatter。"
+                   description="服务端会逐跳校验公网地址并限制体积；内容只当文本保存，不会自动执行。" />
           <a-form layout="vertical">
             <a-form-item label="SKILL.md 地址" required>
-              <a-input v-model:value="installForm.url" placeholder="https://raw.githubusercontent.com/org/repo/main/skills/demo/SKILL.md"
-                       :disabled="!remote.enabled" />
+              <a-input v-model:value="installForm.url" placeholder="https://raw.githubusercontent.com/org/repo/main/skills/demo/SKILL.md" />
             </a-form-item>
             <a-form-item label="技能名（可选）">
-              <a-input v-model:value="installForm.name" placeholder="留空则取文件里 frontmatter 的 name" :maxlength="64"
-                       :disabled="!remote.enabled" />
+              <a-input v-model:value="installForm.name" placeholder="留空则取文件里 frontmatter 的 name" :maxlength="64" />
             </a-form-item>
             <a-checkbox v-model:checked="installForm.overwrite">同名覆盖</a-checkbox>
           </a-form>
           <div class="key-modal-foot">
             <button class="app-btn ghost" @click="installOpen = false">取消</button>
-            <button class="app-btn" :disabled="installing || !remote.enabled" @click="submitUrl">
+            <button class="app-btn" :disabled="installing" @click="submitUrl">
               {{ installing ? '安装中…' : '安装' }}
             </button>
           </div>
@@ -388,7 +383,6 @@ const openPublish = s => {
 
 const skills = ref([])
 const summary = ref({ total: 0, active: 0, reads30dTotal: 0, zeroCall: 0, missingDesc: 0 })
-const remote = ref({ enabled: false, hosts: [] })
 const limits = ref({})
 const loading = ref(false)
 const keyword = ref('')
@@ -418,7 +412,7 @@ const source = ref('all')
 const sortBy = ref('lastUsed')
 
 const isZero = s => !s.disabled && (s.reads30d || 0) === 0
-const isAttention = s => isZero(s) || !s.description || s.platformDisabled
+const isAttention = s => isZero(s) || !s.description
 
 // 关键词/来源/分类先过滤（状态计数与分段共用），状态与排序最后
 const baseList = computed(() => {
@@ -527,8 +521,8 @@ const catKey = s => {
   return 'general'
 }
 const catIcon = s => CAT_ICONS[catKey(s)]
-const pillCls = s => s.disabled ? (s.platformDisabled ? 'warn' : 'muted') : 'ok'
-const pillText = s => s.disabled ? (s.platformDisabled ? '平台停用' : '我停用了') : '生效中'
+const pillCls = s => s.disabled ? 'muted' : 'ok'
+const pillText = s => s.disabled ? '我停用了' : '生效中'
 
 /** 描述短（<40 字）时续显正文首段摘录，把卡面描述区填到至少两行；hover title 仍是完整描述 */
 const descText = s => {
@@ -579,9 +573,7 @@ const load = async () => {
       zeroCall: skills.value.filter(isZero).length,
       missingDesc: skills.value.filter(s => !s.description).length
     }
-    remote.value = r.data?.remoteInstall || { enabled: false, hosts: [] }
-    limits.value = r.data?.limits || {}
-    // 抽屉打开时同步刷新对应行（开关/编辑/批量后状态与统计跟着变）
+    limits.value = r.data?.limits || {}    // 抽屉打开时同步刷新对应行（开关/编辑/批量后状态与统计跟着变）
     if (drawerOpen.value && drawerSkill.value) {
       const cur = skills.value.find(s => s.name === drawerSkill.value.name && s.source === drawerSkill.value.source)
       if (cur) drawerSkill.value = cur

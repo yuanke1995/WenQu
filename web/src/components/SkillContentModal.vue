@@ -30,9 +30,6 @@
         <template v-else-if="entry.source === 'user'">
           <p class="sc-hint">这是你自己安装的技能。</p>
         </template>
-        <template v-else-if="entry.platformDisabled">
-          <p class="sc-hint">这条已由平台统一停用。本轮仍可在输入框里点名用它一次。</p>
-        </template>
         <template v-else-if="entry.disabled">
           <p class="sc-hint">你已停用这条技能，它不再进模型清单。可在「智能体 → 技能」里重新启用。</p>
         </template>
