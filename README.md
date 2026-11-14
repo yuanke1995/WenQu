@@ -19,7 +19,7 @@
 | 能力域 | 说明 |
 |--------|------|
 | 智能对话 | SSE 流式回答、随时停止与断线重连接流、运行中插话、句末 `[N]` 引用溯源、深度思考（思考强度五档）、上下文容量计量与手动/自动压缩、正文与过程分离（过程块可展开）、图片与文件多模态输入、`@` 引用资料与 `#` 历史引用、回答末尾下一步建议 |
-| 长任务执行 | 计划模式（计划卡「目标 + 前三步 + 卡脚」、完整计划与版本轨右侧抽屉、同轮按意见升版、执行中调整与血缘保留）；目标模式（输入区目标条、自动续跑、暂停/继续/取消、插话让位接续、终态卡留痕、证据逐条核验）；四项硬预算与软阈值收敛、任务清单步骤级进度、工具执行确认与智能体提问卡（人在回路） |
+| 长任务执行 | 计划模式（计划卡「目标 + 前三步 + 卡脚」、完整计划与版本轨右侧抽屉、同轮按意见升版、执行中调整与血缘保留）；目标模式（输入区目标条、自动续跑、暂停/继续/取消、插话让位接续、终态卡留痕、证据逐条核验）；轮数上限 20 与软阈值收敛、任务清单步骤级进度、工具执行确认与智能体提问卡（人在回路） |
 | 知识库（RAG） | docx / pdf / xlsx / ppt / pptx / txt / md / csv 解析与网页导入（扫描件 OCR）、混合检索（向量 + 中文分词词面）+ GraphRAG 图谱扩展、父子分块与问答对增强、网页定时刷新、文档版本与回收站、知识块预览与单块编辑、检索低分保底 |
 | 智能体 | 人设 / 知识范围 / 能力开关可配、会话级不锁定、按需委派（跨主题问题派给职责对口助手）、子智能体两种执行形态、配置历史版本回滚、公开发布与 MCP 端点、定时执行、三级记忆域、HTTP 工具集、工作流工具、轮终回调、发布前评测门禁 |
 | 工作区 | 你电脑上的一个或多个真实文件夹 + 一份工作区记忆；文件只在本机（本机执行器读写，服务器不存副本），支持多目录、单层浏览 / 预览 / 下载 / 在电脑上打开 / 应用内编辑；会话级权限档位（仅可查看 / 工作区内修改 / 完全权限）、图标与颜色、会话与自动化在侧栏按工作区归集、记忆隔离；事项清单（记下 → 去聊 → 勾掉）与模板复制（复制事项、记忆骨架、目录别名，不带文件/会话） |
@@ -44,7 +44,7 @@
   ▼
 问渠服务端（Java 17 · Spring Boot 3.5 · Spring AI）
   ├─ 问答管线：混合检索 → 重排 → 上下文组装 → 流式生成 → 内容安全出口闸
-  ├─ 智能体编排：按需委派、计划模式、目标模式（证据核验 + 预算闸）、人在回路审批
+  ├─ 智能体编排：按需委派、计划模式、目标模式（证据核验 + 轮数上限）、人在回路审批
   ├─ 工作流引擎：DSL → StateGraph 翻译执行 + 节点级 trace
   ├─ 开放接入：OpenAI 兼容端点 · 外部工作流 API/Webhook · 智能体轮终回调 · MCP 双向
   ├─ 企业治理：多租户 · OIDC/SAML/SCIM/LDAP · 服务账号 · 推理配额 · 哈希链审计 · 内容安全
@@ -171,7 +171,7 @@ export AI_VAPID_PRIVATE_KEY=              # VAPID 私钥；多副本必须同一
 export AI_VAPID_SUBJECT=mailto:admin@wenqu.local  # 推送服务要求的联系标识
 ```
 
-> **行为参数与模型配置不走环境变量**：检索 / 解析 / 上下文 / 工具 / 联网搜索 / HTTP 工具 / 工作流工具 / 智能体回调与记忆 / 目标模式 / 沙盒 / 记忆 / 定时任务 / 通知外发 / 内容安全 / 限流等 **137 项**行为参数统一在**系统设置页**维护（另有 54 个隐藏/部署项在 `defaults()` 登记，不进设置页）（`config-schema.json` → `c_ai_config`，保存即生效）；聊天 / 视觉 / 向量 / 重排 / OCR 等模型走**模型供应商**登记 + 引用绑定（API Key RSA 加密入库，**无全局兜底**——聊天模型缺失或引用无效会 fail-loud 引导选择）。`application.yml` 不存任何模型网关与密钥。Web Push 的 VAPID 私钥只从环境变量读取；SMTP 口令走设置页（RSA 加密入库、不回显明文）。
+> **行为参数与模型配置不走环境变量**：检索 / 解析 / 上下文 / 工具 / 联网搜索 / HTTP 工具 / 工作流工具 / 智能体回调与记忆 / 沙盒 / 记忆 / 定时任务 / 通知外发 / 内容安全 / 限流等 **141 项**行为参数统一在**系统设置页**维护（另有 55 个隐藏/部署项在 `defaults()` 登记，不进设置页）（`config-schema.json` → `c_ai_config`，保存即生效）；聊天 / 视觉 / 向量 / 重排 / OCR 等模型走**模型供应商**登记 + 引用绑定（API Key RSA 加密入库，**无全局兜底**——聊天模型缺失或引用无效会 fail-loud 引导选择）。`application.yml` 不存任何模型网关与密钥。Web Push 的 VAPID 私钥只从环境变量读取；SMTP 口令走设置页（RSA 加密入库、不回显明文）。
 
 **本机执行器（工作区文件）**：工作区的文件在用户电脑上，需要在**那台电脑**上跑执行器：
 ```bash
@@ -252,7 +252,7 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 - **多模态输入**：图片（一轮最多 5 张）经视觉模型理解后参与回答；文件（一轮最多 5 个、单个 ≤15MB，含 PDF / Word / Excel / PPT 与文本代码类）读出正文作为该问材料；支持粘贴、拖拽与「+」上传，长文本粘贴自动收为附件卡片
 - **引用资料**：`@` 或「+」面板的引用页，四类内容按当轮生效——知识库（收窄检索范围）、文档（相关内容直接带入）、智能体（本轮强制咨询一次）、技能（正文逐字带入）；`#` 另可引用历史问答（最多 10 条）
 - **深度执行**：`/deep`（或 `/深度`，手机在「+」→ 本轮模式）把一件事交出去：先产出执行计划卡，批准后自动跨轮推进。卡上只放「目标 + 前三步 + 卡脚」，完整计划、版本轨、逐版意见与步骤级 diff 在右侧抽屉（PC 560px / H5 全屏），历史版本只读、只有当前版可裁决。确认栏提供**确认 / 提修改意见 / 取消**：同一轮内按意见升版、消息流不新增气泡；挂起有倒计时。批准后仍可在输入框继续调整：执行中的插话只影响尚未执行的步骤、不改计划正文；需要重排则按新意见重新规划，新卡标出血缘（基于哪一版、已执行到 N/M），旧卡执行记录与产物保留。执行进度以会话任务清单为数据源（校验清单与消息轮次一致），卡上只报进度摘要，逐条清单归位底部任务清单；执行详情抽屉按步骤展示工具、产物与失败步骤，无对应清单时退回计划步骤预览
-- **深度执行条**：计划批准后输入一句话即入队自动续跑，不需要逐轮点继续。输入框顶部执行条分「身份 / 进度 / 动作」三段：显示任务原文与版本、轮次与预算进度，提供暂停、继续、修改原文与取消；取消需就地二次确认，历史、过程与终态卡都保留。运行中插话时目标让位，当前轮答完自动接续；终态卡留在对应执行回声下不消失，可查看过程与删除记录。助手通过 `goal_submit` 提交完成申请并附证据（产物 / 文件 / 命令 / 测试），平台逐条核验结构、环境与退出码后才判定完成；无法自行解决时转「已暂停」并写明原因。四项硬预算（轮数 40、工具调用 400 次、token 200 万、机器时长 2 小时，均可填 0 表示不限制）与软阈值收敛提示兜底
+- **深度执行条**：计划批准后输入一句话即入队自动续跑，不需要逐轮点继续。输入框顶部执行条分「身份 / 进度 / 动作」三段：显示任务原文与版本、轮次与预算进度，提供暂停、继续、修改原文与取消；取消需就地二次确认，历史、过程与终态卡都保留。运行中插话时目标让位，当前轮答完自动接续；终态卡留在对应执行回声下不消失，可查看过程与删除记录。助手通过 `goal_submit` 提交完成申请并附证据（产物 / 文件 / 命令 / 测试），平台逐条核验结构、环境与退出码后才判定完成；无法自行解决时转「已暂停」并写明原因。自动推进轮数上限 20 轮（代码常量）与软阈值收敛提示兜底
 - **人在回路**：工具执行确认卡（批准 / 拒绝 / 超时按拒绝）、智能体提问卡（单选与多选，未作答不自动选择）、计划确认卡三类卡片随流弹出并落库，关闭页面后重新进入仍在原处，未处理期间铃铛提示待办
 - **过程可视化**：整轮「文本段 + 工具段 + 产物段」编为消息时间线随消息落库，完成后折叠为一行总览（只报整轮墙钟耗时），展开是一行一步的执行清单；工具大输出超上限时整份留存，可在卡上「查看完整输出」读回或检索；会话事件账本按轮记录工具步与耗时、审批 / 提问 / 计划三张卡、产物、编排与轮终态，界面按人话渲染并以时间轴回放，会话级与单轮级都能打开，支持导出
 - **代码与图表**：回答中的 HTML / SVG 代码块可弹层预览，Python / Node / Shell 可一键在沙盒运行并回填输出；`echarts` 与 `mermaid` 代码块在正文原位渲染为交互图表与示意图，配色跟随主题
@@ -620,9 +620,9 @@ spring:
 
 > **模型配置无兜底**：`spring.ai.openai.*` 不配置；聊天 / 视觉 / 向量 / 重排 / OCR 模型引用解析不出时显式报错并引导到可修改的位置，不静默回落任何全局默认。记忆提炼复用本轮会话模型，不单独配置引用。
 
-### 系统设置（137 项行为参数）
+### 系统设置（141 项行为参数）
 
-设置项 schema 唯一定义源是 `src/main/resources/config-schema.json`：后端据此校验并下发前端渲染设置页，缺失即启动失败。字段按**层级**标注（必需 6 项 / 调优 59 项 / 工程排障 72 项），设置页默认折叠低层项；另有 55 项内部键只从 `ConfigService.defaults()` 读取、不进设置页（如 `chat.resumeEnabled`、`ratelimit.chatPerMinute`、`sandbox.provisionerUrl`、`share.guestDailyTurns`、`webpush.enabled` 等）。
+设置项 schema 唯一定义源是 `src/main/resources/config-schema.json`：后端据此校验并下发前端渲染设置页，缺失即启动失败。字段按**层级**标注（必需 6 项 / 调优 60 项 / 工程排障 74 项），设置页默认折叠低层项；另有 55 项内部键只从 `ConfigService.defaults()` 读取、不进设置页（如 `chat.resumeEnabled`、`ratelimit.chatPerMinute`、`sandbox.provisionerUrl`、`share.guestDailyTurns`、`webpush.enabled` 等）。
 
 **归属分层**：
 
@@ -659,7 +659,7 @@ spring:
 | `share.guest*`（内部键） | `share.guestDailyTurns`(200)、`share.guestDailyTurnsPerVisitor`(20)、`share.guestDailyTokens`(200 万) | 分享链接的游客轮次与 token 日额度，跨副本 Redis 计数；0=关闭该层 |
 | `webSearch.*` | `enabled`(false)、`provider`(tavily)、`apiKey`(敏感)、`maxResults`(5)、`maxCallsPerTurn`(2)、`requireApproval`(true)、`baseUrl`、`timeoutMs`(8000)、`snippetChars`(600) | 服务商 tavily / bocha / generic（自建 SearXNG）；保存即生效 |
 | `skill.*` | `disabled`（平台停用清单，从当前可用技能多选）、`remoteAllowedHosts`（URL 安装允许的域名，逗号分隔；空=关闭远程安装） | 个人停用在「智能体 → 技能」自助；正文读取上限 20000 字为平台常量；技能目录 `WENQU_SKILLS_USERS_DIR` |
-| `chat.goal.*`（深度执行面板，20 项） | `maxRounds`(40)、`nextRoundDelayMs`(2000)、`maxCompletionChecks`(2)、`maxVerifyFailures`(5)、`maxTokens`(200 万)、`maxMs`(2 小时)、`maxToolCalls`(400)、`maxRetries`(2)、`maxRecoveries`(3)、`retryBaseSeconds`(15)、`retryMaxSeconds`(120)、`softBudgetRatio`(0.8)、`claimBatch`(5)、`workers`(4)、`tickMs`(2000)、`leaseSeconds`(300)、`heartbeatStaleSeconds`(90)、`staleGraceSeconds`(90)、`verifyLocalFiles`(false)、`initialTickDelayMs`(1000) | 四项硬预算均可填 **0 = 该项不限制**；软阈值决定预算用到几成开始在提示里要求收敛；租约与心跳参数由 `GoalScheduler` 用于多副本抢占执行权 |
+| `chat.goal.*`（深度执行调度参数，代码常量） | 自动推进轮数上限恒 20（`GoalSettings.MAX_ROUNDS`）；其余旋钮值固定在 `ConfigDefaults.GOAL_*`：`nextRoundDelayMs`(2000)、`maxCompletionChecks`(不限)、`maxVerifyFailures`(不限)、`maxRetries`(2)、`maxRecoveries`(3)、`retryBaseSeconds`(15)、`retryMaxSeconds`(120)、`softBudgetRatio`(0.8)、`claimBatch`(5)、`workers`(4)、`tickMs`(2000)、`leaseSeconds`(300)、`heartbeatStaleSeconds`(90)、`staleGraceSeconds`(90)、`verifyLocalFiles`(false)、`initialTickDelayMs`(1000) | 深度执行设置面板已整体退役（2026-11-14）：Token/时长/工具调用三项硬预算机制随设置一并下线；软阈值决定轮数预算用到几成开始在提示里要求收敛；租约与心跳参数由 `GoalScheduler` 用于多副本抢占执行权 |
 | `workflow.*` | `maxSteps`(50)、`runTimeoutSeconds`(600)、`subagentTimeoutMs`(180000)、`maxConcurrentRuns`(4)、`runQueueCapacity`(50)、`runLogRetentionDays`(30)、`runCleanupIntervalMs`(1d)、`approvalReapIntervalMs`(60s)、`scheduleScanIntervalMs`(30s) | 保存即生效；`maxConcurrentRuns` 与 `runQueueCapacity` 需重启 |
 | `scheduled.*` | `maxPerUser`(20)、`scanIntervalMs`(30000)、`timeoutMs`(300000) | 定时执行智能体；是否执行由每个任务自己的启用状态决定 |
 | `web.*` | `refreshScanIntervalMs`(60s) | 网页源定时刷新扫描间隔；是否刷新由文档自己的自动刷新开关决定 |
@@ -673,9 +673,9 @@ spring:
 | `mcp.*` | `server.enabled`(**false**)、`server.timeoutMs`(50000)、`server.allowedOrigins`("")、`patrolIntervalMs`(5min) | `server.allowedOrigins` 为空时仅允许本机回环（Origin 校验防 DNS rebinding）；`server.timeoutMs` 压在多数 MCP 客户端自身的 60 秒请求超时之下；`patrolIntervalMs` 为连接健康巡检间隔（0=关闭） |
 | `chat.agentscope*` / `chat.sessionLogArchive.*`（调试设置） | `agentscopeMaxIters`(12，0=不限制)、`agentscopeStateDir`(`user-data/agentscope`)、`agentscopeRedisPrefix`(`agentscope:session:`)、`sessionLogArchive.enabled`(true)、`.keepDays`(90)、`agentscopeJournalRotateEvents`(12000)、`agentscopeJournalRotateKeepDays`(30) | 框架引擎推理步数上限、状态目录与 Redis 前缀、会话事件日志归档与换代；多副本必须把状态与归档目录指向共享卷 |
 
-### 设置页 14 个导航项（19 个配置面板，137 项参数）
+### 设置页导航（18 个配置面板，141 项参数）
 
-**对话模型**（24）· **检索设置（RAG）**（4 页签：检索 15 / 上下文 3 / 文档解析 19 / 图片描述 8）· **工具调用**（3 页签：总开关与子工具 19 / 联网搜索 10 / 技能 2，底部附只读工具与技能名册）· **HTTP 工具**（3）· **工作流工具**（1）· **智能体轮终回调**（1）· **接口限流**（1）· **定时任务**（76，4 页签：参数配置 / 运行状态 / 执行日志 / 索引与健康）· **通知外发（邮件）**（12）· **沙盒**（9）· **MCP 服务（双向）**（5）· **调试设置**（11）· **目标模式**（20，3 节：推进与轮次 / 预算与恢复 / 调度与核验）· **内容安全**（13）。
+**对话模型**（24）· **检索设置（RAG）**（4 页签：检索 15 / 上下文 3 / 文档解析 19 / 图片描述 8）· **工具调用**（3 页签：总开关与子工具 19 / 联网搜索 10 / 技能 2，底部附只读工具与技能名册）· **HTTP 工具**（3）· **工作流工具**（1）· **智能体轮终回调**（1）· **接口限流**（1）· **定时任务**（76，4 页签：参数配置 / 运行状态 / 执行日志 / 索引与健康）· **通知外发（邮件）**（12）· **沙盒**（9）· **MCP 服务（双向）**（5）· **调试设置**（11）**内容安全**（13）。
 
 `webSearch`、`skills` 与 RAG 链路的 `context`、`chunk`、`vision` 五个面板并入宿主面板页签，导航不单列；页头「保存配置」一次性提交全部改动，支持参数搜索与「恢复本组默认」（定时任务、调试设置两组不提供整组恢复）。模型不在设置页登记——统一走「智能体 → 模型供应商」；深度思考也不设全局面板，思考强度在对话页按模型选择。内容安全规则、企业认证源与服务账号在「权限管理」各页签维护；智能体评测在「智能体 → 评测」；审计事件与系统巡检在「安全与运维」。
 
@@ -749,7 +749,7 @@ WenQu/                               # 工作区根（git 仓库名 WenQu；本�
 │   └── application-local.yml        # 本地开发私有配置（含密钥与数据目录，.gitignore 忽略，不打进构建产物）
 ├── src/main/resources/
 │   ├── application.yml              # 配置（关键密钥无默认值：DB_PASSWORD 缺失 fail-fast）
-│   ├── config-schema.json           # 设置项 schema 唯一定义源（20 面板 / 147 字段，缺失即启动失败）
+│   ├── config-schema.json           # 设置项 schema 唯一定义源（18 面板 / 141 字段，缺失即启动失败）
 │   ├── db/migration/V1__baseline.sql # Flyway V1 基线（空库首次启动执行一次，之后只追加 V2+）
 │   ├── manual/*.md                  # 《问渠使用手册》16 篇（随包分发，同步后成为官方内置知识库）
 │   └── skills/*/SKILL.md            # 内置技能
