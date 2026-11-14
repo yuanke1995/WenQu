@@ -231,6 +231,7 @@
     <KnowledgeBaseEditModal v-model:open="showEdit" :kb="editing" @saved="load" />
     <KnowledgeGraphModal v-model:open="graphModal" :kb="graphKb" />
     <KbOverviewDrawer v-model:open="drawerOpen" :kb="drawerKb"
+                      :manageable="Boolean(drawerKb && canManage(drawerKb))"
                       @probe="openProbeFromDrawer" @docs="openDocs" @edit="openEdit"
                       @graph="openGraph" @changed="load" />
     <KbProbeModal v-model:open="probeOpen" :kb="probeKb" :initial-query="probeQuery" />

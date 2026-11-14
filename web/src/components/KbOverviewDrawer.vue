@@ -26,7 +26,7 @@
           <template #overlay>
             <a-menu @click="onMenu">
               <a-menu-item key="edit">编辑设置</a-menu-item>
-              <a-menu-item key="graph">知识图谱</a-menu-item>
+              <a-menu-item v-if="canGraph" key="graph">知识图谱</a-menu-item>
               <a-menu-item key="archive" :disabled="kb?.isDefault === 1 || kb?.builtin === 1">
                 {{ kb?.archived === 1 ? '恢复知识库' : '归档（可恢复）' }}
               </a-menu-item>
@@ -42,7 +42,7 @@
         <span :class="['dr-tab', { on: tab === 'documents' }]" @click="switchTab('documents')">
           文档 <i v-if="docs.length" class="n">{{ docs.length }}</i>
         </span>
-        <span :class="['dr-tab', { on: tab === 'graph' }]" @click="switchTab('graph')">图谱</span>
+        <span v-if="canGraph" :class="['dr-tab', { on: tab === 'graph' }]" @click="switchTab('graph')">图谱</span>
         <span :class="['dr-tab', { on: tab === 'settings' }]" @click="switchTab('settings')">设置</span>
         <span :class="['dr-tab', { on: tab === 'unmatched' }]" @click="switchTab('unmatched')">
           未命中 <i v-if="unmatchedCount" class="n warn">{{ unmatchedCount }}</i>
@@ -177,12 +177,12 @@
         </div>
       </div>
 
-      <div v-else-if="tab === 'graph'" class="dr-body">
+      <div v-else-if="tab === 'graph' && canGraph" class="dr-body">
         <div class="panel">
           <div class="panel-h">知识图谱
             <span class="sub">{{ kb?.graphEnabled === 1 ? '已开启检索图扩展' : '未开启' }}</span>
             <span class="sp"></span>
-            <span class="lnk" @click="emit('graph', kb)">打开图谱工作台 →</span>
+            <span v-if="canGraph" class="lnk" @click="emit('graph', kb)">打开图谱工作台 →</span>
           </div>
           <div class="graph-stats">
             <div class="gs"><b>{{ graphInfo.entities || 0 }}</b><span>实体</span></div>
@@ -194,7 +194,7 @@
           </div>
           <div v-else-if="graphInfo.failed" class="tip-strip warn">上次构建失败 {{ graphInfo.failed }} 个文档，可到图谱工作台重试。</div>
           <div v-else-if="kb?.graphEnabled !== 1" class="mini-empty">开启知识图谱后，解析完成会自动抽三元组，检索时可一跳扩展。</div>
-          <a-button size="small" style="margin-top:10px" @click="emit('graph', kb)">打开图谱</a-button>
+          <a-button v-if="canGraph" size="small" style="margin-top:10px" @click="emit('graph', kb)">打开图谱</a-button>
         </div>
       </div>
 
@@ -270,9 +270,15 @@ import { modelRefInfo } from '../utils/modelRef'
 
 const props = defineProps({
   open: { type: Boolean, default: false },
-  kb: { type: Object, default: null }
+  kb: { type: Object, default: null },
+  // 库主/管理员级才能进图谱工作台：由知识库页用它的 canManage(kb) 算好传入，
+  // 与卡片菜单「知识图谱」同一判据，别在抽屉里再写一套身份判断
+  manageable: { type: Boolean, default: false }
 })
 const emit = defineEmits(['update:open', 'probe', 'docs', 'edit', 'graph', 'changed'])
+
+/** 官方内置库（builtin=1）的图谱随版本分发，卡片菜单也不给入口，这里保持一致 */
+const canGraph = computed(() => props.manageable && props.kb?.builtin !== 1)
 
 const loading = ref(false)
 const data = ref(null)
@@ -342,8 +348,14 @@ watch(() => [props.open, props.kb?.id], ([open]) => {
   load()
 })
 
+/** 切库/身份变化导致失去图谱权限时，别把人留在已经隐藏的 tab 上 */
+watch(canGraph, allowed => {
+  if (!allowed && tab.value === 'graph') tab.value = 'overview'
+})
+
 /** Tab 切换：文档/图谱按需加载，避免每次打开抽屉都多打两个请求 */
 function switchTab (next) {
+  if (next === 'graph' && !canGraph.value) return
   tab.value = next
   if (next === 'documents' && !docsLoaded.value) loadDocs()
   if (next === 'graph') loadGraph()
@@ -364,7 +376,7 @@ async function loadDocs () {
 }
 
 async function loadGraph () {
-  if (!props.kb?.id) return
+  if (!props.kb?.id || !canGraph.value) return
   try {
     const r = await graphStatus(props.kb.id)
     graphInfo.value = { ...(props.kb?.graph || {}), ...(r.data || {}) }
