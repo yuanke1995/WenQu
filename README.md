@@ -171,7 +171,7 @@ export AI_VAPID_PRIVATE_KEY=              # VAPID 私钥；多副本必须同一
 export AI_VAPID_SUBJECT=mailto:admin@wenqu.local  # 推送服务要求的联系标识
 ```
 
-> **行为参数与模型配置不走环境变量**：检索 / 解析 / 上下文 / 工具 / 联网搜索 / HTTP 工具 / 工作流工具 / 智能体回调与记忆 / 沙盒 / 记忆 / 定时任务 / 通知外发 / 限流等 **132 项**行为参数统一在**系统设置页**维护（其中 1 项个人专属项——知识块填充上限——在**个人设置 → 问答偏好**维护；另有 50 个隐藏/部署项在 `defaults()` 登记，不进设置页）（`config-schema.json` → `c_ai_config`，保存即生效）；聊天 / 视觉 / 向量 / 重排 / OCR 等模型走**模型供应商**登记 + 引用绑定（API Key RSA 加密入库，**无全局兜底**——聊天模型缺失或引用无效会 fail-loud 引导选择）。`application.yml` 不存任何模型网关与密钥。Web Push 的 VAPID 私钥只从环境变量读取；SMTP 口令走设置页（RSA 加密入库、不回显明文）。
+> **行为参数与模型配置不走环境变量**：检索 / 解析 / 上下文 / 工具 / 联网搜索 / HTTP 工具 / 工作流工具 / 智能体回调与记忆 / 沙盒 / 记忆 / 定时任务 / 通知外发 / 限流等 **90 项**行为参数统一在**系统设置页**维护（其中 1 项个人专属项——知识块填充上限——在**个人设置 → 问答偏好**维护；另有 50 个隐藏/部署项在 `defaults()` 登记，不进设置页）（`config-schema.json` → `c_ai_config`，保存即生效）；聊天 / 视觉 / 向量 / 重排 / OCR 等模型走**模型供应商**登记 + 引用绑定（API Key RSA 加密入库，**无全局兜底**——聊天模型缺失或引用无效会 fail-loud 引导选择）。`application.yml` 不存任何模型网关与密钥。Web Push 的 VAPID 私钥只从环境变量读取；SMTP 口令走设置页（RSA 加密入库、不回显明文）。
 
 **本机执行器（工作区文件）**：工作区的文件在用户电脑上，需要在**那台电脑**上跑执行器：
 ```bash
@@ -282,7 +282,7 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 - **网页导入**：一次最多 20 个 URL，抓取正文后按上传同链路入库；源文件为 HTML 快照，重解析离线提取不重新抓网；仅公网 http/https，逐跳校验防内网探测；可开文档级 cron **定时自动刷新**，到期重抓并同名替换重建
 - **知识块**：切片列表与结构导图两种视图，块数与 token 统计、未向量化块提示；单块编辑（自动重向量化）、停用、删除、手动建块
 - **GraphRAG**：库级开关（默认关），解析时抽取「主体-关系-客体」三元组，检索命中后做一跳图扩展并按衰减分并入结果；图谱弹窗提供实体与三元组规模、构建与清空、力导向图（点实体看完整关系链与来源块溯源）
-- **混合检索**：Redis 向量 Top-K 与关键词召回并行，向量分归一化后按权重融合（双命中叠加加分、标题命中奖励）；**重排门 0.6 / 融合门 0.5** 分别作用于重排分与融合分，重排执行过后未经重排的候选不得经融合阈值进入上下文。低分全灭时默认保留唯一最高分块并显式标注「低置信」（`retrieval.lowConfidencePolicy=top1`），避免隐性问答被绝对门全部误杀；重排链路异常时不启用保底
+- **混合检索**：Redis 向量 Top-K 与关键词召回并行，向量分归一化后按权重融合（双命中叠加加分、标题命中奖励）；**重排门 0.6 / 融合门 0.5** 分别作用于重排分与融合分，重排执行过后未经重排的候选不得经融合阈值进入上下文。低分全灭时默认保留唯一最高分块并显式标注「低置信」（低分保底为知识库检索设置项，默认 top1），避免隐性问答被绝对门全部误杀；重排链路异常时不启用保底
 - **关键词引擎可切换**：默认 `mysql` LIKE 零依赖；切到 `meilisearch` 使用 jieba 中文分词与相关度打分，服务不可用自动降级回 MySQL；切换后需全量重建一次，写索引随解析 / 编辑 / 删除增量同步，并有定时精确对账
 - **上下文工程**：窗口与最大输出按模型声明，登记时校验最大输出小于「窗口 × 0.7」；知识块填充上限在个人设置可调（默认 8），单文档与单库配额为平台常量；历史压缩、逐轮裁剪与 token 计数由框架与 jtokkit 承担
 
@@ -616,15 +616,15 @@ spring:
 
 > **模型配置无兜底**：`spring.ai.openai.*` 不配置；聊天 / 视觉 / 向量 / 重排 / OCR 模型引用解析不出时显式报错并引导到可修改的位置，不静默回落任何全局默认。记忆提炼复用本轮会话模型，不单独配置引用。
 
-### 系统设置（132 项行为参数）
+### 系统设置（90 项行为参数）
 
-设置项 schema 唯一定义源是 `src/main/resources/config-schema.json`：后端据此校验并下发前端渲染设置页，缺失即启动失败。字段按**层级**标注（必需 1 项 / 调优 36 项 / 工程参数 61 项；其中 1 项为个人专属项，不下发管理端设置页、在**个人设置 → 问答偏好**维护），设置页默认全部铺开（工程参数可在面板头整体收起）；另有 50 项内部键只从 `ConfigService.defaults()` 读取、不进设置页（如 `chat.resumeEnabled`、`ratelimit.chatPerMinute`、`sandbox.provisionerUrl`、`share.guestDailyTurns`、`webpush.enabled` 等）。
+设置项 schema 唯一定义源是 `src/main/resources/config-schema.json`：后端据此校验并下发前端渲染设置页，缺失即启动失败。字段按**层级**标注（必需 1 项 / 调优 22 项 / 工程参数 55 项；其中 1 项为个人专属项，不下发管理端设置页、在**个人设置 → 问答偏好**维护），设置页默认全部铺开（工程参数可在面板头整体收起）；另有 50 项内部键只从 `ConfigService.defaults()` 读取、不进设置页（如 `chat.resumeEnabled`、`ratelimit.chatPerMinute`、`sandbox.provisionerUrl`、`share.guestDailyTurns`、`webpush.enabled` 等）。
 
 **归属分层**：
 
 | 归属 | 说明 |
 |------|------|
-| 平台全局 | 设置页 132 项全部（重排模型与窗口、检索/解析参数均已下放知识库） |
+| 平台全局 | 设置页里除个人专属项以外的全部参数（检索 / 解析参数与重排模型、窗口均已下放知识库） |
 | 个人专属 | 另有个人在「个人设置」里的默认模型、记忆开关、通知静音 / 邮件偏好、通知邮箱（走 `c_ai_user`，不占设置页） |
 | 资源级绑定 | 知识库的向量 / 视觉 / OCR / 重排 / 图谱抽取模型与解析、检索参数；文档的图片理解模型；智能体的人设、能力开关、权限档位、工具确认模式、步数上限、目标模式开关、记忆域、HTTP 工具集、工作流工具、轮终回调；会话的模型覆盖；用户的 MCP 服务、技能与 Web Push 设备 |
 
@@ -634,17 +634,17 @@ spring:
 
 | 前缀 | 主要键（默认值） | 生效方式 |
 |------|------------------|----------|
-| `chat.*` | `citationCheckEnabled`(true)、`sseTimeoutMs`(300000)、`approvalTimeoutMs`(120000)、`askTimeoutMs`(600000)、`planTimeoutMs`(600000)、`modelStallTimeoutMs`(60000)、`maxImagesPerMessage`(9)、`maxImageMb`(10)、`uploadRetentionHours`(24)、`uploadCleanupIntervalMs`(1h)、`retrievalDebugEnabled`(true) | 聊天模型走「会话选择 > 个人默认」；行为项保存即生效。「超时与等待」提供**耐心档位**（标准 / 长任务 / 无人值守）一次写齐四个超时，也可逐项微调；`modelStallTimeoutMs` 管的是一次模型调用**停住不动**多久判这条流已断（还在出字就不算，长回答不受约束），故不随档位调整；回答温度、断线重连、流水线线程数为内部键 |
+| `chat.*` | `sseTimeoutMs`(300000)、`approvalTimeoutMs`(120000)、`askTimeoutMs`(600000)、`planTimeoutMs`(600000)、`modelStallTimeoutMs`(60000)、`maxImagesPerMessage`(9)、`maxImageMb`(10)、`uploadRetentionHours`(24)、`uploadCleanupIntervalMs`(1h)、`retrievalDebugEnabled`(true) | 聊天模型走「会话选择 > 个人默认」；行为项保存即生效。「超时与等待」提供**耐心档位**（标准 / 长任务 / 无人值守）一次写齐四个超时，也可逐项微调；`modelStallTimeoutMs` 管的是一次模型调用**停住不动**多久判这条流已断（还在出字就不算，长回答不受约束），故不随档位调整；回答温度、断线重连、流水线线程数为内部键 |
 | `memory.*` | `flushThrottleMinutes`(10，0=每轮)、`maxMdTokens`(3000) | 长期记忆的提炼节拍与预算；是否自动提炼由个人设置在个人维度控制；合并时给模型的目标预算按上限的 2/3 推导，写入落盘再按上限强制裁剪；日账保留期沿用框架默认 90 天 |
-| `retrieval.*` | `vectorWeight`(0.6)、`keywordWeight`(0.4)、`vectorTopK`(15)、`vecThreshold`(0.3)、`keywordLimit`(20)、`minContextScore`(0.6 重排门)、`minFusionScore`(0.5 融合门)、`lowConfidencePolicy`(top1)、`aclTopKSupplant`(true) | 保存即生效；同一组参数也可在知识库编辑里逐库稀疏覆盖；低分全灭时 `top1` 保底唯一最高分块，`off` 关闭保底 |
+| `retrieval.*` / `graphrag.expandTopK` | `keyword.engine`(meilisearch)、`keyword.baseUrl`、`keyword.apiKey`(敏感)；其余检索参数（双路权重、召回量、阈值门槛、低分保底）与图谱扩展规模已下沉**知识库检索设置**逐库生效（`aclTopKSupplant` 为内部键） | 设置页只剩关键词引擎连接；同一组检索参数也可在知识库编辑里逐库覆盖 |
 | `rerank.*` | `timeoutMillis`(5000 生效超时)、`failCooldownMs`(60000 失败冷却) 为内部键 | 重排平台层已退役：重排模型与窗口归知识库检索设置（选了才重排，多库按命中收敛）；`rerank.enabled` 仅剩智能体级「强制关」；未绑模型按融合分排序并提示，不阻塞问答 |
 | `keyword.*` | `engine`(mysql)、`baseUrl`、`apiKey` | 保存即生效；切换引擎需全量重建一次索引；索引对账为内置周期任务（1h），无开关 |
 | `context.*` | —（`maxContextHits` 已下放个人设置 → 问答偏好，默认 8；`maxBlocksPerDoc`(3)、`maxBlocksPerKb`(4) 为平台常量） | 历史压缩由框架按模型窗口触发，无独立开关 |
-| `chunk.*` / `parse.*` / `upload.*` | `maxSize`(800)、`overlap`(100)、`maxChunks`(3000)、`maxImages`(100)、`structural`(true)、`structuralRatio`(0.8)、`headingDepth`(4)、`qaEnabled`(true)、`qaPerChunk`(2)、`childEnabled`(true)、`childSize`(400)、`ocrEngine`(none)、`ocrMinText`(20)、`ocrDpi`(200)、`concurrency`(3)、`queue.capacity`(500)、`taskTimeoutMs`(20min)、`retryMaxAttempts`(3)、`upload.maxFileSizeMB`(200) | **需重解析或新上传才生效**（解析参数只影响之后的解析）；`ocrEngine` 可选 none / vision / pp_structure_v3 / mineru |
+| `chunk.*` / `parse.*` / `upload.*` | 分块、问答对与解析参数已全部下沉**知识库解析设置**（新建库按默认模板预填，逐库可改）；平台层只剩 `parse.qaConcurrency`(2) 管问答对生成并发；解析队列与上传参数（`concurrency`(3)、`queue.capacity`(500)、`taskTimeoutMs`(20min)、`upload.maxFileSizeMB`(200) 等）照旧 | 解析参数只影响之后的解析（**需重解析或新上传才生效**） |
 | `vision.*` | `prompt`、`concurrency`(2)、`userImageConcurrency`(2)、`timeoutMillis`(30000)、`retryCount`(1)、`descCacheVersion`("1")、`descCacheTtlDays`(180) | 保存即生效（`timeoutMillis` 需重启）；视觉模型按知识库绑定，无全局键；未绑定模型的知识库解析时跳过图片描述 |
-| `images.*` | `maxWidth`(1280)、`quality`(0.9)、`authEnabled`(true)、`authExpireSeconds`(3600)、`chatCleanupIntervalMs`(1d)、`chatRetentionMillis`(7d) | 保存即生效 |
+| `images.*` | `maxWidth`(1280)、`quality`(0.9)、`authExpireSeconds`(3600)、`chatCleanupIntervalMs`(1d)、`chatRetentionMillis`(7d) | 保存即生效 |
 | `tool.*` | `enabled`(true)、`knowledgeRetrieval.maxHits`(5)、`sandbox.enabled`(false)、`runcode.enabled`(false)、`runcode.maxSubCalls`(50)、`maxParallel`(8)、`timeoutSeconds`(120)、`subCallTimeoutMs`(60000)、`spillCleanupIntervalMs`(1h)、`spillMaxMbPerUser`(200) | 保存即生效。知识检索 / 产物交付 / 内置 / 联网搜索 / 任务清单随总闸启用，由智能体三态限定；工具大输出超上限时整份留存供读回，按人配额 |
-| `agent.*` | `maxToolSteps`(15，0=不限制)、`consultMaxPerTurn`(3)、`consultTimeoutMs`(300000)、`subagentMode`(digest)、`versionKeep`(20) | 保存即生效；权限档位取值 research / standard / autonomous（未选档按 standard） |
+| `agent.*` | `maxToolSteps`(15，0=不限制)、`consultMaxPerTurn`(3)、`consultTimeoutMs`(300000)、`versionKeep`(20) | 保存即生效；权限档位取值 research / standard / autonomous（未选档按 standard） |
 | `httpTool.*` | `timeoutMs`(10000) | 无总闸（`httpTool.enabled` 已退役，工具族只受 `tool.enabled` 制约、内网地址恒允许调用）；超时为工具集未单独配置时的默认值 |
 | `agentWebhook.*` | `retryMax`(4) | 智能体轮终回调首发失败后的最大重试次数（退避 60s/5min/30min/2h；0=不重试） |
 | `apiOpen.*` | `allowedOrigins`("") | OpenAI 兼容端点与开放 API 的 CORS 白名单（逗号分隔；空=不放开跨域） |
@@ -652,14 +652,14 @@ spring:
 | `ops.*` | `checkupIntervalMs`、`checkupRetentionDays`、`checkupAlertEnabled` | 系统巡检节拍、报告保留期与失败告警；手动巡检不受间隔限制 |
 | `share.guest*`（内部键） | `share.guestDailyTurns`(200)、`share.guestDailyTurnsPerVisitor`(20)、`share.guestDailyTokens`(200 万) | 分享链接的游客轮次与 token 日额度，跨副本 Redis 计数；0=关闭该层 |
 | `webSearch.*` | `enabled`(false)、`provider`(tavily)、`apiKey`(敏感)、`maxResults`(5)、`maxCallsPerTurn`(2)、`baseUrl`、`timeoutMs`(8000)、`snippetChars`(600) | 服务商 tavily / bocha / generic（自建 SearXNG）；保存即生效 |
-| `skill.*` | `disabled`（平台停用清单，从当前可用技能多选）、`remoteAllowedHosts`（URL 安装允许的域名，逗号分隔；空=关闭远程安装） | 个人停用在「智能体 → 技能」自助；正文读取上限 20000 字为平台常量；技能目录 `WENQU_SKILLS_USERS_DIR` |
+| `skill.*` | —（平台停用清单与 URL 安装域名白名单已退役：停用只留个人层，在「智能体 → 技能」自助；URL 安装不限制来源域名，服务端仍逐跳公网校验） | 正文读取上限 20000 字为平台常量；技能目录 `WENQU_SKILLS_USERS_DIR` |
 | `chat.goal.*`（深度执行调度参数，代码常量） | 自动推进轮数上限恒 20（`GoalSettings.MAX_ROUNDS`）；其余旋钮值固定在 `ConfigDefaults.GOAL_*`：`nextRoundDelayMs`(2000)、`maxCompletionChecks`(不限)、`maxVerifyFailures`(不限)、`maxRetries`(2)、`maxRecoveries`(3)、`retryBaseSeconds`(15)、`retryMaxSeconds`(120)、`softBudgetRatio`(0.8)、`claimBatch`(5)、`workers`(4)、`tickMs`(2000)、`leaseSeconds`(300)、`heartbeatStaleSeconds`(90)、`staleGraceSeconds`(90)、`verifyLocalFiles`(false)、`initialTickDelayMs`(1000) | 深度执行设置面板已整体退役（2026-11-14）：Token/时长/工具调用三项硬预算机制随设置一并下线；软阈值决定轮数预算用到几成开始在提示里要求收敛；租约与心跳参数由 `GoalScheduler` 用于多副本抢占执行权 |
 | `workflow.*` | `maxSteps`(50)、`runTimeoutSeconds`(600)、`subagentTimeoutMs`(180000)、`maxConcurrentRuns`(4)、`runQueueCapacity`(50)、`runLogRetentionDays`(30)、`runCleanupIntervalMs`(1d)、`approvalReapIntervalMs`(60s)、`scheduleScanIntervalMs`(30s) | 保存即生效；`maxConcurrentRuns` 与 `runQueueCapacity` 需重启 |
 | `scheduled.*` | `maxPerUser`(20)、`scanIntervalMs`(30000)、`timeoutMs`(300000) | 定时执行智能体；是否执行由每个任务自己的启用状态决定 |
 | `web.*` | `refreshScanIntervalMs`(60s) | 网页源定时刷新扫描间隔；是否刷新由文档自己的自动刷新开关决定 |
-| `graphrag.*` | `batchChunks`(3)、`maxTriplesPerChunk`(10)、`expandTopK`(5) | 抽取成本与图扩展规模；开关归知识库 `graph_enabled`（默认关） |
+| `graphrag.*` | `batchChunks`(3)、`maxTriplesPerChunk`(10)；`expandTopK` 已下沉知识库检索设置 | 抽取成本与图扩展规模；开关归知识库 `graph_enabled`（默认关） |
 | `cleanup.*` | `sessionRetentionDays`(30)、`sessionCleanupIntervalMs`(1d)、`sessionEventRetentionDays`(30)、`toolSpillRetentionDays`(7)、`visitorIdleDays`(30) | 会话、事件账本、工具外溢原文与游客会话的保留期 |
-| `eval.*` / `trace.*` | `autoIntervalMs`(1d)、`autoThresholdPct`(10)、`judgeEnabled`(false)、`judgeModel`、`answerModel`、`samplingIntervalMs`(1d)、`sampleRandomDaily`(20)、`sampleNoHitDaily`(10)、`sessionEventEnabled`(true) | 自动体检、评判模型与线上采样；`eval.judgeModel` 未配置时体检跳过评分 |
+| `eval.*` / `trace.*` | `autoIntervalMs`(1d)、`autoThresholdPct`(10)、`judgeEnabled`(false)、`judgeModel`、`answerModel`、`samplingIntervalMs`(1d)、`sampleRandomDaily`(20)、`sampleNoHitDaily`(10) | 自动体检、评判模型与线上采样；`eval.judgeModel` 未配置时体检跳过评分 |
 | `notification.*` | `retentionDays`(30)、`dedupWindow`(1440 分钟)、`cleanupIntervalMs`(1d) | 站内通知保留期、同类去重窗口与清理间隔 |
 | `artifact.*` | `retentionDays`(90)、`cleanupIntervalMs`(1d) | 产物超期清理 |
 | `schedule.*` | `runLogRetentionDays`(7)、`runLogCleanupIntervalMs`(1d) | 调度中心执行日志 |
@@ -667,11 +667,11 @@ spring:
 | `mcp.*` | `server.enabled`(**false**)、`server.timeoutMs`(50000)、`server.allowedOrigins`("")、`patrolIntervalMs`(5min) | `server.allowedOrigins` 为空时仅允许本机回环（Origin 校验防 DNS rebinding）；`server.timeoutMs` 压在多数 MCP 客户端自身的 60 秒请求超时之下；`patrolIntervalMs` 为连接健康巡检间隔（0=关闭） |
 | `chat.agentscope*` / `chat.sessionLogArchive.*`（调试设置） | `agentscopeMaxIters`(12，0=不限制)、`agentscopeStateDir`(`user-data/agentscope`)、`agentscopeRedisPrefix`(`agentscope:session:`)、`sessionLogArchive.enabled`(true)、`.keepDays`(90)、`agentscopeJournalRotateEvents`(12000)、`agentscopeJournalRotateKeepDays`(30) | 框架引擎推理步数上限、状态目录与 Redis 前缀、会话事件日志归档与换代；多副本必须把状态与归档目录指向共享卷 |
 
-### 设置页导航（17 个配置面板，132 项参数）
+### 设置页导航（11 个配置面板，90 项参数）
 
-**对话模型**（7）· **检索设置（RAG）**（3 页签：关键词引擎 3 / 上下文 1 / 解析与图片 2；检索与解析参数已归各知识库的检索/解析设置，全局默认值层退役）· **工具调用**（2 页签：总开关 1 / 联网搜索 13，底部附只读工具名册；沙盒相关设置归「沙盒」面板）· **HTTP 工具**（3）· **工作流工具**（1）· **智能体轮终回调**（1）· **接口限流**（1）· **定时任务**（76，4 页签：参数配置 / 运行状态 / 执行日志 / 索引与健康）· **通知外发（邮件）**（12）· **沙盒**（9）· **MCP 服务（双向）**（5）· **调试设置**（11）。（深度执行面板已整体退役：四项预算旋钮下线，自动推进轮数上限恒为代码常量 20）
+**对话模型**（6）· **检索设置**（3，关键词引擎连接；双路权重 / 召回量 / 阈值 / 保底已下沉知识库检索设置）· **工具调用**（2 页签：总开关 1 / 联网搜索 3（服务商配置已下放个人设置），底部附只读工具名册；沙盒相关设置归「沙盒」面板）· **智能体轮终回调**（1）· **接口限流**（1）· **定时任务**（36，4 页签：参数配置 / 运行状态 / 执行日志 / 索引与健康）· **通知外发（邮件）**（10）· **沙盒**（10，首节「能力开关」）· **MCP 服务（双向）**（3）· **调试设置**（5）。（深度执行面板已整体退役：四项预算旋钮下线，自动推进轮数上限恒为代码常量 20；内容安全面板已随功能整体退役）
 
-`webSearch`、`skills` 与 RAG 链路的 `context`、`chunk` 三个面板并入宿主面板页签，导航不单列；页头「保存配置」一次性提交全部改动，支持参数搜索与「恢复本组默认」（定时任务、调试设置两组不提供整组恢复）。模型不在设置页登记——统一走「智能体 → 模型供应商」；深度思考也不设全局面板，思考强度在对话页按模型选择。企业认证源与服务账号在「权限管理」各页签维护；智能体评测在「智能体 → 评测」；审计事件与系统巡检在「安全与运维」。
+`webSearch` 并入「工具调用」页签，导航不单列；页头「保存配置」一次性提交全部改动，支持参数搜索与「恢复本组默认」（定时任务、调试设置两组不提供整组恢复）。模型不在设置页登记——统一走「智能体 → 模型供应商」；深度思考也不设全局面板，思考强度在对话页按模型选择。企业认证源与服务账号在「权限管理」各页签维护；智能体评测在「智能体 → 评测」；审计事件与系统巡检在「安全与运维」。
 
 ## 后台定时任务
 
@@ -743,7 +743,7 @@ WenQu/                               # 工作区根（git 仓库名 WenQu；本�
 │   └── application-local.yml        # 本地开发私有配置（含密钥与数据目录，.gitignore 忽略，不打进构建产物）
 ├── src/main/resources/
 │   ├── application.yml              # 配置（关键密钥无默认值：DB_PASSWORD 缺失 fail-fast）
-│   ├── config-schema.json           # 设置项 schema 唯一定义源（17 面板 / 132 字段，缺失即启动失败）
+│   ├── config-schema.json           # 设置项 schema 唯一定义源（11 面板 / 90 字段，缺失即启动失败）
 │   ├── db/migration/V1__baseline.sql # Flyway V1 基线（空库首次启动执行一次，之后只追加 V2+）
 │   ├── manual/*.md                  # 《问渠使用手册》16 篇（随包分发，同步后成为官方内置知识库）
 │   └── skills/*/SKILL.md            # 内置技能
@@ -849,7 +849,7 @@ curl -X POST http://localhost:8090/api/ai/v1/chat/completions \
 - Web Push 未配置 VAPID 密钥时不展示订阅入口；邮件总闸关闭时全站零外发，站内通知与 Web Push 不受影响
 
 **配置生效时机**
-- 需重解析或新上传才生效：`chunk.maxSize` / `headingDepth` / `structural` / `overlap` 等解析参数（检索、上下文类参数均保存即生效）
+- 需重解析或新上传才生效：知识库解析设置里的分块 / 问答对 / OCR 参数（检索、上下文类参数均保存即生效）
 - `vision.timeoutMillis` 需重启（视觉客户端启动时构建）；`workflow.maxConcurrentRuns`、`workflow.runQueueCapacity`、`chat.goal.workers`（代码常量）需重启
 - 换绑**向量模型**必然触发该库全量重嵌入（与知识块数成正比），期间向量检索降级关键词路；全量重嵌入只在知识库编辑里换模型时按库触发，无平台级重嵌入口
 - 停用或删除供应商 / 模型不会自动改动选过它的地方：停用成功的当场列出仍在引用的位置并逐条给「去修改」入口，对话页与个人设置会把不可用的选项在原地标红并写明原因

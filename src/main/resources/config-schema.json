@@ -7,53 +7,22 @@
       "title": "对话模型",
       "sections": [
         "模型与连接（厂商预设自动填充地址与补全路径）",
-        "回答行为与内容",
         "超时与等待",
         "消息图片限制（防 base64 洪峰压垮解码/视觉处理）"
-      ]
-    },
-    {
-      "key": "vision",
-      "title": "图片描述（视觉；模型归各知识库解析设置）",
-      "sections": [
-        "识别提示词与并发（文档图与用户传图分开控制）",
-        "调用参数（超时 / 重试 / Ollama 推理）",
-        "图片描述缓存（改版本号/有效期后需重解析生效）"
-      ]
-    },
-    {
-      "key": "chunk",
-      "title": "文档解析默认模板（新建库预填；各库可在知识库设置覆盖）",
-      "sections": [
-        "上传与单文档保护（超限截断入库）",
-        "图片处理与访问鉴权（需重解析/新上传生效）",
-        "分块与解析行为（需重新解析/新上传文档生效；知识库级参数仅对其后解析生效）"
       ]
     },
     {
       "key": "retrieval",
       "title": "检索设置",
       "sections": [
-        "关键词引擎（类型与服务连接）",
-        "融合权重 · 阈值 · 检索策略"
-      ]
-    },
-    {
-      "key": "context",
-      "title": "上下文与长度控制",
-      "sections": [
-        "填充配额"
+        "关键词引擎（类型与服务连接）"
       ]
     },
     {
       "key": "tool",
       "title": "工具调用",
       "sections": [
-        "总开关",
-        "子工具（需总开关开启）",
-        "权限档位（沙盒能力上限与逐项确认）",
-        "执行预算与助手咨询",
-        "输出留存与引用"
+        "总开关"
       ]
     },
     {
@@ -61,23 +30,7 @@
       "title": "联网搜索（工具 webSearch；结果进引用体系）",
       "sections": [
         "服务商与连接（需工具总开关开启）",
-        "检索行为与配额",
-        "安全"
-      ]
-    },
-    {
-      "key": "httpTool",
-      "title": "HTTP 工具（OpenAPI 导入的宿主 API 工具集）",
-      "sections": [
-        "总开关",
-        "安全"
-      ]
-    },
-    {
-      "key": "workflowTool",
-      "title": "工作流工具（已发布工作流挂载为对话工具）",
-      "sections": [
-        "总开关"
+        "检索行为与配额"
       ]
     },
     {
@@ -85,13 +38,6 @@
       "title": "智能体轮终回调（出站）",
       "sections": [
         "重试"
-      ]
-    },
-    {
-      "key": "skills",
-      "title": "技能",
-      "sections": [
-        "停用的技能"
       ]
     },
     {
@@ -113,7 +59,6 @@
         "产物清理（模型生成的可下载文件）",
         "定时执行智能体",
         "网页源定时刷新（url 文档到期自动重抓重建）",
-        "知识图谱（库级开关）",
         "文档解析队列（并发 / 排队 / 重试）",
         "任务执行日志（ScheduleCenter 运行历史）",
         "工作流运行治理（步数 / 超时 / 记录清理）",
@@ -135,6 +80,7 @@
       "key": "sandbox",
       "title": "沙盒（运行限制；连接走环境变量）",
       "sections": [
+        "能力开关",
         "工作区与执行限额",
         "回收"
       ]
@@ -157,37 +103,10 @@
   ],
   "fields": [
     {
-      "backendKey": "chat.citationCheckEnabled",
-      "panel": "chat",
-      "section": 1,
-      "group": "chat",
-      "key": "citationCheckEnabled",
-      "path": "chat.citationCheckEnabled",
-      "label": "引用一致性自检",
-      "type": "switch",
-      "tips": "citationCheck",
-      "def": true,
-      "note": "生成后剔除与引用内容不符的 [N] 并重编号；快调用（自动关思考）通常 1~3 秒，15 秒硬超时、失败自动跳过不阻塞",
-      "tier": 2
-    },
-    {
-      "backendKey": "chat.toolDescriptionCompact",
-      "panel": "chat",
-      "section": 1,
-      "group": "chat",
-      "key": "toolDescriptionCompact",
-      "path": "chat.toolDescriptionCompact",
-      "label": "工具说明精简",
-      "type": "switch",
-      "def": true,
-      "note": "把工具说明压成一句话再发，省上下文；能力与参数不变",
-      "tier": 2
-    },
-    {
       "backendKey": "chat.sseTimeoutMs",
       "hidden": true,
       "panel": "chat",
-      "section": 2,
+      "section": 1,
       "group": "chat",
       "key": "sseTimeoutMs",
       "path": "chat.sseTimeoutMs",
@@ -228,7 +147,7 @@
       "backendKey": "chat.approvalTimeoutMs",
       "hidden": true,
       "panel": "chat",
-      "section": 2,
+      "section": 1,
       "group": "chat",
       "key": "approvalTimeoutMs",
       "path": "chat.approvalTimeoutMs",
@@ -268,7 +187,7 @@
     {
       "backendKey": "chat.turnResumeWindowMinutes",
       "panel": "chat",
-      "section": 2,
+      "section": 1,
       "group": "chat",
       "key": "turnResumeWindowMinutes",
       "path": "chat.turnResumeWindowMinutes",
@@ -287,7 +206,7 @@
       "backendKey": "chat.askTimeoutMs",
       "hidden": true,
       "panel": "chat",
-      "section": 2,
+      "section": 1,
       "group": "chat",
       "key": "askTimeoutMs",
       "path": "chat.askTimeoutMs",
@@ -328,7 +247,7 @@
       "backendKey": "chat.planTimeoutMs",
       "hidden": true,
       "panel": "chat",
-      "section": 2,
+      "section": 1,
       "group": "chat",
       "key": "planTimeoutMs",
       "path": "chat.planTimeoutMs",
@@ -368,7 +287,7 @@
     {
       "backendKey": "chat.modelStallTimeoutMs",
       "panel": "chat",
-      "section": 2,
+      "section": 1,
       "group": "chat",
       "key": "modelStallTimeoutMs",
       "path": "chat.modelStallTimeoutMs",
@@ -469,159 +388,9 @@
       "tier": 3
     },
     {
-      "backendKey": "vision.prompt",
-      "panel": "vision",
-      "section": 0,
-      "group": "vision",
-      "key": "prompt",
-      "path": "vision.prompt",
-      "label": "识别提示词",
-      "type": "textarea",
-      "tips": "visionPrompt",
-      "def": "",
-      "rows": 3,
-      "ph": "图片描述提示词（50字内描述界面/元素）",
-      "tier": 2
-    },
-    {
-      "backendKey": "images.authEnabled",
-      "panel": "chunk",
-      "section": 1,
-      "group": "images",
-      "key": "authEnabled",
-      "path": "images.authEnabled",
-      "label": "图片访问鉴权",
-      "type": "switch",
-      "tips": "imagesAuthEnabled",
-      "def": true,
-      "note": "开启后图片需 HMAC 签名，防盗链（默认开）",
-      "core": true,
-      "tier": 3
-    },
-    {
-      "backendKey": "chunk.maxSize",
-      "panel": "chunk",
-      "section": 2,
-      "group": "chunk",
-      "key": "maxSize",
-      "path": "chunk.maxSize",
-      "label": "分块最大字符数",
-      "type": "number",
-      "tips": "chunkMaxSize",
-      "def": 800,
-      "min": 200,
-      "step": 100,
-      "width": 200,
-      "note": "单块上限，决定检索粒度；改后需重解析生效",
-      "core": true,
-      "tier": 1
-    },
-    {
-      "backendKey": "chunk.overlap",
-      "panel": "chunk",
-      "section": 2,
-      "group": "chunk",
-      "key": "overlap",
-      "path": "chunk.overlap",
-      "label": "分块重叠字符",
-      "type": "number",
-      "tips": "overlap",
-      "def": 100,
-      "min": 0,
-      "step": 20,
-      "width": 200,
-      "note": "0=关闭，需重解析生效",
-      "tier": 1
-    },
-    {
-      "backendKey": "chunk.structural",
-      "panel": "chunk",
-      "section": 2,
-      "group": "chunk",
-      "key": "structural",
-      "path": "chunk.structural",
-      "label": "结构感知切分",
-      "type": "switch",
-      "tips": "chunkStructural",
-      "def": true,
-      "note": "标题/段落边界优先 + 章节路径注入，需重解析生效",
-      "tier": 2
-    },
-    {
-      "backendKey": "chunk.structuralRatio",
-      "panel": "chunk",
-      "section": 2,
-      "group": "chunk",
-      "key": "structuralRatio",
-      "path": "chunk.structuralRatio",
-      "label": "边界阈值比例",
-      "type": "number",
-      "tips": "chunkStructuralRatio",
-      "def": 0.8,
-      "min": 0.5,
-      "max": 1,
-      "step": 0.05,
-      "width": 200,
-      "note": "达到 maxSize×比例 时优先在段落边界断块",
-      "vif": "chunk.structural",
-      "tier": 2
-    },
-    {
-      "backendKey": "chunk.headingDepth",
-      "panel": "chunk",
-      "section": 2,
-      "group": "chunk",
-      "key": "headingDepth",
-      "path": "chunk.headingDepth",
-      "label": "标题识别层级",
-      "type": "number",
-      "tips": "chunkHeadingDepth",
-      "def": 4,
-      "min": 1,
-      "max": 6,
-      "step": 1,
-      "width": 200,
-      "note": "章节路径识别到几级标题；改后需重解析生效",
-      "vif": "chunk.structural",
-      "tier": 2
-    },
-    {
-      "backendKey": "parse.qaEnabled",
-      "panel": "chunk",
-      "section": 2,
-      "group": "parse",
-      "key": "qaEnabled",
-      "path": "parse.qaEnabled",
-      "label": "问答对增强",
-      "type": "switch",
-      "tips": "qaEnabled",
-      "def": true,
-      "note": "每块生成问答对并向量化；需重解析，消耗对话模型 token（默认开）",
-      "tier": 2
-    },
-    {
-      "backendKey": "parse.qaPerChunk",
-      "panel": "chunk",
-      "section": 2,
-      "group": "parse",
-      "key": "qaPerChunk",
-      "path": "parse.qaPerChunk",
-      "label": "每块问答对数量",
-      "type": "number",
-      "tips": "qaPerChunk",
-      "def": 2,
-      "min": 1,
-      "max": 5,
-      "step": 1,
-      "width": 200,
-      "note": "每块生成的问法条数；越大召回越广、token 消耗越多",
-      "vif": "parse.qaEnabled",
-      "tier": 2
-    },
-    {
       "backendKey": "parse.qaConcurrency",
-      "panel": "chunk",
-      "section": 2,
+      "panel": "maintenance",
+      "section": 8,
       "group": "parse",
       "key": "qaConcurrency",
       "path": "parse.qaConcurrency",
@@ -635,53 +404,6 @@
       "width": 200,
       "note": "逐块调用对话模型的并发数；调大解析更快，但会同时占用更多模型配额",
       "vif": "parse.qaEnabled",
-      "tier": 2
-    },
-    {
-      "backendKey": "parse.ocrEngine",
-      "panel": "chunk",
-      "section": 2,
-      "group": "parse",
-      "key": "ocrEngine",
-      "path": "parse.ocrEngine",
-      "label": "PDF 解析引擎",
-      "type": "select",
-      "tips": "ocrEngine",
-      "def": "none",
-      "width": 320,
-      "options": [
-        {
-          "value": "none",
-          "label": "none（文本抽取，扫描件视觉兜底）"
-        },
-        {
-          "value": "vision",
-          "label": "vision（整份逐页视觉 OCR）"
-        },
-        {
-          "value": "pp_structure_v3",
-          "label": "pp_structure_v3（版面+表格，自托管）"
-        },
-        {
-          "value": "mineru",
-          "label": "mineru（版面 markdown，自托管）"
-        }
-      ],
-      "note": "版面引擎需先配 OCR_PP_STRUCTURE_URI / OCR_MINERU_URI；失败不回落文本层",
-      "tier": 2
-    },
-    {
-      "backendKey": "parse.childEnabled",
-      "panel": "chunk",
-      "section": 2,
-      "group": "parse",
-      "key": "childEnabled",
-      "path": "parse.childEnabled",
-      "label": "父子分块",
-      "type": "switch",
-      "tips": "childEnabled",
-      "def": true,
-      "note": "长块切子块检索，命中返回父块全文；需重解析（默认开）",
       "tier": 2
     },
     {
@@ -741,188 +463,9 @@
       "tier": 2
     },
     {
-      "backendKey": "keyword.reconcileOnStartup",
-      "panel": "retrieval",
-      "section": 0,
-      "group": "keyword",
-      "key": "reconcileOnStartup",
-      "path": "keyword.reconcileOnStartup",
-      "label": "启动时对账",
-      "type": "switch",
-      "tips": "keywordReconcile",
-      "def": false,
-      "note": "启动即跑一轮索引对账；默认关（周期任务已覆盖）",
-      "tier": 3
-    },
-    {
-      "backendKey": "retrieval.vectorWeight",
-      "panel": "retrieval",
-      "section": 1,
-      "group": "retrieval",
-      "key": "vectorWeight",
-      "path": "retrieval.vectorWeight",
-      "label": "向量权重",
-      "type": "number",
-      "tips": "vectorWeight",
-      "def": 0.6,
-      "min": 0,
-      "max": 1,
-      "step": 0.05,
-      "width": 200,
-      "core": true,
-      "tier": 2
-    },
-    {
-      "backendKey": "retrieval.keywordWeight",
-      "panel": "retrieval",
-      "section": 1,
-      "group": "retrieval",
-      "key": "keywordWeight",
-      "path": "retrieval.keywordWeight",
-      "label": "关键词权重",
-      "type": "number",
-      "tips": "keywordWeight",
-      "def": 0.4,
-      "min": 0,
-      "max": 1,
-      "step": 0.05,
-      "width": 200,
-      "core": true,
-      "tier": 2
-    },
-    {
-      "backendKey": "retrieval.vectorTopK",
-      "panel": "retrieval",
-      "section": 1,
-      "group": "retrieval",
-      "key": "vectorTopK",
-      "path": "retrieval.vectorTopK",
-      "label": "向量召回上限",
-      "type": "number",
-      "tips": "vectorTopK",
-      "def": 15,
-      "min": 1,
-      "max": 100,
-      "step": 5,
-      "width": 200,
-      "note": "向量路候选块数，调大更易召回生僻表述",
-      "core": true,
-      "tier": 1
-    },
-    {
-      "backendKey": "retrieval.minContextScore",
-      "panel": "retrieval",
-      "section": 1,
-      "group": "retrieval",
-      "key": "minContextScore",
-      "path": "retrieval.minContextScore",
-      "label": "最低相关分",
-      "type": "number",
-      "tips": "minContextScore",
-      "def": 0.6,
-      "min": 0,
-      "max": 1,
-      "step": 0.05,
-      "width": 200,
-      "note": "重排分低于此值不进上下文；0=关闭。未启用重排时走 minFusionScore",
-      "tier": 1
-    },
-    {
-      "backendKey": "retrieval.minFusionScore",
-      "panel": "retrieval",
-      "section": 1,
-      "group": "retrieval",
-      "key": "minFusionScore",
-      "path": "retrieval.minFusionScore",
-      "label": "融合分门（未重排）",
-      "type": "number",
-      "def": 0.5,
-      "min": 0,
-      "max": 1,
-      "step": 0.05,
-      "width": 200,
-      "note": "融合分低于此值不进上下文（未重排时生效）；0=关闭。调权重后需重跑基线",
-      "tier": 2
-    },
-    {
-      "backendKey": "retrieval.lowConfidencePolicy",
-      "panel": "retrieval",
-      "section": 1,
-      "group": "retrieval",
-      "key": "lowConfidencePolicy",
-      "path": "retrieval.lowConfidencePolicy",
-      "label": "低分保底策略",
-      "type": "select",
-      "def": "top1",
-      "width": 240,
-      "options": [
-        {
-          "value": "top1",
-          "label": "top1（全灭时保底最相关 1 条，低置信显形）"
-        },
-        {
-          "value": "off",
-          "label": "off（不保底，严格按绝对门）"
-        }
-      ],
-      "note": "全被门掉时：top1=留最相关 1 条并标低置信；off=严格门。仅重排分域生效",
-      "tier": 2
-    },
-    {
-      "backendKey": "retrieval.top1Floor",
-      "panel": "retrieval",
-      "section": 1,
-      "group": "retrieval",
-      "key": "top1Floor",
-      "path": "retrieval.top1Floor",
-      "label": "保底最低分",
-      "type": "number",
-      "def": 0.05,
-      "min": 0,
-      "max": 1,
-      "step": 0.01,
-      "width": 200,
-      "note": "top1 保底的分数下限：低于它的候选视为没有相关内容，不强行塞给模型",
-      "tier": 2
-    },
-    {
-      "backendKey": "retrieval.vecThreshold",
-      "panel": "retrieval",
-      "section": 1,
-      "group": "retrieval",
-      "key": "vecThreshold",
-      "path": "retrieval.vecThreshold",
-      "label": "向量阈值",
-      "type": "number",
-      "tips": "vecThreshold",
-      "def": 0.3,
-      "min": 0,
-      "max": 1,
-      "step": 0.05,
-      "width": 200,
-      "note": "相似度归一化基准/下限",
-      "core": true,
-      "tier": 1
-    },
-    {
-      "backendKey": "retrieval.keywordLimit",
-      "panel": "retrieval",
-      "section": 1,
-      "group": "retrieval",
-      "key": "keywordLimit",
-      "path": "retrieval.keywordLimit",
-      "label": "关键词召回上限",
-      "type": "number",
-      "tips": "keywordLimit",
-      "def": 20,
-      "min": 1,
-      "step": 5,
-      "width": 200,
-      "tier": 2
-    },
-    {
       "backendKey": "context.maxContextHits",
-      "panel": "context",
+      "personalOnly": true,
+      "panel": "retrieval",
       "section": 0,
       "group": "context",
       "key": "maxContextHits",
@@ -949,80 +492,6 @@
       "def": true,
       "note": "只管问渠注册的工具；文件/命令、记忆、技能工具由权限档位控制",
       "core": true,
-      "tier": 2
-    },
-    {
-      "backendKey": "agent.permissionPreset.default",
-      "panel": "tool",
-      "section": 2,
-      "group": "agent",
-      "key": "permissionPreset.default",
-      "path": "agent.permissionPreset.default",
-      "label": "智能体默认权限档位",
-      "type": "select",
-      "tips": "toolPermissionPresetDefault",
-      "def": "standard",
-      "width": 300,
-      "options": [
-        {
-          "value": "research",
-          "label": "research（只读调研：沙盒只留读文件与列目录，命令执行、写入、交付、写长期记忆与外部工具都不进工具表）"
-        },
-        {
-          "value": "standard",
-          "label": "standard（常规：沙盒能跑命令、能写自己的沙盒目录）"
-        },
-        {
-          "value": "autonomous",
-          "label": "autonomous（全自主：路径不收束、不逐项确认）"
-        }
-      ],
-      "note": "智能体没选档位时用它；默认 standard，与旧行为一致",
-      "tier": 2
-    },
-    {
-      "backendKey": "agent.permissionPreset.max",
-      "panel": "tool",
-      "section": 2,
-      "group": "agent",
-      "key": "permissionPreset.max",
-      "path": "agent.permissionPreset.max",
-      "label": "平台允许的最高档位",
-      "type": "select",
-      "tips": "toolPermissionPresetMax",
-      "def": "autonomous",
-      "width": 300,
-      "options": [
-        {
-          "value": "research",
-          "label": "research（只读调研：沙盒只留读文件与列目录，命令执行、写入、交付、写长期记忆与外部工具都不进工具表）"
-        },
-        {
-          "value": "standard",
-          "label": "standard（常规：沙盒能跑命令、能写自己的沙盒目录）"
-        },
-        {
-          "value": "autonomous",
-          "label": "autonomous（全自主：路径不收束、不逐项确认）"
-        }
-      ],
-      "note": "平台上限：超出按上限执行，被禁能力不进工具表。research=全平台禁沙盒写入",
-      "tier": 2
-    },
-    {
-      "backendKey": "tool.deny",
-      "panel": "tool",
-      "section": 2,
-      "group": "tool",
-      "key": "deny",
-      "path": "tool.deny",
-      "label": "平台停用工具名单",
-      "type": "multiselect",
-      "submitKey": "deny",
-      "tips": "toolDenyGlobal",
-      "def": "",
-      "width": 560,
-      "note": "选中的工具对全平台不挂，智能体设置也覆盖不了；逗号分隔工具名",
       "tier": 2
     },
     {
@@ -1119,56 +588,6 @@
       "tier": 3
     },
     {
-      "backendKey": "eval.applyObserveHours",
-      "panel": "maintenance",
-      "section": 1,
-      "group": "eval",
-      "key": "applyObserveHours",
-      "path": "eval.applyObserveHours",
-      "label": "灰度观察期(小时)",
-      "type": "number",
-      "tips": "evalApplyObserveHours",
-      "def": 24,
-      "min": 1,
-      "max": 720,
-      "step": 1,
-      "width": 200,
-      "note": "应用参数组后的观察期；期间核心指标跌幅超过阈值会自动回滚",
-      "tier": 3
-    },
-    {
-      "backendKey": "agentEval.enabled",
-      "panel": "maintenance",
-      "section": 1,
-      "group": "agentEval",
-      "key": "enabled",
-      "path": "agentEval.enabled",
-      "label": "智能体评测",
-      "type": "switch",
-      "tips": "agentEvalEnabled",
-      "def": true,
-      "note": "智能体「评测」页签总开关；关闭后评测端点全部拒绝",
-      "tier": 3
-    },
-    {
-      "backendKey": "agentEval.gateMode",
-      "panel": "maintenance",
-      "section": 1,
-      "group": "agentEval",
-      "key": "gateMode",
-      "path": "agentEval.gateMode",
-      "label": "评测门禁",
-      "type": "select",
-      "def": "hint",
-      "width": 240,
-      "options": [
-        { "value": "hint", "label": "只提示（保存前弹检查）" },
-        { "value": "block", "label": "拦截（低于门槛/有变更未重测时拒绝保存与发布）" }
-      ],
-      "note": "block 档由服务端在保存/发布时校验，API 层无法绕过；hint 档只弹检查不拦",
-      "tier": 3
-    },
-    {
       "backendKey": "trace.samplingIntervalMs",
       "panel": "maintenance",
       "section": 1,
@@ -1230,20 +649,6 @@
       "width": 200,
       "note": "每轮无引用回答采样条数（默认 10）；0=不采",
       "tier": 3
-    },
-    {
-      "backendKey": "trace.sessionEventEnabled",
-      "panel": "maintenance",
-      "section": 1,
-      "group": "trace",
-      "key": "sessionEventEnabled",
-      "path": "trace.sessionEventEnabled",
-      "label": "会话事件账本",
-      "type": "switch",
-      "tips": "traceSessionEvent",
-      "def": true,
-      "tier": 3,
-      "note": "留痕每轮过程（工具步、卡片、产物、用量）；默认开，关掉不影响问答"
     },
     {
       "backendKey": "cleanup.intervalMs",
@@ -1331,61 +736,6 @@
       "note": "产物与会话归档保留天数（默认 90 天）；≤0=不清理，删了找不回"
     },
     {
-      "backendKey": "skill.disabled",
-      "panel": "skills",
-      "section": 0,
-      "group": "skill",
-      "key": "disabled",
-      "path": "skill.disabled",
-      "label": "停用的技能",
-      "type": "multiselect",
-      "def": "",
-      "width": 520,
-      "ph": "选择要停用的技能",
-      "freeInput": false,
-      "note": "列出的技能对全平台停用；输入框点名仍可用。留空=全部恢复",
-      "tier": 2
-    },
-    {
-      "backendKey": "skill.remoteAllowedHosts",
-      "panel": "skills",
-      "section": 0,
-      "group": "skill",
-      "key": "remoteAllowedHosts",
-      "path": "skill.remoteAllowedHosts",
-      "label": "允许远程安装的域名",
-      "type": "text",
-      "def": "",
-      "width": 520,
-      "ph": "raw.githubusercontent.com,gist.githubusercontent.com",
-      "note": "URL 安装白名单，精确匹配域名；留空=关闭「从 URL 安装」",
-      "tier": 3
-    },
-    {
-      "backendKey": "agent.subagentMode",
-      "panel": "tool",
-      "section": 3,
-      "group": "agent",
-      "key": "subagentMode",
-      "path": "agent.subagentMode",
-      "label": "分支执行方式",
-      "type": "select",
-      "tips": "agentSubagentMode",
-      "def": "digest",
-      "options": [
-        {
-          "value": "digest",
-          "label": "digest（检索要点）"
-        },
-        {
-          "value": "full",
-          "label": "full（全循环）"
-        }
-      ],
-      "note": "digest=只检索提炼要点（快、省）；full=跑完整问答（能独立办事）",
-      "tier": 2
-    },
-    {
       "panel": "maintenance",
       "section": 6,
       "group": "scheduled",
@@ -1456,8 +806,8 @@
     },
     {
       "backendKey": "tool.sandbox.enabled",
-      "panel": "tool",
-      "section": 1,
+      "panel": "sandbox",
+      "section": 0,
       "group": "tool",
       "key": "sandbox.enabled",
       "path": "tool.sandbox.enabled",
@@ -1471,8 +821,8 @@
     },
     {
       "backendKey": "tool.runcode.enabled",
-      "panel": "tool",
-      "section": 1,
+      "panel": "sandbox",
+      "section": 0,
       "group": "tool",
       "key": "runcode.enabled",
       "path": "tool.runcode.enabled",
@@ -1486,8 +836,8 @@
     },
     {
       "backendKey": "tool.runcode.maxSubCalls",
-      "panel": "tool",
-      "section": 1,
+      "panel": "sandbox",
+      "section": 0,
       "group": "tool",
       "key": "runcode.maxSubCalls",
       "path": "tool.runcode.maxSubCalls",
@@ -1517,50 +867,6 @@
       "tier": 2,
       "note": "开启后模型可自主联网搜索；需先开「工具调用」",
       "tips": "webSearchEnabled"
-    },
-    {
-      "backendKey": "httpTool.enabled",
-      "panel": "httpTool",
-      "section": 0,
-      "group": "httpTool",
-      "key": "enabled",
-      "path": "httpTool.enabled",
-      "label": "总开关",
-      "type": "switch",
-      "def": true,
-      "vif": "tool.enabled",
-      "tier": 2,
-      "note": "开启后智能体可挂 HTTP 工具集（OpenAPI）；未配置的智能体不受影响",
-      "tips": "httpToolEnabled"
-    },
-    {
-      "backendKey": "httpTool.allowPrivateNetwork",
-      "panel": "httpTool",
-      "section": 1,
-      "group": "httpTool",
-      "key": "allowPrivateNetwork",
-      "path": "httpTool.allowPrivateNetwork",
-      "label": "允许调用内网地址",
-      "type": "switch",
-      "def": true,
-      "vif": "httpTool.enabled",
-      "tier": 2,
-      "note": "自宿主开启；公网多租户关闭，防探测内网",
-      "tips": "httpToolAllowPrivateNetwork"
-    },
-    {
-      "backendKey": "workflowTool.enabled",
-      "panel": "workflowTool",
-      "section": 0,
-      "group": "workflowTool",
-      "key": "enabled",
-      "path": "workflowTool.enabled",
-      "label": "总开关",
-      "type": "switch",
-      "def": true,
-      "vif": "tool.enabled",
-      "tier": 2,
-      "note": "开启后智能体可挂已发布工作流为工具（≤8 个）；嵌套上限 2 层"
     },
     {
       "backendKey": "agentWebhook.retryMax",
@@ -1823,24 +1129,9 @@
       "tips": "webSearchMaxCallsPerTurn"
     },
     {
-      "backendKey": "webSearch.requireApproval",
-      "panel": "webSearch",
-      "section": 2,
-      "group": "webSearch",
-      "key": "requireApproval",
-      "path": "webSearch.requireApproval",
-      "label": "纳入执行审批",
-      "type": "switch",
-      "def": true,
-      "vif": "webSearch.enabled",
-      "tier": 2,
-      "note": "开启后联网搜索需按审批模式确认；默认开（会外发请求并计费）",
-      "tips": "webSearchRequireApproval"
-    },
-    {
       "backendKey": "sandbox.commandTimeoutSeconds",
       "panel": "sandbox",
-      "section": 0,
+      "section": 1,
       "group": "sandbox",
       "key": "commandTimeoutSeconds",
       "path": "sandbox.commandTimeoutSeconds",
@@ -1857,7 +1148,7 @@
     {
       "backendKey": "sandbox.idleReleaseMinutes",
       "panel": "sandbox",
-      "section": 1,
+      "section": 2,
       "group": "sandbox",
       "key": "idleReleaseMinutes",
       "path": "sandbox.idleReleaseMinutes",
@@ -1874,7 +1165,7 @@
     {
       "backendKey": "workflow.maxSteps",
       "panel": "maintenance",
-      "section": 11,
+      "section": 10,
       "group": "workflow",
       "key": "maxSteps",
       "path": "workflow.maxSteps",
@@ -1892,7 +1183,7 @@
     {
       "backendKey": "workflow.runTimeoutSeconds",
       "panel": "maintenance",
-      "section": 11,
+      "section": 10,
       "group": "workflow",
       "key": "runTimeoutSeconds",
       "path": "workflow.runTimeoutSeconds",
@@ -1910,7 +1201,7 @@
     {
       "backendKey": "workflow.subagentTimeoutMs",
       "panel": "maintenance",
-      "section": 11,
+      "section": 10,
       "group": "workflow",
       "key": "subagentTimeoutMs",
       "path": "workflow.subagentTimeoutMs",
@@ -1950,7 +1241,7 @@
     {
       "backendKey": "workflow.maxConcurrentRuns",
       "panel": "maintenance",
-      "section": 11,
+      "section": 10,
       "group": "workflow",
       "key": "maxConcurrentRuns",
       "path": "workflow.maxConcurrentRuns",
@@ -1968,7 +1259,7 @@
     {
       "backendKey": "workflow.runQueueCapacity",
       "panel": "maintenance",
-      "section": 11,
+      "section": 10,
       "group": "workflow",
       "key": "runQueueCapacity",
       "path": "workflow.runQueueCapacity",
@@ -1986,7 +1277,7 @@
     {
       "backendKey": "notification.turnEnabled",
       "panel": "maintenance",
-      "section": 12,
+      "section": 11,
       "group": "notification",
       "key": "turnEnabled",
       "path": "notification.turnEnabled",
@@ -2000,7 +1291,7 @@
     {
       "backendKey": "notification.dedupWindow",
       "panel": "maintenance",
-      "section": 12,
+      "section": 11,
       "group": "notification",
       "key": "dedupWindow",
       "path": "notification.dedupWindow",
@@ -2017,7 +1308,7 @@
     {
       "backendKey": "dashboard.alertIntervalMs",
       "panel": "maintenance",
-      "section": 15,
+      "section": 14,
       "group": "dashboard",
       "key": "alertIntervalMs",
       "path": "dashboard.alertIntervalMs",
@@ -2039,7 +1330,7 @@
     {
       "backendKey": "dashboard.noHitAlertRate",
       "panel": "maintenance",
-      "section": 15,
+      "section": 14,
       "group": "dashboard",
       "key": "noHitAlertRate",
       "path": "dashboard.noHitAlertRate",
@@ -2057,7 +1348,7 @@
     {
       "backendKey": "dashboard.likeAlertRate",
       "panel": "maintenance",
-      "section": 15,
+      "section": 14,
       "group": "dashboard",
       "key": "likeAlertRate",
       "path": "dashboard.likeAlertRate",
@@ -2075,7 +1366,7 @@
     {
       "backendKey": "dashboard.weeklyReportIntervalMs",
       "panel": "maintenance",
-      "section": 15,
+      "section": 14,
       "group": "dashboard",
       "key": "weeklyReportIntervalMs",
       "path": "dashboard.weeklyReportIntervalMs",
@@ -2096,7 +1387,7 @@
     {
       "backendKey": "webpush.enabled",
       "panel": "maintenance",
-      "section": 12,
+      "section": 11,
       "group": "webpush",
       "key": "enabled",
       "path": "webpush.enabled",
@@ -2292,26 +1583,9 @@
       "tier": 2
     },
     {
-      "backendKey": "graphrag.expandTopK",
-      "panel": "maintenance",
-      "section": 8,
-      "group": "graphrag",
-      "key": "expandTopK",
-      "path": "graphrag.expandTopK",
-      "label": "检索图扩展上限",
-      "type": "number",
-      "def": 5,
-      "min": 0,
-      "max": 20,
-      "step": 1,
-      "width": 140,
-      "note": "检索时图扩展最多并入几块（0=不扩展）；扩展块按命中块分×0.9 衰减",
-      "tier": 2
-    },
-    {
       "backendKey": "parse.concurrency",
       "panel": "maintenance",
-      "section": 9,
+      "section": 8,
       "group": "parse",
       "key": "concurrency",
       "path": "parse.concurrency",
@@ -2328,7 +1602,7 @@
     {
       "backendKey": "parse.queue.capacity",
       "panel": "maintenance",
-      "section": 9,
+      "section": 8,
       "group": "parse",
       "key": "queue.capacity",
       "path": "parse.queue.capacity",
@@ -2345,7 +1619,7 @@
     {
       "backendKey": "parse.taskTimeoutMs",
       "panel": "maintenance",
-      "section": 9,
+      "section": 8,
       "group": "parse",
       "key": "taskTimeoutMs",
       "path": "parse.taskTimeoutMs",
@@ -2380,7 +1654,7 @@
     {
       "backendKey": "parse.taskLeaseSeconds",
       "panel": "maintenance",
-      "section": 9,
+      "section": 8,
       "group": "parse",
       "key": "taskLeaseSeconds",
       "path": "parse.taskLeaseSeconds",
@@ -2397,7 +1671,7 @@
     {
       "backendKey": "parse.embedConcurrency",
       "panel": "maintenance",
-      "section": 9,
+      "section": 8,
       "group": "parse",
       "key": "embedConcurrency",
       "path": "parse.embedConcurrency",
@@ -2414,7 +1688,7 @@
     {
       "backendKey": "parse.ocrGateConcurrency",
       "panel": "maintenance",
-      "section": 9,
+      "section": 8,
       "group": "parse",
       "key": "ocrGateConcurrency",
       "path": "parse.ocrGateConcurrency",
@@ -2427,34 +1701,6 @@
       "width": 140,
       "note": "每个 OCR 引擎同时处理的图片数；多线解析时必须同步放开此闸门",
       "tier": 3
-    },
-    {
-      "backendKey": "chat.profileAuto",
-      "hidden": true,
-      "panel": "chat",
-      "section": 1,
-      "group": "chat",
-      "key": "profileAuto",
-      "path": "chat.profileAuto",
-      "label": "聊天档/工作区档自动分流",
-      "type": "switch",
-      "def": true,
-      "note": "关掉后全部走工作区档（旧行为）；默认开",
-      "tier": 2
-    },
-    {
-      "backendKey": "chat.prefixStabilizer",
-      "hidden": true,
-      "panel": "chat",
-      "section": 1,
-      "group": "chat",
-      "key": "prefixStabilizer",
-      "path": "chat.prefixStabilizer",
-      "label": "前缀稳定器",
-      "type": "switch",
-      "def": true,
-      "note": "会话/容器 id 换稳定占位，提升前缀缓存命中；关掉恢复原样",
-      "tier": 2
     },
     {
       "backendKey": "mcp.turnWaitMs",
@@ -2489,35 +1735,9 @@
       "tier": 3
     },
     {
-      "backendKey": "chat.mcpEnabled",
-      "panel": "chat",
-      "section": 1,
-      "group": "chat",
-      "key": "mcpEnabled",
-      "path": "chat.mcpEnabled",
-      "label": "聊天档挂载 MCP",
-      "type": "switch",
-      "def": false,
-      "note": "聊天档默认不挂 MCP 工具；开启后仍受 mcp.turnWaitMs 有界等待",
-      "tier": 2
-    },
-    {
-      "backendKey": "chat.asyncWorkspaceUpgrade",
-      "panel": "chat",
-      "section": 1,
-      "group": "chat",
-      "key": "asyncWorkspaceUpgrade",
-      "path": "chat.asyncWorkspaceUpgrade",
-      "label": "文件意图异步升级工作区",
-      "type": "switch",
-      "def": false,
-      "note": "首轮先走聊天档，后台建沙盒，下一轮切工作区档；默认关",
-      "tier": 2
-    },
-    {
       "backendKey": "sandbox.maxPerUser",
       "panel": "sandbox",
-      "section": 1,
+      "section": 2,
       "group": "sandbox",
       "key": "maxPerUser",
       "path": "sandbox.maxPerUser",
@@ -2534,7 +1754,7 @@
     {
       "backendKey": "workspace.sessionLocal",
       "panel": "sandbox",
-      "section": 1,
+      "section": 2,
       "group": "workspace",
       "key": "sessionLocal",
       "path": "workspace.sessionLocal",
@@ -2548,7 +1768,7 @@
       "backendKey": "workspace.sessionRootBase",
       "hidden": true,
       "panel": "sandbox",
-      "section": 1,
+      "section": 2,
       "group": "workspace",
       "key": "sessionRootBase",
       "path": "workspace.sessionRootBase",
@@ -2561,7 +1781,7 @@
     {
       "backendKey": "sandbox.userScope",
       "panel": "sandbox",
-      "section": 1,
+      "section": 2,
       "group": "sandbox",
       "key": "userScope",
       "path": "sandbox.userScope",
@@ -2574,7 +1794,7 @@
     {
       "backendKey": "sandbox.poolWarmUsers",
       "panel": "sandbox",
-      "section": 1,
+      "section": 2,
       "group": "sandbox",
       "key": "poolWarmUsers",
       "path": "sandbox.poolWarmUsers",
@@ -2591,7 +1811,7 @@
     {
       "backendKey": "ops.checkupIntervalMs",
       "panel": "maintenance",
-      "section": 13,
+      "section": 12,
       "group": "ops",
       "key": "checkupIntervalMs",
       "path": "ops.checkupIntervalMs",
@@ -2608,7 +1828,7 @@
     {
       "backendKey": "ops.checkupRetentionDays",
       "panel": "maintenance",
-      "section": 13,
+      "section": 12,
       "group": "ops",
       "key": "checkupRetentionDays",
       "path": "ops.checkupRetentionDays",
@@ -2626,7 +1846,7 @@
     {
       "backendKey": "ops.checkupAlertEnabled",
       "panel": "maintenance",
-      "section": 13,
+      "section": 12,
       "group": "ops",
       "key": "checkupAlertEnabled",
       "path": "ops.checkupAlertEnabled",
@@ -2643,17 +1863,10 @@
     "dashboardNoHitAlertRate": "近 7 天无命中率高于该值时预警；样本不足 20 条不报，避免小样本误报",
     "dashboardLikeAlertRate": "近 7 天反馈满意率低于该值时预警；反馈不足 10 条不报",
     "dashboardWeeklyReportInterval": "周报检查周期；只在周一发送，没有问答数据时自动跳过，不发空报",
-    "visionPrompt": "图片描述的要求；影响检索与配图准确性",
     "maxChunks": "单文档最大知识块数（0=不限）；超出部分不入库",
     "maxImages": "单文档最多描述图片数（0=不限）；防止解析过慢",
-    "qaEnabled": "每块生成问法并向量化，提高口语化命中；需重解析，消耗对话模型 token",
-    "qaPerChunk": "每块问法条数（1~5）；越多覆盖越广、token 越多",
     "qaConcurrency": "逐块生成问答对的并发数（1~8）；调大解析更快、模型配额占用更多",
-    "childEnabled": "长块切子块检索，命中返回父块全文；需重解析",
     "childSize": "子块尺寸（100~2000）；越小检索越准，向量化次数越多",
-    "overlap": "分块重叠字数，仅用于向量化，不写入正文；0=关闭",
-    "vectorWeight": "向量语义相似度占比；调高偏「意思相近」",
-    "keywordWeight": "关键词命中占比；调高偏「字面命中」",
     "maxContextHits": "上下文最多塞入的知识块数；调大易稀释注意力",
     "sseTimeoutMs": "回答超时：检索/生成/工具的实际工作时长，超时截断。等待操作不计；0=不限。nginx 代理超时需一并放开",
     "approvalTimeoutMs": "等批准工具执行的上限；超时按拒绝",
@@ -2665,35 +1878,20 @@
     "opsCheckupRetentionDays": "巡检报告保留天数（默认 90 天）；0=永久",
     "opsCheckupAlertEnabled": "巡检 fail 时通知管理员；同一项未读合并",
     "retrievalDebugEnabled": "显示检索调试、加入评测集、归属徽标与降级提示；排障入口仅管理员可见",
-    "citationCheck": "生成后让模型核对每条 [N] 是否有来源支撑，剔除不符并重编号；判定走关思考快调用（通常 1~3 秒），15 秒硬超时、失败自动跳过不阻塞",
     "ocrMinText": "PDF 页文本少于该长度视为扫描件并触发 OCR；0=总是 OCR",
-    "ocrEngine": "none=文本抽取 / vision=逐页视觉 OCR / pp_structure_v3、mineru=外部版面解析；失败不回落",
-    "chunkStructural": "按标题与段落边界切块并注入章节路径；需重解析",
-    "chunkStructuralRatio": "结构切分阈值（maxSize×比例）；调低块更小",
-    "chunkHeadingDepth": "识别到第几级标题就断块（默认 4）；越深块越多、成本越高",
-    "vecThreshold": "向量相似度下限；调高更严格",
-    "minContextScore": "重排分低于此值不进上下文与引用（0~1）；0=关闭。未重排时走 minFusionScore，可调至 0.45~0.5",
-    "vectorTopK": "向量检索候选数；调大更全但更慢",
-    "keywordLimit": "关键词召回上限；调高更全但更慢",
     "keywordEngine": "mysql=LIKE（零依赖）；meilisearch=外部索引。切换时自动校验并全量重建",
     "keywordBaseUrl": "Meilisearch 服务地址",
     "keywordApiKey": "Meilisearch master key；留空读 AI_MEILI_KEY。不一致会导致切换失败",
     "rlEnabled": "接口限流总闸；Redis 不可用时自动放行",
     "evalAutoIntervalMs": "自动体检周期（默认每天）；≤0=暂停",
     "evalAutoThresholdPct": "指标跌幅超过该比例判退化；调小更灵敏",
-    "evalApplyObserveHours": "参数组应用后的观察期（默认 24 小时）；期间指标明显下滑自动回滚",
     "evalJudgeModel": "体检评判模型；留空复用当前问答模型",
     "evalJudgeEnabled": "用模型给体检答案打分；默认关，开启后按评估集规模计费",
-    "agentEvalEnabled": "智能体「评测」页签总开关；关闭后端点全部拒绝",
     "traceSamplingInterval": "采样周期（默认每天）；≤0=暂停。差评必采",
     "traceSampleRandom": "每轮随机采样条数（默认 20）；0=不采",
     "traceSampleNoHit": "每轮无引用回答采样条数（默认 10）；0=不采",
-    "traceSessionEvent": "留痕每轮过程（工具步、卡片、产物、用量）；默认开，关掉不影响问答",
-    "chunkMaxSize": "单块最大字符数；调小更精准但向量化更多。需重解析",
-    "imagesAuthEnabled": "图片 URL 需 HMAC 签名，防盗链；默认开",
     "ocrDpi": "OCR 渲染 DPI（默认 200）；越高越清晰、越慢",
     "toolEnabled": "问渠工具总开关；不控制文件/命令、记忆、技能工具。默认开",
-    "agentSubagentMode": "digest=只检索提炼要点（快、省）；full=跑完整问答（能独立办事）",
     "toolRuncodeEnabled": "允许模型写脚本在沙盒执行并调用本轮工具；需沙盒服务与回调地址配置；审批选「每次问我」时不提供",
     "toolRuncodeMaxSubCalls": "单脚本最多工具调用次数（含被挡）；独立于单轮步数，是账单闸",
     "scheduledMaxPerUser": "每人最多定时任务数（默认 20）；0=不限",
@@ -2716,17 +1914,10 @@
     "webSearchCustomResultsPath": "响应 JSON 里结果数组的点路径：智谱=search_result、博查=data.webPages.value、百炼=output.search_info.search_results、SearXNG/Tavily=results",
     "webSearchModel": "custom 请求体模板里 {{model}} 占位的替换值（OpenAI Responses / 百炼口径需要；智谱口径留空）",
     "webSearchCustomFieldPaths": "结果条目内取字段的点路径：智谱 标题=title/链接=link/摘要=content/时间=publish_date；博查 name/url/snippet；百炼 title/url（无摘要，留空）",
-    "webSearchRequireApproval": "开启后联网搜索需按审批模式确认；默认开（会外发并计费）",
     "webSearchEnabled": "联网搜索总开关；需先开「工具调用」",
-    "httpToolEnabled": "HTTP 工具总开关；未配置工具集的智能体不受影响",
-    "httpToolAllowPrivateNetwork": "是否允许调内网地址；自宿主开，公网多租户关",
     "webSearchBaseUrl": "平台内置 SearXNG 地址（个人 generic 默认回落此值）；generic / custom 必填（custom 的 POST 是端点地址、GET 是含 {{query}} 的 URL 模板）",
     "webSearchMaxCallsPerTurn": "单轮搜索次数上限；0=不限",
     "notificationTurnEnabled": "问答/计划/审批/目标通知总闸；个人可在通知偏好里按类型静音",
-    "keywordReconcile": "比对 MySQL 与 Meilisearch 修复索引漂移，不消耗模型额度；差异过大转全量重建",
-    "toolPermissionPresetDefault": "智能体未选档位时的默认值；默认 standard",
-    "toolPermissionPresetMax": "平台上限：超出按上限执行，被禁能力不进工具表。research=全禁沙盒写入",
-    "toolDenyGlobal": "选中的工具对全平台不挂；也可直接填外部工具名。无效名启动时报错",
     "webpushEnabled": "Web Push 总闸；需 VAPID 密钥与设备授权。静音类型不推"
   },
   "editable": {
