@@ -14,9 +14,8 @@ import java.util.List;
 /**
  * 联网搜索族。
  * <p>
- * requiresApproval 恒真（2026-11-14 设置项退役前的口径即默认开）：联网是把用户输入发到
- * 平台之外、可能产生外部计费的唯一一类工具，没审批就等于让模型自主决定花谁的钱——
- * 所以审批不可关，只受智能体审批模式管辖（off 档不影响联网启停）。
+ * requiresApproval=false：联网搜索不再要求执行前确认——审批档为 ask 时也不弹卡。
+ * 启停仍由两级开关（全局 webSearch.enabled + 智能体三态）决定，审批档位不影响本族挂不挂。
  * <p>
  * guestAllowed=false：匿名访客不暴露联网（游客分支在挂载它之前就返回了）。
  */
@@ -43,7 +42,7 @@ public class WebSearchToolProvider implements ToolFamilyProvider {
     public List<ToolDescriptor> descriptors() {
         return List.of(new ToolDescriptor(WebSearchTools.TOOL_NAME, ToolFamily.WEBSEARCH,
                 "联网搜索", "联网搜索", "上网搜索相关资料，结果会作为引用来源",
-                SideEffect.EXTERNAL, "webSearch.enabled", false, true));
+                SideEffect.EXTERNAL, "webSearch.enabled", false, false));
     }
 
     /**

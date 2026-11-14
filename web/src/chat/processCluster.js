@@ -61,12 +61,14 @@ export const clusterProcCount = cl => (cl?.segs || []).filter(s => s && (s.kind 
 
 // ---- 簇头标题（DSH 的 processTitle 文案法则，问渠词表）----
 /* 折叠簇头不再报「已执行 N 个操作」：数字要展开数一遍才有感，而罗列**做过什么**一眼就读完
- * （「已检索知识库并调用工具」「已完成分析，已检索知识库等」）。簇内的事归三类：
- * 检索（kb/检索词类工具）、调用工具（其余工具）、分析（思考与过程独白）。 */
-export const CLUSTER_KIND_DONE = { search: '已检索知识库', tools: '已调用工具', thinking: '已完成分析' }
-export const CLUSTER_KIND_LIVE = { search: '正在检索知识库', tools: '正在调用工具', thinking: '正在分析' }
+ * （「已检索知识库并调用工具」「已完成分析，已检索知识库等」）。簇内的事归四类：
+ * 检索（kb/检索词类工具）、联网（webSearch 一类出网搜索）、调用工具（其余工具）、分析（思考与过程独白）。 */
+export const CLUSTER_KIND_DONE = { search: '已检索知识库', web: '已联网搜索', tools: '已调用工具', thinking: '已完成分析' }
+export const CLUSTER_KIND_LIVE = { search: '正在检索知识库', web: '正在联网搜索', tools: '正在调用工具', thinking: '正在分析' }
 export const clusterKindOfTool = t => {
   const s = String((t && (t.name || t.label)) || '')
+  // 联网工具的内部名是 webSearch：不先认出来会落进下面的 search 分支，簇头误报成「检索知识库」
+  if (/web_?search|联网|上网搜索/i.test(s)) return 'web'
   return /search|kb|检索|知识库|知识/i.test(s) ? 'search' : 'tools'
 }
 /** 簇内按发生顺序去重的类别表：罗列与簇头图标都按这个顺序取。 */

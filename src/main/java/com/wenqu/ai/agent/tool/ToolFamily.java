@@ -55,8 +55,8 @@ public enum ToolFamily {
      * 「工具执行确认=off（禁用）」时整族不挂。
      * <p>这是族级事实而不是工具级事实：
      * 沙盒与 MCP 在 off 档下整族不给（前者真在容器里跑命令、后者是外部 server 的任意工具），
-     * 而联网搜索<b>刻意不受 off 管辖</b>——它启停由自身开关决定；纳入执行审批是恒定事实
-     * （2026-11-14 设置项退役，原默认开），off 档不会把联网整个关掉，只有 ask 档逐项确认。
+     * 而联网搜索<b>刻意不受 off 管辖</b>——它启停由自身开关决定，审批档位与它无关
+     * （requiresApproval=false，ask 档也不弹卡）。
      */
     private final boolean blockedWhenApprovalOff;
 

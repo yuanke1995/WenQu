@@ -449,7 +449,7 @@ import {
   DislikeOutlined, ReloadOutlined, RedoOutlined, RobotOutlined, ThunderboltOutlined, SearchOutlined,
   FileTextOutlined, PaperClipOutlined, ExclamationCircleOutlined, MoreOutlined,
   QuestionCircleOutlined, CheckCircleOutlined, PauseCircleOutlined, AimOutlined,
-  LoadingOutlined, DownOutlined, ApiOutlined, BulbOutlined, ClockCircleOutlined
+  LoadingOutlined, DownOutlined, ApiOutlined, BulbOutlined, GlobalOutlined, ClockCircleOutlined
 } from '@ant-design/icons-vue'
 import { resolveImg } from '../utils/markdown'
 import { approvalArgsText, approvalLeftSec } from '../chat/approval'
@@ -489,7 +489,7 @@ import ArtifactPendingCard from '../components/ArtifactPendingCard.vue'
 import AgentAvatar from '../components/AgentAvatar.vue'
 
 // 簇头活动图标（与 PC 同位）：类别 → 图标，收起时常显、展开让位给下开三角（触屏无 hover）
-const CLUSTER_ICONS = { search: SearchOutlined, tools: ApiOutlined, thinking: BulbOutlined }
+const CLUSTER_ICONS = { search: SearchOutlined, web: GlobalOutlined, tools: ApiOutlined, thinking: BulbOutlined }
 const clusterIconOf = seg => CLUSTER_ICONS[clusterHeadKind(seg)] || BulbOutlined
 
 const props = defineProps({

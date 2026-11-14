@@ -1933,7 +1933,7 @@ const composerRef = ref(null)
 const editingRef = ref(null)
 const goalArmed = ref(false)
 const goalStarting = ref(false)
-const CLUSTER_ICONS = { search: SearchOutlined, tools: ApiOutlined, thinking: BulbOutlined }
+const CLUSTER_ICONS = { search: SearchOutlined, web: GlobalOutlined, tools: ApiOutlined, thinking: BulbOutlined }
 // 具名引用：命名空间 import 会把整个图标库与 api 模块拖进本页分包。
 const api = { debugRetrieval, deleteMessageGroup, submitFeedback: apiSubmitFeedback,
               addEvalCase, getSessionShare, enableSessionShare, disableSessionShare,

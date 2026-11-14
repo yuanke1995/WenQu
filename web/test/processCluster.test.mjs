@@ -60,9 +60,14 @@ test('簇头：类别顺序、标题 1/2/3 类、头部图标类别', () => {
   assert.equal(clusterTitle(searchOnly), '已检索知识库')
   assert.equal(clusterHeadKind(searchOnly), 'search')
 
+  const webOnly = { segs: [group(tool('webSearch'))] }
+  assert.deepEqual(clusterKinds(webOnly), ['web'])
+  assert.equal(clusterTitle(webOnly), '已联网搜索')
+  assert.equal(clusterHeadKind(webOnly), 'web')
+
   const mixed = { segs: [think(), group(tool('webSearch'), tool('read_file'))] }
-  assert.deepEqual(clusterKinds(mixed), ['thinking', 'search', 'tools'])
-  assert.equal(clusterTitle(mixed), '已完成分析，已检索知识库，已调用工具等')
+  assert.deepEqual(clusterKinds(mixed), ['thinking', 'web', 'tools'])
+  assert.equal(clusterTitle(mixed), '已完成分析，已联网搜索，已调用工具等')
   assert.equal(clusterHeadKind(mixed), 'thinking')
 
   const two = { segs: [group(tool('search_knowledge'), tool('read_file'))] }
