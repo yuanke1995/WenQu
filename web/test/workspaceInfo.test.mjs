@@ -40,9 +40,9 @@ test('标题、权限恢复、刷新播报与选档分派', () => {
 const ws = over => ({ projectId: 'p1', name: '工作区', roots: ['/x'], isLocal: true,
                       executorId: 'pc-a', executorOnline: true, permissionPreset: 'balanced', ...over })
 const presets = [
-  { code: 'readonly', label: '只读', available: true },
-  { code: 'balanced', label: '平衡', platformDefault: true, available: true },
-  { code: 'autonomous', label: '完全', available: true }
+  { code: 'readonly', label: '只读' },
+  { code: 'balanced', label: '平衡', platformDefault: true },
+  { code: 'autonomous', label: '完全' }
 ]
 
 const makeCtx = (over = {}) => {
@@ -118,10 +118,11 @@ test('会话工作区：取数失败置空；异机提示按本地执行器判�
   assert.deepEqual(f.permissionPresets.value, [])
 })
 
-test('档位：平台上限回落；完全权限需勾选确认；失败复位保存态', async () => {
+test('档位：不再按平台上限回落；完全权限需勾选确认；失败复位保存态', async () => {
   const { ctx, calls, notices } = makeCtx({
     api: {
       getSessionWorkspace: async () => ({ data: ws() }),
+      // 平台档位上限已退役：名册里的 available 不再参与钳制
       getPermissionPresets: async () => ({ success: true, data: presets.map(p =>
         p.code === 'autonomous' ? { ...p, available: false } : p) }),
       setSessionPermission: async (sid, code) => { calls.push(['perm', sid, code]) }
@@ -131,7 +132,7 @@ test('档位：平台上限回落；完全权限需勾选确认；失败复位�
   await tick()
   await w.loadPermissionPresets()
   w.sessionPermission.value = 'autonomous'
-  assert.equal(w.effectivePermission.value, 'balanced')   // 上限回落
+  assert.equal(w.effectivePermission.value, 'autonomous')   // 原样生效
 
   await w.pickPermission('readonly')
   assert.deepEqual(calls.at(-1), ['perm', 's1', 'readonly'])

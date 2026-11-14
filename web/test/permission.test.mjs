@@ -3,9 +3,9 @@ import assert from 'node:assert/strict'
 import { resolveEffectivePermission, permissionLabelOf } from '../src/chat/permission.js'
 
 const presets = [
-  { code: 'read', label: '只读', available: true },
-  { code: 'write', label: '可写', available: true, platformDefault: true },
-  { code: 'full', label: '完全', available: false }
+  { code: 'read', label: '只读' },
+  { code: 'write', label: '可写', platformDefault: true },
+  { code: 'full', label: '完全' }
 ]
 
 test('优先级：会话覆盖 > 智能体默认 > 平台默认', () => {
@@ -14,13 +14,15 @@ test('优先级：会话覆盖 > 智能体默认 > 平台默认', () => {
   assert.equal(resolveEffectivePermission(presets, '', ''), 'write')
 })
 
-test('不可用档位按平台上限回落', () => {
-  assert.equal(resolveEffectivePermission(presets, 'full', ''), 'write')
+// 平台档位上限已退役（2026-11-14）：名册里的档位不再做 available 钳制，选过/智能体档原样生效
+test('档位不再按平台上限回落：不可用码原样返回', () => {
+  const list = presets.map(p => p.code === 'full' ? { ...p, available: false } : p)
+  assert.equal(resolveEffectivePermission(list, 'full', ''), 'full')
+  assert.equal(resolveEffectivePermission(list, '', 'full'), 'full')
 })
 
-test('不可用档位且平台无可用项时保留原码', () => {
-  const none = [{ code: 'full', label: '完全', available: false }]
-  assert.equal(resolveEffectivePermission(none, 'full', ''), 'full')
+test('档位不在名册里也原样返回', () => {
+  assert.equal(resolveEffectivePermission(presets, 'gone', ''), 'gone')
 })
 
 test('空名册/空码：返回空串', () => {
