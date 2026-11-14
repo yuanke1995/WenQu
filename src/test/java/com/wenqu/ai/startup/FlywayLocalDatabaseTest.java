@@ -1,6 +1,7 @@
 package com.wenqu.ai.startup;
 
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.MigrationInfo;
 import org.flywaydb.core.api.output.MigrateResult;
 import org.junit.jupiter.api.Test;
 
@@ -8,6 +9,8 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
+import java.util.Arrays;
+import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.Set;
 
@@ -15,7 +18,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
- * 本地 MySQL 集成测试：空库执行 Flyway V1~V19（15 个迁移文件：V7~V9、V17 编号空缺），验证基线可用、各版改动生效、二次 migrate 为 0。
+ * 本地 MySQL 集成测试：空库执行全部 Flyway 迁移（编号有历史空缺），验证基线可用、各版改动生效、二次 migrate 为 0；
+ * 脚本数量按 classpath 实际解析结果自校验，不随版本号手工改。
  *
  * <p>不依赖 Docker；本机 3306 不可达时自动跳过。CI 里仍由 {@link FlywayFreshDatabaseTest}
  * （Testcontainers）覆盖。
@@ -46,7 +50,18 @@ class FlywayLocalDatabaseTest {
                     .load();
 
             MigrateResult first = flyway.migrate();
-            assertThat(first.migrationsExecuted).as("空库应执行 V1~V19（V7~V9、V17 编号空缺）").isEqualTo(15);
+            // 迁移计数不写死：空库必须执行掉 classpath 里解析到的每个脚本，库版本停在最高迁移号
+            var resolved = flyway.info().all();
+            assertThat(first.migrationsExecuted)
+                    .as("空库应执行全部迁移脚本（V7~V9、V17 编号空缺）")
+                    .isEqualTo(resolved.length);
+            assertThat(flyway.info().pending()).as("迁移后不应有未执行脚本").isEmpty();
+            assertThat(flyway.info().current().getVersion())
+                    .as("库版本应停在最高迁移号")
+                    .isEqualTo(Arrays.stream(resolved)
+                            .map(MigrationInfo::getVersion)
+                            .max(Comparator.naturalOrder())
+                            .orElseThrow());
 
             assertThat(tables(url)).contains(
                     "c_ai_session", "c_ai_message", "c_ai_session_event",

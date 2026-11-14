@@ -85,8 +85,44 @@ class ConfigContractTest {
                 .as("defaults 有而 schema 无：隐藏/部署项必须登记到 HIDDEN_DEFAULTS")
                 .containsExactlyInAnyOrderElementsOf(HIDDEN_DEFAULTS);
 
-        assertThat(schemaKeys).as("schema 字段数变了：同步 README 的设置项口径").hasSize(90);
-        assertThat(defaultsKeys).as("defaults 键数变了：同步 README 的隐藏项口径").hasSize(140);
+        // 口径不在这里写死数字：README 是给人看的文案真源，测试只核对它有没有落后于 schema。
+        // 增删配置项时改 README（系统设置一节 + 目录树注释）即可，不用回来改测试。
+        String readme = Files.readString(Path.of("README.md"));
+        assertThat(readmeNumber(readme, "共 (\\d+) 个字段"))
+                .as("README「共 N 个字段」与 config-schema.json 字段数不一致")
+                .isEqualTo(schemaKeys.size());
+        assertThat(readmeNumber(readme, "管理端可见 (\\d+) 项"))
+                .as("README「管理端可见 N 项」与 schema 非 personalOnly 字段数不一致")
+                .isEqualTo(schemaKeys.size() - personalOnlyCount());
+        assertThat(readmeNumber(readme, "另有 (\\d+) 项内部键"))
+                .as("README「另有 N 项内部键」与 defaults 里不暴露到设置页的键数不一致")
+                .isEqualTo(defaultsKeys.size() - schemaKeys.size());
+        Matcher tree = Pattern.compile("(\\d+) 面板 / (\\d+) 字段").matcher(readme);
+        assertThat(tree.find()).as("README 目录树缺少「N 面板 / N 字段」口径").isTrue();
+        assertThat(Integer.parseInt(tree.group(1)))
+                .as("README 目录树的「N 面板」与 schema panels 数不一致")
+                .isEqualTo(panelCount());
+        assertThat(Integer.parseInt(tree.group(2)))
+                .as("README 目录树的「N 字段」与 schema 字段数不一致")
+                .isEqualTo(schemaKeys.size());
+    }
+
+    private static int readmeNumber(String readme, String regex) {
+        Matcher m = Pattern.compile(regex).matcher(readme);
+        assertThat(m.find()).as("README 缺少口径：%s", regex).isTrue();
+        return Integer.parseInt(m.group(1));
+    }
+
+    private static int personalOnlyCount() throws Exception {
+        int n = 0;
+        for (JsonNode f : new ObjectMapper().readTree(Files.readString(SCHEMA)).path("fields")) {
+            if (f.path("personalOnly").asBoolean(false)) n++;
+        }
+        return n;
+    }
+
+    private static int panelCount() throws Exception {
+        return new ObjectMapper().readTree(Files.readString(SCHEMA)).path("panels").size();
     }
 
     @Test
