@@ -22,8 +22,6 @@ public class AppProperties {
     private Vision vision = new Vision();
     private Ratelimit ratelimit = new Ratelimit();
 
-    private Context context = new Context();
-
     private Auth auth = new Auth();
 
     /** 部署级密钥（登录令牌签名密钥、配置加密 RSA 密钥环）的取用方式，见 DeploymentSecrets */
@@ -116,8 +114,6 @@ public class AppProperties {
         private float quality = 0.9f;
         /** 图片 URL 访问前缀（含 context-path /ai） */
         private String urlPrefix = "/ai/images";
-        /** 图片访问鉴权开关（HMAC 签名 URL，生产开启；与 yml/schema 默认一致，首次启动由本值播种） */
-        private boolean authEnabled = true;
         /** 签名 URL 有效期（秒） */
         private long authExpireSeconds = 3600;
     }
@@ -130,8 +126,8 @@ public class AppProperties {
         private int concurrency = 2;
         /** 单张图片失败重试次数（syncProperties 回写，设置页保存即生效） */
         private int retryCount = 1;
-        /** 描述 prompt（defaults() 种子值；运行时读 vision.prompt，设置页保存即生效） */
-        private String prompt = "请简要描述这张图片的内容，如果是界面截图请提取关键文字和界面元素，如果是流程图请说明流程要点，50字以内。";
+        // 描述 prompt 已固化为平台常量（ConfigDefaults.VISION_PROMPT，2026-11-14 拍板）：原 vision.prompt
+        // 设置项退役，提示词调整需改代码发版——它直接决定图片描述质量与缓存键，不宜让设置页随手改。
     }
 
     /**
@@ -142,12 +138,6 @@ public class AppProperties {
      * 安全系数为平台固定策略（ModelRegistryService.CONTEXT_SAFETY_FACTOR），不再作为配置项。
      * 历史压缩由 AgentScope 的 CompactionMiddleware 接管，这里不再有压缩开关/比例。
      */
-    @Data
-    public static class Context {
-        /** 上下文填充的最大块数（兜底上限，防候选极多时预算失控） */
-        private int maxContextHits = 8;
-    }
-
     /** 本地登录鉴权（JWT + PBKDF2，纯 JDK 实现，不引入第三方依赖） */
     @Data
     public static class Auth {

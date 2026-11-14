@@ -3,7 +3,6 @@ package com.wenqu.ai.service;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
-import com.wenqu.ai.config.AppProperties;
 import com.wenqu.ai.config.ConfigDefaults;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
@@ -26,16 +25,11 @@ import java.util.Map;
 @Service
 public class VisionService {
 
-    private final AppProperties properties;
-    private final ConfigService configService;
     private final ModelRegistryService modelRegistryService;
     private final ImageDescCache imageDescCache;
     private final RestClient restClient;
 
-    public VisionService(AppProperties properties, ConfigService configService,
-                         ModelRegistryService modelRegistryService, ImageDescCache imageDescCache) {
-        this.properties = properties;
-        this.configService = configService;
+    public VisionService(ModelRegistryService modelRegistryService, ImageDescCache imageDescCache) {
         this.modelRegistryService = modelRegistryService;
         this.imageDescCache = imageDescCache;
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
@@ -48,12 +42,13 @@ public class VisionService {
     }
 
     /**
-     * 生成图片文字描述（使用配置的默认提示词）；任何失败返回 ""（降级，不中断主流程）。
+     * 生成图片文字描述（提示词为平台常量 {@link ConfigDefaults#VISION_PROMPT}，原 vision.prompt
+     * 设置项已退役）；任何失败返回 ""（降级，不中断主流程）。
      * 视觉模型取当前线程的解析期「图片描述」引用（{@link #startParseScope(String)}，文档内嵌图按库）；
      * 未设置（无库上下文）时不描述图片，没有运行时兜底。
      */
     public String describe(byte[] imageBytes, String ext) {
-        return describe(imageBytes, ext, configService.get("vision.prompt"), DESC_REF.get());
+        return describe(imageBytes, ext, ConfigDefaults.VISION_PROMPT, DESC_REF.get());
     }
 
     /**
@@ -66,7 +61,7 @@ public class VisionService {
 
     /** 显式引用版图片描述（异步任务用）：ref 由提交线程捕获后传入，其余逻辑同 {@link #describe(byte[], String)} */
     public String describeWithRef(byte[] imageBytes, String ext, String ref) {
-        return describe(imageBytes, ext, configService.get("vision.prompt"), ref);
+        return describe(imageBytes, ext, ConfigDefaults.VISION_PROMPT, ref);
     }
 
     /**

@@ -20,13 +20,17 @@ public final class ConfigDefaults {
 
     // ---- 检索 / 重排（调优重灾区，重标定只改这里） ----
 
-    /** retrieval.minContextScore：重排分门（仅对重排分 0~1 分域生效） */
+    /** retrieval.vectorTopK：向量召回条数（库级可调，此为内置默认） */
+    public static final int RETRIEVAL_VECTOR_TOP_K = 15;
+    /** retrieval.keywordLimit：关键词召回条数上限（库级可调，此为内置默认） */
+    public static final int RETRIEVAL_KEYWORD_LIMIT = 20;
+    /** retrieval.minContextScore：重排分门（仅对重排分 0~1 分域生效；库级可调，此为内置默认） */
     public static final double RETRIEVAL_MIN_CONTEXT_SCORE = 0.6;
-    /** retrieval.minFusionScore：融合分门（未启用重排时生效） */
+    /** retrieval.minFusionScore：融合分门（未启用重排时生效；库级可调，此为内置默认） */
     public static final double RETRIEVAL_MIN_FUSION_SCORE = 0.5;
-    /** retrieval.lowConfidencePolicy：低分全灭时的策略（top1=只保底最相关的 1 条；off=不保底） */
+    /** retrieval.lowConfidencePolicy：低分全灭时的策略（top1=只保底最相关的 1 条；off=不保底；库级可调，此为内置默认） */
     public static final String RETRIEVAL_LOW_CONFIDENCE_POLICY = "top1";
-    /** retrieval.top1Floor：保底条目的最低分（低于此分视为没有相关内容，不强行塞给模型） */
+    /** retrieval.top1Floor：保底条目的最低分（低于此分视为没有相关内容，不强行塞给模型；库级可调，此为内置默认） */
     public static final double RETRIEVAL_TOP1_FLOOR = 0.05;
     /** 多路检索共识加分（仅评测的多路近似使用） */
     public static final double RETRIEVAL_MULTI_CONSENSUS_BONUS = 0.03;
@@ -34,6 +38,8 @@ public final class ConfigDefaults {
     public static final int RERANK_MIN_HITS = 6;
     /** rerank.maxHits：只重排融合分最高的前 N 块（库级「重排窗口」可调，此为内置默认） */
     public static final int RERANK_MAX_HITS = 15;
+    /** graphrag.expandTopK：检索图扩展最多并入块数，0=不扩展（库级「图扩展上限」可调，此为内置默认） */
+    public static final int GRAPH_EXPAND_TOP_K = 5;
 
     // ---- 解析 / 向量化 ----
 
@@ -159,7 +165,10 @@ public final class ConfigDefaults {
     public static final int CHAT_AGENTSCOPE_JOURNAL_ROTATE_EVENTS = 12_000;
     public static final boolean CHAT_SESSION_LOG_ARCHIVE_ENABLED = true;
 
-    // ---- 视觉：并发与缓存 ----
+    // ---- 视觉：识别提示词、并发与缓存 ----
+    /** 图片描述提示词（2026-11-14 拍板固化：原 vision.prompt 设置项退役，调整需改代码发版） */
+    public static final String VISION_PROMPT =
+            "请简要描述这张图片的内容，如果是界面截图请提取关键文字和界面元素，如果是流程图请说明流程要点，50字以内。";
     public static final int VISION_CONCURRENCY = 2;
     public static final int VISION_USER_IMAGE_CONCURRENCY = 2;
     public static final int VISION_TIMEOUT_MILLIS = 30_000;
@@ -205,7 +214,6 @@ public final class ConfigDefaults {
     public static final int AGENT_WEBHOOK_RETRY_MAX = 4;
 
     // ---- 评估与评测 ----
-    public static final String AGENT_EVAL_GATE_MODE = "hint";
     public static final int AGENT_EVAL_THRESHOLD_RATE = 0;
     public static final int AGENT_EVAL_MAX_CASES = 200;
     public static final int AGENT_EVAL_CONCURRENCY = 2;
