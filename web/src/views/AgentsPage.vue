@@ -316,9 +316,10 @@
                           {{ c.desc }}
                         </div>
                       </div>
-                      <div v-if="form.isBuiltin === 1 && (c.key === 'toolHttp' || c.key === 'toolWorkflow')" class="ap-seg">
-                        <span class="ap-hint" style="margin:0">随产品固定</span>
-                      </div>
+                      <span v-if="form.isBuiltin === 1 && (c.key === 'toolHttp' || c.key === 'toolWorkflow')"
+                            class="ap-seg-lock" :title="'内置问渠不支持' + c.label + '（随产品固定）'">
+                        <lock-outlined />随产品固定
+                      </span>
                       <div v-else class="ap-seg">
                         <button v-for="s in capSegItems(c)" :key="s.v" type="button"
                                 :class="{ on: capSegValue(c) === s.v }" @click="setCapState(c, s.v)">
@@ -2599,6 +2600,15 @@ onMounted(async () => { })
 .ap-seg button.on { background: var(--app-accent); color: #fff; font-weight: 500; }
 .ap-seg button.on:hover { background: var(--app-accent-hover); }
 .ap-seg-gv { font-size: 10px; opacity: .8; }
+/* 内置问渠不可配置的能力：与分段控件同高的锁定胶囊，不再用裸文字占位 */
+.ap-seg-lock {
+  display: inline-flex; align-items: center; gap: 4px; flex: none;
+  height: 24px; padding: 0 9px; box-sizing: border-box;
+  border: 1px solid var(--app-border); border-radius: 6px;
+  background: var(--app-panel-2); color: var(--app-text3);
+  font-size: 11.5px; line-height: 1; white-space: nowrap;
+}
+.ap-seg-lock svg { font-size: 12px; }
 /* 卡头唯一差异指示：行内徽标只作定位，计数与「恢复跟随」集中在这里（与右侧摘要同口径）。
    零差异与有差异共用同一盒模型（始终占位 + 透明边框），切换开关时卡头高度不变，下方内容不跳动 */
 .ap-head-diff {
