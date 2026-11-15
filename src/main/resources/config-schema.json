@@ -496,6 +496,33 @@
       "tier": 2
     },
     {
+      "backendKey": "browser.location",
+      "personal": true,
+      "personalOnly": true,
+      "panel": "browser",
+      "section": 0,
+      "group": "browser",
+      "key": "location",
+      "path": "browser.location",
+      "label": "执行位置",
+      "type": "select",
+      "def": "",
+      "options": [
+        {
+          "value": "local",
+          "label": "系统浏览器"
+        },
+        {
+          "value": "builtin",
+          "label": "内置浏览器"
+        }
+      ],
+      "width": 240,
+      "ph": "系统浏览器（默认）",
+      "tier": 2,
+      "note": "内置浏览器不接触你的电脑，只能访问公网；系统浏览器能访问 localhost 与内网，需本机执行器在线。"
+    },
+    {
       "backendKey": "ratelimit.enabled",
       "panel": "ratelimit",
       "section": 0,

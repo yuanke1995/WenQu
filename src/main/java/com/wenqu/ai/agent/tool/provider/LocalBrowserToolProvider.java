@@ -6,6 +6,7 @@ import com.wenqu.ai.agent.tool.ToolFamily;
 import com.wenqu.ai.agent.tool.ToolFamilyProvider;
 import com.wenqu.ai.agent.tool.ToolMountContext;
 import com.wenqu.ai.service.LocalBrowserTools;
+import com.wenqu.ai.service.UserConfigService;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.stereotype.Component;
 
@@ -18,6 +19,9 @@ import java.util.List;
  * 执行器在用户机器上能。两者工具名不同（localBrowser* vs browser_*），不会撞名；
  * 智能体可按需选用，执行器在线时本族自动出现。
  * <p>
+ * 用户可在个人设置选「内置浏览器」（{@code browser.location=builtin}）：选中时本族不挂载，
+ * 即使执行器在线也不碰用户电脑；云端不可用就是明确的失败，不回落本机。
+ * <p>
  * 有副作用（驱动真实浏览器）→ requiresApproval=true，审批 ask/off 档按现有体系收口；
  * 游客不暴露（guestAllowed=false）。
  *
@@ -26,10 +30,16 @@ import java.util.List;
 @Component
 public class LocalBrowserToolProvider implements ToolFamilyProvider {
 
-    private final LocalBrowserTools tools;
+    /** 个人设置：浏览器执行位置（空=本地优先，维持历史行为） */
+    private static final String LOCATION_KEY = "browser.location";
+    private static final String LOCATION_BUILTIN = "builtin";
 
-    public LocalBrowserToolProvider(LocalBrowserTools tools) {
+    private final LocalBrowserTools tools;
+    private final UserConfigService userConfigService;
+
+    public LocalBrowserToolProvider(LocalBrowserTools tools, UserConfigService userConfigService) {
         this.tools = tools;
+        this.userConfigService = userConfigService;
     }
 
     @Override
@@ -65,7 +75,10 @@ public class LocalBrowserToolProvider implements ToolFamilyProvider {
     @Override
     public List<ToolCallback> callbacks(ToolMountContext mc) {
         // 执行器不在线=这台电脑没开执行器，本族整体不挂（模型看不见，不会对着空能力空转）
-        boolean online = tools.onlineExecutor(mc.userId()) != null;
-        return mountFiltered(mc, d -> online && exposes(d, mc));
+        // 用户选了「内置浏览器」也整体不挂，模型只能用云端 browser_*
+        boolean mount = tools.onlineExecutor(mc.userId()) != null
+                && !LOCATION_BUILTIN.equalsIgnoreCase(
+                        userConfigService.personalValue(mc.userId(), LOCATION_KEY));
+        return mountFiltered(mc, d -> mount && exposes(d, mc));
     }
 }

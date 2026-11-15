@@ -1083,13 +1083,21 @@ const fieldNote = f => String(f.note || '')
 const personalGroups = computed(() => {
   const fs = personal.value.fields || []
   const out = []
-  const retrieval = fs.filter(f => f.panel !== 'webSearch')
+  const retrieval = fs.filter(f => f.panel !== 'webSearch' && f.panel !== 'browser')
   if (retrieval.length) {
     out.push({
       key: 'retrieval',
       title: '回答检索',
       hint: '每次回答最多带多少条知识块进上下文；越大信息越全，也越费 token。',
       fields: retrieval
+    })
+  }
+  const browser = fs.filter(f => f.panel === 'browser')
+  if (browser.length) {
+    out.push({
+      key: 'browser',
+      title: '浏览器操作',
+      fields: browser
     })
   }
   const basic = fs.filter(f => f.panel === 'webSearch' && f.key !== 'provider'
