@@ -87,7 +87,7 @@
                   <span v-if="isDefault(a) || isBuiltin(a) || isPreset(a) || isSub(a)" class="ap-card-tags">
                     <span v-if="isDefault(a)" class="ap-tag-default" title="默认智能体：对话页预选">★ 默认</span>
                     <span v-if="isBuiltin(a)" class="ap-tag-builtin" title="系统默认智能体：全员可用，仅管理员可配置"><lock-outlined />内置</span>
-                    <span v-else-if="isPreset(a)" class="ap-tag-builtin" title="平台内置助手：仅管理员可见可配置"><lock-outlined />内置</span>
+                    <span v-else-if="isPreset(a)" class="ap-tag-builtin" title="平台内置助手：全员可用，管理员可配置"><lock-outlined />内置</span>
                     <span v-else-if="isSub(a)" class="ap-tag-sub">子智能体</span>
                   </span>
                 </div>
@@ -117,7 +117,7 @@
                           <a-menu-item key="export" @click="exportAgent(a)">导出 JSON</a-menu-item>
                           <a-menu-item key="ver" @click="openEdit(a); openVersions()">历史版本</a-menu-item>
                           <!-- 「设为默认」是全局动作（影响所有人下拉的预选），后端仅管理员放行；
-                               平台预置仅管理员可见，不能设为全员默认 -->
+                               平台预置是能力型助手，不能设为全员默认 -->
                           <a-menu-item v-if="canSetDefault(a)" key="def" @click="doSetDefault(a.id)">设为默认</a-menu-item>
                           <!-- 内置智能体不提供删除入口（后端也会拒绝），避免出现"点了报错"的死路 -->
                           <a-menu-item v-if="!isBuiltin(a) && !isPreset(a)" key="del" danger @click="confirmDelete(a)">删除</a-menu-item>
@@ -1182,7 +1182,7 @@ const onRunModeChange = v => {
   form.value.isSubagent = v === 'sub' ? 1 : 0
 }
 // 页头星标：已存在的非子智能体、且管理员才有「设为默认」能力（与列表卡片同一判据）；
-// 平台预置仅管理员可见，不能设为全员默认
+// 平台预置是能力型助手，不能设为全员默认
 const canShowStar = computed(() => {
   if (!editingId.value || !isAdmin.value || form.value.isSubagent) return false
   const a = agents.value.find(x => String(x.id) === String(editingId.value))
@@ -1196,7 +1196,7 @@ const iconOptions = computed(() => ICON_OPTIONS.filter(o => o.value !== 'wenqu')
 const isDefault = a => a.isDefault === 1 || a.isDefault === true
 /** 系统内置（如默认「知识库助手」）：不可删除，卡片上以「内置」标记区分 */
 const isBuiltin = a => a.isBuiltin === 1 || a.isBuiltin === true
-/** 平台预置的内置助手（created_by=system，如网页操作助手）：仅管理员可见可配置，不可删除、不可设为默认 */
+/** 平台预置的内置助手（created_by=system，如网页操作助手）：全员可用，管理员可配置，不可删除、不可设为默认 */
 const isPreset = a => a.createdBy === 'system' && !isBuiltin(a)
 /** 子智能体：不直接参与对话，只能被主智能体委派 */
 const isSub = a => a.isSubagent === 1 || a.isSubagent === true

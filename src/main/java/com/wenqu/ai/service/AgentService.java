@@ -236,8 +236,8 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
      * <p>为什么不复用 {@code isBuiltin=1}：那一格的语义是「全局唯一的产品默认助手」，启动维护会把
      * 多出来的降级。平台预置可以有多个，只是可见性同样要跨过「谁建归谁」——归属人 'system'
      * 不等于任何登录 uid，不在这里开口子，播种出来的行就没有任何人看得到。
-     * <p><b>可见性与内置「问渠」不同</b>：平台预置是平台能力（网页操作等），仅管理员级可见可用——
-     * 它依赖的平台级 MCP 服务同样只对管理员露出，普通用户不该在对话页、评测页或工作流里选到它。
+     * <p><b>可见性与内置「问渠」相同</b>：平台预置是平台能力（网页操作等），本租户内全员可读可用，
+     * 配置仍只由管理员级维护；它依赖的平台级 MCP 服务同样对全员只读露出。
      */
     public static boolean isPlatformPreset(Agent a) {
         return a != null && "system".equals(a.getCreatedBy())
@@ -247,11 +247,11 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
     /**
      * 当前用户是否可读取该智能体。归属口径（谁建归谁）：仅创建者可见；
      * 内置「问渠」是系统默认——给每个人用，所有登录用户可读（配置仍只由管理员级维护）。
-     * 平台预置助手仅管理员级可读（见 {@link #isPlatformPreset}）。
+     * 平台预置助手同样全员可读（见 {@link #isPlatformPreset}）。
      */
     public boolean readable(Agent a) {
         if (a != null && Integer.valueOf(1).equals(a.getIsBuiltin())) return true;
-        if (isPlatformPreset(a)) return roleService.isAdminAny(RequestUser.roles());
+        if (isPlatformPreset(a)) return true;
         return resourceVisibilityService.canRead(principal(), a == null ? null : a.getCreatedBy());
     }
 
@@ -593,9 +593,9 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         if (Integer.valueOf(1).equals(target.getIsSubagent())) {
             throw new BizException("子智能体不能设为默认：它只能被主智能体委派调用");
         }
-        // 平台预置仅管理员可见：设成默认会让普通用户的下拉预选命中一个他们无权读取的助手
+        // 平台预置是能力型助手，不作为全员默认预选：默认助手由管理员在普通助手里显式指定
         if (isPlatformPreset(target)) {
-            throw new BizException("内置助手「" + target.getName() + "」仅管理员可用，不能设为全员默认");
+            throw new BizException("内置助手「" + target.getName() + "」不能设为全员默认");
         }
         clearDefault(id);
         Agent a = new Agent();
