@@ -45,7 +45,15 @@ export const consultChatView = t => {
       st: x.s === 'error' ? 'error' : 'done'
     } : null).filter(Boolean),
     dur: toolDuration(Number(s.elapsedMs) || 0),
-    status
+    sources: (Array.isArray(s.sources) ? s.sources : []).filter(x => x && x.ref),
+    // 产物：{f,u,s,e} 明细（可点）
+    artifacts: (Array.isArray(s.artifacts) ? s.artifacts : []).filter(a => a && typeof a === 'object').map(a => ({
+      name: String(a.f || ''), url: a.u ? String(a.u) : '', size: Number(a.s) || 0, ext: String(a.e || '')
+    })),
+    status,
+    failed: status !== 'done',
+    timeout: status === 'timeout',
+    error: s.error || ''
   }
 }
 

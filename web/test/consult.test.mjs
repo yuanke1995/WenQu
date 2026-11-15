@@ -23,6 +23,26 @@ test('子对话视图：无 subChat 返回 null；有则规范化步骤与耗时
   assert.equal(v.dur, '1.2s')
 })
 
+test('子对话视图：资料/产物/失败态字段齐全，卡片模板据 length 判空', () => {
+  const v = consultChatView({ subChat: {
+    status: 'timeout', error: '超时',
+    sources: [{ ref: 1, title: '甲' }, { title: '无号' }, null],
+    artifacts: [{ f: '报表.xlsx', u: '/a/b.xlsx', s: 2048, e: 'xlsx' }, 'bad']
+  } })
+  assert.deepEqual(v.sources.map(s => s.ref), [1])
+  assert.deepEqual(v.artifacts, [{ name: '报表.xlsx', url: '/a/b.xlsx', size: 2048, ext: 'xlsx' }])
+  assert.equal(v.failed, true)
+  assert.equal(v.timeout, true)
+  assert.equal(v.error, '超时')
+
+  const ok = consultChatView({ subChat: {} })
+  assert.deepEqual(ok.sources, [])
+  assert.deepEqual(ok.artifacts, [])
+  assert.equal(ok.failed, false)
+  assert.equal(ok.timeout, false)
+  assert.equal(ok.error, '')
+})
+
 test('任务原文与定位锚', () => {
   assert.equal(dispatchTaskOf({ subChat: { question: '跑完了' }, args: '{"task":"原始"}' }), '跑完了')
   assert.equal(dispatchTaskOf({ args: '{"task":"原始"}' }), '原始')
