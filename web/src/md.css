@@ -3,6 +3,8 @@
    渲染产物类：.md 容器 + .md-img（图文交错）/ .ref-sup（引用角标）/ .code-copy（代码复制）
    色值一律走 --app-* token（定义见 views/app.css），暗色模式下自动适配。 */
 .md img { max-width: 100%; max-height: 320px; border: 1px solid var(--app-border); border-radius: var(--app-radius-sm); display: block; margin: 8px 0; cursor: zoom-in; }
+/* 手册正文的随包插图（/manual/*）：按行内小标使用，不套文档图片的外框与放大光标 */
+.md img[src^="/manual/"] { display: inline-block; width: 20px; height: 20px; border: 0; border-radius: 5px; vertical-align: -4px; margin: 0 4px; cursor: default; }
 /* 引用角标 [N] */
 .md .ref-sup { color: var(--app-accent); font-size: 12px; cursor: pointer; user-select: none; }
 /* Markdown 完整渲染样式 */
