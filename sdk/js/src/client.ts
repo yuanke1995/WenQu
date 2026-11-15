@@ -1,6 +1,6 @@
 /**
  * SDK 入口客户端：负责构造校验、fetch 封装、鉴权头注入与错误映射。
- * 各能力模块（chat/embeddings/retrieval/kbs/workflow/native）通过本类的内部请求方法发请求。
+ * 各能力模块（chat/embeddings/retrieval/kbs/workflow/native/runs）通过本类的内部请求方法发请求。
  */
 
 import type { PlatformEnvelope } from "./types.js";
@@ -11,6 +11,7 @@ import { Retrieval } from "./retrieval.js";
 import { Kbs } from "./kb.js";
 import { Workflows } from "./workflow.js";
 import { NativeChat } from "./native.js";
+import { Runs } from "./runs.js";
 import { SDK_VERSION } from "./version.js";
 
 export interface WenquClientOptions {
@@ -55,6 +56,8 @@ export class WenquClient {
   readonly workflows: Workflows;
   /** 原生问答运行时（深度集成）：send/resume/steer/stop + 人在回路卡片 + 附件与历史 */
   readonly native: NativeChat;
+  /** v1 run 原语（正式契约）：建轮 / 状态 / 事件流（Last-Event-ID 续传）/ 审批 / 产物 / 插话 / 停止 */
+  readonly runs: Runs;
 
   private readonly apiKey: string;
   private readonly extraHeaders: WenquClientOptions["headers"];
@@ -87,6 +90,7 @@ export class WenquClient {
     this.kbs = new Kbs(this);
     this.workflows = new Workflows(this);
     this.native = new NativeChat(this);
+    this.runs = new Runs(this);
   }
 
   /** 内部：装配本次请求的附加头（代理登录态等，函数形态每次现取——令牌会刷新） */

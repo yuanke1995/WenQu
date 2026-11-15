@@ -336,6 +336,48 @@ const resp = await client.chat.completions.create({
 - **升级**：重新 pack 后重装 tarball。沿用同一版本号时个别 npm 缓存场景需 `--force` 或 `npm cache clean --force`，建议每次 `npm version patch` 再 pack。
 - **类型**：自带 `dist/*.d.ts`，不需要额外安装 `@types`。
 
+### 5. v1 run 原语（`client.runs`）
+
+正式契约的「一次运行」：建轮、状态、事件流、审批、产物、插话、停止。
+**它和 `client.native` 是两套协议**：native 的事件名在 JSON 的 `type` 字段、续传靠 session 快照；
+runs 的事件名在 SSE `event:` 行、每帧带 `id:`（seq），断线靠 `Last-Event-ID` 补增量。
+
+需要给 Key 显式勾选 `runs.write`（建轮/插话/停止/审批）与 `runs.read`（状态/事件流/产物）——
+这两个 scope **不在默认集里**，存量 Key 不会自动扩权。
+
+```ts
+const run = await client.runs.create("智能体id", {
+  question: "整理这份资料",
+  idempotencyKey: "order-12345", // 同 Key 重放回同一 runId，不新起轮
+});
+
+const summary = await client.runs.stream(run.runId, {
+  onToken: (delta) => process.stdout.write(delta),
+  onApprovalRequired: async (card) => {
+    // card.approvalId / card.kind；提交后再跑下一帧
+    await client.runs.approve(run.runId, {
+      approvalId: card.approvalId as string, decision: "approve",
+    });
+  },
+  onArtifact: (d) => console.log("产物", d),
+  onFallback: (detail) => console.log("回放过期，已降级重拉", detail.status),
+});
+// summary.status: succeeded | failed | stopped | resume_expired | cancelled
+```
+
+- `stream()` 自动记住每帧 `id:`；终态前断线会带 `Last-Event-ID` 重连（默认最多 3 次），
+  只补增量且按 seq 去重。鉴权/权限/不存在/限流类 4xx 不重连，直接抛对应错误类。
+- 事件流缓冲过期（服务端回 `run.error(code=resume_expired)`）时，SDK 自动重拉
+  `GET /v1/runs/{id}` 并通过 `onFallback` 交回状态，**不会把过期伪装成一条从 id=1 开始的新流**。
+- 冻结事件：`run.started / token / tool.status / plan.updated / approval.required /
+  artifact.created / approval.timed_out / run.done / run.error`。未知事件由 `onEvent` 统一交出，
+  契约只增不删新增事件不会打断订阅。
+- 其余端点：`get(runId)`、`artifacts(runId)`（当场换发 1 小时签名 URL）、
+  `approve(runId, {approvalId, decision, ...})`、`steer(runId, text)`、`stop(runId)`（幂等）。
+
+> 当前 SDK 版本仍是 `0.1.0`，按项目排期**尚未发布 npm/PyPI**；在仓库内用
+> `file:../wenqu/sdk/js` 之类的本地引用即可使用，发布后再切包名。
+
 ## 开发
 
 ```bash

@@ -12,6 +12,7 @@
 
 from ._version import __version__
 
+from .runs import RUN_ERROR_CODES, RUN_EVENT_NAMES, RunEvent, RunsNamespace
 from .client import (
     WenquAPIError,
     WenquAuthError,
@@ -28,4 +29,8 @@ __all__ = [
     "WenquAuthError",
     "WenquRateLimitError",
     "__version__",
+    "RunsNamespace",
+    "RunEvent",
+    "RUN_EVENT_NAMES",
+    "RUN_ERROR_CODES",
 ]

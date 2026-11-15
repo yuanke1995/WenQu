@@ -13,6 +13,7 @@ from .embeddings import Embeddings, Models
 from .kb import KnowledgeBases
 from .retrieval import Retrieval
 from .workflow import Workflows
+from .runs import RunsNamespace
 
 
 class WenquError(Exception):
@@ -68,7 +69,7 @@ class WenquClient:
         最大空闲时间。
 
     能力入口：``chat.completions`` / ``responses`` / ``embeddings`` / ``models`` /
-    ``retrieval`` / ``kbs`` / ``workflows``。
+    ``retrieval`` / ``kbs`` / ``workflows`` / ``runs``。
     """
 
     def __init__(
@@ -97,6 +98,7 @@ class WenquClient:
         self.retrieval = Retrieval(self)
         self.kbs = KnowledgeBases(self)
         self.workflows = Workflows(self)
+        self.runs = RunsNamespace(self)
 
     def close(self) -> None:
         """释放底层连接池；客户端不再使用时调用。"""
@@ -119,6 +121,7 @@ class WenquClient:
         files: Optional[Dict[str, Any]] = None,
         data: Optional[Dict[str, Any]] = None,
         stream: bool = False,
+        headers: Optional[Dict[str, str]] = None,
     ) -> requests.Response:
         """发起请求并做统一错误映射；成功时返回原始 Response。"""
         url = f"{self.base_url}{path}"
@@ -131,6 +134,7 @@ class WenquClient:
             data=data,
             timeout=self.timeout,
             stream=stream,
+            headers=headers,
         )
         if not response.ok:
             # 流式响应出错时错误体尚未读取，先取出再映射

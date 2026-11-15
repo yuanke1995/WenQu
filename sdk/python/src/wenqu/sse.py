@@ -13,10 +13,12 @@ import requests
 
 
 class SSEEvent(NamedTuple):
-    """一条已派发的 SSE 事件：event 名（无则为 None）与 data 负载原文。"""
+    """一条已派发的 SSE 事件：event 名、data 原文、可选的 SSE ``id``（v1 runs 的 seq）。"""
 
     event: Optional[str]
     data: str
+    # 放最后并给默认值：chat/responses 等既有消费方按位置或按 event/data 构造都不受影响
+    id: Optional[str] = None
 
 
 def iter_sse(response: requests.Response) -> Iterator[SSEEvent]:
@@ -25,6 +27,7 @@ def iter_sse(response: requests.Response) -> Iterator[SSEEvent]:
     # 中文内容将乱码，这里强制按 UTF-8 解码。
     response.encoding = "utf-8"
     event: Optional[str] = None
+    event_id: Optional[str] = None
     data_lines: list = []
     for line in response.iter_lines(decode_unicode=True):
         if line is None:
@@ -32,8 +35,9 @@ def iter_sse(response: requests.Response) -> Iterator[SSEEvent]:
         if line == "":
             # 空行 = 一帧结束，派发
             if data_lines:
-                yield SSEEvent(event=event, data="\n".join(data_lines))
+                yield SSEEvent(event=event, data="\n".join(data_lines), id=event_id)
             event = None
+            event_id = None
             data_lines = []
             continue
         if line.startswith(":"):
@@ -47,7 +51,10 @@ def iter_sse(response: requests.Response) -> Iterator[SSEEvent]:
         elif line.startswith("event:"):
             name = line[len("event:"):].strip()
             event = name or event
-        # 其余字段（id、retry）当前 SDK 不使用
+        elif line.startswith("id:"):
+            # v1 runs 的 seq：客户端据此回带 Last-Event-ID，断线后只补增量
+            event_id = line[len("id:"):].strip()
+        # 其余字段（retry）当前 SDK 不使用：服务端没下发，SDK 自己有固定退避
     # 连接关闭时仍有未派发的负载（末帧不带空行的容错）
     if data_lines:
-        yield SSEEvent(event=event, data="\n".join(data_lines))
+        yield SSEEvent(event=event, data="\n".join(data_lines), id=event_id)

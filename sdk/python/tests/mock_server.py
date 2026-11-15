@@ -10,9 +10,10 @@
 """
 
 from __future__ import annotations
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 import json
+import re
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -153,6 +154,8 @@ class MockHandler(BaseHTTPRequestHandler):
         if not self._auth_ok():
             return
         path = self._route_path()
+        if self._handle_runs_get(path):
+            return
         if path == _MODELS_EMBEDDINGS_PATH:
             self._json(200, {
                 "object": "list",
@@ -215,6 +218,8 @@ class MockHandler(BaseHTTPRequestHandler):
         if not self._auth_ok():
             return
         path = self._route_path()
+        if self._handle_runs_post(path):
+            return
         if path == _CHAT_PATH:
             self._handle_chat()
             return
@@ -380,6 +385,128 @@ class MockHandler(BaseHTTPRequestHandler):
         if b'name="description"' in raw:
             doc["description"] = "已带描述"
         self._envelope_ok(doc)
+
+
+    # ---------- v1 run 原语（A2） ----------
+
+    @staticmethod
+    def _run_detail(run_id: str, status: str = "running") -> Dict[str, Any]:
+        return {
+            "runId": run_id, "status": status, "sessionId": "sess-run-1",
+            "agentId": "agent-1", "createdAt": "2026-11-15T18:00:00",
+            "finishedAt": None if status == "running" else "2026-11-15T18:00:04",
+            "errorCode": None, "errorMessage": None, "answer": None, "requestId": "rid-0",
+        }
+
+    def _sse_runs(self, frames: List[Tuple[int, str, Dict[str, Any]]]) -> None:
+        """写 v1 runs 的 SSE 帧：id(seq) + event(名) + data(扁平对象)。"""
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        for seq, event, data in frames:
+            text = "id: {}\nevent: {}\ndata: {}\n\n".format(
+                seq, event, json.dumps(data, ensure_ascii=False))
+            self.wfile.write(text.encode("utf-8"))
+        self.wfile.flush()
+        self.close_connection = True
+
+    def _handle_runs_get(self, path: str) -> bool:
+        if not path.startswith("/api/ai/v1/"):
+            return False
+        m = re.match(r"^/api/ai/v1/runs/([^/]+)(/[^/]+)?$", path)
+        if not m:
+            return False
+        run_id = unquote(m.group(1))
+        sub = m.group(2) or ""
+        if sub == "":
+            self._json(200, self._run_detail(
+                run_id, "succeeded" if run_id == "run-expired" else "running"))
+            return True
+        if sub == "/artifacts":
+            self._json(200, {"runId": run_id, "count": 1, "artifacts": [{
+                "id": "art-1", "name": "报表.html", "filename": "report.html",
+                "kind": "page", "preview": "page", "ext": "html", "size": 128,
+                "createdAt": "2026-11-15T18:00:03",
+                "downloadUrl": "/ai/artifacts/report.html?expire=1&sig=x",
+                "expiresInSeconds": 3600,
+            }]})
+            return True
+        if sub != "/events":
+            return False
+        last = self.headers.get("Last-Event-ID") or ""
+        SEEN_LAST_EVENT_IDS.append(last)
+        if run_id == "run-403":
+            self._openai_error(403, "该 API Key 未开通 runs.read", "permission_error")
+            return True
+        from_id = int(last) if last.isdigit() else 0
+        started = {"runId": run_id, "sessionId": "sess-run-1",
+                   "agentId": "agent-1", "status": "running"}
+        done = {"runId": run_id, "status": "succeeded", "finalContent": "收到",
+                "usage": {"total": 3}, "sources": [], "artifacts": []}
+        frames: List[Tuple[int, str, Dict[str, Any]]] = []
+        if run_id == "run-expired":
+            frames = [(5, "run.error", {"runId": run_id, "status": "failed",
+                "code": "resume_expired", "message": "回放缓冲已过期，请重拉 GET /runs/{id}",
+                "request_id": "rid-x"})]
+        elif run_id == "run-error":
+            frames = [(1, "run.started", started), (2, "token", {"runId": run_id, "delta": "收到"}),
+                      (3, "run.error", {"runId": run_id, "status": "failed",
+                        "code": "rate_limited", "message": "请求过于频繁", "request_id": "rid-e"})]
+        elif run_id == "run-disconnect" and not last:
+            # 终态前断开：SDK 应带 Last-Event-ID: 2 重连补 id=3
+            frames = [(1, "run.started", started), (2, "token", {"runId": run_id, "delta": "收到"})]
+        else:
+            frames = [(1, "run.started", started), (2, "token", {"runId": run_id, "delta": "收到"})]
+            if run_id == "run-dup" and from_id == 0:
+                frames.append((2, "token", {"runId": run_id, "delta": "重复帧"}))
+            if run_id == "run-stopped":
+                frames.append((3, "run.done", dict(done, status="stopped")))
+            else:
+                frames.append((3, "run.done", done))
+        self._sse_runs([f for f in frames if f[0] > from_id])
+        return True
+
+    def _handle_runs_post(self, path: str) -> bool:
+        if not path.startswith("/api/ai/v1/"):
+            return False
+        m = re.match(r"^/api/ai/v1/agents/([^/]+)/runs$", path)
+        if m:
+            body = self._read_json()
+            if not body.get("question"):
+                self._openai_error(400, "question 必填", "invalid_request_error")
+                return True
+            d = self._run_detail("run-new")
+            if self.headers.get("Idempotency-Key"):
+                d["idempotent"] = True
+            self._json(200, d)
+            return True
+        m = re.match(r"^/api/ai/v1/runs/([^/]+)(/[^/]+)?$", path)
+        if not m:
+            return False
+        run_id = unquote(m.group(1))
+        sub = m.group(2) or ""
+        body = self._read_json()
+        if sub == "/approvals":
+            if not body.get("approvalId") or not body.get("decision"):
+                self._openai_error(400, "approvalId / decision 必填", "invalid_request_error")
+                return True
+            self._json(200, {"runId": run_id, "approvalId": body["approvalId"],
+                "kind": "tool_approval", "decision": body["decision"], "accepted": True})
+            return True
+        if sub == "/steer":
+            self._json(200, {"runId": run_id, "accepted": bool(body.get("text")),
+                "messageId": "m-1" if body.get("text") else ""})
+            return True
+        if sub == "/stop":
+            self._json(200, {"runId": run_id, "stopped": True, "status": "running"})
+            return True
+        return False
+
+
+# 每次 /events 请求收到的 Last-Event-ID（空串=没带），供续传断言
+SEEN_LAST_EVENT_IDS: List[str] = []
 
 
 def start_mock_server(api_key: str = API_KEY) -> Tuple[ThreadingHTTPServer, str]:

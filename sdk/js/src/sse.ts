@@ -6,6 +6,8 @@
 export interface SseEvent {
   /** SSE event: 行（chat/completions 流不带事件名，responses 流带） */
   event?: string;
+  /** SSE id: 行（v1 runs 用它做 Last-Event-ID 续传；其余流不带） */
+  id?: string;
   /** 多行 data: 以 \n 拼接后的载荷 */
   data: string;
 }
@@ -18,6 +20,7 @@ function normalizeNewlines(text: string): string {
 /** 解析单个 SSE 帧；无 data 行的帧（纯注释/心跳）返回 null */
 function parseFrame(frame: string): SseEvent | null {
   let event: string | undefined;
+  let id: string | undefined;
   const dataLines: string[] = [];
   for (const line of frame.split("\n")) {
     if (line.startsWith(":")) continue; // SSE 注释行
@@ -25,10 +28,14 @@ function parseFrame(frame: string): SseEvent | null {
       dataLines.push(line.slice(5).replace(/^ /, ""));
     } else if (line.startsWith("event:")) {
       event = line.slice(6).replace(/^ /, "");
+    } else if (line.startsWith("id:")) {
+      // v1 runs 的 seq：客户端据此回带 Last-Event-ID，断线后只补增量。
+      // 其它字段（retry）仍不使用——服务端没下发，SDK 自己有固定退避。
+      id = line.slice(3).replace(/^ /, "").trim();
     }
   }
   if (dataLines.length === 0) return null;
-  return { event, data: dataLines.join("\n") };
+  return { event, id, data: dataLines.join("\n") };
 }
 
 /**

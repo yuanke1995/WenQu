@@ -12,8 +12,12 @@ export const MOCK_API_KEY = "sk-test";
 export interface MockServer {
   /** 含 /ai 前缀的根地址（验证 SDK 不自动补 context-path） */
   baseUrl: string;
+  /** 每次 /events 请求收到的 Last-Event-ID（空串=没带），供续传断言 */
+  seenLastEventIds: string[];
   close(): Promise<void>;
 }
+
+const seenLastEventIds: string[] = [];
 
 function readBody(req: IncomingMessage): Promise<Buffer> {
   return new Promise((resolve, reject) => {
@@ -112,6 +116,121 @@ function runObject(inputs: Record<string, unknown> | undefined): Record<string, 
   };
 }
 
+function runDetail(runId: string, status = "running"): Record<string, unknown> {
+  return {
+    runId, status, sessionId: "sess-run-1", agentId: "agent-1",
+    createdAt: "2026-11-15T18:00:00", finishedAt: status === "running" ? null : "2026-11-15T18:00:04",
+    errorCode: null, errorMessage: null, answer: null, requestId: "rid-0",
+  };
+}
+
+/** v1 runs 的 SSE 帧：id(seq) + event(v1 名) + data(扁平对象)，与 OpenRunService.pump 同形 */
+function sseRunFrame(res: ServerResponse, id: number, event: string, data: unknown): void {
+  res.write(`id: ${id}\nevent: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+}
+
+async function routeRuns(path: string, method: string,
+                         req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+  if (!path.startsWith("/ai/api/ai/v1/")) return false;
+  const create = /^\/ai\/api\/ai\/v1\/agents\/([^/]+)\/runs$/.exec(path);
+  if (create && method === "POST") {
+    const body = JSON.parse(((await readBody(req)).toString("utf8") || "{}")) as { question?: string };
+    if (!body.question) {
+      openAiError(res, 400, "invalid_request_error", "question 必填");
+      return true;
+    }
+    const d = runDetail("run-new");
+    if (req.headers["idempotency-key"]) d.idempotent = true;
+    sendJson(res, 200, d);
+    return true;
+  }
+  const m = /^\/ai\/api\/ai\/v1\/runs\/([^/]+)(\/[^/]+)?$/.exec(path);
+  if (!m) return false;
+  const runId = decodeURIComponent(m[1]);
+  const sub = m[2] ?? "";
+  if (sub === "" && method === "GET") {
+    sendJson(res, 200, runDetail(runId, runId === "run-expired" ? "succeeded" : "running"));
+    return true;
+  }
+  if (sub === "/artifacts" && method === "GET") {
+    sendJson(res, 200, { runId, count: 1, artifacts: [{
+      id: "art-1", name: "报表.html", filename: "report.html", kind: "page", preview: "page",
+      ext: "html", size: 128, createdAt: "2026-11-15T18:00:03",
+      downloadUrl: "/ai/artifacts/report.html?expire=1&sig=x", expiresInSeconds: 3600,
+    }] });
+    return true;
+  }
+  if (sub === "/approvals" && method === "POST") {
+    const body = JSON.parse(((await readBody(req)).toString("utf8") || "{}")) as Record<string, unknown>;
+    if (!body.approvalId || !body.decision) {
+      openAiError(res, 400, "invalid_request_error", "approvalId / decision 必填");
+      return true;
+    }
+    sendJson(res, 200, { runId, approvalId: body.approvalId, kind: "tool_approval",
+      decision: body.decision, accepted: true });
+    return true;
+  }
+  if (sub === "/steer" && method === "POST") {
+    const body = JSON.parse(((await readBody(req)).toString("utf8") || "{}")) as { text?: string };
+    sendJson(res, 200, { runId, accepted: !!body.text, messageId: body.text ? "m-1" : "" });
+    return true;
+  }
+  if (sub === "/stop" && method === "POST") {
+    sendJson(res, 200, { runId, stopped: true, status: "running" });
+    return true;
+  }
+  if (sub === "/events" && method === "GET") {
+    const last = String(req.headers["last-event-id"] ?? "");
+    seenLastEventIds.push(last);
+    if (runId === "run-403") {
+      openAiError(res, 403, "permission_error", "该 API Key 未开通 runs.read");
+      return true;
+    }
+    sseHead(res);
+    const from = last ? Number(last) : 0;
+    const frame = (id: number, name: string, data: unknown): void => {
+      if (id > from) sseRunFrame(res, id, name, data);
+    };
+    const started = { runId, sessionId: "sess-run-1", agentId: "agent-1", status: "running" };
+    const done = { runId, status: "succeeded", finalContent: "收到",
+      usage: { total: 3 }, sources: [], artifacts: [] };
+    if (runId === "run-expired") {
+      frame(5, "run.error", { runId, status: "failed", code: "resume_expired",
+        message: "事件回放缓冲已过期，请重拉 GET /runs/{id}", request_id: "rid-x" });
+      res.end();
+      return true;
+    }
+    if (runId === "run-error") {
+      frame(1, "run.started", started);
+      frame(2, "token", { runId, delta: "收到" });
+      frame(3, "run.error", { runId, status: "failed", code: "rate_limited",
+        message: "请求过于频繁", request_id: "rid-e" });
+      res.end();
+      return true;
+    }
+    if (runId === "run-disconnect" && !last) {
+      // 终态前断开：只发前两帧，SDK 应带 Last-Event-ID: 2 重连补 id=3
+      frame(1, "run.started", started);
+      frame(2, "token", { runId, delta: "收到" });
+      res.end();
+      return true;
+    }
+    frame(1, "run.started", started);
+    frame(2, "token", { runId, delta: "收到" });
+    if (runId === "run-dup" && from === 0) {
+      sseRunFrame(res, 2, "token", { runId, delta: "重复帧" }); // 故意重复 seq
+    }
+    if (runId === "run-stopped") {
+      frame(3, "run.done", { ...done, status: "stopped" });
+    } else {
+      frame(3, "run.done", done);
+    }
+    res.end();
+    return true;
+  }
+  return false;
+}
+
 async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const path = new URL(req.url ?? "/", "http://localhost").pathname;
   const method = req.method ?? "GET";
@@ -128,6 +247,9 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     openAiError(res, 401, "authentication_error", "API Key 无效或缺失");
     return;
   }
+
+  // ---------- v1 run 原语（A2） ----------
+  if (await routeRuns(path, method, req, res)) return;
 
   // ---------- Chat Completions ----------
   if (path === "/ai/api/ai/v1/chat/completions" && method === "POST") {
@@ -567,6 +689,7 @@ export async function startMockServer(): Promise<MockServer> {
   const { port } = server.address() as AddressInfo;
   return {
     baseUrl: `http://127.0.0.1:${port}/ai`,
+    seenLastEventIds,
     close: () =>
       new Promise<void>((resolve, reject) => {
         // 先断掉 SSE 等长连接，否则 close 会等连接自然结束

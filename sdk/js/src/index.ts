@@ -8,6 +8,12 @@ export type { WenquClientOptions } from "./client.js";
 export { WenquError, WenquApiError, WenquAuthError, WenquRateLimitError } from "./errors.js";
 export type { WenquErrorInfo } from "./errors.js";
 export type { NativeTurnHandle } from "./native.js";
+export { Runs } from "./runs.js";
+export type {
+  RunEventName, RunErrorCode, RunDetail, RunCreateParams, RunArtifact, RunArtifactList,
+  RunDecision, RunApprovalParams, RunApprovalResult, RunSteerResult, RunStopResult,
+  RunEvent, RunDoneData, RunErrorData, RunStreamHandlers, RunStreamOptions, RunStreamSummary,
+} from "./runs.js";
 
 export type {
   ChatRole,

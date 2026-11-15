@@ -186,6 +186,37 @@ print(reply.content)
 
 未安装 `langchain-core` 时导入 `wenqu.langchain_integration` 会抛出带安装指引的 `ImportError`；SDK 核心功能不受影响。
 
+## v1 run 原语（`client.runs`）
+
+正式契约的「一次运行」。需要给 Key 显式勾选 `runs.write` / `runs.read`（**不在默认集**）。
+与 `client.native`（JS SDK 的深度集成协议）不同，runs 的事件名在 SSE `event:` 行、
+每帧带 `id:`（seq），断线用 `Last-Event-ID` 补增量。
+
+```python
+run = client.runs.create("智能体id", "整理这份资料", idempotency_key="order-12345")
+
+summary = client.runs.stream(
+    run["runId"],
+    on_token=lambda delta: print(delta, end="", flush=True),
+    on_approval_required=lambda card: client.runs.approve(
+        run["runId"], card["approvalId"], "approve"),
+    on_fallback=lambda detail: print("回放过期，已降级重拉", detail["status"]),
+)
+# summary["status"]: succeeded / failed / stopped / resume_expired
+```
+
+`stream()` 自动按 `id:` 记 seq，终态前断线带 `Last-Event-ID` 重连（默认 3 次）、只补增量并去重；
+收到 `run.error(code=resume_expired)` 时自动 `get(run_id)` 降级，通过 `on_fallback` 交回状态。
+需要逐帧自行处理的场景用 `client.runs.iter_events(run_id)`（生成器，产出 `RunEvent(id, event, data)`）。
+
+冻结事件：`run.started / token / tool.status / plan.updated / approval.required /
+artifact.created / approval.timed_out / run.done / run.error`。未知事件仍交给 `on_event`。
+
+其余端点：`get(run_id)`、`artifacts(run_id)`、`approve(run_id, approval_id, decision, **fields)`、
+`steer(run_id, text)`、`stop(run_id)`。
+
+> 当前版本 `0.1.0`，按项目排期**尚未发布 PyPI**；仓库内用 `pip install -e sdk/python` 即可使用。
+
 ## 运行测试
 
 测试基于本地 mock 服务（`tests/mock_server.py`，随机端口起停），无需后端：
@@ -210,7 +241,8 @@ sdk/python/
 │   ├── retrieval.py              # 知识检索
 │   ├── kb.py                     # 知识库管理
 │   ├── workflow.py               # 工作流触发
-│   ├── sse.py                    # SSE 流解析
+│   ├── sse.py                    # SSE 流解析（含 id: 字段）
+│   ├── runs.py                   # v1 run 原语：7 端点 + 自动续传
 │   └── langchain_integration.py  # LangChain 可选适配
 └── tests/
     ├── mock_server.py
