@@ -9,7 +9,7 @@
 //   store 负责「按工作区取数 + 重新摊平」，视图只决定怎么渲染。
 import { ref, reactive, shallowReactive } from 'vue'
 import { message } from 'ant-design-vue'
-import { listSessions, listProjects, listScheduledJobs, getNewSessionProject, setNewSessionProject, listLiveSandboxProcs } from '../api'
+import { listSessions, listProjects, listScheduledJobs, getNewSessionProject, setNewSessionProject, listLiveSessionProcs } from '../api'
 import { announce, onAnnounce } from '../utils/tabSync'
 import { getToken } from '../utils/auth'
 import { projectOnThisComputer } from '../utils/localExecutor'
@@ -82,9 +82,9 @@ export const sessionStore = reactive({
 // 已是 reactive(fresh)，模板响应性不受影响。
 export const chatStreams = shallowReactive(new Map())
 
-// ==================== 沙盒后台进程标记（模块级单例，跨路由存活） ====================
-// sid → 这条会话的沙盒里还在跑的进程树数。模型「起个服务自己看效果」留下的是不会自己退的进程，
-// 端口一直占着，光看会话列表并不知道它还背着进程，所以要在会话行上给个标记。
+// ==================== 后台进程标记（模块级单例，跨路由存活） ====================
+// sid → 这条会话还在跑的进程树数（本机执行器 + 沙盒两路汇总）。模型「起个服务自己看效果」
+// 留下的是不会自己退的进程，端口一直占着，光看会话列表并不知道它还背着进程，所以在会话行上给个标记。
 // 视觉直接复用会话行的「生成中」呼吸（同一套语言，不另开第二套），区别写在 hover 提示里。
 export const procSessions = shallowReactive(new Map())
 
@@ -92,13 +92,13 @@ const PROC_POLL_MS = 60000
 let procTimer = null
 let procInFlight = false
 
-/** 扫一遍所有活着的沙盒，把「谁还背着进程」刷进 procSessions。
- *  后端没有活容器时一次网络都不发，所以这条可以按分钟级放心轮询。 */
+/** 扫一遍两路来源（活着的沙盒 + 在线执行器），把「谁还背着进程」刷进 procSessions。
+ *  后端没有活容器时一次网络都不发；本机侧只问在线执行器，所以这条可以按分钟级放心轮询。 */
 export async function refreshProcBadges() {
   if (procInFlight) return
   procInFlight = true
   try {
-    const r = await listLiveSandboxProcs()
+    const r = await listLiveSessionProcs()
     const sessions = (r && r.data && r.data.sessions) || {}
     if (r && r.data && r.data.partial) {
       // 这轮没扫全：只写查到的。据此摘掉别的标记 = 把一个可能正占着端口的服务读成「已经没了」
@@ -109,7 +109,7 @@ export async function refreshProcBadges() {
     }
   } catch (e) {
     // 拉不到就留着上一次的结果：这条是软提示，进对话后右栏那张「后台进程」卡才是权威；
-    // 每 60 秒为它弹一次红字只会变成噪音（沙盒没开启时这条口本来就是关的）
+    // 每 60 秒为它弹一次红字只会变成噪音（没有本机会话、沙盒也没开启时这条口本来就是空的）
   } finally {
     procInFlight = false
   }

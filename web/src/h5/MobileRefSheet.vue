@@ -193,7 +193,14 @@
            类名走 rs-bg* 一段：rs-proc* 已被上面「本轮」那些步 row 占着，同名会让两套样式互相打脏，
            进程行里会多出工具步 row。 -->
       <template v-if="procCardVisible">
-        <div class="rs-section">后台进程<span class="rs-n rs-bg-n">{{ procs.length }} 个在跑</span></div>
+        <div class="rs-section">后台进程<span class="rs-n rs-bg-n">{{ procs.length }} 个在跑</span>
+          <button v-if="procs.length > 1" type="button" class="rs-sb-retry" :disabled="killingAll || !!killingTag"
+                  @click="killAllProcs">{{ killingAll ? '停止中…' : '全部停止' }}</button>
+        </div>
+        <div v-for="n in procNotices" :key="'notice-' + n.side" class="rs-bg-note">
+          <span>{{ n.message }}</span>
+          <button v-if="n.reason === 'error'" type="button" class="rs-sb-retry" @click="loadSandboxProcs">重试</button>
+        </div>
         <div v-if="procErr" class="rs-sb-err">
           <span>{{ procErr }}</span>
           <button type="button" class="rs-sb-retry" @click="loadSandboxProcs">重试</button>
@@ -202,21 +209,25 @@
              :class="{ 'is-killing': killingTag === p.tag }" :style="{ '--proc-i': i }">
           <div class="rs-bg-cmd">
             <span class="rs-bg-dot" aria-hidden="true" />
+            <span class="rs-bg-side" :class="'is-' + (p.side || 'sandbox')">{{ p.side === 'local' ? '本机' : '沙盒' }}</span>
             <span class="rs-bg-cmd-t">{{ p.command }}</span>
           </div>
           <div class="rs-bg-foot">
             <span class="rs-bg-meta">
               <span>跑了 {{ procAge(p) }}</span>
-              <span v-if="p.ports && p.ports.length"> · 占着端口 {{ p.ports.join(' / ') }}（会话内部）</span>
+              <span v-if="p.ports && p.ports.length">
+                <template v-if="p.side === 'local'"> · 占着端口 {{ p.ports.join(' / ') }}（你电脑上的 localhost）</template>
+                <template v-else> · 占着端口 {{ p.ports.join(' / ') }}（沙盒内部）</template>
+              </span>
               <span v-if="p.roots > 1"> · {{ p.roots }} 棵进程树</span>
               <span v-if="!p.own"> · 同工作区别的会话起的</span>
             </span>
-            <button v-if="p.killable" type="button" class="rs-bg-kill" :disabled="killingTag === p.tag"
+            <button v-if="p.killable" type="button" class="rs-bg-kill" :disabled="killingTag === p.tag || killingAll"
                     @click="killProc(p)">{{ killingTag === p.tag ? '停止中…' : '停止它' }}</button>
             <span v-else class="rs-bg-unknown">认不出来源，停不了</span>
           </div>
         </div>
-        <div class="rs-act-tip">停止会一并结束子进程并释放端口</div>
+        <div class="rs-act-tip">停止会一并结束子进程并释放端口；本机进程停在你电脑上，沙盒只停本会话起的</div>
       </template>
       <div v-if="!sandboxFiles.length && !sandboxErr && !sandboxLoading && !procCardVisible" class="rs-empty">没有沙盒文件</div>
         </div>
@@ -321,8 +332,9 @@ const { groupedSources, lastTokens, lastSources, sessionTokens, sessionRetrieval
   sandboxFiles, sandboxRows, sandboxCount, sandboxBytes, sandboxRest,
   sandboxErr, sandboxLoading, sandboxTaken,
   loadSandboxFiles, toggleSandboxDir, sandboxDownload, sandboxTake, sbSize,
-  // 后台进程同样整族吃引擎：露脸判据、秒针、停止的三种结果只算一份
-  procs, procErr, procCardVisible, killingTag, loadSandboxProcs, procAge, killProc,
+  // 后台进程同样整族吃引擎（本机执行器 + 沙盒两路）：露脸判据、秒针、停止结果只算一份
+  procs, procNotices, procErr, procCardVisible, killingTag, killingAll,
+  loadSandboxProcs, procAge, killProc, killAllProcs,
   // 本轮过程总览的数据源：与 PC 右栏那张卡同一个对象（跑轮时它就是正在流的那条，结束后是上一轮）
   panelAi } = engine
 
@@ -603,6 +615,13 @@ watch(() => props.open, v => {
 .rs-bg-kill:active { color: var(--app-warn-text); border-color: var(--app-warn-text); }
 .rs-bg-kill:disabled { opacity: .6; }
 .rs-bg-unknown { flex: none; font-size: 12px; color: var(--app-text3); }
+.rs-bg-side { flex: none; padding: 0 5px; border-radius: 3px; font-size: 11px; line-height: 16px;
+  color: var(--app-text3); background: var(--app-bg-soft, rgba(127, 127, 127, .12)); }
+.rs-bg-side.is-local { color: var(--app-accent); }
+.rs-bg-note { display: flex; align-items: center; gap: 8px; margin: 6px 0; padding: 7px 9px;
+  border-radius: 6px; font-size: 12px; line-height: 17px; color: var(--app-warn-text);
+  background: var(--app-warn-bg, rgba(250, 173, 20, .10)); }
+.rs-bg-note > span { flex: 1; min-width: 0; }
 @media (prefers-reduced-motion: reduce) { .rs-bg-dot { animation: none; } }
 /* 本轮：一步两行（动作名一行、它做的事一行），只读行不点；在跑的那一行给强调色，
    一眼看到卡在哪一步。单步耗时不报——整轮用时只在气泡那条状态行。 */

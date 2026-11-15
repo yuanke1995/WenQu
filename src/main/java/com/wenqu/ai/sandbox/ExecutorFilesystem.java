@@ -56,12 +56,26 @@ public class ExecutorFilesystem extends BaseSandboxFilesystem {
     private final LocalJournalStorage journalStorage;
     /** 本会话当前轮的 turnId 供给方（调用期读取；实例可能跨轮被缓存，不能烘焙进构造器）。可为 null。 */
     private final java.util.function.Supplier<String> turnIdSupplier;
+    /** 会话 id：命令起进程时带下去，执行器据此把进程记在这条会话头上（后台进程卡）。可为 null。 */
+    private final String sessionId;
+    /** 归属用户：进程登记带上，执行器按 uid 汇总时避免把同机其他账号的会话带出来。可为 null。 */
+    private final String uid;
     public ExecutorFilesystem(ExecutorRegistry registry, String executorId, List<Root> roots, boolean unrestricted) {
-        this(registry, executorId, roots, unrestricted, null);
+        this(registry, executorId, roots, unrestricted, null, null, null);
     }
 
     public ExecutorFilesystem(ExecutorRegistry registry, String executorId, List<Root> roots, boolean unrestricted,
                               java.util.function.Supplier<String> turnIdSupplier) {
+        this(registry, executorId, roots, unrestricted, turnIdSupplier, null, null);
+    }
+
+    public ExecutorFilesystem(ExecutorRegistry registry, String executorId, List<Root> roots, boolean unrestricted,
+                              java.util.function.Supplier<String> turnIdSupplier, String sessionId) {
+        this(registry, executorId, roots, unrestricted, turnIdSupplier, sessionId, null);
+    }
+
+    public ExecutorFilesystem(ExecutorRegistry registry, String executorId, List<Root> roots, boolean unrestricted,
+                              java.util.function.Supplier<String> turnIdSupplier, String sessionId, String uid) {
         this.registry = Objects.requireNonNull(registry, "registry is required");
         this.executorId = Objects.requireNonNull(executorId, "executorId is required");
         this.roots = roots == null ? List.of() : List.copyOf(roots);
@@ -69,6 +83,8 @@ public class ExecutorFilesystem extends BaseSandboxFilesystem {
                 .orElse(this.roots.isEmpty() ? "/" : this.roots.get(0).path());
         this.unrestricted = unrestricted;
         this.turnIdSupplier = turnIdSupplier;
+        this.sessionId = sessionId;
+        this.uid = uid;
         this.journalStorage = new LocalJournalStorage(LocalJournalStorage.defaultRoot());
     }
 
@@ -125,6 +141,9 @@ public class ExecutorFilesystem extends BaseSandboxFilesystem {
         }
         out.put("roots", rs);
         out.put("policy", unrestricted ? "danger-full-access" : "workspace-write");
+        // 后台进程归属：命令起出来的进程要能落回这条会话（执行器按它登记进程组）。
+        if (sessionId != null && !sessionId.isBlank()) out.put("sessionId", sessionId);
+        if (uid != null && !uid.isBlank()) out.put("uid", uid);
         // 每轮文件改动：变更型调用带上当前轮身份，执行器据此在改动前抓一份原文（内容不出那台电脑）。
         // 读类调用带不带都行——执行器只在写类操作上读它。
         if (turnIdSupplier != null) {

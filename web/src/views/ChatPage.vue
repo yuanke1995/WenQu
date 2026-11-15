@@ -1504,18 +1504,26 @@
         </template>
         <div v-if="sandboxRest" class="rp-sb-hint">另有 {{ sandboxRest }} 个文件未列出（仅显示最新 {{ sandboxFiles.length }} 个）</div>
       </div>
-      <!-- 沙盒后台进程：让它「把写好的前后端跑起来自己看效果」时，起的是 npm run dev 这类<b>不会自己退</b>
-           的进程；而沙盒那条执行到点只是「不再等它」，进程照旧活着、端口照旧占着，界面上却什么都看不见。
-           这里给一个看得见、能一键停掉的地方。清单读的是容器实况（带归属标记的进程），不是服务端台账：
-           后端重启、换副本都照得到；沙盒被空闲回收（默认 60 分钟）后整张清单自然清空。
-           挂了共享目录的工作区里多个会话共用一个容器，所以同工作区别的会话起走的进程也会出现在这里，
-           标一句「别的会话起的」——端口是被同一个容器占的，看不见就停不掉。 -->
+      <!-- 会话后台进程：让它「把写好的前后端跑起来自己看效果」时，起的是 npm run dev 这类<b>不会自己退</b>
+           的进程。两个来源合成一张清单：工作区会话的进程跑在你电脑上的本机执行器里，会话栏会话的跑在沙盒容器里；
+           同一条会话可能在执行器离线的轮退回沙盒，两边都会出现，所以来源只是行上的一个标记，不拆两张卡。
+           真源各自在源头（执行器进程登记 + ps 实况 / 容器 /proc），服务端不留台账：执行器/后端重启都照得到。
+           沙盒里挂了共享目录时多个会话共用一个容器，别的会话起走的进程也会列出来，标一句——端口是同一个容器占的。
+           本机侧端口可以直接点开（就是你电脑上的 localhost），沙盒容器端口不映射、只说明它占着哪个。 -->
       <div v-if="procCardVisible" class="rp-card">
         <div class="rp-label rp-proc-head"
-             title="助手在会话里起的、不会自己退的进程（比如为了自己看效果起的服务）。到点没跑完只是不再等它，进程照旧活着。">
+             title="助手在会话里起的、不会自己退的进程（比如为了自己看效果起的服务）。本机执行器到点只是不再等它（或它自己退成了孤儿），进程照旧活着。">
           <span>后台进程<span class="rp-proc-n">{{ procs.length }}</span><span class="rp-proc-unit">个在跑</span></span>
-          <button type="button" class="rp-sb-retry" :disabled="procLoading"
-                  title="重新扫一遍会话里的进程" @click="loadSandboxProcs">刷新</button>
+          <span class="rp-proc-acts">
+            <button v-if="procs.length > 1" type="button" class="rp-sb-retry" :disabled="killingAll || !!killingTag"
+                    title="停掉本会话起的全部进程树" @click="killAllProcs">{{ killingAll ? '停止中…' : '全部停止' }}</button>
+            <button type="button" class="rp-sb-retry" :disabled="procLoading"
+                    title="重新扫一遍会话里的进程" @click="loadSandboxProcs">刷新</button>
+          </span>
+        </div>
+        <div v-for="(n, i) in procNotices" :key="'notice-' + n.side" class="rp-proc-note">
+          <span>{{ n.message }}</span>
+          <button v-if="n.reason === 'error'" type="button" class="rp-sb-retry" @click="loadSandboxProcs">重试</button>
         </div>
         <div v-if="procErr" class="rp-sb-err">
           <span>{{ procErr }}</span>
@@ -1527,17 +1535,28 @@
                于是这张卡最该认得出的东西（这是哪个服务）整个消失 -->
           <div class="rp-proc-cmd">
             <span class="rp-proc-dot" aria-hidden="true" />
+            <span class="rp-proc-side" :class="'is-' + (p.side || 'sandbox')"
+                  :title="p.side === 'local' ? '起在你电脑上（本机执行器）' : '起在服务器沙盒里'">
+              {{ p.side === 'local' ? '本机' : '沙盒' }}</span>
             <span class="rp-proc-cmd-t" :title="p.command">{{ p.command }}</span>
           </div>
           <div class="rp-proc-foot">
             <span class="rp-proc-meta">
               <span>跑了 {{ procAge(p) }}</span>
-              <span v-if="p.ports && p.ports.length" title="会话内部的端口，外部浏览器打不开；这里只说明它占着哪个">
-                · 占着端口 {{ p.ports.join(' / ') }}</span>
+              <span v-if="p.ports && p.ports.length">
+                <template v-if="p.side === 'local'">
+                  · 占着端口
+                  <template v-for="(port, pi) in p.ports" :key="port">
+                    <a :href="'http://localhost:' + port" target="_blank" rel="noopener" class="rp-proc-port"
+                       :title="'在浏览器里打开 localhost:' + port">{{ port }}</a><span v-if="pi < p.ports.length - 1"> / </span>
+                  </template>
+                </template>
+                <template v-else> · 占着端口 {{ p.ports.join(' / ') }}（沙盒内部）</template>
+              </span>
               <span v-if="p.roots > 1"> · {{ p.roots }} 棵进程树</span>
               <span v-if="!p.own"> · 同工作区别的会话起的</span>
             </span>
-            <button v-if="p.killable" type="button" class="rp-proc-kill" :disabled="killingTag === p.tag"
+            <button v-if="p.killable" type="button" class="rp-proc-kill" :disabled="killingTag === p.tag || killingAll"
                     :title="'停掉它，连同它起走的全部子进程（' + p.pids.length + ' 个）'"
                     @click="killProc(p)">{{ killingTag === p.tag ? '停止中…' : '停止' }}</button>
             <span v-else class="rp-proc-unknown" title="认不出这是哪次会话起的，停不了">来源不明</span>
@@ -2003,8 +2022,9 @@ const {
   sandboxFiles, sandboxRows, sandboxCount, sandboxBytes, sandboxRest,
   sandboxErr, sandboxLocalOffline, sandboxLoading, sandboxTaken, sessionSandboxActive,
   loadSandboxFiles, toggleSandboxDir, sandboxDownload, sandboxTake, sbSize,
-  // 后台进程那一族同样吃引擎：本页只留这张卡的摆法
-  procs, procErr, procLoading, procCardVisible, killingTag, loadSandboxProcs, procAge, killProc,
+  // 后台进程那一族同样吃引擎（本机执行器 + 沙盒两路）：本页只留这张卡的摆法
+  procs, procNotices, procErr, procLoading, procCardVisible, killingTag, killingAll,
+  loadSandboxProcs, procAge, killProc, killAllProcs,
   // 图片与附件（输入框里的 chip 删除走编辑区 → onKeys 剪枝；顶替态没有编辑区，由待发条按下标移除）
   pendingImages, removePendingImage, MAX_FILES, pendingFiles, removePendingFile, hasUploadingFile, addFiles,
   takePastedFiles, takePastedText, attachUploaded, attachImage,
@@ -3386,6 +3406,18 @@ const {
 .rp-proc-kill:hover:not(:disabled) { color: var(--app-warn-text); border-color: var(--app-warn-text); }
 .rp-proc-kill:disabled { opacity: .7; cursor: default; }
 .rp-proc-unknown { flex: none; font-size: 11px; color: var(--app-text3); }
+/* 来源标记：本机/沙盒只是行上的一个事实，不用强调色——用户关心的是「这是哪个服务、要不要停」 */
+.rp-proc-side { flex: none; padding: 0 4px; border-radius: 3px; font-size: 10px; line-height: 15px;
+  color: var(--app-text3); background: var(--app-bg-soft, rgba(127, 127, 127, .12)); }
+.rp-proc-side.is-local { color: var(--app-accent); }
+.rp-proc-port { color: var(--app-accent); text-decoration: none; }
+.rp-proc-port:hover { text-decoration: underline; }
+.rp-proc-acts { display: flex; align-items: center; gap: 6px; flex: none; }
+/* 来源提醒（执行器离线/版本旧/读不到）：一行一句，不与「没有进程」混在一起 */
+.rp-proc-note { display: flex; align-items: center; gap: 8px; margin: 4px 0; padding: 5px 8px;
+  border-radius: 4px; font-size: 11px; line-height: 16px; color: var(--app-warn-text);
+  background: var(--app-warn-bg, rgba(250, 173, 20, .10)); }
+.rp-proc-note > span { flex: 1; min-width: 0; }
 @media (prefers-reduced-motion: reduce) { .rp-proc-dot { animation: none; } }
 /* 目录行：整行是 flex，开合钮只占名字那一段（行尾还要放「在电脑上打开」），计数与合计体积贴右。
    button 要自带重置，antd reset 不清底色边框 */

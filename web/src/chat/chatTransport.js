@@ -11,7 +11,7 @@ export {
   revisePlanApproval, listPendingPlans, updateSessionModelApi, getSessionModelApi,
   listKnowledgeBases, listDocuments, uploadChatAttachment, getSessionTodosApi,
   listSandboxFiles, downloadSandboxFile, sandboxFileToArtifact,
-  listSandboxProcs, killSandboxProc,
+  listSessionProcs, listLiveSessionProcs, killSessionProc, killAllSessionProcs,
   startGoalApi, goalActionApi, getPendingGoalApi, getSessionGoalApi, getGoalEventsApi,
   downloadArtifactsZip,
   refreshArtifactSigns as refreshArtifactSignsApi

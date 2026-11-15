@@ -70,7 +70,8 @@
 |------|------|
 | `GET /api/ai/project/list`、`/{id}`、`/{id}/files`、`/{id}/file`、`/{id}/file/content`、`/{id}/export`、`/{id}/workflows`、`/{id}/runs`、`/{id}/instruction-history`、`/{id}/todos`、`/{id}/turn-guard`；`POST /project`、`/{id}/files`、`/{id}/dir`、`/{id}/files/batch`、`/{id}/todos`；`PUT /project/{id}`、`PUT /{id}/executor`、`POST /{id}/open`、`/{id}/status`、`/{id}/file`、`/{id}/todos/{todoId}`；`DELETE /{id}`、`/{id}/todos/{todoId}` | 工作区容器（绑定本机执行器与源文件夹，`POST /project` body 为 `{name, executorId, roots:[{path, alias}]}`）、本机目录单层列表、上传下载、改名移动、批量、打包导出、在电脑上打开文件夹、约定历史、事项、归档与删除、轮次占用检查；删除只摘归属，本机文件不动 |
 | `GET /ai/project-files/{token}` | 工作区文件签名预览（可直接在浏览器打开的类型；`/api` 之外，token 带过期） |
-| `GET /api/ai/sandbox/state`、`/tree`、`/files`、`/download`、`/files/download`、`/procs`、`/procs/live`；`POST /sandbox/files/artifact`、`/run`、`/procs/kill`；`POST /sandbox/tool-call` | 沙盒：容器状态、目录与文件、存为产物、执行 python/node/bash、后台进程清单与停止、脚本回程调用 |
+| `GET /api/ai/sandbox/state`、`/tree`、`/files`、`/download`、`/files/download`；`POST /sandbox/files/artifact`、`/run`；`POST /sandbox/tool-call` | 沙盒：容器状态、目录与文件、存为产物、执行 python/node/bash、脚本回程调用 |
+| `GET /api/ai/session/procs`、`/procs/live`；`POST /api/ai/session/procs/kill`、`/killAll` | 会话后台进程：本机执行器与沙盒两路合成清单（来源/命令行/时长/端口/进程树）、侧栏计数、单棵与全部停止 |
 | `GET /api/ai/artifact/list`、`/{id}/content`；`PUT /artifact/{id}/project`；`POST /refresh-sign`、`/batch-delete`；`DELETE /{id}` | 我的产物：列表 / 读文本原文 / 移动工作区 / 换发新鲜签名下载地址 / 批量与单条删除 |
 
 ## 身份、配置与运营

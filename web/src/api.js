@@ -2252,19 +2252,24 @@ export const sandboxFileToArtifact = (sessionId, path, description) =>
     method: 'POST',
     body: JSON.stringify({ sessionId, path, description: description || '' })
   })
-/** 本会话沙盒里**还在跑**的后台进程（模型起的 dev server 这类不会自己退的）。
- *  读的是容器实况（扫带归属标记的进程），服务端不留台账：后端重启、换副本都照样取得到，
- *  沙盒被空闲回收后清单自然清空。返回 {available, procs:[{tag,command,elapsedSec,ports,own,killable}]} */
-export const listSandboxProcs = sessionId =>
-  request(`/sandbox/procs?sessionId=${encodeURIComponent(sessionId)}`)
-/** 侧栏标记用的批量实况：一次扫过本进程里该用户所有还活着的沙盒，
- *  返回 {sessions:{会话id:进程树数}, partial}。没有活容器时后端一次网络都不发，可以放心轮询；
- *  partial=true 表示这轮没扫全，这份结果只多不少（列出来的都是真的，没列出的只是没查到） */
-export const listLiveSandboxProcs = () => request('/sandbox/procs/live')
-/** 停掉一棵进程树（先 TERM、一秒后对幸存的补 KILL）：返回 {killed, remaining}，
- *  remaining>0 = 有进程停不下来，要如实报出来，不能当成已经关掉 */
-export const killSandboxProc = (sessionId, tag) =>
-  request('/sandbox/procs/kill', { method: 'POST', body: JSON.stringify({ sessionId, tag }) })
+/** 本会话**还在跑**的后台进程（模型起的 dev server 这类不会自己退的）。
+ *  两路合成一张清单：本机执行器（工作区会话，进程在用户电脑上）与服务器沙盒（会话栏会话）。
+ *  服务端不留台账，执行器重启/后端重启后仍取得到。返回
+ *  {available, procs:[{side,tag,sessionId,command,roots,pids,ports,elapsedSec,startedAt,own,killable}],
+ *   sides:{local:{applicable,available,reason,message}, sandbox:{...}}} */
+export const listSessionProcs = sessionId =>
+  request(`/session/procs?sessionId=${encodeURIComponent(sessionId)}`)
+/** 侧栏标记用的批量实况：沙盒 + 本机执行器两路汇总，
+ *  返回 {sessions:{会话id:进程树数}, partial}。partial=true 表示这轮没扫全（只多不少） */
+export const listLiveSessionProcs = () => request('/session/procs/live')
+/** 停掉一棵进程树（side=local 走本机执行器、side=sandbox 走沙盒，先 TERM 再对幸存者补 KILL）：
+ *  返回 {found, killed, remaining}，remaining>0 = 有进程停不下来，要如实报出来 */
+export const killSessionProc = (sessionId, side, tag) =>
+  request('/session/procs/kill', { method: 'POST', body: JSON.stringify({ sessionId, side, tag }) })
+/** 停掉本会话起的全部进程树：本机侧全部登记进程组；沙盒侧只停 own=true 的。
+ *  返回 {found, killed, remaining} */
+export const killAllSessionProcs = (sessionId, side) =>
+  request('/session/procs/killAll', { method: 'POST', body: JSON.stringify({ sessionId, side }) })
 /** 下载沙盒文件：与工作区那份同一条路——必须走 fetch 带 Authorization（后端认 JWT，不认 cookie） */
 export const downloadSandboxFile = async (sessionId, path, filename) => {
   const q = `sessionId=${encodeURIComponent(sessionId)}&path=${encodeURIComponent(path)}`

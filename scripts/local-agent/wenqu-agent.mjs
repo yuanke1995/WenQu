@@ -37,7 +37,7 @@ import fsp from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import readline from 'node:readline'
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { spawn, execFile, spawnSync } from 'node:child_process'
 import net from 'node:net'
 
@@ -63,8 +63,9 @@ const REQUIRE_HTTPS = flag('require-https')
 const NAME = arg('name', os.hostname())
 const WAIT = Math.max(5, Math.min(30, Number(arg('timeout', '25')) || 25))
 /** 执行器协议版本：v2 起 poll 会带这个头，服务端据此启用 ack 租约与重投；
- *  旧服务端不认识也无害（ack 404 时按旧协议放行），旧 agent 不带这个头则服务端按旧协议处理。 */
-const AGENT_VERSION = '2'
+ *  v3 起支持会话后台进程（procs/liveProcs/killProc/killSession）。旧服务端不认识也无害
+ *  （ack 404 时按旧协议放行），旧 agent 不带这个头则服务端按旧协议处理。 */
+const AGENT_VERSION = '3'
 
 /** 远程 HTTP 目前临时放行，但启动时明确告警：设备令牌与文件内容都在 Bearer/HTTP 体里，
  *  明文过网等于把本机文件读写权交给中间人。正式环境请换 https；
@@ -968,7 +969,7 @@ function shellSpawn (command, ctx) {
     + '工作区内修改档不执行 shell。请改用文件工具；确实需要命令时请把会话权限调到完全权限。')
 }
 
-async function opExec({ command, timeoutSeconds, userInitiated, turnId }, ctx) {
+async function opExec({ command, timeoutSeconds, userInitiated, turnId, sessionId, uid }, ctx) {
   const ok = await confirm('执行命令', `cwd: ${curRoot(ctx)}\n$ ${command}`, userInitiated)
   if (!ok) throw err('E_DENIED', '用户拒绝了这次命令')
   if (turnId) await ensureTurnState(turnId, ctx)
@@ -978,6 +979,9 @@ async function opExec({ command, timeoutSeconds, userInitiated, turnId }, ctx) {
   if (ctx.deadline && remaining <= 0) throw err('E_TIMEOUT', '服务端等待时限已过，命令未执行')
   const seconds = Math.max(1, Math.min(requested, remaining))
   const shell = shellSpawn(command, ctx)
+  // 会话进程归属标记：子进程与孙进程天然继承，Linux 侧扫描 /proc 靠它把 setsid 逃出去的认回来；
+  // macOS 读不到别人的环境，靠 detached 带来的「同一个进程组」归属（见上面的进程登记段）。
+  const tag = procTagFor(sessionId)
   // 命令也会改文件（构建产物、代码生成、git mv…）：记下这条命令的执行时间窗，
   // 轮末按时间窗把这类改动算作助手自己动的。
   const st = turnId ? turnStateOf(turnId) : null
@@ -985,7 +989,26 @@ async function opExec({ command, timeoutSeconds, userInitiated, turnId }, ctx) {
   const result = await new Promise(resolve => {
     // detached：直接子进程成为组长，超时要杀时按进程组杀。只 kill 直接子进程在
     // 「shell 早已退出、nohup 孙进程还活着」的场景里什么也杀不到，回包会一直挂着。
-    const child = spawn(shell.cmd, shell.args, { cwd: curRoot(ctx), env: process.env, detached: true })
+    const child = spawn(shell.cmd, shell.args, {
+      cwd: curRoot(ctx),
+      env: tag ? { ...process.env, [PROC_TAG_VAR]: tag } : process.env,
+      detached: true
+    })
+    // 登记的是「这条会话的这条命令起过哪个进程组」；进程组里还有活口就一直算这条会话的后台进程。
+    // 正常退出也不摘：cmd & / nohup 的孙进程恰恰是在 shell 退出后才成为孤儿（以前完全看不见）。
+    if (tag && child.pid) {
+      registerProc({
+        tag,
+        sessionId: String(sessionId).trim(),
+        turnId: turnId ? String(turnId) : '',
+        uid: uid ? String(uid) : '',
+        command: String(command || ''),
+        cwd: curRoot(ctx),
+        pgid: child.pid,
+        startedAt: Date.now(),
+        policy: ctx.policy
+      })
+    }
     let out = ''
     let truncated = false
     const cap = 1024 * 1024
@@ -1064,6 +1087,327 @@ const TURN_MAX_FILES = 200
 const BINARY_PROBE_BYTES = 8000
 /** 命令执行窗口的容差（毫秒）：文件系统的 mtime 精度与时钟抖动都可能差一点点。 */
 const EXEC_WINDOW_SLACK_MS = 2000
+
+// ==================== 会话后台进程（工作区侧） ====================
+//
+// 「后台进程」卡的另一半数据源：工作区会话的命令由这台电脑执行，进程起在这里、也只有这里看得见。
+// 真源是「这台电脑的进程表 + 本文件的登记」：登记只记「哪条会话的哪条命令起过哪个进程组」，
+// 存活与否每次拿 ps 实况核对；进程自己退了/被杀掉，清单自然归零。执行器重启后登记还在（落盘）。
+//
+// 归属靠两条腿（沙盒那条靠子进程继承环境变量，macOS 不许读别人的环境，所以这里补了进程组）：
+// 1) 进程组：opExec 以 detached 启动，shell 就是组长，祖孙进程天然同 pgid——macOS/Linux 都成立；
+// 2) Linux 额外读 /proc/<pid>/environ 认 WQ_PROC_TAG：setsid 跳出进程组的也能认回来。
+//
+// 「cmd &」/nohup 起走的孙进程在 shell 正常退出后仍活着（超时那条路会整组杀），
+// 这类孤儿正是这张卡要解决的问题：以前完全不可见，端口一直占着。
+
+const PROC_FILE = path.join(DATA_DIR, 'procs.json')
+const PROC_TAG_VAR = 'WQ_PROC_TAG'
+const PROC_MAX = 200
+/** 连续这么久一个活口都没有才从登记里摘掉：给「刚 spawn、ps 还没看到」留一个极窄的窗口。
+ *  登记发生在 spawn 之后（组长已在进程表里），因此这里不需要更长的宽限；
+ *  窗口越短，旧登记撞上 pid 复用的机会越小（macOS 没有环境标记，只能按 pgid 认）。 */
+const PROC_PRUNE_GRACE_MS = 10_000
+const PROC_PIDS_MAX = 400
+const PROC_CMD_MAX = 500
+const IS_LINUX = process.platform === 'linux'
+
+let procEntries = null
+let procSaveTimer = null
+
+/** 标记形状与服务器沙盒同一口径（wq1.<会话 id>.<8 位随机>），服务端按同一正则校验归属。 */
+function procTagFor (sessionId) {
+  const sid = String(sessionId || '').trim().replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64)
+  if (!sid) return null
+  return `wq1.${sid}.${randomBytes(4).toString('hex')}`
+}
+
+function procSessionOfTag (tag) {
+  const m = /^wq1\.([A-Za-z0-9_-]{1,64})\.[a-f0-9]{8}$/.exec(String(tag || ''))
+  return m ? m[1] : null
+}
+
+function loadProcEntries () {
+  if (procEntries) return procEntries
+  procEntries = []
+  try {
+    const arr = JSON.parse(fs.readFileSync(PROC_FILE, 'utf8'))
+    if (Array.isArray(arr)) {
+      procEntries = arr.filter(e => e && typeof e.tag === 'string' && procSessionOfTag(e.tag)
+        && Number.isInteger(e.pgid) && Number.isFinite(e.startedAt))
+    }
+  } catch { /* 没有/坏了：从空开始 */ }
+  return procEntries
+}
+
+/** 落盘走临时文件 + rename。登记必须立刻写：进程组一旦起来就可能比执行器活得久，
+ *  拖到「稍后合并写」的窗口里被 SIGKILL（升级重启很常见）就再也找不回这棵树的归属了。
+ *  清理走 500ms 合并，别让每次扫描都写一遍盘。 */
+function saveProcEntriesNow () {
+  if (procSaveTimer) {
+    clearTimeout(procSaveTimer)
+    procSaveTimer = null
+  }
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 })
+    const tmp = `${PROC_FILE}.${process.pid}.tmp`
+    fs.writeFileSync(tmp, JSON.stringify(procEntries || []), { mode: 0o600 })
+    fs.renameSync(tmp, PROC_FILE)
+  } catch (e) {
+    log('进程登记写入失败：', e.message)
+  }
+}
+
+function saveProcEntriesSoon () {
+  if (procSaveTimer) return
+  procSaveTimer = setTimeout(() => {
+    procSaveTimer = null
+    saveProcEntriesNow()
+  }, 500)
+  if (procSaveTimer.unref) procSaveTimer.unref()
+}
+
+function registerProc (entry) {
+  const list = loadProcEntries()
+  list.push(entry)
+  if (list.length > PROC_MAX) list.splice(0, list.length - PROC_MAX)
+  saveProcEntriesNow()
+}
+
+function removeProcEntry (tag) {
+  const list = loadProcEntries()
+  const i = list.findIndex(e => e.tag === tag)
+  if (i < 0) return false
+  list.splice(i, 1)
+  saveProcEntriesSoon()
+  return true
+}
+
+function execCapture (cmd, args, timeoutMs = 8000) {
+  return new Promise(resolve => {
+    execFile(cmd, args, { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024 }, (e, stdout) => {
+      resolve({ ok: !e, out: String(stdout || ''), message: e ? e.message : '' })
+    })
+  })
+}
+
+/** ps 的 etime：[dd-]hh:mm:ss / hh:mm:ss / mm:ss → 秒。 */
+function parseProcElapsed (s) {
+  let rest = String(s || '').trim()
+  let days = 0
+  const dash = rest.indexOf('-')
+  if (dash > 0) {
+    days = Number(rest.slice(0, dash)) || 0
+    rest = rest.slice(dash + 1)
+  }
+  const p = rest.split(':').map(v => Number(v))
+  if (!p.length || p.some(v => !Number.isFinite(v))) return 0
+  const sec = p.length === 3 ? p[0] * 3600 + p[1] * 60 + p[2]
+    : p.length === 2 ? p[0] * 60 + p[1] : p[0]
+  return days * 86400 + sec
+}
+
+async function processTable () {
+  const r = await execCapture('ps', ['-A', '-o', 'pid=,ppid=,pgid=,etime=,args='])
+  if (!r.ok) throw err('E_IO', '读不到本机进程表：' + (r.message || 'ps 执行失败'))
+  const byPid = new Map()
+  const byPgid = new Map()
+  for (const line of r.out.split('\n')) {
+    const m = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/.exec(line)
+    if (!m) continue
+    const row = {
+      pid: Number(m[1]), ppid: Number(m[2]), pgid: Number(m[3]),
+      elapsedSec: parseProcElapsed(m[4]), args: m[5]
+    }
+    byPid.set(row.pid, row)
+    const g = byPgid.get(row.pgid) || []
+    g.push(row)
+    byPgid.set(row.pgid, g)
+  }
+  return { byPid, byPgid }
+}
+
+/** Linux：读各进程 environ 里的标记（只读得到自己的进程，读不到就跳过）。 */
+async function tagPidsFromProc () {
+  const out = new Map()
+  let names
+  try { names = await fsp.readdir('/proc') } catch { return out }
+  for (const n of names) {
+    if (!/^\d+$/.test(n)) continue
+    let buf
+    try { buf = await fsp.readFile(`/proc/${n}/environ`) } catch { continue }
+    const m = /(?:^|\0)WQ_PROC_TAG=([^\0]+)/.exec(buf.toString('utf8'))
+    if (!m) continue
+    const arr = out.get(m[1]) || []
+    arr.push(Number(n))
+    out.set(m[1], arr)
+  }
+  return out
+}
+
+/** 把当前进程表折成「登记里的会话进程组」：每个组给出存活 pid、根数、命令与时长。 */
+async function liveProcGroups (sessionFilter, uidFilter) {
+  const table = await processTable()
+  const tagged = IS_LINUX ? await tagPidsFromProc() : new Map()
+  const entries = loadProcEntries()
+  const now = Date.now()
+  const alive = []
+  let pruned = false
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const e = entries[i]
+    if (sessionFilter && !sessionFilter.has(e.sessionId)) continue
+    // 同机多账号共用这一个执行器：没有归属 uid 的登记不往任何账号的侧栏带（宁可少列，不串账号）
+    if (uidFilter && e.uid !== uidFilter) continue
+    const pidSet = new Set()
+    for (const row of table.byPgid.get(e.pgid) || []) pidSet.add(row.pid)
+    for (const pid of tagged.get(e.tag) || []) if (table.byPid.has(pid)) pidSet.add(pid)
+    if (!pidSet.size) {
+      if (now - (e.startedAt || 0) > PROC_PRUNE_GRACE_MS) {
+        entries.splice(i, 1)
+        pruned = true
+      }
+      continue
+    }
+    const pids = [...pidSet].slice(0, PROC_PIDS_MAX)
+    const rows = pids.map(pid => table.byPid.get(pid)).filter(Boolean)
+    const rootRows = rows.filter(r => !pidSet.has(r.ppid))
+    let oldest = Number.MAX_SAFE_INTEGER
+    for (const r of rows) if (r.elapsedSec < oldest) oldest = r.elapsedSec
+    alive.push({
+      entry: e,
+      pids,
+      roots: rootRows.length || 1,
+      elapsedSec: oldest === Number.MAX_SAFE_INTEGER
+        ? Math.max(0, Math.floor((now - (e.startedAt || now)) / 1000)) : oldest,
+      command: procDisplayCommand(e, rootRows)
+    })
+  }
+  if (pruned) saveProcEntriesSoon()
+  return alive
+}
+
+function procDisplayCommand (entry, rootRows) {
+  const raw = String(entry.command || '').trim() || rootRows.map(r => r.args).join(' ─┬─ ')
+  const first = raw.split('\n').map(s => s.trim()).filter(Boolean)[0] || '(读不到命令行)'
+  return first.length > PROC_CMD_MAX ? first.slice(0, PROC_CMD_MAX) + '…' : first
+}
+
+/** 这些 pid 正在监听的端口：lsof 优先，Linux 无 lsof 时用 ss 兜底；都拿不到就返回空（不猜）。 */
+async function listenPorts (pids) {
+  const out = new Map()
+  if (!pids.length) return out
+  const args = ['-nP', '-Fpn', '-a', '-iTCP', '-sTCP:LISTEN']
+  for (const pid of pids.slice(0, PROC_PIDS_MAX)) args.push('-p', String(pid))
+  const lsof = await execCapture('lsof', args, 6000)
+  if (lsof.ok && lsof.out) {
+    let cur = null
+    for (const line of lsof.out.split('\n')) {
+      if (line.startsWith('p')) cur = Number(line.slice(1))
+      else if (line.startsWith('n') && cur) {
+        const port = /:(\d+)$/.exec(line.slice(1))
+        if (!port) continue
+        const arr = out.get(cur) || []
+        if (!arr.includes(port[1])) arr.push(port[1])
+        out.set(cur, arr)
+      }
+    }
+    return out
+  }
+  if (!IS_LINUX) return out
+  const ss = await execCapture('ss', ['-ltnp'], 6000)
+  if (!ss.ok) return out
+  for (const line of ss.out.split('\n')) {
+    const idm = /pid=(\d+)/.exec(line)
+    const cols = line.trim().split(/\s+/)
+    const addr = cols.length >= 4 ? cols[3] : ''
+    const port = /:(\d+)$/.exec(addr)
+    if (!idm || !port) continue
+    const pid = Number(idm[1])
+    const arr = out.get(pid) || []
+    if (!arr.includes(port[1])) arr.push(port[1])
+    out.set(pid, arr)
+  }
+  return out
+}
+
+/** 按登记里的进程组停进程：TERM → 1.5s → 对幸存者 KILL；返回停掉几个、还剩几个。 */
+async function terminateGroups (entries) {
+  const found = entries.length > 0
+  if (!found) return { found: false, killed: 0, remaining: 0 }
+  const collect = async () => {
+    const table = await processTable()
+    const tagged = IS_LINUX ? await tagPidsFromProc() : new Map()
+    const pids = new Set()
+    const perEntry = new Map()
+    for (const e of entries) {
+      const own = new Set()
+      for (const row of table.byPgid.get(e.pgid) || []) own.add(row.pid)
+      for (const pid of tagged.get(e.tag) || []) if (table.byPid.has(pid)) own.add(pid)
+      perEntry.set(e.tag, own)
+      for (const pid of own) pids.add(pid)
+    }
+    return { pids, perEntry }
+  }
+  const first = await collect()
+  if (!first.pids.size) return { found: true, killed: 0, remaining: 0 }
+  const term = (pid, sig) => { try { process.kill(pid, sig) } catch { /* 已退出/无权限 */ } }
+  for (const e of entries) term(-e.pgid, 'SIGTERM')
+  for (const pid of first.pids) term(pid, 'SIGTERM')
+  await sleep(1500)
+  const second = await collect()
+  for (const e of entries) term(-e.pgid, 'SIGKILL')
+  for (const pid of second.pids) term(pid, 'SIGKILL')
+  if (second.pids.size) await sleep(300)
+  const third = await collect()
+  let pruned = false
+  for (const e of entries) {
+    if ((third.perEntry.get(e.tag) || new Set()).size) continue
+    if (removeProcEntry(e.tag)) pruned = true
+  }
+  log(`[进程] 停止 ${entries.length} 棵：目标 ${first.pids.size} 个，幸存 ${third.pids.size} 个${pruned ? '（已出清登记）' : ''}`)
+  return { found: true, killed: Math.max(0, first.pids.size - third.pids.size), remaining: third.pids.size }
+}
+
+async function opProcs ({ sessionIds }) {
+  const list = Array.isArray(sessionIds)
+    ? sessionIds.map(s => String(s || '').trim()).filter(Boolean) : []
+  const filter = list.length ? new Set(list) : null
+  const groups = await liveProcGroups(filter)
+  const ports = await listenPorts(groups.flatMap(g => g.pids))
+  return {
+    procs: groups.map(g => ({
+      tag: g.entry.tag,
+      sessionId: g.entry.sessionId,
+      command: g.command,
+      roots: g.roots,
+      pids: g.pids,
+      ports: [...new Set(g.pids.flatMap(p => ports.get(p) || []))],
+      elapsedSec: g.elapsedSec,
+      startedAt: g.entry.startedAt,
+      killable: true
+    }))
+  }
+}
+
+async function opLiveProcs ({ uid }) {
+  const groups = await liveProcGroups(null, String(uid || '').trim() || null)
+  const sessions = {}
+  for (const g of groups) sessions[g.entry.sessionId] = (sessions[g.entry.sessionId] || 0) + 1
+  return { sessions, partial: false }
+}
+
+async function opKillProc ({ tag }) {
+  if (!procSessionOfTag(tag)) throw err('E_BAD_TAG', '进程标识不合法')
+  const entries = loadProcEntries().filter(e => e.tag === tag)
+  return terminateGroups(entries)
+}
+
+async function opKillSession ({ sessionId }) {
+  const sid = String(sessionId || '').trim()
+  if (!sid) throw err('E_BAD_SESSION', '缺少会话标识')
+  const entries = loadProcEntries().filter(e => e.sessionId === sid)
+  return terminateGroups(entries)
+}
 
 /** turnId → 本轮状态（内存索引；落盘副本在 TURN_STORE 下，进程重启时由 loadTurnStates 读回）。 */
 const turnStates = new Map()
@@ -2335,6 +2679,10 @@ const HANDLERS = {
   writeChunk: opWriteChunk,
   exec: opExec,
   grep: opGrep,
+  procs: opProcs,
+  liveProcs: opLiveProcs,
+  killProc: opKillProc,
+  killSession: opKillSession,
   turnStart: opTurnStart,
   turnEnd: opTurnEnd,
   turnDiff: opTurnDiff
@@ -2446,7 +2794,7 @@ function deadlineGuard (ctx) {
 
 // 读操作可以并行（不同工作区互不影响、长命令不再堵住预览/搜索）；
 // 写操作仍严格串行——同一轮 turnStart/write/turnEnd 的顺序和快照一致性不能赌。
-const READ_OPS = new Set(['list', 'find', 'grep', 'read', 'readBytes', 'stat', 'tree'])
+const READ_OPS = new Set(['list', 'find', 'grep', 'read', 'readBytes', 'stat', 'tree', 'procs', 'liveProcs'])
 const READ_CONCURRENCY = 4
 const MAX_INFLIGHT = 16
 let readActive = 0
