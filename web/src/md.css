@@ -174,10 +174,13 @@ body.md-preview-lock { overflow: hidden; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .md .md-chart-range { flex: none; font-size: 11px; color: var(--app-text3); }
-.md .md-chart-acts { margin-left: auto; display: flex; align-items: center; gap: 1px; flex: none; }
+.md .md-chart-acts { margin-left: auto; display: flex; align-items: center; gap: 2px; flex: none; }
+/* 图表动作是纯图标按钮：22px 方形热区，图标 14px（与代码块动作按钮同一档） */
 .md .md-chart-act {
-  height: 24px; padding: 0 7px; border: 1px solid transparent; border-radius: 6px;
-  background: transparent; color: var(--app-text3); font: inherit; font-size: 11px;
+  width: 22px; height: 22px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid transparent; border-radius: 6px;
+  background: transparent; color: var(--app-text3); font: inherit; font-size: 14px;
   white-space: nowrap; cursor: pointer;
 }
 .md .md-chart-act:hover { background: var(--app-bg-layer-3, #f2f4f7); color: var(--app-text); }
@@ -317,7 +320,7 @@ html[data-theme="dark"] .hljs-deletion { color: #ffdcd7; }
   /* 代码复制按钮：浮起那份 hover 才显（opacity:0 起），触屏永不可见 = 复制功能失效 */
   .md .md-code > .code-copy, .md pre > .code-copy { opacity: 1; }
   /* 触控热区：桌面 22px 的按钮在手指上点不准 */
-  .md .code-copy, .md .md-act { min-width: 30px; min-height: 30px; }
+  .md .code-copy, .md .md-act, .md .md-chart-act { min-width: 30px; min-height: 30px; }
   .md-preview-close { min-width: 34px; min-height: 34px; }
   /* 标题栏跟着让高，否则 30px 的按钮上下各溢出 1px */
   .md .md-code-head { height: 34px; }

@@ -29,6 +29,9 @@ export const onImgError = e => { e.target.onerror = null; e.target.src = FALLBAC
 const antIcon = d => `<span class="anticon"><svg viewBox="64 64 896 896" width="1em" height="1em" fill="currentColor">${d}</svg></span>`
 const COPY_SVG = antIcon('<path d="M832 64H296c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h496v688c0 4.4 3.6 8 8 8h56c4.4 0 8-3.6 8-8V96c0-17.7-14.3-32-32-32zM704 192H192c-17.7 0-32 14.3-32 32v530.7c0 8.5 3.4 16.6 9.4 22.6l173.3 173.3c2.2 2.2 4.7 4 7.4 5.5v1.9h4.2c3.5 1.3 7.2 2 11 2H704c17.7 0 32-14.3 32-32V224c0-17.7-14.3-32-32-32zM350 856.2L263.9 770H350v86.2zM664 888H414V746c0-22.1-17.9-40-40-40H232V264h432v624z"/>')
 const CHECK_SVG = antIcon('<path d="M912 190h-69.9c-9.8 0-19.1 4.5-25.1 12.2L404.7 724.5 207 474a32 32 0 00-25.1-12.2H112c-6.7 0-10.4 7.7-6.3 12.9l273.9 347c12.8 16.2 37.4 16.2 50.3 0l488.4-618.9c4.1-5.1.4-12.8-6.3-12.8z"/>')
+const EXPAND_ICON = antIcon('<path d="M342 88H120c-17.7 0-32 14.3-32 32v224c0 8.8 7.2 16 16 16h48c8.8 0 16-7.2 16-16V168h174c8.8 0 16-7.2 16-16v-48c0-8.8-7.2-16-16-16zm578 576h-48c-8.8 0-16 7.2-16 16v176H682c-8.8 0-16 7.2-16 16v48c0 8.8 7.2 16 16 16h222c17.7 0 32-14.3 32-32V680c0-8.8-7.2-16-16-16zM342 856H168V680c0-8.8-7.2-16-16-16h-48c-8.8 0-16 7.2-16 16v224c0 17.7 14.3 32 32 32h222c8.8 0 16-7.2 16-16v-48c0-8.8-7.2-16-16-16zM904 88H682c-8.8 0-16 7.2-16 16v48c0 8.8 7.2 16 16 16h174v176c0 8.8 7.2 16 16 16h48c8.8 0 16-7.2 16-16V120c0-17.7-14.3-32-32-32z"/>')
+const DOWNLOAD_ICON = antIcon('<path d="M505.7 661a8 8 0 0012.6 0l112-141.7c4.1-5.2.4-12.9-6.3-12.9h-74.1V168c0-4.4-3.6-8-8-8h-60c-4.4 0-8 3.6-8 8v338.3H400c-6.7 0-10.4 7.7-6.3 12.9l112 141.8zM878 626h-60c-4.4 0-8 3.6-8 8v154H214V634c0-4.4-3.6-8-8-8h-60c-4.4 0-8 3.6-8 8v198c0 17.7 14.3 32 32 32h684c17.7 0 32-14.3 32-32V634c0-4.4-3.6-8-8-8z"/>')
+const TABLE_ICON = antIcon('<path d="M928 160H96c-17.7 0-32 14.3-32 32v640c0 17.7 14.3 32 32 32h832c17.7 0 32-14.3 32-32V192c0-17.7-14.3-32-32-32zm-40 208H676V232h212v136zm0 224H676V432h212v160zM412 432h200v160H412V432zm200-64H412V232h200v136zm-476 64h212v160H136V432zm0-200h212v136H136V232zm0 424h212v136H136V656zm276 0h200v136H412V656zm476 136H676V656h212v136z"/>')
 
 // markdown-it 实例（配置与渲染管线整体一致）
 // 安全：html:false（不渲染原始 HTML）+ DOMPurify 白名单双保险
@@ -811,14 +814,16 @@ const mountChartHead = (el, code, opt) => {
   }
   const acts = document.createElement('span')
   acts.className = 'md-chart-acts'
-  const defs = [['expand', '放大'], ['download', '下载'], ['data', '数据']]
-  for (const [act, label] of defs) {
+  const defs = [['expand', '放大查看', EXPAND_ICON], ['download', '下载 PNG', DOWNLOAD_ICON], ['data', '查看图表数据', TABLE_ICON]]
+  for (const [act, title, icon] of defs) {
     const b = document.createElement('button')
     b.type = 'button'
     b.className = 'md-chart-act'
     b.dataset.mdChartAct = act
-    b.title = act === 'expand' ? '放大查看' : act === 'download' ? '下载 PNG' : '查看图表数据'
-    b.textContent = label
+    // 只留图标：三个动作都是通用语义，文字标签在卡头右侧挤掉了标题；语义交给 title/aria-label
+    b.title = title
+    b.setAttribute('aria-label', title)
+    b.innerHTML = icon
     acts.appendChild(b)
   }
   if (!chartDataOf(opt)) acts.querySelector('[data-md-chart-act="data"]').remove()

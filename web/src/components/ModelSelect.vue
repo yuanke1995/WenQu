@@ -534,10 +534,10 @@ watch([() => props.modelValue, () => groups.value, inheritText,
 .ms-pill :deep(.ant-select-selection-item),
 .ms-pill :deep(.ant-select-selection-placeholder) {
   line-height: 26px !important;
-  /* 下移 1px：值/跟随两态文本同字体同行高、墨迹偏移一致（实测两态相对胶囊中心差 <0.1px），
-     必须一起加——只加 item 的话切到「跟随」态文字会上跳 1px。
+  /* 下移 1.5px：值/跟随两态文本同字体同行高、墨迹偏移一致，必须一起加——
+     只加 item 的话切到「跟随」态文字会上跳。
      这是用户在 DevTools 里对真实页面试出来的值：加后模型名与档位标记、下拉箭头同一条视觉中线 */
-  margin-top: 1px;
+  margin-top: 1.5px;
   color: var(--app-text3);
 }
 /* 已指定模型时文字用前景色，「跟随：…」保持灰 */
