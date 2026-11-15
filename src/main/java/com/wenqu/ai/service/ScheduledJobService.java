@@ -104,6 +104,8 @@ public class ScheduledJobService {
     private final ChatService chatService;
     private final SessionService sessionService;
     private final AgentMapper agentMapper;
+    /** 平台共享单行（网页操作助手）跨租户解析：本租户的查询扫不到它 */
+    private final PlatformAgentLookup platformAgentLookup;
     /** 工作区：任务挂到工作区上时，结果会话要落进该工作区（校验归属也在这里） */
     private final ProjectService projectService;
     private final com.wenqu.ai.mapper.SessionMapper sessionMapper;
@@ -128,13 +130,15 @@ public class ScheduledJobService {
                                SessionService sessionService, AgentMapper agentMapper,
                                NotificationService notificationService,
                                ProjectService projectService,
-                               com.wenqu.ai.mapper.SessionMapper sessionMapper) {
+                               com.wenqu.ai.mapper.SessionMapper sessionMapper,
+                               PlatformAgentLookup platformAgentLookup) {
         this.jobMapper = jobMapper;
         this.runMapper = runMapper;
         this.configService = configService;
         this.chatService = chatService;
         this.sessionService = sessionService;
         this.agentMapper = agentMapper;
+        this.platformAgentLookup = platformAgentLookup;
         this.notificationService = notificationService;
         this.projectService = projectService;
         this.sessionMapper = sessionMapper;
@@ -831,7 +835,7 @@ public class ScheduledJobService {
         }
         if (body.containsKey("agentId")) {
             String agentId = str(body.get("agentId"));
-            if (!agentId.isEmpty() && agentMapper.selectById(agentId) == null) {
+            if (!agentId.isEmpty() && resolveAgent(agentId) == null) {
                 throw new BizException("指定的智能体不存在");
             }
             job.setAgentId(agentId.isEmpty() ? null : agentId);
@@ -1010,6 +1014,13 @@ public class ScheduledJobService {
         return run;
     }
 
+    /** 解析任务绑定的智能体：本租户优先，平台共享单行（网页操作助手）在保留租户里，单独补取 */
+    private Agent resolveAgent(String agentId) {
+        if (agentId == null || agentId.isBlank()) return null;
+        Agent a = agentMapper.selectById(agentId);
+        return a != null ? a : platformAgentLookup.find(agentId);
+    }
+
     private Map<String, Object> toDto(ScheduledJob job) {
         return toDto(job, projectNames(List.of(job)));
     }
@@ -1022,7 +1033,7 @@ public class ScheduledJobService {
         m.put("name", job.getName());
         m.put("prompt", job.getPrompt());
         m.put("agentId", job.getAgentId());
-        Agent agent = job.getAgentId() == null ? null : agentMapper.selectById(job.getAgentId());
+        Agent agent = job.getAgentId() == null ? null : resolveAgent(job.getAgentId());
         m.put("agentName", agent == null ? null : agent.getName());
         m.put("cron", job.getCron());
         m.put("timezone", job.getTimezone());

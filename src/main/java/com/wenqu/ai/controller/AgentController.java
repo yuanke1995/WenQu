@@ -276,6 +276,7 @@ public class AgentController {
     @Permission("agent:publish")
     @GetMapping("/{id}/publish")
     public ResultJson getPublish(@PathVariable("id") String id) {
+        if (AgentService.isPlatformSharedAgent(id)) return ResultJson.error("平台预置智能体不支持公开发布");
         if (!canManage(agentService.get(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");
         var share = agentShareService.getByAgent(id);
         // 未发布时能力位一律 false：多模态开关与分享同生命周期，分享没开就没有"游客能不能发图"这回事
@@ -309,6 +310,7 @@ public class AgentController {
     @Permission("agent:publish")
     @PostMapping("/{id}/publish")
     public ResultJson publish(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
+        if (AgentService.isPlatformSharedAgent(id)) return ResultJson.error("平台预置智能体不支持公开发布");
         if (!canManage(agentService.get(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");
         boolean enabled = Boolean.parseBoolean(String.valueOf(body.get("enabled")));
         boolean mcpEnabled = Boolean.parseBoolean(String.valueOf(body.get("mcpEnabled")));
@@ -382,6 +384,7 @@ public class AgentController {
     @Permission("agent:publish")
     @DeleteMapping("/{id}/publish")
     public ResultJson revokePublish(@PathVariable("id") String id) {
+        if (AgentService.isPlatformSharedAgent(id)) return ResultJson.error("平台预置智能体不支持公开发布");
         if (!canManage(agentService.get(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");
         agentShareService.revoke(id);
         return ResultJson.ok("已撤销分享");

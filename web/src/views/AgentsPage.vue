@@ -87,7 +87,7 @@
                   <span v-if="isDefault(a) || isBuiltin(a) || isPreset(a) || isSub(a)" class="ap-card-tags">
                     <span v-if="isDefault(a)" class="ap-tag-default" title="默认智能体：对话页预选">★ 默认</span>
                     <span v-if="isBuiltin(a)" class="ap-tag-builtin" title="系统默认智能体：全员可用，仅管理员可配置"><lock-outlined />内置</span>
-                    <span v-else-if="isPreset(a)" class="ap-tag-builtin" title="平台内置助手：全员可用，管理员可配置"><lock-outlined />内置</span>
+                    <span v-else-if="isPreset(a)" class="ap-tag-builtin" title="平台内置助手：全员可用，仅平台超级管理员可配置"><lock-outlined />内置</span>
                     <span v-else-if="isSub(a)" class="ap-tag-sub">子智能体</span>
                   </span>
                 </div>
@@ -112,10 +112,10 @@
                       <button class="ap-more-btn" aria-label="更多操作" @click.stop><more-outlined /></button>
                       <template #overlay>
                         <a-menu>
-                          <a-menu-item key="pub" @click="openPublish(a)">发布管理</a-menu-item>
+                          <a-menu-item v-if="!isPreset(a)" key="pub" @click="openPublish(a)">发布管理</a-menu-item>
                           <a-menu-item key="copy" @click="copyAgent(a)">复制</a-menu-item>
                           <a-menu-item key="export" @click="exportAgent(a)">导出 JSON</a-menu-item>
-                          <a-menu-item key="ver" @click="openEdit(a); openVersions()">历史版本</a-menu-item>
+                          <a-menu-item v-if="!isPreset(a)" key="ver" @click="openEdit(a); openVersions()">历史版本</a-menu-item>
                           <!-- 「设为默认」是全局动作（影响所有人下拉的预选），后端仅管理员放行；
                                平台预置是能力型助手，不能设为全员默认 -->
                           <a-menu-item v-if="canSetDefault(a)" key="def" @click="doSetDefault(a.id)">设为默认</a-menu-item>
@@ -125,7 +125,7 @@
                       </template>
                     </a-dropdown>
                   </template>
-                  <span v-else class="ap-readonly-hint">{{ isBuiltin(a) || isPreset(a) ? '系统内置 · 管理员可配置' : '仅可使用' }}</span>
+                  <span v-else class="ap-readonly-hint">{{ isBuiltin(a) ? '系统内置 · 管理员可配置' : (isPreset(a) ? '系统内置 · 仅平台管理员可配置' : '仅可使用') }}</span>
                 </div>
               </article>
             </div>
@@ -155,10 +155,10 @@
               <star-outlined />
             </button>
           </a-tooltip>
-          <button v-if="editingId" class="app-btn ghost small" @click="openEvalTab">
+          <button v-if="editingId && !editingPreset" class="app-btn ghost small" @click="openEvalTab">
             <experiment-outlined style="margin-right:4px" />评测
           </button>
-          <button v-if="editingId" class="app-btn ghost small" @click="openVersions">
+          <button v-if="editingId && !editingPreset" class="app-btn ghost small" @click="openVersions">
             <history-outlined style="margin-right:4px" />历史版本
           </button>
           <button class="app-btn ghost small" @click="closeEdit">取消</button>
@@ -182,7 +182,7 @@
             <section class="app-card">
               <h2 class="app-card-title"><idcard-outlined class="ap-sec-ic" />身份与角色</h2>
               <div class="ap-id-row">
-                <a-popover v-if="form.isBuiltin !== 1" v-model:open="iconOpen" trigger="click"
+                <a-popover v-if="!identityLocked" v-model:open="iconOpen" trigger="click"
                            placement="bottomLeft" :overlay-style="{ width: '300px' }">
                   <template #content>
                     <div class="ap-icon-grid">
@@ -199,14 +199,14 @@
                     <span class="ap-avatar-pen"><edit-outlined /></span>
                   </button>
                 </a-popover>
-                <span v-else class="ap-avatar-btn is-locked" title="内置「问渠」图标固定">
+                <span v-else class="ap-avatar-btn is-locked" :title="form.isBuiltin === 1 ? '内置「问渠」图标固定' : '平台预置智能体图标固定'">
                   <AgentAvatar :agent="{ icon: form.icon, isBuiltin: form.isBuiltin }" :size="46" />
                 </span>
                 <div class="ap-id-name">
                   <label class="ap-field-label">名称</label>
-                  <a-input v-model:value="form.name" :maxlength="200" :disabled="form.isBuiltin === 1"
+                  <a-input v-model:value="form.name" :maxlength="200" :disabled="identityLocked"
                            placeholder="如：合同审查助手 / 运维排障 / 产品 FAQ" />
-                  <div v-if="form.isBuiltin === 1" class="ap-hint">名称、用途与图标随产品固定。</div>
+                  <div v-if="identityLocked" class="ap-hint">{{ form.isBuiltin === 1 ? '名称、用途与图标随产品固定。' : '平台预置助手：名称、图标、用途与系统提示词随产品固定，仅能力配置可改。' }}</div>
                 </div>
               </div>
 
@@ -218,13 +218,13 @@
                 <div class="ap-prompt-head">
                   <label class="ap-field-label" style="margin:0">系统提示词</label>
                   <!-- 布局三档：编辑=全宽书写（长提示词不用挤半栏），分屏=边写边看，预览=纯阅读；选择记住，下次进来保持 -->
-                  <a-radio-group v-if="form.isBuiltin !== 1" v-model:value="promptPane" size="small" class="ap-pane-mode">
+                  <a-radio-group v-if="!identityLocked" v-model:value="promptPane" size="small" class="ap-pane-mode">
                     <a-radio-button value="edit">编辑</a-radio-button>
                     <a-radio-button value="split">分屏</a-radio-button>
                     <a-radio-button value="preview">预览</a-radio-button>
                   </a-radio-group>
                 </div>
-                <MdPreview v-if="form.isBuiltin === 1" editor-id="ap-system-prompt-view" :model-value="form.systemPrompt"
+                <MdPreview v-if="identityLocked" editor-id="ap-system-prompt-view" :model-value="form.systemPrompt"
                            :theme="mdTheme" class="ap-md-editor ap-md-preview" />
                 <template v-else>
                   <MdEditor v-if="promptPane !== 'preview'" :key="promptPane" v-model="form.systemPrompt"
@@ -234,7 +234,7 @@
                   <MdPreview v-else editor-id="ap-system-prompt-view" :model-value="form.systemPrompt"
                              :theme="mdTheme" class="ap-md-editor ap-md-preview" />
                 </template>
-                <div class="ap-hint">{{ form.isBuiltin === 1 ? '系统提示词随产品固定，不可修改。' : '支持 Markdown，⌘S 保存' }}</div>
+                <div class="ap-hint">{{ identityLocked ? '系统提示词随产品固定，不可修改。' : '支持 Markdown，⌘S 保存' }}</div>
               </div>
             </section>
 
@@ -1069,12 +1069,16 @@ const OPTION_REFS = { skillOptions, mcpOptions }
 
 const editing = ref(false)
 const editingId = ref('')
+// 正在编辑的是平台预置助手（全平台共享单行）：名称/图标/用途/提示词随产品固定，只有配置项可改
+const editingPreset = ref(false)
 // 侧栏「最近保存」：列表接口带回的更新时间（新建时为空，不显示该卡）
 const editingUpdatedAt = ref('')
 const scopeMode = ref('all')
 // 编辑视图的运行方式：main=问答助手 / sub=可被委派。
 // 它只影响「哪些配置参与」与保存时写回 isSubagent，不新增后端字段。
 const runMode = ref('main')
+/** 身份字段锁定：内置「问渠」与平台预置行的名称/图标/用途/提示词随产品固定 */
+const identityLocked = computed(() => form.value.isBuiltin === 1 || editingPreset.value)
 // 「专家选项」折叠（原生 details 的 open 态），默认收起
 const advOpen = ref(false)
 const iconOpen = ref(false)
@@ -1180,16 +1184,17 @@ watch(promptPane, v => localStorage.setItem(PROMPT_PANE_KEY, v))
 // 运行方式：决定页面里哪些配置参与，以及保存时 isSubagent 怎么写。
 const runModeOptions = computed(() => [
   { label: '问答助手', value: 'main' },
-  { label: '可被委派', value: 'sub', disabled: form.value.isBuiltin === 1 }
+  { label: '可被委派', value: 'sub', disabled: form.value.isBuiltin === 1 || editingPreset.value }
 ])
 const runModeHint = computed(() => {
+  if (editingPreset.value) return '平台预置助手的用途随产品固定：全平台一份，只能作为问答助手直接选用。'
   if (runMode.value === 'sub') return '不能直接选用，只能被主智能体委派去查资料或办事。'
   return '对话页可直接选用；人设、资料与能力都按本页配置生效。'
 })
 const modeChip = computed(() => runMode.value === 'sub' ? '可被委派' : '')
 const onRunModeChange = v => {
-  // 内置「问渠」固定为主智能体：即便分段控件被绕过，也不让它落成子智能体
-  if (v === 'sub' && form.value.isBuiltin === 1) { runMode.value = 'main'; return }
+  // 内置「问渠」与平台预置都固定为主智能体：即便分段控件被绕过，也不让它落成子智能体
+  if (v === 'sub' && (form.value.isBuiltin === 1 || editingPreset.value)) { runMode.value = 'main'; return }
   form.value.isSubagent = v === 'sub' ? 1 : 0
 }
 // 页头星标：已存在的非子智能体、且管理员才有「设为默认」能力（与列表卡片同一判据）；
@@ -1344,7 +1349,8 @@ const updatedAgo = a => {
   return r ? `${r}更新` : ''
 }
 /** 状态点只给「发布与否在自己手里」的卡片：子智能体不参与直接对话，发布语义不适用 */
-const showPubDot = a => a.manageable && !isSub(a)
+// 平台预置不支持公开发布，不显示发布状态点（灰点会被读成「还没发，可以发」）
+const showPubDot = a => a.manageable && !isSub(a) && !isPreset(a)
 const canSetDefault = a => !isSub(a) && !isDefault(a) && isAdmin.value && !isPreset(a)
 /** 试一试：直达对话页并预选该智能体（对话页消费 ?agent= 后摘掉参数） */
 const tryAgent = a => router.push({ path: '/chat', query: { agent: String(a.id) } })
@@ -1380,6 +1386,7 @@ const copyAgent = a => {
   createOpen.value = false
   openEdit(a)
   editingId.value = ''
+  editingPreset.value = false
   editingUpdatedAt.value = ''
   form.value.name = `${a.name || '未命名'}-副本`
   form.value.isDefault = false
@@ -1419,6 +1426,7 @@ const onImportFile = ev => {
     // 导入走与复制同一条路径：把配置载入新建表单，用户检查后再保存
     openEdit({ ...cfg, isBuiltin: 0 })
     editingId.value = ''
+    editingPreset.value = false
     editingUpdatedAt.value = ''
     form.value.isDefault = false
     message.info('配置已载入，确认后点「保存」即创建为新智能体')
@@ -1973,6 +1981,7 @@ const triStr = v => (v === null || v === undefined ? '' : String(v))
 
 const openCreate = () => {
   editingId.value = ''
+  editingPreset.value = false
   editingUpdatedAt.value = ''
   form.value = blankForm()
   scopeMode.value = 'all'
@@ -2000,6 +2009,8 @@ const effectiveAskUserTri = a => {
 
 const openEdit = a => {
   editingId.value = a.id
+  // 平台预置行（created_by=system 且非内置问渠）：身份字段锁定，只有能力配置可改
+  editingPreset.value = isPreset(a)
   editingUpdatedAt.value = a.updateTime || a.createTime || ''
   const sub = a.isSubagent === 1 || a.isSubagent === true
   runMode.value = sub ? 'sub' : 'main'
@@ -2060,7 +2071,7 @@ const openEdit = a => {
     ? 'none' : (kbs.length ? 'pick' : 'all')
   editing.value = true
 }
-const closeEdit = () => { editing.value = false }
+const closeEdit = () => { editing.value = false; editingPreset.value = false }
 
 /** HTTP 工具集 JSON 串 → 编辑器数组（坏数据当空配置，重新导入即可修复） */
 const parseJsonArray = s => {

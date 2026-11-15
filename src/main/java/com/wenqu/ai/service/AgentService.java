@@ -75,6 +75,27 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
             + "4. 结构清晰：先给结论，再给依据；内容多时用短段落或列表，不用客套话开场。\n"
             + "5. 默认使用简体中文，专业术语首次出现时给出全称。";
 
+    /**
+     * 平台保留租户：全平台共享的单行智能体（如「网页操作助手」）存在这里。
+     * <p>它不登记进 {@code c_ai_tenant}，普通租户的查询天然带 {@code tenant_id=当前租户}，
+     * 永远扫不到这一行；只有 {@link #globalAgent(String)} 显式切到这个租户去取。
+     * 这是多租户行级隔离的唯一特例，且只对 {@link #PLATFORM_BROWSER_AGENT_ID} 这一个 id 生效。
+     */
+    public static final String PLATFORM_TENANT = PlatformAgentLookup.PLATFORM_TENANT;
+
+    /** 平台预置「网页操作助手」的固定 id：全平台唯一一行，各租户看到的是同一份配置 */
+    public static final String PLATFORM_BROWSER_AGENT_ID = PlatformAgentLookup.BROWSER_AGENT_ID;
+
+    /** 是否平台共享单行智能体（只认固定 id，其它行一律按租户隔离） */
+    public static boolean isPlatformSharedAgent(String id) {
+        return PlatformAgentLookup.isShared(id);
+    }
+
+    public static boolean isPlatformSharedAgent(Agent a) {
+        return a != null && isPlatformSharedAgent(a.getId());
+    }
+
+    private final PlatformAgentLookup platformAgentLookup;
     private final AgentMapper mapper;
     private final AgentVersionMapper versionMapper;
     private final TenantMapper tenantMapper;
@@ -289,6 +310,8 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
      */
     public boolean manageable(Agent a) {
         if (a == null) return false;
+        // 平台共享单行全平台一份，任何租户管理员改了都会影响别人：配置权只留给平台超级管理员
+        if (isPlatformSharedAgent(a)) return RequestUser.superadmin();
         if (Integer.valueOf(1).equals(a.getIsBuiltin()) || isPlatformPreset(a)) {
             return roleService.isAdminAny(RequestUser.roles());
         }
@@ -304,11 +327,25 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
 
     /** 列表（默认智能体在前，其余按创建时间倒序）；出参脱敏（HTTP 工具集的鉴权密文不出服务层） */
     public List<Agent> list() {
-        List<Agent> out = mapper.selectList(new LambdaQueryWrapper<Agent>()
+        List<Agent> out = new ArrayList<>(mapper.selectList(new LambdaQueryWrapper<Agent>()
                 .orderByDesc(Agent::getIsDefault)
-                .orderByDesc(Agent::getCreateTime));
+                .orderByDesc(Agent::getCreateTime)));
+        // 平台共享行在保留租户里，本租户查不到：补进来（全平台同一份，只补固定 id 这一行）
+        Agent global = globalAgent(PLATFORM_BROWSER_AGENT_ID);
+        if (global != null && out.stream().noneMatch(a -> PLATFORM_BROWSER_AGENT_ID.equals(a.getId()))) {
+            out.add(global);
+        }
         for (Agent a : out) maskHttpTools(a);
         return out;
+    }
+
+    /**
+     * 取平台共享单行（本租户查不到时的兜底）。
+     * <p>只认真实存在的固定行：缺失时返回 null，调用方按「不存在」处理——不能凭 id 造一个影子对象，
+     * 否则配置页会展示一份改不动的假配置。
+     */
+    private Agent globalAgent(String id) {
+        return platformAgentLookup.find(id);
     }
 
     /**
@@ -436,6 +473,7 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
     public Agent get(String id) {
         if (!StringUtils.hasText(id)) return null;
         Agent a = mapper.selectById(id);
+        if (a == null) a = globalAgent(id);
         return (a != null && readable(a)) ? a : null;
     }
 
@@ -484,9 +522,40 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
 
     /** 更新智能体；isDefault 变化时同步处理唯一默认 */
     public Agent update(String id, Map<String, Object> body) {
+        // 平台共享行存在保留租户里：更新与版本快照都要在那个租户上下文里跑，否则 SQL 被本租户谓词挡空
+        if (isPlatformSharedAgent(id)) {
+            if (!RequestUser.superadmin()) throw new BizException(403, "平台预置智能体仅平台超级管理员可配置");
+            return TenantContext.as(PLATFORM_TENANT, () -> doUpdate(id, body));
+        }
+        return doUpdate(id, body);
+    }
+
+    private Agent doUpdate(String id, Map<String, Object> body) {
         Agent existing = mapper.selectById(id);
         if (existing == null) throw new BizException(404, "智能体不存在");
         ensureManageable(existing);
+        // 平台共享行：名称/图标/用途/系统提示词是产品身份（播种器每次启动归一），改动 fail-loud 拒绝，
+        // 避免「保存成功、重启又变回去」这种事后才发现的漂移
+        if (isPlatformSharedAgent(existing) && body != null) {
+            if (body.containsKey("isSubagent") && Integer.valueOf(1).equals(toTri(body.get("isSubagent")))) {
+                throw new BizException("平台预置智能体「" + existing.getName() + "」固定为主智能体，用途不可修改");
+            }
+            if (body.containsKey("name") && !java.util.Objects.equals(
+                    asText(body.get("name"), 200) == null ? null : asText(body.get("name"), 200).trim(),
+                    existing.getName())) {
+                throw new BizException("平台预置智能体「" + existing.getName() + "」的名称随产品固定，不可修改");
+            }
+            if (body.containsKey("icon") && !java.util.Objects.equals(asText(body.get("icon"), 32), existing.getIcon())) {
+                throw new BizException("平台预置智能体「" + existing.getName() + "」的图标随产品固定，不可修改");
+            }
+            if (body.containsKey("systemPrompt") && !java.util.Objects.equals(
+                    asText(body.get("systemPrompt"), 60000), asText(existing.getSystemPrompt(), 60000))) {
+                throw new BizException("平台预置智能体「" + existing.getName() + "」的系统提示词随产品固定，不可修改");
+            }
+            if (body.containsKey("isDefault") && Integer.valueOf(1).equals(toTri(body.get("isDefault")))) {
+                throw new BizException("平台预置智能体不能设为全员默认");
+            }
+        }
         // 内置智能体（「问渠」）的名称是产品身份的一部分：请求体里出现 name 且与现值不一致时直接拒绝（fail-loud，
         // 不做静默忽略——静默会让用户以为改成功了，刷新后名称"自己变回去"更困惑）
         if (body != null && body.containsKey("name") && Integer.valueOf(1).equals(existing.getIsBuiltin())) {
@@ -622,6 +691,10 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
 
     /** 删除智能体（内置标记与平台预置的禁止删除） */
     public void delete(String id) {
+        // 平台共享行不在本租户里，selectById 查不到——先按固定 id 挡掉，避免落入「删 0 行却报成功」
+        if (isPlatformSharedAgent(id)) {
+            throw new BizException("平台预置智能体不可删除（如需调整请联系平台管理员）");
+        }
         Agent existing = mapper.selectById(id);
         if (existing != null) {
             ensureManageable(existing);
@@ -638,6 +711,7 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
 
     /** 设为默认（其余清零） */
     public void setDefault(String id) {
+        if (isPlatformSharedAgent(id)) throw new BizException("平台预置智能体不能设为全员默认");
         Agent target = mapper.selectById(id);
         if (target == null) throw new BizException(404, "智能体不存在");
         ensureManageable(target);
@@ -837,6 +911,13 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
      * current（是否最新版记录）、identical（内容是否与当前配置一致，回滚过去等于没变）。
      */
     public List<Map<String, Object>> listVersions(String id) {
+        if (isPlatformSharedAgent(id)) {
+            return TenantContext.as(PLATFORM_TENANT, () -> doListVersions(id));
+        }
+        return doListVersions(id);
+    }
+
+    private List<Map<String, Object>> doListVersions(String id) {
         Agent agent = mapper.selectById(id);
         if (agent == null) throw new BizException(404, "智能体不存在");
         List<AgentVersion> rows = versionMapper.selectList(new LambdaQueryWrapper<AgentVersion>()
@@ -873,6 +954,15 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
 
     /** 回滚到指定历史版本：把该版配置重新应用并落一版新快照（reason 记「回滚自 vX」），返回新版本号 */
     public Map<String, Object> rollback(String id, int targetVersion) {
+        // 平台共享行的名称/用途/提示词随产品固定，历史快照里的身份字段不应被整行写回；
+        // 版本列表仍可查看（排查配置漂移），但不提供回滚
+        if (isPlatformSharedAgent(id)) {
+            throw new BizException("平台预置智能体的配置随产品定型，不提供历史回滚");
+        }
+        return doRollback(id, targetVersion);
+    }
+
+    private Map<String, Object> doRollback(String id, int targetVersion) {
         Agent agent = mapper.selectById(id);
         if (agent == null) throw new BizException(404, "智能体不存在");
         ensureManageable(agent);

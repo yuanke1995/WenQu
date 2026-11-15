@@ -62,6 +62,8 @@ public class TraceService {
     private final WorkflowRunMapper runMapper;
     private final WorkflowMapper workflowMapper;
     private final AgentMapper agentMapper;
+    /** 平台共享单行（网页操作助手）跨租户解析：本租户的 in 查询扫不到它 */
+    private final PlatformAgentLookup platformAgentLookup;
     private final RetrievalEvaluationService evalService;
     private final ConfigService configService;
 
@@ -420,9 +422,16 @@ public class TraceService {
     /** 批量解析智能体名（一次 in 查询；名称异常的行跳过，调用方对查不到的回退显示 id） */
     private Map<String, String> agentNames(List<String> agentIds) {
         if (agentIds == null || agentIds.isEmpty()) return Map.of();
-        return agentMapper.selectBatchIds(agentIds).stream()
+        Map<String, String> out = new java.util.HashMap<>(agentMapper.selectBatchIds(agentIds).stream()
                 .filter(a -> a.getName() != null && !a.getName().isBlank())
-                .collect(Collectors.toMap(Agent::getId, Agent::getName, (a, b) -> a));
+                .collect(Collectors.toMap(Agent::getId, Agent::getName, (a, b) -> a)));
+        // 平台共享行在保留租户里，上面的 in 查询按本租户谓词扫不到——逐个别名补一次
+        for (String id : agentIds) {
+            if (out.containsKey(id)) continue;
+            Agent g = platformAgentLookup.find(id);
+            if (g != null && g.getName() != null && !g.getName().isBlank()) out.put(id, g.getName());
+        }
+        return out;
     }
 
     private String workflowName(String workflowId) {
