@@ -218,19 +218,23 @@
                 <div class="ap-prompt-head">
                   <label class="ap-field-label" style="margin:0">系统提示词</label>
                   <!-- 布局三档：编辑=全宽书写（长提示词不用挤半栏），分屏=边写边看，预览=纯阅读；选择记住，下次进来保持 -->
-                  <a-radio-group v-model:value="promptPane" size="small" class="ap-pane-mode">
+                  <a-radio-group v-if="form.isBuiltin !== 1" v-model:value="promptPane" size="small" class="ap-pane-mode">
                     <a-radio-button value="edit">编辑</a-radio-button>
                     <a-radio-button value="split">分屏</a-radio-button>
                     <a-radio-button value="preview">预览</a-radio-button>
                   </a-radio-group>
                 </div>
-                <MdEditor v-if="promptPane !== 'preview'" :key="promptPane" v-model="form.systemPrompt"
-                          editor-id="ap-system-prompt" language="zh-CN" :theme="mdTheme" :toolbars="mdToolbars"
-                          :no-prettier="true" :footers="[]" :preview="promptPane === 'split'" @on-save="save"
-                          placeholder="填写后完全替换全局系统提示词；留空沿用全局" class="ap-md-editor" />
-                <MdPreview v-else editor-id="ap-system-prompt-view" :model-value="form.systemPrompt"
+                <MdPreview v-if="form.isBuiltin === 1" editor-id="ap-system-prompt-view" :model-value="form.systemPrompt"
                            :theme="mdTheme" class="ap-md-editor ap-md-preview" />
-                <div class="ap-hint">支持 Markdown，⌘S 保存</div>
+                <template v-else>
+                  <MdEditor v-if="promptPane !== 'preview'" :key="promptPane" v-model="form.systemPrompt"
+                            editor-id="ap-system-prompt" language="zh-CN" :theme="mdTheme" :toolbars="mdToolbars"
+                            :no-prettier="true" :footers="[]" :preview="promptPane === 'split'" @on-save="save"
+                            placeholder="填写后完全替换全局系统提示词；留空沿用全局" class="ap-md-editor" />
+                  <MdPreview v-else editor-id="ap-system-prompt-view" :model-value="form.systemPrompt"
+                             :theme="mdTheme" class="ap-md-editor ap-md-preview" />
+                </template>
+                <div class="ap-hint">{{ form.isBuiltin === 1 ? '系统提示词随产品固定，不可修改。' : '支持 Markdown，⌘S 保存' }}</div>
               </div>
             </section>
 
@@ -281,7 +285,7 @@
                 </span>
               </div>
               <div v-if="form.isBuiltin === 1" class="ap-hint" style="margin-bottom:8px">
-                内置问渠的「指定」只列平台内置资源（平台 MCP、内置技能）；个人 MCP / 个人技能 / 个人子智能体不会对成员生效。
+                内置问渠的「指定」只列平台内置资源（平台 MCP、内置技能）；系统提示词、HTTP 工具、工作流工具与轮终回调随产品固定。
               </div>
               <div class="ap-cap-list">
                 <template v-for="g in CAP_GROUPS" :key="g">
@@ -312,7 +316,10 @@
                           {{ c.desc }}
                         </div>
                       </div>
-                      <div class="ap-seg">
+                      <div v-if="form.isBuiltin === 1 && (c.key === 'toolHttp' || c.key === 'toolWorkflow')" class="ap-seg">
+                        <span class="ap-hint" style="margin:0">随产品固定</span>
+                      </div>
+                      <div v-else class="ap-seg">
                         <button v-for="s in capSegItems(c)" :key="s.v" type="button"
                                 :class="{ on: capSegValue(c) === s.v }" @click="setCapState(c, s.v)">
                           {{ s.label }}<span v-if="s.gv" class="ap-seg-gv">{{ s.gv }}</span>
@@ -333,14 +340,14 @@
                       </div>
                     </div>
                     <!-- HTTP 工具集管理：挂在开关行下方（从属关系一眼可见），开关不开不出现 -->
-                    <div v-if="c.key === 'toolHttp' && form.toolHttp === '1'" class="ap-cap-pick">
+                    <div v-if="c.key === 'toolHttp' && form.toolHttp === '1' && form.isBuiltin !== 1" class="ap-cap-pick">
                       <HttpToolsEditor v-model="form.httpTools" />
                       <div class="ap-pick-empty" style="margin-top:4px">
                         工具名 = 工具集名_操作名；执行审批跟随「工具执行确认」档位；游客分享与 API Key 白名单外的通道不暴露
                       </div>
                     </div>
                     <!-- 工作流工具管理：同样挂在开关行下方，勾选已发布工作流 -->
-                    <div v-if="c.key === 'toolWorkflow' && form.toolWorkflow === '1'" class="ap-cap-pick">
+                    <div v-if="c.key === 'toolWorkflow' && form.toolWorkflow === '1' && form.isBuiltin !== 1" class="ap-cap-pick">
                       <WorkflowToolsEditor v-model="form.workflowTools" />
                       <div class="ap-pick-empty" style="margin-top:4px">
                         工具名 = wf_工作流名_短id；运行取该工作流当前发布版本的出参；嵌套调用有 2 层防环上限；游客分享与 API Key 白名单外的通道不暴露
@@ -420,11 +427,14 @@
                     </div>
                     <div class="ap-adv-field ap-adv-full">
                       <label class="ap-field-label">轮终回调</label>
-                      <a-input v-model:value="form.callbackUrl" size="small" allow-clear autocomplete="off"
-                               placeholder="https://宿主系统.example.com/wenqu/callback（每轮结束 POST 结果）" />
-                      <a-input-password v-model:value="form.callbackSecret" size="small" class="ap-cb-secret" autocomplete="new-password"
-                                        :placeholder="form.callbackSecretSet ? '已配置（重新填写可更换，留空沿用）' : '签名密钥（可选，留空则不带签名头）'" />
-                      <div class="ap-hint">每轮结束 POST 签名结果；失败自动重试，内网地址会被拒绝</div>
+                      <template v-if="form.isBuiltin !== 1">
+                        <a-input v-model:value="form.callbackUrl" size="small" allow-clear autocomplete="off"
+                                 placeholder="https://宿主系统.example.com/wenqu/callback（每轮结束 POST 结果）" />
+                        <a-input-password v-model:value="form.callbackSecret" size="small" class="ap-cb-secret" autocomplete="new-password"
+                                          :placeholder="form.callbackSecretSet ? '已配置（重新填写可更换，留空沿用）' : '签名密钥（可选，留空则不带签名头）'" />
+                        <div class="ap-hint">每轮结束 POST 签名结果；失败自动重试，内网地址会被拒绝</div>
+                      </template>
+                      <div v-else class="ap-hint" style="margin-top:4px">内置问渠不提供轮终回调。</div>
                     </div>
                     <div v-if="agentDefaultsError" class="ap-pick-empty ap-adv-full">
                       系统默认值加载失败 —— 上面的「跟随系统」没点名当前值 ——
@@ -2012,6 +2022,16 @@ const openEdit = a => {
     subAgentIds: splitList(a.subAgentIds),
     // 检索开关（只有重排三态；旧版存量的阈值/权重键由后端忽略并在下次保存时清除）
     qpRerank: parseQueryParams(a.queryParams)
+  }
+  if (form.value.isBuiltin === 1) {
+    // 安全出口与提示词随产品固定：表单强制清空，保存时不会把管理员资产/外部出口写进共享行
+    form.value.toolHttp = ''
+    form.value.httpTools = []
+    form.value.toolWorkflow = ''
+    form.value.workflowTools = []
+    form.value.callbackUrl = ''
+    form.value.callbackSecret = ''
+    form.value.callbackSecretSet = false
   }
   // 三档：不使用知识库 > 指定知识库（选了库）> 全部知识库
   scopeMode.value = (a.knowledgeDisabled === 1 || a.knowledgeDisabled === true)

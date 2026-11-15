@@ -63,8 +63,8 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
      * <p>此前播种只写名称/描述/标记，{@code system_prompt} 留空 → 全新环境启动后，
      * 管理员在智能体配置页看到的是空框，且运行时回落 {@code AppProperties.systemPrompt}
      *（yml/env 兜底、不在配置页露出、不可编辑），等于产品自带的主助手没有任何人设。
-     * 与 {@link AppProperties#systemPrompt} 的区别：这里是<b>可编辑的默认值</b>，
-     * 管理员改后即以本行为准；留空才回落全局兜底。
+     * 自 2026-11-15 起这里是<b>随产品固定的身份提示词</b>：内置「问渠」不再允许管理员修改，
+     * 启动维护会把存量自定义值归一为本常量。
      */
     public static final String BUILTIN_SYSTEM_PROMPT =
             "你是「问渠」智能体工作台的主助手，负责结合知识库回答用户问题。\n\n"
@@ -199,6 +199,31 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
                     dirty = true;
                     log.warn("[AGENT] 内置「问渠」固定使用问渠品牌标，已修正遗留图标: {}（{}，原 {}）",
                             keeper.getName(), keeper.getId(), keeper.getIcon());
+                }
+                // 提示词与外部出口随产品固定：存量环境里若残留历史自定义值，在此归一（接口层已拒绝再次修改）
+                if (!BUILTIN_SYSTEM_PROMPT.equals(asText(keeper.getSystemPrompt(), 60000))) {
+                    fix.set(Agent::getSystemPrompt, BUILTIN_SYSTEM_PROMPT);
+                    dirty = true;
+                    log.warn("[AGENT] 内置「问渠」系统提示词随产品固定，已归一: {}（{}）", keeper.getName(), keeper.getId());
+                }
+                if (hasItems(keeper.getHttpTools()) || Integer.valueOf(1).equals(keeper.getToolHttp())) {
+                    fix.set(Agent::getHttpTools, null);
+                    fix.set(Agent::getToolHttp, 0);
+                    dirty = true;
+                    log.warn("[AGENT] 内置「问渠」不支持 HTTP 工具，已清空: {}（{}）", keeper.getName(), keeper.getId());
+                }
+                if (hasItems(keeper.getWorkflowTools()) || Integer.valueOf(1).equals(keeper.getToolWorkflow())) {
+                    fix.set(Agent::getWorkflowTools, null);
+                    fix.set(Agent::getToolWorkflow, 0);
+                    dirty = true;
+                    log.warn("[AGENT] 内置「问渠」不支持工作流工具，已清空: {}（{}）", keeper.getName(), keeper.getId());
+                }
+                if ((keeper.getCallbackUrl() != null && !keeper.getCallbackUrl().isBlank())
+                        || (keeper.getCallbackSecret() != null && !keeper.getCallbackSecret().isBlank())) {
+                    fix.set(Agent::getCallbackUrl, null);
+                    fix.set(Agent::getCallbackSecret, null);
+                    dirty = true;
+                    log.warn("[AGENT] 内置「问渠」不支持轮终回调，已清空: {}（{}）", keeper.getName(), keeper.getId());
                 }
                 if (dirty) {
                     fix.set(Agent::getUpdateTime, LocalDateTime.now());
@@ -494,6 +519,32 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
             if (!java.util.Objects.equals(curKb, reqKb) || curOff != reqOff) {
                 throw new BizException("内置智能体「" + existing.getName()
                         + "」固定检索默认知识库「问渠」及官方使用手册，知识库范围不可修改");
+            }
+            // 系统提示词是产品身份；HTTP/工作流工具与轮终回调会把管理员凭据/外部出口挂到全租户共享行，
+            // 内置问渠一律随产品固定。与知识库同口径：等价提交放行（整单保存不受影响），真改动 fail-loud。
+            if (body.containsKey("systemPrompt")) {
+                String curPrompt = asText(existing.getSystemPrompt(), 60000);
+                String reqPrompt = asText(body.get("systemPrompt"), 60000);
+                if (!java.util.Objects.equals(curPrompt, reqPrompt)) {
+                    throw new BizException("内置智能体「" + existing.getName() + "」的系统提示词随产品固定，不可修改");
+                }
+            }
+            if ((body.containsKey("toolHttp") && Integer.valueOf(1).equals(toTri(body.get("toolHttp"))))
+                    || (body.containsKey("httpTools") && hasItems(body.get("httpTools")))) {
+                throw new BizException("内置智能体「" + existing.getName() + "」不支持 HTTP 工具");
+            }
+            if ((body.containsKey("toolWorkflow") && Integer.valueOf(1).equals(toTri(body.get("toolWorkflow"))))
+                    || (body.containsKey("workflowTools") && hasItems(body.get("workflowTools")))) {
+                throw new BizException("内置智能体「" + existing.getName() + "」不支持工作流工具");
+            }
+            if (body.containsKey("callbackUrl") && asText(body.get("callbackUrl"), 512) != null) {
+                throw new BizException("内置智能体「" + existing.getName() + "」不支持轮终回调");
+            }
+            if (body.containsKey("callbackSecret")) {
+                String s = body.get("callbackSecret") == null ? null : String.valueOf(body.get("callbackSecret"));
+                if (s != null && !s.isBlank()) {
+                    throw new BizException("内置智能体「" + existing.getName() + "」不支持轮终回调");
+                }
             }
         }
         // 改动前的快照串先算好：toEntity 会就地改写 existing（合并 body 字段），之后就拿不到原值了
@@ -1078,6 +1129,15 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         String s = String.valueOf(v).trim();
         if (s.isEmpty()) return null;
         return s.length() > max ? s.substring(0, max) : s;
+    }
+
+    /** 工具集字段是否有内容（前端传数组，存量可能是 JSON 串）：空数组/空串/空 JSON 都算空 */
+    private static boolean hasItems(Object v) {
+        if (v == null) return false;
+        if (v instanceof java.util.Collection<?> c) return !c.isEmpty();
+        if (v instanceof Object[] a) return a.length > 0;
+        String s = String.valueOf(v).trim();
+        return !s.isEmpty() && !"[]".equals(s) && !"null".equalsIgnoreCase(s);
     }
 
     /**
