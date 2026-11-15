@@ -24,9 +24,21 @@ export const setToken = token => {
 export function clearAuth () {
   setToken('')
   cached = null
-  try { localStorage.removeItem('ai_role') } catch (e) { /* ignore */ }
+  try {
+    localStorage.removeItem('ai_role')
+    localStorage.removeItem('ai_uid')
+  } catch (e) { /* ignore */ }
   // 退出/令牌失效同时清掉本机输入草稿：共享设备上换人登录不该看到上一个人没发出去的话
   clearAllDrafts()
+}
+
+/**
+ * 当前登录账号（uid）的同步读法：本机「这台电脑」的设备 id 要按账号分开存，
+ * 存储层拿不到异步的 /auth/me。ensureAuth 落地时会缓存到 localStorage，冷启动也能读到。
+ */
+export const uidSync = () => {
+  if (cached && cached.user) return cached.user
+  try { return localStorage.getItem('ai_uid') || '' } catch (e) { return '' }
 }
 
 export const isAdminSync = () => {
@@ -86,7 +98,10 @@ export async function ensureAuth (force = false) {
       profile: info.profile || 'standard',
       menus: Array.isArray(info.menus) ? info.menus : []
     }
-    try { localStorage.setItem('ai_role', cached.admin ? 'admin' : 'user') } catch (e) { /* ignore */ }
+    try {
+      localStorage.setItem('ai_role', cached.admin ? 'admin' : 'user')
+      if (cached.user) localStorage.setItem('ai_uid', cached.user)
+    } catch (e) { /* ignore */ }
   } catch (e) {
     cached = { user: '', username: '', role: '', admin: false, superadmin: false, tenant: '', tenantName: '', profile: 'standard', menus: [] }
   }

@@ -9,6 +9,10 @@
  * ~/.wenqu/executor.json（0600），之后启动直接复用——令牌不进命令行、shell 历史和环境变量。
  * 授权被撤销或失效时会自动重新走一遍。
  *
+ * 同一台电脑可以绑多个账号（同一个进程各自一条心跳 + 一条长轮询）：
+ *   --pair             只给当前账号配对一次，写进授权文件后退出；跑着的执行器几秒内自动接管
+ *                      （用法：npm run agent:pair / agent:pair:prod，见 web/package.json）
+ *
  * 可选：
  *   --token <设备令牌>  手工指定（平时不需要）
  *   --web <页面地址>    授权链接的页面地址，默认按 --server 推断（如 http://<host>）
@@ -99,14 +103,25 @@ const fmtTime = d => {
 const log = (...a) => console.log(`[${fmtTime(new Date())}]`, ...a)
 
 // ==================== 设备授权 ====================
+//
+// 同一台电脑可以绑多个问渠账号（例如开发机和日常账号、或同一台机器上先后登录的人）。
+// 授权文件按 server 分键，每个 server 下再按设备分账号：
+//
+//   { "servers": { "<server>": { "accounts": { "<executorId>": {
+//       "token": "...", "executorId": "ex-...", "uid": "yuki", "name": "主机名", "savedAt": "..."
+//   } } } } }
+//
+// 每个账号各自一条心跳 + 一条长轮询；同一个进程里跑，文件锁仍按 server 只允许一个进程。
+// 旧版文件是单账号平铺结构（servers[server].token），读时兼容，写回时迁进 accounts。
 
 const TOKEN_FILE = path.join(os.homedir(), '.wenqu', 'executor.json')
 /** 手工令牌（命令行/环境变量）只在显式给出时使用；平时靠本地保存的授权 */
 const PROVIDED_TOKEN = arg('token', process.env.WENQU_EXECUTOR_TOKEN || '')
+/** 只做配对：打印链接等确认，写进授权文件后退出；正在运行的执行器几秒内自动接管这个账号 */
+const PAIR_ONLY = flag('pair')
 /** 授权链接指向的页面地址：默认从 --server 推断（去掉末尾的 /ai 或 /proxy） */
 const WEB = (arg('web', process.env.WENQU_WEB_BASE || '') || SERVER.replace(/\/(ai|proxy)$/i, ''))
   .replace(/\/+$/, '')
-let TOKEN = ''
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 /** 给 fetch 加硬超时：网络挂起时不要把轮询循环/心跳一起拖死。 */
@@ -115,12 +130,6 @@ const timeoutSignal = ms => (typeof AbortSignal !== 'undefined' && AbortSignal.t
 
 function readTokenFile () {
   try { return JSON.parse(fs.readFileSync(TOKEN_FILE, 'utf8')) || {} } catch { return {} }
-}
-
-function savedToken () {
-  const cfg = readTokenFile()
-  const entry = cfg && cfg.servers ? cfg.servers[SERVER] : null
-  return entry && entry.token ? entry : null
 }
 
 function writeTokenFile (cfg) {
@@ -132,22 +141,73 @@ function writeTokenFile (cfg) {
   try { fs.chmodSync(TOKEN_FILE, 0o600) } catch { /* ignore */ }
 }
 
-function saveToken (token, executorId) {
+/** 一个账号的身份键：设备 id 优先，只能用 --token 时退回令牌摘要（同名设备重新配对会换 id）。 */
+function identityKey (ident) {
+  const id = ident && ident.executorId
+  return id || 't-' + createHash('sha1').update(String(ident && ident.token)).digest('hex').slice(0, 12)
+}
+
+/** 服务端条目 → 账号清单。旧版单账号平铺结构也认。 */
+function identitiesOf (entry) {
+  if (!entry || typeof entry !== 'object') return []
+  const pick = (v, id) => ({
+    token: v.token,
+    executorId: v.executorId || id || '',
+    uid: v.uid || '',
+    name: v.name || '',
+    savedAt: v.savedAt || ''
+  })
+  if (entry.accounts && typeof entry.accounts === 'object') {
+    return Object.entries(entry.accounts)
+      .filter(([, v]) => v && v.token)
+      .map(([id, v]) => pick(v, id))
+  }
+  return entry.token ? [pick(entry)] : []
+}
+
+function savedIdentities () {
+  const cfg = readTokenFile()
+  return identitiesOf(cfg && cfg.servers ? cfg.servers[SERVER] : null)
+}
+
+function saveIdentity (ident) {
   const cfg = readTokenFile()
   if (!cfg.servers || typeof cfg.servers !== 'object') cfg.servers = {}
-  cfg.servers[SERVER] = {
-    token,
-    executorId: executorId || '',
-    name: NAME,
+  const entry = cfg.servers[SERVER] && typeof cfg.servers[SERVER] === 'object' ? cfg.servers[SERVER] : {}
+  const accounts = entry.accounts && typeof entry.accounts === 'object' ? entry.accounts : {}
+  // 旧版单账号写法就地迁进 accounts，免得同一个身份在文件里有两份
+  if (entry.token) {
+    const legacy = identitiesOf(entry)[0]
+    accounts[identityKey(legacy)] = legacy
+    delete entry.token
+    delete entry.executorId
+    delete entry.uid
+    delete entry.name
+    delete entry.savedAt
+  }
+  const record = {
+    token: ident.token,
+    executorId: ident.executorId || '',
+    uid: ident.uid || '',
+    name: ident.name || NAME,
     savedAt: new Date().toISOString()
   }
+  accounts[identityKey(record)] = record
+  entry.accounts = accounts
+  cfg.servers[SERVER] = entry
   writeTokenFile(cfg)
 }
 
-function forgetToken () {
+function forgetIdentity (ident) {
   const cfg = readTokenFile()
-  if (!cfg.servers || !cfg.servers[SERVER]) return
-  delete cfg.servers[SERVER]
+  const entry = cfg && cfg.servers ? cfg.servers[SERVER] : null
+  if (!entry) return
+  if (entry.accounts && typeof entry.accounts === 'object') {
+    delete entry.accounts[identityKey(ident)]
+    if (!Object.keys(entry.accounts).length) delete cfg.servers[SERVER]
+  } else if (entry.token) {
+    delete cfg.servers[SERVER]
+  }
   writeTokenFile(cfg)
 }
 
@@ -280,45 +340,52 @@ async function postJson (url, body) {
 //
 // 长轮询只在取任务前后刷新 last_seen；一条 120s 的命令会把执行器「挂」在服务端
 // 的 70s 在线窗口之外，后续调用会被误判离线。心跳独立于轮询，命令执行期间照常发。
+// 每个账号一条心跳：账号之间互不影响，一个被撤销不能把另一个的在线状态带下线。
 
-let heartbeatTimer = null
-let heartbeatWarned = false
-let heartbeatUnsupported = false
 let legacyServerWarned = false
 
-function startHeartbeat () {
-  if (heartbeatTimer) return
+// 同一个账号的设备 id 才是区分维度：名字默认是主机名，多账号时都一样
+const identityLabel = ident => (ident && (ident.uid || ident.executorId || ident.name)) || '本机执行器'
+
+function startHeartbeat (ident) {
+  if (ident.heartbeatTimer) return
   const beat = async () => {
-    if (!TOKEN || heartbeatUnsupported) return
+    if (!ident.token || ident.stopped || ident.heartbeatUnsupported) return
     try {
       const res = await fetch(`${SERVER}/api/ai/executor/heartbeat`, {
         method: 'POST',
-        headers: { Authorization: 'Bearer ' + TOKEN },
+        headers: { Authorization: 'Bearer ' + ident.token },
         signal: timeoutSignal(5_000)
       })
       if (res.status === 401) {
-        if (!heartbeatWarned) log('心跳被拒（设备令牌失效），等待主循环重新授权')
-        heartbeatWarned = true
+        if (!ident.heartbeatWarned) log(`[${identityLabel(ident)}] 心跳被拒（设备令牌失效），等待长轮询重新授权`)
+        ident.heartbeatWarned = true
         return
       }
       // 旧服务端没有心跳端点：长轮询本身会刷新在线状态，停发即可（别每 20s 刷一条失败日志）
       if (res.status === 404 || res.status === 405) {
-        if (!heartbeatUnsupported) log('服务端不支持心跳（旧版本），在线状态由长轮询维持')
-        heartbeatUnsupported = true
+        if (!ident.heartbeatUnsupported) log(`[${identityLabel(ident)}] 服务端不支持心跳（旧版本），在线状态由长轮询维持`)
+        ident.heartbeatUnsupported = true
         return
       }
-      if (!res.ok) log('心跳失败:', res.status)
-      else heartbeatWarned = false
+      if (!res.ok) log(`[${identityLabel(ident)}] 心跳失败:`, res.status)
+      else ident.heartbeatWarned = false
     } catch (e) {
-      log('心跳失败:', e.message)
+      log(`[${identityLabel(ident)}] 心跳失败:`, e.message)
     }
   }
-  heartbeatTimer = setInterval(beat, 20_000)
-  if (heartbeatTimer.unref) heartbeatTimer.unref()
+  ident.heartbeatTimer = setInterval(beat, 20_000)
+  if (ident.heartbeatTimer.unref) ident.heartbeatTimer.unref()
   beat()
 }
 
-/** 设备授权：打印链接 + 6 位码，等浏览器确认后把令牌写到本地文件。 */
+function stopHeartbeat (ident) {
+  if (!ident.heartbeatTimer) return
+  clearInterval(ident.heartbeatTimer)
+  ident.heartbeatTimer = null
+}
+
+/** 设备授权：打印链接 + 6 位码，等浏览器确认后把令牌写到本地文件。成功返回身份，失败返回 null。 */
 async function authorize () {
   let start
   try {
@@ -331,15 +398,15 @@ async function authorize () {
     } else {
       console.error(`无法向服务器申请授权（${SERVER}）：${e.message}`)
     }
-    return false
+    return null
   }
   if (!start.deviceCode) {
     console.error('服务器没有返回授权码，请确认后端版本')
-    return false
+    return null
   }
   const link = `${WEB}/pair?code=${encodeURIComponent(start.userCode)}`
   console.log('')
-  console.log('  这台电脑还没有授权。请打开下面的链接，登录你的问渠账号并点确认：')
+  console.log('  这台电脑（的当前账号）还没有授权。请打开下面的链接，登录你的问渠账号并点确认：')
   console.log(`    ${link}`)
   console.log(`  链接打不开时：打开 ${WEB}/pair ，输入授权码 ${start.userCode}`)
   console.log('  授权码 10 分钟内有效，确认后这里会自动继续。')
@@ -351,14 +418,19 @@ async function authorize () {
     try {
       const data = await postJson(`${SERVER}/api/ai/executor/device-code/token`, { deviceCode: start.deviceCode })
       if (data.status === 'approved' && data.token) {
-        saveToken(data.token, data.executorId)
-        TOKEN = data.token
-        console.log(`已授权：「${data.name || NAME}」加入成功，令牌已保存到 ${TOKEN_FILE}`)
-        return true
+        const ident = {
+          token: data.token,
+          executorId: data.executorId || '',
+          uid: data.uid || '',
+          name: data.name || NAME
+        }
+        saveIdentity(ident)
+        console.log(`已授权：「${ident.name}」加入成功，令牌已保存到 ${TOKEN_FILE}`)
+        return ident
       }
       if (data.status === 'expired' || data.status === 'consumed') {
         console.error('授权码已过期，请重新启动执行器。')
-        return false
+        return null
       }
       if (!waiting) {
         console.log('等待浏览器确认…')
@@ -369,7 +441,7 @@ async function authorize () {
     }
   }
   console.error('授权码已过期，请重新启动执行器。')
-  return false
+  return null
 }
 
 // ==================== 路径围栏 ====================
@@ -2275,23 +2347,23 @@ const MUTATING_OPS = new Set([
   'exec', 'openPath', 'pickDir', 'browser'
 ])
 
-async function postResult(id, ok, data, error) {
+async function postResult(ident, id, ok, data, error) {
   const body = ok ? { id, ok: true, data } : { id, ok: false, error }
   // 回传失败重试：服务端在等这条结果，一次网络抖动不能让它白等到超时。
-  // 401 不重试——令牌失效由主循环重新授权，继续打只会刷日志。
+  // 401 不重试——令牌失效由该账号的长轮询重新授权，继续打只会刷日志。
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const res = await fetch(`${SERVER}/api/ai/executor/result`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + TOKEN },
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + ident.token },
         body: JSON.stringify(body),
         signal: timeoutSignal(10_000)
       })
       if (res.ok) return true
       if (res.status === 401) return false
-      log('回传失败:', res.status, await res.text().catch(() => ''))
+      log(`[${identityLabel(ident)}] 回传失败:`, res.status, await res.text().catch(() => ''))
     } catch (e) {
-      log('回传异常:', e.message)
+      log(`[${identityLabel(ident)}] 回传异常:`, e.message)
     }
     await sleep(300 * (attempt + 1))
   }
@@ -2299,12 +2371,12 @@ async function postResult(id, ok, data, error) {
 }
 
 /** 取到调用后立刻 ack：服务端据此确认投递成功；没 ack 的调用 15s 后会重投。 */
-async function postAck(id) {
+async function postAck(ident, id) {
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const res = await fetch(`${SERVER}/api/ai/executor/ack`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + TOKEN },
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + ident.token },
         body: JSON.stringify({ id }),
         signal: timeoutSignal(5_000)
       })
@@ -2405,15 +2477,15 @@ function runSerial (fn) {
   return p
 }
 
-async function executeCall (call) {
+async function executeCall (ident, call) {
   const cached = cachedCall(call.id)
   if (cached) {
-    await postResult(call.id, cached.ok, cached.data, cached.error)
+    await postResult(ident, call.id, cached.ok, cached.data, cached.error)
     return
   }
   const handler = HANDLERS[call.op]
   if (!handler) {
-    await postResult(call.id, false, null, { code: 'E_UNSUPPORTED', message: '不支持的调用：' + call.op })
+    await postResult(ident, call.id, false, null, { code: 'E_UNSUPPORTED', message: '不支持的调用：' + call.op })
     return
   }
   const args = call.args || {}
@@ -2425,20 +2497,20 @@ async function executeCall (call) {
     }
     deadlineGuard(ctx)
     const data = await handler(args, ctx)
-    log(`${call.op} 完成 ${Date.now() - started}ms`, args.path ? args.path : '')
+    log(`[${identityLabel(ident)}] ${call.op} 完成 ${Date.now() - started}ms`, args.path ? args.path : '')
     rememberCall(call.op, call.id, true, data, null)
-    await postResult(call.id, true, data, null)
+    await postResult(ident, call.id, true, data, null)
   } catch (e) {
     const code = e.code === 'ENOENT' ? 'E_NOT_FOUND' : (e.code || 'E_IO')
-    log(`${call.op} 失败: ${code} ${e.message}`)
+    log(`[${identityLabel(ident)}] ${call.op} 失败: ${code} ${e.message}`)
     rememberCall(call.op, call.id, false, null, { code, message: e.message })
-    await postResult(call.id, false, null, { code, message: e.message })
+    await postResult(ident, call.id, false, null, { code, message: e.message })
   }
 }
 
-function dispatchCall (call) {
+function dispatchCall (ident, call) {
   if (inFlightCalls.has(call.id)) return inFlightCalls.get(call.id)
-  const run = () => executeCall(call)
+  const run = () => executeCall(ident, call)
   const queued = READ_OPS.has(call.op) ? withReadSlot(run) : runSerial(run)
   const tracked = queued.finally(() => inFlightCalls.delete(call.id))
   tracked.catch(() => { /* executeCall 内部已回传错误；这里只防未处理拒绝 */ })
@@ -2446,7 +2518,7 @@ function dispatchCall (call) {
   return tracked
 }
 
-async function once() {
+async function once(ident) {
   // 在途调用有上限：服务端队列是有界的，执行器也不能无限往下吞
   if (inFlightCalls.size >= MAX_INFLIGHT) {
     await Promise.race([...inFlightCalls.values()])
@@ -2455,7 +2527,7 @@ async function once() {
   if (inFlightCalls.size === 0) await sweepTurns()
   const res = await fetch(`${SERVER}/api/ai/executor/poll?wait=${WAIT}`, {
     headers: {
-      Authorization: 'Bearer ' + TOKEN,
+      Authorization: 'Bearer ' + ident.token,
       'X-Wenqu-Executor-Version': AGENT_VERSION
     },
     // 服务端长轮询最多 WAIT 秒；多留 10s 余量，避免网络挂起时主循环永远停在这里
@@ -2465,63 +2537,152 @@ async function once() {
   if (res.status === 204) return
   if (!res.ok) throw err('E_IO', `轮询失败 HTTP ${res.status}`)
   const call = await res.json()
-  const ackOk = await postAck(call.id)
+  const ackOk = await postAck(ident, call.id)
   if (!ackOk) {
-    log('未获执行许可（等待方已失效或调用已超时），跳过:', call.id)
+    log(`[${identityLabel(ident)}] 未获执行许可（等待方已失效或调用已超时），跳过:`, call.id)
     // 明确告诉服务端“本次没有执行”，让等待方立刻拿到错误，而不是一直挂到超时
-    await postResult(call.id, false, null, {
+    await postResult(ident, call.id, false, null, {
       code: 'E_ACK_FAILED',
       message: '执行器未获得执行许可（等待方已失效或调用已超时）'
     })
     return
   }
-  dispatchCall(call)
+  dispatchCall(ident, call)
+}
+
+// ==================== 多账号：每个身份一条长轮询 ====================
+//
+// 一台电脑上一个进程，按授权文件里的账号清单各起一条循环；令牌被撤销的那条自己退出，
+// 不影响其他账号。文件被 --pair 追加新账号时，文件监听会在几秒内把它接上（无需重启）。
+
+/** key = 身份键，value = 运行态（token/uid/心跳/long-poll 循环） */
+const identities = new Map()
+
+function addIdentity (ident) {
+  const key = identityKey(ident)
+  const existing = identities.get(key)
+  if (existing) return existing
+  const state = { ...ident, key, stopped: false, started: false }
+  identities.set(key, state)
+  return state
+}
+
+function dropIdentity (ident) {
+  ident.stopped = true
+  stopHeartbeat(ident)
+  identities.delete(ident.key)
+}
+
+async function pollLoop (ident) {
+  let backoff = 1000
+  while (!ident.stopped) {
+    try {
+      await once(ident)
+      backoff = 1000
+    } catch (e) {
+      if (e.code === 'E_AUTH') {
+        if (PROVIDED_TOKEN) {
+          console.error(`[${identityLabel(ident)}] 设备令牌无效或已被撤销`)
+          process.exit(3)
+        }
+        log(`[${identityLabel(ident)}] 授权已失效，这台设备从这个账号下移除`)
+        forgetIdentity(ident)
+        dropIdentity(ident)
+        // 全部账号都没了才重新走一次配对（保持「首次启动即可用」的老行为）；
+        // 只是某一个账号被撤销时不要自动再配一个，否则会凭空多出一台设备。
+        if (!identities.size) {
+          const again = await authorize()
+          if (!again) process.exit(2)
+          startIdentity(addIdentity(again))
+        }
+        return
+      }
+      if (ident.stopped) return
+      log(`[${identityLabel(ident)}] 连接失败，稍后重试：`, e.message)
+      await sleep(backoff)
+      backoff = Math.min(backoff * 2, 30000)
+    }
+  }
+}
+
+function startIdentity (ident) {
+  if (ident.started || ident.stopped) return ident
+  ident.started = true
+  startHeartbeat(ident)
+  pollLoop(ident).catch(e => log(`[${identityLabel(ident)}] 循环异常退出：`, e.message))
+  return ident
+}
+
+/** 授权文件被 --pair 改写后增量接管：新账号起循环，被删的账号停循环。 */
+function syncIdentitiesFromFile () {
+  if (PROVIDED_TOKEN) return
+  const saved = savedIdentities()
+  const keep = new Set(saved.map(identityKey))
+  for (const [key, ident] of [...identities]) {
+    if (keep.has(key)) continue
+    log(`[${identityLabel(ident)}] 已从授权文件移除，停止这个账号`)
+    dropIdentity(ident)
+  }
+  for (const s of saved) {
+    const key = identityKey(s)
+    if (identities.has(key)) continue
+    log(`发现新授权：「${s.name || key}」，接入这个账号`)
+    startIdentity(addIdentity(s))
+  }
+}
+
+function watchIdentities () {
+  if (PROVIDED_TOKEN) return
+  try {
+    fs.watchFile(TOKEN_FILE, { interval: 3000 }, () => {
+      try { syncIdentitiesFromFile() } catch (e) { log('重新读取授权文件失败：', e.message) }
+    })
+  } catch { /* 平台不支持时退化为重启生效 */ }
 }
 
 async function main() {
   log(`执行器启动：${SERVER}  设备=${NAME}`)
   log(`浏览起点：${ROOT}`)
   if (AUTO_YES) log('注意：--yes 已开启，写文件与命令不再逐次确认')
+
+  // 只配对：写授权文件后退出，正在运行的执行器靠文件监听接管这个账号
+  if (PAIR_ONLY) {
+    if (PROVIDED_TOKEN) {
+      console.error('--pair 和 --token 不能同时用：手工令牌已经包含账号身份')
+      process.exit(2)
+    }
+    const ident = await authorize()
+    if (!ident) process.exit(2)
+    console.log('正在运行的执行器会在几秒内接入这个账号；没在运行的话，启动执行器即可。')
+    process.exit(0)
+  }
+
+  let initial = []
   if (PROVIDED_TOKEN) {
-    TOKEN = PROVIDED_TOKEN
     log('使用命令行/环境变量里的设备令牌（仅兼容旧用法；推荐去掉，让它自行授权）')
+    initial = [{ token: PROVIDED_TOKEN, executorId: '', uid: '', name: NAME }]
   } else {
-    const saved = savedToken()
-    if (saved) {
-      TOKEN = saved.token
-      log(`已读取本机保存的授权（${TOKEN_FILE}）`)
+    initial = savedIdentities()
+    if (initial.length) {
+      log(`已读取本机保存的授权（${TOKEN_FILE}）：${initial.length} 个账号`)
+      for (const s of initial) log(`  · ${s.name || s.executorId}${s.uid ? '（' + s.uid + '）' : ''}`)
+    } else {
+      const ident = await authorize()
+      if (!ident) process.exit(2)
+      initial = [ident]
     }
   }
-  if (!TOKEN && !(await authorize())) process.exit(2)
 
   acquireSingleInstanceLock()
-  startHeartbeat()
 
   await loadTurnStates()
   await sweepTurns()
 
-  let backoff = 1000
-  for (;;) {
-    try {
-      await once()
-      backoff = 1000
-    } catch (e) {
-      if (e.code === 'E_AUTH') {
-        if (PROVIDED_TOKEN) {
-          console.error('设备令牌无效或已被撤销')
-          process.exit(3)
-        }
-        log('本机保存的授权已失效，重新走一次授权流程')
-        forgetToken()
-        TOKEN = ''
-        if (!(await authorize())) process.exit(2)
-        continue
-      }
-      log('连接失败，稍后重试：', e.message)
-      await sleep(backoff)
-      backoff = Math.min(backoff * 2, 30000)
-    }
-  }
+  for (const s of initial) startIdentity(addIdentity(s))
+  watchIdentities()
+
+  // 每条长轮询各自跑；这里保持进程不退（sleep/长轮询本身就是事件源）
+  await new Promise(() => {})
 }
 
 main().catch(e => {

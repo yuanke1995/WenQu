@@ -45,7 +45,8 @@ public class ExecutorPairingService {
     public record Info(String userCode, String name, String os, long expiresAt, Status status) {
     }
 
-    public record Redeemed(String token, String executorId, String name, Status status) {
+    /** uid 随令牌一起回给执行器：同一台电脑可以绑多个账号，本地要靠它把身份写进授权文件。 */
+    public record Redeemed(String token, String executorId, String name, String uid, Status status) {
     }
 
     public static class PairingException extends RuntimeException {
@@ -155,22 +156,22 @@ public class ExecutorPairingService {
     /** 执行器侧轮询：确认后才签发令牌，且只签一次。 */
     public Redeemed redeem(String deviceCode) {
         if (deviceCode == null || deviceCode.isBlank()) {
-            return new Redeemed(null, null, null, Status.EXPIRED);
+            return new Redeemed(null, null, null, null, Status.EXPIRED);
         }
         Session s = byDeviceCode.get(deviceCode.trim());
-        if (s == null) return new Redeemed(null, null, null, Status.EXPIRED);
+        if (s == null) return new Redeemed(null, null, null, null, Status.EXPIRED);
         synchronized (s) {
             Status status = s.status(System.currentTimeMillis());
             if (status != Status.APPROVED) {
                 if (status == Status.EXPIRED || status == Status.CONSUMED) remove(s);
-                return new Redeemed(null, null, s.name, status);
+                return new Redeemed(null, null, s.name, null, status);
             }
             ExecutorRegistry.Paired paired = executorService.register(s.uid, s.name, s.os);
             s.consumed = true;
             remove(s);
             log.info("[EXECUTOR] 已按授权码签发设备令牌 id={} uid={} name={}",
                     paired.device().id(), s.uid, s.name);
-            return new Redeemed(paired.token(), paired.device().id(), s.name, Status.APPROVED);
+            return new Redeemed(paired.token(), paired.device().id(), s.name, s.uid, Status.APPROVED);
         }
     }
 

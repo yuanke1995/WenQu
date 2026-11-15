@@ -9,6 +9,8 @@
   "scripts": {
     "dev": "node ../scripts/mac/dev-with-agent.mjs",
     "dev:prod": "VITE_PROXY_TARGET=http://49.232.129.201/ai WENQU_WEB_BASE=http://localhost:5801 node ../scripts/mac/dev-with-agent.mjs --port 5801",
+    "agent:pair": "node ../scripts/mac/dev-with-agent.mjs --pair",
+    "agent:pair:prod": "VITE_PROXY_TARGET=http://49.232.129.201/ai WENQU_WEB_BASE=http://localhost:5801 node ../scripts/mac/dev-with-agent.mjs --pair",
     "build": "vite build",
     "postbuild": "node ../scripts/mac/check-h5-budget.mjs",
     "test": "node --test test/*.test.mjs",

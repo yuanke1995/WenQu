@@ -31,23 +31,28 @@ const root = process.env.WENQU_EXECUTOR_ROOT || '~'
 const web = process.env.WENQU_WEB_BASE || 'http://localhost:5800'
 
 /** 本机执行器身份：令牌文件按 server 分键，取出 executorId 注入给 vite，前端据此只列这台电脑的工作区。
+ *  同一台电脑可以绑多个账号：授权文件里每个账号一条，带 uid 的按 uid 注入成映射，
+ *  前端按当前登录账号取自己那条；旧版单账号结构继续走单值注入。
  *  首次授权前文件还不存在（vite 与执行器同时起），此时不注入——在页面「这台电脑」里选一次即可。 */
-function localExecutorId () {
+function localExecutors () {
   try {
     const cfg = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.wenqu', 'executor.json'), 'utf8'))
     const entry = cfg && cfg.servers ? cfg.servers[server] : null
-    return entry && entry.executorId ? String(entry.executorId) : ''
-  } catch { return '' }
+    if (!entry) return { byUid: {}, single: '' }
+    const byUid = {}
+    if (entry.accounts && typeof entry.accounts === 'object') {
+      for (const v of Object.values(entry.accounts)) {
+        if (v && v.executorId && v.uid) byUid[String(v.uid)] = String(v.executorId)
+      }
+    }
+    return { byUid, single: entry.executorId ? String(entry.executorId) : '' }
+  } catch { return { byUid: {}, single: '' } }
 }
 const viteEnv = { ...process.env }
-const localId = localExecutorId()
-if (localId) viteEnv.VITE_LOCAL_EXECUTOR_ID = localId
+const local = localExecutors()
+if (Object.keys(local.byUid).length) viteEnv.VITE_LOCAL_EXECUTORS = JSON.stringify(local.byUid)
+if (local.single) viteEnv.VITE_LOCAL_EXECUTOR_ID = local.single
 
-const vite = spawn(process.execPath, [path.join(webRoot, 'node_modules', 'vite', 'bin', 'vite.js'), ...process.argv.slice(2)], {
-  cwd: webRoot,
-  stdio: 'inherit',
-  env: viteEnv
-})
 const args = [
   path.join(repoRoot, 'scripts', 'local-agent', 'wenqu-agent.mjs'),
   '--server', server,
@@ -57,22 +62,39 @@ const args = [
 if (process.env.WENQU_EXECUTOR_TOKEN) args.push('--token', process.env.WENQU_EXECUTOR_TOKEN)
 if (/^(1|true|yes)$/i.test(String(process.env.WENQU_EXECUTOR_REQUIRE_HTTPS || '').trim())) args.push('--require-https')
 if (/^(1|true|yes)$/i.test(String(process.env.WENQU_EXECUTOR_INSECURE || '').trim())) args.push('--insecure')
-let agent = spawn(process.execPath, args, { cwd: repoRoot, stdio: 'inherit' })
-agent.on('exit', code => {
-  if (code && code !== 0) console.log(`[dev] 本机执行器已退出（code=${code}），前端继续运行`)
-  agent = null
-})
 
-const stopAgent = () => {
-  if (!agent) return
-  try { agent.kill('SIGTERM') } catch { /* 已退出 */ }
-  agent = null
+// --pair：只给当前账号配对一次，不启动 vite。跑着的执行器会用文件监听自动接管新账号。
+if (process.argv.includes('--pair')) {
+  args.push('--pair')
+  const child = spawn(process.execPath, args, { cwd: repoRoot, stdio: 'inherit' })
+  child.on('exit', code => process.exit(code == null ? 0 : code))
+} else {
+  start()
 }
 
-process.on('SIGINT', () => { stopAgent(); try { vite.kill('SIGTERM') } catch { /* ignore */ } process.exit(0) })
-process.on('SIGTERM', () => { stopAgent(); try { vite.kill('SIGTERM') } catch { /* ignore */ } process.exit(0) })
+function start () {
+  const vite = spawn(process.execPath, [path.join(webRoot, 'node_modules', 'vite', 'bin', 'vite.js'), ...process.argv.slice(2)], {
+    cwd: webRoot,
+    stdio: 'inherit',
+    env: viteEnv
+  })
+  let agent = spawn(process.execPath, args, { cwd: repoRoot, stdio: 'inherit' })
+  agent.on('exit', code => {
+    if (code && code !== 0) console.log(`[dev] 本机执行器已退出（code=${code}），前端继续运行`)
+    agent = null
+  })
 
-vite.on('exit', code => {
-  stopAgent()
-  process.exit(code == null ? 0 : code)
-})
+  const stopAgent = () => {
+    if (!agent) return
+    try { agent.kill('SIGTERM') } catch { /* 已退出 */ }
+    agent = null
+  }
+
+  process.on('SIGINT', () => { stopAgent(); try { vite.kill('SIGTERM') } catch { /* ignore */ } process.exit(0) })
+  process.on('SIGTERM', () => { stopAgent(); try { vite.kill('SIGTERM') } catch { /* ignore */ } process.exit(0) })
+
+  vite.on('exit', code => {
+    stopAgent()
+    process.exit(code == null ? 0 : code)
+  })
+}

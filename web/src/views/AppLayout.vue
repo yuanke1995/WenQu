@@ -164,11 +164,15 @@
           <div style="color:var(--app-text2);font-size:12px;margin-bottom:8px">
             还没认出这台电脑（或原来的执行器已被撤销）：选一台在线设备。
           </div>
-          <a-select v-model:value="localDevicePicked" style="width:100%" :options="localDeviceOptions"
-                    placeholder="选择一台在线设备" />
-          <div v-if="!localDevices.length" style="color:var(--app-text2);font-size:12px;margin-top:8px">
-            还没有在线的执行器：先在这台电脑的终端启动 wenqu-agent 并完成授权。
+          <!-- 候选只列当前账号名下且在线的那批。一台电脑可以绑多个账号，但这个账号没配过就会是空的 -->
+          <div v-if="!localDevices.length" style="color:var(--app-text2);font-size:12px;line-height:1.7;margin-bottom:8px">
+            这台电脑上的执行器还没连当前账号。在终端跑一次配对（web 目录下 <code>npm run agent:pair</code>，
+            连线上用 <code>npm run agent:pair:prod</code>），用当前账号确认后几秒内生效；
+            同一台电脑已配过别的账号也不影响。
           </div>
+          <a-select v-model:value="localDevicePicked" style="width:100%" :options="localDeviceOptions"
+                    placeholder="选择一台在线设备"
+                    not-found-content="当前账号在这台电脑上还没有在线的执行器" />
           <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px">
             <a-button @click="localDeviceOpen = false">取消</a-button>
             <a-button type="primary" :loading="localDeviceSaving" @click="saveLocalDevice">保存</a-button>

@@ -62,6 +62,7 @@ public class ExecutorController {
         if (redeemed.token() != null) {
             data.put("token", redeemed.token());
             data.put("executorId", redeemed.executorId());
+            data.put("uid", redeemed.uid());
         }
         return ok(data);
     }
