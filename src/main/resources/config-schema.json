@@ -49,9 +49,9 @@
     },
     {
       "key": "maintenance",
-      "title": "定时任务（索引对账 / 自动体检 / 清理）",
+      "title": "定时任务（自动体检 / 清理）",
       "sections": [
-        "启动自愈与索引对账",
+        "启动自愈",
         "自动体检（检索质量回归）",
         "聊天图片清理",
         "会话参数与清理",
@@ -2059,7 +2059,6 @@
     "graphrag.batchChunks": "知识图谱：每次模型调用合并的块数（3~5 平衡成本与溯源粒度）",
     "graphrag.maxTriplesPerChunk": "知识图谱：每块最多抽几条关系（成本闸，超出的丢弃）",
     "graphrag.expandTopK": "检索命中后，沿知识图谱再多并入几块相关块。0=不扩展；调大召回更全、噪声也更多",
-    "keyword.reconcileIntervalMs": "关键词索引精确对账周期（毫秒，0=暂停）",
     "chat.profileAuto": "聊天档/工作区档自动分流（关掉=旧行为，用于回滚）",
     "chat.scratchRetentionHours": "聊天档临时目录保留（小时，0=不清理）",
     "chat.scratchCleanupIntervalMs": "聊天档临时目录清理间隔(ms，≤0=暂停)",

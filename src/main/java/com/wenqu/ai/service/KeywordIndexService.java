@@ -16,19 +16,12 @@ import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
-import javax.sql.DataSource;
 import java.net.http.HttpClient;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -42,11 +35,8 @@ import java.util.concurrent.atomic.AtomicLong;
  * - 启用开关 keyword.engine=meilisearch；未启用/探测失败/调用失败 → 调用方自动降级回 MySQL LIKE
  * - 探测结果缓存 + 失败冷却（keyword.failCooldownMs），冷却结束自动重探，避免每请求都撞
  * - 配置（baseUrl/timeout）变更自动重建客户端并重置探测
- * - 写索引全部 best-effort（失败只告警不抛），最终一致由周期精确对账兜底：按 (id, contentHash)
- *   逐块比对 MySQL 有效块与索引文档，仅定向修复差异块（缺失/过期按主键批量拉取比对、孤儿由计数
- *   差值门控后才全量扫描、多副本用 MySQL 命名锁互斥；按主键拉取不可用时本轮告警跳过。
- *   schedule 包调度中心驱动：启动先跑一次 + 内置节拍（1 小时，ScheduleCenter 常量，
- *   不再是配置项）周期执行；差异过大降级全量重建。切换引擎保存配置时也自动全量重建，运维可调 /api/ai/search-index/reindex）
+ * - 写索引全部 best-effort（失败只告警不抛）；索引漂移不做自动对账，由运维在「设置 → 定时任务 →
+ *   索引与健康」看计数差，再用切换引擎保存或 /api/ai/search-index/reindex 全量重建对齐
  */
 @Slf4j
 @Service
@@ -55,7 +45,6 @@ public class KeywordIndexService {
     private final AppProperties properties;
     private final ConfigService configService;
     private final KnowledgeMapper knowledgeMapper;
-    private final DataSource dataSource;
 
     private final AtomicBoolean supportChecked = new AtomicBoolean(false);
     private volatile boolean available = false;
@@ -66,12 +55,6 @@ public class KeywordIndexService {
     /** 全量重建进行中标志（防并发重复重建） */
     private final AtomicBoolean reindexing = new AtomicBoolean(false);
 
-    /** 精确对账进行中标志（防 daemon 周期重叠） */
-    private final AtomicBoolean reconciling = new AtomicBoolean(false);
-
-    /** 对账分布式锁名（MySQL 命名锁；多副本部署防重复对账） */
-    private static final String RECONCILE_LOCK = "wenqu:keyword-reconcile";
-
     /** 索引写失败累计计数（M12 fail-loud：/search-index/stats 暴露，运维可见漂移之外的写故障） */
     private final AtomicLong writeFailCount = new AtomicLong();
 
@@ -81,11 +64,10 @@ public class KeywordIndexService {
     private volatile int clientTimeout = 0;
 
     public KeywordIndexService(AppProperties properties, ConfigService configService,
-                               KnowledgeMapper knowledgeMapper, DataSource dataSource) {
+                               KnowledgeMapper knowledgeMapper) {
         this.properties = properties;
         this.configService = configService;
         this.knowledgeMapper = knowledgeMapper;
-        this.dataSource = dataSource;
     }
 
     // ==================== 配置（动态读取，保存即生效） ====================
@@ -345,16 +327,14 @@ public class KeywordIndexService {
                     // 已存在或并发创建，交由下面的 settings 校准
                 }
                 // 可搜索字段按优先级排序（title > titlePath > content）；可过滤：docId（按文档删除用）
-                // + id（精确对账按主键批量拉回指纹用——POST /documents/fetch 的 filter 主键同样须先登记，
-                // Meilisearch 不默认放行主键过滤；settings 为异步任务，落地前首轮对账自动降级旧算法）
                 client().patch().uri("/indexes/" + index() + "/settings")
                         .contentType(MediaType.APPLICATION_JSON)
                         .body(Map.of(
                                 "searchableAttributes", List.of("title", "titlePath", "content"),
-                                "filterableAttributes", List.of("docId", "id")))
+                                "filterableAttributes", List.of("docId")))
                         .retrieve().body(String.class);
                 indexReady = true;
-                log.info("[Keyword] 索引 {} 初始化完成（searchable: title/titlePath/content, filterable: docId/id）", index());
+                log.info("[Keyword] 索引 {} 初始化完成（searchable: title/titlePath/content, filterable: docId）", index());
             } catch (Exception e) {
                 log.warn("[Keyword] 索引初始化失败: {}", e.getMessage());
             }
@@ -419,8 +399,6 @@ public class KeywordIndexService {
                 d.put("title", k.getTitle() == null ? "" : k.getTitle());
                 d.put("titlePath", k.getTitlePath() == null ? "" : k.getTitlePath());
                 d.put("content", k.getContent() == null ? "" : k.getContent());
-                // 对账指纹（不入 searchableAttributes，不影响检索）：精确对账按它识别"数量相同但内容过期"的漂移
-                d.put("contentHash", k.getContentHash() == null ? "" : k.getContentHash());
                 docs.add(d);
             }
             if (docs.isEmpty()) return;
@@ -498,14 +476,14 @@ public class KeywordIndexService {
             return;
         }
         // 提交被拒（队列满/池关闭）时 lambda 永不执行，finally 里的复位够不着——reindexing 永久
-        // true，之后对账与重建全部静默跳过（自愈机制失效，直到重启）。拒了就地复位。
+        // true，之后重建全部静默跳过（自愈机制失效，直到重启）。拒了就地复位。
         if (!ThreadPoolManager.execute(() -> {
             long total = 0;
             try {
                 String lastId = "";
                 while (true) {
-                    // 只灌有效块（status=0 文档的块 + 手动块 docId IS NULL，与对账同口径），使"索引集合 = 有效块集合"闭环：
-                    // 弃用/失败文档的块不入索引，对账（indexedCount vs 有效块数）不会因残留而每次重建
+                    // 只灌有效块（status=0 文档的块 + 手动块 docId IS NULL），使"索引集合 = 有效块集合"闭环：
+                    // 弃用/失败文档的块不入索引，健康卡的计数差（indexedCount vs 有效块数）不会因残留而常亮
                     List<Knowledge> batch = knowledgeMapper.selectList(
                             effectiveChunkQuery()
                                     .gt(Knowledge::getId, lastId) // UUID 字符串升序游标
@@ -530,127 +508,7 @@ public class KeywordIndexService {
         }
     }
 
-    /**
-     * 精确对账：按 (id, contentHash) 逐块比对 MySQL 有效块集合与索引文档集合，只定向修复差异块——
-     * 相比计数对账能发现"数量相同但内容过期"的漂移（如 upsert 失败后索引残留旧内容）。
-     * 缺失/过期块补写（差异过大降级全量重建），多余块删除（已删块/已删文档/弃用文档的块）。
-     * 首轮会给存量文档补写 contentHash 字段（索引缺该字段判为过期，upsert 一次自愈，无需手动重建）。
-     * <p>
-     * 规模化设计（数据量随用户增长，不允许 O(N) 内存与 O(N²) 请求成为常态）：
-     * <ul>
-     *   <li><b>缺失/过期</b>：MySQL 有效块按 id 游标分批（1000/批），按主键过滤批量拉回索引指纹
-     *       （POST /documents/fetch，filter: id IN [...]，需 filterableAttributes 含 id，ensureIndex 已写入），
-     *       内存只保留当前批与差异清单；差异超过 max(1000, 有效块/3) 提前转全量重建；</li>
-     *   <li><b>多余（孤儿）</b>：先用 O(1) 的索引计数（/stats）与有效块计数做差值门控——
-     *       孤儿数 = 索引数 − 有效块数 + 缺失数，仅证明存在孤儿才全量拉取索引 id 流式反查 MySQL（罕见分支）；</li>
-     *   <li><b>多副本安全</b>：MySQL 命名锁（GET_LOCK）互斥，其他实例持锁时跳过本轮；锁能力不可用
-     *       （外部库不支持等）退化为单机防重继续——对账幂等，不能因锁缺失而停摆。</li>
-     * </ul>
-     * 按主键拉取不可用（settings 异步任务未落地、索引不是可过滤结构等）时本轮告警跳过，下轮重试；
-     * 不再回退到两侧全量拉取的旧算法。
-     * 调度（内置节拍的周期任务，见 ScheduleCenter；原启动首轮开关 keyword.reconcileOnStartup 已退役）
-     * 由 schedule 包 ScheduleCenter 驱动；失败只告警不抛，下轮重试。
-     */
-    public void reconcile() {
-        if (!enabled()) return;
-        if (!isAvailable()) {
-            log.info("[Reconcile] Meilisearch 不可用，跳过本轮对账");
-            return;
-        }
-        if (reindexing.get()) {
-            log.info("[Reconcile] 全量重建进行中，跳过本轮对账");
-            return;
-        }
-        if (!reconciling.compareAndSet(false, true)) return;
-        ensureIndex(); // 索引/settings 未就绪先校准（幂等）；否则按主键过滤拉取 404/不可过滤
-        try (ReconcileLock lock = ReconcileLock.tryAcquire(dataSource, RECONCILE_LOCK)) {
-            if (lock.busy()) {
-                log.info("[Reconcile] 其他实例正在对账（分布式锁占用），跳过本轮");
-                return;
-            }
-            doReconcile();
-        } catch (Exception e) {
-            log.warn("[Reconcile] 对账失败（下轮重试）: {}", e.getMessage());
-        } finally {
-            reconciling.set(false);
-        }
-    }
-
-    /** 精确对账主流程（已持对账锁与单机 CAS） */
-    private void doReconcile() {
-        long effectiveCount = countEffectiveChunks();
-        long indexedCount = indexedCount(); // /stats O(1)；-1=拉取失败（本轮顺延孤儿核对）
-        if (effectiveCount == 0 && indexedCount == 0) {
-            log.info("[Reconcile] 关键词索引一致（有效块 0 = 索引 0），无需修复");
-            return;
-        }
-
-        // Pass 1：缺失/过期——MySQL 有效块分批，按主键批量拉回索引指纹逐块比对
-        long driftLimit = Math.max(1000, effectiveCount / 3); // 差异超过该值转全量重建（与全量重灌划算的阈值一致）
-        List<String> stale = new ArrayList<>();
-        long missing = 0;
-        long mismatch = 0;
-        String lastId = "";
-        while (true) {
-            List<Knowledge> batch = knowledgeMapper.selectList(
-                    effectiveChunkQuery()
-                            .select(Knowledge::getId, Knowledge::getContentHash)
-                            .gt(Knowledge::getId, lastId) // UUID 字符串升序游标
-                            .orderByAsc(Knowledge::getId)
-                            .last("LIMIT 1000"));
-            if (batch.isEmpty()) break;
-            lastId = batch.get(batch.size() - 1).getId();
-            List<String> batchIds = new ArrayList<>(batch.size());
-            for (Knowledge k : batch) batchIds.add(k.getId());
-            Map<String, String> idx = fetchHashesByIds(batchIds);
-            if (idx == null) {
-                log.warn("[Reconcile] 按主键批量拉取索引指纹不可用，本轮跳过（请确认 Meilisearch 支持 documents 过滤）");
-                return;
-            }
-            for (Knowledge k : batch) {
-                String mysqlHash = k.getContentHash() == null ? "" : k.getContentHash();
-                String idxHash = idx.get(k.getId());
-                if (idxHash == null) { // 索引缺失
-                    missing++;
-                    stale.add(k.getId());
-                } else if (!mysqlHash.isEmpty() && !mysqlHash.equals(idxHash)) { // 内容过期（存量空 hash 只比存在性，重解析后自然收敛）
-                    mismatch++;
-                    stale.add(k.getId());
-                }
-            }
-            if (stale.size() > driftLimit) {
-                log.info("[Reconcile] 差异过大（缺失/过期 {} 块，有效 {}），转全量重建", stale.size(), effectiveCount);
-                reindexAll();
-                return;
-            }
-            if (batch.size() < 1000) break;
-        }
-
-        // Pass 2：多余（孤儿）——计数差值门控（o = 索引数 − 有效块数 + 缺失数），仅证明存在才扫描。
-        // Meili 写入是异步任务，stats 计数与逐块核对间有短暂口径差：差值>0 但扫描为空时以扫描为准
-        List<String> orphans = new ArrayList<>();
-        if (indexedCount - effectiveCount + missing > 0) {
-            List<String> found = findOrphans();
-            if (found != null) orphans = found;
-        }
-
-        if (stale.isEmpty() && orphans.isEmpty()) {
-            log.info("[Reconcile] 关键词索引一致（有效块 {}，索引 {}，逐块核对无差异），无需修复",
-                    effectiveCount, indexedCount < 0 ? "计数未知" : indexedCount);
-            return;
-        }
-        log.warn("[Reconcile] 索引漂移：缺失 {}、内容过期 {}、多余 {}（有效 {}，索引 {}）→ 定向修复",
-                missing, mismatch, orphans.size(), effectiveCount, indexedCount);
-        for (int i = 0; i < orphans.size(); i += 1000) {
-            deleteChunks(orphans.subList(i, Math.min(i + 1000, orphans.size())));
-        }
-        for (int i = 0; i < stale.size(); i += 1000) {
-            indexChunks(knowledgeMapper.selectBatchIds(stale.subList(i, Math.min(i + 1000, stale.size()))));
-        }
-        log.info("[Reconcile] 修复完成：补写 {} 块、删除 {} 块", stale.size(), orphans.size());
-    }
-
-    /** 有效块查询条件（全量重建/对账同口径）：手动块（docId IS NULL）+ 启用且未删文档的块 */
+    /** 有效块查询条件（全量重建同口径）：手动块（docId IS NULL）+ 启用且未删文档的块 */
     private LambdaQueryWrapper<Knowledge> effectiveChunkQuery() {
         return new LambdaQueryWrapper<Knowledge>()
                 .and(w -> w.isNull(Knowledge::getDocId)
@@ -658,94 +516,10 @@ public class KeywordIndexService {
                                 "SELECT id FROM c_ai_document WHERE status=0 AND deleted=0"));
     }
 
-    /** 有效块计数（对账孤儿门控与面板索引漂移共用，单条 COUNT；与索引灌库同口径） */
+    /** 有效块计数（面板索引漂移与知识库健康共用，单条 COUNT；与索引灌库同口径） */
     public long countEffectiveChunks() {
         Long n = knowledgeMapper.selectCount(effectiveChunkQuery());
         return n == null ? 0 : n;
-    }
-
-    /**
-     * 按主键批量拉回索引指纹（POST /documents/fetch，filter: id IN [...]；需 filterableAttributes 含 id，
-     * ensureIndex 已写入）。只保留本批指纹，内存 O(批大小)。
-     * 失败返回 null，调用方本轮告警跳过。
-     */
-    private Map<String, String> fetchHashesByIds(List<String> ids) {
-        try {
-            StringBuilder filter = new StringBuilder("id IN [");
-            for (int i = 0; i < ids.size(); i++) {
-                if (i > 0) filter.append(',');
-                // 块 id 为 MyBatis-Plus 生成的 UUID hex，不含引号，无需转义
-                filter.append('"').append(ids.get(i)).append('"');
-            }
-            filter.append(']');
-            String resp = client().post().uri("/indexes/" + index() + "/documents/fetch")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(Map.of("filter", filter.toString(), "limit", ids.size(),
-                            "fields", List.of("id", "contentHash")))
-                    .retrieve().body(String.class);
-            JSONObject body = resp == null ? null : JSON.parseObject(resp);
-            JSONArray docs = body == null ? null : body.getJSONArray("results");
-            Map<String, String> map = new HashMap<>();
-            if (docs != null) {
-                for (int i = 0; i < docs.size(); i++) {
-                    JSONObject d = docs.getJSONObject(i);
-                    String id = d.getString("id");
-                    if (id != null && !id.isBlank()) {
-                        String h = d.getString("contentHash");
-                        map.put(id, h == null ? "" : h);
-                    }
-                }
-            }
-            return map;
-        } catch (Exception e) {
-            log.info("[Reconcile] 按主键拉取索引指纹失败: {}", e.getMessage());
-            return null;
-        }
-    }
-
-    /**
-     * 孤儿扫描（仅计数差值证明存在多余块时触发）：offset 分页拉索引文档 id，按批反查 MySQL 有效块，
-     * 差集即孤儿——只保留批与孤儿清单，不构建两侧全量映射。失败返回 null（本轮跳过删除，下轮重试）。
-     */
-    private List<String> findOrphans() {
-        try {
-            List<String> orphans = new ArrayList<>();
-            int offset = 0;
-            while (true) {
-                final int off = offset;
-                String resp = client().get()
-                        .uri(b -> b.path("/indexes/" + index() + "/documents")
-                                .queryParam("fields", "id")
-                                .queryParam("limit", 1000)
-                                .queryParam("offset", off)
-                                .build())
-                        .retrieve().body(String.class);
-                JSONObject body = resp == null ? null : JSON.parseObject(resp);
-                JSONArray docs = body == null ? null : body.getJSONArray("results");
-                if (docs == null || docs.isEmpty()) break;
-                List<String> pageIds = new ArrayList<>(docs.size());
-                for (int i = 0; i < docs.size(); i++) {
-                    String id = docs.getJSONObject(i).getString("id");
-                    if (id != null && !id.isBlank()) pageIds.add(id);
-                }
-                if (!pageIds.isEmpty()) {
-                    Set<String> effectiveIds = new HashSet<>();
-                    for (Knowledge k : knowledgeMapper.selectList(
-                            effectiveChunkQuery().select(Knowledge::getId).in(Knowledge::getId, pageIds))) {
-                        effectiveIds.add(k.getId());
-                    }
-                    for (String id : pageIds) {
-                        if (!effectiveIds.contains(id)) orphans.add(id);
-                    }
-                }
-                offset += docs.size();
-                if (docs.size() < 1000) break;
-            }
-            return orphans;
-        } catch (Exception e) {
-            log.warn("[Reconcile] 孤儿扫描失败（本轮跳过删除，下轮重试）: {}", e.getMessage());
-            return null;
-        }
     }
 
     /** 索引内文档数（探测失败或未启用返回 -1；索引尚未创建返回 0） */
@@ -784,56 +558,5 @@ public class KeywordIndexService {
     /** 写失败累计次数（stats 接口展示用） */
     public long writeFailCount() {
         return writeFailCount.get();
-    }
-
-    /**
-     * 对账互斥锁（MySQL 命名锁 GET_LOCK，探测超时 0=立即返回）：锁随连接会话生效，
-     * 持锁连接须保持打开直到 {@link #close()} 先 RELEASE_LOCK 再归还。
-     * <ul>
-     *   <li>持锁成功：connection 非空且 busy=false；</li>
-     *   <li>其他实例持锁：busy=true，调用方跳过本轮；</li>
-     *   <li>锁能力不可用（外部库不支持 GET_LOCK / 连接异常）：connection=null 且 busy=false，
-     *       退化为单机防重继续——对账幂等，重复执行无害，不能因锁能力缺失停摆对账。</li>
-     * </ul>
-     */
-    private record ReconcileLock(Connection connection, String name, boolean busy) implements AutoCloseable {
-
-        static ReconcileLock tryAcquire(DataSource dataSource, String name) {
-            try {
-                Connection c = dataSource.getConnection();
-                try {
-                    try (PreparedStatement ps = c.prepareStatement("SELECT GET_LOCK(?, 0)")) {
-                        ps.setString(1, name);
-                        try (ResultSet rs = ps.executeQuery()) {
-                            if (rs.next() && rs.getInt(1) == 1) return new ReconcileLock(c, name, false);
-                        }
-                    }
-                } catch (Exception e) {
-                    try { c.close(); } catch (Exception ignored) { }
-                    log.warn("[Reconcile] 分布式锁探测失败（{}），退化为单机防重继续", e.getMessage());
-                    return new ReconcileLock(null, name, false);
-                }
-                try { c.close(); } catch (Exception ignored) { }
-                return new ReconcileLock(null, name, true);
-            } catch (Exception e) {
-                log.warn("[Reconcile] 分布式锁探测失败（{}），退化为单机防重继续", e.getMessage());
-                return new ReconcileLock(null, name, false);
-            }
-        }
-
-        @Override
-        public void close() {
-            if (connection == null) return;
-            try (PreparedStatement ps = connection.prepareStatement("SELECT RELEASE_LOCK(?)")) {
-                ps.setString(1, name);
-                ps.executeQuery();
-            } catch (Exception ignored) {
-                // 释放失败仅告警意义不大：连接关闭后 MySQL 会话锁随之释放
-            }
-            try {
-                connection.close();
-            } catch (Exception ignored) {
-            }
-        }
     }
 }

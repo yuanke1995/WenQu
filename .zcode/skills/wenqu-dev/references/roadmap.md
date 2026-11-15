@@ -264,6 +264,8 @@
 
 - **工作流工具总开关退役**（2026-11-14）：`workflowTool.enabled` 平台设置全链删——参数设置「工作流工具」面板+字段、`WorkflowToolProvider` 全局闸判断（智能体不显式关即挂）、智能体页能力行摘 `path`（同技能/MCP 口径：无独立全局开关，只受「工具调用」总闸制约）、README 配置行。限制收口在智能体选工作流处（≤8 个/嵌套 2 层/游客不暴露原样不变）。契约计数 106/156 对齐、ConfigContractTest 4 测全绿。未提交。
 
+- **关键词索引精确对账任务退役**（2026-11-15）：周期对账整体下线——ScheduleCenter 注册/内置节拍常量/`KeywordIndexService` 注入、`KeywordIndexService.reconcile()`+`doReconcile`+按主键拉取指纹+孤儿扫描+`GET_LOCK` 对账锁、config-schema `keyword.reconcileIntervalMs` 说明、README 与手册 13 的任务表行。漂移改为观察态：「索引与健康」计数差（indexedCount vs `countEffectiveChunks`）常亮，按提示去「检索索引」全量重建（或切换引擎保存）对齐；保留 `countEffectiveChunks`/`indexedCount`（健康卡与巡检仍读）。V1 基线里该键的 DELETE 行保留（存量库幂等清理）。
+
 ### FormCopilot × 报表系统（三仓联动线，主战场在 dynamic-form / dynamic-form-vue 仓）
 
 后台管理+真实登录（a625c73b 族）、B 档后端代理（问渠 token 不落浏览器）、增量补丁协议（__patch + ops）、列宽 px/% 双单位、设计器 UX 包、沙盒双重加密修复（68d8bb6b）等。细节以三仓 git log 为准，本账本只记联动概要。

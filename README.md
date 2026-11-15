@@ -283,7 +283,7 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 - **知识块**：切片列表与结构导图两种视图，块数与 token 统计、未向量化块提示；单块编辑（自动重向量化）、停用、删除、手动建块
 - **GraphRAG**：库级开关（默认关），解析时抽取「主体-关系-客体」三元组，检索命中后做一跳图扩展并按衰减分并入结果；图谱弹窗提供实体与三元组规模、构建与清空、力导向图（点实体看完整关系链与来源块溯源）
 - **混合检索**：Redis 向量 Top-K 与关键词召回并行，向量分归一化后按权重融合（双命中叠加加分、标题命中奖励）；**重排门 0.6 / 融合门 0.5** 分别作用于重排分与融合分，重排执行过后未经重排的候选不得经融合阈值进入上下文。低分全灭时默认保留唯一最高分块并显式标注「低置信」（低分保底为知识库检索设置项，默认 top1），避免隐性问答被绝对门全部误杀；重排链路异常时不启用保底
-- **关键词引擎可切换**：默认 `mysql` LIKE 零依赖；切到 `meilisearch` 使用 jieba 中文分词与相关度打分，服务不可用自动降级回 MySQL；切换后需全量重建一次，写索引随解析 / 编辑 / 删除增量同步，并有定时精确对账
+- **关键词引擎可切换**：默认 `mysql` LIKE 零依赖；切到 `meilisearch` 使用 jieba 中文分词与相关度打分，服务不可用自动降级回 MySQL；切换后需全量重建一次，写索引随解析 / 编辑 / 删除增量同步；漂移看「定时任务 → 索引与健康」的计数差，需要时用全量重建对齐
 - **上下文工程**：窗口与最大输出按模型声明，登记时校验最大输出小于「窗口 × 0.7」；知识块填充上限在个人设置可调（默认 8），单文档与单库配额为平台常量；历史压缩、逐轮裁剪与 token 计数由框架与 jtokkit 承担
 
 ### 智能体（`/agents`，全员开放）
@@ -640,7 +640,7 @@ spring:
 | `memory.*` | `flushThrottleMinutes`(10，0=每轮)、`maxMdTokens`(3000) | 长期记忆的提炼节拍与预算；是否自动提炼由个人设置在个人维度控制；合并时给模型的目标预算按上限的 2/3 推导，写入落盘再按上限强制裁剪；日账保留期沿用框架默认 90 天 |
 | `retrieval.*` / `graphrag.expandTopK` | `keyword.engine`(meilisearch)、`keyword.baseUrl`、`keyword.apiKey`(敏感)；其余检索参数（双路权重、召回量、阈值门槛、低分保底）与图谱扩展规模已下沉**知识库检索设置**逐库生效（`aclTopKSupplant` 为内部键） | 设置页只剩关键词引擎连接；同一组检索参数也可在知识库编辑里逐库覆盖 |
 | `rerank.*` | `timeoutMillis`(5000 生效超时)、`failCooldownMs`(60000 失败冷却) 为内部键 | 重排平台层已退役：重排模型与窗口归知识库检索设置（选了才重排，多库按命中收敛）；`rerank.enabled` 仅剩智能体级「强制关」；未绑模型按融合分排序并提示，不阻塞问答 |
-| `keyword.*` | `engine`(mysql)、`baseUrl`、`apiKey` | 保存即生效；切换引擎需全量重建一次索引；索引对账为内置周期任务（1h），无开关 |
+| `keyword.*` | `engine`(mysql)、`baseUrl`、`apiKey` | 保存即生效；切换引擎需全量重建一次索引；漂移在「定时任务 → 索引与健康」按计数差观察，需要时全量重建对齐 |
 | `context.*` | —（`maxContextHits` 已下放个人设置 → 问答偏好，默认 8；`maxBlocksPerDoc`(3)、`maxBlocksPerKb`(4) 为平台常量） | 历史压缩由框架按模型窗口触发，无独立开关 |
 | `chunk.*` / `parse.*` / `upload.*` | 分块、问答对与解析参数已全部下沉**知识库解析设置**（新建库按默认模板预填，逐库可改）；平台层只剩 `parse.qaConcurrency`(2) 管问答对生成并发；解析队列与上传参数（`concurrency`(3)、`queue.capacity`(500)、`taskTimeoutMs`(20min)、`upload.maxFileSizeMB`(200) 等）照旧 | 解析参数只影响之后的解析（**需重解析或新上传才生效**） |
 | `vision.*` | `concurrency`(2)、`userImageConcurrency`(2)、`timeoutMillis`(30000)、`retryCount`(1)、`descCacheVersion`("1")、`descCacheTtlDays`(180) | 保存即生效（`timeoutMillis` 需重启）；`vision.prompt` 已退役，描述提示词固化为平台常量；视觉模型按知识库绑定，无全局键；未绑定模型的知识库解析时跳过图片描述 |
@@ -681,30 +681,24 @@ spring:
 
 | 任务 | 间隔键（默认） | 做什么 |
 |------|----------------|--------|
-| 关键词索引精确对账 | `keyword.reconcileIntervalMs`(1h) | 按 `(id, contentHash)` 双向比对 MySQL 有效块与 Meilisearch 文档，定向修复漂移；差异超限转全量重建，`GET_LOCK` 互斥保证多副本安全 |
-| 聊天图片目录清理 | `images.chatCleanupIntervalMs`(1d) | 删除超过 `images.chatRetentionMillis`（7 天）的用户聊天图片 |
-| 聊天附件超期清理 | `chat.uploadCleanupIntervalMs`(1h) | 删除超过 `chat.uploadRetentionHours`（24 小时，0=不清理）的会话附件 |
-| 工具外溢原文清理 | `tool.spillCleanupIntervalMs`(1h) | 删除超过 `cleanup.toolSpillRetentionDays`（7 天，0=不清理）的工具大输出留存原文 |
+| 临时件清理 | `cleanup.intervalMs`(1h) | 删除超过 `cleanup.tempFileRetentionDays`（7 天，0=不清理）的聊天图片（`images/chat`）、聊天附件（`chat-uploads`）、工具大输出外溢原文、调度执行日志与聊天档宿主临时目录 |
+| 过程记录清理 | `cleanup.intervalMs`(1h) | 删除超过 `cleanup.recordRetentionDays`（30 天）的已软删会话/消息/停用分享、闲置访客会话、会话事件账本、站内通知与工作流运行记录（挂起审批的 run 排除）；巡检报告走 `ops.checkupRetentionDays`、定时任务执行记录走 `scheduled.runRetentionDays`（每任务另留最近 100 条） |
+| 用户资产清理 | `cleanup.intervalMs`(1h) | 删除超过 `cleanup.assetRetentionDays`（90 天，0=不清理）的产物与会话日志归档，以及换代搬走的旧日志目录（`cleanup.recordRetentionDays`） |
+| 合规留存清理 | `cleanup.intervalMs`(1h) | 删除超过固定保留期的审计事件（365 天）与市场安装流水（180 天），口径固定不做成参数 |
 | 检索评估自动体检 | `eval.autoIntervalMs`(1d) | 按线上参数跑评估集、落一条 scheduled 运行历史并与上期对比，下滑写预警结论供看板红绿灯；评估集为空自动跳过 |
 | 系统巡检 | `ops.checkupIntervalMs` | 按节拍全面体检并把报告落库；失败时给管理员发站内通知，手动巡检不受间隔限制 |
-| 巡检报告清理 | `ops.checkupRetentionDays` | 删除超过保留期的巡检历史报告（0=永久保留） |
+| 数据看板阈值告警 | `dashboard.alertIntervalMs`(6h) | 近 7 天无命中率 / 满意率越过阈值时给管理员发站内通知（同类未读合并，不刷屏） |
+| 数据看板周报 | `dashboard.weeklyReportIntervalMs`(1d) | 每天检查一次，只在周一且当天未发时发「健康度 + 待办 + 费用」摘要（防重启后周期漂移） |
 | 智能体回调重试 | 内置节拍（退避 60s / 5min / 30min / 2h） | 扫描到期的轮终 Webhook 投递行并补发；耗尽后通知智能体主人 |
-| 长任务接续扫描 | `chat.turnResumeWindowMinutes` | 把「发出去却再没有过回答」的轮按中断收口，留下已生成部分并提示发「继续」 |
-| 聊天档临时目录清理 | `cleanup.tempFileRetentionDays` | 清理超过保留期的聊天档宿主临时目录（0=不清理） |
-| 配置缓存兜底刷新 | `config.reloadIntervalMs`(5min) | 补齐 Redis 订阅断线期间错过的配置变更 |
-| 过期会话/消息清理 | `cleanup.sessionCleanupIntervalMs`(1d) | 物理删除逻辑删除超过 `cleanup.sessionRetentionDays`（30 天）的会话与消息 |
-| 产物超期清理 | `artifact.cleanupIntervalMs`(1d) | 删除超过 `artifact.retentionDays`（90 天，0=不清理）的产物文件与记录 |
-| 会话日志归档清理 | `chat.sessionLogArchive.cleanupIntervalMs`(1d) | 按文件最后写入时间删除超过 `chat.sessionLogArchive.keepDays`（90 天，0=不清理）的归档，以及换代搬走的旧代次（`agentscopeJournalRotateKeepDays`，30 天） |
-| 定时智能体任务 | `scheduled.scanIntervalMs`(30s) | 扫描到期的用户定时任务并投递线程池执行（扫描与执行分离，长任务不拖节拍） |
-| 文档解析队列扫描 | `parse.queue.scanIntervalMs`(5s) | 抢占 `c_ai_parse_task` 到期任务交给 worker 池（上传与重解析全靠它推动，DB 队列不怕进程重启） |
-| 网页源定时刷新 | `web.refreshScanIntervalMs`(60s) | 扫描到期且开启自动刷新的 URL 文档，重抓网页并同名替换重建 |
-| 沙盒空闲回收 | `sandbox.cleanupIntervalMs`(10min) | 回收空闲超过 `sandbox.idleReleaseMinutes`（60 分钟，0=不回收）的会话沙盒容器 |
-| 工作流审批超时回收 | `workflow.approvalReapIntervalMs`(60s) | 挂起超过节点 `timeoutSeconds` 的人工审核 run 落 timeout 终态 |
-| 工作流运行记录清理 | `workflow.runCleanupIntervalMs`(1d) | 物理删除超过 `workflow.runLogRetentionDays`（30 天）的运行记录（挂起审批的 run 排除） |
-| 工作流定时触发 | `workflow.scheduleScanIntervalMs`(30s) | 扫描到期的定时工作流并派发已发布版本运行（先推进 `next_run_at` 防重复） |
+| 长任务接续扫描 | 内置节拍(2min) | 把「发出去却再没有过回答」的轮按中断收口，留下已生成部分并提示发「继续」（窗口 `chat.turnResumeWindowMinutes`） |
+| 配置缓存兜底刷新 | 内置节拍(5min) | 补齐 Redis 订阅断线期间错过的配置变更 |
+| 定时智能体任务 | 内置节拍(30s) | 扫描到期的用户定时任务并投递线程池执行（扫描与执行分离，长任务不拖节拍） |
+| 文档解析队列扫描 | 内置节拍(5s) | 抢占 `c_ai_parse_task` 到期任务交给 worker 池（上传与重解析全靠它推动，DB 队列不怕进程重启） |
+| 网页源定时刷新 | 内置节拍(60s) | 扫描到期且开启自动刷新的 URL 文档，重抓网页并同名替换重建 |
+| 沙盒空闲回收 | 内置节拍(10min) | 回收空闲超过 `sandbox.idleReleaseMinutes`（60 分钟，0=不回收）的会话沙盒容器 |
+| 工作流审批超时回收 | 内置节拍(60s) | 挂起超过节点 `timeoutSeconds` 的人工审核 run 落 timeout 终态 |
+| 工作流定时触发 | 内置节拍(30s) | 扫描到期的定时工作流并派发已发布版本运行（先推进 `next_run_at` 防重复） |
 | Trace 线上采样 | `trace.samplingIntervalMs`(1d) | 线上对话按规则入采样池（差评必采 + 无引用 / 随机限额），供标注回流评测集 |
-| 任务执行日志清理 | `schedule.runLogCleanupIntervalMs`(1d) | 物理删除超过 `schedule.runLogRetentionDays`（7 天）的调度执行日志 |
-| 站内通知清理 | `notification.cleanupIntervalMs`(1d) | 物理删除超过 `notification.retentionDays`（30 天）的站内通知 |
 
 **深度执行调度器**独立于 `ScheduleCenter`：`GoalScheduler` 按 `chat.goal.tickMs`（默认 2s）节拍批量认领（`claimBatch` 5）到期的目标轮次，用 DB 租约条件更新（`leaseSeconds` 300）保证同一目标只有一个副本在执行，心跳超过 `heartbeatStaleSeconds` 判失活并在 `staleGraceSeconds` 宽限后恢复或转暂停；`workers`（4）为并发执行线程数（改动需重启）。
 
