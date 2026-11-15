@@ -47,9 +47,30 @@
     },
     {
       "method": "GET",
+      "path": "/api/ai/v1/runs/{id}",
+      "scope": "runs.read",
+      "summary": "查询运行状态与输出（与 run.done 同口径）",
+      "keyAccessible": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/ai/v1/runs/{id}/events",
+      "scope": "runs.read",
+      "summary": "SSE 事件流（Last-Event-ID 续传，seq 连续）",
+      "keyAccessible": true
+    },
+    {
+      "method": "GET",
       "path": "/api/ai/v1/workflows/{id}/run/{runId}",
       "scope": "workflow.run",
       "summary": "查询工作流运行结果",
+      "keyAccessible": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/ai/v1/agents/{agentId}/runs",
+      "scope": "runs.write",
+      "summary": "创建一次智能体运行（run）",
       "keyAccessible": true
     },
     {

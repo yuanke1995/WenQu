@@ -415,7 +415,8 @@ const copiedKey = ref(false)
 const scopeCatalog = ref({ all: [], default: [] })
 const SCOPE_LABELS = {
   chat: '问答', embedding: '向量化', 'kb.read': '知识库只读',
-  'kb.write': '知识库写入', 'workflow.run': '工作流触发'
+  'kb.write': '知识库写入', 'workflow.run': '工作流触发',
+  'runs.read': '运行读取', 'runs.write': '运行控制'
 }
 /**
  * 签发向导的用途模板（B4）：四个入口自动预选 scope，省掉「五个勾选项分别是什么意思」。

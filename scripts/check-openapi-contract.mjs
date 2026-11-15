@@ -31,6 +31,8 @@ const SCOPES = {
   KB_READ: 'kb.read',
   KB_WRITE: 'kb.write',
   WORKFLOW_RUN: 'workflow.run',
+  RUNS_READ: 'runs.read',
+  RUNS_WRITE: 'runs.write',
 }
 
 const walk = dir => readdirSync(dir, { withFileTypes: true }).flatMap(e => {
@@ -49,8 +51,10 @@ function scanFile(file) {
   let m
   while ((m = ann.exec(src)) !== null) {
     const attrs = m[1]
+    // Spring 允许 @GetMapping("x") 与 @GetMapping(value = "x", produces = ...) 两种写法；
+    // 只认简写会把带 produces 的 SSE 端点误判成「找不到路由注解」。
     const route = src.slice(ann.lastIndex, ann.lastIndex + 600)
-      .match(/@(Get|Post|Put|Delete|Patch)Mapping\(\s*"([^"]+)"/)
+      .match(/@(Get|Post|Put|Delete|Patch)Mapping\(\s*(?:value\s*=\s*)?"([^"]+)"/)
     if (!route) throw new Error(`${file}: @OpenApi 之后找不到 @*Mapping 路由注解`)
     let path = route[2]
     // Spring 里方法级 "/{id}/run" 虽然以 / 开头，仍是相对类级 @RequestMapping 的；

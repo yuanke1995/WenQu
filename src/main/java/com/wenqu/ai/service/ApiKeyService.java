@@ -68,6 +68,10 @@ public class ApiKeyService {
     public static final String SCOPE_KB_WRITE = OpenApiScopes.KB_WRITE;
     /** 工作流触发（/api/ai/v1/workflows/{id}/run） */
     public static final String SCOPE_WORKFLOW_RUN = OpenApiScopes.WORKFLOW_RUN;
+    /** 对外开放运行：读（GET /v1/runs/**） */
+    public static final String SCOPE_RUNS_READ = OpenApiScopes.RUNS_READ;
+    /** 对外开放运行：写（POST /v1/agents/{id}/runs、steer、stop、approvals） */
+    public static final String SCOPE_RUNS_WRITE = OpenApiScopes.RUNS_WRITE;
     /** 全部合法 scope（前端勾选项与后端校验共用这一份名单） */
     public static final List<String> ALL_SCOPES = OpenApiScopes.ALL;
     /** 默认集：除 kb.write 外全部——存量 Key（scopes=NULL）与新签未收窄的 Key 都落在这里，

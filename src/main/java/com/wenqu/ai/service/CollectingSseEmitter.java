@@ -57,6 +57,12 @@ public class CollectingSseEmitter extends SseEmitter {
      * 只转发正文，不转发 thinking/tool 过程——外部客户端拿到的 content 必须是最终答案本身。
      */
     private volatile java.util.function.Consumer<String> tokenForwarder;
+    /**
+     * 全帧转发口（A 期 run 投影用）：每收到一帧就交出 (事件名, 原始 SSE 文本)。
+     * <p>与上面两个定向转发口不同，它不挑事件，投影层自己按契约白名单过滤——native 新增事件
+     * 不必回来改这个类。默认 null，定时任务 / MCP / 子智能体分支行为逐字节不变。
+     */
+    private volatile java.util.function.BiConsumer<String, String> allFrameForwarder;
 
     public CollectingSseEmitter() {
         super(0L);   // 不设 SSE 超时：节奏由调用方的 awaitDone 控制
@@ -84,6 +90,11 @@ public class CollectingSseEmitter extends SseEmitter {
         this.tokenForwarder = listener;
     }
 
+    /** 登记全帧转发口（A 期 run 投影；null=不转发） */
+    public void forwardAllFrames(java.util.function.BiConsumer<String, String> listener) {
+        this.allFrameForwarder = listener;
+    }
+
     /**
      * 父轮不再等待（停止或超时）：让 {@link #awaitDone} 立即返回，分支执行器据此收尾。
      * <p>只负责解除等待，真正叫停子轮由分支执行器调 {@code ChatRunRuntime.stopTurn}。
@@ -102,6 +113,16 @@ public class CollectingSseEmitter extends SseEmitter {
             if (o == null) return;
             String type = o.getString("type");
             if (type == null) return;
+            // 旁路转发：投影失败不能掐断用户正在跑的这轮问答。单独 catch 并留痕，
+            // 不是把错误吞掉——投影层自己会把异常写进 run.error 让集成方看得见。
+            java.util.function.BiConsumer<String, String> all = allFrameForwarder;
+            if (all != null) {
+                try {
+                    all.accept(type, raw);
+                } catch (Exception e) {
+                    log.warn("[COLLECT] 全帧投影失败 type={}: {}", type, e.getMessage());
+                }
+            }
             switch (type) {
                 case "token" -> {
                     String c = nullToEmpty(o.getString("content"));
