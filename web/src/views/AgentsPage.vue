@@ -1794,8 +1794,28 @@ const globalText = c => {
 const capState = c => (c.kind === 'switch' ? form.value[c.key] : form.value[c.modeKey])
 const capOn = c => { const v = capState(c); return v === '1' || v === 'pick' }
 const capOff = c => { const v = capState(c); return v === '0' || v === 'none' }
-/** 是否被本智能体显式覆盖（驱动「已覆盖」徽标与图标变色） */
-const capOverridden = c => capOn(c) || capOff(c)
+/**
+ * 开关型能力「跟随系统」的取值（'1'/'0'；'' = 默认值没拿到，端点失败或无此配置键）。
+ * 与能力行「跟随系统」段的小字同口径（globalText 为唯一来源），保证徽标和它旁边写的默认值不自相矛盾。
+ */
+const capFollowTri = c => {
+  const t = globalText(c)
+  if (!t) return ''
+  return t.startsWith('关闭') ? '0' : '1'
+}
+/**
+ * 是否与系统默认不同：比生效值，不比「库里有没有显式值」。
+ * 显式 1 而系统默认也是开 = 同一结果，不算不同；默认值拿不到时退回「显式即算」，
+ * 宁可多报一处，也不能把真覆盖漏掉。多实例能力没有可比的单一全局值（跟随=全挂/全部技能），
+ * 指定与不使用都算显式收窄。
+ */
+const capOverridden = c => {
+  const v = capState(c)
+  if (c.kind !== 'switch') return capOn(c) || capOff(c)
+  if (v !== '1' && v !== '0') return false
+  const d = capFollowTri(c)
+  return !d || d !== v
+}
 /** 多实例能力是否处于「指定」模式（决定要不要展开具体项多选） */
 const needsPick = c => c.kind === 'list' && form.value[c.modeKey] === 'pick'
 /** 能力行的状态控件：开关型写三态列，多实例写模式列 */
@@ -1816,11 +1836,12 @@ const summaryScope = computed(() => {
   const n = (form.value.knowledgeBaseIds || []).length
   return n ? `指定 ${n} 个知识库` : '未选知识库'
 })
-/** 能力摘要只列显式覆盖的项；没有任何覆盖时说明其余跟随全局 */
+/** 能力摘要只列与系统默认不同的项（与徽标同一判据）；没有任何差异时说明其余跟随全局 */
 const summaryCapsList = computed(() => {
   const goal = form.value.goalEnabled === 0 ? '深度执行关闭' : '深度执行'
   const parts = []
   for (const c of CAPS) {
+    if (!capOverridden(c)) continue
     if (capOn(c)) {
       if (c.kind === 'list' && form.value[c.modeKey] === 'pick') {
         const n = (form.value[c.listKey] || []).length
