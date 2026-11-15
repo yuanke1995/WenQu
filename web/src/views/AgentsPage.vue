@@ -280,6 +280,9 @@
                   <template v-else>全部跟随系统默认</template>
                 </span>
               </div>
+              <div v-if="form.isBuiltin === 1" class="ap-hint" style="margin-bottom:8px">
+                内置问渠的「指定」只列平台内置资源（平台 MCP、内置技能）；个人 MCP / 个人技能 / 个人子智能体不会对成员生效。
+              </div>
               <div class="ap-cap-list">
                 <template v-for="g in CAP_GROUPS" :key="g">
                   <div class="ap-cap-grp-h">{{ g }}</div>
@@ -375,9 +378,11 @@
                 </div>
                 <div v-if="runMode === 'main'" class="ap-adv-field">
                   <label class="ap-field-label">子智能体委派</label>
-                  <a-select v-model:value="form.subAgentIds" mode="multiple" :options="subOptions" allow-clear
+                  <a-select v-model:value="form.subAgentIds" mode="multiple" :options="visibleSubOptions" allow-clear
                             show-search option-filter-prop="label" :max-tag-count="6" style="width:100%"
-                            :placeholder="subOptions.length ? '选择允许委派的子智能体' : '还没有子智能体 —— 先把运行方式设为「子智能体」'" />
+                            :placeholder="form.isBuiltin === 1
+                              ? (visibleSubOptions.length ? '选择允许委派的平台子智能体' : '内置问渠不绑定个人子智能体')
+                              : (subOptions.length ? '选择允许委派的子智能体' : '还没有子智能体 —— 先把运行方式设为「子智能体」')" />
                   <div v-if="(form.subAgentIds || []).length" class="ap-hint" style="display:flex;align-items:center;gap:10px">
                     <span>把这条并行编排变成可画可跑的工作流？</span>
                     <button type="button" class="app-btn ghost small" :disabled="toWfLoading" @click="toWorkflow">
@@ -1034,7 +1039,8 @@ const applySkillList = list => {
     })
     .map(s => ({
       value: s.ref || s.name,
-      label: s.name + (SKILL_SOURCE_SUFFIX[s.source] || '')
+      label: s.name + (SKILL_SOURCE_SUFFIX[s.source] || ''),
+      source: s.source
     }))
 }
 /** 停用/恢复之后就地重拉这份清单（不整页 reload：那会把正在编辑的表单所在的面板闪成加载态） */
@@ -1049,7 +1055,6 @@ const mcpOptions = ref([])
 const subOptions = ref([])
 /** 工作流工具与可委派选项共用本页数据 */
 const OPTION_REFS = { skillOptions, mcpOptions }
-const optionsOf = c => OPTION_REFS[c.optionsKey]?.value || []
 
 const editing = ref(false)
 const editingId = ref('')
@@ -1126,6 +1131,26 @@ function buildQueryParams (rr) {
 }
 
 const form = ref(blankForm())
+
+/**
+ * 内置「问渠」是全租户共享行：只能引用平台内置资源。
+ * 个人 MCP / 个人技能带归属人，写进共享行后其他成员用不了，属于假生效。
+ */
+const optionsOf = c => {
+  const all = OPTION_REFS[c.optionsKey]?.value || []
+  if (form.value.isBuiltin !== 1) return all
+  if (c.key === 'toolMcp') return all.filter(o => o.scope === 'platform')
+  if (c.key === 'toolSkill') return all.filter(o => o.source === 'builtin')
+  return all
+}
+/** 子智能体同理：内置问渠只列平台级（内置/平台预置）子智能体，个人子智能体不写进共享行 */
+const visibleSubOptions = computed(() => {
+  if (form.value.isBuiltin !== 1) return subOptions.value
+  const platformIds = new Set(agents.value
+    .filter(a => a.isBuiltin === 1 || a.isBuiltin === true || a.createdBy === 'system')
+    .map(a => a.id))
+  return subOptions.value.filter(o => platformIds.has(o.value))
+})
 
 // 系统提示词 md 编辑器（md-editor-v3）：提示词一般是 markdown（组件契约由 npm run spec 生成），
 // 主体工作是「整份粘贴 + 校对」，不是从零写作——工具栏只留基础排版与撤销，图片上传/图表/公式
@@ -1891,7 +1916,8 @@ const reload = async () => {
     if (mr && mr.success && mr.data) {
       mcpOptions.value = (mr.data.servers || []).map(s => ({
         value: s.ref || s.name,
-        label: s.name + (s.connected ? '' : '（未连接）')
+        label: s.name + (s.connected ? '' : '（未连接）'),
+        scope: s.scope
       }))
       // 发布弹窗「游客可用 MCP 工具」的候选池：只留已启用的 server（未启用的后端发布校验也不认）；
       // 具体勾选项等 openPublish 拿到智能体自己的 MCP 配置后再收窄
