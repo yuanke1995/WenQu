@@ -1056,6 +1056,8 @@ async function opExec({ command, timeoutSeconds, userInitiated, turnId, sessionI
 // DSH workspace-changes 同款口径：轮前/轮后各给工作树拍一份 git 快照（私有 object store +
 // 私有 index，用户的仓库全程只读），轮末 diff-tree --numstat 得出每个文件的增删行数；
 // 快照覆盖不到的路径（非 git 目录、被 ignore 的文件）靠「写类调用改动前整文件捕获」兜底。
+// 列的是「这一轮窗口里工作区发生的改动」，不区分写入者（DSH 同样如此）：touched / execWindows
+// 只服务轮首的用户改动对账（detectDrift），不是改动卡的过滤条件。
 // 快照对象与捕获副本全部留在这台电脑的磁盘里（默认 ~/.wenqu/executor/turns，0700），
 // 重启执行器后仍能按 turnId 找回；回传给服务端的只有「相对路径 + 行数」，点开某个文件的差异时
 // 才由这里现算 hunk。例外：轮首用户改动对账（detectDrift）会主动带回一小段 diff（≤3 文件/200 行），
@@ -1495,7 +1497,7 @@ async function parseTurnState (dir) {
     scratch: dir,
     roots: Array.isArray(raw.roots) ? raw.roots : [],
     drift: new Set(Array.isArray(raw.drift) ? raw.drift : []),
-    // 助手这一轮自己动过的路径：轮末只报这些，别的时间窗内的外部改动不算它的产出
+    // 助手轮碰过的路径与命令窗口：只给轮首用户改动对账（detectDrift）做归因，改动卡不再用它过滤
     touched: new Set(Array.isArray(raw.touched) ? raw.touched : []),
     execWindows: Array.isArray(raw.execWindows)
       ? raw.execWindows.filter(w => Array.isArray(w) && w.length === 2).map(w => [Number(w[0]) || 0, Number(w[1]) || 0])
@@ -1719,7 +1721,7 @@ async function snapshotTree (repo) {
 
 /**
  * 命令也会改文件（构建产物、代码生成、git mv…）。命令执行的时间窗记进 state.execWindows：
- * 轮末归因时，落在这个窗口里的文件改动算这条命令改的（也就是助手改的）。
+ * 轮首用户改动对账时，落在这个窗口里的文件改动算助手轮改的，不记为「用户改动」。
  *
  * 不用给每条命令各拍一份 git 快照——命令一多，快照的开销和磁盘占用都不划算；
  * 这里靠「文件的最后修改时间落在命令窗口里」来判断归属，粒度够用且不花钱。
@@ -1729,7 +1731,7 @@ function markExecWindow (state, fromMs, toMs) {
   state.execWindows.push([fromMs, toMs])
 }
 
-/** 这条路径是不是助手这一轮自己动过的（改动卡只列这些）。 */
+/** 这条路径是不是这一轮助手轮动过的（只用于轮首的用户改动对账）。 */
 async function isTouched (state, abs) {
   const touched = state.touched
   if (touched && touched.size) {
@@ -1814,9 +1816,9 @@ async function snapshotPostCaptures (state) {
 const turnStarts = new Map()
 
 /**
- * 记下「助手这一轮自己动过的文件」（绝对路径；原样与规范化两种形式都存一份）。
- * 轮末只把这些文件算进改动卡：同一台电脑上并行干活的别的程序（IDE、别的任务）
- * 落在同一时间窗里的改动不算助手的产出。
+ * 记下「这一轮助手轮动过的文件」（绝对路径；原样与规范化两种形式都存一份）。
+ * 只给轮首的用户改动对账用：同一工作区里别的会话/定时任务的写入不能当成「用户改动」，
+ * 否则并发下每条新会话都会撞 E_CONFLICT。改动卡本身不按它过滤。
  */
 async function markTouched (turnId, absPath) {
   const id = String(turnId || '').trim()
@@ -2281,9 +2283,8 @@ async function opTurnEnd ({ turnId }) {
       for (const entry of parseNumstat(String(diff.stdout))) {
         const abs = path.resolve(repo.root, entry.path)
         if (!insideRoots(state, abs)) continue
-        // 只报助手这一轮自己动过的文件：同一台电脑上别的程序（IDE、并行任务）
-        // 在同一时间窗里的改动不算助手的产出。
-        if (!(await isTouched(state, abs))) continue
+        // 与 DSH 同口径：轮内工作树 diff 全量列出，不做写入者归属。同一时间窗里
+        // IDE、并行会话写的文件也会进来；who-wrote-it 只能靠 mtime 猜，猜错比不猜更糟。
         listed.set(abs, {
           display: displayOf(state, abs),
           added: entry.added, deleted: entry.deleted,
