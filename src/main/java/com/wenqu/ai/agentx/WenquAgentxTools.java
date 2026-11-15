@@ -526,9 +526,10 @@ public class WenquAgentxTools {
         // 不因提及越界；kbFilter 恒等设置，命中块的所属库必须落在点名集合里（关键词路本就
         // 不按库界走，不设这道后过滤会留一半口子，见 KnowledgeRetrievalTool 的同名过滤段）。
         if (!mentionedKbIds.isEmpty()) {
+            // tags 必须原样带过去：这里重建 KbScope 时漏掉它，@ 了任一知识库就把智能体级标签收窄悄悄关掉
             scope = new KnowledgeRetrievalTool.KbScope(
                     scope.kbIds() == null ? mentionedKbIds : scope.kbIds(),
-                    scope.docIds(), mentionedKbIds);
+                    scope.docIds(), mentionedKbIds, scope.tags());
         }
         AgentxTaint taint = new AgentxTaint();
         if (workspaceMemoryTainted) taint.mark("workspace-memory");

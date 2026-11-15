@@ -281,8 +281,13 @@
                             placeholder="选择允许检索的知识库" />
                   <div class="ap-hint">已选 {{ form.knowledgeBaseIds.length }} 个；不选则检索不到内容</div>
                   <a-select v-model:value="form.knowledgeTags" mode="tags" :max-tag-count="8" allow-clear
-                            style="width:100%;margin-top:8px" placeholder="检索标签收窄（可选）：如 部门A、合同——只检索打了这些标签的文档" />
-                  <div class="ap-hint">按标签收窄，留空不过滤</div>
+                            :options="kbTagOptions" style="width:100%;margin-top:8px"
+                            placeholder="检索标签收窄（可选）：如 部门A、合同——只检索打了这些标签的文档" />
+                  <div class="ap-hint">
+                    <template v-if="kbTagFetchFailed">标签候选加载失败，仍可手动输入</template>
+                    <template v-else-if="kbTagOptions.length">候选来自所选知识库已打标的文档；也可手动输入新标签</template>
+                    <template v-else>所选知识库还没有打过标签的文档（到文档管理页给文档打标）；也可手动输入</template>
+                  </div>
                 </div>
                 <div v-else-if="scopeMode === 'none'" class="ap-hint">
                   纯角色智能体：完全不查资料，仅凭系统提示词与对话上下文作答；对话中手动 @ 的文档仍会被参考。
@@ -910,6 +915,7 @@ import {
   LockOutlined, MoreOutlined, PlusOutlined, ImportOutlined
 } from '@ant-design/icons-vue'
 import { listAgents, createAgent, updateAgent, deleteAgent, batchDeleteAgents, setAgentDefault, listKnowledgeBases,
+         listDocuments,
          listAvailableSkills, getMcpStatus, listSubAgents, getToolCatalog, getPermissionPresets,
          getAgentConfigDefaults,
          getAgentPublish, publishAgent, revokeAgentPublish, createWorkflowFromAgent,
@@ -1237,6 +1243,33 @@ function buildQueryParams (rr) {
 }
 
 const form = ref(blankForm())
+
+// 「检索标签收窄」候选 = 所选知识库内文档已打的标签（打标在文档管理页做）。
+// 标签是多选下拉里唯一能选的数据源，不拉候选就是一个永远「暂无数据」的空框。
+// 走已有的 /document/list?kbId=（线上已在运行），候选不依赖后端发版。
+const kbTagOptions = ref([])
+const kbTagFetchFailed = ref(false)
+let kbTagSeq = 0
+async function loadKbTagOptions (ids) {
+  const seq = ++kbTagSeq
+  const picked = (ids || []).filter(Boolean)
+  if (!picked.length) { kbTagOptions.value = []; kbTagFetchFailed.value = false; return }
+  const rs = await Promise.all(picked.map(id => listDocuments(id).catch(() => null)))
+  if (seq !== kbTagSeq) return
+  const tags = new Set()
+  let failed = true
+  for (const r of rs) {
+    if (!r || !r.success || !Array.isArray(r.data)) continue
+    failed = false
+    for (const d of r.data) for (const t of String(d.tags || '').split(',')) if (t.trim()) tags.add(t.trim())
+  }
+  kbTagOptions.value = [...tags].sort().map(t => ({ value: t, label: t }))
+  kbTagFetchFailed.value = failed
+}
+watch(() => [scopeMode.value, (form.value.knowledgeBaseIds || []).join(',')], ([mode, csv]) => {
+  if (mode !== 'pick') { kbTagSeq++; kbTagOptions.value = []; return }
+  loadKbTagOptions(csv ? csv.split(',') : [])
+}, { immediate: true })
 
 /**
  * 内置「问渠」是全租户共享行：只能引用平台内置资源。
