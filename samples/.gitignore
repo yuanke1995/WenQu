@@ -1,0 +1,6 @@
+# 样例本地产物与凭据：一律不入库
+.env
+node_modules/
+.venv/
+__pycache__/
+*.log

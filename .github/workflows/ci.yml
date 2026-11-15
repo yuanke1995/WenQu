@@ -84,3 +84,25 @@ jobs:
       # v1 只增不删：删端点 / 改 scope / 改可达性一律失败；新增需先跑 --update 登记进快照与变更日志
       - name: v1 contract snapshot check
         run: node scripts/check-openapi-contract.mjs --check
+
+  samples:
+    name: Integration samples syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      # 方案缺口 2：代码片段容易随契约漂移。这里不装样例依赖、不起服务，
+      # 只挡「样例本身写坏了」——真链路靠 samples/*/README.md 里的本地实机步骤。
+      - name: Sample scripts parse
+        run: |
+          node --check samples/seed/seed.mjs
+          node --check samples/backend-node/server.mjs
+          node --check samples/frontend-proxy/server.mjs
+          python -m py_compile samples/backend-python/app.py

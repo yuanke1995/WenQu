@@ -1,0 +1,13 @@
+{
+  "name": "wenqu-sample-backend-node",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "@wenqu/sdk": "file:../../sdk/js",
+    "express": "^4.21.2"
+  }
+}

@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>问渠样例 · 浏览器零凭据代理</title>
+<style>
+  body { font: 13px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+         color: #2c2c2a; background: #f7f6f2; margin: 0; padding: 2rem 1.25rem; }
+  main { max-width: 680px; margin: 0 auto; }
+  h1 { font-size: 15px; font-weight: 500; margin: 0 0 6px; }
+  p.hint { color: #5f5e5a; margin: 0 0 1.5rem; }
+  .card { background: #fff; border: 0.5px solid rgba(0,0,0,.15); border-radius: 12px;
+          padding: 1rem 1.25rem; margin-bottom: 12px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  button { font: inherit; border: 0.5px solid rgba(0,0,0,.3); background: transparent;
+           border-radius: 8px; padding: 6px 14px; cursor: pointer; }
+  button:hover { border-color: #185fa5; color: #185fa5; }
+  input { font: inherit; border: 0.5px solid rgba(0,0,0,.3); border-radius: 8px;
+          padding: 6px 10px; flex: 1; min-width: 180px; }
+  pre { background: #f1efe8; border-radius: 8px; padding: 12px; white-space: pre-wrap;
+        word-break: break-all; font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+        max-height: 320px; overflow: auto; margin: 12px 0 0; }
+  .badge { display: inline-block; font-size: 12px; color: #0f6e56; background: #e1f5ee;
+           border-radius: 8px; padding: 2px 8px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>浏览器零凭据代理</h1>
+  <p class="hint">这个页面只带自家的 <code>X-Session-Token</code>；API Key 只存在于 3011 端口的服务端进程里。
+     打开开发者工具看请求，任何一处都不会出现 <code>sk-</code>。</p>
+
+  <div class="card">
+    <span class="badge">L1 · 自家后端持 Key</span>
+    <div class="row" style="margin-top:12px">
+      <button id="me">自检 /api/me</button>
+      <button id="kb">知识库 /api/kbs</button>
+      <button id="white">白名单外路径</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <input id="q" value="问渠" placeholder="检索关键词">
+      <button id="search">检索 /api/retrieval</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <input id="chat" value="只回复两个字：收到" placeholder="发给模型的问题">
+      <button id="stream">流式问答 /api/chat</button>
+    </div>
+  </div>
+
+  <pre id="out">等待操作…</pre>
+</main>
+<script>
+const out = document.getElementById('out');
+const SESSION = new URLSearchParams(location.search).get('session') || 'demo-session';
+const H = { 'X-Session-Token': SESSION };
+function show(s) { out.textContent = typeof s === 'string' ? s : JSON.stringify(s, null, 2); }
+async function json(path, init) {
+  const r = await fetch(path, { ...init, headers: { ...H, ...(init && init.headers) } });
+  const t = await r.text();
+  try { return { status: r.status, body: JSON.parse(t) }; }
+  catch { return { status: r.status, body: t.slice(0, 500) }; }
+}
+document.getElementById('me').onclick = async () => show(await json('/api/me'));
+document.getElementById('kb').onclick = async () => show(await json('/api/kbs'));
+document.getElementById('white').onclick = async () => show(await json('/api/agent/list'));
+document.getElementById('search').onclick = async () => show(await json('/api/retrieval', {
+  method: 'POST', headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ query: document.getElementById('q').value, topK: 3 })
+}));
+document.getElementById('stream').onclick = async () => {
+  show('连接中…');
+  const r = await fetch('/api/chat', {
+    method: 'POST',
+    headers: { ...H, 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+    body: JSON.stringify({ model: '', messages: [{ role: 'user', content: document.getElementById('chat').value }], stream: true })
+  });
+  if (!r.ok || !r.body) return show({ status: r.status, body: await r.text() });
+  const reader = r.body.getReader(), dec = new TextDecoder();
+  let buf = '', text = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    const parts = buf.split('\n\n'); buf = parts.pop();
+    for (const p of parts) for (const line of p.split('\n')) {
+      if (!line.startsWith('data:')) continue;
+      const d = line.slice(5).trim();
+      if (d === '[DONE]') continue;
+      try { const j = JSON.parse(d); const t = j.choices?.[0]?.delta?.content; if (t) text += t; }
+      catch { /* 非 JSON 帧忽略 */ }
+    }
+    show(text || '(暂无正文)');
+  }
+};
+</script>
+</body>
+</html>
