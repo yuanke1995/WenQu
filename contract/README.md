@@ -54,6 +54,21 @@ node scripts/check-openapi-contract.mjs --update   # 改了契约后跑：更新
   **「为什么改」由人工补**，脚本不编。
 - CI 的 `contract` job 跑 `--check`；契约检查失败时不要改断言，先按上面流程更新快照。
 
+## 文档站（B2，2026-11-15）
+
+对外文档只有一份产物，两处展示：独立部署的文档站 + 应用内「对接文档」页（iframe 同一份 HTML）。
+这一页不再手写正文——以前手写的那份是「第二份真源」，改一处必然漂移。
+
+- 构建：`node scripts/build-docs.mjs`（`--check` 只校验，`--out=` 换目录）；零第三方依赖。
+- 真源三处，构建期合并：`contract/openapi.v1.json`（端点表，自动）+ `docs-site/guides/*.md`（正文，人写）
+  + `samples/*` 与 `contract/CHANGELOG.md`（样例与变更记录）。
+- 产物 `web/public/docs/` **提交入库**：应用内页面靠它工作，不能要求每个部署都先跑一次文档构建。
+- CI 的 `docs` job 跑 `--check`：改了真源却没重建就失败。**不要改断言**，重新构建并提交。
+- 正文里的服务地址一律写 `__BASE__`，由 `docs.js` 在浏览器按 `?base=` → `localStorage` →
+  `location.origin + '/ai'` 三级回落替换；同一份产物因此在本地、同域线上、独立站三种场景都成立。
+
+**口径不变**：三层承诺分级、只增不删、SDK 发包排最后，三处（文档站 / SDK README / 应用内页）引用同一份措辞。
+
 ## 待拍板（方案 09 节）
 
 | 编号 | 问题 | 当前建议 |

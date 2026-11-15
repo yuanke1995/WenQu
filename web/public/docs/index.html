@@ -1,0 +1,1075 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>问渠 · 对外集成文档 v1</title>
+<meta name="description" content="问渠开放 API 的三层接入、认证与 scope、run 事件契约、webhook 验签、断线续传与错误码。">
+<link rel="stylesheet" href="assets/docs.css">
+</head>
+<body>
+<a class="skip" href="#doc-article">跳到正文</a>
+<div class="layout">
+  <aside class="side">
+    <div class="side-head">
+      <span class="brand">问渠 · 开发者</span>
+      <span class="badge">v1 · 只增不删</span>
+    </div>
+    <div class="search-wrap">
+      <input id="doc-search" type="search" placeholder="搜索文档（⌘K）" autocomplete="off" aria-label="搜索文档">
+      <div id="doc-search-results" class="search-results" hidden></div>
+    </div>
+    <nav id="doc-nav">
+<div class="nav-group"><div class="nav-group-t">开始</div>
+      <a class="nav-page" href="#quickstart">快速开始</a>
+      <div class="nav-subs"><a class="nav-sub" href="#三步走到第一个成功响应">三步走到第一个成功响应</a><a class="nav-sub" href="#1-自检-这把-key-能干什么">1. 自检：这把 Key 能干什么</a><a class="nav-sub" href="#2-第一条问答-openai-兼容">2. 第一条问答（OpenAI 兼容）</a><a class="nav-sub" href="#3-想清楚要去哪一层">3. 想清楚要去哪一层</a><a class="nav-sub" href="#首跑失败对照">首跑失败对照</a></div>
+      <a class="nav-page" href="#choose">接入选型</a>
+      <div class="nav-subs"><a class="nav-sub" href="#三种形态-一种凭据边界">三种形态，一种凭据边界</a><a class="nav-sub" href="#选型问四句">选型问四句</a><a class="nav-sub" href="#承诺分级">承诺分级</a><a class="nav-sub" href="#一张图看链路位置">一张图看链路位置</a><a class="nav-sub" href="#每层的最小可跑样例">每层的最小可跑样例</a></div>
+      <a class="nav-page" href="#auth">认证与安全</a>
+      <div class="nav-subs"><a class="nav-sub" href="#地址拼法">地址拼法</a><a class="nav-sub" href="#认证头">认证头</a><a class="nav-sub" href="#两类响应体">两类响应体</a><a class="nav-sub" href="#scope-key-的能力范围">scope：Key 的能力范围</a><a class="nav-sub" href="#key-碰不到什么">Key 碰不到什么</a><a class="nav-sub" href="#契约注册表-v1-只认登记过的端点">契约注册表：v1 只认登记过的端点</a><a class="nav-sub" href="#集成方守则">集成方守则</a></div>
+      </div>
+      <div class="nav-group"><div class="nav-group-t">参考</div>
+      <a class="nav-page" href="#sdk">SDK（JS / Python）</a>
+      <div class="nav-subs"><a class="nav-sub" href="#现状-仓库内分发-尚未发包">现状：仓库内分发，尚未发包</a><a class="nav-sub" href="#建客户端">建客户端</a><a class="nav-sub" href="#命名空间">命名空间</a><a class="nav-sub" href="#run-原语一行开跑">run 原语一行开跑</a><a class="nav-sub" href="#自动续传做了什么">自动续传做了什么</a><a class="nav-sub" href="#版本头">版本头</a><a class="nav-sub" href="#错误类型">错误类型</a></div>
+      <a class="nav-page" href="#run-events">事件契约（run 原语）</a>
+      <div class="nav-subs"><a class="nav-sub" href="#为什么要-run">为什么要 run</a><a class="nav-sub" href="#七个端点">七个端点</a><a class="nav-sub" href="#建一次-run">建一次 run</a><a class="nav-sub" href="#事件表">事件表</a><a class="nav-sub" href="#审批-回同一条-run">审批：回同一条 run</a><a class="nav-sub" href="#续传-last-event-id-seq">续传： Last-Event-ID + seq</a><a class="nav-sub" href="#终态查询">终态查询</a><a class="nav-sub" href="#与-chat-completions-的边界">与 chat/completions 的边界</a></div>
+      <a class="nav-page" href="#api-reference">API 参考（自动生成）</a>
+      </div>
+      <div class="nav-group"><div class="nav-group-t">指南</div>
+      <a class="nav-page" href="#webhook">webhook 验签与幂等</a>
+      <div class="nav-subs"><a class="nav-sub" href="#什么时候发">什么时候发</a><a class="nav-sub" href="#载荷">载荷</a><a class="nav-sub" href="#请求头与验签">请求头与验签</a><a class="nav-sub" href="#重试与幂等">重试与幂等</a><a class="nav-sub" href="#回调地址的现实约束">回调地址的现实约束</a><a class="nav-sub" href="#与事件流的关系">与事件流的关系</a></div>
+      <a class="nav-page" href="#resume">断线续传</a>
+      <div class="nav-subs"><a class="nav-sub" href="#契约给了什么">契约给了什么</a><a class="nav-sub" href="#手写客户端要点">手写客户端要点</a><a class="nav-sub" href="#sdk-里已经做了">SDK 里已经做了</a><a class="nav-sub" href="#什么时候必须自己处理">什么时候必须自己处理</a></div>
+      <a class="nav-page" href="#errors">错误码与限频</a>
+      <div class="nav-subs"><a class="nav-sub" href="#错误体">错误体</a><a class="nav-sub" href="#状态码">状态码</a><a class="nav-sub" href="#run-链路的专用-code">run 链路的专用 code</a><a class="nav-sub" href="#缺-scope-的文案到底写了什么">缺 scope 的文案到底写了什么</a><a class="nav-sub" href="#限频">限频</a><a class="nav-sub" href="#排查顺序">排查顺序</a></div>
+      <a class="nav-page" href="#capabilities">能力清单（问答 / 检索 / 工作流 / 嵌入 / MCP）</a>
+      <div class="nav-subs"><a class="nav-sub" href="#端点全景">端点全景</a><a class="nav-sub" href="#cap-chat">问答：原生 SSE 链路</a><a class="nav-sub" href="#cap-retrieval">检索：把问渠当搜索引擎</a><a class="nav-sub" href="#cap-kb">知识库：读写分离</a><a class="nav-sub" href="#cap-embedding">向量：OpenAI 兼容</a><a class="nav-sub" href="#cap-workflow">工作流：当 RPC 调</a><a class="nav-sub" href="#cap-embed">前端嵌入：分享 token，不碰 Key</a><a class="nav-sub" href="#cap-mcp">MCP 接入</a></div>
+      </div>
+      <div class="nav-group"><div class="nav-group-t">资源</div>
+      <a class="nav-page" href="#samples-changelog">示例与变更日志</a>
+      <div class="nav-subs"><a class="nav-sub" href="#2026-11-13">2026-11-13</a><a class="nav-sub" href="#2026-11-15">2026-11-15</a><a class="nav-sub" href="#2026-11-15-2">2026-11-15</a></div>
+      </div>
+    </nav>
+    <div class="side-foot">
+      构建自 <code>contract/openapi.v1.json</code> + <code>docs-site/guides/*.md</code><br>
+      未发布的东西不写进承诺：SDK 发包、v2 都还没有。
+    </div>
+  </aside>
+  <main>
+    <div class="topbar">
+      <button class="side-toggle" type="button" aria-label="目录">≡</button>
+      <span class="base-pill">地址 <code data-base-slot>…</code></span>
+      <select id="doc-version" aria-label="契约版本">
+        <option value="v1" selected>v1</option>
+        <option value="v2" disabled>v2（未发布）</option>
+      </select>
+      <span class="topbar-spacer"></span>
+      <a class="topbar-link" href="#errors">错误码</a>
+      <a class="topbar-link" href="#api-reference">API 参考</a>
+    </div>
+    <article id="doc-article">
+<section class="page" id="quickstart">
+  <div class="page-kicker">开始</div>
+  <h1>快速开始</h1>
+  <p class="page-lead">签一把 Key、跑一次自检、拿到第一个成功响应。三步，五分钟。</p>
+<h2 id="三步走到第一个成功响应"><a class="anchor" href="#三步走到第一个成功响应" aria-hidden="true">#</a>三步走到第一个成功响应</h2>
+<ol>
+<li><strong>签 Key</strong> —— 问渠「个人设置 → API 密钥」新建。选用途模板（问答 / 检索 / 工作流 / 全量）会自动预选 scope； 默认集里<strong>没有</strong> <code>runs.read</code>、<code>runs.write</code>、<code>kb.write</code>，要跑 run 原语必须显式勾选。</li>
+<li><strong>自检</strong> —— 拿 Key 打一次 <code>GET /v1/me</code>：能力范围、发问身份、限流、近 30 天用量一次看清。</li>
+<li><strong>首响</strong> —— 复制下面的代码，只改 <code>baseUrl</code> 与 Key。</li>
+</ol>
+<blockquote><p>Key 恒以<strong>签发人本人</strong>身份发问，不存在机器号，也不能改绑别人。给哪个系统对接，就用那个系统归属的账号签发。</p></blockquote>
+<h2 id="1-自检-这把-key-能干什么"><a class="anchor" href="#1-自检-这把-key-能干什么" aria-hidden="true">#</a>1. 自检：这把 Key 能干什么</h2>
+<div class="code">
+  <div class="code-top"><span class="code-lang">bash</span><span class="spacer"></span><button class="copy" type="button">复制</button></div>
+  <pre><code>curl __BASE__/api/ai/v1/me \
+  -H &quot;X-Api-Key: sk-你的Key&quot;</code></pre>
+</div>
+<div class="code">
+  <div class="code-top"><span class="code-lang">json</span><span class="spacer"></span><button class="copy" type="button">复制</button></div>
+  <pre><code>{
+  &quot;key&quot;: &quot;客服系统对接&quot;,
+  &quot;keyPrefix&quot;: &quot;sk-3f8a…&quot;,
+  &quot;scopes&quot;: [&quot;chat&quot;, &quot;kb.read&quot;],
+  &quot;actAs&quot;: &quot;u_10086&quot;,
+  &quot;actAsBinding&quot;: &quot;issuer&quot;,
+  &quot;limits&quot;: { &quot;enabled&quot;: true, &quot;windowSeconds&quot;: 60, &quot;chatPerMinute&quot;: 10, &quot;embeddingPerMinute&quot;: 60 },
+  &quot;usage30d&quot;: { &quot;available&quot;: true, &quot;calls&quot;: 128, &quot;tokens&quot;: 96240 },
+  &quot;expiresAt&quot;: null,
+  &quot;contract&quot;: &quot;/api/ai/v1/openapi.json&quot;
+}</code></pre>
+</div>
+<ul>
+<li><code>actAs</code> 恒为签发人（<code>actAsBinding=issuer</code>）；平台没有「代表账号」这一说。</li>
+<li><code>limits</code> 是平台按「桶 + 租户 + 账号/IP」分桶的<strong>当前配置</strong>，不是这把 Key 的独占配额。</li>
+<li><code>usage30d.available=false</code> 表示台账暂不可查，<strong>不等于</strong> 0 次调用。</li>
+</ul>
+<h2 id="2-第一条问答-openai-兼容"><a class="anchor" href="#2-第一条问答-openai-兼容" aria-hidden="true">#</a>2. 第一条问答（OpenAI 兼容）</h2>
+<div class="code">
+  <div class="code-top"><span class="code-lang">bash</span><span class="spacer"></span><button class="copy" type="button">复制</button></div>
+  <pre><code>curl -X POST __BASE__/api/ai/v1/chat/completions \
+  -H &quot;X-Api-Key: sk-你的Key&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d '{&quot;model&quot;:&quot;&lt;智能体id&gt;&quot;,&quot;messages&quot;:[{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;你好&quot;}]}'</code></pre>
+</div>
+<div class="code">
+  <div class="code-top"><span class="code-lang">javascript</span><span class="spacer"></span><button class="copy" type="button">复制</button></div>
+  <pre><code>// SDK 尚未发布到公共 registry（B1 排在方案最后）。现在从仓库装：
+//   npm i file:/path/to/WenQu/sdk/js
+import { WenquClient } from &quot;@wenqu/sdk&quot;;
+
+const client = new WenquClient({
+  baseUrl: &quot;__BASE__&quot;,   // 带 context-path /ai，SDK 不自动补
+  apiKey: process.env.WENQU_KEY,
+});
+
+const r = await client.chat.completions.create({
+  model: &quot;&lt;智能体id&gt;&quot;,
+  messages: [{ role: &quot;user&quot;, content: &quot;你好&quot; }],
+});
+console.log(r.choices[0].message.content);</code></pre>
+</div>
+<div class="code">
+  <div class="code-top"><span class="code-lang">python</span><span class="spacer"></span><button class="copy" type="button">复制</button></div>
+  <pre><code># pip install -e path/to/WenQu/sdk/python
+import os
+from wenqu import WenquClient
+
+c = WenquClient(base_url=&quot;__BASE__&quot;, api_key=os.environ[&quot;WENQU_KEY&quot;])
+r = c.chat.completions.create(
+    model=&quot;&lt;智能体id&gt;&quot;,
+    messages=[{&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;你好&quot;}],
+)
+print(r.choices[0].message.content)</code></pre>
+</div>
+<p><code>model</code> 填<strong>问渠智能体 id</strong>（智能体页可见）。多轮靠重发完整 <code>messages</code>——这条链路是无状态的。</p>
+<blockquote><p><code>chat/completions</code> 是<strong>收集型单块下发</strong>（stream 也只是把结果分块推回，不是逐 token 真增量）， 长任务、审批、产物、插话都不在这条链路上。要这些能力走 <a href="#run-events">run 原语</a>。</p></blockquote>
+<h2 id="3-想清楚要去哪一层"><a class="anchor" href="#3-想清楚要去哪一层" aria-hidden="true">#</a>3. 想清楚要去哪一层</h2>
+<div class="tbl-wrap"><table>
+<thead><tr><th>你想要的</th><th>去哪</th></tr></thead>
+<tbody>
+<tr><td>只在自己页面放一个问答框</td><td><a href="#cap-embed">L0 零代码嵌入</a></td></tr>
+<tr><td>自家前端要审批卡 / 产物 / 计划过程</td><td><a href="#choose">L1 前端深度集成</a> + <a href="#run-events">run 原语</a></td></tr>
+<tr><td>业务后端调用、结果要回调</td><td><a href="#choose">L2 后端集成</a> + <a href="#webhook">webhook</a></td></tr>
+<tr><td>在 Claude / Cursor 里直接用问渠</td><td><a href="#cap-mcp">MCP 接入</a></td></tr>
+<tr><td>把问渠当检索引擎</td><td><a href="#cap-kb">知识库 API</a></td></tr>
+</tbody></table></div>
+<h2 id="首跑失败对照"><a class="anchor" href="#首跑失败对照" aria-hidden="true">#</a>首跑失败对照</h2>
+<div class="tbl-wrap"><table>
+<thead><tr><th>现象</th><th>原因</th><th>怎么办</th></tr></thead>
+<tbody>
+<tr><td>401 <code>authentication_error</code></td><td>没带或带错 <code>X-Api-Key</code></td><td>头名是 <code>X-Api-Key</code>；也接受 <code>Authorization: Bearer sk-…</code></td></tr>
+<tr><td>403 <code>permission_error</code></td><td>缺 scope</td><td>报错原文会点名缺哪一项、去「个人设置 → API 密钥」哪一列勾</td></tr>
+<tr><td>404 <code>not_found_error</code></td><td>智能体 id 不存在，或不在签发人可见范围</td><td>用 <code>GET /api/ai/agent/available</code> 拉可用清单</td></tr>
+<tr><td>429 <code>rate_limit_error</code></td><td>限频（问答默认 10 次/分钟）</td><td>退避重试，或让管理员调 <code>ratelimit.chatPerMinute</code></td></tr>
+<tr><td>连接被拒 / 404 页面</td><td><code>baseUrl</code> 少了 <code>/ai</code></td><td>完整地址 = 服务地址 + <code>/ai</code> + 接口路径</td></tr>
+</tbody></table></div>
+</section>
+<section class="page" id="choose">
+  <div class="page-kicker">开始</div>
+  <h1>接入选型</h1>
+  <p class="page-lead">三层不是三条技术路线，差别只有一句话——谁持凭据、承诺到什么程度。</p>
+<h2 id="三种形态-一种凭据边界"><a class="anchor" href="#三种形态-一种凭据边界" aria-hidden="true">#</a>三种形态，一种凭据边界</h2>
+<div class="tbl-wrap"><table>
+<thead><tr><th>层</th><th>谁持凭据</th><th>形态</th><th>承诺</th><th>什么时候用</th></tr></thead>
+<tbody>
+<tr><td><strong>L0</strong> 零代码嵌入</td><td>分享 token（浏览器不持 Key）</td><td><code>wenqu-embed.js</code> / iframe</td><td><strong>正式</strong></td><td>官网 / 帮助中心 / 客服台放一个问答入口</td></tr>
+<tr><td><strong>L1</strong> 前端深度集成</td><td>业务后端代理，浏览器零凭据</td><td><code>client.native</code> 事件协议（A 期后走 run 事件）</td><td><strong>实验性</strong></td><td>自家前端要展示审批卡、产物、插话、计划</td></tr>
+<tr><td><strong>L2</strong> 后端集成</td><td>API Key / 服务账号（只在服务端）</td><td>v1 REST + webhook + MCP</td><td><strong>正式</strong></td><td>业务后端、自动化流程、批处理</td></tr>
+</tbody></table></div>
+<p><strong>凭据边界一句话</strong>：API Key 只在服务端，浏览器零凭据。L1 + L2 可以共用同一个业务后端，Key 仍然不进浏览器。</p>
+<h2 id="选型问四句"><a class="anchor" href="#选型问四句" aria-hidden="true">#</a>选型问四句</h2>
+<ol>
+<li>只想在自己页面上放一个问答入口？ → <strong>L0</strong>（分享 token，零代码）</li>
+<li>要嵌进自家前端，而且要展示审批、产物、计划过程？ → <strong>L1</strong>（业务后端代理，浏览器零凭据）</li>
+<li>由业务系统后端调用，或要把结果通过回调送回业务？ → <strong>L2</strong>（API Key + webhook）</li>
+<li>既要前端体验又要后端事件？ → <strong>L1 + L2</strong>，两者共用同一个后端，Key 仍然只在服务端。</li>
+</ol>
+<h2 id="承诺分级"><a class="anchor" href="#承诺分级" aria-hidden="true">#</a>承诺分级</h2>
+<ul>
+<li><strong>正式</strong> = 只增不删 + 变更日志 + 至少两个 minor 的废弃期。删端点、改 HTTP 方法、改 scope、 改 <code>keyAccessible</code> 都算破坏性变更，CI 会挡下来。</li>
+<li><strong>实验性</strong> = 字段可改，接口变更提前在本站公告。L1 先挂这个标签，run 契约冻结并稳定两周后转正。</li>
+</ul>
+<p>为什么只正式承诺两层：三层全部正式会把维护面直接翻三倍，收益却在「少数要过程能力的前端」身上。</p>
+<blockquote><p>别把两种承诺混用：<code>chat/completions</code> 是<strong>无状态、文本、收集型单块下发</strong>的兼容面； 逐 token 真增量、长任务、人在回路<strong>只在 run 原语上承诺</strong>。</p></blockquote>
+<h2 id="一张图看链路位置"><a class="anchor" href="#一张图看链路位置" aria-hidden="true">#</a>一张图看链路位置</h2>
+<div class="code">
+  <div class="code-top"><span class="code-lang">text</span><span class="spacer"></span><button class="copy" type="button">复制</button></div>
+  <pre><code>宿主页面（官网 / 门户 / 客服台）
+  │  L0 嵌入  ·  L1 native
+  ▼
+业务后端（可选代理层，持 Key、注入登录态）
+  │  L1 / L2
+  ▼
+问渠网关：API Key / 服务账号 / 分享 token
+  · v1 注册表：未登记即拒绝 + scope
+  · 限流桶 + 用量归因
+  · v1 错误体统一 OpenAI 形状
+  ▼
+智能体引擎：技能 / MCP / HTTP / 工作流 / 知识库 / 审批 / 产物</code></pre>
+</div>
+<h2 id="每层的最小可跑样例"><a class="anchor" href="#每层的最小可跑样例" aria-hidden="true">#</a>每层的最小可跑样例</h2>
+<div class="tbl-wrap"><table>
+<thead><tr><th>层</th><th>样例</th><th>跑起来看什么</th></tr></thead>
+<tbody>
+<tr><td>L0</td><td><code>samples/widget-static</code></td><td>一个 HTML 文件挂出浮窗，凭据只有分享 token</td></tr>
+<tr><td>L1</td><td><code>samples/frontend-proxy</code></td><td>浏览器只与自家后端说话，转发 SSE，Key 不出服务端</td></tr>
+<tr><td>L2</td><td><code>samples/backend-node</code></td><td>建 run、订阅事件、验签收 <code>run.finished</code>、按 runId 幂等</td></tr>
+<tr><td>L2</td><td><code>samples/backend-python</code></td><td>混合检索 + 工作流触发</td></tr>
+</tbody></table></div>
+</section>
+<section class="page" id="auth">
+  <div class="page-kicker">开始</div>
+  <h1>认证与安全</h1>
+  <p class="page-lead">一把 Key 代表一个人。它能碰的面是固定的白名单，不是「这个账号在界面上能点什么」。</p>
+<h2 id="地址拼法"><a class="anchor" href="#地址拼法" aria-hidden="true">#</a>地址拼法</h2>
+<p>后端 context-path 是 <code>/ai</code>，完整地址 = <strong>服务地址 + <code>/ai</code> + 接口路径</strong>：</p>
+<div class="code">
+  <div class="code-top"><span class="code-lang">bash</span><span class="spacer"></span><button class="copy" type="button">复制</button></div>
+  <pre><code># 本机实例
+__BASE__/api/ai/v1/me
+
+# 线上（同一台机器反代到 /ai）同形：
+https://your-host/ai/api/ai/v1/me</code></pre>
+</div>
+<h2 id="认证头"><a class="anchor" href="#认证头" aria-hidden="true">#</a>认证头</h2>
+<div class="code">
+  <div class="code-top"><span class="code-lang">bash</span><span class="spacer"></span><button class="copy" type="button">复制</button></div>
+  <pre><code>X-Api-Key: sk-xxxxxxxx</code></pre>
+</div>
+<ul>
+<li><code>Authorization: Bearer sk-…</code> 等价（给 OpenAI SDK 用，<code>Authorization</code> 里必须是 <code>sk-</code> 开头）。</li>
+<li>MCP 入口例外：它只认 <code>Authorization: Bearer</code>。</li>
+<li>分享 token 是另一条通道（L0 / 公开链接），不与 Key 混用。</li>
+</ul>
+<h2 id="两类响应体"><a class="anchor" href="#两类响应体" aria-hidden="true">#</a>两类响应体</h2>
+<p><strong>v1 命名空间</strong>（<code>/api/ai/v1/**</code>）：成功是裸对象或业务形状，错误统一 OpenAI 形状：</p>
+<div class="code">
+  <div class="code-top"><span class="code-lang">json</span><span class="spacer"></span><button class="copy" type="button">复制</button></div>
+  <pre><code>{
+  &quot;error&quot;: {
+    &quot;message&quot;: &quot;该 API Key 未开通「runs.write」能力；请在问渠「个人设置 → API 密钥」编辑该 Key 的权限范围后重试&quot;,
+    &quot;type&quot;: &quot;permission_error&quot;,
+    &quot;code&quot;: &quot;permission_error&quot;,
+    &quot;request_id&quot;: &quot;3f8a1c2e…&quot;
+  }
+}</code></pre>
+</div>
+<p><strong>非 v1 的既有接口</strong>（如原生问答 <code>/api/ai/chat</code>）：走平台包络 <code>{&quot;success&quot;:true,&quot;data&quot;:…}</code> / <code>{&quot;success&quot;:false,&quot;msg&quot;:&quot;原因&quot;}</code>。两套形状的边界就在命名空间上，SDK 已各自抹平，手写 curl 时别按同一种解。</p>
+<h2 id="scope-key-的能力范围"><a class="anchor" href="#scope-key-的能力范围" aria-hidden="true">#</a>scope：Key 的能力范围</h2>
+<p>每把 Key 一份 scope，签发时勾选、之后可在「个人设置 → API 密钥」编辑。只约束 Key 通道（登录态不受影响）， 收紧<strong>立即生效</strong>。</p>
+<div class="tbl-wrap"><table>
+<thead><tr><th>scope</th><th>默认开通</th><th>覆盖能力</th></tr></thead>
+<tbody>
+<tr><td><code>chat</code></td><td>是</td><td>问答（<code>/v1/chat/completions</code>、<code>/v1/responses</code>）</td></tr>
+<tr><td><code>embedding</code></td><td>是</td><td>向量化（<code>/v1/embeddings</code>）</td></tr>
+<tr><td><code>kb.read</code></td><td>是</td><td>知识检索与知识库只读（<code>/v1/retrieval</code>、<code>/v1/kbs</code> 读侧）</td></tr>
+<tr><td><code>workflow.run</code></td><td>是</td><td>触发已发布工作流（<code>/v1/workflows</code>）</td></tr>
+<tr><td><code>kb.write</code></td><td><strong>否</strong></td><td>建库与上传文档（<code>/v1/kbs</code> 写侧）</td></tr>
+<tr><td><code>runs.read</code></td><td><strong>否</strong></td><td>查 run 状态 / 事件流 / 产物</td></tr>
+<tr><td><code>runs.write</code></td><td><strong>否</strong></td><td>建 run、插话、停止、提交审批</td></tr>
+</tbody></table></div>
+<p><code>kb.write</code>、<code>runs.read</code>、<code>runs.write</code> <strong>不进默认集</strong>：存量 Key 不应因为平台升级就自动多出写库或跑长任务的权限。 缺哪个就 403 点名哪个，报错原文里写着去哪一列勾。</p>
+<h2 id="key-碰不到什么"><a class="anchor" href="#key-碰不到什么" aria-hidden="true">#</a>Key 碰不到什么</h2>
+<p>Key 只开放<strong>问答链路</strong>。以下是硬性拒绝（HTTP 403，当场给出原因，不会静默落到别的鉴权层）：</p>
+<div class="tbl-wrap"><table>
+<thead><tr><th>端点前缀</th><th>为什么不给</th></tr></thead>
+<tbody>
+<tr><td><code>/api/ai/api-key/**</code></td><td>Key 管理——否则泄露的 Key 能给自己签发续命、改绑定换身份</td></tr>
+<tr><td><code>/api/ai/user/**</code></td><td>改密 / 资料 / 偏好 / 个人设置——贴在配置文件里的密钥不该拥有账号自服务能力</td></tr>
+<tr><td><code>/api/ai/auth/**</code></td><td>登录鉴权（唯一例外 <code>GET /auth/me</code>，只读身份自检）</td></tr>
+<tr><td><code>/api/ai/skill/**</code>、<code>/api/ai/mcp/**</code>、<code>/api/ai/market/**</code>、<code>/api/ai/scheduled/**</code>、<code>/api/ai/credential/**</code></td><td>能力配置面：技能 / MCP / 市场 / 定时任务 / 工作流凭据</td></tr>
+<tr><td><code>/api/ai/session-shares/**</code>、<code>DELETE /api/ai/session(s)…</code></td><td>分享管理、删历史（保留审计线索）</td></tr>
+<tr><td><code>/api/ai/agent/{id}/publish · /share</code></td><td>智能体发布与分享配置</td></tr>
+</tbody></table></div>
+<p>白名单之外的一切端点对 Key 一律 403——即使签发人在界面上是管理员。<strong>Key 的 API 面恒为问答白名单，不受角色影响。</strong></p>
+<h2 id="契约注册表-v1-只认登记过的端点"><a class="anchor" href="#契约注册表-v1-只认登记过的端点" aria-hidden="true">#</a>契约注册表：v1 只认登记过的端点</h2>
+<p><code>/api/ai/v1/**</code> 的唯一真源是后端的开放契约注册表（<code>@OpenApi</code> 注解 + Spring 路由，启动期扫描）：</p>
+<ul>
+<li>v1 命名空间里<strong>出现未标注的路由直接启动失败</strong>——新增端点必须显式声明它对集成方的可见性；</li>
+<li>未登记的 v1 路径对 Key 一律拒绝，错误文案会指向 <code>GET /api/ai/v1/openapi.json</code>；</li>
+<li>契约变更走 CI：删除端点 / 改 scope / 改可达性一律失败，新增必须先跑 <code>--update</code> 登记。</li>
+</ul>
+<h2 id="集成方守则"><a class="anchor" href="#集成方守则" aria-hidden="true">#</a>集成方守则</h2>
+<ul>
+<li>一把 Key 一个用途，别多系统共用；不用了先「停用」而不是删除——停用保留审计线索，删除记录即消失。</li>
+<li>Key 等于签发人的问答身份与额度，按敏感凭据保管（配置文件 / 密钥管理服务），不进前端代码与日志。</li>
+<li>明文由服务端加密保管（列表点「眼睛」可回显）；怀疑泄露就停用重签。</li>
+<li>轮询注意限频，见<a href="#errors">错误码与限频</a>。</li>
+</ul>
+</section>
+<section class="page" id="sdk">
+  <div class="page-kicker">参考</div>
+  <h1>SDK（JS / Python）</h1>
+  <p class="page-lead">双端 SDK 抹平「两套响应形状」与「SSE 续传」，分包只抹一层——它不替你决定用哪条链路。</p>
+<h2 id="现状-仓库内分发-尚未发包"><a class="anchor" href="#现状-仓库内分发-尚未发包" aria-hidden="true">#</a>现状：仓库内分发，尚未发包</h2>
+<p>SDK 版本 0.2.0，<strong>未发布到 npm / PyPI</strong>（发包排在方案最后，且契约冻结前不发）。现在两种用法：</p>
+<div class="code">
+  <div class="code-top"><span class="code-lang">bash</span><span class="spacer"></span><button class="copy" type="button">复制</button></div>
+  <pre><code># JS：从仓库装（先构建，dist/ 不入库）
+cd sdk/js &amp;&amp; npm ci &amp;&amp; npm run build
+npm i file:/path/to/WenQu/sdk/js
+
+# Python
+pip install -e /path/to/WenQu/sdk/python</code></pre>
+</div>
+<p>发包后把 <code>file:</code> 换成 <code>@wenqu/sdk</code>、<code>-e</code> 换成 <code>wenqu-ai</code>，其余代码不动。</p>
+<h2 id="建客户端"><a class="anchor" href="#建客户端" aria-hidden="true">#</a>建客户端</h2>
+<div class="code">
+  <div class="code-top"><span class="code-lang">javascript</span><span class="spacer"></span><button class="copy" type="button">复制</button></div>
+  <pre><code>import { WenquClient } from &quot;@wenqu/sdk&quot;;
+
+const client = new WenquClient({
+  baseUrl: &quot;__BASE__&quot;,       // 必带 /ai；SDK 不自动补
+  apiKey: process.env.WENQU_KEY,
+  headers: { &quot;X-Trace-Id&quot;: &quot;your-own&quot; },   // 可选：透传自有链路头
+});</code></pre>
+</div>
+<div class="code">
+  <div class="code-top"><span class="code-lang">python</span><span class="spacer"></span><button class="copy" type="button">复制</button></div>
+  <pre><code>from wenqu import WenquClient
+
+client = WenquClient(base_url=&quot;__BASE__&quot;, api_key=os.environ[&quot;WENQU_KEY&quot;])</code></pre>
+</div>
+<p><code>apiKey</code> 可省略——只走 <code>client.native</code> 且经自有后端代理时，凭据在代理那一侧，浏览器不持有 Key。</p>
+<h2 id="命名空间"><a class="anchor" href="#命名空间" aria-hidden="true">#</a>命名空间</h2>
+<div class="tbl-wrap"><table>
+<thead><tr><th>命名空间</th><th>覆盖</th></tr></thead>
+<tbody>
+<tr><td><code>chat</code></td><td><code>/v1/chat/completions</code>（OpenAI 兼容，收集型）</td></tr>
+<tr><td><code>responses</code></td><td><code>/v1/responses</code>（OpenAI Responses 形状）</td></tr>
+<tr><td><code>embeddings</code> / <code>models</code></td><td>向量化 / 可用向量模型</td></tr>
+<tr><td><code>retrieval</code></td><td><code>/v1/retrieval</code> 混合检索</td></tr>
+<tr><td><code>kbs</code></td><td>知识库读写（写需 <code>kb.write</code>）</td></tr>
+<tr><td><code>workflows</code></td><td>触发 / 补查工作流</td></tr>
+<tr><td><code>runs</code></td><td><strong>run 原语</strong>：建 run、事件流、审批、插话、停止、产物</td></tr>
+<tr><td><code>native</code></td><td>前端事件协议（L1，实验性）</td></tr>
+</tbody></table></div>
+<h2 id="run-原语一行开跑"><a class="anchor" href="#run-原语一行开跑" aria-hidden="true">#</a>run 原语一行开跑</h2>
+<div class="code">
+  <div class="code-top"><span class="code-lang">javascript</span><span class="spacer"></span><button class="copy" type="button">复制</button></div>
+  <pre><code>const run = await client.runs.create(&quot;agent-id&quot;, &quot;帮我核对这份报销单&quot;, {
+  idempotencyKey: &quot;order-20261115-001&quot;,   // 重试不重复建 run
+});
+
+const summary = await client.runs.stream(run.runId, {
+  onEvent: (ev) =&gt; {
+    if (ev.event === &quot;token&quot;) process.stdout.write(ev.data.delta);
+    if (ev.event === &quot;approval.required&quot;) {
+      // 审批走同一个 run，不是另一个接口
+      client.runs.approve(run.runId, ev.data.approvalId, &quot;approve&quot;);
+    }
+  },
+  onFallback: (detail) =&gt; console.log(&quot;回放已过期，已降级为拉取终态&quot;, detail.status),
+});
+console.log(summary.status);   // succeeded / failed / stopped</code></pre>
+</div>
+<div class="code">
+  <div class="code-top"><span class="code-lang">python</span><span class="spacer"></span><button class="copy" type="button">复制</button></div>
+  <pre><code>run = client.runs.create(&quot;agent-id&quot;, &quot;帮我核对这份报销单&quot;, idempotency_key=&quot;order-20261115-001&quot;)
+
+def on_event(ev):
+    if ev.event == &quot;token&quot;:
+        print(ev.data[&quot;delta&quot;], end=&quot;&quot;)
+    elif ev.event == &quot;approval.required&quot;:
+        client.runs.approve(run[&quot;runId&quot;], ev.data[&quot;approvalId&quot;], &quot;approve&quot;)
+
+summary = client.runs.stream(run[&quot;runId&quot;], on_event=on_event)
+print(summary[&quot;status&quot;])</code></pre>
+</div>
+<p>事件名、字段与续传语义见<a href="#run-events">事件契约</a>；<code>approve/steer/stop/artifacts/get</code> 都是 <code>runs</code> 上的方法。</p>
+<h2 id="自动续传做了什么"><a class="anchor" href="#自动续传做了什么" aria-hidden="true">#</a>自动续传做了什么</h2>
+<ul>
+<li>记住每条事件的 <code>id:</code>（= <code>seq</code>），断线后带 <code>Last-Event-ID</code> 重连，最多 3 次退避重试；</li>
+<li>按 <code>seq</code> 去重，重连不会把已经处理过的事件再交一遍；</li>
+<li>回放缓冲已过期（<code>resume_expired</code>）时，自动降级为 <code>GET /runs/{id}</code> 拉终态，结果经 <code>onFallback</code> 交回，<strong>不抛异常、不留空</strong>。</li>
+</ul>
+<h2 id="版本头"><a class="anchor" href="#版本头" aria-hidden="true">#</a>版本头</h2>
+<p>每个请求带 <code>X-Wenqu-Sdk-Version</code>。后端 debug 日志比对，提前发现「服务端已升级、客户端还是老版本」的错配。 四处版本号（JS 包清单 / JS 版本源 / Python 包清单 / Python 版本源）由 CI 闸门 <code>scripts/check-sdk-version.mjs</code> 对齐。</p>
+<h2 id="错误类型"><a class="anchor" href="#错误类型" aria-hidden="true">#</a>错误类型</h2>
+<div class="code">
+  <div class="code-top"><span class="code-lang">javascript</span><span class="spacer"></span><button class="copy" type="button">复制</button></div>
+  <pre><code>import { WenquAuthError, WenquRateLimitError, WenquApiError } from &quot;@wenqu/sdk&quot;;</code></pre>
+</div>
+<p><code>WenquAuthError</code>（401/403，带 <code>code</code> 与 <code>request_id</code>）、<code>WenquRateLimitError</code>（429）、<code>WenquApiError</code>（其余）。 Python 侧统一 <code>WenquError</code>，字段 <code>message / status_code / error_type / code / request_id</code>。</p>
+</section>
+<section class="page" id="run-events">
+  <div class="page-kicker">参考</div>
+  <h1>事件契约（run 原语）</h1>
+  <p class="page-lead">审批、产物、插话、停止、计划都在同一条 run 上。这是对外唯一的运行原语，不复制引擎。</p>
+<h2 id="为什么要-run"><a class="anchor" href="#为什么要-run" aria-hidden="true">#</a>为什么要 run</h2>
+<p><code>chat/completions</code> 是「无状态、文本、收集型单块下发」的兼容面。它没有任务身份、没有过程事件、 没有人在回路的入口。run 原语是把<strong>已有的站内运行过程</strong>投影成一条对外可订阅的链路：</p>
+<ul>
+<li>一条 run = 一次智能体运行，有稳定 id、有终态、有事件序列；</li>
+<li>审批 / 产物 / 插话 / 停止都挂在<strong>同一个 runId</strong> 上，不另开接口族；</li>
+<li>实现是投影（复用 native 会话与断线接流），引擎没变——所以站内看到的行为与对外一致。</li>
+</ul>
+<h2 id="七个端点"><a class="anchor" href="#七个端点" aria-hidden="true">#</a>七个端点</h2>
+<div class="tbl-wrap"><table>
+<thead><tr><th>方法</th><th>路径</th><th>scope</th><th>要点</th></tr></thead>
+<tbody>
+<tr><td>POST</td><td><code>/v1/agents/{agentId}/runs</code></td><td><code>runs.write</code></td><td><code>Idempotency-Key</code> 去重；默认无状态，显式传 <code>sessionId</code> 才持久</td></tr>
+<tr><td>GET</td><td><code>/v1/runs/{id}</code></td><td><code>runs.read</code></td><td>状态 / 输出 / 错误，与 <code>run.done</code> 同口径</td></tr>
+<tr><td>GET</td><td><code>/v1/runs/{id}/events</code></td><td><code>runs.read</code></td><td>SSE，<code>Last-Event-ID</code> 续传，<code>id:</code> = <code>seq</code></td></tr>
+<tr><td>POST</td><td><code>/v1/runs/{id}/approvals</code></td><td><code>runs.write</code></td><td>统一 <code>decision</code> 枚举，按 <code>approvalId</code> 提交</td></tr>
+<tr><td>GET</td><td><code>/v1/runs/{id}/artifacts</code></td><td><code>runs.read</code></td><td>只回可下载项 + 当场换发的签名 URL（1 小时）</td></tr>
+<tr><td>POST</td><td><code>/v1/runs/{id}/steer</code></td><td><code>runs.write</code></td><td>运行中插话（纯文本），框架收下才落库</td></tr>
+<tr><td>POST</td><td><code>/v1/runs/{id}/stop</code></td><td><code>runs.write</code></td><td>幂等；已结束返 200 + 终态</td></tr>
+</tbody></table></div>
+<h2 id="建一次-run"><a class="anchor" href="#建一次-run" aria-hidden="true">#</a>建一次 run</h2>
+<div class="code">
+  <div class="code-top"><span class="code-lang">bash</span><span class="spacer"></span><button class="copy" type="button">复制</button></div>
+  <pre><code>curl -X POST __BASE__/api/ai/v1/agents/&lt;智能体id&gt;/runs \
+  -H &quot;X-Api-Key: sk-你的Key&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -H &quot;Idempotency-Key: order-20261115-001&quot; \
+  -d '{&quot;question&quot;:&quot;帮我核对这份报销单&quot;,&quot;sessionId&quot;:&quot;&lt;可选，续聊传上一次的&gt;&quot;}'</code></pre>
+</div>
+<div class="code">
+  <div class="code-top"><span class="code-lang">json</span><span class="spacer"></span><button class="copy" type="button">复制</button></div>
+  <pre><code>{
+  &quot;runId&quot;: &quot;9f2c7a4b8e1d4f6ba0c3d5e7f9012345&quot;,
+  &quot;status&quot;: &quot;running&quot;,
+  &quot;sessionId&quot;: &quot;…&quot;,
+  &quot;agentId&quot;: &quot;…&quot;,
+  &quot;createdAt&quot;: &quot;2026-11-15T19:06:12&quot;
+}</code></pre>
+</div>
+<ul>
+<li><code>question</code> 必填；<code>sessionId</code> 不传就是一次性运行（D2：默认无状态）。</li>
+<li>同一 <code>Idempotency-Key</code> 重放直接回<strong>同一个 runId</strong>，返回体多一个 <code>idempotent: true</code>，不新起一轮。</li>
+<li>出站账号恒为 Key 签发人；智能体停用会当场 400（不能靠建新 run 绕开）。</li>
+</ul>
+<h2 id="事件表"><a class="anchor" href="#事件表" aria-hidden="true">#</a>事件表</h2>
+<p><code>event:</code> 行是下面 9 个名字之一，<code>id:</code> 是 <code>seq</code>（从 1 连续），<code>data:</code> 是带 <code>runId</code> 的扁平 JSON。</p>
+<div class="tbl-wrap"><table>
+<thead><tr><th>事件</th><th>含义</th><th><code>data</code> 关键字段</th></tr></thead>
+<tbody>
+<tr><td><code>run.started</code></td><td>运行已建立（永远是 <code>seq=1</code>）</td><td><code>runId</code> <code>sessionId</code> <code>agentId</code> <code>status=running</code></td></tr>
+<tr><td><code>token</code></td><td>正文<strong>真增量</strong></td><td><code>delta</code></td></tr>
+<tr><td><code>tool.status</code></td><td>工具执行进度</td><td><code>native:{name,status,elapsedMs,stepId}</code></td></tr>
+<tr><td><code>plan.updated</code></td><td>计划最新快照（不做逐条 diff）</td><td><code>plan</code></td></tr>
+<tr><td><code>approval.required</code></td><td>需要人决定</td><td><code>approvalId</code> <code>kind</code> <code>payload</code></td></tr>
+<tr><td><code>artifact.created</code></td><td>产生了可下载产物</td><td><code>artifact:{id,filename,ext,size,preview,description}</code></td></tr>
+<tr><td><code>approval.timed_out</code></td><td>审批超时（非超时的 <code>warn</code> 不投）</td><td><code>code=approval_timeout</code> <code>message</code></td></tr>
+<tr><td><code>run.done</code></td><td>终态成功</td><td><code>status</code> <code>finalContent</code> <code>usage</code> <code>sources</code> <code>artifacts</code></td></tr>
+<tr><td><code>run.error</code></td><td>终态失败</td><td><code>status=failed</code> <code>code</code> <code>message</code> <code>request_id</code></td></tr>
+</tbody></table></div>
+<p><code>thinking</code> 默认不对外；由智能体配置显式开启才发。<strong>新增事件不升级 SDK</strong>：SDK 的 <code>onEvent</code> 是兜底的， 未知事件原样交回，契约只增不删。</p>
+<h2 id="审批-回同一条-run"><a class="anchor" href="#审批-回同一条-run" aria-hidden="true">#</a>审批：回同一条 run</h2>
+<div class="code">
+  <div class="code-top"><span class="code-lang">text</span><span class="spacer"></span><button class="copy" type="button">复制</button></div>
+  <pre><code>event: approval.required
+id: 12
+data: {&quot;runId&quot;:&quot;9f2c…&quot;,&quot;approvalId&quot;:&quot;ap_88&quot;,&quot;kind&quot;:&quot;tool_approval&quot;,&quot;payload&quot;:{…}}</code></pre>
+</div>
+<div class="code">
+  <div class="code-top"><span class="code-lang">bash</span><span class="spacer"></span><button class="copy" type="button">复制</button></div>
+  <pre><code>curl -X POST __BASE__/api/ai/v1/runs/&lt;runId&gt;/approvals \
+  -H &quot;X-Api-Key: sk-你的Key&quot; -H &quot;Content-Type: application/json&quot; \
+  -d '{&quot;approvalId&quot;:&quot;ap_88&quot;,&quot;decision&quot;:&quot;approve&quot;}'</code></pre>
+</div>
+<p><code>decision</code> 统一为 <code>approve | reject | revise | supersede | answer | ignore</code>；<code>kind</code> 是 <code>tool_approval</code> / <code>plan_approval</code> / <code>ask_user</code>。<code>answer</code> 对应问答卡，其他按计划/工具审批处理。</p>
+<ul>
+<li>卡片已处理或已超时 → <strong>409</strong>，文案是「已处理或已失效」。重新拉事件流取新的 <code>approvalId</code>， 不要拿旧 id 重试。</li>
+<li>审批卡不在本副本时由网关内部转发到宿主副本，调用方无感。</li>
+<li>超时后终态按 <code>run.error(code=approval_timeout)</code> 收口，不是永远 <code>running</code>。</li>
+</ul>
+<h2 id="续传-last-event-id-seq"><a class="anchor" href="#续传-last-event-id-seq" aria-hidden="true">#</a>续传：<code>Last-Event-ID</code> + seq</h2>
+<div class="code">
+  <div class="code-top"><span class="code-lang">bash</span><span class="spacer"></span><button class="copy" type="button">复制</button></div>
+  <pre><code># 首次
+curl -N __BASE__/api/ai/v1/runs/&lt;runId&gt;/events -H &quot;X-Api-Key: sk-你的Key&quot;
+
+# 断线重连：把最后收到的 id 带回来
+curl -N __BASE__/api/ai/v1/runs/&lt;runId&gt;/events \
+  -H &quot;X-Api-Key: sk-你的Key&quot; -H &quot;Last-Event-ID: 42&quot;</code></pre>
+</div>
+<ul>
+<li><code>id:</code> 从 1 连续递增，<strong>没有空洞</strong>；客户端按 <code>id</code> 去重即可，不需要自己数帧。</li>
+<li>回放缓冲保留 <strong>10 分钟</strong>（Redis，短 TTL）。过期后流里回一帧 <code>run.error(code=resume_expired)</code>，提示「请重拉 GET /runs/{id}」——不会把过期伪装成一条新流从头开始。</li>
+<li>终止条件：收到 <code>run.done</code> / <code>run.error</code> 即结束；已结束的 run 再订阅，回放完直接关流。</li>
+</ul>
+<h2 id="终态查询"><a class="anchor" href="#终态查询" aria-hidden="true">#</a>终态查询</h2>
+<div class="code">
+  <div class="code-top"><span class="code-lang">json</span><span class="spacer"></span><button class="copy" type="button">复制</button></div>
+  <pre><code>{
+  &quot;runId&quot;: &quot;9f2c…&quot;,
+  &quot;status&quot;: &quot;succeeded&quot;,
+  &quot;sessionId&quot;: &quot;…&quot;,
+  &quot;agentId&quot;: &quot;…&quot;,
+  &quot;createdAt&quot;: &quot;2026-11-15T19:06:12&quot;,
+  &quot;finishedAt&quot;: &quot;2026-11-15T19:06:41&quot;,
+  &quot;errorCode&quot;: null,
+  &quot;errorMessage&quot;: null,
+  &quot;output&quot;: { &quot;finalContent&quot;: &quot;…&quot;, &quot;usage&quot;: {…}, &quot;sources&quot;: […], &quot;artifacts&quot;: […] }
+}</code></pre>
+</div>
+<p><code>status</code> ∈ <code>running | succeeded | failed | stopped</code>。停止后的终态是 <code>stopped</code>（不是 <code>succeeded</code>）， <code>run.done</code> 的 <code>status</code> 同步改判——按状态分支处理的重投逻辑才不会误判。</p>
+<h2 id="与-chat-completions-的边界"><a class="anchor" href="#与-chat-completions-的边界" aria-hidden="true">#</a>与 chat/completions 的边界</h2>
+<div class="tbl-wrap"><table>
+<thead><tr><th></th><th><code>chat/completions</code></th><th><code>runs</code></th></tr></thead>
+<tbody>
+<tr><td>承诺</td><td>正式（形状只增不删）</td><td>正式</td></tr>
+<tr><td>增量</td><td>收集型，非真逐 token</td><td><code>token</code> 是真 <code>delta</code></td></tr>
+<tr><td>任务身份</td><td>无</td><td><code>runId</code> + 终态 + 幂等键</td></tr>
+<tr><td>人在回路</td><td>无</td><td><code>approval.required</code> + <code>/approvals</code></td></tr>
+<tr><td>产物</td><td>只在最终文本里</td><td><code>artifact.created</code> + <code>/artifacts</code> 签名 URL</td></tr>
+<tr><td>长任务</td><td>单次请求周期</td><td>事件流可断线重连，终态可补查</td></tr>
+</tbody></table></div>
+<blockquote><p>别把两种承诺混用：要过程能力就用 runs，别指望 OpenAI 兼容面回审批卡。</p></blockquote>
+</section>
+<section class="page" id="webhook">
+  <div class="page-kicker">指南</div>
+  <h1>webhook 验签与幂等</h1>
+  <p class="page-lead">回调是「至少一次」投递。验签防伪造，runId 幂等防重复——两件事都要做，缺一件都会出事。</p>
+<h2 id="什么时候发"><a class="anchor" href="#什么时候发" aria-hidden="true">#</a>什么时候发</h2>
+<p>智能体运行结束（成功 / 失败 / 停止）后，问渠向该智能体配置的<strong>回调地址</strong> POST 一条事件：</p>
+<div class="tbl-wrap"><table>
+<thead><tr><th>事件</th><th>触发</th><th>幂等键</th></tr></thead>
+<tbody>
+<tr><td><code>run.finished</code></td><td>v1 run 收口（本页）</td><td><code>runId</code>（<code>uk_wh_run_id</code> 唯一键）</td></tr>
+<tr><td><code>agent.turn.finished</code></td><td>站内会话一轮结束（不在 run 链路上）</td><td><code>turnId</code></td></tr>
+</tbody></table></div>
+<p>两条事件的边界是<strong>来源</strong>：v1 run 只发 <code>run.finished</code>，站内会话只发 <code>agent.turn.finished</code>， 不会为同一轮发两次。</p>
+<h2 id="载荷"><a class="anchor" href="#载荷" aria-hidden="true">#</a>载荷</h2>
+<div class="code">
+  <div class="code-top"><span class="code-lang">json</span><span class="spacer"></span><button class="copy" type="button">复制</button></div>
+  <pre><code>{
+  &quot;event&quot;: &quot;run.finished&quot;,
+  &quot;runId&quot;: &quot;9f2c7a4b8e1d4f6ba0c3d5e7f9012345&quot;,
+  &quot;sessionId&quot;: &quot;…&quot;,
+  &quot;agentId&quot;: &quot;…&quot;,
+  &quot;agentName&quot;: &quot;订单核对助手&quot;,
+  &quot;apiKeyId&quot;: &quot;…&quot;,
+  &quot;status&quot;: &quot;succeeded&quot;,
+  &quot;finalContent&quot;: &quot;已核对，差异 2 处：…&quot;,
+  &quot;elapsedMs&quot;: 28431,
+  &quot;contract&quot;: &quot;/api/ai/v1/openapi.json&quot;
+}</code></pre>
+</div>
+<ul>
+<li><code>status</code> ∈ <code>succeeded | failed | stopped</code>；失败时带 <code>errorCode</code> / <code>errorMessage</code>，<strong>不含堆栈</strong>。</li>
+<li><code>finalContent</code> 超长会截断并注明「请按 runId 回查」——完整正文用 <code>GET /v1/runs/{id}</code>。</li>
+<li>载荷与 <code>GET /v1/runs/{id}</code> 同口径，回调里能看到的字段在补查接口里一定有。</li>
+</ul>
+<h2 id="请求头与验签"><a class="anchor" href="#请求头与验签" aria-hidden="true">#</a>请求头与验签</h2>
+<div class="code">
+  <div class="code-top"><span class="code-lang">text</span><span class="spacer"></span><button class="copy" type="button">复制</button></div>
+  <pre><code>POST /your/callback
+X-Wenqu-Event: run.finished
+X-Wenqu-Run-Id: 9f2c…
+X-Wenqu-Signature: sha256=&lt;hex&gt;
+Content-Type: application/json</code></pre>
+</div>
+<p>签名 = <code>HMAC-SHA256(secret, 原始请求体)</code>，十六进制，前缀 <code>sha256=</code>。<code>secret</code> 是智能体回调配置里的密钥。</p>
+<div class="code">
+  <div class="code-top"><span class="code-lang">javascript</span><span class="spacer"></span><button class="copy" type="button">复制</button></div>
+  <pre><code>// Express：必须用 raw body 验签，不能先用 express.json() 解析
+import crypto from &quot;node:crypto&quot;;
+
+app.post(&quot;/callback&quot;, express.raw({ type: &quot;application/json&quot; }), (req, res) =&gt; {
+  const expected = &quot;sha256=&quot; + crypto
+    .createHmac(&quot;sha256&quot;, process.env.WENQU_WEBHOOK_SECRET)
+    .update(req.body)                       // Buffer，字节级一致
+    .digest(&quot;hex&quot;);
+
+  const given = req.get(&quot;X-Wenqu-Signature&quot;) || &quot;&quot;;
+  const ok = given.length === expected.length &amp;&amp;
+    crypto.timingSafeEqual(Buffer.from(given), Buffer.from(expected));
+  if (!ok) return res.status(401).end(&quot;bad signature&quot;);
+
+  const payload = JSON.parse(req.body.toString(&quot;utf8&quot;));
+  if (payload.event !== &quot;run.finished&quot;) return res.status(204).end();
+
+  // 幂等：runId 唯一。重投不产生第二条业务记录。
+  if (db.seen(payload.runId)) return res.status(200).end();
+  db.saveRun(payload);
+  res.status(200).end();
+});</code></pre>
+</div>
+<div class="code">
+  <div class="code-top"><span class="code-lang">python</span><span class="spacer"></span><button class="copy" type="button">复制</button></div>
+  <pre><code># FastAPI：请求体用 bytes 拿，别用 Pydantic 模型先解析
+import hmac, hashlib
+from fastapi import FastAPI, Request, Response
+
+@app.post(&quot;/callback&quot;)
+async def callback(request: Request):
+    raw = await request.body()
+    expected = &quot;sha256=&quot; + hmac.new(SECRET.encode(), raw, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, request.headers.get(&quot;X-Wenqu-Signature&quot;, &quot;&quot;)):
+        return Response(status_code=401)
+    payload = json.loads(raw)
+    if not store.seen(payload[&quot;runId&quot;]):
+        store.save(payload)
+    return Response(status_code=200)</code></pre>
+</div>
+<p><strong>验签三个坑</strong>：① 必须用原始字节（框架若先解析 JSON 再序列化，哈希就对不上）； ② 用恒时比较，别用 <code>==</code>；③ 逐字节比较长度，缺失头直接拒绝。</p>
+<h2 id="重试与幂等"><a class="anchor" href="#重试与幂等" aria-hidden="true">#</a>重试与幂等</h2>
+<ul>
+<li>失败重试：<code>60s → 5min → 30min → 2h</code> 退避，耗尽后停止并留痕（不强投到天荒地老）。</li>
+<li>只认 <strong>2xx</strong> 为送达；3xx / 4xx / 5xx 都算失败。</li>
+<li>重投可能带<strong>相同 <code>runId</code></strong>，所以幂等一定要做在 <code>runId</code> 上（不是消息体哈希）。</li>
+<li>建议：先落库（唯一键冲突即忽略）再触发副作用；不要「先发消息再存库」。</li>
+</ul>
+<h2 id="回调地址的现实约束"><a class="anchor" href="#回调地址的现实约束" aria-hidden="true">#</a>回调地址的现实约束</h2>
+<ul>
+<li>保存回调地址时过 SSRF 校验：<code>127.0.0.1</code> / <code>localhost</code> / 内网段一律拒绝，生产必须公网可达。</li>
+<li>本地验证要绕开保存期校验（投递期不校验），<code>samples/backend-node/README.md</code> 给了具体做法——<strong>生产不要用</strong>。</li>
+<li>回调地址按智能体配置，不是按 Key。同一智能体的所有 run 都回同一个地址。</li>
+</ul>
+<h2 id="与事件流的关系"><a class="anchor" href="#与事件流的关系" aria-hidden="true">#</a>与事件流的关系</h2>
+<p>webhook 是<strong>兜底</strong>，不是替代：</p>
+<div class="tbl-wrap"><table>
+<thead><tr><th></th><th>事件流 SSE</th><th>webhook</th></tr></thead>
+<tbody>
+<tr><td>谁主动</td><td>客户端连着想听多久听多久</td><td>服务端投给业务后端</td></tr>
+<tr><td>断线</td><td><code>Last-Event-ID</code> 续传（10 分钟缓冲）</td><td>重试 + 幂等</td></tr>
+<tr><td>适合</td><td>前端要展示过程、审批要交互</td><td>后端流程推进、跨系统编排</td></tr>
+</tbody></table></div>
+<p>两者可以同时用：前端看流，后端收回调，同一个 <code>runId</code> 串起来。</p>
+</section>
+<section class="page" id="resume">
+  <div class="page-kicker">指南</div>
+  <h1>断线续传</h1>
+  <p class="page-lead">SSE 断在长回答的中间是常态。契约给了序号和续传头，剩下的是客户端别把序号丢了。</p>
+<h2 id="契约给了什么"><a class="anchor" href="#契约给了什么" aria-hidden="true">#</a>契约给了什么</h2>
+<ul>
+<li>每帧带 <code>id:</code>，等于 <code>seq</code>，从 1 连续、无空洞；<code>event:</code> 是事件名，<code>data:</code> 是 JSON。</li>
+<li>重连时带 <code>Last-Event-ID: &lt;最后收到的 seq&gt;</code>，服务端从下一条开始补发。</li>
+<li>回放缓冲保留 <strong>10 分钟</strong>（Redis 短 TTL）。超出后回一帧 <code>run.error(code=resume_expired)</code>，让调用方改走 <code>GET /runs/{id}</code>。</li>
+</ul>
+<div class="code">
+  <div class="code-top"><span class="code-lang">bash</span><span class="spacer"></span><button class="copy" type="button">复制</button></div>
+  <pre><code># 断线后从这里接着听
+curl -N __BASE__/api/ai/v1/runs/&lt;runId&gt;/events \
+  -H &quot;X-Api-Key: sk-你的Key&quot; \
+  -H &quot;Last-Event-ID: 42&quot;</code></pre>
+</div>
+<h2 id="手写客户端要点"><a class="anchor" href="#手写客户端要点" aria-hidden="true">#</a>手写客户端要点</h2>
+<div class="code">
+  <div class="code-top"><span class="code-lang">javascript</span><span class="spacer"></span><button class="copy" type="button">复制</button></div>
+  <pre><code>let cursor = 0;
+let retries = 0;
+
+async function listen(runId) {
+  while (retries &lt; 3) {
+    const res = await fetch(`${BASE}/api/ai/v1/runs/${runId}/events`, {
+      headers: { &quot;X-Api-Key&quot;: KEY, ...(cursor ? { &quot;Last-Event-ID&quot;: String(cursor) } : {}) },
+    });
+    if (!res.ok) throw new Error(&quot;HTTP &quot; + res.status);
+
+    const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+    let buf = &quot;&quot;;
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += value;
+      // 按空行切帧：解析 id: / event: / data:
+      let at;
+      while ((at = buf.indexOf(&quot;\n\n&quot;)) &gt;= 0) {
+        const frame = buf.slice(0, at);
+        buf = buf.slice(at + 2);
+        const ev = parseFrame(frame);            // {id, event, data}
+        if (ev.id) cursor = Number(ev.id);       // 关键：先记住序号再处理
+        if (ev.data?.code === &quot;resume_expired&quot;) return fallback(runId);
+        handle(ev);
+        if (ev.event === &quot;run.done&quot; || ev.event === &quot;run.error&quot;) return;
+      }
+    }
+    retries++;                                  // 流被掐断：退避重连
+    await sleep(500 * retries);
+  }
+}
+
+async function fallback(runId) {
+  // 缓冲过期：拉终态，不再假装能补齐过程事件
+  const detail = await fetch(`${BASE}/api/ai/v1/runs/${runId}`, { headers: { &quot;X-Api-Key&quot;: KEY } })
+    .then(r =&gt; r.json());
+  console.log(&quot;回放已过期，取终态：&quot;, detail.status, detail.output?.finalContent);
+}</code></pre>
+</div>
+<ul>
+<li><strong>先记 <code>id</code> 再处理事件</strong>：反过来的话，处理到一半崩了会重复消费。</li>
+<li>重连用<strong>退避</strong>（500ms 起，最多 3 次），别原地紧循环。</li>
+<li><code>resume_expired</code> 不是错误不是要重试，是一次<strong>降级信号</strong>：改用终态接口。</li>
+</ul>
+<h2 id="sdk-里已经做了"><a class="anchor" href="#sdk-里已经做了" aria-hidden="true">#</a>SDK 里已经做了</h2>
+<div class="code">
+  <div class="code-top"><span class="code-lang">javascript</span><span class="spacer"></span><button class="copy" type="button">复制</button></div>
+  <pre><code>const summary = await client.runs.stream(run.runId, {
+  onEvent: (ev) =&gt; { /* 只会收到新事件，重连不会重复 */ },
+  onReconnect: (attempt, cursor) =&gt; console.warn(`第 ${attempt} 次重连，从 ${cursor} 继续`),
+  onFallback: (detail) =&gt; console.warn(&quot;回放过期，已取终态&quot;, detail.status),
+});</code></pre>
+</div>
+<p>SDK 记 <code>id:</code>、按 <code>seq</code> 去重、断线带 <code>Last-Event-ID</code> 重连 3 次、<code>resume_expired</code> 时自动 <code>get(runId)</code> 并回 <code>summary.status = &quot;resume_expired&quot;</code>（不抛异常、不留空）。Python 侧行为一致。</p>
+<h2 id="什么时候必须自己处理"><a class="anchor" href="#什么时候必须自己处理" aria-hidden="true">#</a>什么时候必须自己处理</h2>
+<div class="tbl-wrap"><table>
+<thead><tr><th>场景</th><th>做法</th></tr></thead>
+<tbody>
+<tr><td>客户端在浏览器，用户切后台被节流</td><td>恢复时先 <code>GET /runs/{id}</code>：可能早就结束了，没必要重连</td></tr>
+<tr><td>链路要跨进程接力（A 机断、B 机接）</td><td><code>seq</code> 存到共享存储，重连带 <code>Last-Event-ID</code></td></tr>
+<tr><td>断线超过 10 分钟</td><td>放弃补过程，改拉终态；这是设计上的边界，不是故障</td></tr>
+<tr><td>只需要最终结果</td><td>根本不用事件流：建 run 后轮询 <code>GET /runs/{id}</code> 更省事</td></tr>
+</tbody></table></div>
+<blockquote><p>续传只覆盖<strong>事件回放</strong>，不覆盖审批卡：卡片超时后会以 <code>approval.timed_out</code> 事件收口， 别指望重连后还能补交同一张卡。</p></blockquote>
+</section>
+<section class="page" id="errors">
+  <div class="page-kicker">指南</div>
+  <h1>错误码与限频</h1>
+  <p class="page-lead">v1 的错误体只有一种形状，<code>code</code> 可编程、<code>message</code> 说人话、<code>request_id</code> 能拿来查日志。</p>
+<h2 id="错误体"><a class="anchor" href="#错误体" aria-hidden="true">#</a>错误体</h2>
+<div class="code">
+  <div class="code-top"><span class="code-lang">json</span><span class="spacer"></span><button class="copy" type="button">复制</button></div>
+  <pre><code>{
+  &quot;error&quot;: {
+    &quot;message&quot;: &quot;该 API Key 未开通「runs.write」能力；请在问渠「个人设置 → API 密钥」编辑该 Key 的权限范围后重试&quot;,
+    &quot;type&quot;: &quot;permission_error&quot;,
+    &quot;code&quot;: &quot;permission_error&quot;,
+    &quot;request_id&quot;: &quot;3f8a1c2e-…&quot;
+  }
+}</code></pre>
+</div>
+<p>非 v1 的既有接口仍是平台包络 <code>{&quot;success&quot;:false,&quot;msg&quot;:&quot;…&quot;}</code>——两套形状的边界在命名空间上。</p>
+<h2 id="状态码"><a class="anchor" href="#状态码" aria-hidden="true">#</a>状态码</h2>
+<div class="tbl-wrap"><table>
+<thead><tr><th>状态码</th><th><code>code</code></th><th>含义与处理</th></tr></thead>
+<tbody>
+<tr><td>400</td><td><code>invalid_request_error</code></td><td>参数或业务校验失败（超字数 / 附件过期 / 引用不可见 / 工作流未发布 / 智能体停用）</td></tr>
+<tr><td>401</td><td><code>authentication_error</code></td><td>没带有效 <code>X-Api-Key</code>，或登录门禁拦下</td></tr>
+<tr><td>403</td><td><code>permission_error</code></td><td>三种可能：Key 无效；端点在拒绝名单；v1 端点未登记进开放契约。文案会点名</td></tr>
+<tr><td>404</td><td><code>not_found_error</code></td><td>资源不存在<strong>或不在可见范围</strong>（刻意同码，避免拿 403/404 差异探测别人的 runId）</td></tr>
+<tr><td>409</td><td><code>api_error</code></td><td>审批卡已处理或已失效（可能已超时）。重拉事件流取新的 <code>approvalId</code></td></tr>
+<tr><td>429</td><td><code>rate_limit_error</code></td><td>限频，窗口 60 秒。退避重试，或让管理员调 <code>ratelimit.chatPerMinute</code></td></tr>
+<tr><td>500</td><td><code>internal_error</code></td><td>服务端异常。拿 <code>request_id</code> 对日志，别只贴一句「500 了」</td></tr>
+</tbody></table></div>
+<h2 id="run-链路的专用-code"><a class="anchor" href="#run-链路的专用-code" aria-hidden="true">#</a>run 链路的专用 code</h2>
+<div class="tbl-wrap"><table>
+<thead><tr><th><code>code</code></th><th>出现在</th><th>含义</th></tr></thead>
+<tbody>
+<tr><td><code>approval_timeout</code></td><td><code>run.error</code> / <code>approval.timed_out</code></td><td>审批卡超时，本次运行按失败收口</td></tr>
+<tr><td><code>resume_expired</code></td><td><code>run.error</code></td><td>事件回放缓冲过期（10 分钟），改拉 <code>GET /runs/{id}</code></td></tr>
+<tr><td><code>run_interrupted</code></td><td><code>run.error</code></td><td>运行被中断（服务重启 / 副本切换），重查终态再决定是否重建</td></tr>
+<tr><td><code>invalid_request</code> / <code>authentication_error</code> / <code>permission_error</code> / <code>not_found</code> / <code>rate_limit_error</code></td><td>HTTP 错误体</td><td>与状态码一一对应</td></tr>
+</tbody></table></div>
+<h2 id="缺-scope-的文案到底写了什么"><a class="anchor" href="#缺-scope-的文案到底写了什么" aria-hidden="true">#</a>缺 scope 的文案到底写了什么</h2>
+<blockquote><p>该 API Key 未开通「runs.write」能力；请在问渠「个人设置 → API 密钥」编辑该 Key 的权限范围后重试</p></blockquote>
+<blockquote><p>该端点不在开放契约注册表内，默认拒绝；请从 GET /api/ai/v1/openapi.json 查已开放端点， 或让管理员把该能力登记进开放契约</p></blockquote>
+<blockquote><p>该 API Key 只开放问答链路（问答 / 会话 / 反馈 / 引用溯源等）：这个端点不对 Key 开放</p></blockquote>
+<p>三类 403 的区别很重要：<strong>缺 scope</strong> 去勾选就能解决；<strong>未登记</strong>是平台没开放这个能力； <strong>拒绝名单</strong>是结构性设计（Key 永远不该有账号自服务能力）。别把三者都当「权限不够，找管理员开」。</p>
+<h2 id="限频"><a class="anchor" href="#限频" aria-hidden="true">#</a>限频</h2>
+<div class="tbl-wrap"><table>
+<thead><tr><th>桶</th><th>默认值</th><th>说明</th></tr></thead>
+<tbody>
+<tr><td><code>chat</code></td><td>10 次/分钟</td><td>问答、建 run、上传共用这个桶</td></tr>
+<tr><td><code>embedding</code></td><td>60 次/分钟</td><td>每请求最多 256 条文本</td></tr>
+<tr><td><code>workflow</code></td><td>按租户配置</td><td>触发已发布工作流</td></tr>
+</tbody></table></div>
+<p>限频按「桶 + 租户 + 账号/IP」分桶，所以 <code>GET /v1/me</code> 里的 <code>limits</code> 是<strong>当前配置</strong>， 不是这把 Key 的私有配额。超限统一 429，退避重试即可；不要对 429 做无限重试。</p>
+<h2 id="排查顺序"><a class="anchor" href="#排查顺序" aria-hidden="true">#</a>排查顺序</h2>
+<ol>
+<li><code>request_id</code> 有没有留下？没有就先在客户端日志里补上。</li>
+<li><code>GET /v1/me</code>：scope 对不对、代表谁、限流多少。</li>
+<li><code>GET /api/ai/v1/openapi.json</code>：这个端点到底登记了吗。</li>
+<li>还是不懂？把 <code>request_id</code> + 请求路径 + 时间点给管理员，服务端日志按它一秒定位。</li>
+</ol>
+</section>
+<section class="page" id="capabilities">
+  <div class="page-kicker">指南</div>
+  <h1>能力清单（问答 / 检索 / 工作流 / 嵌入 / MCP）</h1>
+  <p class="page-lead">v1 注册表里已有的能力，以及两条不在注册表内、但仍然可用的既有链路。</p>
+<h2 id="端点全景"><a class="anchor" href="#端点全景" aria-hidden="true">#</a>端点全景</h2>
+<div class="tbl-wrap"><table>
+<thead><tr><th>分类</th><th>端点</th><th>scope</th></tr></thead>
+<tbody>
+<tr><td>问答</td><td><code>POST /v1/chat/completions</code> · <code>POST /v1/responses</code></td><td><code>chat</code></td></tr>
+<tr><td>运行</td><td><code>POST /v1/agents/{id}/runs</code> 及其 6 个派生端点</td><td><code>runs.read</code> / <code>runs.write</code></td></tr>
+<tr><td>检索</td><td><code>POST /v1/retrieval</code></td><td><code>kb.read</code></td></tr>
+<tr><td>知识库</td><td><code>GET/POST /v1/kbs…</code></td><td><code>kb.read</code> / <code>kb.write</code></td></tr>
+<tr><td>向量</td><td><code>POST /v1/embeddings</code> · <code>GET /v1/models/embeddings</code></td><td><code>embedding</code></td></tr>
+<tr><td>工作流</td><td><code>POST /v1/workflows/{id}/run</code> · <code>GET …/run/{runId}</code></td><td><code>workflow.run</code></td></tr>
+<tr><td>工作流入站</td><td><code>POST /v1/workflows/webhook/{token}</code></td><td>令牌即凭据</td></tr>
+<tr><td>自检</td><td><code>GET /v1/me</code> · <code>GET /v1/openapi.json</code></td><td>任意有效 Key</td></tr>
+</tbody></table></div>
+<p>完整签名（含参数与错误）见<a href="#api-reference">API 参考</a>，那份表是构建期从契约快照生成的，不手写。</p>
+<h2 id="cap-chat"><a class="anchor" href="#cap-chat" aria-hidden="true">#</a>问答：原生 SSE 链路</h2>
+<p><code>POST /api/ai/chat</code> 是站内同款的原生流式接口——它<strong>不在 v1 注册表内</strong>（属于既有问答链路，按问答白名单放行）， 所以严格说不带「只增不删」承诺；但阶段事件比 <code>chat/completions</code> 丰富，L1 前端集成与内部代理用的就是它。</p>
+<div class="code">
+  <div class="code-top"><span class="code-lang">bash</span><span class="spacer"></span><button class="copy" type="button">复制</button></div>
+  <pre><code>curl -N -X POST __BASE__/api/ai/chat \
+  -H &quot;Content-Type: application/json&quot; \
+  -H &quot;X-Api-Key: sk-你的Key&quot; \
+  -d '{&quot;question&quot;:&quot;如何创建评分组件？&quot;,&quot;agentId&quot;:&quot;&lt;智能体id&gt;&quot;}'</code></pre>
+</div>
+<p>请求体主要字段：<code>question</code>（必填 ≤8000 字）、<code>sessionId</code>（续聊）、<code>agentId</code>、<code>model</code>、<code>deepThink</code>、 <code>planMode</code>、<code>reasoningLevel</code>、<code>images</code>（≤9 张 data URL）、<code>attachments</code>（<code>fileId</code> 来自 <code>POST /api/ai/chat/attachment</code>）、<code>mentions</code>（kb/doc/agent 三类 @ 引用）、<code>historyRefs</code>。</p>
+<p>事件：<code>thinking</code> / <code>thinking_done</code>、<code>token</code>、<code>image</code>、<code>tool_status</code> / <code>tool_output</code>、 <code>plan</code> / <code>todo</code> / <code>retrieved</code> / <code>usage</code> / <code>warn</code>，收尾 <code>done</code>，失败 <code>error</code>。 <code>done</code> 里带 <code>sources</code>（引用块，可用于溯源）、<code>messageId</code>、<code>finalContent</code>（权威全文）、<code>finalImages</code>。</p>
+<p>相关端点：<code>POST /api/ai/session/new</code>（建会话）、<code>POST /api/ai/chat/stop</code>、<code>POST /api/ai/feedback</code>、 <code>GET /api/ai/session/{id}</code>。</p>
+<blockquote><p>这条链路没有 run 身份、没有审批回传、没有续传序号。需要过程能力就上 <a href="#run-events">run 原语</a>。</p></blockquote>
+<h2 id="cap-retrieval"><a class="anchor" href="#cap-retrieval" aria-hidden="true">#</a>检索：把问渠当搜索引擎</h2>
+<div class="code">
+  <div class="code-top"><span class="code-lang">bash</span><span class="spacer"></span><button class="copy" type="button">复制</button></div>
+  <pre><code>curl -X POST __BASE__/api/ai/v1/retrieval \
+  -H &quot;X-Api-Key: sk-你的Key&quot; -H &quot;Content-Type: application/json&quot; \
+  -d '{&quot;query&quot;:&quot;报销流程&quot;,&quot;knowledgeBaseIds&quot;:[&quot;&lt;kbId&gt;&quot;],&quot;topK&quot;:5}'</code></pre>
+</div>
+<ul>
+<li><code>query</code> 必填（≤8000 字）；<code>knowledgeBaseIds</code> 省略 = 签发人可见的全部库；<code>topK</code> 1–50（默认 20）；<code>minScore</code> 按融合分过滤。</li>
+<li>返回 <code>{chunks:[{id,text,score,title,titlePath,docId,kbId,chunkIndex,images}], total, warnings?}</code>。</li>
+<li>不执行重排；链路降级会在 <code>warnings</code> 里如实说明，不会假装正常。</li>
+</ul>
+<h2 id="cap-kb"><a class="anchor" href="#cap-kb" aria-hidden="true">#</a>知识库：读写分离</h2>
+<div class="tbl-wrap"><table>
+<thead><tr><th>端点</th><th>scope</th><th>说明</th></tr></thead>
+<tbody>
+<tr><td><code>GET /v1/kbs</code></td><td><code>kb.read</code></td><td>可见库列表（含文档数）</td></tr>
+<tr><td><code>GET /v1/kbs/{id}</code></td><td><code>kb.read</code></td><td>库详情</td></tr>
+<tr><td><code>GET /v1/kbs/{id}/documents</code></td><td><code>kb.read</code></td><td>文档列表与解析进度（0 生效 / 1 弃用 / 2 解析中 / 3 失败）</td></tr>
+<tr><td><code>POST /v1/kbs</code></td><td><code>kb.write</code></td><td>建库：<code>name</code> + <code>embeddingRef</code>（向量模型引用，必填）</td></tr>
+<tr><td><code>POST /v1/kbs/{id}/documents</code></td><td><code>kb.write</code></td><td>multipart 传 <code>file</code>；同步回文档行，解析走后台队列</td></tr>
+</tbody></table></div>
+<div class="code">
+  <div class="code-top"><span class="code-lang">bash</span><span class="spacer"></span><button class="copy" type="button">复制</button></div>
+  <pre><code>curl -X POST __BASE__/api/ai/v1/kbs/&lt;kbId&gt;/documents \
+  -H &quot;X-Api-Key: sk-你的Key&quot; \
+  -F &quot;file=@员工手册.docx&quot;</code></pre>
+</div>
+<p><code>kb.write</code> <strong>默认不开通</strong>：签发时不勾就没有写库能力（403 点名缺哪项）。可见性与网页端一致—— 签发人看不到的库与文档，从这里同样拿不到。</p>
+<h2 id="cap-embedding"><a class="anchor" href="#cap-embedding" aria-hidden="true">#</a>向量：OpenAI 兼容</h2>
+<div class="code">
+  <div class="code-top"><span class="code-lang">bash</span><span class="spacer"></span><button class="copy" type="button">复制</button></div>
+  <pre><code>curl -X POST __BASE__/api/ai/v1/embeddings \
+  -H &quot;X-Api-Key: sk-你的Key&quot; -H &quot;Content-Type: application/json&quot; \
+  -d '{&quot;input&quot;:[&quot;你好，世界&quot;],&quot;model&quot;:&quot;&lt;providerId&gt;/&lt;modelId&gt;&quot;}'</code></pre>
+</div>
+<ul>
+<li><code>model</code> 必填（问渠向量按知识库绑定，没有全局默认）；可用清单 <code>GET /v1/models/embeddings</code>。</li>
+<li><code>input</code> 单批 ≤256 条、单条 ≤8192 token；<code>encoding_format</code> 支持 <code>float</code> / <code>base64</code>；<code>dimensions</code> 可裁剪。</li>
+<li>响应是 OpenAI 标准形状，任何 OpenAI SDK 改 <code>base_url</code> 即可用；用量按 <code>kind=embedding</code> 单独记账。</li>
+</ul>
+<h2 id="cap-workflow"><a class="anchor" href="#cap-workflow" aria-hidden="true">#</a>工作流：当 RPC 调</h2>
+<div class="code">
+  <div class="code-top"><span class="code-lang">bash</span><span class="spacer"></span><button class="copy" type="button">复制</button></div>
+  <pre><code>curl -X POST __BASE__/api/ai/v1/workflows/&lt;工作流id&gt;/run \
+  -H &quot;X-Api-Key: sk-你的Key&quot; -H &quot;Content-Type: application/json&quot; \
+  -d '{&quot;inputs&quot;:{&quot;city&quot;:&quot;杭州&quot;}}'</code></pre>
+</div>
+<ul>
+<li><code>inputs</code> 对应开始节点入参，可整体省略。</li>
+<li><strong>同步返回</strong> run 全量：<code>status / outputs / nodeTraces / durationMs</code>。</li>
+<li>失败不抛 500：回 <code>status=failed</code> 的 run，看 <code>error</code> 与 <code>nodeTraces</code> 定位失败节点。</li>
+<li>约束：工作流对签发人<strong>可见</strong>才可触发（不可见一律 404，不泄露存在性）；未发布 → 400； 含人工审核节点 → 400（外部调用方没有审批交互面）。</li>
+<li>补查：<code>GET /v1/workflows/{id}/run/{runId}</code>。另有入站触发 <code>POST /v1/workflows/webhook/{token}</code>（令牌即凭据，不走 Key）。</li>
+</ul>
+<h2 id="cap-embed"><a class="anchor" href="#cap-embed" aria-hidden="true">#</a>前端嵌入：分享 token，不碰 Key</h2>
+<p>两条路，凭据都是<strong>分享 token</strong>（智能体「公开发布」得到）：</p>
+<div class="code">
+  <div class="code-top"><span class="code-lang">html</span><span class="spacer"></span><button class="copy" type="button">复制</button></div>
+  <pre><code>&lt;script src=&quot;https://your-host/wenqu-embed.js&quot;&gt;&lt;/script&gt;
+&lt;script&gt;
+  WenquChat.init({
+    token: '&lt;分享token&gt;',        // 公开发布链接 /s/ 后面那段
+    title: '在线咨询',
+    color: '#3b82f6',
+    placeholder: '问我任何问题',
+    position: 'bottom-right'     // 或 bottom-left
+  })
+&lt;/script&gt;</code></pre>
+</div>
+<div class="code">
+  <div class="code-top"><span class="code-lang">html</span><span class="spacer"></span><button class="copy" type="button">复制</button></div>
+  <pre><code>&lt;iframe src=&quot;https://your-host/s/&lt;分享token&gt;?embed=1&amp;color=%233b82f6&quot;
+        width=&quot;420&quot; height=&quot;640&quot; style=&quot;border:0;border-radius:12px&quot;&gt;&lt;/iframe&gt;</code></pre>
+</div>
+<ul>
+<li>加载器约 3KB、零依赖；浮动按钮点击才懒加载对话面板。</li>
+<li><code>WenquChat.init()</code> 返回 <code>{open, close, toggle, destroy}</code>。</li>
+<li>iframe 参数（<code>embed=1</code> 时生效）：<code>no-tool=1</code> / <code>compact=1</code> / <code>color=#rrggbb</code> / <code>placeholder=…</code> / <code>autoOpen=1</code>。</li>
+<li>游客额度闸照常生效：每条分享有每日轮次与 token 上限，超限 429。</li>
+<li><strong>嵌入脚本挂在前端站点，不在后端 API 实例上</strong>——本地起前后端两个进程时，<code>src</code> 要指向前端 5800，不是 8090。</li>
+</ul>
+<h2 id="cap-mcp"><a class="anchor" href="#cap-mcp" aria-hidden="true">#</a>MCP 接入</h2>
+<p>平台级 MCP 入口把问渠能力暴露成标准 MCP Server（Streamable HTTP），凭据是 <code>Authorization: Bearer</code>：</p>
+<div class="code">
+  <div class="code-top"><span class="code-lang">json</span><span class="spacer"></span><button class="copy" type="button">复制</button></div>
+  <pre><code>{
+  &quot;mcpServers&quot;: {
+    &quot;wenqu&quot;: { &quot;url&quot;: &quot;__BASE__/mcp&quot;, &quot;headers&quot;: { &quot;Authorization&quot;: &quot;Bearer sk-你的Key&quot; } }
+  }
+}</code></pre>
+</div>
+<p>固定元工具集：<code>wenqu_ask</code>、<code>wenqu_search_knowledge</code>、<code>wenqu_list_knowledge_bases</code>、<code>wenqu_list_agents</code>。</p>
+<p>启用条件（缺一不可）：① 该 Key 在个人设置里打开了「MCP」开关；② 管理员在「系统设置 → MCP 服务（双向）」 开启「对外提供 MCP 端点」；③ 对外域名访问时，前端域名要进「允许的 Origin」（Claude / Cursor 这类本地进程不带 Origin，不受影响）。可见范围与签发人在网页上看到的完全一致。</p>
+<blockquote><p>想让某一个智能体单独对外，用它的「公开发布 → MCP 端点」<code>__BASE__/mcp/{token}</code>——凭据是分享 token，不是 Key。</p></blockquote>
+</section>
+<section class="page" id="api-reference">
+  <div class="page-kicker">参考</div>
+  <h1>API 参考（自动生成）</h1>
+  <p class="page-lead">端点清单由契约快照生成：路径、方法、scope、可达性都不是手写的。</p>
+<p>共 <strong>22</strong> 个已登记端点，契约版本 <code>v1</code>。这张表由 <code>contract/openapi.v1.json</code> 在构建期生成，与后端开放契约注册表同源（<code>@OpenApi</code> + Spring 路由），不手写、不做第二份。运行时机器可读版本：<code>GET __BASE__/api/ai/v1/openapi.json</code>。</p>
+<h3 id="api-me"><a class="anchor" href="#api-me" aria-hidden="true">#</a>自检与契约</h3>
+<div class="tbl-wrap"><table>
+<thead><tr><th style="width:64px">方法</th><th style="width:330px">路径</th><th style="width:112px">scope</th><th>说明</th><th style="width:76px">curl</th></tr></thead>
+<tbody>
+<tr><td><span class="method get">GET</span></td><td><code>/api/ai/v1/me</code></td><td><span class="scope">任意有效 Key</span></td><td>API Key 自检：能力范围、发问身份、限流与近 30 天用量</td><td><button class="copy" type="button" data-copy-text="curl -X GET __BASE__/api/ai/v1/me \
+  -H &quot;X-Api-Key: sk-你的Key&quot;">复制</button></td></tr>
+<tr><td><span class="method get">GET</span></td><td><code>/api/ai/v1/openapi.json</code></td><td><span class="scope">任意有效 Key</span></td><td>开放 API 契约（OpenAPI 3.1）</td><td><button class="copy" type="button" data-copy-text="curl -X GET __BASE__/api/ai/v1/openapi.json \
+  -H &quot;X-Api-Key: sk-你的Key&quot;">复制</button></td></tr>
+</tbody></table></div>
+<h3 id="api-chat"><a class="anchor" href="#api-chat" aria-hidden="true">#</a>问答（OpenAI 兼容）</h3>
+<div class="tbl-wrap"><table>
+<thead><tr><th style="width:64px">方法</th><th style="width:330px">路径</th><th style="width:112px">scope</th><th>说明</th><th style="width:76px">curl</th></tr></thead>
+<tbody>
+<tr><td><span class="method post">POST</span></td><td><code>/api/ai/v1/chat/completions</code></td><td><span class="scope">chat</span></td><td>Chat Completions（OpenAI 兼容）</td><td><button class="copy" type="button" data-copy-text="curl -X POST __BASE__/api/ai/v1/chat/completions \
+  -H &quot;X-Api-Key: sk-你的Key&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d '{}'">复制</button></td></tr>
+</tbody></table></div>
+<h3 id="api-responses"><a class="anchor" href="#api-responses" aria-hidden="true">#</a>问答（Responses 形状）</h3>
+<div class="tbl-wrap"><table>
+<thead><tr><th style="width:64px">方法</th><th style="width:330px">路径</th><th style="width:112px">scope</th><th>说明</th><th style="width:76px">curl</th></tr></thead>
+<tbody>
+<tr><td><span class="method post">POST</span></td><td><code>/api/ai/v1/responses</code></td><td><span class="scope">chat</span></td><td>Responses API（OpenAI 兼容）</td><td><button class="copy" type="button" data-copy-text="curl -X POST __BASE__/api/ai/v1/responses \
+  -H &quot;X-Api-Key: sk-你的Key&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d '{}'">复制</button></td></tr>
+</tbody></table></div>
+<h3 id="api-agents"><a class="anchor" href="#api-agents" aria-hidden="true">#</a>运行原语 · 建 run</h3>
+<div class="tbl-wrap"><table>
+<thead><tr><th style="width:64px">方法</th><th style="width:330px">路径</th><th style="width:112px">scope</th><th>说明</th><th style="width:76px">curl</th></tr></thead>
+<tbody>
+<tr><td><span class="method post">POST</span></td><td><code>/api/ai/v1/agents/{agentId}/runs</code></td><td><span class="scope">runs.write</span></td><td>创建一次智能体运行（run）</td><td><button class="copy" type="button" data-copy-text="curl -X POST __BASE__/api/ai/v1/agents/{agentId}/runs \
+  -H &quot;X-Api-Key: sk-你的Key&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d '{}'">复制</button></td></tr>
+</tbody></table></div>
+<h3 id="api-runs"><a class="anchor" href="#api-runs" aria-hidden="true">#</a>运行原语 · 查询与控制</h3>
+<div class="tbl-wrap"><table>
+<thead><tr><th style="width:64px">方法</th><th style="width:330px">路径</th><th style="width:112px">scope</th><th>说明</th><th style="width:76px">curl</th></tr></thead>
+<tbody>
+<tr><td><span class="method get">GET</span></td><td><code>/api/ai/v1/runs/{id}</code></td><td><span class="scope">runs.read</span></td><td>查询运行状态与输出（与 run.done 同口径）</td><td><button class="copy" type="button" data-copy-text="curl -X GET __BASE__/api/ai/v1/runs/{id} \
+  -H &quot;X-Api-Key: sk-你的Key&quot;">复制</button></td></tr>
+<tr><td><span class="method post">POST</span></td><td><code>/api/ai/v1/runs/{id}/approvals</code></td><td><span class="scope">runs.write</span></td><td>提交审批卡（approve/reject/revise/supersede/answer/ignore）</td><td><button class="copy" type="button" data-copy-text="curl -X POST __BASE__/api/ai/v1/runs/{id}/approvals \
+  -H &quot;X-Api-Key: sk-你的Key&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d '{}'">复制</button></td></tr>
+<tr><td><span class="method get">GET</span></td><td><code>/api/ai/v1/runs/{id}/artifacts</code></td><td><span class="scope">runs.read</span></td><td>列出本次运行的可下载产物（含签名 URL）</td><td><button class="copy" type="button" data-copy-text="curl -X GET __BASE__/api/ai/v1/runs/{id}/artifacts \
+  -H &quot;X-Api-Key: sk-你的Key&quot;">复制</button></td></tr>
+<tr><td><span class="method get">GET</span></td><td><code>/api/ai/v1/runs/{id}/events</code></td><td><span class="scope">runs.read</span></td><td>SSE 事件流（Last-Event-ID 续传，seq 连续）</td><td><button class="copy" type="button" data-copy-text="curl -X GET __BASE__/api/ai/v1/runs/{id}/events \
+  -H &quot;X-Api-Key: sk-你的Key&quot;">复制</button></td></tr>
+<tr><td><span class="method post">POST</span></td><td><code>/api/ai/v1/runs/{id}/steer</code></td><td><span class="scope">runs.write</span></td><td>运行中插话（纯文本，框架收下才落库）</td><td><button class="copy" type="button" data-copy-text="curl -X POST __BASE__/api/ai/v1/runs/{id}/steer \
+  -H &quot;X-Api-Key: sk-你的Key&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d '{}'">复制</button></td></tr>
+<tr><td><span class="method post">POST</span></td><td><code>/api/ai/v1/runs/{id}/stop</code></td><td><span class="scope">runs.write</span></td><td>停止运行（幂等，终态收成 stopped）</td><td><button class="copy" type="button" data-copy-text="curl -X POST __BASE__/api/ai/v1/runs/{id}/stop \
+  -H &quot;X-Api-Key: sk-你的Key&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d '{}'">复制</button></td></tr>
+</tbody></table></div>
+<h3 id="api-retrieval"><a class="anchor" href="#api-retrieval" aria-hidden="true">#</a>知识检索</h3>
+<div class="tbl-wrap"><table>
+<thead><tr><th style="width:64px">方法</th><th style="width:330px">路径</th><th style="width:112px">scope</th><th>说明</th><th style="width:76px">curl</th></tr></thead>
+<tbody>
+<tr><td><span class="method post">POST</span></td><td><code>/api/ai/v1/retrieval</code></td><td><span class="scope">kb.read</span></td><td>知识检索（混合检索直通）</td><td><button class="copy" type="button" data-copy-text="curl -X POST __BASE__/api/ai/v1/retrieval \
+  -H &quot;X-Api-Key: sk-你的Key&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d '{}'">复制</button></td></tr>
+</tbody></table></div>
+<h3 id="api-kbs"><a class="anchor" href="#api-kbs" aria-hidden="true">#</a>知识库管理</h3>
+<div class="tbl-wrap"><table>
+<thead><tr><th style="width:64px">方法</th><th style="width:330px">路径</th><th style="width:112px">scope</th><th>说明</th><th style="width:76px">curl</th></tr></thead>
+<tbody>
+<tr><td><span class="method get">GET</span></td><td><code>/api/ai/v1/kbs</code></td><td><span class="scope">kb.read</span></td><td>知识库列表</td><td><button class="copy" type="button" data-copy-text="curl -X GET __BASE__/api/ai/v1/kbs \
+  -H &quot;X-Api-Key: sk-你的Key&quot;">复制</button></td></tr>
+<tr><td><span class="method post">POST</span></td><td><code>/api/ai/v1/kbs</code></td><td><span class="scope">kb.write</span></td><td>创建知识库</td><td><button class="copy" type="button" data-copy-text="curl -X POST __BASE__/api/ai/v1/kbs \
+  -H &quot;X-Api-Key: sk-你的Key&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d '{}'">复制</button></td></tr>
+<tr><td><span class="method get">GET</span></td><td><code>/api/ai/v1/kbs/{id}</code></td><td><span class="scope">kb.read</span></td><td>知识库详情</td><td><button class="copy" type="button" data-copy-text="curl -X GET __BASE__/api/ai/v1/kbs/{id} \
+  -H &quot;X-Api-Key: sk-你的Key&quot;">复制</button></td></tr>
+<tr><td><span class="method get">GET</span></td><td><code>/api/ai/v1/kbs/{id}/documents</code></td><td><span class="scope">kb.read</span></td><td>知识库文档列表与解析进度</td><td><button class="copy" type="button" data-copy-text="curl -X GET __BASE__/api/ai/v1/kbs/{id}/documents \
+  -H &quot;X-Api-Key: sk-你的Key&quot;">复制</button></td></tr>
+<tr><td><span class="method post">POST</span></td><td><code>/api/ai/v1/kbs/{id}/documents</code></td><td><span class="scope">kb.write</span></td><td>上传文档</td><td><button class="copy" type="button" data-copy-text="curl -X POST __BASE__/api/ai/v1/kbs/{id}/documents \
+  -H &quot;X-Api-Key: sk-你的Key&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d '{}'">复制</button></td></tr>
+</tbody></table></div>
+<h3 id="api-embeddings"><a class="anchor" href="#api-embeddings" aria-hidden="true">#</a>向量化</h3>
+<div class="tbl-wrap"><table>
+<thead><tr><th style="width:64px">方法</th><th style="width:330px">路径</th><th style="width:112px">scope</th><th>说明</th><th style="width:76px">curl</th></tr></thead>
+<tbody>
+<tr><td><span class="method post">POST</span></td><td><code>/api/ai/v1/embeddings</code></td><td><span class="scope">embedding</span></td><td>Embeddings（OpenAI 兼容）</td><td><button class="copy" type="button" data-copy-text="curl -X POST __BASE__/api/ai/v1/embeddings \
+  -H &quot;X-Api-Key: sk-你的Key&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d '{}'">复制</button></td></tr>
+</tbody></table></div>
+<h3 id="api-models"><a class="anchor" href="#api-models" aria-hidden="true">#</a>模型清单</h3>
+<div class="tbl-wrap"><table>
+<thead><tr><th style="width:64px">方法</th><th style="width:330px">路径</th><th style="width:112px">scope</th><th>说明</th><th style="width:76px">curl</th></tr></thead>
+<tbody>
+<tr><td><span class="method get">GET</span></td><td><code>/api/ai/v1/models/embeddings</code></td><td><span class="scope">embedding</span></td><td>可用向量模型清单</td><td><button class="copy" type="button" data-copy-text="curl -X GET __BASE__/api/ai/v1/models/embeddings \
+  -H &quot;X-Api-Key: sk-你的Key&quot;">复制</button></td></tr>
+</tbody></table></div>
+<h3 id="api-workflows"><a class="anchor" href="#api-workflows" aria-hidden="true">#</a>工作流</h3>
+<div class="tbl-wrap"><table>
+<thead><tr><th style="width:64px">方法</th><th style="width:330px">路径</th><th style="width:112px">scope</th><th>说明</th><th style="width:76px">curl</th></tr></thead>
+<tbody>
+<tr><td><span class="method post">POST</span></td><td><code>/api/ai/v1/workflows/{id}/run</code></td><td><span class="scope">workflow.run</span></td><td>触发已发布工作流</td><td><button class="copy" type="button" data-copy-text="curl -X POST __BASE__/api/ai/v1/workflows/{id}/run \
+  -H &quot;X-Api-Key: sk-你的Key&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d '{}'">复制</button></td></tr>
+<tr><td><span class="method get">GET</span></td><td><code>/api/ai/v1/workflows/{id}/run/{runId}</code></td><td><span class="scope">workflow.run</span></td><td>查询工作流运行结果</td><td><button class="copy" type="button" data-copy-text="curl -X GET __BASE__/api/ai/v1/workflows/{id}/run/{runId} \
+  -H &quot;X-Api-Key: sk-你的Key&quot;">复制</button></td></tr>
+<tr><td><span class="method post">POST</span></td><td><code>/api/ai/v1/workflows/webhook/{token}</code></td><td><span class="scope">任意有效 Key</span></td><td>Webhook 入站触发（令牌即凭据）<span class="pill-token">令牌通道</span></td><td><button class="copy" type="button" data-copy-text="curl -X POST __BASE__/api/ai/v1/workflows/webhook/{token} \
+  -H &quot;X-Api-Key: sk-你的Key&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d '{}'">复制</button></td></tr>
+</tbody></table></div>
+<blockquote><p>表的排序与分组是构建脚本按路径前缀归的，不是人工排版。<strong>新增端点</strong>要先标注 <code>@OpenApi</code>、再跑 <code>node scripts/check-openapi-contract.mjs --update</code> 更新快照与变更日志，然后重新构建本站——三步顺序反了 CI 会拦。</p></blockquote>
+<p class="foot-note">成功体的形状不统一：<code>v1/runs/*</code> 与 <code>v1/me</code> 是裸对象，<code>v1/retrieval</code>、<code>v1/workflows/*</code> 是 <code>{success,data,msg}</code> 平台包络。双端 SDK 已各自抹平，手写 curl 时别按同一种解。</p>
+</section>
+<section class="page" id="samples-changelog">
+  <div class="page-kicker">资源</div>
+  <h1>示例与变更日志</h1>
+  <p class="page-lead">能跑的宿主，加上契约改了什么、为什么改。</p>
+<p>样例是<strong>能启动的宿主</strong>，不是片段：每个目录都有 README、可执行入口与失败路径说明。代码片段会随契约漂移，能跑的宿主不会——所以本站的示例一律指向这里，不在页面里重抄一遍。</p>
+<div class="tbl-wrap"><table><thead><tr><th style="width:190px">目录</th><th>说明</th></tr></thead><tbody>
+<tr><td><code>samples/backend-node/</code></td><td>Express + `@wenqu/sdk`。浏览器不参与，Key 只在这个进程里。</td></tr>
+<tr><td><code>samples/backend-python/</code></td><td>FastAPI + `wenqu-ai`（Python SDK，仓库内 `-e` 安装，无需 PyPI）。</td></tr>
+<tr><td><code>samples/frontend-proxy/</code></td><td>浏览器 → 自家后端（这个进程，持 Key）→ 问渠 v1。零依赖，Node ≥18 直接跑。</td></tr>
+<tr><td><code>samples/seed/</code></td><td>cd samples</td></tr>
+<tr><td><code>samples/widget-static/</code></td><td>纯 HTML，无构建、无依赖、无 API Key。用 HTTP 打开（**不能 `file://`**）：</td></tr>
+</tbody></table></div>
+<blockquote><p>样例里的 SDK 走仓库内引用（<code>file:</code> / <code>-e</code>）：SDK 还没发包。装样例依赖前必须先构建 <code>sdk/js</code>，否则 <code>dist/</code> 不存在。</p></blockquote>
+<h3 id="changelog"><a class="anchor" href="#changelog" aria-hidden="true">#</a>契约变更日志</h3>
+<p>下列内容原文来自 <code>contract/CHANGELOG.md</code>：<strong>条目由脚本在 <code>--update</code> 时生成草稿，「为什么改」由人工补</strong>。承诺是只增不删，所以这里不会出现「端点被移除」的条目——真出现了说明违反了承诺。</p>
+<h2 id="2026-11-13"><a class="anchor" href="#2026-11-13" aria-hidden="true">#</a>2026-11-13</h2>
+<ul>
+<li>初始基线：15 个 v1 端点纳入契约快照。</li>
+</ul>
+<blockquote><p>为什么改：&lt;!-- 人工补；自动条目只描述「改了什么」 --&gt;</p></blockquote>
+<h2 id="2026-11-15"><a class="anchor" href="#2026-11-15" aria-hidden="true">#</a>2026-11-15</h2>
+<ul>
+<li>新增 <code>GET /api/ai/v1/runs/{id}</code>（scope: runs.read）：查询运行状态与输出（与 run.done 同口径）</li>
+<li>新增 <code>GET /api/ai/v1/runs/{id}/events</code>（scope: runs.read）：SSE 事件流（Last-Event-ID 续传，seq 连续）</li>
+<li>新增 <code>POST /api/ai/v1/agents/{agentId}/runs</code>（scope: runs.write）：创建一次智能体运行（run）</li>
+</ul>
+<blockquote><p>为什么改：A 期 A1 第一批——把 native 问答链路投影成正式 v1 run 契约（建轮 / 状态 / 事件流）， 详见 design/plans/对外开放运行原语A1实现方案.md。新增 runs.read / runs.write 两个 scope 不进默认集。</p></blockquote>
+<h2 id="2026-11-15-2"><a class="anchor" href="#2026-11-15-2" aria-hidden="true">#</a>2026-11-15</h2>
+<ul>
+<li>新增 <code>GET /api/ai/v1/runs/{id}/artifacts</code>（scope: runs.read）：列出本次运行的可下载产物（含签名 URL）</li>
+<li>新增 <code>POST /api/ai/v1/runs/{id}/approvals</code>（scope: runs.write）：提交审批卡（approve/reject/revise/supersede/answer/ignore）</li>
+<li>新增 <code>POST /api/ai/v1/runs/{id}/steer</code>（scope: runs.write）：运行中插话（纯文本，框架收下才落库）</li>
+<li>新增 <code>POST /api/ai/v1/runs/{id}/stop</code>（scope: runs.write）：停止运行（幂等，终态收成 stopped）</li>
+</ul>
+<blockquote><p>为什么改：A 期 A1 第二批——补齐 run 控制面（审批 / 产物 / 插话 / 停止），让长任务与人在回路能走正式 v1 契约；同时收口 run.finished 出站回调，新增 approval.timed_out 过程事件。详见 design/plans/对外开放运行原语A1实现方案.md §10.2。</p></blockquote>
+</section>
+<p class="foot-note">本站为构建产物，请勿直接编辑：改 <code>docs-site/guides/*.md</code> 或后端 <code>@OpenApi</code> 后重新构建。
+产物同时被应用内「对接文档」页嵌入，两处显示的永远是同一份。</p>
+    </article>
+  </main>
+</div>
+<script src="assets/docs.js"></script>
+</body>
+</html>

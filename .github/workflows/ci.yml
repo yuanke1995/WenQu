@@ -85,6 +85,20 @@ jobs:
       - name: v1 contract snapshot check
         run: node scripts/check-openapi-contract.mjs --check
 
+  docs:
+    name: Integration docs (single source)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      # 文档站产物提交入库（应用内「对接文档」页 iframe 的就是它）。
+      # 改了 guides/*.md / 契约快照 / 样例却没重新构建，这里失败——别改断言，跑构建并提交产物。
+      - name: docs build up to date
+        run: node scripts/build-docs.mjs --check
+
   samples:
     name: Integration samples syntax
     runs-on: ubuntu-latest

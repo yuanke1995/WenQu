@@ -1,0 +1,488 @@
+[
+ {
+  "id": "quickstart",
+  "page": "开始",
+  "title": "快速开始",
+  "text": "签一把 Key、跑一次自检、拿到第一个成功响应。三步，五分钟。"
+ },
+ {
+  "id": "三步走到第一个成功响应",
+  "page": "开始",
+  "title": "三步走到第一个成功响应",
+  "text": "三步走到第一个成功响应 签 Key —— 问渠「个人设置 → API 密钥」新建。选用途模板（问答 / 检索 / 工作流 / 全量）会自动预选 scope； 默认集里 没有 runs.read 、 runs.write 、 kb.write ，要跑 run 原语必须显式勾选。 自检 —— 拿 Key 打一次 GET /v1/me ：能力范围、发问身份、限流、近 30 天用量一次看清。 首响 —— "
+ },
+ {
+  "id": "1-自检-这把-key-能干什么",
+  "page": "开始",
+  "title": "1. 自检：这把 Key 能干什么",
+  "text": "1. 自检：这把 Key 能干什么 actAs 恒为签发人（ actAsBinding=issuer ）；平台没有「代表账号」这一说。 limits 是平台按「桶 + 租户 + 账号/IP」分桶的 当前配置 ，不是这把 Key 的独占配额。 usage30d.available=false 表示台账暂不可查， 不等于 0 次调用。"
+ },
+ {
+  "id": "2-第一条问答-openai-兼容",
+  "page": "开始",
+  "title": "2. 第一条问答（OpenAI 兼容）",
+  "text": "2. 第一条问答（OpenAI 兼容） model 填 问渠智能体 id （智能体页可见）。多轮靠重发完整 messages ——这条链路是无状态的。 chat/completions 是 收集型单块下发 （stream 也只是把结果分块推回，不是逐 token 真增量）， 长任务、审批、产物、插话都不在这条链路上。要这些能力走 run 原语 。"
+ },
+ {
+  "id": "3-想清楚要去哪一层",
+  "page": "开始",
+  "title": "3. 想清楚要去哪一层",
+  "text": "3. 想清楚要去哪一层 你想要的 去哪 只在自己页面放一个问答框 L0 零代码嵌入 自家前端要审批卡 / 产物 / 计划过程 L1 前端深度集成 + run 原语 业务后端调用、结果要回调 L2 后端集成 + webhook 在 Claude / Cursor 里直接用问渠 MCP 接入 把问渠当检索引擎 知识库 API"
+ },
+ {
+  "id": "首跑失败对照",
+  "page": "开始",
+  "title": "首跑失败对照",
+  "text": "首跑失败对照 现象 原因 怎么办 401 authentication_error 没带或带错 X-Api-Key 头名是 X-Api-Key ；也接受 Authorization: Bearer sk-… 403 permission_error 缺 scope 报错原文会点名缺哪一项、去「个人设置 → API 密钥」哪一列勾 404 not_found_error 智能体 id 不存在，或不在"
+ },
+ {
+  "id": "choose",
+  "page": "开始",
+  "title": "接入选型",
+  "text": "三层不是三条技术路线，差别只有一句话——谁持凭据、承诺到什么程度。"
+ },
+ {
+  "id": "三种形态-一种凭据边界",
+  "page": "开始",
+  "title": "三种形态，一种凭据边界",
+  "text": "三种形态，一种凭据边界 层 谁持凭据 形态 承诺 什么时候用 L0 零代码嵌入 分享 token（浏览器不持 Key） wenqu-embed.js / iframe 正式 官网 / 帮助中心 / 客服台放一个问答入口 L1 前端深度集成 业务后端代理，浏览器零凭据 client.native 事件协议（A 期后走 run 事件） 实验性 自家前端要展示审批卡、产物、插话、计划 L2 后端集成 A"
+ },
+ {
+  "id": "选型问四句",
+  "page": "开始",
+  "title": "选型问四句",
+  "text": "选型问四句 只想在自己页面上放一个问答入口？ → L0 （分享 token，零代码） 要嵌进自家前端，而且要展示审批、产物、计划过程？ → L1 （业务后端代理，浏览器零凭据） 由业务系统后端调用，或要把结果通过回调送回业务？ → L2 （API Key + webhook） 既要前端体验又要后端事件？ → L1 + L2 ，两者共用同一个后端，Key 仍然只在服务端。"
+ },
+ {
+  "id": "承诺分级",
+  "page": "开始",
+  "title": "承诺分级",
+  "text": "承诺分级 正式 = 只增不删 + 变更日志 + 至少两个 minor 的废弃期。删端点、改 HTTP 方法、改 scope、 改 keyAccessible 都算破坏性变更，CI 会挡下来。 实验性 = 字段可改，接口变更提前在本站公告。L1 先挂这个标签，run 契约冻结并稳定两周后转正。 为什么只正式承诺两层：三层全部正式会把维护面直接翻三倍，收益却在「少数要过程能力的前端」身上。 别把两种承"
+ },
+ {
+  "id": "一张图看链路位置",
+  "page": "开始",
+  "title": "一张图看链路位置",
+  "text": "一张图看链路位置"
+ },
+ {
+  "id": "每层的最小可跑样例",
+  "page": "开始",
+  "title": "每层的最小可跑样例",
+  "text": "每层的最小可跑样例 层 样例 跑起来看什么 L0 samples/widget-static 一个 HTML 文件挂出浮窗，凭据只有分享 token L1 samples/frontend-proxy 浏览器只与自家后端说话，转发 SSE，Key 不出服务端 L2 samples/backend-node 建 run、订阅事件、验签收 run.finished 、按 runId 幂等 L2 sam"
+ },
+ {
+  "id": "auth",
+  "page": "开始",
+  "title": "认证与安全",
+  "text": "一把 Key 代表一个人。它能碰的面是固定的白名单，不是「这个账号在界面上能点什么」。"
+ },
+ {
+  "id": "地址拼法",
+  "page": "开始",
+  "title": "地址拼法",
+  "text": "地址拼法 后端 context-path 是 /ai ，完整地址 = 服务地址 + /ai + 接口路径 ："
+ },
+ {
+  "id": "认证头",
+  "page": "开始",
+  "title": "认证头",
+  "text": "认证头 Authorization: Bearer sk-… 等价（给 OpenAI SDK 用， Authorization 里必须是 sk- 开头）。 MCP 入口例外：它只认 Authorization: Bearer 。 分享 token 是另一条通道（L0 / 公开链接），不与 Key 混用。"
+ },
+ {
+  "id": "两类响应体",
+  "page": "开始",
+  "title": "两类响应体",
+  "text": "两类响应体 v1 命名空间 （ /api/ai/v1/** ）：成功是裸对象或业务形状，错误统一 OpenAI 形状： 非 v1 的既有接口 （如原生问答 /api/ai/chat ）：走平台包络 {\"success\":true,\"data\":…} / {\"success\":false,\"msg\":\"原因\"} 。两套形状的边界就在命名空间上，SDK 已各自抹平，手写 curl 时别按同一种解。"
+ },
+ {
+  "id": "scope-key-的能力范围",
+  "page": "开始",
+  "title": "scope：Key 的能力范围",
+  "text": "scope：Key 的能力范围 每把 Key 一份 scope，签发时勾选、之后可在「个人设置 → API 密钥」编辑。只约束 Key 通道（登录态不受影响）， 收紧 立即生效 。 scope 默认开通 覆盖能力 chat 是 问答（ /v1/chat/completions 、 /v1/responses ） embedding 是 向量化（ /v1/embeddings ） kb.read 是"
+ },
+ {
+  "id": "key-碰不到什么",
+  "page": "开始",
+  "title": "Key 碰不到什么",
+  "text": "Key 碰不到什么 Key 只开放 问答链路 。以下是硬性拒绝（HTTP 403，当场给出原因，不会静默落到别的鉴权层）： 端点前缀 为什么不给 /api/ai/api-key/** Key 管理——否则泄露的 Key 能给自己签发续命、改绑定换身份 /api/ai/user/** 改密 / 资料 / 偏好 / 个人设置——贴在配置文件里的密钥不该拥有账号自服务能力 /api/ai/auth/**"
+ },
+ {
+  "id": "契约注册表-v1-只认登记过的端点",
+  "page": "开始",
+  "title": "契约注册表：v1 只认登记过的端点",
+  "text": "契约注册表：v1 只认登记过的端点 /api/ai/v1/** 的唯一真源是后端的开放契约注册表（ @OpenApi 注解 + Spring 路由，启动期扫描）： v1 命名空间里 出现未标注的路由直接启动失败 ——新增端点必须显式声明它对集成方的可见性； 未登记的 v1 路径对 Key 一律拒绝，错误文案会指向 GET /api/ai/v1/openapi.json ； 契约变更走 CI：删除端"
+ },
+ {
+  "id": "集成方守则",
+  "page": "开始",
+  "title": "集成方守则",
+  "text": "集成方守则 一把 Key 一个用途，别多系统共用；不用了先「停用」而不是删除——停用保留审计线索，删除记录即消失。 Key 等于签发人的问答身份与额度，按敏感凭据保管（配置文件 / 密钥管理服务），不进前端代码与日志。 明文由服务端加密保管（列表点「眼睛」可回显）；怀疑泄露就停用重签。 轮询注意限频，见 错误码与限频 。"
+ },
+ {
+  "id": "sdk",
+  "page": "参考",
+  "title": "SDK（JS / Python）",
+  "text": "双端 SDK 抹平「两套响应形状」与「SSE 续传」，分包只抹一层——它不替你决定用哪条链路。"
+ },
+ {
+  "id": "现状-仓库内分发-尚未发包",
+  "page": "参考",
+  "title": "现状：仓库内分发，尚未发包",
+  "text": "现状：仓库内分发，尚未发包 SDK 版本 0.2.0， 未发布到 npm / PyPI （发包排在方案最后，且契约冻结前不发）。现在两种用法： 发包后把 file: 换成 @wenqu/sdk 、 -e 换成 wenqu-ai ，其余代码不动。"
+ },
+ {
+  "id": "建客户端",
+  "page": "参考",
+  "title": "建客户端",
+  "text": "建客户端 apiKey 可省略——只走 client.native 且经自有后端代理时，凭据在代理那一侧，浏览器不持有 Key。"
+ },
+ {
+  "id": "命名空间",
+  "page": "参考",
+  "title": "命名空间",
+  "text": "命名空间 命名空间 覆盖 chat /v1/chat/completions （OpenAI 兼容，收集型） responses /v1/responses （OpenAI Responses 形状） embeddings / models 向量化 / 可用向量模型 retrieval /v1/retrieval 混合检索 kbs 知识库读写（写需 kb.write ） workflows 触发 "
+ },
+ {
+  "id": "run-原语一行开跑",
+  "page": "参考",
+  "title": "run 原语一行开跑",
+  "text": "run 原语一行开跑 事件名、字段与续传语义见 事件契约 ； approve/steer/stop/artifacts/get 都是 runs 上的方法。"
+ },
+ {
+  "id": "自动续传做了什么",
+  "page": "参考",
+  "title": "自动续传做了什么",
+  "text": "自动续传做了什么 记住每条事件的 id: （= seq ），断线后带 Last-Event-ID 重连，最多 3 次退避重试； 按 seq 去重，重连不会把已经处理过的事件再交一遍； 回放缓冲已过期（ resume_expired ）时，自动降级为 GET /runs/{id} 拉终态，结果经 onFallback 交回， 不抛异常、不留空 。"
+ },
+ {
+  "id": "版本头",
+  "page": "参考",
+  "title": "版本头",
+  "text": "版本头 每个请求带 X-Wenqu-Sdk-Version 。后端 debug 日志比对，提前发现「服务端已升级、客户端还是老版本」的错配。 四处版本号（JS 包清单 / JS 版本源 / Python 包清单 / Python 版本源）由 CI 闸门 scripts/check-sdk-version.mjs 对齐。"
+ },
+ {
+  "id": "错误类型",
+  "page": "参考",
+  "title": "错误类型",
+  "text": "错误类型 WenquAuthError （401/403，带 code 与 request_id ）、 WenquRateLimitError （429）、 WenquApiError （其余）。 Python 侧统一 WenquError ，字段 message / status_code / error_type / code / request_id 。"
+ },
+ {
+  "id": "run-events",
+  "page": "参考",
+  "title": "事件契约（run 原语）",
+  "text": "审批、产物、插话、停止、计划都在同一条 run 上。这是对外唯一的运行原语，不复制引擎。"
+ },
+ {
+  "id": "为什么要-run",
+  "page": "参考",
+  "title": "为什么要 run",
+  "text": "为什么要 run chat/completions 是「无状态、文本、收集型单块下发」的兼容面。它没有任务身份、没有过程事件、 没有人在回路的入口。run 原语是把 已有的站内运行过程 投影成一条对外可订阅的链路： 一条 run = 一次智能体运行，有稳定 id、有终态、有事件序列； 审批 / 产物 / 插话 / 停止都挂在 同一个 runId 上，不另开接口族； 实现是投影（复用 native "
+ },
+ {
+  "id": "七个端点",
+  "page": "参考",
+  "title": "七个端点",
+  "text": "七个端点 方法 路径 scope 要点 POST /v1/agents/{agentId}/runs runs.write Idempotency-Key 去重；默认无状态，显式传 sessionId 才持久 GET /v1/runs/{id} runs.read 状态 / 输出 / 错误，与 run.done 同口径 GET /v1/runs/{id}/events runs.read SSE，"
+ },
+ {
+  "id": "建一次-run",
+  "page": "参考",
+  "title": "建一次 run",
+  "text": "建一次 run question 必填； sessionId 不传就是一次性运行（D2：默认无状态）。 同一 Idempotency-Key 重放直接回 同一个 runId ，返回体多一个 idempotent: true ，不新起一轮。 出站账号恒为 Key 签发人；智能体停用会当场 400（不能靠建新 run 绕开）。"
+ },
+ {
+  "id": "事件表",
+  "page": "参考",
+  "title": "事件表",
+  "text": "事件表 event: 行是下面 9 个名字之一， id: 是 seq （从 1 连续）， data: 是带 runId 的扁平 JSON。 事件 含义 data 关键字段 run.started 运行已建立（永远是 seq=1 ） runId sessionId agentId status=running token 正文 真增量 delta tool.status 工具执行进度 native:"
+ },
+ {
+  "id": "审批-回同一条-run",
+  "page": "参考",
+  "title": "审批：回同一条 run",
+  "text": "审批：回同一条 run decision 统一为 approve | reject | revise | supersede | answer | ignore ； kind 是 tool_approval / plan_approval / ask_user 。 answer 对应问答卡，其他按计划/工具审批处理。 卡片已处理或已超时 → 409 ，文案是「已处理或已失效」。重新拉事件流取新的 "
+ },
+ {
+  "id": "续传-last-event-id-seq",
+  "page": "参考",
+  "title": "续传： Last-Event-ID + seq",
+  "text": "续传： Last-Event-ID + seq id: 从 1 连续递增， 没有空洞 ；客户端按 id 去重即可，不需要自己数帧。 回放缓冲保留 10 分钟 （Redis，短 TTL）。过期后流里回一帧 run.error(code=resume_expired) ，提示「请重拉 GET /runs/{id}」——不会把过期伪装成一条新流从头开始。 终止条件：收到 run.done / run.e"
+ },
+ {
+  "id": "终态查询",
+  "page": "参考",
+  "title": "终态查询",
+  "text": "终态查询 status ∈ running | succeeded | failed | stopped 。停止后的终态是 stopped （不是 succeeded ）， run.done 的 status 同步改判——按状态分支处理的重投逻辑才不会误判。"
+ },
+ {
+  "id": "与-chat-completions-的边界",
+  "page": "参考",
+  "title": "与 chat/completions 的边界",
+  "text": "与 chat/completions 的边界 chat/completions runs 承诺 正式（形状只增不删） 正式 增量 收集型，非真逐 token token 是真 delta 任务身份 无 runId + 终态 + 幂等键 人在回路 无 approval.required + /approvals 产物 只在最终文本里 artifact.created + /artifacts 签名 "
+ },
+ {
+  "id": "webhook",
+  "page": "指南",
+  "title": "webhook 验签与幂等",
+  "text": "回调是「至少一次」投递。验签防伪造，runId 幂等防重复——两件事都要做，缺一件都会出事。"
+ },
+ {
+  "id": "什么时候发",
+  "page": "指南",
+  "title": "什么时候发",
+  "text": "什么时候发 智能体运行结束（成功 / 失败 / 停止）后，问渠向该智能体配置的 回调地址 POST 一条事件： 事件 触发 幂等键 run.finished v1 run 收口（本页） runId （ uk_wh_run_id 唯一键） agent.turn.finished 站内会话一轮结束（不在 run 链路上） turnId 两条事件的边界是 来源 ：v1 run 只发 run.finish"
+ },
+ {
+  "id": "载荷",
+  "page": "指南",
+  "title": "载荷",
+  "text": "载荷 status ∈ succeeded | failed | stopped ；失败时带 errorCode / errorMessage ， 不含堆栈 。 finalContent 超长会截断并注明「请按 runId 回查」——完整正文用 GET /v1/runs/{id} 。 载荷与 GET /v1/runs/{id} 同口径，回调里能看到的字段在补查接口里一定有。"
+ },
+ {
+  "id": "请求头与验签",
+  "page": "指南",
+  "title": "请求头与验签",
+  "text": "请求头与验签 签名 = HMAC-SHA256(secret, 原始请求体) ，十六进制，前缀 sha256= 。 secret 是智能体回调配置里的密钥。 验签三个坑 ：① 必须用原始字节（框架若先解析 JSON 再序列化，哈希就对不上）； ② 用恒时比较，别用 == ；③ 逐字节比较长度，缺失头直接拒绝。"
+ },
+ {
+  "id": "重试与幂等",
+  "page": "指南",
+  "title": "重试与幂等",
+  "text": "重试与幂等 失败重试： 60s → 5min → 30min → 2h 退避，耗尽后停止并留痕（不强投到天荒地老）。 只认 2xx 为送达；3xx / 4xx / 5xx 都算失败。 重投可能带 相同 runId ，所以幂等一定要做在 runId 上（不是消息体哈希）。 建议：先落库（唯一键冲突即忽略）再触发副作用；不要「先发消息再存库」。"
+ },
+ {
+  "id": "回调地址的现实约束",
+  "page": "指南",
+  "title": "回调地址的现实约束",
+  "text": "回调地址的现实约束 保存回调地址时过 SSRF 校验： 127.0.0.1 / localhost / 内网段一律拒绝，生产必须公网可达。 本地验证要绕开保存期校验（投递期不校验）， samples/backend-node/README.md 给了具体做法—— 生产不要用 。 回调地址按智能体配置，不是按 Key。同一智能体的所有 run 都回同一个地址。"
+ },
+ {
+  "id": "与事件流的关系",
+  "page": "指南",
+  "title": "与事件流的关系",
+  "text": "与事件流的关系 webhook 是 兜底 ，不是替代： 事件流 SSE webhook 谁主动 客户端连着想听多久听多久 服务端投给业务后端 断线 Last-Event-ID 续传（10 分钟缓冲） 重试 + 幂等 适合 前端要展示过程、审批要交互 后端流程推进、跨系统编排 两者可以同时用：前端看流，后端收回调，同一个 runId 串起来。"
+ },
+ {
+  "id": "resume",
+  "page": "指南",
+  "title": "断线续传",
+  "text": "SSE 断在长回答的中间是常态。契约给了序号和续传头，剩下的是客户端别把序号丢了。"
+ },
+ {
+  "id": "契约给了什么",
+  "page": "指南",
+  "title": "契约给了什么",
+  "text": "契约给了什么 每帧带 id: ，等于 seq ，从 1 连续、无空洞； event: 是事件名， data: 是 JSON。 重连时带 Last-Event-ID: <最后收到的 seq> ，服务端从下一条开始补发。 回放缓冲保留 10 分钟 （Redis 短 TTL）。超出后回一帧 run.error(code=resume_expired) ，让调用方改走 GET /runs/{id} 。"
+ },
+ {
+  "id": "手写客户端要点",
+  "page": "指南",
+  "title": "手写客户端要点",
+  "text": "手写客户端要点 先记 id 再处理事件 ：反过来的话，处理到一半崩了会重复消费。 重连用 退避 （500ms 起，最多 3 次），别原地紧循环。 resume_expired 不是错误不是要重试，是一次 降级信号 ：改用终态接口。"
+ },
+ {
+  "id": "sdk-里已经做了",
+  "page": "指南",
+  "title": "SDK 里已经做了",
+  "text": "SDK 里已经做了 SDK 记 id: 、按 seq 去重、断线带 Last-Event-ID 重连 3 次、 resume_expired 时自动 get(runId) 并回 summary.status = \"resume_expired\" （不抛异常、不留空）。Python 侧行为一致。"
+ },
+ {
+  "id": "什么时候必须自己处理",
+  "page": "指南",
+  "title": "什么时候必须自己处理",
+  "text": "什么时候必须自己处理 场景 做法 客户端在浏览器，用户切后台被节流 恢复时先 GET /runs/{id} ：可能早就结束了，没必要重连 链路要跨进程接力（A 机断、B 机接） seq 存到共享存储，重连带 Last-Event-ID 断线超过 10 分钟 放弃补过程，改拉终态；这是设计上的边界，不是故障 只需要最终结果 根本不用事件流：建 run 后轮询 GET /runs/{id} 更省事 续"
+ },
+ {
+  "id": "errors",
+  "page": "指南",
+  "title": "错误码与限频",
+  "text": "v1 的错误体只有一种形状，`code` 可编程、`message` 说人话、`request_id` 能拿来查日志。"
+ },
+ {
+  "id": "错误体",
+  "page": "指南",
+  "title": "错误体",
+  "text": "错误体 非 v1 的既有接口仍是平台包络 {\"success\":false,\"msg\":\"…\"} ——两套形状的边界在命名空间上。"
+ },
+ {
+  "id": "状态码",
+  "page": "指南",
+  "title": "状态码",
+  "text": "状态码 状态码 code 含义与处理 400 invalid_request_error 参数或业务校验失败（超字数 / 附件过期 / 引用不可见 / 工作流未发布 / 智能体停用） 401 authentication_error 没带有效 X-Api-Key ，或登录门禁拦下 403 permission_error 三种可能：Key 无效；端点在拒绝名单；v1 端点未登记进开放契约。文案会点"
+ },
+ {
+  "id": "run-链路的专用-code",
+  "page": "指南",
+  "title": "run 链路的专用 code",
+  "text": "run 链路的专用 code code 出现在 含义 approval_timeout run.error / approval.timed_out 审批卡超时，本次运行按失败收口 resume_expired run.error 事件回放缓冲过期（10 分钟），改拉 GET /runs/{id} run_interrupted run.error 运行被中断（服务重启 / 副本切换），重查终态再"
+ },
+ {
+  "id": "缺-scope-的文案到底写了什么",
+  "page": "指南",
+  "title": "缺 scope 的文案到底写了什么",
+  "text": "缺 scope 的文案到底写了什么 该 API Key 未开通「runs.write」能力；请在问渠「个人设置 → API 密钥」编辑该 Key 的权限范围后重试 该端点不在开放契约注册表内，默认拒绝；请从 GET /api/ai/v1/openapi.json 查已开放端点， 或让管理员把该能力登记进开放契约 该 API Key 只开放问答链路（问答 / 会话 / 反馈 / 引用溯源等）：这个端"
+ },
+ {
+  "id": "限频",
+  "page": "指南",
+  "title": "限频",
+  "text": "限频 桶 默认值 说明 chat 10 次/分钟 问答、建 run、上传共用这个桶 embedding 60 次/分钟 每请求最多 256 条文本 workflow 按租户配置 触发已发布工作流 限频按「桶 + 租户 + 账号/IP」分桶，所以 GET /v1/me 里的 limits 是 当前配置 ， 不是这把 Key 的私有配额。超限统一 429，退避重试即可；不要对 429 做无限重试。"
+ },
+ {
+  "id": "排查顺序",
+  "page": "指南",
+  "title": "排查顺序",
+  "text": "排查顺序 request_id 有没有留下？没有就先在客户端日志里补上。 GET /v1/me ：scope 对不对、代表谁、限流多少。 GET /api/ai/v1/openapi.json ：这个端点到底登记了吗。 还是不懂？把 request_id + 请求路径 + 时间点给管理员，服务端日志按它一秒定位。"
+ },
+ {
+  "id": "capabilities",
+  "page": "指南",
+  "title": "能力清单（问答 / 检索 / 工作流 / 嵌入 / MCP）",
+  "text": "v1 注册表里已有的能力，以及两条不在注册表内、但仍然可用的既有链路。"
+ },
+ {
+  "id": "端点全景",
+  "page": "指南",
+  "title": "端点全景",
+  "text": "端点全景 分类 端点 scope 问答 POST /v1/chat/completions · POST /v1/responses chat 运行 POST /v1/agents/{id}/runs 及其 6 个派生端点 runs.read / runs.write 检索 POST /v1/retrieval kb.read 知识库 GET/POST /v1/kbs… kb.read / kb."
+ },
+ {
+  "id": "cap-chat",
+  "page": "指南",
+  "title": "问答：原生 SSE 链路",
+  "text": "问答：原生 SSE 链路 POST /api/ai/chat 是站内同款的原生流式接口——它 不在 v1 注册表内 （属于既有问答链路，按问答白名单放行）， 所以严格说不带「只增不删」承诺；但阶段事件比 chat/completions 丰富，L1 前端集成与内部代理用的就是它。 请求体主要字段： question （必填 ≤8000 字）、 sessionId （续聊）、 agentId 、 m"
+ },
+ {
+  "id": "cap-retrieval",
+  "page": "指南",
+  "title": "检索：把问渠当搜索引擎",
+  "text": "检索：把问渠当搜索引擎 query 必填（≤8000 字）； knowledgeBaseIds 省略 = 签发人可见的全部库； topK 1–50（默认 20）； minScore 按融合分过滤。 返回 {chunks:[{id,text,score,title,titlePath,docId,kbId,chunkIndex,images}], total, warnings?} 。 不执行重排；"
+ },
+ {
+  "id": "cap-kb",
+  "page": "指南",
+  "title": "知识库：读写分离",
+  "text": "知识库：读写分离 端点 scope 说明 GET /v1/kbs kb.read 可见库列表（含文档数） GET /v1/kbs/{id} kb.read 库详情 GET /v1/kbs/{id}/documents kb.read 文档列表与解析进度（0 生效 / 1 弃用 / 2 解析中 / 3 失败） POST /v1/kbs kb.write 建库： name + embeddingRef"
+ },
+ {
+  "id": "cap-embedding",
+  "page": "指南",
+  "title": "向量：OpenAI 兼容",
+  "text": "向量：OpenAI 兼容 model 必填（问渠向量按知识库绑定，没有全局默认）；可用清单 GET /v1/models/embeddings 。 input 单批 ≤256 条、单条 ≤8192 token； encoding_format 支持 float / base64 ； dimensions 可裁剪。 响应是 OpenAI 标准形状，任何 OpenAI SDK 改 base_url 即"
+ },
+ {
+  "id": "cap-workflow",
+  "page": "指南",
+  "title": "工作流：当 RPC 调",
+  "text": "工作流：当 RPC 调 inputs 对应开始节点入参，可整体省略。 同步返回 run 全量： status / outputs / nodeTraces / durationMs 。 失败不抛 500：回 status=failed 的 run，看 error 与 nodeTraces 定位失败节点。 约束：工作流对签发人 可见 才可触发（不可见一律 404，不泄露存在性）；未发布 → 400；"
+ },
+ {
+  "id": "cap-embed",
+  "page": "指南",
+  "title": "前端嵌入：分享 token，不碰 Key",
+  "text": "前端嵌入：分享 token，不碰 Key 两条路，凭据都是 分享 token （智能体「公开发布」得到）： 加载器约 3KB、零依赖；浮动按钮点击才懒加载对话面板。 WenquChat.init() 返回 {open, close, toggle, destroy} 。 iframe 参数（ embed=1 时生效）： no-tool=1 / compact=1 / color=#rrggbb /"
+ },
+ {
+  "id": "cap-mcp",
+  "page": "指南",
+  "title": "MCP 接入",
+  "text": "MCP 接入 平台级 MCP 入口把问渠能力暴露成标准 MCP Server（Streamable HTTP），凭据是 Authorization: Bearer ： 固定元工具集： wenqu_ask 、 wenqu_search_knowledge 、 wenqu_list_knowledge_bases 、 wenqu_list_agents 。 启用条件（缺一不可）：① 该 Key 在个人"
+ },
+ {
+  "id": "api-reference",
+  "page": "参考",
+  "title": "API 参考（自动生成）",
+  "text": "端点清单由契约快照生成：路径、方法、scope、可达性都不是手写的。"
+ },
+ {
+  "id": "api-me",
+  "page": "参考",
+  "title": "自检与契约",
+  "text": "自检与契约 方法 路径 scope 说明 curl GET /api/ai/v1/me 任意有效 Key API Key 自检：能力范围、发问身份、限流与近 30 天用量 复制 GET /api/ai/v1/openapi.json 任意有效 Key 开放 API 契约（OpenAPI 3.1） 复制"
+ },
+ {
+  "id": "api-chat",
+  "page": "参考",
+  "title": "问答（OpenAI 兼容）",
+  "text": "问答（OpenAI 兼容） 方法 路径 scope 说明 curl POST /api/ai/v1/chat/completions chat Chat Completions（OpenAI 兼容） 复制"
+ },
+ {
+  "id": "api-responses",
+  "page": "参考",
+  "title": "问答（Responses 形状）",
+  "text": "问答（Responses 形状） 方法 路径 scope 说明 curl POST /api/ai/v1/responses chat Responses API（OpenAI 兼容） 复制"
+ },
+ {
+  "id": "api-agents",
+  "page": "参考",
+  "title": "运行原语 · 建 run",
+  "text": "运行原语 · 建 run 方法 路径 scope 说明 curl POST /api/ai/v1/agents/{agentId}/runs runs.write 创建一次智能体运行（run） 复制"
+ },
+ {
+  "id": "api-runs",
+  "page": "参考",
+  "title": "运行原语 · 查询与控制",
+  "text": "运行原语 · 查询与控制 方法 路径 scope 说明 curl GET /api/ai/v1/runs/{id} runs.read 查询运行状态与输出（与 run.done 同口径） 复制 POST /api/ai/v1/runs/{id}/approvals runs.write 提交审批卡（approve/reject/revise/supersede/answer/ignore） 复制 "
+ },
+ {
+  "id": "api-retrieval",
+  "page": "参考",
+  "title": "知识检索",
+  "text": "知识检索 方法 路径 scope 说明 curl POST /api/ai/v1/retrieval kb.read 知识检索（混合检索直通） 复制"
+ },
+ {
+  "id": "api-kbs",
+  "page": "参考",
+  "title": "知识库管理",
+  "text": "知识库管理 方法 路径 scope 说明 curl GET /api/ai/v1/kbs kb.read 知识库列表 复制 POST /api/ai/v1/kbs kb.write 创建知识库 复制 GET /api/ai/v1/kbs/{id} kb.read 知识库详情 复制 GET /api/ai/v1/kbs/{id}/documents kb.read 知识库文档列表与解析进度 复制 P"
+ },
+ {
+  "id": "api-embeddings",
+  "page": "参考",
+  "title": "向量化",
+  "text": "向量化 方法 路径 scope 说明 curl POST /api/ai/v1/embeddings embedding Embeddings（OpenAI 兼容） 复制"
+ },
+ {
+  "id": "api-models",
+  "page": "参考",
+  "title": "模型清单",
+  "text": "模型清单 方法 路径 scope 说明 curl GET /api/ai/v1/models/embeddings embedding 可用向量模型清单 复制"
+ },
+ {
+  "id": "api-workflows",
+  "page": "参考",
+  "title": "工作流",
+  "text": "工作流 方法 路径 scope 说明 curl POST /api/ai/v1/workflows/{id}/run workflow.run 触发已发布工作流 复制 GET /api/ai/v1/workflows/{id}/run/{runId} workflow.run 查询工作流运行结果 复制 POST /api/ai/v1/workflows/webhook/{token} 任意有效 K"
+ },
+ {
+  "id": "samples-changelog",
+  "page": "资源",
+  "title": "示例与变更日志",
+  "text": "能跑的宿主，加上契约改了什么、为什么改。"
+ },
+ {
+  "id": "changelog",
+  "page": "资源",
+  "title": "契约变更日志",
+  "text": "契约变更日志 下列内容原文来自 contract/CHANGELOG.md ： 条目由脚本在 --update 时生成草稿，「为什么改」由人工补 。承诺是只增不删，所以这里不会出现「端点被移除」的条目——真出现了说明违反了承诺。"
+ },
+ {
+  "id": "2026-11-13",
+  "page": "资源",
+  "title": "2026-11-13",
+  "text": "2026-11-13 初始基线：15 个 v1 端点纳入契约快照。 为什么改：<!-- 人工补；自动条目只描述「改了什么」 -->"
+ },
+ {
+  "id": "2026-11-15",
+  "page": "资源",
+  "title": "2026-11-15",
+  "text": "2026-11-15 新增 GET /api/ai/v1/runs/{id} （scope: runs.read）：查询运行状态与输出（与 run.done 同口径） 新增 GET /api/ai/v1/runs/{id}/events （scope: runs.read）：SSE 事件流（Last-Event-ID 续传，seq 连续） 新增 POST /api/ai/v1/agents/{ag"
+ },
+ {
+  "id": "2026-11-15-2",
+  "page": "资源",
+  "title": "2026-11-15",
+  "text": "2026-11-15 新增 GET /api/ai/v1/runs/{id}/artifacts （scope: runs.read）：列出本次运行的可下载产物（含签名 URL） 新增 POST /api/ai/v1/runs/{id}/approvals （scope: runs.write）：提交审批卡（approve/reject/revise/supersede/answer/ignore"
+ }
+]
