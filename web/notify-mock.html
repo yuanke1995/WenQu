@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>通知与推送 · 方案稿</title>
+<link rel="stylesheet" href="/src/views/app.css" />
+<style>
+  :root { --accent: var(--app-accent, #2e6be6); }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--app-bg, #f7f8fa); color: var(--app-text, #1f2329);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    font-size: 13px; -webkit-font-smoothing: antialiased;
+  }
+  .shell { display: flex; min-height: 100vh; }
+  /* ---- 侧栏（仅示意上下文） ---- */
+  .side { width: 168px; flex: none; border-right: 1px solid var(--app-border); background: var(--app-panel); padding: 14px 10px; }
+  .side-title { font-size: 15px; font-weight: 600; margin: 2px 0 14px; }
+  .side-group { padding: 0 10px 5px; font-size: 11px; color: var(--app-text3); }
+  .side-item { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 8px; color: var(--app-text2); margin-bottom: 2px; }
+  .side-item.on { background: var(--app-accent-weak); color: var(--app-text); font-weight: 500; position: relative; }
+  .side-item.on::before { content: ""; position: absolute; left: 0; top: 7px; bottom: 7px; width: 3px; border-radius: 0 3px 3px 0; background: var(--app-accent); }
+  .side-ic { width: 14px; height: 14px; color: var(--app-text3); flex: none; }
+  .side-item.on .side-ic { color: var(--app-accent); }
+
+  /* ---- 内容 ---- */
+  .main { flex: 1; min-width: 0; }
+  .page-head { padding: 18px 20px 6px; }
+  .page-head h1 { margin: 0; font-size: 18px; font-weight: 600; }
+  .page-head p { margin: 3px 0 0; font-size: 12px; color: var(--app-text3); }
+  .content { padding: 10px 20px 30px; }
+  .card {
+    max-width: 640px; background: var(--app-panel); border: 1px solid var(--app-border);
+    border-radius: 12px; padding: 18px 20px;
+  }
+  .card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .card-head h2 { margin: 0 0 3px; font-size: 15px; font-weight: 600; }
+  .card-head p { margin: 0; font-size: 12px; color: var(--app-text3); }
+  .autosave { flex: none; font-size: 11px; color: var(--app-text3); white-space: nowrap; }
+
+  /* ---- 通知方式：两行 ---- */
+  .ways { margin-top: 14px; border: 1px solid var(--app-border); border-radius: 10px; overflow: hidden; }
+  .way { display: flex; align-items: center; gap: 12px; padding: 11px 12px; }
+  .way + .way { border-top: 1px solid var(--app-border); }
+  .way-ic {
+    width: 30px; height: 30px; border-radius: 9px; flex: none;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--app-panel-2); border: 1px solid var(--app-border); color: var(--app-text2);
+  }
+  .way-ic svg { width: 15px; height: 15px; }
+  .way-main { min-width: 0; flex: 1; }
+  .way-name { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 600; }
+  .way-sub { margin-top: 3px; font-size: 11px; color: var(--app-text3); }
+  .badge {
+    font-size: 10px; font-weight: 400; line-height: 1; padding: 3px 6px; border-radius: 999px;
+    background: var(--app-panel-2); border: 1px solid var(--app-border); color: var(--app-text3); white-space: nowrap;
+  }
+  .badge.on { background: var(--app-ok-weak); border-color: #cfe9db; color: #1a7f4b; }
+  .way-inline { display: flex; align-items: center; gap: 8px; flex: none; }
+  .inp {
+    width: 200px; height: 30px; padding: 0 9px; font-size: 12px; font-family: inherit;
+    border: 1px solid var(--app-border); border-radius: 7px; background: var(--app-panel); color: var(--app-text);
+    outline: none;
+  }
+  .inp::placeholder { color: var(--app-text3); }
+
+  .btn {
+    height: 30px; padding: 0 12px; border-radius: 7px; font-size: 12px; font-family: inherit;
+    border: 1px solid var(--app-border); background: var(--app-panel); color: var(--app-text); cursor: pointer;
+    white-space: nowrap;
+  }
+  .btn.primary { background: var(--app-accent); border-color: var(--app-accent); color: #fff; }
+  .btn.ghost { background: transparent; }
+  .btn.small { height: 28px; padding: 0 10px; }
+  .link {
+    border: none; background: none; padding: 0; font: inherit; font-size: 12px;
+    color: var(--app-accent); cursor: pointer;
+  }
+
+  /* ---- 接收哪些通知 ---- */
+  .sec-head { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--app-border); display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .sec-title { font-size: 12px; font-weight: 600; }
+  .sec-sub { margin: 3px 0 0; font-size: 11px; color: var(--app-text3); }
+  .sec-acts { display: flex; align-items: center; gap: 10px; flex: none; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px;
+    border: 1px solid var(--app-border); border-radius: 999px; font-size: 11px; color: var(--app-text2);
+    cursor: pointer; user-select: none;
+  }
+  .chip .box { width: 12px; height: 12px; border: 1px solid var(--app-border-strong); border-radius: 3px; background: var(--app-panel); }
+  .chip.on { border-color: var(--app-accent-border); background: var(--app-accent-weak); color: var(--app-text); }
+  .chip.on .box { background: var(--app-accent); border-color: var(--app-accent); position: relative; }
+  .chip.on .box::after { content: "✓"; position: absolute; inset: 0; color: #fff; font-size: 9px; line-height: 12px; text-align: center; }
+  .muted-note { font-size: 11px; color: var(--app-text3); }
+
+  .groups { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+  .group { border: 1px solid var(--app-border); border-radius: 9px; overflow: hidden; }
+  .group-head { display: flex; align-items: center; gap: 8px; padding: 7px 10px; background: var(--app-panel-2); }
+  .dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+  .dot.warn { background: var(--app-warn); }
+  .dot.err { background: var(--app-danger); }
+  .dot.ok { background: var(--app-ok); }
+  .group-name { font-size: 12px; font-weight: 600; }
+  .group-count { font-size: 11px; color: var(--app-text3); }
+  .group-collapsed { font-size: 11px; color: var(--app-text3); }
+  .group-acts { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 9px 16px; padding: 10px; }
+  .item { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .sw {
+    width: 28px; height: 16px; border-radius: 999px; background: #d3d8de; flex: none; position: relative;
+  }
+  .sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: #fff; transition: left .15s; }
+  .sw.on { background: var(--app-accent); }
+  .sw.on::after { left: 14px; }
+  .ic { width: 14px; height: 14px; flex: none; }
+  .ic.ok { color: var(--app-ok); }
+  .ic.err { color: var(--app-danger); }
+  .ic.warn { color: var(--app-warn); }
+  .label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
+  .item.muted .label { color: var(--app-text3); }
+  .item.muted .ic { opacity: .45; }
+  .mail {
+    margin-left: auto; flex: none; width: 24px; height: 22px; border-radius: 6px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border: 1px solid transparent; background: transparent; color: var(--app-text3); cursor: pointer; padding: 0;
+  }
+  .mail svg { width: 13px; height: 13px; }
+  .mail:hover { border-color: var(--app-border); background: var(--app-panel-2); color: var(--app-text2); }
+  .mail.on { border-color: var(--app-accent-border); background: var(--app-accent-weak); color: var(--app-accent); }
+  .mail.off { cursor: not-allowed; opacity: .3; }
+  .foot-note { margin: 16px 0 0; padding-top: 12px; border-top: 1px solid var(--app-border); font-size: 11px; line-height: 1.6; color: var(--app-text3); }
+
+  @media (max-width: 768px) {
+    .side { display: none; }
+    .page-head { padding: 14px 12px 4px; }
+    .page-head p { display: none; }
+    .content { padding: 8px 12px 24px; }
+    .card { padding: 14px; border-radius: 10px; }
+    .ways .way { flex-wrap: wrap; }
+    .way-inline { width: 100%; }
+    .inp { flex: 1; width: auto; min-width: 0; }
+    .sec-head { flex-wrap: wrap; }
+    .sec-acts { width: 100%; justify-content: flex-start; }
+    .grid { grid-template-columns: 1fr; }
+    .group-acts { gap: 12px; }
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="side">
+    <div class="side-title">个人设置</div>
+    <div class="side-group">账号</div>
+    <div class="side-item"><span class="side-ic">◔</span>个人资料</div>
+    <div class="side-item"><span class="side-ic">◈</span>账号安全</div>
+    <div class="side-group">偏好</div>
+    <div class="side-item"><span class="side-ic">⚙</span>问答偏好</div>
+    <div class="side-item on"><span class="side-ic">🔔</span>通知与推送</div>
+    <div class="side-group">数据与应用</div>
+    <div class="side-item"><span class="side-ic">▤</span>我的记忆</div>
+    <div class="side-item"><span class="side-ic">↗</span>分享管理</div>
+    <div class="side-item"><span class="side-ic">⚿</span>API 密钥</div>
+  </aside>
+
+  <main class="main">
+    <div class="page-head">
+      <h1>个人设置</h1>
+      <p>头像、偏好、记忆与密钥。</p>
+    </div>
+    <div class="content">
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <h2>通知与推送</h2>
+            <p>收哪些、怎么收；关掉的只停新通知，已有的不受影响。</p>
+          </div>
+          <span class="autosave">改动即时保存</span>
+        </div>
+
+        <!-- ① 通知方式收成两行 -->
+        <div class="ways" id="ways">
+          <div class="way">
+            <span class="way-ic" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 7h18s-3 0-3-7"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/></svg>
+            </span>
+            <div class="way-main">
+              <div class="way-name">系统级通知 <span class="badge">这台设备未开启</span></div>
+              <div class="way-sub">平台未配置推送密钥，需管理员先生成 VAPID 密钥</div>
+            </div>
+            <button class="btn small ghost">允许通知</button>
+          </div>
+          <div class="way">
+            <span class="way-ic" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>
+            </span>
+            <div class="way-main">
+              <div class="way-name">邮件提醒 <span class="badge on">已开启</span></div>
+              <div class="way-sub">点亮行尾 ✉ 的类型才会另发一封邮件</div>
+            </div>
+            <div class="way-inline">
+              <input class="inp" value="yuki@example.com" />
+              <button class="btn small ghost">保存</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ② 列表头：只看已静音 + 已静音计数 -->
+        <div class="sec-head" id="listhead">
+          <div>
+            <div class="sec-title">接收哪些通知</div>
+            <p class="sec-sub">静音的类型既不发站内，也不发邮件</p>
+          </div>
+          <div class="sec-acts">
+            <span class="chip"><span class="box"></span>只看已静音</span>
+            <span class="muted-note">已静音 3 类</span>
+            <button class="link">全部开启</button>
+          </div>
+        </div>
+
+        <div class="groups">
+          <div class="group">
+            <div class="group-head">
+              <span class="dot warn"></span><span class="group-name">待处理</span>
+              <span class="group-count">5 类</span>
+              <div class="group-acts"><button class="link">全开</button><button class="link">全关</button></div>
+            </div>
+            <div class="grid">
+              <div class="item"><span class="sw on"></span><span class="ic warn">!</span><span class="label">工作流待审核</span><button class="mail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg></button></div>
+              <div class="item"><span class="sw on"></span><span class="ic warn">!</span><span class="label">工具审批待决</span><button class="mail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg></button></div>
+              <div class="item"><span class="sw on"></span><span class="ic warn">!</span><span class="label">智能体提问待答</span><button class="mail on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg></button></div>
+              <div class="item"><span class="sw on"></span><span class="ic warn">!</span><span class="label">深度执行计划待确认</span><button class="mail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg></button></div>
+              <div class="item"><span class="sw on"></span><span class="ic warn">!</span><span class="label">模型额度不足</span><button class="mail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg></button></div>
+            </div>
+          </div>
+
+          <div class="group">
+            <div class="group-head">
+              <span class="dot err"></span><span class="group-name">异常</span>
+              <span class="group-count">11 类 · 已静音 1</span>
+              <div class="group-acts"><button class="link">全开</button><button class="link">全关</button></div>
+            </div>
+            <div class="grid">
+              <div class="item"><span class="sw on"></span><span class="ic err">×</span><span class="label">解析失败</span><button class="mail on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg></button></div>
+              <div class="item"><span class="sw on"></span><span class="ic err">×</span><span class="label">批量解析失败</span><button class="mail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg></button></div>
+              <div class="item"><span class="sw on"></span><span class="ic err">×</span><span class="label">工作流失败</span><button class="mail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg></button></div>
+              <div class="item"><span class="sw on"></span><span class="ic warn">!</span><span class="label">工作流超时</span><button class="mail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg></button></div>
+              <div class="item"><span class="sw on"></span><span class="ic err">×</span><span class="label">网页源刷新失败</span><button class="mail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg></button></div>
+              <div class="item"><span class="sw on"></span><span class="ic err">×</span><span class="label">定时任务失败</span><button class="mail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg></button></div>
+              <div class="item"><span class="sw on"></span><span class="ic err">×</span><span class="label">检索评估失败</span><button class="mail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg></button></div>
+              <div class="item"><span class="sw on"></span><span class="ic err">×</span><span class="label">智能体评测失败</span><button class="mail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg></button></div>
+              <div class="item"><span class="sw on"></span><span class="ic err">×</span><span class="label">智能体回调失败</span><button class="mail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg></button></div>
+              <div class="item"><span class="sw on"></span><span class="ic err">×</span><span class="label">一轮没跑成</span><button class="mail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg></button></div>
+              <div class="item muted"><span class="sw"></span><span class="ic warn">⚑</span><span class="label">目标停住</span><button class="mail off"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg></button></div>
+            </div>
+          </div>
+
+          <!-- ③ 完成默认收起 -->
+          <div class="group" id="collapsed">
+            <div class="group-head">
+              <span class="dot ok"></span><span class="group-name">完成</span>
+              <span class="group-count">7 类 · 已静音 2</span>
+              <span class="group-collapsed">已收起</span>
+              <div class="group-acts"><button class="link">展开 ▾</button></div>
+            </div>
+          </div>
+        </div>
+
+        <p class="foot-note">通知保留期由管理员配置；网页推送需要 https 或 localhost，iPhone 需先把本站添加到主屏幕。</p>
+      </div>
+    </div>
+  </main>
+</div>
+</body>
+</html>
