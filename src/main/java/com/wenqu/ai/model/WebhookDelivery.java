@@ -27,8 +27,13 @@ public class WebhookDelivery {
     private String uid;
     private String agentId;
     private String turnId;
+    /**
+     * v1 runId（A 期第二批）：非空表示这是 {@code run.finished} 投递，整张表按它唯一。
+     * 轮终回调为 NULL，MySQL 唯一键允许多个 NULL，两条链路互不干扰。
+     */
+    private String runId;
     private String sessionId;
-    /** 事件名（X-Wenqu-Event 头同源；v1 恒为 agent.turn.finished） */
+    /** 事件名（X-Wenqu-Event 头同源；agent.turn.finished 或 run.finished） */
     private String event;
     private String url;
     /** 出站 JSON 原文（重试时原样重发，不重算——同一笔投递内容恒定） */

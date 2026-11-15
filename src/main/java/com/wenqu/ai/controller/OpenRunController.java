@@ -7,6 +7,7 @@ import com.wenqu.ai.openapi.RequestIdFilter;
 import com.wenqu.ai.service.ApiKeyService;
 import com.wenqu.ai.service.RateLimitService;
 import com.wenqu.ai.service.openrun.OpenRunService;
+import com.wenqu.ai.service.openrun.RunControlService;
 import com.wenqu.ai.util.RequestUser;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
@@ -22,7 +23,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.util.Map;
 
 /**
- * A 期 run 原语（第一批）：建轮 / 状态 / 事件流。
+ * A 期 run 原语：建轮 / 状态 / 事件流 / 审批 / 产物 / 插话 / 停止。
  *
  * <p>路径必须落在 {@code /api/ai/v1/} 才会被 OpenApiRegistry 登记、走 Key 通道与 OpenAI 形状错误体。
  * 响应直接回对象，不走 {@code ResultJson} 平台包络——与其余 v1 端点一致。</p>
@@ -34,6 +35,7 @@ public class OpenRunController {
     private final OpenRunService openRunService;
     private final ApiKeyService apiKeyService;
     private final RateLimitService rateLimitService;
+    private final RunControlService runControlService;
 
     @OpenApi(scope = OpenApiScopes.RUNS_WRITE, summary = "创建一次智能体运行（run）")
     @PostMapping("/api/ai/v1/agents/{agentId}/runs")
@@ -73,6 +75,48 @@ public class OpenRunController {
         SseEmitter emitter = new SseEmitter(0L);
         openRunService.attach(id, cursor, emitter);
         return emitter;
+    }
+
+    /** 审批：请求体带 approvalId（见 approval.required 事件）+ 统一 decision */
+    @OpenApi(scope = OpenApiScopes.RUNS_WRITE, summary = "提交审批卡（approve/reject/revise/supersede/answer/ignore）")
+    @PostMapping("/api/ai/v1/runs/{id}/approvals")
+    public Map<String, Object> approve(@PathVariable("id") String id,
+                                       @RequestBody(required = false) Map<String, Object> body,
+                                       HttpServletRequest request) {
+        String keyId = (String) request.getAttribute(SecurityConfig.ATTR_API_KEY_ID);
+        apiKeyService.requireScope(keyId, OpenApiScopes.RUNS_WRITE);
+        return runControlService.approve(RequestUser.uid(), id, body);
+    }
+
+    /** 产物：只回本次 run 的可下载项，签名 URL 当场换发（1 小时） */
+    @OpenApi(scope = OpenApiScopes.RUNS_READ, summary = "列出本次运行的可下载产物（含签名 URL）")
+    @GetMapping("/api/ai/v1/runs/{id}/artifacts")
+    public Map<String, Object> artifacts(@PathVariable("id") String id, HttpServletRequest request) {
+        String keyId = (String) request.getAttribute(SecurityConfig.ATTR_API_KEY_ID);
+        apiKeyService.requireScope(keyId, OpenApiScopes.RUNS_READ);
+        return runControlService.artifacts(RequestUser.uid(), id);
+    }
+
+    /** 插话：v1 只接纯文本，框架收下才落库 */
+    @OpenApi(scope = OpenApiScopes.RUNS_WRITE, summary = "运行中插话（纯文本，框架收下才落库）")
+    @PostMapping("/api/ai/v1/runs/{id}/steer")
+    public Map<String, Object> steer(@PathVariable("id") String id,
+                                     @RequestBody(required = false) Map<String, Object> body,
+                                     HttpServletRequest request) {
+        String keyId = (String) request.getAttribute(SecurityConfig.ATTR_API_KEY_ID);
+        apiKeyService.requireScope(keyId, OpenApiScopes.RUNS_WRITE);
+        Map<String, Object> b = body == null ? Map.of() : body;
+        String text = b.get("text") == null ? null : String.valueOf(b.get("text"));
+        return runControlService.steer(RequestUser.uid(), id, text);
+    }
+
+    /** 停止：幂等；终态由随后到达的 done 收成 stopped */
+    @OpenApi(scope = OpenApiScopes.RUNS_WRITE, summary = "停止运行（幂等，终态收成 stopped）")
+    @PostMapping("/api/ai/v1/runs/{id}/stop")
+    public Map<String, Object> stop(@PathVariable("id") String id, HttpServletRequest request) {
+        String keyId = (String) request.getAttribute(SecurityConfig.ATTR_API_KEY_ID);
+        apiKeyService.requireScope(keyId, OpenApiScopes.RUNS_WRITE);
+        return runControlService.stop(RequestUser.uid(), id);
     }
 
     private static long parseSeq(String raw) {

@@ -12,11 +12,13 @@ import com.wenqu.ai.openapi.RequestIdFilter;
 import com.wenqu.ai.service.ChatService;
 import com.wenqu.ai.service.SessionService;
 import com.wenqu.ai.service.TurnSource;
+import com.wenqu.ai.service.webhook.AgentWebhookService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -41,6 +43,7 @@ public class OpenRunService {
     private final ChatService chatService;
     private final AgentMapper agentMapper;
     private final RunEventReplay replay;
+    private final AgentWebhookService agentWebhookService;
 
     /** 建一次运行；Idempotency-Key 命中时直接回同一 runId，不新起轮 */
     public Map<String, Object> create(String uid, String apiKeyId, String agentId, String question,
@@ -135,14 +138,38 @@ public class OpenRunService {
     }
 
     private void finish(String runId, OpenRunEmitter.Terminal t) {
+        LocalDateTime now = LocalDateTime.now();
         mapper.update(null, new LambdaUpdateWrapper<OpenRun>()
                 .eq(OpenRun::getRunId, runId)
                 .set(OpenRun::getStatus, t.status())
                 .set(OpenRun::getErrorCode, t.code())
                 .set(OpenRun::getErrorMessage, t.message() == null ? null : trim(t.message(), 500))
                 .set(OpenRun::getAnswer, t.answer() == null ? null : trim(t.answer(), 4000))
-                .set(OpenRun::getFinishTime, LocalDateTime.now()));
+                .set(OpenRun::getFinishTime, now));
         log.info("[OPEN-RUN] 终态 run={} status={}", runId, t.status());
+        // run.finished 出站：done/error 都只经过这一个收敛点，天然单发。
+        // agent.turn.finished 已在 AgentWebhookService 按 sourceName=open-run 跳过，不会双终态。
+        // 出站是旁路，任何异常都不许反过来影响问答收口。
+        try {
+            OpenRun row = mapper.selectById(runId);
+            if (row == null) return;
+            String content = t.answer() == null ? "" : t.answer();
+            String terminal = replay.terminalData(runId);
+            if (terminal != null) {
+                try {
+                    String fc = JSON.parseObject(terminal).getString("finalContent");
+                    if (fc != null && !fc.isBlank()) content = fc;
+                } catch (Exception ignored) {
+                    // 终态帧不是预期 JSON 时沿用摘录，不为此中断回调
+                }
+            }
+            long elapsed = row.getCreateTime() == null ? 0L
+                    : Duration.between(row.getCreateTime(), now).toMillis();
+            agentWebhookService.onRunFinished(runId, row.getUid(), row.getAgentId(), row.getApiKeyId(),
+                    row.getSessionId(), t.status(), t.code(), t.message(), content, elapsed);
+        } catch (Exception e) {
+            log.warn("[OPEN-RUN] run.finished 出站异常（旁路）: run={} : {}", runId, e.getMessage());
+        }
     }
 
     /**
@@ -160,7 +187,7 @@ public class OpenRunService {
                     Map<String, Object> err = new LinkedHashMap<>();
                     err.put("runId", runId);
                     err.put("status", "failed");
-                    err.put("code", "resume_expired");
+                    err.put("code", OpenRunErrorCode.RESUME_EXPIRED);
                     err.put("message", "事件回放缓冲已过期，请重拉 GET /runs/{id}");
                     err.put("request_id", RequestIdFilter.current() == null ? "" : RequestIdFilter.current());
                     emitter.send(SseEmitter.event()

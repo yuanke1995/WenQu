@@ -34,6 +34,7 @@ public class OpenRunEmitter extends CollectingSseEmitter {
             "ask_user", "approval.required",
             "deep_plan_approval", "approval.required",
             "artifact", "artifact.created",
+            "warn", "approval.timed_out",
             "done", "run.done",
             "error", "run.error");
 
@@ -68,13 +69,17 @@ public class OpenRunEmitter extends CollectingSseEmitter {
         Object rawContent = frame.get("content");
         String content = rawContent instanceof String s ? s
                 : (rawContent == null ? "" : JSON.toJSONString(rawContent));
-        Map<String, Object> payload = payload(v1, nativeType, content);
+        // warn 还用于整轮预算提示与 ask 卡「前台等待结束（本轮继续）」，那些不是超时，一律不投
+        if ("approval.timed_out".equals(v1) && !OpenRunErrorCode.isApprovalTimeoutWarn(content)) return;
+        // 原生 stopTurn 不发帧，终态仍是 done；标记存在时把这一轮如实收成 stopped
+        boolean stopped = "run.done".equals(v1) && replay.consumeStopped(runId);
+        Map<String, Object> payload = payload(v1, nativeType, content, stopped);
         long id = seq.incrementAndGet();
         replay.append(runId, id, v1, JSON.toJSONString(payload));
         if ("run.done".equals(v1)) {
-            finish(new Terminal("succeeded", null, null, answer()));
+            finish(new Terminal(stopped ? "stopped" : "succeeded", null, null, answer()));
         } else if ("run.error".equals(v1)) {
-            finish(new Terminal("failed", "internal_error", content, answer()));
+            finish(new Terminal("failed", OpenRunErrorCode.classify(content), content, answer()));
         }
     }
 
@@ -91,7 +96,7 @@ public class OpenRunEmitter extends CollectingSseEmitter {
         }
     }
 
-    private Map<String, Object> payload(String v1, String nativeType, String content) {
+    private Map<String, Object> payload(String v1, String nativeType, String content, boolean stopped) {
         Map<String, Object> p = new LinkedHashMap<>();
         p.put("runId", runId);
         switch (v1) {
@@ -110,10 +115,15 @@ public class OpenRunEmitter extends CollectingSseEmitter {
                 p.put("approvalId", firstNonBlank(c, "approvalId", "planApprovalId", "askId"));
                 p.put("payload", parseOrRaw(content));
             }
-            case "artifact.created" -> p.put("artifact", contentOf(content, "id", "filename", "ext", "size", "preview"));
+            case "artifact.created" -> p.put("artifact", contentOf(content,
+                    "id", "filename", "ext", "size", "preview", "description"));
+            case "approval.timed_out" -> {
+                p.put("code", OpenRunErrorCode.APPROVAL_TIMEOUT);
+                p.put("message", content);
+            }
             case "run.done" -> {
                 JSONObject c = asObject(content);
-                p.put("status", "succeeded");
+                p.put("status", stopped ? "stopped" : "succeeded");
                 p.put("finalContent", c == null ? content : c.getString("finalContent"));
                 if (c != null) {
                     p.put("usage", c.get("tokens"));
@@ -123,7 +133,7 @@ public class OpenRunEmitter extends CollectingSseEmitter {
             }
             case "run.error" -> {
                 p.put("status", "failed");
-                p.put("code", "internal_error");
+                p.put("code", OpenRunErrorCode.classify(content));
                 p.put("message", content);
                 p.put("request_id", requestId);
             }

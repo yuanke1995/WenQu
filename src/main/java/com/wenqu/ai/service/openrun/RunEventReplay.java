@@ -30,11 +30,29 @@ public class RunEventReplay {
     /** 保留期：方案验收要求断线 5 分钟仍能续传，留一倍余量 */
     public static final Duration RETENTION = Duration.ofMinutes(10);
     public static final String KEY_PREFIX = "wenqu:run:events:";
+    /** 「调用方主动停止过」标记：原生 stopTurn 不发 SSE 帧，终态仍是引擎的 done，见 markStopped */
+    private static final String STOP_PREFIX = "wenqu:run:stop:";
 
     private final StringRedisTemplate redis;
 
     private static String key(String runId) {
         return KEY_PREFIX + runId;
+    }
+
+    /**
+     * 记下这次 run 被主动停止过。
+     * <p>原生 {@code ChatRunRuntime.stopTurn} 只置把手上的 stopped 标记、不写 SSE；收尾仍由引擎
+     * 发 {@code done}，投影层若照单全收会把状态写成 succeeded。用 Redis 短标记把「用户停过」
+     * 从控制端点带到投影层（跨副本也成立），在 done 到达时改判 stopped，与 c_ai_open_run.status
+     * 和 run.done 帧保持一致。TTL 与回放缓冲同长，不会留垃圾键。</p>
+     */
+    public void markStopped(String runId) {
+        redis.opsForValue().set(STOP_PREFIX + runId, "1", RETENTION);
+    }
+
+    /** 消费一次停止标记；返回 true 表示这轮被用户主动停过 */
+    public boolean consumeStopped(String runId) {
+        return Boolean.TRUE.equals(redis.delete(STOP_PREFIX + runId));
     }
 
     /** 追加一帧；每次 append 续期，长跑的 run 不会在跑到一半被清掉 */

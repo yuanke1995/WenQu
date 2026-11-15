@@ -54,6 +54,13 @@
     },
     {
       "method": "GET",
+      "path": "/api/ai/v1/runs/{id}/artifacts",
+      "scope": "runs.read",
+      "summary": "列出本次运行的可下载产物（含签名 URL）",
+      "keyAccessible": true
+    },
+    {
+      "method": "GET",
       "path": "/api/ai/v1/runs/{id}/events",
       "scope": "runs.read",
       "summary": "SSE 事件流（Last-Event-ID 续传，seq 连续）",
@@ -113,6 +120,27 @@
       "path": "/api/ai/v1/retrieval",
       "scope": "kb.read",
       "summary": "知识检索（混合检索直通）",
+      "keyAccessible": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/ai/v1/runs/{id}/approvals",
+      "scope": "runs.write",
+      "summary": "提交审批卡（approve/reject/revise/supersede/answer/ignore）",
+      "keyAccessible": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/ai/v1/runs/{id}/steer",
+      "scope": "runs.write",
+      "summary": "运行中插话（纯文本，框架收下才落库）",
+      "keyAccessible": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/ai/v1/runs/{id}/stop",
+      "scope": "runs.write",
+      "summary": "停止运行（幂等，终态收成 stopped）",
       "keyAccessible": true
     },
     {

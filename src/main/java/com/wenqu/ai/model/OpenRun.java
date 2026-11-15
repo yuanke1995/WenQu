@@ -10,9 +10,13 @@ import java.time.LocalDateTime;
 /**
  * 对外开放的一次运行（run）映射。
  *
- * <p>{@code runId} 直接用 {@code turnId}：消息、审批卡、事件账本、webhook 早已挂在 turnId 上，
- * 另造一个 UUID 只会多一层映射，还会和框架「一 turn 多 executionRunId」的概念混淆。
- * 本表只做归属与对外状态查询，<b>不是执行状态机</b>——运行态仍在 TurnRegistry / ChatRunBus，
+ * <p><b>{@code runId} 是对外独立句柄，不等于框架 {@code turnId}</b>：建轮时本服务生成 runId，
+ * 流水线内部另生成 turnId，两者不经映射。方案 J1 原本设想「runId=turnId」，但按
+ * {@code CollectingSseEmitter} 接缝实现后拿不到流水线生成的 turnId；实测 A1 两批的审批、
+ * 产物、插话、停止都只需「runId → sessionId」即可复用现有能力，补映射列反而多一层会漂移的
+ * 中间态。口径更正见 V21 迁移头注释与方案 §10.2。</p>
+ *
+ * <p>本表只做归属与对外状态查询，<b>不是执行状态机</b>——运行态仍在 TurnRegistry / ChatRunBus，
  * 终态由投影层在 done/error 帧到达时回填。</p>
  */
 @Data

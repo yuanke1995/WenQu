@@ -56,6 +56,9 @@ public class AgentWebhookService {
 
     public static final String EVENT_TURN_FINISHED = "agent.turn.finished";
 
+    /** v1 run 终态（A 期第二批）：与轮终回调二选一，幂等键是 runId 而不是 turnId/messageId */
+    public static final String EVENT_RUN_FINISHED = "run.finished";
+
     /** 重试退避（毫秒）：首发失败后按序取用，用尽即 exhausted */
     static final long[] RETRY_BACKOFF_MS = {60_000L, 300_000L, 1_800_000L, 7_200_000L};
     /** 给模型的正文进 payload 的截断（64KB——完整正文落库在 c_ai_message，宿主要长文自己拉） */
@@ -81,6 +84,9 @@ public class AgentWebhookService {
                                List<Map<String, Object>> artifacts, long elapsedMs) {
         try {
             if (cmd == null) return;
+            // A 期 run 原语：v1 轮由 OpenRunEmitter.finish 单点发 run.finished（payload 带 runId）。
+            // 这里必须跳过，否则同一轮会同时收到 agent.turn.finished 与 run.finished 两种终态。
+            if ("open-run".equals(cmd.getSourceName())) return;
             // 发起方过滤与 TurnNotifyService.turnUid 同口径：null/空=老调用方没登记（按用户轮放行），
             // 只有显式的非 user 来源（定时/工作流子轮/咨询子轮）不发
             String src = cmd.getSource();
@@ -123,6 +129,98 @@ public class AgentWebhookService {
         }
     }
 
+    // ==================== v1 run 终态（A 期第二批） ====================
+
+    /**
+     * v1 run 终态出站。挂点是 {@code OpenRunEmitter.finish} → {@code OpenRunService.finish}，
+     * 整轮只有这一个收敛点（done/error 都过它），所以天然单发；engine 侧的轮终回调已按
+     * {@code sourceName="open-run"} 跳过，不会双发。
+     *
+     * <p>投递、退避重试、扫描补发、HMAC 签名全部复用本类既有机制，只是事件名与幂等键换成
+     * runId。幂等有两层：应用层先查（省一次无谓 insert），DB 唯一键
+     * {@code uk_wh_run_id} 兜并发——同一 run 重投绝不产生第二条业务记录。</p>
+     */
+    public void onRunFinished(String runId, String uid, String agentId, String apiKeyId,
+                              String sessionId, String status, String errorCode,
+                              String errorMessage, String finalContent, long elapsedMs) {
+        if (runId == null || runId.isBlank()) return;
+        try {
+            if (!deliveryMapper.selectList(new LambdaQueryWrapper<WebhookDelivery>()
+                    .eq(WebhookDelivery::getRunId, runId).last("LIMIT 1")).isEmpty()) return;
+            boolean submitted = com.wenqu.ai.thread.ThreadPoolManager.execute(() -> {
+                try {
+                    deliverRun(runId, uid, agentId, apiKeyId, sessionId, status, errorCode,
+                            errorMessage, finalContent == null ? "" : finalContent, elapsedMs, true);
+                } catch (Exception e) {
+                    log.warn("[WEBHOOK] run.finished 投递失败（旁路）: run={} : {}", runId, e.getMessage());
+                }
+            });
+            if (!submitted) {
+                // 拒投不丢：只落到期 pending 行，扫描任务下一拍补发（与轮终回调同纪律）
+                log.warn("[WEBHOOK] 线程池拒投，run.finished 转扫描补发: run={}", runId);
+                deliverRun(runId, uid, agentId, apiKeyId, sessionId, status, errorCode,
+                        errorMessage, finalContent == null ? "" : finalContent, elapsedMs, false);
+            }
+        } catch (Exception e) {
+            log.warn("[WEBHOOK] run.finished 出站入口异常（旁路）: {}", e.getMessage());
+        }
+    }
+
+    /** 落行 + 首发；{@code immediate=false} 只落到期 pending 行，交给 sweepRetry */
+    private void deliverRun(String runId, String uid, String agentId, String apiKeyId,
+                            String sessionId, String status, String errorCode,
+                            String errorMessage, String content, long elapsedMs, boolean immediate) {
+        Agent agent = agentId == null || agentId.isBlank() ? null : agentMapper.selectById(agentId);
+        if (agent == null || agent.getCallbackUrl() == null || agent.getCallbackUrl().isBlank()) return;
+        // 并发兜底：两层查之间可能已经有别的线程落了行，唯一键会挡下来
+        if (!deliveryMapper.selectList(new LambdaQueryWrapper<WebhookDelivery>()
+                .eq(WebhookDelivery::getRunId, runId).last("LIMIT 1")).isEmpty()) return;
+        String secret = decryptSecret(agent.getCallbackSecret());
+        WebhookDelivery row = new WebhookDelivery();
+        row.setId(UUID.randomUUID().toString());
+        row.setUid(uid);
+        row.setAgentId(agentId);
+        row.setRunId(runId);
+        row.setSessionId(sessionId);
+        row.setEvent(EVENT_RUN_FINISHED);
+        row.setUrl(agent.getCallbackUrl().trim());
+        row.setPayload(JSON.toJSONString(buildRunPayload(runId, sessionId, agent, apiKeyId,
+                status, errorCode, errorMessage, content, elapsedMs)));
+        row.setStatus(WebhookDelivery.STATUS_PENDING);
+        row.setAttempts(0);
+        row.setNextRetryAt(immediate ? null : LocalDateTime.now());
+        row.setCreateTime(LocalDateTime.now());
+        try {
+            deliveryMapper.insert(row);
+        } catch (org.springframework.dao.DuplicateKeyException dup) {
+            log.debug("[WEBHOOK] run.finished 幂等命中，跳过重复投递: run={}", runId);
+            return;
+        }
+        if (immediate) attempt(row, secret);
+    }
+
+    /** run.finished 出站载荷：幂等键 runId；与 GET /runs/{id} 同口径，不含堆栈 */
+    private Map<String, Object> buildRunPayload(String runId, String sessionId, Agent agent, String apiKeyId,
+                                                 String status, String errorCode, String errorMessage,
+                                                 String content, long elapsedMs) {
+        Map<String, Object> p = new LinkedHashMap<>();
+        p.put("event", EVENT_RUN_FINISHED);
+        p.put("runId", runId);
+        p.put("sessionId", sessionId);
+        p.put("agentId", agent.getId());
+        p.put("agentName", agent.getName() == null ? "" : agent.getName());
+        if (apiKeyId != null && !apiKeyId.isBlank()) p.put("apiKeyId", apiKeyId);
+        p.put("status", status);
+        if (errorCode != null && !errorCode.isBlank()) p.put("errorCode", errorCode);
+        if (errorMessage != null && !errorMessage.isBlank()) p.put("errorMessage", clip(errorMessage, 500));
+        p.put("finalContent", content.length() > CONTENT_MAX_CHARS
+                ? content.substring(0, CONTENT_MAX_CHARS) + "\n…（超长截断，完整正文请按 runId 回查）"
+                : content);
+        p.put("elapsedMs", elapsedMs);
+        p.put("contract", "/api/ai/v1/openapi.json");
+        return p;
+    }
+
     // ==================== 投递与重试 ====================
 
     /** 落行 + 首发（异步线程内执行） */
@@ -153,9 +251,13 @@ public class AgentWebhookService {
 
     /** 单次尝试并按结果收口（成功置 success；失败排下一次重试或置 exhausted+通知） */
     private void attempt(WebhookDelivery row, String secret) {
+        Map<String, String> headers = row.getRunId() == null || row.getRunId().isBlank()
+                ? Map.of("X-Wenqu-Turn-Id", row.getTurnId() == null ? "" : row.getTurnId())
+                : Map.of("X-Wenqu-Run-Id", row.getRunId());
         OutboundWebhook.Receipt r = OutboundWebhook.post(row.getUrl(), row.getEvent(),
-                Map.of("X-Wenqu-Turn-Id", row.getTurnId() == null ? "" : row.getTurnId()),
-                secret, row.getPayload());
+                headers, secret, row.getPayload());
+        String bizId = row.getRunId() == null || row.getRunId().isBlank()
+                ? "turn=" + row.getTurnId() : "run=" + row.getRunId();
         int attempts = nz(row.getAttempts()) + 1;
         LambdaUpdateWrapper<WebhookDelivery> uw = new LambdaUpdateWrapper<WebhookDelivery>()
                 .eq(WebhookDelivery::getId, row.getId())
@@ -167,18 +269,18 @@ public class AgentWebhookService {
         if (r.ok()) {
             uw.set(WebhookDelivery::getStatus, WebhookDelivery.STATUS_SUCCESS)
                     .set(WebhookDelivery::getFinishTime, LocalDateTime.now());
-            log.info("[WEBHOOK] 送达: turn={} url={} 第 {} 次", row.getTurnId(), row.getUrl(), attempts);
+            log.info("[WEBHOOK] 送达: {} url={} 第 {} 次", bizId, row.getUrl(), attempts);
         } else if (attempts > retryMax()) {
             uw.set(WebhookDelivery::getStatus, WebhookDelivery.STATUS_EXHAUSTED)
                     .set(WebhookDelivery::getFinishTime, LocalDateTime.now());
             notifyExhausted(row, attempts, r);
-            log.warn("[WEBHOOK] 重试耗尽: turn={} url={} 共 {} 次", row.getTurnId(), row.getUrl(), attempts);
+            log.warn("[WEBHOOK] 重试耗尽: {} url={} 共 {} 次", bizId, row.getUrl(), attempts);
         } else {
             long backoff = RETRY_BACKOFF_MS[Math.min(attempts - 1, RETRY_BACKOFF_MS.length - 1)];
             uw.set(WebhookDelivery::getStatus, WebhookDelivery.STATUS_PENDING)
                     .set(WebhookDelivery::getNextRetryAt, LocalDateTime.now().plusNanos(backoff * 1_000_000));
             log.warn("[WEBHOOK] 投递失败，{}s 后重试（第 {}/{} 次）: turn={} : {}",
-                    backoff / 1000, attempts, RETRY_BACKOFF_MS.length + 1, row.getTurnId(),
+                    backoff / 1000, attempts, RETRY_BACKOFF_MS.length + 1, bizId,
                     r.error() != null ? r.error() : "HTTP " + r.status());
         }
         deliveryMapper.update(null, uw);
@@ -279,7 +381,8 @@ public class AgentWebhookService {
                     "智能体回调 " + clip(row.getUrl(), 80) + " 重试 " + attempts + " 次仍失败（"
                             + why + "）；本轮结果未送达，请检查接收方服务",
                     "agent", row.getAgentId(),
-                    "webhook:" + row.getId(), row.getTurnId());
+                    "webhook:" + row.getId(),
+                    row.getRunId() == null || row.getRunId().isBlank() ? row.getTurnId() : row.getRunId());
         } catch (Exception e) {
             log.warn("[WEBHOOK] 耗尽通知发送失败: {}", e.getMessage());
         }
