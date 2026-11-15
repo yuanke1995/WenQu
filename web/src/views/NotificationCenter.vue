@@ -133,9 +133,10 @@ import {
   notificationDelete, notificationClear, notificationMarkUnread
 } from '../api'
 import {
-  NOTIF_BUCKETS, NOTIF_BUCKET_ORDER, NOTIF_TYPES, emitNotifChanged, notifBucket, notifLabel,
-  notifTarget
+  NOTIF_BUCKETS, NOTIF_BUCKET_ORDER, emitNotifChanged, notifBucket, notifLabel,
+  notifTarget, notifTypesFor
 } from '../chat/useNotifications'
+import { authUser } from '../utils/auth'
 import NotificationList from '../components/notification/NotificationList.vue'
 
 const route = useRoute()
@@ -184,9 +185,15 @@ const bucketTabs = computed(() => {
   return [tabOf('action'), { key: 'all', label: '全部', tone: '', count: 0 }, ...others]
 })
 
+// 类型筛选项按身份收敛（与个人设置「收哪些类」同一口径）：普通用户不该看到
+// 永远收不到的管理员/企业面类型，选了也只会得到空列表
 const typeOptions = computed(() => [
   { value: '', label: '全部类型' },
-  ...NOTIF_TYPES.map(t => ({
+  ...notifTypesFor({
+    admin: Boolean(authUser.value && authUser.value.admin),
+    superadmin: Boolean(authUser.value && authUser.value.superadmin),
+    enterprise: Boolean(authUser.value && authUser.value.profile && authUser.value.profile !== 'standard')
+  }).map(t => ({
     value: t.type,
     label: t.label + (counts.value[t.type] ? ` (${counts.value[t.type]})` : '')
   }))

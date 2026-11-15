@@ -181,11 +181,21 @@
                           :options="f.options" class="pf-ctl" allow-clear
                           :style="{ width: g.collapsible ? '100%' : '240px' }"
                           :placeholder="personalPlaceholder(f)" @change="commitPersonal(f)" />
-                <!-- password：服务端永不回填真值（values 里是 ******** 掩码），输入框恒空，输入新值才覆盖 -->
-                <a-input-password v-else-if="f.type === 'password'" v-model:value="personalDrafts[f.path]"
-                                  :placeholder="personalPlaceholder(f)" class="pf-ctl"
-                                  :style="{ width: g.collapsible ? '100%' : '280px' }"
-                                  autocomplete="new-password" @blur="commitPersonal(f)" @pressEnter="commitPersonal(f)" />
+                <!-- password：服务端永不回填真值（values 里是 ******** 掩码），输入框恒空，输入新值才覆盖。
+                     不用 type=password：浏览器会把本页当登录页，在 Key 框上弹「保存的密码」并自动填。
+                     掩码改由 CSS（-webkit-text-security）实现；不支持该属性的浏览器退回 password 类型 -->
+                <a-input v-else-if="f.type === 'password'" v-model:value="personalDrafts[f.path]"
+                         :placeholder="personalPlaceholder(f)" class="pf-ctl pf-secret"
+                         :class="{ 'is-masked': !secretVisible[f.path] }" :type="secretInputType(f.path)"
+                         :style="{ width: g.collapsible ? '100%' : '280px' }"
+                         autocomplete="off" @blur="commitPersonal(f)" @pressEnter="commitPersonal(f)">
+                  <template #suffix>
+                    <span class="pf-secret-eye" @mousedown.prevent @click="toggleSecretVisible(f.path)">
+                      <EyeOutlined v-if="secretVisible[f.path]" />
+                      <EyeInvisibleOutlined v-else />
+                    </span>
+                  </template>
+                </a-input>
                 <a-textarea v-else-if="f.type === 'textarea'" v-model:value="personalDrafts[f.path]"
                             :rows="3" class="pf-ctl pf-ctl-block" :placeholder="personalPlaceholder(f)"
                             @blur="commitPersonal(f)" />
@@ -198,8 +208,9 @@
               </div>
             </div>
           </div>
-          <!-- 探测按钮放在整块配置之后：高级配置展开时也仍在最后，符合「填完再测」 -->
-          <div class="pf-grp-foot">
+          <!-- 探测按钮放在整块配置之后：高级配置展开时也仍在最后，符合「填完再测」。
+               平台内置且用平台端点时无可测配置，只有自填了自建地址才给按钮 -->
+          <div v-if="wsCanProbe" class="pf-grp-foot">
             <button class="app-btn ghost small" type="button" :disabled="wsProbing" @click="probeWebSearch">
               {{ wsProbing ? '测试中…' : '测试连接' }}
             </button>
@@ -210,17 +221,24 @@
 
         <!-- 通知与推送：一件事的两半放同一屏——「收哪些类」与「要不要跳出浏览器成为系统级通知」。
              「收哪些类」过去长在通知中心里（点开一块开关），这次整块搬过来，通知中心只留跳转入口：
-             同一批勾选状态不许在两个页面各存一份，两边各写各的迟早对不上。 -->
+             同一批勾选状态不许在两个页面各存一份，两边各写各的迟早对不上。
+             勾选即时落库（与「问答偏好」同一口径）：一排开关底下挂「保存」，用户改完不点就静默丢失。
+             邮件改为行尾 ✉ 图标开关：两个一模一样的开关并排，谁也说不清右边那个是干什么的。 -->
         <div v-else-if="current === 'notify'" class="app-card pf-card">
-          <div class="pf-panel-head">
-            <h2 class="app-card-title">通知与推送</h2>
+          <div class="pf-panel-head pf-pref-head">
+            <div>
+              <h2 class="app-card-title">通知与推送</h2>
+              <p class="pf-panel-sub">收哪些通知、怎么通知你；改动即时生效。</p>
+            </div>
+            <span class="pf-autosave">{{ notifySaving ? '保存中…' : '改动即时保存' }}</span>
           </div>
 
           <div class="pf-field">
             <div class="pf-field-head">
               <span class="pf-label">邮件提醒</span>
-              <span class="pf-meta-right">
-                <span class="pf-sub-hint">{{ mailEnabled ? '邮件通道已开启' : '管理员尚未开启邮件通道' }}</span>
+              <span class="pf-sub-hint">
+                {{ !mailEnabled ? '管理员尚未开启邮件通道'
+                  : (mailEmail ? '邮件通道已开启' : '邮件通道已开启，还差一个邮箱') }}
               </span>
             </div>
             <div class="np-mail-row">
@@ -230,24 +248,28 @@
                 {{ mailSaving ? '保存中…' : '保存邮箱' }}
               </button>
             </div>
-            <div class="pf-sub-hint" style="margin-top:6px">
-              邮箱保存后，只有下方每一项开启「邮件」的类型才会发邮件；站内通知不受影响。
-            </div>
+            <p class="pf-sub-hint">
+              邮箱保存后，下方点亮 <span class="np-mail-inline"><MailOutlined /></span> 的类型才会另发一封邮件；站内通知不受影响。
+            </p>
           </div>
 
           <div class="pf-field">
             <div class="pf-field-head">
-              <span class="pf-label">接收哪些通知</span>
+              <div class="np-field-main">
+                <span class="pf-label">接收哪些通知</span>
+                <p class="pf-sub-hint">关掉的只停新通知，已有的不受影响。</p>
+              </div>
               <span class="pf-meta-right">
-                <span v-if="muteDirty" class="pf-dirty">未保存</span>
-                <span class="pf-sub-hint">{{ mutedTypes.length ? `已静音 ${mutedTypes.length} 类` : '全部接收' }}</span>
-                <button class="app-link-btn" type="button" @click="receiveAll">全部接收</button>
-                <button class="app-link-btn" type="button" @click="restoreDefault">恢复默认</button>
+                <template v-if="mutedTypes.length">
+                  <span class="pf-sub-hint">已静音 {{ mutedTypes.length }} 类</span>
+                  <button class="app-link-btn" type="button" @click="receiveAll">全部开启</button>
+                </template>
               </span>
             </div>
             <div class="np-groups">
               <div v-for="g in notifGroups" :key="g.key" class="np-group">
                 <div class="np-group-head">
+                  <span class="np-dot" :class="'tone-' + g.tone"></span>
                   <span class="np-group-title">{{ g.label }}</span>
                   <span class="np-group-count">{{ g.types.length }} 类</span>
                   <div class="np-group-acts">
@@ -256,20 +278,20 @@
                   </div>
                 </div>
                 <div class="np-grid">
-                  <label v-for="t in g.types" :key="t.type" class="np-item">
+                  <div v-for="t in g.types" :key="t.type" class="np-item">
                     <a-switch :checked="!muted(t.type)" size="small" @change="v => toggleMute(t.type, v)" />
                     <component :is="t.icon" class="np-ic" :class="t.tone" />
-                    <span>{{ t.label }}</span>
-                    <a-tooltip :title="mailEnabled ? '同时发一封邮件到你的通知邮箱' : '管理员尚未开启邮件通道'">
-                      <a-switch class="np-mail-switch" :checked="mailTypes.includes(t.type)" size="small"
-                                :disabled="!mailEnabled" @click.stop @change="v => toggleMail(t.type, v)" />
+                    <span class="np-item-label" :title="t.hint || null">{{ t.label }}</span>
+                    <a-tooltip v-if="mailEnabled" :title="mailEmail ? '同时发一封邮件到你的通知邮箱' : '先填好上方的通知邮箱，邮件才发得出去'">
+                      <button type="button" class="np-mail" :class="{ on: mailOn(t.type) }"
+                              :aria-pressed="mailOn(t.type)" :aria-label="'邮件提醒：' + t.label"
+                              @click.stop="toggleMail(t.type, !mailOn(t.type))">
+                        <MailOutlined />
+                      </button>
                     </a-tooltip>
-                  </label>
+                  </div>
                 </div>
               </div>
-            </div>
-            <div class="np-foot">
-              <button class="app-btn small" type="button" :disabled="muteSaving || !muteDirty" @click="saveMutes">保存</button>
             </div>
           </div>
 
@@ -292,11 +314,9 @@
             </p>
           </div>
 
-          <div class="pf-field">
-            <div class="pf-field-head"><span class="pf-label">说明</span></div>
-            <p class="pf-sub-hint">只影响新通知；保留期由管理员配置</p>
-            <p class="pf-sub-hint">需 https 或 localhost；iPhone 需先添加到主屏幕</p>
-          </div>
+          <p class="np-foot-note">
+            通知保留期由管理员配置；网页推送需要 https 或 localhost，iPhone 需先把本站添加到主屏幕。
+          </p>
         </div>
 
         <!-- 我的记忆：框架负责写，这里负责让用户看得见、改得动、删得掉；
@@ -577,8 +597,9 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import {
-  BellOutlined, CameraOutlined, KeyOutlined, QuestionCircleOutlined, ReadOutlined,
-  SafetyCertificateOutlined, SettingOutlined, ShareAltOutlined, UserOutlined
+  BellOutlined, CameraOutlined, EyeInvisibleOutlined, EyeOutlined, KeyOutlined, MailOutlined,
+  QuestionCircleOutlined, ReadOutlined, SafetyCertificateOutlined, SettingOutlined,
+  ShareAltOutlined, UserOutlined
 } from '@ant-design/icons-vue'
 import { authUser, clearAuth, ensureAuth } from '../utils/auth'
 import { refreshSetupGuide } from '../utils/setupGuide'
@@ -586,7 +607,7 @@ import { copyText } from '../utils/clipboard'
 import { parseMemoryDoc, serializeMemoryDoc, nextEntryId } from '../utils/memoryDoc'
 import { shareUrlOf } from './shareSession'
 import { markSessionShared, resetSessionStore } from './store'
-import { NOTIF_BUCKETS, NOTIF_BUCKET_ORDER, NOTIF_TYPES, emitNotifChanged, notifBucket } from '../chat/useNotifications'
+import { NOTIF_BUCKETS, NOTIF_BUCKET_ORDER, emitNotifChanged, notifBucket, notifTypesFor } from '../chat/useNotifications'
 import { changePasswordApi, getUserPreference, setUserPreference, updateMyProfile, uploadAvatarApi,
          notificationPreferences, notificationSavePreferences, updateMyEmail,
          listMySessionShares, stopShareBySession, purgeShareRecord, enableSessionShare,
@@ -716,15 +737,15 @@ const onTestPush = async () => {
 
 // 收哪些类（个人静音清单）：从通知中心整块搬来，那边只留跳转入口
 const mutedTypes = ref([])
-const savedMutedTypes = ref([])
-const muteSaving = ref(false)
 // 邮件提醒：平台通道是否开 / 本人邮箱 / 已勾选的类型
 const mailEnabled = ref(false)
 const mailEmail = ref('')
 const mailTypes = ref([])
 const mailSaving = ref(false)
+const mailOn = t => mailTypes.value.includes(t)
 const toggleMail = (t, on) => {
   mailTypes.value = on ? [...new Set([...mailTypes.value, t])] : mailTypes.value.filter(x => x !== t)
+  scheduleNotifySave()
 }
 async function saveMailEmail () {
   mailSaving.value = true
@@ -735,55 +756,73 @@ async function saveMailEmail () {
     message.error('保存失败：' + (e.message || '请重试'))
   } finally { mailSaving.value = false }
 }
-// 排序后比对：静音清单是有序数组，开关顺序变化不代表内容变化
-const muteKey = list => [...(list || [])].sort().join('|')
-const muteDirty = computed(() => muteKey(mutedTypes.value) !== muteKey(savedMutedTypes.value))
 const muted = t => mutedTypes.value.includes(t)
 const toggleMute = (t, on) => {
   mutedTypes.value = on ? mutedTypes.value.filter(x => x !== t) : [...new Set([...mutedTypes.value, t])]
+  scheduleNotifySave()
 }
-// 按语义桶分组：19 个开关平铺读不动，先给「需要你处理 / 异常与失败 / 完成」三组
-const notifGroups = computed(() => NOTIF_BUCKET_ORDER
-  .map(key => ({
-    key,
-    label: NOTIF_BUCKETS[key].label,
-    types: NOTIF_TYPES.filter(t => notifBucket(t.type) === key)
-  }))
-  .filter(g => g.types.length))
+// 类型清单按身份收敛：与后端收件人口径一致（管理员 / 平台级 / 企业面），
+// 普通用户不该对着一排永远收不到的开关做选择。authUser 未就绪时先按普通用户渲染。
+const notifAudience = computed(() => ({
+  admin: Boolean(authUser.value && authUser.value.admin),
+  superadmin: Boolean(authUser.value && authUser.value.superadmin),
+  enterprise: Boolean(authUser.value && authUser.value.profile && authUser.value.profile !== 'standard')
+}))
+// 按语义桶分组：20+ 个开关平铺读不动，先给「需要你处理 / 异常与失败 / 完成」三组
+const notifGroups = computed(() => {
+  const visible = notifTypesFor(notifAudience.value)
+  return NOTIF_BUCKET_ORDER
+    .map(key => ({
+      key,
+      label: NOTIF_BUCKETS[key].label,
+      tone: NOTIF_BUCKETS[key].tone,
+      types: visible.filter(t => notifBucket(t.type) === key)
+    }))
+    .filter(g => g.types.length)
+})
 // 组级全开/全关：mutedFlag=true 表示把整组加入静音清单
 const setGroupMuted = (g, mutedFlag) => {
   const ids = g.types.map(t => t.type)
   mutedTypes.value = mutedFlag
     ? [...new Set([...mutedTypes.value, ...ids])]
     : mutedTypes.value.filter(x => !ids.includes(x))
+  scheduleNotifySave()
 }
-const receiveAll = () => { mutedTypes.value = [] }
-const restoreDefault = async () => {
-  receiveAll()
-  await saveMutes()
+const receiveAll = () => {
+  mutedTypes.value = []
+  scheduleNotifySave()
+}
+// 勾选即时落库（防抖）：失败回读服务端，界面以后端为准
+const notifySaving = ref(false)
+let notifyTimer = null
+let notifySeq = 0
+function scheduleNotifySave () {
+  clearTimeout(notifyTimer)
+  notifyTimer = setTimeout(saveNotifyPrefs, 400)
+}
+async function saveNotifyPrefs () {
+  const seq = ++notifySeq
+  notifySaving.value = true
+  try {
+    await notificationSavePreferences(mutedTypes.value, mailTypes.value)
+    // 静音变化不影响已收到的通知，但通知中心的筛选计数应与新偏好保持一致
+    emitNotifChanged('center')
+  } catch (e) {
+    message.error('通知偏好保存失败：' + (e.message || '请重试'))
+    await loadMutes()
+  } finally {
+    if (seq === notifySeq) notifySaving.value = false
+  }
 }
 const loadMutes = async () => {
   try {
     const r = await notificationPreferences()
     const d = (r && r.data) || {}
-    const list = d.mutedTypes || []
-    mutedTypes.value = list
-    savedMutedTypes.value = [...list]
+    mutedTypes.value = d.mutedTypes || []
     mailTypes.value = d.mailTypes || []
     mailEnabled.value = Boolean(d.mailEnabled)
     mailEmail.value = d.email || ''
   } catch (e) { message.error('通知偏好读取失败：' + (e.message || '请重试')) }
-}
-const saveMutes = async () => {
-  muteSaving.value = true
-  try {
-    await notificationSavePreferences(mutedTypes.value, mailTypes.value)
-    savedMutedTypes.value = [...mutedTypes.value]
-    message.success('已保存')
-    // 静音变化不影响已收到的通知，但通知中心的筛选计数应与新偏好保持一致
-    emitNotifChanged('center')
-  } catch (e) { message.error('保存失败：' + (e.message || '')) }
-  finally { muteSaving.value = false }
 }
 
 const load = async () => {
@@ -821,6 +860,12 @@ const saveDefaultModel = async v => {
 // switch 类型不渲染：「未设=用默认」与「显式关」两种状态表达不出来，等真出现个人开关字段再定口径
 const personal = ref({ fields: [], values: {}, globals: {}, tips: {} })
 const personalDrafts = ref({})
+// 密钥框显隐与掩码：掩码走 CSS 而非 type=password（见模板注释），逐个字段独立记显隐
+const secretVisible = ref({})
+const cssTextSecurity = typeof CSS !== 'undefined' && typeof CSS.supports === 'function'
+  && CSS.supports('-webkit-text-security', 'disc')
+const secretInputType = path => (secretVisible.value[path] || cssTextSecurity ? 'text' : 'password')
+const toggleSecretVisible = path => { secretVisible.value[path] = !secretVisible.value[path] }
 // 占位符口径：有全局层的键展示「跟随系统（全局值）」；个人专属键（personalOnly，无全局层，
 // globals 回空）展示「默认（内置默认值）」——平台设置页退役后这类键只有个人设置这一个入口。
 // 内置默认值为空（地址/Key/模板这类自由文本）时退回字段自带的示例（schema 的 ph），
@@ -895,6 +940,10 @@ const wsMaxResults = computed(() => {
 const wsCountLabel = computed(() => wsPreset.value === 'generic'
   ? `每次 ${wsMaxResults.value} 条（固定）`
   : `每次 ${wsMaxResults.value} 条`)
+// 平台内置（且没自填自建地址）是平台自己管的服务商，个人无可调配置，不给「测试连接」；
+// 一旦填了自建 SearXNG 地址，测的就是用户自己的端点，按钮保留
+const wsCanProbe = computed(() => !(wsPreset.value === 'generic'
+  && !String(personalDrafts.value['webSearch.baseUrl'] || '').trim()))
 // 高级区：预设（DeepSeek）与自定义共用；Tavily/博查/平台内置只留可选的代理/自建地址
 const WS_ADV_KEYS = new Set([
   'baseUrl', 'model', 'customMethod', 'customBody', 'customResultsPath',
@@ -1630,24 +1679,50 @@ watch(current, v => { if (v === 'notify') refreshPushState().then(refreshCap).ca
 </script>
 
 <style scoped>
-/* 收哪些类：开关 + 图标 + 标签成行，窄屏自动换列（与通知中心原来那块同形，搬过来不改观感） */
+/* 收哪些类：开关 + 图标 + 标签成行，行尾是可选的邮件开关；窄屏自动换列 */
 .np-groups { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
 .np-group { border: 1px solid var(--app-border); border-radius: 8px; overflow: hidden; }
 .np-group-head { display: flex; align-items: center; gap: 8px; padding: 7px 10px; background: var(--app-panel-2); }
+/* 分组的语义色小圆点：待处理 / 异常 / 完成一眼分得开，标题本身不必染色 */
+.np-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; background: var(--app-text3); }
+.np-dot.tone-warn { background: var(--app-warn); }
+.np-dot.tone-err { background: var(--app-danger); }
+.np-dot.tone-ok { background: var(--app-ok); }
 .np-group-title { font-size: 12px; font-weight: 600; color: var(--app-text); }
 .np-group-count { font-size: 11px; color: var(--app-text3); }
 .np-group-acts { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 .np-group .np-grid { padding: 10px; }
 .np-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px 16px; }
-.np-item { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--app-text); }
+.np-item { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--app-text); min-width: 0; }
+/* 标签单行截断：长标签挤走行尾邮件开关会让两列参差不齐 */
+.np-item-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.np-field-main { min-width: 0; }
+.np-field-main .pf-sub-hint { margin: 2px 0 0; }
 .np-mail-row { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
 .np-mail-row :deep(.ant-input) { max-width: 320px; }
-.np-mail-switch { margin-left: auto; flex: none; }
+/* 邮件开关：行尾一个小信封图标按钮。与站内开关同形会分不清谁是谁；
+   开启态只着色不放大，避免整排出现第二列「主开关」的视觉噪音 */
+.np-mail {
+  flex: none; margin-left: auto; width: 22px; height: 22px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid transparent; border-radius: 6px; background: transparent;
+  color: var(--app-text3); font-size: 14px; cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.np-mail:hover { background: var(--app-accent-weak); color: var(--app-text); }
+.np-mail.on { background: var(--app-accent-weak); border-color: var(--app-accent-border); color: var(--app-accent); }
+.np-mail:focus-visible { outline: 2px solid var(--app-accent-border); outline-offset: 1px; }
+/* 说明文案里嵌的信封图标：与右侧按钮同一形状，指代明确 */
+.np-mail-inline {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; border-radius: 4px; vertical-align: -3px;
+  background: var(--app-accent-weak); color: var(--app-accent); font-size: 11px;
+}
 .np-ic { font-size: 15px; flex: none; }
 .np-ic.ok { color: var(--app-ok); }
 .np-ic.err { color: var(--app-danger); }
 .np-ic.warn { color: var(--app-warn); }
-.np-foot { display: flex; align-items: center; gap: 12px; margin-top: 14px; flex-wrap: wrap; }
+.np-foot-note { margin: 16px 0 0; padding-top: 12px; border-top: 1px solid var(--app-border); font-size: 11px; line-height: 1.6; color: var(--app-text3); }
 
 .pf-body { flex: 1; min-height: 0; display: flex; }
 .pf-page-head { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
@@ -1768,6 +1843,9 @@ watch(current, v => { if (v === 'notify') refreshPushState().then(refreshCap).ca
 .pf-ctl { max-width: 100%; }
 .pf-ctl-sm { width: 160px; }
 .pf-ctl-block { width: 100%; }
+.pf-secret.is-masked :deep(input) { -webkit-text-security: disc; }
+.pf-secret-eye { display: inline-flex; color: var(--app-text3); cursor: pointer; }
+.pf-secret-eye:hover { color: var(--app-text2); }
 /* ---- 联网搜索：服务商预设卡片（普通用户只选哪家，地址/模板/取数路径由预设填好） ---- */
 .pf-ws-presets { display: grid; grid-template-columns: repeat(auto-fit, minmax(104px, 1fr)); gap: 8px; }
 .pf-ws-preset {
@@ -2009,6 +2087,15 @@ watch(current, v => { if (v === 'notify') refreshPushState().then(refreshCap).ca
 
   /* 触控热区下限 */
   .pf-nav-item, .pf-emoji-opt, .app-btn { min-height: 34px; }
+  /* 通知开关是「小号」控件：44px 热区把 16px 高的开关撑成一块蓝色色块。
+     热区交给整行（.np-item 撑高），开关本体保持原尺寸 */
+  .np-item { min-height: 40px; }
+  .np-item :deep(.ant-switch) { min-width: 0; min-height: 0; }
+  .np-mail { min-width: 34px; min-height: 34px; }
+  /* 邮箱行：输入框优先占满，按钮不换行（窄屏下并排时「保存邮箱」会被压成两行） */
+  .np-mail-row { flex-wrap: wrap; }
+  .np-mail-row :deep(.ant-input) { flex: 1 1 160px; min-width: 0; max-width: none; }
+  .np-mail-row .app-btn { white-space: nowrap; }
   /* 记忆页的添加行：输入框占满整行（原 min-width 200 与分类框并排会溢出） */
   .mem-add-row { gap: 8px; }
   .mem-add-input { min-width: 100%; }

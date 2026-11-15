@@ -26,8 +26,11 @@ export const NOTIF_ICONS = {
   'schedule.failed': CloseCircleFilled,
   'schedule.expired': ExclamationCircleFilled,
   'eval.decline': ExclamationCircleFilled,
+  'eval.done': CheckCircleFilled,
+  'eval.failed': CloseCircleFilled,
   'agentEval.done': CheckCircleFilled,
   'agentEval.failed': CloseCircleFilled,
+  'agent.webhook.failed': CloseCircleFilled,
   'tool.approval': ExclamationCircleFilled,
   'tool.ask': ExclamationCircleFilled,
   'plan.approval': ExclamationCircleFilled,
@@ -60,8 +63,11 @@ const NOTIF_TONES = {
   'schedule.failed': 'err',
   'schedule.expired': 'warn',
   'eval.decline': 'warn',
+  'eval.done': 'ok',
+  'eval.failed': 'err',
   'agentEval.done': 'ok',
   'agentEval.failed': 'err',
+  'agent.webhook.failed': 'err',
   'tool.approval': 'warn',
   'tool.ask': 'warn',
   'plan.approval': 'warn',
@@ -98,8 +104,12 @@ export const NOTIF_LABELS = {
   'schedule.failed': '定时任务失败',
   'schedule.expired': '定时任务到期停用',
   'eval.decline': '检索评估下滑',
-  'agentEval.done': '评测完成',
-  'agentEval.failed': '评测失败',
+  // 检索评估（检索质量）与智能体回归评测是两件事，标签必须分开说
+  'eval.done': '检索评估完成',
+  'eval.failed': '检索评估失败',
+  'agentEval.done': '智能体评测完成',
+  'agentEval.failed': '智能体评测失败',
+  'agent.webhook.failed': '智能体回调失败',
   'tool.approval': '工具审批待决',
   'tool.ask': '智能体提问待答',
   'plan.approval': '深度执行计划待确认',
@@ -118,9 +128,37 @@ export const NOTIF_LABELS = {
 }
 export const notifLabel = t => NOTIF_LABELS[t] || t
 
-/** 全部通知类型（标签 + 图标 + 语义色），由上面三张表派生——不再在页面里各抄一份 */
+/**
+ * 类型说明：只给望文生义的几类（「目标停住」「一轮跑完」这类不看说明猜不准）。
+ * 其余类型的标签本身已经说清，不再逐条重复一句废话。
+ */
+const NOTIF_HINTS = {
+  'parse.batch.failed': '一次批量解析里多条失败',
+  'web.refresh.failed': '网页知识源自动刷新失败',
+  'schedule.expired': '定时任务到期自动停用',
+  'eval.decline': '检索质量评测明显下滑',
+  'agentEval.done': '智能体回归评测跑完',
+  'agentEval.failed': '智能体回归评测没跑成',
+  'agent.webhook.failed': '轮终结果回调重试多次仍没送达',
+  'tool.approval': '工具调用等你批准',
+  'tool.ask': '智能体在对话中向你提问',
+  'plan.approval': '深度执行计划等你确认',
+  'chat.turn.done': '一轮问答正常结束（只对长任务提醒）',
+  'chat.turn.failed': '这一轮问答中途没跑成',
+  'goal.achieved': '跨多轮的目标已完成',
+  'goal.failed': '目标停下，等你补充信息或决定继不继续',
+  'ops.alert': '平台巡检发现异常',
+  'model.quota': '模型供应商余额或额度不足',
+  'tenant.request': '有人申请开通新租户',
+  'tenant.approved': '申请通过，租户已开通',
+  'quota': '用量达到配额上限',
+  'dashboard.alert': '数据看板触发阈值告警',
+  'dashboard.weekly': '每周数据看板摘要'
+}
+
+/** 全部通知类型（标签 + 图标 + 语义色 + 可选的说明），由上面几张表派生——不再在页面里各抄一份 */
 export const NOTIF_TYPES = Object.keys(NOTIF_LABELS)
-  .map(t => ({ type: t, label: NOTIF_LABELS[t], icon: notifIcon(t), tone: notifClass(t) }))
+  .map(t => ({ type: t, label: NOTIF_LABELS[t], icon: notifIcon(t), tone: notifClass(t), hint: NOTIF_HINTS[t] || '' }))
 
 // ==================== 语义桶：待处理 / 异常 / 完成 ====================
 // 与 NOTIF_LABELS 同为单一事实源：新增类型必须同时补标签与桶。
@@ -136,13 +174,15 @@ export const NOTIF_BUCKETS = {
     label: '异常',
     tone: 'err',
     types: ['parse.failed', 'parse.batch.failed', 'workflow.failed', 'workflow.timeout',
-            'web.refresh.failed', 'schedule.failed', 'eval.decline', 'chat.turn.failed',
+            'web.refresh.failed', 'schedule.failed', 'eval.decline', 'eval.failed',
+            'agentEval.failed', 'agent.webhook.failed', 'chat.turn.failed',
             'goal.failed', 'ops.alert', 'dashboard.alert']
   },
   done: {
     label: '完成',
     tone: 'ok',
-    types: ['parse.done', 'schedule.done', 'schedule.expired', 'chat.turn.done', 'goal.achieved', 'tenant.approved', 'dashboard.weekly']
+    types: ['parse.done', 'schedule.done', 'schedule.expired', 'eval.done', 'agentEval.done',
+            'chat.turn.done', 'goal.achieved', 'tenant.approved', 'dashboard.weekly']
   }
 }
 export const NOTIF_BUCKET_ORDER = ['action', 'alert', 'done']
@@ -151,6 +191,37 @@ const BUCKET_BY_TYPE = Object.fromEntries(
 )
 export const notifBucket = t => BUCKET_BY_TYPE[t] || 'info'
 export const notifBucketLabel = bucket => NOTIF_BUCKETS[bucket]?.label || ''
+
+// ==================== 谁收得到哪些类 ====================
+// 与后端触发点一一对应：adminOnly 由 createForAdmins 发出、superadminOnly 由 createForSuperadmins 发出，
+// 普通用户永远收不到；enterpriseOnly 的落点（租户与开通 / 安全与运维）在 standard 档位整体不存在。
+// 个人设置的「收哪些类」与通知中心的「类型筛选」都按这份口径收敛——否则普通用户会面对一排
+// 永远不亮的开关。新增通知类型时若触发点只发给管理员，必须同步登记在这里。
+const NOTIF_AUDIENCE = {
+  'tenant.request': { superadmin: true, enterprise: true },
+  'tenant.approved': { admin: true, enterprise: true },
+  'ops.alert': { admin: true, enterprise: true },
+  'eval.decline': { admin: true },
+  'quota': { admin: true },
+  'dashboard.alert': { admin: true },
+  'dashboard.weekly': { admin: true }
+}
+
+/**
+ * 该类型对当前身份是否可见/可达。
+ * @param {{admin?:boolean, superadmin?:boolean, enterprise?:boolean}} id 身份口径（superadmin 同时视为 admin）
+ */
+export function notifAudienceOk (type, { admin = false, superadmin = false, enterprise = false } = {}) {
+  const a = NOTIF_AUDIENCE[type]
+  if (!a) return true
+  if (a.enterprise && !enterprise) return false
+  if (a.superadmin) return superadmin
+  if (a.admin) return admin
+  return true
+}
+
+/** 当前身份能收到的类型清单（顺序与 NOTIF_TYPES 一致） */
+export const notifTypesFor = id => NOTIF_TYPES.filter(t => notifAudienceOk(t.type, id))
 
 // ==================== 文案清洗与主体抽取 ====================
 // 与后端 NotificationService.clean 同一套规则：URL 去 query/fragment，超长只留 host/…
