@@ -219,51 +219,72 @@
           </div>
         </div>
 
-        <!-- 通知与推送：一件事的两半放同一屏——「收哪些类」与「要不要跳出浏览器成为系统级通知」。
-             「收哪些类」过去长在通知中心里（点开一块开关），这次整块搬过来，通知中心只留跳转入口：
-             同一批勾选状态不许在两个页面各存一份，两边各写各的迟早对不上。
-             勾选即时落库（与「问答偏好」同一口径）：一排开关底下挂「保存」，用户改完不点就静默丢失。
-             邮件改为行尾 ✉ 图标开关：两个一模一样的开关并排，谁也说不清右边那个是干什么的。 -->
+        <!-- 通知与推送：两件事——上面一行一个「通知方式」（系统级推送 / 邮件），下面才是类型清单。
+             勾选即时落库（与「问答偏好」同一口径）：一排开关底下挂「保存」，改完不点就静默丢失。
+             静音是整体语义：后端命中 isMuted 后既不推站内也不发邮件，所以静音行的邮件按钮同步禁用，
+             不给「静音但邮件开着」这种永远不生效的假状态。 -->
         <div v-else-if="current === 'notify'" class="app-card pf-card">
           <div class="pf-panel-head pf-pref-head">
             <div>
               <h2 class="app-card-title">通知与推送</h2>
-              <p class="pf-panel-sub">收哪些通知、怎么通知你；改动即时生效。</p>
+              <p class="pf-panel-sub">收哪些、怎么收；关掉的只停新通知，已有的不受影响。</p>
             </div>
             <span class="pf-autosave">{{ notifySaving ? '保存中…' : '改动即时保存' }}</span>
           </div>
 
-          <div class="pf-field">
-            <div class="pf-field-head">
-              <span class="pf-label">邮件提醒</span>
-              <span class="pf-sub-hint">
-                {{ !mailEnabled ? '管理员尚未开启邮件通道'
-                  : (mailEmail ? '邮件通道已开启' : '邮件通道已开启，还差一个邮箱') }}
-              </span>
+          <!-- 通知方式：两行卡片。开启失败的每种原因（VAPID 未配 / 非 https / 未装到主屏幕 / 浏览器拒绝）
+               都是「用户下一步该做什么」，随状态作为副文案出现，不再常驻两段说明 -->
+          <div class="np-ways">
+            <div class="np-way">
+              <span class="np-way-ic" aria-hidden="true"><BellOutlined /></span>
+              <div class="np-way-main">
+                <div class="np-way-name">
+                  系统级通知
+                  <span class="np-badge" :class="{ on: pushSubscribedHere }">{{ pushBadge }}</span>
+                </div>
+                <div class="np-way-sub">{{ pushSubLine }}</div>
+              </div>
+              <div class="np-way-acts">
+                <button v-if="!pushSubscribedHere" class="app-btn small" type="button"
+                        :disabled="!pushCanEnable || pushBusy" @click="onEnablePush">允许通知</button>
+                <template v-else>
+                  <button class="app-btn small" type="button" :disabled="pushBusy" @click="onTestPush">发一条测试</button>
+                  <button class="app-btn ghost small" type="button" :disabled="pushBusy" @click="onDisablePush">取消这台设备</button>
+                </template>
+              </div>
             </div>
-            <div class="np-mail-row">
-              <a-input v-model:value="mailEmail" size="small" :maxlength="160"
-                       placeholder="你的通知邮箱，如 name@company.com" :disabled="!mailEnabled" />
-              <button class="app-btn ghost" type="button" :disabled="!mailEnabled || mailSaving" @click="saveMailEmail">
-                {{ mailSaving ? '保存中…' : '保存邮箱' }}
-              </button>
+            <div class="np-way">
+              <span class="np-way-ic" aria-hidden="true"><MailOutlined /></span>
+              <div class="np-way-main">
+                <div class="np-way-name">
+                  邮件提醒
+                  <span class="np-badge" :class="{ on: mailEnabled && mailEmail.trim() }">{{ mailBadge }}</span>
+                </div>
+                <div class="np-way-sub">{{ mailSubLine }}</div>
+              </div>
+              <div v-if="mailEnabled" class="np-way-acts">
+                <a-input v-model:value="mailEmail" size="small" :maxlength="160"
+                         placeholder="你的通知邮箱，如 name@company.com" />
+                <button class="app-btn ghost small" type="button" :disabled="mailSaving" @click="saveMailEmail">
+                  {{ mailSaving ? '保存中…' : '保存' }}
+                </button>
+              </div>
             </div>
-            <p class="pf-sub-hint">
-              邮箱保存后，下方点亮 <span class="np-mail-inline"><MailOutlined /></span> 的类型才会另发一封邮件；站内通知不受影响。
-            </p>
           </div>
 
           <div class="pf-field">
             <div class="pf-field-head">
               <div class="np-field-main">
                 <span class="pf-label">接收哪些通知</span>
-                <p class="pf-sub-hint">关掉的只停新通知，已有的不受影响。</p>
+                <p class="pf-sub-hint">静音的类型既不发站内，也不发邮件。</p>
               </div>
-              <span class="pf-meta-right">
-                <template v-if="mutedTypes.length">
-                  <span class="pf-sub-hint">已静音 {{ mutedTypes.length }} 类</span>
-                  <button class="app-link-btn" type="button" @click="receiveAll">全部开启</button>
-                </template>
+              <span class="np-head-acts">
+                <button v-if="mutedTypes.length" type="button" class="np-chip" :class="{ on: onlyMuted }"
+                        :aria-pressed="onlyMuted" @click="onlyMuted = !onlyMuted">
+                  <span class="np-chip-box" aria-hidden="true"></span>只看已静音
+                </button>
+                <span v-if="mutedTypes.length" class="pf-sub-hint">已静音 {{ mutedTypes.length }} 类</span>
+                <button v-if="mutedTypes.length" class="app-link-btn" type="button" @click="receiveAll">全部开启</button>
               </span>
             </div>
             <div class="np-groups">
@@ -271,47 +292,41 @@
                 <div class="np-group-head">
                   <span class="np-dot" :class="'tone-' + g.tone"></span>
                   <span class="np-group-title">{{ g.label }}</span>
-                  <span class="np-group-count">{{ g.types.length }} 类</span>
+                  <span class="np-group-count">
+                    {{ g.types.length }} 类<template v-if="groupMutedCount(g)"> · 已静音 {{ groupMutedCount(g) }}</template>
+                  </span>
+                  <span v-if="!groupOpen(g)" class="np-collapsed-tag">· 已收起</span>
                   <div class="np-group-acts">
-                    <button class="app-link-btn" type="button" @click="setGroupMuted(g, false)">全开</button>
-                    <button class="app-link-btn" type="button" @click="setGroupMuted(g, true)">全关</button>
+                    <template v-if="groupOpen(g)">
+                      <button class="app-link-btn" type="button" @click="setGroupMuted(g, false)">全开</button>
+                      <button class="app-link-btn" type="button" @click="setGroupMuted(g, true)">全关</button>
+                    </template>
+                    <button v-if="!onlyMuted" class="app-link-btn" type="button"
+                            :aria-expanded="groupOpen(g)" @click="toggleGroupCollapse(g.key)">
+                      {{ groupOpen(g) ? '收起' : '展开 ▾' }}
+                    </button>
                   </div>
                 </div>
-                <div class="np-grid">
-                  <div v-for="t in g.types" :key="t.type" class="np-item">
+                <div v-show="groupOpen(g)" class="np-grid">
+                  <div v-for="t in g.types" :key="t.type" class="np-item" :class="{ muted: muted(t.type) }">
                     <a-switch :checked="!muted(t.type)" size="small" @change="v => toggleMute(t.type, v)" />
                     <component :is="t.icon" class="np-ic" :class="t.tone" />
                     <span class="np-item-label" :title="t.hint || null">{{ t.label }}</span>
-                    <a-tooltip v-if="mailEnabled" :title="mailEmail ? '同时发一封邮件到你的通知邮箱' : '先填好上方的通知邮箱，邮件才发得出去'">
-                      <button type="button" class="np-mail" :class="{ on: mailOn(t.type) }"
-                              :aria-pressed="mailOn(t.type)" :aria-label="'邮件提醒：' + t.label"
-                              @click.stop="toggleMail(t.type, !mailOn(t.type))">
-                        <MailOutlined />
-                      </button>
+                    <a-tooltip v-if="mailEnabled" :title="mailTip(t)">
+                      <span class="np-mail-wrap">
+                        <button type="button" class="np-mail" :class="{ on: mailOn(t.type), off: mailLocked(t) }"
+                                :disabled="mailLocked(t)" :aria-pressed="mailOn(t.type)"
+                                :aria-label="'邮件提醒：' + t.label"
+                                @click.stop="toggleMail(t.type, !mailOn(t.type))">
+                          <MailOutlined />
+                        </button>
+                      </span>
                     </a-tooltip>
                   </div>
                 </div>
               </div>
+              <p v-if="!notifGroups.length" class="pf-sub-hint">没有已静音的类别。</p>
             </div>
-          </div>
-
-          <div class="pf-field">
-            <div class="pf-field-head">
-              <span class="pf-label">这台设备的系统级通知</span>
-              <span class="pf-sub-hint">{{ pushStateHint }}</span>
-            </div>
-            <div class="pf-row">
-              <button v-if="!pushSubscribedHere" class="app-btn small" type="button"
-                      :disabled="!pushCanEnable || pushBusy" @click="onEnablePush">允许通知</button>
-              <template v-else>
-                <button class="app-btn small" type="button" :disabled="pushBusy" @click="onTestPush">发一条测试</button>
-                <button class="app-btn ghost small" type="button" :disabled="pushBusy" @click="onDisablePush">取消这台设备</button>
-              </template>
-            </div>
-            <p class="pf-sub-hint">{{ pushWhy }}</p>
-            <p v-if="pushDeviceCount" class="pf-sub-hint">
-              已订阅 {{ pushDeviceCount }} 台设备{{ pushLastSeen ? `（最近一次 ${pushLastSeen}）` : '' }}
-            </p>
           </div>
 
           <p class="np-foot-note">
@@ -698,16 +713,20 @@ const REASON_WHY = {
 const pushReason = ref('loading')
 const pushCanEnable = ref(false)
 const pushDeviceCount = computed(() => ((pushPlatform.value && pushPlatform.value.devices) || []).length)
-const pushStateHint = computed(() => {
-  if (pushSubscribedHere.value) return '这台设备已开启'
-  return REASON_HINT[pushReason.value] || ''
+// 状态徽标 + 一行副文案：能干什么、为什么干不了都说在这一行里（详见 REASON_WHY）
+const pushBadge = computed(() => {
+  if (pushSubscribedHere.value) return '已开启'
+  if (pushReason.value === 'loading') return '确认中…'
+  return pushCanEnable.value ? '可开启' : '未开启'
 })
-const pushWhy = computed(() => {
+const pushSubLine = computed(() => {
   if (pushSubscribedHere.value) {
-    return '已订阅。换浏览器或换设备需要在那台上各点一次——浏览器的授权是按设备、按站点记的，平台不能替你点。'
+    const n = pushDeviceCount.value
+    return n > 1
+      ? `这台设备已订阅；名下共 ${n} 台设备，换设备需在那台上各点一次`
+      : '这台设备已订阅；换浏览器或换设备需在那台上各点一次'
   }
-  if (pushReason.value === 'ok') return REASON_WHY.ok
-  return REASON_WHY[pushReason.value] || ''
+  return REASON_WHY[pushReason.value] || REASON_HINT[pushReason.value] || ''
 })
 const refreshCap = async () => {
   const c = await pushCapability()
@@ -743,6 +762,21 @@ const mailEmail = ref('')
 const mailTypes = ref([])
 const mailSaving = ref(false)
 const mailOn = t => mailTypes.value.includes(t)
+// 静音命中后后端既不推站内也不发邮件：静音行与「还没填邮箱」时邮件按钮一律禁用，避免假状态
+const mailLocked = t => muted(t.type) || !mailEmail.value.trim()
+const mailTip = t => muted(t.type)
+  ? '这类已静音：站内和邮件都不会发'
+  : (mailEmail.value.trim() ? '同时发一封邮件到你的通知邮箱' : '先保存邮箱，邮件才发得出去')
+const mailBadge = computed(() => {
+  if (!mailEnabled.value) return '未开启'
+  return mailEmail.value.trim() ? '已开启' : '待填邮箱'
+})
+const mailSubLine = computed(() => {
+  if (!mailEnabled.value) return '管理员尚未开启邮件通道，站内通知不受影响'
+  return mailEmail.value.trim()
+    ? '行尾点亮 ✉ 的类型会另发一封邮件'
+    : '先保存一个邮箱，勾选的邮件才发得出去'
+})
 const toggleMail = (t, on) => {
   mailTypes.value = on ? [...new Set([...mailTypes.value, t])] : mailTypes.value.filter(x => x !== t)
   scheduleNotifySave()
@@ -772,17 +806,45 @@ const notifAudience = computed(() => ({
 const notifGroups = computed(() => {
   const visible = notifTypesFor(notifAudience.value)
   return NOTIF_BUCKET_ORDER
-    .map(key => ({
-      key,
-      label: NOTIF_BUCKETS[key].label,
-      tone: NOTIF_BUCKETS[key].tone,
-      types: visible.filter(t => notifBucket(t.type) === key)
-    }))
+    .map(key => {
+      const all = visible.filter(t => notifBucket(t.type) === key)
+      return {
+        key,
+        label: NOTIF_BUCKETS[key].label,
+        tone: NOTIF_BUCKETS[key].tone,
+        // all=整组（「全开/全关」的落点）；types=本次该渲染的行（只看已静音时只留静音项）
+        all,
+        types: onlyMuted.value ? all.filter(t => muted(t.type)) : all
+      }
+    })
     .filter(g => g.types.length)
 })
-// 组级全开/全关：mutedFlag=true 表示把整组加入静音清单
+const groupMutedCount = g => g.all.filter(t => muted(t.type)).length
+// 只看已静音：静音是不可见的操作，给一个审自己的出口；过滤时分组强制展开
+const onlyMuted = ref(false)
+watch(mutedTypes, list => { if (!list.length) onlyMuted.value = false })
+// 分组折叠（「完成」默认收起）：记在本地，下次进页保持；做完的事不必天天占屏
+const COLLAPSE_KEY = 'notif.collapsedGroups'
+const loadCollapsed = () => {
+  try {
+    const raw = localStorage.getItem(COLLAPSE_KEY)
+    if (raw) {
+      const v = JSON.parse(raw)
+      if (v && typeof v === 'object' && !Array.isArray(v)) return v
+    }
+  } catch { /* 本地状态坏了按默认收起 */ }
+  return { done: true }
+}
+const collapsedGroups = ref(loadCollapsed())
+const isCollapsed = k => Boolean(collapsedGroups.value[k])
+const groupOpen = g => onlyMuted.value || !isCollapsed(g.key)
+const toggleGroupCollapse = k => {
+  collapsedGroups.value = { ...collapsedGroups.value, [k]: !collapsedGroups.value[k] }
+  try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify(collapsedGroups.value)) } catch { /* 存不了就只在本次生效 */ }
+}
+// 组级全开/全关：落点是整组（g.all），不受「只看已静音」的显示过滤影响
 const setGroupMuted = (g, mutedFlag) => {
-  const ids = g.types.map(t => t.type)
+  const ids = g.all.map(t => t.type)
   mutedTypes.value = mutedFlag
     ? [...new Set([...mutedTypes.value, ...ids])]
     : mutedTypes.value.filter(x => !ids.includes(x))
@@ -1679,6 +1741,29 @@ watch(current, v => { if (v === 'notify') refreshPushState().then(refreshCap).ca
 </script>
 
 <style scoped>
+/* ---- 通知方式：两行卡片（系统级推送 / 邮件），状态徽标 + 一句副文案 + 行尾操作 ---- */
+.np-ways { margin-top: 12px; border: 1px solid var(--app-border); border-radius: 10px; overflow: hidden; }
+.np-way { display: flex; align-items: center; gap: 12px; padding: 10px 12px; }
+.np-way + .np-way { border-top: 1px solid var(--app-border); }
+.np-way-ic {
+  width: 30px; height: 30px; flex: none; font-size: 14px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--app-border); border-radius: 9px;
+  background: var(--app-panel-2); color: var(--app-text2);
+}
+.np-way-main { min-width: 0; flex: 1; }
+.np-way-name { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 600; color: var(--app-text); }
+.np-way-sub { margin-top: 3px; font-size: 11px; line-height: 1.55; color: var(--app-text3); }
+/* 状态徽标：开启用绿，未开启保持弱灰（红色会让「没开推送」看着像故障） */
+.np-badge {
+  flex: none; font-size: 10px; font-weight: 400; line-height: 1; padding: 3px 6px;
+  border: 1px solid var(--app-border); border-radius: 999px;
+  background: var(--app-panel-2); color: var(--app-text3); white-space: nowrap;
+}
+.np-badge.on { background: var(--app-ok-weak); border-color: #cfe9db; color: #1a7f4b; }
+.np-way-acts { flex: none; display: flex; align-items: center; gap: 8px; }
+.np-way-acts :deep(.ant-input) { width: 200px; }
+
 /* 收哪些类：开关 + 图标 + 标签成行，行尾是可选的邮件开关；窄屏自动换列 */
 .np-groups { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
 .np-group { border: 1px solid var(--app-border); border-radius: 8px; overflow: hidden; }
@@ -1690,20 +1775,39 @@ watch(current, v => { if (v === 'notify') refreshPushState().then(refreshCap).ca
 .np-dot.tone-ok { background: var(--app-ok); }
 .np-group-title { font-size: 12px; font-weight: 600; color: var(--app-text); }
 .np-group-count { font-size: 11px; color: var(--app-text3); }
+.np-collapsed-tag { font-size: 11px; color: var(--app-text3); }
 .np-group-acts { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 .np-group .np-grid { padding: 10px; }
 .np-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px 16px; }
 .np-item { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--app-text); min-width: 0; }
+/* 已静音整行压暗：静音是「我不想收到」，行内控件同步变弱比只看开关更直观 */
+.np-item.muted .np-item-label, .np-item.muted .np-ic { opacity: .45; }
 /* 标签单行截断：长标签挤走行尾邮件开关会让两列参差不齐 */
 .np-item-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .np-field-main { min-width: 0; }
 .np-field-main .pf-sub-hint { margin: 2px 0 0; }
-.np-mail-row { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
-.np-mail-row :deep(.ant-input) { max-width: 320px; }
-/* 邮件开关：行尾一个小信封图标按钮。与站内开关同形会分不清谁是谁；
+.np-head-acts { flex: none; display: inline-flex; align-items: center; gap: 10px; }
+/* 「只看已静音」筛选芯片：与链接按钮同排，做成可勾选的胶囊以示「这是一个筛选」 */
+.np-chip {
+  display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px;
+  border: 1px solid var(--app-border); border-radius: 999px; background: transparent;
+  font: inherit; font-size: 11px; color: var(--app-text2); cursor: pointer;
+}
+.np-chip:hover { border-color: var(--app-accent-border); color: var(--app-text); }
+.np-chip.on { border-color: var(--app-accent-border); background: var(--app-accent-weak); color: var(--app-text); }
+.np-chip-box {
+  width: 12px; height: 12px; flex: none; position: relative;
+  border: 1px solid var(--app-border-strong); border-radius: 3px; background: var(--app-panel);
+}
+.np-chip.on .np-chip-box { background: var(--app-accent); border-color: var(--app-accent); }
+.np-chip.on .np-chip-box::after {
+  content: '✓'; position: absolute; inset: 0; color: #fff; font-size: 9px; line-height: 12px; text-align: center;
+}
+/* 邮件开关：行尾信封图标按钮。与站内开关同形会分不清谁是谁；
    开启态只着色不放大，避免整排出现第二列「主开关」的视觉噪音 */
+.np-mail-wrap { margin-left: auto; flex: none; display: inline-flex; align-items: center; justify-content: flex-end; }
 .np-mail {
-  flex: none; margin-left: auto; width: 22px; height: 22px; padding: 0;
+  width: 22px; height: 22px; padding: 0;
   display: inline-flex; align-items: center; justify-content: center;
   border: 1px solid transparent; border-radius: 6px; background: transparent;
   color: var(--app-text3); font-size: 14px; cursor: pointer;
@@ -1712,12 +1816,9 @@ watch(current, v => { if (v === 'notify') refreshPushState().then(refreshCap).ca
 .np-mail:hover { background: var(--app-accent-weak); color: var(--app-text); }
 .np-mail.on { background: var(--app-accent-weak); border-color: var(--app-accent-border); color: var(--app-accent); }
 .np-mail:focus-visible { outline: 2px solid var(--app-accent-border); outline-offset: 1px; }
-/* 说明文案里嵌的信封图标：与右侧按钮同一形状，指代明确 */
-.np-mail-inline {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 16px; height: 16px; border-radius: 4px; vertical-align: -3px;
-  background: var(--app-accent-weak); color: var(--app-accent); font-size: 11px;
-}
+/* 锁定（已静音 / 未填邮箱）：只压暗，不隐藏——让用户看得到有这一项以及为什么用不了 */
+.np-mail.off { opacity: .3; cursor: not-allowed; }
+.np-mail.off:hover { background: transparent; color: var(--app-text3); }
 .np-ic { font-size: 15px; flex: none; }
 .np-ic.ok { color: var(--app-ok); }
 .np-ic.err { color: var(--app-danger); }
@@ -2091,11 +2192,15 @@ watch(current, v => { if (v === 'notify') refreshPushState().then(refreshCap).ca
      热区交给整行（.np-item 撑高），开关本体保持原尺寸 */
   .np-item { min-height: 40px; }
   .np-item :deep(.ant-switch) { min-width: 0; min-height: 0; }
-  .np-mail { min-width: 34px; min-height: 34px; }
-  /* 邮箱行：输入框优先占满，按钮不换行（窄屏下并排时「保存邮箱」会被压成两行） */
-  .np-mail-row { flex-wrap: wrap; }
-  .np-mail-row :deep(.ant-input) { flex: 1 1 160px; min-width: 0; max-width: none; }
-  .np-mail-row .app-btn { white-space: nowrap; }
+  .np-mail-wrap { min-width: 34px; min-height: 34px; }
+  /* 通知方式：窄屏两行堆叠，操作（按钮 / 邮箱输入）换到第二行 */
+  .np-way { flex-wrap: wrap; }
+  .np-way-acts { width: 100%; }
+  .np-way-acts :deep(.ant-input) { flex: 1 1 160px; width: auto; min-width: 0; }
+  .np-way-acts .app-btn { white-space: nowrap; }
+  /* 列表头：说明与筛选芯片在窄屏各占一行（并排会把说明挤成三行） */
+  .pf-field-head { flex-wrap: wrap; }
+  .np-head-acts { width: 100%; flex-wrap: wrap; row-gap: 6px; }
   /* 记忆页的添加行：输入框占满整行（原 min-width 200 与分类框并排会溢出） */
   .mem-add-row { gap: 8px; }
   .mem-add-input { min-width: 100%; }
