@@ -94,7 +94,7 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
     public volatile com.wenqu.ai.service.DocumentMetaCache docMetaCache;
     /** 本轮已注册的 MCP 引用条数（上限 tool.mcpCiteMaxRefs，防引用面板被单轮刷屏） */
     public final AtomicInteger mcpCiteCount = new AtomicInteger();
-    /** 本轮联网搜索已执行次数（配额 webSearch.maxCallsPerTurn；<=0 不限制） */
+    /** 本轮联网搜索已执行次数（按工具调用计，一次调用可带 1~4 个查询；配额 webSearch.maxCallsPerTurn；<=0 不限制） */
     public final AtomicInteger webSearchCalls = new AtomicInteger();
     /**
      * 本轮收敛出的重排模型引用（知识库检索工具登记，见 KnowledgeRetrievalTool.SourceRegistrar

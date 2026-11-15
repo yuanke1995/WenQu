@@ -171,7 +171,7 @@ export AI_VAPID_PRIVATE_KEY=              # VAPID 私钥；多副本必须同一
 export AI_VAPID_SUBJECT=mailto:admin@wenqu.local  # 推送服务要求的联系标识
 ```
 
-> **行为参数与模型配置不走环境变量**：检索 / 解析 / 上下文 / 工具 / 联网搜索 / HTTP 工具 / 工作流工具 / 智能体回调与记忆 / 沙盒 / 记忆 / 定时任务 / 通知外发 / 限流等 **79 项**行为参数统一在**系统设置页**维护，另有 **11 项个人专属项**（知识块填充上限 + 联网搜索整套：`provider`/`apiKey`/`model`/`custom*`，无全局槽位）在**个人设置**维护；另有 50 个隐藏/部署项在 `defaults()` 登记，不进设置页（`config-schema.json` → `c_ai_config`，保存即生效）；聊天 / 视觉 / 向量 / 重排 / OCR 等模型走**模型供应商**登记 + 引用绑定（API Key RSA 加密入库，**无全局兜底**——聊天模型缺失或引用无效会 fail-loud 引导选择）。`application.yml` 不存任何模型网关与密钥。Web Push 的 VAPID 私钥只从环境变量读取；SMTP 口令走设置页（RSA 加密入库、不回显明文）。
+> **行为参数与模型配置不走环境变量**：检索 / 解析 / 上下文 / 工具 / 联网搜索 / HTTP 工具 / 工作流工具 / 智能体回调与记忆 / 沙盒 / 记忆 / 定时任务 / 通知外发 / 限流等 **79 项**行为参数统一在**系统设置页**维护，另有 **12 项个人专属项**（知识块填充上限 + 联网搜索整套：`provider`/`apiKey`/`model`/`maxResults`/`custom*`，无全局槽位）在**个人设置**维护；另有 50 个隐藏/部署项在 `defaults()` 登记，不进设置页（`config-schema.json` → `c_ai_config`，保存即生效）；聊天 / 视觉 / 向量 / 重排 / OCR 等模型走**模型供应商**登记 + 引用绑定（API Key RSA 加密入库，**无全局兜底**——聊天模型缺失或引用无效会 fail-loud 引导选择）。`application.yml` 不存任何模型网关与密钥。Web Push 的 VAPID 私钥只从环境变量读取；SMTP 口令走设置页（RSA 加密入库、不回显明文）。
 
 **本机执行器（工作区文件）**：工作区的文件在用户电脑上，需要在**那台电脑**上跑执行器：
 ```bash
@@ -519,7 +519,7 @@ docker compose up -d          # 自包含：redis-stack + meilisearch + 内置 M
 | `GET /api/ai/quota`、`POST /quota`、`DELETE /quota/{id}`、`GET /stats/quota` | 推理配额：规则清单（含本周期用量与进度）/ 新建或覆盖 / 删除 / 成员自查 |
 | `GET /api/ai/stats/usage`、`/stats/cost` | 个人使用统计聚合（统计卡 / 热力图 / 每日趋势 / 模型用量 / 用途分项）/ 费用口径（区间费用、按用户与按模型、未计价 tokens） |
 | `GET /api/ai/trace/list`、`/chat/{id}`、`/workflow/{runId}`、`/pool`、`/stats`、`POST /trace/pool/{id}/label\|dismiss`、`/sample/run` | 执行 Trace：列表与详情 / 采样池 / 采样统计 / 标注回流 / 忽略 / 立即采样 |
-| `GET /api/ai/user/list`、`/user/page`、`/preference`、`/settings`、`POST /user`、`PUT /user/{uid}`、`/{uid}/password`、`/preference`、`/profile`、`/email`、`/settings`、`DELETE /{uid}`、`/{uid}/oidc-binding` | 成员列表 / 成员分页（关键字·部门·状态库侧过滤，供万级名单的「会话治理」用）/ 个人偏好（默认模型、记忆开关）读取与保存 / 个人配置覆盖通道（schema 标记 personal 的 12 个字段，含 11 项个人专属）/ 新建用户 / 编辑成员与重置密码 / 保存资料与头像 / 设置本人通知邮箱 / 删除 / 解绑单点登录 |
+| `GET /api/ai/user/list`、`/user/page`、`/preference`、`/settings`、`POST /user`、`PUT /user/{uid}`、`/{uid}/password`、`/preference`、`/profile`、`/email`、`/settings`、`DELETE /{uid}`、`/{uid}/oidc-binding` | 成员列表 / 成员分页（关键字·部门·状态库侧过滤，供万级名单的「会话治理」用）/ 个人偏好（默认模型、记忆开关）读取与保存 / 个人配置覆盖通道（schema 标记 personal 的 13 个字段，含 12 项个人专属）/ 新建用户 / 编辑成员与重置密码 / 保存资料与头像 / 设置本人通知邮箱 / 删除 / 解绑单点登录 |
 | `GET /api/ai/role/list`、`/options`、`/{code}/permissions`、`POST /role`、`PUT /{code}`、`/{code}/permissions`、`DELETE /{code}` | 角色管理与统一权限读写（权限 = 菜单 + 名下接口，单棵树勾选） |
 | `GET /api/ai/menu/list`、`/my-layout`、`POST /menu`、`PUT /{id}`、`/my-layout`、`DELETE /{id}` | 菜单维护与个人侧栏布局（顺序、显隐）读写 |
 | `GET /api/ai/department/list`、`POST /department`、`PUT /{id}`、`DELETE /{id}` | 部门树维护 |
@@ -616,9 +616,9 @@ spring:
 
 > **模型配置无兜底**：`spring.ai.openai.*` 不配置；聊天 / 视觉 / 向量 / 重排 / OCR 模型引用解析不出时显式报错并引导到可修改的位置，不静默回落任何全局默认。记忆提炼复用本轮会话模型，不单独配置引用。
 
-### 系统设置（79 项行为参数 + 11 项个人专属）
+### 系统设置（79 项行为参数 + 12 项个人专属）
 
-设置项 schema 唯一定义源是 `src/main/resources/config-schema.json`：后端据此校验并下发前端渲染设置页，缺失即启动失败。共 90 个字段，按**层级**标注（必需 1 项 / 调优 29 项 / 工程参数 60 项）；其中 11 项 `personalOnly`（知识块填充上限 + 联网搜索整套）不下发管理端设置页、只在**个人设置**维护，管理端可见 79 项。设置页默认全部铺开（工程参数可在面板头整体收起）；另有 50 项内部键只从 `ConfigService.defaults()` 读取、不进设置页（如 `chat.resumeEnabled`、`ratelimit.chatPerMinute`、`sandbox.provisionerUrl`、`share.guestDailyTurns`、`webpush.enabled` 等）。
+设置项 schema 唯一定义源是 `src/main/resources/config-schema.json`：后端据此校验并下发前端渲染设置页，缺失即启动失败。共 91 个字段，按**层级**标注（必需 1 项 / 调优 30 项 / 工程参数 60 项）；其中 12 项 `personalOnly`（知识块填充上限 + 联网搜索整套）不下发管理端设置页、只在**个人设置**维护，管理端可见 79 项。设置页默认全部铺开（工程参数可在面板头整体收起）；另有 50 项内部键只从 `ConfigService.defaults()` 读取、不进设置页（如 `chat.resumeEnabled`、`ratelimit.chatPerMinute`、`sandbox.provisionerUrl`、`share.guestDailyTurns`、`webpush.enabled` 等）。
 
 **归属分层**：
 
@@ -743,7 +743,7 @@ WenQu/                               # 工作区根（git 仓库名 WenQu；本�
 │   └── application-local.yml        # 本地开发私有配置（含密钥与数据目录，.gitignore 忽略，不打进构建产物）
 ├── src/main/resources/
 │   ├── application.yml              # 配置（关键密钥无默认值：DB_PASSWORD 缺失 fail-fast）
-│   ├── config-schema.json           # 设置项 schema 唯一定义源（11 面板 / 90 字段，缺失即启动失败）
+│   ├── config-schema.json           # 设置项 schema 唯一定义源（11 面板 / 91 字段，缺失即启动失败）
 │   ├── db/migration/V1__baseline.sql # Flyway V1 基线（空库首次启动执行一次，之后只追加 V2+）
 │   ├── manual/*.md                  # 《问渠使用手册》16 篇（随包分发，同步后成为官方内置知识库）
 │   └── skills/*/SKILL.md            # 内置技能

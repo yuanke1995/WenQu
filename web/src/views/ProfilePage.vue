@@ -124,15 +124,16 @@
             </div>
           </div>
 
-          <!-- 个人可覆盖配置：按用途分块，块内只渲染当前服务商真正用得到的字段——
-               custom 的请求模板/取数路径对其它服务商无效，全量铺开就是一堆填不了的空框；
-               自定义的 4 个响应字段路径再收进「展开」里。值为空=用默认（占位符亮出继承值），改了就存。 -->
+          <!-- 个人可覆盖配置：按用途分块。联网搜索先让用户选「哪家」——
+               DeepSeek 等预设把地址/模板/取数路径一并填好，普通用户只面对 Key 与条数；
+               传输细节收进「高级配置」，自定义入口保留完整能力。值为空=用默认，改了就存。 -->
           <div v-for="g in personalGroups" :key="g.key" class="pf-grp">
             <div class="pf-grp-head">
               <div class="pf-grp-head-main">
                 <h3 class="pf-grp-title">
                   {{ g.title }}
-                  <span v-if="g.key === 'wsAdv' && wsAdvCustomized" class="pf-set-badge">已自定义</span>
+                  <span v-if="g.key === 'wsAdv' && wsPreset === 'deepseek'" class="pf-set-badge">已按 DeepSeek 填好</span>
+                  <span v-else-if="g.key === 'wsAdv' && wsPreset === 'custom' && wsAdvCustomized" class="pf-set-badge">已自定义</span>
                 </h3>
                 <p v-if="g.hint" class="pf-grp-hint">{{ g.hint }}</p>
               </div>
@@ -141,8 +142,28 @@
                 {{ wsAdvOpen ? '收起' : '展开' }}
               </button>
             </div>
+            <p v-if="g.collapsible && !wsAdvOpen" class="pf-ws-adv-summary">{{ wsAdvSummary }}</p>
             <div v-show="!g.collapsible || wsAdvOpen" class="pf-grp-body" :class="{ 'pf-fld-grid': g.collapsible }">
-              <div v-for="f in g.fields" :key="f.path" class="pf-fld">
+              <div v-if="g.key === 'ws'" class="pf-ws-presets">
+                <button v-for="p in WS_PRESETS" :key="p.id" class="pf-ws-preset"
+                        :class="{ on: wsPreset === p.id }" type="button"
+                        :aria-pressed="wsPreset === p.id" @click="selectWsPreset(p.id)">
+                  <span v-if="wsPreset === p.id" class="pf-ws-check">✓</span>
+                  <span class="pf-ws-ico" :class="'ws-ico-' + p.id">{{ p.icon }}</span>
+                  <span class="pf-ws-name">{{ p.name }}</span>
+                  <span class="pf-ws-desc">{{ p.desc }}<br>{{ p.extra }}</span>
+                </button>
+              </div>
+              <div v-if="g.key === 'ws'" class="pf-ws-status">
+                <span class="pf-ws-dot"></span>
+                <span>当前：<b>{{ wsStatusLabel }}</b></span>
+                <span class="pf-ws-sep">·</span>
+                <span>{{ wsKeyState }}</span>
+                <span class="pf-ws-sep">·</span>
+                <span>{{ wsCountLabel }}</span>
+              </div>
+              <div v-for="f in g.fields" :key="f.path" class="pf-fld"
+                   :class="{ 'pf-fld-wide': f.type === 'textarea' || (g.key === 'wsAdv' && f.key === 'baseUrl') }">
                 <div class="pf-fld-head">
                   <span class="pf-label">{{ f.label }}</span>
                   <a-tooltip v-if="personal.tips[f.tips]" :title="personal.tips[f.tips]"
@@ -158,7 +179,7 @@
                                 @blur="commitPersonal(f)" @pressEnter="commitPersonal(f)" />
                 <a-select v-else-if="f.type === 'select'" v-model:value="personalDrafts[f.path]"
                           :options="f.options" class="pf-ctl" allow-clear
-                          :style="{ width: g.collapsible ? '100%' : (f.key === 'provider' ? '360px' : '240px') }"
+                          :style="{ width: g.collapsible ? '100%' : '240px' }"
                           :placeholder="personalPlaceholder(f)" @change="commitPersonal(f)" />
                 <!-- password：服务端永不回填真值（values 里是 ******** 掩码），输入框恒空，输入新值才覆盖 -->
                 <a-input-password v-else-if="f.type === 'password'" v-model:value="personalDrafts[f.path]"
@@ -171,23 +192,19 @@
                 <a-input v-else v-model:value="personalDrafts[f.path]" class="pf-ctl" allow-clear
                          :style="{ width: g.collapsible ? '100%' : (f.width ? f.width + 'px' : '280px') }"
                          :placeholder="personalPlaceholder(f)" @blur="commitPersonal(f)" @pressEnter="commitPersonal(f)" />
-                <!-- 服务商：直接说清「现在按哪套配置在搜」，清空即回落平台内置 -->
-                <p v-if="f.key === 'provider'" class="pf-fld-note">
-                  {{ hasPersonalValue(f)
-                    ? `当前使用：${wsProviderLabel}（个人配置，费用自理）`
-                    : '当前使用：平台内置 SearXNG（免费）；选了服务商就改用你自己的配置' }}
+                <p v-if="fieldNote(f) && !(wsPreset === 'deepseek' && g.key === 'wsAdv')" class="pf-fld-note">
+                  {{ f.key === 'apiKey' && wsKeyHint ? wsKeyHint : fieldNote(f) }}
                 </p>
-                <p v-else-if="g.key === 'ws' && fieldNote(f)" class="pf-fld-note">{{ fieldNote(f) }}</p>
               </div>
             </div>
-            <!-- 探测按钮跟在本组配置后面：不用滚到卡片底部再回头对照填了什么 -->
-            <div v-if="g.key === 'ws'" class="pf-grp-foot">
-              <button class="app-btn ghost small" type="button" :disabled="wsProbing" @click="probeWebSearch">
-                {{ wsProbing ? '测试中…' : '测试连接' }}
-              </button>
-              <span class="pf-grp-hint">按上方已保存的配置真搜一次（只取 1 条）</span>
-              <span v-if="wsProbeHint" class="pf-probe-hint" :class="{ ok: wsProbeOk }">{{ wsProbeHint }}</span>
-            </div>
+          </div>
+          <!-- 探测按钮放在整块配置之后：高级配置展开时也仍在最后，符合「填完再测」 -->
+          <div class="pf-grp-foot">
+            <button class="app-btn ghost small" type="button" :disabled="wsProbing" @click="probeWebSearch">
+              {{ wsProbing ? '测试中…' : '测试连接' }}
+            </button>
+            <span class="pf-grp-hint">按上方已保存的配置真搜一次（只取 1 条）</span>
+            <span v-if="wsProbeHint" class="pf-probe-hint" :class="{ ok: wsProbeOk }">{{ wsProbeHint }}</span>
           </div>
         </div>
 
@@ -815,6 +832,12 @@ const personalPlaceholder = f => {
   if (f.type === 'password') {
     return hasPersonalValue(f) ? '已设置（输入新 Key 可覆盖，留空沿用）' : '未设置'
   }
+  // 平台内置地址只服务 generic，自定义服务商留空不会回落它——别让「跟随系统」把必填项伪装成可留空
+  if (f.path === 'webSearch.baseUrl') {
+    if (wsPreset.value === 'custom') return '必填：搜索端点地址（如 https://api.example.com/v1/search）'
+    if (wsPreset.value === 'tavily') return '留空用官方端点（https://api.tavily.com/search）'
+    if (wsPreset.value === 'bocha') return '留空用博查官方端点'
+  }
   if (hasGlobalLayer(f)) return `跟随系统（${personal.value.globals[f.path]}）`
   const def = f.def === null || f.def === undefined ? '' : String(f.def)
   if (def !== '') return `默认（${def}）`
@@ -822,31 +845,124 @@ const personalPlaceholder = f => {
 }
 
 // ---- 问答偏好分组：字段清单仍由 /user/settings 下发，这里只决定「此刻该露哪些、怎么排」----
+// 服务商预设：普通用户只选「哪家」，地址/模板/取数路径由预设替他们填好；
+// 落库仍是 provider + custom* 原字段，选「自定义」不会失去任何能力。
+const DEEPSEEK_SEARCH = {
+  'webSearch.provider': 'custom',
+  'webSearch.baseUrl': 'https://api.deepseek.com/v1/tools/search',
+  'webSearch.customMethod': 'POST',
+  'webSearch.customBody': '{"query":"{{query}}","count":{{count}},"need_content":false}',
+  'webSearch.customResultsPath': 'results',
+  'webSearch.customTitlePath': 'title',
+  'webSearch.customUrlPath': 'url',
+  'webSearch.customSnippetPath': 'summary',
+  'webSearch.customPublishedPath': 'date'
+}
+const WS_PRESETS = [
+  { id: 'generic', name: '平台内置', icon: '◎', desc: 'SearXNG · 免费', extra: '无需 Key' },
+  { id: 'deepseek', name: 'DeepSeek', icon: 'D', desc: '官方搜索 API', extra: '按请求计费' },
+  { id: 'tavily', name: 'Tavily', icon: 'T', desc: '面向模型的摘要', extra: '海外服务' },
+  { id: 'bocha', name: '博查', icon: '博', desc: '国内直连', extra: '中文结果好' },
+  { id: 'custom', name: '自定义', icon: '</>', desc: '任意搜索 API', extra: '填模板与路径' }
+]
 // 当前服务商取草稿（切换即重排、不等保存回读），未设置按运行时口径回落 generic
 // （WebSearchService：personalOnly 键没有全局层，空值一律走平台内置 SearXNG）
-const WS_PROVIDER_LABELS = { generic: '平台内置 SearXNG', tavily: 'Tavily', bocha: '博查', custom: '自定义搜索 API' }
-// 只有 custom 服务商才用得到的字段：请求模板与响应取数路径
-const WS_CUSTOM_KEYS = new Set([
-  'model', 'customMethod', 'customBody', 'customResultsPath',
+const wsProvider = computed(() => personalDrafts.value['webSearch.provider'] || 'generic')
+// provider=custom 时再按已填的服务地址识别 DeepSeek；改掉地址就自然回到「自定义」
+const wsPreset = computed(() => {
+  const p = wsProvider.value
+  if (p === 'tavily' || p === 'bocha') return p
+  if (p !== 'custom') return 'generic'
+  const base = String(personalDrafts.value['webSearch.baseUrl'] || '')
+  return base.includes('api.deepseek.com/v1/tools/search') ? 'deepseek' : 'custom'
+})
+const wsStatusLabel = computed(() => ({
+  generic: '平台内置（免费）', deepseek: 'DeepSeek 搜索', tavily: 'Tavily', bocha: '博查', custom: '自定义搜索 API'
+})[wsPreset.value])
+const wsApiKeySet = computed(() => (personal.value.values || {})['webSearch.apiKey'] === '********')
+const wsKeyState = computed(() => wsPreset.value === 'generic'
+  ? '无需 Key' : (wsApiKeySet.value ? 'Key 已配置' : 'Key 未配置'))
+const wsMaxResults = computed(() => {
+  // 平台内置是平台管理的选项：固定内置默认值，不读个人设置（用户只选不改）
+  if (wsPreset.value === 'generic') {
+    const f = (personal.value.fields || []).find(x => x.path === 'webSearch.maxResults')
+    return f && f.def !== null && f.def !== undefined ? f.def : 10
+  }
+  const draft = personalDrafts.value['webSearch.maxResults']
+  if (draft !== null && draft !== undefined && draft !== '') return draft
+  return (personal.value.values || {})['webSearch.maxResults'] || 10
+})
+const wsCountLabel = computed(() => wsPreset.value === 'generic'
+  ? `每次 ${wsMaxResults.value} 条（固定）`
+  : `每次 ${wsMaxResults.value} 条`)
+// 高级区：预设（DeepSeek）与自定义共用；Tavily/博查/平台内置只留可选的代理/自建地址
+const WS_ADV_KEYS = new Set([
+  'baseUrl', 'model', 'customMethod', 'customBody', 'customResultsPath',
   'customTitlePath', 'customUrlPath', 'customSnippetPath', 'customPublishedPath'
 ])
-// 响应字段映射是「接任意厂商」才要调的工程参数，默认收起
-const WS_ADV_KEYS = new Set(['customTitlePath', 'customUrlPath', 'customSnippetPath', 'customPublishedPath'])
 const wsAdvOpen = ref(false)
-const wsProvider = computed(() => personalDrafts.value['webSearch.provider'] || 'generic')
-const wsProviderLabel = computed(() => WS_PROVIDER_LABELS[wsProvider.value] || wsProvider.value)
 // GET 模式用 URL 模板（服务地址里带 {{query}}），请求体模板完全不参与渲染——
 // 只在 POST 下露出，避免填了不生效还误以为配置好了
 const wsMethod = computed(() => String(personalDrafts.value['webSearch.customMethod'] || 'POST').toUpperCase())
 const wsFieldVisible = f => {
   if (f.panel !== 'webSearch') return true
+  if (f.key === 'provider') return false              // 用上方预设卡片代替下拉
   if (f.key === 'apiKey') return wsProvider.value !== 'generic'
-  if (f.key === 'customBody') return wsProvider.value === 'custom' && wsMethod.value === 'POST'
-  if (WS_CUSTOM_KEYS.has(f.key)) return wsProvider.value === 'custom'
+  if (f.key === 'maxResults') return wsPreset.value !== 'generic'   // 平台内置只选不改
+  if (f.key === 'customBody') return wsMethod.value === 'POST'
+  // {{model}} 不在模板里就不露模型名，省得用户以为它影响搜索
+  if (f.key === 'model') return String(personalDrafts.value['webSearch.customBody'] || '').includes('{{model}}')
   return true
 }
 const wsAdvCustomized = computed(() =>
   (personal.value.fields || []).some(f => WS_ADV_KEYS.has(f.key) && hasPersonalValue(f)))
+const wsAdvSummary = computed(() => {
+  const base = String(personalDrafts.value['webSearch.baseUrl'] || '')
+  if (wsPreset.value === 'deepseek') {
+    return 'POST https://api.deepseek.com/v1/tools/search · 结果取 results[] · 摘要取 summary'
+  }
+  if (wsPreset.value === 'custom') {
+    return base || '尚未填写服务地址，展开后填写端点、请求模板与响应取数路径'
+  }
+  if (wsPreset.value === 'tavily') return base ? `代理地址：${base}` : '使用 Tavily 官方端点（api.tavily.com/search）'
+  if (wsPreset.value === 'bocha') return base ? `代理地址：${base}` : '使用博查官方端点'
+  return base ? `自建地址：${base}` : '使用平台内置搜索（免费）'
+})
+const wsAdvHint = computed(() => {
+  if (wsPreset.value === 'deepseek') return '通常无需修改；改掉服务地址会转为自定义配置。'
+  if (wsPreset.value === 'custom') return '服务地址、请求模板与响应取数路径；适用于能读接口文档的用户。'
+  if (wsPreset.value === 'generic') return '可选：自建 SearXNG 或代理地址；留空用平台内置。'
+  return '可选：代理或自建网关地址；留空用官方端点。'
+})
+const wsKeyHint = computed(() => {
+  const where = { deepseek: 'DeepSeek 开放平台', tavily: 'Tavily 控制台', bocha: '博查控制台' }[wsPreset.value]
+  return where ? `在 ${where}创建 API Key 后粘贴；RSA 加密入库。各服务商共用一把 Key，切换后请确认` : ''
+})
+const selectWsPreset = async id => {
+  // 只有自定义需要立刻看到传输参数；其余预设默认收起，避免技术字段扑面而来
+  wsAdvOpen.value = id === 'custom'
+  let payload
+  if (id === 'custom') {
+    wsAdvOpen.value = true
+    // 从 DeepSeek 预设切到自定义：清掉预设端点，否则地址仍含 api.deepseek.com，
+    // 卡片会继续识别成 DeepSeek，用户会以为「点了没反应」
+    payload = { 'webSearch.provider': 'custom' }
+    if (wsPreset.value === 'deepseek') payload['webSearch.baseUrl'] = ''
+  } else if (id === 'deepseek') {
+    payload = { ...DEEPSEEK_SEARCH }
+  } else {
+    // 切走计费服务商时清掉个人地址：configuredBaseUrl 对任意服务商都生效，
+    // 留着上一家的端点会把 Tavily/博查/内置的请求串到别家去
+    payload = { 'webSearch.provider': id, 'webSearch.baseUrl': '' }
+  }
+  try {
+    await saveUserSettings(payload)
+    await loadPersonal()
+  } catch (e) {
+    message.error(e.message || '切换服务商失败')
+    await loadPersonal()
+  }
+}
 // 字段备注：这一段本来就只在 custom 下露出，「仅 custom 使用」再逐行重复就是噪音；
 // 去掉这类从句，只留下确实需要人读的信息（占位符、路径语义、加密口径）。
 const fieldNote = f => String(f.note || '')
@@ -865,22 +981,34 @@ const personalGroups = computed(() => {
       fields: retrieval
     })
   }
-  const basic = fs.filter(f => f.panel === 'webSearch' && !WS_ADV_KEYS.has(f.key) && wsFieldVisible(f))
-  if (basic.length) {
+  const basic = fs.filter(f => f.panel === 'webSearch' && f.key !== 'provider'
+    && !WS_ADV_KEYS.has(f.key) && wsFieldVisible(f))
+  // 平台内置没有任何可编辑字段，但预设卡片与状态行仍要显示——分组按「有联网搜索字段」判断
+  if (fs.some(f => f.panel === 'webSearch')) {
     out.push({
       key: 'ws',
       title: '联网搜索',
-      hint: '不设置时用平台内置搜索（免费）；填了服务商或 Key 就按你的配置搜，费用自理。',
+      hint: '选一个搜索服务商；不设置时用平台内置（免费）。计费服务商按你的配置搜，费用自理。',
       fields: basic
     })
   }
-  const adv = fs.filter(f => WS_ADV_KEYS.has(f.key) && wsFieldVisible(f))
+  // 传输类字段的阅读顺序：地址 → 方法/取数路径 → 请求体 → 其余响应映射；
+  // 与两列网格配合，请求体独占一行，长路径字段不挤成半截
+  const order = ['baseUrl', 'customMethod', 'customResultsPath', 'customBody', 'model',
+    'customTitlePath', 'customUrlPath', 'customSnippetPath', 'customPublishedPath']
+  let adv = fs.filter(f => WS_ADV_KEYS.has(f.key) && wsFieldVisible(f))
+    .sort((a, b) => order.indexOf(a.key) - order.indexOf(b.key))
+  // 平台内置没有可调参数（只选不改）；tavily/博查只留可选的代理/自建地址
+  if (wsPreset.value === 'generic') adv = []
+  else if (wsPreset.value !== 'deepseek' && wsPreset.value !== 'custom') {
+    adv = adv.filter(f => f.key === 'baseUrl')
+  }
   if (adv.length) {
     out.push({
       key: 'wsAdv',
-      title: '响应字段映射',
+      title: '高级配置',
       collapsible: true,
-      hint: '结果条目内取标题 / 链接 / 摘要 / 时间的点路径；留空用服务商默认。',
+      hint: wsAdvHint.value,
       fields: adv
     })
   }
@@ -900,6 +1028,8 @@ const loadPersonal = async () => {
       else drafts[f.path] = raw
     }
     personalDrafts.value = drafts
+    // 自定义但还没填地址：直接展开高级区，省得用户对着「已自定义」找不到必填项
+    if (wsPreset.value === 'custom' && !drafts['webSearch.baseUrl']) wsAdvOpen.value = true
   } catch (e) { /* 读取失败按无个人字段渲染：这个面板还有默认模型可管，不必整块报错 */ }
 }
 // 提交单项：清空（null/空串）=回落默认；与已存值相同不提交。成败都回读服务端，输入框以服务端为准
@@ -1633,11 +1763,53 @@ watch(current, v => { if (v === 'notify') refreshPushState().then(refreshCap).ca
 .pf-fld { min-width: 0; }
 .pf-fld-head { display: flex; align-items: center; gap: 5px; margin-bottom: 5px; }
 .pf-fld-note { margin: 5px 0 0; font-size: 11px; line-height: 1.55; color: var(--app-text3); }
-/* 响应字段映射：两列排（窄屏自动回落单列），控件吃满格宽 */
-.pf-fld-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px 16px; }
+/* 高级配置：两列排（窄屏回落单列），长字段（地址/请求体）吃满整行 */
+.pf-fld-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 16px; }
 .pf-ctl { max-width: 100%; }
 .pf-ctl-sm { width: 160px; }
 .pf-ctl-block { width: 100%; }
+/* ---- 联网搜索：服务商预设卡片（普通用户只选哪家，地址/模板/取数路径由预设填好） ---- */
+.pf-ws-presets { display: grid; grid-template-columns: repeat(auto-fit, minmax(104px, 1fr)); gap: 8px; }
+.pf-ws-preset {
+  position: relative; min-width: 0; padding: 10px 9px 9px; text-align: left; font: inherit; color: inherit;
+  border: 1px solid var(--app-border); border-radius: 9px; background: var(--app-panel);
+  cursor: pointer; -webkit-appearance: none; appearance: none;
+  transition: border-color .15s, background .15s, box-shadow .15s;
+}
+.pf-ws-preset:hover { border-color: var(--app-accent-border); background: var(--app-info-weak); }
+.pf-ws-preset.on { border-color: var(--app-accent); background: var(--app-info-weak); box-shadow: inset 0 0 0 1px var(--app-accent); }
+.pf-ws-ico {
+  display: flex; width: 22px; height: 22px; margin-bottom: 7px; border-radius: 6px;
+  align-items: center; justify-content: center; color: #fff; background: #8a94a3;
+  font-size: 11px; font-weight: 700; line-height: 1;
+}
+.ws-ico-deepseek { background: #4d6bfe; }
+.ws-ico-tavily { background: #1f2329; }
+.ws-ico-bocha { background: #2f7dff; }
+.ws-ico-custom { background: #5f6570; font-size: 9px; }
+.pf-ws-name { display: block; font-size: 12px; font-weight: 600; line-height: 1.3; }
+.pf-ws-desc { display: block; margin-top: 2px; font-size: 10.5px; line-height: 1.4; color: var(--app-text3); }
+.pf-ws-check {
+  position: absolute; top: 7px; right: 7px; width: 14px; height: 14px; border-radius: 50%;
+  background: var(--app-accent); color: #fff; font-size: 9px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+}
+/* 状态行：当前哪家 · Key 是否已配 · 每次几条，替代逐个字段猜 */
+.pf-ws-status {
+  display: flex; align-items: center; gap: 7px; flex-wrap: wrap; padding: 7px 10px;
+  border: 1px solid var(--app-border); border-radius: 8px; background: var(--app-panel-2);
+  font-size: 11px; color: var(--app-text2);
+}
+.pf-ws-status b { color: var(--app-text); font-weight: 600; }
+.pf-ws-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--app-ok); flex: none; }
+.pf-ws-sep { color: var(--app-border-strong); }
+/* 高级配置收起时给一行摘要：不用展开也知道现在按什么在跑 */
+.pf-ws-adv-summary {
+  margin: 0; font-size: 10.5px; line-height: 1.6; color: var(--app-text3);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all;
+}
+/* 请求体模板这类长文本在高级区独占一行 */
+.pf-fld-wide { grid-column: 1 / -1; }
 /* 状态胶囊：已设置 / 已自定义 */
 .pf-set-badge {
   flex: none; font-size: 10px; line-height: 1; color: var(--app-text3);
@@ -1816,6 +1988,8 @@ watch(current, v => { if (v === 'notify') refreshPushState().then(refreshCap).ca
   .pf-content { padding: 12px 12px calc(24px + var(--sab, 0px)); }
   .pf-card, .mem-card, .shm-card { max-width: none; padding: 14px; }
   .akp-card { max-width: none; padding: 14px; }
+  /* 高级配置的单行点路径在窄屏两列会截断，回落单列 */
+  .pf-fld-grid { grid-template-columns: 1fr; }
 
   /* 表单行换行：昵称输入 + 保存按钮并排会挤压（保存两字被压成竖排） */
   .pf-row { flex-wrap: wrap; }

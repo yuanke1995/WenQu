@@ -974,6 +974,27 @@
       "tips": "webSearchModel"
     },
     {
+      "backendKey": "webSearch.maxResults",
+      "panel": "webSearch",
+      "section": 1,
+      "group": "webSearch",
+      "key": "maxResults",
+      "path": "webSearch.maxResults",
+      "label": "每次搜索条数上限",
+      "type": "number",
+      "def": 10,
+      "min": 1,
+      "max": 50,
+      "step": 1,
+      "width": 180,
+      "personal": true,
+      "personalOnly": true,
+      "vif": "webSearch.enabled",
+      "tier": 2,
+      "note": "个人专属（平台内置固定 10 条）：模型请求的条数不会超过它；受服务商上限约束，越多越费 token",
+      "tips": "webSearchMaxResults"
+    },
+    {
       "backendKey": "webSearch.customMethod",
       "panel": "webSearch",
       "section": 0,
@@ -988,11 +1009,11 @@
       "options": [
         {
           "value": "POST",
-          "label": "POST（JSON 请求体模板）"
+          "label": "POST（JSON 请求体）"
         },
         {
           "value": "GET",
-          "label": "GET（服务地址即 URL 模板）"
+          "label": "GET（URL 模板）"
         }
       ],
       "vif": "webSearch.enabled",
@@ -1126,7 +1147,7 @@
       "width": 180,
       "vif": "webSearch.enabled",
       "tier": 2,
-      "note": "防模型反复搜索烧配额；0=不限制",
+      "note": "按工具调用计（一次调用可带 1~4 个查询）；防模型反复搜索烧配额；0=不限制",
       "tips": "webSearchMaxCallsPerTurn"
     },
     {
@@ -1914,10 +1935,11 @@
     "webSearchCustomBody": "POST 请求体 JSON 模板，占位符 {{query}} / {{count}} / {{model}}。示例——智谱：{\"search_query\":\"{{query}}\",\"count\":{{count}}}；OpenAI Responses：{\"model\":\"{{model}}\",\"input\":\"{{query}}\",\"tools\":[{\"type\":\"web_search\"}]}；百炼：{\"model\":\"{{model}}\",\"input\":{\"messages\":[{\"role\":\"user\",\"content\":\"{{query}}\"}]},\"parameters\":{\"enable_search\":true}}",
     "webSearchCustomResultsPath": "响应 JSON 里结果数组的点路径：智谱=search_result、博查=data.webPages.value、百炼=output.search_info.search_results、SearXNG/Tavily=results",
     "webSearchModel": "custom 请求体模板里 {{model}} 占位的替换值（OpenAI Responses / 百炼口径需要；智谱口径留空）",
+    "webSearchMaxResults": "每次联网搜索返回的条数上限（1~50，默认 10），只对计费服务商生效：模型请求的条数不会超过它；各服务商另有自己的上限（如 Tavily 最多 20、DeepSeek 1~50），越多越费 token。平台内置搜索固定 10 条、不读取此项",
     "webSearchCustomFieldPaths": "结果条目内取字段的点路径：智谱 标题=title/链接=link/摘要=content/时间=publish_date；博查 name/url/snippet；百炼 title/url（无摘要，留空）",
     "webSearchEnabled": "联网搜索总开关；需先开「工具调用」",
     "webSearchBaseUrl": "平台内置 SearXNG 地址（个人 generic 默认回落此值）；generic / custom 必填（custom 的 POST 是端点地址、GET 是含 {{query}} 的 URL 模板）",
-    "webSearchMaxCallsPerTurn": "单轮搜索次数上限；0=不限",
+    "webSearchMaxCallsPerTurn": "单轮搜索次数上限（按工具调用计，一次调用可带 1~4 个查询）；0=不限",
     "notificationTurnEnabled": "问答/计划/审批/目标通知总闸；个人可在通知偏好里按类型静音",
     "webpushEnabled": "Web Push 总闸；需 VAPID 密钥与设备授权。静音类型不推"
   },

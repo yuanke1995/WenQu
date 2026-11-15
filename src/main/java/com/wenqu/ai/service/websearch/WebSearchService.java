@@ -59,10 +59,35 @@ public class WebSearchService {
     }
 
     /**
+     * 每次搜索条数：平台内置固定用内置默认值（用户只选不改）；计费服务商按个人设置，
+     * 未设置按内置 10，并夹在服务商通用上限 50 内。
+     */
+    private int maxResultsPerSearch(String providerId) {
+        if ("generic".equalsIgnoreCase(providerId)) return ConfigDefaults.WEB_SEARCH_MAX_RESULTS;
+        int v = configService.getInt("webSearch.maxResults", ConfigDefaults.WEB_SEARCH_MAX_RESULTS);
+        return Math.max(1, Math.min(v, ConfigDefaults.WEB_SEARCH_MAX_RESULTS_LIMIT));
+    }
+
+    private int limitFor(String providerId, Integer requested) {
+        int configured = maxResultsPerSearch(providerId);
+        return requested == null ? configured : Math.max(1, Math.min(requested, configured));
+    }
+
+    /**
+     * 本次调用实际生效的条数上限：多查询合并时作为总条数上限，与单次请求的条数口径同源
+     * （generic 固定 10；计费服务商按个人设置，未设置 10，夹在 50 内）。
+     */
+    public int effectiveLimit(Integer requested) {
+        String providerId = configService.get("webSearch.provider");
+        if (providerId == null || providerId.isBlank()) providerId = "generic";
+        return limitFor(providerId.trim(), requested);
+    }
+
+    /**
      * 执行一次搜索。
      *
      * @param query      搜索词
-     * @param maxResults 期望条数（null=平台固定 10）
+     * @param maxResults 期望条数（null=generic 固定 10 / 计费服务商取个人设置）
      * @return 结果列表（已去空链接、已补站点名、已按条数截断）
      * @throws WebSearchException 未启用 / 缺配置 / 请求失败（fail-loud，不返回空列表充数）
      */
@@ -97,8 +122,7 @@ public class WebSearchService {
             throw new WebSearchException("联网搜索未配置服务 Key：请在 个人设置 → 联网搜索 填写「"
                     + providerId + "」的 API Key，或把服务商切换为「generic（平台内置搜索，免费）」", true);
         }
-        int cap = ConfigDefaults.WEB_SEARCH_MAX_RESULTS;
-        int limit = maxResults == null ? cap : Math.max(1, Math.min(maxResults, cap));
+        int limit = limitFor(provider.id(), maxResults);
         int timeoutMs = ConfigDefaults.WEB_SEARCH_TIMEOUT_MS;
         String baseUrl = configuredBaseUrl(provider.id());
         if (baseUrl.startsWith("http://")) {

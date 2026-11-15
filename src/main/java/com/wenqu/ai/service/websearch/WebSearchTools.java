@@ -12,8 +12,11 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 联网搜索工具（Function Calling / Tool Calling）。
@@ -41,6 +44,9 @@ public class WebSearchTools {
 
     /** 工具名（与前端 TOOL_LABELS、装配处 sensitiveTools 判定保持一致；改名需同步） */
     public static final String TOOL_NAME = "webSearch";
+
+    /** 单次调用可带的查询数上限（DSH 同款口径：一次调用扇出多个查询，省模型轮次；配额仍按调用扣一次） */
+    public static final int MAX_QUERIES_PER_CALL = 4;
 
     /**
      * 按本轮问题重排这批结果，返回「片段 → 相关度分」；重排实际没跑成时返回空表（调用方按兜底走）。
@@ -120,7 +126,7 @@ public class WebSearchTools {
      * 由问答侧经 {@code ToolContext} 随本次调用传入（见 {@link #CTX_SINK}），非流式直接调用时为 null。
      */
     public interface WebSearchSink {
-        /** 扣减一次本轮搜索配额；false=已达 webSearch.maxCallsPerTurn，本次调用应拒绝 */
+        /** 扣减一次本轮搜索配额（按工具调用计，一次调用可带 1~4 个查询）；false=已达 webSearch.maxCallsPerTurn，本次调用应拒绝 */
         boolean tryConsumeQuota();
 
         /** 本轮问题（相关度门的判据）：问答侧传入的是改写后的检索查询，取不到返回 null */
@@ -181,20 +187,22 @@ public class WebSearchTools {
      * 联网搜索，返回与查询相关的网页结果（标题、链接、摘要）。
      * 当知识库资料不足以回答、或问题涉及时效信息（最新价格/版本/政策/新闻/外部事实）时调用。
      *
-     * @param query      搜索关键词或短句（像在搜索引擎里那样写，不要写完整句子）
-     * @param maxResults 需要返回的结果条数（1~5，默认取配置值）
+     * @param queries    搜索关键词或短句列表（1~4 个，像在搜索引擎里那样写；完全相同的查询只执行一次）
+     * @param maxResults 合并后需要返回的结果总条数（1~50，缺省取个人设置）
      * @return 命中的网页结果（含引用编号），未命中或失败时返回可说明原因的文本
      */
     @Tool(description = "联网搜索，返回与查询相关的网页结果（标题、链接、摘要）。"
             + "当知识库资料不足以回答、或问题涉及时效信息（最新价格、版本、政策、新闻、外部事实）时调用本工具。"
+            + "同一问题的多个侧面请放进一次调用（1~4 个查询），不要拆成多次调用。"
             + "不要用它回答知识库已覆盖的内容，也不要凭记忆编造搜索结果。")
     public String webSearch(
-            @ToolParam(description = "搜索关键词或短句，像在搜索引擎里那样写，不要写完整句子") String query,
-            @ToolParam(description = "返回结果条数（1~5，默认取系统配置）", required = false) Integer maxResults,
+            @ToolParam(description = "搜索关键词或短句列表（1~4 个），像在搜索引擎里那样写，不要写完整句子；结果会合并去重后返回")
+            List<String> queries,
+            @ToolParam(description = "合并后返回的结果总条数（1~50，默认取个人设置）", required = false) Integer maxResults,
             org.springframework.ai.chat.model.ToolContext toolContext) {
         com.wenqu.ai.agentx.WenquAgentxTools.TurnHooks hooks = hooksOf(toolContext);
         if (hooks == null) {
-            return webSearch(query, maxResults, sinkOf(toolContext));
+            return webSearch(queries, maxResults, sinkOf(toolContext));
         }
         // 弹性线程复用（与知识工具同款 try/finally）：个人层搜索配置（服务商/Key/模板）挂在
         // ThreadLocal 覆盖里，不重放就静默回落平台内置——重放范围只此调用，用完复原
@@ -203,7 +211,7 @@ public class WebSearchTools {
         configService.putUserOverrides(hooks.userOverrides());
         configService.putOverrides(hooks.overrides());
         try {
-            return webSearch(query, maxResults, sinkOf(toolContext));
+            return webSearch(queries, maxResults, sinkOf(toolContext));
         } finally {
             configService.clearOverride();
             configService.clearUserOverrides();
@@ -213,39 +221,52 @@ public class WebSearchTools {
     }
 
     /** 显式传落点的版本（无引用体系的调用方传 null） */
-    public String webSearch(String query, Integer maxResults, WebSearchSink sink) {
-
-        if (query == null || query.isBlank()) {
+    public String webSearch(List<String> queries, Integer maxResults, WebSearchSink sink) {
+        QueryPlan plan = planQueries(queries);
+        if (plan.queries().isEmpty()) {
             return "搜索词不能为空";
         }
         if (sink != null && !sink.tryConsumeQuota()) {
             return "已达到本轮联网搜索次数上限，不再执行搜索。请基于已有信息直接给出最终回答，"
                     + "并如实说明这部分内容未经过联网核实。";
         }
-        List<WebSearchResult> results;
-        try {
-            results = webSearchService.search(query.trim(), maxResults);
-        } catch (WebSearchException e) {
-            // fail-loud：把原因说给模型，再由模型转告用户；同时挂一条本轮降级提示。
-            // 区分"配置缺失"与"服务临时故障"，前者不该让模型反复重试。
-            if (sink != null) {
-                sink.degrade("webSearchUnavailable", "联网搜索不可用：" + e.getMessage());
+        // 每个查询各打一次服务商。配置类失败整批立刻停（同一份配置重试也不会成功）；
+        // 传输类失败只摘掉该查询，其余照常合并——一次坏查询不该让整批结果一起丢掉。
+        List<List<WebSearchResult>> batches = new ArrayList<>();
+        List<String> failed = new ArrayList<>();
+        for (String q : plan.queries()) {
+            try {
+                batches.add(webSearchService.search(q, maxResults));
+            } catch (WebSearchException e) {
+                // fail-loud：把原因说给模型，再由模型转告用户；同时挂一条本轮降级提示。
+                // 区分"配置缺失"与"服务临时故障"，前者不该让模型反复重试。
+                if (e.isConfigIssue()) {
+                    if (sink != null) {
+                        sink.degrade("webSearchUnavailable", "联网搜索不可用：" + e.getMessage());
+                    }
+                    return "联网搜索失败：" + e.getMessage()
+                            + "（属平台配置问题，重试不会成功；请如实说明无法联网核实，不要编造结果）";
+                }
+                failed.add(q + "（" + e.getMessage() + "）");
             }
-            return "联网搜索失败：" + e.getMessage()
-                    + (e.isConfigIssue()
-                    ? "（属平台配置问题，重试不会成功；请如实说明无法联网核实，不要编造结果）"
-                    : "（可稍后再试一次；若仍失败，请如实说明无法联网核实）");
         }
-        if (results == null || results.isEmpty()) {
+        Merged merged = mergeByRank(batches, webSearchService.effectiveLimit(maxResults));
+        List<WebSearchResult> results = merged.results();
+        if (results.isEmpty()) {
+            if (!failed.isEmpty()) {
+                String why = "联网搜索失败：" + String.join("；", failed);
+                if (sink != null) sink.degrade("webSearchUnavailable", why);
+                return why + "（可稍后再试一次；若仍失败，请如实说明无法联网核实）";
+            }
             return "未检索到相关网页结果。请如实说明没有找到可依据的联网资料，不要凭记忆编写内容。";
         }
 
         // 相关度门：按本轮问题重排，低于 retrieval.minContextScore 的结果不注册、不列给模型。
         // 判据优先取 sink 上的本轮问题（多轮指代消解后的检索查询，与主管线判相关同口径），
-        // 取不到（非流式直调）退化为工具查询本身。重排实际没跑成（不可用/请求失败）时不过门、
+        // 取不到（非流式直调）退化为本次的查询（多个时拼接）。重排实际没跑成（不可用/请求失败）时不过门、
         // 全量保留并挂降级——宁可让用户看见"没过滤"，也不把一次瞬时故障演变成"什么都搜不到"。
         String gateQuery = sink != null ? sink.question() : null;
-        if (gateQuery == null || gateQuery.isBlank()) gateQuery = query.trim();
+        if (gateQuery == null || gateQuery.isBlank()) gateQuery = String.join(" ", plan.queries());
         List<WebSearchResult> kept = results;
         int filtered = 0;
         boolean lowConfidence = false;
@@ -358,9 +379,72 @@ public class WebSearchTools {
         if (filtered > 0) {
             sb.append("（另有 ").append(filtered).append(" 条搜索结果与问题相关度不足，未列为引用，不要使用。）\n\n");
         }
+        if (merged.droppedByLimit() > 0) {
+            sb.append("（另有 ").append(merged.droppedByLimit())
+                    .append(" 条结果因单次条数上限未列出，可缩小查询范围后再搜。）\n\n");
+        }
+        if (plan.ignored() > 0) {
+            sb.append("（单次最多 ").append(MAX_QUERIES_PER_CALL).append(" 个查询，已忽略 ")
+                    .append(plan.ignored()).append(" 个；如仍需可再调用一次。）\n\n");
+        }
+        if (!failed.isEmpty()) {
+            String note = "另有 " + failed.size() + " 个查询未搜成：" + String.join("；", failed);
+            if (sink != null) sink.degrade("webSearchPartial", note);
+            sb.append("（").append(note).append("）\n\n");
+        }
         if (sink != null) {
             sb.append(com.wenqu.ai.agent.chat.CitationConvention.webSearch());
         }
         return sb.toString().trim();
+    }
+
+    /** 查询计划：去空去重后的前 N 个 + 因超上限被忽略的条数 */
+    private record QueryPlan(List<String> queries, int ignored) {}
+
+    /** 合并结果 + 因总条数上限没列出的条数（让模型知道"不是没有，是没要"） */
+    private record Merged(List<WebSearchResult> results, int droppedByLimit) {}
+
+    /** 去空、去重（完全相同的查询只执行一次，保留首次位置）、截到单次上限 */
+    private static QueryPlan planQueries(List<String> raw) {
+        if (raw == null || raw.isEmpty()) return new QueryPlan(List.of(), 0);
+        List<String> out = new ArrayList<>();
+        Set<String> seen = new LinkedHashSet<>();
+        int ignored = 0;
+        for (String q : raw) {
+            if (q == null || q.isBlank()) continue;
+            String t = q.trim();
+            if (!seen.add(t)) continue;
+            if (out.size() >= MAX_QUERIES_PER_CALL) {
+                ignored++;
+                continue;
+            }
+            out.add(t);
+        }
+        return new QueryPlan(out, ignored);
+    }
+
+    /**
+     * 多查询合并：按名次轮询（每个查询的第 1 条、再各自第 2 条……），按归一化 URL 去重，
+     * 到总条数上限为止——同一来源在多查询里重复命中时只保留排名最靠前的那次。
+     */
+    private static Merged mergeByRank(List<List<WebSearchResult>> batches, int limit) {
+        List<WebSearchResult> out = new ArrayList<>();
+        Set<String> picked = new HashSet<>();
+        Set<String> all = new HashSet<>();
+        int maxSize = 0;
+        for (List<WebSearchResult> b : batches) {
+            maxSize = Math.max(maxSize, b.size());
+            for (WebSearchResult r : b) all.add(WebSearchService.normalizeUrl(r.url()));
+        }
+        for (int rank = 0; rank < maxSize && out.size() < limit; rank++) {
+            for (List<WebSearchResult> b : batches) {
+                if (rank >= b.size()) continue;
+                WebSearchResult r = b.get(rank);
+                if (!picked.add(WebSearchService.normalizeUrl(r.url()))) continue;
+                out.add(r);
+                if (out.size() >= limit) break;
+            }
+        }
+        return new Merged(out, Math.max(0, all.size() - out.size()));
     }
 }

@@ -224,7 +224,10 @@ public final class ConfigDefaults {
     public static final int CLEANUP_AUDIT_RETENTION_DAYS = 365;
 
     // ---- 联网搜索 ----
+    /** 每次搜索默认条数（个人设置 webSearch.maxResults 可改；未设置时用它） */
     public static final int WEB_SEARCH_MAX_RESULTS = 10;
+    /** 每次搜索条数的硬上限：主流搜索服务商普遍封顶 50，再大只会白白烧 token 与配额 */
+    public static final int WEB_SEARCH_MAX_RESULTS_LIMIT = 50;
     public static final int WEB_SEARCH_TIMEOUT_MS = 30_000;
     public static final double WEB_SEARCH_FALLBACK_MIN_OVERLAP = 0.2;
     public static final int WEB_SEARCH_SNIPPET_CHARS = 600;

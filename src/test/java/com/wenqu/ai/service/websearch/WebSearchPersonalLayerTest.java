@@ -35,7 +35,7 @@ class WebSearchPersonalLayerTest {
 
     /** 与 schema 的 personalOnly 标记一致的键集（本测试的桩链按此判「无全局层」） */
     private static final java.util.Set<String> PERSONAL_ONLY = java.util.Set.of(
-            "webSearch.provider", "webSearch.apiKey", "webSearch.model",
+            "webSearch.provider", "webSearch.apiKey", "webSearch.model", "webSearch.maxResults",
             "webSearch.customMethod", "webSearch.customBody", "webSearch.customResultsPath",
             "webSearch.customTitlePath", "webSearch.customUrlPath", "webSearch.customSnippetPath",
             "webSearch.customPublishedPath");
@@ -43,6 +43,7 @@ class WebSearchPersonalLayerTest {
     private static HttpServer server;
     private static final AtomicReference<String> lastAuth = new AtomicReference<>("");
     private static final AtomicReference<String> lastBody = new AtomicReference<>("");
+    private static final AtomicReference<String> lastQuery = new AtomicReference<>("");
 
     /** 平台层存值（非 personalOnly 键的兜底）；personalOnly 键永不读这张表 */
     private Map<String, String> platform = new HashMap<>();
@@ -86,6 +87,7 @@ class WebSearchPersonalLayerTest {
             lastAuth.set(ex.getRequestHeaders().getFirst("Authorization") == null
                     ? "" : ex.getRequestHeaders().getFirst("Authorization"));
             lastBody.set(new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            lastQuery.set(ex.getRequestURI().getRawQuery() == null ? "" : ex.getRequestURI().getRawQuery());
             byte[] resp = """
                     {"results":[{"title":"平台内置结果","url":"https://sx.example.com/1","content":"摘要"}]}
                     """.getBytes(StandardCharsets.UTF_8);
@@ -106,6 +108,7 @@ class WebSearchPersonalLayerTest {
     void resetPlatform() {
         lastAuth.set("");
         lastBody.set("");
+        lastQuery.set("");
         platform = new HashMap<>();
         platform.put("tool.enabled", "true");
         platform.put("webSearch.enabled", "true");
@@ -132,6 +135,16 @@ class WebSearchPersonalLayerTest {
         // 平台层即便存过计费 Key，个人未设置时也绝不会被读到（personalOnly 无全局层）
         platform.put("webSearch.apiKey", "platform-secret-key");
         assertThat(service(stub()).search("问渠", 3)).hasSize(1);
+    }
+
+    @Test
+    void genericIgnoresPersonalMaxResults() throws Exception {
+        // 平台内置只选不改：个人若在计费服务商下设过 50 条，切回内置也必须按固定 10 条发请求
+        platform.put("webSearch.baseUrl", base());
+        ConfigService cfg = stub();
+        cfg.putUserOverrides(Map.of("webSearch.maxResults", "50"));
+        service(cfg).search("问渠", null);
+        assertThat(lastQuery.get()).contains("limit=10");
     }
 
     @Test
@@ -178,6 +191,74 @@ class WebSearchPersonalLayerTest {
     }
 
     @Test
+    void personalMaxResultsCapsHowManyResultsAreRequested() throws Exception {
+        // 每次搜索条数交给个人设置：模型不传按个人值，传多了也不得超过个人值
+        server.createContext("/multi", ex -> {
+            lastBody.set(new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] resp = """
+                    {"results":[
+                      {"title":"A","url":"https://a.example.com/1","content":"a"},
+                      {"title":"B","url":"https://b.example.com/2","content":"b"},
+                      {"title":"C","url":"https://c.example.com/3","content":"c"}]}
+                    """.getBytes(StandardCharsets.UTF_8);
+            ex.sendResponseHeaders(200, resp.length);
+            try (OutputStream os = ex.getResponseBody()) {
+                os.write(resp);
+            }
+        });
+        ConfigService cfg = stub();
+        cfg.putUserOverrides(Map.of(
+                "webSearch.provider", "custom",
+                "webSearch.baseUrl", base() + "/multi",
+                "webSearch.customBody", "{\"query\":\"{{query}}\",\"count\":{{count}}}",
+                "webSearch.customResultsPath", "results",
+                "webSearch.maxResults", "2"));
+        assertThat(service(cfg).search("问渠", null)).hasSize(2);
+        assertThat(lastBody.get()).contains("\"count\":2");
+        assertThat(service(cfg).search("问渠", 5)).hasSize(2);
+    }
+
+    @Test
+    void multiQueryCallMergesDedupesAndCapsAtOneLimit() throws Exception {
+        // 一次调用带多个查询（DSH 的「一次调用扇出」口径）：按名次轮询合并、URL 去重、总条数按上限截断
+        server.createContext("/multi-query", ex -> {
+            String body = new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+            String q = body.contains("人工智能") ? "人工智能" : "大模型";
+            String host = q.equals("人工智能") ? "ai" : "llm";
+            byte[] resp = ("{\"results\":["
+                    + "{\"title\":\"" + q + "进展\",\"url\":\"https://dup.example.com/1\",\"content\":\"" + q + "\"},"
+                    + "{\"title\":\"" + q + "发布\",\"url\":\"https://" + host + ".example.com/2\",\"content\":\"" + q + "\"}]}")
+                    .getBytes(StandardCharsets.UTF_8);
+            ex.sendResponseHeaders(200, resp.length);
+            try (OutputStream os = ex.getResponseBody()) {
+                os.write(resp);
+            }
+        });
+        ConfigService cfg = stub();
+        cfg.putUserOverrides(Map.of(
+                "webSearch.provider", "custom",
+                "webSearch.baseUrl", base() + "/multi-query",
+                "webSearch.customBody", "{\"query\":\"{{query}}\",\"count\":{{count}}}",
+                "webSearch.customResultsPath", "results",
+                "webSearch.maxResults", "3"));
+        com.wenqu.ai.service.RerankService noRerank = new com.wenqu.ai.service.RerankService(null, null) {
+            @Override
+            public String debugUnavailableReason(String modelRef) {
+                return "test: 本轮不重排，走词面兜底";
+            }
+        };
+        WebSearchTools tools = new WebSearchTools(service(cfg), cfg, noRerank);
+
+        String out = tools.webSearch(List.of("人工智能", "大模型", "人工智能"), 3,
+                (WebSearchTools.WebSearchSink) null);
+
+        assertThat(out).contains("人工智能进展").contains("人工智能发布").contains("大模型发布");
+        // 同一 URL 在两个查询里都命中：只保留排名最靠前的那次（先出现的查询胜出）
+        assertThat(out).doesNotContain("大模型进展");
+        assertThat(out).contains("【片段1】").contains("【片段3】").doesNotContain("【片段4】");
+    }
+
+    @Test
     void toolThreadReplaysUserOverridesFromTurnHooks() {
         // 模拟框架弹性线程：请求线程上 ThreadLocal 为空，覆盖只能经 ToolContext 里的 TurnHooks 带过来。
         // 个人选 bocha 但没填 Key：重放生效 → fail-loud 报个人设置引导；不重放 → 静默回落 generic 平台内置
@@ -186,7 +267,7 @@ class WebSearchPersonalLayerTest {
         WebSearchService svc = service(cfg);
         WebSearchTools tools = new WebSearchTools(svc, cfg, null);   // 缺 Key 在重排之前就 fail，rerank 不会触达
 
-        String out = tools.webSearch("x", 1, new ToolContext(Map.of(
+        String out = tools.webSearch(List.of("x"), 1, new ToolContext(Map.of(
                 WebSearchTools.CTX_SINK, (WebSearchTools.WebSearchSink) new WebSearchTools.WebSearchSink() {
                     public boolean tryConsumeQuota() { return true; }
                     public String question() { return null; }
@@ -231,7 +312,7 @@ class WebSearchPersonalLayerTest {
             }
         };
         WebSearchTools tools = new WebSearchTools(service(cfg), cfg, fake);
-        tools.webSearch("问渠", 1, new WebSearchTools.WebSearchSink() {
+        tools.webSearch(List.of("问渠"), 1, new WebSearchTools.WebSearchSink() {
             public boolean tryConsumeQuota() { return true; }
             public String question() { return "问渠"; }
             public int register(WebSearchResult r) { return 1; }

@@ -32,6 +32,8 @@ public class TavilySearchProvider implements WebSearchProvider {
     private static final String DEFAULT_URL = "https://api.tavily.com/search";
     /** basic 是官方默认的平衡档；advanced 更准但更慢更贵，交给服务商侧配置更合适 */
     private static final String SEARCH_DEPTH = "basic";
+    /** 官方 max_results 上限 20：个人设置更高时按上限发，否则整次请求会被 400 拒掉 */
+    private static final int MAX_RESULTS_CAP = 20;
 
     @Override
     public String id() {
@@ -43,7 +45,7 @@ public class TavilySearchProvider implements WebSearchProvider {
         String url = (req.baseUrl() == null || req.baseUrl().isBlank()) ? DEFAULT_URL : req.baseUrl().trim();
         JSONObject body = new JSONObject();
         body.put("query", req.query());
-        body.put("max_results", req.maxResults());
+        body.put("max_results", Math.min(req.maxResults(), MAX_RESULTS_CAP));
         body.put("search_depth", SEARCH_DEPTH);
         // 不取 answer/raw_content：answer 是服务商替模型做的总结，会把引用证据变成二手内容；
         // raw_content 是整页正文，体积大且不如摘要适合做 [N] 证据。
