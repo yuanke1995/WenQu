@@ -88,7 +88,7 @@
                     <span v-if="isDefault(a)" class="ap-tag-default" title="默认智能体：对话页预选">★ 默认</span>
                     <span v-if="isBuiltin(a)" class="ap-tag-builtin" title="系统默认智能体：全员可用，仅管理员可配置"><lock-outlined />内置</span>
                     <span v-else-if="isPreset(a)" class="ap-tag-builtin" title="平台内置助手：全员可用，仅平台超级管理员可配置"><lock-outlined />内置</span>
-                    <span v-else-if="isSub(a)" class="ap-tag-sub">子智能体</span>
+                    <span v-if="isSub(a)" class="ap-tag-sub">子智能体</span>
                   </span>
                 </div>
                 <p class="ap-desc" :title="a.description || ''">{{ a.description || '未填写描述' }}</p>
@@ -206,7 +206,7 @@
                   <label class="ap-field-label">名称</label>
                   <a-input v-model:value="form.name" :maxlength="200" :disabled="identityLocked"
                            placeholder="如：合同审查助手 / 运维排障 / 产品 FAQ" />
-                  <div v-if="identityLocked" class="ap-hint">{{ form.isBuiltin === 1 ? '名称、用途与图标随产品固定。' : '平台预置助手：名称、图标、用途与系统提示词随产品固定，仅能力配置可改。' }}</div>
+                  <div v-if="identityLocked" class="ap-hint">{{ form.isBuiltin === 1 ? '名称、用途与图标随产品固定。' : '平台预置助手：名称、图标、用途（子智能体）与系统提示词随产品固定，仅能力配置可改。' }}</div>
                 </div>
               </div>
 
@@ -1183,18 +1183,19 @@ watch(promptPane, v => localStorage.setItem(PROMPT_PANE_KEY, v))
 
 // 运行方式：决定页面里哪些配置参与，以及保存时 isSubagent 怎么写。
 const runModeOptions = computed(() => [
-  { label: '问答助手', value: 'main' },
-  { label: '可被委派', value: 'sub', disabled: form.value.isBuiltin === 1 || editingPreset.value }
+  { label: '问答助手', value: 'main', disabled: editingPreset.value },
+  { label: '可被委派', value: 'sub', disabled: form.value.isBuiltin === 1 }
 ])
 const runModeHint = computed(() => {
-  if (editingPreset.value) return '平台预置助手的用途随产品固定：全平台一份，只能作为问答助手直接选用。'
+  if (editingPreset.value) return '平台预置助手的用途随产品固定：全平台一份，作为子智能体供主智能体委派。'
   if (runMode.value === 'sub') return '不能直接选用，只能被主智能体委派去查资料或办事。'
   return '对话页可直接选用；人设、资料与能力都按本页配置生效。'
 })
 const modeChip = computed(() => runMode.value === 'sub' ? '可被委派' : '')
 const onRunModeChange = v => {
-  // 内置「问渠」与平台预置都固定为主智能体：即便分段控件被绕过，也不让它落成子智能体
-  if (v === 'sub' && (form.value.isBuiltin === 1 || editingPreset.value)) { runMode.value = 'main'; return }
+  // 平台预置固定为子智能体；内置「问渠」固定为主智能体——即便分段控件被绕过也不让它改身份
+  if (editingPreset.value) { runMode.value = 'sub'; form.value.isSubagent = 1; return }
+  if (v === 'sub' && form.value.isBuiltin === 1) { runMode.value = 'main'; return }
   form.value.isSubagent = v === 'sub' ? 1 : 0
 }
 // 页头星标：已存在的非子智能体、且管理员才有「设为默认」能力（与列表卡片同一判据）；

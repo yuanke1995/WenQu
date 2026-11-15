@@ -435,9 +435,15 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
      */
     public List<Map<String, Object>> subAgents() {
         List<Map<String, Object>> out = new ArrayList<>();
-        List<Agent> subs = mapper.selectList(new LambdaQueryWrapper<Agent>()
+        List<Agent> subs = new ArrayList<>(mapper.selectList(new LambdaQueryWrapper<Agent>()
                 .eq(Agent::getIsSubagent, 1)
-                .orderByDesc(Agent::getCreateTime));
+                .orderByDesc(Agent::getCreateTime)));
+        // 平台共享行在保留租户里，本租户的 in/条件查询扫不到：是子智能体时补进候选清单
+        Agent global = globalAgent(PLATFORM_BROWSER_AGENT_ID);
+        if (global != null && Integer.valueOf(1).equals(global.getIsSubagent())
+                && subs.stream().noneMatch(a -> PLATFORM_BROWSER_AGENT_ID.equals(a.getId()))) {
+            subs.add(global);
+        }
         for (Agent a : subs) {
             if (!readable(a)) continue;
             Map<String, Object> m = new LinkedHashMap<>();
@@ -537,8 +543,8 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         // 平台共享行：名称/图标/用途/系统提示词是产品身份（播种器每次启动归一），改动 fail-loud 拒绝，
         // 避免「保存成功、重启又变回去」这种事后才发现的漂移
         if (isPlatformSharedAgent(existing) && body != null) {
-            if (body.containsKey("isSubagent") && Integer.valueOf(1).equals(toTri(body.get("isSubagent")))) {
-                throw new BizException("平台预置智能体「" + existing.getName() + "」固定为主智能体，用途不可修改");
+            if (body.containsKey("isSubagent") && !Integer.valueOf(1).equals(toTri(body.get("isSubagent")))) {
+                throw new BizException("平台预置智能体「" + existing.getName() + "」固定为子智能体（供主智能体委派），用途不可修改");
             }
             if (body.containsKey("name") && !java.util.Objects.equals(
                     asText(body.get("name"), 200) == null ? null : asText(body.get("name"), 200).trim(),

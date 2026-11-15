@@ -265,10 +265,10 @@ public class BrowserCapabilitySeeder implements ApplicationRunner {
                         fix.set(Agent::getSystemPrompt, SYSTEM_PROMPT);
                         dirty = true;
                     }
-                    // 产品身份：固定名称/图标/主智能体/非内置/非默认/系统归属
+                    // 产品身份：固定名称/图标/用途（子智能体）/非内置/非默认/系统归属
                     if (!"网页操作助手".equals(existing.getName())) { fix.set(Agent::getName, "网页操作助手"); dirty = true; }
                     if (!"🌐".equals(existing.getIcon())) { fix.set(Agent::getIcon, "🌐"); dirty = true; }
-                    if (!Integer.valueOf(0).equals(existing.getIsSubagent())) { fix.set(Agent::getIsSubagent, 0); dirty = true; }
+                    if (!Integer.valueOf(1).equals(existing.getIsSubagent())) { fix.set(Agent::getIsSubagent, 1); dirty = true; }
                     if (Integer.valueOf(1).equals(existing.getIsBuiltin())) { fix.set(Agent::getIsBuiltin, 0); dirty = true; }
                     if (Integer.valueOf(1).equals(existing.getIsDefault())) { fix.set(Agent::getIsDefault, 0); dirty = true; }
                     if (!"system".equals(existing.getCreatedBy())) { fix.set(Agent::getCreatedBy, "system"); dirty = true; }
@@ -307,7 +307,9 @@ public class BrowserCapabilitySeeder implements ApplicationRunner {
         a.setPermissionPreset("standard");
         a.setMaxToolSteps(30);
         a.setToolDeny(DENIED_TOOLS);
-        a.setIsSubagent(0);
+        // 平台能力型助手：不直接参与对话，供主智能体并行委派（委派轮跑完整问答管线，
+        // 工具族照常挂载；护栏见上一条审批说明）
+        a.setIsSubagent(1);
         a.setIsDefault(0);
         a.setCreatedBy("system");
         LocalDateTime now = LocalDateTime.now();
