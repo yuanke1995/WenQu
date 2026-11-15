@@ -42,6 +42,16 @@ export default defineConfig({
         target: process.env.VITE_PROXY_TARGET || 'http://localhost:8090/ai',
         changeOrigin: true,
         rewrite: path => path.replace(/^\/proxy/, '')
+      },
+      // 对接文档里的 curl 用「origin + /ai」作基址（线上 dist 与后端同域，正是这个形状），
+      // 分享/邀请/MCP 链接里的对外地址也是这么来的。dev 不转发的话，本地打开文档复制出来的
+      // curl 会命中 SPA 回退、拿到 index.html（200 + text/html，比 404 更难察觉）。
+      // 所以这里同样把 /ai 透到后端：本地复制即可直接跑。
+      // 约定与上面一致——VITE_PROXY_TARGET 要含上下文路径（默认 .../ai）。
+      '/ai': {
+        target: process.env.VITE_PROXY_TARGET || 'http://localhost:8090/ai',
+        changeOrigin: true,
+        rewrite: path => path.replace(/^\/ai/, '')
       }
     }
   }

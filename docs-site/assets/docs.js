@@ -119,6 +119,39 @@
     onScroll()
   }
 
+  /* ---------------- 3.5 锚点跳转：跨页直接落位 ---------------- */
+  // 整站是单页（近 3 万像素），原生 smooth 从顶部跳到「错误码」要滚三秒以上，
+  // 点完像没反应。规则：1.5 屏以内保留平滑（连续感有用），更远直接落位（用户要的是「到那一页」）。
+  function bindAnchorScroll() {
+    document.addEventListener('click', function (e) {
+      var a = e.target.closest ? e.target.closest('a[href^="#"]') : null
+      if (!a) return
+      var id = (a.getAttribute('href') || '').slice(1)
+      if (!id) return
+      var target = document.getElementById(id)
+      if (!target) return
+      e.preventDefault()
+      var margin = parseFloat(getComputedStyle(target).scrollMarginTop) || 0
+      var top = Math.max(0, target.getBoundingClientRect().top + window.scrollY - margin)
+      var far = Math.abs(top - window.scrollY) > window.innerHeight * 1.5
+      if (far) {
+        // 注意：scrollTo({behavior:'auto'}) 不是「立即」，它按 CSS 的 scroll-behavior 走，
+        // 而本站是 smooth —— 等于没改。必须先临时把根元素的 smooth 摘掉。
+        var root = document.documentElement
+        var prev = root.style.scrollBehavior
+        root.style.scrollBehavior = 'auto'
+        window.scrollTo(0, top)
+        root.style.scrollBehavior = prev
+      } else {
+        window.scrollTo({ top: top, behavior: 'smooth' })
+      }
+      if (history.pushState) history.pushState(null, '', '#' + id)
+      else location.hash = '#' + id
+      var panel = document.getElementById('doc-search-results')
+      if (panel) panel.hidden = true
+    })
+  }
+
   /* ---------------- 4. 搜索 ---------------- */
   function bindSearch() {
     var input = document.getElementById('doc-search')
@@ -245,6 +278,7 @@
   ready(function () {
     fillBase()
     bindCopy()
+    bindAnchorScroll()
     bindScrollSpy()
     bindSearch()
     bindDrawer()
