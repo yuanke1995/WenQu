@@ -1292,7 +1292,10 @@ const tagOptions = computed(() => {
   return [...s].map(t => ({ value: t, label: t }))
 })
 const shownList = computed(() => {
-  let arr = list.value
+  // 按文件名自然排序（10 排在 9 之后）：手册类文档的名前序号即章节次序，
+  // 后端按更新时间返回会把 01–16 打散
+  let arr = [...list.value].sort((a, b) =>
+    String(a.fileName || '').localeCompare(String(b.fileName || ''), 'zh', { numeric: true }))
   if (tagFilter.value) arr = arr.filter(d => docTags(d).includes(tagFilter.value))
   if (statusFilter.value === 'ok') arr = arr.filter(d => d.status === 0)
   else if (statusFilter.value === 'parsing') arr = arr.filter(d => d.status === 2)

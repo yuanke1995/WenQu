@@ -113,7 +113,7 @@ const select = async d => {
     const r = await getManualDocContent(d.id)
     const data = (r && r.data) || {}
     activeDoc.value = { ...d, status: data.status, failReason: data.failReason }
-    activeHtml.value = renderMd(data.content || '')
+    activeHtml.value = renderMd(absoluteManualImages(data.content || ''))
   } catch (e) {
     message.error(e.message || '篇目内容加载失败')
     activeHtml.value = ''
@@ -121,6 +121,12 @@ const select = async d => {
     contentLoading.value = false
   }
 }
+
+// 手册里的插图与 .md 源文件同目录、按相对文件名引用（编辑器预览能直接显示），
+// 网页端没有这个目录，统一挂到随包插图的 /manual/（web/public/manual/*）
+const absoluteManualImages = text => text.replace(
+  /(!\[[^\]]*\]\()(?!https?:|\/|data:|#)([^)\s]+\.(?:svg|png|jpe?g|gif|webp))\)/gi,
+  '$1/manual/$2)')
 
 // 正文渲染出的代码块带复制按钮（与问答页同一套事件委托入口，按钮类名 .code-copy）
 const onArticleClick = e => {

@@ -645,9 +645,9 @@
           <template v-else>
             <!-- 批量替换条：逐处「去修改」之外给一条一次换干净的路——多数场景只是「这家坏了/贵了，
                  整体搬到同源的另一家」。只对可管理供应商给这个入口（后端 replace 同样要求写权限） -->
-            <div v-if="(refsData.editableCount || 0) > 0 && refsProvider?.manageable && replaceOptions.length"
+            <div v-if="replaceableCount > 0 && refsProvider?.manageable && replaceOptions.length"
                  class="pv-replace-bar">
-              <span class="pv-replace-lead">一次替换这 <b>{{ refsData.editableCount }}</b> 处 →</span>
+              <span class="pv-replace-lead">一次替换这 <b>{{ replaceableCount }}</b> 处 →</span>
               <a-select v-model:value="replaceTarget" :options="replaceOptions" size="small"
                         class="pv-replace-select" placeholder="目标供应商" :popup-match-select-width="false" />
               <button class="app-btn ghost small" :disabled="replacing || !replaceTarget" @click="doReplaceAllRefs">
@@ -943,6 +943,18 @@ const reEnableFromRefs = async () => {
 // 后端按同名模型逐处换，目标没登记该模型的逐处失败给原因——不做静默换别的模型这种事。
 const replaceTarget = ref('')
 const replacing = ref(false)
+/**
+ * 批量口真正写得回的引用类型（与 ProviderReferenceReplaceService 一一对应）。
+ * 历史会话与系统配置槽位在清单里也算「可改」——前者用本弹窗的清除按钮、后者跳设置页——
+ * 但后端批量口按设计不碰它们（会话清完是回落默认模型，不是换到目标供应商）；
+ * 用 editableCount 当条数，会让只剩这两类时也亮出「一次替换这 N 处」，点下去只得到一句「没有可替换的引用」。
+ */
+const BATCH_REPLACE_KINDS = new Set([
+  'kbEmbedding', 'kbGraph', 'kbRerank', 'kbParseVision', 'kbParseOcr',
+  'docVision', 'scheduledJob', 'workflow', 'userDefault', 'agentShare'
+])
+const replaceableCount = computed(() => (refsData.value?.items || [])
+  .filter(r => r.editable !== false && BATCH_REPLACE_KINDS.has(r.kind)).length)
 /** 候选：启用、可管理、不是自己（后端 replace 同样要求 provider:write，只列改得动的） */
 const replaceOptions = computed(() => {
   const cur = refsProvider.value

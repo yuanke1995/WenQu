@@ -506,6 +506,7 @@ import {
 } from '@ant-design/icons-vue'
 import ModelSelect from '../components/ModelSelect.vue'
 import { locateField } from '../utils/fieldLocate'
+import { localExecutorId } from '../utils/localExecutor'
 import {
   listScheduledJobs, getScheduledOverview, previewScheduledCron, createScheduledJob,
   updateScheduledJob, deleteScheduledJob, toggleScheduledJob, runScheduledJob,
@@ -622,12 +623,20 @@ const loadAgents = async () => {
       .filter(o => o.value)
   } catch (e) { agentOptions.value = [] }
 }
+/** 工作区归属：绑在哪个执行器上决定任务跑在哪里，同名时靠这个后缀区分。 */
+const projectKindOf = p => {
+  if (!p.isLocal || !p.executorId) return '云端'
+  return p.executorId === localExecutorId() ? '本机' : '另一台电脑'
+}
 const loadProjects = async () => {
   try {
     const r = await listProjects()
-    projectOptions.value = ((r && r.data) || [])
-      .filter(p => p && p.status !== 'archived')
-      .map(p => ({ value: p.id, label: p.name || p.id }))
+    // implicit 兜底容器不是可选的工作区：接口会带上它（name 为空，退化成裸 id），别处选择器都过滤了
+    const list = ((r && r.data) || []).filter(p => p && p.status !== 'archived' && !p.isImplicit)
+    projectOptions.value = list.map(p => {
+      const name = p.name || p.displayName || p.id
+      return { value: p.id, label: `${name}（${projectKindOf(p)}）` }
+    })
   } catch (e) { projectOptions.value = [] }
 }
 
