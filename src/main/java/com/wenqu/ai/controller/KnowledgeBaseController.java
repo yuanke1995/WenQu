@@ -7,6 +7,7 @@ import com.wenqu.ai.model.KnowledgeBase;
 import com.wenqu.ai.service.AuthService;
 import com.wenqu.ai.service.DocumentService;
 import com.wenqu.ai.service.KnowledgeBaseService;
+import com.wenqu.ai.service.OcrEngineCatalogService;
 import com.wenqu.ai.service.ResourceVisibilityService;
 import com.wenqu.ai.service.RoleService;
 import com.wenqu.ai.util.RequestUser;
@@ -63,6 +64,8 @@ public class KnowledgeBaseController {
     private final com.wenqu.ai.config.ConfigSchemaService configSchemaService;
     /** 文档跨库移动时图谱数据（三元组/实体）同步随迁——见 moveDoc */
     private final com.wenqu.ai.service.GraphRagService graphRagService;
+    /** 版面解析引擎目录（库级解析参数的二级选择与可用性提示） */
+    private final OcrEngineCatalogService ocrEngineCatalog;
 
     private ResourceVisibilityService.Principal principal() {
         return new ResourceVisibilityService.Principal(
@@ -128,6 +131,17 @@ public class KnowledgeBaseController {
         // 图扩展上限（库级，随「知识图谱」开关展示）：内置默认常量，不占 Params（图扩展不属于召回池层）
         out.put(com.wenqu.ai.service.KbParamCodec.GRAPH_EXPAND_TOP_K, String.valueOf(ConfigDefaults.GRAPH_EXPAND_TOP_K));
         return ResultJson.ok(out);
+    }
+
+    /**
+     * 版面解析引擎目录（**普通用户可读**）：知识库编辑页「版面还原」的二级选择与可用性提示。
+     * <p>只回状态与固定文案，不落服务地址；探活结果缓存 60s，{@code refresh=true} 强制重探。
+     */
+    @Operation(summary = "版面解析引擎可用性", description = "MinerU / PP-StructureV3 的配置与探活状态（库级解析参数展示用）")
+    @Permission("kb:read")
+    @GetMapping("/parse-engines")
+    public ResultJson parseEngines(@RequestParam(name = "refresh", defaultValue = "false") boolean refresh) {
+        return ResultJson.ok(java.util.Map.of("engines", ocrEngineCatalog.layoutEngines(refresh)));
     }
 
     /**

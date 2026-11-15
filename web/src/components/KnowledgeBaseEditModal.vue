@@ -57,6 +57,7 @@
             <span v-else-if="kb" class="kb-adv-sub">全部跟随默认</span>
           </template>
           <div class="kb-param-grid">
+            <div class="kb-param-group">召回与融合</div>
             <a-form-item label="向量权重" :tooltip="tip('retrieval.vectorWeight')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
               <a-input-number v-model:value="form.q.vectorWeight" :min="0" :max="1" :step="0.05" style="width:100%" :placeholder="numPh('retrieval', 'vectorWeight')" />
             </a-form-item>
@@ -66,22 +67,31 @@
             <a-form-item label="向量阈值" :tooltip="tip('retrieval.vecThreshold')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
               <a-input-number v-model:value="form.q.vecThreshold" :min="0" :max="1" :step="0.05" style="width:100%" :placeholder="numPh('retrieval', 'vecThreshold')" />
             </a-form-item>
-            <a-form-item label="重排模型" data-fix="rerankModel" :tooltip="tip('rerank.model')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
-              <ModelSelect v-model="form.q.rerankModel" type="rerank" width="100%" inherit-label="不重排" placeholder="不选=本库不重排" />
-            </a-form-item>
-            <a-form-item label="重排触发下限" :tooltip="tip('rerank.minHits')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
-              <a-input-number v-model:value="form.q.rerankMinHits" :min="2" :max="50" :step="1" :precision="0" style="width:100%" :placeholder="numPh('rerank', 'minHits')" />
-            </a-form-item>
-            <a-form-item label="重排窗口" :tooltip="tip('rerank.maxHits')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
-              <a-input-number v-model:value="form.q.rerankMaxHits" :min="2" :max="100" :step="1" :precision="0" style="width:100%" :placeholder="numPh('rerank', 'maxHits')" />
-            </a-form-item>
             <a-form-item label="向量召回条数" :tooltip="tip('retrieval.vectorTopK')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
               <a-input-number v-model:value="form.q.vectorTopK" :min="1" :max="100" :step="1" :precision="0" style="width:100%" :placeholder="numPh('retrieval', 'vectorTopK')" />
             </a-form-item>
             <a-form-item label="关键词召回上限" :tooltip="tip('retrieval.keywordLimit')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
               <a-input-number v-model:value="form.q.keywordLimit" :min="1" :max="200" :step="1" :precision="0" style="width:100%" :placeholder="numPh('retrieval', 'keywordLimit')" />
             </a-form-item>
-            <a-form-item label="最低相关分(重排)" :tooltip="tip('retrieval.minContextScore')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
+
+            <div class="kb-param-group">重排<span class="kb-param-group-sub">绑了重排模型才生效</span></div>
+            <a-form-item label="重排模型" data-fix="rerankModel" :tooltip="tip('rerank.model')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
+              <ModelSelect v-model="form.q.rerankModel" type="rerank" width="100%" inherit-label="不重排" placeholder="不选=本库不重排" />
+            </a-form-item>
+            <template v-if="rerankOn">
+              <a-form-item label="重排触发下限" :tooltip="tip('rerank.minHits')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
+                <a-input-number v-model:value="form.q.rerankMinHits" :min="2" :max="50" :step="1" :precision="0" style="width:100%" :placeholder="numPh('rerank', 'minHits')" />
+              </a-form-item>
+              <a-form-item label="重排窗口" :tooltip="tip('rerank.maxHits')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
+                <a-input-number v-model:value="form.q.rerankMaxHits" :min="2" :max="100" :step="1" :precision="0" style="width:100%" :placeholder="numPh('rerank', 'maxHits')" />
+              </a-form-item>
+            </template>
+            <div v-else class="kb-param-group-hint">
+              未绑定重排模型（本库不重排）：重排触发下限 / 重排窗口与「最低相关分(重排)」已收起，选好模型后出现。
+            </div>
+
+            <div class="kb-param-group">相关度门与保底</div>
+            <a-form-item v-if="rerankOn" label="最低相关分(重排)" :tooltip="tip('retrieval.minContextScore')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
               <a-input-number v-model:value="form.q.minContextScore" :min="0" :max="1" :step="0.05" style="width:100%" :placeholder="numPh('retrieval', 'minContextScore')" />
             </a-form-item>
             <a-form-item label="最低相关分(融合)" :tooltip="tip('retrieval.minFusionScore')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
@@ -95,7 +105,8 @@
             </a-form-item>
           </div>
           <div class="kb-hint" style="margin:2px 0 0">
-            阈值、两路权重、召回条数、相关度门、重排模型与重排窗口<b>按库生效</b>；绑了重排模型才重排。清空某项 = 跟随内置默认。
+            阈值、两路权重、召回条数、相关度门、重排模型与重排窗口<b>按库生效</b>；绑了重排模型才重排、才出现重排三项。
+            清空某项 = 跟随内置默认。
           </div>
         </a-collapse-panel>
         <a-collapse-panel key="p">
@@ -105,6 +116,7 @@
             <span v-else-if="kb" class="kb-adv-sub">全部跟随默认</span>
           </template>
           <div class="kb-param-grid">
+            <div class="kb-param-group">分块</div>
             <a-form-item label="分块最大字符" :tooltip="tip('chunk.maxSize')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
               <a-input-number v-model:value="form.p.maxSize" :min="200" :step="100" style="width:100%" :placeholder="numPh('chunk', 'maxSize')" />
             </a-form-item>
@@ -114,49 +126,85 @@
             <a-form-item label="最大知识块数" :tooltip="tip('chunk.maxChunks')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
               <a-input-number v-model:value="form.p.maxChunks" :min="0" :step="100" style="width:100%" :placeholder="numPh('chunk', 'maxChunks')" />
             </a-form-item>
-            <a-form-item label="最多提取图片" :tooltip="tip('chunk.maxImages')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
-              <a-input-number v-model:value="form.p.maxImages" :min="0" :step="10" style="width:100%" :placeholder="numPh('chunk', 'maxImages')" />
+            <a-form-item label="标题识别层级" :tooltip="tip('chunk.headingDepth')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
+              <a-input-number v-model:value="form.p.headingDepth" :min="1" :max="6" style="width:100%" :placeholder="numPh('chunk', 'headingDepth')" />
             </a-form-item>
             <a-form-item label="结构感知切分" :tooltip="tip('chunk.structural')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
               <a-select v-model:value="form.p.structural" style="width:100%" :options="triOptions" :placeholder="triPh('chunk', 'structural')" allow-clear />
             </a-form-item>
-            <a-form-item label="边界阈值比例" :tooltip="tip('chunk.structuralRatio')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
+            <a-form-item v-if="!structuralOff" label="边界阈值比例" :tooltip="tip('chunk.structuralRatio')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
               <a-input-number v-model:value="form.p.structuralRatio" :min="0.5" :max="1" :step="0.05" style="width:100%" :placeholder="numPh('chunk', 'structuralRatio')" />
             </a-form-item>
-            <a-form-item label="标题识别层级" :tooltip="tip('chunk.headingDepth')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
-              <a-input-number v-model:value="form.p.headingDepth" :min="1" :max="6" style="width:100%" :placeholder="numPh('chunk', 'headingDepth')" />
+
+            <div class="kb-param-group">图片与 OCR</div>
+            <a-form-item label="最多提取图片" :tooltip="tip('chunk.maxImages')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
+              <a-input-number v-model:value="form.p.maxImages" :min="0" :step="10" style="width:100%" :placeholder="numPh('chunk', 'maxImages')" />
             </a-form-item>
+            <a-form-item label="图片描述模型" data-fix="visionRef" :tooltip="tip('parse.visionRef')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
+              <ModelSelect v-model="form.p.visionRef" type="vision,ocr" width="100%" inherit-label="不描述图片" />
+            </a-form-item>
+            <a-form-item label="解析方式" :tooltip="tip('parse.ocrEngine')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
+              <a-select :value="parseMode" style="width:100%" :options="parseModeOptions" @change="setParseMode" />
+            </a-form-item>
+            <a-form-item label="扫描件 OCR 模型" data-fix="ocrRef" :tooltip="tip('parse.ocrRef')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
+              <ModelSelect v-model="form.p.ocrRef" type="ocr" width="100%" inherit-label="跟随图片描述模型" />
+            </a-form-item>
+            <!-- 版面引擎是二级选择：主选项只表达策略，厂商名与可用性放这里（未部署的置灰，不让用户选了才失败） -->
+            <div v-if="layoutParse" class="kb-engine-block">
+              <div class="kb-engine-block-head">
+                <span>版面引擎</span>
+                <span v-if="ocrEnginesLoading" class="kb-engine-checking">检测中…</span>
+                <a v-else @click="loadOcrEngines(true)">重新检测</a>
+              </div>
+              <a-radio-group v-model:value="form.p.ocrEngine" class="kb-engine-radios">
+                <a-radio v-for="e in layoutEngineList" :key="e.id" :value="e.id"
+                         :disabled="e.status === 'unconfigured'" class="kb-engine-radio">
+                  <span class="kb-engine-body">
+                    <span class="kb-engine-line">
+                      <span class="kb-engine-name">{{ e.label }}</span>
+                      <span class="kb-engine-badge" :class="'is-' + engineBadgeState(e)">{{ engineBadgeText(e) }}</span>
+                    </span>
+                    <span class="kb-engine-reason" :class="{ bad: e.status === 'unconfigured' || e.status === 'unreachable' }">
+                      {{ engineReason(e) }}
+                    </span>
+                  </span>
+                </a-radio>
+              </a-radio-group>
+              <div v-if="ocrEnginesError" class="kb-engine-error">状态检测失败，可点「重新检测」重试；不影响保存与解析。</div>
+            </div>
+            <!-- 扫描件阈值只在纯文本层兜底路径读；渲染 DPI 只在视觉 OCR 时读——版面引擎整份还原，两者都不读 -->
+            <a-form-item v-if="textLayerParse" label="扫描件阈值(字符)" :tooltip="tip('parse.ocrMinText')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
+              <a-input-number v-model:value="form.p.ocrMinText" :min="0" :step="5" style="width:100%" :placeholder="numPh('parse', 'ocrMinText')" />
+            </a-form-item>
+            <a-form-item v-if="renderDpiParse" label="OCR 渲染 DPI" :tooltip="tip('parse.ocrDpi')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
+              <a-input-number v-model:value="form.p.ocrDpi" :min="72" :max="400" :step="8" style="width:100%" :placeholder="numPh('parse', 'ocrDpi')" />
+            </a-form-item>
+            <div v-if="layoutParse" class="kb-param-group-hint">
+              「扫描件阈值 / OCR 渲染 DPI」两项对版面引擎不生效，已收起；扫描件识别仍按「扫描件 OCR 模型」。
+            </div>
+
+            <div class="kb-param-group">增强</div>
             <a-form-item label="问答对增强" :tooltip="tip('parse.qaEnabled')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
               <a-select v-model:value="form.p.qaEnabled" style="width:100%" :options="triOptions" :placeholder="triPh('parse', 'qaEnabled')" allow-clear />
             </a-form-item>
-            <a-form-item label="每块问答对数" :tooltip="tip('parse.qaPerChunk')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
+            <a-form-item v-if="!qaOff" label="每块问答对数" :tooltip="tip('parse.qaPerChunk')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
               <a-input-number v-model:value="form.p.qaPerChunk" :min="1" :max="5" :step="1" style="width:100%" :placeholder="numPh('parse', 'qaPerChunk')" />
             </a-form-item>
             <a-form-item label="父子分块" :tooltip="tip('parse.childEnabled')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
               <a-select v-model:value="form.p.childEnabled" style="width:100%" :options="triOptions" :placeholder="triPh('parse', 'childEnabled')" allow-clear />
             </a-form-item>
-            <a-form-item label="子块尺寸(字符)" :tooltip="tip('parse.childSize')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
+            <a-form-item v-if="!childOff" label="子块尺寸(字符)" :tooltip="tip('parse.childSize')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
               <a-input-number v-model:value="form.p.childSize" :min="100" :max="2000" :step="100" style="width:100%" :placeholder="numPh('parse', 'childSize')" />
-            </a-form-item>
-            <a-form-item label="PDF 解析引擎" :tooltip="tip('parse.ocrEngine')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
-              <a-select v-model:value="form.p.ocrEngine" style="width:100%" :options="ocrEngineOptions" :placeholder="valPh('parse', 'ocrEngine')" allow-clear />
-            </a-form-item>
-            <a-form-item label="扫描件阈值(字符)" :tooltip="tip('parse.ocrMinText')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
-              <a-input-number v-model:value="form.p.ocrMinText" :min="0" :step="5" style="width:100%" :placeholder="numPh('parse', 'ocrMinText')" />
-            </a-form-item>
-            <a-form-item label="OCR 渲染 DPI" :tooltip="tip('parse.ocrDpi')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
-              <a-input-number v-model:value="form.p.ocrDpi" :min="72" :max="400" :step="8" style="width:100%" :placeholder="numPh('parse', 'ocrDpi')" />
-            </a-form-item>
-            <a-form-item label="图片描述模型" data-fix="visionRef" :tooltip="tip('parse.visionRef')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
-              <ModelSelect v-model="form.p.visionRef" type="vision,ocr" width="100%" inherit-label="不描述图片" />
-            </a-form-item>
-            <a-form-item label="扫描件 OCR 模型" data-fix="ocrRef" :tooltip="tip('parse.ocrRef')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
-              <ModelSelect v-model="form.p.ocrRef" type="ocr" width="100%" inherit-label="跟随图片描述模型" />
             </a-form-item>
           </div>
           <div class="kb-hint" style="margin:6px 0 0">
-            改解析参数需重新解析文档才生效。扫描件 PDF 须绑定「扫描件 OCR 模型」，
-            <span class="kb-warn">两者都空时会解析失败</span>；纯文本用「纯文本层」，复杂版式再选 MinerU / PP。
+            改解析方式需重新解析文档才生效。
+            <template v-if="parseMode === 'smart'">智能解析优先读文本层，扫描件自动用「扫描件 OCR 模型」识别。</template>
+            <template v-else-if="parseMode === 'vision'">整份逐页交给视觉模型，不走文本层。</template>
+            <template v-else>整份重排，保留标题层级与表格；适合复杂版式。</template>
+            <template v-if="parseMode !== 'layout' && !hasVisionModel">
+              <span class="kb-warn">当前未绑定「扫描件 OCR 模型」或「图片描述模型」，扫描件会解析失败。</span>
+            </template>
           </div>
         </a-collapse-panel>
       </a-collapse>
@@ -165,32 +213,47 @@
            后端 isDefault 不可写（无晋升路径），UI 上传也全部显式带库，不提供换默认库入口 -->
 
       <!-- GraphRAG 库级开关（默认关）：开启后解析完成自动抽三元组，检索一跳图扩展；
-           官方内置库不显示——后端 builtin 白名单只收检索/解析参数与向量模型，提交会被整单拒绝 -->
-      <a-form-item v-if="!isBuiltin" label="知识图谱" style="margin-top:4px">
-        <div class="kb-switch-line">
-          <a-switch v-model:checked="form.graphEnabled" />
+           官方内置库不显示——后端 builtin 白名单只收检索/解析参数与向量模型，提交会被整单拒绝。
+           开关与两个参数收在同一小节里：关 = 参数整组收起，开关不单独占一行、说明不通栏甩到最左边 -->
+      <div v-if="!isBuiltin" class="kb-graph">
+        <div class="kb-graph-head">
+          <span class="kb-graph-name">知识图谱</span>
+          <span class="kb-graph-state">{{ form.graphEnabled ? '已开启' : '已关闭' }}</span>
+          <a-switch v-model:checked="form.graphEnabled" class="kb-graph-switch" />
         </div>
-        <div class="kb-hint" style="margin-top:4px">
-          开启后新文档自动抽三元组，检索时图扩展；旧文档可在列表点「构建图谱」。
-        </div>
-      </a-form-item>
-      <a-form-item v-if="!isBuiltin && form.graphEnabled" label="图谱抽取模型" data-fix="graphModelRef">
-        <!-- 「跟随库主默认」点名到具体模型：可管库的只有创建者本人（谁建归谁），
-             库主默认即当前登录用户的个人默认聊天模型，留空时直接把模型名写在触发器上 -->
-        <ModelSelect v-model="form.graphModelRef" type="chat" width="320"
-                     inherit-label="跟随库主默认聊天模型" inherit-resolve="personalDefault" />
-        <div class="kb-hint" style="margin-top:4px">
-          抽取用的聊天模型；留空用库主默认，都没有则不抽取。
-        </div>
-      </a-form-item>
-      <!-- 图扩展上限（库级，2026-11-14 自平台层下放）：留空=内置默认 5；多库轮取参与库最大值 -->
-      <a-form-item v-if="!isBuiltin && form.graphEnabled" label="图扩展上限" :tooltip="tip('graphrag.expandTopK')">
-        <a-input-number v-model:value="form.q.graphExpandTopK" :min="0" :max="20" :step="1" :precision="0"
-                        style="width:140px" :placeholder="numPh('graphrag', 'expandTopK')" />
-        <div class="kb-hint" style="margin-top:4px">
-          检索时图扩展最多并入几块；0=不扩展。
-        </div>
-      </a-form-item>
+        <div class="kb-hint">新文档自动抽三元组，检索时做一跳图扩展；旧文档可在列表点「构建图谱」补建。</div>
+        <template v-if="form.graphEnabled">
+          <div class="kb-graph-row" data-fix="graphModelRef">
+            <div class="kb-graph-label">
+              图谱抽取模型
+              <a-tooltip :title="tip('graphrag.modelRef')">
+                <QuestionCircleOutlined class="kb-graph-q" />
+              </a-tooltip>
+            </div>
+            <div class="kb-graph-cell">
+              <!-- 「跟随库主默认」点名到具体模型：可管库的只有创建者本人（谁建归谁），
+                   库主默认即当前登录用户的个人默认聊天模型，留空时直接把模型名写在触发器上 -->
+              <ModelSelect v-model="form.graphModelRef" type="chat" width="320"
+                           inherit-label="库主默认" inherit-resolve="personalDefault" />
+              <div class="kb-hint">留空 = 用库主的默认聊天模型；库主没设则不抽取。</div>
+            </div>
+          </div>
+          <!-- 图扩展上限（库级，2026-11-14 自平台层下放）：留空=内置默认 5；多库轮取参与库最大值 -->
+          <div class="kb-graph-row">
+            <div class="kb-graph-label">
+              图扩展上限
+              <a-tooltip :title="tip('graphrag.expandTopK')">
+                <QuestionCircleOutlined class="kb-graph-q" />
+              </a-tooltip>
+            </div>
+            <div class="kb-graph-cell">
+              <a-input-number v-model:value="form.q.graphExpandTopK" :min="0" :max="20" :step="1" :precision="0"
+                              style="width:176px" :placeholder="numPh('graphrag', 'expandTopK')" />
+              <div class="kb-hint">检索时最多并入几块；0 = 不扩展。</div>
+            </div>
+          </div>
+        </template>
+      </div>
     </a-form>
   </a-modal>
 </template>
@@ -198,7 +261,8 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { message } from 'ant-design-vue'
-import { createKnowledgeBase, updateKnowledgeBase, getKbParamDefaults, getKbParamTips } from '../api'
+import { QuestionCircleOutlined } from '@ant-design/icons-vue'
+import { createKnowledgeBase, updateKnowledgeBase, getKbParamDefaults, getKbParamTips, getKbParseEngines } from '../api'
 import ModelSelect from './ModelSelect.vue'
 import KbIcon from './KbIcon.vue'
 import { locateField } from '../utils/fieldLocate'
@@ -337,12 +401,16 @@ const policyOptions = [
   { value: 'off', label: '不保底' }
 ]
 
-/** 库级 PDF 解析引擎选项（清空=跟随内置默认 none；速度差异见下方提示） */
-const ocrEngineOptions = [
-  { value: 'none', label: '纯文本层（快，秒级）' },
-  { value: 'vision', label: '视觉模型 OCR（逐页识别）' },
-  { value: 'pp_structure_v3', label: 'PP-StructureV3 版面还原' },
-  { value: 'mineru', label: 'MinerU 版面还原（慢，约 10s/页）' }
+/** 解析方式主选项（清空=智能解析；落库仍写存量枚举值 none/vision/mineru/pp_structure_v3） */
+const parseModeOptions = [
+  { value: 'smart', label: '智能解析（推荐）' },
+  { value: 'vision', label: '全页视觉 OCR' },
+  { value: 'layout', label: '版面还原' }
+]
+/** 版面引擎展示顺序与静态说明；可用性状态由 /kb/parse-engines 覆盖 */
+const LAYOUT_ENGINE_META = [
+  { id: 'mineru', label: 'MinerU', hint: '标题层级 + 表格还原，CPU 约 10s/页' },
+  { id: 'pp_structure_v3', label: 'PP-StructureV3', hint: 'PaddleX 版面还原，整份提交' }
 ]
 
 // 参数内置默认值缓存（扁平的「后端键 → 值」）：占位符展示"内置默认值" + 新建库模板预填。
@@ -358,8 +426,9 @@ const loadParamDefaults = async () => {
 // 参数问号文案（/kb/param-tips，普通用户可读；与系统设置页字段说明同一份定义源）：
 // 表单专属字段（两个模型槽位）没有配置键，用静态文案补。
 const STATIC_TIPS = {
-  'parse.visionRef': '文档内嵌图片（docx/PDF 里的插图、截图）的自动描述模型：把图转成文字后一起参与检索，图片内容也能被搜到。留空=解析时跳过图片描述。',
-  'parse.ocrRef': '扫描件/图片型 PDF 逐页识别的 OCR 专用模型（如 PaddleOCR-VL）。留空回落「图片描述模型」；两者都空时这类文档解析会失败。'
+  'parse.visionRef': '图片描述模型：把文档里的插图、截图转成文字一起参与检索。留空=解析时不描述图片。',
+  'parse.ocrRef': '扫描件 OCR 模型：识别扫描页和图片型 PDF。留空就用「图片描述模型」；两者都空时扫描件会解析失败。',
+  'graphrag.modelRef': '图谱抽取模型：只在新文档解析后读正文抽关系，不参与回答。留空=用库主的默认聊天模型；没有则不抽。'
 }
 const paramTips = ref({})
 const loadParamTips = async () => {
@@ -376,6 +445,76 @@ const customCount = obj => Object.values(obj).filter(v => v !== null && v !== un
 // 图扩展上限展示在「知识图谱」区块（不在检索参数折叠组里），不计进折叠组标题的自定义数
 const customQ = computed(() => (props.kb ? customCount({ ...form.value.q, graphExpandTopK: null }) : 0))
 const customP = computed(() => (props.kb ? customCount(form.value.p) : 0))
+
+// 联动：只露出当前配置下真正生效的项——「选了才有意义」的参数不再和常规项挤在一张长表里。
+// 留空一律按内置默认判断（qaEnabled/childEnabled/structural 默认开，ocrEngine 默认 none），
+// 所以只认显式 'false' / 显式引擎值，清空即回落默认、项照常出现。
+const rerankOn = computed(() => !!String(form.value.q.rerankModel || '').trim())
+const structuralOff = computed(() => String(form.value.p.structural ?? '') === 'false')
+const qaOff = computed(() => String(form.value.p.qaEnabled ?? '') === 'false')
+const childOff = computed(() => String(form.value.p.childEnabled ?? '') === 'false')
+// 解析引擎读点：扫描件阈值只在纯文本层兜底路径读（PdfParser），渲染 DPI 只在逐页视觉 OCR 时读
+const parseEngine = computed(() => String(form.value.p.ocrEngine || '').trim() || 'none')
+const textLayerParse = computed(() => parseEngine.value === 'none')
+const renderDpiParse = computed(() => parseEngine.value === 'none' || parseEngine.value === 'vision')
+const layoutParse = computed(() => parseEngine.value === 'pp_structure_v3' || parseEngine.value === 'mineru')
+
+// 主选项只表达「策略」，不暴露厂商：none=智能解析（文本层优先、扫描件视觉兜底），
+// vision=整份视觉 OCR，mineru/pp_structure_v3=版面还原（二级再选引擎）
+const parseMode = computed(() => {
+  const v = String(form.value.p.ocrEngine || '').trim()
+  if (v === 'vision') return 'vision'
+  return LAYOUT_ENGINE_META.some(e => e.id === v) ? 'layout' : 'smart'
+})
+const setParseMode = mode => {
+  if (mode === 'vision') form.value.p.ocrEngine = 'vision'
+  else if (mode === 'layout') {
+    // 切到版面还原时优先落到已探活可用的引擎，都不可用就保留首个（徽标会标出未配置/不可达）
+    form.value.p.ocrEngine = layoutEngineList.value.find(e => e.status === 'available')?.id || LAYOUT_ENGINE_META[0].id
+  } else form.value.p.ocrEngine = null
+}
+
+// 版面引擎可用性：展开「解析参数」时才拉（探活有秒级耗时）；后端缓存 60s，可手动重探
+const ocrEngines = ref([])
+const ocrEnginesLoading = ref(false)
+const ocrEnginesLoaded = ref(false)
+const ocrEnginesError = ref(false)
+const loadOcrEngines = async (refresh = false) => {
+  if (ocrEnginesLoading.value || (!refresh && ocrEnginesLoaded.value)) return
+  ocrEnginesLoading.value = true
+  ocrEnginesError.value = false
+  try {
+    const r = await getKbParseEngines(refresh)
+    ocrEngines.value = (r && r.data && r.data.engines) || []
+    ocrEnginesLoaded.value = true
+  } catch (e) {
+    // 只影响状态徽标：选项仍可保存，解析时后端照常按 fail-loud 报具体原因
+    ocrEngines.value = []
+    ocrEnginesError.value = true
+  } finally {
+    ocrEnginesLoading.value = false
+  }
+}
+const layoutEngineList = computed(() => LAYOUT_ENGINE_META.map(meta => ({
+  ...meta,
+  ...(ocrEngines.value.find(e => e.id === meta.id) || {})
+})))
+const engineBadgeState = e => (ocrEnginesLoading.value ? 'loading' : (e.status || 'unknown'))
+const engineBadgeText = e => ({
+  available: '可用',
+  unconfigured: '未配置',
+  unreachable: '不可达',
+  timeout: '状态未知',
+  loading: '检测中',
+  unknown: '状态未知'
+}[engineBadgeState(e)] || '状态未知')
+/** 可用时显示引擎特点，其余显示探活原因（未配置/不可达的就地修复指引） */
+const engineReason = e => (engineBadgeState(e) === 'available' ? e.hint : (e.reason || e.hint))
+// 扫描件是否有人可识别：OCR 槽位留空时回落图片描述槽位（VisionService 同口径）
+const hasVisionModel = computed(() => !!String(form.value.p.ocrRef || '').trim() || !!String(form.value.p.visionRef || '').trim())
+watch(advActive, keys => {
+  if (keys.includes('p')) loadOcrEngines()
+})
 const flatVal = key => String(flatCfg.value[key] ?? '').trim()
 const gval = (group, key) => flatVal(group + '.' + key)
 /** 数字类占位符：显示内置默认值（留空=跟随它） */
@@ -534,6 +673,20 @@ const save = async () => {
 .kb-icon-locked { display: flex; align-items: center; gap: 8px; }
 .kb-divider { margin: 16px 0 4px; font-size: 12px; color: var(--app-text2); }
 .kb-param-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 8px; }
+/* 组内小节：整行标题 + 细虚线分隔，一节只装一件事，扫读不用逐项辨认 */
+.kb-param-group {
+  grid-column: 1 / -1; display: flex; align-items: baseline; gap: 6px;
+  margin-bottom: 6px; font-size: 12px; font-weight: 600; color: var(--app-text2);
+}
+.kb-param-group:not(:first-child) {
+  margin-top: 4px; padding-top: 8px; border-top: 1px dashed var(--app-border);
+}
+.kb-param-group-sub { font-size: 11px; font-weight: 400; color: var(--app-text3); }
+/* 联动收起时的解释行：参数消失不能变成「不知道去哪了」 */
+.kb-param-group-hint {
+  grid-column: 1 / -1; margin-bottom: 8px;
+  font-size: 12px; color: var(--app-text3); line-height: 1.6;
+}
 /* 高级参数折叠区：默认收起，展开内容与卡片贴平（ghost 样式去掉默认边框底色） */
 .kb-adv :deep(.ant-collapse-header) { padding: 6px 0 !important; font-size: 13px; color: var(--app-text2); }
 .kb-adv :deep(.ant-collapse-content-box) { padding: 4px 0 0 !important; }
@@ -541,6 +694,43 @@ const save = async () => {
 /* min-width:0：长内容（如列表外模型的原始引用串）只省略号，不把轨道撑出弹窗 */
 .kb-param-grid :deep(.ant-form-item) { margin-bottom: 8px; min-width: 0; }
 .kb-warn { color: var(--app-danger); }
-/* 开关行：裸放开关会贴行首，中心比标签文字高约 8px；撑到 32px 并居中 = 与输入框/标签文字同轴 */
-.kb-switch-line { display: flex; align-items: center; min-height: 32px; }
+/* 知识图谱：与上面分组同一套小节语法（虚线分节 + 标题行开关），关=两个参数整组收起 */
+.kb-graph { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--app-border); }
+.kb-graph-head { display: flex; align-items: center; gap: 8px; }
+.kb-graph-name { font-size: 13px; font-weight: 600; color: var(--app-text); }
+.kb-graph-state { font-size: 12px; color: var(--app-text3); }
+.kb-graph-switch { margin-left: auto; }
+.kb-graph-row { display: flex; align-items: flex-start; gap: 8px; margin-top: 10px; }
+/* 标签列与高级参数左列标签同一条右对齐线（左列标签占 41.67% 的半个弹窗 ≈ 21% 全宽） */
+.kb-graph-label {
+  flex: 0 0 21%; display: flex; align-items: center; justify-content: flex-end; gap: 4px;
+  padding-top: 6px; font-size: 14px; line-height: 1.4; color: var(--app-text); text-align: right;
+}
+.kb-graph-cell { flex: 1; min-width: 0; }
+.kb-graph-q { font-size: 13px; color: var(--app-text3); cursor: help; }
+.kb-graph .kb-hint { margin-top: 5px; }
+/* 版面引擎二级选择：卡片式单选项；未配置就地置灰并写修复指引，不让人选了才失败 */
+.kb-engine-block { grid-column: 1 / -1; margin: 0 0 8px; }
+.kb-engine-block-head {
+  display: flex; align-items: baseline; gap: 8px;
+  margin: 0 0 6px; font-size: 12px; font-weight: 600; color: var(--app-text2);
+}
+.kb-engine-block-head a { font-weight: 400; font-size: 12px; }
+.kb-engine-checking { font-weight: 400; font-size: 12px; color: var(--app-text3); }
+.kb-engine-radios { display: flex; flex-direction: column; gap: 6px; width: 100%; }
+.kb-engine-radio {
+  display: flex !important; align-items: flex-start; margin: 0; padding: 8px 10px;
+  border: 1px solid var(--app-border); border-radius: 8px; background: var(--app-panel);
+}
+.kb-engine-radio :deep(.ant-radio) { margin-top: 2px; }
+.kb-engine-body { display: flex; flex-direction: column; gap: 2px; line-height: 1.5; }
+.kb-engine-line { display: flex; align-items: center; gap: 7px; }
+.kb-engine-name { font-size: 13px; }
+.kb-engine-badge { font-size: 11px; padding: 0 6px; border-radius: 9px; background: var(--app-panel); color: var(--app-text3); }
+.kb-engine-badge.is-available { background: #e6f7ee; color: #00875a; }
+.kb-engine-badge.is-unconfigured, .kb-engine-badge.is-unreachable { background: #fdecea; color: var(--app-danger); }
+.kb-engine-badge.is-timeout, .kb-engine-badge.is-unknown { background: #fff7e6; color: #ad6800; }
+.kb-engine-reason { font-size: 11.5px; color: var(--app-text3); }
+.kb-engine-reason.bad { color: var(--app-danger); }
+.kb-engine-error { margin-top: 4px; font-size: 11.5px; color: var(--app-text3); }
 </style>

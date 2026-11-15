@@ -523,6 +523,9 @@ export const syncManual = () => request('/manual/sync', { method: 'POST', timeou
 export const getKbParamDefaults = () => request('/kb/param-defaults')
 // 知识库参数问号文案（backendKey → 人话解释；普通用户可读，与系统设置页字段说明同一份定义源）
 export const getKbParamTips = () => request('/kb/param-tips')
+// 版面解析引擎可用性（MinerU / PP-StructureV3）：只回状态与固定文案，不含服务地址；
+// 服务端缓存 60s，用户点「重新检测」时传 refresh
+export const getKbParseEngines = refresh => request(`/kb/parse-engines${refresh ? '?refresh=1' : ''}`)
 
 // 我的产物（模型在回答中生成的可下载文件，按用户归属；url 为可直接下载的签名地址）
 // 参数：keyword / projectId（__unassigned__=没挂工作区）/ kind / timeRange / expiring / sort，

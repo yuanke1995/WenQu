@@ -76,26 +76,29 @@ public class MinerUOcrEngine implements OcrEngine {
     }
 
     @Override
-    public String checkHealth() {
+    public EngineHealth probe() {
         String base = uri();
+        if (base.isEmpty()) {
+            return EngineHealth.unconfigured("未配置服务地址（环境变量 OCR_MINERU_URI 为空）");
+        }
         try {
             HttpResponse<String> resp = HTTP.send(HttpRequest.newBuilder(URI.create(base + "/openapi.json"))
                     .timeout(Duration.ofSeconds(5)).GET().build(), HttpResponse.BodyHandlers.ofString());
             if (resp.statusCode() != 200) {
-                return "MinerU 服务响应异常: HTTP " + resp.statusCode() + "（" + base + "），请确认服务已启动";
+                return EngineHealth.unreachable("MinerU 服务响应异常: HTTP " + resp.statusCode() + "（" + base + "），请确认服务已启动");
             }
             JSONObject openapi = JSON.parseObject(resp.body());
             JSONObject paths = openapi == null ? null : openapi.getJSONObject("paths");
             if (paths == null || !paths.containsKey("/file_parse")) {
-                return "MinerU 服务缺少 /file_parse 端点（" + base + "），疑似版本不兼容";
+                return EngineHealth.unreachable("MinerU 服务缺少 /file_parse 端点（" + base + "），疑似版本不兼容");
             }
-            return null;
+            return EngineHealth.ok();
         } catch (ConnectException e) {
-            return "MinerU 服务无法连接（" + base + "），请确认服务已启动、地址与 parse.ocrMineruUri 一致";
+            return EngineHealth.unreachable("MinerU 服务无法连接（" + base + "），请确认服务已启动、地址与 parse.ocrMineruUri 一致");
         } catch (java.net.http.HttpTimeoutException e) {
-            return "MinerU 服务健康检查超时（" + base + "）";
+            return EngineHealth.timeout("MinerU 服务健康检查超时（" + base + "）");
         } catch (Exception e) {
-            return "MinerU 健康检查失败: " + e.getMessage();
+            return EngineHealth.unreachable("MinerU 健康检查失败: " + e.getMessage());
         }
     }
 

@@ -27,10 +27,45 @@ public interface OcrEngine {
     String id();
 
     /**
+     * 结构化探活（知识库编辑页的引擎目录用）：只给状态与中文原因。
+     * 普通用户可读，因此 {@link EngineHealth#detail()} 里的服务地址不得出现在对外响应中
+     * （目录接口只按 state 映射固定文案）。
+     */
+    EngineHealth probe();
+
+    /**
      * 健康检查：{@code null} = 可用；非 {@code null} = 不可用原因（面向用户的中文描述，含修复指引）。
      * 解析前先调用，不可用直接 fail-loud，不进入真实解析白耗一份上传。
      */
-    String checkHealth();
+    default String checkHealth() {
+        EngineHealth h = probe();
+        return h.healthy() ? null : h.detail();
+    }
+
+    /** 探活结果：detail 含服务地址，仅供管理侧排障与解析失败文案 */
+    record EngineHealth(State state, String detail) {
+        public enum State { AVAILABLE, UNCONFIGURED, UNREACHABLE, TIMEOUT }
+
+        public boolean healthy() {
+            return state == State.AVAILABLE;
+        }
+
+        public static EngineHealth ok() {
+            return new EngineHealth(State.AVAILABLE, null);
+        }
+
+        public static EngineHealth unconfigured(String detail) {
+            return new EngineHealth(State.UNCONFIGURED, detail);
+        }
+
+        public static EngineHealth unreachable(String detail) {
+            return new EngineHealth(State.UNREACHABLE, detail);
+        }
+
+        public static EngineHealth timeout(String detail) {
+            return new EngineHealth(State.TIMEOUT, detail);
+        }
+    }
 
     /**
      * 整份 PDF 解析为版面页 markdown 列表。

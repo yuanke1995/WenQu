@@ -485,6 +485,7 @@ docker compose up -d          # 自包含：redis-stack + meilisearch + 内置 M
 | `GET /api/ai/search-index/stats`、`POST /search-index/reindex`、`DELETE /search-index` | 关键词索引状态 / 全量重建 / 清空 |
 | `GET /api/ai/desc-cache/stats`、`POST /desc-cache/prune`、`DELETE /desc-cache` | 图片描述缓存运维 |
 | `GET /api/ai/ocr/health` | PDF 深度解析引擎（PP-StructureV3 / MinerU）逐引擎探活 |
+| `GET /api/ai/kb/parse-engines?refresh=` | 版面引擎可用性目录（普通用户可读；知识库编辑页二级选择用，只回状态与修复文案） |
 | `GET /api/ai/provider/list`、`/available`、`/{id}/models`、`/{id}/references`、`POST /provider`、`/models/fetch`、`/test`、`/batch-enabled`、`/batch-delete`、`/{id}/clear-session-models`、`PUT /{id}`、`/{id}/models`、`/{id}/enabled`、`DELETE /{id}` | 模型供应商：登记（平台级 / 个人级）/ 可用列表 / 模型清单 / 引用清单 / 新建 / 拉取候选模型 / 连通测试 / 批量启停与删除 / 清除历史会话选择 / 编辑 / 保存模型 / 单个启停 / 删除 |
 | `GET /api/ai/agent/list`、`/available`、`/consultable`、`/sub`、`/config-defaults`、`/tool-catalog`、`/permission-presets`、`/{id}/versions`、`POST /agent`、`/{id}/rollback`、`/{id}/default`、`/batch-delete`、`PUT /{id}`、`DELETE /{id}` | 智能体 CRUD / 对话页精简列表 / 可咨询列表 / 子智能体列表 / 默认值 / 工具目录 / 权限档位选项 / 配置版本与回滚 / 设默认 / 批量删除 / 删除 |
 | `GET /POST /DELETE /api/ai/agent/{id}/publish` | 公开发布：查询 / 发布（生成 token 与 iframe 嵌入，可另开 MCP 端点）/ 撤销 |

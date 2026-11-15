@@ -47,9 +47,9 @@ public class VisionOcrEngine implements OcrEngine {
     }
 
     @Override
-    public String checkHealth() {
-        // 没有固定服务地址可探：视觉模型按库绑定，可用性在解析调用点校验（fail-loud 文案见 PdfParser）
-        return null;
+    public EngineHealth probe() {
+        // 没有固定服务地址可探：视觉模型按库绑定，可用性在解析调用点（按库绑定的模型）校验
+        return EngineHealth.ok();
     }
 
     @Override

@@ -66,19 +66,22 @@ public class PPStructureV3OcrEngine implements OcrEngine {
     }
 
     @Override
-    public String checkHealth() {
+    public EngineHealth probe() {
         String base = uri();
+        if (base.isEmpty()) {
+            return EngineHealth.unconfigured("未配置服务地址（环境变量 OCR_PP_STRUCTURE_URI 为空）");
+        }
         try {
             HttpResponse<String> resp = HTTP.send(HttpRequest.newBuilder(URI.create(base + "/health"))
                     .timeout(Duration.ofSeconds(5)).GET().build(), HttpResponse.BodyHandlers.ofString());
-            if (resp.statusCode() == 200) return null;
-            return "PP-StructureV3 服务响应异常: HTTP " + resp.statusCode() + "（" + base + "），请确认 PaddleX serving 已启动";
+            if (resp.statusCode() == 200) return EngineHealth.ok();
+            return EngineHealth.unreachable("PP-StructureV3 服务响应异常: HTTP " + resp.statusCode() + "（" + base + "），请确认 PaddleX serving 已启动");
         } catch (ConnectException e) {
-            return "PP-StructureV3 服务无法连接（" + base + "），请确认服务已启动、地址与 parse.ocrPpUri 一致";
+            return EngineHealth.unreachable("PP-StructureV3 服务无法连接（" + base + "），请确认服务已启动、地址与 parse.ocrPpUri 一致");
         } catch (java.net.http.HttpTimeoutException e) {
-            return "PP-StructureV3 服务健康检查超时（" + base + "）";
+            return EngineHealth.timeout("PP-StructureV3 服务健康检查超时（" + base + "）");
         } catch (Exception e) {
-            return "PP-StructureV3 健康检查失败: " + e.getMessage();
+            return EngineHealth.unreachable("PP-StructureV3 健康检查失败: " + e.getMessage());
         }
     }
 

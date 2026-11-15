@@ -103,7 +103,7 @@ public class PdfParser implements DocumentParser {
                 String unhealthy = engine.checkHealth();
                 if (unhealthy != null) {
                     throw new BizException("「" + fileName + "」版面解析失败：" + unhealthy
-                            + "；也可在设置页「文档解析默认模板 → PDF 解析引擎」换回 none");
+                            + "；也可在知识库编辑 → 解析参数 → 解析方式中换回「智能解析」");
                 }
                 log.info("[PDF] {} 走 {} 版面解析引擎", fileName, engineId);
                 chunks = chunksFromPages(engine.parse(file, fileName, cb), maxSize);
