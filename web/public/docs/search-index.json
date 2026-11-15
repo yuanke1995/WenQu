@@ -204,6 +204,12 @@
   "text": "审批：回同一条 run decision 统一为 approve | reject | revise | supersede | answer | ignore ； kind 是 tool_approval / plan_approval / ask_user 。 answer 对应问答卡，其他按计划/工具审批处理。 卡片已处理或已超时 → 409 ，文案是「已处理或已失效」。重新拉事件流取新的 "
  },
  {
+  "id": "超时-这一步被跳过-不是整轮失败",
+  "page": "参考",
+  "title": "超时：这一步被跳过，不是整轮失败",
+  "text": "超时：这一步被跳过，不是整轮失败 审批等待到达上限（ chat.approvalTimeoutMs ，默认 10 分钟）时，先到一帧 approval.timed_out （ code=approval_timeout ），工具/计划按「未批准」处理； 本轮仍会以 run.done 收口 ， finalContent 说明这一步没有执行。 所以判定要按事件、不要按状态： run.done(stat"
+ },
+ {
   "id": "续传-last-event-id-seq",
   "page": "参考",
   "title": "续传： Last-Event-ID + seq",
@@ -315,7 +321,7 @@
   "id": "run-链路的专用-code",
   "page": "指南",
   "title": "run 链路的专用 code",
-  "text": "run 链路的专用 code code 出现在 含义 approval_timeout run.error / approval.timed_out 审批卡超时，本次运行按失败收口 resume_expired run.error 事件回放缓冲过期（10 分钟），改拉 GET /runs/{id} run_interrupted run.error 运行被中断（服务重启 / 副本切换），重查终态再"
+  "text": "run 链路的专用 code code 出现在 含义 approval_timeout approval.timed_out （过程事件） 审批卡超时：这一步未执行，本轮仍以 run.done 收口。要当失败处理由集成方自己判定 resume_expired run.error 事件回放缓冲过期（保留 10 分钟），改拉 GET /runs/{id} 取终态与输出 run_interrupted "
  },
  {
   "id": "缺-scope-的文案到底写了什么",

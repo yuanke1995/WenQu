@@ -85,6 +85,8 @@ public class ChatRunBus {
     private final ConfigService configService;
     /** 跨副本层：注册表、事件帧广播、远端观众与快照请求 */
     private final RunBusCluster cluster;
+    /** 会话级旁路订阅（见 {@link #tap}）：只读镜像给对外 run 的投影层，不参与投递判定 */
+    private final Map<String, List<BiConsumer<String, String>>> taps = new ConcurrentHashMap<>();
 
     /** 一条在跑的轮：订阅者 + 事件序号 + 宽限状态 */
     public static final class Run {
@@ -366,11 +368,48 @@ public class ChatRunBus {
      * @return true=本轮由总线接管（调用方不必再自己发）
      */
     public boolean publishToSession(String sessionId, String type, String rawJson) {
+        // 先喂旁路订阅者，再看总线是否接管：收集型通道（v1 run 的投影口）不登记在总线上，
+        // 走的是「工具线程按 sessionId 发一条」这条路，不在这里镜像的话它的产物事件永远收不到。
+        emitToTaps(sessionId, type, rawJson);
         Run run = running(sessionId);
         if (run == null) return false;
         long seq = bump(run, type, rawJson);
         if (seq < 0) return false;
         return fan(run, seq, rawFrame(type, rawJson, sessionId, seq), type);
+    }
+
+    /**
+     * 旁路订阅：把某个会话上「工具线程发出的帧」抄一份给投递方（v1 run 的投影层用它翻译
+     * {@code artifact.created}）。
+     *
+     * <p><b>为什么要有这层</b>：产物事件是工具线程按 sessionId 发的，不经过当轮通道；
+     * 而对外 run 用的通道是收集型（刻意不登记总线，见 {@code OpenRunEmitter}），
+     * 于是「总线有观众才收得到」对它不成立——契约里承诺的 {@code artifact.created} 一帧都不会到。
+     * 加一个只读旁路比重写产物投递面窄得多，也不改任何既有观众的行为。</p>
+     *
+     * @return 取消订阅句柄（调用方终结时必须调，否则该会话的帧会一直复制给已结束的 run）
+     */
+    public Runnable tap(String sessionId, BiConsumer<String, String> sink) {
+        if (sessionId == null || sink == null) return () -> { };
+        List<BiConsumer<String, String>> list = taps.computeIfAbsent(sessionId, k -> new CopyOnWriteArrayList<>());
+        list.add(sink);
+        return () -> {
+            list.remove(sink);
+            if (list.isEmpty()) taps.remove(sessionId, list);
+        };
+    }
+
+    private void emitToTaps(String sessionId, String type, String rawJson) {
+        List<BiConsumer<String, String>> list = sessionId == null ? null : taps.get(sessionId);
+        if (list == null || list.isEmpty()) return;
+        for (BiConsumer<String, String> t : list) {
+            try {
+                t.accept(type, rawJson);
+            } catch (Exception e) {
+                // 旁路异常不许影响主投递：投影层自己的 bug 不能把观众的事件流带崩
+                log.warn("[BUS] 旁路订阅者处理失败 type={} session={}: {}", type, sessionId, e.getMessage());
+            }
+        }
     }
 
     /**

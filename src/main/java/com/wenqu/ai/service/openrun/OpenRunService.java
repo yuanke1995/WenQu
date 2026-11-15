@@ -10,6 +10,7 @@ import com.wenqu.ai.mapper.OpenRunMapper;
 import com.wenqu.ai.model.Agent;
 import com.wenqu.ai.model.OpenRun;
 import com.wenqu.ai.openapi.RequestIdFilter;
+import com.wenqu.ai.service.ChatRunBus;
 import com.wenqu.ai.service.ChatService;
 import com.wenqu.ai.service.SessionService;
 import com.wenqu.ai.service.TurnSource;
@@ -26,6 +27,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 对外开放运行的建轮 / 归属 / 状态 / 事件流。
@@ -45,6 +47,26 @@ public class OpenRunService {
     private final AgentMapper agentMapper;
     private final RunEventReplay replay;
     private final AgentWebhookService agentWebhookService;
+    private final ChatRunBus chatRunBus;
+
+    /**
+     * 运行期的总线旁路句柄（runId → 取消订阅）。
+     * <p>产物事件由工具线程按 sessionId 发到运行总线，而对外 run 的通道是收集型（不登记总线），
+     * 靠这条旁路才能把 {@code artifact.created} 投影出去；终结时必须取消，否则同一会话的帧会
+     * 一直复制给已经结束的 run。</p>
+     */
+    private final Map<String, Runnable> busTaps = new ConcurrentHashMap<>();
+
+    /**
+     * 「已中断」判定阈值：超过这个时长还看不到回放缓冲，就不再认为它还在跑。
+     * <p>取 30 分钟是有依据的上界：一轮的工作时长受 {@code chat.sseTimeoutMs} 截断（默认 5 分钟），
+     * 等待人操作不计入其中，而审批等待上限 10 分钟——两者相加仍在半小时内。所以「半小时还没缓冲」
+     * 只剩一种解释：跑它的进程已经没了（重启 / 副本切换 / 被杀）。</p>
+     */
+    private static final Duration ABANDONED_AFTER = Duration.ofMinutes(30);
+
+    /** 中断码：v1 自产（不是从 native 文案猜的），见 docs/errors */
+    private static final String RUN_INTERRUPTED = "run_interrupted";
 
     /** 建一次运行；Idempotency-Key 命中时直接回同一 runId，不新起轮 */
     public Map<String, Object> create(String uid, String apiKeyId, String agentId, String question,
@@ -106,6 +128,7 @@ public class OpenRunService {
                 .agentId(row.getAgentId())
                 .source(TurnSource.USER).sourceName("open-run")
                 .build();
+        busTaps.put(runId, chatRunBus.tap(sid, emitter::onBusFrame));
         chatService.chat(cmd, emitter);
         log.info("[OPEN-RUN] 建轮 uid={} run={} session={} agent={}", uid, runId, sid, row.getAgentId());
         return detail(row, requestId);
@@ -122,6 +145,7 @@ public class OpenRunService {
 
     /** GET /runs/{id} 与 run.done 同口径 */
     public Map<String, Object> detail(OpenRun row, String requestId) {
+        row = reapIfAbandoned(row);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("runId", row.getRunId());
         out.put("status", row.getStatus());
@@ -146,6 +170,8 @@ public class OpenRunService {
     }
 
     private void finish(String runId, OpenRunEmitter.Terminal t) {
+        Runnable untap = busTaps.remove(runId);
+        if (untap != null) untap.run();
         LocalDateTime now = LocalDateTime.now();
         mapper.update(null, new LambdaUpdateWrapper<OpenRun>()
                 .eq(OpenRun::getRunId, runId)
@@ -229,6 +255,30 @@ public class OpenRunService {
         }
     }
 
+    /**
+     * 卡在 {@code running} 又长时间没有任何事件缓冲的 run，收敛成 {@code run_interrupted}。
+     * <p><b>为什么必须有一条读路径上的收敛</b>：投影层只在「进程还活着」时才写终态，
+     * 服务重启/副本切换会让 c_ai_open_run 永远停在 running，集成方按文档轮询就永远等不到终态。
+     * 放在读路径而不是定时任务里：不新增调度挂点（ScheduleCenter 正在别处重构），也天然只对
+     * 「真的有人在看的那条 run」生效；判据是「年龄超阈值 + 回放缓冲不可用」，不靠猜。</p>
+     */
+    private OpenRun reapIfAbandoned(OpenRun row) {
+        if (row == null || !"running".equals(row.getStatus())) return row;
+        LocalDateTime at = row.getCreateTime();
+        if (at == null || at.isAfter(LocalDateTime.now().minus(ABANDONED_AFTER))) return row;
+        // 还有缓冲 = 这一刻仍在写事件，不动它
+        if (replay.available(row.getRunId())) return row;
+        mapper.update(null, new LambdaUpdateWrapper<OpenRun>()
+                .eq(OpenRun::getRunId, row.getRunId())
+                .eq(OpenRun::getStatus, "running")
+                .set(OpenRun::getStatus, "failed")
+                .set(OpenRun::getErrorCode, RUN_INTERRUPTED)
+                .set(OpenRun::getErrorMessage, "运行已中断（服务重启或副本切换）：长时间无事件且回放缓冲已过期")
+                .set(OpenRun::getFinishTime, LocalDateTime.now()));
+        log.warn("[OPEN-RUN] 中断收敛 run={} 建于 {}：状态置 run_interrupted", row.getRunId(), at);
+        return mapper.selectById(row.getRunId());
+    }
+
     /** 回放首帧 + 启动后台推送；用 commonPool 而非问答池，长连接不占业务线程 */
     public void attach(String runId, long lastEventId, SseEmitter emitter) {
         List<Map<String, Object>> frames = replay.since(runId, lastEventId);
@@ -247,7 +297,7 @@ public class OpenRunService {
                 }
             }
         }
-        OpenRun row = mapper.selectById(runId);
+        OpenRun row = reapIfAbandoned(mapper.selectById(runId));
         if (row != null && !"running".equals(row.getStatus()) && frames.isEmpty()) {
             try {
                 emitter.complete();

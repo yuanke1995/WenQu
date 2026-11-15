@@ -36,9 +36,9 @@ lead: v1 的错误体只有一种形状，`code` 可编程、`message` 说人话
 
 | `code` | 出现在 | 含义 |
 |---|---|---|
-| `approval_timeout` | `run.error` / `approval.timed_out` | 审批卡超时，本次运行按失败收口 |
-| `resume_expired` | `run.error` | 事件回放缓冲过期（10 分钟），改拉 `GET /runs/{id}` |
-| `run_interrupted` | `run.error` | 运行被中断（服务重启 / 副本切换），重查终态再决定是否重建 |
+| `approval_timeout` | `approval.timed_out`（过程事件） | 审批卡超时：这一步未执行，本轮仍以 `run.done` 收口。要当失败处理由集成方自己判定 |
+| `resume_expired` | `run.error` | 事件回放缓冲过期（保留 10 分钟），改拉 `GET /runs/{id}` 取终态与输出 |
+| `run_interrupted` | `run.error` | 运行已中断（服务重启 / 副本切换 / 进程被杀）：状态由 `GET /runs/{id}` 在超过 30 分钟且回放缓冲不可用时收敛，不会永远 `running` |
 | `invalid_request` / `authentication_error` / `permission_error` / `not_found` / `rate_limit_error` | HTTP 错误体 | 与状态码一一对应 |
 
 ## 缺 scope 的文案到底写了什么

@@ -59,13 +59,35 @@ public class OpenRunEmitter extends CollectingSseEmitter {
     }
 
     private void project(String nativeType, String rawFrame) {
-        String v1 = EVENTS.get(nativeType);
-        if (v1 == null || settled) return;
         JSONObject frame = dataOf(rawFrame);
         if (frame == null) {
             log.warn("[OPEN-RUN] 事件帧无 data 段，跳过 run={} type={}", runId, nativeType);
             return;
         }
+        projectFrame(nativeType, frame);
+    }
+
+    /**
+     * 总线旁路来的帧（{@code ArtifactService.publish} 这类「工具线程按 sessionId 发一条」的事件）。
+     * <p>它们的载荷本身就是 JSON 值，没有 {@code data:} 外壳；语义与同名 native 帧一致，
+     * 所以走同一个翻译器。没有这层，契约里承诺的 {@code artifact.created} 一帧都到不了集成方——
+     * 产物事件不走当轮通道，而收集型通道不登记在运行总线上。</p>
+     */
+    public void onBusFrame(String nativeType, String rawJson) {
+        if (settled) return;
+        JSONObject frame = new JSONObject();
+        try {
+            frame.put("content", rawJson == null || rawJson.isBlank() ? null : JSON.parse(rawJson));
+        } catch (Exception e) {
+            // 载荷不是合法 JSON 时原样透传，由 payload() 的兜底分支处理，不吞掉这条事件
+            frame.put("content", rawJson);
+        }
+        projectFrame(nativeType, frame);
+    }
+
+    private void projectFrame(String nativeType, JSONObject frame) {
+        String v1 = EVENTS.get(nativeType);
+        if (v1 == null || settled) return;
         Object rawContent = frame.get("content");
         String content = rawContent instanceof String s ? s
                 : (rawContent == null ? "" : JSON.toJSONString(rawContent));

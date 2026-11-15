@@ -20,6 +20,17 @@ const CHUNK_MS = +process.env.CHUNK_MS || 40;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * 工具调用 id 必须每次都不一样。
+ *
+ * <p>原先每一处都写死 {@code call_mock_ask_1} 这类固定串，而问渠把「模型给的 tool_call id」直接当作
+ * 人在回路卡片的**主键**（`c_ai_tool_approval.id`）：40 路并发压测时 39 张卡的主键撞车，落库失败只留一条
+ * WARN，于是「40 路挂起」实际是 1 路挂起、39 路在内存里互相覆盖句柄；单路连跑两次也会让第二次的审批
+ * 被判定「审批卡不属于这次运行」。真实网关给的是 {@code call_<24位随机>}，这个固定串是 mock 自己的想当然。</p>
+ */
+let CALL_SEQ = 0;
+const callId = (kind) => `call_mock_${kind}_${Date.now().toString(36)}${(++CALL_SEQ).toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     const parts = [];
@@ -87,6 +98,13 @@ const server = http.createServer(async (req, res) => {
       }));
       return;
     }
+    if (req.method === 'POST' && url === '/echo') {
+      // HTTP 工具（agent.httpTools）的落点：验「有副作用工具 → 审批闸 → 真执行」时工具得有地方可打
+      const body = await readBody(req);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, echo: body, at: new Date().toISOString() }));
+      return;
+    }
     if (req.method !== 'POST' || url !== '/v1/chat/completions') {
       res.writeHead(404).end();
       return;
@@ -106,6 +124,14 @@ const server = http.createServer(async (req, res) => {
     const wantsArtifact = userText.includes('[[ARTIFACT]]');
     const wantsPlan = userText.includes('[[PLAN]]');
     const wantsApproval = userText.includes('[[APPROVAL]]');
+    // 按名调任意工具：`[[TOOL:<工具名>]]` 让模型发一次该工具的调用，工具结果回来后给正文收尾。
+    // 用来验「有副作用的工具走审批闸」这条（HTTP 工具 / MCP 工具都属于动态接入，
+    // 不在注册中心静态清单里，requiresApproval 走 fail-closed=true），
+    // 而联网搜索已经改成不要求审批，[[APPROVAL]] 那条老用例因此不再产生审批卡。
+    const namedTool = (userText.match(/\[\[TOOL:([A-Za-z0-9_.:-]+)\]\]/) || [])[1] || '';
+    // 全链路：一张提问卡 → 一次产物交付 → 正文收尾。用完这一条就把「token → 审批 → 产物 → done」
+    // 压进**同一次运行**里验（v1 run 的验收口径），而不是分三次各验一段。
+    const wantsChain = userText.includes('[[CHAIN]]');
     const wantsLoop = userText.includes('[[LOOP]]');
     const wantsRich = userText.includes('[[RICHTEXT]]');
     // 一句话被工具调用劈开：前半句 → 工具 → 后半句，用来验「正文一条流」不按工具边界切正文
@@ -132,7 +158,7 @@ const server = http.createServer(async (req, res) => {
       const emitTool = async (name, args) => {
         res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
         chunk(res, id, model, { role: 'assistant', tool_calls: [{
-          index: 0, id: 'call_mock_goal_' + name + '_' + Date.now(), type: 'function',
+          index: 0, id: callId('goal_' + name), type: 'function',
           function: { name, arguments: JSON.stringify(args) },
         }] });
         await sleep(120);
@@ -192,7 +218,7 @@ const server = http.createServer(async (req, res) => {
       chunk(res, id, model, { content: '我先查一下最近' });
       await sleep(120);
       chunk(res, id, model, { tool_calls: [{
-        index: 0, id: 'call_mock_split_1', type: 'function',
+        index: 0, id: callId('split'), type: 'function',
         function: { name: 'read_file', arguments: JSON.stringify({ path: 'README.md' }) },
       }] });
       await sleep(120);
@@ -248,7 +274,7 @@ const server = http.createServer(async (req, res) => {
     if (wantsLoop && calledTools.filter((n) => n === 'read_file').length < 8) {
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
       chunk(res, id, model, { role: 'assistant', tool_calls: [{
-        index: 0, id: `call_mock_loop_${calledTools.filter((n) => n === 'read_file').length + 1}`, type: 'function',
+        index: 0, id: callId('loop'), type: 'function',
         function: { name: 'read_file', arguments: JSON.stringify({ path: 'README.md' }) },
       }] });
       await sleep(120);
@@ -264,7 +290,7 @@ const server = http.createServer(async (req, res) => {
       const n = calledTools.filter((x) => x === 'webSearch').length + 1;
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
       chunk(res, id, model, { role: 'assistant', tool_calls: [{
-        index: 0, id: `call_mock_search_${n}`, type: 'function',
+        index: 0, id: callId('search_' + n), type: 'function',
         function: {
           name: 'webSearch',
           arguments: JSON.stringify({ query: `blocks approval case ${n}` }),
@@ -281,7 +307,7 @@ const server = http.createServer(async (req, res) => {
       // 计划三步：plan_write（正文）→ plan_exit（确认卡）→ 批准后出答案
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
       chunk(res, id, model, { role: 'assistant', tool_calls: [{
-        index: 0, id: 'call_mock_plan_write_1', type: 'function',
+        index: 0, id: callId('plan_write'), type: 'function',
         function: {
           name: 'plan_write',
           arguments: JSON.stringify({
@@ -299,7 +325,7 @@ const server = http.createServer(async (req, res) => {
     if (wantsPlan && !calledTools.includes('plan_exit')) {
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
       chunk(res, id, model, { role: 'assistant', tool_calls: [{
-        index: 0, id: 'call_mock_plan_exit_1', type: 'function',
+        index: 0, id: callId('plan_exit'), type: 'function',
         function: { name: 'plan_exit', arguments: JSON.stringify({ summary: '按三步走' }) },
       }] });
       await sleep(200);
@@ -318,7 +344,7 @@ const server = http.createServer(async (req, res) => {
         Connection: 'keep-alive',
       });
       chunk(res, id, model, { role: 'assistant', tool_calls: [{
-        index: 0, id: 'call_mock_artifact_1', type: 'function',
+        index: 0, id: callId('artifact'), type: 'function',
         function: {
           name: 'presentArtifact',
           arguments: JSON.stringify({
@@ -336,6 +362,72 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (wantsChain) {
+      const sse = () => res.writeHead(200, {
+        'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive',
+      });
+      const call = async (name, args) => {
+        sse();
+        chunk(res, id, model, { role: 'assistant', tool_calls: [{
+          index: 0, id: callId(name), type: 'function',
+          function: { name, arguments: JSON.stringify(args) },
+        }] });
+        await sleep(150);
+        chunk(res, id, model, {}, 'tool_calls');
+        res.write('data: [DONE]\n\n');
+        res.end();
+      };
+      if (!calledTools.includes('askUser')) {
+        await call('askUser', {
+          topic: '验收', question: '全链路验收：请选一个方案', options: ['方案A', '方案B'],
+        });
+        return;
+      }
+      if (!calledTools.includes('presentArtifact')) {
+        await call('presentArtifact', {
+          filename: 'chain-demo.html',
+          description: '全链路验收产物',
+          content: '<!DOCTYPE html><html><head><meta charset="utf-8"><title>chain</title></head>'
+            + '<body><h1>全链路产物</h1><p>审批后交付的产物，用于验证 artifact.created 与产物清单同源。</p></body></html>',
+        });
+        return;
+      }
+      sse();
+      chunk(res, id, model, { role: 'assistant' });
+      chunk(res, id, model, { content: '审批已收到，产物已交付，这一轮结束。' });
+      await sleep(120);
+      chunk(res, id, model, {}, 'stop');
+      res.write('data: [DONE]\n\n');
+      res.end();
+      return;
+    }
+
+    if (namedTool) {
+      if (!calledTools.includes(namedTool)) {
+        // 第一轮：发一次指定工具的调用。参数按 HTTP 工具的通用形状给（text 字段），
+        // MCP 工具若名字不同再按需扩展；工具表里没有该工具时框架会回一条 error，仍然可验拒绝路径。
+        res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+        chunk(res, id, model, { role: 'assistant', tool_calls: [{
+          index: 0, id: callId('tool'), type: 'function',
+          function: { name: namedTool, arguments: JSON.stringify({ text: 'approval probe' }) },
+        }] });
+        await sleep(200);
+        chunk(res, id, model, {}, 'tool_calls');
+        res.write('data: [DONE]\n\n');
+        res.end();
+        return;
+      }
+      // 工具结果（批准执行或被拒）已回传：给正文收尾
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+      chunk(res, id, model, { role: 'assistant' });
+      chunk(res, id, model, { content: `已处理 ${namedTool} 的调用结果。` });
+      await sleep(120);
+      chunk(res, id, model, {}, 'stop');
+      res.write('data: [DONE]\n\n');
+      res.end();
+      return;
+    }
+
     if (!hasToolResult && wantsAsk) {
       // 第一轮：流式下发 askUser 工具调用。参数面照 AskUserTool 的 schema：
       // {question(必填), options[], multi, topic}——早先这里发的是 questions[]，工具按 schema 校验
@@ -347,7 +439,7 @@ const server = http.createServer(async (req, res) => {
         Connection: 'keep-alive',
       });
       chunk(res, id, model, { role: 'assistant', tool_calls: [{
-        index: 0, id: 'call_mock_ask_1', type: 'function',
+        index: 0, id: callId('ask'), type: 'function',
         function: {
           name: 'askUser',
           arguments: JSON.stringify({

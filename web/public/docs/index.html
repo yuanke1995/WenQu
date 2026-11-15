@@ -450,8 +450,8 @@ print(summary[&quot;status&quot;])</code></pre>
 <tr><td><code>tool.status</code></td><td>工具执行进度</td><td><code>native:{name,status,elapsedMs,stepId}</code></td></tr>
 <tr><td><code>plan.updated</code></td><td>计划最新快照（不做逐条 diff）</td><td><code>plan</code></td></tr>
 <tr><td><code>approval.required</code></td><td>需要人决定</td><td><code>approvalId</code> <code>kind</code> <code>payload</code></td></tr>
-<tr><td><code>artifact.created</code></td><td>产生了可下载产物</td><td><code>artifact:{id,filename,ext,size,preview,description}</code></td></tr>
-<tr><td><code>approval.timed_out</code></td><td>审批超时（非超时的 <code>warn</code> 不投）</td><td><code>code=approval_timeout</code> <code>message</code></td></tr>
+<tr><td><code>artifact.created</code></td><td>产生了可下载产物（<strong>在 <code>run.done</code> 之前到</strong>，可即时渲染下载入口）</td><td><code>artifact:{id,filename,ext,size,preview,description}</code></td></tr>
+<tr><td><code>approval.timed_out</code></td><td>审批卡超时（非超时的 <code>warn</code> 不投）；<strong>不代表整轮失败</strong>，见下</td><td><code>code=approval_timeout</code> <code>message</code></td></tr>
 <tr><td><code>run.done</code></td><td>终态成功</td><td><code>status</code> <code>finalContent</code> <code>usage</code> <code>sources</code> <code>artifacts</code></td></tr>
 <tr><td><code>run.error</code></td><td>终态失败</td><td><code>status=failed</code> <code>code</code> <code>message</code> <code>request_id</code></td></tr>
 </tbody></table></div>
@@ -473,8 +473,11 @@ data: {&quot;runId&quot;:&quot;9f2c…&quot;,&quot;approvalId&quot;:&quot;ap_88&
 <ul>
 <li>卡片已处理或已超时 → <strong>409</strong>，文案是「已处理或已失效」。重新拉事件流取新的 <code>approvalId</code>， 不要拿旧 id 重试。</li>
 <li>审批卡不在本副本时由网关内部转发到宿主副本，调用方无感。</li>
-<li>超时后终态按 <code>run.error(code=approval_timeout)</code> 收口，不是永远 <code>running</code>。</li>
+<li><code>approvalId</code> 是不透明字符串（形如 <code>call_…</code>，由产生这张卡的模型调用 id 派生成主键）， 不要解析、不要自己拼，只按事件里给的原样回传。</li>
 </ul>
+<h3 id="超时-这一步被跳过-不是整轮失败"><a class="anchor" href="#超时-这一步被跳过-不是整轮失败" aria-hidden="true">#</a>超时：这一步被跳过，不是整轮失败</h3>
+<p>审批等待到达上限（<code>chat.approvalTimeoutMs</code>，默认 10 分钟）时，先到一帧 <code>approval.timed_out</code>（<code>code=approval_timeout</code>），工具/计划按「未批准」处理； <strong>本轮仍会以 <code>run.done</code> 收口</strong>，<code>finalContent</code> 说明这一步没有执行。</p>
+<p>所以判定要按事件、不要按状态：<code>run.done(status=succeeded)</code> 只表示「这一轮跑完了」， 不代表工具执行过。需要「超时即失败」的集成方，自己把 <code>approval.timed_out</code> 记成失败即可。 只有 <code>run.error</code> 才是整轮失败（<code>code</code> 见「错误码与限频」）。</p>
 <h2 id="续传-last-event-id-seq"><a class="anchor" href="#续传-last-event-id-seq" aria-hidden="true">#</a>续传：<code>Last-Event-ID</code> + seq</h2>
 <div class="code">
   <div class="code-top"><span class="code-lang">bash</span><span class="spacer"></span><button class="copy" type="button">复制</button></div>
@@ -749,9 +752,9 @@ async function fallback(runId) {
 <div class="tbl-wrap"><table>
 <thead><tr><th><code>code</code></th><th>出现在</th><th>含义</th></tr></thead>
 <tbody>
-<tr><td><code>approval_timeout</code></td><td><code>run.error</code> / <code>approval.timed_out</code></td><td>审批卡超时，本次运行按失败收口</td></tr>
-<tr><td><code>resume_expired</code></td><td><code>run.error</code></td><td>事件回放缓冲过期（10 分钟），改拉 <code>GET /runs/{id}</code></td></tr>
-<tr><td><code>run_interrupted</code></td><td><code>run.error</code></td><td>运行被中断（服务重启 / 副本切换），重查终态再决定是否重建</td></tr>
+<tr><td><code>approval_timeout</code></td><td><code>approval.timed_out</code>（过程事件）</td><td>审批卡超时：这一步未执行，本轮仍以 <code>run.done</code> 收口。要当失败处理由集成方自己判定</td></tr>
+<tr><td><code>resume_expired</code></td><td><code>run.error</code></td><td>事件回放缓冲过期（保留 10 分钟），改拉 <code>GET /runs/{id}</code> 取终态与输出</td></tr>
+<tr><td><code>run_interrupted</code></td><td><code>run.error</code></td><td>运行已中断（服务重启 / 副本切换 / 进程被杀）：状态由 <code>GET /runs/{id}</code> 在超过 30 分钟且回放缓冲不可用时收敛，不会永远 <code>running</code></td></tr>
 <tr><td><code>invalid_request</code> / <code>authentication_error</code> / <code>permission_error</code> / <code>not_found</code> / <code>rate_limit_error</code></td><td>HTTP 错误体</td><td>与状态码一一对应</td></tr>
 </tbody></table></div>
 <h2 id="缺-scope-的文案到底写了什么"><a class="anchor" href="#缺-scope-的文案到底写了什么" aria-hidden="true">#</a>缺 scope 的文案到底写了什么</h2>

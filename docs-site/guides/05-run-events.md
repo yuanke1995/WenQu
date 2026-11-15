@@ -61,8 +61,8 @@ curl -X POST __BASE__/api/ai/v1/agents/<智能体id>/runs \
 | `tool.status` | 工具执行进度 | `native:{name,status,elapsedMs,stepId}` |
 | `plan.updated` | 计划最新快照（不做逐条 diff） | `plan` |
 | `approval.required` | 需要人决定 | `approvalId` `kind` `payload` |
-| `artifact.created` | 产生了可下载产物 | `artifact:{id,filename,ext,size,preview,description}` |
-| `approval.timed_out` | 审批超时（非超时的 `warn` 不投） | `code=approval_timeout` `message` |
+| `artifact.created` | 产生了可下载产物（**在 `run.done` 之前到**，可即时渲染下载入口） | `artifact:{id,filename,ext,size,preview,description}` |
+| `approval.timed_out` | 审批卡超时（非超时的 `warn` 不投）；**不代表整轮失败**，见下 | `code=approval_timeout` `message` |
 | `run.done` | 终态成功 | `status` `finalContent` `usage` `sources` `artifacts` |
 | `run.error` | 终态失败 | `status=failed` `code` `message` `request_id` |
 
@@ -89,7 +89,18 @@ curl -X POST __BASE__/api/ai/v1/runs/<runId>/approvals \
 - 卡片已处理或已超时 → **409**，文案是「已处理或已失效」。重新拉事件流取新的 `approvalId`，
   不要拿旧 id 重试。
 - 审批卡不在本副本时由网关内部转发到宿主副本，调用方无感。
-- 超时后终态按 `run.error(code=approval_timeout)` 收口，不是永远 `running`。
+- `approvalId` 是不透明字符串（形如 `call_…`，由产生这张卡的模型调用 id 派生成主键），
+  不要解析、不要自己拼，只按事件里给的原样回传。
+
+### 超时：这一步被跳过，不是整轮失败
+
+审批等待到达上限（`chat.approvalTimeoutMs`，默认 10 分钟）时，先到一帧
+`approval.timed_out`（`code=approval_timeout`），工具/计划按「未批准」处理；
+**本轮仍会以 `run.done` 收口**，`finalContent` 说明这一步没有执行。
+
+所以判定要按事件、不要按状态：`run.done(status=succeeded)` 只表示「这一轮跑完了」，
+不代表工具执行过。需要「超时即失败」的集成方，自己把 `approval.timed_out` 记成失败即可。
+只有 `run.error` 才是整轮失败（`code` 见「错误码与限频」）。
 
 ## 续传：`Last-Event-ID` + seq
 
