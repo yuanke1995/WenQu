@@ -1,5 +1,6 @@
 <template>
-  <!-- 每轮文件改动卡：这一轮助手在工作区里改了哪些文件、各多少行。
+  <!-- 每轮文件改动卡：这一轮窗口里工作区发生了哪些改动、各多少行（与 DSH 同口径，
+       不区分写入者——并行会话、用户本人在同一窗口里的写入也会列出来）。
        行点击经 data-pv 进预览台的 diff 档——差异由本机执行器现算，快照过期会给出可读提示。 -->
   <div v-if="rows.length" class="tcc" data-changed-files>
     <button type="button" class="tcc-head" :aria-expanded="open" @click="open = !open">
