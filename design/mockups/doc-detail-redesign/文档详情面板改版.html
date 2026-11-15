@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>文档详情面板 · 改版对照</title>
+<style>
+  :root{
+    --bg:#f7f8fa; --panel:#fff; --panel2:#fafbfc;
+    --border:#e6e9ed; --border-strong:#d8dde3;
+    --text:#1f2329; --text2:#5f6570; --text3:#98a0aa;
+    --accent:#2e6be6; --accent-weak:#eef2f7; --accent-border:#bcd0f7;
+    --ok:#3b8f4e; --ok-weak:#eaf5ec;
+    --info-weak:#f0f6ff;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; padding:30px 24px 40px; background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1180px;margin:0 auto}
+  header{margin-bottom:22px}
+  header h1{font-size:17px;font-weight:600;margin:0 0 6px;letter-spacing:.01em}
+  header p{font-size:12px;color:var(--text2);margin:0}
+
+  section{margin-bottom:28px}
+  .cap{display:flex;align-items:center;gap:8px;margin:0 0 9px}
+  .cap b{font-size:12px;font-weight:600;color:var(--text);border:1px solid var(--border-strong);border-radius:999px;padding:3px 10px;background:#fff}
+  .cap b.rec{border-color:var(--accent-border);background:var(--accent-weak);color:var(--accent)}
+  .cap span{font-size:11.5px;color:var(--text3)}
+
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:10px;overflow:hidden;box-shadow:0 1px 2px rgba(16,24,40,.04)}
+
+  /* ===== 列表行（与线上同尺寸） ===== */
+  .doc-row{display:flex;align-items:center;gap:10px;padding:9px 14px;border-bottom:1px solid var(--panel2);font-size:12px;color:var(--text2)}
+  .head-row{font-size:11px;color:var(--text3);background:var(--panel2);border-bottom:1px solid var(--border)}
+  .row-open{background:var(--accent-weak)}
+  .col-check{width:26px;flex:none}
+  .col-name{flex:1;min-width:0;display:flex;align-items:center;gap:8px}
+  .col-num{width:48px;flex:none;text-align:right}
+  .col-size{width:72px;flex:none;text-align:right}
+  .col-status{width:130px;flex:none}
+  .col-time{width:130px;flex:none}
+  .col-act{width:168px;flex:none;text-align:right;white-space:nowrap}
+  .cb{display:inline-block;width:15px;height:15px;border:1px solid #d0d5dc;border-radius:3px;background:#fff;vertical-align:-3px}
+  .chev{display:inline-flex;color:var(--text3);flex:none}
+  .fic{width:34px;height:24px;border-radius:5px;font-size:9px;font-weight:500;flex:none;display:inline-flex;align-items:center;justify-content:center;letter-spacing:.5px;background:var(--info-weak);color:var(--accent)}
+  .fname{color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+  .lnk{color:var(--accent);font-size:12px;margin-left:10px}
+  .more{color:var(--text3);margin-left:12px;font-size:14px;letter-spacing:1px}
+  .doc-foot{display:flex;align-items:center;gap:10px;padding:8px 14px;border-top:1px solid var(--border);background:var(--panel2);font-size:10.5px;color:var(--text3)}
+  .doc-foot .sp{flex:1}
+  .pill{display:inline-flex;align-items:center;gap:5px;font-size:11px;line-height:1;padding:4px 8px;border-radius:999px;white-space:nowrap}
+  .pill::before{content:'';width:5px;height:5px;border-radius:50%;background:currentColor}
+  .pill.ok{color:var(--ok);background:var(--ok-weak)}
+
+  /* ===== 现状 ===== */
+  .de-now{padding:10px 16px 12px 60px;background:var(--panel2);border-bottom:1px solid var(--border)}
+  .de-now .row{display:flex;align-items:flex-start;gap:10px;font-size:11.5px;line-height:20px;color:var(--text2);padding:2px 0}
+  .de-now .k{width:42px;flex:none;color:var(--text3)}
+  .de-now .v{min-width:0;flex:1}
+  .de-now .url{color:var(--accent)}
+  .sel{display:inline-flex;align-items:center;justify-content:space-between;width:170px;height:24px;padding:0 7px 0 8px;border:1px solid #d9d9d9;border-radius:6px;background:#fff;font-size:12px;color:var(--text);line-height:22px}
+  .sel .car{display:inline-flex;color:var(--text3)}
+  .links{margin-left:auto;display:inline-flex;align-items:center;gap:14px}
+  .link{font-size:11.5px;color:var(--accent);cursor:pointer}
+  .de-now .links{align-self:center}
+
+  /* ===== 方案 A：属性网格 ===== */
+  .de-a{padding:14px 16px 0 60px;background:var(--panel2);border-bottom:1px solid var(--border)}
+  .de-a .grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));column-gap:22px;align-items:start}
+  .de-a .item{min-width:0}
+  .de-a .item.wide{grid-column:span 2}
+  .de-a .k{font-size:10.5px;line-height:16px;color:var(--text3)}
+  .de-a .v{margin-top:3px;font-size:12px;line-height:20px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .de-a .v.muted{color:var(--text3)}
+  .de-a .bar{display:flex;align-items:center;gap:12px;margin-top:12px;padding:9px 0 10px;border-top:1px solid var(--border)}
+  .de-a .hint{font-size:10.5px;color:var(--text3)}
+  .kb-chip{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 7px 0 8px;border:1px solid #e0e5ec;border-radius:7px;background:#fff;font-family:inherit;font-size:12px;color:var(--text);cursor:pointer;box-shadow:0 1px 2px rgba(16,24,40,.04);transition:border-color .15s,color .15s}
+  .kb-chip:hover{border-color:var(--accent-border);color:var(--accent)}
+  .kb-chip .ic{display:inline-flex;color:var(--accent)}
+  .kb-chip .n{font-size:10.5px;color:var(--text3)}
+  .kb-chip .car{display:inline-flex;color:var(--text3);margin-left:1px}
+
+  /* ===== 方案 B：单列幽灵控件 ===== */
+  .de-b{padding:9px 16px 10px 60px;background:var(--panel2);border-bottom:1px solid var(--border)}
+  .de-b .row{display:flex;align-items:center;gap:10px;font-size:12px;line-height:22px;color:var(--text2);padding:1.5px 0}
+  .de-b .k{width:44px;flex:none;font-size:11px;color:var(--text3)}
+  .de-b .v{min-width:0;flex:1;color:var(--text2)}
+  .de-b .v.dark{color:var(--text)}
+  .de-b .v.muted{color:var(--text3)}
+  .kb-ghost{display:inline-flex;align-items:center;gap:6px;height:24px;margin-left:-7px;padding:0 6px;border:1px solid transparent;border-radius:6px;background:transparent;font-family:inherit;font-size:12px;color:var(--text);cursor:pointer;transition:border-color .15s,background .15s}
+  .kb-ghost:hover{border-color:var(--border);background:#fff}
+  .kb-ghost .ic{display:inline-flex;color:var(--accent)}
+  .kb-ghost .n{font-size:11px;color:var(--text3)}
+  .kb-ghost .car{display:inline-flex;color:var(--text3);margin-left:1px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>文档详情面板 · 改版对照</h1>
+    <p>同一个展开态：归属从「嵌在文字里的表单框」改成与信息层级匹配的控件；顺带收掉右侧的空白。</p>
+  </header>
+
+  <!-- ============ 现状 ============ -->
+  <section>
+    <div class="cap"><b>现状</b><span>单列 11.5px 文字 + 带框下拉：控件比周围文字重，底部大片留白</span></div>
+    <div class="card">
+      <div class="doc-row head-row">
+        <span class="col-check"></span><span class="col-name">文件名</span>
+        <span class="col-num">知识块</span><span class="col-num">命中</span>
+        <span class="col-size">大小</span><span class="col-status">状态</span>
+        <span class="col-time">更新时间</span><span class="col-act">操作</span>
+      </div>
+      <div class="doc-row row-open">
+        <span class="col-check"><span class="cb"></span></span>
+        <span class="col-name">
+          <span class="chev"><svg width="10" height="10" viewBox="0 0 12 12"><path d="M2.6 4.4 6 7.8l3.4-3.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          <span class="fic">DOCX</span>
+          <span class="fname">中华人民共和国监狱法_20260430.docx</span>
+        </span>
+        <span class="col-num">12</span><span class="col-num">3</span>
+        <span class="col-size">105.5 KB</span>
+        <span class="col-status"><span class="pill ok">已入库</span></span>
+        <span class="col-time">2026-11-02 15:21</span>
+        <span class="col-act"><span class="lnk">知识块</span><span class="lnk">下载</span><span class="more">⋯</span></span>
+      </div>
+      <div class="de-now">
+        <div class="row"><span class="k">描述</span><span class="v">暂无描述</span></div>
+        <div class="row"><span class="k">标签</span><span class="v">未设置</span></div>
+        <div class="row"><span class="k">来源</span><span class="v">本地上传</span></div>
+        <div class="row"><span class="k">解析</span><span class="v">已入库</span></div>
+        <div class="row">
+          <span class="k">归属</span>
+          <span class="v"><span class="sel"><span>问渠（3）</span><span class="car"><svg width="10" height="10" viewBox="0 0 12 12"><path d="M2.6 4.4 6 7.8l3.4-3.4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg></span></span></span>
+          <span class="links"><span class="link">查看知识块</span><span class="link">编辑标签</span><span class="link">下载源文件</span></span>
+        </div>
+      </div>
+      <div class="doc-row">
+        <span class="col-check"><span class="cb"></span></span>
+        <span class="col-name">
+          <span class="chev"><svg width="10" height="10" viewBox="0 0 12 12"><path d="M2.6 4.4 6 7.8l3.4-3.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          <span class="fic">PDF</span>
+          <span class="fname">劳动合同法实施条例.pdf</span>
+        </span>
+        <span class="col-num">64</span><span class="col-num">18</span>
+        <span class="col-size">2.1 MB</span>
+        <span class="col-status"><span class="pill ok">已入库</span></span>
+        <span class="col-time">2026-11-05 09:40</span>
+        <span class="col-act"><span class="lnk">知识块</span><span class="lnk">下载</span><span class="more">⋯</span></span>
+      </div>
+      <div class="doc-foot"><span>3 个文档 · 3 个生效 · 76 片段 · 占用 105.5 KB</span><span class="sp"></span><span>解析完成后自动参与检索</span></div>
+    </div>
+  </section>
+
+  <!-- ============ 方案 A ============ -->
+  <section>
+    <div class="cap"><b class="rec">方案 A · 推荐</b><span>属性网格（标签在上、值在下）+ 归属胶囊 + 底部操作条：一屏读完，控件不再是表单框</span></div>
+    <div class="card">
+      <div class="doc-row head-row">
+        <span class="col-check"></span><span class="col-name">文件名</span>
+        <span class="col-num">知识块</span><span class="col-num">命中</span>
+        <span class="col-size">大小</span><span class="col-status">状态</span>
+        <span class="col-time">更新时间</span><span class="col-act">操作</span>
+      </div>
+      <div class="doc-row row-open">
+        <span class="col-check"><span class="cb"></span></span>
+        <span class="col-name">
+          <span class="chev"><svg width="10" height="10" viewBox="0 0 12 12"><path d="M2.6 4.4 6 7.8l3.4-3.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          <span class="fic">DOCX</span>
+          <span class="fname">中华人民共和国监狱法_20260430.docx</span>
+        </span>
+        <span class="col-num">12</span><span class="col-num">3</span>
+        <span class="col-size">105.5 KB</span>
+        <span class="col-status"><span class="pill ok">已入库</span></span>
+        <span class="col-time">2026-11-02 15:21</span>
+        <span class="col-act"><span class="lnk">知识块</span><span class="lnk">下载</span><span class="more">⋯</span></span>
+      </div>
+      <div class="de-a">
+        <div class="grid">
+          <div class="item wide"><div class="k">描述</div><div class="v muted">暂无描述</div></div>
+          <div class="item"><div class="k">标签</div><div class="v muted">未设置</div></div>
+          <div class="item"><div class="k">来源</div><div class="v">本地上传</div></div>
+          <div class="item"><div class="k">解析</div><div class="v"><span class="pill ok">已入库</span></div></div>
+          <div class="item">
+            <div class="k">归属</div>
+            <div class="v">
+              <button class="kb-chip" type="button">
+                <span class="ic"><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><ellipse cx="8" cy="3.6" rx="5.2" ry="2" stroke="currentColor" stroke-width="1.2"/><path d="M2.8 3.6v8.8c0 1.1 2.33 2 5.2 2s5.2-.9 5.2-2V3.6" stroke="currentColor" stroke-width="1.2"/><path d="M2.8 8c0 1.1 2.33 2 5.2 2s5.2-.9 5.2-2" stroke="currentColor" stroke-width="1.2"/></svg></span>
+                <span>问渠（3）</span>
+                <span class="car"><svg width="10" height="10" viewBox="0 0 12 12"><path d="M2.6 4.4 6 7.8l3.4-3.4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="bar">
+          <span class="hint">切换归属会决定哪些助手能检索到该文档</span>
+          <span class="links"><span class="link">查看知识块</span><span class="link">编辑标签</span><span class="link">下载源文件</span></span>
+        </div>
+      </div>
+      <div class="doc-row">
+        <span class="col-check"><span class="cb"></span></span>
+        <span class="col-name">
+          <span class="chev"><svg width="10" height="10" viewBox="0 0 12 12"><path d="M2.6 4.4 6 7.8l3.4-3.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          <span class="fic">PDF</span>
+          <span class="fname">劳动合同法实施条例.pdf</span>
+        </span>
+        <span class="col-num">64</span><span class="col-num">18</span>
+        <span class="col-size">2.1 MB</span>
+        <span class="col-status"><span class="pill ok">已入库</span></span>
+        <span class="col-time">2026-11-05 09:40</span>
+        <span class="col-act"><span class="lnk">知识块</span><span class="lnk">下载</span><span class="more">⋯</span></span>
+      </div>
+      <div class="doc-foot"><span>3 个文档 · 3 个生效 · 76 片段 · 占用 105.5 KB</span><span class="sp"></span><span>解析完成后自动参与检索</span></div>
+    </div>
+  </section>
+
+  <!-- ============ 方案 B ============ -->
+  <section>
+    <div class="cap"><b>方案 B</b><span>保留单列清单，只把下拉改成无边框「幽灵控件」（悬停才出现浅底），改动最小</span></div>
+    <div class="card">
+      <div class="doc-row head-row">
+        <span class="col-check"></span><span class="col-name">文件名</span>
+        <span class="col-num">知识块</span><span class="col-num">命中</span>
+        <span class="col-size">大小</span><span class="col-status">状态</span>
+        <span class="col-time">更新时间</span><span class="col-act">操作</span>
+      </div>
+      <div class="doc-row row-open">
+        <span class="col-check"><span class="cb"></span></span>
+        <span class="col-name">
+          <span class="chev"><svg width="10" height="10" viewBox="0 0 12 12"><path d="M2.6 4.4 6 7.8l3.4-3.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          <span class="fic">DOCX</span>
+          <span class="fname">中华人民共和国监狱法_20260430.docx</span>
+        </span>
+        <span class="col-num">12</span><span class="col-num">3</span>
+        <span class="col-size">105.5 KB</span>
+        <span class="col-status"><span class="pill ok">已入库</span></span>
+        <span class="col-time">2026-11-02 15:21</span>
+        <span class="col-act"><span class="lnk">知识块</span><span class="lnk">下载</span><span class="more">⋯</span></span>
+      </div>
+      <div class="de-b">
+        <div class="row"><span class="k">描述</span><span class="v muted">暂无描述</span></div>
+        <div class="row"><span class="k">标签</span><span class="v muted">未设置</span></div>
+        <div class="row"><span class="k">来源</span><span class="v">本地上传</span></div>
+        <div class="row"><span class="k">解析</span><span class="v"><span class="pill ok">已入库</span></span></div>
+        <div class="row">
+          <span class="k">归属</span>
+          <span class="v">
+            <button class="kb-ghost" type="button">
+              <span class="ic"><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><ellipse cx="8" cy="3.6" rx="5.2" ry="2" stroke="currentColor" stroke-width="1.2"/><path d="M2.8 3.6v8.8c0 1.1 2.33 2 5.2 2s5.2-.9 5.2-2V3.6" stroke="currentColor" stroke-width="1.2"/><path d="M2.8 8c0 1.1 2.33 2 5.2 2s5.2-.9 5.2-2" stroke="currentColor" stroke-width="1.2"/></svg></span>
+              <span>问渠</span><span class="n">3 篇</span>
+              <span class="car"><svg width="10" height="10" viewBox="0 0 12 12"><path d="M2.6 4.4 6 7.8l3.4-3.4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+            </button>
+          </span>
+          <span class="links"><span class="link">查看知识块</span><span class="link">编辑标签</span><span class="link">下载源文件</span></span>
+        </div>
+      </div>
+      <div class="doc-row">
+        <span class="col-check"><span class="cb"></span></span>
+        <span class="col-name">
+          <span class="chev"><svg width="10" height="10" viewBox="0 0 12 12"><path d="M2.6 4.4 6 7.8l3.4-3.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          <span class="fic">PDF</span>
+          <span class="fname">劳动合同法实施条例.pdf</span>
+        </span>
+        <span class="col-num">64</span><span class="col-num">18</span>
+        <span class="col-size">2.1 MB</span>
+        <span class="col-status"><span class="pill ok">已入库</span></span>
+        <span class="col-time">2026-11-05 09:40</span>
+        <span class="col-act"><span class="lnk">知识块</span><span class="lnk">下载</span><span class="more">⋯</span></span>
+      </div>
+      <div class="doc-foot"><span>3 个文档 · 3 个生效 · 76 片段 · 占用 105.5 KB</span><span class="sp"></span><span>解析完成后自动参与检索</span></div>
+    </div>
+  </section>
+</div>
+</body>
+</html>

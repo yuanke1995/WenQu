@@ -155,7 +155,7 @@
         </div>
         <a-spin :spinning="loading">
           <template v-for="d in shownList" :key="d.id">
-            <div :class="['doc-row', { 'row-open': expandedDocId === d.id }]">
+            <div :class="['doc-row', { 'row-open': expandedDocId === d.id }]" @click="onRowClick(d, $event)">
               <span class="col-check" v-if="canManageCurrentKb"><a-checkbox :checked="selectedKeys.includes(d.id)" @change="e => toggleSelect(d.id, e)" /></span>
               <span v-else class="col-check"></span>
               <span class="col-name">
@@ -163,7 +163,7 @@
                   <down-outlined :class="{ flip: expandedDocId !== d.id }" />
                 </button>
                 <span class="file-ic" :style="{ background: typeColor(d.fileType).bg, color: typeColor(d.fileType).fg }">{{ (d.fileType || '?').toUpperCase().slice(0, 4) }}</span>
-                <span class="file-name" :title="d.fileName + (d.description ? ' · ' + d.description : '') + (d.sourceUrl ? ' · 来源: ' + d.sourceUrl : '')" @click="toggleDoc(d)">
+                <span class="file-name" :title="d.fileName + (d.description ? ' · ' + d.description : '') + (d.sourceUrl ? ' · 来源: ' + d.sourceUrl : '')">
                   {{ d.fileName }}<i v-if="d.description" class="file-desc">{{ d.description }}</i>
                 </span>
                 <span v-if="docTags(d).length" class="doc-tags">
@@ -177,7 +177,7 @@
                 <a-tooltip v-if="d.status === 0 || d.status === 1 || d.status === 3" :title="chipTip(d)">
                   <span v-if="d.status === 0" class="app-pill ok">已入库</span>
                   <span v-else-if="d.status === 1" class="app-pill warn">已弃用</span>
-                  <span v-else class="app-pill err" style="cursor:pointer" @click="showFailReason(d)">解析失败</span>
+                  <span v-else class="app-pill err" style="cursor:pointer" @click.stop="showFailReason(d)">解析失败</span>
                 </a-tooltip>
                 <div v-else-if="d.status === 2" class="parse-cell">
                   <span class="app-pill warn">解析中</span>
@@ -208,46 +208,59 @@
               </span>
             </div>
             <div v-if="expandedDocId === d.id" class="doc-expand">
-              <div class="de-meta">
-                <div class="de-row">
-                  <span class="de-label">描述</span>
-                  <span class="de-val">{{ d.description || '暂无描述' }}</span>
+              <div class="de-grid">
+                <div class="de-item de-item-desc">
+                  <span class="de-k">描述</span>
+                  <span class="de-v" :class="{ 'de-muted': !d.description }"
+                        :title="d.description || ''">{{ d.description || '暂无描述' }}</span>
                 </div>
-                <div class="de-row">
-                  <span class="de-label">标签</span>
-                  <span class="de-val">
+                <div class="de-item">
+                  <span class="de-k">标签</span>
+                  <span class="de-v">
                     <template v-if="docTags(d).length">
                       <a-tag v-for="t in docTags(d)" :key="t" class="doc-tag-chip">{{ t }}</a-tag>
                     </template>
                     <span v-else class="de-muted">未设置</span>
                   </span>
                 </div>
-                <div class="de-row">
-                  <span class="de-label">来源</span>
-                  <span class="de-val de-ellipsis" :title="d.sourceUrl || '本地上传'">
+                <div class="de-item">
+                  <span class="de-k">来源</span>
+                  <span class="de-v de-ellipsis" :title="d.sourceUrl || '本地上传'">
                     <a v-if="d.sourceUrl" :href="d.sourceUrl" target="_blank" rel="noopener">{{ d.sourceUrl }}</a>
                     <span v-else>本地上传</span>
                   </span>
                 </div>
-                <div class="de-row">
-                  <span class="de-label">解析</span>
-                  <span class="de-val">{{ d.status === 2 ? (d.parseDesc || '解析中') : statusText(d.status) }}<span v-if="d.parseProgress && d.status === 2"> · {{ d.parseProgress }}%</span></span>
+                <div class="de-item">
+                  <span class="de-k">解析</span>
+                  <span class="de-v">
+                    <a-tooltip v-if="d.status === 3" :title="d.failReason || '点击查看失败原因'">
+                      <span class="app-pill err" style="cursor:pointer" @click="showFailReason(d)">解析失败</span>
+                    </a-tooltip>
+                    <span v-else-if="d.status === 2" class="de-parsing">{{ d.parseDesc || '解析中' }}<template v-if="d.parseProgress"> · {{ d.parseProgress }}%</template></span>
+                    <span v-else class="app-pill" :class="d.status === 0 ? 'ok' : 'warn'">{{ statusText(d.status) }}</span>
+                  </span>
                 </div>
-                <div class="de-row de-row-kb">
-                  <span class="de-label">归属</span>
-                  <span class="de-val de-val-kb">
-                    <a-select v-if="canManageDoc(d)" :value="kbOf(d)" size="small"
-                              :options="kbSelectOptions" :dropdown-match-select-width="false"
-                              :title="'切换所属知识库：决定哪些助手能检索到该文档'"
-                              @change="v => onMoveKb(d, v)" />
+                <div class="de-item">
+                  <span class="de-k">归属</span>
+                  <span class="de-v">
+                    <span v-if="canManageDoc(d)" class="de-kbwrap"
+                          :title="`当前归属：${kbNameOf(d)}，点击切换（决定哪些助手能检索到该文档）`">
+                      <database-outlined class="de-kbic" />
+                      <a-select :value="kbOf(d)" size="small" :bordered="false" class="de-kb"
+                                :options="kbSelectOptions" :dropdown-match-select-width="false"
+                                @change="v => onMoveKb(d, v)" />
+                    </span>
                     <template v-else>{{ kbNameOf(d) }}</template>
                   </span>
-                  <span class="de-links">
-                    <button v-if="d.status !== 2" class="app-link-btn" @click="openKb(d)">查看知识块</button>
-                    <button v-if="canManageDoc(d)" class="app-link-btn" @click="openTagEdit(d)">编辑标签</button>
-                    <button v-if="d.status !== 2" class="app-link-btn" @click="dlSource(d)">下载源文件</button>
-                  </span>
                 </div>
+              </div>
+              <div v-if="canManageDoc(d) || d.status !== 2" class="de-bar">
+                <span v-if="canManageDoc(d)" class="de-hint">切换归属会决定哪些助手能检索到该文档</span>
+                <span class="de-links">
+                  <button v-if="d.status !== 2" class="app-link-btn" @click="openKb(d)">查看知识块</button>
+                  <button v-if="canManageDoc(d)" class="app-link-btn" @click="openTagEdit(d)">编辑标签</button>
+                  <button v-if="d.status !== 2" class="app-link-btn" @click="dlSource(d)">下载源文件</button>
+                </span>
               </div>
             </div>
           </template>
@@ -904,6 +917,12 @@ const statusText = s => ({ 0: '已入库', 1: '已弃用', 2: '解析中', 3: '�
 
 function toggleDoc (d) {
   expandedDocId.value = expandedDocId.value === d.id ? '' : d.id
+}
+
+/** 整行都是展开热区：行内勾选、按钮、下拉各自处理，点击不抢展开 */
+function onRowClick (d, e) {
+  if (e.target.closest('button, a, input, label, .ant-checkbox-wrapper, .ant-dropdown-trigger')) return
+  toggleDoc(d)
 }
 
 function onMoreMenu ({ key }) {
@@ -2011,6 +2030,8 @@ const fmtTime = t => {
 .doc-foot .sp { flex: 1; }
 .doc-foot-note { color: var(--app-text3); }
 .doc-row:not(.head-row):hover { background: var(--app-panel-2); }
+/* 整行可点展开（见 onRowClick），光标给出可点暗示；行内按钮/下拉自身是 pointer */
+.doc-row:not(.head-row) { cursor: pointer; }
 .head-row { font-size: 11px; color: var(--app-text3); background: var(--app-panel-2); border-bottom: 1px solid var(--app-border); user-select: none; }
 .col-check { width: 26px; flex: none; }
 .col-name { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; }
@@ -2063,19 +2084,34 @@ const fmtTime = t => {
 .doc-toggle .flip { transform: rotate(-90deg); transition: transform .15s; }
 .doc-row.row-open { background: var(--app-accent-weak); }
 .doc-expand { padding: 10px 16px 12px 60px; background: var(--app-panel-2); border-bottom: 1px solid var(--app-border); }
-.de-meta { display: flex; flex-direction: column; gap: 2px; }
-.de-row { display: flex; align-items: flex-start; gap: 10px; font-size: 11.5px; line-height: 20px;
-  color: var(--app-text2); padding: 2px 0; }
-.de-label { width: 42px; flex: none; color: var(--app-text3); }
-.de-val { min-width: 0; flex: 1; word-break: break-all; }
-.de-val a { color: var(--app-accent); }
+/* 详情区：属性网格（标签在上、值在下），描述占宽位；归属是轻胶囊而非表单框。
+   flex-wrap 而非 grid：中等宽度（侧栏占掉后 900–1100）时自动折行，不会横向溢出。 */
+.de-grid { display: flex; flex-wrap: wrap; column-gap: 22px; row-gap: 10px; align-items: flex-start; }
+.de-item { flex: 1 1 130px; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.de-item-desc { flex: 2.4 1 220px; }
+/* 长描述最多两行，悬停看全文：避免一个属性把整行拉高、其它属性孤零零挂在顶部 */
+.de-item-desc .de-v { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.de-k { font-size: 10.5px; line-height: 16px; color: var(--app-text3); }
+.de-v { min-width: 0; font-size: 12px; line-height: 20px; color: var(--app-text); word-break: break-all; }
+.de-v a { color: var(--app-accent); }
 .de-muted { color: var(--app-text3); }
-.de-ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* 归属行：左侧下拉收窄，右侧操作靠右；窄屏时操作整体换行，不挤压下拉 */
-.de-row-kb { align-items: center; flex-wrap: wrap; row-gap: 6px; }
-.de-val-kb { flex: 0 1 auto; }
-.de-val-kb :deep(.ant-select) { width: 170px; max-width: 100%; }
-.de-links { margin-left: auto; display: inline-flex; align-items: center; flex-wrap: wrap; gap: 14px; }
+.de-ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; word-break: normal; }
+.de-parsing { color: var(--app-warn-text); }
+/* 归属胶囊：包住无边框下拉；库图标 + 库名（含文档数）+ 箭头，悬停才强调描边 */
+.de-kbwrap { display: inline-flex; align-items: center; gap: 6px; height: 26px; max-width: 100%;
+  padding: 0 2px 0 8px; border: 1px solid var(--app-border); border-radius: 7px; background: var(--app-panel);
+  box-shadow: var(--app-shadow-sm); transition: border-color .15s; }
+.de-kbwrap:hover { border-color: var(--app-accent-border); }
+.de-kbic { font-size: 12px; color: var(--app-accent); flex: none; }
+.de-kb { flex: 0 1 auto; min-width: 88px; max-width: 190px; font-size: 12px; }
+.de-kb :deep(.ant-select-selector) { padding: 0 20px 0 0 !important; height: 24px !important; }
+.de-kb :deep(.ant-select-selection-item) { line-height: 24px !important; color: var(--app-text); }
+.de-kb :deep(.ant-select-arrow) { inset-inline-end: 2px; color: var(--app-text3); font-size: 10px; }
+/* 底部操作条：左说明、右链接；窄屏整体折行 */
+.de-bar { display: flex; align-items: center; gap: 12px; margin-top: 12px; padding-top: 9px;
+  border-top: 1px solid var(--app-border); flex-wrap: wrap; row-gap: 4px; }
+.de-hint { font-size: 10.5px; color: var(--app-text3); }
+.de-links { margin-left: auto; display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; }
 .de-links .app-link-btn { font-size: 11.5px; }
 /* 上传队列浮层 */
 /* 队列收起后的悬浮入口：与展开卡同位置，点一下原样展开 */
@@ -2310,5 +2346,12 @@ const fmtTime = t => {
   /* 页头工具组：被 flex 压到 min-content 时四字标签会竖排叠字——整组换行铺开、按钮不换行 */
   .doc-tools { width: 100%; margin-left: 0; flex-wrap: wrap; row-gap: 6px; }
   .doc-tools .app-btn { white-space: nowrap; min-height: 38px; padding: 0 10px; font-size: 12px; }
+  /* 展开区没有勾选列，左内距从 60 收到文件名起点 */
+  .doc-expand { padding-left: 34px; }
+}
+/* 详情属性组：窄屏自然折行（flex-wrap），只需把展开区左内距收回到文件名起点 */
+@media (max-width: 640px) {
+  .de-item { flex-basis: 46%; }
+  .de-item-desc { flex-basis: 100%; }
 }
 </style>
