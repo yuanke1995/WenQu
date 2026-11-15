@@ -1,12 +1,13 @@
 # SearXNG 本地实例配置（问渠联网搜索 generic 服务商专用）
 #
-# 最小化配置：基于官方默认值（use_default_settings: true）覆盖四处——
+# 最小化配置：基于官方默认值（use_default_settings: true）覆盖五处——
 # 1. secret_key：实例密钥，必须设置否则起不来
 # 2. limiter=false：本地单用户实例必须关。SearXNG 自带的防爬限流会把「无浏览器
 #    指纹的程序化 JSON 请求」当机器人拦掉（429/403），这正是问渠的调用形态
 # 3. search.formats 显式含 json：不加的话 /search?format=json 直接 403
 #    （SearXNG 默认只开 html，这是"通了但返回 403"的头号原因）
-# 4. engines：只保留境内可达引擎（见下方说明），并放宽出站超时
+# 4. search.default_lang：搜索语言，缺了 bing 会返回无关降级页（见下方说明）
+# 5. engines：只保留境内可达引擎（见下方说明），并放宽出站超时
 #
 # ── 为什么换成境内引擎组合 ──────────────────────────────────────
 # 实例部署在境内云主机上，默认引擎里的 brave / duckduckgo / google cse /
@@ -21,9 +22,16 @@
 # 这类故障在 settings.yml 里改任何参数都治不了，只能换引擎。
 #
 # 选型依据（keep_only 按引擎 name 匹配，官方 settings_loader 只认 name）：
-#   bing  -> base_url 覆盖为 cn.bing.com，官方注释即为此场景
-#   baidu / sogou / quark -> 引擎可用性稳定，补足中文结果
-#   不保留 360search：默认 timeout 20.0，一个引擎就能拖垮整次查询
+#   bing          -> base_url 覆盖为 cn.bing.com，官方注释即为此场景
+#   360search     -> 境内直连可用，补足中文结果；引擎内 http_get 硬编码 10s 超时
+#   sogou wechat  -> 公众号文章，补足中文长尾内容
+#   quark         -> 时好时坏：上游返回形状漂移时整引擎崩，恢复后能出结果，保留观察
+#   baidu         -> 云主机出口 IP 常被判验证码（Suspended: CAPTCHA），保留待恢复
+#   sogou         -> 当前镜像里引擎自身报 SXNG_Response 无 next_request，恒崩；
+#                    留着等上游/镜像修复，不参与出数也不影响其他引擎
+# 2026-11-15 实测：关掉 default_lang 时 bing 对「考勤系统」返回「西游释厄传2」贴吧/
+# 模拟器下载；补上后同一查询恢复考勤百科/钉钉考勤。应用侧 GenericSearchProvider
+# 也会显式带 language（中文 zh-CN、其余 en），实例默认值仅作兜底。
 #
 # 想要墙外结果（google / ddg / wikipedia）只能给 outgoing 段配 proxies，
 # 届时把 keep_only 相应放开：
@@ -38,6 +46,8 @@ use_default_settings:
       - baidu
       - sogou
       - quark
+      - 360search
+      - sogou wechat
 
 server:
   secret_key: "d0ebe9f7219447d27d78bf45c010f5312cc8f68adee2be0233fabaf11756dde5"
@@ -48,16 +58,12 @@ search:
   formats:
     - html
     - json
-  # 默认界面语言必须钉死 zh-CN，不能留空。
-  # 留空的注释是「从浏览器信息检测」——但问渠是程序化 JSON 调用（无 Accept-Language），
-  # 检测失败后回落英文，bing 引擎随之带上 setlang=en：cn.bing.com 的国际版语言模式下，
-  # 中文查询返回的是轮换的无关降级页（实测「考勤系统 厂商」→ 黄奇帆环球时报、
-  # 「主流考勤系统产品对比」→ 英镑汇率页、weather → 百度首页），HTTP 200、格式完好，
-  # 只是内容全不对——这就是「检索内容页一半是垃圾」在搜索侧的根因。
-  # 带上 language=zh-CN 复测同查询即恢复全对（考勤百科/钉钉考勤/各厂商对比）。
-  # 2026-10-14 实测定位：容器内直连 cn.bing.com（python/curl_cffi 各指纹、h1.1/h2、
-  # 带不带 setlang）全部正常，唯一变量就是语言参数。
-  default_locale: "zh-CN"
+  # 搜索语言必须钉死 zh-CN。键名是 default_lang——不是 default_locale
+  # （后者是 server 段的界面 locale，不是搜索语言；放进 search 段会被忽略）。
+  # 问渠是程序化 JSON 调用、不带 Accept-Language，语言落空时 bing 走国际版模式：
+  # 中文查询返回轮换的无关降级页（实测「考勤系统」→ 西游释厄传2 贴吧/模拟器下载），
+  # HTTP 200、格式完好，只是内容全不对；带 language=zh-CN 的同一查询恢复全对。
+  default_lang: "zh-CN"
 
 # 默认 3.0s 对境内引擎偏紧（sogou/quark 首字节常在 2s 上下），调到 6.0s
 outgoing:
@@ -75,4 +81,8 @@ engines:
   - name: sogou
     disabled: false
   - name: quark
+    disabled: false
+  - name: 360search
+    disabled: false
+  - name: sogou wechat
     disabled: false

@@ -1,6 +1,9 @@
 # SearXNG 本地实例（问渠联网搜索 generic 服务商）
 #
 # 启动：  docker compose up -d
+# 改配置：docker compose up -d --force-recreate
+#         （settings.yml 是单文件 bind mount，编辑器整文件替换后容器会钉在旧
+#          inode 上读到空文件；restart 不够，必须重建容器）
 # 验证：  curl 'http://127.0.0.1:8888/search?q=test&format=json'
 # 停止：  docker compose down
 #
