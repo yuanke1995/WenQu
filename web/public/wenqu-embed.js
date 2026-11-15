@@ -16,12 +16,28 @@
   var TOKEN_RE = /^[A-Za-z0-9_-]{6,64}$/
   var COLOR_RE = /^#[0-9a-fA-F]{3,8}$/
 
+  /**
+   * 加载器自己的地址，在脚本执行时**立即**抓住。
+   *
+   * 不能等到 init() 里再读 document.currentScript：那时正在执行的是宿主页调用
+   * init 的那段内联脚本（没有 src），于是会静默回落到 location.origin —— 宿主要求
+   * 与问渠同源才不出错，正是这个挂件最不该有的前提。这个坑在跨站嵌入时表现为
+   * iframe 打到宿主站点、404 一个不存在的 /s/{token}。
+   */
+  var SELF_SRC = (function () {
+    var el = document.currentScript
+    if (el && el.src) return el.src
+    // 极少数宿主用内联方式塞了脚本内容（没有 src），此时只能退回扫描标签
+    var list = document.querySelectorAll('script[src*="wenqu-embed.js"]')
+    return list.length ? list[list.length - 1].src : ''
+  })()
+
   /** 站点根：脚本 src 去掉文件名与 /s/、/wenqu-embed.js 等尾巴后的同源前缀 */
   function siteBase() {
-    var el = document.currentScript
-    if (!el || !el.src) return location.origin
+    var src = SELF_SRC
+    if (!src) return location.origin
     try {
-      var u = new URL(el.src, location.href)
+      var u = new URL(src, location.href)
       // 常见形态：{base}/wenqu-embed.js 或 {base}/embed/wenqu-embed.js
       var path = u.pathname.replace(/\/wenqu-embed\.js.*$/, '').replace(/\/embed$/, '')
       return u.origin + path
