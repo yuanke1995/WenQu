@@ -289,7 +289,9 @@ public class KnowledgeRetrievalTool {
         // 但「本轮没绑模型」是设计上的正常态（选了才重排），不是故障——只有本该重排却没跑成才报，
         // 否则每次检索都挂一条 warn「重排不可用」，会把真正的服务故障淹没掉。
         if (!rerankActive && registrar != null && roundRef != null && !roundRef.isBlank()) {
-            String reason = rerankService.debugUnavailableReason();
+            // 此处已退出 withRerankConf 作用域（线程覆盖已撤），必须显式传本轮收敛的引用，
+            // 否则按线程覆盖解析必为空，会把「探测/调用失败」误报成「未绑定重排模型」
+            String reason = rerankService.debugUnavailableReason(roundRef);
             registrar.degrade("rerankUnavailable",
                     "重排不可用（" + (reason == null ? "本轮未返回重排分" : reason)
                             + "）：本轮引用未做语义筛选，相关性可能偏低");

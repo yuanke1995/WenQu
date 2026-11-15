@@ -133,7 +133,7 @@ public class RerankService {
         if (forcedOff() || r == null || candidates == null || candidates.size() < 2) return candidates;
         // 防御：query 为空/null 时服务端 400（"query and documents required"）——直接跳过重排回退融合分排序
         if (query == null || query.isBlank()) return candidates;
-        if (!checkSupport(stateFor(r))) return candidates;
+        if (!checkSupport(stateFor(r), r)) return candidates;
         return rankWithRoute(candidates, query, r, false);
     }
 
@@ -147,7 +147,7 @@ public class RerankService {
         ModelRegistryService.ModelRoute r = route();
         if (forcedOff() || r == null || candidates == null || candidates.isEmpty()) return candidates;
         if (query == null || query.isBlank()) return candidates;
-        if (!checkSupport(stateFor(r))) return candidates;
+        if (!checkSupport(stateFor(r), r)) return candidates;
         return rankWithRoute(candidates, query, r, true);
     }
 
@@ -163,7 +163,7 @@ public class RerankService {
         if (r == null) return candidates;
         if (candidates == null || candidates.isEmpty()) return candidates;
         if (query == null || query.isBlank()) return candidates;
-        if (!checkSupport(stateFor(r))) return candidates;
+        if (!checkSupport(stateFor(r), r)) return candidates;
         return rankWithRoute(candidates, query, r, true);
     }
 
@@ -244,7 +244,7 @@ public class RerankService {
                             + "请在命中的知识库检索设置里绑定重排模型";
         }
         RouteState st = stateFor(r);
-        if (!checkSupport(st)) {
+        if (!checkSupport(st, r)) {
             if (System.currentTimeMillis() - st.lastFailTs < failCooldownMs()) {
                 return "重排服务调用失败，冷却中（" + failCooldownMs() / 1000 + "s 后自动重试）";
             }
@@ -296,9 +296,10 @@ public class RerankService {
 
     /**
      * 服务可用性探测（每条路由独立缓存；失败进入冷却，冷却结束自动重新探测）：
-     * GET /v1/models 确认 OpenAI 兼容服务在线
+     * GET /v1/models 确认 OpenAI 兼容服务在线。必须带该路由的 Bearer——OpenAI 兼容网关
+     * （硅基流动等）对 /v1/models 同样要求鉴权，不带 Key 会稳定 401 把可用路由误判成故障。
      */
-    private boolean checkSupport(RouteState st) {
+    private boolean checkSupport(RouteState st, ModelRegistryService.ModelRoute r) {
         // 已探测过：成功直接返回；失败且冷却未过 → 仍不可用；冷却已过 → 重新探测（瞬时故障自动恢复）
         if (st.checked) {
             if (st.supported) return true;
@@ -309,7 +310,7 @@ public class RerankService {
             if (st.checked) return st.supported;
             try {
                 String modelsPath = st.rerankPath.replaceFirst("/rerank$", "/models");
-                String resp = st.client.get().uri(modelsPath).retrieve().body(String.class);
+                String resp = auth(st.client.get().uri(modelsPath), r).retrieve().body(String.class);
                 st.supported = resp != null && resp.contains("data");
                 if (!st.supported) {
                     st.lastFailTs = System.currentTimeMillis();
