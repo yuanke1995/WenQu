@@ -2564,14 +2564,15 @@ const sandboxTree = computed(() => {
   }
   return roll(root)
 })
-/** 树按收起状态摊平成可渲染的行；同层里目录与文件混排、谁最新谁在前（整栏的读法仍是「刚做出来的在最上面」） */
+/** 树按收起状态摊平成可渲染的行。同层先目录后文件——文件夹跟文件按时间混排时，一个刚写进去的名字
+ *  就把目录行挤到下面，脉络读不出来；组内仍按最新在前（整栏的读法仍是「刚做出来的在最上面」） */
 const sandboxRows = computed(() => {
   const out = []
   const walk = (node, depth) => {
     const kids = [
       ...[...node.dirs.values()].map(d => ({ dir: true, node: d, newest: d.newest })),
       ...node.files.map(f => ({ dir: false, node: f, newest: Number(f.mtime) || 0 })),
-    ].sort((a, b) => b.newest - a.newest)
+    ].sort((a, b) => (b.dir === a.dir ? 0 : b.dir ? 1 : -1) || b.newest - a.newest)
     for (const k of kids) {
       if (!k.dir) {
         out.push({ type: 'file', key: k.node.path, depth, file: k.node })
