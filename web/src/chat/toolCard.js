@@ -16,7 +16,9 @@ export const toggleToolCard = t => {
 /** 四层依次摊开：本轮过程 → 所在簇 → 所在组条 → 卡片自己。 */
 export const openDispatchCard = (m, t) => {
   if (!m || !t) return
-  const show = () => { if (!toolCardOpen(t)) toggleToolCard(t) }
+  // 直接置 true：过程簇帽体里的轻量行只认 _open 展详情，而派遣卡走 toolCardOpen 时
+  // 「没标过」就算开着，靠 toggle 是翻不开那一行的
+  t._open = true
   if (!turnOpen(m)) m._turnOpen = true
   for (const s of turnProcessRows(m)) {
     const segs = s.kind === 'cluster' ? (s.segs || []) : [s]
@@ -24,10 +26,7 @@ export const openDispatchCard = (m, t) => {
       if (!g || g.kind !== 'group' || !Array.isArray(g.tools) || g.tools.indexOf(t) < 0) continue
       if (s.kind === 'cluster' && !clusterOpen(m, s)) toggleCluster(m, s)
       if (g.tools.length > 1 && g.tools[0]._groupOpen !== true) g.tools[0]._groupOpen = true
-      show()
       return
     }
   }
-  // 时间线里没有它（正文重建失败退回兜底列表那条路）：只管把卡片本身点开
-  show()
 }

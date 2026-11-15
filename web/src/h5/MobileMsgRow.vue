@@ -135,7 +135,7 @@
                    与 PC 同构；点行在帽内展开该步详情（入参/输出/错误）。 -->
               <div v-if="clusterOpen(m, seg)" v-follow-bottom="!!(m.loading && seg.grow)" v-edge-fade class="cluster-live">
                 <template v-for="(lr, li) in clusterLiveRows(seg)" :key="li">
-                  <div v-if="lr.t" class="live-row"
+                  <div v-if="lr.t" class="live-row" :data-spawn="spawnAnchorOf(lr.t)"
                        :class="{ run: lr.t.status === 'start' && !lr.t.denied, err: lr.t.status === 'error', off: lr.t.denied, open: lr.t._open }"
                        @click.stop="lr.t._open = !lr.t._open">
                     <span class="tl-cluster-ic live-ic">

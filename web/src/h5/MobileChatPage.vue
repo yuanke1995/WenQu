@@ -677,8 +677,13 @@ function focusSpawn ({ run, msg }) {
   const t = run && run.t
   if (!t) return
   openDispatchCard(msg, t)
-  const el = box.value && box.value.querySelector('[data-spawn="' + spawnAnchorOf(t) + '"]')
-  if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  // 人是奔着那张卡去的：先解开贴底，别让随后的流式帧把视口又拽回底部
+  stickToBottom.value = false
+  // 卡片在展开后的一拍才入 DOM，同步查会扑空
+  nextTick(() => {
+    const el = box.value && box.value.querySelector('[data-spawn="' + spawnAnchorOf(t) + '"]')
+    if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  })
 }
 const onScroll = () => {
   const el = box.value

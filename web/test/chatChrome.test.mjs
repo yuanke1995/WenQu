@@ -546,8 +546,13 @@ test('深链与卡片定位：派遣卡/审批卡/答题面板落点，找不到
   api.box.value = { querySelector: sel => (sel.includes('data-spawn') ? spawnEl : null) }
   api.focusSpawn({ run: { t: 7 }, msg: { id: 1 } })
   assert.deepEqual(calls.openDispatchCard[0], [{ id: 1 }, 7])
+  // 四层展开要等渲染完才查 DOM：同步查会扑空，滚动落下一拍
+  assert.equal(scrolls.length, 0)
+  assert.equal(api.stickToBottom.value, false)
+  await nextTick()
   assert.equal(scrolls.length, 1)
   api.focusSpawn({ run: {} })
+  await nextTick()
   assert.equal(scrolls.length, 1)
 
   const approvalEl = makeEl()

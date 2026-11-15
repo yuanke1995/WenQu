@@ -153,8 +153,13 @@ export const useChatChrome = ctx => {
     if (!t) return
     ctx.openDispatchCard?.(msg, t)
     const anchor = ctx.spawnAnchorOf ? ctx.spawnAnchorOf(t) : t
-    const el = box.value && box.value.querySelector('[data-spawn="' + anchor + '"]')
-    if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    // 人是奔着那张卡去的：先解开贴底，别让随后的流式帧把视口又拽回底部
+    stickToBottom.value = false
+    // 四层折叠是刚改的状态，卡片要等这一拍渲染完才在 DOM 里；同步查会查空、白点一下
+    nextTick(() => {
+      const el = box.value && box.value.querySelector('[data-spawn="' + anchor + '"]')
+      if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    })
   }
   const focusHitl = kind => {
     if (kind === 'approval') {
