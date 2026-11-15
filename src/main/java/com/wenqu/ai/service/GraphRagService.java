@@ -1056,15 +1056,15 @@ public class GraphRagService {
                 ? Map.of()
                 : knowledgeMapper.selectBatchIds(candidateChunkIds).stream()
                         .collect(Collectors.toMap(Knowledge::getId, k -> k, (a, b) -> a));
-        Set<String> allowedDocIds = allowedDocIdsOf(chunkById.values());
+        Map<String, String> allowedDocKb = allowedDocKbOf(chunkById.values());
         for (GraphTriple t : picked) {
             if (added.size() >= expandTopK) break;
             if (t.getChunkId() == null || existingKIds.contains(t.getChunkId()) || added.containsKey(t.getChunkId())) continue;
             Knowledge chunk = chunkById.get(t.getChunkId());
             if (chunk == null || (chunk.getStatus() != null && chunk.getStatus() == 1)) continue;
             if (t.getKbId() != null && !scope.contains(t.getKbId())) continue;
-            if (chunk.getDocId() != null && !String.valueOf(chunk.getDocId()).isBlank()
-                    && !allowedDocIds.contains(String.valueOf(chunk.getDocId()))) continue;
+            String docId = chunk.getDocId() == null ? "" : String.valueOf(chunk.getDocId()).trim();
+            if (!docId.isEmpty() && !allowedDocKb.containsKey(docId)) continue;
             double origin = Math.max(triggerEntityScore.getOrDefault(t.getSubjectId(), 0.0),
                     triggerEntityScore.getOrDefault(t.getObjectId(), 0.0));
             if (origin <= 0) continue;
@@ -1074,9 +1074,13 @@ public class GraphRagService {
                 if (chunk.getImages() != null && !chunk.getImages().isBlank()) images = JSON.parseArray(chunk.getImages(), String.class);
             } catch (Exception ignored) {
             }
+            // 归属库回填：分域门/重排收敛/引用展示都按命中块 kbId 取参数，缺失会被当成“无库归属”回落内置默认。
+            // 以文档当前所属库为准（文档移动后图谱数据随迁，但文档行才是归属真源）；取不到再退三元组所属库。
+            String chunkKbId = docId.isEmpty() ? null : allowedDocKb.get(docId);
+            if (chunkKbId == null || chunkKbId.isBlank()) chunkKbId = t.getKbId();
             added.put(chunk.getId(), new HybridRetrievalService.Hit(
                     chunk.getId(), chunk.getDocId(), chunk.getTitle(), chunk.getContent(), images,
-                    score, chunk.getChunkIndex(), chunk.getTitlePath(), null, null));
+                    score, chunk.getChunkIndex(), chunk.getTitlePath(), null, chunkKbId));
         }
         if (added.isEmpty()) return hits;
         if (diag != null) diag.addGraphExpanded(added.size());
@@ -1113,33 +1117,34 @@ public class GraphRagService {
     }
 
     /**
-     * 扩展候选块涉及的文档里，本轮用户可见且生效中的 docId 集合。
+     * 扩展候选块涉及的文档里，本轮用户可见且生效中的 docId → 所属库 kbId 映射。
      * 生效判据与主检索 {@code loadNonRetrievableDocIds} 同口径（status=0 且未删——弃用 1/解析中 2/
      * 解析失败 3 的块不复活）；可见判据与主检索晚绑定过滤同源（文档恒跟随所属库，库门即判定）。
      * 手动知识块（docId 空）不在文档管辖内，调用方按主检索同一口径直接放行。
+     * <p>带回 kbId 是为了让扩展块与主检索命中同一口径取库级参数（分域门/重排收敛/引用归属）。
      */
-    private Set<String> allowedDocIdsOf(Collection<Knowledge> chunks) {
+    private Map<String, String> allowedDocKbOf(Collection<Knowledge> chunks) {
         Set<String> docIds = chunks.stream()
                 .map(Knowledge::getDocId)
                 .filter(id -> id != null && !String.valueOf(id).isBlank())
                 .map(String::valueOf)
                 .collect(Collectors.toSet());
-        if (docIds.isEmpty()) return Set.of();
+        if (docIds.isEmpty()) return Map.of();
         try {
             ResourceVisibilityService.Principal p = new ResourceVisibilityService.Principal(
                     com.wenqu.ai.util.RequestUser.uid(), com.wenqu.ai.util.RequestUser.departmentId(),
                     com.wenqu.ai.util.RequestUser.role());
-            Set<String> allowed = new HashSet<>();
+            Map<String, String> allowed = new HashMap<>();
             for (AiDocument d : docMapper.selectList(new LambdaQueryWrapper<AiDocument>()
                     .in(AiDocument::getId, docIds))) {
                 if (d.getStatus() == null || d.getStatus() != 0) continue;
                 if (d.getDeleted() != null && d.getDeleted() != 0) continue;
-                allowed.add(String.valueOf(d.getId()));
+                allowed.put(String.valueOf(d.getId()), d.getKbId());
             }
             return allowed;
         } catch (Exception e) {
             log.error("[FAIL-LOUD] 图扩展文档权限判定失败，候选块全部放弃（fail-closed）: {}", e.getMessage());
-            return Set.of();
+            return Map.of();
         }
     }
 

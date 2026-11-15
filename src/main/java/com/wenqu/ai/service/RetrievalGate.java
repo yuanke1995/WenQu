@@ -82,6 +82,18 @@ public final class RetrievalGate {
      */
     public static Result applyPerKb(List<HybridRetrievalService.Hit> hits, boolean rerankActive,
                                     Function<String, KbRetrievalParamService.Params> paramsOf) {
+        return applyPerKb(hits, rerankActive, paramsOf, null);
+    }
+
+    /**
+     * 带「显式重排分门」的重载：调用方级声明（如工作流节点 config.minScore）优先于库级门。
+     * <p>融合分门、低分保底策略与保底最低分仍逐库取——两个分值域分布不同，不能共用一个门。
+     *
+     * @param rerankGateOverride 非 null 时覆盖各命中库的 {@code retrieval.minContextScore}；null=逐库取
+     */
+    public static Result applyPerKb(List<HybridRetrievalService.Hit> hits, boolean rerankActive,
+                                    Function<String, KbRetrievalParamService.Params> paramsOf,
+                                    Double rerankGateOverride) {
         if (hits == null || hits.isEmpty()) return new Result(List.of(), 0, false);
         // 按所属库分组，各组用自己的门值过门（组内不保底——保底是「整个候选面全灭」的语义，合并层统一判）
         Map<String, List<HybridRetrievalService.Hit>> groups = new LinkedHashMap<>();
@@ -91,7 +103,8 @@ public final class RetrievalGate {
         List<HybridRetrievalService.Hit> kept = new ArrayList<>(hits.size());
         for (Map.Entry<String, List<HybridRetrievalService.Hit>> g : groups.entrySet()) {
             KbRetrievalParamService.Params p = paramsOf.apply(g.getKey().isEmpty() ? null : g.getKey());
-            kept.addAll(apply(g.getValue(), p.minContextScore(), p.minFusionScore(), rerankActive, "off", 0).kept());
+            double rerankGate = rerankGateOverride != null ? rerankGateOverride : p.minContextScore();
+            kept.addAll(apply(g.getValue(), rerankGate, p.minFusionScore(), rerankActive, "off", 0).kept());
         }
         if (!kept.isEmpty()) return new Result(kept, hits.size() - kept.size(), false);
 

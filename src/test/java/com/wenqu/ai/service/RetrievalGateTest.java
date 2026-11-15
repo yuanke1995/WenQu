@@ -5,6 +5,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -16,6 +17,15 @@ class RetrievalGateTest {
 
     private static Hit hit(String id, double fusion, Double rerank) {
         return new Hit(id, "doc-" + id, "标题" + id, "正文" + id, List.of(), fusion, 0, "章节", rerank, "kb");
+    }
+
+    private static Hit hit(String id, String kbId, Double rerank) {
+        return new Hit(id, "doc-" + id, "标题" + id, "正文" + id, List.of(), 0.9, 0, "章节", rerank, kbId);
+    }
+
+    private static KbRetrievalParamService.Params params(double minContext, double minFusion, String policy) {
+        return new KbRetrievalParamService.Params(0.3, 0.6, 0.4, null, null, null,
+                15, 20, minContext, minFusion, policy, 0.05);
     }
 
     @Test
@@ -78,5 +88,29 @@ class RetrievalGateTest {
                 List.of(hit("a", 0.9, 0.8), hit("b", 0.9, null)),
                 0.6, 0.5, true, "top1", 0.05);
         assertThat(result.kept()).containsExactly(hit("a", 0.9, 0.8));
+    }
+
+    @Test
+    @DisplayName("逐库门：同一轮里各库用自己的重排分门，严格库的块不借宽松库的门入场")
+    void perKbGatesApplyIndependently() {
+        var paramsByKb = Map.of(
+                "strict", params(0.9, 0.5, "top1"),
+                "loose", params(0.3, 0.5, "top1"));
+        var result = RetrievalGate.applyPerKb(
+                List.of(hit("a", "strict", 0.5), hit("b", "loose", 0.5)),
+                true, paramsByKb::get);
+        assertThat(result.kept()).containsExactly(hit("b", "loose", 0.5));
+    }
+
+    @Test
+    @DisplayName("显式重排门覆盖：节点 config.minScore 压过库级门，仍保留逐库融合门与保底策略")
+    void explicitRerankGateOverridesKbGate() {
+        var paramsByKb = Map.of(
+                "strict", params(0.9, 0.5, "top1"),
+                "loose", params(0.3, 0.5, "top1"));
+        var result = RetrievalGate.applyPerKb(
+                List.of(hit("a", "strict", 0.5), hit("b", "loose", 0.5)),
+                true, paramsByKb::get, 0.4);
+        assertThat(result.kept()).containsExactly(hit("a", "strict", 0.5), hit("b", "loose", 0.5));
     }
 }

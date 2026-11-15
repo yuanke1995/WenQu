@@ -43,12 +43,12 @@ public class WorkflowController {
     }
 
     /**
-     * 节点表单「留空跟随全局」的当前全局值（登录用户可读）。
+     * 节点表单「留空」时的展示值（登录用户可读）：检索低分门现在逐库生效，这里返回内置默认。
      * <p>它与 {@code GET /{id}} 同形状（一段路径）：Spring 的图案比较器让字面量段优先于变量段，
      * 所以这个请求不会被当成"查一个叫 config-defaults 的工作流"。
      */
-    @Operation(summary = "工作流节点默认值", description = "LLM 节点温度兜底（chat.temperature）与检索节点低分门"
-            + "（retrieval.minContextScore）的当前全局值，供画布属性页把「留空跟随全局」点名成具体数")
+    @Operation(summary = "工作流节点默认值", description = "LLM 节点温度兜底（chat.temperature）与检索节点低分门的内置默认值；"
+            + "检索门留空时实际按命中块所属知识库的库级参数生效，画布仅展示未配置时的内置默认")
     @Permission("workflow:read")
     @GetMapping("/config-defaults")
     public ResultJson configDefaults() {

@@ -254,7 +254,7 @@ public class KnowledgeRetrievalTool {
         // 工具命中会注册进本轮引用来源，弱相关块同样不得借工具链路回流到引用面板。0=关闭对应域的门。
         boolean rerankActive = hits != null && hits.stream().anyMatch(h -> h.rerankScore() != null);
         // 分域门逐库生效（库级检索参数，显式覆盖>库级 JSON>内置默认）：按命中块所属库取各自的门与保底策略，
-        // 统一收口在 RetrievalGate.applyPerKb，四个检索入口共用一份判据。0=关闭对应域的门。
+        // 统一收口在 RetrievalGate.applyPerKb，工具/咨询来源/试检索/工作流节点共用一份判据。0=关闭对应域的门。
         Map<String, KbRetrievalParamService.Params> gateKbParams = kbRetrievalParams.forScope(
                 hits == null ? List.of() : hits.stream().map(Hit::kbId)
                         .filter(k -> k != null && !k.isBlank()).distinct().toList());

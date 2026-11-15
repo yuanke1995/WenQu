@@ -527,9 +527,9 @@ public class WorkflowEngine {
      * 知识库检索节点：query 模板渲染 → 混合检索（kbIds 限定库界，null=全局）→ 低分门过滤 → 取前 topK。
      * 输出 chunks（结构化列表）/ text（拼接文本，直接可拼 prompt）/ count。
      * <p>
-     * 低分门：config.minScore 声明则用它，未声明跟随全局 {@code retrieval.minContextScore}
-     * （与主问答管线同键同语义：排序分 = 重排分??融合分，低于阈值的块不进结果也不占 topK 名额；
-     * 0 = 不过滤）。
+     * 低分门：节点 config.minScore 显式声明时作为重排分门（优先于库级）；未声明则按命中块所属库
+     * 逐库取 {@code retrieval.minContextScore}/{@code retrieval.minFusionScore} 与低分保底策略——
+     * 与主问答管线同口径：排序分 = 重排分??融合分，低于阈值的块不进结果也不占 topK 名额；0 = 不过滤。
      */
     private Function<OverAllState, NodeOut> retrievalBody(WorkflowDsl.Node n, WorkflowRunCtx ctx) {
         return state -> {
@@ -548,15 +548,16 @@ public class WorkflowEngine {
             hits = withReplay(ctx, () -> kbRetrievalParams.withRerankModel(kbIds, hitKbIds,
                     () -> rerankService.rankForced(candidates, query)));
             boolean rerankActive = hits != null && hits.stream().anyMatch(h -> h.rerankScore() != null);
-            double minScore = resolveMinScore(n, ctx);
-            // 分域取门：重排分走节点低分门（config.minScore，未声明跟随 retrieval.minContextScore）；
-            // 未重排（关闭/失败回退）的融合分走 retrieval.minFusionScore——两个分值域分布不同，不可共用一个门
-            Double fusionGate = withReplay(ctx, () -> configService.getDouble("retrieval.minFusionScore", ConfigDefaults.RETRIEVAL_MIN_FUSION_SCORE));
-            // 与主检索工具同一份门：分域 + 低分全灭时保底 top-1（RetrievalGate），不在这里另写过滤流
-            String lowPolicy = withReplay(ctx, () -> configService.get("retrieval.lowConfidencePolicy"));
-            Double top1Floor = withReplay(ctx, () -> configService.getDouble("retrieval.top1Floor", ConfigDefaults.RETRIEVAL_TOP1_FLOOR));
-            RetrievalGate.Result gate = RetrievalGate.apply(hits, minScore, fusionGate == null ? 0 : fusionGate,
-                    rerankActive, lowPolicy, top1Floor == null ? 0 : top1Floor);
+            // 节点 config.minScore 是调用方级显式声明，压过库级重排门；未声明（null）则逐库取。
+            Double nodeGate = declaredMinScore(n);
+            // 分域门逐库生效（与主检索工具/咨询来源同一份 RetrievalGate.applyPerKb 判据）：
+            // 参数解析须在节点线程内重放，池化线程读不到触发线程的覆盖层
+            Map<String, KbRetrievalParamService.Params> gateKbParams = withReplay(ctx, () ->
+                    kbRetrievalParams.forScope(hitKbIds.stream()
+                            .filter(k -> k != null && !k.isBlank()).distinct().toList()));
+            KbRetrievalParamService.Params defGateParams = withReplay(ctx, kbRetrievalParams::defaults);
+            RetrievalGate.Result gate = RetrievalGate.applyPerKb(hits, rerankActive,
+                    kbId -> gateKbParams.getOrDefault(kbId, defGateParams), nodeGate);
             List<Hit> kept = gate.kept();
             int skipped = hits.size() - kept.size();
             List<Map<String, Object>> chunks = new ArrayList<>();
@@ -597,7 +598,7 @@ public class WorkflowEngine {
             trace.put("kbIds", kbIds == null ? "全部知识库" : kbIds);
             trace.put("topK", topK);
             trace.put("count", count);
-            if (minScore > 0) trace.put("minScore", minScore);
+            if (nodeGate != null && nodeGate > 0) trace.put("minScore", nodeGate);
             if (skipped > 0) trace.put("lowScoreSkipped", skipped);
             if (!ctx.imageUrls.isEmpty()) trace.put("images", ctx.imageUrls.size());
             return new NodeOut(Map.of("chunks", chunks, "text", text.toString().trim(), "count", count),
@@ -656,12 +657,10 @@ public class WorkflowEngine {
         return text;
     }
 
-    /** 节点低分阈值：config.minScore 声明优先，未声明跟随全局 retrieval.minContextScore（节点线程内经 withReplay 重放） */
-    private double resolveMinScore(WorkflowDsl.Node n, WorkflowRunCtx ctx) {
+    /** 节点显式声明的低分阈值（config.minScore）；未声明返回 null = 跟随命中库的库级门 */
+    private Double declaredMinScore(WorkflowDsl.Node n) {
         Object v = n.getConfig() == null ? null : n.getConfig().get("minScore");
-        if (v instanceof Number num) return Math.max(0, num.doubleValue());
-        Double g = withReplay(ctx, () -> configService.getDouble("retrieval.minContextScore", ConfigDefaults.RETRIEVAL_MIN_CONTEXT_SCORE));
-        return g == null ? 0 : Math.max(0, g);
+        return v instanceof Number num ? Math.max(0, num.doubleValue()) : null;
     }
 
     /** 低分门：排序分（重排分??融合分，与主链路同口径）低于阈值的块剔除；阈值 ≤0 原样返回（公开纯函数，供用例直接验证） */
