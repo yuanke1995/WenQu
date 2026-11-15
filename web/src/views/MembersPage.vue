@@ -9,7 +9,7 @@
         <button class="app-btn ghost" @click="goTab('invites')"><MailOutlined /> 邀请成员</button>
         <button class="app-btn" @click="openUserCreate"><PlusOutlined /> 新建用户</button>
         <!-- 租户相关动作已收口到「租户与开通」：这里只保留跳转，不在成员页复制第二套 -->
-        <router-link v-if="isSuper" to="/tenants" class="app-btn ghost">租户与开通 →</router-link>
+        <router-link v-if="isSuper && enterprise" to="/tenants" class="app-btn ghost">租户与开通 →</router-link>
       </div>
     </div>
 
@@ -490,7 +490,7 @@
             <button class="app-link-btn" @click="expiryOpen = false">收起</button>
           </div>
         </a-form-item>
-        <a-form-item v-if="isSuper" label="所属租户">
+        <a-form-item v-if="isSuper && enterprise" label="所属租户">
           <a-select v-model:value="userForm.tenantId" :options="tenantOptionsList" style="width:100%" />
           <div class="form-tip">只改所属租户，已有数据留在原租户</div>
         </a-form-item>
@@ -558,7 +558,7 @@ import {
   ClockCircleOutlined, SendOutlined, RiseOutlined, PlayCircleOutlined, TeamOutlined, UserOutlined,
   MoreOutlined, EditOutlined, DeleteOutlined, DownloadOutlined, LinkOutlined
 } from '@ant-design/icons-vue'
-import { isSuperadminSync, tenantStateSync } from '../utils/auth'
+import { isSuperadminSync, tenantStateSync, profileSync } from '../utils/auth'
 import {
   createUser, updateUser, deleteUser, resetUserPassword,
   listDepartments, createDepartment, updateDepartment, deleteDepartment,
@@ -1015,7 +1015,7 @@ async function saveUser () {
       : await createUser({ ...base, uid: String(f.uid).trim(), password: f.password })
     if (!r.success) { message.error(r.msg || '保存失败'); return }
     // 归属变更是另一个动作（只改账号归属，不动他已产出的资源），所以单独一步、单独报错
-    if (f.isEdit && isSuper.value && f.tenantId && f.tenantId !== f.origTenant) {
+    if (enterprise && f.isEdit && isSuper.value && f.tenantId && f.tenantId !== f.origTenant) {
       const mv = await moveMemberTenant(f.uid, f.tenantId)
       if (!mv.success) { message.error(mv.msg || '归属变更失败'); return }
       await loadTenants()
@@ -1150,6 +1150,7 @@ async function delDept (id) {
 
 /* ==================== 加载 ==================== */
 const isSuper = computed(() => isSuperadminSync())
+const enterprise = profileSync() !== 'standard'
 const defaultTenant = 'default'
 const tenantOptionsList = computed(() => tenants.value
   .filter(t => t.status !== 0)
@@ -1191,6 +1192,8 @@ async function loadProviders () {
   providers.value = ((r && r.data) || []).map(p => ({ id: p.id, name: p.name }))
 }
 async function loadTenants () {
+  // 标准档单租户：租户清单端点 404，这里直接按空清单收口，免得页签加载报「N 项数据加载失败」
+  if (!enterprise) { tenants.value = []; return }
   const r = await listTenants()
   tenants.value = (r && r.data) || []
 }

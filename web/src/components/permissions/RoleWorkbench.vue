@@ -72,7 +72,7 @@
           成员 <span>{{ statOf(activeRole.code).memberCount ?? 0 }}</span>
         </button>
         <button class="rw-seg" :class="{ on: tab === 'scope' }" @click="tab = 'scope'">数据范围</button>
-        <button class="rw-seg" :class="{ on: tab === 'changes' }" @click="tab = 'changes'">变更记录</button>
+        <button v-if="enterprise" class="rw-seg" :class="{ on: tab === 'changes' }" @click="tab = 'changes'">变更记录</button>
       </div>
 
       <div class="rw-body">
@@ -126,6 +126,7 @@ import { useRouter } from 'vue-router'
 import { Modal } from 'ant-design-vue'
 import { SearchOutlined } from '@ant-design/icons-vue'
 import { getRoleDataScope, listAuditEvents } from '../../api'
+import { profileSync } from '../../utils/auth'
 import { scopeLabel } from '../../utils/permissions'
 import PermissionEditor from './PermissionEditor.vue'
 import RoleMembersPanel from './RoleMembersPanel.vue'
@@ -143,6 +144,8 @@ const keyword = ref('')
 const filter = ref('all')
 const activeCode = ref('')
 const router = useRouter()
+// 标准档没有审计面：/audit 直接 404，切角色时不再顺带拉变更记录
+const enterprise = profileSync() !== 'standard'
 const tab = ref('permissions')
 const editorRef = ref(null)
 const scope = ref({ scopeType: 'own', departmentId: null })
@@ -210,6 +213,7 @@ async function loadScope () {
 }
 
 async function loadChanges () {
+  if (!enterprise) return
   if (!activeRole.value) return
   changesError.value = ''
   try {

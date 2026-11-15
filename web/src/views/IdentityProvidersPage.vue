@@ -235,7 +235,11 @@ import {
   triggerIdentitySync, listSyncLogs
 } from '../api'
 import { listRoleOptions, listDepartments, listTenants } from '../api'
+import { profileSync } from '../utils/auth'
 import { publicOrigin } from '../utils/publicUrl'
+
+// 标准档单租户：租户清单端点 404，不拉清单，租户那一维也不出现
+const enterprise = profileSync() !== 'standard'
 
 const list = ref([])
 const roles = ref([])
@@ -280,7 +284,10 @@ const cols = computed(() => {
 async function load () {
   loading.value = true
   try {
-    const [r, rr, rd, rt] = await Promise.all([listIdentityProviders(), listRoleOptions(), listDepartments(), listTenants()])
+    const [r, rr, rd, rt] = await Promise.all([
+      listIdentityProviders(), listRoleOptions(), listDepartments(),
+      enterprise ? listTenants() : Promise.resolve(null)
+    ])
     list.value = (r && r.data) || []
     roles.value = (rr && rr.data) || []
     departments.value = (rd && rd.data) || []

@@ -106,7 +106,7 @@
                     style="width:100%;margin-top:6px" />
         </div>
 
-        <div v-if="superadmin" class="editor-section">
+        <div v-if="superadmin && enterprise" class="editor-section">
           <div class="editor-label">发布租户</div>
           <a-select v-model:value="form.tenantId" size="small" :options="tenantOptions" placeholder="默认当前租户" allow-clear style="width:100%" />
         </div>
@@ -141,10 +141,12 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { listAnnouncements, saveAnnouncement, deleteAnnouncement, purgeAnnouncement,
          listDepartments, listRoleOptions, listTenants } from '../../api'
-import { isSuperadminSync } from '../../utils/auth'
+import { isSuperadminSync, profileSync } from '../../utils/auth'
 import { renderMd } from '../../utils/markdown'
 
 const superadmin = isSuperadminSync()
+// 标准档单租户：租户清单端点 404，不发这次请求，也不出现「发布租户」
+const enterprise = profileSync() !== 'standard'
 const rows = ref([])
 const loading = ref(false)
 
@@ -233,7 +235,7 @@ async function loadOptions () {
     const r = await listRoleOptions()
     if (r.success) roles.value = r.data || []
   } catch (e) { /* 同上 */ }
-  if (superadmin) {
+  if (superadmin && enterprise) {
     try {
       const r = await listTenants()
       if (r.success) tenants.value = r.data || []

@@ -586,7 +586,7 @@
       <!-- ==================== 配额编辑 ==================== -->
       <a-modal v-model:open="quotaModal" :title="quotaForm.id ? '编辑配额' : '新建配额'" @ok="submitQuota">
         <a-form layout="vertical">
-          <a-form-item v-if="superadmin" label="归属租户" extra="平台级管理员可给任一租户设限；租户管理员固定为本租户">
+          <a-form-item v-if="superadmin && enterprise" label="归属租户" extra="平台级管理员可给任一租户设限；租户管理员固定为本租户">
             <a-select v-model:value="quotaForm.tenantId" :options="tenantOptions" style="width:100%" :disabled="!!quotaForm.id" />
           </a-form-item>
           <a-form-item label="作用域">
@@ -762,7 +762,7 @@ import { LineChart, PieChart, BarChart } from 'echarts/charts'
 import { TooltipComponent, GridComponent, LegendComponent, TitleComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import { themeState } from '../utils/theme'
-import { isSuperadminSync } from '../utils/auth'
+import { isSuperadminSync, profileSync } from '../utils/auth'
 import {
   getAnalytics, getDashboardActions, getDashboardAlerts, getTraceOverview,
   createKnowledge, addEvalCase, getEvalLastReport, runEvalAutoCheck,
@@ -1364,6 +1364,8 @@ const deptOptions = ref([])
 const memberOptions = ref([])
 const tenantOptions = ref([])
 const superadmin = isSuperadminSync()
+// 标准档没有多租户：租户清单端点直接 404，页面上任何「选租户」都是空选择，一律按单租户渲染
+const enterprise = profileSync() !== 'standard'
 const costRangeLabel = computed(() => costRange.value === 7 ? '近 7 日' : '近 30 日')
 const costPager = { pageSize: 10, size: 'small', showSizeChanger: false, hideOnSinglePage: true, showTotal: t => `共 ${t} 条` }
 
@@ -1485,7 +1487,7 @@ const loadQuotas = async () => {
     const r = await listQuotas()
     if (r.success) quotas.value = r.data || []
     else message.error(r.msg || '配额清单加载失败')
-    if (superadmin && !tenantOptions.value.length) {
+    if (enterprise && superadmin && !tenantOptions.value.length) {
       const rt = await listTenants()
       if (rt.success) tenantOptions.value = (rt.data || []).map(t => ({ value: t.id, label: t.name || t.id }))
     }

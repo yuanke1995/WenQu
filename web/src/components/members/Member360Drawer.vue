@@ -26,7 +26,7 @@
       <a-tab-pane key="identity" tab="身份与归属" />
       <a-tab-pane key="roles" tab="角色与授权" />
       <a-tab-pane key="auth" tab="认证与登录" />
-      <a-tab-pane key="audit" tab="操作记录" />
+      <a-tab-pane v-if="enterprise" key="audit" tab="操作记录" />
     </a-tabs>
 
     <!-- 内容只在打开时渲染：关闭态渲染会带着空 member 跑一遍模板，白白报错 -->
@@ -195,7 +195,11 @@
 import { computed, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import { getEffectivePermissions, getPermissionCatalog, listAuditEvents, unbindIdentity } from '../../api'
+import { profileSync } from '../../utils/auth'
 import UserAvatar from '../UserAvatar.vue'
+
+// 标准档没有审计面：/audit 直接 404，「操作记录」这一段整段不出现
+const enterprise = profileSync() !== 'standard'
 
 /**
  * 成员 360 抽屉：一个成员的四段聚合面（身份与归属 / 角色与授权 / 认证与登录 / 操作记录）。
@@ -359,6 +363,7 @@ async function loadPerms () {
 }
 
 async function loadAudit () {
+  if (!enterprise) return
   const uid = props.member.uid
   if (!uid) { auditRows.value = []; return }
   auditLoading.value = true
