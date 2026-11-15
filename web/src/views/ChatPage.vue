@@ -239,70 +239,75 @@
                     <!-- 帽体（DSH 的 .body 同参）：跑轮中自动开并贴底跟随最新一步、用户点开停顶部从头看；
                          min(400px,50vh) 内滚、上下边缘 24px 渐隐。一行一步（图标+动词+2px 点+参数摘要），
                          点行在帽内展开该步详情（入参/输出/错误）——页面高度恒定。 -->
-                    <div v-if="clusterOpen(m, seg)" v-follow-bottom="!!(m.loading && seg.grow)" v-edge-fade class="tl-cluster-live">
+                    <div v-if="clusterOpen(m, seg)" v-follow-bottom="!!(m.loading && seg.grow)" v-edge-fade
+                         class="tl-cluster-live" :class="{ reading: clusterReading(seg) }">
                       <template v-for="(lr, li) in clusterLiveRows(seg)" :key="li">
-                        <div v-if="lr.t" class="tl-live-row" :data-spawn="spawnAnchorOf(lr.t)"
-                             :class="{ run: lr.t.status === 'start' && !lr.t.denied, err: lr.t.status === 'error', off: lr.t.denied, open: lr.t._open }"
-                             @click="lr.t._open = !lr.t._open">
-                          <span class="tl-live-ic">
-                            <span class="tl-ic-a">
-                              <loading-outlined v-if="lr.t.status === 'start' && !lr.t.denied" spin />
-                              <check-outlined v-else-if="lr.t.status === 'done'" />
-                              <close-circle-outlined v-else-if="lr.t.status === 'error'" class="ic-err" />
-                              <pause-circle-outlined v-else />
+                        <!-- 头与详情同一盒：头在自己这盒内贴顶吸附（见 .tl-live-step），
+                             滚过这一盒（下一行到头）它自然让位，不会盖住后面几步 -->
+                        <div v-if="lr.t" class="tl-live-step">
+                          <div class="tl-live-row" :data-spawn="spawnAnchorOf(lr.t)"
+                               :class="{ run: lr.t.status === 'start' && !lr.t.denied, err: lr.t.status === 'error', off: lr.t.denied, open: lr.t._open }"
+                               @click="lr.t._open = !lr.t._open">
+                            <span class="tl-live-ic">
+                              <span class="tl-ic-a">
+                                <loading-outlined v-if="lr.t.status === 'start' && !lr.t.denied" spin />
+                                <check-outlined v-else-if="lr.t.status === 'done'" />
+                                <close-circle-outlined v-else-if="lr.t.status === 'error'" class="ic-err" />
+                                <pause-circle-outlined v-else />
+                              </span>
+                              <span class="tl-ic-c"><down-outlined /></span>
                             </span>
-                            <span class="tl-ic-c"><down-outlined /></span>
-                          </span>
-                          <span class="tl-live-name" :title="toolDesc(lr.t.name, lr.t.hint)">{{ toolLabel(lr.t.name, lr.t.label) }}</span>
-                          <template v-if="toolBrief(lr.t)">
-                            <span class="tl-live-sep" aria-hidden="true"></span>
-                            <span class="tl-live-brief" :class="{ shimmer: lr.t.status === 'start' && !lr.t.denied }">{{ toolBrief(lr.t) }}</span>
-                          </template>
-                          <span v-if="lr.t.denied" class="tl-live-flag" title="被守卫挡下，没有真正执行">被挡下</span>
-                        </div>
-                        <!-- 单步详情（点行展开，DSH 的 IN/OUT 卡同构）：分段 grid、每段独立内滚、段间细分割线。
-                             这一步之前/之后的思考挂在这里：原先挂在行尾当一颗「深度思考 N 字」标签，
-                             被摘要的弹性宽度顶到整行最右、飘在页面空白处（且帽体里没有正文，点开也没东西看）。 -->
-                        <div v-if="lr.t && lr.t._open && (lr.t.args || liveOutput(lr.t) || lr.t.error || (lr.notes && lr.notes.length))" class="tl-live-detail" @click.stop>
-                          <template v-if="lr.notes && lr.notes.length">
-                            <div class="tl-live-think">
-                              <div class="tl-live-think-label">思考</div>
-                              <div v-for="(nn, ni) in lr.notes" :key="'n' + ni" class="tl-think-seg">
-                                <NoteBody :m="m" :note="nn" always bare />
+                            <span class="tl-live-name" :title="toolDesc(lr.t.name, lr.t.hint)">{{ toolLabel(lr.t.name, lr.t.label) }}</span>
+                            <template v-if="toolBrief(lr.t)">
+                              <span class="tl-live-sep" aria-hidden="true"></span>
+                              <span class="tl-live-brief" :class="{ shimmer: lr.t.status === 'start' && !lr.t.denied }">{{ toolBrief(lr.t) }}</span>
+                            </template>
+                            <span v-if="lr.t.denied" class="tl-live-flag" title="被守卫挡下，没有真正执行">被挡下</span>
+                          </div>
+                          <!-- 单步详情（点行展开，DSH 的 IN/OUT 卡同构）：分段 grid、每段独立内滚、段间细分割线。
+                               这一步之前/之后的思考挂在这里：原先挂在行尾当一颗「深度思考 N 字」标签，
+                               被摘要的弹性宽度顶到整行最右、飘在页面空白处（且帽体里没有正文，点开也没东西看）。 -->
+                          <div v-if="lr.t._open && (lr.t.args || liveOutput(lr.t) || lr.t.error || (lr.notes && lr.notes.length))" class="tl-live-detail" @click.stop>
+                            <template v-if="lr.notes && lr.notes.length">
+                              <div class="tl-live-think">
+                                <div class="tl-live-think-label">思考</div>
+                                <div v-for="(nn, ni) in lr.notes" :key="'n' + ni" class="tl-think-seg">
+                                  <NoteBody :m="m" :note="nn" always bare />
+                                </div>
+                              </div>
+                              <div v-if="lr.t.args || liveOutput(lr.t) || lr.t.error" class="tl-io-div" aria-hidden="true"></div>
+                            </template>
+                            <div v-if="lr.t.args" class="tl-io-sec">
+                              <div class="tl-io-label">入参</div>
+                              <div class="tl-io-body">
+                                <pre class="tl-io">{{ prettyIo(lr.t.args) }}</pre>
+                                <ToolSpillButton v-if="lr.t.argsSpillId" :id="lr.t.argsSpillId" :tool="lr.t.name" kind="入参" />
                               </div>
                             </div>
-                            <div v-if="lr.t.args || liveOutput(lr.t) || lr.t.error" class="tl-io-div" aria-hidden="true"></div>
-                          </template>
-                          <div v-if="lr.t.args" class="tl-io-sec">
-                            <div class="tl-io-label">入参</div>
-                            <div class="tl-io-body">
-                              <pre class="tl-io">{{ prettyIo(lr.t.args) }}</pre>
-                              <ToolSpillButton v-if="lr.t.argsSpillId" :id="lr.t.argsSpillId" :tool="lr.t.name" kind="入参" />
+                            <div v-if="lr.t.args && liveOutput(lr.t)" class="tl-io-div" aria-hidden="true"></div>
+                            <div v-if="liveOutput(lr.t)" class="tl-io-sec">
+                              <div class="tl-io-label">{{ lr.t.status === 'start' ? '实时输出' : (lr.t.result ? '输出' : '输出（执行期）') }}</div>
+                              <div class="tl-io-body">
+                                <pre class="tl-io" :class="{ live: lr.t.status === 'start' }">{{ liveOutput(lr.t) }}</pre>
+                                <ToolSpillButton v-if="lr.t.spillId" :id="lr.t.spillId" :tool="lr.t.name" kind="输出" />
+                              </div>
                             </div>
-                          </div>
-                          <div v-if="lr.t.args && liveOutput(lr.t)" class="tl-io-div" aria-hidden="true"></div>
-                          <div v-if="liveOutput(lr.t)" class="tl-io-sec">
-                            <div class="tl-io-label">{{ lr.t.status === 'start' ? '实时输出' : (lr.t.result ? '输出' : '输出（执行期）') }}</div>
-                            <div class="tl-io-body">
-                              <pre class="tl-io" :class="{ live: lr.t.status === 'start' }">{{ liveOutput(lr.t) }}</pre>
-                              <ToolSpillButton v-if="lr.t.spillId" :id="lr.t.spillId" :tool="lr.t.name" kind="输出" />
+                            <div v-if="(lr.t.args || liveOutput(lr.t)) && lr.t.error" class="tl-io-div" aria-hidden="true"></div>
+                            <div v-if="lr.t.error" class="tl-io-sec">
+                              <div class="tl-io-label">错误</div>
+                              <div class="tl-io-body">
+                                <pre class="tl-io tl-io-err">{{ lr.t.error }}</pre>
+                                <ToolSpillButton v-if="lr.t.spillId" :id="lr.t.spillId" :tool="lr.t.name" kind="输出" />
+                              </div>
                             </div>
+                            <!-- 咨询另一位助手：平铺行的详情里也挂子对话卡（问它/执行过程/它的回答
+                                 +「完整过程」抽屉），两条路径同构 -->
+                            <SubAgentChatCard v-if="isDispatchTool(lr.t.name) && (lr.t.subChat || (lr.t._steps && lr.t._steps.length))"
+                                              :t="lr.t"
+                                              :agent="lr.t.subChat ? agentBadgeOf(agentList, lr.t.subChat.agentId, lr.t.subChat.agentName) : null"
+                                              :sources="m.sources"
+                                              :session-id="currentSessionId || ''" :turn-id="m.turnId || ''" />
                           </div>
-                          <div v-if="(lr.t.args || liveOutput(lr.t)) && lr.t.error" class="tl-io-div" aria-hidden="true"></div>
-                          <div v-if="lr.t.error" class="tl-io-sec">
-                            <div class="tl-io-label">错误</div>
-                            <div class="tl-io-body">
-                              <pre class="tl-io tl-io-err">{{ lr.t.error }}</pre>
-                              <ToolSpillButton v-if="lr.t.spillId" :id="lr.t.spillId" :tool="lr.t.name" kind="输出" />
-                            </div>
-                          </div>
-                          <!-- 咨询另一位助手：平铺行的详情里也挂子对话卡（问它/执行过程/它的回答
-                               +「完整过程」抽屉），两条路径同构 -->
-                          <SubAgentChatCard v-if="isDispatchTool(lr.t.name) && (lr.t.subChat || (lr.t._steps && lr.t._steps.length))"
-                                            :t="lr.t"
-                                            :agent="lr.t.subChat ? agentBadgeOf(agentList, lr.t.subChat.agentId, lr.t.subChat.agentName) : null"
-                                            :sources="m.sources"
-                                            :session-id="currentSessionId || ''" :turn-id="m.turnId || ''" />
                         </div>
                         <!-- 还没换来工具的尾部思考/独白：它就是「当前这一步」，自成一节。
                              转圈只在真的还在长时出现；整组可点开看正文。正文另起一块，不能挤在 flex 行里。 -->
@@ -1362,7 +1367,7 @@
           :issue="effectiveModelIssue"
           :placeholder="effectiveModelLabel || '选择模型'"
           :display-ref="effectiveModel"
-          :badge="isNarrow ? pillLevelBadge : thinkBadgeText" :badge-title="pillLevelTitle"
+          :badge="pillLevelBadge" :badge-title="pillLevelTitle"
           :search="false"
           :compact="isNarrow"
           :width="190"
@@ -2245,12 +2250,6 @@ const runSettingsUsage = computed(() => {
   if (!used || runSettingsModel.value !== effectiveModel.value) return ''
   return fmtTokens(used) + (ctxPctText.value ? ' · ' + ctxPctText.value : '')
 })
-// 运行设置触发器上的档位文字：模型名后面读成「中思考」，比一颗光秃秃的「中」清楚
-const thinkBadgeText = computed(() => {
-  const b = pillLevelBadge.value
-  if (!b) return ''
-  return b === '思' ? '思考' : b + '思考'
-})
 // 运行设置面板里的检索范围：只报本轮显式 @ 的知识库；没有就是按智能体默认范围
 const kbScopeText = computed(() => {
   const kbs = (pendingMentions.value || []).filter(x => x.type === 'kb')
@@ -2336,6 +2335,10 @@ const g = {
 
 /** 执行详情：工具/产物按 stepId 归到步骤上；没有归属数据时卡片只报状态。 */
 const planExecDetailOf = m => planExecDetail(planExecProgressOf(m), m && m.toolCalls, (m && m.artifacts) || [])
+
+/** 帽体里有没有把某一步摊开在读：有则顶部渐隐要撤——贴顶吸附的行头正落在 24px 渐隐带里，
+ *  不撤会被整行抹成透明（见 .tl-cluster-live.reading） */
+const clusterReading = seg => clusterLiveRows(seg).some(r => r.t && r.t._open)
 
 // ---- 编辑重发：先建，命令面板要复用它的编辑态列表 ----
 const {
@@ -2910,6 +2913,18 @@ const {
 .tl-cluster-live.ef-top { mask-image: linear-gradient(to bottom, transparent 0, #000 24px, #000 100%); }
 .tl-cluster-live.ef-bot { mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 24px), transparent 100%); }
 .tl-cluster-live.ef-top.ef-bot { mask-image: linear-gradient(to bottom, transparent 0, #000 24px, #000 calc(100% - 24px), transparent 100%); }
+/* 有一步摊开在读时撤掉顶部渐隐：贴顶吸住的行头正好坐在 24px 渐隐带里，不撤会被整行抹成透明。
+   底部渐隐留着——「下面还有步骤」的暗示不因在读这一步而失效 */
+.tl-cluster-live.reading.ef-top { mask-image: none; }
+.tl-cluster-live.reading.ef-top.ef-bot { mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 24px), transparent 100%); }
+/* 一步＝行头 + 详情装同一盒：展开后行头在盒内贴顶吸附——往下读长入参/输出时，滚走的只是详情，
+   待读哪一步的头一直在；滚过这一盒（下一步到头）它自然让位，不会盖住后面几步。
+   底色取聊天画布（.chat2 的 --app-panel）：不取底色，滚上来的正文会从行头后面透出来；
+   取同色则看不见这道底，只起遮挡作用 */
+.tl-live-step { position: relative; }
+.tl-live-step > .tl-live-row.open {
+  position: sticky; top: 0; z-index: 1; background: var(--app-panel);
+}
 /* 步骤行（DSH ToolRow 折叠态同款）：24px 一行——[16px 图标位] 6 [13px 动词] 8 [2px 点] 8 [13px 摘要省略]。
    整行可点展开详情；悬停只加深文字色（状态图标保持原样——✓/错误图标是每行的身份，hover 不动它），
    行真正展开后图标位才让位给上收箭头。 */

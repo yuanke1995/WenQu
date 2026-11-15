@@ -133,59 +133,63 @@
               </button>
               <!-- 帽体：跑轮中自动开并贴底跟随、用户点开停顶部。固定高度裸排清单（180px 内滚、边缘渐隐），
                    与 PC 同构；点行在帽内展开该步详情（入参/输出/错误）。 -->
-              <div v-if="clusterOpen(m, seg)" v-follow-bottom="!!(m.loading && seg.grow)" v-edge-fade class="cluster-live">
+              <div v-if="clusterOpen(m, seg)" v-follow-bottom="!!(m.loading && seg.grow)" v-edge-fade
+                   class="cluster-live" :class="{ reading: clusterReading(seg) }">
                 <template v-for="(lr, li) in clusterLiveRows(seg)" :key="li">
-                  <div v-if="lr.t" class="live-row" :data-spawn="spawnAnchorOf(lr.t)"
-                       :class="{ run: lr.t.status === 'start' && !lr.t.denied, err: lr.t.status === 'error', off: lr.t.denied, open: lr.t._open }"
-                       @click.stop="lr.t._open = !lr.t._open">
-                    <span class="tl-cluster-ic live-ic">
-                      <span class="tl-ic-a">
-                        <loading-outlined v-if="lr.t.status === 'start' && !lr.t.denied" spin />
-                        <check-outlined v-else-if="lr.t.status === 'done'" />
-                        <close-circle-outlined v-else-if="lr.t.status === 'error'" class="ic-err" />
-                        <pause-circle-outlined v-else />
+                  <!-- 头与详情同一盒：头在自己这盒内贴顶吸附（见 .live-step），滚过这一盒自然让位 -->
+                  <div v-if="lr.t" class="live-step">
+                    <div class="live-row" :data-spawn="spawnAnchorOf(lr.t)"
+                         :class="{ run: lr.t.status === 'start' && !lr.t.denied, err: lr.t.status === 'error', off: lr.t.denied, open: lr.t._open }"
+                         @click.stop="lr.t._open = !lr.t._open">
+                      <span class="tl-cluster-ic live-ic">
+                        <span class="tl-ic-a">
+                          <loading-outlined v-if="lr.t.status === 'start' && !lr.t.denied" spin />
+                          <check-outlined v-else-if="lr.t.status === 'done'" />
+                          <close-circle-outlined v-else-if="lr.t.status === 'error'" class="ic-err" />
+                          <pause-circle-outlined v-else />
+                        </span>
+                        <span class="tl-ic-c"><down-outlined /></span>
                       </span>
-                      <span class="tl-ic-c"><down-outlined /></span>
-                    </span>
-                    <span class="live-name" :title="lr.t.hint">{{ toolLabel(lr.t.name, lr.t.label) }}</span>
-                    <template v-if="toolBrief(lr.t)">
-                      <span class="live-sep" aria-hidden="true"></span>
-                      <span class="live-brief">{{ toolBrief(lr.t) }}</span>
-                    </template>
-                    <span v-if="lr.t.denied" class="live-flag">被挡下</span>
-                  </div>
-                  <div v-if="lr.t && lr.t._open && (lr.t.args || liveOutput(lr.t) || lr.t.error || (lr.notes && lr.notes.length))" class="live-detail" @click.stop>
-                    <template v-if="lr.notes && lr.notes.length">
-                      <div class="live-think">
-                        <div class="live-think-label">思考</div>
-                        <div v-for="(nn, ni) in lr.notes" :key="'n' + ni" class="think-seg">
-                          <NoteBody :m="m" :note="nn" always bare :viewer="false"
-                                    @citation="onBodyCitation" @preview="onBodyPreview" />
+                      <span class="live-name" :title="lr.t.hint">{{ toolLabel(lr.t.name, lr.t.label) }}</span>
+                      <template v-if="toolBrief(lr.t)">
+                        <span class="live-sep" aria-hidden="true"></span>
+                        <span class="live-brief">{{ toolBrief(lr.t) }}</span>
+                      </template>
+                      <span v-if="lr.t.denied" class="live-flag">被挡下</span>
+                    </div>
+                    <div v-if="lr.t._open && (lr.t.args || liveOutput(lr.t) || lr.t.error || (lr.notes && lr.notes.length))" class="live-detail" @click.stop>
+                      <template v-if="lr.notes && lr.notes.length">
+                        <div class="live-think">
+                          <div class="live-think-label">思考</div>
+                          <div v-for="(nn, ni) in lr.notes" :key="'n' + ni" class="think-seg">
+                            <NoteBody :m="m" :note="nn" always bare :viewer="false"
+                                      @citation="onBodyCitation" @preview="onBodyPreview" />
+                          </div>
+                        </div>
+                        <div v-if="lr.t.args || liveOutput(lr.t) || lr.t.error" class="io-div" aria-hidden="true"></div>
+                      </template>
+                      <div v-if="lr.t.args" class="io-sec">
+                        <div class="io-label">入参</div>
+                        <div class="io-body">
+                          <pre class="io-pre">{{ prettyIo(lr.t.args) }}</pre>
+                          <ToolSpillButton v-if="lr.t.argsSpillId" :id="lr.t.argsSpillId" :tool="lr.t.name" kind="入参" />
                         </div>
                       </div>
-                      <div v-if="lr.t.args || liveOutput(lr.t) || lr.t.error" class="io-div" aria-hidden="true"></div>
-                    </template>
-                    <div v-if="lr.t.args" class="io-sec">
-                      <div class="io-label">入参</div>
-                      <div class="io-body">
-                        <pre class="io-pre">{{ prettyIo(lr.t.args) }}</pre>
-                        <ToolSpillButton v-if="lr.t.argsSpillId" :id="lr.t.argsSpillId" :tool="lr.t.name" kind="入参" />
+                      <div v-if="lr.t.args && liveOutput(lr.t)" class="io-div" aria-hidden="true"></div>
+                      <div v-if="liveOutput(lr.t)" class="io-sec">
+                        <div class="io-label">{{ lr.t.status === 'start' ? '实时输出' : (lr.t.result ? '输出' : '输出（执行期）') }}</div>
+                        <div class="io-body">
+                          <pre class="io-pre" :class="{ live: lr.t.status === 'start' }">{{ liveOutput(lr.t) }}</pre>
+                          <ToolSpillButton v-if="lr.t.spillId" :id="lr.t.spillId" :tool="lr.t.name" kind="输出" />
+                        </div>
                       </div>
-                    </div>
-                    <div v-if="lr.t.args && liveOutput(lr.t)" class="io-div" aria-hidden="true"></div>
-                    <div v-if="liveOutput(lr.t)" class="io-sec">
-                      <div class="io-label">{{ lr.t.status === 'start' ? '实时输出' : (lr.t.result ? '输出' : '输出（执行期）') }}</div>
-                      <div class="io-body">
-                        <pre class="io-pre" :class="{ live: lr.t.status === 'start' }">{{ liveOutput(lr.t) }}</pre>
-                        <ToolSpillButton v-if="lr.t.spillId" :id="lr.t.spillId" :tool="lr.t.name" kind="输出" />
-                      </div>
-                    </div>
-                    <div v-if="(lr.t.args || liveOutput(lr.t)) && lr.t.error" class="io-div" aria-hidden="true"></div>
-                    <div v-if="lr.t.error" class="io-sec">
-                      <div class="io-label">错误</div>
-                      <div class="io-body">
-                        <pre class="io-pre io-err">{{ lr.t.error }}</pre>
-                        <ToolSpillButton v-if="lr.t.spillId" :id="lr.t.spillId" :tool="lr.t.name" kind="输出" />
+                      <div v-if="(lr.t.args || liveOutput(lr.t)) && lr.t.error" class="io-div" aria-hidden="true"></div>
+                      <div v-if="lr.t.error" class="io-sec">
+                        <div class="io-label">错误</div>
+                        <div class="io-body">
+                          <pre class="io-pre io-err">{{ lr.t.error }}</pre>
+                          <ToolSpillButton v-if="lr.t.spillId" :id="lr.t.spillId" :tool="lr.t.name" kind="输出" />
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -492,6 +496,10 @@ import AgentAvatar from '../components/AgentAvatar.vue'
 const CLUSTER_ICONS = { search: SearchOutlined, web: GlobalOutlined, tools: ApiOutlined, thinking: BulbOutlined }
 const clusterIconOf = seg => CLUSTER_ICONS[clusterHeadKind(seg)] || BulbOutlined
 
+/** 帽体里有没有把某一步摊开在读（与 PC 同一判据）：有则撤掉顶部渐隐，
+ *  否则贴顶吸附的行头会整行落在渐隐带里被抹透明（见 .cluster-live.reading） */
+const clusterReading = seg => clusterLiveRows(seg).some(r => r.t && r.t._open)
+
 const props = defineProps({
   m: { type: Object, required: true },
   index: { type: Number, required: true },
@@ -733,6 +741,15 @@ const onBodyPreview = (urls, index) => emit('preview', urls, index)
 .cluster-live.ef-top { mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 100%); }
 .cluster-live.ef-bot { mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 20px), transparent 100%); }
 .cluster-live.ef-top.ef-bot { mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 20px), transparent 100%); }
+/* 有一步摊开在读时撤掉顶部渐隐：贴顶吸住的行头正坐在渐隐带里，不撤会被整行抹透。
+   底部渐隐留着（下面还有步骤的暗示不变），与 PC 同一条口径 */
+.cluster-live.reading.ef-top { mask-image: none; }
+.cluster-live.reading.ef-top.ef-bot { mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 20px), transparent 100%); }
+/* 一步＝行头 + 详情一盒：头在展开态于盒内贴顶吸附（与 PC 同构）——
+   往下读长入参/输出时仍看得到在读哪一步；滚过这一盒自然让位给下一行。
+   帽体长在卡片里（.proc-cluster 卡底），吸附底色取卡底 */
+.live-step { position: relative; }
+.live-step > .live-row.open { position: sticky; top: 0; z-index: 1; background: var(--app-panel); }
 /* 步骤行（与 PC 同款）：图标位+动词+2px 点+摘要；触屏热区 32px */
 .live-row { display: flex; align-items: center; gap: 6px; min-height: 32px; font-size: 13px; color: var(--app-text3); cursor: pointer; }
 .live-ic { color: inherit; }
