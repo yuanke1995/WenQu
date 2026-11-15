@@ -14,7 +14,7 @@
           <folder-open-outlined class="head-ws-ic" />
           <span class="head-ws-name">{{ sessionWorkspace.name }}</span>
         </button>
-        <span class="head-tip" title="查看免责声明" @click="disclaimerVisible = true">AI 回答可能有误，重要信息请核实</span>
+        <!-- 免责声明从标题栏下沉到每条回答的脚注（见 msg-disclaimer）：它该出现在读结论的现场 -->
         <!-- 头部动作区：右对齐一组，图标按钮无框安静 -->
         <div class="head-actions">
           <button class="app-icon-btn" title="在本会话中查找（Ctrl/⌘ + F）" @click="openSearch">
@@ -30,9 +30,15 @@
                派遣一跑就是两三分钟，而正文在这期间一直在往下长——跟在正文里的东西要滚到
                最新那一段才看得见，等它跑完才出现的东西等于没给。 -->
           <SubagentPill :msg="processMsg" @focus="focusSpawn" />
-          <button class="head-quiet-btn" title="看这个会话是怎么跑出来的：工具步与耗时、三张卡、产物、停止与失败"
-                  @click="openEvents()">过程</button>
-          <button class="head-quiet-btn" @click="togglePanel">{{ panelOpen ? '隐藏状态' : '状态' }}</button>
+          <!-- 过程账本入口收成图标：过程本身已经挂到回答头上，顶栏只留「事后回看」这条路 -->
+          <button class="app-icon-btn" title="看这个会话是怎么跑出来的：工具步与耗时、三张卡、产物、停止与失败"
+                  @click="openEvents()"><history-outlined /></button>
+          <!-- 状态胶囊：把「本轮跑成什么样」放回顶栏；失败时变红，点它开合右栏 -->
+          <button class="head-status" :class="headStatusClass" @click="headStatusClick"
+                  :title="headStatusTitle">
+            <span class="hs-dot" aria-hidden="true"></span>
+            <span>{{ headStatusText }}</span>
+          </button>
         </div>
       </div>
       <!-- 窄屏动作行：标题归顶栏，这里只放查找/分享/状态三个图标 -->
@@ -180,14 +186,16 @@
               </div>
           </template>
           <template #body-before="{ m, i }">
-              <div v-if="showAgentTag(m, i) && debugDisplayVisible" class="agent-tag">
-                <AgentAvatar class="agent-tag-ava" :agent="agentBadgeOf(agentList, m.agentId, m.agentName)" :size="14" />
-                <span>由「{{ m.agentName }}」回答</span>
-              </div>
+              <!-- 回答头：身份 + 完成态 + 模型 + 步数，过程入口也挂在这里。
+                   它用 CSS sticky 吸在这条回答内，滚到长答中段仍能看状态与复制。 -->
+              <AnswerHeader v-if="m.role === 'ai'" :m="m" :msg-index="i"
+                            :agent="agentBadgeOf(agentList, m.agentId, m.agentName)"
+                            :name="m.agentName || ''"
+                            :model-label="m.model ? modelLabelOf(m.model) : ''" />
           </template>
           <template #body="{ m, i }">
-              <!-- 整轮用时那一条：它同时是过程块的开关。跑着的时候过程自动展开，答完收起只留正文 -->
-              <TurnBar v-if="m.role === 'ai'" :m="m" />
+              <!-- 整轮状态行已并入回答头（AnswerHeader）：正文从这里直接开始，
+                   过程块仍由回答头上的「过程」按钮开合。 -->
               <!-- 技能命中不再在回答头顶放芯片（点「看这一轮的过程」账本面板仍可回看 skill_hit 投影） -->
               <!-- 正文 / 过程分离（统一正文流）：正文＝整段 content，工具调用只作过程步骤、不切正文；
                    过程（思考/过程/工具）全收在顶部过程块里。唯一例外是插话：它是用户自己说的话，
@@ -560,10 +568,20 @@
           </template>
           <template #sources-after="{ m, i }">
               <!-- 只在最新一轮出现（panelAi=最后一条 AI 消息，含进行中）：更早那几轮的建议已被后面的对话取代，
-                   每轮都留着会让整页散落着可点的旧问句，翻历史时容易误点重发一个早问过的话题 -->
+                   每轮都留着会让整页散落着可点的旧问句，翻历史时容易误点重发一个早问过的话题。
+                   整行是按钮：编号 + 问题 + 箭头，比灰底小 chip 更像「下一步」 -->
               <div v-if="m.role === 'ai' && m === panelAi && m.related && m.related.length" class="related">
-                <span class="related-label">接下来可以：</span>
-                <span v-for="(q, qi) in m.related" :key="qi" class="related-tag" @click="ask(q)">{{ q }}</span>
+                <div class="related-head">
+                  <bulb-outlined class="related-ic" />
+                  <span class="related-title">接下来可以</span>
+                  <span class="related-sub">会作为新一轮提问发送</span>
+                </div>
+                <button v-for="(q, qi) in m.related" :key="qi" type="button" class="related-row" @click="ask(q)">
+                  <span class="related-no">{{ qi + 1 }}</span>
+                  <span class="related-txt" :title="q">{{ q }}</span>
+                  <arrow-right-outlined class="related-go" />
+                </button>
+                <div class="related-foot">这些追问会作为新的用户消息发送，可能重新检索资料或调用工具。</div>
               </div>
           </template>
           <template #actions-prefix="{ m, i }">
@@ -610,6 +628,12 @@
                   <span v-if="m.time" class="msg-time-inline">{{ fmtMsgTime(m.time) }}</span>
           </template>
           <template #actions-after="{ m, i }">
+            <!-- 免责声明：从标题栏下沉到读结论的现场；点开仍是原来那份完整声明 -->
+            <div v-if="m.role === 'ai' && m.content && !m.loading" class="msg-disclaimer"
+                 title="查看完整免责声明" @click="disclaimerVisible = true">
+              <InfoCircleOutlined />
+              <span>AI 生成内容，关键数字请以数据源为准</span>
+            </div>
             <!-- 叫停且本轮没产出任何回答：终止事实记在「这一问」上（不造一条空回答气泡），刷新/换端从库里带回 -->
             <div v-if="m.role === 'user' && m.endReason === 'stopped'" class="msg-stopped"
                  title="已按你的要求停止这一轮，智能体没有产出回答">
@@ -1338,11 +1362,59 @@
           :issue="effectiveModelIssue"
           :placeholder="effectiveModelLabel || '选择模型'"
           :display-ref="effectiveModel"
-          :badge="pillLevelBadge" :badge-title="pillLevelTitle"
+          :badge="isNarrow ? pillLevelBadge : thinkBadgeText" :badge-title="pillLevelTitle"
           :search="false"
           :compact="isNarrow"
           :width="190"
-          @option-hover="onModelOptionHover" @open-change="onModelSelectOpenChange" />
+          :run-settings="!isCoarse"
+          panel-title="运行设置"
+          :panel-sub="runSettingsModelLabel">
+            <!-- 运行设置尾栏：与模型列表同一张下拉。设计稿要的就是「模型 + 思考 + 上下文 + 检索」一次改完，
+                 不再另开一层悬浮面板 -->
+            <template #runSettings>
+              <div class="rs-panel" @mousedown.stop @click.stop>
+                <div class="rs-sec">
+                  <div class="rs-label">思考强度</div>
+                  <div class="rs-seg">
+                    <button v-for="opt in runSettingsLevels" :key="opt.value" type="button" class="rs-chip"
+                            :class="{ on: opt.value === runSettingsLevel }"
+                            :disabled="runSettingsCaps.locked || loading"
+                            :title="opt.label" @click="setThinkLevel(opt.value, runSettingsModel)">
+                      {{ chipLabelOf(opt.value) }}
+                    </button>
+                  </div>
+                  <div class="rs-hint">{{ runSettingsHint }}</div>
+                </div>
+                <div v-if="runSettingsWindow" class="rs-row">
+                  <span class="rs-k">上下文窗口</span><span class="rs-v">{{ runSettingsWindow }}</span>
+                </div>
+                <div v-if="runSettingsUsage" class="rs-row">
+                  <span class="rs-k">本轮占用</span><span class="rs-v">{{ runSettingsUsage }}</span>
+                </div>
+                <div class="rs-row">
+                  <span class="rs-k">本轮检索</span><span class="rs-v" :title="kbScopeText">{{ kbScopeText }}</span>
+                </div>
+                <div class="rs-foot">
+                  <span class="rs-foot-note">思考档按模型记住</span>
+                  <button type="button" class="rs-default" :disabled="isRunModelDefault" @click.stop="setRunModelDefault">
+                    {{ isRunModelDefault ? '已是默认' : '设为默认' }}
+                  </button>
+                </div>
+              </div>
+            </template>
+          </ModelSelect>
+        </template>
+        <!-- 快捷键说明从 placeholder 里下沉到这里：卡片之下、同一内边距列里；
+             页面若在外面另起一行，居中基准会和输入卡片错开 -->
+        <template #below>
+          <div v-if="!isNarrow" class="chat-hints">
+            <span><kbd>Enter</kbd> 发送</span>
+            <span><kbd>Shift</kbd>+<kbd>Enter</kbd> 换行</span>
+            <span><b>@</b> 引用资料</span>
+            <span><b>/</b> 命令</span>
+            <span><b>#</b> 历史问答</span>
+            <span class="chat-hints-sp">生成中按 Enter 可插话</span>
+          </div>
         </template>
       </ChatInput>
       <!-- 完全权限二次确认：这是一次「把围栏放下」的显式动作，必须看清风险再勾选 -->
@@ -1395,17 +1467,38 @@
       <button v-if="isNarrow" class="rp-sheet-close" type="button" title="关闭" @click="mPanelOpen = false">
         <close-outlined />
       </button>
+      <!-- 右栏分段：过程 / 来源 / 文件。原先所有卡竖排，本轮最该看的过程会被后面的卡顶出首屏；
+           分段把三件事分开，计数与失败数直接标在页签上 -->
+      <div class="rp-tabs" role="tablist" aria-label="右栏内容">
+        <button type="button" class="rp-tab" :class="{ on: railTab === 'process' }" role="tab"
+                :aria-selected="railTab === 'process'" @click="railTab = 'process'">
+          过程<span class="rp-tab-n">{{ processSteps.length }}</span>
+          <span v-if="processFailCount" class="rp-tab-badge">{{ processFailCount }}</span>
+        </button>
+        <button type="button" class="rp-tab" :class="{ on: railTab === 'sources' }" role="tab"
+                :aria-selected="railTab === 'sources'" @click="railTab = 'sources'">
+          来源<span class="rp-tab-n">{{ groupedSources.length }}</span>
+        </button>
+        <button type="button" class="rp-tab" :class="{ on: railTab === 'files' }" role="tab"
+                :aria-selected="railTab === 'files'" @click="railTab = 'files'">
+          文件<span class="rp-tab-n">{{ fileTabCount }}</span>
+        </button>
+      </div>
       <!-- 本轮卡（常驻首位）：跑轮时实时滚动「哪几步、每步在做什么事」，答完收成这一轮的动作清单。
            单步耗时不在这里报（整轮用时归气泡那条状态行），要点「查看全部步骤」进账本弹窗。
            会话里还没有 AI 消息时整卡不渲染（新会话不占位）。其余各卡仍是「有数据才显示」。 -->
-      <RightProcessCard :msg="processMsg" @open-events="openEvents()" @open-hitl="focusHitl" />
+      <RightProcessCard v-if="railTab === 'process'" :msg="processMsg"
+                        @open-events="openEvents()" @open-hitl="focusHitl"
+                        @regenerate="processMsgIndex >= 0 && regenerate(processMsgIndex)" />
+      <div v-if="railTab === 'process' && !processMsg" class="rp-empty">还没有可看的过程</div>
       <!-- 引用来源：右栏交互最重的一张卡（点片段看原文 / 角标号定位正文 / hover 高亮角标 / 分组展开），过程卡之后的第一张。
            原先排在末尾，等于把「核查答案」这个最高频动作排到最需要滚动才看得到的位置——
            正文里刚亮起的角标，用户得点开侧栏再往下翻。移动端 sheet 一直把它排第一，这里对齐。
            有引用才显示整卡（空则隐藏，不占版面，与产物卡同规则）。
            卡头可折叠：来源多时（11 个来源就是 11 个分组行）整卡会把下面的卡顶出首屏。
            任务清单在输入框上方常驻（见 #above 的 .todo-bar）。 -->
-      <div v-if="groupedSources.length" class="rp-card">
+      <div v-if="railTab === 'sources' && !groupedSources.length" class="rp-empty">本轮没有引用来源</div>
+      <div v-if="railTab === 'sources' && groupedSources.length" class="rp-card">
         <button type="button" class="rp-card-head" @click="srcCardOpen = !srcCardOpen">
           <span class="rp-label">引用来源 · {{ groupedSources.length }} 个来源</span>
           <caret-right-outlined class="tl-caret" :class="{ open: srcCardOpen }" />
@@ -1444,7 +1537,8 @@
            同一判据同一待遇），下载走同一份签名地址；更多入口跳产物页 -->
       <!-- 本会话交付：按交付包列（目标跨轮一个包、其余按轮一个包），点开进交付抽屉；
            不再把每件产物摊成一行。 -->
-      <div v-if="deliveryPackages.length" class="rp-card">
+      <div v-if="railTab === 'files' && filesTabEmpty" class="rp-empty">本轮还没有文件或交付</div>
+      <div v-if="railTab === 'files' && deliveryPackages.length" class="rp-card">
         <div class="rp-label">交付 · {{ deliveryPackages.length }} 个包</div>
         <button v-for="d in deliveryPackages" :key="d.anchorKey || d.name" type="button" class="rp-dlv"
                 @click="openDelivery(d)">
@@ -1462,7 +1556,7 @@
            预览＝签名地址开新标签（与工作区文件栏同一条路、同一批类型判据，服务端只给点得开的条目配 viewUrl）。
            接口给的是摊平的一维清单，这里按相对路径折回目录树：整条路径摊在一行时名字全被截断，
            认不出哪份是成品；折成树之后行内只剩文件名，腾出的位置给大小。 -->
-      <div v-if="sandboxFiles.length || sandboxErr || sandboxLoading" class="rp-card">
+      <div v-if="railTab === 'files' && (sandboxFiles.length || sandboxErr || sandboxLoading)" class="rp-card">
         <div class="rp-label">{{ sessionWorkspace && (sessionWorkspace.isLocal || sessionWorkspace.wsEffective === 'local') ? '本机文件' : '会话文件' }} · {{ sandboxCount }} 个{{ sandboxBytes ? ' · ' + sbSize(sandboxBytes) : '' }}</div>
         <div v-if="sandboxLocalOffline" class="rp-sb-hint">本机执行器离线，暂显示云端沙盒文件</div>
         <div v-if="sandboxLoading" class="rp-sb-hint">正在读取目录…</div>
@@ -1510,7 +1604,7 @@
            真源各自在源头（执行器进程登记 + ps 实况 / 容器 /proc），服务端不留台账：执行器/后端重启都照得到。
            沙盒里挂了共享目录时多个会话共用一个容器，别的会话起走的进程也会列出来，标一句——端口是同一个容器占的。
            本机侧端口可以直接点开（就是你电脑上的 localhost），沙盒容器端口不映射、只说明它占着哪个。 -->
-      <div v-if="procCardVisible" class="rp-card">
+      <div v-if="railTab === 'files' && procCardVisible" class="rp-card">
         <div class="rp-label rp-proc-head"
              title="助手在会话里起的、不会自己退的进程（比如为了自己看效果起的服务）。本机执行器到点只是不再等它（或它自己退成了孤儿），进程照旧活着。">
           <span>后台进程<span class="rp-proc-n">{{ procs.length }}</span><span class="rp-proc-unit">个在跑</span></span>
@@ -1565,7 +1659,7 @@
       </div>
       <!-- 计划：本会话每轮出过的计划各列一条（继续对话/退回重出后每次重做都算一份），点开右侧完整计划抽屉。
            待确认的计划自动展开并置顶，避免「计划要批」这件事被藏住；历史计划沉底折叠。 -->
-      <div v-if="sessionPlans.length" class="rp-card">
+      <div v-if="railTab === 'process' && sessionPlans.length" class="rp-card">
         <button type="button" class="rp-card-head rp-plan-head" @click="planOpen = !planOpen"
                 :title="planOpen ? '收起计划' : '展开计划'">
           <span class="rp-label rp-label-h">计划 · {{ sessionPlans.length }} 份</span>
@@ -1742,13 +1836,23 @@
            @mouseenter="onThinkPanelEnter" @mouseleave="onThinkPanelLeave"
            @mousedown.stop.prevent>
         <div class="thinkp">
-          <div class="thinkp-title">深度思考</div>
+          <div class="thinkp-title">运行设置<span v-if="modelLabelOf(thinkHoverModel)" class="thinkp-model">{{ modelLabelOf(thinkHoverModel) }}</span></div>
           <div v-if="thinkPanelCtxText || thinkPanelCaps.visible" class="thinkp-row-wrap">
             <!-- 上下文窗口只报登记上限：窗口一律按模型登记的最大值走 -->
             <div v-if="thinkPanelCtxText" class="thinkp-row"
                  title="模型登记的上下文窗口：一次能带进的资料与历史总量，也决定长对话什么时候开始折上下文">
               <span class="thinkp-row-label">上下文窗口</span>
               <span class="thinkp-row-val">{{ thinkPanelCtxText }}</span>
+            </div>
+            <!-- 本轮占用与检索范围只对「正在生效的模型」说：悬浮另一个模型时，别把本轮的用量算到它头上 -->
+            <div v-if="ctxCapData.used && thinkHoverModel === effectiveModel" class="thinkp-row"
+                 title="本轮结束时的上下文占用 / 模型登记的窗口">
+              <span class="thinkp-row-label">上下文占用</span>
+              <span class="thinkp-row-val">{{ fmtTokens(ctxCapData.used) }}<template v-if="ctxPctText"> · {{ ctxPctText }}</template></span>
+            </div>
+            <div v-if="thinkHoverModel === effectiveModel" class="thinkp-row" title="本轮显式 @ 的知识库；没有就是按智能体默认范围">
+              <span class="thinkp-row-label">本轮检索</span>
+              <span class="thinkp-row-val thinkp-row-ellipsis">{{ kbScopeText }}</span>
             </div>
             <template v-if="thinkPanelCaps.visible">
               <!-- 恒思考：强度由管理员在模型库登记，没有可选项，保持只读一行 -->
@@ -1837,13 +1941,13 @@ import { LoadingOutlined, DownOutlined, CaretRightOutlined, CheckOutlined, Close
          CloseOutlined, DatabaseOutlined, SearchOutlined, UpOutlined, ShareAltOutlined,
          HistoryOutlined, SwapOutlined, InfoCircleOutlined,
          AppstoreOutlined, ClockCircleOutlined, BookOutlined,
-         OrderedListOutlined, LeftOutlined, FolderOpenOutlined, FolderOutlined, ExportOutlined,
+         ArrowRightOutlined, OrderedListOutlined, LeftOutlined, FolderOpenOutlined, FolderOutlined, ExportOutlined,
          AimOutlined, EyeOutlined, SaveOutlined, ReloadOutlined, BulbOutlined,
          SafetyCertificateOutlined, ScheduleOutlined } from '@ant-design/icons-vue'
 import { debugRetrieval, deleteMessageGroup, submitFeedback as apiSubmitFeedback,
          addEvalCase, getSessionShare, enableSessionShare, disableSessionShare,
          getSessionWorkspace, getPermissionPresets, setSessionPermission,
-         openProjectFolder, updateProjectItem, createSkill } from '../api'
+         openProjectFolder, updateProjectItem, createSkill, setUserPreference } from '../api'
 import { renderMd, resolveImg, onImgError } from '../utils/markdown'
 import { loadSessions, sessionStore } from './store'
 import { exportAnswerMd, exportSessionMarkdown } from './exportMd'
@@ -1873,7 +1977,8 @@ import MobileChatHead from '../h5/MobileChatHead.vue'
 import AskRecordCard from '../components/AskRecordCard.vue'
 import NoteTag from '../components/NoteTag.vue'
 import NoteBody from '../components/NoteBody.vue'
-import TurnBar from '../components/TurnBar.vue'
+import AnswerHeader from '../components/AnswerHeader.vue'
+import { roundSteps } from '../chat/roundSummary'
 import SubAgentChatCard from '../components/SubAgentChatCard.vue'
 import MsgDivider from '../components/MsgDivider.vue'
 import ToolSpillButton from '../components/ToolSpillButton.vue'
@@ -2005,11 +2110,11 @@ const {
   skillList, pickedSkills, toggleSkill, skillAvaStyle, loadSkills, skillDoc,
   // 智能体
   agentList, hasDefaultAgent, currentAgentId, isAdmin, agentPickerOpen,
-  currentAgentName, currentAgent, pickAgent, showAgentTag, modelSwitchInfo, loadAgents,
+  currentAgentName, currentAgent, pickAgent, modelLabelOf, modelSwitchInfo, loadAgents,
   // 会话与消息
   currentSessionId, loading, messages, currentSessionTitle,
   // 模型
-  currentOverrideModel, modelIndex, effectiveModel, effectiveModelLabel, effectiveModelIcon,
+  currentOverrideModel, userDefaultModel, modelIndex, effectiveModel, effectiveModelLabel, effectiveModelIcon,
   effectiveModelProvider, debugEntryVisible, debugDisplayVisible, effectiveModelIssue,
   // 检索 / 用量 / 来源
   lastAi, groupedSources, ctxTokens, ctxCapData, ctxRingDash,
@@ -2062,6 +2167,94 @@ const goalRoundsCount = computed(() => {
 const goalNextVersionLabel = computed(() => {
   const n = Number(sessionGoal.value && sessionGoal.value.objectiveVersion) || 0
   return 'v' + (n + 2)
+})
+
+// 顶栏状态胶囊与回答头共用同一份过程步：只读最后一条 AI 消息，不另起一套判据
+const processSteps = computed(() => (processMsg.value ? roundSteps(processMsg.value) : []))
+const processFailCount = computed(() => processSteps.value.filter(t => t.status === 'error').length)
+const headStatusClass = computed(() => ({
+  bad: processFailCount.value > 0,
+  run: !!(processMsg.value && processMsg.value.loading),
+  on: panelOpen.value
+}))
+const headStatusText = computed(() => {
+  if (processFailCount.value) return `本轮 ${processFailCount.value} 步失败`
+  if (processMsg.value && processMsg.value.loading) return '正在执行'
+  return '状态'
+})
+const headStatusTitle = computed(() => {
+  if (processFailCount.value) return `本轮有 ${processFailCount.value} 步失败，点开右栏看过程`
+  if (processMsg.value && processMsg.value.loading) return '本轮正在执行，点开右栏看过程'
+  return panelOpen.value ? '收起状态栏' : '展开状态栏'
+})
+// 右栏分段与计数：过程 / 来源 / 文件各一份，失败数只压在过程页签上
+const railTab = ref('process')
+const fileTabCount = computed(() => (deliveryPackages.value?.length || 0)
+  + (Number(sandboxCount.value) || 0) + (procs.value?.length || 0))
+// 文件页签的空态不能只看计数：读取失败/正在读时 count 可能是 0，但下面确实有错误卡要显示
+const filesTabEmpty = computed(() => !fileTabCount.value && !sandboxErr.value && !sandboxLoading.value && !procCardVisible.value)
+// 最后一条 AI 消息的下标：右栏「重新生成本轮」要按这条消息重跑整轮
+const processMsgIndex = computed(() => {
+  const list = messages.value || []
+  for (let i = list.length - 1; i >= 0; i--) if (list[i].role === 'ai') return i
+  return -1
+})
+// 顶栏状态胶囊：先切到过程页签再开栏；已经停在过程页签时再点才收起
+const headStatusClick = () => {
+  const openNow = isNarrow.value ? mPanelOpen.value : panelOpen.value
+  if (openNow && railTab.value === 'process') { togglePanel(); return }
+  railTab.value = 'process'
+  if (!openNow) togglePanel()
+}
+// 运行设置（与模型下拉同一张卡）：以当前显式选择的模型为准；跟随默认时用生效模型
+const runSettingsModel = computed(() => currentOverrideModel.value || effectiveModel.value)
+const runSettingsModelLabel = computed(() => modelLabelOf(runSettingsModel.value) || effectiveModelLabel.value || '当前模型')
+const runSettingsCaps = computed(() => thinkCapsOf(runSettingsModel.value))
+const runSettingsLevels = computed(() => levelOptionsOf(runSettingsModel.value))
+const runSettingsLevel = computed(() => currentLevelOf(runSettingsModel.value))
+const runSettingsHint = computed(() => runSettingsCaps.value.locked
+  ? '该模型始终思考，强度由管理员在模型库登记'
+  : '强度越高，思考越深入，回答耗时相应增加')
+const runSettingsWindow = computed(() => {
+  const info = modelIndex.value[runSettingsModel.value]
+  return info && info.contextWindow ? fmtWindow(info.contextWindow) : ''
+})
+const isRunModelDefault = computed(() => !!runSettingsModel.value && runSettingsModel.value === userDefaultModel.value)
+const setRunModelDefault = async () => {
+  const ref = runSettingsModel.value
+  if (!ref) return
+  try {
+    await setUserPreference({ defaultModel: ref })
+    userDefaultModel.value = ref
+    message.success('已设为默认模型')
+  } catch (e) {
+    message.error((e && e.message) || '设置默认模型失败')
+  }
+}
+// 输入区容量圆环旁的那颗百分比：与圆环同源（ctxCapData 的实测 used/window），没有真数就不显示
+const ctxPctText = computed(() => {
+  const used = Number(ctxCapData.value && ctxCapData.value.used) || 0
+  const win = Number(ctxCapData.value && ctxCapData.value.window) || 0
+  if (!used || !win) return ''
+  const pct = (used / win) * 100
+  return pct > 0 && pct < 1 ? '<1%' : Math.round(pct * 10) / 10 + '%'
+})
+// 运行设置里的「本轮占用」只对生效模型成立：选了另一个模型时，本轮的 tokens 不是它的
+const runSettingsUsage = computed(() => {
+  const used = Number(ctxCapData.value && ctxCapData.value.used) || 0
+  if (!used || runSettingsModel.value !== effectiveModel.value) return ''
+  return fmtTokens(used) + (ctxPctText.value ? ' · ' + ctxPctText.value : '')
+})
+// 运行设置触发器上的档位文字：模型名后面读成「中思考」，比一颗光秃秃的「中」清楚
+const thinkBadgeText = computed(() => {
+  const b = pillLevelBadge.value
+  if (!b) return ''
+  return b === '思' ? '思考' : b + '思考'
+})
+// 运行设置面板里的检索范围：只报本轮显式 @ 的知识库；没有就是按智能体默认范围
+const kbScopeText = computed(() => {
+  const kbs = (pendingMentions.value || []).filter(x => x.type === 'kb')
+  return kbs.length ? kbs.map(x => x.name || x.id).join('、') : '按智能体默认范围'
 })
 
 const ask = q => { text.value = q; nextTick(send) }
@@ -2505,6 +2698,24 @@ const {
 .head-ws-archived .head-ws-name { text-decoration: line-through; }
 .head-tip { font-size: 11px; color: var(--app-text3); cursor: pointer; user-select: none; }
 .head-tip:hover { color: var(--app-accent); }
+/* 顶栏状态胶囊：把「本轮跑成什么样」从右栏搬到一直看得见的地方。
+   失败变红、跑动蓝点脉冲、展开状态栏时加深；点它开合右栏 */
+.head-status {
+  display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 9px; flex: none;
+  border: 1px solid var(--app-border); border-radius: 999px; background: transparent;
+  color: var(--app-text2); font: inherit; font-size: 11.5px; white-space: nowrap; cursor: pointer;
+  transition: background .15s, border-color .15s, color .15s;
+}
+.head-status:hover { background: var(--app-panel-2); color: var(--app-text); }
+.head-status.on { background: var(--app-panel-2); color: var(--app-text); }
+.head-status.bad { color: var(--app-danger); border-color: var(--app-danger-border); background: var(--app-danger-weak); }
+.head-status.bad:hover { background: var(--app-danger-weak); border-color: var(--app-danger); }
+.hs-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--app-text3); flex: none; }
+.head-status.run .hs-dot { background: var(--app-accent); animation: hs-pulse 1.2s ease-in-out infinite; }
+/* 失败优先于「跑动」：同一时刻既在跑又有失败步时，红点必须压过蓝点 */
+.head-status.bad .hs-dot { background: var(--app-danger); animation: none; }
+@keyframes hs-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .head-status.run .hs-dot { animation: none; } }
 /* 会话内查找条：标题栏与消息流之间的一条，随查找开关出现/消失 */
 .chat-search {
   display: flex; align-items: center; gap: 6px; flex: none;
@@ -2895,6 +3106,54 @@ const {
 .ctx-ring-val { stroke: var(--app-accent); transition: stroke-dasharray .25s; }
 .ctx-ring.warn .ctx-ring-val { stroke: var(--app-warn); }
 .ctx-ring.danger .ctx-ring-val { stroke: var(--app-danger); }
+/* 运行设置尾栏（模型下拉内，与模型列表同一张卡） */
+.rs-panel { padding: 1px 0 0; }
+.rs-sec { padding: 2px 0 6px; }
+.rs-label { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--app-text2); }
+.rs-seg { display: flex; gap: 3px; margin-top: 6px; padding: 3px; border-radius: 8px; background: var(--app-bg-layer-3); }
+.rs-chip {
+  flex: 1; height: 25px; border: 0; border-radius: 6px; background: transparent;
+  color: var(--app-text2); font: inherit; font-size: 11px; cursor: pointer;
+}
+.rs-chip.on { background: var(--app-panel); color: var(--app-accent); font-weight: 600; box-shadow: var(--app-shadow-sm); }
+.rs-chip:disabled { opacity: .55; cursor: default; }
+.rs-hint { margin-top: 6px; font-size: 10px; line-height: 1.5; color: var(--app-text3); }
+.rs-row {
+  display: flex; align-items: center; gap: 8px; padding: 6px 0;
+  border-top: 1px solid var(--app-border); font-size: 11px;
+}
+.rs-k { color: var(--app-text2); white-space: nowrap; }
+.rs-v {
+  margin-left: auto; min-width: 0; max-width: 230px; color: var(--app-text3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rs-foot {
+  display: flex; align-items: center; gap: 8px; padding: 8px 0 2px;
+  border-top: 1px solid var(--app-border);
+}
+.rs-foot-note { font-size: 10px; color: var(--app-text3); }
+.rs-default {
+  margin-left: auto; height: 24px; padding: 0 8px; border: 1px solid var(--app-border);
+  border-radius: 6px; background: var(--app-panel); color: var(--app-text2);
+  font: inherit; font-size: 10.5px; cursor: pointer;
+}
+.rs-default:hover:not(:disabled) { color: var(--app-accent); border-color: var(--app-accent-border); }
+.rs-default:disabled { opacity: .5; cursor: default; }
+
+/* 输入卡下方的快捷键提示：由 ChatInput 的 #below 槽渲染，与卡片同宽同基准 */
+.chat-hints {
+  width: 100%; max-width: var(--chat-col);
+  margin: 7px auto 0; padding: 0; box-sizing: border-box;
+  display: flex; align-items: center; gap: 13px;
+  font-size: 10.5px; color: var(--app-text3); user-select: none;
+}
+.chat-hints b { color: var(--app-text2); font-weight: 600; }
+.chat-hints kbd {
+  display: inline-block; min-width: 14px; padding: 0 4px; margin-right: 3px;
+  border: 1px solid var(--app-border); border-radius: 4px; background: var(--app-panel-2);
+  font-family: inherit; font-size: 9.5px; line-height: 15px; color: var(--app-text2);
+}
+.chat-hints-sp { margin-left: auto; color: var(--app-text3); }
 
 
 /* 脚本扇出清单：一行一次子调用，窄栏时摘要自己换行，不横向溢出 */
@@ -2916,13 +3175,46 @@ const {
 /* 并发水位总览：脚本跑着的时候挂在过程簇头上，一处看清"跑了多少、在途几条" */
 .run-board { color: var(--app-accent); font-size: 11px; }
 
-.related { margin-top: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.related-label { font-size: 12px; color: var(--app-text3); }
-.related-tag {
-  font-size: 11px; color: var(--app-ok); background: var(--app-ok-weak); border-radius: 999px;
-  padding: 3px 10px; cursor: pointer;
+/* 接下来可以：整行可点的追问卡，不再是散落的灰底 chip。
+   标题行说明「会作为新一轮提问发送」——不承诺沿用快照，避免把重新检索说成不会。 */
+.related {
+  margin-top: 14px; border: 1px solid var(--app-border); border-radius: 12px;
+  background: var(--app-panel); overflow: hidden;
 }
-.related-tag:hover { background: var(--app-ok-weak-hover); }
+.related-head {
+  display: flex; align-items: center; gap: 6px; padding: 9px 12px;
+  background: var(--app-panel-2); border-bottom: 1px solid var(--app-border);
+}
+.related-ic { font-size: 13px; color: var(--app-accent); flex: none; }
+.related-title { font-size: 12px; font-weight: 600; color: var(--app-text); }
+.related-sub { font-size: 10.5px; color: var(--app-text3); margin-left: 2px; }
+.related-row {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  padding: 9px 12px; border: 0; border-top: .5px solid var(--app-border);
+  background: transparent; text-align: left; font: inherit; color: var(--app-text2); cursor: pointer;
+}
+.related-row:first-of-type { border-top: 0; }
+.related-row:hover { background: var(--app-accent-weak); color: var(--app-text); }
+.related-no {
+  flex: none; width: 18px; height: 18px; border-radius: 50%;
+  background: var(--app-panel-2); color: var(--app-text3);
+  font-size: 10px; line-height: 18px; text-align: center; font-variant-numeric: tabular-nums;
+}
+.related-row:hover .related-no { background: var(--app-accent); color: #fff; }
+.related-txt { flex: 1; min-width: 0; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.related-go { flex: none; font-size: 12px; color: var(--app-text3); opacity: 0; transition: opacity .12s; }
+.related-row:hover .related-go { opacity: 1; }
+.related-foot {
+  padding: 7px 12px 8px; border-top: .5px dashed var(--app-border);
+  font-size: 10px; color: var(--app-text3);
+}
+/* AI 生成内容的脚注：紧贴动作行下方，弱到不抢阅读，但每一轮都在 */
+.msg-disclaimer {
+  display: inline-flex; align-items: center; gap: 4px; margin-top: 8px;
+  font-size: 10.5px; color: var(--app-text3); cursor: pointer; user-select: none;
+}
+.msg-disclaimer:hover { color: var(--app-text2); }
+.msg-disclaimer :deep(svg) { width: 11px; height: 11px; }
 
 /* 重新生成的多版本切换器：与操作图标同一行，弱化呈现 */
 .ver-switch {
@@ -3161,6 +3453,14 @@ const {
 /* 面板卡：标题/描述 + 「思考强度」标签值行（点开展开档位列表）+ 底部提示 */
 .thinkp { width: 264px; }
 .thinkp-title { font-size: 14px; font-weight: 600; color: var(--app-text); }
+.thinkp-model {
+  margin-left: 7px; font-size: 10.5px; font-weight: 400; color: var(--app-text3);
+  max-width: 150px; display: inline-block; vertical-align: 1px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.thinkp-row-ellipsis {
+  max-width: 168px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .thinkp-row-wrap { margin-top: 12px; border-top: 1px solid var(--app-border); }
 .thinkp-row {
   display: flex; align-items: center; gap: 8px; width: 100%; padding: 10px 0;
@@ -3338,6 +3638,33 @@ const {
   padding: 12px 10px 56px; display: flex; flex-direction: column; gap: 10px; overflow-y: auto;
 }
 .rp-card { background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 10px; padding: 10px 12px; }
+/* 右栏分段：三颗等宽页签，选中态浮起；失败数是一颗红色小徽标，只压在「过程」上 */
+.rp-tabs {
+  display: flex; gap: 2px; padding: 3px; flex: none;
+  background: var(--app-panel-3, #f2f4f7); border-radius: 9px;
+}
+.rp-tab {
+  flex: 1; min-width: 0; height: 27px; padding: 0 5px; border: 0; border-radius: 7px;
+  background: transparent; color: var(--app-text2); font: inherit; font-size: 11.5px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  white-space: nowrap; cursor: pointer;
+}
+.rp-tab:hover { color: var(--app-text); }
+.rp-tab.on { background: var(--app-panel); color: var(--app-text); font-weight: 600; box-shadow: var(--app-shadow-sm); }
+.rp-tab-n {
+  font-size: 10px; line-height: 1; color: var(--app-text3); font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.rp-tab.on .rp-tab-n { color: var(--app-accent); }
+.rp-tab-badge {
+  min-width: 14px; height: 14px; padding: 0 3px; border-radius: 7px;
+  background: var(--app-danger-weak); color: var(--app-danger);
+  font-size: 9px; line-height: 14px; font-weight: 700; text-align: center;
+}
+.rp-empty {
+  padding: 24px 10px; text-align: center; font-size: 11.5px; color: var(--app-text3);
+  border: 1px dashed var(--app-border); border-radius: 10px; background: var(--app-panel-2);
+}
 .rp-label { font-size: 11px; color: var(--app-text3); margin-bottom: 4px; }
 .rp-src { display: flex; align-items: center; gap: 6px; padding: 4px 0; cursor: pointer; }
 /* 引用来源：按文档分组 + 片段可折叠（0fr→1fr 高度动画，与全站展开节奏一致） */

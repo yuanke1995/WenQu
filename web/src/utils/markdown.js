@@ -45,7 +45,17 @@ const md = new MarkdownIt({
   }
 })
 // 降级标题：h1→h2 ... h6 封顶（h1 留给页面）
-md.renderer.rules.heading_open = t => `<h${Math.min(+t[0].tag[1] + 1, 6)}>`
+// 标题锚点：给每条回答的 H2/H3 一个稳定 id，回答大纲与深链都靠它。
+// id 只由标题文本 + 本次渲染内的序号决定（不引入时间戳），同一份内容重复渲染得到同一批 id。
+const headingSlug = s => String(s || '').trim().toLowerCase()
+  .replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-+|-+$/g, '').slice(0, 48) || 'section'
+md.renderer.rules.heading_open = (tokens, idx, options, env) => {
+  const tag = Math.min(+tokens[idx].tag[1] + 1, 6)
+  const e = env || {}
+  const seq = (e.headingSeq = (e.headingSeq || 0) + 1)
+  const text = (tokens[idx + 1] && tokens[idx + 1].content) || ''
+  return `<h${tag} id="${md.utils.escapeHtml(headingSlug(text))}-${seq}">`
+}
 md.renderer.rules.heading_close = t => `</h${Math.min(+t[0].tag[1] + 1, 6)}>`
 
 // ==================== 富渲染：Mermaid / ECharts / HTML·SVG 预览 / 沙盒运行 ====================
@@ -55,6 +65,9 @@ md.renderer.rules.heading_close = t => `</h${Math.min(+t[0].tag[1] + 1, 6)}>`
 //      因为 v-html 只能同步塞字符串，且 mermaid/echarts 本身都是 ~1MB 的懒加载依赖。
 // 三条语言白名单与后端 SandboxController.LANGS 保持一致（前端不给按钮，后端也会拒）。
 const MERMAID_LANG = 'mermaid'
+// KPI：回答开头的 3–6 个总量/关键指标。围栏内放 JSON（与 echarts 同一条只 parse 不 eval 口径），
+// 由界面渲染成指标卡；拿不到真数的项应当整项不出现，而不是补一个估算值。
+const KPI_LANG = 'kpi'
 // ECharts：围栏里放一份完整的 option JSON，enhanceDiagrams 解析后用 echarts 渲染成交互图表。
 // 只认 JSON（不 eval）：option 里不能带函数/注释，模型给的 formatter 只能用 '{b}: {c}' 字符串模板。
 const ECHARTS_LANG = 'echarts'
@@ -254,6 +267,11 @@ const fence = (tokens, idx) => {
       + `<pre class="md-diagram-src-code"><code>${md.utils.escapeHtml(code)}</code></pre>`
       + `</div>`
   }
+  if (lang === KPI_LANG) {
+    return `<div class="md-kpi" data-md-kpi>`
+      + `<pre class="md-kpi-src"><code>${md.utils.escapeHtml(code)}</code></pre>`
+      + `</div>`
+  }
   const highlighted = md.options.highlight(code, lang)
   // data-lang 决定后处理挂哪些按钮；data-md-code 标记「围栏产物」，复制按钮注入据此跳过重复生成
   return `<div class="md-code" data-md-code data-lang="${md.utils.escapeHtml(lang)}">`
@@ -421,7 +439,7 @@ const renderMdInner = (t, images = [], runnable = RUNNABLE_DEFAULT, preview = PR
   // start="6"/colspan 等纯数字值会被当非法 URI 剥掉 → 列表被图片打断后每段从 1 重排、合并单元格丢失。
   // 这些属性值天然不是 URI，走官方扩展点跳过 URI 校验（base 合并默认列表，不影响其它安全检查）。
   // /manual/：手册正文里随包分发的插图（web/public/manual/*），只放行这一个站内目录，不开任意相对路径。
-  let html = DOMPurify.sanitize(md.render(pre), {
+  let html = DOMPurify.sanitize(md.render(pre, { headingSeq: 0 }), {
     ALLOWED_URI_REGEXP: /^(?:__AI_IMG_|\/manual\/|https?:|data:image\/|mailto:|tel:)/i,
     ADD_URI_SAFE_ATTR: ['start', 'colspan', 'rowspan', 'span']
   })
@@ -532,6 +550,8 @@ const actBtn = (cls, title, icon, label) => {
  */
 export const enhanceDiagrams = async (root, opts = {}) => {
   const streaming = !!opts.streaming
+  // KPI 是同步渲染，先于图表跑：它不依赖懒加载，流式期间也能立刻出结果
+  for (const el of root.querySelectorAll('.md-kpi[data-md-kpi]')) paintKpi(el)
   const list = Array.from(root.querySelectorAll('.md-diagram[data-md-diagram]'))
   if (!list.length) return
   sweepDetachedCharts()
@@ -558,9 +578,10 @@ const mermaidCache = new Map()
 const MERMAID_CACHE_MAX = 60
 
 const paintDiagram = async (mermaid, el, code) => {
-  el.dataset.state = 'loading'
   // 画之前先把源码 pre 摘下来暂存（成功后要换成图，失败时要留在 details 里）
   const srcPre = el.querySelector('.md-diagram-src-code')
+  // 等 render 期间保持与流式占位同款的「准备中」，不切空态——切态会把高度抽掉一帧
+  markDiagramPending(el)
   let svg = mermaidCache.get(code)
   if (svg === undefined) {
     try {
@@ -668,36 +689,28 @@ const adoptEChartHost = (el, host, code, srcPre) => {
   el.dataset.state = 'ok'
   el.dataset.done = code
   el.appendChild(diagramSource(code, false, srcPre))
+  let opt = null
+  try { opt = JSON.parse(code) } catch (e) { /* paintEChart 已校验过 */ }
+  mountChartHead(el, code, opt || {})
   ecLive.add(new WeakRef(host))
   ecNodeCache.delete(code)
   ecNodeCache.set(code, host)   // LRU touch
 }
 
 const paintEChart = async (el, code) => {
-  el.dataset.state = 'loading'
   const srcPre = el.querySelector('.md-diagram-src-code')
+  // 解析与首次加载 echarts 期间一直挂着「准备中」：中途切到空态会把卡片高度抽掉一帧，流式里就是肉眼一跳
+  markDiagramPending(el)
   let opt
   try {
     opt = JSON.parse(code)
   } catch (e) {
-    if (chartOptionTruncated(code)) {
-      el.dataset.state = 'pending'
-      el.textContent = ''
-      el.appendChild(chartPendingTip('图表准备中…'))
-      return
-    }
-    el.textContent = ''
+    if (chartOptionTruncated(code)) return   // 半截 JSON：不写 done，源码补全后自愈
     showDiagramError(el, code, new Error('option 不是合法 JSON：' + (e && e.message ? String(e.message).split('\n')[0] : '解析失败')))
     return
   }
   if (!opt || typeof opt !== 'object' || Array.isArray(opt) || !opt.series) {
-    if (chartOptionTruncated(code)) {
-      el.dataset.state = 'pending'
-      el.textContent = ''
-      el.appendChild(chartPendingTip('图表准备中…'))
-      return
-    }
-    el.textContent = ''
+    if (chartOptionTruncated(code)) return
     showDiagramError(el, code, new Error('option 缺少 series 字段（至少要有一组 series 才有东西可画）'))
     return
   }
@@ -732,6 +745,7 @@ const paintEChart = async (el, code) => {
   el.dataset.state = 'ok'
   el.dataset.done = code
   el.appendChild(diagramSource(code, false, srcPre))
+  mountChartHead(el, code, opt)
   // 入节点缓存（同 code 覆盖旧值）：LRU 满时淘汰最老的一张并 dispose 其实例
   host.dataset.ecCode = code
   ecNodeCache.set(code, host)
@@ -744,9 +758,273 @@ const paintEChart = async (el, code) => {
   ecLive.add(new WeakRef(host))
 }
 
+// ==================== 图表卡头 / 图表动作 / KPI 指标卡 ====================
+
+const chartTitleOf = opt => {
+  const t = opt && opt.title
+  if (typeof t === 'string') return t
+  if (Array.isArray(t)) return (t[0] && t[0].text) || ''
+  return (t && t.text) || ''
+}
+const chartRangeOf = opt => {
+  const t = opt && opt.title
+  if (Array.isArray(t)) return (t[0] && t[0].subtext) || ''
+  return (t && t.subtext) || ''
+}
+
+/** 能反解成表格的图：类目轴 + 系列，或单系列饼图；反解不了的图不给「数据」按钮 */
+const chartDataOf = opt => {
+  const axis = Array.isArray(opt && opt.xAxis) ? opt.xAxis[0] : (opt && opt.xAxis)
+  const cats = axis && Array.isArray(axis.data) ? axis.data : []
+  const series = Array.isArray(opt && opt.series) ? opt.series : []
+  if (cats.length && series.length) return { type: 'category', cats, series }
+  if (!cats.length && series.length === 1 && series[0].type === 'pie' && Array.isArray(series[0].data)) {
+    return { type: 'pie', rows: series[0].data }
+  }
+  return null
+}
+const chartCellOf = v => {
+  if (v && typeof v === 'object') return v.value === undefined ? '' : String(v.value)
+  return v === undefined || v === null ? '' : String(v)
+}
+
+/** 在图表容器顶部插一张卡头：标题 / 范围 / 放大·下载·数据。重复渲染时先摘旧的。 */
+const mountChartHead = (el, code, opt) => {
+  const old = el.querySelector(':scope > .md-chart-head')
+  if (old) old.remove()
+  const head = document.createElement('div')
+  head.className = 'md-chart-head'
+  // 图内已有 title 时卡头不再重复一遍：卡头只做动作条，标题仍由图表自己画
+  const hasTitle = !!chartTitleOf(opt)
+  if (!hasTitle) {
+    const title = document.createElement('span')
+    title.className = 'md-chart-title'
+    title.textContent = '图表'
+    head.appendChild(title)
+  }
+  const rangeText = chartRangeOf(opt)
+  if (!hasTitle && rangeText) {
+    const range = document.createElement('span')
+    range.className = 'md-chart-range'
+    range.textContent = rangeText
+    head.appendChild(range)
+  }
+  const acts = document.createElement('span')
+  acts.className = 'md-chart-acts'
+  const defs = [['expand', '放大'], ['download', '下载'], ['data', '数据']]
+  for (const [act, label] of defs) {
+    const b = document.createElement('button')
+    b.type = 'button'
+    b.className = 'md-chart-act'
+    b.dataset.mdChartAct = act
+    b.title = act === 'expand' ? '放大查看' : act === 'download' ? '下载 PNG' : '查看图表数据'
+    b.textContent = label
+    acts.appendChild(b)
+  }
+  if (!chartDataOf(opt)) acts.querySelector('[data-md-chart-act="data"]').remove()
+  head.appendChild(acts)
+  el.insertBefore(head, el.firstChild)
+  el._mdOpt = opt
+  el._mdCode = code
+}
+
+const chartPngOf = async card => {
+  const code = card._mdCode || card.querySelector('.md-diagram-src-code code')?.textContent || ''
+  const snap = await snapshotEChart(code)
+  if (snap) return snap
+  const host = card.querySelector('.md-echart-canvas')
+  const inst = host && echartsMod ? echartsMod.getInstanceByDom(host) : null
+  if (!inst) return ''
+  try {
+    return inst.getDataURL({ type: 'png', pixelRatio: 2, backgroundColor: pickVar('--app-panel-2', '--app-panel') })
+  } catch (e) { return '' }
+}
+
+let chartLayer = null
+const closeChartLayer = () => {
+  if (!chartLayer) return
+  chartLayer.mask.remove()
+  document.removeEventListener('keydown', chartLayer.onKey)
+  document.body.classList.remove('md-preview-lock')
+  chartLayer = null
+}
+const openChartLayer = (titleText, bodyEl) => {
+  closeChartLayer()
+  const mask = document.createElement('div')
+  mask.className = 'md-chart-mask'
+  const modal = document.createElement('div')
+  modal.className = 'md-chart-modal'
+  const head = document.createElement('div')
+  head.className = 'md-chart-modal-head'
+  const title = document.createElement('span')
+  title.className = 'md-chart-modal-title'
+  title.textContent = titleText
+  const close = document.createElement('button')
+  close.type = 'button'
+  close.className = 'md-chart-modal-close'
+  close.title = '关闭'
+  close.textContent = '关闭'
+  close.addEventListener('click', closeChartLayer)
+  head.append(title, close)
+  modal.append(head, bodyEl)
+  mask.appendChild(modal)
+  mask.addEventListener('click', e => { if (e.target === mask) closeChartLayer() })
+  const onKey = e => { if (e.key === 'Escape') closeChartLayer() }
+  document.addEventListener('keydown', onKey)
+  document.body.classList.add('md-preview-lock')
+  document.body.appendChild(mask)
+  chartLayer = { mask, onKey }
+}
+
+const downloadChart = async card => {
+  const url = await chartPngOf(card)
+  if (!url) { message.error('这张图暂时导出不了'); return }
+  const a = document.createElement('a')
+  a.href = url
+  a.download = (chartTitleOf(card._mdOpt) || '图表') + '.png'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+}
+
+const zoomChart = async card => {
+  const url = await chartPngOf(card)
+  if (!url) { message.error('这张图暂时放大不了'); return }
+  const img = document.createElement('img')
+  img.className = 'md-chart-zoom'
+  img.alt = chartTitleOf(card._mdOpt) || '图表'
+  img.src = url
+  openChartLayer('图表预览', img)
+}
+
+const showChartData = card => {
+  const data = chartDataOf(card._mdOpt || {})
+  if (!data) { message.info('这张图没有可直接展开的类目数据'); return }
+  const table = document.createElement('table')
+  table.className = 'md-chart-table'
+  if (data.type === 'pie') {
+    const thead = document.createElement('thead')
+    thead.innerHTML = '<tr><th>名称</th><th>数值</th></tr>'
+    const tbody = document.createElement('tbody')
+    for (const row of data.rows) {
+      const tr = document.createElement('tr')
+      const a = document.createElement('td'); a.textContent = row && row.name !== undefined ? String(row.name) : ''
+      const b = document.createElement('td'); b.textContent = chartCellOf(row)
+      tr.append(a, b); tbody.appendChild(tr)
+    }
+    table.append(thead, tbody)
+  } else {
+    const thead = document.createElement('thead')
+    const hr = document.createElement('tr')
+    const th0 = document.createElement('th'); th0.textContent = '类目'; hr.appendChild(th0)
+    for (const s of data.series) {
+      const th = document.createElement('th'); th.textContent = s.name || '值'; hr.appendChild(th)
+    }
+    thead.appendChild(hr)
+    const tbody = document.createElement('tbody')
+    data.cats.forEach((cat, i) => {
+      const tr = document.createElement('tr')
+      const td0 = document.createElement('td'); td0.textContent = String(cat); tr.appendChild(td0)
+      for (const s of data.series) {
+        const td = document.createElement('td'); td.textContent = chartCellOf(s.data && s.data[i]); tr.appendChild(td)
+      }
+      tbody.appendChild(tr)
+    })
+    table.append(thead, tbody)
+  }
+  const wrap = document.createElement('div')
+  wrap.className = 'md-chart-data'
+  wrap.appendChild(table)
+  openChartLayer((chartTitleOf(card._mdOpt) || '图表') + ' · 数据', wrap)
+}
+
+/** KPI 指标卡：只渲染上游真值；格式不对就明说，不猜、不估算 */
+const paintKpi = el => {
+  const code = el.querySelector('.md-kpi-src code')?.textContent || ''
+  if (!code || el.dataset.done === code) return
+  let data
+  try { data = JSON.parse(code) } catch (e) {
+    if (chartOptionTruncated(code)) {
+      el.dataset.state = 'pending'
+      el.textContent = ''
+      el.appendChild(chartPendingTip('指标准备中…'))
+      return
+    }
+    el.dataset.done = code
+    el.textContent = ''
+    el.appendChild(chartPendingTip('指标卡格式不正确：围栏内需要一份 JSON'))
+    return
+  }
+  const items = Array.isArray(data) ? data : (Array.isArray(data && data.items) ? data.items : [])
+  if (!items.length) {
+    el.dataset.done = code
+    el.textContent = ''
+    el.appendChild(chartPendingTip('指标卡没有可展示的项'))
+    return
+  }
+  el.textContent = ''
+  const wrap = document.createElement('div')
+  wrap.className = 'md-kpi-wrap'
+  if (data && data.title) {
+    const title = document.createElement('div')
+    title.className = 'md-kpi-title'
+    title.textContent = String(data.title)
+    wrap.appendChild(title)
+  }
+  const grid = document.createElement('div')
+  grid.className = 'md-kpi-grid'
+  for (const it of items.slice(0, 8)) {
+    const card = document.createElement('div')
+    card.className = 'md-kpi-card'
+    const label = document.createElement('div')
+    label.className = 'md-kpi-label'
+    label.textContent = it && it.label !== undefined ? String(it.label) : ''
+    const value = document.createElement('div')
+    value.className = 'md-kpi-value'
+    value.textContent = it && it.value !== undefined ? String(it.value) : '—'
+    if (it && it.unit) {
+      const unit = document.createElement('span')
+      unit.className = 'md-kpi-unit'
+      unit.textContent = String(it.unit)
+      value.appendChild(unit)
+    }
+    const foot = document.createElement('div')
+    foot.className = 'md-kpi-foot'
+    foot.textContent = it && it.foot !== undefined ? String(it.foot) : ''
+    card.append(label, value, foot)
+    grid.appendChild(card)
+  }
+  wrap.appendChild(grid)
+  const note = data && data.note
+  if (note) {
+    const box = document.createElement('div')
+    box.className = 'md-kpi-note ' + ((note && note.tone) === 'ok' ? 'ok' : (note && note.tone) === 'info' ? 'info' : 'warn')
+    const text = typeof note === 'string' ? note : (note.text || '')
+    box.textContent = String(text)
+    wrap.appendChild(box)
+  }
+  el.appendChild(wrap)
+  el.dataset.done = code
+}
+
+// 图表动作走 document 级委托：与代码预览同一条口径，消费页不必各自接线
+if (typeof document !== 'undefined') {
+  document.addEventListener('click', e => {
+    const btn = e.target && e.target.closest ? e.target.closest('[data-md-chart-act]') : null
+    if (!btn) return
+    const card = btn.closest('.md-diagram[data-md-echart]')
+    if (!card) return
+    e.preventDefault()
+    e.stopPropagation()
+    const act = btn.dataset.mdChartAct
+    if (act === 'download') downloadChart(card)
+    else if (act === 'expand') zoomChart(card)
+    else if (act === 'data') showChartData(card)
+  })
+}
+
 /**
  * 把一份 ECharts option 离屏画成 PNG，返回 data URL；画不出来返回 null。
- *
  * <p>给 Markdown 导出用：```echarts 围栏只有本项目的渲染器认得，导出的 .md 交给别的阅读器
  * 就是一份裸 JSON。所以导出前重画一份位图内嵌进去（与图片转 base64 同一口径：文件自包含）。
  * <p>尺寸写死而不读屏上的宿主：一次导出里几张图宽窄要一致，而且会话导出时大部分消息根本不在

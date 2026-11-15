@@ -30,15 +30,16 @@ test('列表映射：向上找最近用户提问；过程卡取含 loading 的�
   assert.equal(processMsgOf(list.slice(0, 2)), list[1])
 })
 
-test('占位文案：生成中插话/目标轮、目标上膛、窄屏不提示 Enter', () => {
+test('占位文案：生成中插话/目标轮、目标上膛、空闲态只留一句', () => {
   assert.equal(composerPlaceholderOf({ loading: true, goalTurnStreaming: true, isNarrow: false, goalArmed: false, hasSessionGoal: false }),
     '插话：先回答你这句，目标随后自动继续')
   assert.match(composerPlaceholderOf({ loading: true, goalTurnStreaming: false, isNarrow: false, goalArmed: false, hasSessionGoal: false }), /Enter 立刻插进本轮/)
   assert.match(composerPlaceholderOf({ loading: true, goalTurnStreaming: false, isNarrow: true, goalArmed: false, hasSessionGoal: false }), /立刻插进本轮/)
   assert.match(composerPlaceholderOf({ loading: false, goalTurnStreaming: false, isNarrow: false, goalArmed: true, hasSessionGoal: false }), /写下目标/)
   assert.equal(composerPlaceholderOf({ loading: false, goalTurnStreaming: false, isNarrow: false, goalArmed: true, hasSessionGoal: true }).includes('写下目标'), false)
-  assert.match(composerPlaceholderOf({ loading: false, goalTurnStreaming: false, isNarrow: true, goalArmed: false, hasSessionGoal: false }), /@ 引用资料/)
-  assert.equal(composerPlaceholderOf({ loading: false, goalTurnStreaming: false, isNarrow: true, goalArmed: false, hasSessionGoal: false }).includes('Enter'), false)
+  // 快捷键已下沉到输入卡下方提示行：placeholder 空闲态只剩一句「问点什么」，宽窄同文
+  assert.equal(composerPlaceholderOf({ loading: false, goalTurnStreaming: false, isNarrow: false, goalArmed: false, hasSessionGoal: false }), '问点什么…')
+  assert.equal(composerPlaceholderOf({ loading: false, goalTurnStreaming: false, isNarrow: true, goalArmed: false, hasSessionGoal: false }), '问点什么…')
 })
 
 test('锚点文案：问题空回退、生成中占位、无回答不占字', () => {
@@ -381,7 +382,7 @@ test('占位文案 computed 与过程卡/计划列表随引擎值联动', () => 
   const loadingRef = ref(false)
   ctx.loading = () => loadingRef.value
   const api = useChatChrome(ctx)
-  assert.match(api.composerPlaceholder.value, /Enter 发送/)
+  assert.equal(api.composerPlaceholder.value, '问点什么…')
   loadingRef.value = true
   assert.match(api.composerPlaceholder.value, /补一句方向/)
   loadingRef.value = false
@@ -389,7 +390,7 @@ test('占位文案 computed 与过程卡/计划列表随引擎值联动', () => 
   assert.match(api.composerPlaceholder.value, /写下目标/)
   api.goalArmed.value = false
   ctx.isNarrow.value = true
-  assert.match(api.composerPlaceholder.value, /@ 引用资料/)
+  assert.equal(api.composerPlaceholder.value, '问点什么…')
 
   msgs.value = [
     { role: 'user', content: '问' },

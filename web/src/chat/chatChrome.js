@@ -33,17 +33,14 @@ export const processMsgOf = list => {
 }
 
 /** 主输入框占位文案：生成中的插话、目标待发、窄屏不提示 Enter/Shift+Enter。 */
-export const composerPlaceholderOf = ({ loading, goalTurnStreaming, isNarrow, goalArmed, hasSessionGoal }) => {
+export const composerPlaceholderOf = ({ loading, goalTurnStreaming, goalArmed, hasSessionGoal }) => {
   if (loading) {
     if (goalTurnStreaming) return '插话：先回答你这句，目标随后自动继续'
-    return isNarrow
-      ? '补一句方向（发送后立刻插进本轮）'
-      : '补一句方向（Enter 立刻插进本轮 · Shift+Enter 换行）'
+    return '补一句方向（Enter 立刻插进本轮）'
   }
   if (goalArmed && !hasSessionGoal) return '写下目标，回车开始（助手会自己接着往下推进）'
-  return isNarrow
-    ? '问点什么？（@ 引用资料 · / 快捷命令）'
-    : '问点什么？Enter 发送，Shift+Enter 换行（@ 引用资料，/ 快捷命令，# 引用历史问答）'
+  // 快捷键与 @ / # 用法下沉到输入卡下方那一行；placeholder 只留一句「问点什么」
+  return '问点什么…'
 }
 
 /** 右栏锚点预览卡两行：问题截一行、回答摘录；截断口径由调用方注入。 */

@@ -10,7 +10,7 @@
 /* Markdown 完整渲染样式 */
 .md p { margin: 6px 0; }
 .md h2, .md h3, .md h4, .md h5 { margin: 12px 0 6px; font-weight: 600; }
-.md h2 { font-size: var(--app-fs-xl); } .md h3 { font-size: var(--app-fs-lg); } .md h4 { font-size: var(--app-fs-md); }
+.md h2 { font-size: var(--app-fs-xl); } .md h3 { font-size: var(--app-fs-lg); } .md h4 { font-size: var(--app-fs-lg); }
 .md code { background: var(--app-code-inline-bg); padding: 1px 4px; border-radius: 3px; font-size: var(--app-fs-md); }
 .md pre { background: var(--app-code-bg); padding: 12px; border-radius: var(--app-radius-sm); overflow-x: auto; font-size: var(--app-fs-md); line-height: 1.5; margin: 8px 0; position: relative; max-height: 360px; overflow-y: auto; }
 .md pre code { background: none; padding: 0; display: block; white-space: pre-wrap; word-break: break-word; }
@@ -130,15 +130,18 @@ body.md-preview-lock { overflow: hidden; }
   border: 1px solid var(--app-border); border-radius: var(--app-radius-sm);
   background: var(--app-panel-2);
 }
-.md .md-diagram[data-state="loading"] { color: var(--app-text2); font-size: var(--app-fs-sm); padding: 18px; text-align: center; }
-/* enhanceDiagrams 尚未处理到的占位（伪元素随 DOM 即时出现，不等 JS 的节流拍点）：
-   流式期间容器每帧重建，JS 提示只在节流拍点挂上，间隙里靠这里兜住空白；
-   历史消息「渲染完成 → 画图完成」的间隙也由它兜底。挂上 data-state 后自动消失 */
-.md .md-diagram[data-md-diagram]:not([data-state])::after {
-  content: '图表准备中…';
-  display: block; padding: 8px 0; text-align: center;
-  color: var(--app-text3); font-size: var(--app-fs-sm);
+/* 图表占位：CSS 兜底（伪元素随 DOM 即时出现，不等 JS 的节流拍点）与 JS 的 .md-diagram-pending
+   共用同一套盒子。流式期间容器每 120ms 整棵重建、补画走 300ms 节流，两拍之间在两种占位间切换，
+   高度/内边距必须完全一致——否则占位块一跳一跳。历史消息「渲染完成 → 画图完成」的间隙也靠它兜底 */
+.md .md-diagram[data-md-diagram]:not([data-state])::after,
+.md .md-diagram-pending,
+.md .md-kpi:not([data-state]):not([data-done])::after {
+  display: flex; align-items: center; justify-content: center;
+  box-sizing: border-box; min-height: 52px; padding: 6px 0;
+  color: var(--app-text3); font-size: var(--app-fs-sm); text-align: center;
 }
+.md .md-diagram[data-md-diagram]:not([data-state])::after { content: '图表准备中…'; }
+.md .md-kpi:not([data-state]):not([data-done])::after { content: '指标准备中…'; }
 /* 渲染层的源码 pre 只是「给绘图读的载体」，绘图成功后被移进 details 折叠区；
    加载中先藏起来，避免用户看到一份裸源码再看到图（闪一下）。
    只藏「还没进 details 的那份」（:scope > ），进了 details 的正是用户要展开看的源码，不能藏 */
@@ -160,8 +163,91 @@ body.md-preview-lock { overflow: hidden; }
 /* ECharts 统计图围栏：echarts 画 canvas，必须给定像素高度才有布局；宽度吃满容器（气泡宽），
    窗口缩放由 markdown.js 里的 resize 监听驱动实例 resize */
 .md .md-echart-canvas { width: 100%; height: 300px; }
-/* 半截 option（流式补全中）：与 loading 同款的居中弱提示，但语义不同——它不是失败，不写 data-done */
-.md .md-diagram[data-state="pending"] { color: var(--app-text3); font-size: var(--app-fs-sm); padding: 18px; text-align: center; }
+/* 图表卡：标题/范围/动作在卡头，图本体吃满卡宽；源码折叠区收进卡底 */
+.md .md-diagram[data-md-echart] {
+  padding: 0; background: var(--app-panel); border-radius: 12px; overflow: hidden;
+  box-shadow: var(--app-shadow-sm, 0 1px 2px rgba(16,24,40,.04));
+}
+.md .md-chart-head { display: flex; align-items: center; gap: 8px; padding: 11px 14px 2px; min-width: 0; }
+.md .md-chart-title {
+  font-size: 13px; font-weight: 600; color: var(--app-text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.md .md-chart-range { flex: none; font-size: 11px; color: var(--app-text3); }
+.md .md-chart-acts { margin-left: auto; display: flex; align-items: center; gap: 1px; flex: none; }
+.md .md-chart-act {
+  height: 24px; padding: 0 7px; border: 1px solid transparent; border-radius: 6px;
+  background: transparent; color: var(--app-text3); font: inherit; font-size: 11px;
+  white-space: nowrap; cursor: pointer;
+}
+.md .md-chart-act:hover { background: var(--app-bg-layer-3, #f2f4f7); color: var(--app-text); }
+.md .md-diagram[data-md-echart] > .md-diagram-src { margin: 0 14px 10px; }
+.md .md-diagram[data-md-echart] > .md-diagram-src > summary { font-size: 10.5px; color: var(--app-text3); }
+/* 图表放大 / 数据表：与代码预览同一条遮罩口径 */
+.md-chart-mask {
+  position: fixed; inset: 0; z-index: 1000; background: rgba(16, 24, 40, .55);
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+}
+.md-chart-modal {
+  background: var(--app-panel); border-radius: 14px; overflow: hidden;
+  max-width: min(1200px, 94vw); max-height: 90vh; display: flex; flex-direction: column;
+  box-shadow: 0 24px 60px rgba(16, 24, 40, .28);
+}
+.md-chart-modal-head {
+  display: flex; align-items: center; gap: 10px; padding: 10px 14px;
+  border-bottom: 1px solid var(--app-border); flex: none;
+}
+.md-chart-modal-title { font-size: 13px; font-weight: 600; color: var(--app-text); }
+.md-chart-modal-close {
+  margin-left: auto; height: 26px; padding: 0 9px; border: 1px solid var(--app-border);
+  border-radius: 6px; background: transparent; color: var(--app-text2); font: inherit; font-size: 11.5px; cursor: pointer;
+}
+.md-chart-modal-close:hover { color: var(--app-accent); border-color: var(--app-accent-border); }
+.md-chart-zoom { display: block; max-width: 100%; max-height: calc(90vh - 48px); object-fit: contain; background: var(--app-panel); }
+.md-chart-data { overflow: auto; padding: 12px 14px; }
+.md-chart-table { border-collapse: collapse; font-size: 12px; min-width: 380px; }
+.md-chart-table th, .md-chart-table td {
+  border-bottom: 1px solid var(--app-border); padding: 6px 10px; white-space: nowrap;
+}
+.md-chart-table th { font-weight: 600; color: var(--app-text2); text-align: left; background: var(--app-panel-2); }
+.md-chart-table td { color: var(--app-text); text-align: right; font-variant-numeric: tabular-nums; }
+.md-chart-table th:first-child, .md-chart-table td:first-child { text-align: left; }
+
+/* KPI 指标卡：回答开头的 3–6 个关键总量。窄屏折成两列/一列，不横向溢出 */
+.md .md-kpi { margin: 14px 0 18px; }
+.md .md-kpi-src { display: none; }
+.md .md-kpi-title { font-size: 13px; font-weight: 600; color: var(--app-text); margin-bottom: 8px; }
+.md .md-kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+.md .md-kpi-card {
+  min-width: 0; padding: 12px 13px; border: 1px solid var(--app-border); border-radius: 12px;
+  background: var(--app-panel); box-shadow: var(--app-shadow-sm, 0 1px 2px rgba(16,24,40,.04));
+}
+.md .md-kpi-label { font-size: 11px; color: var(--app-text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.md .md-kpi-value {
+  margin-top: 3px; font-size: 26px; line-height: 1.2; font-weight: 650; letter-spacing: -.02em;
+  color: var(--app-text); font-variant-numeric: tabular-nums;
+}
+.md .md-kpi-unit { margin-left: 3px; font-size: 12px; font-weight: 500; letter-spacing: 0; color: var(--app-text2); }
+.md .md-kpi-foot { margin-top: 3px; font-size: 10.5px; color: var(--app-text3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.md .md-kpi-note {
+  margin-top: 8px; padding: 8px 10px; border-radius: 8px; font-size: 11.5px; line-height: 1.6;
+  border: 1px solid var(--app-border); background: var(--app-panel-2); color: var(--app-text2);
+}
+.md .md-kpi-note.warn { border-color: var(--app-warn-border); background: var(--app-warn-weak); color: var(--app-warn-text); }
+.md .md-kpi-note.ok { border-color: var(--app-ok-border, #cfe4d3); background: var(--app-ok-weak); color: var(--app-ok); }
+.md .md-kpi-note.info { border-color: var(--app-accent-border); background: var(--app-accent-weak); color: var(--app-accent); }
+@media (max-width: 720px) {
+  .md .md-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .md .md-kpi-value { font-size: 22px; }
+}
+@media (max-width: 430px) {
+  .md .md-kpi-grid { grid-template-columns: 1fr; }
+  .md .md-chart-acts .md-chart-act:not([data-md-chart-act="data"]) { display: none; }
+}
+/* 回答大纲跳转时不被吸顶回答头盖住 */
+.md h1, .md h2, .md h3, .md h4 { scroll-margin-top: 64px; }
+/* 小节标题（模型写 ###，渲染后是 h4）与正文拉开一点距离，长回答读起来才有分段感 */
+.md h3, .md h4 { margin-top: 20px; margin-bottom: 8px; }
 
 /* 代码块复制按钮（渲染层动态创建，页面级委托点击）。
    有语言标题栏时它就是标题栏里的一个动作按钮（吃 .md-act 那套尺寸/透明底，常驻可见）；

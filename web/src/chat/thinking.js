@@ -47,7 +47,7 @@ export const pillLevelBadgeOf = ({ ref, modelInfo, capsVisible, level }) => {
 /** 胶囊标记的悬浮说明：调整入口两端不同（宽屏 hover 行 / 触屏旁边的「思考」按钮） */
 export const pillLevelTitleOf = ({ ref, badge, locked, level, coarse }) => {
   if (!ref || !badge) return ''
-  const how = coarse ? '点旁边的「思考」可调整' : '悬浮下拉里的模型行可调整'
+  const how = coarse ? '点旁边的「思考」可调整' : '点开模型胶囊，在运行设置里调整'
   if (locked) return `该模型始终深度思考，强度${levelLabel(level)}由管理员在模型库登记，不可调`
   return level === THINK_LEVEL_ON
     ? `已开启思考（该模型未登记强度档位），${how}`

@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>问渠 · 问答区改版细节（交互状态）</title>
+<style>
+:root{
+  --bg:#f4f6f9; --panel:#fff; --panel2:#fafbfc; --panel3:#f2f4f7;
+  --border:#e6e9ed; --border2:#d8dde3;
+  --text:#1f2329; --text2:#5f6570; --text3:#98a0aa;
+  --accent:#2e6be6; --accent-weak:#eef4ff; --accent-border:#c9dbfb;
+  --ok:#3b8f4e; --ok-weak:#eaf5ec; --ok-border:#cfe4d3;
+  --warn:#a3691b; --warn-weak:#faf3e6; --warn-border:#f0dfb6;
+  --danger:#cf1322; --danger-weak:#fff2f0; --danger-border:#f3c9c9;
+  --font:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Hiragino Sans GB','Microsoft YaHei','Helvetica Neue',Helvetica,Arial,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,'Liberation Mono',monospace;
+  --shadow-sm:0 1px 2px rgba(16,24,40,.04);
+  --shadow:0 3px 12px rgba(16,24,40,.07);
+  --shadow-lg:0 18px 46px rgba(16,24,40,.16);
+}
+*{box-sizing:border-box}
+body{
+  width:1440px;margin:0 auto;background:var(--bg);color:var(--text);
+  font-family:var(--font);font-size:14px;line-height:1.6;-webkit-font-smoothing:antialiased;
+}
+button{font-family:var(--font);cursor:pointer}
+.ic{width:15px;height:15px;flex:none;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.ic.sm{width:12.5px;height:12.5px}
+.ic.lg{width:17px;height:17px}
+.num{font-variant-numeric:tabular-nums}
+
+.page{padding:34px 44px 46px}
+.page-head{display:flex;align-items:flex-end;gap:14px;margin-bottom:24px}
+.page-head .eyebrow{font-family:var(--mono);font-size:10px;letter-spacing:.14em;color:var(--accent);text-transform:uppercase;padding-bottom:6px}
+.page-head h1{margin:0;font-size:24px;letter-spacing:-.02em;font-weight:650;line-height:1.3}
+.page-head p{margin:0 0 3px auto;font-size:12px;color:var(--text3)}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:26px}
+.panel{background:var(--panel);border:1px solid var(--border);border-radius:16px;box-shadow:var(--shadow-sm);overflow:hidden}
+.panel-head{display:flex;align-items:flex-start;gap:10px;padding:16px 18px 13px;border-bottom:1px solid var(--border)}
+.panel-no{
+  width:22px;height:22px;border-radius:7px;background:var(--accent-weak);color:var(--accent);
+  font-family:var(--mono);font-size:10.5px;font-weight:700;display:flex;align-items:center;justify-content:center;flex:none;margin-top:1px;
+}
+.panel-title{font-size:13.5px;font-weight:600;line-height:1.4}
+.panel-sub{font-size:11.5px;color:var(--text3);margin-top:2px}
+.panel-body{padding:22px;background:linear-gradient(180deg,#fbfcfd,#f7f8fa);min-height:498px;display:flex;flex-direction:column;justify-content:center;position:relative}
+.panel-body.tall{min-height:660px;justify-content:flex-start;padding-top:16px}
+.frame{background:var(--panel);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow);overflow:hidden;position:relative}
+
+/* ===== 输入区 ===== */
+.composer-stage{width:600px;margin:0 auto;position:relative;display:flex;flex-direction:column}
+.composer{max-width:600px;margin:0 auto;border:1px solid var(--accent);border-radius:16px;background:var(--panel);padding:12px 13px 9px;box-shadow:0 0 0 3px rgba(46,107,230,.10),0 14px 30px -18px rgba(46,107,230,.45)}
+.c-text{font-size:14px;line-height:1.7;padding:2px 4px 12px;color:var(--text)}
+.c-text .caret{display:inline-block;width:1.5px;height:16px;background:var(--accent);vertical-align:-3px;margin-left:1px}
+.c-bar{display:flex;align-items:center;gap:4px}
+.c-chip{display:inline-flex;align-items:center;gap:6px;height:27px;padding:0 9px;border-radius:7px;border:1px solid transparent;background:transparent;color:var(--text2);font-size:12px;white-space:nowrap}
+.c-chip:hover{background:var(--panel3)}
+.c-chip.ws{border-color:var(--border);background:var(--panel2);border-radius:999px;height:26px}
+.c-chip .ic{width:14px;height:14px}
+.c-plus{width:27px;height:27px;border-radius:7px;border:1px solid var(--border);background:var(--panel);color:var(--text2);display:inline-flex;align-items:center;justify-content:center}
+.c-right{margin-left:auto;display:flex;align-items:center;gap:6px}
+.ctx{display:inline-flex;align-items:center;gap:6px;height:27px;padding:0 8px;border-radius:7px;color:var(--text3);font-size:11px}
+.ring{width:16px;height:16px;flex:none;transform:rotate(-90deg)}
+.model-chip{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 9px;border-radius:8px;border:1px solid var(--accent-border);background:var(--accent-weak);color:var(--accent);font-size:11.5px;white-space:nowrap;position:relative}
+.model-chip .think{display:inline-flex;align-items:center;gap:4px;padding-left:7px;margin-left:1px;border-left:1px solid var(--accent-border);font-weight:500}
+.model-chip .think .ic{width:11px;height:11px}
+.send{width:30px;height:30px;border-radius:50%;border:0;background:var(--accent);color:#fff;display:inline-flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(46,107,230,.28)}
+.pop{
+  position:relative;z-index:5;width:432px;margin:0 64px 10px auto;
+  background:var(--panel);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow-lg);
+}
+.pop::after{content:'';position:absolute;bottom:-6px;right:96px;width:11px;height:11px;background:var(--panel);border-right:1px solid var(--border);border-bottom:1px solid var(--border);transform:rotate(45deg)}
+.pop-head{display:flex;align-items:center;padding:13px 15px 10px}
+.pop-head b{font-size:12.5px;font-weight:600}
+.pop-head span{margin-left:auto;font-size:10.5px;color:var(--text3)}
+.pop-sec{padding:0 15px 12px}
+.pop-label{font-size:10.5px;color:var(--text3);letter-spacing:.02em;margin:2px 0 6px;display:flex;align-items:center;gap:6px}
+.pop-label .lk{margin-left:auto;color:var(--accent);font-size:10.5px;letter-spacing:0;cursor:default}
+.opt{display:flex;align-items:center;gap:8px;height:31px;padding:0 8px;border-radius:7px;font-size:11.5px;color:var(--text2)}
+.opt:hover{background:var(--panel2)}
+.opt.on{background:var(--accent-weak);color:var(--accent);font-weight:600}
+.radio{width:14px;height:14px;border-radius:50%;border:1.5px solid var(--border2);flex:none;display:flex;align-items:center;justify-content:center}
+.opt.on .radio{border-color:var(--accent)}
+.opt.on .radio::after{content:'';width:7px;height:7px;border-radius:50%;background:var(--accent)}
+.opt .meta{margin-left:auto;font-size:9.5px;color:var(--text3);font-weight:400;letter-spacing:.01em}
+.seg{display:flex;gap:4px;background:var(--panel3);border-radius:8px;padding:3px}
+.seg button{flex:1;height:25px;border:0;border-radius:6px;background:transparent;color:var(--text2);font-size:11px}
+.seg button.on{background:var(--panel);color:var(--text);font-weight:600;box-shadow:var(--shadow-sm)}
+.seg button.on.brain{color:var(--accent)}
+.seg-hint{font-size:10px;color:var(--text3);margin-top:6px;display:flex;align-items:center;gap:5px}
+.seg-hint .ic{width:11px;height:11px}
+.ctx-bar{display:flex;align-items:center;gap:9px;font-size:10.5px;color:var(--text2)}
+.ctx-track{flex:1;height:5px;border-radius:3px;background:var(--panel3);overflow:hidden}
+.ctx-track i{display:block;height:100%;width:1.5%;background:var(--accent);border-radius:3px}
+.scope{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.scope .tag{display:inline-flex;align-items:center;gap:4px;height:22px;padding:0 7px;border-radius:6px;border:1px solid var(--border);background:var(--panel2);font-size:10.5px;color:var(--text2)}
+.scope .tag .ic{width:11px;height:11px;color:var(--text3)}
+.scope .off{color:var(--text3);border-style:dashed}
+.pop-foot{display:flex;align-items:center;gap:8px;padding:10px 15px;border-top:1px solid var(--border);background:var(--panel2);border-radius:0 0 14px 14px}
+.pop-foot .note{font-size:10px;color:var(--text3)}
+.pop-foot .btn{margin-left:auto;height:25px;padding:0 9px;border-radius:6px;border:1px solid var(--border);background:var(--panel);color:var(--text2);font-size:10.5px}
+
+/* ===== 失败处置 ===== */
+.rail-frame{width:320px;margin:0 auto;background:var(--panel2);border:1px solid var(--border);border-radius:14px;padding:12px;box-shadow:var(--shadow)}
+.card{border:1px solid var(--border);border-radius:12px;background:var(--panel);overflow:hidden;box-shadow:var(--shadow-sm)}
+.card-head{display:flex;align-items:center;gap:7px;padding:11px 12px 9px}
+.card-title{font-size:12px;font-weight:600}
+.card-sub{font-size:10.5px;color:var(--text3);margin-left:auto}
+.progress{height:4px;border-radius:2px;background:var(--panel3);margin:0 12px 10px;overflow:hidden}
+.progress i{display:block;height:100%;width:91.7%;background:linear-gradient(90deg,var(--accent),#6fa2f7)}
+.steps{display:flex;flex-direction:column;padding:0 6px 4px}
+.step{display:flex;gap:8px;padding:7px 6px;border-radius:7px}
+.step:hover{background:var(--panel2)}
+.sic{width:16px;height:16px;flex:none;display:flex;justify-content:center;margin-top:1px}
+.sic .ic{width:13px;height:13px}
+.sic.ok{color:var(--ok)} .sic.err{color:var(--danger)}
+.step-main{min-width:0;flex:1}
+.step-row{display:flex;align-items:center;gap:6px}
+.step-name{font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.step-time{font-size:10px;color:var(--text3);margin-left:auto;white-space:nowrap}
+.step-arg{font-size:10.5px;color:var(--text3);margin-top:1px}
+.step.err .step-name{color:var(--danger);font-weight:500}
+.err-box{margin-top:3px;padding:9px;border-radius:8px;background:var(--danger-weak);border:1px solid var(--danger-border);font-size:10.5px;line-height:1.55;color:#8f1d1d}
+.err-box .code{font-family:var(--mono);font-size:9.5px;color:#a33;display:block;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.err-acts{display:flex;gap:4px;margin-top:7px;flex-wrap:wrap}
+.err-act{height:23px;padding:0 7px;border-radius:6px;border:1px solid var(--danger-border);background:#fff;color:var(--danger);font-size:10.5px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+.err-act.ghost{border-color:var(--border);color:var(--text2);background:transparent}
+.err-note{display:flex;align-items:flex-start;gap:6px;margin:8px 12px 10px;padding:7px 9px;border-radius:7px;background:var(--ok-weak);border:1px solid var(--ok-border);font-size:10px;line-height:1.5;color:#2f6d3d}
+.err-hint{margin-top:5px;font-size:9.5px;line-height:1.45;color:#a33;opacity:.75}.err-note .ic{width:11px;height:11px;margin-top:1px}
+.rail-foot{display:flex;justify-content:center;align-items:center;gap:5px;padding:8px;border-top:1px solid var(--border);font-size:11px;color:var(--text2)}
+
+/* ===== 吸顶工具条 ===== */
+.read-frame{width:640px;margin:0 auto;border:1px solid var(--border);border-radius:14px;background:var(--panel);overflow:hidden;box-shadow:var(--shadow)}
+.sticky-bar{display:flex;align-items:center;gap:9px;height:44px;padding:0 14px;background:rgba(255,255,255,.94);border-bottom:1px solid var(--border);box-shadow:0 6px 12px -10px rgba(16,24,40,.18)}
+.avatar{width:24px;height:24px;border-radius:7px;background:linear-gradient(135deg,#5E93F5,#2A5FE0);display:flex;align-items:center;justify-content:center;flex:none}
+.avatar svg{width:15px;height:15px}
+.sticky-name{font-size:12px;font-weight:600}
+.sticky-meta{font-size:10.5px;color:var(--text3);display:flex;align-items:center;gap:6px}
+.sticky-meta .ok{color:var(--ok);display:inline-flex;align-items:center;gap:3px}
+.sticky-meta .ok .ic{width:10px;height:10px}
+.sticky-acts{margin-left:auto;display:flex;align-items:center;gap:2px}
+.s-act{height:26px;padding:0 7px;border:0;border-radius:6px;background:transparent;color:var(--text2);font-size:11px;display:inline-flex;align-items:center;gap:4px}
+.s-act:hover{background:var(--panel3);color:var(--text)}
+.s-act.warn{color:var(--danger);background:var(--danger-weak)}
+.s-act .ic{width:12.5px;height:12.5px}
+.read-body{padding:18px 20px 22px;position:relative;height:300px;overflow:hidden}.read-body h2{font-size:17px;font-weight:650;letter-spacing:-.01em;margin:0 0 4px}
+.read-sub{font-size:10.5px;color:var(--text3);margin-bottom:14px}
+.read-p{font-size:12.5px;line-height:1.8;color:var(--text2);margin:0 0 12px}
+.read-p b{color:var(--text)}
+.read-fade{position:absolute;left:0;right:0;bottom:0;height:64px;background:linear-gradient(180deg,rgba(255,255,255,0),#fff)}
+.outline-pill{
+  position:absolute;right:12px;bottom:52px;display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 9px;
+  border:1px solid var(--border);border-radius:8px;background:var(--panel);box-shadow:var(--shadow-sm);font-size:10.5px;color:var(--text2);
+}
+.outline-pill .ic{width:12px;height:12px}
+
+/* ===== 回答大纲 ===== */
+.outline-frame{width:520px;margin:0 auto;background:var(--panel);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow);overflow:hidden}
+.of-head{display:flex;align-items:center;gap:7px;padding:11px 13px;border-bottom:1px solid var(--border)}
+.of-head b{font-size:11.5px;font-weight:600}
+.of-head span{margin-left:auto;font-size:10px;color:var(--text3)}
+.of-list{padding:6px}
+.of-row{display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:7px;font-size:11.5px;color:var(--text2)}
+.of-row:hover{background:var(--panel2)}
+.of-row.on{background:var(--accent-weak);color:var(--accent);font-weight:600}
+.of-no{font-family:var(--mono);font-size:9.5px;color:var(--text3);width:16px;flex:none}
+.of-row.on .of-no{color:var(--accent)}
+.of-txt{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.of-len{margin-left:auto;font-size:9.5px;color:var(--text3);font-weight:400}
+.of-prog{height:2px;background:var(--panel3)}
+.of-prog i{display:block;height:100%;width:38%;background:var(--accent)}
+.of-foot{padding:7px 13px 9px;border-top:1px solid var(--border);font-size:9.5px;color:var(--text3);display:flex;align-items:center;gap:5px}
+
+.anno{position:absolute;font-size:10px;color:var(--text3);display:flex;align-items:center;gap:4px}
+.anno .dot{width:5px;height:5px;border-radius:50%;background:var(--accent)}
+.caption{max-width:600px;margin:14px auto 0;font-size:11.5px;line-height:1.65;color:var(--text3);text-align:left}
+.caption b{color:var(--text2);font-weight:600}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-arrow-up" viewBox="0 0 24 24"><path d="M12 20V5M6 11l6-6 6 6"/></symbol>
+    <symbol id="i-brain" viewBox="0 0 24 24"><path d="M9.5 4A3.5 3.5 0 0 0 6 7.5c-1.7.6-3 2.2-3 4.1 0 1.4.7 2.7 1.8 3.5-.2.4-.3.9-.3 1.4A3.5 3.5 0 0 0 8 20c.6 0 1.1-.1 1.5-.4A3.5 3.5 0 0 0 12 21V4z"/><path d="M14.5 4A3.5 3.5 0 0 1 18 7.5c1.7.6 3 2.2 3 4.1 0 1.4-.7 2.7-1.8 3.5.2.4.3.9.3 1.4A3.5 3.5 0 0 1 16 20c-.6 0-1.1-.1-1.5-.4A3.5 3.5 0 0 1 12 21"/></symbol>
+    <symbol id="i-chev" viewBox="0 0 24 24"><path d="M8 10l4 4 4-4"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2 5.5"/><path d="M20 4v7h-7"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></symbol>
+    <symbol id="i-db" viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.2" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></symbol>
+    <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3l1.7 5.3L19 10l-5.3 1.7L12 17l-1.7-5.3L5 10l5.3-1.7z"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 5-3.4 8.2-8 9-4.6-.8-8-4-8-9V6z"/><path d="M9 12l2 2 4-4"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18"/></symbol>
+    <symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
+  </defs>
+</svg>
+
+<div class="page">
+  <div class="page-head">
+    <span class="eyebrow">Q&A UX · 02</span>
+    <h1>问答区改版 · 交互细节</h1>
+    <p>同一套设计令牌，四个关键状态</p>
+  </div>
+
+  <div class="grid">
+    <!-- 1 输入区与运行设置 -->
+    <section class="panel">
+      <div class="panel-head">
+        <span class="panel-no">01</span>
+        <div>
+          <div class="panel-title">输入区：模型、思考与检索范围合并成一个「运行设置」</div>
+          <div class="panel-sub">触发态显示「模型 · 思考档」；展开后一次改完，不用二层弹层</div>
+        </div>
+      </div>
+      <div class="panel-body tall">
+        <div class="composer-stage">
+          <div class="pop">
+            <div class="pop-head"><b>本轮运行设置</b><span>只影响这一条</span></div>
+            <div class="pop-sec">
+              <div class="pop-label">模型 <span class="lk">查看全部 12 个 ›</span></div>
+              <div class="opt on"><span class="radio"></span>deepseek-v4.1-flash<span class="meta">快 · 适合取数</span></div>
+              <div class="opt"><span class="radio"></span>qwen3.8-max<span class="meta">均衡</span></div>
+              <div class="opt"><span class="radio"></span>qwen3.8-flash<span class="meta">最快</span></div>
+              <div class="opt"><span class="radio"></span>kimi-k3.1-pro<span class="meta">长文</span></div>
+            </div>
+            <div class="pop-sec">
+              <div class="pop-label">思考强度</div>
+              <div class="seg">
+                <button>关闭</button><button class="on brain">中</button><button>高</button><button>超高</button><button>极致</button>
+              </div>
+              <div class="seg-hint"><svg class="ic"><use href="#i-spark"/></svg>强度越高，思考越深入，本轮预计多花 8–20 秒</div>
+            </div>
+            <div class="pop-sec" style="display:flex;flex-direction:column;gap:7px">
+              <div class="pop-label">上下文窗口</div>
+              <div class="ctx-bar"><span class="num">14.6K</span><div class="ctx-track"><i></i></div><span class="num">1M · 1.5%</span></div>
+            </div>
+            <div class="pop-sec">
+              <div class="pop-label">本轮检索范围</div>
+              <div class="scope">
+                <span class="tag"><svg class="ic"><use href="#i-db"/></svg>会话口径</span>
+                <span class="tag"><svg class="ic"><use href="#i-db"/></svg>取数规范</span>
+                <span class="tag"><svg class="ic"><use href="#i-file"/></svg>30 天报表</span>
+                <span class="tag off"><svg class="ic"><use href="#i-globe"/></svg>联网关闭</span>
+              </div>
+            </div>
+            <div class="pop-foot"><span class="note">修改后按 Enter 发送即生效</span><button class="btn">设为默认</button></div>
+          </div>
+          <div class="composer">
+            <div class="c-text">把 11-03 之后的会话按天拆开，标注异常值<span class="caret"></span></div>
+            <div class="c-bar">
+              <button class="c-chip ws"><svg class="ic"><use href="#i-folder"/></svg>工作区内修改</button>
+              <button class="c-chip">问渠<svg class="ic sm" style="width:10px"><use href="#i-chev"/></svg></button>
+              <button class="c-plus"><svg class="ic"><use href="#i-plus"/></svg></button>
+              <div class="c-right">
+                <span class="ctx"><svg class="ring" viewBox="0 0 20 20"><circle cx="10" cy="10" r="8" fill="none" stroke="#e6e9ed" stroke-width="2.4"/><circle cx="10" cy="10" r="8" fill="none" stroke="#2e6be6" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="50.3" stroke-dashoffset="49.5"/></svg>1.5%</span>
+                <button class="model-chip">deepseek-v4.1-flash<span class="think"><svg class="ic"><use href="#i-brain"/></svg>中思考</span><svg class="ic sm" style="width:10px"><use href="#i-chev"/></svg></button>
+                <button class="send"><svg class="ic lg"><use href="#i-arrow-up"/></svg></button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="caption"><b>现状：</b>模型选择与「深度思考」是两个独立入口，思考强度在第二层弹层里；上下文占用只有一颗没有数字的圆环。<b>改法：</b>把三者与检索范围收进同一张卡，触发态直接写清「哪个模型、开没开思考」。</div>
+      </div>
+    </section>
+
+    <!-- 2 失败步骤 -->
+    <section class="panel">
+      <div class="panel-head">
+        <span class="panel-no">02</span>
+        <div>
+          <div class="panel-title">过程失败：从「一行红字」变成可处置的一步</div>
+          <div class="panel-sub">失败原因、影响范围，以及当前能做的下一步都在原地</div>
+        </div>
+      </div>
+      <div class="panel-body">
+        <div class="rail-frame">
+          <div class="card">
+            <div class="card-head"><span class="card-title">本轮</span><span class="card-sub">11 / 12 步 · 1 步失败</span></div>
+            <div class="progress"><i></i></div>
+            <div class="steps">
+              <div class="step">
+                <span class="sic ok"><svg class="ic"><use href="#i-check"/></svg></span>
+                <div class="step-main"><div class="step-row"><span class="step-name">理解问题并规划</span><span class="step-time">0.4s</span></div></div>
+              </div>
+              <div class="step">
+                <span class="sic ok"><svg class="ic"><use href="#i-check"/></svg></span>
+                <div class="step-main"><div class="step-row"><span class="step-name">检索知识库</span><span class="step-time">2.1s</span></div><div class="step-arg">6 段命中 · 会话统计、活跃口径</div></div>
+              </div>
+              <div class="step">
+                <span class="sic ok"><svg class="ic"><use href="#i-check"/></svg></span>
+                <div class="step-main"><div class="step-row"><span class="step-name">委派「取数助手」</span><span class="step-time">34.8s</span></div><div class="step-arg">会话表 · 消息表 · 30 天窗口</div></div>
+              </div>
+              <div class="step err">
+                <span class="sic err"><svg class="ic"><use href="#i-x"/></svg></span>
+                <div class="step-main">
+                  <div class="step-row"><span class="step-name">列出历史会话</span><span class="step-time">30.0s</span></div>
+                  <div class="err-box">
+                    工具调用超时（30s），已自动重试 1 次仍失败。主表取数不受影响，回答仍可完成。
+                    <span class="code">ToolTimeout: list_sessions exceeded 30000ms</span>
+                    <div class="err-acts">
+                      <button class="err-act"><svg class="ic sm"><use href="#i-file"/></svg>查看日志</button>
+                      <button class="err-act ghost"><svg class="ic sm"><use href="#i-copy"/></svg>复制错误</button>
+                      <button class="err-act ghost"><svg class="ic sm"><use href="#i-refresh"/></svg>重新生成本轮</button>
+                    </div>
+                    <div class="err-hint">重新生成会重跑全部 12 步，不会只补这一步。</div>
+                  </div>
+                </div>
+              </div>
+              <div class="step">
+                <span class="sic ok"><svg class="ic"><use href="#i-check"/></svg></span>
+                <div class="step-main"><div class="step-row"><span class="step-name">生成图表</span><span class="step-time">19.6s</span></div><div class="step-arg">2 张图 · option 已校验</div></div>
+              </div>
+            </div>
+            <div class="err-note"><svg class="ic"><use href="#i-shield"/></svg><div>这一步不是取数主链路，失败不影响总量与趋势；受影响的是「按会话逐条列出」那一段。</div></div>
+            <div class="rail-foot">查看全部 12 步<svg class="ic sm"><use href="#i-chev"/></svg></div>
+          </div>
+        </div>
+        <div class="caption" style="max-width:420px"><b>现状：</b>失败只给「Error: Tool …」被截断的一行，用户既不知道影响什么，也没有下一步。<b>改法：</b>把失败当一等状态——原因可读、影响范围说清；已完成的轮次给「日志 / 复制错误 / 重新生成」，仍在跑的轮次才谈「跳过」。</div>
+      </div>
+    </section>
+
+    <!-- 3 吸顶工具条 -->
+    <section class="panel">
+      <div class="panel-head">
+        <span class="panel-no">03</span>
+        <div>
+          <div class="panel-title">长回答阅读：滚到中段也能复制、反馈、回到过程</div>
+          <div class="panel-sub">回答超过一屏后，回答头收成 44px 的吸顶条</div>
+        </div>
+      </div>
+      <div class="panel-body">
+        <div class="read-frame">
+          <div class="sticky-bar">
+            <div class="avatar"><svg viewBox="0 0 64 64"><path d="M18 25c4.5-5.2 9-5.2 13.5 0s9 5.2 13.5 0" stroke="#fff" stroke-width="6" stroke-linecap="round" fill="none"/><path d="M16 37c5-5.6 10-5.6 15 0s10 5.6 15 0" stroke="#fff" stroke-width="6" stroke-linecap="round" fill="none"/></svg></div>
+            <div>
+              <div class="sticky-name">问渠</div>
+              <div class="sticky-meta"><span class="ok"><svg class="ic"><use href="#i-check"/></svg>已完成</span><span>57.3 秒</span><span>·</span><span>第 1 轮</span></div>
+            </div>
+            <div class="sticky-acts">
+              <button class="s-act"><svg class="ic"><use href="#i-list"/></svg>大纲</button>
+              <button class="s-act warn"><svg class="ic"><use href="#i-alert"/></svg>过程 12</button>
+              <button class="s-act"><svg class="ic"><use href="#i-copy"/></svg>复制</button>
+              <button class="s-act"><svg class="ic"><use href="#i-more"/></svg></button>
+            </div>
+          </div>
+          <div class="read-body">
+            <h2>最近 30 天会话与轮数</h2>
+            <div class="read-sub">2026-10-17 — 11-15 · 数据截至 11-15 21:25</div>
+            <p class="read-p">30 天共 <b>197 个会话</b>、<b>689 条消息</b>、约 <b>327 轮对话</b>；11-03 起进入高频期，11-06 为单日峰值。</p>
+            <p class="read-p">11-01 之前是零散的试用期，日均不到 2 个会话；11-03 起连续 7 天日会话数保持在 15 个以上，11-09 出现第二个小高峰（19 个会话、65 条消息），随后回落到日均 5 个会话。</p>
+            <p class="read-p">增长主要来自「数据分析」与「文档问答」两类会话：前者平均 2.4 轮，后者平均 1.2 轮。这也解释了为什么消息数（689）比轮数（327）增长更快。</p>
+            <p class="read-p">从时长看，11-06 的会话中位数是 6 分 12 秒，明显高于其他高峰日的 3 分钟上下……</p>
+            <div class="read-fade"></div>
+          </div>
+        </div>
+        <div class="caption" style="max-width:640px"><b>现状：</b>复制/反馈/重新生成只挂在回答末尾，长回答读到中段想复制只能滚到底；过程入口在顶栏，和当前这段话脱节。<b>改法：</b>吸顶条只保留最常用的四个动作，滚动离开回答头时浮现。</div>
+      </div>
+    </section>
+
+    <!-- 4 回答大纲 -->
+    <section class="panel">
+      <div class="panel-head">
+        <span class="panel-no">04</span>
+        <div>
+          <div class="panel-title">回答大纲：长答案先看骨架，再决定读哪一段</div>
+          <div class="panel-sub">从正文 H2/H3 自动生成，跟随阅读位置高亮</div>
+        </div>
+      </div>
+      <div class="panel-body">
+        <div class="outline-frame">
+          <div class="of-head"><svg class="ic sm" style="color:var(--accent)"><use href="#i-list"/></svg><b>本条回答</b><span>4 节 · 约 2 屏</span></div>
+          <div class="of-prog"><i></i></div>
+          <div class="of-list">
+            <div class="of-row"><span class="of-no">01</span><span class="of-txt">结论速览</span><span class="of-len">1 屏</span></div>
+            <div class="of-row on"><span class="of-no">02</span><span class="of-txt">按天趋势与峰值</span><span class="of-len">2 屏</span></div>
+            <div class="of-row"><span class="of-no">03</span><span class="of-txt">一天内的活跃分布</span><span class="of-len">1 屏</span></div>
+            <div class="of-row"><span class="of-no">04</span><span class="of-txt">口径与数据来源</span><span class="of-len">½ 屏</span></div>
+          </div>
+          <div class="of-foot"><svg class="ic" style="width:10px;height:10px"><use href="#i-target"/></svg>当前阅读到「按天趋势与峰值」</div>
+        </div>
+        <div class="caption" style="max-width:520px"><b>现状：</b>左侧已有轮次锚点轨，但只回答「跳到哪一问」，回答内部仍要靠滚。<b>改法：</b>对超过 2 屏的回答生成小节大纲，与轮次锚点分工：一个跳轮，一个跳节。</div>
+      </div>
+    </section>
+  </div>
+</div>
+</body>
+</html>

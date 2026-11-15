@@ -102,7 +102,7 @@ test('展示口径：强度行/底部提示/胶囊标记与窗口文本', () => 
   assert.equal(p.thinkPanelStrengthText.value, '高')
   assert.match(p.thinkPanelFoot.value, /强度越高/)
   assert.equal(p.pillLevelBadge.value, '高')
-  assert.match(p.pillLevelTitle.value, /悬浮下拉/)
+  assert.match(p.pillLevelTitle.value, /点开模型胶囊/)
   coarseRef.value = true
   assert.match(p.pillLevelTitle.value, /点旁边的「思考」/)
   assert.equal(p.thinkPanelCtxText.value, '128K')

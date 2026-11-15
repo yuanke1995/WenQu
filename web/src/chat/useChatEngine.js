@@ -1814,6 +1814,9 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
   //（重试定时器触发时用户可能已切到别的会话/换了模型）
   const sid = prev ? prev.sid : currentSessionId.value
   const agentId = prev ? prev.agentId : (currentAgentId.value || '')
+  // 作答方在发问这一刻就是确定的：归属随气泡一起写上，不等 done 才补——否则整段流式期间
+  // 「由 X 回答」一直空着。没选智能体（空 agentId 走全局配置）就没有归属，不编一个名字顶上。
+  const turnAgentName = agentId ? (agentList.value.find(a => a.id === agentId)?.name || '') : ''
   // 会话已有 ID 时**不再**随发送带模型：会话里存的那一份是权威（选择器改动即时 PUT 落库，后端也按它作答）。
   // 把页签内存里的那一份发上去，等于用一个端的选择盖掉另一个端刚改过的值——A 端刚切到
   // 可用模型，B 端一句重发又把已停用的写回会话，两边来回盖、每轮都在重建实例。
@@ -1827,7 +1830,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
   // model 留空，等 done/接流快照带后端那份权威值回来：前端预填的是「生效引用」（覆盖>个人默认），
   // 后端落库的是模型名那一段，两边写法不同却都叫 model——拿引用去和上一条的落库值比，
   // 同一个模型会被判成「已切换」，done 一到又自己消失（刷新后更是从来没有过这条线）
-  const fresh = { role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkLoading: false, time: Date.now(), turnClockFromServer: false, turnMs: 0, humanWaitMs: 0, artifacts: [], toolCalls: [], skillHits: [], plan: null, planCard: null, timeline: [], errorCard: null, model: '', goalWaiting: false }
+  const fresh = { role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkLoading: false, time: Date.now(), turnClockFromServer: false, turnMs: 0, humanWaitMs: 0, artifacts: [], toolCalls: [], skillHits: [], plan: null, planCard: null, timeline: [], errorCard: null, model: '', goalWaiting: false, agentId: agentId || '', agentName: turnAgentName }
   // 接流时被替换的那颗气泡沿用它的起表点：目标占位气泡的起表点是用户按下回车那一刻，
   // 断线重挂的残影是这一轮真实的开轮时刻——两者都不能在接上的一瞬跳回 0（数字变小读成计时坏了）。
   // 服务端快照随后会用 elapsedMs 再对一次表（见 streamReducer 的 earlierStart）。

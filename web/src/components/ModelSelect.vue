@@ -69,6 +69,49 @@
         <div class="ms-empty-tip" v-if="adminTipVisible">请先到「模型供应商」新建供应商并登记模型</div>
       </div>
     </template>
+    <!-- 运行设置：模型列表与思考/上下文/检索收在同一张下拉里。
+         只有 runSettings=true 的消费方（聊天页）才显示尾栏；其它页仍是纯模型列表。 -->
+    <template #dropdownRender="{ menuNode }">
+      <div class="ms-run-panel" :class="{ 'has-settings': runSettings }">
+        <div v-if="panelTitle" class="ms-run-head">
+          <b>{{ panelTitle }}</b>
+          <span v-if="panelSub">{{ panelSub }}</span>
+        </div>
+        <div v-if="runSettings" class="ms-run-label">模型</div>
+        <!-- 运行设置模式：面板内自定义单选列表。用原生 option 会一点就收起下拉，
+             用户就没法接着调下面的思考强度；这里点模型只更新值，不关面板。 -->
+        <div v-if="runSettings" class="ms-run-models ms-run-models-custom">
+          <template v-if="groups.length || orphanRef">
+            <!-- 当前引用已不在可用清单：把它摆出来并标灰，用户才知道「我选的那个不是凭空丢了」 -->
+            <div v-if="orphanRef" class="ms-run-group">
+              <div class="ms-run-group-name">当前</div>
+              <button type="button" class="ms-run-model" :class="{ on: orphanRef === modelValue }" disabled>
+                <span class="ms-run-radio" :class="{ on: orphanRef === modelValue }" aria-hidden="true"></span>
+                <ProviderIcon :icon="iconOf(orphanRef)" :name="providerNameOf(orphanRef)" :size="16" />
+                <span class="ms-run-model-name">{{ orphanLabel }}</span>
+                <span class="ms-run-flag">{{ issue || '已不可用' }}</span>
+              </button>
+            </div>
+            <div v-for="g in groups" :key="g.providerId" class="ms-run-group">
+              <div class="ms-run-group-name">{{ g.name }}</div>
+              <button v-for="m in g.models" :key="m.ref" type="button" class="ms-run-model"
+                      :class="{ on: m.ref === modelValue, blocked: m.quotaBlocked }"
+                      :disabled="m.quotaBlocked" @mousedown.stop @click.stop="pickRunModel(m)">
+                <span class="ms-run-radio" :class="{ on: m.ref === modelValue }" aria-hidden="true"></span>
+                <ProviderIcon :icon="iconOf(m.ref)" :name="providerNameOf(m.ref)" :size="16" />
+                <span class="ms-run-model-name">{{ m.displayName }}</span>
+                <span v-if="m.quotaBlocked" class="ms-run-flag" :title="blockedTip(m.ref)">额度不足</span>
+              </button>
+            </div>
+          </template>
+          <div v-else class="ms-empty">{{ loading ? '加载中…' : '暂无可用模型' }}</div>
+        </div>
+        <div v-else class="ms-run-models"><VNodeHost :node="menuNode" /></div>
+        <div v-if="runSettings && $slots.runSettings" class="ms-run-settings">
+          <slot name="runSettings" />
+        </div>
+      </div>
+    </template>
   </a-select>
     <!-- 胶囊触发器里的品牌图标 + 思考档位标记。
          用绝对定位覆盖层而不是 antd 的 #label 插槽：#label 只在「有选中值」时参与渲染，
@@ -119,6 +162,11 @@ const props = defineProps({
   badge: { type: String, default: '' },
   /** 标记的悬浮说明 */
   badgeTitle: { type: String, default: '' },
+  /** 把「运行设置」尾栏挂进下拉（聊天页）：模型列表 + 思考/上下文/检索同一张卡 */
+  runSettings: { type: Boolean, default: false },
+  /** 运行设置卡头标题与右侧说明（如当前模型名） */
+  panelTitle: { type: String, default: '' },
+  panelSub: { type: String, default: '' },
   /** 是否可在下拉里打字筛选（对话工具栏的胶囊关掉：模型就那十几个，搜索框反而让胶囊像输入框） */
   search: { type: Boolean, default: true },
   placeholder: { type: String, default: '' },
@@ -145,6 +193,9 @@ const emit = defineEmits(['update:modelValue', 'change', 'option-hover', 'open-c
 
 const groups = ref([])
 const loading = ref(false)
+// dropdownRender 的 menuNode 是 VNode，不能插值（会被 JSON 序列化）；用函数组件原样渲染
+const VNodeHost = props => props.node
+VNodeHost.props = { node: { type: [Object, Array], required: true } }
 
 // 模块级缓存（10s TTL）：同一页面多个选择器（设置页四组/聊天页）共享一次请求
 let cache = { ts: 0, data: [] }
@@ -187,6 +238,12 @@ function onChange(v) {
   // 清空时 antd 返回 undefined，统一归一为 ''（=未指定/继承）
   emit('update:modelValue', v || '')
   emit('change', v || '')
+}
+/** 运行设置里的模型单选：只更新值，不关下拉，好让用户接着调思考强度 */
+function pickRunModel(m) {
+  if (!m || m.quotaBlocked) return
+  emit('update:modelValue', m.ref)
+  emit('change', m.ref)
 }
 
 // ==================== 「跟随」点名 ====================
@@ -538,6 +595,50 @@ watch([() => props.modelValue, () => groups.value, inheritText,
   max-width: min(72vw, 480px) !important;
   padding: 6px !important;
   border-radius: 12px !important;
+}
+/* 运行设置：同一张下拉里的卡头 + 模型列表 + 设置尾栏 */
+.ms-dropdown .ms-run-panel.has-settings {
+  min-width: 380px; max-height: min(72vh, 620px); overflow-y: auto;
+}
+.ms-dropdown .ms-run-head {
+  display: flex; align-items: baseline; gap: 8px; padding: 3px 10px 7px;
+}
+.ms-dropdown .ms-run-head b { font-size: 12.5px; font-weight: 600; color: var(--app-text); }
+.ms-dropdown .ms-run-head span {
+  margin-left: auto; max-width: 190px; font-size: 10.5px; color: var(--app-text3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ms-dropdown .ms-run-label { padding: 3px 10px 3px; font-size: 10.5px; color: var(--app-text3); }
+.ms-dropdown .ms-run-settings {
+  margin: 3px 4px 2px; padding: 2px 6px 0;
+  border-top: 1px solid var(--app-border);
+}
+/* 面板内模型单选：常开列表，点模型只换值、不收起下拉 */
+.ms-dropdown .ms-run-models-custom { max-height: 260px; overflow-y: auto; }
+.ms-dropdown .ms-run-group-name {
+  padding: 8px 10px 3px; font-size: 10.5px; color: var(--app-text3);
+}
+.ms-dropdown .ms-run-model {
+  display: flex; align-items: center; gap: 8px; width: 100%; min-height: 32px;
+  padding: 5px 10px; border: 0; border-radius: 8px; background: transparent;
+  color: var(--app-text); font: inherit; font-size: 13px; text-align: left; cursor: pointer;
+}
+.ms-dropdown .ms-run-model:hover { background: var(--app-bg-layer-3); }
+.ms-dropdown .ms-run-model.on { background: var(--app-accent-weak); color: var(--app-accent); font-weight: 500; }
+.ms-dropdown .ms-run-model:disabled { opacity: .5; cursor: default; }
+.ms-dropdown .ms-run-model-name {
+  min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ms-dropdown .ms-run-flag {
+  flex: none; font-size: 10px; color: var(--app-warn-text); white-space: nowrap;
+}
+.ms-dropdown .ms-run-radio {
+  flex: none; width: 14px; height: 14px; border-radius: 50%; position: relative;
+  border: 1.5px solid var(--app-border-strong, #d8dde3);
+}
+.ms-dropdown .ms-run-model.on .ms-run-radio { border-color: var(--app-accent); }
+.ms-dropdown .ms-run-model.on .ms-run-radio::after {
+  content: ''; position: absolute; inset: 3px; border-radius: 50%; background: var(--app-accent);
 }
 .ms-dropdown .ant-select-item-group {
   font-size: 11px !important;

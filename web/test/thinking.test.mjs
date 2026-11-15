@@ -55,7 +55,7 @@ test('胶囊标记：无模型/未登记/不支持/关闭都不挂，ON 挂「�
 test('胶囊悬浮说明：恒思考/已开启/具体档位，宽屏与触屏入口文案不同', () => {
   assert.equal(pillLevelTitleOf({ ref: 'v/m', badge: '', level: 'high', coarse: false }), '')
   assert.match(pillLevelTitleOf({ ref: 'v/m', badge: '高', locked: true, level: 'high', coarse: false }), /不可调/)
-  assert.match(pillLevelTitleOf({ ref: 'v/m', badge: '思', locked: false, level: THINK_LEVEL_ON, coarse: false }), /悬浮下拉里的模型行/)
+  assert.match(pillLevelTitleOf({ ref: 'v/m', badge: '思', locked: false, level: THINK_LEVEL_ON, coarse: false }), /点开模型胶囊/)
   assert.match(pillLevelTitleOf({ ref: 'v/m', badge: '高', locked: false, level: 'high', coarse: true }), /点旁边的「思考」/)
 })
 

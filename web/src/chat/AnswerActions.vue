@@ -56,19 +56,24 @@ async function doCopy () {
   <div class="fb-row">
     <slot name="prefix" />
     <template v-if="messageId">
-      <a-tooltip title="复制"><button class="app-icon-btn" @click="doCopy"><copy-outlined /></button></a-tooltip>
-      <a-tooltip :title="fb != null ? '已评价' : '有帮助'">
-        <button class="app-icon-btn" :class="{ 'fb-active': fb === 1 }" :disabled="fb != null"
-                @click="emit('feedback', 1)"><like-outlined /></button>
+      <button class="fb-btn" type="button" title="复制回答" @click="doCopy">
+        <copy-outlined /><span class="fb-label">复制</span>
+      </button>
+      <a-tooltip :title="fb != null ? '已评价' : '这条回答有帮助'">
+        <button class="fb-btn" type="button" :class="{ 'fb-active': fb === 1 }" :disabled="fb != null"
+                @click="emit('feedback', 1)"><like-outlined /><span class="fb-label">有帮助</span></button>
       </a-tooltip>
-      <a-tooltip :title="fb != null ? '已评价' : '没帮助'">
-        <button class="app-icon-btn" :class="{ 'fb-active': fb === 0 }" :disabled="fb != null"
-                @click="emit('feedback', 0)"><dislike-outlined /></button>
+      <a-tooltip :title="fb != null ? '已评价' : '这条回答没帮助'">
+        <button class="fb-btn" type="button" :class="{ 'fb-active': fb === 0 }" :disabled="fb != null"
+                @click="emit('feedback', 0)"><dislike-outlined /><span class="fb-label">没帮助</span></button>
       </a-tooltip>
-      <a-tooltip v-if="canRegenerate" title="重新生成">
-        <button class="app-icon-btn" :disabled="loading" @click="emit('regenerate')"><reload-outlined /></button>
+      <a-tooltip v-if="canRegenerate" title="重新生成这条回答">
+        <button class="fb-btn" type="button" :disabled="loading" @click="emit('regenerate')">
+          <reload-outlined /><span class="fb-label">重新生成</span>
+        </button>
       </a-tooltip>
       <slot name="more" />
+      <span class="fb-sep" aria-hidden="true"></span>
     </template>
     <slot name="extra" />
   </div>
@@ -77,13 +82,29 @@ async function doCopy () {
 <style scoped>
 /* 动作行：与正文同一列、贴着回答下方一行。间距故意只有 8px——它是这一条回答的脚注，
    不是新的一块内容 */
-.fb-row { margin-top: 8px; display: flex; align-items: center; gap: 2px; }
+.fb-row { margin-top: 8px; display: flex; align-items: center; flex-wrap: wrap; gap: 2px; }
+/* 图标 + 文字：纯图标只有悬浮才知道是什么，长回答里更找不到；文字常驻、颜色仍弱于正文 */
+.fb-btn {
+  height: 27px; padding: 0 7px; border: 1px solid transparent; border-radius: 7px;
+  background: transparent; color: var(--app-text2); font: inherit; font-size: 11.5px;
+  display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; cursor: pointer;
+  transition: background .12s, color .12s;
+}
+.fb-btn:hover:not(:disabled) { background: var(--app-panel-2); color: var(--app-text); }
+.fb-btn:disabled { cursor: default; opacity: .55; }
+.fb-btn :deep(svg) { width: 14px; height: 14px; }
+.fb-sep { width: 1px; height: 12px; background: var(--app-border); margin: 0 4px; flex: none; }
 /* 已评价态：钉在强调色上，用户一眼看出自己评过哪一条（同一条不能再评，按钮同时被禁用） */
 .fb-active { color: var(--app-accent); }
-/* 窄屏把整行做成触控友好的热区（图标 15px、按钮 34px）：分享链接大量在手机上打开，
-   而这四个动作是游客唯一能对回答做的事 */
+/* 窄屏：保留文字（触屏没有悬浮说明），只把热区做到 34px；再窄才收掉文字 */
 @media (max-width: 768px) {
-  .fb-row { gap: 4px; }
-  .fb-row .app-icon-btn { min-width: 34px; min-height: 34px; font-size: 15px; }
+  .fb-row { gap: 3px; }
+  .fb-btn { min-height: 34px; padding: 0 8px; font-size: 12px; }
+  .fb-btn :deep(svg) { width: 15px; height: 15px; }
+}
+@media (max-width: 430px) {
+  .fb-label { display: none; }
+  .fb-btn { min-width: 34px; justify-content: center; padding: 0 7px; }
+  .fb-sep { margin: 0 2px; }
 }
 </style>

@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>问渠 · 问答区体验升级：诊断、改法与效果图</title>
+<style>
+:root{
+  --bg:#f4f6f9; --panel:#fff; --panel2:#fafbfc; --panel3:#f2f4f7;
+  --border:#e6e9ed; --border2:#d8dde3;
+  --ink:#1f2329; --muted:#5f6570; --faint:#98a0aa;
+  --accent:#2e6be6; --accent-weak:#eef4ff; --accent-border:#c9dbfb;
+  --ok:#3b8f4e; --ok-weak:#eaf5ec; --ok-border:#cfe4d3;
+  --warn:#a3691b; --warn-weak:#faf3e6; --warn-border:#f0dfb6;
+  --danger:#cf1322; --danger-weak:#fff2f0; --danger-border:#f3c9c9;
+  --radius:10px; --radius-lg:14px;
+  --shadow:0 18px 50px rgba(16,24,40,.12);
+  --shadow-sm:0 2px 8px rgba(16,24,40,.06);
+  --font:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Hiragino Sans GB','Microsoft YaHei','Helvetica Neue',Helvetica,Arial,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,'Liberation Mono',monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0;background:var(--bg);color:var(--ink);font:14px/1.7 var(--font);
+  -webkit-font-smoothing:antialiased;
+}
+a{color:var(--accent);text-decoration:none}
+button{font-family:var(--font)}
+.report{max-width:1180px;margin:28px auto 64px;background:var(--panel);border:1px solid var(--border);border-radius:18px;box-shadow:var(--shadow);overflow:hidden}
+.cover{padding:52px 56px 38px;background:linear-gradient(180deg,#fbfcff 0%,#fff 100%);border-bottom:1px solid var(--border)}
+.eyebrow{font:10.5px/1 var(--mono);letter-spacing:.16em;color:var(--accent);text-transform:uppercase}
+.cover h1{margin:16px 0 0;font-size:34px;line-height:1.28;letter-spacing:-.02em;font-weight:700}
+.cover h1 em{font-style:normal;color:var(--accent)}
+.lede{max-width:880px;margin:18px 0 0;color:var(--muted);font-size:14px;line-height:1.85}
+.lede b{color:var(--ink)}
+.meta-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:24px}
+.meta-chip{font-size:11.5px;color:var(--muted);border:1px solid var(--border);background:#fff;border-radius:999px;padding:4px 11px}
+.meta-chip b{color:var(--ink);font-weight:600}
+.summary-band{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:28px}
+.summary-card{border:1px solid var(--border);border-radius:12px;padding:15px 16px 14px;background:linear-gradient(180deg,#fff,#fafbfc)}
+.summary-card .num{font:10px/1 var(--mono);letter-spacing:.08em;color:var(--accent)}
+.summary-card h3{margin:8px 0 4px;font-size:13px;font-weight:600}
+.summary-card p{margin:0;font-size:11.5px;line-height:1.65;color:var(--muted)}
+
+.section{padding:40px 56px;border-bottom:1px solid var(--border)}
+.section:last-child{border-bottom:0}
+.sec-head{display:flex;align-items:baseline;gap:12px;margin-bottom:18px}
+.sec-no{font:10.5px/1 var(--mono);letter-spacing:.12em;color:var(--accent);padding-bottom:4px}
+.sec-head h2{margin:0;font-size:22px;letter-spacing:-.015em;font-weight:650}
+.sec-head p{margin:0 0 2px auto;font-size:11.5px;color:var(--faint)}
+.sec-lede{max-width:960px;margin:-6px 0 24px;font-size:13px;line-height:1.8;color:var(--muted)}
+.sec-lede b{color:var(--ink)}
+
+/* 现状 */
+.before-grid{display:grid;grid-template-columns:1fr;gap:14px;align-items:start}
+.shot{border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--panel2);box-shadow:var(--shadow-sm)}
+.shot img{display:block;width:100%;height:auto}
+.shot figcaption{padding:9px 12px;font-size:11px;color:var(--faint);border-top:1px solid var(--border);display:flex;align-items:center;gap:6px}
+.shot figcaption b{color:var(--muted);font-weight:600}
+.tag{display:inline-flex;align-items:center;height:19px;padding:0 6px;border-radius:5px;font-size:10px;font-weight:600;letter-spacing:.02em;white-space:nowrap}
+.tag.p0{background:var(--danger-weak);color:var(--danger);border:1px solid var(--danger-border)}
+.tag.p1{background:var(--warn-weak);color:var(--warn);border:1px solid var(--warn-border)}
+.tag.p2{background:var(--panel3);color:var(--muted);border:1px solid var(--border)}
+.tag.ok{background:var(--ok-weak);color:var(--ok);border:1px solid var(--ok-border)}
+.tag.blue{background:var(--accent-weak);color:var(--accent);border:1px solid var(--accent-border)}
+
+/* 诊断表 */
+.diag{border:1px solid var(--border);border-radius:12px;overflow:hidden;background:#fff}
+.diag-row{display:grid;grid-template-columns:78px 1.15fr 1fr 1.25fr;gap:0}
+.diag-row+.diag-row{border-top:1px solid var(--border)}
+.diag-row>div{padding:13px 14px;font-size:12px;line-height:1.65}
+.diag-row.head>div{background:var(--panel2);font-size:10.5px;font-weight:600;color:var(--muted);letter-spacing:.04em;padding-top:9px;padding-bottom:9px}
+.diag-row .id{font:10px/1.6 var(--mono);color:var(--faint);padding-top:15px;display:flex;align-items:flex-start;gap:6px}
+.diag-row .id .tag{margin-top:1px}
+.diag-row .title{font-weight:600;color:var(--ink);font-size:12.5px}
+.diag-row .title small{display:block;font-weight:400;color:var(--faint);font-size:10.5px;margin-top:2px;font-family:var(--mono)}
+.diag-row .impact{color:var(--muted)}
+.diag-row .fix{color:var(--ink)}
+.diag-row .fix b{color:var(--accent);font-weight:600}
+.diag-row:hover>div{background:#fcfdff}
+.diag-note{margin:10px 2px 0;font-size:10.5px;color:var(--faint)}
+
+/* 效果图 */
+.effect{border:1px solid var(--border);border-radius:14px;overflow:hidden;box-shadow:var(--shadow);background:var(--panel2)}
+.effect img{display:block;width:100%;height:auto}
+.effect-cap{display:flex;align-items:center;gap:10px;padding:11px 14px;border-top:1px solid var(--border);font-size:11.5px;color:var(--muted);background:#fff}
+.effect-cap b{color:var(--ink);font-weight:600}
+.effect-cap .right{margin-left:auto;color:var(--faint);font-size:10.5px}
+.legend{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:16px}
+.legend-item{border:1px solid var(--border);border-radius:10px;padding:11px 12px;background:var(--panel2);font-size:11.5px;line-height:1.65;color:var(--muted)}
+.legend-item b{display:flex;align-items:center;gap:7px;color:var(--ink);font-size:12px;margin-bottom:3px}
+.legend-item .n{width:17px;height:17px;border-radius:50%;background:var(--accent);color:#fff;font-size:9.5px;font-weight:700;display:flex;align-items:center;justify-content:center;flex:none}
+.gap{height:22px}
+
+/* 规则 */
+.rules{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+.rule{border:1px solid var(--border);border-radius:12px;padding:15px 16px;background:#fff;position:relative;overflow:hidden}
+.rule::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--accent);opacity:.75}
+.rule h3{margin:0 0 5px;font-size:13px;font-weight:600}
+.rule p{margin:0;font-size:11.5px;line-height:1.7;color:var(--muted)}
+.rule code{font:10.5px/1.5 var(--mono);background:var(--panel3);padding:1px 4px;border-radius:4px;color:var(--ink)}
+
+/* 落地表 */
+.plan{border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.plan-row{display:grid;grid-template-columns:1.05fr .98fr .5fr 1.47fr;align-items:flex-start}
+.plan-row+.plan-row{border-top:1px solid var(--border)}
+.plan-row>div{padding:12px 14px;font-size:11.5px;line-height:1.65;color:var(--muted)}
+.plan-row.head>div{background:var(--panel2);font-size:10.5px;font-weight:600;color:var(--muted);padding-top:9px;padding-bottom:9px}
+.plan-row .task{color:var(--ink);font-weight:600}
+.plan-row .task small{display:block;font-family:var(--mono);font-weight:400;color:var(--faint);font-size:10px;margin-top:2px}
+.plan-row .file{font-family:var(--mono);font-size:10px;color:var(--muted);overflow-wrap:anywhere}
+.cost{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:600;color:var(--muted)}
+.cost i{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--ok)}
+.cost.mid i{background:var(--warn)}
+.cost.high i{background:var(--danger)}
+
+/* 不做 */
+.dont{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+.dont-item{display:flex;gap:9px;font-size:11.5px;line-height:1.65;color:var(--muted);border:1px dashed var(--border2);border-radius:10px;padding:11px 12px;background:var(--panel2)}
+.dont-item .x{color:var(--danger);font-weight:700;flex:none}
+.dont-item b{color:var(--ink);font-weight:600}
+
+.foot{padding:22px 56px;display:flex;align-items:center;gap:14px;font-size:10.5px;color:var(--faint);background:var(--panel2)}
+.foot .right{margin-left:auto;font-family:var(--mono);letter-spacing:.06em}
+@media print{body{background:#fff}.report{box-shadow:none;margin:0;border:0}}
+</style>
+</head>
+<body>
+<div class="report">
+  <header class="cover">
+    <div class="eyebrow">WENQU · Q&amp;A UX REVIEW · 2026-11-15</div>
+    <h1>问答区体验升级：<em>结构不动，层级重排</em></h1>
+    <p class="lede">
+      范围覆盖整块问答区：<b>顶栏、回答头、正文与图表、动作行、右栏过程、输入区、长文导航</b>。
+      结论是 <b>不需要推翻现有三列骨架</b>——当前的问题不在「少了什么功能」，而在三件事：
+      <b>一条回答要同时说清身份、状态与出处</b>；<b>长答案没有结论层与内部导航</b>；
+      <b>失败与动作只被「显示」出来，没给出下一步</b>。
+    </p>
+    <div class="meta-row">
+      <span class="meta-chip">基线 <b>1440 × 桌面端</b></span>
+      <span class="meta-chip">问题 <b>9 处</b> · 高优先 <b>3 处</b></span>
+      <span class="meta-chip">原则 <b>不加新功能，只重排已有信息</b></span>
+      <span class="meta-chip">效果图 <b>2 张</b></span>
+    </div>
+    <div class="summary-band">
+      <div class="summary-card"><div class="num">01 / STRUCTURE</div><h3>骨架成立，头部过载</h3><p>三列（消息 / 输入 / 状态）是对的；但顶栏同时承担标题、工作区、免责声明、过程与状态，回答身份反而被压成一条灰字。</p></div>
+      <div class="summary-card"><div class="num">02 / READING</div><h3>结论被表格埋掉</h3><p>5 行两列的大表占满首屏，真正该先读的 4 个数字没有层级；口径说明放在最末，读者先看到数、后看到「数可能对不上」。</p></div>
+      <div class="summary-card"><div class="num">03 / RECOVERY</div><h3>失败没有下一步</h3><p>过程失败只剩一行被截断的 Error；回答动作只有四个图标且贴在底部。用户知道「出事了」，但不知道「现在能做什么」。</p></div>
+    </div>
+  </header>
+
+  <!-- 1 现状 -->
+  <section class="section">
+    <div class="sec-head"><span class="sec-no">01</span><h2>现状</h2><p>本轮「30 天会话统计」的实际截图</p></div>
+    <p class="sec-lede">这是一条很典型的「重答案」：一个结论表、两张图、三段口径说明，右栏还有一次工具失败。它把当前问答区的问题一次性暴露了出来。</p>
+    <div class="before-grid">
+      <figure class="shot">
+        <img src="assets/现状-1.png" alt="现状：问答区全览">
+        <figcaption><b>现状 · 全览</b> 顶栏 / 回答 / 图表 / 右栏 / 输入区</figcaption>
+      </figure>
+      <figure class="shot">
+        <img src="assets/现状-2.png" alt="现状：输入区与模型弹层">
+        <figcaption><b>现状 · 输入区</b> 模型与思考分成两层入口</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- 2 诊断 -->
+  <section class="section">
+    <div class="sec-head"><span class="sec-no">02</span><h2>诊断</h2><p>按「先改哪个收益最大」排序</p></div>
+    <p class="sec-lede">下表只列会影响「读懂」与「接着做」的问题；纯视觉偏好（圆角、阴影、留白）不进入清单。<b>P0 = 影响任务完成，P1 = 明显增加理解成本，P2 = 打磨项。</b></p>
+    <div class="diag">
+      <div class="diag-row head"><div>#</div><div>问题</div><div>影响</div><div>改法</div></div>
+      <div class="diag-row">
+        <div class="id">01 <span class="tag p0">P0</span></div>
+        <div class="title">过程失败只有一行截断的 Error<small>RightProcessCard.vue:4-44</small></div>
+        <div class="impact">用户不知道失败的是哪条链路、影响哪部分结论，也没有看日志 / 复制错误 / 重新生成本轮的入口。</div>
+        <div class="fix">把失败做成<b>可处置的一步</b>：原因可读、影响范围一句话；已完成的轮次给「日志 / 复制错误 / 重新生成本轮」，仍在跑的轮次才谈「跳过」。</div>
+      </div>
+      <div class="diag-row">
+        <div class="id">02 <span class="tag p0">P0</span></div>
+        <div class="title">动作行只有图标，且只在回答末尾<small>AnswerActions.vue:55-76</small></div>
+        <div class="impact">复制 / 反馈 / 重新生成的可发现性差；长回答读到中段想复制只能滚到底，过程入口又在顶栏，与当前段落脱节。</div>
+        <div class="fix">按钮加文字、保持弱强调；回答超过一屏后出现<b>44px 吸顶条</b>，只保留最常用四个动作。</div>
+      </div>
+      <div class="diag-row">
+        <div class="id">03 <span class="tag p0">P0</span></div>
+        <div class="title">口径说明在最后，结论表在前面<small>回答正文 Markdown</small></div>
+        <div class="impact">读者先建立「197 / 689 / 327」的印象，滚到底才被告知按天相加是 184 / 649 / 334。信任成本被推到最后一屏。</div>
+        <div class="fix">口径提示上移为<b>结论后的黄色提示条</b>，一句说清差异与取哪个；完整三条收进可展开的「口径与来源」。</div>
+      </div>
+      <div class="diag-row">
+        <div class="id">04 <span class="tag p1">P1</span></div>
+        <div class="title">结论是 5 行两列的表格，没有 KPI 层级<small>Markdown 表格 · --chat-col 860px</small></div>
+        <div class="impact">首屏被表格占满，四个关键数字没有轻重；「日均 6.6 / 10.9」这种派生指标和总量同权重。</div>
+        <div class="fix">四个总量做成<b>KPI 四联</b>，派生指标降为脚注；明细表保留但收进「按天明细」折叠。</div>
+      </div>
+      <div class="diag-row">
+        <div class="id">05 <span class="tag p1">P1</span></div>
+        <div class="title">图表标题、图例、源码都塞在卡里<small>utils/markdown.js:593-599</small></div>
+        <div class="impact">图表本体被三层文字挤压，留白大；「图表源码」以文本框形态出现在正文里，打断阅读；没有放大 / 下载 / 看数据。</div>
+        <div class="fix">卡头只留<b>动作条</b>（放大 / 下载 / 数据）；标题与范围仍由图内标题承担，不重复；源码收进「…」；图表占满卡宽。</div>
+      </div>
+      <div class="diag-row">
+        <div class="id">06 <span class="tag p1">P1</span></div>
+        <div class="title">输入区用 placeholder 教快捷键<small>chatChrome.js:36-54</small></div>
+        <div class="impact">默认态是一行长灰字「问点什么？Enter 发送，Shift+Enter 换行（@…，#…）」，把操作教学塞进了输入框；模型与思考又是两个入口。</div>
+        <div class="fix">placeholder 只留「问点什么…」；快捷键下沉到卡片下方 11px 提示。模型、思考强度、上下文、检索范围合并成一张<b>运行设置</b>卡。</div>
+      </div>
+      <div class="diag-row">
+        <div class="id">07 <span class="tag p1">P1</span></div>
+        <div class="title">右栏多张卡竖排，没有分组<small>ChatPage.vue:1399+</small></div>
+        <div class="impact">过程、来源、交付、文件、进程依次往下堆；本轮最需要看的过程卡会被后面的卡顶出首屏。</div>
+        <div class="fix">顶部加<b>过程 / 来源 / 文件</b>分段切换，各带数量；失败数直接标在「过程」上。</div>
+      </div>
+      <div class="diag-row">
+        <div class="id">08 <span class="tag p2">P2</span></div>
+        <div class="title">「接下来可以」与来源、降级条同权重<small>ChatPage.vue:565</small></div>
+        <div class="impact">灰底小 chip 散在回答末尾，像元信息而不是「可以继续做的事」；也没说明会作为新一轮提问、可能重新检索。</div>
+        <div class="fix">做成整行可点的追问卡，编号 + 箭头；脚注如实说明「会作为新一轮提问发送，可能重新检索」。</div>
+      </div>
+      <div class="diag-row">
+        <div class="id">09 <span class="tag p2">P2</span></div>
+        <div class="title">长答案没有内部大纲<small>markdown.js:47-49 无 heading id</small></div>
+        <div class="impact">左侧锚点轨只解决「跳到哪一问」，同一回答内部仍要靠滚。2 屏以上的答案读起来没有骨架。</div>
+        <div class="fix">给 H2/H3 生成 id，超过 2 屏时提供<b>回答大纲</b>；与轮次锚点分工：一个跳轮，一个跳节。</div>
+      </div>
+    </div>
+    <p class="diag-note">补充：顶栏把免责声明、过程、状态与标题并排（ChatPage.vue:7-37）属于 01–03 的共同根因，改法统一放在效果图的顶栏与回答头，不单列。</p>
+  </section>
+
+  <!-- 3 效果图 1 -->
+  <section class="section">
+    <div class="sec-head"><span class="sec-no">03</span><h2>效果图 1 · 桌面端全览</h2><p>1440px · 完整问答区</p></div>
+    <p class="sec-lede">保持三列骨架与现有设计令牌，只重排信息：一条回答的第一屏回答「是什么、跑完没有、数据可不可信」；第二屏开始才是图表与明细。</p>
+    <div class="effect">
+      <a href="效果1-问答区全览.png" target="_blank" rel="noopener"><img src="效果1-问答区全览.png" alt="优化后的问答区全览效果图"></a>
+      <div class="effect-cap"><b>优化后 · 1440 桌面端</b><span>可对照 assets/现状-1.png 看同一内容的差异</span><span class="right">源文件：效果-桌面端.html</span></div>
+    </div>
+    <div class="legend">
+      <div class="legend-item"><b><span class="n">1</span>顶栏减负</b>标题与工作区留下；免责声明下沉到回答脚注；失败收敛成一颗状态胶囊，点它直达右栏。</div>
+      <div class="legend-item"><b><span class="n">2</span>回答头一行读全</b>头像 + 智能体 + 完成态 + 用时 + 模型 + 步数；过程入口就在答案上，不再跑回顶栏。</div>
+      <div class="legend-item"><b><span class="n">3</span>结论先于明细</b>四个 KPI + 一句结论；口径提示紧贴结论，完整三条收进折叠区。</div>
+      <div class="legend-item"><b><span class="n">4</span>图表卡有动作</b>放大 / 下载 / 数据收进卡头动作条；标题仍由图内标题承担，避免重复；源码不再占据正文。</div>
+      <div class="legend-item"><b><span class="n">5</span>动作行可读</b>图标 + 文字，弱强调；上下文用量与时间右对齐，不抢主操作。</div>
+      <div class="legend-item"><b><span class="n">6</span>追问是「下一步」</b>整行可点、编号、箭头；脚注如实说明「会作为新一轮提问发送、可能重新检索」。</div>
+      <div class="legend-item"><b><span class="n">7</span>右栏可切换</b>过程 / 来源 / 文件三个分段，失败数直接标在过程上。</div>
+      <div class="legend-item"><b><span class="n">8</span>输入区说清「发出去会发生什么」</b>模型 + 思考档常驻；上下文百分比带数字，不再是一颗无含义圆环。</div>
+    </div>
+  </section>
+
+  <!-- 4 效果图 2 -->
+  <section class="section">
+    <div class="sec-head"><span class="sec-no">04</span><h2>效果图 2 · 四个关键状态</h2><p>运行设置 / 失败处置 / 吸顶阅读 / 回答大纲</p></div>
+    <p class="sec-lede">这四处是「静态全览图看不出来、但实际使用中最影响手感」的地方，单独出状态图。</p>
+    <div class="effect">
+      <a href="效果2-交互细节.png" target="_blank" rel="noopener"><img src="效果2-交互细节.png" alt="优化后的交互细节效果图"></a>
+      <div class="effect-cap"><b>优化后 · 交互细节</b><span>同一套令牌，四个状态</span><span class="right">源文件：效果-交互细节.html</span></div>
+    </div>
+    <div class="gap"></div>
+    <div class="rules">
+      <div class="rule"><h3>01 · 运行设置合并</h3><p>触发态直接写「deepseek-v4.1-flash · 中思考」；展开后模型、思考强度、上下文、检索范围一次改完。<b>只影响本轮</b>是卡的默认语义，「设为默认」是显式动作。</p></div>
+      <div class="rule"><h3>02 · 失败可处置</h3><p>失败步骤保留在时间线原位，展开为原因 + 影响 + 当前能做的动作。已完成的轮次不摆「重试这一步」——重新生成会重跑整轮，必须如实说明。</p></div>
+      <div class="rule"><h3>03 · 吸顶阅读条</h3><p>回答超过一屏后，回答头收成 44px 的条：身份、完成态、过程、复制、大纲。离开回答头时出现，回到头部时消失，不做常驻。</p></div>
+      <div class="rule"><h3>04 · 回答大纲</h3><p>从 H2/H3 生成，带每节长度与当前阅读位置。与左侧轮次轨分工：轮次轨回答「跳到哪一问」，大纲回答「跳到哪一节」。</p></div>
+    </div>
+  </section>
+
+  <!-- 5 规则 -->
+  <section class="section">
+    <div class="sec-head"><span class="sec-no">05</span><h2>五条改版规则</h2><p>用来判断后续每个细节该不该加</p></div>
+    <div class="rules">
+      <div class="rule"><h3>一条回答只回答一次「我是谁、跑完没有」</h3><p>身份、模型、完成态、用时、步数收进同一个回答头；正文里不再重复「由…回答 / 已完成」。<code>ChatThread</code> 的 body-before 与 TurnBar 合并为一个头部。</p></div>
+      <div class="rule"><h3>结论先于过程，口径先于明细</h3><p>首屏只放结论与四个总量；差异说明紧跟结论；明细、源码、完整口径全部下沉。顺序错了，后面的信息再全也会被误读。</p></div>
+      <div class="rule"><h3>每个失败状态都必须给出下一步</h3><p>没有下一步的红色错误等于把焦虑留给用户。已完成的轮次给「看日志 / 复制错误 / 重新生成本轮」，运行中的轮次才谈「跳过」；做不到的动作不摆。</p></div>
+      <div class="rule"><h3>长回答要有两个导航</h3><p>轮次轨解决会话级跳转，回答大纲解决答案内跳转。两者都只在内容超过一屏时出现，不做常驻装饰。</p></div>
+      <div class="rule"><h3>输入区默认态只回答「发出去会发生什么」</h3><p>用哪个模型、开没开思考、会检索什么、上下文用了多少。快捷键与 @ / # 用法下沉到第二层，不占 placeholder。</p></div>
+      <div class="rule"><h3>新信息优先，不新造卡片</h3><p>本次所有改动都在现有组件与插槽里完成：右栏用分段、动作行加文字、回答头合并。没有新增一级页面，也没有新增设置项。</p></div>
+    </div>
+  </section>
+
+  <!-- 6 落地 -->
+  <section class="section">
+    <div class="sec-head"><span class="sec-no">06</span><h2>落地拆解</h2><p>按依赖顺序，从低风险到需要接口配合</p></div>
+    <p class="sec-lede">前四项是纯前端改动，可以独立上线；后三项需要助手输出约定或引擎能力配合。工作量按「熟悉这套代码的一位前端」估算。</p>
+    <div class="plan">
+      <div class="plan-row head"><div>任务</div><div>主要文件</div><div>成本</div><div>风险 / 依赖</div></div>
+      <div class="plan-row">
+        <div class="task">A. 顶栏减负 + 回答头合并<small>结构先行</small></div>
+        <div class="file">views/ChatPage.vue<br>chat/ChatThread.vue</div>
+        <div class="cost"><i></i>低 · 1–2 天</div>
+        <div>免责声明下沉需要决定「首访提示」还是「回答脚注」；建议两者都要：首访一次、每答脚注。</div>
+      </div>
+      <div class="plan-row">
+        <div class="task">B. 动作行加文字 + 吸顶条<small>纯前端</small></div>
+        <div class="file">chat/AnswerActions.vue<br>chat/ChatThread.vue</div>
+        <div class="cost"><i></i>低 · 1 天</div>
+        <div>用 IntersectionObserver 观察回答头，不需要滚动事件；分享页复用同一组件，窄屏触控热区已达标。</div>
+      </div>
+      <div class="plan-row">
+        <div class="task">C. 输入区运行设置合并<small>交互重构</small></div>
+        <div class="file">components/ModelSelect.vue<br>chat/thinkingLevels.js<br>chat/chatChrome.js</div>
+        <div class="cost mid"><i></i>中 · 2–3 天</div>
+        <div>模型与思考档目前各有存储位，合并后仍要分别落库；「设为默认」要确认写的是个人配置而不是本轮值。</div>
+      </div>
+      <div class="plan-row">
+        <div class="task">D. 右栏分段 + 失败处置<small>状态与动作</small></div>
+        <div class="file">components/RightProcessCard.vue<br>views/ChatPage.vue</div>
+        <div class="cost mid"><i></i>中 · 2 天</div>
+        <div>后端没有单步重跑接口（已完成轮次只能整轮重新生成）。落地版给「查看日志 / 复制错误 / 重新生成本轮」；单步重跑要等引擎能力。</div>
+      </div>
+      <div class="plan-row">
+        <div class="task">E. 图表卡头与动作<small>渲染层</small></div>
+        <div class="file">utils/markdown.js</div>
+        <div class="cost mid"><i></i>中 · 1–2 天</div>
+        <div>放大 / 下载可先做，数据表需要从 ECharts option 反解 dataset；源码折叠保持 details，不影响流式重绘。</div>
+      </div>
+      <div class="plan-row">
+        <div class="task">F. KPI 四联 + 口径上移<small>需要输出约定</small></div>
+        <div class="file">utils/markdown.js<br>助手输出契约</div>
+        <div class="cost high"><i></i>较高 · 2–3 天</div>
+        <div>KPI 卡无法从普通 Markdown 推断。建议新增一个 <code>kpi</code> 围栏（与 echarts 同级），由助手显式输出；不新增围栏则退化为「表格首行加粗 + 数字右对齐」。</div>
+      </div>
+      <div class="plan-row">
+        <div class="task">G. 回答大纲<small>阅读辅助</small></div>
+        <div class="file">utils/markdown.js<br>components/AnswerBody.vue</div>
+        <div class="cost"><i></i>低 · 1–2 天</div>
+        <div>当前 heading_open 不生成 id（markdown.js:47-49），需补 slug；大纲只在答案 ≥2 屏时出现，避免短答多一块 UI。</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 7 不做 -->
+  <section class="section">
+    <div class="sec-head"><span class="sec-no">07</span><h2>这次不做什么</h2><p>避免把「优化」做成「重做」</p></div>
+    <div class="dont">
+      <div class="dont-item"><span class="x">×</span><div><b>不改三列骨架。</b>消息 / 输入 / 状态的分工是对的，问题在列内层级，不在列本身。</div></div>
+      <div class="dont-item"><span class="x">×</span><div><b>不给每条消息加头像与描边气泡。</b>助手侧当前无气泡是刻意的阅读优化，加容器只会增加噪音。</div></div>
+      <div class="dont-item"><span class="x">×</span><div><b>不把所有卡片都做成可折叠。</b>折叠是成本；只有「口径」「源码」「完整步骤」这三类长尾值得收。</div></div>
+      <div class="dont-item"><span class="x">×</span><div><b>不为视觉新增设置项。</b>运行设置里的每一项都对应已有能力（模型 / 思考 / 检索），不引入新的开关。</div></div>
+      <div class="dont-item"><span class="x">×</span><div><b>不把「免责声明」做成弹窗。</b>它应该出现在阅读结论的现场（脚注 + 首访一次），弹窗只会被立刻关掉。</div></div>
+      <div class="dont-item"><span class="x">×</span><div><b>不在浅色之外另起一套深色样式。</b>全部使用现有 token，暗色主题只换变量，不改结构。</div></div>
+    </div>
+  </section>
+
+  <!-- 8 验收 -->
+  <section class="section">
+    <div class="sec-head"><span class="sec-no">08</span><h2>验收口径</h2><p>出图之后按这些状态逐项核对</p></div>
+    <div class="rules">
+      <div class="rule"><h3>宽度三档</h3><p>1440（右栏展开）、1200（右栏默认收起）、768 以下（H5 继承输入区与吸顶条）。每一档都要确认 --chat-col 与输入卡同宽同基准。</p></div>
+      <div class="rule"><h3>回答长度两档</h3><p>短答（不足一屏）不出现吸顶条与大纲；长答（≥2 屏）两者都出现，且大纲高亮随滚动更新。</p></div>
+      <div class="rule"><h3>失败三态</h3><p>失败且可跳过、失败且回答不完整、降级但已完成。三种都要给出不同的文案，不共用一句「出错了」。</p></div>
+      <div class="rule"><h3>输入区三态</h3><p>空闲 / 生成中可插话 / 附件或 @ 引用已挂。运行设置触发态在三种状态下都要能正确显示模型与思考档。</p></div>
+      <div class="rule"><h3>暗色与分享页</h3><p>只换 token；公开分享页复用 AnswerActions 与 ChatInput，不得出现主对话页有、分享页没有的第五个动作。</p></div>
+      <div class="rule"><h3>流式回归</h3><p>图表卡头、动作行、吸顶条都不能破坏 markdown 的增量重绘与 echarts 缓存（markdown.js 的 data-done 幂等）。</p></div>
+    </div>
+  </section>
+
+  <footer class="foot">
+    <span>问渠 · 问答区体验升级 · 诊断与效果图</span>
+    <span>设计令牌与现有工作台一致：--app-accent #2E6BE6 / 列宽 860px / 圆角 14–16px</span>
+    <span class="right">design/mockups/chat-ux-upgrade</span>
+  </footer>
+</div>
+</body>
+</html>
