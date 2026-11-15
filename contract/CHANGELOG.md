@@ -24,3 +24,14 @@
 
 > 为什么改：A 期 A1 第二批——补齐 run 控制面（审批 / 产物 / 插话 / 停止），让长任务与人在回路能走正式 v1 契约；同时收口 run.finished 出站回调，新增 approval.timed_out 过程事件。详见 design/plans/对外开放运行原语A1实现方案.md §10.2。
 
+
+## 2026-11-15
+
+- 修正（不改端点、不改 scope）：`POST /api/ai/v1/workflows/{id}/run` 与 `GET …/run/{runId}` 的响应里
+  `inputs` / `outputs` / `nodeTraces` 由「JSON 字符串」改为真正的 JSON（对象 / 数组）。
+
+> 为什么改：这三个字段在库里是 String（存的是序列化后的 JSON），实体直接序列化就成了「字符串套 JSON」——
+> `res.data.outputs.answer` 取不到值，而 SDK 的类型声明（`WorkflowRun.outputs: Record<string, unknown>`）
+> 与本仓文档写的都是对象。实测同步触发与补查都把出参回成了 `"{\"answer\":\"…\"}"`。
+> 对外端点改为解析后返回，内部管理端点 `/api/ai/workflow/**` 形状不变（前端那里按字符串 `JSON.parse`）。
+> 解析失败原样回字符串，不因形状问题把 run 变成 500。

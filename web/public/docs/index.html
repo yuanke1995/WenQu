@@ -47,7 +47,7 @@
       </div>
       <div class="nav-group"><div class="nav-group-t">资源</div>
       <a class="nav-page" href="#samples-changelog">示例与变更日志</a>
-      <div class="nav-subs"><a class="nav-sub" href="#2026-11-13">2026-11-13</a><a class="nav-sub" href="#2026-11-15">2026-11-15</a><a class="nav-sub" href="#2026-11-15-2">2026-11-15</a></div>
+      <div class="nav-subs"><a class="nav-sub" href="#2026-11-13">2026-11-13</a><a class="nav-sub" href="#2026-11-15">2026-11-15</a><a class="nav-sub" href="#2026-11-15-2">2026-11-15</a><a class="nav-sub" href="#2026-11-15-3">2026-11-15</a></div>
       </div>
     </nav>
     <div class="side-foot">
@@ -860,7 +860,7 @@ async function fallback(runId) {
 </div>
 <ul>
 <li><code>inputs</code> 对应开始节点入参，可整体省略。</li>
-<li><strong>同步返回</strong> run 全量：<code>status / outputs / nodeTraces / durationMs</code>。</li>
+<li><strong>同步返回</strong> run 全量：<code>status / outputs / nodeTraces / durationMs</code>。 <code>outputs</code> 是对象（结束节点出参，<code>outputs.answer</code> 直接取）、<code>nodeTraces</code> 是数组（节点级输入输出与耗时）， 不需要再 <code>JSON.parse</code> 一次。</li>
 <li>失败不抛 500：回 <code>status=failed</code> 的 run，看 <code>error</code> 与 <code>nodeTraces</code> 定位失败节点。</li>
 <li>约束：工作流对签发人<strong>可见</strong>才可触发（不可见一律 404，不泄露存在性）；未发布 → 400； 含人工审核节点 → 400（外部调用方没有审批交互面）。</li>
 <li>补查：<code>GET /v1/workflows/{id}/run/{runId}</code>。另有入站触发 <code>POST /v1/workflows/webhook/{token}</code>（令牌即凭据，不走 Key）。</li>
@@ -1067,6 +1067,11 @@ async function fallback(runId) {
 <li>新增 <code>POST /api/ai/v1/runs/{id}/stop</code>（scope: runs.write）：停止运行（幂等，终态收成 stopped）</li>
 </ul>
 <blockquote><p>为什么改：A 期 A1 第二批——补齐 run 控制面（审批 / 产物 / 插话 / 停止），让长任务与人在回路能走正式 v1 契约；同时收口 run.finished 出站回调，新增 approval.timed_out 过程事件。详见 design/plans/对外开放运行原语A1实现方案.md §10.2。</p></blockquote>
+<h2 id="2026-11-15-3"><a class="anchor" href="#2026-11-15-3" aria-hidden="true">#</a>2026-11-15</h2>
+<ul>
+<li>修正（不改端点、不改 scope）：<code>POST /api/ai/v1/workflows/{id}/run</code> 与 <code>GET …/run/{runId}</code> 的响应里 <code>inputs</code> / <code>outputs</code> / <code>nodeTraces</code> 由「JSON 字符串」改为真正的 JSON（对象 / 数组）。</li>
+</ul>
+<blockquote><p>为什么改：这三个字段在库里是 String（存的是序列化后的 JSON），实体直接序列化就成了「字符串套 JSON」—— <code>res.data.outputs.answer</code> 取不到值，而 SDK 的类型声明（<code>WorkflowRun.outputs: Record&lt;string, unknown&gt;</code>） 与本仓文档写的都是对象。实测同步触发与补查都把出参回成了 <code>&quot;{\&quot;answer\&quot;:\&quot;…\&quot;}&quot;</code>。 对外端点改为解析后返回，内部管理端点 <code>/api/ai/workflow/**</code> 形状不变（前端那里按字符串 <code>JSON.parse</code>）。 解析失败原样回字符串，不因形状问题把 run 变成 500。</p></blockquote>
 </section>
 <p class="foot-note">本站为构建产物，请勿直接编辑：改 <code>docs-site/guides/*.md</code> 或后端 <code>@OpenApi</code> 后重新构建。
 产物同时被应用内「对接文档」页嵌入，两处显示的永远是同一份。</p>

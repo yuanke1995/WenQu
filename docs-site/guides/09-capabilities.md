@@ -98,6 +98,8 @@ curl -X POST __BASE__/api/ai/v1/workflows/<工作流id>/run \
 
 - `inputs` 对应开始节点入参，可整体省略。
 - **同步返回** run 全量：`status / outputs / nodeTraces / durationMs`。
+  `outputs` 是对象（结束节点出参，`outputs.answer` 直接取）、`nodeTraces` 是数组（节点级输入输出与耗时），
+  不需要再 `JSON.parse` 一次。
 - 失败不抛 500：回 `status=failed` 的 run，看 `error` 与 `nodeTraces` 定位失败节点。
 - 约束：工作流对签发人**可见**才可触发（不可见一律 404，不泄露存在性）；未发布 → 400；
   含人工审核节点 → 400（外部调用方没有审批交互面）。

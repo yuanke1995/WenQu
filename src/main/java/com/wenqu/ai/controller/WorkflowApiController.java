@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 import com.wenqu.ai.security.Permission;
 
@@ -61,7 +62,7 @@ public class WorkflowApiController {
         // scope 闸（Key 通道）：触发工作流需 workflow.run；登录态不受 scope 约束
         apiKeyService.requireScope(apiKeyId, ApiKeyService.SCOPE_WORKFLOW_RUN);
         WorkflowRun run = workflowService.runByApi(id, inputs, apiKeyId);
-        return ResultJson.ok(run);
+        return ResultJson.ok(publicView(run));
     }
 
     @Operation(summary = "查询运行结果", description = "按 runId 查本次运行的状态与结果（触发方与归属一致的才可见）；"
@@ -76,7 +77,46 @@ public class WorkflowApiController {
         Object keyId = request.getAttribute(SecurityConfig.ATTR_API_KEY_ID);
         String apiKeyId = keyId == null ? null : String.valueOf(keyId);
         apiKeyService.requireScope(apiKeyId, ApiKeyService.SCOPE_WORKFLOW_RUN);
-        return ResultJson.ok(workflowService.getRunForApi(id, runId, apiKeyId));
+        return ResultJson.ok(publicView(workflowService.getRunForApi(id, runId, apiKeyId)));
+    }
+
+    /**
+     * 对外 run 视图：把 {@code inputs / outputs / nodeTraces} 这三个「库里的 JSON 字符串」解成真 JSON。
+     * <p>
+     * <b>为什么不能直接返回实体</b>：实体字段是 String（存的是序列化后的 JSON），直接序列化会给外部
+     * 调用方「字符串套 JSON」——{@code res.data.outputs} 是个字符串，{@code .answer} 取不到值，
+     * 而 SDK 的类型声明（{@code WorkflowRun.outputs: Record<string, unknown>}）与文档写的都是对象。
+     * 实测踩到：同步触发与补查两个端点都把出参回成了 {@code "{\"answer\":\"…\"}"}。
+     * 内部管理端点（{@code /api/ai/workflow/**}）保持原形状不动——前端那里是按字符串 {@code JSON.parse} 的。
+     * <p>
+     * 解析失败不抛：原样回字符串（宁可让调用方拿到能看见的脏数据，也不要为了形状把整个 run 变成 500）。
+     */
+    private Map<String, Object> publicView(WorkflowRun run) {
+        if (run == null) return Map.of();
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", run.getId());
+        m.put("workflowId", run.getWorkflowId());
+        m.put("status", run.getStatus());
+        m.put("triggerType", run.getTriggerType());
+        m.put("version", run.getVersion());
+        m.put("inputs", asJson(run.getInputs(), false));
+        m.put("outputs", asJson(run.getOutputs(), false));
+        m.put("nodeTraces", asJson(run.getNodeTraces(), true));
+        m.put("error", run.getError());
+        m.put("startedAt", run.getStartedAt());
+        m.put("finishedAt", run.getFinishedAt());
+        m.put("durationMs", run.getDurationMs());
+        return m;
+    }
+
+    /** 库里的 JSON 字符串 → 真 JSON；空串给 null、解析失败原样返回 */
+    private Object asJson(String raw, boolean array) {
+        if (raw == null || raw.isBlank()) return null;
+        try {
+            return array ? com.alibaba.fastjson2.JSON.parseArray(raw) : com.alibaba.fastjson2.JSON.parse(raw);
+        } catch (RuntimeException e) {
+            return raw;
+        }
     }
 
     /**
