@@ -210,13 +210,22 @@
                 <div class="key-usage-body sched-pane">
                   <div class="audit-filter">
                     <span class="key-dim">共 {{ scheduleTasks.length }} 个任务 · 点间隔或「调参」可就地改，保存即生效（下一调度节拍约 10s 内）</span>
+                    <!-- 内置节拍扫描器：不可暂停、间隔也不可调，默认折叠成一行开关——
+                         它们的存在感只在「挂了」时才有价值，失败数直接标在开关旁，不展开也看得到 -->
+                    <a-tooltip v-if="builtinTasks.length"
+                               title="内置节拍扫描器（解析队列、到期派发、重试补发等）：间隔是代码常量、不可暂停，默认折叠；最近有失败时这里会标红">
+                      <a-checkbox v-model:checked="showBuiltin" class="sched-builtin-toggle">
+                        显示内置扫描器（{{ builtinTasks.length }}）
+                        <span v-if="!showBuiltin && builtinFailedCount" class="sched-bad">· {{ builtinFailedCount }} 项失败</span>
+                      </a-checkbox>
+                    </a-tooltip>
                     <a-tooltip title="刷新运行状态">
                       <button class="app-icon-btn" aria-label="刷新定时任务状态" :disabled="schedLoading" @click="loadSchedule">
                         <reload-outlined />
                       </button>
                     </a-tooltip>
                   </div>
-                  <a-table :data-source="scheduleTasks" size="small" row-key="name" :pagination="false"
+                  <a-table :data-source="visibleScheduleTasks" size="small" row-key="name" :pagination="false"
                            :loading="schedLoading" :scroll="{ x: 1020, y: tableScrollY }"
                            class="sched-table"
                            :expanded-row-keys="expandedTasks" @expandedRowsChange="onExpandChange">
@@ -1034,8 +1043,19 @@ const cadenceShareNote = key => {
 }
 
 /**
+ * 内置节拍任务（无间隔配置键）：间隔是代码常量、不可暂停，默认折叠成一行开关。
+ * 折叠不等于藏问题——最近一轮失败的任务数直接标在开关上，展开就能看到是哪一行红了。
+ */
+const showBuiltin = ref(false)
+const builtinTasks = computed(() => scheduleTasks.value.filter(t => !t.configKey))
+const builtinFailedCount = computed(() => builtinTasks.value.filter(t => t.lastSuccess === false).length)
+const visibleScheduleTasks = computed(() => (
+  showBuiltin.value ? scheduleTasks.value : scheduleTasks.value.filter(t => !!t.configKey)
+))
+
+/**
  * 运行状态表格体的最大高度（px，超出则表格内部滚动，表头固定）。
- * 17 个任务行约 58px/行 = 986px，比一屏高 ⇒ 让整页滚的话，用户要滚过整张表
+ * 任务行约 58px/行，默认可见行仍可能超一屏 ⇒ 让整页滚的话，用户要滚过整张表
  * 才能看到页头说明，展开某行后要滚两屏。
  *
  * <p>**按容器真实高度算，不按 window.innerHeight 算**——这是本条最关键的一点。
