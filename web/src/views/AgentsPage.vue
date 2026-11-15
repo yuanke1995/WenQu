@@ -20,7 +20,7 @@
             <button class="app-icon-btn" :disabled="loading" aria-label="刷新列表" @click="reload"><reload-outlined /></button>
           </a-tooltip>
           <a-tooltip title="委派编排视图：主智能体 → 子智能体的委派关系图">
-            <button class="app-icon-btn" :disabled="loading || !agents.length" aria-label="委派编排视图" @click="topoOpen = true"><apartment-outlined /></button>
+            <button class="app-icon-btn" :disabled="loading || !agents.length" aria-label="委派编排视图" @click="openTopo()"><apartment-outlined /></button>
           </a-tooltip>
           <button class="app-btn small" @click="openCreateEntry">新建智能体</button>
           <!-- 批量区（分隔线独立成区，不与搜索/新建挤作一堆）。默认收起，点「批量管理」进入批量模式；
@@ -75,7 +75,8 @@
                    信息架构：徽章与状态点说身份/发布态 → 一行描述 → meta 行说「资料/能力/委派/更新」
                    → 操作收敛为 试一试 + 配置 + ⋯ 菜单（低频与破坏性动作进菜单） -->
               <article v-for="a in sec.members" :key="sec.key + '-' + a.id" class="ap-card"
-                       :class="{ 'ap-card-readonly': !a.manageable }" @click="a.manageable && openEdit(a)">
+                       :class="{ 'ap-card-readonly': !a.manageable, 'ap-card-disabled': isDisabledAgent(a) }"
+                       @click="a.manageable && openEdit(a)">
                 <!-- 状态点：绿=公开链接已发布，灰=未发布。颜色之外配 title 文字，不单靠颜色编码 -->
                 <span v-if="showPubDot(a)" class="ap-dot" :class="a.published === 1 ? 'pub' : 'off'"
                       :title="a.published === 1 ? '公开链接已发布：拿到链接的人可免登录对话，点 ⋯ → 发布管理 查看链接' : '公开链接未发布'"></span>
@@ -84,7 +85,8 @@
                               @click.stop @change="toggleSelect(a.id)" />
                   <AgentAvatar :agent="a" :size="24" />
                   <span class="ap-name" :title="a.name">{{ a.name }}</span>
-                  <span v-if="isDefault(a) || isBuiltin(a) || isPreset(a) || isSub(a)" class="ap-card-tags">
+                  <span v-if="isDefault(a) || isBuiltin(a) || isPreset(a) || isSub(a) || isDisabledAgent(a)" class="ap-card-tags">
+                    <span v-if="isDisabledAgent(a)" class="ap-tag-disabled" title="已停用：对话页不可选，已有会话与分享链接不可用；配置与历史版本保留">⏸ 已停用</span>
                     <span v-if="isDefault(a)" class="ap-tag-default" title="默认智能体：对话页预选">★ 默认</span>
                     <span v-if="isBuiltin(a)" class="ap-tag-builtin" title="系统默认智能体：全员可用，仅管理员可配置"><lock-outlined />内置</span>
                     <span v-else-if="isPreset(a)" class="ap-tag-builtin" title="平台内置助手：全员可用，仅平台超级管理员可配置"><lock-outlined />内置</span>
@@ -95,7 +97,7 @@
                 <div class="ap-meta">
                   <span class="ap-meta-i" title="资料范围"><database-outlined />{{ scopeText(a) }}</span>
                   <span v-if="capSummary(a)" class="ap-meta-i" :title="capSummaryTitle(a)"><control-outlined />{{ capSummary(a) }}</span>
-                  <span v-if="delegText(a)" class="ap-meta-i ap-meta-link" title="在委派编排视图中查看完整链路" @click.stop="topoOpen = true">
+                  <span v-if="delegText(a)" class="ap-meta-i ap-meta-link" title="在委派编排视图中查看完整链路" @click.stop="openTopo(a)">
                     <apartment-outlined />{{ delegText(a) }}
                   </span>
                   <span v-if="updatedAgo(a)" class="ap-meta-i ap-meta-time" :title="'配置最后保存于 ' + fmtTime(a.updateTime || a.createTime)"><history-outlined />{{ updatedAgo(a) }}</span>
@@ -105,27 +107,34 @@
                        （写路径后端还会按归属二次判定）。
                        「试一试」直达对话并预选该智能体——配置完立刻验证，不用去对话页手动找人；
                        子智能体不参与直接对话，不给这个入口 -->
-                  <button v-if="!isSub(a)" class="app-btn small ap-btn-try" @click.stop="tryAgent(a)">试一试</button>
+                  <button v-if="!isSub(a) && !isDisabledAgent(a)" class="app-btn small ap-btn-try" @click.stop="tryAgent(a)">试一试</button>
                   <template v-if="a.manageable">
                     <button class="app-btn ghost small" @click.stop="openEdit(a)">配置</button>
                     <a-dropdown placement="bottomRight" :trigger="['click']">
                       <button class="ap-more-btn" aria-label="更多操作" @click.stop><more-outlined /></button>
                       <template #overlay>
                         <a-menu>
-                          <a-menu-item v-if="!isPreset(a)" key="pub" @click="openPublish(a)">发布管理</a-menu-item>
+                          <!-- 停用期间分享链接本就失效：发布管理没有可做的事，先启用再发布 -->
+                          <a-menu-item v-if="!isPreset(a) && !isDisabledAgent(a)" key="pub" @click="openPublish(a)">发布管理</a-menu-item>
                           <a-menu-item key="copy" @click="copyAgent(a)">复制</a-menu-item>
                           <a-menu-item key="export" @click="exportAgent(a)">导出 JSON</a-menu-item>
                           <a-menu-item v-if="!isPreset(a)" key="ver" @click="openEdit(a); openVersions()">历史版本</a-menu-item>
                           <!-- 「设为默认」是全局动作（影响所有人下拉的预选），后端仅管理员放行；
                                平台预置是能力型助手，不能设为全员默认 -->
                           <a-menu-item v-if="canSetDefault(a)" key="def" @click="doSetDefault(a.id)">设为默认</a-menu-item>
+                          <!-- 停用/启用：生命周期动作，与保存解耦（点一下立即生效）；默认智能体后端拒绝停用 -->
+                          <a-menu-item key="disabled" :danger="!isDisabledAgent(a)" @click="toggleDisabled(a)">
+                            {{ isDisabledAgent(a) ? '启用' : '停用' }}
+                          </a-menu-item>
                           <!-- 内置智能体不提供删除入口（后端也会拒绝），避免出现"点了报错"的死路 -->
                           <a-menu-item v-if="!isBuiltin(a) && !isPreset(a)" key="del" danger @click="confirmDelete(a)">删除</a-menu-item>
                         </a-menu>
                       </template>
                     </a-dropdown>
                   </template>
-                  <span v-else class="ap-readonly-hint">{{ isBuiltin(a) ? '系统内置 · 管理员可配置' : (isPreset(a) ? '系统内置 · 仅平台管理员可配置' : '仅可使用') }}</span>
+                  <span v-else class="ap-readonly-hint">{{ isDisabledAgent(a)
+                    ? '已停用'
+                    : (isBuiltin(a) ? '系统内置 · 管理员可配置' : (isPreset(a) ? '系统内置 · 仅平台管理员可配置' : '仅可使用')) }}</span>
                 </div>
               </article>
             </div>
@@ -143,6 +152,7 @@
           <div class="ap-head-chips">
             <span class="ap-head-chip">{{ summaryScope }}</span>
             <span v-if="modeChip" class="ap-head-chip">{{ modeChip }}</span>
+            <span v-if="form.disabled === 1" class="ap-head-chip is-danger">已停用</span>
             <span class="ap-head-chip" :class="{ 'is-accent': capsOverriddenCount > 0 }">
               {{ capsOverriddenCount ? `${capsOverriddenCount} 处与系统默认不同` : '能力全部跟随系统默认' }}
             </span>
@@ -176,6 +186,15 @@
               </div>
               <a-segmented v-model:value="runMode" :options="runModeOptions" class="ap-mode-seg" @change="onRunModeChange" />
               <p class="ap-hint ap-mode-note">{{ runModeHint }}</p>
+              <!-- 停用开关：与「保存」解耦，点一下立即生效；新建的智能体默认启用，不露出这一行 -->
+              <div v-if="editingId" class="ap-enable-row">
+                <div class="ap-enable-main">
+                  <b>启用状态</b>
+                  <p class="ap-hint">停用后从对话页移除，已有会话、@ 与公开分享链接立即不可用；配置与历史版本保留，可随时启用。</p>
+                </div>
+                <a-switch :checked="form.disabled !== 1" :loading="disabledBusy"
+                          checked-children="启用" un-checked-children="停用" @change="onEnabledSwitch" />
+              </div>
             </section>
 
             <!-- 身份与角色 -->
@@ -397,7 +416,7 @@
                       <partition-outlined /> 转成工作流
                     </button>
                   </div>
-                  <div v-else class="ap-hint">不选则用系统多视角检索。</div>
+                  <div v-else class="ap-hint">不选则不限制可派遣的助手；选了就只派遣勾选的这几位。</div>
                 </div>
               </div>
               <details class="ap-adv-more" :open="advOpen" @toggle="advOpen = $event.target.open">
@@ -728,54 +747,123 @@
       </div>
     </a-modal>
 
-    <!-- 委派编排视图：主智能体 → 子智能体委派关系拓扑（数据全部来自已加载列表，纯前端渲染） -->
-    <a-modal v-model:open="topoOpen" title="委派编排视图" :width="900" :footer="null" class="ap-topo-modal">
-      <div class="ap-topo-legend">
-        <span class="ap-lg"><span class="ap-lg-dot main" />主智能体</span>
-        <span class="ap-lg"><span class="ap-lg-dot sub" />子智能体</span>
-        <span class="ap-lg"><svg width="30" height="8"><line x1="0" y1="4" x2="30" y2="4" class="ap-edge miss" /></svg>失效引用（子智能体已删除）</span>
-        <span class="ap-lg">悬停高亮委派链路 · 点击节点直接进配置</span>
+    <!-- 委派编排视图：列表承载规模（搜索 / 筛选 / 窗口化滚动），拓扑只画一位主智能体的链路。
+         全量拓扑在几十上百个智能体时是几千像素的长图，链路也缠在一起——图只回答「这一条链路长什么样」，
+         规模和检索归列表。 -->
+    <a-modal v-model:open="topoOpen" title="委派编排视图" :width="1000" :footer="null" class="ap-topo-modal">
+      <div class="ap-topo-head">
+        <div class="ap-topo-seg">
+          <button type="button" :class="{ on: topoMode === 'list' }" @click="topoMode = 'list'">列表</button>
+          <button type="button" :class="{ on: topoMode === 'topo' }" :disabled="!topoFocus" @click="topoMode = 'topo'">拓扑</button>
+        </div>
+        <div class="ap-topo-sum">
+          <span>主智能体 <b>{{ topoSummary.mains }}</b></span>
+          <span>子智能体 <b>{{ topoSummary.subs }}</b></span>
+          <span :class="{ warn: topoSummary.orphans > 0 }" :title="topoOrphanTitle">未进入清单 <b>{{ topoSummary.orphans }}</b></span>
+          <span :class="{ danger: topoSummary.missing > 0 }">失效引用 <b>{{ topoSummary.missing }}</b></span>
+        </div>
       </div>
-      <div v-if="topoData.warnings.length" class="ap-topo-warns">
-        <div v-for="(w, wi) in topoData.warnings" :key="wi" class="ap-topo-warn">{{ w }}</div>
-      </div>
-      <div v-if="!topoData.subs.length && !topoData.edges.length" class="ap-topo-empty">
-        还没有委派关系：先把一个智能体的运行方式设为「子智能体」，再到主智能体的「高级设置 → 子智能体委派」里勾选它。
-      </div>
-      <div v-else class="ap-topo-scroll">
-        <svg :viewBox="`0 0 ${TOPO_W} ${topoData.H}`" :width="TOPO_W" :height="topoData.H" class="ap-topo-svg">
-          <!-- 委派边（失效引用：红色虚线 + 右列占位符） -->
-          <path v-for="e in topoData.edges" :key="'e' + e.from.id + (e.to ? e.to.id : 'x' + e.toId)"
-                :d="edgePath(e)" class="ap-edge" :class="[edgeCls(e), { miss: e.missing }]" />
-          <g v-for="e in topoData.edges.filter(x => x.missing)" :key="'x' + e.from.id + e.toId">
-            <rect :x="SUB_X" :y="topoData.mainPos[String(e.from.id)] + TOPO.rowH / 2 - 13" width="26" height="26" rx="6" class="ap-phantom" />
-            <text :x="SUB_X + 13" :y="topoData.mainPos[String(e.from.id)] + TOPO.rowH / 2 + 5" class="ap-phantom-t">!</text>
-          </g>
-          <!-- 主智能体列（点击直达配置；不可管理的节点点了不做任何事） -->
-          <g v-for="a in topoData.mains" :key="'m' + a.id" class="ap-node" :class="nodeCls('m' + a.id)"
-             @mouseenter="topoHover = 'm' + a.id" @mouseleave="topoHover = ''"
-             @click="a.manageable ? (openEdit(a), topoOpen = false) : null">
-            <rect :x="MAIN_X" :y="topoData.mainPos[String(a.id)]" :width="TOPO.nodeW" :height="TOPO.rowH" rx="8" class="ap-nrect main" />
-            <text :x="MAIN_X + 12" :y="topoData.mainPos[String(a.id)] + 22" class="ap-nname">{{ trunc(a.name, MAIN_NAME) }}</text>
-            <text :x="MAIN_X + 12" :y="topoData.mainPos[String(a.id)] + 40" class="ap-ndesc">{{ trunc(a.description || '未填写描述', MAIN_LINE) }}</text>
-            <text :x="MAIN_X + 12" :y="topoData.mainPos[String(a.id)] + 56" class="ap-nmeta">
-              {{ subCountOf(a) ? `委派 ${subCountOf(a)} 个子智能体` : '未委派子智能体' }}
-            </text>
-          </g>
-          <!-- 子智能体列（无人委派 = 灰虚线框；点击同主列，不可管理不响应） -->
-          <g v-for="a in topoData.subs" :key="'s' + a.id" class="ap-node" :class="nodeCls('s' + a.id)"
-             @mouseenter="topoHover = 's' + a.id" @mouseleave="topoHover = ''"
-             @click="a.manageable ? (openEdit(a), topoOpen = false) : null">
-            <rect :x="SUB_X" :y="topoData.subPos[String(a.id)]" :width="TOPO.subW" :height="TOPO.rowH" rx="8"
-                  class="ap-nrect sub" :class="{ orphan: !topoData.parents[String(a.id)].length }" />
-            <text :x="SUB_X + 12" :y="topoData.subPos[String(a.id)] + 22" class="ap-nname">{{ trunc(a.name, SUB_NAME) }}</text>
-            <text :x="SUB_X + 12" :y="topoData.subPos[String(a.id)] + 40" class="ap-ndesc">{{ trunc(a.description || '未填写描述', SUB_LINE) }}</text>
-            <text :x="SUB_X + 12" :y="topoData.subPos[String(a.id)] + 56" class="ap-nmeta">
-              {{ topoData.parents[String(a.id)].length ? `被 ${topoData.parents[String(a.id)].length} 个主智能体委派` : '暂无人委派' }}
-            </text>
-          </g>
-        </svg>
-      </div>
+
+      <!-- 列表：行内直接看委派，点一行进聚焦拓扑 -->
+      <template v-if="topoMode === 'list'">
+        <div class="ap-topo-bar">
+          <input v-model.trim="topoQuery" class="ap-topo-q" type="text" placeholder="搜索主智能体名称 / 描述" />
+          <button v-for="f in topoFilters" :key="f.key" type="button" class="ap-topo-chip"
+                  :class="{ on: topoFilter === f.key }" @click="topoFilter = f.key">{{ f.label }}<em>{{ f.count }}</em></button>
+        </div>
+        <div v-if="!topoFiltered.length" class="ap-topo-empty">
+          {{ topoRows.length ? '没有匹配的智能体' : '还没有主智能体' }}
+        </div>
+        <template v-else>
+          <div class="ap-topo-thead">
+            <span class="c-name">主智能体</span>
+            <span class="c-sub">委派子智能体</span>
+            <span class="c-st">状态</span>
+          </div>
+          <div ref="topoListEl" class="ap-topo-rows" @scroll="onTopoScroll">
+            <div :style="{ height: topoWin.padTop + 'px' }"></div>
+            <div v-for="r in topoWin.rows" :key="r.agent.id" class="ap-topo-row"
+                 :class="{ sel: topoFocusId === r.agent.id }" @click="focusTopo(r.agent)">
+              <span class="c-name">
+                <AgentAvatar :agent="r.agent" :size="24" />
+                <span class="ap-topo-who">
+                  <b>{{ r.agent.name }}</b>
+                  <small>{{ r.agent.description || '未填写描述' }}</small>
+                </span>
+              </span>
+              <span class="c-sub">
+                <template v-if="r.subs.length">
+                  <span v-for="s in r.subs.slice(0, 3)" :key="s.id" class="ap-topo-tg">{{ s.name }}</span>
+                  <span v-if="r.subs.length > 3" class="ap-topo-tg more">+{{ r.subs.length - 3 }}</span>
+                </template>
+                <span v-else class="ap-topo-unb">不限（全部可派遣）</span>
+              </span>
+              <span class="c-st">
+                <span v-if="r.missingIds.length" class="ap-topo-badge err">失效引用 {{ r.missingIds.length }}</span>
+                <span v-else-if="r.subs.length" class="ap-topo-badge ok">已配置</span>
+                <span v-else class="ap-topo-badge">默认不限</span>
+              </span>
+            </div>
+            <div :style="{ height: topoWin.padBottom + 'px' }"></div>
+          </div>
+          <div class="ap-topo-foot">
+            显示 {{ topoWin.from }}–{{ topoWin.to }} / {{ topoFiltered.length }}
+            <span class="sp"></span>
+            <span>滚轮浏览 · 点任意一行看委派链路</span>
+          </div>
+        </template>
+      </template>
+
+      <!-- 聚焦拓扑：画布只随这一位的委派数增长，与智能体总量无关 -->
+      <template v-else-if="topoFocus">
+        <div class="ap-topo-crumb">
+          <button type="button" class="app-link-btn" @click="topoMode = 'list'">← 返回列表</button>
+          <span class="sep">/</span>
+          <b>{{ topoFocus.agent.name }}</b>
+          <span class="sep">/</span>
+          <span>{{ topoFocus.subs.length ? `委派 ${topoFocus.subs.length} 个子智能体` : '未配置委派（默认不限）' }}</span>
+          <span class="sp"></span>
+          <a-select :value="topoFocus.agent.id" :options="topoMainOptions" size="small" show-search
+                    option-filter-prop="label" style="width: 200px" @change="v => (topoFocusId = v)" />
+          <button v-if="topoFocus.agent.manageable" type="button" class="app-btn small"
+                  @click="openEdit(topoFocus.agent); topoOpen = false">编辑委派</button>
+        </div>
+        <div class="ap-topo-legend">
+          <span class="ap-lg"><span class="ap-lg-dot main" />主智能体</span>
+          <span class="ap-lg"><span class="ap-lg-dot sub" />子智能体</span>
+          <span class="ap-lg"><svg width="30" height="8"><line x1="0" y1="4" x2="30" y2="4" class="ap-edge miss" /></svg>失效引用（子智能体已删除）</span>
+          <span class="ap-lg">悬停高亮链路 · 点击节点进配置</span>
+        </div>
+        <div v-if="!topoGraph.nodes.length" class="ap-topo-empty">
+          这一位没有配置委派：清单为空时默认允许派遣全部子智能体。到「高级设置 → 子智能体委派」里勾选即可收窄。
+        </div>
+        <div v-else class="ap-topo-canvas">
+          <svg :viewBox="`0 0 ${topoGraph.W} ${topoGraph.H}`" :width="topoGraph.W" :height="topoGraph.H" class="ap-topo-svg">
+            <path v-for="e in topoGraph.edges" :key="e.key" :d="e.d" class="ap-edge" :class="[edgeCls(e), { miss: e.miss }]" />
+            <g v-for="n in topoGraph.nodes" :key="'n' + n.key" class="ap-node" :class="nodeCls(n.key)"
+               @mouseenter="topoHover = n.key" @mouseleave="topoHover = ''"
+               @click="n.agent && n.agent.manageable ? (openEdit(n.agent), topoOpen = false) : null">
+              <rect :x="n.x" :y="n.y" :width="TOPO.subW" :height="TOPO.rowH" rx="8"
+                    class="ap-nrect" :class="n.miss ? 'miss' : 'sub'" />
+              <text class="ap-nname" :x="n.x + 12" :y="n.y + 22">{{ n.miss ? '已删除的子智能体' : trunc(n.agent.name, SUB_NAME) }}</text>
+              <text class="ap-ndesc" :x="n.x + 12" :y="n.y + 40">{{ n.miss ? `#${n.id}` : trunc(n.agent.description || '未填写描述', SUB_LINE) }}</text>
+              <text class="ap-nmeta" :x="n.x + 12" :y="n.y + 56">{{ n.miss ? '该委派不会生效' : subMeta(n.agent) }}</text>
+            </g>
+            <g class="ap-node" :class="nodeCls('m')" @mouseenter="topoHover = 'm'" @mouseleave="topoHover = ''"
+               @click="topoFocus.agent.manageable ? (openEdit(topoFocus.agent), topoOpen = false) : null">
+              <rect :x="topoGraph.mainX" :y="topoGraph.mainY" :width="TOPO.nodeW" :height="TOPO.rowH" rx="8" class="ap-nrect main" />
+              <text class="ap-nname" :x="topoGraph.mainX + 12" :y="topoGraph.mainY + 22">{{ trunc(topoFocus.agent.name, MAIN_NAME) }}</text>
+              <text class="ap-ndesc" :x="topoGraph.mainX + 12" :y="topoGraph.mainY + 40">{{ trunc(topoFocus.agent.description || '未填写描述', MAIN_LINE) }}</text>
+              <text class="ap-nmeta" :x="topoGraph.mainX + 12" :y="topoGraph.mainY + 56">{{ topoFocus.subs.length ? `委派 ${topoFocus.subs.length} 个子智能体` : '委派不限（默认全部）' }}</text>
+            </g>
+          </svg>
+        </div>
+        <div v-if="topoSummary.orphans" class="ap-topo-note">
+          <span>{{ topoSummary.orphans }} 个子智能体没进入任何委派清单：{{ topoOrphanNames }}</span>
+          <span class="sp"></span>
+          <span>{{ topoSummary.defaultMains ? '清单为空的主智能体派遣不受限' : '所有主智能体都配了清单，它们暂时派不动' }}</span>
+        </div>
+      </template>
     </a-modal>
 
     <!-- 技能正文查看（「指定」旁那几个「已选正文」入口）：本页没有会话上下文，
@@ -838,6 +926,7 @@ import { loadModelIndex } from '../utils/modelRef'
 import { locateField } from '../utils/fieldLocate'
 import { copyText } from '../utils/clipboard'
 import { publicUrl } from '../utils/publicUrl'
+import { topoWindow, focusedGraph } from '../utils/topoLayout'
 import { MdEditor, MdPreview } from 'md-editor-v3'
 import 'md-editor-v3/lib/style.css'
 import { themeState } from '../utils/theme'
@@ -1089,6 +1178,8 @@ const scopeOptions = [
 ]
 const blankForm = () => ({
   name: '', description: '', systemPrompt: '', knowledgeBaseIds: [], knowledgeTags: [], isDefault: false,
+  // 启停状态（0=启用 1=停用）：配置页的开关走独立的「立即生效」接口，不随保存提交
+  disabled: 0,
   // 图标：''=默认展示（内置「问渠」用问渠品牌标，其余机器人）；'wenqu'=品牌标；emoji=表情
   icon: '', isBuiltin: 0,
   // 开关型：'' = 跟随系统默认 / '1' = 开启 / '0' = 关闭
@@ -1201,7 +1292,7 @@ const onRunModeChange = v => {
 // 页头星标：已存在的非子智能体、且管理员才有「设为默认」能力（与列表卡片同一判据）；
 // 平台预置是能力型助手，不能设为全员默认
 const canShowStar = computed(() => {
-  if (!editingId.value || !isAdmin.value || form.value.isSubagent) return false
+  if (!editingId.value || !isAdmin.value || form.value.isSubagent || form.value.disabled === 1) return false
   const a = agents.value.find(x => String(x.id) === String(editingId.value))
   return !!a && !isPreset(a)
 })
@@ -1211,6 +1302,8 @@ const canShowStar = computed(() => {
 const iconOptions = computed(() => ICON_OPTIONS.filter(o => o.value !== 'wenqu'))
 
 const isDefault = a => a.isDefault === 1 || a.isDefault === true
+/** 已停用：对话页不可选、@/委派不可用、分享链接失效；管理列表仍可见以便恢复 */
+const isDisabledAgent = a => a.disabled === 1 || a.disabled === true
 /** 系统内置（如默认「知识库助手」）：不可删除，卡片上以「内置」标记区分 */
 const isBuiltin = a => a.isBuiltin === 1 || a.isBuiltin === true
 /** 平台预置的内置助手（created_by=system，如网页操作助手）：全员可用，管理员可配置，不可删除、不可设为默认 */
@@ -1351,8 +1444,8 @@ const updatedAgo = a => {
 }
 /** 状态点只给「发布与否在自己手里」的卡片：子智能体不参与直接对话，发布语义不适用 */
 // 平台预置不支持公开发布，不显示发布状态点（灰点会被读成「还没发，可以发」）
-const showPubDot = a => a.manageable && !isSub(a) && !isPreset(a)
-const canSetDefault = a => !isSub(a) && !isDefault(a) && isAdmin.value && !isPreset(a)
+const showPubDot = a => a.manageable && !isSub(a) && !isPreset(a) && !isDisabledAgent(a)
+const canSetDefault = a => !isSub(a) && !isDefault(a) && isAdmin.value && !isPreset(a) && !isDisabledAgent(a)
 /** 试一试：直达对话页并预选该智能体（对话页消费 ?agent= 后摘掉参数） */
 const tryAgent = a => router.push({ path: '/chat', query: { agent: String(a.id) } })
 
@@ -1391,6 +1484,7 @@ const copyAgent = a => {
   editingUpdatedAt.value = ''
   form.value.name = `${a.name || '未命名'}-副本`
   form.value.isDefault = false
+  form.value.disabled = 0
   // 内置标记驱动表单的名称/图标锁定与保存裁剪——复制产物是普通新建智能体，必须清掉；
   // 问渠品牌标是内置「问渠」专属图标，副本改回默认图标
   form.value.isBuiltin = 0
@@ -1430,53 +1524,151 @@ const onImportFile = ev => {
     editingPreset.value = false
     editingUpdatedAt.value = ''
     form.value.isDefault = false
+    form.value.disabled = 0
     message.info('配置已载入，确认后点「保存」即创建为新智能体')
   }
   rd.readAsText(f)
 }
 
-// ==================== 委派编排视图（拓扑：主智能体 → 子智能体委派关系，纯前端渲染） ====================
+// ==================== 委派编排视图（列表承载规模 + 聚焦拓扑） ====================
 const topoOpen = ref(false)
-const topoHover = ref('')   // 悬停的节点 key（'m'+id / 's'+id，用于高亮相关委派链路）
-const TOPO = { pad: 16, rowH: 64, rowGap: 14, nodeW: 216, gapG: 80, subW: 248 }
-const TOPO_W = TOPO.pad + TOPO.nodeW + TOPO.gapG + TOPO.subW + TOPO.pad
-const MAIN_X = TOPO.pad
-const SUB_X = TOPO.pad + TOPO.nodeW + TOPO.gapG
+const topoMode = ref('list')     // list=检索与概览；topo=看某一位主智能体的委派链路
+const topoQuery = ref('')
+const topoFilter = ref('all')
+const topoFocusId = ref('')
+const topoHover = ref('')        // 悬停节点 key（'m'=主节点，其余为子节点 key）
+const topoListEl = ref(null)
+const topoScrollTop = ref(0)
+const TOPO = { pad: 16, rowH: 64, rowGap: 14, nodeW: 216, gapG: 64, subW: 248 }
 
-const topoData = computed(() => {
-  const mains = agents.value.filter(a => !isSub(a))
-  const subs = agents.value.filter(isSub)
-  const subById = new Map(subs.map(a => [String(a.id), a]))
-  const edges = []
-  const warnings = []
-  for (const m of mains) {
-    for (const sid of splitList(m.subAgentIds)) {
-      const sub = subById.get(String(sid))
-      if (sub) edges.push({ from: m, to: sub, missing: false })
-      else {
-        // fail-loud：悬空引用直接在图上标红并给出文字警示（静默画不出来会让人误以为配置生效了）
-        edges.push({ from: m, to: null, toId: String(sid), missing: true })
-        warnings.push(`「${m.name}」引用的子智能体 (#${sid}) 不存在或已删除——该委派不会生效`)
-      }
+const topoMains = computed(() => agents.value.filter(a => !isSub(a)))
+const topoSubs = computed(() => agents.value.filter(isSub))
+
+/** 一行 = 一位主智能体：解析出来的子智能体（按清单顺序）与悬空 id（失效引用） */
+const topoRows = computed(() => {
+  const subById = new Map(topoSubs.value.map(a => [String(a.id), a]))
+  return topoMains.value.map(a => {
+    const declared = splitList(a.subAgentIds)
+    const subs = []
+    const missingIds = []
+    for (const id of declared) {
+      const s = subById.get(String(id))
+      if (s) subs.push(s)
+      else missingIds.push(String(id))
+    }
+    return { agent: a, configured: declared.length > 0, subs, missingIds }
+  })
+})
+
+const topoParentCount = computed(() => {
+  const map = {}
+  for (const r of topoRows.value) for (const s of r.subs) map[String(s.id)] = (map[String(s.id)] || 0) + 1
+  return map
+})
+
+const topoSummary = computed(() => {
+  let missing = 0
+  for (const r of topoRows.value) missing += r.missingIds.length
+  const parents = new Set(Object.keys(topoParentCount.value))
+  const orphans = topoSubs.value.filter(s => !parents.has(String(s.id)))
+  return {
+    mains: topoRows.value.length,
+    subs: topoSubs.value.length,
+    orphans: orphans.length,
+    orphanNames: orphans.map(s => s.name || s.id),
+    missing,
+    defaultMains: topoRows.value.filter(r => !r.configured).length
+  }
+})
+const topoOrphanNames = computed(() => {
+  const names = topoSummary.value.orphanNames
+  return names.length > 4 ? `${names.slice(0, 4).join('、')} 等 ${names.length} 个` : names.join('、')
+})
+const topoOrphanTitle = computed(() => (topoSummary.value.orphanNames.length
+  ? `没进入任何主智能体委派清单的子智能体：${topoSummary.value.orphanNames.join('、')}` : ''))
+
+const topoFilters = computed(() => {
+  const rows = topoRows.value
+  return [
+    { key: 'all', label: '全部', count: rows.length },
+    { key: 'configured', label: '已配置', count: rows.filter(r => r.configured).length },
+    { key: 'default', label: '默认不限', count: rows.filter(r => !r.configured).length },
+    { key: 'dangling', label: '有失效引用', count: rows.filter(r => r.missingIds.length).length }
+  ]
+})
+
+const topoFiltered = computed(() => {
+  const q = topoQuery.value.toLowerCase()
+  return topoRows.value.filter(r => {
+    if (topoFilter.value === 'configured' && !r.configured) return false
+    if (topoFilter.value === 'default' && r.configured) return false
+    if (topoFilter.value === 'dangling' && !r.missingIds.length) return false
+    if (!q) return true
+    return String(r.agent.name || '').toLowerCase().includes(q)
+      || String(r.agent.description || '').toLowerCase().includes(q)
+  })
+})
+
+/**
+ * 窗口化滚动：几百个主智能体时只渲染可视区附近的行（算式与行高在 utils/topoLayout 里单测钉住）。
+ */
+const onTopoScroll = e => { topoScrollTop.value = e.target.scrollTop }
+const topoWin = computed(() => {
+  const rows = topoFiltered.value
+  const w = topoWindow(rows.length, topoScrollTop.value)
+  return { ...w, rows: rows.slice(w.start, w.end) }
+})
+watch([topoQuery, topoFilter], () => {
+  topoScrollTop.value = 0
+  if (topoListEl.value) topoListEl.value.scrollTop = 0
+})
+
+const topoFocus = computed(() => topoRows.value.find(r => r.agent.id === topoFocusId.value) || null)
+// 列表刷新后聚焦对象可能已不存在（被删/改了用途）：回列表，别留一张空弹窗
+watch(topoFocus, v => { if (!v && topoMode.value === 'topo') topoMode.value = 'list' })
+const topoMainOptions = computed(() => topoMains.value.map(a => ({ value: a.id, label: a.name || a.id })))
+
+/**
+ * 打开编排视图。带智能体进 = 直接看它的链路：
+ * 主智能体看自己派出去的，子智能体看委派它的第一位主智能体（卡片上「被谁委派」那个入口）。
+ */
+const openTopo = a => {
+  topoQuery.value = ''
+  topoFilter.value = 'all'
+  topoScrollTop.value = 0
+  topoHover.value = ''
+  let focus = ''
+  if (a) {
+    if (isSub(a)) {
+      const parent = topoRows.value.find(r => r.subs.some(s => String(s.id) === String(a.id)))
+      focus = parent ? parent.agent.id : ''
+    } else {
+      focus = String(a.id)
     }
   }
-  // 反向关系：每个子智能体被哪些主智能体委派（孤儿检测）
-  const parents = {}
-  for (const s of subs) parents[String(s.id)] = []
-  for (const e of edges) if (!e.missing) parents[String(e.to.id)].push(e.from)
-  const orphanCount = subs.filter(s => !parents[String(s.id)].length).length
-  if (orphanCount) warnings.push(`${orphanCount} 个子智能体还没被任何主智能体委派（图中灰虚线框）`)
-  // 两列布局，各自按行数垂直居中
-  const colH = n => Math.max(n, 0) * (TOPO.rowH + TOPO.rowGap) - TOPO.rowGap
-  const rows = Math.max(mains.length, subs.length, 1)
-  const H = colH(rows) + TOPO.pad * 2
-  const yOf = (i, count) => Math.round(TOPO.pad + (H - TOPO.pad * 2 - colH(count)) / 2) + i * (TOPO.rowH + TOPO.rowGap)
-  const mainPos = {}
-  const subPos = {}
-  mains.forEach((a, i) => { mainPos[String(a.id)] = yOf(i, mains.length) })
-  subs.forEach((a, i) => { subPos[String(a.id)] = yOf(i, subs.length) })
-  return { mains, subs, edges, warnings, H, mainPos, subPos, parents }
+  topoFocusId.value = focus
+  topoMode.value = focus ? 'topo' : 'list'
+  topoOpen.value = true
+}
+const focusTopo = a => {
+  topoFocusId.value = String(a.id)
+  topoMode.value = 'topo'
+  topoHover.value = ''
+}
+
+/** 聚焦拓扑布局：最多两列（一列 8 个），画布高度只与这一位的委派数有关 */
+const topoGraph = computed(() => {
+  const r = topoFocus.value
+  const items = r ? [
+    ...r.subs.map(s => ({ key: String(s.id), agent: s, miss: false })),
+    ...r.missingIds.map(id => ({ key: 'x' + id, id, agent: null, miss: true }))
+  ] : []
+  return focusedGraph(items, TOPO)
 })
+const subMeta = a => {
+  const n = topoParentCount.value[String(a.id)] || 0
+  return n ? `被 ${n} 个主智能体委派` : '暂无人委派'
+}
 
 /**
  * 按显示宽度截断：全角 = 1 字宽、半角 ≈ 0.55。
@@ -1497,7 +1689,6 @@ const MAIN_NAME = Math.floor((TOPO.nodeW - 24) / 13)
 const MAIN_LINE = Math.floor((TOPO.nodeW - 24) / 11)
 const SUB_NAME = Math.floor((TOPO.subW - 24) / 13)
 const SUB_LINE = Math.floor((TOPO.subW - 24) / 11)
-const subCountOf = a => splitList(a.subAgentIds).length
 
 // ==================== 委派编排一键转工作流 ====================
 import { useRoute, useRouter } from 'vue-router'
@@ -1530,34 +1721,18 @@ const toWorkflow = async () => {
   }
 }
 
-/** 边路径：主节点右缘中点 → 子节点左缘中点（贝塞尔）；失效引用画到右列同高的占位符 */
-function edgePath (e) {
-  const y1 = topoData.value.mainPos[String(e.from.id)] + TOPO.rowH / 2
-  const x1 = MAIN_X + TOPO.nodeW
-  const y2 = e.missing ? y1 : topoData.value.subPos[String(e.to.id)] + TOPO.rowH / 2
-  const x2 = e.missing ? SUB_X + 13 : SUB_X
-  const mx = (x1 + x2) / 2
-  return `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`
-}
-
-/** 悬停高亮：与悬停节点相连的边/节点保持醒目，其余淡化（一眼看清单条委派链路） */
-const hoverRelated = computed(() => {
-  if (!topoHover.value) return null
-  const set = new Set([topoHover.value])
-  for (const e of topoData.value.edges) {
-    if ('m' + e.from.id === topoHover.value || (e.to && 's' + e.to.id === topoHover.value)) {
-      set.add('m' + e.from.id)
-      if (e.to) set.add('s' + e.to.id)
-    }
-  }
-  return set
-})
+/** 悬停高亮：主节点悬停 = 整条链路；子节点悬停 = 它那一条边（其余淡化） */
 const edgeCls = e => {
-  if (!hoverRelated.value) return ''
-  const rel = hoverRelated.value.has('m' + e.from.id) && (!e.to || hoverRelated.value.has('s' + e.to.id))
-  return rel ? 'on' : 'dim'
+  const h = topoHover.value
+  if (!h) return ''
+  if (h === 'm') return 'on'
+  return h === e.key ? 'on' : 'dim'
 }
-const nodeCls = key => (hoverRelated.value && !hoverRelated.value.has(key) ? 'dim' : '')
+const nodeCls = key => {
+  const h = topoHover.value
+  if (!h || h === 'm' || h === key) return ''
+  return 'dim'
+}
 
 // ==================== 公开发布（/s/{token} 免登录对话 + iframe 嵌入） ====================
 const pubVisible = ref(false)
@@ -1879,7 +2054,7 @@ const summaryExecution = computed(() => {
 const summaryDelegation = computed(() => {
   if (runMode.value === 'sub') return '被委派：跑完整问答，能办事'
   const n = (form.value.subAgentIds || []).length
-  return n ? `${n} 个子智能体` : '未启用'
+  return n ? `${n} 个子智能体` : '不限'
 })
 /** 高级设置的覆盖数（与右侧摘要同口径：记忆域/轮终回调历史上不计入差异数，维持不变） */
 const advOverriddenCount = computed(() => {
@@ -2028,6 +2203,7 @@ const openEdit = a => {
     knowledgeBaseIds: kbs,
     knowledgeTags: splitList(a.knowledgeTags),
     isDefault: isDefault(a),
+    disabled: isDisabledAgent(a) ? 1 : 0,
     toolKnowledge: triStr(a.toolKnowledge),
     toolBuiltin: effectiveAskUserTri(a),
     toolSkill: triStr(a.toolSkill),
@@ -2364,6 +2540,58 @@ const doBatchDelete = () => {
   })
 }
 
+// ==================== 停用 / 启用（生命周期动作，点一下立即生效，不随表单保存） ====================
+const disabledBusy = ref(false)
+
+const doToggleDisabled = async (id, disabled) => {
+  disabledBusy.value = true
+  try {
+    const r = await updateAgent(id, { disabled })
+    if (r.success) {
+      message.success(disabled ? '已停用' : '已启用')
+      if (editing.value && String(editingId.value) === String(id)) form.value.disabled = disabled
+      await reload()
+      return true
+    }
+    message.error(r.msg || '操作失败')
+  } catch (e) { message.error(e.message || '操作失败') }
+  finally { disabledBusy.value = false }
+  return false
+}
+
+/** 列表卡片菜单：停用前确认，并先挡住默认智能体（后端同样会拒绝，避免白跑一趟） */
+const toggleDisabled = a => {
+  if (isDisabledAgent(a)) { doToggleDisabled(a.id, 0); return }
+  if (isDefault(a)) {
+    message.warning('「' + a.name + '」是当前默认智能体，不能停用：请先把其它智能体设为默认')
+    return
+  }
+  Modal.confirm({
+    title: '停用该智能体？',
+    content: `「${a.name}」将从对话页可选项中移除，已有会话、@ 与公开分享链接立即不可用；配置与历史版本保留，可随时重新启用。`,
+    okText: '停用', okType: 'danger', cancelText: '取消',
+    onOk: () => doToggleDisabled(a.id, 1)
+  })
+}
+
+/** 配置页的启用开关：打开=启用，关闭=停用（关闭同样要确认） */
+const onEnabledSwitch = checked => {
+  const next = checked ? 0 : 1
+  if (!editingId.value) { form.value.disabled = next; return }
+  if (next === 0) { doToggleDisabled(editingId.value, 0); return }
+  if (form.value.isDefault) {
+    form.value.disabled = 0
+    message.warning('当前默认智能体不能停用：请先把其它智能体设为默认')
+    return
+  }
+  Modal.confirm({
+    title: '停用该智能体？',
+    content: `「${form.value.name || '未命名智能体'}」将从对话页可选项中移除，已有会话、@ 与公开分享链接立即不可用；配置与历史版本保留，可随时重新启用。`,
+    okText: '停用', okType: 'danger', cancelText: '取消',
+    onOk: () => doToggleDisabled(editingId.value, 1)
+  })
+}
+
 const doSetDefault = async id => {
   try {
     const r = await setAgentDefault(id)
@@ -2445,6 +2673,14 @@ onMounted(async () => { })
   font-size: 10px; line-height: 1; padding: 3px 6px; border-radius: 999px;
   background: var(--app-info-weak); color: var(--app-accent);
 }
+/* 已停用：红色系 + 文字，不单靠颜色编码；卡片整体降饱和但仍可点进配置启用 */
+.ap-tag-disabled {
+  font-size: 10px; line-height: 1; padding: 3px 6px; border-radius: 999px;
+  background: var(--app-danger-weak, rgba(220, 38, 38, .1));
+  color: var(--app-danger, #dc2626);
+}
+.ap-card-disabled { opacity: .68; }
+.ap-card-disabled:hover { opacity: 1; }
 /* 发布状态点：绿=已发布、灰=未发布；悬停 title 说明入口在哪 */
 .ap-dot { position: absolute; top: 13px; right: 13px; width: 8px; height: 8px; border-radius: 50%; }
 .ap-dot.pub { background: var(--app-ok); box-shadow: 0 0 0 3px var(--app-ok-weak); }
@@ -2504,6 +2740,7 @@ onMounted(async () => { })
   overflow: hidden; text-overflow: ellipsis;
 }
 .ap-head-chip.is-accent { color: var(--app-accent); background: var(--app-accent-weak); }
+.ap-head-chip.is-danger { color: var(--app-danger, #dc2626); background: var(--app-danger-weak, rgba(220, 38, 38, .1)); }
 .ap-star-btn { color: var(--app-text3); }
 .ap-star-btn.is-default { color: var(--app-warn); }
 .ap-star-btn:disabled { cursor: default; opacity: 1; }
@@ -2542,6 +2779,13 @@ onMounted(async () => { })
 .ap-mode-seg { width: fit-content; }
 .ap-mode-seg :deep(.ant-segmented-item-label) { min-height: 26px; line-height: 26px; padding: 0 16px; font-size: 12px; }
 .ap-mode-note { margin: 9px 0 0; }
+/* 启用状态行：与运行方式同卡，开关靠右 */
+.ap-enable-row {
+  display: flex; align-items: flex-start; gap: 16px;
+  margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--app-border);
+}
+.ap-enable-main { flex: 1; min-width: 0; font-size: 12px; }
+.ap-enable-main .ap-hint { margin: 4px 0 0; }
 .ap-mode-extra { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
 
 /* 身份与角色 */
@@ -2817,17 +3061,73 @@ onMounted(async () => { })
 }
 .pub-foot-hint { font-size: 11.5px; color: var(--app-text3); }
 
-/* ==================== 委派编排视图（拓扑） ==================== */
-.ap-topo-legend { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; font-size: 12px; color: var(--app-text3); margin-bottom: 10px; }
+/* ==================== 委派编排视图（列表 + 聚焦拓扑） ==================== */
+.ap-topo-head { display: flex; align-items: center; gap: 14px; margin-bottom: 12px; }
+.ap-topo-seg { display: flex; background: var(--app-hover, #f2f3f7); border-radius: 8px; padding: 2px; flex: none; }
+.ap-topo-seg button { border: 0; background: transparent; color: var(--app-text2); font-size: 12.5px; padding: 4px 14px;
+  border-radius: 6px; cursor: pointer; }
+.ap-topo-seg button.on { background: var(--app-panel, #fff); color: var(--app-text); font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+.ap-topo-seg button:disabled { color: var(--app-text3); cursor: not-allowed; }
+.ap-topo-sum { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--app-text3); }
+.ap-topo-sum b { color: var(--app-text); font-weight: 600; margin-left: 2px; }
+.ap-topo-sum .warn b { color: var(--app-warn, #b25e09); }
+.ap-topo-sum .danger b { color: var(--app-danger); }
+
+.ap-topo-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; }
+.ap-topo-q { width: 260px; height: 28px; padding: 0 10px; font-size: 12.5px; color: var(--app-text);
+  background: var(--app-panel, #fff); border: 1px solid var(--app-border); border-radius: 8px; outline: none; }
+.ap-topo-q:focus { border-color: var(--app-accent); }
+.ap-topo-chip { border: 1px solid var(--app-border); background: var(--app-panel, #fff); color: var(--app-text2);
+  border-radius: 999px; padding: 3px 11px; font-size: 12px; cursor: pointer; }
+.ap-topo-chip em { font-style: normal; color: var(--app-text3); margin-left: 5px; }
+.ap-topo-chip.on { border-color: var(--app-accent); background: var(--app-accent-weak); color: var(--app-accent); font-weight: 600; }
+.ap-topo-chip.on em { color: var(--app-accent); }
+
+.ap-topo-thead, .ap-topo-row { display: grid; grid-template-columns: 320px 1fr 150px; align-items: center; gap: 10px; }
+.ap-topo-thead { padding: 7px 12px; font-size: 12px; font-weight: 600; color: var(--app-text2);
+  background: var(--app-hover, #fafbfd); border-top: 1px solid var(--app-border); border-bottom: 1px solid var(--app-border); }
+/* 行高必须与脚本里的 TOPO_ROW_H 一致（窗口化滚动按它算偏移） */
+.ap-topo-rows { height: 432px; overflow-y: auto; border-bottom: 1px solid var(--app-border); }
+.ap-topo-row { height: 52px; padding: 0 12px; border-bottom: 1px solid var(--app-border); cursor: pointer; }
+.ap-topo-row:hover { background: var(--app-hover, #f7f8fb); }
+.ap-topo-row.sel { background: var(--app-accent-weak); box-shadow: inset 3px 0 0 var(--app-accent); }
+.ap-topo-who { display: flex; flex-direction: column; min-width: 0; line-height: 1.35; }
+.ap-topo-who b { font-size: 13px; font-weight: 600; color: var(--app-text); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.ap-topo-who small { font-size: 11.5px; color: var(--app-text3); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.ap-topo-row .c-name { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.ap-topo-row .c-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; min-width: 0; }
+.ap-topo-tg { background: var(--app-accent-weak); border: 1px solid var(--app-border); color: var(--app-text2);
+  border-radius: 6px; padding: 0 7px; font-size: 11.5px; }
+.ap-topo-tg.more { background: transparent; border-style: dashed; color: var(--app-text3); }
+.ap-topo-unb { font-size: 12px; color: var(--app-text3); }
+.ap-topo-badge { font-size: 11.5px; color: var(--app-text3); }
+.ap-topo-badge.ok { color: var(--app-accent); }
+.ap-topo-badge.err { color: var(--app-danger); border: 1px dashed currentColor; border-radius: 999px; padding: 1px 8px; }
+.ap-topo-foot { display: flex; align-items: center; gap: 10px; padding-top: 9px; font-size: 12px; color: var(--app-text3); }
+.ap-topo-foot .sp { flex: 1; }
+
+.ap-topo-crumb { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12.5px;
+  color: var(--app-text2); margin-bottom: 8px; }
+.ap-topo-crumb b { color: var(--app-text); font-size: 13.5px; }
+.ap-topo-crumb .sep { color: var(--app-text3); }
+.ap-topo-crumb .sp { flex: 1; }
+.ap-topo-legend { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; font-size: 12px; color: var(--app-text3); margin-bottom: 8px; }
 .ap-lg { display: inline-flex; align-items: center; gap: 6px; }
 .ap-lg-dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; flex: none; }
 .ap-lg-dot.main { background: var(--app-panel); border: 1.5px solid var(--app-accent, var(--app-accent-hover)); }
 .ap-lg-dot.sub { background: var(--app-accent-weak); border: 1.5px solid var(--app-accent, var(--app-accent-hover)); }
-.ap-topo-warns { margin-bottom: 10px; }
-.ap-topo-warn { font-size: 12px; color: var(--app-danger); padding: 2px 0; }
 .ap-topo-empty { padding: 28px 0; text-align: center; font-size: 13px; color: var(--app-text3); }
-.ap-topo-scroll { display: flex; justify-content: center; overflow: auto; }
-.ap-topo-svg { flex: none; }
+/* 画布内部滚动：委派数再多也把弹窗高度钉住 */
+.ap-topo-canvas { max-height: 560px; overflow: auto; border: 1px solid var(--app-border); border-radius: 10px;
+  background: var(--app-panel, #fff); }
+.ap-topo-svg { display: block; flex: none; }
+.ap-topo-note { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; padding: 8px 12px;
+  font-size: 12px; border-radius: 8px; color: var(--app-warn, #b25e09);
+  background: var(--app-warn-weak, #fff7e6); border: 1px solid var(--app-warn-border, #ffe1a8); }
+.ap-topo-note .sp { flex: 1; }
 .ap-edge { fill: none; stroke: var(--app-text3); stroke-width: 1.5; opacity: .8; transition: opacity .2s, stroke-width .2s; }
 .ap-edge.on { stroke: var(--app-accent, var(--app-accent-hover)); stroke-width: 2; opacity: 1; }
 .ap-edge.dim { opacity: .1; }
@@ -2836,9 +3136,7 @@ onMounted(async () => { })
 .ap-node.dim { opacity: .18; }
 .ap-nrect { fill: #fff; stroke: var(--app-border, var(--app-border)); stroke-width: 1.2; }
 .ap-nrect.sub { fill: var(--app-accent-weak); }
-.ap-nrect.orphan { stroke-dasharray: 5 4; stroke: var(--app-text3); }
-.ap-phantom { fill: #fff; stroke: var(--app-danger, var(--app-danger)); stroke-dasharray: 4 3; }
-.ap-phantom-t { font-size: 14px; font-weight: 700; fill: var(--app-danger, var(--app-danger)); text-anchor: middle; }
+.ap-nrect.miss { fill: #fff; stroke: var(--app-danger); stroke-dasharray: 5 4; }
 .ap-nname { font-size: 13px; font-weight: 600; fill: var(--app-text, var(--app-text)); }
 .ap-ndesc { font-size: 11px; fill: var(--app-text3, var(--app-text3)); }
 .ap-nmeta { font-size: 11px; fill: var(--app-text3, var(--app-text3)); }

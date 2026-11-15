@@ -138,7 +138,7 @@ class SubAgentConsultServiceTest {
         }
 
         @Test
-        @DisplayName("不在可读范围内 → 权限拦截")
+        @DisplayName("不在本轮派遣清单 → 拒绝并区分于猜错 id")
         void notInCandidates() {
             when(agentService.get("agent-zhibao")).thenReturn(targetAgent);
             // selfAgent 的候选清单里没有智报
@@ -146,7 +146,7 @@ class SubAgentConsultServiceTest {
             BranchRunner runner = mock(BranchRunner.class);
             String r = service.consult(newLedger(), ctx(), runner, null,
                     "agent-zhibao", "查询数据");
-            assertTrue(r.contains("没有权限咨询"), "实际: " + r);
+            assertTrue(r.contains("不在本轮派遣清单里"), "实际: " + r);
             verify(runner, never()).run(any());
         }
 

@@ -254,6 +254,17 @@ public class ChatController {
                 }
             }
 
+            // 所选智能体停用校验（同步段 fail-loud）：已有会话/旧页签还钉着已停用的助手时，
+            // 不能静默回落全局配置——用户会以为还是它在答。这里只拦「停用」；
+            // 已删除/不可读仍按原降级语义处理（流水线内带降级提示照常作答）。
+            String requestedAgentId = request.getAgentId();
+            if (requestedAgentId != null && !requestedAgentId.isBlank()) {
+                var picked = agentService.findReadable(requestedAgentId.trim());
+                if (picked != null && com.wenqu.ai.service.AgentService.isDisabled(picked)) {
+                    throw new BizException("智能体「" + picked.getName() + "」已停用，请切换其它智能体后再提问");
+                }
+            }
+
             // @ 引用校验（同样必须在发起问答前 fail-loud）：类型合法 + 资源存在 + 在当前用户共享范围内。
             // 放在这里而不是流水线内：流水线是异步线程，异常只能变成 SSE error，用户拿不到明确的 400 语义
             mentions = validateMentions(request.getMentions(), httpRequest);
@@ -370,9 +381,12 @@ public class ChatController {
                 // @ 智能体（本轮强制咨询它）：get() 内含可读校验（共享范围外按不存在处理，
                 // 不泄露存在性）。子智能体同样可以被 @ ——@ 不再是"换它来作答"而是"派它去查"，
                 // 而子智能体恰恰是挂得最规整的那一份资料域。它仍然不能当问答角色（对话页下拉照旧剔除）。
-                var a = agentService.get(id);
+                var a = agentService.findReadable(id);
                 if (a == null) {
                     throw new BizException("提及的智能体不存在或无权访问");
+                }
+                if (com.wenqu.ai.service.AgentService.isDisabled(a)) {
+                    throw new BizException("提及的智能体「" + a.getName() + "」已停用，请改提及其它智能体");
                 }
                 normalized.setType("agent");
                 normalized.setId(a.getId());

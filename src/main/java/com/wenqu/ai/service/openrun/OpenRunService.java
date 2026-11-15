@@ -7,6 +7,7 @@ import com.wenqu.ai.agent.chat.ChatCommand;
 import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.mapper.AgentMapper;
 import com.wenqu.ai.mapper.OpenRunMapper;
+import com.wenqu.ai.model.Agent;
 import com.wenqu.ai.model.OpenRun;
 import com.wenqu.ai.openapi.RequestIdFilter;
 import com.wenqu.ai.service.ChatService;
@@ -61,8 +62,15 @@ public class OpenRunService {
                 return out;
             }
         }
-        if (agentId != null && !agentId.isBlank() && agentMapper.selectById(agentId) == null) {
-            throw new BizException(400, "智能体不存在：" + agentId);
+        if (agentId != null && !agentId.isBlank()) {
+            Agent agent = agentMapper.selectById(agentId);
+            if (agent == null) {
+                throw new BizException(400, "智能体不存在：" + agentId);
+            }
+            // 对外 run 与站内问答同一口径：停用的智能体立即不可用，不能靠建新 run 绕开
+            if (com.wenqu.ai.service.AgentService.isDisabled(agent)) {
+                throw new BizException(400, "智能体已停用：" + agentId);
+            }
         }
         // 显式 sessionId 才持久（D2）；没传就按本次调用新建一个，归属恒为 Key 签发人
         String sid;

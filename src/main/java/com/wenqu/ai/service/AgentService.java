@@ -356,6 +356,8 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
     public List<Map<String, Object>> available() {
         List<Map<String, Object>> out = new ArrayList<>();
         for (Agent a : list()) {
+            // 已停用的智能体不进入对话页下拉：停用的语义就是「现在不能用」
+            if (isDisabled(a)) continue;
             // 子智能体不出现在对话页下拉：它只能被主智能体委派调用，不能当作问答角色直接选用
             if (Integer.valueOf(1).equals(a.getIsSubagent())) continue;
             // 共享范围之外的人不应在对话页看到该智能体（未配置共享＝私有，谁建归谁；内置「问渠」人人可读）
@@ -398,19 +400,37 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
     }
 
     /**
-     * 本轮可咨询的助手清单：使用者可读的<b>全部</b>智能体，含子智能体，
-     * 只排除"自己咨询自己"。
-     * <p>它刻意<b>包含</b>子智能体：过去那套派遣问的是"换哪个角色来答"，所以要剔掉子智能体；
-     * 这里问的是"有哪几块资料可以派出去查"，子智能体恰恰是最规整的那一块。
+     * 本轮可派遣的助手清单（提示词清单、执行期鉴权、@ 点名三处共用这一份判据）。
+     * <p>清单由主智能体自己的 {@code subAgentIds} 决定（配置页「子智能体委派」）：
+     * 非空 = 只允许这几位；空 = 不设限（本租户全部可读助手）。
+     * <p>默认档为什么不剔掉主智能体：对话里「@ 助手」的候选就是主智能体（{@link #available()} 只放主智能体），
+     * 剔掉等于把 @ 强制咨询整条掐死。白名单一旦显式勾选就只认勾选的那几位。
+     * <p>配置里点着已删除或读不到的行时逐个跳过（不留空转位）；失效项在委派编排视图里显形，不会静默。
      * <p>递归靠深度硬顶与每轮咨询上限收口（见问答侧的咨询台账），不在清单里做——清单要按"这人能不能读"
      * 判，与调用链无关，把链算进可读集合会让缓存与权限判定搅在一起。
      */
     public List<Agent> consultCandidates(String selfAgentId) {
+        Agent self = StringUtils.hasText(selfAgentId) ? get(selfAgentId) : null;
+        List<String> declared = splitIds(self == null ? null : self.getSubAgentIds());
         List<Agent> out = new ArrayList<>();
         for (Agent a : list()) {
             if (!readable(a)) continue;
+            // 停用即不可派遣/咨询：候选清单是模型路由的唯一来源，漏一个就会让主智能体继续用它
+            if (isDisabled(a)) continue;
             if (selfAgentId != null && selfAgentId.equals(a.getId())) continue;
+            if (!declared.isEmpty() && !declared.contains(a.getId())) continue;
             out.add(a);
+        }
+        return out;
+    }
+
+    /** 逗号串 → 去空白去空的 id 列表（{@code subAgentIds} 的落库形态）。 */
+    private static List<String> splitIds(String csv) {
+        if (csv == null || csv.isBlank()) return List.of();
+        List<String> out = new ArrayList<>();
+        for (String part : csv.split(",")) {
+            String v = part == null ? "" : part.trim();
+            if (!v.isEmpty()) out.add(v);
         }
         return out;
     }
@@ -446,6 +466,8 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         }
         for (Agent a : subs) {
             if (!readable(a)) continue;
+            // 停用的子智能体不再出现在「可委派」候选中：配置页勾选了也不会生效（运行期 get 会拒绝）
+            if (isDisabled(a)) continue;
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("id", a.getId());
             m.put("name", a.getName());
@@ -472,15 +494,33 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
     }
 
     /**
-     * 按 ID 取（不存在返回 null，调用方据此降级为全局配置）。
+     * 按 ID 取<b>可用于问答/委派/分享</b>的智能体（不存在或已停用返回 null，调用方据此降级为全局配置）。
      * <p>额外做可读校验：共享范围之外的人即使拿到 id，也不能把该智能体套用到自己的问答上——
      * 一律按「不存在」处理，直接回落全局配置（避免用 id 绕过可见性拿到别人的提示词/知识库范围）。</p>
+     * <p>停用同样按「不存在」处理：消费路径（问答、@、委派、工作流、对外开放接口）一律走本方法，
+     * 停用即立即不可用，不依赖各入口自己记得判。管理端（配置/版本/发布/评测）改用
+     * {@link #findReadable}——它不看启停，否则停用后就再也改不回来。</p>
      */
     public Agent get(String id) {
+        Agent a = findReadable(id);
+        return (a != null && !isDisabled(a)) ? a : null;
+    }
+
+    /**
+     * 按 ID 取<b>可读</b>智能体，<b>不校验启停</b>：供管理端（配置/版本/删除/发布/评测）
+     * 与「这位已停用」的提示文案使用。
+     * <p>消费路径必须用 {@link #get}，否则会绕过停用开关把已下架的智能体重新用起来。</p>
+     */
+    public Agent findReadable(String id) {
         if (!StringUtils.hasText(id)) return null;
         Agent a = mapper.selectById(id);
         if (a == null) a = globalAgent(id);
         return (a != null && readable(a)) ? a : null;
+    }
+
+    /** 是否已停用（NULL 视为启用：V22 之前的存量行由列默认值归一为 0） */
+    public static boolean isDisabled(Agent a) {
+        return a != null && Integer.valueOf(1).equals(a.getDisabled());
     }
 
     /**
@@ -490,17 +530,21 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
      * 未配置共享范围（默认＝私有）的智能体即使已发布，链接也一律判成「分享不存在」。
      * 而发布端点已用 {@code canManage} 把关——能生成 token 的人本就有权公开该智能体，
      * 所以这里的授权语义是「持 token 即已获发布者授权」（见 ShareController 类注释）。</p>
+     * <p>停用的智能体在此按不存在处理：链接与 MCP 端点立即失效，重新启用后原 token 恢复可用。</p>
      * <p>除分享通道外不要用本方法；需要可见性判定的地方一律用 {@link #get}。</p>
      */
     public Agent getForShare(String id) {
         if (!StringUtils.hasText(id)) return null;
-        return mapper.selectById(id);
+        Agent a = mapper.selectById(id);
+        return isDisabled(a) ? null : a;
     }
 
-    /** 默认智能体（无则返回 null） */
+    /** 默认智能体（无则返回 null）；已停用的行不参与默认解析 */
     public Agent defaultAgent() {
         return mapper.selectOne(new LambdaQueryWrapper<Agent>()
-                .eq(Agent::getIsDefault, 1).last("LIMIT 1"));
+                .eq(Agent::getIsDefault, 1)
+                .and(w -> w.isNull(Agent::getDisabled).or().eq(Agent::getDisabled, 0))
+                .last("LIMIT 1"));
     }
 
     /** 新建智能体；isDefault=true 时先清空其它默认 */
@@ -508,6 +552,8 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         Agent a = toEntity(body, new Agent());
         // 内置标记不可经 API 产生（toEntity 本就不映射；这里再兜一道，保证「问渠」全局唯一只能由启动维护路径产生）
         a.setIsBuiltin(null);
+        // 停用是存量智能体的生命周期动作，新建一律为启用：避免「导入/复制配置」把停用标记带进新行
+        a.setDisabled(0);
         a.setCreatedBy(RequestUser.uid());
         a.setCreateTime(LocalDateTime.now());
         a.setUpdateTime(LocalDateTime.now());
@@ -626,6 +672,12 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         String beforeJson = snapshotJson(existing);
         Agent a = toEntity(body, existing);
         a.setUpdateTime(LocalDateTime.now());
+        // 默认智能体不允许停用：未显式指定 agentId 的会话全走 defaultAgent()，
+        // 停掉默认会让所有人静默掉回全局配置——界面上看不出换人了，属于最难排查的那类问题。
+        if (isDisabled(a) && Integer.valueOf(1).equals(a.getIsDefault())) {
+            throw new BizException("「" + existing.getName()
+                    + "」是当前默认智能体，不能停用：请先把其它智能体设为默认，再回来停用");
+        }
         if (Integer.valueOf(1).equals(a.getIsDefault())) {
             // 本行原本可能已是默认：排除自身，否则 clearDefault 会把它清零而 updateColumns 又不写回该列
             clearDefault(id);
@@ -688,6 +740,8 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         if (b.containsKey("isSubagent")) uw.set(Agent::getIsSubagent, a.getIsSubagent());
         if (b.containsKey("subAgentIds")) uw.set(Agent::getSubAgentIds, a.getSubAgentIds());
         if (b.containsKey("isDefault")) uw.set(Agent::getIsDefault, a.getIsDefault());
+        // 停用开关（二态，null 归一为启用）：是生命周期状态，不进版本快照，回滚不会顺带启用/停用
+        if (b.containsKey("disabled")) uw.set(Agent::getDisabled, Integer.valueOf(1).equals(a.getDisabled()) ? 1 : 0);
         // 检索开关覆盖（rerank.enabled；仅显式 false=强制关有语义，true/缺省=跟随「绑了模型才重排」；
         // 可清空：null = 跟随）
         if (b.containsKey("queryParams")) uw.set(Agent::getQueryParams, a.getQueryParams());
@@ -721,6 +775,9 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         Agent target = mapper.selectById(id);
         if (target == null) throw new BizException(404, "智能体不存在");
         ensureManageable(target);
+        if (isDisabled(target)) {
+            throw new BizException("已停用的智能体不能设为默认：请先启用");
+        }
         if (Integer.valueOf(1).equals(target.getIsSubagent())) {
             throw new BizException("子智能体不能设为默认：它只能被主智能体委派调用");
         }
@@ -883,9 +940,13 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         if (body.containsKey("mcps")) a.setMcps(toScopeText(body.get("mcps"), 1000));
         if (body.containsKey("builtinTools")) a.setBuiltinTools(toScopeText(body.get("builtinTools"), 500));
         if (body.containsKey("isSubagent")) a.setIsSubagent(toTri(body.get("isSubagent")));
-        // 委派列表为空串/空时归一为 null（= 不启用委派，编排走原有多视角策略）
+        // 委派列表为空串/空时归一为 null（= 不设限，派遣全部可读助手；见 consultCandidates）
         if (body.containsKey("subAgentIds")) a.setSubAgentIds(asText(body.get("subAgentIds"), 1000));
         if (body.containsKey("isDefault")) a.setIsDefault(toTri(body.get("isDefault")));
+        // 停用开关是二态：null/缺省归一为启用（不沿用 toTri 的「null=继承」语义）
+        if (body.containsKey("disabled")) {
+            a.setDisabled(Integer.valueOf(1).equals(toTri(body.get("disabled"))) ? 1 : 0);
+        }
         if (body.containsKey("queryParams")) a.setQueryParams(asText(body.get("queryParams"), 2000));
         return a;
     }

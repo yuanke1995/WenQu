@@ -572,7 +572,7 @@ public class ChatService {
         Agent picked = agentService.get(requestedAgentId);
         if (picked == null) {
             runtime.addDegradation(degradations, degradedCodes, "agentMissing",
-                    "所选智能体不可用（已删除或你无访问权限），本轮按全局配置回答");
+                    "所选智能体不可用（已删除、已停用或你无访问权限），本轮按全局配置回答");
             log.warn("[AGENT] 请求的智能体 {} 不可解析，本轮按全局配置回答", requestedAgentId);
         }
         return picked;
@@ -617,7 +617,7 @@ public class ChatService {
             if (a == null) {
                 String shown = (m.getName() == null || m.getName().isBlank()) ? m.getId() : m.getName();
                 runtime.addDegradation(degradations, degradedCodes, "agentMentionUnavailable",
-                        "你 @ 的智能体「" + shown + "」已不可访问（被删除或权限变更），本轮由会话绑定的智能体回答");
+                        "你 @ 的智能体「" + shown + "」已不可访问（被删除、已停用或权限变更），本轮由会话绑定的智能体回答");
                 log.warn("[AGENT] @ 提及的智能体 {} 不可解析，本轮回落会话绑定", m.getId());
             } else {
                 first = a;

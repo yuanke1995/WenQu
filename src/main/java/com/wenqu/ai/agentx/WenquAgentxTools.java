@@ -760,10 +760,12 @@ public class WenquAgentxTools {
 
     /**
      * @ 助手提及的强制咨询指令（用户在输入框点名「这一轮先问它」的那一位）。
-     * <p>只在模型真的派得动时才教：派遣被关（游客/分支/审批档/只读沙盒）或点名的那位不在
-     * 可派遣清单里时返回空串——不教一件做不到的事。委派的 agent_delegated 事件这里不发：
-     * 主路径上被点名的助手是「被咨询」不是「作答」，咨询真发生时 agent_consulted 照常下发
-     * （沿用既有口径）；引导是软约束，模型不派时用户看到的是它自己的回答，不会有假徽标。
+     * <p>派遣被关（游客/分支/审批档/只读沙盒）时返回空串——不教一件做不到的事。
+     * 点名的那位存在但在当前智能体的委派清单（{@code subAgentIds} 白名单）之外时，
+     * 给模型一句「如实告知未被授权委派」而不是空串：用户点了名却一声不响，是比拒绝更坏的体验。
+     * 委派的 agent_delegated 事件这里不发：主路径上被点名的助手是「被咨询」不是「作答」，
+     * 咨询真发生时 agent_consulted 照常下发（沿用既有口径）；引导是软约束，模型不派时用户看到的
+     * 是它自己的回答，不会有假徽标。
      */
     public String agentMentionDirective(ChatCommand cmd, ExecutionPolicy policy) {
         List<com.wenqu.ai.dto.ChatRequest.Mention> ms = cmd.getMentions();
@@ -779,10 +781,15 @@ public class WenquAgentxTools {
         }
         if (id == null || !dispatchAllowed(cmd, policy)) return "";
         final String mentionedId = id;
+        String shown = name == null || name.isBlank() ? id : name;
         boolean listed = agentService.consultCandidates(cmd.getAgentId() == null ? "" : cmd.getAgentId())
                 .stream().anyMatch(a -> mentionedId.equals(a.getId()));
-        if (!listed) return "";
-        String shown = name == null || name.isBlank() ? id : name;
+        if (!listed) {
+            // 助手存在但不在当前智能体的委派清单里（subAgentIds 白名单）：用户点了名，不能一声不响
+            if (agentService.get(mentionedId) == null) return "";
+            return "\n（用户点名要求本轮先咨询助手「" + shown + "」，但当前智能体的委派清单里没有这一位："
+                    + "请如实告诉用户它未被授权委派，不要假装咨询过它。）";
+        }
         return "\n（用户点名要求本轮先咨询助手「" + shown + "」：请用 agent_spawn 把与本题相关、"
                 + "落在它职责内的问题交给它查（agent_id 逐字用「" + id + "」），"
                 + "拿到它的结论与资料后再综合作答；它答不了的部分你自己补。）";

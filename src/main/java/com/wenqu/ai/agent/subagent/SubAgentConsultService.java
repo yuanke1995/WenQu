@@ -155,11 +155,17 @@ public class SubAgentConsultService {
         }
         Agent a = agentService.get(id);
         if (a == null) {
+            Agent raw = agentService.findReadable(id);
+            if (raw != null && com.wenqu.ai.service.AgentService.isDisabled(raw)) {
+                return "「" + raw.getName() + "」已停用，本轮不可咨询。请改问清单里的其他助手。";
+            }
             return "查无这位助手：id=" + id + " 不在派遣助手清单里。请按清单里的 agent_id 逐字使用，不要猜。";
         }
         if (!agentService.consultCandidates(ctx.selfAgentId()).stream().anyMatch(x -> x.getId().equals(id))) {
-            // 存在但不可读/已停用：与"猜错 id"分开报，前者是权限问题，排查方向完全不同
-            return "没有权限咨询「" + a.getName() + "」（不在本轮可读范围内）。请改问清单里的其他助手。";
+            // 存在但不在本轮派遣清单：要么读不到，要么父智能体配了委派清单（subAgentIds）而没勾它。
+            // 与"猜错 id"分开报，排查方向完全不同（前者是权限/配置，后者是模型编了个号）
+            return "不能咨询「" + a.getName() + "」：不在本轮派遣清单里（当前智能体的委派清单未包含它，或你无权读取）。"
+                    + "请改问清单里的其他助手。";
         }
 
         if (id.equals(ctx.preConsultedAgentId())) {

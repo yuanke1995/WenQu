@@ -713,7 +713,8 @@ public class AgentEvalService {
     // ==================== 内部 ====================
 
     private Agent mustReadable(String agentId) {
-        Agent a = agentService.get(agentId);
+        // 评测是管理动作：停用的智能体仍要能建评测集/跑回归（验证后再启用），故不看启停
+        Agent a = agentService.findReadable(agentId);
         if (a == null) throw new BizException(404, "智能体不存在或对当前用户不可见");
         return a;
     }

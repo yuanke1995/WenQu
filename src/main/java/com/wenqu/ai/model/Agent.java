@@ -207,9 +207,10 @@ public class Agent {
     private Integer isSubagent;
 
     /**
-     * 主智能体可委派的子智能体 ID 列表：
-     * NULL 或空串 → 不启用委派，编排仍走原有的「多视角并行检索」；
-     * 逗号分隔 → 并行执行这些子智能体（各自用自己的提示词与知识库范围）。
+     * 主智能体可委派的子智能体 ID 列表（运行时的派遣白名单）：
+     * NULL 或空串 → 不设限（本租户全部可读助手都可派遣）；
+     * 逗号分隔 → 只允许派遣这些（已删除或读不到的 id 逐个跳过，失效项在委派编排视图里显形）。
+     * 委派编排视图画的也是这一份清单。
      */
     private String subAgentIds;
 
@@ -229,6 +230,15 @@ public class Agent {
 
     /** 是否默认智能体：0=否 1=是（前端下拉预选，不自动强制应用） */
     private Integer isDefault;
+
+    /**
+     * 停用标记：0/NULL=启用，1=停用。
+     * <p>与删除的区别是配置与版本历史都保留、可随时恢复。停用后对话页不可选、@/委派不可用、
+     * 公开分享链接与 MCP 端点立即失效；管理列表仍对可管理者可见，否则没人能启用回来。
+     * <p>默认智能体不允许停用（见 {@code AgentService.doUpdate}）：否则未指定 agentId 的
+     * 会话会静默掉回全局配置，用户在界面上看不出换人了。
+     */
+    private Integer disabled;
 
     /** 创建人（登录用户 uid） */
     private String createdBy;

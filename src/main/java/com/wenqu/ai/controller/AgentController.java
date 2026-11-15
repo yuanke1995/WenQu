@@ -84,7 +84,11 @@ public class AgentController {
         for (com.wenqu.ai.model.Agent a : agents) {
             a.setPublished(publishedIds.contains(a.getId()) ? 1 : 0);
         }
-        agents = agents.stream().filter(agentService::readable).toList();
+        // 停用行只对可管理者露出（否则没人能把它启用回来）；普通用户按「列表隐藏」口径看不到
+        agents = agents.stream().filter(agentService::readable)
+                .filter(a -> !com.wenqu.ai.service.AgentService.isDisabled(a)
+                        || Integer.valueOf(1).equals(a.getManageable()))
+                .toList();
         return ResultJson.ok(agents);
     }
 
@@ -177,7 +181,8 @@ public class AgentController {
             + "permissionPreset(权限档位 research/standard/autonomous，省略=跟随平台默认档)/"
             + "toolDeny(按名禁用的工具，逗号分隔；省略或空=不禁用)/"
             + "skills/mcps/builtinTools(具体项范围：省略=跟随全局、空串=不使用、逗号串=仅这些)/"
-            + "isSubagent(1=子智能体)/subAgentIds(主智能体可委派的子智能体ID)/isDefault；创建者=当前用户")
+            + "isSubagent(1=子智能体)/subAgentIds(主智能体可委派的子智能体ID)/isDefault；创建者=当前用户；"
+            + "disabled(1=停用，新建一律为启用，忽略该字段)")
     @Permission("agent:write")
     @PostMapping
     public ResultJson create(@RequestBody Map<String, Object> body) {
@@ -185,11 +190,13 @@ public class AgentController {
     }
 
     @Operation(summary = "编辑智能体", description = "仅更新 body 中出现的字段（icon：wenqu=问渠品牌标（内置「问渠」专属）/ emoji；内置智能体的名称不可修改）；"
-            + "工具开关传 null 表示恢复继承；httpTools 的 auth.value 留空=沿用旧凭据；仅创建者/被授权人/管理员可改")
+            + "工具开关传 null 表示恢复继承；httpTools 的 auth.value 留空=沿用旧凭据；"
+            + "disabled(0/1) 为停用开关：停用后对话页不可选、@/委派不可用、分享链接失效，默认智能体不可停用；"
+            + "仅创建者/被授权人/管理员可改")
     @Permission("agent:write")
     @PutMapping("/{id}")
     public ResultJson update(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
-        if (!canManage(agentService.get(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");
+        if (!canManage(agentService.findReadable(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");
         return ResultJson.ok(agentService.update(id, body));
     }
 
@@ -197,7 +204,7 @@ public class AgentController {
     @Permission("agent:delete")
     @DeleteMapping("/{id}")
     public ResultJson delete(@PathVariable("id") String id) {
-        if (!canManage(agentService.get(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");
+        if (!canManage(agentService.findReadable(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");
         agentService.delete(id);
         return ResultJson.ok(Map.of("id", id));
     }
@@ -208,7 +215,7 @@ public class AgentController {
     @Permission("agent:read")
     @GetMapping("/{id}/versions")
     public ResultJson versions(@PathVariable("id") String id) {
-        if (!canManage(agentService.get(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");
+        if (!canManage(agentService.findReadable(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");
         return ResultJson.ok(agentService.listVersions(id));
     }
 
@@ -217,7 +224,7 @@ public class AgentController {
     @Permission("agent:write")
     @PostMapping("/{id}/rollback")
     public ResultJson rollback(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
-        if (!canManage(agentService.get(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");
+        if (!canManage(agentService.findReadable(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");
         Object v = body == null ? null : body.get("version");
         if (v == null) return ResultJson.error("请指定要回滚的版本号");
         int target;
@@ -244,7 +251,7 @@ public class AgentController {
         List<Map<String, Object>> failed = new ArrayList<>();
         for (String id : ids) {
             // get() 对不存在/不可读一律返回 null：逐条进 failed 对账，不静默丢
-            com.wenqu.ai.model.Agent a = agentService.get(id);
+            com.wenqu.ai.model.Agent a = agentService.findReadable(id);
             if (a == null) {
                 failed.add(BatchResults.failItem(id, null, "不存在或无权操作"));
                 continue;
@@ -277,7 +284,7 @@ public class AgentController {
     @GetMapping("/{id}/publish")
     public ResultJson getPublish(@PathVariable("id") String id) {
         if (AgentService.isPlatformSharedAgent(id)) return ResultJson.error("平台预置智能体不支持公开发布");
-        if (!canManage(agentService.get(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");
+        if (!canManage(agentService.findReadable(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");
         var share = agentShareService.getByAgent(id);
         // 未发布时能力位一律 false：多模态开关与分享同生命周期，分享没开就没有"游客能不能发图"这回事
         if (share == null) {
@@ -311,8 +318,12 @@ public class AgentController {
     @PostMapping("/{id}/publish")
     public ResultJson publish(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
         if (AgentService.isPlatformSharedAgent(id)) return ResultJson.error("平台预置智能体不支持公开发布");
-        if (!canManage(agentService.get(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");
+        if (!canManage(agentService.findReadable(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");
         boolean enabled = Boolean.parseBoolean(String.valueOf(body.get("enabled")));
+        // 停用期间分享链接本就不通，再「开启发布」只会生成一条当场失效的链接：fail-loud 让用户先启用
+        if (enabled && AgentService.isDisabled(agentService.findReadable(id))) {
+            return ResultJson.error("智能体已停用：请先启用，再开启公开分享");
+        }
         boolean mcpEnabled = Boolean.parseBoolean(String.valueOf(body.get("mcpEnabled")));
         boolean guestImages = Boolean.parseBoolean(String.valueOf(body.get("guestImages")));
         boolean guestFiles = Boolean.parseBoolean(String.valueOf(body.get("guestFiles")));
@@ -385,7 +396,7 @@ public class AgentController {
     @DeleteMapping("/{id}/publish")
     public ResultJson revokePublish(@PathVariable("id") String id) {
         if (AgentService.isPlatformSharedAgent(id)) return ResultJson.error("平台预置智能体不支持公开发布");
-        if (!canManage(agentService.get(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");
+        if (!canManage(agentService.findReadable(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");
         agentShareService.revoke(id);
         return ResultJson.ok("已撤销分享");
     }

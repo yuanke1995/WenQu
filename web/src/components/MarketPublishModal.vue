@@ -164,7 +164,8 @@ watch(() => props.open, async open => {
     ])
     if (!skillRes || !skillRes.success) throw new Error((skillRes && skillRes.msg) || '读取失败')
     const skills = (skillRes.data?.skills || []).filter(s => s.source === 'user' && !s.disabled)
-    const agents = (agentRes?.data || []).filter(a => a.manageable === 1 && a.isBuiltin !== 1)
+    // 已停用的智能体不可上架：后端同样按「不可用」拒绝（agentService.get 过滤停用），列出来只会点了报错
+    const agents = (agentRes?.data || []).filter(a => a.manageable === 1 && a.isBuiltin !== 1 && a.disabled !== 1)
     // /workflow/list 返回 {mine:[], shared:[]}：可上架=本人的或共享管理命中（与后端 requireManage 同口径）
     const wfAll = [...(wfRes?.data?.mine || []), ...(wfRes?.data?.shared || [])]
     const workflows = wfAll.filter(w => w.mine === true || w.myPermission === 'MANAGE')
