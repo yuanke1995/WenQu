@@ -34,10 +34,7 @@
           <span class="ss-space-name">{{ space.name }}</span>
           <!-- 取数失败时不报条数：那个 0 是「没取回来」的副产品，摆在栏头读起来就是「这个工作区没有会话」 -->
           <span v-if="!space.error" class="ss-space-n">{{ space.count }}</span>
-          <!-- 真实工作区（有 id）整头可点，进工作区页：约定/文件/会话/运行都在那里。
-               「会话」栏（implicit + 没挂工作区）没有工作区可进，保持纯标签 -->
-          <button v-if="space.id" class="ss-space-go" type="button" title="进入工作区" aria-label="进入工作区"
-                  @click.stop="openSpace(space.id)"><right-outlined /></button>
+          <!-- 工作区头只作分组标签：工作区页的目录绑定/文件管理是电脑侧动作，H5 暂不开放入口 -->
         </div>
         <div v-for="s in space.items" :key="s.id" class="ss-row" :class="{ cur: s.id === currentId }">
           <button class="ss-main" type="button" @click="$emit('select', s.id)">
@@ -254,13 +251,6 @@ const doMoveSession = async projectId => {
   }
 }
 
-// 进工作区页（/project/:id 已进窄屏白名单）：先收 sheet 再跳，避免两层叠着
-const openSpace = id => {
-  menuFor.value = null
-  emit('close')
-  router.push('/project/' + id)
-}
-
 const kw = ref('')
 let searchTimer = null
 const onInput = () => {
@@ -376,20 +366,11 @@ const doDelete = () => {
   font-size: 13px; color: var(--app-text2);
 }
 .ss-space-ic { font-size: 13px; color: var(--app-text3); flex: none; }
-/* 名字占满剩余宽度，把「计数 + 进工作区」推到右边。
+/* 名字占满剩余宽度，把计数推到右边。
    不用 .ss-space-n{margin-left:auto} 那套：取数失败时计数整颗不渲染（那个 0 会读成「这里没有会话」），
-   靠它撑右的话箭头就会跟着贴到名字后面，版式一坏一好取决于有没有报错 */
+   靠它撑右的话版式一坏一好取决于有没有报错 */
 .ss-space-name { flex: 1; font-weight: 500; color: var(--app-text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ss-space-n { font-size: 12px; color: var(--app-text3); }
-/* 进工作区：计数右侧的箭头钮。常显（不像 ⋯ 那样平时隐身）——分组头是这棵树里
-   唯一的「往下走一层」入口，藏起来等于没有 */
-.ss-space-go {
-  flex: none; display: inline-flex; align-items: center; justify-content: center;
-  width: 30px; height: 30px; margin: -4px -4px -4px 0;
-  border: 0; border-radius: 8px; background: transparent; cursor: pointer;
-  color: var(--app-text3); font-size: 13px; touch-action: manipulation;
-}
-.ss-space-go:active { color: var(--app-accent); background: var(--app-accent-weak); }
 .ss-space-empty { padding: 4px 2px 6px 22px; font-size: 12px; color: var(--app-text3); }
 /* 分组取数失败：一行原因 + 一颗重试钮（钮按 44px 热区口径，与 sheet 里其它动作同标准） */
 .ss-space-err {

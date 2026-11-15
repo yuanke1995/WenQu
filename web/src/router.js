@@ -112,6 +112,13 @@ router.beforeEach(async to => {
   // 反向同判：在 /m/chat 上放大窗口/接上鼠标后回到 PC 布局。
   if (to.path === '/chat' && preferMobileShell()) return { path: '/m/chat', query: to.query, replace: true }
   if (to.path === '/m/chat' && !preferMobileShell()) return { path: '/chat', query: to.query, replace: true }
+  // 工作区在 H5 暂不开放：目录绑定与文件管理操作的是电脑上的执行器目录，手机上只剩浏览/下载，
+  // 入口已收（会话 sheet 的工作区头只作分组）。触屏设备直达 /project/:id 一并送回移动壳；
+  // 鼠标用户拖窄窗口不命中此判据，仍按原样进工作区页。
+  if ((to.path === '/project' || to.path.startsWith('/project/')) && preferMobileShell()) {
+    message.info('工作区请用电脑访问')
+    return { path: '/m/chat', replace: true }
+  }
   // 标准档：企业面整体不出现（多租户/安全运维）。后端管理端点仍由 RBAC 兜底，
   // 这里先保证用户不会从一个可见入口走进去。
   if (profileSync() === 'standard' && (to.path === '/tenants' || to.path === '/security')) {
