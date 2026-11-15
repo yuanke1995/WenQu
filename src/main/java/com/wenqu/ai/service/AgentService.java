@@ -746,16 +746,28 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
                 a.setPermissionPreset(p.code());
             }
         }
-        // 工具黑名单：逐个核对名字在注册中心里存在。存一个拼错的名字不会报错、只会静默不生效——
+        // 工具黑名单：逐个核对名字。存一个拼错的名字不会报错、只会静默不生效——
         // 「我明明禁了 webSearch，它怎么还在被调用」这种问题从界面上完全看不出来，所以在写入口就拒。
-        // 只核对静态声明的工具：MCP 动态工具的名字由外部 server 自定、本来不在注册中心，
-        // 那族允许存任意名字（运行时按名逐字匹配剔除）。
+        // 但只有静态声明的工具核对得了：MCP 工具名由外部 server 自定（ToolInventoryService 对 MCP 族
+        // 只给「按用户动态接入」一行），离线无从核对；而运行时 ExecutionPolicy#denies 本来就两种写法
+        // 都认（挂载名 wen_qu_browser_click 与 server 裸名 browser_click）。所以认不出的名字只在这个
+        // 智能体<根本不挂 MCP 族>、且不是库里已有的旧值时判为拼错——否则平台预置的「网页操作助手」
+        // 这类带 MCP 裸名的黑名单，一打开编辑页点保存就会被整串拒掉。旧值放行是为了「关掉 MCP 后
+        // 保留原黑名单另存其它字段」这种编辑不被卡住。
         if (body.containsKey("toolDeny")) {
             Object rawDeny = body.get("toolDeny");
             String text = rawDeny == null ? null : String.valueOf(rawDeny).trim();
             if (text == null || text.isEmpty()) {
                 a.setToolDeny(null);
             } else {
+                // toolMcp 三态：0=不挂 MCP 族；1=按 mcps 指定挂；null=跟随全局（可能挂）
+                boolean mcpFamilyPossible = a.getToolMcp() == null || a.getToolMcp() != 0;
+                java.util.Set<String> before = new java.util.HashSet<>();
+                if (a.getToolDeny() != null) {   // 此刻尚未被本次覆盖，仍是库里的旧值（新建为 null）
+                    for (String s : a.getToolDeny().split(",")) {
+                        if (!s.isBlank()) before.add(s.trim());
+                    }
+                }
                 List<String> names = new ArrayList<>();
                 List<String> unknown = new ArrayList<>();
                 for (String part : text.split(",")) {
@@ -765,14 +777,16 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
                     if (toolRegistry.find(n).isEmpty()
                             && !com.wenqu.ai.agent.tool.ToolFamily.looksLikeMcpTool(n)
                             && !httpToolService.opNames(a.getHttpTools()).contains(n)
-                            && !workflowToolService.opNames(a.getWorkflowTools()).contains(n)) {
+                            && !workflowToolService.opNames(a.getWorkflowTools()).contains(n)
+                            && !mcpFamilyPossible
+                            && !before.contains(n)) {
                         unknown.add(n);
                     }
                     names.add(n);
                 }
                 if (!unknown.isEmpty()) {
                     throw new com.wenqu.ai.common.BizException("工具黑名单里有平台不认识的名字："
-                            + String.join("、", unknown) + "（工具名以配置页下拉为准；外部 MCP 工具可直接按名填写）");
+                            + String.join("、", unknown) + "（工具名以配置页下拉为准；外部 MCP 工具可直接按名填写，需先启用「MCP 外部工具」）");
                 }
                 a.setToolDeny(names.isEmpty() ? null : String.join(",", names));
             }
