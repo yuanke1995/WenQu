@@ -1,6 +1,25 @@
 // 提问卡动作（actions 层）：一次性批量提交 / 忽略（与超时同语义）。
 import { askAnswerText, continuedAnswerPayload } from './askUser.js'
 
+/**
+ * 答复送达后让面板多留的这一拍：只为让「已提交」这个态被看见，随后即撤卡。
+ * <p>不干等后端那条 askUser 终态帧——它要等框架续跑把工具结算写进事件流，通常还要几秒，
+ * 而面板此刻顶替着输入框：一张已交卷的卡占着输入位，想补一句话都没地方打。
+ * 与分享页同一口径（ShareChatPage 提交后 700ms 撤面板）。
+ */
+export const ASK_ANSWERED_SETTLE_MS = 700
+
+/** 答完的卡按一拍节拍撤下；终态帧先撤了（或队列里顶上来下一张）就什么都不做。 */
+const retireAnsweredSoon = (m, a, ctx) => {
+  // 排队中的下一张不在这里顶上来：终态帧按工具名认卡，本地抢在帧前撤、把下一张暴露出去，
+  // 那一帧随后会把它当成自己的卡再撤一次——有队列时仍按帧轮换
+  if (Array.isArray(m.askQueue) && m.askQueue.length) return
+  const later = ctx.setTimer || ((fn, ms) => setTimeout(fn, ms))
+  later(() => {
+    if (m.ask === a) ctx.retireAskCard(m)
+  }, ASK_ANSWERED_SETTLE_MS)
+}
+
 /** 一卡多问批量提交；未作答的题留空，后端把「这一题没答」回给模型。 */
 export const submitAsk = async (m, ctx) => {
   const a = m && m.ask
@@ -33,6 +52,7 @@ export const submitAsk = async (m, ctx) => {
       return
     }
     ctx.scrollSoft()
+    retireAnsweredSoon(m, a, ctx)
   } catch (e) {
     ctx.notify.error(e.message || '回答提交失败')
     if (m.ask) m.ask.busy = false

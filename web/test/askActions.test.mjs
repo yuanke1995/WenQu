@@ -16,6 +16,8 @@ const make = (over = {}) => {
     switchSession: sid => calls.switch.push(sid),
     currentSid: () => 's1',
     scrollSoft: () => { calls.scroll++ },
+    // 收卡那一拍在测试里当场执行：真实定时器会把断言拖过 700ms
+    setTimer: fn => fn(),
     ...over
   }
   return { a, m: { ask: a }, calls, ctx }
@@ -28,6 +30,31 @@ test('提交：正常答完标记 answered、发通知并贴底', async () => {
   assert.deepEqual(calls.notif, ['chat'])
   assert.equal(calls.scroll, 1)
   assert.equal(a.busy, true)
+})
+
+test('提交：答完留一拍即撤卡，不等后端 askUser 终态帧', async () => {
+  const { m, calls, ctx } = make()
+  await submitAsk(m, ctx)
+  assert.equal(calls.retire, 1)
+})
+
+test('提交：终态帧先撤了卡，本地那一拍不重复撤、也不动顶上来的下一张', async () => {
+  const timers = []
+  const { a, m, calls, ctx } = make({ setTimer: fn => { timers.push(fn) } })
+  await submitAsk(m, ctx)
+  const next = { id: 'a2' }
+  m.ask = next                 // 后端终态帧先到，撤卡并把排队的下一张顶上来
+  timers.forEach(fn => fn())
+  assert.equal(calls.retire, 0)
+  assert.equal(m.ask, next)
+  assert.equal(a.answered, true)
+})
+
+test('提交：还有排队的卡时不本地撤，仍按终态帧一张一张轮换', async () => {
+  const { m, calls, ctx } = make()
+  m.askQueue = [{ id: 'a2' }]
+  await submitAsk(m, ctx)
+  assert.equal(calls.retire, 0)
 })
 
 test('提交：失败提示并解锁；恢复态失败撤卡重载', async () => {

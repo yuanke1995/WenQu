@@ -105,7 +105,8 @@ export const useDeepAsk = ctx => {
 
   // ==================== 智能体提问面板 ====================
   // 当前会话存在挂起中的提问时，底部聊天输入框整块让位给提问面板（模型在等答案，此刻也没法发新消息）；
-  // 答复后工具终态到达（msg.ask 清空），面板撤下、输入框回归。键盘在「选项+自定义输入行」间循环
+  // 答复提交成功后再留一拍「已提交」，面板即撤下、输入框回归（见 askActions#ASK_ANSWERED_SETTLE_MS），
+  // 不干等后端那条 askUser 终态帧。键盘在「选项+自定义输入行」间循环
   const pendingAsk = computed(() => {
     const list = messages()
     for (let i = list.length - 1; i >= 0; i--) {
