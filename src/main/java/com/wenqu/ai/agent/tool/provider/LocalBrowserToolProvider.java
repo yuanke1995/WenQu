@@ -5,8 +5,8 @@ import com.wenqu.ai.agent.tool.ToolDescriptor;
 import com.wenqu.ai.agent.tool.ToolFamily;
 import com.wenqu.ai.agent.tool.ToolFamilyProvider;
 import com.wenqu.ai.agent.tool.ToolMountContext;
+import com.wenqu.ai.service.BrowserLocationService;
 import com.wenqu.ai.service.LocalBrowserTools;
-import com.wenqu.ai.service.UserConfigService;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.stereotype.Component;
 
@@ -30,16 +30,12 @@ import java.util.List;
 @Component
 public class LocalBrowserToolProvider implements ToolFamilyProvider {
 
-    /** 个人设置：浏览器执行位置（空=本地优先，维持历史行为） */
-    private static final String LOCATION_KEY = "browser.location";
-    private static final String LOCATION_BUILTIN = "builtin";
-
     private final LocalBrowserTools tools;
-    private final UserConfigService userConfigService;
+    private final BrowserLocationService browserLocation;
 
-    public LocalBrowserToolProvider(LocalBrowserTools tools, UserConfigService userConfigService) {
+    public LocalBrowserToolProvider(LocalBrowserTools tools, BrowserLocationService browserLocation) {
         this.tools = tools;
-        this.userConfigService = userConfigService;
+        this.browserLocation = browserLocation;
     }
 
     @Override
@@ -77,8 +73,7 @@ public class LocalBrowserToolProvider implements ToolFamilyProvider {
         // 执行器不在线=这台电脑没开执行器，本族整体不挂（模型看不见，不会对着空能力空转）
         // 用户选了「内置浏览器」也整体不挂，模型只能用云端 browser_*
         boolean mount = tools.onlineExecutor(mc.userId()) != null
-                && !LOCATION_BUILTIN.equalsIgnoreCase(
-                        userConfigService.personalValue(mc.userId(), LOCATION_KEY));
+                && !browserLocation.builtin(mc.userId());
         return mountFiltered(mc, d -> mount && exposes(d, mc));
     }
 }

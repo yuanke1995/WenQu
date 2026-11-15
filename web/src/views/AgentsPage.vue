@@ -837,7 +837,7 @@ const CAPS = [
     detail: '模型可自主联网检索；命中结果登记为网页来源，与知识库来源共用引用编号',
     kind: 'switch', path: ['webSearch', 'enabled'], gate: ['tool', 'enabled'] },
   { key: 'toolMcp', group: '工具与扩展', label: 'MCP 外部工具', desc: '连接外部 MCP 服务', icon: ApiOutlined,
-    detail: '限定连哪几个 MCP 服务；也可以「不使用」或按名禁用其中几个',
+    detail: '跟随系统=挂你登记的全部已启用 MCP（不含平台内置）；指定=只挂勾选的（可勾平台内置）',
     kind: 'list', modeKey: 'mcpMode', listKey: 'mcps', optionsKey: 'mcpOptions',
     gate: ['tool', 'enabled'] },
   // HTTP 工具（OpenAPI 导入）：工具集是智能体自有配置（不是个人资产引用），开启后在本行下方管理；
@@ -862,7 +862,7 @@ const CAPS = [
   // 只对该资源的归属人生效（别人的同名资源不会被拿来顶替）；内置技能存裸名，对所有人按名字生效。
   // 没有独立的全局开关（配置里已无 skill.enabled），只受「工具调用」总闸制约。
   { key: 'toolSkill', group: '执行与交付', label: '技能 Skills', desc: '按需调用技能，正文逐字进提示词', icon: AppstoreOutlined,
-    detail: '限定用哪几个技能',
+    detail: '跟随系统=使用全部可用技能；指定=只注入勾选的技能',
     kind: 'list', modeKey: 'skillMode', listKey: 'skills', optionsKey: 'skillOptions',
     gate: ['tool', 'enabled'] }
 ]
@@ -871,8 +871,9 @@ const CAP_GROUPS = ['检索与知识', '工具与扩展', '执行与交付']
 const capsOfGroup = g => CAPS.filter(c => c.group === g)
 // 开关型三态：''=跟随系统默认 / '1'=开启 / '0'=关闭（对应后端 tool_* 的 1/0/null）
 // 多实例能力：跟随系统默认 / 指定（选「指定」才展开具体项多选）/ 不使用
-// 两者的「跟随系统」段都点名系统默认当前是哪一侧（gv 小字）：默认值来自管理员侧的「系统设置」，
-// 用「跟随系统」措辞，免得普通用户把它读成"我自己的全局"
+// 开关型的「跟随系统」段点名默认在哪一侧（gv 小字），默认值来自管理员侧的「系统设置」。
+// 多实例能力不点名总开关开/关：MCP 的「跟随」是"挂个人全部、不含平台内置"，技能是"用全部"，
+// 写成「（开）」会被读成"这一族已经挂上了"（2026-11-15 实测踩到）
 // 记忆域三态（对外能力第二批）：''=跟随用户级记忆 1=专属 2=叠加；后端认 0/1/2/null
 // 唯一不叫「跟随系统」的跟随档：它的默认值是用户自己的全局记忆，不是管理员侧的系统设置
 const memoryModeOptions = [
@@ -881,6 +882,7 @@ const memoryModeOptions = [
   { label: '叠加（独立记忆 + 用户级记忆只读打底）', value: '2' }
 ]
 const globalSuffix = c => {
+  if (c.kind === 'list') return ''
   const t = globalText(c)
   return t ? '（' + (t.startsWith('关闭') ? '关' : '开') + '）' : ''
 }

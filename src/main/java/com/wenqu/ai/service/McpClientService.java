@@ -107,6 +107,8 @@ public class McpClientService {
     private final ConfigService configService;
     /** 本机浏览器工具（判定执行器在线用）：在线时云端平台浏览器让位，避免两套浏览器给模型两种结论 */
     private final LocalBrowserTools localBrowserTools;
+    /** 个人设置的浏览器执行位置：选了内置浏览器时不再让位给本机（本机族此时也不挂） */
+    private final BrowserLocationService browserLocation;
 
     /** 连接池按用户隔离：uid → 该用户的连接与状态 */
     private final Map<String, UserPool> pools = new ConcurrentHashMap<>();
@@ -133,13 +135,16 @@ public class McpClientService {
                             ConfigCryptoService cryptoService, McpCallLogMapper mcpCallLogMapper,
                             ConfigService configService,
                             /** 判定「本机执行器在线」用：在线时云端平台浏览器让位给本机 localBrowser*（见 toolCallbacks） */
-                            LocalBrowserTools localBrowserTools) {
+                            LocalBrowserTools localBrowserTools,
+                            /** 个人设置「内置浏览器」：选中时本机族不挂，云端也不再让位 */
+                            BrowserLocationService browserLocation) {
         this.userMcpMapper = userMcpMapper;
         this.labelService = labelService;
         this.cryptoService = cryptoService;
         this.mcpCallLogMapper = mcpCallLogMapper;
         this.configService = configService;
         this.localBrowserTools = localBrowserTools;
+        this.browserLocation = browserLocation;
     }
 
     @PreDestroy
@@ -208,9 +213,12 @@ public class McpClientService {
         List<ToolCallback> callbacks = new ArrayList<>();
         Map<String, String> failed = new LinkedHashMap<>();
         long now = System.currentTimeMillis();
-        // 本机执行器在线时，云端平台浏览器整族让位：两套浏览器并存会让模型拿到两种结论
-        // （云端看不到 localhost 报「连接被拒绝」，本机却已打开页面），回答与窗口会对不上。
-        boolean localPreferred = localBrowserTools != null && localBrowserTools.onlineExecutor(uid) != null;
+        // 本机执行器在线、且用户没选「内置浏览器」时，云端平台浏览器整族让位：两套浏览器并存会让
+        // 模型拿到两种结论（云端看不到 localhost 报「连接被拒绝」，本机却已打开页面）。
+        // 选了内置浏览器时本机族本来就不挂，这里若继续让位会导致两套都没有。
+        boolean localPreferred = localBrowserTools != null
+                && localBrowserTools.onlineExecutor(uid) != null
+                && !browserLocation.builtin(uid);
         for (Map.Entry<String, McpSyncClient> entry : snap.entrySet()) {
             if (onlyServers != null && !onlyServers.contains(entry.getKey())) continue;
             // 平台服务不参与「未指定 = 全部」：否则浏览器这类能力会随平台升级落进每一个现存助手的
