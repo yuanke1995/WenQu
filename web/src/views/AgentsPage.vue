@@ -2095,6 +2095,18 @@ const resetOverrides = () => {
 
 
 // ==================== 数据加载 ====================
+/** 只重拉智能体清单、不翻 loading：启停这类原地动作后整页会闪一次骨架屏，看不出改了什么又丢了位置 */
+const refreshAgentsQuiet = async () => {
+  try {
+    const ar = await listAgents()
+    if (!ar || !ar.success || !Array.isArray(ar.data)) return
+    agents.value = ar.data
+    // 与 reload 同一口径：已被删掉的 id 从批量勾选集合里清掉
+    const alive = new Set(agents.value.map(x => x.id))
+    selected.value = selected.value.filter(id => alive.has(id))
+  } catch (e) { /* 静默：列表停在旧数据，下次刷新会补齐 */ }
+}
+
 const reload = async () => {
   loading.value = true
   try {
@@ -2550,7 +2562,7 @@ const doToggleDisabled = async (id, disabled) => {
     if (r.success) {
       message.success(disabled ? '已停用' : '已启用')
       if (editing.value && String(editingId.value) === String(id)) form.value.disabled = disabled
-      await reload()
+      await refreshAgentsQuiet()
       return true
     }
     message.error(r.msg || '操作失败')
