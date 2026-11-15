@@ -638,6 +638,7 @@ public class SecurityConfig implements WebMvcConfigurer {
             //     放过去等于让一把 Key 拥有该账号的账号自服务能力（改密/改设置/清会话）。fail-loud 才看得见。
             if (!v1Path && rec != null && !isAuthEndpoint(path) && isPublicUserEndpoint(method, path)
                     && isKeyDeniedEndpoint(method, path)) {
+                com.wenqu.ai.openapi.OpenApiCallAttr.mark(com.wenqu.ai.openapi.OpenApiCallAttr.KEY_DENIED);
                 response.setStatus(HttpServletResponse.SC_FORBIDDEN);
                 response.setContentType("application/json;charset=UTF-8");
                 response.getWriter().write(accessErrorJson(path, 403, "permission_error",
@@ -658,6 +659,11 @@ public class SecurityConfig implements WebMvcConfigurer {
                 if (path.equals("/api/ai/auth/me")) return true;
                 // webhook 入站是「令牌即凭据」的公开通道，带不带 Key 都应可达（与改造前同口径）
                 if (isWorkflowWebhookEndpoint(method, path)) return true;
+                // 归因：v1 的 403 与「Key 碰了账号自服务面」的 403 解法完全不同，
+                // 台账要能分开（前者改契约登记/换端点，后者改用登录态）
+                com.wenqu.ai.openapi.OpenApiCallAttr.mark(v1Path
+                        ? com.wenqu.ai.openapi.OpenApiCallAttr.ENDPOINT_NOT_REGISTERED
+                        : com.wenqu.ai.openapi.OpenApiCallAttr.KEY_DENIED);
                 response.setStatus(HttpServletResponse.SC_FORBIDDEN);
                 response.setContentType("application/json;charset=UTF-8");
                 response.getWriter().write(accessErrorJson(path, 403, "permission_error",

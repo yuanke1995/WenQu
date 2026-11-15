@@ -1034,6 +1034,8 @@ export const rotateApiKey = id => request(`/api-key/${id}/rotate`, { method: 'PO
 export const deleteApiKey = id => request(`/api-key/${id}`, { method: 'DELETE' })
 /** scope 名册：全部合法 scope 与默认集（签发/编辑弹窗选项数据源） */
 export const getApiKeyScopes = () => request('/api-key/scopes')
+/** 接入漏斗（B5）：签发/首调率/7日留存/成功率/失败原因/端点热度，窗口 1–90 天 */
+export const getApiKeyInsights = (days = 30) => request(`/api-key/insights?days=${days}`)
 /** 设置 Key 能力范围（整组替换；空数组=恢复默认集） */
 export const setApiKeyScopes = (id, scopes) =>
   request(`/api-key/${id}/scopes`, { method: 'PUT', body: JSON.stringify({ scopes }) })

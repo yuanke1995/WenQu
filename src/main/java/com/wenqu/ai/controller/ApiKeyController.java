@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.LocalDate;
@@ -47,6 +48,7 @@ public class ApiKeyController {
 
     private final ApiKeyService apiKeyService;
     private final com.wenqu.ai.openapi.OpenApiRegistry openApiRegistry;
+    private final com.wenqu.ai.service.openapi.OpenApiFunnelService funnelService;
 
     @Operation(summary = "Key 列表", description = "不含明文与哈希，仅前缀与使用/过期状态；谁建归谁（只看得到自己签发的 Key）")
     @Permission("apikey:read")
@@ -167,6 +169,14 @@ public class ApiKeyController {
     public ResultJson delete(@PathVariable("id") String id) {
         apiKeyService.delete(id);
         return ResultJson.ok(Map.of("id", id));
+    }
+
+    @Operation(summary = "接入漏斗", description = "签发 / 首调率 / 7 日留存 / 成功率 / 失败原因与端点热度；"
+            + "只统计当前用户可见的 Key（Key 是个人资产），窗口 1–90 天")
+    @Permission("apikey:read")
+    @GetMapping("/insights")
+    public ResultJson insights(@RequestParam(value = "days", defaultValue = "30") int days) {
+        return ResultJson.ok(funnelService.insights(days));
     }
 
     /** 过期时间：接受 yyyy-MM-dd（当天 23:59:59 失效）或 yyyy-MM-ddTHH:mm[:ss]；空=长期有效 */

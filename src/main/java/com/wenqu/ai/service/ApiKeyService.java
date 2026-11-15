@@ -3,6 +3,7 @@ package com.wenqu.ai.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.wenqu.ai.common.BizException;
+import com.wenqu.ai.openapi.OpenApiCallAttr;
 import com.wenqu.ai.openapi.OpenApiScopes;
 import com.wenqu.ai.mapper.ApiKeyMapper;
 import com.wenqu.ai.model.ApiKey;
@@ -277,6 +278,8 @@ public class ApiKeyService {
     public void requireScope(String apiKeyId, String scope) {
         if (apiKeyId == null || apiKeyId.isBlank()) return;  // JWT 通道直通
         if (hasScope(apiKeyId, scope)) return;
+        // 归因写「缺哪一个」：否则看板上所有缺 scope 的 403 缩成同一行，看不出该补什么
+        markKeyFailure(com.wenqu.ai.openapi.OpenApiCallAttr.SCOPE_DENIED + ":" + scope);
         throw new BizException(403, "该 API Key 未开通「" + scope + "」能力；请在问渠「个人设置 → API 密钥」"
                 + "编辑该 Key 的权限范围后重试");
     }
@@ -333,20 +336,46 @@ public class ApiKeyService {
     /**
      * 校验 API Key：哈希命中 + 未停用 + 未过期 → 返回 Key 记录（供记录使用时间），否则 null。
      * 不做恒定时间比较——查的是哈希，攻击者也无法通过时序推断明文。
+     * <p>
+     * 失败分支顺带记一笔归因（{@link com.wenqu.ai.openapi.OpenApiCallAttr}）：状态码只能说明
+     * 「401 了」，说不出是「Key 过期」还是「Key 被停用」，而这两种的解法不同。归因只在当前请求上，
+     * 不参与放行判定——这里改了判定才是事故。
      */
     public ApiKey verify(String plainKey) {
-        if (plainKey == null || plainKey.isBlank() || !plainKey.startsWith(PREFIX)) return null;
+        if (plainKey == null || plainKey.isBlank() || !plainKey.startsWith(PREFIX)) {
+            if (plainKey != null && !plainKey.isBlank()) markKeyFailure(OpenApiCallAttr.KEY_INVALID);
+            return null;
+        }
         try {
             ApiKey k = mapper.selectOne(new LambdaQueryWrapper<ApiKey>()
                     .eq(ApiKey::getKeyHash, sha256(plainKey)).last("LIMIT 1"));
-            if (k == null) return null;
-            if (k.getDisabled() != null && k.getDisabled() == 1) return null;
-            if (k.getExpireAt() != null && k.getExpireAt().isBefore(LocalDateTime.now())) return null;
+            if (k == null) {
+                markKeyFailure(OpenApiCallAttr.KEY_INVALID);
+                return null;
+            }
+            if (k.getDisabled() != null && k.getDisabled() == 1) {
+                markKeyFailure(OpenApiCallAttr.KEY_DISABLED);
+                return null;
+            }
+            if (k.getExpireAt() != null && k.getExpireAt().isBefore(LocalDateTime.now())) {
+                markKeyFailure(OpenApiCallAttr.KEY_EXPIRED);
+                return null;
+            }
             return k;
         } catch (Exception e) {
             // fail-closed：校验异常不放行（Key 是外部入口，宁可拒绝不可误放）
             log.warn("[API-KEY] 校验异常（拒绝）: {}", e.getMessage());
+            markKeyFailure(OpenApiCallAttr.KEY_INVALID);
             return null;
+        }
+    }
+
+    /** 归因标记（失败原因落台账用；埋点不能反过来影响校验路径，异常一律吞掉） */
+    private static void markKeyFailure(String reason) {
+        try {
+            com.wenqu.ai.openapi.OpenApiCallAttr.mark(reason);
+        } catch (Exception ignored) {
+            // 不在 Web 请求里（单测/调度）时无上下文可标，属正常
         }
     }
 

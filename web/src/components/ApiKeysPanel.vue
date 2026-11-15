@@ -13,9 +13,61 @@
       </div>
       <div class="key-bar-actions">
         <a-tooltip title="刷新列表">
-          <button class="app-icon-btn" aria-label="刷新 Key 列表" :disabled="keysLoading" @click="loadKeys"><reload-outlined /></button>
+          <button class="app-icon-btn" aria-label="刷新 Key 列表" :disabled="keysLoading" @click="refreshAll"><reload-outlined /></button>
         </a-tooltip>
         <button class="app-btn small" @click="openCreateKey">＋ 创建 API Key</button>
+      </div>
+    </div>
+
+    <!-- 接入漏斗（B5）：签发之后到底有没有被用起来、卡在哪一步。
+         数据来自后端 v1 调用台账（按日聚合 + 现场归因），这里只负责展示，不另算口径。 -->
+    <div v-if="keys.length && funnel" class="key-funnel">
+      <div class="kf-head">
+        <span class="kf-title">接入情况</span>
+        <span class="key-dim">近 {{ funnel.days }} 天</span>
+        <span class="kf-kpi"><b>{{ funnel.calls.total }}</b> 次调用</span>
+        <span class="kf-kpi">成功率 <b :class="{ 'kf-bad-text': funnel.calls.successRate !== null && funnel.calls.successRate < 0.9 }">
+          {{ fmtPct(funnel.calls.successRate) }}</b></span>
+        <span class="kf-kpi" title="窗口内签发的 Key 中，至少成功调用过一次的占比">首调率
+          <b>{{ fmtPct(funnel.keySummary.firstCallRate) }}</b></span>
+        <span class="kf-kpi" title="签发满 7 天的 Key 中，第 7–13 天仍在成功调用的占比">7 日留存
+          <b>{{ fmtPct(funnel.keySummary.retentionRate) }}</b></span>
+        <button class="kf-toggle" @click="funnelOpen = !funnelOpen">
+          {{ funnelOpen ? '收起' : '详情' }}
+        </button>
+      </div>
+
+      <!-- 趋势：一根柱一天，实色=成功、浅色=失败；没调用的日子留空，一眼能看出「哪天才开始真的接上」 -->
+      <div v-if="funnelBars.length" class="kf-trend" :title="funnel.since + ' 起逐日调用'">
+        <span v-for="b in funnelBars" :key="b.date" class="kf-bar-wrap" :title="b.title">
+          <span v-if="b.empty" class="kf-bar-empty"></span>
+          <template v-else>
+            <span class="kf-bar-bad" :style="{ height: b.badH + 'px' }"></span>
+            <span class="kf-bar-ok" :style="{ height: b.okH + 'px' }"></span>
+          </template>
+        </span>
+      </div>
+
+      <div v-if="funnelOpen" class="kf-body">
+        <div class="kf-col">
+          <div class="kf-col-title">失败原因 <span class="key-dim">（按次数排序，前三条基本就是接入方卡住的地方）</span></div>
+          <div v-if="!funnel.reasons.length" class="kf-empty-line">窗口内没有失败调用。</div>
+          <div v-for="r in funnel.reasons.slice(0, 6)" :key="r.reason" class="kf-row">
+            <div class="kf-row-head">
+              <span class="kf-row-label">{{ r.label }}</span>
+              <span class="kf-row-calls">{{ r.calls }} 次 · {{ fmtPct(r.share) }}</span>
+            </div>
+            <div v-if="r.action" class="kf-row-hint">{{ r.action }}</div>
+          </div>
+        </div>
+        <div class="kf-col">
+          <div class="kf-col-title">端点热度 <span class="key-dim">（按契约模板聚合，不同 runId 不会拆成多行）</span></div>
+          <div v-if="!funnel.endpoints.length" class="kf-empty-line">窗口内没有调用。</div>
+          <div v-for="e in funnel.endpoints.slice(0, 8)" :key="e.endpoint" class="kf-row kf-row--ep">
+            <code class="kf-ep">{{ e.endpoint }}</code>
+            <span class="kf-row-calls">{{ e.calls }} 次<span v-if="e.calls - e.ok > 0" class="kf-bad"> · 失败 {{ e.calls - e.ok }}</span></span>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -78,6 +130,12 @@
         <template v-else-if="column.key === 'usage30d'">
           <span class="key-dim" :title="'近 30 天：' + (record.usage30dCalls || 0) + ' 次调用 / ' + (record.usage30dTokens || 0) + ' tokens（含 OpenAI 兼容端点）'">
             {{ (record.usage30dCalls || 0) }} 次 · {{ fmtTokens(record.usage30dTokens || 0) }}
+          </span>
+          <!-- 这把 Key 在窗口内有失败调用时单独标出来：看板上「整体成功率」不痛不痒，
+               真正会出事的是「某一把 Key 一直在 403」 -->
+          <span v-if="keyFailed(record.id)" class="kf-bad"
+                :title="'近 ' + (funnel?.days || 30) + ' 天有 ' + keyFailed(record.id) + ' 次失败（含未带凭据/缺 scope 等，见上方「接入情况 → 失败原因」'">
+            · 失败 {{ keyFailed(record.id) }}
           </span>
         </template>
         <template v-else-if="column.key === 'created'">
@@ -365,13 +423,56 @@ import dayjs from 'dayjs'
 import { CheckOutlined, CopyOutlined, EyeInvisibleOutlined, EyeOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons-vue'
 import { listApiKeys, createApiKey, setApiKeyDisabled, setApiKeyMcp, deleteApiKey,
          updateApiKey, revealApiKey, getMcpAuditLogs, getMcpAuditSummary,
-         getApiKeyScopes, setApiKeyScopes, rotateApiKey } from '../api'
+         getApiKeyScopes, setApiKeyScopes, rotateApiKey, getApiKeyInsights } from '../api'
 import { authUser } from '../utils/auth'
 import { writeClipboard } from '../utils/clipboard'
 import { publicUrl } from '../utils/publicUrl'
 
 const keys = ref([])
 const keysLoading = ref(false)
+
+// ==================== 接入漏斗（B5） ====================
+// 口径全部在后端 OpenApiFunnelService：签发量/首调率/留存的分母写在那里，前端只做展示，
+// 免得同一个比率在两端各算一遍、迟早对不上。
+const funnel = ref(null)
+const funnelOpen = ref(false)
+const FUNNEL_DAYS = 30
+const loadInsights = async () => {
+  try {
+    const r = await getApiKeyInsights(FUNNEL_DAYS)
+    if (r.success && r.data) funnel.value = r.data
+  } catch (e) { /* 看板是增强信息：拉取失败不挡 Key 列表，也不弹错 */ }
+}
+const fmtPct = v => (v === null || v === undefined ? '—' : (v * 100).toFixed(v > 0 && v < 0.1 ? 1 : 0) + '%')
+/** 该 Key 窗口内的失败次数（0 不显示）：逐把 Key 看比看整体成功率更能定位问题 */
+const keyFailed = id => {
+  const row = funnel.value?.perKey?.[id]
+  return row && row.failed > 0 ? row.failed : 0
+}
+/**
+ * 趋势柱：一天一根，成功在下、失败在上（堆叠顺序与视觉一致）。
+ * 高度按窗口内单日最大值归一，不写死固定高度——月初只有 1 次调用时也能看出「那天开始接上了」。
+ */
+const funnelBars = computed(() => {
+  const daily = funnel.value?.daily || []
+  if (!daily.length) return []
+  const max = Math.max(...daily.map(d => d.calls), 1)
+  const H = 26
+  return daily.map(d => {
+    const total = Math.max(d.calls, 0)
+    if (!total) {
+      // 没调用的日子只留一道 1px 基线：既让时间轴完整，又不至于把「空窗」画成有数据
+      return { date: d.date, empty: true, okH: 0, badH: 0, title: `${d.date}：无调用` }
+    }
+    return {
+      date: d.date,
+      empty: false,
+      okH: Math.max(2, Math.round((d.ok / max) * H)),
+      badH: d.failed > 0 ? Math.max(2, Math.round((d.failed / max) * H)) : 0,
+      title: `${d.date}：${d.calls} 次（成功 ${d.ok}，失败 ${d.failed}）`
+    }
+  })
+})
 // 列宽只能走 :columns + table-layout="fixed"：写成 <a-table-column width="..."> 不进 colgroup，
 // 浏览器按内容排宽——点「眼睛」回显 48 字明文时 Key 列被撑到 500px，其余列挤成竖排两行字，行高翻三倍。
 // scroll.x 必须 ≥ 固定列宽总和（850）+ 名称列保底（96）：定宽列之和超过 scroll.x 时，
@@ -533,6 +634,8 @@ const loadKeys = async () => {
   } catch (e) { /* 拉取失败不打扰，保留上次列表 */ }
   finally { keysLoading.value = false }
 }
+/** 工具栏刷新：列表与漏斗一起拉（一个是凭据清单，一个是凭据的使用情况，只刷一半会显示矛盾的数据） */
+const refreshAll = () => { loadKeys(); loadInsights() }
 /** 有效期选择 → 提交给后端的 expireAt（yyyy-MM-dd；空串=长期）。创建与编辑两个弹窗共用 */
 const expirePayload = form => {
   const m = form.expireMode
@@ -759,8 +862,9 @@ const toggleAudit = () => {
 }
 const onAuditPage = p => { auditPage.value = p; loadAudit(false) }
 
-// 面板随页签挂载（v-if 控制），挂载即拉一次最新列表（数据可能在别处改过）与 scope 名册
-onMounted(() => { loadScopeCatalog(); loadKeys() })
+// 面板随页签挂载（v-if 控制），挂载即拉一次最新列表（数据可能在别处改过）与 scope 名册；
+// 漏斗跟着列表一起拉：Key 列表是「有哪些凭据」，漏斗是「凭据有没有被用起来」，分开看没意义
+onMounted(() => { loadScopeCatalog(); loadKeys(); loadInsights() })
 </script>
 
 <style scoped>
@@ -887,4 +991,41 @@ onMounted(() => { loadScopeCatalog(); loadKeys() })
 .sc-hint { margin-top: 10px; font-size: 11.5px; color: var(--app-text3); line-height: 1.6; }
 .sc-hint code { font-size: 11px; }
 @media (max-width: 600px) { .sc-grid { grid-template-columns: 1fr; } }
+/* ==================== 接入漏斗 ==================== */
+/* 一条横向的信息带：左标题、中间四个 KPI、右侧展开。刻意不做成第二张表——
+   看板要能「一眼扫过」，表格已经用来管 Key 了 */
+.key-funnel {
+  border: 1px solid var(--app-border); border-radius: 8px; background: var(--app-panel-2);
+  padding: 10px 12px; margin-bottom: 12px;
+}
+.kf-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.kf-title { font-size: 12.5px; font-weight: 600; color: var(--app-text); }
+.kf-kpi { font-size: 12px; color: var(--app-text2); }
+.kf-kpi b { color: var(--app-text); font-weight: 600; margin-left: 2px; }
+.kf-bad-text { color: var(--app-danger) !important; }
+.kf-bad { color: var(--app-danger); font-size: 11.5px; }
+.kf-toggle {
+  margin-left: auto; border: 1px solid var(--app-border); background: var(--app-panel);
+  color: var(--app-text2); font-size: 11.5px; padding: 2px 10px; border-radius: 6px;
+  cursor: pointer; height: 24px; font-family: inherit;
+}
+.kf-toggle:hover { border-color: var(--app-accent-border); color: var(--app-accent); }
+/* 趋势柱：容器固定高度，柱子从底部往上长（bad 在上当「失败帽」，ok 在下是主体） */
+.kf-trend { display: flex; align-items: flex-end; gap: 2px; height: 36px; margin-top: 10px; }
+.kf-bar-wrap { display: flex; flex-direction: column; justify-content: flex-end; flex: 1 1 0; min-width: 2px; max-width: 18px; }
+.kf-bar-ok { background: var(--app-accent); opacity: .55; border-radius: 1px; }
+.kf-bar-bad { background: var(--app-danger); opacity: .75; border-radius: 1px; }
+.kf-bar-empty { height: 1px; background: var(--app-border); }
+.kf-body { display: grid; grid-template-columns: 1.1fr 1fr; gap: 18px; margin-top: 12px; border-top: 1px solid var(--app-border); padding-top: 10px; }
+.kf-col { min-width: 0; }
+.kf-col-title { font-size: 12px; font-weight: 500; color: var(--app-text); margin-bottom: 8px; }
+.kf-row { margin-bottom: 8px; min-width: 0; }
+.kf-row-head { display: flex; align-items: baseline; gap: 8px; }
+.kf-row-label { font-size: 12px; color: var(--app-text); }
+.kf-row-calls { font-size: 11.5px; color: var(--app-text3); margin-left: auto; flex: none; }
+.kf-row-hint { font-size: 11.5px; color: var(--app-text3); line-height: 1.6; margin-top: 2px; }
+.kf-row--ep { display: flex; align-items: baseline; gap: 8px; }
+.kf-ep { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; color: var(--app-text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kf-empty-line { font-size: 12px; color: var(--app-text3); }
+@media (max-width: 720px) { .kf-body { grid-template-columns: 1fr; } }
 </style>

@@ -59,7 +59,11 @@ public class WenquTenantLineHandler implements TenantLineHandler {
             "c_ai_market_item", "c_ai_market_install",
             // 市场版本历史与安装流水：同样平台级共享，不按租户隔离；
             // 漏登记会被 SchemaMigrator/租户拦截注入 tenant_id（表里没有这一列）
-            "c_ai_market_version", "c_ai_market_install_log");
+            "c_ai_market_version", "c_ai_market_install_log",
+            // 开放 API 调用台账（B5）：写入发生在身份/租户绑定之前（过滤器在拦截器外层，且 finally 里
+            // 租户上下文已清），挂租户列会让每一次埋点都依赖请求上下文先就位；查询侧一律按
+            // 「当前用户可见的 Key id」收窄，所以这张表本身不需要租户列。
+            "c_ai_openapi_call_stat");
 
     @Override
     public Expression getTenantId() {
