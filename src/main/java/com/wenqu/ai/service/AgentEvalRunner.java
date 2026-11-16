@@ -208,16 +208,19 @@ public class AgentEvalRunner {
                 JSONObject tk = done.getJSONObject("tokens");
                 if (tk != null && tk.getLong("total") != null) tokens = tk.getLong("total");
             }
-            List<Map<String, Object>> sources = sourcesOf(done);
+            List<Map<String, Object>> sources = mapList(done, "sources");
+            List<Map<String, Object>> toolCallList = mapList(done, "toolCalls");
             JSONArray toolCalls = done == null ? null : done.getJSONArray("toolCalls");
 
             // 引用召回 → 评判 → 综合分（评判在 UsageAttr kind=eval 下同步调用，费用单列「评测」）
             AgentEvalScorer.RecallOutcome rec = scorer.recall(c, sources);
             Object[] faithRel = null;
             if (run.getJudgeModel() != null && !run.getJudgeModel().isBlank()) {
+                String judgeMode = scorer.judgeModeOf(c);
                 UsageAttr.hold(new UsageAttr.Attr(uid, sessionId, null, "eval"));
                 try {
-                    faithRel = scorer.judge(c.getQuestion(), sources, answer, run.getJudgeModel());
+                    faithRel = scorer.judge(c.getQuestion(), sources, toolCallList, answer, run.getJudgeModel(), judgeMode);
+                    result.setJudgeMode(judgeMode);
                 } catch (Exception e) {
                     log.warn("[AGENT-EVAL] 用例评判失败（按引用召回单独计分）run={} case={}: {}",
                             run.getId(), c.getId(), e.getMessage());
@@ -365,9 +368,9 @@ public class AgentEvalRunner {
     }
 
     @SuppressWarnings("unchecked")
-    private List<Map<String, Object>> sourcesOf(JSONObject done) {
+    private List<Map<String, Object>> mapList(JSONObject done, String key) {
         if (done == null) return List.of();
-        JSONArray arr = done.getJSONArray("sources");
+        JSONArray arr = done.getJSONArray(key);
         return arr == null ? List.of() : (List<Map<String, Object>>) (List<?>) arr.toJavaList(Map.class);
     }
 

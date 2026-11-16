@@ -53,6 +53,9 @@ public class AgentEvalResult {
     /** 评判摘要 / issue（一句话指出最主要的问题） */
     private String judgeNote;
 
+    /** 本次评判所用口径快照（strict/open；NULL=旧数据或评判不可用） */
+    private String judgeMode;
+
     /** 综合分 0-100 */
     private Double score;
 

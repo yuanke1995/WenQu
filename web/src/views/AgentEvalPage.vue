@@ -166,9 +166,10 @@
           </div>
           <div v-if="helpOpen" class="app-card help-card">
             <ul>
-              <li><b>评测集</b>：一个智能体一套，用例 = 问题 + 期望引用（知识块/文档）。可手动添加，也可「从会话采样」——差评轮次优先，把该轮实际引用当作期望引用。</li>
+              <li><b>评测集</b>：一个智能体一套，用例 = 问题 + 期望引用（知识块/文档）。可手动添加，也可「从会话采样」——只采有知识块/文档引用的轮次，差评优先，把该轮实际引用当作期望引用。</li>
               <li><b>运行回归</b>：每条用例跑一轮<b>真实问答</b>（检索、人设、工具、引用与网页问答完全一致），需人工确认的工具按拒绝处理，评测只读。</li>
               <li><b>指标</b>：综合分 = 引用召回×40% + 忠实度×30% + 相关性×30%（无期望引用按 0/50/50）。通过 = 综合分 ≥ 套件通过分且有期望引用时命中 ≥ 1 条。忠实度/相关性由评判模型打分，<b>模型判定仅供参考</b>；未配置评判模型时只按引用召回计分。</li>
+              <li><b>忠实度口径</b>：按用例分档——<b>考知识库</b>（strict）要求事实断言有资料/工具结果依据；<b>考开放</b>（open）只判与资料/工具结果矛盾或明显错误，常识不要求出处。默认自动：有期望引用→考知识库，无→考开放，可在用例编辑里改。</li>
               <li><b>门禁</b>：保存智能体时若有变更未评测或低于门槛，会弹「保存前检查」——默认提示，管理员可在设置页（维护 · agentEval）改为阻断。</li>
             </ul>
           </div>
@@ -299,7 +300,9 @@
                   <div class="detail-col grow">
                     <div class="k">失败原因</div>
                     <div class="v" :class="{ reason: record.passed !== 1 }">{{ record.failureReason || '无——本轮通过' }}</div>
-                    <div class="k" style="margin-top:10px">评判摘要</div>
+                    <div class="k" style="margin-top:10px">评判摘要
+                      <span v-if="record.judgeMode" class="tag" style="margin-left:6px">{{ record.judgeMode === 'open' ? '考开放' : '考知识库' }}</span>
+                    </div>
                     <div class="v">{{ record.judgeNote || '未配置评判模型，仅按引用命中计分' }}</div>
                   </div>
                   <div class="detail-col">
@@ -389,6 +392,9 @@
                 <a-table-column title="期望引用" :width="90" key="exp">
                   <template #default="{ record }">{{ expectedCount(record) || '—' }}</template>
                 </a-table-column>
+                <a-table-column title="口径" :width="76" key="jm">
+                  <template #default="{ record }"><span class="muted">{{ caseModeText(record) }}</span></template>
+                </a-table-column>
                 <a-table-column title="来源" :width="96" key="src">
                   <template #default="{ record }"><span class="muted">{{ sourceText(record.source) }}</span></template>
                 </a-table-column>
@@ -431,6 +437,13 @@
           <a-textarea v-model:value="caseForm.kbIds" :rows="3" placeholder="知识块 ID 列表" /></div>
         <div class="cf-row"><label>期望引用 · 文档 ID（每行一个，可留空）</label>
           <a-textarea v-model:value="caseForm.docIds" :rows="2" placeholder="文档 ID 列表" /></div>
+        <div class="cf-row"><label>忠实度口径</label>
+          <a-select v-model:value="caseForm.judgeMode" size="small" style="width:100%"
+                    :options="[
+                      { value: '', label: '自动（有期望引用→考知识库，无→考开放）' },
+                      { value: 'strict', label: '考知识库：事实断言必须有资料/工具结果依据' },
+                      { value: 'open', label: '考开放：只判矛盾与明显错误，常识不要求出处' }
+                    ]" /></div>
         <div class="cf-row two">
           <div><label>备注 / 考察点</label><a-input v-model:value="caseForm.note" :maxlength="500" /></div>
           <div><label>启用</label><a-switch v-model:checked="caseForm.enabled" size="small" /></div>
@@ -466,6 +479,7 @@ import { SearchOutlined, PlusOutlined, LeftOutlined, RightOutlined } from '@ant-
 import EvalCompareModal from '../components/agent/EvalCompareModal.vue'
 import AgentAvatar from '../components/AgentAvatar.vue'
 import { themeState } from '../utils/theme'
+import { loadModelIndex, modelRefInfo } from '../utils/modelRef'
 import {
   agentEvalSummary, agentEvalSuite, agentEvalSaveSuite, agentEvalMutateCases, agentEvalGenerateCases,
   agentEvalStartRun, agentEvalRuns, agentEvalRun, agentEvalCancelRun, agentEvalGate
@@ -582,7 +596,7 @@ async function loadDetail () {
   const id = currentAgentId.value
   try {
     const [g, suiteR, runsR] = await Promise.all([
-      agentEvalGate(id), agentEvalSuite(id), agentEvalRuns(id, runsPage.value, runsSize.value)
+      agentEvalGate(id), agentEvalSuite(id), agentEvalRuns(id, runsPage.value, runsSize.value), loadModelIndex()
     ])
     if (g.success) gate.value = g.data
     if (suiteR.success) {
@@ -739,8 +753,9 @@ function openCaseEditor (c) {
   caseForm.value = c ? {
     id: c.id, question: c.question, note: c.note || '',
     kbIds: idsToText(c.expectedKnowledgeIds), docIds: idsToText(c.expectedDocIds),
+    judgeMode: c.judgeMode || '',
     enabled: c.enabled === 1
-  } : { id: '', question: '', note: '', kbIds: '', docIds: '', enabled: true }
+  } : { id: '', question: '', note: '', kbIds: '', docIds: '', judgeMode: '', enabled: true }
   caseEditorOpen.value = true
 }
 
@@ -750,8 +765,10 @@ async function saveCase () {
   caseSaving.value = true
   const body = f.id
     ? { update: [{ id: f.id, question: f.question.trim(), note: f.note, tags: [], enabled: f.enabled ? 1 : 0,
+      judgeMode: f.judgeMode || null,
       expectedKnowledgeIds: textToIds(f.kbIds), expectedDocIds: textToIds(f.docIds) }] }
     : { add: [{ question: f.question.trim(), note: f.note || '', tags: [], source: 'manual', enabled: f.enabled ? 1 : 0,
+      judgeMode: f.judgeMode || null,
       expectedKnowledgeIds: textToIds(f.kbIds), expectedDocIds: textToIds(f.docIds) }] }
   try {
     const r = await agentEvalMutateCases(currentAgentId.value, body)
@@ -794,7 +811,8 @@ const resultRows = computed(() => {
   return failOnly.value ? rows.filter(r => r.passed !== 1) : rows
 })
 const judgeShort = computed(() => {
-  const m = detail.value?.run?.judgeModel || ''
+  const ref = detail.value?.run?.judgeModel || ''
+  const m = modelRefInfo(ref)?.displayName || String(ref).split('/').pop() || ref
   return m.length > 18 ? m.slice(0, 18) + '…' : m
 })
 /** 结果行预计算：期望/命中条数、耗时、期望引用对照（展开卡直接读） */
@@ -991,6 +1009,13 @@ const gateCardClass = g => ({ pass: 'ok', below: '', changed: 'warn', unevaluate
 const gateCardText = g => ({ pass: '保存前不会被提示', below: '保存前会被提示', changed: '保存前会被提示', unevaluated: '跑一次就有门禁基线', running: '回归进行中', none: '先建立评测集' }[g] || '')
 function expectedCount (c) {
   return idsOf(c.expectedKnowledgeIds).length + idsOf(c.expectedDocIds).length
+}
+/** 生效口径（与后端 judgeModeOf 同判据）：显式优先，自动=有期望引用→考知识库，无→考开放 */
+function caseModeText (c) {
+  const m = c.judgeMode === 'strict' || c.judgeMode === 'open'
+    ? c.judgeMode
+    : (expectedCount(c) > 0 ? 'strict' : 'open')
+  return m === 'open' ? '考开放' : '考知识库'
 }
 function idsToText (json) { return idsOf(json).join('\n') }
 function textToIds (t) {

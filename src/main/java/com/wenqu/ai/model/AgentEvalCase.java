@@ -40,6 +40,9 @@ public class AgentEvalCase implements com.wenqu.ai.service.AgentEvalScorer.Agent
     /** 期望调用的工具名（JSON 数组字符串；仅记录，暂不参与判分） */
     private String expectedTools;
 
+    /** 忠实度口径: strict=考知识库 grounding open=考开放质量 NULL=自动（有期望引用→strict 无→open） */
+    private String judgeMode;
+
     /** 备注 / 考察点 */
     private String note;
 

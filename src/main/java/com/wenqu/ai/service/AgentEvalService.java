@@ -190,7 +190,7 @@ public class AgentEvalService {
     }
 
     /**
-     * 从会话采样生成用例（plan §3.6 会话采样）：智能体最近的真实问答里挑「有引用」的轮次，
+     * 从会话采样生成用例（plan §3.6 会话采样）：智能体最近的真实问答里挑「有知识块/文档引用」的轮次，
      * 问题 + 该轮实际引用的知识块/文档作为期望引用；差评（rating=0）优先。同问题去重。
      */
     public Map<String, Object> generateFromSessions(String agentId, JSONObject body) {
@@ -228,15 +228,17 @@ public class AgentEvalService {
         int added = 0;
         for (Message m : ordered) {
             if (added >= count) break;
+            // 只采真正含知识块/文档引用的轮次：sources 非空不等于有期望引用（空数组、纯网页/工具
+            // 来源都过得了 isNotNull），无锚点用例只剩评判模型主观定忠实度，会系统性误杀正确回答
+            Set<String> kb = new LinkedHashSet<>();
+            Set<String> doc = new LinkedHashSet<>();
+            collectExpected(m.getSources(), kb, doc, 5);
+            if (kb.isEmpty() && doc.isEmpty()) continue;
             Message q = precedingQuestion(m);
             if (q == null || q.getContent() == null || q.getContent().isBlank()) continue;
             String question = trimStr(q.getContent(), 2000);
             String norm = normalizeQuestion(question);
             if (norm.isEmpty() || existingQuestions.contains(norm)) continue;
-            // 期望引用 = 该轮实际引用的知识块/文档（去重，各截前 5 条）
-            Set<String> kb = new LinkedHashSet<>();
-            Set<String> doc = new LinkedHashSet<>();
-            collectExpected(m.getSources(), kb, doc, 5);
             AgentEvalCase entity = new AgentEvalCase();
             entity.setSuiteId(suite.getId());
             entity.setAgentId(agentId);
@@ -861,6 +863,11 @@ public class AgentEvalService {
         }
         if (c.containsKey("expectedDocIds")) entity.setExpectedDocIds(idsToJson(c.get("expectedDocIds")));
         if (c.containsKey("expectedTools")) entity.setExpectedTools(idsToJson(c.get("expectedTools")));
+        if (c.containsKey("judgeMode")) {
+            String jm = c.getString("judgeMode");
+            // 非 strict/open 一律归 NULL=自动推导：期望引用后来增删时自动档要跟着变，不能固化
+            entity.setJudgeMode("strict".equals(jm) || "open".equals(jm) ? jm : null);
+        }
         if (c.containsKey("note")) entity.setNote(trimStr(c.get("note"), 500));
         if (c.containsKey("tags")) entity.setTags(idsToJson(c.get("tags")));
         if (c.containsKey("source") && create) entity.setSource(trimStr(c.get("source"), 16));
