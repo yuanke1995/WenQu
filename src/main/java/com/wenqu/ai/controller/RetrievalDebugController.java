@@ -46,9 +46,15 @@ public class RetrievalDebugController {
     private final com.wenqu.ai.service.UserConfigService userConfigService;
     /** 库级检索参数：面板要显示“每库生效值”，重排也要按库收敛模型（与生产同口径） */
     private final com.wenqu.ai.service.KbRetrievalParamService kbRetrievalParams;
+    /** 按智能体复现：把它的资料范围与文档条件按生产同一条链路解析出来 */
+    private final com.wenqu.ai.service.AgentService agentService;
+    private final com.wenqu.ai.agent.context.RetrievalScopeService retrievalScopeService;
+    /** 追问改写：可选 sessionId + modelRef 时真实跑一次模型改写，便于复现「追问为什么没搜到」 */
+    private final com.wenqu.ai.service.FollowUpQueryRewriter queryRewriter;
+    private final com.wenqu.ai.service.SessionService sessionService;
 
     @Operation(summary = "检索链路调试",
-            description = "分步展示检索全链路：关键词命中、向量命中（含相似度分）、合并结果、重排结果、最终上下文（Top 8）、被排除的候选。用于排查召回质量问题。可选 kbIds 限定库范围（对照实验/单库排查）")
+            description = "分步展示检索全链路：关键词命中、向量命中（含相似度分）、合并结果、重排结果、最终上下文（Top 8）、被排除的候选。用于排查召回质量问题。可选 kbIds 限定库范围（对照实验/单库排查）；可选 agentId 按该智能体的资料范围与文档条件检索；可选 filter 直接指定过滤条件（优先于 agentId）；可选 sessionId + modelRef 真实跑一次追问改写，并按「改写词 + 原词」两路合并")
     @Permission("retrieval-debug:run")
     @PostMapping("/retrieval")
     public ResultJson debug(
@@ -64,6 +70,57 @@ public class RetrievalDebugController {
         }
     }
 
+    /**
+     * 调试用元数据过滤：body.filter = {kbIds, docIds, tags, fileTypes, updatedWithinDays, createdBy}。
+     * 键缺省=不限；显式空数组=无结果（与生产 RetrievalFilter 同一语义）。
+     */
+    private static com.wenqu.ai.service.RetrievalFilter parseFilter(Map<String, Object> body) {
+        if (!(body.get("filter") instanceof Map<?, ?> raw)) {
+            return com.wenqu.ai.service.RetrievalFilter.NONE;
+        }
+        Integer days = intValue(raw.get("updatedWithinDays"));
+        Set<String> docIds = strings(raw.get("docIds"));
+        if (docIds != null && docIds.size() > 500) {
+            throw new BizException("filter.docIds 调试上限 500 条");
+        }
+        return new com.wenqu.ai.service.RetrievalFilter(
+                strings(raw.get("kbIds")),
+                docIds,
+                strings(raw.get("tags")),
+                strings(raw.get("fileTypes")),
+                days == null || days <= 0 ? null : java.time.LocalDateTime.now().minusDays(days),
+                null,
+                text(raw.get("createdBy")));
+    }
+
+    /** 缺省 → null（不限）；出现但为空数组 → 空集合（无结果） */
+    private static Set<String> strings(Object v) {
+        if (v == null) return null;
+        if (!(v instanceof List<?> list)) return null;
+        Set<String> out = new LinkedHashSet<>();
+        for (Object o : list) {
+            if (o == null) continue;
+            String s = String.valueOf(o).trim();
+            if (!s.isEmpty()) out.add(s);
+        }
+        return out;
+    }
+
+    private static Integer intValue(Object v) {
+        if (v == null) return null;
+        try {
+            return Integer.parseInt(String.valueOf(v).trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private static String text(Object v) {
+        if (v == null) return null;
+        String s = String.valueOf(v).trim();
+        return s.isEmpty() ? null : s;
+    }
+
     private ResultJson debugInternal(Map<String, Object> body) {
         String query = body.get("question") == null ? "" : String.valueOf(body.get("question"));
         if (query.isBlank()) {
@@ -76,11 +133,41 @@ public class RetrievalDebugController {
         }
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("query", query);
+        HybridRetrievalService.RetrievalDiag diag = new HybridRetrievalService.RetrievalDiag();
+        // 可选元数据过滤（与生产同一份 RetrievalFilter）：用于复现「标签/类型/时间下为什么搜不到」
+        com.wenqu.ai.service.RetrievalFilter filter = parseFilter(body);
+        // 可选按智能体复现：资料范围与文档条件走生产同一条解析链路；显式 filter 优先于智能体配置
+        String agentId = text(body.get("agentId"));
+        if (agentId != null) {
+            com.wenqu.ai.model.Agent agent = agentService.findReadable(agentId);
+            if (agent == null) throw new BizException("智能体不存在或不可见");
+            com.wenqu.ai.service.KnowledgeRetrievalTool.KbScope scope =
+                    retrievalScopeService.resolve(agent, com.wenqu.ai.util.RequestUser.uid(), false, null);
+            if (!body.containsKey("filter") && scope.filter() != null) filter = scope.filter();
+            if (kbIds == null && scope.kbIds() != null) kbIds = scope.kbIds();
+            result.put("agentId", agentId);
+        }
         // 检索词元（分词结果，便于验证分词/子词元召回效果）
         result.put("keywordTerms", keywordExtractor.extract(query));
 
+        // 可选追问改写：给了 sessionId 就按最近 3 轮历史真实跑一次；modelRef 缺省时只返回 no-model 跳过原因
+        String sessionId = text(body.get("sessionId"));
+        com.wenqu.ai.service.FollowUpQueryRewriter.Result rewrite = null;
+        if (sessionId != null) {
+            java.util.List<java.util.Map<String, Object>> history = sessionService.getRecentHistory(sessionId, 3);
+            rewrite = queryRewriter.rewrite(text(body.get("modelRef")), query, query, history,
+                    com.wenqu.ai.util.RequestUser.uid(), sessionId);
+            java.util.Map<String, Object> rw = new LinkedHashMap<>();
+            rw.put("applied", rewrite.applied());
+            rw.put("original", query);
+            rw.put("query", rewrite.query());
+            rw.put("skipReason", rewrite.skipReason());
+            rw.put("elapsedMs", rewrite.elapsedMs());
+            result.put("rewrite", rw);
+        }
+
         // 1. 关键词命中（含命中率/标题命中）
-        List<Knowledge> kwDocs = hybridRetrievalService.keywordSearch(query);
+        List<Knowledge> kwDocs = hybridRetrievalService.keywordSearch(query, diag, 0, filter);
         result.put("keywordHits", kwDocs.stream().map(k -> {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("knowledgeId", k.getId());
@@ -94,7 +181,7 @@ public class RetrievalDebugController {
         }).toList());
 
         // 2. 向量命中（相似度分；kbIds 限定库范围与 merged 段一致）
-        List<Document> vectorDocs = hybridRetrievalService.vectorSearch(query, null, kbIds);
+        List<Document> vectorDocs = hybridRetrievalService.vectorSearch(query, diag, kbIds, filter);
         result.put("vectorHits", vectorDocs.stream().map(doc -> {
             Map<String, Object> m = new LinkedHashMap<>();
             String kid = String.valueOf(doc.getId());
@@ -121,16 +208,27 @@ public class RetrievalDebugController {
         }).toList());
 
         // 3. 合并（ChatService 实际使用的检索结果；kbIds 限定库范围——对照实验/单库排查）
-        List<HybridRetrievalService.Hit> merged = hybridRetrievalService.search(query, null, kbIds);
+        //    改写成功时按生产同口径走「改写词 + 原词」两路并行，便于直接对照差异。
+        List<HybridRetrievalService.Hit> merged = rewrite != null && rewrite.applied()
+                ? hybridRetrievalService.searchMulti(List.of(rewrite.query(), query), diag, kbIds, false, filter)
+                : hybridRetrievalService.search(query, diag, kbIds, false, filter);
         if (kbIds != null) {
-            // 关键词路不受 kbIds 约束（产品现状：向量路按库索引过滤，关键词路全库）——
-            // 按目标库的文档集合后过滤，与主链路 scopeKbIds（向量路）+ scopeDocIds（合并后）的组合口径一致
+            // 库界现在已并进 filter 同时约束两条召回路；这里保留一次文档级复核，
+            // 用于对照实验时把「库范围内文档」与命中结果对齐（手动块不在文档表内，会被这里剔掉）
             Set<String> scopeDocs = new HashSet<>(kbService.docIdsOf(new java.util.ArrayList<>(kbIds)));
             merged = merged.stream()
                     .filter(h -> h.docId() != null && scopeDocs.contains(h.docId()))
                     .toList();
         }
         result.put("merged", merged.stream().map(this::hitMap).toList());
+        // 过滤链路诊断：被元数据条件剔除多少、文档范围是否精确下推、关键词走了哪条引擎
+        Map<String, Object> diagOut = new LinkedHashMap<>();
+        diagOut.put("metaFiltered", diag.getMetaFiltered());
+        diagOut.put("filterPushdown", diag.filterPushdown());
+        diagOut.put("keywordEngine", diag.keywordEngine());
+        diagOut.put("graphExpanded", diag.getGraphExpanded());
+        diagOut.put("aclPushdownError", diag.aclPushdownError());
+        result.put("retrievalDiag", diagOut);
 
         // 每库生效参数：只列**本轮真正命中的库**（命中块已过可见性判定），不把范围外的库名/模型带出去。
         // 面板按库展示阈值/权重/重排模型，避免“改了库参数但面板仍显示全局值”的误导。

@@ -49,9 +49,43 @@ public class RetrievalScopeService {
     public KnowledgeRetrievalTool.KbScope resolve(Agent agent, String userId, boolean walled,
                                                   java.util.Collection<String> parentScopeKbIds) {
         java.util.Collection<String> kbIds = scopeKbIdsOf(agent, userId, walled, parentScopeKbIds);
-        return new KnowledgeRetrievalTool.KbScope(kbIds,
-                resolveScopeDocIds(agent, userId, walled, kbIds, parentScopeKbIds),
-                null, tagFilterOf(agent));
+        Set<String> docIds = resolveScopeDocIds(agent, userId, walled, kbIds, parentScopeKbIds);
+        return new KnowledgeRetrievalTool.KbScope(kbIds, null, filterOf(agent, docIds));
+    }
+
+    /**
+     * 智能体级文档条件 → 检索过滤器（单一出口）：标签（历史字段）+ 类型/最近更新（knowledge_filter JSON）。
+     * <p>读取期非法 JSON 记 ERROR 并按「无此条件」处理：坏数据不能把该助手的检索整条打死，
+     * 但也不能静默当成用户想要的条件——错误日志供管理侧发现。
+     */
+    private com.wenqu.ai.service.RetrievalFilter filterOf(Agent agent, Set<String> docIds) {
+        Set<String> tags = tagFilterOf(agent);
+        Set<String> fileTypes = null;
+        java.time.LocalDateTime updatedAfter = null;
+        String raw = agent == null ? null : agent.getKnowledgeFilter();
+        if (raw != null && !raw.isBlank()) {
+            try {
+                var o = com.alibaba.fastjson2.JSON.parseObject(raw);
+                var arr = o == null ? null : o.getJSONArray("fileTypes");
+                if (arr != null) {
+                    java.util.LinkedHashSet<String> types = new java.util.LinkedHashSet<>();
+                    for (int i = 0; i < arr.size(); i++) {
+                        String v = arr.getString(i);
+                        if (v != null && !v.isBlank()) {
+                            types.add(v.trim().toLowerCase(java.util.Locale.ROOT));
+                        }
+                    }
+                    if (!types.isEmpty()) fileTypes = types;
+                }
+                Integer days = o == null ? null : o.getInteger("updatedWithinDays");
+                if (days != null && days > 0) {
+                    updatedAfter = java.time.LocalDateTime.now().minusDays(days);
+                }
+            } catch (Exception e) {
+                log.error("[KB] 智能体检索文档条件不是有效 JSON（本轮按无此条件处理）: {}", e.getMessage());
+            }
+        }
+        return new com.wenqu.ai.service.RetrievalFilter(null, docIds, tags, fileTypes, updatedAfter, null, null);
     }
 
     /** 智能体级标签收窄（knowledgeTags 逗号分隔）：空=不过滤。文档打标见 c_ai_document.tags */

@@ -66,6 +66,8 @@ class FlywayFreshDatabaseTest {
         // V15：内容安全退役（V1 基线仍建表、本迁移删除）——新库终态不得再有这张表
         assertThat(tables).as("V15 已删除内容安全规则表").doesNotContain("c_ai_content_rule");
         assertThat(columns("c_ai_agent")).as("V2 已删除 chatflow 列").doesNotContain("workflow_id");
+        // V27：智能体检索的文档级条件（与 knowledge_tags 并列，不迁移历史标签）
+        assertThat(columns("c_ai_agent")).as("V27 已加检索文档条件列").contains("knowledge_filter");
         // V16：深度执行预算退役（V1 基线仍建列、本迁移删除；SchemaMigrator 以 RETIRED_COLUMNS 防复活）
         assertThat(columns("c_ai_goal"))
                 .as("V16 已删除目标预算四列")

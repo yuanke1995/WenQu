@@ -277,7 +277,8 @@ class WebSearchPersonalLayerTest {
                     public String roundRerankModel() { return null; }
                 },
                 WebSearchTools.CTX_HOOKS, new TurnHooks(null, "u1", null, null, null, null,
-                        null, Map.of(), Map.of("webSearch.provider", "bocha"), null, null, null))));
+                        null, Map.of(), Map.of("webSearch.provider", "bocha"), null, null, null,
+                        null, null))));
         assertThat(out).contains("个人设置").contains("bocha");
     }
 

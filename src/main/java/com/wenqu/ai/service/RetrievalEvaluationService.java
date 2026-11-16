@@ -105,6 +105,8 @@ public class RetrievalEvaluationService {
     private final NotificationService notificationService;
     private final UserRoleService userRoleService;
     private final RetrievalEvalCatalogService catalogService;
+    /** 追问改写评估：同一批追问用例对比「改写开/关」的 recall@5 / MRR */
+    private final FollowUpQueryRewriter queryRewriter;
 
     /** 评估执行线程池（daemon；每组参数一个任务，线程局部 override 不污染主线程） */
     private final ExecutorService evalPool = Executors.newFixedThreadPool(4, r -> {
@@ -121,7 +123,8 @@ public class RetrievalEvaluationService {
                                       AppProperties properties, ChatClient chatClient,
                                       NotificationService notificationService,
                                       UserRoleService userRoleService,
-                                      RetrievalEvalCatalogService catalogService) {
+                                      RetrievalEvalCatalogService catalogService,
+                                      FollowUpQueryRewriter queryRewriter) {
         this.retrievalService = retrievalService;
         this.configService = configService;
         this.keywordExtractor = keywordExtractor;
@@ -136,6 +139,7 @@ public class RetrievalEvaluationService {
         this.notificationService = notificationService;
         this.userRoleService = userRoleService;
         this.catalogService = catalogService;
+        this.queryRewriter = queryRewriter;
     }
 
     @jakarta.annotation.PreDestroy
@@ -372,13 +376,16 @@ public class RetrievalEvaluationService {
         } else {
             merged = retrievalService.search(question);
         }
-        // 重排：库绑了重排模型才触发（选了才重排，模型与窗口按命中库收敛）；
-        // 评测组的 rerankEnabled=false 经覆盖层强制跳过（RerankService 内部判），失败回退融合分
+        return rerankForEval(merged, question);
+    }
+
+    /** 评估口径的重排 + HitInfo 投影（与生产同源：库绑了模型才重排，失败回退融合分） */
+    private List<HitInfo> rerankForEval(List<HybridRetrievalService.Hit> merged, String query) {
         try {
             final List<HybridRetrievalService.Hit> candidates = merged;
             List<String> hitKbIds = candidates.stream().map(HybridRetrievalService.Hit::kbId).toList();
             List<HybridRetrievalService.Hit> ranked = kbRetrievalParams.withRerankModel(
-                    null, hitKbIds, () -> rerankService.rank(candidates, question));
+                    null, hitKbIds, () -> rerankService.rank(candidates, query));
             if (ranked != null) merged = ranked;
         } catch (Exception e) {
             log.debug("[Eval] 重排失败回退: {}", e.getMessage());
@@ -413,6 +420,124 @@ public class RetrievalEvaluationService {
             }
         }
         return parts.stream().distinct().toList();
+    }
+
+    /**
+     * 追问改写评估：从指定会话回放「前文 + 用户问题」，同一批用例对比改写开/关的 recall@5 / MRR。
+     *
+     * <p>用例构造与检索评估同口径：用户问题的期望资料取该轮回答的引用来源（知识块 id），
+     * 只保留仍存活的块；前缀取该问题之前的最近 6 条消息（没有前文的轮次不算追问）。
+     * <p>改写路由：`rewrite(question)` 成功 → `searchMulti([改写词, 原词])` + 用改写词重排；
+     * 未改写（含超时/失败）→ 与基线同一份结果，保证对比只反映「改写是否带来增量」。
+     */
+    public Map<String, Object> runFollowUpEval(String sessionId, int maxCases, String modelRef, String uid) {
+        if (sessionId == null || sessionId.isBlank()) {
+            throw new com.wenqu.ai.common.BizException("请指定要评估的会话");
+        }
+        int cap = Math.max(1, Math.min(maxCases <= 0 ? 8 : maxCases, 20));
+        List<Message> rows = messageMapper.selectList(new LambdaQueryWrapper<Message>()
+                .eq(Message::getSessionId, sessionId)
+                .orderByAsc(Message::getSequence));
+        List<EvalCase> cases = new ArrayList<>();
+        Map<String, List<Map<String, Object>>> prefixes = new LinkedHashMap<>();
+        Set<String> seen = new HashSet<>();
+        for (int i = 0; i < rows.size(); i++) {
+            Message a = rows.get(i);
+            if (!"assistant".equals(a.getRole()) || a.getSources() == null || a.getSources().isBlank()) continue;
+            int ui = -1;
+            for (int j = i - 1; j >= 0; j--) {
+                if ("user".equals(rows.get(j).getRole())) {
+                    ui = j;
+                    break;
+                }
+            }
+            if (ui < 0) continue;
+            Message q = rows.get(ui);
+            if (q.getContent() == null || q.getContent().isBlank()) continue;
+            String question = q.getContent().trim();
+            if (!seen.add(question)) continue;
+            List<String> ids = extractSourceIds(a.getSources());
+            if (ids.isEmpty()) continue;
+            Set<String> alive = new HashSet<>();
+            for (Knowledge k : knowledgeMapper.selectBatchIds(ids)) alive.add(String.valueOf(k.getId()));
+            List<String> valid = ids.stream().filter(alive::contains).distinct().toList();
+            if (valid.isEmpty()) continue;
+            List<Map<String, Object>> prefix = new ArrayList<>();
+            for (int j = Math.max(0, ui - 6); j < ui; j++) {
+                Message m = rows.get(j);
+                if (m.getContent() == null || m.getContent().isBlank()) continue;
+                if (!"user".equals(m.getRole()) && !"assistant".equals(m.getRole())) continue;
+                prefix.add(Map.of("role", m.getRole(), "content", m.getContent()));
+            }
+            if (prefix.isEmpty()) continue;
+            EvalCase c = new EvalCase("fu-" + i, question, valid, "followup");
+            cases.add(c);
+            prefixes.put(c.id(), prefix);
+        }
+        if (cases.size() > cap) cases = new ArrayList<>(cases.subList(cases.size() - cap, cases.size()));
+
+        List<Integer> ks = List.of(5);
+        List<CaseResult> baseline = new ArrayList<>();
+        List<CaseResult> rewritten = new ArrayList<>();
+        List<Map<String, Object>> detail = new ArrayList<>();
+        int appliedCount = 0;
+        long rewriteMsTotal = 0;
+        for (EvalCase c : cases) {
+            List<HitInfo> baseHits = searchHits(c.question(), "normal");
+            CaseResult br = computeCase(c, baseHits, ks);
+            baseline.add(br);
+            FollowUpQueryRewriter.Result r = queryRewriter.rewrite(
+                    modelRef, c.question(), c.question(), prefixes.get(c.id()), uid, sessionId);
+            List<HitInfo> rwHits = baseHits;
+            if (r.applied()) {
+                appliedCount++;
+                rewriteMsTotal += r.elapsedMs();
+                rwHits = rerankForEval(
+                        retrievalService.searchMulti(List.of(r.query(), c.question())), c.question());
+            }
+            CaseResult rr = computeCase(c, rwHits, ks);
+            rewritten.add(rr);
+            Map<String, Object> d = new LinkedHashMap<>();
+            d.put("question", c.question());
+            d.put("expected", c.expectedKnowledgeIds().size());
+            d.put("applied", r.applied());
+            d.put("rewritten", r.applied() ? r.query() : null);
+            d.put("skipReason", r.skipReason());
+            d.put("baselineRecall5", br.recallAtK().get("recall@5"));
+            d.put("rewriteRecall5", rr.recallAtK().get("recall@5"));
+            detail.add(d);
+        }
+        Map<String, Double> bm = computeMetrics(baseline, ks);
+        Map<String, Double> rm = computeMetrics(rewritten, ks);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("sessionId", sessionId);
+        out.put("caseCount", cases.size());
+        out.put("appliedCount", appliedCount);
+        out.put("avgRewriteMs", appliedCount == 0 ? 0 : rewriteMsTotal / appliedCount);
+        out.put("baseline", bm);
+        out.put("rewrite", rm);
+        out.put("deltaRecall5", rm.getOrDefault("recall@5", 0.0) - bm.getOrDefault("recall@5", 0.0));
+        out.put("cases", detail);
+        log.info("[Eval] 追问改写评估: session={} 用例 {} 改写 {} 基线 recall@5={} 改写 recall@5={}",
+                sessionId, cases.size(), appliedCount,
+                bm.get("recall@5"), rm.get("recall@5"));
+        return out;
+    }
+
+    /** 引用来源 JSON → 知识块 id（与评估集生成同一口径） */
+    private static List<String> extractSourceIds(String sourcesJson) {
+        List<String> ids = new ArrayList<>();
+        try {
+            var arr = com.alibaba.fastjson2.JSON.parseArray(sourcesJson);
+            for (int i = 0; i < arr.size(); i++) {
+                var o = arr.getJSONObject(i);
+                String id = o == null ? null : o.getString("knowledgeId");
+                if (id != null && !id.isBlank()) ids.add(id);
+            }
+        } catch (Exception e) {
+            log.debug("[Eval] 引用来源解析失败: {}", e.getMessage());
+        }
+        return ids;
     }
 
     private CaseResult computeCase(EvalCase c, List<HitInfo> hits, List<Integer> ks) {

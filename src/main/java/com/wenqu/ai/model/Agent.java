@@ -53,10 +53,18 @@ public class Agent {
 
     /**
      * 检索标签收窄（逗号分隔的文档标签）：非空时，检索只收所属文档带其中任一标签的命中块——
-     * 与 {@link #knowledgeBaseIds} 叠加生效（先按库界检索，再按标签后过滤，late-binding 与文档级
-     * ACL 同口径）。用于「同一批库、只答某个主题/密级」的智能体分工；空/NULL=不按标签过滤。
+     * 与 {@link #knowledgeBaseIds} 叠加生效（先按库界检索，再按标签过滤）。标签作为文档级条件
+     * 参与召回配额计算，不是召回后削薄；空/NULL=不按标签过滤。
      */
     private String knowledgeTags;
+
+    /**
+     * 检索的文档级条件（JSON：{@code {"fileTypes":["pdf","docx"],"updatedWithinDays":90}}）：
+     * 与 {@link #knowledgeTags} / {@link #knowledgeBaseIds} 叠加生效；空/NULL=不限。
+     * <p>保存期做白名单校验（类型集合、天数范围），读取期非法 JSON 记 ERROR 并按「无此条件」处理；
+     * 新增维度只写本列，不迁移历史标签。
+     */
+    private String knowledgeFilter;
 
     /**
      * 不使用知识库：0=使用（默认，按 knowledgeScope 约束范围）；1=纯角色智能体，整条跳过检索链路

@@ -77,27 +77,34 @@ public class KnowledgeRetrievalTool {
     /**
      * 工具检索范围（与主链路同库界）：智能体绑定了知识库时，
      * searchKnowledge 不允许越过范围检索其他库——否则「仅挂刑法库」的智能体经工具仍能
-     * 把其他库的块召回并注册进引用来源。kbIds 限定向量检索的库（null=不限，与主链路
-     * scopeKbIds 同语义）；docIds 对命中做后过滤（null=不限，空集合=范围内无文档，检索为空）；
-     * kbFilter 是 @ 知识库提及的收窄后过滤（null/空=不收窄）：命中块的所属库必须落在
-     * 用户本轮点名的库集合里——它只收窄、不放宽（向量路的 kbIds 原样保留智能体资料域，
-     * 域外被点名的库不会因提及而越界检索）。
-     * tags 是智能体级标签收窄（null/空=不过滤）：命中块的所属文档必须带其中任一标签
-     * （文档在 c_ai_document.tags 打标，回表比对，late-binding 与 docIds 同口径）。
+     * 把其他库的块召回并注册进引用来源。
+     * <p>{@code kbIds} 限定向量检索的库（null=不限，与主链路 scopeKbIds 同语义）；
+     * {@code kbFilter} 是 @ 知识库提及的收窄（null/空=不收窄）：命中块的所属库必须落在
+     * 用户本轮点名的库集合里——它只收窄、不放宽；
+     * {@code filter} 是文档级条件（文档范围 / 标签 / 类型 / 更新时间），由
+     * {@link com.wenqu.ai.agent.context.RetrievalScopeService} 从智能体配置编译而来，
+     * 直接下传给检索层参与配额计算，**不再召回后回表过滤**。
      */
-    public record KbScope(java.util.Collection<String> kbIds, java.util.Set<String> docIds,
-                          java.util.Set<String> kbFilter, java.util.Set<String> tags) {
-        public KbScope(java.util.Collection<String> kbIds, java.util.Set<String> docIds) {
-            this(kbIds, docIds, null, null);
-        }
-
-        public KbScope(java.util.Collection<String> kbIds, java.util.Set<String> docIds, java.util.Set<String> kbFilter) {
-            this(kbIds, docIds, kbFilter, null);
+    public record KbScope(java.util.Collection<String> kbIds, java.util.Set<String> kbFilter,
+                          RetrievalFilter filter) {
+        public KbScope(java.util.Collection<String> kbIds, RetrievalFilter filter) {
+            this(kbIds, null, filter == null ? RetrievalFilter.NONE : filter);
         }
     }
 
     /** toolContext 键：本轮检索范围（值为 {@link KbScope}，null=不限） */
     public static final String CTX_KB_SCOPE = "wenqu.knowledge.scope";
+
+    /** toolContext 键：本轮追问改写上下文（值为 {@link TurnQueryContext}，null=不启用改写） */
+    public static final String CTX_TURN_QUERY = "wenqu.knowledge.turnQuery";
+
+    /**
+     * 本轮追问改写的输入（由问答侧按轮装进 toolContext）：
+     * 原问题、对话模型、身份、会话号、最近 3 轮历史（懒加载）。
+     */
+    public record TurnQueryContext(String question, String modelRef, String uid, String sessionId,
+                                   java.util.function.Supplier<java.util.List<java.util.Map<String, Object>>> history) {
+    }
 
     /** 从本次调用的上下文取注册器（无上下文=非流式直接调用，退回不注册引用的旧行为） */
     private static SourceRegistrar registrarOf(org.springframework.ai.chat.model.ToolContext ctx) {
@@ -108,6 +115,11 @@ public class KnowledgeRetrievalTool {
     private static KbScope scopeOf(org.springframework.ai.chat.model.ToolContext ctx) {
         Object v = ctx == null ? null : ctx.getContext().get(CTX_KB_SCOPE);
         return v instanceof KbScope s ? s : null;
+    }
+
+    private static TurnQueryContext turnQueryOf(org.springframework.ai.chat.model.ToolContext ctx) {
+        Object v = ctx == null ? null : ctx.getContext().get(CTX_TURN_QUERY);
+        return v instanceof TurnQueryContext t ? t : null;
     }
 
     /**
@@ -134,13 +146,29 @@ public class KnowledgeRetrievalTool {
     private final RerankService rerankService;
     /** 库级检索参数：重排模型按“本轮范围的第一个配了模型的库”收敛（一轮只有一个重排器） */
     private final KbRetrievalParamService kbRetrievalParams;
+    /** 追问改写：短词/指代词改写成独立检索词，与原词两路并行召回 */
+    private final FollowUpQueryRewriter queryRewriter;
 
     public KnowledgeRetrievalTool(HybridRetrievalService hybridRetrievalService, ConfigService configService,
-                                  RerankService rerankService, KbRetrievalParamService kbRetrievalParams) {
+                                  RerankService rerankService, KbRetrievalParamService kbRetrievalParams,
+                                  FollowUpQueryRewriter queryRewriter) {
         this.hybridRetrievalService = hybridRetrievalService;
         this.configService = configService;
         this.rerankService = rerankService;
         this.kbRetrievalParams = kbRetrievalParams;
+        this.queryRewriter = queryRewriter;
+    }
+
+    /** 诊断日志用的过滤条件摘要（不打印具体标签值之外的用户数据） */
+    private static String filterSummary(RetrievalFilter f) {
+        if (f == null || f.isEmpty()) return "none";
+        return "{kb=" + (f.kbIds() == null ? "*" : f.kbIds().size())
+                + ", doc=" + (f.docIds() == null ? "*" : f.docIds().size())
+                + ", tags=" + (f.tags() == null ? "*" : f.tags())
+                + ", types=" + (f.fileTypes() == null ? "*" : f.fileTypes())
+                + ", after=" + f.updatedAfter()
+                + ", before=" + f.updatedBefore()
+                + ", by=" + f.createdBy() + '}';
     }
 
     /**
@@ -156,19 +184,22 @@ public class KnowledgeRetrievalTool {
             @ToolParam(description = "检索知识库的关键词或短语，越精准越好，可含功能名/字段名/操作对象") String query,
             @ToolParam(description = "返回结果条数（1~5，默认 5）") Integer topK,
             org.springframework.ai.chat.model.ToolContext toolContext) {
-        // 本轮的落点（引用注册器 / 检索范围 / 反思循环标记）全部来自本次调用的上下文，
+        // 本轮的落点（引用注册器 / 检索范围 / 追问改写上下文）全部来自本次调用的上下文，
         // 由问答侧的 ToolEnrichment 按次注入——工具不再读任何跨调用的静态状态
-        return searchKnowledge(query, topK, scopeOf(toolContext), registrarOf(toolContext));
+        return searchKnowledge(query, topK, scopeOf(toolContext), registrarOf(toolContext), turnQueryOf(toolContext));
+    }
+
+    /** 非流式调用方（MCP 平台工具）入口：没有本轮会话上下文，不启用追问改写 */
+    public String searchKnowledge(String query, Integer topK, KbScope scope,
+                                  SourceRegistrar registrar) {
+        return searchKnowledge(query, topK, scope, registrar, null);
     }
 
     /**
-     * 显式入参版本：非流式调用方（对外 MCP server 的平台工具）走这条，检索范围由调用方自己给。
-     * <p>迁移前它靠 {@code KnowledgeRetrievalTool.setKbScope(...)} + finally clear 那对静态方法设置范围，
-     * 池化线程漏清就把上一个调用者的库界留给下一个调用者——对免登录对外端点来说这是越权读库，
-     * 现在只能显式传，没有「忘了传还留着上次的」这种状态可留。
+     * 显式入参版本：检索范围由调用方给，追问改写上下文可选。
      */
     public String searchKnowledge(String query, Integer topK, KbScope scope,
-                                  SourceRegistrar registrar) {
+                                  SourceRegistrar registrar, TurnQueryContext turnQuery) {
 
         if (query == null || query.isBlank()) {
             return "查询关键词不能为空";
@@ -187,47 +218,58 @@ public class KnowledgeRetrievalTool {
         // 与「压根没查」（uid=null / 耗时极短 / 有失败标记）。
         long t0 = System.currentTimeMillis();
         Object uid = safeUserAttr("uid");
+        // 文档级条件直接下传检索层：标签/范围/类型不再召回后回表削薄，而是参与配额计算。
+        // @ 知识库收窄编译进同一份 filter（只收窄、不放宽）。
+        RetrievalFilter filter = scope == null ? RetrievalFilter.NONE : scope.filter();
+        if (scope != null && scope.kbFilter() != null && !scope.kbFilter().isEmpty()) {
+            filter = filter.withKbIds(scope.kbFilter());
+        }
+        String originalQuery = query.trim();
+        // 追问改写：只在本轮有会话上下文时启用；改写成功走「改写词 + 原词」两路并行，原词路永远保留。
+        FollowUpQueryRewriter.Result rewrite = null;
+        if (turnQuery != null) {
+            List<Map<String, Object>> history;
+            try {
+                history = turnQuery.history() == null ? null : turnQuery.history().get();
+            } catch (Exception e) {
+                history = null;
+                log.warn("[RAG-REWRITE] 读取最近会话历史失败，本轮按原词检索: session={} err={}",
+                        turnQuery.sessionId(), e.toString());
+            }
+            rewrite = queryRewriter.rewrite(turnQuery.modelRef(), turnQuery.question(), originalQuery,
+                    history, turnQuery.uid(), turnQuery.sessionId());
+            if (rewrite.applied()) {
+                diag.rewriteApplied(rewrite.query(), rewrite.elapsedMs());
+            } else {
+                diag.rewriteSkipped(rewrite.skipReason(), rewrite.elapsedMs());
+            }
+        }
         try {
-            // adaptiveTopK=true：与主链路同口径，权限剔掉的名额由补采补回（工具结果直接进模型上下文，
+            // adaptiveTopK=true：与主链路同口径，权限/元数据条件剔掉的名额由补采补回（工具结果直接进模型上下文，
             // 召回不足会表现为「知识库里明明有却答不出来」）
-            hits = hybridRetrievalService.search(query.trim(), diag,
-                    scope == null ? null : scope.kbIds(), true);
+            if (rewrite != null && rewrite.applied()) {
+                hits = hybridRetrievalService.searchMulti(
+                        List.of(rewrite.query(), originalQuery), diag,
+                        scope == null ? null : scope.kbIds(), true, filter);
+            } else {
+                hits = hybridRetrievalService.search(originalQuery, diag,
+                        scope == null ? null : scope.kbIds(), true, filter);
+            }
         } catch (Exception e) {
             return "知识库检索失败：" + e.getMessage();
         }
-        log.info("[TOOL-DIAG] searchKnowledge query=\"{}\" 融合召回 {} 条耗时 {}ms；uid={} dept={} role={} thread={} 向量路失败={}({}) 关键词路失败={} 库门下推失败={} scopeKbIds={} scopeDocIds数={}",
-                query.trim(), hits == null ? 0 : hits.size(), System.currentTimeMillis() - t0,
+        log.info("[TOOL-DIAG] searchKnowledge query=\"{}\" 融合召回 {} 条耗时 {}ms；uid={} dept={} role={} thread={} 向量路失败={}({}) 关键词路失败={} 库门下推失败={} scopeKbIds={} scopeKbFilter={} filter={} 元数据剔除={} 下推={} 关键词引擎={} 追问改写={}({}) 改写耗时={}ms",
+                originalQuery, hits == null ? 0 : hits.size(), System.currentTimeMillis() - t0,
                 uid, safeUserAttr("dept"), safeUserAttr("role"),
                 Thread.currentThread().getName(),
                 diag.isVectorFailed(), diag.lastError(),
                 diag.isKeywordFailed(), diag.aclPushdownError(),
                 scope == null ? null : scope.kbIds(),
-                scope == null || scope.docIds() == null ? null : scope.docIds().size());
-        if (scope != null && scope.docIds() != null) {
-            int before = hits.size();
-            hits = hits.stream()
-                    .filter(h -> h.docId() != null && scope.docIds().contains(h.docId()))
-                    .toList();
-            log.info("[TOOL-DIAG] docId 后过滤：{} → {} 条（scope.docIds={}）", before, hits.size(),
-                    scope.docIds());
-        }
-        // @ 知识库提及的收窄（两道闸的第二道）：关键词路本就不按库界走，只收窄向量路的 kbIds
-        // 会留一半口子——「以为只按这个库答，别的库的命中照样进来」。所属库不在点名集合里的
-        // 命中（含图扩展、手动块）一律剔除；kbId 解析不出的块宁可丢也不放（收窄语义下宁少不滥）。
-        if (scope != null && scope.kbFilter() != null && !scope.kbFilter().isEmpty()) {
-            int before = hits.size();
-            hits = hits.stream()
-                    .filter(h -> h.kbId() != null && scope.kbFilter().contains(h.kbId()))
-                    .toList();
-            log.info("[TOOL-DIAG] @kb 收窄后过滤：{} → {} 条（kbFilter={}）", before, hits.size(),
-                    scope.kbFilter());
-        }
-        // 智能体级标签收窄：命中块的所属文档必须带 knowledgeTags 之一（文档表打标，回表比对）
-        if (scope != null && scope.tags() != null && !scope.tags().isEmpty()) {
-            int before = hits.size();
-            hits = hybridRetrievalService.filterByDocTags(hits, scope.tags());
-            log.info("[TOOL-DIAG] 标签收窄后过滤：{} → {} 条（tags={}）", before, hits.size(), scope.tags());
-        }
+                scope == null ? null : scope.kbFilter(),
+                filterSummary(filter), diag.getMetaFiltered(), diag.filterPushdown(), diag.keywordEngine(),
+                rewrite == null ? "off" : (rewrite.applied() ? rewrite.query() : rewrite.skipReason()),
+                rewrite == null ? "-" : String.valueOf(rewrite.applied()),
+                diag.getRewriteElapsedMs());
         // 补重排（强制窗口）：search() 只出融合分，不重排的话相关分门发生在两个分值域上——
         // 与查询仅词面重叠的无关块（如"框架/使用"命中操作手册章节）融合分可达 0.6+，而真实重排分 ~0.000x，
         // 全部混进工具结果并注册进引用面板。rankForced 不受 minHits 窗口限制（工具候选可能不足 6 条），
@@ -246,8 +288,11 @@ public class KnowledgeRetrievalTool {
             registrar.registerRoundRerankModel(roundRef.trim());
         }
         final KbRetrievalParamService.RerankConf finalConf = conf;
+        // 重排始终用「用户原问题」：改写只负责扩大召回，不参与相关性判定——
+        // 评估实测用改写词重排会把原词能命中的正确块挤出 top5（recall@5 0.5→0），改用原问题后回归消失。
+        final String rankQuery = originalQuery;
         hits = kbRetrievalParams.withRerankConf(finalConf,
-                () -> rerankService.rankForced(candidates, query.trim()));
+                () -> rerankService.rankForced(candidates, rankQuery));
         // 最低相关分门（分域双门，与主链路上下文填充同款语义）：重排分走 retrieval.minContextScore（0.6），
         // 未重排（关闭/失败回退）的融合分走 retrieval.minFusionScore（0.5）——两个分值域分布不同，一个绝对门
         // 不可能同时对两者成立；重排本轮实际执行过时，未重排候选不得借融合门入场（单侧约束）。

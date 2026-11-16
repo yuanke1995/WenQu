@@ -2013,9 +2013,19 @@ export const listDocumentVersions = id => request(`/document/${id}/versions`)
 export const rollbackDocument = (id, version) =>
   request(`/document/${id}/rollback`, { method: 'POST', body: JSON.stringify({ version }) })
 
-/** 检索调试：分步查看关键词/向量/合并/重排/最终上下文/被排除 */
-export const debugRetrieval = question =>
-  request('/debug/retrieval', { method: 'POST', body: JSON.stringify({ question }) })
+/**
+ * 检索调试：分步查看关键词/向量/合并/重排/最终上下文/被排除。
+ * opts.sessionId + opts.modelRef 时后端会真实跑一次追问改写，并按「改写词 + 原词」两路合并。
+ */
+export const debugRetrieval = (question, opts = {}) =>
+  request('/debug/retrieval', {
+    method: 'POST',
+    body: JSON.stringify({
+      question,
+      sessionId: opts.sessionId || undefined,
+      modelRef: opts.modelRef || undefined
+    })
+  })
 
 /** 检索评估：从历史问答回放生成评估集（scopeKbId 非空时只保留该知识库的期望块） */
 export const evalGenerate = (maxCases, scopeKbId) =>

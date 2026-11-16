@@ -1758,6 +1758,17 @@
       </div>
       <a-spin :spinning="debugLoading">
         <template v-if="debugResult">
+          <div v-if="debugResult.rewrite" class="dbg-rewrite">
+            <span class="dbg-terms-label">追问改写</span>
+            <template v-if="debugResult.rewrite.applied">
+              <a-tag color="green" size="small">已改写</a-tag>
+              <span class="dbg-rw-text">{{ debugResult.rewrite.original }} → {{ debugResult.rewrite.query }}</span>
+            </template>
+            <template v-else>
+              <a-tag size="small">未改写</a-tag>
+              <span class="dbg-rw-text">{{ rewriteSkipText(debugResult.rewrite.skipReason) }}</span>
+            </template>
+          </div>
           <div v-if="debugResult.keywordTerms?.length" class="dbg-terms">
             <span class="dbg-terms-label">检索词元</span>
             <a-tag v-for="(t, ti) in debugResult.keywordTerms" :key="ti" color="blue" style="margin:2px">{{ t }}</a-tag>
@@ -1958,6 +1969,19 @@ import { loadSessions, sessionStore } from './store'
 import { exportAnswerMd, exportSessionMarkdown } from './exportMd'
 import { fmtTokens } from '../utils/token'
 import { chatDone, guideSnoozed, refreshSetupGuide, setupGuide } from '../utils/setupGuide'
+
+/** 追问改写未执行的原因 → 用户能看懂的一句话（界面不出现 no-history 这类开发术语） */
+const rewriteSkipText = r => ({
+  'no-history': '本会话还没有可参考的前文',
+  blank: '检索词为空',
+  'too-long': '检索词已足够完整',
+  standalone: '检索词已足够独立',
+  'no-model': '未取到本轮模型',
+  timeout: '改写超时，已按原词检索',
+  failed: '改写失败，已按原词检索',
+  'empty-output': '改写没有返回可用结果',
+  unchanged: '与原检索词一致'
+}[r] || '本轮未改写')
 import { copyText } from '../utils/clipboard'
 import { localExecutorId } from '../utils/localExecutor'
 import { useSessionShare } from './shareSession'
@@ -3770,6 +3794,8 @@ const {
 /* 检索调试面板 */
 .dbg-item { padding: 6px 8px; margin-bottom: 6px; border: 1px solid var(--app-border); border-radius: 6px; background: var(--app-panel-2); }
 .dbg-terms { padding: 8px 10px; margin-bottom: 10px; border: 1px solid var(--app-info-border); border-radius: 6px; background: var(--app-info-weak); }
+.dbg-rewrite { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 8px 10px; margin-bottom: 10px; border: 1px solid var(--app-border); border-radius: 6px; }
+.dbg-rw-text { font-size: 12px; color: var(--app-text2); }
 .dbg-terms-label { font-size: 12px; color: var(--app-text3); margin-right: 6px; }
 .dbg-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .dbg-title { font-weight: 500; font-size: 13px; }

@@ -174,7 +174,8 @@ public class AgentController {
     }
 
     @Operation(summary = "新建智能体", description = "body 字段：name(必填)/icon(图标：wenqu=问渠品牌标（内置「问渠」专属，其它智能体不可用）/ emoji 字符，省略=默认展示)/"
-            + "description/model/systemPrompt/knowledgeScope/"
+            + "description/model/systemPrompt/knowledgeScope/knowledgeBaseIds/knowledgeTags/"
+            + "knowledgeFilter(检索文档条件 JSON：{\"fileTypes\":[\"pdf\"],\"updatedWithinDays\":90}，空=不限)/"
             + "toolKnowledge/toolBuiltin/toolSkill/toolArtifact/toolMcp/toolWebsearch/toolHttp(1开0关，省略=继承)/"
             + "httpTools(HTTP 工具集数组：[{name,baseUrl,timeoutMs,enabled,auth:{type,header,value},ops:[{operationId,method,path,summary,params,hasBody,inputSchema}]}]；"
             + "ops 由 /http-tools/preview 解析得出，auth.value 明文提交、服务端 JWE 加密落库)/"
@@ -190,7 +191,8 @@ public class AgentController {
     }
 
     @Operation(summary = "编辑智能体", description = "仅更新 body 中出现的字段（icon：wenqu=问渠品牌标（内置「问渠」专属）/ emoji；内置智能体的名称不可修改）；"
-            + "工具开关传 null 表示恢复继承；httpTools 的 auth.value 留空=沿用旧凭据；"
+            + "工具开关传 null 表示恢复继承；knowledgeFilter 为检索文档条件 JSON（fileTypes/updatedWithinDays，空=不限）；"
+            + "httpTools 的 auth.value 留空=沿用旧凭据；"
             + "disabled(0/1) 为停用开关：停用后对话页不可选、@/委派不可用、分享链接失效，默认智能体不可停用；"
             + "仅创建者/被授权人/管理员可改")
     @Permission("agent:write")

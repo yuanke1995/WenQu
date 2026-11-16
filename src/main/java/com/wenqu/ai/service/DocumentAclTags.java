@@ -120,6 +120,22 @@ public class DocumentAclTags {
         return FIELD_KB_ID + " IN [" + String.join(", ", quoted) + "]";
     }
 
+    /**
+     * 编译任意 TAG 字段的 {@code IN} 子句（检索元数据过滤的 docId 下推复用同一份转义）。
+     *
+     * @param field  metadata 字段名（如 {@link #FIELD_DOC_ID}）
+     * @param values 取值集合；null 返回 null（=不下推），空集返回永假表达式（宁少不滥）
+     */
+    public static String buildTagInExpression(String field, Set<String> values) {
+        if (values == null) return null;
+        List<String> quoted = values.stream()
+                .filter(v -> v != null && !v.isBlank())
+                .map(DocumentAclTags::quoteTagValue)
+                .toList();
+        if (quoted.isEmpty()) return field + " IN ['__no_match__']";
+        return field + " IN [" + String.join(", ", quoted) + "]";
+    }
+
     /** FilterExpression 文本解析器里字符串字面量用单引号，内部单引号需转义 */
     private static String quoteTagValue(String v) {
         return "'" + escapeTagValue(v) + "'";

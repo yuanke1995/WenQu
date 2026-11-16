@@ -127,6 +127,7 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         m.put("knowledgeScope", "文档范围");
         m.put("knowledgeBaseIds", "关联知识库");
         m.put("knowledgeTags", "检索标签收窄");
+        m.put("knowledgeFilter", "检索文档条件");
         m.put("knowledgeDisabled", "不使用知识库");
         m.put("toolKnowledge", "知识库检索");
         m.put("toolBuiltin", "向用户提问");
@@ -712,6 +713,7 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         if (b.containsKey("knowledgeScope")) uw.set(Agent::getKnowledgeScope, a.getKnowledgeScope());
         if (b.containsKey("knowledgeBaseIds")) uw.set(Agent::getKnowledgeBaseIds, a.getKnowledgeBaseIds());
         if (b.containsKey("knowledgeTags")) uw.set(Agent::getKnowledgeTags, a.getKnowledgeTags());
+        if (b.containsKey("knowledgeFilter")) uw.set(Agent::getKnowledgeFilter, a.getKnowledgeFilter());
         if (b.containsKey("knowledgeDisabled")) uw.set(Agent::getKnowledgeDisabled, a.getKnowledgeDisabled());
         if (b.containsKey("toolKnowledge")) uw.set(Agent::getToolKnowledge, a.getToolKnowledge());
         if (b.containsKey("toolBuiltin")) uw.set(Agent::getToolBuiltin, a.getToolBuiltin());
@@ -818,6 +820,10 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         if (body.containsKey("knowledgeBaseIds")) a.setKnowledgeBaseIds(asText(body.get("knowledgeBaseIds"), 1000));
         // 检索标签收窄：逗号分隔文档标签，检索只收命中其一的文档（空=不过滤）
         if (body.containsKey("knowledgeTags")) a.setKnowledgeTags(asText(body.get("knowledgeTags"), 500));
+        // 检索文档条件（类型/最近更新）：JSON 白名单校验后落库；空串=不限制
+        if (body.containsKey("knowledgeFilter")) {
+            a.setKnowledgeFilter(normalizeKnowledgeFilter(body.get("knowledgeFilter")));
+        }
         // 「不使用知识库」：纯角色智能体（法律顾问/写作助手等）——1=跳过检索链路；null 视为 0
         if (body.containsKey("knowledgeDisabled")) a.setKnowledgeDisabled(toTri(body.get("knowledgeDisabled")));
         if (body.containsKey("toolKnowledge")) a.setToolKnowledge(toTri(body.get("toolKnowledge")));
@@ -1251,6 +1257,7 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         uw.set(Agent::getKnowledgeScope, raw(cfg.get("knowledgeScope")));
         uw.set(Agent::getKnowledgeBaseIds, raw(cfg.get("knowledgeBaseIds")));
         uw.set(Agent::getKnowledgeTags, raw(cfg.get("knowledgeTags")));
+        uw.set(Agent::getKnowledgeFilter, raw(cfg.get("knowledgeFilter")));
         uw.set(Agent::getKnowledgeDisabled, asInt(cfg.get("knowledgeDisabled")));
         uw.set(Agent::getToolKnowledge, asInt(cfg.get("toolKnowledge")));
         uw.set(Agent::getToolBuiltin, asInt(cfg.get("toolBuiltin")));
@@ -1300,6 +1307,51 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         String s = String.valueOf(v).trim();
         if (s.isEmpty()) return null;
         return s.length() > max ? s.substring(0, max) : s;
+    }
+
+    /** 检索文档条件可接受的类型（与文档解析器支持的扩展名一致） */
+    private static final java.util.Set<String> KNOWLEDGE_FILTER_TYPES = java.util.Set.of(
+            "pdf", "docx", "xlsx", "ppt", "pptx", "url", "html", "htm", "txt", "md", "markdown", "csv");
+
+    /**
+     * 检索文档条件（{@code knowledge_filter}）的保存期归一：只保留白名单键与合法值。
+     * <ul>
+     *   <li>JSON 非法 / 类型不在白名单 / 天数越界 → 400（不静默丢弃用户提交的条件）；</li>
+     *   <li>空数组、空白值、未知键 → 丢弃；归一后为空 → null（= 不限制）。</li>
+     * </ul>
+     */
+    private String normalizeKnowledgeFilter(Object v) {
+        if (v == null) return null;
+        String s = String.valueOf(v).trim();
+        if (s.isEmpty()) return null;
+        JSONObject in;
+        try {
+            in = JSON.parseObject(s);
+        } catch (Exception e) {
+            throw new BizException("检索文档条件不是有效 JSON");
+        }
+        if (in == null) return null;
+        java.util.LinkedHashSet<String> types = new java.util.LinkedHashSet<>();
+        var arr = in.getJSONArray("fileTypes");
+        if (arr != null) {
+            for (int i = 0; i < arr.size(); i++) {
+                String t = arr.getString(i);
+                if (t == null || t.isBlank()) continue;
+                t = t.trim().toLowerCase(java.util.Locale.ROOT);
+                if (!KNOWLEDGE_FILTER_TYPES.contains(t)) {
+                    throw new BizException("不支持的文档类型：" + t);
+                }
+                types.add(t);
+            }
+        }
+        Integer days = in.getInteger("updatedWithinDays");
+        if (days != null && (days < 1 || days > 3650)) {
+            throw new BizException("最近更新天数需在 1~3650 之间");
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        if (!types.isEmpty()) out.put("fileTypes", new ArrayList<>(types));
+        if (days != null) out.put("updatedWithinDays", days);
+        return out.isEmpty() ? null : JSON.toJSONString(out);
     }
 
     /** 工具集字段是否有内容（前端传数组，存量可能是 JSON 串）：空数组/空串/空 JSON 都算空 */

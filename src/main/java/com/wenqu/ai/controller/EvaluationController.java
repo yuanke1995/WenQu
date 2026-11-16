@@ -86,6 +86,21 @@ public class EvaluationController {
         }
     }
 
+    @Operation(summary = "追问改写评估", description = "从指定会话回放「前文 + 追问」，对比改写开/关的 recall@5 与 MRR；maxCases 1~20，modelRef 缺省=不发起改写")
+    @Permission("eval:write")
+    @PostMapping("/followup")
+    public ResultJson followup(@RequestBody Map<String, Object> body) {
+        String sessionId = body.get("sessionId") == null ? null : String.valueOf(body.get("sessionId"));
+        int maxCases = body.get("maxCases") == null ? 8 : Integer.parseInt(String.valueOf(body.get("maxCases")));
+        String modelRef = body.get("modelRef") == null ? null : String.valueOf(body.get("modelRef"));
+        try {
+            return ResultJson.ok(evalService.runFollowUpEval(
+                    sessionId, maxCases, modelRef, com.wenqu.ai.util.RequestUser.uid()));
+        } catch (BizException e) {
+            return ResultJson.error(e.getCode(), e.getMessage());
+        }
+    }
+
     @Operation(summary = "追加单条评估用例（差评回流）", description = "按问题去重，失效期望块自动剔除")
     @Permission("eval:write")
     @PostMapping("/case")

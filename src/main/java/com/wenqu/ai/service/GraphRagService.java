@@ -970,6 +970,19 @@ public class GraphRagService {
     public List<HybridRetrievalService.Hit> expand(List<HybridRetrievalService.Hit> hits,
                                                    Collection<String> kbIds,
                                                    HybridRetrievalService.RetrievalDiag diag) {
+        return expand(hits, kbIds, diag, RetrievalFilter.NONE);
+    }
+
+    /**
+     * 主检索收口处的图扩展：命中块内容匹配实体 → 一跳三元组 → 反查真实知识块并入（衰减分 ×0.9）。
+     * <p>扩展块与主检索命中同一份 {@link RetrievalFilter}：主路被标签/类型/时间筛掉的文档，
+     * 不能从图路又塞回上下文与引用面板。
+     */
+    public List<HybridRetrievalService.Hit> expand(List<HybridRetrievalService.Hit> hits,
+                                                   Collection<String> kbIds,
+                                                   HybridRetrievalService.RetrievalDiag diag,
+                                                   RetrievalFilter filter) {
+        RetrievalFilter f = filter == null ? RetrievalFilter.NONE : filter;
         if (hits == null || hits.isEmpty()) return hits;
         // 开启了 GraphRAG 的库（与本次检索范围求交）
         List<KnowledgeBase> graphKbs = kbMapper.selectList(new LambdaQueryWrapper<KnowledgeBase>()
@@ -1056,7 +1069,7 @@ public class GraphRagService {
                 ? Map.of()
                 : knowledgeMapper.selectBatchIds(candidateChunkIds).stream()
                         .collect(Collectors.toMap(Knowledge::getId, k -> k, (a, b) -> a));
-        Map<String, String> allowedDocKb = allowedDocKbOf(chunkById.values());
+        Map<String, String> allowedDocKb = allowedDocKbOf(chunkById.values(), f);
         for (GraphTriple t : picked) {
             if (added.size() >= expandTopK) break;
             if (t.getChunkId() == null || existingKIds.contains(t.getChunkId()) || added.containsKey(t.getChunkId())) continue;
@@ -1123,7 +1136,8 @@ public class GraphRagService {
      * 手动知识块（docId 空）不在文档管辖内，调用方按主检索同一口径直接放行。
      * <p>带回 kbId 是为了让扩展块与主检索命中同一口径取库级参数（分域门/重排收敛/引用归属）。
      */
-    private Map<String, String> allowedDocKbOf(Collection<Knowledge> chunks) {
+    private Map<String, String> allowedDocKbOf(Collection<Knowledge> chunks, RetrievalFilter filter) {
+        RetrievalFilter f = filter == null ? RetrievalFilter.NONE : filter;
         Set<String> docIds = chunks.stream()
                 .map(Knowledge::getDocId)
                 .filter(id -> id != null && !String.valueOf(id).isBlank())
@@ -1139,6 +1153,7 @@ public class GraphRagService {
                     .in(AiDocument::getId, docIds))) {
                 if (d.getStatus() == null || d.getStatus() != 0) continue;
                 if (d.getDeleted() != null && d.getDeleted() != 0) continue;
+                if (!f.accepts(d, d.getKbId())) continue;
                 allowed.put(String.valueOf(d.getId()), d.getKbId());
             }
             return allowed;

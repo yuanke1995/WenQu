@@ -127,6 +127,14 @@ public class HybridRetrievalService {
         private String lastError;
         private int graphExpanded;       // 图扩展并入的块数（GraphRAG 开启的库才有值）
         private String aclPushdownError; // ACL 过滤条件下推失败（已退回事后过滤兜底，非越权但召回受损）
+        private final java.util.concurrent.atomic.AtomicInteger metaFiltered =
+                new java.util.concurrent.atomic.AtomicInteger(); // 被元数据条件剔除的候选数（多路并行时累加）
+        private String filterPushdown;   // exact=文档范围已下推 / large=过大未下推 / none=无文档级条件
+        private String keywordEngine;    // meili / mysql / mysql(filter)
+        private boolean rewriteApplied;  // 本轮追问改写是否成功
+        private String rewrittenQuery;   // 改写后的检索词（未改写为 null）
+        private String rewriteSkipReason;// 未改写原因（no-history/standalone/timeout/failed...）
+        private long rewriteElapsedMs;   // 改写耗时
 
         void vectorFailed(String err) { this.vectorFailed = true; this.lastError = err; }
         void vectorPartialFailed(String err) { this.vectorPartialFailed = true; if (this.lastError == null) this.lastError = err; }
@@ -136,6 +144,21 @@ public class HybridRetrievalService {
         void multiTimeout() { this.multiTimeout = true; }
         /** 库门下推失败（记 error 而非布尔：既要让调试面板看到原因，也避免多字段互相覆盖）。字段名沿用 acl* 前缀，属既有 API 契约不更名 */
         void aclPushdownFailed(String err) { this.aclPushdownError = err; }
+        void addMetaFiltered(int n) { if (n > 0) this.metaFiltered.addAndGet(n); }
+        void filterPushdown(String mode) { this.filterPushdown = mode; }
+        void keywordEngine(String engine) { this.keywordEngine = engine; }
+        void rewriteApplied(String query, long ms) {
+            this.rewriteApplied = true;
+            this.rewrittenQuery = query;
+            this.rewriteSkipReason = null;
+            this.rewriteElapsedMs = Math.max(0, ms);
+        }
+        void rewriteSkipped(String reason, long ms) {
+            this.rewriteApplied = false;
+            this.rewrittenQuery = null;
+            this.rewriteSkipReason = reason;
+            this.rewriteElapsedMs = Math.max(0, ms);
+        }
 
         /** 清空本次诊断（改写回退/二次检索前调用：最终用于回答的那次检索的状态为准） */
         void reset() {
@@ -147,6 +170,13 @@ public class HybridRetrievalService {
             this.multiTimeout = false;
             this.lastError = null;
             this.aclPushdownError = null;
+            this.metaFiltered.set(0);
+            this.filterPushdown = null;
+            this.keywordEngine = null;
+            this.rewriteApplied = false;
+            this.rewrittenQuery = null;
+            this.rewriteSkipReason = null;
+            this.rewriteElapsedMs = 0;
         }
 
         public boolean isVectorFailed() { return vectorFailed; }
@@ -158,6 +188,17 @@ public class HybridRetrievalService {
         public String lastError() { return lastError; }
         public int getGraphExpanded() { return graphExpanded; }
         void addGraphExpanded(int n) { this.graphExpanded += n; }
+        public int getMetaFiltered() { return metaFiltered.get(); }
+        public String filterPushdown() { return filterPushdown; }
+        public String keywordEngine() { return keywordEngine; }
+        public boolean isRewriteApplied() { return rewriteApplied; }
+        public String rewrittenQuery() { return rewrittenQuery; }
+        public String rewriteSkipReason() { return rewriteSkipReason; }
+        public long getRewriteElapsedMs() { return rewriteElapsedMs; }
+        /** 改写是否属于异常降级（超时/失败）；no-history/standalone 等是正常跳过 */
+        public boolean isRewriteFailed() {
+            return "timeout".equals(rewriteSkipReason) || "failed".equals(rewriteSkipReason);
+        }
         /** 库门下推失败原因（null=本次下推正常）。字段名沿用 acl* 前缀，属既有 API 契约不更名 */
         public String aclPushdownError() { return aclPushdownError; }
     }
@@ -185,32 +226,6 @@ public class HybridRetrievalService {
     }
 
     /**
-     * 按文档标签过滤命中（智能体级标签收窄）：命中块回表比对所属文档的 tags（逗号分隔），
-     * 任一标签命中即保留。late-binding 与文档级 ACL 同口径——打标改 MySQL 即时生效，
-     * 不动向量/关键词索引；代价是过滤发生在补采之后，命中池被标签削薄时本轮结果变少。
-     * 文档无标签 = 收窄语义下不放行（宁少不滥，与 kbFilter 同判据）。
-     */
-    public List<Hit> filterByDocTags(List<Hit> hits, java.util.Collection<String> tags) {
-        if (hits == null || hits.isEmpty() || tags == null || tags.isEmpty()) return hits;
-        Set<String> wanted = tags.stream().map(String::trim).filter(s -> !s.isEmpty()).collect(Collectors.toSet());
-        if (wanted.isEmpty()) return hits;
-        Set<String> docIds = hits.stream().map(Hit::docId).filter(Objects::nonNull).collect(Collectors.toSet());
-        if (docIds.isEmpty()) return List.of();
-        Set<String> matched = new HashSet<>();
-        for (AiDocument doc : documentMapper.selectBatchIds(docIds)) {
-            String t = doc.getTags();
-            if (t == null || t.isBlank() || doc.getId() == null) continue;
-            for (String part : t.split(",")) {
-                if (wanted.contains(part.trim())) {
-                    matched.add(doc.getId());
-                    break;
-                }
-            }
-        }
-        return hits.stream().filter(h -> h.docId() != null && matched.contains(h.docId())).toList();
-    }
-
-    /**
      * @param kbIds 限定检索的知识库（空=全部）
      * @param adaptiveTopK 是否启用「权限有效召回」补采（见 {@link #vectorSearch}）。
      *        <b>{@code false} 时严格按配置 topK 取一次</b>——量化评估与检索调试必须走此路。
@@ -218,9 +233,39 @@ public class HybridRetrievalService {
      */
     public List<Hit> search(String query, RetrievalDiag diag, java.util.Collection<String> kbIds,
             boolean adaptiveTopK) {
+        return search(query, diag, kbIds, adaptiveTopK, RetrievalFilter.NONE);
+    }
+
+    /**
+     * 混合检索（带元数据过滤）。
+     *
+     * <p><b>过滤为什么必须在召回内部</b>：标签/文档范围/类型/时间如果等召回完再剔，
+     * {@code vectorTopK} 会先被无关文档占满，剔完只剩零星几条甚至为空，而系统以为召回正常。
+     * 这里把条件并进「可见性资格判定」，让权限补采机制同时覆盖元数据削薄；
+     * 关键词路再单独把条件下推进 SQL，保证 {@code LIMIT} 作用在过滤之后。
+     *
+     * <p><b>空集合语义</b>：{@code filter.kbIds}/{@code filter.docIds} 为空集表示「无结果」，
+     * 直接早退，不发起 embedding 与 KNN。
+     */
+    public List<Hit> search(String query, RetrievalDiag diag, java.util.Collection<String> kbIds,
+            boolean adaptiveTopK, RetrievalFilter filter) {
+        RetrievalFilter rf = filter == null ? RetrievalFilter.NONE : filter;
+        if (isExplicitlyEmpty(rf.kbIds()) || isExplicitlyEmpty(rf.docIds())) {
+            if (diag != null) diag.filterPushdown("none");
+            return List.of();
+        }
+        // 本轮真正要搜的库：智能体库界 ∩ @ 知识库收窄（两者都空=不限；交集为空=无结果）
+        java.util.Collection<String> scopeKbIds = effectiveKbScope(kbIds, rf.kbIds());
+        if (scopeKbIds != null && scopeKbIds.isEmpty()) {
+            if (diag != null) diag.filterPushdown("none");
+            return List.of();
+        }
+        // 库界必须同时作用于关键词路：关键词路本就不按向量库界走，只传 kbIds 给向量路会漏一半
+        //（墙内助手/工作流节点/对外接口的命中会从关键词路越界进来）。并进 filter 后两条路同一份范围。
+        RetrievalFilter ef = scopeKbIds == null ? rf : rf.withKbIds(new LinkedHashSet<>(scopeKbIds));
         // 本轮库级参数逐库解析一次：阈值/权重都按“命中块所属库”取，不能压成回合级标量。
         // 取值链见 KbRetrievalParamService：显式覆盖(评估扫参) > 库级 JSON > 全局设置。
-        Map<String, KbRetrievalParamService.Params> params = kbRetrievalParams.forScope(kbIds);
+        Map<String, KbRetrievalParamService.Params> params = kbRetrievalParams.forScope(scopeKbIds);
         KbRetrievalParamService.Params defaults = kbRetrievalParams.defaults();
 
         // 可见范围过滤（资源共享范围）：当前用户不可见的文档在向量/关键词两路统一剔除
@@ -229,27 +274,30 @@ public class HybridRetrievalService {
         //    补采还受总闸约束（RETRIEVAL_ACL_TOPK_SUPPLANT，平台固定默认开）：补采顶掉尾部为平台固定行为（见下方 KNN 成本说明）
         boolean supplement = adaptiveTopK && ConfigDefaults.RETRIEVAL_ACL_TOPK_SUPPLANT;
         List<Document> vectorDocs = supplement
-                ? vectorSearch(query, diag, kbIds, roundVectorTopK(params), params)
-                : vectorSearch(query, diag, kbIds, 0, params);
+                ? vectorSearch(query, diag, scopeKbIds, roundVectorTopK(params), params, ef)
+                : vectorSearch(query, diag, scopeKbIds, 0, params, ef);
 
-        // 2. 关键词召回（并行，超时兜底）。关键词路不按库界走，召回上限按轮取参与库最大值
-        //   （单库轮即该库值；显式覆盖已在 Params 解析时折进各库值）
+        // 2. 关键词召回（并行，超时兜底）。库界已并进 filter（关键词路同样受约束），
+        //    召回上限按轮取参与库最大值（单库轮即该库值；显式覆盖已在 Params 解析时折进各库值）
         int kwLimit = params.values().stream().mapToInt(KbRetrievalParamService.Params::keywordLimit)
                 .max().orElse(ConfigDefaults.RETRIEVAL_KEYWORD_LIMIT);
-        List<Knowledge> kwDocs = keywordSearch(query, diag, kwLimit);
+        List<Knowledge> kwDocs = keywordSearch(query, diag, kwLimit, ef);
 
         // 3. 批量加载向量命中的知识块元数据（一次 selectBatchIds 替代逐条 selectById）+ 不可召回文档集合
         Map<String, Knowledge> kidMap = loadKnowledgeBatch(vectorDocs);
         Set<String> blockedDocIds = loadNonRetrievableDocIds(kidMap);
 
-        // 4. 可见范围过滤（**晚绑定**：召回后才判，只查「本轮命中的那些文档」）
+        // 4. 资格过滤（**晚绑定**：召回后才判，只查「本轮命中的那些文档」）
         //    若召回前全表扫 c_ai_document 算不可见集合，文档量涨上去就是每问一次全表，
         //    且 ACL 真相被复制进向量 metadata 造成两处口径（详见 DocumentAclTags 类注释）。
         //    这里只对命中块涉及的 docId 批量查一次（WHERE id IN (...)，主键索引、亚毫秒级），
-        //    判定全部收敛到 ResourceVisibilityService 一处，改共享范围下次检索即生效、无需重写索引。
+        //    可见性收敛到 ResourceVisibilityService，元数据条件收敛到 RetrievalFilter，同一批文档行上判完。
         //    docKb 顺手带回 docId→kbId：关键词路只拿到 docId，没有它就无法按库取权重。
         Map<String, String> docKb = new HashMap<>();
-        Set<String> visibleDocIds = loadVisibleDocIdsOfHits(vectorDocs, kwDocs, kidMap, docKb);
+        Eligibility eligible = loadEligibleDocIdsOfHits(vectorDocs, kwDocs, kidMap, docKb, ef);
+        Set<String> eligibleDocIds = eligible.docIds();
+        boolean requiresDoc = ef.requiresDocument();
+        if (diag != null) diag.addMetaFiltered(eligible.metaRejected());
 
         // 5. 融合：先存两路归一化分量，最后按块所属库的权重合成
         //    向量命中：非生效文档（弃用/解析中/解析失败）跳过，与关键词路 status=0 语义一致
@@ -265,9 +313,15 @@ public class HybridRetrievalService {
                 log.debug("[RAG] 跳过非生效文档命中: docId={} kid={}", docId, kid);
                 continue;
             }
-            // 可见范围：白名单判定（docId 为空=手动知识块，不在文档 ACL 管辖内，保留）
-            if (docId != null && !docId.isBlank() && !visibleDocIds.contains(docId)) {
-                log.debug("[RAG] 跳过不可见文档命中: docId={} kid={}", docId, kid);
+            // 资格判定：无文档行的手动块在有文档级条件时剔除（宁少不滥）；有文档行的按资格集合判
+            if (docId == null || docId.isBlank()) {
+                if (requiresDoc) {
+                    if (diag != null) diag.addMetaFiltered(1);
+                    log.debug("[RAG] 跳过无文档归属的手动块（本轮有文档级过滤）: kid={}", kid);
+                    continue;
+                }
+            } else if (!eligibleDocIds.contains(docId)) {
+                log.debug("[RAG] 跳过不可见/不符合过滤条件的文档命中: docId={} kid={}", docId, kid);
                 continue;
             }
             if (k != null && k.getStatus() != null && k.getStatus() == 1) {
@@ -291,10 +345,16 @@ public class HybridRetrievalService {
         }
         // 关键词命中：与向量命中叠加（两路分量相加）；词频加权分 0~1
         for (Knowledge k : kwDocs) {
-            // 可见范围：白名单判定（与向量路同口径；docId 为空=手动块，不在文档 ACL 管辖内）
+            // 资格判定与向量路同口径（docId 为空的手动块在有文档级条件时剔除）
             String kDocId = k.getDocId() == null ? "" : String.valueOf(k.getDocId());
-            if (!kDocId.isBlank() && !visibleDocIds.contains(kDocId)) {
-                log.debug("[RAG] 跳过不可见文档命中（关键词路）: docId={} kid={}", kDocId, k.getId());
+            if (kDocId.isBlank()) {
+                if (requiresDoc) {
+                    if (diag != null) diag.addMetaFiltered(1);
+                    log.debug("[RAG] 跳过无文档归属的手动块（关键词路，本轮有文档级过滤）: kid={}", k.getId());
+                    continue;
+                }
+            } else if (!eligibleDocIds.contains(kDocId)) {
+                log.debug("[RAG] 跳过不可见/不符合过滤条件的文档命中（关键词路）: docId={} kid={}", kDocId, k.getId());
                 continue;
             }
             String kbId = kDocId.isBlank() ? null : docKb.get(kDocId);
@@ -319,13 +379,36 @@ public class HybridRetrievalService {
         }
         result.sort((a, b) -> Double.compare(b.score(), a.score()));
         // GraphRAG 图扩展：按库级开关一跳补块（真实块衰减分并入，diag.graphExpanded 计数）
+        // 扩展块与主检索命中同一份过滤条件，避免「主路筛掉、图路又塞回来」。
         try {
-            result = graphRagService.expand(result, kbIds, diag);
+            result = graphRagService.expand(result, scopeKbIds, diag, ef);
         } catch (Exception e) {
             log.warn("[RAG] 图扩展失败（不影响主检索结果）: {}", e.getMessage());
         }
         return result;
     }
+
+    /** null=不限；空集=明确「无结果」（不能当不限处理） */
+    private static boolean isExplicitlyEmpty(Set<String> s) {
+        return s != null && s.isEmpty();
+    }
+
+    /**
+     * 本轮真正要搜的库：库界（智能体墙）∩ 过滤条件里的库（@ 知识库收窄）。
+     * 两者都为空 = 不限；交集为空 = 无结果（调用方早退）。
+     */
+    private static java.util.Collection<String> effectiveKbScope(java.util.Collection<String> wallKbIds,
+                                                                 Set<String> filterKbIds) {
+        boolean wallEmpty = wallKbIds == null || wallKbIds.isEmpty();
+        if (wallEmpty) return filterKbIds;
+        if (filterKbIds == null) return wallKbIds;
+        Set<String> out = new LinkedHashSet<>(wallKbIds);
+        out.retainAll(filterKbIds);
+        return out;
+    }
+
+    /** 资格判定结果：通过「可见 + 元数据条件」的文档集合，以及被元数据条件单独剔除的条数（诊断用） */
+    private record Eligibility(Set<String> docIds, int metaRejected) {}
 
     /**
      * 多路并行检索线程池（daemon，供深度思考多路检索用）。线程数随 chat.pipelineThreads 联动
@@ -396,10 +479,23 @@ public class HybridRetrievalService {
      */
     public List<Hit> searchMulti(List<String> queries, RetrievalDiag diag,
             java.util.Collection<String> kbIds, boolean adaptiveTopK) {
+        return searchMulti(queries, diag, kbIds, adaptiveTopK, RetrievalFilter.NONE);
+    }
+
+    /**
+     * 多路检索（带元数据过滤）；过滤条件对每一路生效，合并后再按同一条件收口。
+     * <p><b>多路的补采按路数收敛</b>：≤2 路开（每路补 1 次、最坏 topK 翻倍，总 KNN 成本 ≤4 倍，
+     * 且多路本就为拆子问题取多样性，收益最大）；≥3 路不开——N 路同步放大 KNN 而
+     * {@code multiSearchPool} 线程有限（随 chat.pipelineThreads 联动，终归有上界），成本乘路数后超时风险陡增，此时归并后的多路共识与
+     * 多样性收益已能覆盖名额损失。
+     */
+    public List<Hit> searchMulti(List<String> queries, RetrievalDiag diag,
+            java.util.Collection<String> kbIds, boolean adaptiveTopK, RetrievalFilter filter) {
+        RetrievalFilter rf = filter == null ? RetrievalFilter.NONE : filter;
         if (queries == null || queries.isEmpty()) return List.of();
         List<String> qs = queries.stream().map(String::trim).filter(q -> !q.isBlank()).distinct().toList();
         if (qs.size() <= 1) {
-            return qs.isEmpty() ? List.of() : search(qs.get(0), diag, kbIds, adaptiveTopK);
+            return qs.isEmpty() ? List.of() : search(qs.get(0), diag, kbIds, adaptiveTopK, rf);
         }
         syncMultiSearchSize();
         try {
@@ -419,7 +515,7 @@ public class HybridRetrievalService {
             List<CompletableFuture<List<Hit>>> futures = qs.stream()
                     .map(q -> CompletableFuture.supplyAsync(
                             () -> RequestUser.callAs(identity, () ->
-                                    runWithOverrides(runOverrides, () -> search(q, diag, kbIds, multiSupplement))),
+                                    runWithOverrides(runOverrides, () -> search(q, diag, kbIds, multiSupplement, rf))),
                             multiSearchPool))
                     .toList();
             CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
@@ -459,7 +555,7 @@ public class HybridRetrievalService {
             // fail-loud：多路检索超时/失败，降级首路（不再静默）
             if (diag != null) diag.multiTimeout();
             log.warn("[FAIL-LOUD] 多路检索超时/失败，降级首路: {}", e.getMessage());
-            return search(qs.get(0), diag, kbIds);
+            return search(qs.get(0), diag, kbIds, false, rf);
         }
     }
 
@@ -491,7 +587,14 @@ public class HybridRetrievalService {
      * 补采会掩盖 topK 被权限吃掉的事实。需要生产问答的补采行为请走 {@link #search(String, RetrievalDiag, java.util.Collection, boolean)}。
      */
     public List<Document> vectorSearch(String query, RetrievalDiag diag, java.util.Collection<String> kbIds) {
-        return vectorSearch(query, diag, kbIds, 0, kbRetrievalParams.forScope(kbIds));
+        return vectorSearch(query, diag, kbIds, 0, kbRetrievalParams.forScope(kbIds), RetrievalFilter.NONE);
+    }
+
+    /** 带元数据过滤的向量召回（调试面板对照用；不补采，与上一重载同口径） */
+    public List<Document> vectorSearch(String query, RetrievalDiag diag, java.util.Collection<String> kbIds,
+                                       RetrievalFilter filter) {
+        return vectorSearch(query, diag, kbIds, 0, kbRetrievalParams.forScope(kbIds),
+                filter == null ? RetrievalFilter.NONE : filter);
     }
 
     /**
@@ -519,7 +622,7 @@ public class HybridRetrievalService {
      * 向量召回；{@code minWantedHits} = 通过可见性判定的目标条数（&lt;=0 表示不补采，按配置 topK 取一次）。
      *
      * <p><b>为什么需要补采（治本点）</b>：文档级 ACL 是<b>晚绑定</b>——向量路先按 topK 取候选，
-     * 再由 {@link #loadVisibleDocIdsOfHits} 剔除无权文档。于是「topK 配额」被同库内的无权文档占掉，
+     * 再由 {@link #loadEligibleDocIdsOfHits} 剔除无权文档。于是「topK 配额」被同库内的无权文档占掉，
      * 用户实际拿到的有效命中少于 topK（私有文档占比越高损失越大），而系统以为召回正常。
      * 本方法把固定配额改成<b>「要够 N 条有效结果才停」</b>：先按配置 topK 取一次，
      * 若因权限被剔除导致有效条数不足，按保留率放大 topK <b>补采一次</b>，过滤仍由调用方做。
@@ -541,7 +644,9 @@ public class HybridRetrievalService {
      */
     private List<Document> vectorSearch(String query, RetrievalDiag diag,
             java.util.Collection<String> kbIds, int minWantedHits,
-            Map<String, KbRetrievalParamService.Params> params) {
+            Map<String, KbRetrievalParamService.Params> params, RetrievalFilter filter) {
+        RetrievalFilter f = filter == null ? RetrievalFilter.NONE : filter;
+        if (isExplicitlyEmpty(f.kbIds()) || isExplicitlyEmpty(f.docIds())) return List.of();
         // 全量重嵌入期间（任一实例执行 DROP/重建索引中）：向量索引不存在或半成品，
         // 直接跳过向量路（安静降级关键词路），避免对半成品索引检索产生错误/空召回与噪音告警
         if (reembedInProgress()) {
@@ -551,16 +656,19 @@ public class HybridRetrievalService {
         // 逐库：kbId → 该库的向量库实例（索引按库隔离，阈值也按库取）
         Map<String, VectorStore> stores = resolveVectorStores(kbIds);
         if (stores.isEmpty()) return List.of();
-        // 可见范围过滤条件（检索时过滤）：可见库集合 + 当前用户身份，编译成 RediSearch filter 下推。
-        // 必须在 resolveVectorStores 之后、similaritySearch 之前求值——下推靠它把无权文档挡在 KNN 之外。
-        String aclFilter = buildAclFilter(kbIds, diag);
+        // 文档级过滤的精确下推：条件够严（命中文档 ≤ 上限）时把 docId IN (...) 拼进 KNN 过滤，
+        // 避免「先取 topK 再过滤」把配额削薄；命中太多则不下推，交给资格判定 + 补采（见 resolvePushdownDocIds）。
+        Set<String> pushdownDocIds = resolvePushdownDocIds(f, diag);
+        if (pushdownDocIds != null && pushdownDocIds.isEmpty()) return List.of();
+        // 可见范围 + 文档范围过滤条件下推（检索时过滤）：必须在 similaritySearch 之前求值。
+        String aclFilter = buildAclFilter(kbIds, pushdownDocIds, diag);
         try {
             // 初召回各库用各自的库级 topK；补采放大基准取参与库最大值（见 roundVectorTopK）
             int baseTopK = roundVectorTopK(params);
             List<Document> first = similaritySearchAcross(stores, query, aclFilter, 0, diag, params);
             if (minWantedHits <= 0 || first.isEmpty()) return first;
 
-            int visibleCount = countVisibleHits(first);
+            int visibleCount = countVisibleHits(first, f);
             if (visibleCount >= minWantedHits || visibleCount == 0) return first;
 
             // 保留率 = 有效/召回。visibleCount==0 已在上行 return，故除数必 >0
@@ -583,6 +691,97 @@ public class HybridRetrievalService {
         }
     }
 
+    /** 向量路文档范围下推的条数上限：超过它就不拼表达式，改由资格判定 + 补采（太长的 TAG IN 会拖垮 KNN） */
+    private static final int DOC_FILTER_PUSHDOWN_MAX = 256;
+
+    /**
+     * 解析可精确下推的文档范围。
+     *
+     * <p>为什么分段：条件越严，命中文档越少——正好落在「≤上限精确下推」；条件越宽，命中文档越多，
+     * topK 候选里绝大多数本来就符合条件，晚绑定过滤损失很小，补采再兜一层。这样不在索引里
+     * 烘焙标签/类型等可运营字段，也避免把几千个 docId 拼进过滤表达式。
+     *
+     * @return null=不下推（无文档级条件或范围过大）；空集=确定无命中文档（调用方早退）
+     */
+    private Set<String> resolvePushdownDocIds(RetrievalFilter f, RetrievalDiag diag) {
+        if (!f.hasDocConditions()) {
+            if (diag != null) diag.filterPushdown("none");
+            return null;
+        }
+        Set<String> explicit = f.docIds();
+        if (explicit != null) {
+            if (explicit.size() > DOC_FILTER_PUSHDOWN_MAX) {
+                if (diag != null) diag.filterPushdown("large");
+                return null;
+            }
+            if (diag != null) diag.filterPushdown("exact");
+            return explicit;
+        }
+        Set<String> ids = queryEligibleDocIds(f, DOC_FILTER_PUSHDOWN_MAX + 1);
+        if (ids == null) {
+            if (diag != null) diag.filterPushdown("none");
+            return null;
+        }
+        if (ids.size() > DOC_FILTER_PUSHDOWN_MAX) {
+            if (diag != null) diag.filterPushdown("large");
+            return null;
+        }
+        if (diag != null) diag.filterPushdown("exact");
+        return ids;
+    }
+
+    /**
+     * 按元数据条件取命中文档 id（最多 limit 条，用于判断是否能精确下推）。
+     * <p>查询失败返回 null（不下推，也不放行）——最终资格判定仍按命中文档逐条过滤，安全方向不变。
+     */
+    private Set<String> queryEligibleDocIds(RetrievalFilter f, int limit) {
+        try {
+            com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<AiDocument> w =
+                    new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<>();
+            w.select(AiDocument::getId)
+                    .eq(AiDocument::getDeleted, 0)
+                    .eq(AiDocument::getStatus, 0);
+            if (f.kbIds() != null && !f.kbIds().isEmpty()) w.in(AiDocument::getKbId, f.kbIds());
+            if (f.tags() != null && !f.tags().isEmpty()) {
+                w.and(q -> {
+                    int i = 0;
+                    for (String tag : f.tags()) {
+                        String pattern = tagLikePattern(tag);
+                        if (i++ == 0) {
+                            q.apply("CONCAT(',', REGEXP_REPLACE(REGEXP_REPLACE(tags,'，',','), '\\\\s*,\\\\s*', ','), ',') LIKE {0}", pattern);
+                        } else {
+                            q.or().apply("CONCAT(',', REGEXP_REPLACE(REGEXP_REPLACE(tags,'，',','), '\\\\s*,\\\\s*', ','), ',') LIKE {0}", pattern);
+                        }
+                    }
+                });
+            }
+            if (f.fileTypes() != null && !f.fileTypes().isEmpty()) w.in(AiDocument::getFileType, f.fileTypes());
+            if (f.updatedAfter() != null) w.ge(AiDocument::getUpdateTime, f.updatedAfter());
+            if (f.updatedBefore() != null) w.lt(AiDocument::getUpdateTime, f.updatedBefore());
+            if (f.createdBy() != null) w.eq(AiDocument::getCreatedBy, f.createdBy());
+            w.last("LIMIT " + Math.max(1, limit));
+            return documentMapper.selectList(w).stream()
+                    .map(AiDocument::getId).filter(Objects::nonNull)
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
+        } catch (Exception e) {
+            log.warn("[RAG] 元数据过滤解析文档范围失败，本次不下推（仍由资格判定过滤）: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /** 标签等值匹配的 LIKE 模式：归一化后前后加逗号，转义通配符 */
+    private static String tagLikePattern(String tag) {
+        String t = tag == null ? "" : tag.trim();
+        StringBuilder sb = new StringBuilder("%,");
+        for (int i = 0; i < t.length(); i++) {
+            char c = t.charAt(i);
+            if (c == '%' || c == '_' || c == '\\') sb.append('\\');
+            sb.append(c);
+        }
+        sb.append(",%");
+        return sb.toString();
+    }
+
     /** 补采放大后的 topK 硬上限：防止「几乎全被剔除」时把 KNN 打成重负载 */
     private static final int MAX_TOPK_CAP = 60;
 
@@ -593,20 +792,26 @@ public class HybridRetrievalService {
     }
 
     /**
-     * 统计本轮向量命中里<b>通过可见性判定</b>的条数（只计数，不做任何权限决策）。
-     * 可见性唯一出口 = {@code ResourceVisibilityService}，此处只借用其判定做配额估算；
-     * 最终过滤仍在 {@code search()} 内进行——补采只决定「多取多少」，绝不参与权限放行。
+     * 统计本轮向量命中里<b>通过「可见 + 元数据条件」判定</b>的条数（只计数，不做任何权限决策）。
+     * 可见性唯一出口 = {@code ResourceVisibilityService}，元数据唯一出口 = {@link RetrievalFilter}；
+     * 此处只借用两者判定做配额估算，最终过滤仍在 {@code search()} 内进行——补采只决定「多取多少」，
+     * 绝不参与权限放行。
      */
-    private int countVisibleHits(List<Document> vectorDocs) {
+    private int countVisibleHits(List<Document> vectorDocs, RetrievalFilter filter) {
         try {
+            RetrievalFilter f = filter == null ? RetrievalFilter.NONE : filter;
             Map<String, Knowledge> kidMap = loadKnowledgeBatch(vectorDocs);
-            Set<String> visibleDocIds = loadVisibleDocIdsOfHits(vectorDocs, List.of(), kidMap, null);
+            Eligibility eligible = loadEligibleDocIdsOfHits(vectorDocs, List.of(), kidMap, null, f);
             int n = 0;
             for (Document d : vectorDocs) {
                 Knowledge k = kidMap.get(String.valueOf(d.getId()));
                 String docId = k != null && k.getDocId() != null ? String.valueOf(k.getDocId()) : metadataDocId(d);
-                // docId 为空 = 手动知识块，不在文档 ACL 管辖内，计为可见
-                if (docId == null || docId.isBlank() || visibleDocIds.contains(docId)) n++;
+                // docId 为空 = 手动知识块：无文档级条件时计为有效，否则剔除
+                if (docId == null || docId.isBlank()) {
+                    if (!f.requiresDocument()) n++;
+                } else if (eligible.docIds().contains(docId)) {
+                    n++;
+                }
             }
             return n;
         } catch (Exception e) {
@@ -749,13 +954,33 @@ public class HybridRetrievalService {
      * （显式线程覆盖仍生效）；主检索链路传按轮解析的库级值（参与库最大值）。
      */
     public List<Knowledge> keywordSearch(String query, RetrievalDiag diag, int limit) {
+        return keywordSearch(query, diag, limit, RetrievalFilter.NONE);
+    }
+
+    /**
+     * 带元数据过滤的关键词检索。
+     *
+     * <p><b>带文档条件时强制走 MySQL 路</b>：Meilisearch 索引里没有标签/类型/时间这些可过滤字段，
+     * 只能先取 topN 再后置过滤——与改造前「召回后削薄」是同一个病。MySQL 路可以把条件写进
+     * {@code doc_id IN (SELECT ...)}，让 {@code LIMIT} 作用在过滤之后，是精确的。
+     * 代价是 LIKE 更慢，但有 {@code keywordTimeoutMs} 兜底；这条取舍写进 diag 供面板展示。
+     */
+    public List<Knowledge> keywordSearch(String query, RetrievalDiag diag, int limit, RetrievalFilter filter) {
         List<String> terms = keywordExtractor.extract(query);
         if (terms.isEmpty()) return List.of();
         // LIMIT 必须在调用线程求值：supplyAsync 内跑在 commonPool 线程，ThreadLocal 参数覆盖（评估扫参）传不进去
         int lim = limit > 0 ? limit : keywordLimit();
+        RetrievalFilter f = filter == null ? RetrievalFilter.NONE : filter;
+        if (f.requiresDocument()) {
+            if (diag != null) diag.keywordEngine("mysql(filter)");
+            return keywordSearchMysql(terms, lim, diag, f);
+        }
         if (keywordIndexService.isAvailable()) {
             List<Knowledge> hits = keywordSearchMeili(query, terms, lim);
-            if (!hits.isEmpty()) return hits;
+            if (!hits.isEmpty()) {
+                if (diag != null) diag.keywordEngine("meili");
+                return hits;
+            }
             // 索引空/未重建时不静默返回空，回退 MySQL 保证召回（首次切换引擎未 reindex 的常见场景）
             // 仅调试展示，不扰用户
             if (diag != null) diag.keywordFallback();
@@ -765,7 +990,8 @@ public class HybridRetrievalService {
             if (diag != null) diag.keywordFailed();
             log.warn("[FAIL-LOUD] Meilisearch 不可用，关键词降级 MySQL LIKE（{}）", keywordIndexService.debugUnavailableReason());
         }
-        return keywordSearchMysql(terms, lim, diag);
+        if (diag != null) diag.keywordEngine("mysql");
+        return keywordSearchMysql(terms, lim, diag, f);
     }
 
     /**
@@ -832,15 +1058,31 @@ public class HybridRetrievalService {
 
     /** 带诊断的 MySQL 关键词召回（fail-loud：繁忙/超时跳过整路写入 diag） */
     private List<Knowledge> keywordSearchMysql(List<String> terms, int limit, RetrievalDiag diag) {
+        return keywordSearchMysql(terms, limit, diag, RetrievalFilter.NONE);
+    }
+
+    /**
+     * 带元数据过滤的 MySQL 关键词召回：条件拼进 {@code doc_id IN (SELECT ...)} 子查询，
+     * 让 {@code LIMIT} 作用在过滤之后——这是「标签收窄后结果变少」的根治点，而不是召回后再剔。
+     */
+    private List<Knowledge> keywordSearchMysql(List<String> terms, int limit, RetrievalDiag diag,
+                                               RetrievalFilter filter) {
+        RetrievalFilter f = filter == null ? RetrievalFilter.NONE : filter;
         Future<List<Knowledge>> future;
         try {
             future = keywordFallbackPool.submit(() -> {
-                // WHERE doc_id IN (生效文档) AND ((content LIKE ? OR title LIKE ?) OR ...)
-                QueryWrapper<Knowledge> wrapper = new QueryWrapper<Knowledge>()
-                        .and(w -> w.inSql("doc_id", "SELECT id FROM c_ai_document WHERE status=0 AND deleted=0")
-                                .or().isNull("doc_id"))
-                        // 块级停用过滤（status 默认 0）
-                        .eq("status", 0);
+                QueryWrapper<Knowledge> wrapper = new QueryWrapper<>();
+                // 块级停用过滤（status 默认 0）
+                wrapper.eq("status", 0);
+                if (f.requiresDocument()) {
+                    SqlFragment docPredicate = buildDocumentPredicate(f);
+                    if (docPredicate == null) return List.of();
+                    wrapper.apply(docPredicate.sql(), docPredicate.values().toArray());
+                } else {
+                    // WHERE doc_id IN (生效文档) AND ((content LIKE ? OR title LIKE ?) OR ...)
+                    wrapper.and(w -> w.inSql("doc_id", "SELECT id FROM c_ai_document WHERE status=0 AND deleted=0")
+                            .or().isNull("doc_id"));
+                }
                 // 词元之间必须是 OR（任一命中即可）——用 or(Consumer) 承载后续词元。
                 // 注意不能写成 `w.or(); w.and(t -> ...)`：and(Consumer) 会强制以 AND 连接该嵌套段，
                 // 把前一个 or() 覆盖掉，词元被 AND 串联（词元越多命中越少，长问句直接 0 命中）。
@@ -875,6 +1117,69 @@ public class HybridRetrievalService {
             log.warn("[FAIL-LOUD] 关键词检索失败/超时: {}", e.getMessage());
             return List.of();
         }
+    }
+
+    /** 关键词 SQL 里显式 docId 列表的绑定上限：更大范围是非选择性的，交给资格判定与补采 */
+    private static final int DOC_ID_SQL_BIND_MAX = 200;
+
+    /** SQL 片段（固定模板 + 顺序绑定值）；模板里的 {n} 与 values 下标一一对应 */
+    private record SqlFragment(String sql, List<Object> values) {}
+
+    /**
+     * 把元数据条件编译成 {@code doc_id IN (SELECT ...)} 子查询（关键词路专用）。
+     * <p>标签用「归一化后 LIKE」做等值匹配：只归一化分隔符周围的空白与中文逗号，保留标签内部的空格；
+     * 不能直接用 {@code FIND_IN_SET}——分隔符后的空格会让值对不上。
+     */
+    private SqlFragment buildDocumentPredicate(RetrievalFilter f) {
+        if (f.docIds() != null && f.docIds().isEmpty()) return null;
+        if (f.kbIds() != null && f.kbIds().isEmpty()) return null;
+        StringBuilder sb = new StringBuilder("doc_id IN (SELECT d.id FROM c_ai_document d WHERE d.deleted = 0 AND d.status = 0");
+        List<Object> values = new ArrayList<>();
+        if (f.docIds() != null && f.docIds().size() <= DOC_ID_SQL_BIND_MAX) {
+            appendIn(sb, values, "d.id", f.docIds());
+        }
+        if (f.kbIds() != null) {
+            appendIn(sb, values, "d.kb_id", f.kbIds());
+        }
+        if (f.fileTypes() != null && !f.fileTypes().isEmpty()) {
+            appendIn(sb, values, "d.file_type", f.fileTypes());
+        }
+        if (f.createdBy() != null) {
+            sb.append(" AND d.created_by = {").append(values.size()).append('}');
+            values.add(f.createdBy());
+        }
+        if (f.updatedAfter() != null) {
+            sb.append(" AND d.update_time >= {").append(values.size()).append('}');
+            values.add(f.updatedAfter());
+        }
+        if (f.updatedBefore() != null) {
+            sb.append(" AND d.update_time < {").append(values.size()).append('}');
+            values.add(f.updatedBefore());
+        }
+        if (f.tags() != null && !f.tags().isEmpty()) {
+            sb.append(" AND (");
+            int i = 0;
+            for (String tag : f.tags()) {
+                if (i++ > 0) sb.append(" OR ");
+                sb.append("CONCAT(',', REGEXP_REPLACE(REGEXP_REPLACE(d.tags,'，',','), '\\\\s*,\\\\s*', ','), ',') LIKE {")
+                        .append(values.size()).append('}');
+                values.add(tagLikePattern(tag));
+            }
+            sb.append(')');
+        }
+        sb.append(')');
+        return new SqlFragment(sb.toString(), values);
+    }
+
+    private static void appendIn(StringBuilder sb, List<Object> values, String field, Set<String> vals) {
+        sb.append(" AND ").append(field).append(" IN (");
+        int i = 0;
+        for (String v : vals) {
+            if (i++ > 0) sb.append(", ");
+            sb.append('{').append(values.size()).append('}');
+            values.add(v);
+        }
+        sb.append(')');
     }
 
     /**
@@ -1073,12 +1378,15 @@ public class HybridRetrievalService {
     }
 
     /**
-     * 编译<b>库门</b>过滤表达式并下推到向量索引（检索时过滤）。
+     * 编译检索过滤表达式并下推到向量索引（检索时过滤）：库门 + 可选的高选择性文档范围。
      *
-     * <p><b>下推范围仅限库级</b>：文档级 ACL 依赖
-     * 「未配置共享=跟随库」这种 DB 状态规则，索引层无法表达，改由
-     * {@link #loadVisibleDocIdsOfHits} 在检索后按命中块实时判定（晚绑定）。
+     * <p><b>文档级 ACL 不下推</b>：它依赖「未配置共享=跟随库」这种 DB 状态规则，索引层无法表达，
+     * 改由 {@link #loadEligibleDocIdsOfHits} 在检索后按命中块实时判定（晚绑定）。
      * 库级满足下推三前提——集合小（几十个库）、每次实时算（无陈旧问题）、能整库挡掉召回。
+     *
+     * <p><b>为什么元数据过滤的 docId 可以下推</b>：它不是权限快照，而是本次查询按 MySQL 现算的
+     * 命中文档集合；只在 ≤{@value #DOC_FILTER_PUSHDOWN_MAX} 条时拼进表达式（见
+     * {@link #resolvePushdownDocIds}），条件宽松时不拼，避免把几千个 id 塞进 RediSearch 查询。
      *
      * <p><b>「检索时过滤」与「检索后过滤」的差别</b>：
      * <ul>
@@ -1089,8 +1397,8 @@ public class HybridRetrievalService {
      *       无权库的文档<b>在 KNN 之前</b>就被排除，topK 名额不被整库浪费。</li>
      * </ul>
      *
-     * <p><b>残留代价（已知，接受）</b>：库级已下推，但<b>文档级不享有此优化</b>——
-     * 同一个库内的私有文档仍会占掉 topK 名额，这是换「权限真相单一来源 + 改权限即时生效」的代价。
+     * <p><b>残留代价（已知，接受）</b>：文档级 ACL 仍不享有下推，同一个库内的私有文档会占掉
+     * topK 名额；补采机制按保留率放大一次，把名额损失压到可接受范围。
      *
      * <p><b>库门与请求范围的交集</b>：kbIds（智能体/工具绑定的库范围）比可见库集合更窄时，
      * 取交集才是本次真正要搜的库——只按可见库过滤会忽略范围收窄（虽不越权，但白搜了无权无关的库）。
@@ -1100,7 +1408,8 @@ public class HybridRetrievalService {
      *
      * @return filter 表达式；无法确定可见库时返回 null（退回无过滤检索 + 事后过滤兜底）
      */
-    private String buildAclFilter(java.util.Collection<String> kbIds, RetrievalDiag diag) {
+    private String buildAclFilter(java.util.Collection<String> kbIds, Set<String> pushdownDocIds,
+                                  RetrievalDiag diag) {
         try {
             Set<String> visibleKbIds = loadVisibleKbIds();
             if (visibleKbIds == null) {
@@ -1111,7 +1420,12 @@ public class HybridRetrievalService {
             if (kbIds != null && !kbIds.isEmpty()) {
                 visibleKbIds.retainAll(kbIds);
             }
-            return documentAclTags.buildKbGateExpression(visibleKbIds);
+            String kbGate = documentAclTags.buildKbGateExpression(visibleKbIds);
+            if (pushdownDocIds == null) return kbGate;
+            String docGate = DocumentAclTags.buildTagInExpression(
+                    DocumentAclTags.FIELD_DOC_ID, new LinkedHashSet<>(pushdownDocIds));
+            if (docGate == null) return kbGate;
+            return kbGate == null ? docGate : kbGate + " AND " + docGate;
         } catch (Exception e) {
             if (diag != null) diag.aclPushdownFailed(e.getMessage());
             log.warn("[FAIL-LOUD] 编译库门过滤条件失败，本次退回无下推检索（文档级过滤仍生效）: {}", e.getMessage());
@@ -1166,9 +1480,11 @@ public class HybridRetrievalService {
      * 放行全部等于把一次 DB 抖动变成越权，而空集最坏只是「检索不到、报个错」。
      * 用户重试或运维介入即可恢复，不会泄露内容。
      */
-    private Set<String> loadVisibleDocIdsOfHits(List<Document> vectorDocs, List<Knowledge> kwDocs,
-                                               Map<String, Knowledge> kidMap,
-                                               Map<String, String> docKbOut) {
+    private Eligibility loadEligibleDocIdsOfHits(List<Document> vectorDocs, List<Knowledge> kwDocs,
+                                                 Map<String, Knowledge> kidMap,
+                                                 Map<String, String> docKbOut,
+                                                 RetrievalFilter filter) {
+        RetrievalFilter f = filter == null ? RetrievalFilter.NONE : filter;
         // 汇总本轮涉及的 docId：向量路优先取块表（权威），取不到再退metadata（向量库可能丢 metadata）
         Set<String> hitDocIds = new LinkedHashSet<>();
         for (Document d : vectorDocs == null ? List.<Document>of() : vectorDocs) {
@@ -1181,7 +1497,7 @@ public class HybridRetrievalService {
                 hitDocIds.add(String.valueOf(k.getDocId()));
             }
         }
-        if (hitDocIds.isEmpty()) return Set.of();
+        if (hitDocIds.isEmpty()) return new Eligibility(Set.of(), 0);
 
         try {
             List<AiDocument> docs = documentMapper.selectBatchIds(hitDocIds);
@@ -1192,10 +1508,11 @@ public class HybridRetrievalService {
             Set<String> visibleKbIds = loadVisibleKbIds();
             if (visibleKbIds == null) {
                 log.error("[FAIL-LOUD] 可见库集合查询失败，本轮按「全部不可见」处理（fail-closed）");
-                return Set.of();
+                return new Eligibility(Set.of(), 0);
             }
 
-            Set<String> visible = new LinkedHashSet<>();
+            Set<String> eligible = new LinkedHashSet<>();
+            int metaRejected = 0;
             for (AiDocument d : docs) {
                 if (d == null) continue;
                 String kbId = d.getKbId();
@@ -1205,13 +1522,19 @@ public class HybridRetrievalService {
                 }
                 // 未挂任何库的文档（kbId 空）按默认库判定（kb_id 空=默认库语义，与管理接口一致）
                 boolean kbVisible = kbId == null || kbId.isBlank() || visibleKbIds.contains(kbId);
-                if (kbVisible) visible.add(String.valueOf(d.getId()));
+                if (!kbVisible) continue;
+                // 元数据条件与可见性在同一批文档行上判：权限只收窄、条件只收窄，顺序不影响结果
+                if (f.accepts(d, kbId)) {
+                    eligible.add(String.valueOf(d.getId()));
+                } else {
+                    metaRejected++;
+                }
             }
-            return visible;
+            return new Eligibility(eligible, metaRejected);
         } catch (Exception e) {
             // fail-closed：判定失败时不可见，而不是放行（见方法注释）
             log.error("[FAIL-LOUD] 查询命中文档可见范围失败，本轮按「全部不可见」处理: {}", e.getMessage());
-            return Set.of();
+            return new Eligibility(Set.of(), 0);
         }
     }
 

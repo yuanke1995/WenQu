@@ -284,9 +284,18 @@ export const useChatActions = ctx => {
   const debugLoading = ref(false)
   const debugQuestion = ref('')
   const debugResult = ref(null)
+  // 追问改写复现：带上会话与当轮模型，后端才能真实跑一次「短词/指代词 → 独立检索词」
+  const debugSessionId = ref('')
+  const debugModelRef = ref('')
   const openDebug = mi => {
     const q = findQuestion(ctx.messages(), mi, false)
     if (q) debugQuestion.value = q.content
+    debugSessionId.value = ctx.currentSessionId ? ctx.currentSessionId() : ''
+    const rows = ctx.messages ? ctx.messages() : []
+    const row = rows && rows[mi]
+    debugModelRef.value = row && row.model
+      ? row.model
+      : ((rows || []).slice(mi).find(x => x && x.role === 'assistant' && x.model) || {}).model || ''
     debugVisible.value = true
     runDebug()
   }
@@ -296,7 +305,10 @@ export const useChatActions = ctx => {
     debugLoading.value = true
     debugResult.value = null
     try {
-      const r = await api.debugRetrieval(q)
+      const r = await api.debugRetrieval(q, {
+        sessionId: debugSessionId.value,
+        modelRef: debugModelRef.value
+      })
       if (r.success) debugResult.value = r.data
       else notify.error(r.msg || '调试失败')
     } catch (e) { notify.error(e.message || '调试失败') }

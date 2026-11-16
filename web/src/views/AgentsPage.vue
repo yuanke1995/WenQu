@@ -288,6 +288,14 @@
                     <template v-else-if="kbTagOptions.length">候选来自所选知识库已打标的文档；也可手动输入新标签</template>
                     <template v-else>所选知识库还没有打过标签的文档（到文档管理页给文档打标）；也可手动输入</template>
                   </div>
+                  <div class="ap-filter-row">
+                    <a-select v-model:value="form.knowledgeFileTypes" mode="multiple" allow-clear
+                              :max-tag-count="3" :options="KB_FILE_TYPE_OPTIONS"
+                              style="flex:1;min-width:180px" placeholder="文档类型：全部" />
+                    <a-select v-model:value="form.knowledgeUpdatedDays" allow-clear
+                              :options="KB_UPDATED_OPTIONS"
+                              style="width:148px" placeholder="最近更新：不限" />
+                  </div>
                 </div>
                 <div v-else-if="scopeMode === 'none'" class="ap-hint">
                   纯角色智能体：完全不查资料，仅凭系统提示词与对话上下文作答；对话中手动 @ 的文档仍会被参考。
@@ -1184,8 +1192,29 @@ const scopeOptions = [
   { value: 'pick', label: '指定知识库', hint: '只查下面这几个' },
   { value: 'none', label: '不使用', hint: '仅凭提示词作答' }
 ]
+/** 检索文档类型（值与 c_ai_document.file_type 一致，后端保存期按同一白名单校验） */
+const KB_FILE_TYPE_OPTIONS = [
+  { value: 'pdf', label: 'PDF' },
+  { value: 'docx', label: 'Word' },
+  { value: 'xlsx', label: 'Excel' },
+  { value: 'pptx', label: 'PPT' },
+  { value: 'url', label: '网页' },
+  { value: 'txt', label: '纯文本' },
+  { value: 'md', label: 'Markdown' },
+  { value: 'csv', label: 'CSV' }
+]
+/** 最近更新（按文档更新时间；与后端 updatedWithinDays 同义） */
+const KB_UPDATED_OPTIONS = [
+  { value: 7, label: '近 7 天' },
+  { value: 30, label: '近 30 天' },
+  { value: 90, label: '近 90 天' },
+  { value: 365, label: '近一年' }
+]
 const blankForm = () => ({
-  name: '', description: '', systemPrompt: '', knowledgeBaseIds: [], knowledgeTags: [], isDefault: false,
+  name: '', description: '', systemPrompt: '', knowledgeBaseIds: [], knowledgeTags: [],
+  // 检索文档条件：类型多选 + 最近更新天数（null=不限）；保存时合成 knowledgeFilter JSON
+  knowledgeFileTypes: [], knowledgeUpdatedDays: null,
+  isDefault: false,
   // 启停状态（0=启用 1=停用）：配置页的开关走独立的「立即生效」接口，不随保存提交
   disabled: 0,
   // 图标：''=默认展示（内置「问渠」用问渠品牌标，其余机器人）；'wenqu'=品牌标；emoji=表情
@@ -1476,7 +1505,7 @@ const tryAgent = a => router.push({ path: '/chat', query: { agent: String(a.id) 
 
 // ==================== 复制 / 导出 / 导入（前端整包搬运，创建仍走既有保存链路） ====================
 /** 导出只带配置面字段：id/发布态/管理权等运行时信息带出去只会误导导入方 */
-const EXPORT_KEYS = ['name', 'icon', 'description', 'systemPrompt', 'knowledgeBaseIds', 'knowledgeTags', 'knowledgeDisabled',
+const EXPORT_KEYS = ['name', 'icon', 'description', 'systemPrompt', 'knowledgeBaseIds', 'knowledgeTags', 'knowledgeFilter', 'knowledgeDisabled',
   'toolKnowledge', 'toolBuiltin', 'toolArtifact', 'toolWebsearch', 'toolHttp', 'httpTools',
   'toolWorkflow', 'workflowTools', 'toolMcp', 'mcps', 'toolSkill', 'skills',
   'goalEnabled', 'toolApprovalMode', 'permissionPreset', 'toolDeny', 'maxToolSteps', 'memoryMode',
@@ -1845,6 +1874,7 @@ const openEdit = a => {
   advOpen.value = false
   iconOpen.value = false
   const kbs = splitList(a.knowledgeBaseIds)
+  const kf = parseFilter(a.knowledgeFilter)
   form.value = {
     name: a.name || '',
     description: a.description || '',
@@ -1854,6 +1884,8 @@ const openEdit = a => {
     icon: a.icon || (isBuiltin(a) ? 'wenqu' : ''),
     knowledgeBaseIds: kbs,
     knowledgeTags: splitList(a.knowledgeTags),
+    knowledgeFileTypes: Array.isArray(kf.fileTypes) ? kf.fileTypes : [],
+    knowledgeUpdatedDays: kf.updatedWithinDays || null,
     isDefault: isDefault(a),
     disabled: isDisabledAgent(a) ? 1 : 0,
     toolKnowledge: triStr(a.toolKnowledge),
@@ -1907,6 +1939,18 @@ const parseJsonArray = s => {
   if (!s) return []
   try { const v = JSON.parse(s); return Array.isArray(v) ? v : [] } catch { return [] }
 }
+/** 检索文档条件 JSON 串 → 对象（坏数据当空条件） */
+const parseFilter = s => {
+  if (!s) return {}
+  try { const v = JSON.parse(s); return v && typeof v === 'object' && !Array.isArray(v) ? v : {} } catch { return {} }
+}
+/** 表单里的两个条件 → knowledgeFilter JSON 串（空对象返回空串=后端存 null） */
+const buildKnowledgeFilter = f => {
+  const out = {}
+  if ((f.knowledgeFileTypes || []).length) out.fileTypes = f.knowledgeFileTypes
+  if (f.knowledgeUpdatedDays) out.updatedWithinDays = Number(f.knowledgeUpdatedDays)
+  return Object.keys(out).length ? JSON.stringify(out) : ''
+}
 
 // ==================== 配置历史版本（见 ../agents/useAgentVersions） ====================
 const { verOpen, verLoading, verList, verExpanded, verRolling, openVersions, toggleVer, doRollback }
@@ -1931,6 +1975,7 @@ const save = async () => {
     ...(f.isBuiltin === 1 ? {} : {
       knowledgeBaseIds: scopeMode.value === 'pick' ? (f.knowledgeBaseIds || []).join(',') : '',
       knowledgeTags: scopeMode.value === 'pick' ? (f.knowledgeTags || []).join(',') : '',
+      knowledgeFilter: scopeMode.value === 'pick' ? buildKnowledgeFilter(f) : '',
       knowledgeDisabled: scopeMode.value === 'none' ? 1 : 0
     }),
     toolKnowledge: tri(f.toolKnowledge),
@@ -2420,6 +2465,7 @@ onMounted(async () => { })
 .ap-scope-text small { display: block; font-size: 10.5px; color: var(--app-text3); line-height: 1.4; margin-top: 1px; }
 .ap-kb-pick { margin-top: 10px; }
 .ap-kb-pick .ap-hint { margin-top: 5px; }
+.ap-filter-row { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
 /* 内置「问渠」的知识库范围为固定展示（无选择入口）：单行芯片，与选择器同起点对齐 */
 .ap-kb-fixed { margin-top: 4px; }
 .ap-sec-ic { font-size: 13px; color: var(--app-text3); }

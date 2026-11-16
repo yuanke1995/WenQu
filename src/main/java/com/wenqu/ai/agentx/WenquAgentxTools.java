@@ -136,7 +136,11 @@ public class WenquAgentxTools {
                             com.wenqu.ai.agent.subagent.SubAgentConsultService.Ledger consultLedger,
                             RequestUser.Snapshot identity,
                             Map<String, String> overrides, Map<String, String> userOverrides,
-                            RunCodeHolder runCode, StepTrack step, InfraTrack infra) {
+                            RunCodeHolder runCode, StepTrack step, InfraTrack infra,
+                            /** 本轮用户原始问题：追问改写要拿它对齐「用户到底在问什么」 */
+                            String question,
+                            /** 最近 3 轮对话（懒加载：本轮不检索就不读库；null=读取失败） */
+                            java.util.function.Supplier<List<Map<String, Object>>> recentHistory) {
     }
 
     /**
@@ -204,7 +208,28 @@ public class WenquAgentxTools {
                               com.wenqu.ai.agent.subagent.SubAgentConsultService.Ledger ledger) {
         return new TurnHooks(cmd.getSessionId(), cmd.getUserId(), modelRef, turnId, spills, ledger,
                 RequestUser.snapshot(), configService.currentOverrides(), configService.currentUserOverrides(),
-                new RunCodeHolder(), new StepTrack(), new InfraTrack());
+                new RunCodeHolder(), new StepTrack(), new InfraTrack(),
+                cmd.getQuestion(), memoHistory(cmd.getSessionId()));
+    }
+
+    /**
+     * 最近 3 轮对话的懒加载快照：首次取用才读 MySQL（一轮不检索就不花这次查询），
+     * 同轮多次检索复用同一份；{@code getRecentHistory} 返回 null 表示读取失败（与「无历史」区分）。
+     */
+    private java.util.function.Supplier<List<Map<String, Object>>> memoHistory(String sessionId) {
+        return new java.util.function.Supplier<>() {
+            private boolean loaded;
+            private List<Map<String, Object>> value;
+
+            @Override
+            public synchronized List<Map<String, Object>> get() {
+                if (!loaded) {
+                    loaded = true;
+                    value = sessionService.getRecentHistory(sessionId, 3);
+                }
+                return value;
+            }
+        };
     }
 
     /**
@@ -521,15 +546,14 @@ public class WenquAgentxTools {
         KnowledgeRetrievalTool.KbScope scope = retrievalScope.resolve(agentOf(cmd), cmd.getUserId(),
                 cmd.isGuestMode(), cmd.getParentScopeKbIds());
         java.util.Set<String> mentionedKbIds = mentionedKbIdsOf(cmd);
-        // @ 知识库提及的收窄（此前 mentions 里 kb 类型全仓无消费方，@ 了只留一行名字）：
-        // 向量路的 kbIds 只在「没有围墙域」时收成点名的库——围墙域原样保留，域外被点名的库
-        // 不因提及越界；kbFilter 恒等设置，命中块的所属库必须落在点名集合里（关键词路本就
-        // 不按库界走，不设这道后过滤会留一半口子，见 KnowledgeRetrievalTool 的同名过滤段）。
+        // @ 知识库提及的收窄：向量路的 kbIds 只在「没有围墙域」时收成点名的库——围墙域原样保留，
+        // 域外被点名的库不因提及越界；kbFilter 编译进 filter.kbIds 下推，命中块所属库必须落在
+        // 点名集合里（关键词路与图扩展同样生效，不再留「召回后再剔」的口子）。
         if (!mentionedKbIds.isEmpty()) {
-            // tags 必须原样带过去：这里重建 KbScope 时漏掉它，@ 了任一知识库就把智能体级标签收窄悄悄关掉
+            // filter 必须原样带过去：这里重建 KbScope 时漏掉它，@ 了任一知识库就把智能体级标签/范围收窄悄悄关掉
             scope = new KnowledgeRetrievalTool.KbScope(
                     scope.kbIds() == null ? mentionedKbIds : scope.kbIds(),
-                    scope.docIds(), mentionedKbIds, scope.tags());
+                    mentionedKbIds, scope.filter());
         }
         AgentxTaint taint = new AgentxTaint();
         if (workspaceMemoryTainted) taint.mark("workspace-memory");
@@ -1022,6 +1046,13 @@ public class WenquAgentxTools {
                                  ConfigService configService,
                                  AgentxTurnSlot slot) {
 
+        /**
+         * 追问改写生产开关：A3 评估（2026-11-16）在当前样本上未证实 recall@5 增益（0.693→0.693），
+         * 拍板默认关闭。调试端点 `/debug/retrieval` 与 `/eval/followup` 仍直接调用改写器做测量；
+         * 要重新启用时把这里改成 true（并确认真实流量评估结论）。
+         */
+        private static final boolean KNOWLEDGE_REWRITE_ENABLED = false;
+
         @Tool(name = "search_knowledge", readOnly = true,
                 description = "精确检索知识库，返回与查询相关的知识片段（含章节路径、标题、正文）。当现有信息不足以回答、或需要核对知识库中具体功能/字段/步骤/报错处理时调用。")
         public String searchKnowledge(
@@ -1043,6 +1074,14 @@ public class WenquAgentxTools {
                 configService.putOverrides(hooks.overrides());
                 configService.putUserOverrides(hooks.userOverrides());
                 try {
+                    // 追问改写默认关闭：A3 未证实增益，避免为中性效果付 2s 延迟。
+                    // 关闭时仍走原 4 参入口，检索行为与改造前一致；开启时补 TurnQueryContext 走两路召回。
+                    if (KNOWLEDGE_REWRITE_ENABLED) {
+                        return delegate.searchKnowledge(query, topK, t.scope(), t.pool().registrar(),
+                                new KnowledgeRetrievalTool.TurnQueryContext(
+                                        hooks.question(), hooks.modelRef(), hooks.userId(),
+                                        hooks.sessionId(), hooks.recentHistory()));
+                    }
                     return delegate.searchKnowledge(query, topK, t.scope(), t.pool().registrar());
                 } finally {
                     configService.clearOverride();
@@ -1183,7 +1222,9 @@ public class WenquAgentxTools {
                     com.wenqu.ai.agent.tool.ToolFamily.SANDBOX, inv -> sandboxContext(inv.toolName(), turn));
         }
 
-        /** 知识检索工具的本轮落点：注册器=同一个引用池，库界=与主链路同一条解析（不越过智能体绑定）。 */
+        /** 知识检索工具的本轮落点：注册器=同一个引用池，库界=与主链路同一条解析（不越过智能体绑定）。
+         *  追问改写默认关闭（见 {@link KnowledgeTools#KNOWLEDGE_REWRITE_ENABLED}），这里不再注入改写上下文；
+         *  调试/评估走各自入口直接调用改写器。 */
         private Map<String, Object> knowledgeEntries() {
             Map<String, Object> m = new java.util.HashMap<>();
             m.put(KnowledgeRetrievalTool.CTX_SOURCE_REGISTRAR, turn.pool().registrar());
