@@ -449,7 +449,7 @@
               <a-input-number v-model:value="answer.count" size="small" :min="1" :max="50" style="width:70px" />
               <span class="ev-muted">上限 50</span>
               <span class="ev-sp"></span>
-              <span class="ev-muted">评判模型 {{ overview?.judgeModel || '未配置' }} · 预计 {{ answer.count * 2 }} 次调用</span>
+              <span class="ev-muted">评判模型 {{ overview?.judgeModel ? modelLabel(overview.judgeModel) : '未配置' }} · 预计 {{ answer.count * 2 }} 次调用</span>
               <button class="app-btn" :disabled="answer.running || !canWrite" @click="startAnswer">
                 {{ answer.running ? '评测中…' : '运行答案评测' }}
               </button>
@@ -466,7 +466,7 @@
                 <div class="ev-score-box"><div class="ev-muted">忠实度均分</div><div class="ev-score-num" :class="scoreTone(answer.report.avgFaithfulness)">{{ fmtPct(answer.report.avgFaithfulness) }}</div></div>
                 <div class="ev-score-box"><div class="ev-muted">相关性均分</div><div class="ev-score-num" :class="scoreTone(answer.report.avgRelevance)">{{ fmtPct(answer.report.avgRelevance) }}</div></div>
                 <div class="ev-score-box"><div class="ev-muted">用例数</div><div class="ev-score-num dim">{{ answer.report.caseCount }}</div><div class="ev-muted">{{ answer.report.runTime }}</div></div>
-                <div class="ev-score-box"><div class="ev-muted">耗时</div><div class="ev-score-num dim">{{ answer.report.elapsedMs }}ms</div><div class="ev-muted">{{ answer.report.answerModel }}</div></div>
+                <div class="ev-score-box"><div class="ev-muted">耗时</div><div class="ev-score-num dim">{{ answer.report.elapsedMs }}ms</div><div class="ev-muted">{{ modelLabel(answer.report.answerModel) }}</div></div>
               </div>
               <a-table size="small" row-key="id" :data-source="answer.report.cases || []" :columns="answerColumns"
                        :pagination="{ pageSize: 10, size: 'small', hideOnSinglePage: true, showTotal: t => `共 ${t} 条` }"
@@ -639,6 +639,7 @@ import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { ThunderboltOutlined } from '@ant-design/icons-vue'
 import EvalTrendChart from './eval/EvalTrendChart.vue'
+import { loadModelIndex, modelRefInfo } from '../utils/modelRef'
 import {
   getEvalOverview, getEvalCases, createEvalCase, updateEvalCase, deleteEvalCase,
   importEvalCases, exportEvalCases, startEvalRun, listEvalRuns, getEvalRun,
@@ -853,10 +854,15 @@ const setSourceText = computed(() => {
 })
 
 // ==================== 加载 ====================
+/** 模型引用（providerId/modelId）→ 展示名；索引查不到时去掉提供商 UUID 前缀 */
+function modelLabel (ref) {
+  if (!ref) return ''
+  return modelRefInfo(ref)?.displayName || String(ref).split('/').pop() || ref
+}
 async function loadOverview () {
   loading.overview = true
   try {
-    const r = await getEvalOverview(scopeKbId.value)
+    const [r] = await Promise.all([getEvalOverview(scopeKbId.value), loadModelIndex()])
     if (r.success) overview.value = r.data
   } catch (e) { message.error(e.message || '加载总览失败') }
   finally { loading.overview = false }
