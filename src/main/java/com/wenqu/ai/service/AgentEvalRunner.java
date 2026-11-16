@@ -172,12 +172,14 @@ public class AgentEvalRunner {
         result.setQuestion(trim(c.getQuestion(), 2000));
         long tokens = 0;
         try {
+            String replayPrefix = replayPrefixOf(c);
             CollectingSseEmitter sink = new CollectingSseEmitter();
             boolean timeout;
             try {
                 chatService.chat(ChatCommand.of(sessionId, c.getQuestion(), uid)
                         .userImages(List.of()).attachments(List.of()).skills(List.of())
                         .agentId(run.getAgentId())
+                        .replayPrefix(replayPrefix)
                         .source(TurnSource.EVAL).sourceName("评测 · " + ctx.agentName)
                         .build(), sink);
                 timeout = !sink.awaitDone(timeoutMs);
@@ -219,7 +221,7 @@ public class AgentEvalRunner {
                 String judgeMode = scorer.judgeModeOf(c);
                 UsageAttr.hold(new UsageAttr.Attr(uid, sessionId, null, "eval"));
                 try {
-                    faithRel = scorer.judge(c.getQuestion(), sources, toolCallList, answer, run.getJudgeModel(), judgeMode);
+                    faithRel = scorer.judge(c.getQuestion(), sources, toolCallList, answer, run.getJudgeModel(), judgeMode, replayPrefix);
                     result.setJudgeMode(judgeMode);
                 } catch (Exception e) {
                     log.warn("[AGENT-EVAL] 用例评判失败（按引用召回单独计分）run={} case={}: {}",
@@ -372,6 +374,29 @@ public class AgentEvalRunner {
         if (done == null) return List.of();
         JSONArray arr = done.getJSONArray(key);
         return arr == null ? List.of() : (List<Map<String, Object>>) (List<?>) arr.toJavaList(Map.class);
+    }
+
+    /** 用例前文快照 → 转录文本（用户：…/助手：…）；无前缀返回 null。作答与评判共用同一份渲染 */
+    private String replayPrefixOf(AgentEvalCase c) {
+        if (c.getOrigin() == null || c.getOrigin().isBlank()) return null;
+        try {
+            JSONObject o = JSON.parseObject(c.getOrigin());
+            JSONArray prefix = o == null ? null : o.getJSONArray("prefix");
+            if (prefix == null || prefix.isEmpty()) return null;
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < prefix.size(); i++) {
+                JSONObject t = prefix.getJSONObject(i);
+                if (t == null) continue;
+                String content = t.getString("content");
+                if (content == null || content.isBlank()) continue;
+                sb.append("user".equals(t.getString("role")) ? "用户" : "助手")
+                        .append("：").append(content).append('\n');
+            }
+            return sb.isEmpty() ? null : sb.toString();
+        } catch (Exception e) {
+            // 坏快照按无前缀处理：前文是增强语境，不该让整条用例炸掉
+            return null;
+        }
     }
 
     private static String trim(String s, int max) {

@@ -167,6 +167,12 @@ public final class ChatCommand {
      * 字符预算已按深度裁剪。仅 {@link #subagentDepth} &gt; 0 时有值；null/空 = 不带。
      */
     final String parentBrief;
+    /**
+     * 评测前文回放（P2-b）：采样用例携带的会话前缀转录（用户：…/助手：…），前置进模型输入。
+     * 历史上下文活在框架 Redis 会话状态里，临时会话往消息表铺底进不了模型——走与 # 历史引用
+     * 同一条装配通道（TurnPromptAssembler），作为引用上下文而非真实轮次。null/空 = 不带。
+     */
+    final String replayPrefix;
     /** 派出这一支的父会话 id（日志关联用；产物收养在分支执行器内直接按它落，不经本字段传递语义） */
     final String parentSessionId;
     /** 派出这一支的父轮 id：审批卡上翻后刷新恢复要挂回父轮气泡（仅分支轮有值） */

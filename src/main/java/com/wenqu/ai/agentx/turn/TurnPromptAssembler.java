@@ -153,6 +153,13 @@ public final class TurnPromptAssembler {
      */
     public String userContentWithContext(ChatCommand cmd, SkillFilter skillFilter, String agentConsultDirective) {
         StringBuilder sb = new StringBuilder();
+        // 0) 评测前文回放（P2-b）：问题发生前的对话记录前置，供模型理解追问语境。
+        //    前文是既定事实的引用数据（旧回答里可能埋指令），与附件正文同口径套信封。
+        if (cmd.getReplayPrefix() != null && !cmd.getReplayPrefix().isBlank()) {
+            sb.append("【前文对话回放】（以下是本问题发生前的对话记录，请结合这段语境理解并回答后面的问题）\n")
+                    .append(com.wenqu.ai.util.UntrustedContent.envelope("eval-prefix", cmd.getReplayPrefix()))
+                    .append("\n\n");
+        }
         String q = cmd.getQuestion() == null ? "" : cmd.getQuestion();
         // 插话没赶上本轮、随收尾交回后作为新一轮补发的那一条：不带这句声明，模型看到的是孤零零一句
         // 新用户消息，会当成「用户又问了一遍」重新起题。

@@ -423,7 +423,20 @@
                 <template #expandedRowRender="{ record }">
                   <div class="detail-inner">
                     <div class="detail-col grow">
-                      <div class="k">原轮回答（采样快照）<span v-if="record.reviewStatus === 'pending'" class="tag" style="margin-left:6px">复核依据</span></div>
+                      <template v-if="prefixOf(record).length">
+                        <div class="k">前文回放 · {{ prefixOf(record).length }} 轮（评测时前置进模型语境）
+                          <template v-if="prefixEdited(record)">
+                            <a class="link" style="margin-left:8px" @click="savePrefixTrim(record)">保存裁剪</a>
+                            <a class="link" style="margin-left:6px" @click="resetPrefixTrim(record)">还原</a>
+                          </template>
+                        </div>
+                        <div v-for="(t, i) in prefixOf(record)" :key="i" class="src-row">
+                          <span class="tag">{{ t.role === 'user' ? '用户' : '助手' }}</span>
+                          <span class="prefix-content" :title="t.content">{{ t.content }}</span>
+                          <a class="link danger" @click="trimPrefix(record, i)">移除</a>
+                        </div>
+                      </template>
+                      <div class="k" style="margin-top:10px">原轮回答（采样快照）<span v-if="record.reviewStatus === 'pending'" class="tag" style="margin-left:6px">复核依据</span></div>
                       <div class="v origin-answer">{{ originAnswer(record) || '手动用例，无原轮快照' }}</div>
                     </div>
                     <div class="detail-col">
@@ -449,6 +462,7 @@
         <div class="rc-line">智能体：<b>{{ runTarget.agentName }}</b> · 用例 <b>{{ runTarget.caseCount }}</b> 条</div>
         <div class="rc-line">预计模型调用：<b>{{ runTarget.caseCount * 2 }}</b> 次（每条 = 1 次作答 + {{ hasJudge ? 1 : 0 }} 次评判{{ hasJudge ? '' : '，未配置评判模型' }}）+ 每条 1 次检索</div>
         <div class="rc-line">预计耗时：约 {{ runMinutes }} 分钟；评测默认<b>只读</b>，不会执行需要人工确认的工具。</div>
+        <div v-if="prefixCaseCount" class="rc-line muted">{{ prefixCaseCount }} 条用例带前文回放，前文计入作答上下文，token 消耗高于普通用例。</div>
         <div class="rc-line muted">费用按模型单价计入「使用统计 · 智能体评测 / 对话问答」，可在那里核对。</div>
       </div>
     </a-modal>
@@ -836,6 +850,36 @@ function originAnswer (c) {
 function expectedIds (c) {
   return idsOf(c.expectedKnowledgeIds).concat(idsOf(c.expectedDocIds))
 }
+
+// ==================== 前文回放：复核视图展示与裁剪 ====================
+const prefixEdits = ref({})
+function originPrefix (c) {
+  try { return JSON.parse(c.origin || '{}').prefix || [] } catch (e) { return [] }
+}
+function prefixOf (c) { return prefixEdits.value[c.id] || originPrefix(c) }
+function prefixEdited (c) { return !!prefixEdits.value[c.id] }
+function trimPrefix (c, i) {
+  const arr = [...prefixOf(c)]
+  arr.splice(i, 1)
+  prefixEdits.value = { ...prefixEdits.value, [c.id]: arr }
+}
+function resetPrefixTrim (c) {
+  const m = { ...prefixEdits.value }
+  delete m[c.id]
+  prefixEdits.value = m
+}
+async function savePrefixTrim (c) {
+  try {
+    const r = await agentEvalMutateCases(currentAgentId.value, { update: [{ id: c.id, originPrefix: prefixEdits.value[c.id] }] })
+    if (r.success) {
+      message.success('前文裁剪已保存')
+      resetPrefixTrim(c)
+      const x = await agentEvalSuite(currentAgentId.value)
+      if (x.success) suiteInfo.value = x.data
+    } else message.error(r.msg || '保存失败')
+  } catch (e) { message.error(e.message || '保存失败') }
+}
+const prefixCaseCount = computed(() => (suiteInfo.value?.cases || []).filter(c => originPrefix(c).length > 0).length)
 
 async function removeCase (c) {
   try {
@@ -1296,6 +1340,7 @@ onUnmounted(() => {
 .suite-set { padding: 12px 16px; }
 .ss-title { font-size: 12px; font-weight: 600; color: var(--app-text); margin-bottom: 8px; }
 .origin-answer { white-space: pre-wrap; max-height: 220px; overflow: auto; }
+.prefix-content { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ss-form { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--app-text2); }
 .ss-form label { display: inline-flex; align-items: center; gap: 6px; }
 .ss-form .sp { flex: 1; }

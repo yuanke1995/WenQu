@@ -258,6 +258,8 @@ public class AgentEvalService {
             origin.put("sessionId", m.getSessionId());
             origin.put("messageId", m.getId());
             origin.put("answer", trimStr(m.getContent(), 2000));
+            JSONArray prefix = prefixOf(q);
+            if (!prefix.isEmpty()) origin.put("prefix", prefix);
             entity.setOrigin(origin.toJSONString());
             entity.setEnabled(1);
             caseMapper.insert(entity);
@@ -844,6 +846,36 @@ public class AgentEvalService {
         return qs.isEmpty() ? null : qs.get(0);
     }
 
+    /**
+     * 目标问之前的会话前缀（P2-b 上下文回放）：最近 10 条 user/assistant、总预算 4000 字、
+     * 就近优先（离问题越近的轮次越相关）。落 origin.prefix，评测时前置进模型输入与评判语境。
+     */
+    private JSONArray prefixOf(Message question) {
+        JSONArray out = new JSONArray();
+        if (question.getSequence() == null) return out;
+        List<Message> prior = messageMapper.selectList(new LambdaQueryWrapper<Message>()
+                .eq(Message::getSessionId, question.getSessionId())
+                .in(Message::getRole, List.of("user", "assistant"))
+                .eq(Message::getDeleted, 0)
+                .lt(Message::getSequence, question.getSequence())
+                .orderByDesc(Message::getSequence)
+                .last("LIMIT 10"));
+        int budget = 4000;
+        List<JSONObject> picked = new ArrayList<>();
+        for (Message p : prior) {
+            String content = trimStr(p.getContent(), "user".equals(p.getRole()) ? 400 : 600);
+            if (content == null || content.length() > budget) continue;
+            budget -= content.length();
+            JSONObject t = new JSONObject();
+            t.put("role", p.getRole());
+            t.put("content", content);
+            picked.add(t);
+        }
+        // 查询按新→旧取（就近优先），落快照还原时间序
+        for (int i = picked.size() - 1; i >= 0; i--) out.add(picked.get(i));
+        return out;
+    }
+
     private void collectExpected(String sourcesJson, Set<String> kb, Set<String> doc, int capEach) {
         try {
             JSONArray arr = JSON.parseArray(sourcesJson);
@@ -895,6 +927,32 @@ public class AgentEvalService {
                 throw new BizException("复核状态只能是 approved 或 pending");
             }
             entity.setReviewStatus(rs);
+        }
+        if (c.containsKey("originPrefix")) {
+            // 复核裁剪只动 prefix，sessionId/messageId/answer 快照不接受客户端改写
+            JSONObject o = entity.getOrigin() == null || entity.getOrigin().isBlank()
+                    ? new JSONObject() : JSON.parseObject(entity.getOrigin());
+            JSONArray arr = c.getJSONArray("originPrefix");
+            JSONArray prefix = new JSONArray();
+            int budget = 8000;
+            if (arr != null) {
+                for (int i = 0; i < Math.min(arr.size(), 20); i++) {
+                    JSONObject t = arr.getJSONObject(i);
+                    String role = t == null ? null : t.getString("role");
+                    if (!"user".equals(role) && !"assistant".equals(role)) {
+                        throw new BizException("前文轮次角色只能是 user 或 assistant");
+                    }
+                    String content = trimStr(t.getString("content"), 1000);
+                    if (content == null || content.length() > budget) continue;
+                    budget -= content.length();
+                    JSONObject pt = new JSONObject();
+                    pt.put("role", role);
+                    pt.put("content", content);
+                    prefix.add(pt);
+                }
+            }
+            o.put("prefix", prefix);
+            entity.setOrigin(o.toJSONString());
         }
         if (c.containsKey("enabled")) entity.setEnabled(triInt(c.get("enabled"), 1));
         if (create && entity.getSource() == null) entity.setSource("manual");
