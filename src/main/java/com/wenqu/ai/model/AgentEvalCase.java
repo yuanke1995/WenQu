@@ -52,6 +52,12 @@ public class AgentEvalCase implements com.wenqu.ai.service.AgentEvalScorer.Agent
     /** 用例来源: manual / session / import */
     private String source;
 
+    /** 复核状态: pending=待复核（不参与运行/门禁） approved=已采纳；采样落 pending，手动/存量默认 approved */
+    private String reviewStatus;
+
+    /** 采样原轮快照 JSON {sessionId,messageId,answer≤2000字}；手动用例 NULL */
+    private String origin;
+
     /** 是否启用：1=参与回归 0=停用 */
     private Integer enabled;
 

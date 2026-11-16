@@ -366,7 +366,9 @@
           <!-- 评测集 -->
           <div v-if="innerTab === 'suite'" class="suite-wrap">
             <div class="app-card suite-set">
-              <div class="ss-title">套件设置</div>
+              <div class="ss-title">套件设置
+                <span v-if="pendingCount" class="pill warn mini" style="margin-left:8px">待复核 {{ pendingCount }} 条 · 展开核对后采纳</span>
+              </div>
               <div class="ss-form">
                 <label>通过率门槛(%) <a-input-number v-model:value="suiteForm.thresholdRate" :min="0" :max="100" size="small" /></label>
                 <label>单条通过分 <a-input-number v-model:value="suiteForm.passScore" :min="0" :max="100" size="small" /></label>
@@ -385,7 +387,7 @@
             </div>
             <div class="app-card tbl-card">
               <a-table size="small" :data-source="suiteInfo?.cases || []" :pagination="suiteInfo?.cases?.length > 10 ? { pageSize: 10, size: 'small' } : false"
-                       row-key="id" :locale="{ emptyText: '评测集为空——从会话采样一键生成，或手动新增' }">
+                       row-key="id" :locale="{ emptyText: '评测集为空——从会话采样（待复核）或手动新增' }">
                 <a-table-column title="用例" key="q" :ellipsis="true">
                   <template #default="{ record }"><span class="q">{{ record.question }}</span></template>
                 </a-table-column>
@@ -400,16 +402,39 @@
                 </a-table-column>
                 <a-table-column title="状态" :width="76" key="en">
                   <template #default="{ record }">
-                    <span class="pill mini" :class="record.enabled === 1 ? 'ok' : 'muted'">{{ record.enabled === 1 ? '启用' : '停用' }}</span>
+                    <span v-if="record.reviewStatus === 'pending'" class="pill mini warn">待复核</span>
+                    <span v-else class="pill mini" :class="record.enabled === 1 ? 'ok' : 'muted'">{{ record.enabled === 1 ? '启用' : '停用' }}</span>
                   </template>
                 </a-table-column>
                 <a-table-column title="操作" :width="130" key="ops">
                   <template #default="{ record }">
-                    <a class="link" @click="openCaseEditor(record)">编辑</a>
-                    <a class="link" @click="toggleCase(record)">{{ record.enabled === 1 ? '停用' : '启用' }}</a>
-                    <a class="link danger" @click="removeCase(record)">删除</a>
+                    <template v-if="record.reviewStatus === 'pending'">
+                      <a class="link" @click="adoptCase(record)">采纳</a>
+                      <a class="link" @click="openCaseEditor(record)">编辑</a>
+                      <a class="link danger" @click="removeCase(record)">丢弃</a>
+                    </template>
+                    <template v-else>
+                      <a class="link" @click="openCaseEditor(record)">编辑</a>
+                      <a class="link" @click="toggleCase(record)">{{ record.enabled === 1 ? '停用' : '启用' }}</a>
+                      <a class="link danger" @click="removeCase(record)">删除</a>
+                    </template>
                   </template>
                 </a-table-column>
+                <template #expandedRowRender="{ record }">
+                  <div class="detail-inner">
+                    <div class="detail-col grow">
+                      <div class="k">原轮回答（采样快照）<span v-if="record.reviewStatus === 'pending'" class="tag" style="margin-left:6px">复核依据</span></div>
+                      <div class="v origin-answer">{{ originAnswer(record) || '手动用例，无原轮快照' }}</div>
+                    </div>
+                    <div class="detail-col">
+                      <div class="k">期望引用 · {{ expectedCount(record) }} 条</div>
+                      <template v-if="expectedCount(record)">
+                        <div v-for="id in expectedIds(record)" :key="id" class="src-row"><span class="tag">引用</span>{{ refTitle(id) }}</div>
+                      </template>
+                      <div v-else class="v muted">无期望引用</div>
+                    </div>
+                  </div>
+                </template>
               </a-table>
             </div>
           </div>
@@ -677,7 +702,7 @@ function confirmRunOf (row) {
   const target = row || agentRow.value
   if (!target) return
   if (target.gate?.gate === 'none' || !target.caseCount) {
-    message.warning('先建立评测集并添加用例，再运行回归')
+    message.warning('没有可运行的用例——先建立评测集，采样后展开核对并采纳')
     openAgent(target.agentId, 'suite')
     return
   }
@@ -739,7 +764,7 @@ async function doSample () {
   try {
     const r = await agentEvalGenerateCases(currentAgentId.value, { count: sampleCount.value, onlyBad: sampleOnlyBad.value })
     if (r.success) {
-      message.success(`已采样 ${r.data?.added ?? 0} 条用例（请求 ${r.data?.requested ?? '—'} 条）`)
+      message.success(`已采样 ${r.data?.added ?? 0} 条（待复核）——展开核对原轮回答与期望引用后采纳`)
       const x = await agentEvalSuite(currentAgentId.value)
       if (x.success) suiteInfo.value = x.data
       loadSummary()
@@ -791,6 +816,27 @@ async function toggleCase (c) {
   } catch (e) { message.error(e.message || '操作失败') }
 }
 
+/** 采纳待复核用例：approved + 启用，从此参与回归与门禁 */
+async function adoptCase (c) {
+  try {
+    const r = await agentEvalMutateCases(currentAgentId.value, { update: [{ id: c.id, reviewStatus: 'approved', enabled: 1 }] })
+    if (r.success) {
+      message.success('已采纳，参与回归')
+      const x = await agentEvalSuite(currentAgentId.value)
+      if (x.success) suiteInfo.value = x.data
+      loadSummary()
+    } else message.error(r.msg || '采纳失败')
+  } catch (e) { message.error(e.message || '采纳失败') }
+}
+
+const pendingCount = computed(() => (suiteInfo.value?.cases || []).filter(c => c.reviewStatus === 'pending').length)
+function originAnswer (c) {
+  try { return JSON.parse(c.origin || '{}').answer || '' } catch (e) { return '' }
+}
+function expectedIds (c) {
+  return idsOf(c.expectedKnowledgeIds).concat(idsOf(c.expectedDocIds))
+}
+
 async function removeCase (c) {
   try {
     const r = await agentEvalMutateCases(currentAgentId.value, { delete: [c.id] })
@@ -831,7 +877,7 @@ function enrichResults () {
     r._actualRefs = srcTitles(r.sources)
   }
 }
-const refTitle = id => detail.value?.refTitles?.[id] || id
+const refTitle = id => detail.value?.refTitles?.[id] || suiteInfo.value?.refTitles?.[id] || id
 
 // ==================== 通过率趋势（ECharts） ====================
 /** 最近 6 次成功运行，按时间正序（左旧右新） */
@@ -1249,6 +1295,7 @@ onUnmounted(() => {
 .suite-wrap { display: flex; flex-direction: column; gap: 12px; }
 .suite-set { padding: 12px 16px; }
 .ss-title { font-size: 12px; font-weight: 600; color: var(--app-text); margin-bottom: 8px; }
+.origin-answer { white-space: pre-wrap; max-height: 220px; overflow: auto; }
 .ss-form { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--app-text2); }
 .ss-form label { display: inline-flex; align-items: center; gap: 6px; }
 .ss-form .sp { flex: 1; }

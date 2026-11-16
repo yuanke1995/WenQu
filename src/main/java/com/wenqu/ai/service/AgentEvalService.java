@@ -96,6 +96,7 @@ public class AgentEvalService {
         out.put("suite", suite);
         out.put("cases", cases);
         out.put("caseCount", cases.size());
+        out.put("refTitles", refTitlesOf(cases));
         return out;
     }
 
@@ -124,12 +125,15 @@ public class AgentEvalService {
 
     // ==================== 用例 ====================
 
-    /** 用例清单（enabledFilter: null=全部 / 1=启用） */
+    /** 用例清单（enabledFilter: null=全部 / 1=可运行——启用且已采纳，待复核不参与运行与门禁） */
     public List<AgentEvalCase> casesOf(String suiteId, Integer enabledFilter) {
         LambdaQueryWrapper<AgentEvalCase> qw = new LambdaQueryWrapper<AgentEvalCase>()
                 .eq(AgentEvalCase::getSuiteId, suiteId)
                 .orderByAsc(AgentEvalCase::getCreateTime);
-        if (enabledFilter != null) qw.eq(AgentEvalCase::getEnabled, enabledFilter);
+        if (enabledFilter != null) {
+            qw.eq(AgentEvalCase::getEnabled, enabledFilter);
+            if (enabledFilter == 1) qw.eq(AgentEvalCase::getReviewStatus, "approved");
+        }
         return caseMapper.selectList(qw);
     }
 
@@ -190,8 +194,10 @@ public class AgentEvalService {
     }
 
     /**
-     * 从会话采样生成用例（plan §3.6 会话采样）：智能体最近的真实问答里挑「有知识块/文档引用」的轮次，
-     * 问题 + 该轮实际引用的知识块/文档作为期望引用；差评（rating=0）优先。同问题去重。
+     * 从会话采样生成用例（plan §3.6 会话采样 + P2-a 复核闸）：智能体最近的真实问答里挑
+     * 「有知识块/文档引用」的轮次，问题 + 该轮实际引用作为期望引用；差评（rating=0）优先，同问题去重。
+     * 采样落 pending 待复核（不自动参与运行/门禁），并存原轮回答快照供复核对照——
+     * 依赖上文的半截话题与长任务题由人工在复核时丢弃，不做词表启发式。
      */
     public Map<String, Object> generateFromSessions(String agentId, JSONObject body) {
         AgentEvalSuite suite = mustSuite(agentId);
@@ -247,6 +253,12 @@ public class AgentEvalService {
             entity.setExpectedDocIds(doc.isEmpty() ? null : JSON.toJSONString(new ArrayList<>(doc)));
             entity.setNote(badMessageIds.contains(m.getId()) ? "差评回流" : "会话采样");
             entity.setSource("session");
+            entity.setReviewStatus("pending");
+            JSONObject origin = new JSONObject();
+            origin.put("sessionId", m.getSessionId());
+            origin.put("messageId", m.getId());
+            origin.put("answer", trimStr(m.getContent(), 2000));
+            entity.setOrigin(origin.toJSONString());
             entity.setEnabled(1);
             caseMapper.insert(entity);
             existingQuestions.add(norm);
@@ -277,14 +289,15 @@ public class AgentEvalService {
             for (String id : caseIds) {
                 AgentEvalCase c = caseMapper.selectById(id);
                 if (c != null && suite.getId().equals(c.getSuiteId())
-                        && (c.getEnabled() == null || c.getEnabled() == 1)) {
+                        && (c.getEnabled() == null || c.getEnabled() == 1)
+                        && "approved".equals(c.getReviewStatus())) {
                     cases.add(c);
                 }
             }
         } else {
             cases = casesOf(suite.getId(), 1);
         }
-        if (cases.isEmpty()) throw new BizException("评测集没有可运行的用例，先添加或启用用例");
+        if (cases.isEmpty()) throw new BizException("评测集没有可运行的用例，先添加、采纳或启用用例");
         int maxCases = ConfigDefaults.AGENT_EVAL_MAX_CASES;
         if (cases.size() > maxCases) {
             throw new BizException("单次最多跑 " + maxCases + " 条（当前勾选 " + cases.size() + " 条），请减少勾选");
@@ -352,10 +365,16 @@ public class AgentEvalService {
         out.put("done", results.size());
         out.put("running", "running".equals(run.getStatus()));
         // 期望引用标题对照（失败展开卡显示「未命中」的书名而不是裸 ID）：知识块与文档分开查
+        out.put("refTitles", refTitlesOf(caseMapper.selectList(new LambdaQueryWrapper<AgentEvalCase>()
+                .eq(AgentEvalCase::getAgentId, run.getAgentId()))));
+        return out;
+    }
+
+    /** 期望引用 ID→标题对照（运行详情与评测集复核视图共用）；拿不到标题回落裸 ID */
+    private Map<String, String> refTitlesOf(List<AgentEvalCase> cases) {
         Set<String> kbIds = new LinkedHashSet<>();
         Set<String> docIds = new LinkedHashSet<>();
-        for (AgentEvalCase c : caseMapper.selectList(new LambdaQueryWrapper<AgentEvalCase>()
-                .eq(AgentEvalCase::getAgentId, run.getAgentId()))) {
+        for (AgentEvalCase c : cases) {
             collectIds(c.getExpectedKnowledgeIds(), kbIds);
             collectIds(c.getExpectedDocIds(), docIds);
         }
@@ -372,8 +391,7 @@ public class AgentEvalService {
         } catch (Exception ignored) {
             // 标题对照是展示增强，拿不到就回落 ID
         }
-        out.put("refTitles", refTitles);
-        return out;
+        return refTitles;
     }
 
     /** 取消运行：置标记 + 叫停在跑题；运行不在本实例时把残留 running 行就地收口 */
@@ -871,6 +889,13 @@ public class AgentEvalService {
         if (c.containsKey("note")) entity.setNote(trimStr(c.get("note"), 500));
         if (c.containsKey("tags")) entity.setTags(idsToJson(c.get("tags")));
         if (c.containsKey("source") && create) entity.setSource(trimStr(c.get("source"), 16));
+        if (c.containsKey("reviewStatus")) {
+            String rs = c.getString("reviewStatus");
+            if (!"approved".equals(rs) && !"pending".equals(rs)) {
+                throw new BizException("复核状态只能是 approved 或 pending");
+            }
+            entity.setReviewStatus(rs);
+        }
         if (c.containsKey("enabled")) entity.setEnabled(triInt(c.get("enabled"), 1));
         if (create && entity.getSource() == null) entity.setSource("manual");
         if (entity.getEnabled() == null) entity.setEnabled(1);
