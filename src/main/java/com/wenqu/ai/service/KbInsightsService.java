@@ -79,7 +79,7 @@ public class KbInsightsService {
         Map<String, Map<String, Object>> healthByKb = healthByKb();
         Map<String, Long> recycleByKb = documentService.recycleCountsByKb();
         Map<String, String> docKb = documentService.docKbMap();
-        Map<String, DocumentService.HitStat> hits = documentService.hitStatsByDoc();
+        Map<String, DocumentStatsService.HitStat> hits = documentService.hitStatsByDoc();
         Map<String, Long> hitByKb = new HashMap<>();
         Map<String, LocalDateTime> lastByKb = new HashMap<>();
         hits.forEach((docId, st) -> {

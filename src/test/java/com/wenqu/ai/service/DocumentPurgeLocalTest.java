@@ -30,6 +30,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.when;
 
 /**
  * 文档彻底删除真实 MySQL 集成测试：知识块 / 版本快照 / 文档行同一事务；
@@ -108,21 +109,21 @@ class DocumentPurgeLocalTest {
         }
     }
 
-    private static DocumentService newDocumentService(AiDocumentMapper docMapper, KnowledgeMapper knowledgeMapper,
+    private static DocumentRecycleService newDocumentService(AiDocumentMapper docMapper, KnowledgeMapper knowledgeMapper,
                                                       AiDocumentVersionMapper versionMapper, Path dataDir,
                                                       DataSourceTransactionManager txManager) {
         AppProperties properties = new AppProperties();
         properties.getImages().setDir(dataDir.toString());
-        return new DocumentService(
-                mock(AuditService.class), txManager, docMapper, knowledgeMapper, versionMapper,
-                mock(KbVectorStoreRegistry.class), mock(com.wenqu.ai.mapper.KnowledgeBaseMapper.class),
-                mock(KnowledgeBaseService.class), properties, mock(DocumentMetaCache.class),
-                mock(DocumentAclTags.class), mock(com.wenqu.ai.mapper.QaLogMapper.class),
-                List.of(), mock(org.springframework.context.ApplicationEventPublisher.class),
-                mock(ConfigService.class), mock(KeywordIndexService.class), mock(VisionService.class),
-                mock(ModelRegistryService.class), mock(DynamicEmbeddingModel.class), mock(com.wenqu.ai.parser.DocxParser.class),
-                mock(QaIndexService.class), mock(ChildChunkService.class), mock(NotificationService.class),
-                mock(StringRedisTemplate.class), mock(ParseQueueService.class), mock(GraphRagService.class));
+        DocumentFileStore fileStore = new DocumentFileStore(properties, docMapper, knowledgeMapper);
+        DocumentVectorOps vectorOps = mock(DocumentVectorOps.class);
+        when(vectorOps.storeOf(any())).thenReturn(mock(org.springframework.ai.vectorstore.VectorStore.class));
+        return new DocumentRecycleService(
+                docMapper, knowledgeMapper, versionMapper,
+                mock(com.wenqu.ai.mapper.KnowledgeBaseMapper.class),
+                mock(KeywordIndexService.class), mock(GraphRagService.class),
+                mock(AuditService.class), txManager, mock(DocumentMetaCache.class),
+                fileStore, vectorOps, mock(DocumentParseState.class),
+                mock(DocumentKbResolver.class), mock(KnowledgeBaseService.class));
     }
 
     private static long count(String dbUrl, String sql) throws Exception {

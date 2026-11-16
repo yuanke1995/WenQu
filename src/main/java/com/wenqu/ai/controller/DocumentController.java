@@ -2,6 +2,7 @@ package com.wenqu.ai.controller;
 
 import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.config.ConfigDefaults;
+import com.wenqu.ai.service.DocumentFileStore;
 import com.wenqu.ai.service.AuditService;
 import com.wenqu.ai.dto.ResultJson;
 import com.wenqu.ai.service.ConfigService;
@@ -266,7 +267,7 @@ public class DocumentController {
     public org.springframework.http.ResponseEntity<org.springframework.core.io.Resource> downloadSource(
             @Parameter(description = "文档 ID") @PathVariable("id") String id) {
         requireDocRead(documentService.getDoc(id));   // 共享范围内才可取源文件
-        DocumentService.SourceFile sf = documentService.sourceFileForDownload(id);
+        DocumentFileStore.SourceFile sf = documentService.sourceFileForDownload(id);
         // 文件名 URL 编码（RFC 5987）：中文名在 Content-Disposition 里必须编码，否则部分客户端乱码
         String encoded = java.net.URLEncoder.encode(sf.fileName(), java.nio.charset.StandardCharsets.UTF_8)
                 .replace("+", "%20");
