@@ -121,7 +121,7 @@ public final class AgentxFrameworkToolGate implements MiddlewareBase {
      * 直接构造期传入会拿到 null。
      */
     private volatile java.util.function.Supplier<
-            AgentscopeChatEngine.Recording> recordingSupplier;
+            AgentxTurnRecording> recordingSupplier;
 
     public AgentxFrameworkToolGate(Supplier<ExecutionPolicy> policySupplier) {
         this(policySupplier, java.util.Set.of());
@@ -142,7 +142,7 @@ public final class AgentxFrameworkToolGate implements MiddlewareBase {
     private final java.util.Set<String> guestMcpAllow;
 
     /** 挂上本轮的工具卡记录器（每轮开轮时由引擎调用）。 */
-    public void bindRecording(AgentscopeChatEngine.Recording recording) {
+    public void bindRecording(AgentxTurnRecording recording) {
         this.recordingSupplier = () -> recording;
     }
 
@@ -196,7 +196,7 @@ public final class AgentxFrameworkToolGate implements MiddlewareBase {
                 turnLabel, completionCheck, policy.sandboxMode().code(),
                 denied.stream().map(ToolUseBlock::getName).toList());
 
-        AgentscopeChatEngine.Recording rec = currentRecording();
+        AgentxTurnRecording rec = currentRecording();
         if (rec != null) {
             // 被拒的也要有卡：status=error 让界面显示成红色失败，而不是「调了个工具，什么都没发生」。
             // 拒绝理由一并落库（只发帧不落库的话，刷新后这张红叉卡就说不清为什么红）
@@ -247,8 +247,8 @@ public final class AgentxFrameworkToolGate implements MiddlewareBase {
         }
     }
 
-    private AgentscopeChatEngine.Recording currentRecording() {
-        java.util.function.Supplier<AgentscopeChatEngine.Recording> s = recordingSupplier;
+    private AgentxTurnRecording currentRecording() {
+        java.util.function.Supplier<AgentxTurnRecording> s = recordingSupplier;
         return s == null ? null : s.get();
     }
 
