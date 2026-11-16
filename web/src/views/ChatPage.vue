@@ -2022,6 +2022,8 @@ import { buildSessionPlans, planStateText } from '../chat/planPanel'
 import { useSourceFocus } from '../chat/useSourceFocus'
 import { useChatScroll } from '../chat/useChatScroll'
 import { useChatPanels } from '../chat/useChatPanels'
+import { useHeadStatus } from '../chat/useHeadStatus'
+import { useRunSettings } from '../chat/useRunSettings'
 import { parseDeepCommand } from '../chat/deepCommand'
 import TurnChangesCard from '../components/TurnChangesCard.vue'
 import { splitAtts } from '../chat/attachments'
@@ -2174,86 +2176,27 @@ const goalNextVersionLabel = computed(() => {
   return 'v' + (n + 2)
 })
 
-// 顶栏状态胶囊与回答头共用同一份过程步：只读最后一条 AI 消息，不另起一套判据
-const processSteps = computed(() => (processMsg.value ? roundSteps(processMsg.value) : []))
-const processFailCount = computed(() => processSteps.value.filter(t => t.status === 'error').length)
-const headStatusClass = computed(() => ({
-  bad: processFailCount.value > 0,
-  run: !!(processMsg.value && processMsg.value.loading),
-  on: panelOpen.value
-}))
-const headStatusText = computed(() => {
-  if (processFailCount.value) return `本轮 ${processFailCount.value} 步失败`
-  if (processMsg.value && processMsg.value.loading) return '正在执行'
-  return '状态'
+// 顶栏状态胶囊 + 右栏分段（见 ../chat/useHeadStatus）
+const {
+  processSteps, processFailCount, headStatusClass, headStatusText, headStatusTitle,
+  railTab, fileTabCount, filesTabEmpty, processMsgIndex, headStatusClick
+} = useHeadStatus({
+  processMsg: () => processMsg.value, roundSteps,
+  panelOpen: () => panelOpen.value, mPanelOpen: () => mPanelOpen.value,
+  isNarrow: () => isNarrow.value, togglePanel: (...a) => togglePanel(...a),
+  deliveryPackages, sandboxCount, procs, sandboxErr, sandboxLoading, procCardVisible, messages
 })
-const headStatusTitle = computed(() => {
-  if (processFailCount.value) return `本轮有 ${processFailCount.value} 步失败，点开右栏看过程`
-  if (processMsg.value && processMsg.value.loading) return '本轮正在执行，点开右栏看过程'
-  return panelOpen.value ? '收起状态栏' : '展开状态栏'
-})
-// 右栏分段与计数：过程 / 来源 / 文件各一份，失败数只压在过程页签上
-const railTab = ref('process')
-const fileTabCount = computed(() => (deliveryPackages.value?.length || 0)
-  + (Number(sandboxCount.value) || 0) + (procs.value?.length || 0))
-// 文件页签的空态不能只看计数：读取失败/正在读时 count 可能是 0，但下面确实有错误卡要显示
-const filesTabEmpty = computed(() => !fileTabCount.value && !sandboxErr.value && !sandboxLoading.value && !procCardVisible.value)
-// 最后一条 AI 消息的下标：右栏「重新生成本轮」要按这条消息重跑整轮
-const processMsgIndex = computed(() => {
-  const list = messages.value || []
-  for (let i = list.length - 1; i >= 0; i--) if (list[i].role === 'ai') return i
-  return -1
-})
-// 顶栏状态胶囊：先切到过程页签再开栏；已经停在过程页签时再点才收起
-const headStatusClick = () => {
-  const openNow = isNarrow.value ? mPanelOpen.value : panelOpen.value
-  if (openNow && railTab.value === 'process') { togglePanel(); return }
-  railTab.value = 'process'
-  if (!openNow) togglePanel()
-}
-// 运行设置（与模型下拉同一张卡）：以当前显式选择的模型为准；跟随默认时用生效模型
-const runSettingsModel = computed(() => currentOverrideModel.value || effectiveModel.value)
-const runSettingsModelLabel = computed(() => modelLabelOf(runSettingsModel.value) || effectiveModelLabel.value || '当前模型')
-const runSettingsCaps = computed(() => thinkCapsOf(runSettingsModel.value))
-const runSettingsLevels = computed(() => levelOptionsOf(runSettingsModel.value))
-const runSettingsLevel = computed(() => currentLevelOf(runSettingsModel.value))
-const runSettingsHint = computed(() => runSettingsCaps.value.locked
-  ? '该模型始终思考，强度由管理员在模型库登记'
-  : '强度越高，思考越深入，回答耗时相应增加')
-const runSettingsWindow = computed(() => {
-  const info = modelIndex.value[runSettingsModel.value]
-  return info && info.contextWindow ? fmtWindow(info.contextWindow) : ''
-})
-const isRunModelDefault = computed(() => !!runSettingsModel.value && runSettingsModel.value === userDefaultModel.value)
-const setRunModelDefault = async () => {
-  const ref = runSettingsModel.value
-  if (!ref) return
-  try {
-    await setUserPreference({ defaultModel: ref })
-    userDefaultModel.value = ref
-    message.success('已设为默认模型')
-  } catch (e) {
-    message.error((e && e.message) || '设置默认模型失败')
-  }
-}
-// 输入区容量圆环旁的那颗百分比：与圆环同源（ctxCapData 的实测 used/window），没有真数就不显示
-const ctxPctText = computed(() => {
-  const used = Number(ctxCapData.value && ctxCapData.value.used) || 0
-  const win = Number(ctxCapData.value && ctxCapData.value.window) || 0
-  if (!used || !win) return ''
-  const pct = (used / win) * 100
-  return pct > 0 && pct < 1 ? '<1%' : Math.round(pct * 10) / 10 + '%'
-})
-// 运行设置里的「本轮占用」只对生效模型成立：选了另一个模型时，本轮的 tokens 不是它的
-const runSettingsUsage = computed(() => {
-  const used = Number(ctxCapData.value && ctxCapData.value.used) || 0
-  if (!used || runSettingsModel.value !== effectiveModel.value) return ''
-  return fmtTokens(used) + (ctxPctText.value ? ' · ' + ctxPctText.value : '')
-})
-// 运行设置面板里的检索范围：只报本轮显式 @ 的知识库；没有就是按智能体默认范围
-const kbScopeText = computed(() => {
-  const kbs = (pendingMentions.value || []).filter(x => x.type === 'kb')
-  return kbs.length ? kbs.map(x => x.name || x.id).join('、') : '按智能体默认范围'
+
+// 运行设置（见 ../chat/useRunSettings）
+const {
+  runSettingsModel, runSettingsModelLabel, runSettingsCaps, runSettingsLevels,
+  runSettingsLevel, runSettingsHint, runSettingsWindow, isRunModelDefault,
+  setRunModelDefault, ctxPctText, runSettingsUsage, kbScopeText
+} = useRunSettings({
+  currentOverrideModel, effectiveModel, effectiveModelLabel, userDefaultModel,
+  modelIndex, pendingMentions, ctxCapData,
+  modelLabelOf, thinkCapsOf, levelOptionsOf, currentLevelOf, fmtWindow, fmtTokens,
+  setUserPreference, message
 })
 
 const ask = q => { text.value = q; nextTick(send) }

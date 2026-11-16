@@ -903,6 +903,7 @@
 
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import {
   ArrowLeftOutlined, ReloadOutlined, SearchOutlined, IdcardOutlined,
@@ -918,24 +919,25 @@ import { listAgents, createAgent, updateAgent, deleteAgent, batchDeleteAgents, s
          listDocuments,
          listAvailableSkills, getMcpStatus, listSubAgents, getToolCatalog, getPermissionPresets,
          getAgentConfigDefaults,
-         getAgentPublish, publishAgent, revokeAgentPublish, createWorkflowFromAgent,
-         listAgentVersions, rollbackAgent, agentEvalGateCheck, agentEvalStartRun } from '../api'
+         agentEvalGateCheck, agentEvalStartRun } from '../api'
 import EvalGateModal from '../components/agent/EvalGateModal.vue'
-import ProviderIcon from '../components/ProviderIcon.vue'
 import ModelSelect from '../components/ModelSelect.vue'
 import AgentAvatar from '../components/AgentAvatar.vue'
 import SkillContentModal from '../components/SkillContentModal.vue'
 import HttpToolsEditor from '../components/agent/HttpToolsEditor.vue'
 import WorkflowToolsEditor from '../components/agent/WorkflowToolsEditor.vue'
 import { ensureAuth, isAdminSync } from '../utils/auth'
-import { loadModelIndex } from '../utils/modelRef'
-import { locateField } from '../utils/fieldLocate'
 import { copyText } from '../utils/clipboard'
-import { publicUrl } from '../utils/publicUrl'
-import { topoWindow, focusedGraph } from '../utils/topoLayout'
 import { MdEditor, MdPreview } from 'md-editor-v3'
 import 'md-editor-v3/lib/style.css'
 import { themeState } from '../utils/theme'
+import { isDefault, isDisabledAgent, isBuiltin, isPreset, isSub, splitList, triStr, clip, fmtTime } from '../agents/agentBasics'
+import { useAgentPublish } from '../agents/useAgentPublish'
+import { useDelegationTopo } from '../agents/useDelegationTopo'
+import { useAgentVersions } from '../agents/useAgentVersions'
+
+const route = useRoute()
+const router = useRouter()
 
 // ==================== 能力定义 ====================
 // path：该能力在全局配置里的开关路径；gate：还受此总闸制约（关掉总闸时能力不生效）
@@ -1334,17 +1336,7 @@ const canShowStar = computed(() => {
 // 内置问渠整块「图标」已隐藏，这里恒走过滤分支
 const iconOptions = computed(() => ICON_OPTIONS.filter(o => o.value !== 'wenqu'))
 
-const isDefault = a => a.isDefault === 1 || a.isDefault === true
-/** 已停用：对话页不可选、@/委派不可用、分享链接失效；管理列表仍可见以便恢复 */
-const isDisabledAgent = a => a.disabled === 1 || a.disabled === true
-/** 系统内置（如默认「知识库助手」）：不可删除，卡片上以「内置」标记区分 */
-const isBuiltin = a => a.isBuiltin === 1 || a.isBuiltin === true
-/** 平台预置的内置助手（created_by=system，如网页操作助手）：全员可用，管理员可配置，不可删除、不可设为默认 */
-const isPreset = a => a.createdBy === 'system' && !isBuiltin(a)
-/** 子智能体：不直接参与对话，只能被主智能体委派 */
-const isSub = a => a.isSubagent === 1 || a.isSubagent === true
-/** 逗号串 → 数组（具体项） */
-const splitList = v => (v ? String(v).split(',').filter(Boolean) : [])
+// 判定/转换纯函数见 ../agents/agentBasics（本页与各 composable 共用同一口径）
 /** 搜索覆盖卡片上能看到的一切维度：名称、描述、能力摘要、资料范围、工作流名、MCP/技能/知识库名 */
 const matchKw = a => {
   const kw = keyword.value.trim().toLowerCase()
@@ -1563,407 +1555,24 @@ const onImportFile = ev => {
   rd.readAsText(f)
 }
 
-// ==================== 委派编排视图（列表承载规模 + 聚焦拓扑） ====================
-const topoOpen = ref(false)
-const topoMode = ref('list')     // list=检索与概览；topo=看某一位主智能体的委派链路
-const topoQuery = ref('')
-const topoFilter = ref('all')
-const topoFocusId = ref('')
-const topoHover = ref('')        // 悬停节点 key（'m'=主节点，其余为子节点 key）
-const topoListEl = ref(null)
-const topoScrollTop = ref(0)
-const TOPO = { pad: 16, rowH: 64, rowGap: 14, nodeW: 216, gapG: 64, subW: 248 }
+// ==================== 委派编排视图（见 ../agents/useDelegationTopo） ====================
+const {
+  topoOpen, topoMode, topoQuery, topoFilter, topoFocusId, topoHover, topoListEl, topoScrollTop, TOPO,
+  topoMains, topoSubs, topoRows, topoParentCount, topoSummary, topoOrphanNames, topoOrphanTitle,
+  topoFilters, topoFiltered, onTopoScroll, topoWin, topoFocus, topoMainOptions, openTopo, focusTopo,
+  topoGraph, subMeta, trunc, MAIN_NAME, MAIN_LINE, SUB_NAME, SUB_LINE, toWfLoading, toWorkflow, edgeCls, nodeCls
+} = useDelegationTopo({ agents, editingId, route, router })
 
-const topoMains = computed(() => agents.value.filter(a => !isSub(a)))
-const topoSubs = computed(() => agents.value.filter(isSub))
+// ==================== 公开发布（见 ../agents/useAgentPublish） ====================
+const {
+  pubVisible, pubAgentId, pubAgentName, pubAgent, pubEnabled, pubMcpEnabled,
+  pubAgentApprovalOff, pubModelRef, pubToken, pubGuestImages, pubGuestFiles,
+  pubVariables, pubGuestMcp, myMcpServerChoices, myMcpServers, modelIndex,
+  pubModelVisionOk, pubVisionWarn, pubVisitCount, pubLastVisitAt, pubTab,
+  pubFrameW, pubFrameH, shareUrl, mcpUrl, mcpJson, iframeSnippet,
+  applyPubDeepLink, openPublish, savePublish, saveMcpChecks, doRevoke
+} = useAgentPublish({ agents, route, router })
 
-/** 一行 = 一位主智能体：解析出来的子智能体（按清单顺序）与悬空 id（失效引用） */
-const topoRows = computed(() => {
-  const subById = new Map(topoSubs.value.map(a => [String(a.id), a]))
-  return topoMains.value.map(a => {
-    const declared = splitList(a.subAgentIds)
-    const subs = []
-    const missingIds = []
-    for (const id of declared) {
-      const s = subById.get(String(id))
-      if (s) subs.push(s)
-      else missingIds.push(String(id))
-    }
-    return { agent: a, configured: declared.length > 0, subs, missingIds }
-  })
-})
-
-const topoParentCount = computed(() => {
-  const map = {}
-  for (const r of topoRows.value) for (const s of r.subs) map[String(s.id)] = (map[String(s.id)] || 0) + 1
-  return map
-})
-
-const topoSummary = computed(() => {
-  let missing = 0
-  for (const r of topoRows.value) missing += r.missingIds.length
-  const parents = new Set(Object.keys(topoParentCount.value))
-  const orphans = topoSubs.value.filter(s => !parents.has(String(s.id)))
-  return {
-    mains: topoRows.value.length,
-    subs: topoSubs.value.length,
-    orphans: orphans.length,
-    orphanNames: orphans.map(s => s.name || s.id),
-    missing,
-    defaultMains: topoRows.value.filter(r => !r.configured).length
-  }
-})
-const topoOrphanNames = computed(() => {
-  const names = topoSummary.value.orphanNames
-  return names.length > 4 ? `${names.slice(0, 4).join('、')} 等 ${names.length} 个` : names.join('、')
-})
-const topoOrphanTitle = computed(() => (topoSummary.value.orphanNames.length
-  ? `没进入任何主智能体委派清单的子智能体：${topoSummary.value.orphanNames.join('、')}` : ''))
-
-const topoFilters = computed(() => {
-  const rows = topoRows.value
-  return [
-    { key: 'all', label: '全部', count: rows.length },
-    { key: 'configured', label: '已配置', count: rows.filter(r => r.configured).length },
-    { key: 'default', label: '默认不限', count: rows.filter(r => !r.configured).length },
-    { key: 'dangling', label: '有失效引用', count: rows.filter(r => r.missingIds.length).length }
-  ]
-})
-
-const topoFiltered = computed(() => {
-  const q = topoQuery.value.toLowerCase()
-  return topoRows.value.filter(r => {
-    if (topoFilter.value === 'configured' && !r.configured) return false
-    if (topoFilter.value === 'default' && r.configured) return false
-    if (topoFilter.value === 'dangling' && !r.missingIds.length) return false
-    if (!q) return true
-    return String(r.agent.name || '').toLowerCase().includes(q)
-      || String(r.agent.description || '').toLowerCase().includes(q)
-  })
-})
-
-/**
- * 窗口化滚动：几百个主智能体时只渲染可视区附近的行（算式与行高在 utils/topoLayout 里单测钉住）。
- */
-const onTopoScroll = e => { topoScrollTop.value = e.target.scrollTop }
-const topoWin = computed(() => {
-  const rows = topoFiltered.value
-  const w = topoWindow(rows.length, topoScrollTop.value)
-  return { ...w, rows: rows.slice(w.start, w.end) }
-})
-watch([topoQuery, topoFilter], () => {
-  topoScrollTop.value = 0
-  if (topoListEl.value) topoListEl.value.scrollTop = 0
-})
-
-const topoFocus = computed(() => topoRows.value.find(r => r.agent.id === topoFocusId.value) || null)
-// 列表刷新后聚焦对象可能已不存在（被删/改了用途）：回列表，别留一张空弹窗
-watch(topoFocus, v => { if (!v && topoMode.value === 'topo') topoMode.value = 'list' })
-const topoMainOptions = computed(() => topoMains.value.map(a => ({ value: a.id, label: a.name || a.id })))
-
-/**
- * 打开编排视图。带智能体进 = 直接看它的链路：
- * 主智能体看自己派出去的，子智能体看委派它的第一位主智能体（卡片上「被谁委派」那个入口）。
- */
-const openTopo = a => {
-  topoQuery.value = ''
-  topoFilter.value = 'all'
-  topoScrollTop.value = 0
-  topoHover.value = ''
-  let focus = ''
-  if (a) {
-    if (isSub(a)) {
-      const parent = topoRows.value.find(r => r.subs.some(s => String(s.id) === String(a.id)))
-      focus = parent ? parent.agent.id : ''
-    } else {
-      focus = String(a.id)
-    }
-  }
-  topoFocusId.value = focus
-  topoMode.value = focus ? 'topo' : 'list'
-  topoOpen.value = true
-}
-const focusTopo = a => {
-  topoFocusId.value = String(a.id)
-  topoMode.value = 'topo'
-  topoHover.value = ''
-}
-
-/** 聚焦拓扑布局：最多两列（一列 8 个），画布高度只与这一位的委派数有关 */
-const topoGraph = computed(() => {
-  const r = topoFocus.value
-  const items = r ? [
-    ...r.subs.map(s => ({ key: String(s.id), agent: s, miss: false })),
-    ...r.missingIds.map(id => ({ key: 'x' + id, id, agent: null, miss: true }))
-  ] : []
-  return focusedGraph(items, TOPO)
-})
-const subMeta = a => {
-  const n = topoParentCount.value[String(a.id)] || 0
-  return n ? `被 ${n} 个主智能体委派` : '暂无人委派'
-}
-
-/**
- * 按显示宽度截断：全角 = 1 字宽、半角 ≈ 0.55。
- * 纯字数截断不可靠——中文按字号折算一行只装得下十几字，超宽文本会溢出节点矩形、
- * 被 SVG 视口右缘裁掉（首版"显示不全"的根因）。maxFull = 该行可容纳的全角字数。
- */
-const trunc = (s, maxFull) => {
-  const t = String(s == null ? '' : s)
-  let w = 0
-  for (let i = 0; i < t.length; i++) {
-    w += t.charCodeAt(i) > 255 ? 1 : 0.55
-    if (w > maxFull) return t.slice(0, i) + '…'
-  }
-  return t
-}
-// 每行可容纳的全角字数（节点宽 - 左右内边距 12×2，按字号折算：名称 13px / 描述与元信息 11px）
-const MAIN_NAME = Math.floor((TOPO.nodeW - 24) / 13)
-const MAIN_LINE = Math.floor((TOPO.nodeW - 24) / 11)
-const SUB_NAME = Math.floor((TOPO.subW - 24) / 13)
-const SUB_LINE = Math.floor((TOPO.subW - 24) / 11)
-
-// ==================== 委派编排一键转工作流 ====================
-import { useRoute, useRouter } from 'vue-router'
-const route = useRoute()
-const router = useRouter()
-const toWfLoading = ref(false)
-/**
- * 把该智能体已保存的委派编排（subAgentIds 并行委派）转成工作流：
- * 后端按库里的委派关系生成「start 扇出 subagent → template 聚合 → llm 总结 → end」
- * 并创建草稿工作流；成功后跳到「工作流」Tab，列表首行（更新时间倒序）就是它。
- */
-const toWorkflow = async () => {
-  if (!editingId.value) {
-    message.warning('请先保存智能体（委派关系以已保存的为准），再转换工作流')
-    return
-  }
-  toWfLoading.value = true
-  try {
-    const r = await createWorkflowFromAgent(editingId.value)
-    if (r && r.success) {
-      message.success(`已按已保存的委派关系创建工作流「${r.data.name}」，可在画布继续调整后发布`)
-      router.replace({ query: { ...route.query, tab: 'workflow' } })
-    } else {
-      message.error((r && r.msg) || '转换失败')
-    }
-  } catch (e) {
-    message.error('转换失败：' + (e.message || ''))
-  } finally {
-    toWfLoading.value = false
-  }
-}
-
-/** 悬停高亮：主节点悬停 = 整条链路；子节点悬停 = 它那一条边（其余淡化） */
-const edgeCls = e => {
-  const h = topoHover.value
-  if (!h) return ''
-  if (h === 'm') return 'on'
-  return h === e.key ? 'on' : 'dim'
-}
-const nodeCls = key => {
-  const h = topoHover.value
-  if (!h || h === 'm' || h === key) return ''
-  return 'dim'
-}
-
-// ==================== 公开发布（/s/{token} 免登录对话 + iframe 嵌入） ====================
-const pubVisible = ref(false)
-const pubAgentId = ref('')
-const pubAgentName = ref('')
-/** 弹窗标题栏的智能体头像：与列表卡片共用 AgentAvatar 的 icon 解析口径（品牌标 / emoji / 默认机器人） */
-const pubAgent = ref({ name: '', icon: '', isBuiltin: 0 })
-const pubEnabled = ref(false)
-const pubMcpEnabled = ref(false)
-/** 被发布智能体的「工具执行确认」是否为「禁用」（openPublish 时取一次）。
- *  禁用档在运行期 approvalPolicyAllows 处直接不挂 MCP 工具族（ToolAssemblyService 精确匹配 "off"，
- *  跟随档位''/auto/ask 都不算），勾了名单也一个工具都调不动——这是确定翻车的组合，就地警告 */
-const pubAgentApprovalOff = ref(false)
-const pubModelRef = ref('')
-const pubToken = ref('')
-/** 游客输入开关（默认关；发布者显式打开才给访客多模态入口） */
-const pubGuestImages = ref(false)
-const pubGuestFiles = ref(false)
-/** 调用变量开关（默认关 fail-closed；嵌入页随轮传业务上下文，发布者显式同意才注入） */
-const pubVariables = ref(false)
-/** 游客可用 MCP server 勾选（server 名数组；空=关闭。MCP 是发布者个人资产，按 server 粒度亮出） */
-const pubGuestMcp = ref([])
-/** 勾选项：发布者自己已启用、且落在**被发布智能体的 MCP 配置范围内**的 server（openPublish 时按智能体算；
- *  未连接的也列出，标注即可）。运行期 McpToolProvider 本来就拿「游客名单 ∩ 智能体具体项选择」装配，
- *  勾选列表与智能体配置对齐后，这里勾到的每一项都是真能挂上的，不会出现「勾了但智能体根本没配」的死选项 */
-const myMcpServerChoices = ref([])
-/** 发布者名下全部已启用的 MCP server（loadLists 时取一次；具体勾选项在 openPublish 按智能体配置收窄） */
-const myMcpServers = ref([])
-/**
- * 被发布智能体的 MCP 具体项范围 → 裸服务名数组。
- *   toolMcp=0（不使用）           → []（整族不挂，无可勾）
- *   toolMcp=1（指定）             → agent.mcps 引用串解析成名字。引用是 {uid}/{name} 精确绑定（个人资产），
- *                                   裸名是存量配置的弱匹配——与后端 ResourceRefs.resolve 同一套口径
- *   toolMcp=null（跟随全局）      → null（智能体未指定具体项，运行期挂发布者全部已启用 server）
- */
-const agentMcpScopeNames = a => {
-  const tri = triStr(a.toolMcp)
-  if (tri === '0') return []
-  if (tri === '1') {
-    return splitList(a.mcps).map(r => {
-      const slash = r.indexOf('/')
-      return slash < 0 ? r : r.slice(slash + 1)
-    }).filter(n => n)
-  }
-  return null
-}
-/** 模型目录（ref → 展示信息，含 visionCapable）：只用来判断"选中的模型能不能看图"。
- *  loadModelIndex 自带 10s TTL 缓存且失败静默，拿不到就按"能看"放过——宁可少提示一句，
- *  也不要因为一次取数失败就在发布弹窗里报一个假警 */
-const modelIndex = ref({})
-/** 选中模型能否看图（三态已由后端归一成布尔）。空 modelRef=跟随个人默认模型，此时无从判定 */
-const pubModelVisionOk = computed(() => !pubModelRef.value || !!modelIndex.value[pubModelRef.value]?.visionCapable)
-/**
- * 「允许发图」要不要就地提示，以及提示哪一句：
- *   'model'   —— 选定的模型看不懂图，是**确定的问题**（访客发图会被忽略或报错）
- *   'inherit' —— 跟随个人默认模型，此处**无从判定**，但同样得提醒去确认
- *   ''        —— 不必提示
- * <p>为什么分成两档而不是「判不出来就不提示」：判不出来的那一档恰恰最容易出事——
- * 发布者以为自己选了默认模型就万事俱备，访客发出去的图却被静默忽略。
- * 提示要说出「我判不了，你去确认」，而不是假装没问题（这正是本函数存在的理由）。
- */
-const pubVisionWarn = computed(() => {
-  if (!pubEnabled.value || !pubGuestImages.value) return ''
-  if (!pubModelRef.value) return 'inherit'
-  return pubModelVisionOk.value ? '' : 'model'
-})
-/** 发布后的回收信号（visit_count 每次游客发起对话 +1） */
-const pubVisitCount = ref(0)
-const pubLastVisitAt = ref('')
-/** 分发方式当前页签（三种形态共用一个 token，切页签不产生新链接） */
-const pubTab = ref('link')
-/** iframe 嵌入尺寸：可调，并实时反映进代码 */
-const pubFrameW = ref(420)
-const pubFrameH = ref(640)
-const shareUrl = computed(() => pubToken.value ? publicUrl('/s/' + pubToken.value) : '')
-// MCP 端点（/ai/mcp/{token}）：与网页分享同一 token，token 即凭据
-const mcpUrl = computed(() => pubToken.value ? publicUrl('/ai/mcp/' + pubToken.value) : '')
-const mcpJson = computed(() => mcpUrl.value
-  ? JSON.stringify({ mcpServers: { [pubAgentName.value || 'wenqu']: { url: mcpUrl.value } } }, null, 2)
-  : '')
-const iframeSnippet = computed(() => shareUrl.value
-  ? `<iframe src="${shareUrl.value}?embed=1" style="width:${pubFrameW.value}px;height:${pubFrameH.value}px;border:1px solid #e5e6eb;border-radius:12px" title="${pubAgentName.value || 'AI 助手'}"></iframe>`
-  : '')
-
-/**
- * ?agentId=&pub=1 深链：模型供应商「查看引用」里那条「游客对话模型」，能改它的地方就是
- * 这个公开发布弹窗（游客模型选择器在里面）。停在智能体列表上等于让人自己找那张卡再自己找入口。
- */
-const applyPubDeepLink = () => {
-  const id = typeof route.query.agentId === 'string' ? route.query.agentId : ''
-  if (!id || !route.query.pub) return
-  router.replace({ path: route.path, query: { ...route.query, agentId: undefined, pub: undefined } })
-  const a = agents.value.find(x => x.id === id)
-  if (!a) {
-    message.warning('这位智能体不在你的列表里（可能已删除，或你没有管理权）')
-    return
-  }
-  openPublish(a)
-  locateField('pubModelRef')
-}
-
-async function openPublish (a) {
-  pubAgentId.value = a.id
-  pubAgentName.value = a.name || ''
-  pubAgent.value = { name: a.name || '', icon: a.icon || '', isBuiltin: a.isBuiltin || 0 }
-  pubVisible.value = true
-  pubToken.value = ''
-  pubEnabled.value = false
-  pubMcpEnabled.value = false
-  pubAgentApprovalOff.value = (a.toolApprovalMode || '') === 'off'
-  pubModelRef.value = ''
-  pubGuestImages.value = false
-  pubGuestFiles.value = false
-  pubVariables.value = false
-  pubGuestMcp.value = []
-  pubTab.value = 'link'
-  pubVisitCount.value = 0
-  pubLastVisitAt.value = ''
-  // 勾选项跟随被发布智能体的 MCP 配置走：指定模式只列它绑定的那几个，不使用则一项不列，
-  // 跟随全局（未指定具体项）才亮出发布者全部已启用 server——运行期装配就是按这个交集来的
-  const mcpScope = agentMcpScopeNames(a)
-  myMcpServerChoices.value = mcpScope
-    ? myMcpServers.value.filter(s => mcpScope.includes(s.name))
-    : myMcpServers.value.slice()
-  // 模型目录用于「允许发图」那条就地提示；不 await：它是 10s TTL 的展示索引，
-  // 晚到一步只影响那行提示什么时候出现，不该拖住弹窗打开
-  loadModelIndex().then(ix => { modelIndex.value = ix || {} }).catch(() => {})
-  try {
-    const r = await getAgentPublish(a.id)
-    if (r && r.success !== false && r.data) {
-      pubEnabled.value = !!r.data.enabled
-      pubMcpEnabled.value = !!r.data.mcpEnabled
-      pubGuestImages.value = !!r.data.guestImages
-      pubGuestFiles.value = !!r.data.guestFiles
-      pubVariables.value = !!r.data.variables
-      // 已存名单先按本次勾选项收口：智能体配置改过（或 server 被删）后，名单里的残留名
-      // 运行期装配时交集为空、勾了也白勾——回显就剪掉，下次保存自然把库里那份一起清掉
-      const allowNames = new Set(myMcpServerChoices.value.map(s => s.name))
-      pubGuestMcp.value = Array.isArray(r.data.guestMcpServers)
-        ? r.data.guestMcpServers.filter(n => allowNames.has(n))
-        : []
-      pubModelRef.value = r.data.modelRef || ''
-      pubToken.value = r.data.token || ''
-      pubVisitCount.value = r.data.visitCount || 0
-      pubLastVisitAt.value = r.data.lastVisitAt || ''
-    }
-  } catch (e) { message.error(e.message || '分享配置加载失败') }
-}
-
-/** 大动作（总开关 / 端点开关 / 模型 / 游客输入开关）保存后给一句确认 */
-async function savePublish () { return doSave(true) }
-/** 勾选名单的细粒度改动走静默保存：勾三个服务弹三个「已发布」，toast 就成了噪音，
- *  勾选框本身已是反馈。全选/清空也走这里 */
-async function saveMcpChecks () { return doSave(false) }
-
-async function doSave (toast) {
-  // MCP 端点是分享的附加形态：分享停用后链接与端点一并失效，前端同步关掉避免发布出无效组合
-  if (!pubEnabled.value) pubMcpEnabled.value = false
-  // 游客输入同理依赖分享本身：链接都停了就无所谓"访客能不能发图"，收了才不会回显出
-  // 「未发布 + 已允许发图」这种自相矛盾的状态（后端也归一成关，两边口径一致）
-  if (!pubEnabled.value) { pubGuestImages.value = false; pubGuestFiles.value = false; pubVariables.value = false; pubGuestMcp.value = [] }
-  try {
-    const r = await publishAgent(pubAgentId.value, {
-      enabled: pubEnabled.value,
-      mcpEnabled: pubMcpEnabled.value,
-      guestImages: pubGuestImages.value,
-      guestFiles: pubGuestFiles.value,
-      variables: pubVariables.value,
-      guestMcpServers: pubGuestMcp.value.slice(),
-      modelRef: pubModelRef.value || ''
-    })
-    if (r && r.success !== false && r.data) {
-      pubToken.value = r.data.token || ''
-      pubMcpEnabled.value = !!r.data.mcpEnabled
-      // 以后端归一后的值为准（停用分享时它会把两个能力位一起压成 false）
-      pubGuestImages.value = !!r.data.guestImages
-      pubGuestFiles.value = !!r.data.guestFiles
-      pubVariables.value = !!r.data.variables
-      if (Array.isArray(r.data.guestMcpServers)) pubGuestMcp.value = r.data.guestMcpServers.slice()
-      // 同步列表行：卡片上的「已发布」标记即时反映，不用重拉列表
-      const row = agents.value.find(x => x.id === pubAgentId.value)
-      if (row) row.published = pubEnabled.value ? 1 : 0
-      if (toast) message.success(pubEnabled.value ? '已发布，链接可访问' : '已停用')
-    } else message.error(r?.msg || '保存失败')
-  } catch (e) { message.error(e.message || '保存失败') }
-}
-
-async function doRevoke () {
-  try {
-    const r = await revokeAgentPublish(pubAgentId.value)
-    if (r && r.success !== false) {
-      const row = agents.value.find(x => x.id === pubAgentId.value)
-      if (row) row.published = 0
-      pubVisible.value = false
-      message.success('已撤销分享')
-    } else message.error(r?.msg || '撤销失败')
-  } catch (e) { message.error(e.message || '撤销失败') }
-}
 
 // ==================== 全局默认值（用于把每个「跟随默认」点名成具体值） ====================
 /**
@@ -2198,8 +1807,6 @@ const reload = async () => {
 }
 
 // ==================== 列表操作 ====================
-const triStr = v => (v === null || v === undefined ? '' : String(v))
-
 const openCreate = () => {
   editingId.value = ''
   editingPreset.value = false
@@ -2301,82 +1908,9 @@ const parseJsonArray = s => {
   try { const v = JSON.parse(s); return Array.isArray(v) ? v : [] } catch { return [] }
 }
 
-// ==================== 配置历史版本（每次保存落一版快照，可查 diff、一键回滚） ====================
-const verOpen = ref(false)
-const verLoading = ref(false)
-const verList = ref([])
-// 展开的版本号集合（默认展开最新一版，正是"最近一次改了什么"）
-const verExpanded = ref([])
-const verRolling = ref(null)
-
-const openVersions = async () => {
-  verOpen.value = true
-  await loadVersions()
-}
-
-const loadVersions = async () => {
-  if (!editingId.value) return
-  verLoading.value = true
-  try {
-    const r = await listAgentVersions(editingId.value)
-    if (r.success) {
-      verList.value = r.data || []
-      verExpanded.value = verList.value.length ? [verList.value[0].version] : []
-    } else {
-      verList.value = []
-      message.error(r.msg || '版本列表加载失败')
-    }
-  } catch (e) {
-    verList.value = []
-    message.error(e.message || '版本列表加载失败')
-  } finally {
-    verLoading.value = false
-  }
-}
-
-const toggleVer = version => {
-  verExpanded.value = verExpanded.value.includes(version)
-    ? verExpanded.value.filter(v => v !== version)
-    : [...verExpanded.value, version]
-}
-
-/** diff 值预览：长文本（提示词/描述）压成单行短串，完整值走 title 悬浮 */
-const clip = s => {
-  const t = String(s ?? '')
-  return t.length > 80 ? t.slice(0, 80) + '…' : t
-}
-
-const fmtTime = t => (t ? String(t).replace('T', ' ').slice(0, 19) : '')
-
-const doRollback = v => {
-  Modal.confirm({
-    title: `回滚到 v${v.version}`,
-    content: `将把 v${v.version} 的配置（名称/提示词/知识库范围/工具集等）重新应用到当前智能体，`
-      + '并生成一条新的版本记录。历史版本不会被改写，本次回滚也可以再回滚。',
-    okText: '确认回滚',
-    cancelText: '取消',
-    onOk: async () => {
-      verRolling.value = v.version
-      try {
-        const r = await rollbackAgent(editingId.value, v.version)
-        if (r.success) {
-          message.success(`已回滚到 v${v.version}`)
-          // 回滚改的是后端配置：把列表与表单都刷成回滚后的状态，避免表单里残留旧值被下次「保存」又写回去
-          await reload()
-          const a = agents.value.find(x => x.id === editingId.value)
-          if (a) openEdit(a)
-          await loadVersions()
-        } else {
-          message.error(r.msg || '回滚失败')
-        }
-      } catch (e) {
-        message.error(e.message || '回滚失败')
-      } finally {
-        verRolling.value = null
-      }
-    }
-  })
-}
+// ==================== 配置历史版本（见 ../agents/useAgentVersions） ====================
+const { verOpen, verLoading, verList, verExpanded, verRolling, openVersions, toggleVer, doRollback }
+  = useAgentVersions({ editingId, agents, reload, openEdit })
 
 /** 三态转换：'' → null（跟随全局）；'1' → 1；'0' → 0 */
 const tri = v => (v === '' || v == null ? null : Number(v))
