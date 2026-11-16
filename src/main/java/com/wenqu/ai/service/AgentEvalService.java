@@ -40,8 +40,10 @@ import java.util.Set;
  * <p>
  * 口径（智能体评测立项方案.md §3.2/§3.3/§6.1）：门禁状态五态
  * {@code none(无套件) / unevaluated / changed(有变更未评测) / running / pass / below}；
- * 「有变更未评测」= 当前版本号 &gt; 最近成功运行快照的版本号；归属校验：读走
- * {@link AgentService#get}（可读即可见），写与运行走 {@link AgentService#manageable}（谁建归谁）。
+ * 「有变更未评测」= 当前版本号 &gt; 最近成功运行快照的版本号；归属校验：读与运行都走
+ * {@link AgentService#get}（可读即可见）——评测不改智能体本身，内置「问渠」没有归属人，
+ * 按 manageable 判会让所有非管理员永远跑不了它的回归；只有「保存前检查」走 manageable，
+ * 那是改智能体的前置动作。
  *
  * @author yuanke
  */
@@ -282,7 +284,9 @@ public class AgentEvalService {
             // 打开即拒，宁可报错也不静默放宽。
             throw new BizException("评测默认只读，暂不支持放开有副作用的工具");
         }
-        Agent agent = mustManageable(agentId);
+        // 评测只读且不改智能体：能读就能跑。内置「问渠」created_by=system，非管理员的
+        // manageable 恒为 false，按管理权判会把它的回归永远挡在门外（线上实测 403）。
+        Agent agent = mustReadable(agentId);
         AgentEvalSuite suite = mustSuite(agentId);
 
         List<AgentEvalCase> cases;
@@ -517,7 +521,8 @@ public class AgentEvalService {
 
     /** 设为基线：把指定成功运行标记为该智能体「较上版」的比较锚点（落在最近一次成功运行上） */
     public Map<String, Object> setBaseline(String agentId, String runId) {
-        mustManageable(agentId);
+        // 基线是评测数据，不动智能体；与「运行回归」同口径按可读判，否则内置「问渠」跑完也设不了基线
+        mustReadable(agentId);
         AgentEvalRun target = runMapper.selectById(runId);
         if (target == null || !agentId.equals(target.getAgentId())
                 || !"succeeded".equals(target.getStatus())) {
@@ -735,7 +740,7 @@ public class AgentEvalService {
     // ==================== 内部 ====================
 
     private Agent mustReadable(String agentId) {
-        // 评测是管理动作：停用的智能体仍要能建评测集/跑回归（验证后再启用），故不看启停
+        // 评测不改智能体，能读就能评；停用的智能体仍要能建评测集/跑回归（验证后再启用），故不看启停
         Agent a = agentService.findReadable(agentId);
         if (a == null) throw new BizException(404, "智能体不存在或对当前用户不可见");
         return a;

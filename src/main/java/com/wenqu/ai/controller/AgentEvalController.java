@@ -23,10 +23,10 @@ import java.util.Map;
 /**
  * 智能体评测与发布门禁（智能体评测立项方案.md §6.1）。
  * <p>
- * 资产口径：评测数据按<b>智能体归属</b>隔离——读端点要求智能体对当前用户可读
- * （{@code AgentService.get}，含共享范围），写端点与「运行回归」要求可管理（谁建归谁，
- * 管理员按现有管理口径放行）；归属校验收在 {@code AgentEvalService} 的 mustReadable /
- * mustManageable，本控制器不重复判定。权限点 {@code agentEval:read} / {@code agentEval:write}。
+ * 资产口径：评测数据按<b>智能体归属</b>隔离——读端点与运行/基线等评测写入要求智能体对当前用户可读
+ * （评测不改智能体本身，内置「问渠」没有归属人也应能评测）；「保存前检查」服务于改智能体，
+ * 仍要求可管理。归属校验收在 {@code AgentEvalService} 的 mustReadable / mustManageable，
+ * 本控制器不重复判定。权限点 {@code agentEval:read} / {@code agentEval:write}。
  * <p>与 {@code /api/ai/eval/**}（检索评估）是两条线：那边回答「检索参数哪组好」，
  * 这边回答「这个智能体这一版好不好」，前缀与权限点都分开，不共用。
  *
