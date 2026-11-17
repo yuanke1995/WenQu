@@ -372,13 +372,25 @@ public class ChatService {
         syncPipelineSize();
         try {
             pipelineExecutor.execute(() -> {
+                // 流水线线程是池化复用的：上一轮留下的身份/租户必须先清干净，
+                // 否则这一轮会拿别人的租户去过滤（跨租户串读）或拿上一轮的身份判可见性。
+                com.wenqu.ai.util.RequestUser.clear();
+                com.wenqu.ai.util.TenantContext.clear();
+                // 租户同样按本轮用户显式绑定：租户过滤是行级的，会话行/消息行/知识行都按它圈定。
+                // 只靠 TenantContext.current() 的惰性解析不够——解析结果会缓存在池化线程上，
+                // 下一轮换一个租户的用户时仍命中上一轮的租户，于是「会话行不可用」这类
+                // 查不到本会话行的错会随机出现（写进去的行与查的时候用的租户对不上）。
+                // 放在装身份之前：身份装载要读用户表，那条 SQL 也走租户谓词，
+                // 租户先定下来，读到的才是本轮用户自己的行。
+                bindTurnTenant(userId);
+                // 身份装载（检索可见性按真实用户判）：
                 // 流水线线程**没有请求上下文**：检索的库门下推与文档可见性晚绑定
                 // （HybridRetrievalService.buildAclFilter / loadVisibleDocIdsOfHits 读 RequestUser）
                 // 会拿到 SYSTEM ⇒ 可见库集合为空/受限，配了共享范围（department/user）
                 // 的文档被判为不可见并被过滤，表现就是"共享给我的资料，我在问答里检索不到"。
                 // 这里按本轮 userId 从用户档案装载身份，让过滤按**真实用户**算（来源是用户表，
                 // 与调用线程无关：网页问答的 Tomcat 线程、定时任务的池线程同一个来源）。
-                boolean identity = loadIdentity(userId);
+                loadIdentity(userId);
                 // 个人配置覆盖（schema personal 字段）：随身份一次性载入，本轮内 configService.get 对
                 // 标了 personal 的字段优先读个人值。当前 schema 里没有这类字段，
                 // 这一层作为配置四档的通用机制保留，将来再有个人可覆盖项时不必重铺。
@@ -456,7 +468,10 @@ public class ChatService {
                         }
                     }
                     runtime.endTurnMutex(sessionId);
-                    if (identity) com.wenqu.ai.util.RequestUser.clear();
+                    // 身份与租户同生命周期：池化线程复用，必须清，否则下一轮会带着上一轮的身份
+                    // 判可见性、带着上一轮的租户去过滤别人的行（跨租户串读）。
+                    com.wenqu.ai.util.TenantContext.clear();
+                    com.wenqu.ai.util.RequestUser.clear();
                     // 智能体检索开关的作用域覆盖随本轮结束清除（ThreadLocal，池化线程复用必须清，
                     // 否则下一轮请求会继承上一轮智能体的检索开关）
                     configService.clearOverride();
@@ -778,6 +793,32 @@ public class ChatService {
             log.warn("[FAIL-LOUD] 流水线线程装载用户身份失败（本轮检索可见性按 SYSTEM 判定）uid={}: {}",
                     userId, e.getMessage());
             return false;
+        }
+    }
+
+    /**
+     * 按本轮用户显式绑定租户（行级过滤的圈定依据）。
+     * <p>
+     * 为什么不能只靠 {@link com.wenqu.ai.util.TenantContext#current()} 惰性解析：那份解析结果
+     * 会缓存在池化线程上（同一线程下一轮换一个租户的用户时仍命中上一轮的租户），于是
+     * 「写进去的行」与「查的时候用的租户」对不上——症状是随机出现「会话行不可用」这类
+     * 明明刚建好、却查不到的错。显式绑定把租户钉死在本轮用户身上。
+     * <p>
+     * 解析失败（账号无归属/查询异常）不打断问答：留空即不注入租户谓词，退回旧口径。
+     */
+    private void bindTurnTenant(String userId) {
+        if (userId == null || userId.isBlank()
+                || com.wenqu.ai.util.RequestUser.SYSTEM.equals(userId)) {
+            return;
+        }
+        try {
+            String tenant = com.wenqu.ai.util.TenantContext.resolveFor(userId);
+            if (tenant != null && !tenant.isBlank()) {
+                com.wenqu.ai.util.TenantContext.bind(tenant);
+            }
+        } catch (Exception e) {
+            log.warn("[FAIL-LOUD] 流水线线程绑定租户失败（本轮行级过滤按未绑定处理）uid={}: {}",
+                    userId, e.getMessage());
         }
     }
 

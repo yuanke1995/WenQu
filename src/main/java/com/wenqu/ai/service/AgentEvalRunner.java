@@ -13,6 +13,8 @@ import com.wenqu.ai.model.AgentEvalResult;
 import com.wenqu.ai.model.AgentEvalRun;
 import com.wenqu.ai.model.AgentEvalSuite;
 import com.wenqu.ai.model.Notification;
+import com.wenqu.ai.util.RequestUser;
+import com.wenqu.ai.util.TenantContext;
 import com.wenqu.ai.util.UsageAttr;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -91,14 +93,38 @@ public class AgentEvalRunner {
 
     // ==================== 对外 ====================
 
-    /** 提交执行（Service 已做完闸门与 run 落库；cases 为已启用的执行清单，顺序稳定） */
+    /**
+     * 提交执行（Service 已做完闸门与 run 落库；cases 为已启用的执行清单，顺序稳定）。
+     * <p>
+     * <b>身份与租户随任务一起走</b>（同 {@link com.wenqu.ai.thread.ThreadPoolManager} 的口径）：
+     * 评测线程没有请求上下文，租户会退化成「未绑定」——写库落到 DB 默认租户（default），
+     * 读侧却按发起人的真实租户过滤，于是<b>运行行看得见、逐条结果行读不到</b>；
+     * 临时会话同样落错租户，问答流水线按真实租户查会话必然查不到（会话行不可用），
+     * 整轮问答直接报错——评测因此恒为 0 分，且看不出原因。
+     */
     public void submit(AgentEvalRun run, AgentEvalSuite suite, String agentName, List<AgentEvalCase> cases) {
         RunCtx ctx = new RunCtx(run.getCreatedBy(), agentName);
         active.put(run.getId(), ctx);
+        // 提交侧捕获（此刻身份与租户还在请求线程上）
+        RequestUser.Snapshot identity = RequestUser.snapshot();
+        String tenant = TenantContext.boundTenant();
+        if (tenant == null && run.getCreatedBy() != null) {
+            tenant = TenantContext.resolveFor(run.getCreatedBy());
+        }
+        final String finalTenant = tenant;
         pool.submit(() -> {
+            RequestUser.clear();
+            TenantContext.clear();
             try {
-                execute(run, suite, cases, ctx);
+                if (finalTenant != null) TenantContext.bind(finalTenant);
+                try (AutoCloseable ignored = RequestUser.restore(identity)) {
+                    execute(run, suite, cases, ctx);
+                }
+            } catch (Exception e) {
+                log.warn("[FAIL-LOUD] 评测运行 {} 执行异常: {}", run.getId(), e.getMessage(), e);
             } finally {
+                RequestUser.clear();
+                TenantContext.clear();
                 active.remove(run.getId());
             }
         });
