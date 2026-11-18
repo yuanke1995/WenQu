@@ -635,7 +635,8 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import { ThunderboltOutlined } from '@ant-design/icons-vue'
 import EvalTrendChart from './eval/EvalTrendChart.vue'
@@ -648,6 +649,7 @@ import {
   getConfig, listKnowledgeBases, searchKnowledge, getAuthMe, runEvalAutoCheck
 } from '../api'
 
+const route = useRoute()
 const activeTab = ref('overview')
 const canWrite = ref(true)
 const loading = reactive({ overview: false, cases: false, history: false })
@@ -1471,9 +1473,12 @@ onMounted(async () => {
   await loadCases(1)
   await loadHistory(1)
   loadAnswerStatus()
-  const sharedRun = new URLSearchParams(location.search).get('run')
-  if (sharedRun) openRunRow({ id: sharedRun })
+  // ?run= 深链（通知落点 / 分享链）：直接打开该次运行的逐题明细
+  const sharedRun = route.query.run
+  if (sharedRun) openRunRow({ id: String(sharedRun) })
 })
+// 已在评估页时再点另一条完成通知：URL 变了但组件不重挂，补一次 watch 命中
+watch(() => route.query.run, v => { if (v && v !== runModal.detail?.run?.id) openRunRow({ id: String(v) }) })
 onUnmounted(() => { stopRunPoll(); stopAnswerPoll() })
 </script>
 

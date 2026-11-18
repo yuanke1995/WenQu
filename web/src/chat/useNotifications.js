@@ -272,11 +272,23 @@ export function notifTarget (n, { mobile = false } = {}) {
     return { path: chatPath, query: { sid: n.refId, approval: n.refSub } }
   }
   if (n.refType === 'kb' && n.refId) return `/knowledge/${n.refId}/docs`
-  if (n.refType === 'workflow' && n.refId) return { path: '/agents', query: { tab: 'workflow' } }
+  if (n.refType === 'workflow' && n.refId) return { path: '/agents', query: { tab: 'workflow', wf: n.refId } }
   if (n.refType === 'session' && n.refId) return { path: chatPath, query: { sid: n.refId } }
   if (n.refType === 'provider' && n.refId) return { path: '/agents', query: { tab: 'providers' } }
+  // 轮终回调送不出去（agent.webhook.failed）：打开该智能体配置并亮出「轮终回调」（AgentsPage 的 config 深链）
+  if (n.refType === 'agent' && n.refId) {
+    return { path: '/agents', query: { tab: 'agents', agentId: n.refId, config: 1 } }
+  }
   if (n.refType === 'ops') return '/security'
   if (n.refType === 'dashboard') return { path: '/quality', query: { view: 'dashboard', tab: 'overview' } }
+  // 智能体评测：refId 是 agentId，AgentEvalPage 按 agent 参数还原详情并自动打开最近一轮逐条结果
+  if (n.refType === 'agentEval' && n.refId) return { path: '/quality', query: { view: 'agent', agent: n.refId } }
+  // 检索评估：refId 是 runId，评估页支持 ?run= 直接打开该次运行的逐题明细；下滑预警不带 ref 落到页本身
+  if (n.refType === 'eval' || n.type === 'eval.decline') {
+    return n.refType === 'eval' && n.refId
+      ? { path: '/quality', query: { view: 'eval', run: n.refId } }
+      : { path: '/quality', query: { view: 'eval' } }
+  }
   if (n.type === 'tenant.request') {
     return { path: '/tenants', query: { tab: 'requests' } }
   }

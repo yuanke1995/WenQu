@@ -396,11 +396,25 @@ public class WebPushNotifier {
         if ("tool.approval".equals(type) && "session".equals(refType) && refId != null && hasSub) {
             return "/chat?sid=" + enc(refId) + "&approval=" + enc(refSub);
         }
+        // 检索评估下滑预警不带 refId，须排在空 refId 兜底之前
+        if ("eval.decline".equals(type)) return "/quality?view=eval";
+        if ("eval".equals(refType)) {
+            return refId == null || refId.isBlank() ? "/quality?view=eval" : "/quality?view=eval&run=" + enc(refId);
+        }
         if (refId == null || refId.isBlank()) return "/chat";
         if ("session".equals(refType)) return "/chat?sid=" + enc(refId);
         if ("kb".equals(refType)) return "/knowledge/" + enc(refId) + "/docs";
-        if ("workflow".equals(refType)) return "/agents?tab=workflow";
+        if ("workflow".equals(refType)) return "/agents?tab=workflow&wf=" + enc(refId);
         if ("provider".equals(refType)) return "/agents?tab=providers";
+        if ("agentEval".equals(refType)) return "/quality?view=agent&agent=" + enc(refId);
+        // 轮终回调失败：AgentsPage 的 config 深链打开该智能体配置并亮出「轮终回调」
+        if ("agent".equals(refType)) return "/agents?tab=agents&agentId=" + enc(refId) + "&config=1";
+        if ("ops".equals(refType)) return "/security";
+        if ("dashboard".equals(refType)) return "/quality?view=dashboard&tab=overview";
+        // 开通申请首条 refType 是 tenant-request（连字符），与 type tenant.request（点号）并存
+        if ("tenant-request".equals(refType) || "tenant.request".equals(type)) return "/tenants?tab=requests";
+        if ("tenant".equals(refType) || "tenant.approved".equals(type)) return "/tenants?tab=tenants";
+        if ("quota".equals(refType) || "quota".equals(type)) return "/quality?view=dashboard&tab=cost";
         return "/chat";
     }
 

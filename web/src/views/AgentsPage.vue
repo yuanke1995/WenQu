@@ -458,7 +458,7 @@
                       <a-select v-model:value="form.qpRerank" :options="rerankOptions" size="small" style="width:100%" />
                       <div class="ap-hint">重排由知识库绑定的重排模型决定（选了才重排）；低延迟可在此强制关</div>
                     </div>
-                    <div class="ap-adv-field ap-adv-full">
+                    <div class="ap-adv-field ap-adv-full" data-fix="agentCallback">
                       <label class="ap-field-label">轮终回调</label>
                       <template v-if="form.isBuiltin !== 1">
                         <a-input v-model:value="form.callbackUrl" size="small" allow-clear autocomplete="off"
@@ -936,6 +936,7 @@ import HttpToolsEditor from '../components/agent/HttpToolsEditor.vue'
 import WorkflowToolsEditor from '../components/agent/WorkflowToolsEditor.vue'
 import { ensureAuth, isAdminSync } from '../utils/auth'
 import { copyText } from '../utils/clipboard'
+import { locateField } from '../utils/fieldLocate'
 import { MdEditor, MdPreview } from 'md-editor-v3'
 import 'md-editor-v3/lib/style.css'
 import { themeState } from '../utils/theme'
@@ -2086,7 +2087,7 @@ const onGateConfirm = async action => {
       const r = await agentEvalStartRun(agentId, { trigger: 'gate' })
       if (r.success) {
         message.success('回归已启动，正在转到评测详情')
-        router.push({ path: '/agents', query: { tab: 'eval', agent: agentId } })
+        router.push({ path: '/quality', query: { view: 'agent', agent: agentId } })
       } else message.error(r.msg || '回归启动失败（配置已保存）')
     } catch (e) { message.error(e.message || '回归启动失败（配置已保存）') }
   }
@@ -2095,7 +2096,7 @@ const onGateConfirm = async action => {
 /** 页头「评测」：跳到评测页签的该智能体详情 */
 const openEvalTab = () => {
   if (!editingId.value) return
-  router.push({ path: '/agents', query: { tab: 'eval', agent: editingId.value } })
+  router.push({ path: '/quality', query: { view: 'agent', agent: editingId.value } })
 }
 
 const doDelete = async id => {
@@ -2227,7 +2228,22 @@ const doSetDefault = async id => {
   } catch (e) { message.error(e.message || '操作失败') }
 }
 
-onMounted(async () => { await reload(); applyPubDeepLink() })
+/**
+ * ?agentId=&config=1 深链：轮终回调一直送不出去的通知落点——直接打开该智能体的配置，
+ * 展开高级设置并亮出「轮终回调」那一项；停在列表上等于让人自己找卡片再找入口。
+ */
+const applyConfigDeepLink = () => {
+  const id = typeof route.query.agentId === 'string' ? route.query.agentId : ''
+  if (!id || !route.query.config) return
+  router.replace({ path: route.path, query: { ...route.query, agentId: undefined, config: undefined } })
+  const a = agents.value.find(x => x.id === id)
+  if (!a) { message.warning('这位智能体不在你的列表里（可能已删除，或你没有管理权）'); return }
+  openEdit(a)
+  advOpen.value = true
+  locateField('agentCallback')
+}
+
+onMounted(async () => { await reload(); applyPubDeepLink(); applyConfigDeepLink() })
 onMounted(async () => { })
 </script>
 
