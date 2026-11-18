@@ -1,5 +1,5 @@
 <template>
-  <a-modal :open="open" :title="`检索测试 · ${kb?.name || ''}`" :width="1080" :footer="null"
+  <a-modal :open="open" :title="`检索测试 · ${kb?.name || ''}`" :width="1080" :footer="null" :z-index="1100"
            @update:open="v => emit('update:open', v)">
     <div class="probe-top">
       <a-input v-model:value="query" allow-clear placeholder="输入一个问题，只检索、不生成回答"
@@ -153,7 +153,9 @@ import { SafetyOutlined } from '@ant-design/icons-vue'
 const props = defineProps({
   open: { type: Boolean, default: false },
   kb: { type: Object, default: null },
-  initialQuery: { type: String, default: '' }
+  initialQuery: { type: String, default: '' },
+  /** 打开即执行预填问题（问答对里点「检索」进来时不用再点一次按钮） */
+  autoRun: { type: Boolean, default: false }
 })
 const emit = defineEmits(['update:open'])
 
@@ -266,6 +268,7 @@ watch(() => props.open, v => {
     feedbackSent.value = false
     missSaved.value = false
     if (props.initialQuery) query.value = props.initialQuery
+    if (props.autoRun && String(query.value || '').trim()) run()
   }
 })
 

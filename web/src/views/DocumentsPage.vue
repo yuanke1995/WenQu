@@ -15,7 +15,7 @@
         <span class="app-pill err queue-chip dead-chip" @click="openDeadDrawer">作废 {{ queueStats.dead }}</span>
       </a-tooltip>
       <div class="doc-tools">
-        <button v-if="canManageCurrentKb" class="app-btn ghost" @click="probeOpen = true">
+        <button v-if="canManageCurrentKb" class="app-btn ghost" @click="openProbe">
           <play-circle-outlined /> 试检索
         </button>
         <button v-if="canManageCurrentKb" class="app-btn ghost" @click="graphModal = true">
@@ -459,6 +459,12 @@
                     <div class="kb-qa-line">
                       <span class="kb-qa-k q">问</span>
                       <span class="kb-qa-q">{{ qa.question }}</span>
+                      <span class="kb-qa-acts">
+                        <button class="kb-qa-act" title="复制问题" @click.stop="copyKbQaQuestion(qa)">复制</button>
+                        <button v-if="!mobileShell" class="kb-qa-act"
+                                title="用这个问题做一次检索测试（只检索、不生成回答，预览不关闭）"
+                                :disabled="!currentKb" @click.stop="probeKbQaQuestion(qa)">检索</button>
+                      </span>
                     </div>
                     <div class="kb-qa-line">
                       <span class="kb-qa-k a">答</span>
@@ -642,8 +648,10 @@
     <!-- 知识图谱（与知识库列表页同一弹窗组件）：库详情页的「图谱」入口 -->
     <KnowledgeGraphModal v-model:open="graphModal" :kb="currentKb" />
 
-    <!-- 试检索：只走检索/重排链路，验证本库召回质量 -->
-    <KbProbeModal v-model:open="probeOpen" :kb="currentKb" />
+    <!-- 试检索：只走检索/重排链路，验证本库召回质量。从问答对日志打开时预填问题并自动执行，
+         检索弹窗叠在知识块预览之上（z-index 更高），预览不关闭、展开态保留 -->
+    <KbProbeModal v-model:open="probeOpen" :kb="currentKb"
+                  :initial-query="probeQuery" :auto-run="probeAutoRun" />
 
     <!-- 图片灯箱（知识块内容里的图片点击放大）：多图切换 / 滚轮缩放 / 拖动平移 / ESC 关闭 -->
     <div v-if="kbImgUrl" class="lightbox" @click="closeKbImg" @wheel.prevent="onKbImgWheel">
@@ -814,6 +822,14 @@ const uploadQueue = ref([])
 /** 队列收起态：收起只折叠卡片，右下角保留悬浮入口；新一轮上传自动展开 */
 const queueCollapsed = ref(false)
 const probeOpen = ref(false)
+const probeQuery = ref('')
+const probeAutoRun = ref(false)
+/** 顶栏「试检索」：清掉上一次的预填问题，避免旧问题残留 */
+const openProbe = () => {
+  probeQuery.value = ''
+  probeAutoRun.value = false
+  probeOpen.value = true
+}
 let pollTimer = null
 let pollTicks = 0
 /** 解析队列计数（后端 c_ai_parse_task 统计，非 table_rows 估算）；按当前库过滤，别的库在跑不在本页显数 */
@@ -1662,6 +1678,13 @@ const toggleKbQaAnswer = id => {
   kbQaOpenAnswers.value = s
   nextTick(measureKbQaOverflow)
 }
+const copyKbQaQuestion = qa => copyText(qa.question || '', '已复制问题')
+/** 检索入口：试检索弹窗预填该问题并自动执行，知识块预览不关闭、展开态保留 */
+const probeKbQaQuestion = qa => {
+  probeQuery.value = String(qa.question || '')
+  probeAutoRun.value = true
+  probeOpen.value = true
+}
 const resetKbQaView = () => {
   kbQaOpenAnswers.value = new Set()
   kbQaOverflow.value = new Set()
@@ -2256,7 +2279,14 @@ const fmtTime = t => {
   display: inline-flex; align-items: center; justify-content: center; }
 .kb-qa-k.q { color: var(--app-accent); background: var(--app-accent-weak); border: 1px solid var(--app-accent-border); }
 .kb-qa-k.a { color: var(--app-text3); background: var(--app-panel-2); border: 1px solid var(--app-border); }
-.kb-qa-q { font-size: 12px; line-height: 1.65; font-weight: 500; color: var(--app-text); }
+.kb-qa-q { flex: 1; min-width: 0; font-size: 12px; line-height: 1.65; font-weight: 500; color: var(--app-text); }
+/* 问题右侧动作：复制 / 检索。常驻低对比，悬停提亮，避免每行两个按钮太抢眼 */
+.kb-qa-acts { flex: none; display: inline-flex; align-items: center; gap: 2px; opacity: .55; transition: opacity .12s; }
+.kb-qa-item:hover .kb-qa-acts { opacity: 1; }
+.kb-qa-act { border: none; background: none; padding: 0 3px; font-size: 11px; line-height: 18px;
+  color: var(--app-text3); cursor: pointer; }
+.kb-qa-act:hover:not(:disabled) { color: var(--app-accent); }
+.kb-qa-act:disabled { cursor: not-allowed; opacity: .5; }
 .kb-qa-a-wrap { flex: 1; min-width: 0; }
 .kb-qa-a { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
   font-size: 11.5px; line-height: 1.7; color: var(--app-text2); white-space: pre-wrap; overflow-wrap: anywhere; }
