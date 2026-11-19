@@ -18,12 +18,12 @@
         <span>沙箱隔离</span>
       </label>
       <span class="be-state" :class="{ bad: loadState === 'error' || blocked }">{{ stateText }}</span>
-      <button type="button" class="be-ext" :disabled="!currentUrl" @click="openExternal">在系统浏览器打开 ↗</button>
+      <button type="button" class="be-ext" :disabled="!input.trim()" @click="openExternal">在系统浏览器打开 ↗</button>
     </div>
     <p v-if="!sandboxed" class="be-warn">⚠ 已临时关闭沙箱：页面可下载、弹窗或导航当前应用，刷新后恢复。</p>
     <p v-if="blocked" class="be-blocked">
       {{ blockReason }}
-      <button v-if="currentUrl" type="button" class="be-link" @click="openExternal">在系统浏览器打开 ↗</button>
+      <button v-if="input.trim()" type="button" class="be-link" @click="openExternal">在系统浏览器打开 ↗</button>
     </p>
 
     <!-- iframe 载体：同源策略下跨域页面读不到 URL，导航历史由本组件维护 -->
@@ -157,9 +157,15 @@ const onError = () => {
 }
 
 const openExternal = () => {
-  const r = resolveUrl(input.value)
-  const url = currentUrl.value || r.url
-  if (url) window.open(url, '_blank', 'noopener')
+  // 这里不复用 resolveUrl 的「拒绝自身 origin」——开新标签不是 iframe 嵌套，不存在套娃；
+  // 只补 scheme + 协议白名单，让被 iframe 拦掉的地址（含本应用地址）仍能在系统浏览器打开。
+  let s = String(input.value || '').trim()
+  if (!s) return
+  if (!/^https?:\/\//i.test(s)) s = 'https://' + s
+  try {
+    const u = new URL(s)
+    if (u.protocol === 'http:' || u.protocol === 'https:') window.open(u.href, '_blank', 'noopener')
+  } catch (e) { /* 地址非法，不打开 */ }
 }
 </script>
 
