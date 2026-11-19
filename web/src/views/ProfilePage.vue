@@ -1088,7 +1088,17 @@ const fieldNote = f => String(f.note || '')
 const personalGroups = computed(() => {
   const fs = personal.value.fields || []
   const out = []
-  const retrieval = fs.filter(f => f.panel !== 'webSearch' && f.panel !== 'browser')
+  // 对话里的个人显示项（目前只有「接下来可以」开关）：只影响自己的界面，与检索/联网搜索分开成组
+  const ui = fs.filter(f => f.panel === 'ui')
+  if (ui.length) {
+    out.push({
+      key: 'ui',
+      title: '对话显示',
+      hint: '决定对话里展示哪些辅助内容，只影响你自己的界面。',
+      fields: ui
+    })
+  }
+  const retrieval = fs.filter(f => f.panel !== 'webSearch' && f.panel !== 'browser' && f.panel !== 'ui')
   if (retrieval.length) {
     out.push({
       key: 'retrieval',
@@ -1170,7 +1180,11 @@ const loadPersonal = async () => {
 const commitPersonalSwitch = async (f, checked) => {
   const normalized = checked ? 'true' : 'false'
   const savedRaw = (personal.value.values || {})[f.path] ?? ''
-  if (normalized === String(savedRaw) || (normalized === 'false' && savedRaw === '')) return
+  // 与「生效值」比较而非与空串比较：默认开的开关（def:true）关掉是有效改动，必须落库，
+  // 不能沿用「false 等于默认就不写」的捷径（那只对默认关的开关成立）。
+  const defVal = f.def === true ? 'true' : 'false'
+  const effective = savedRaw === '' ? defVal : String(savedRaw)
+  if (normalized === effective) return
   try {
     await saveUserSettings({ [f.path]: normalized })
     message.success('已保存')

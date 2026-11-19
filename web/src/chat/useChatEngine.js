@@ -194,6 +194,10 @@ const debugEntryVisible = ref(false)
 // 值必须走 /config/public（管理员/普通用户都能读）——这些是"给不给用户看"的显隐，普通用户也要拿到同一个开关值；
 // /config 是管理端点，普通用户调它 403 并触发全局 403 提示（角色未授权），故不复用。
 const debugDisplayVisible = ref(false)
+// 「接下来可以」推荐追问是否展示：个人显示偏好（个人设置 → 问答偏好 → 对话显示），
+// 与排障开关同一份公开运行时配置下发（/config/public 的 ui.showRelatedSuggestions，按登录用户读回）。
+// 默认开：普通用户也能拿到自己的开关值，PC 与移动壳同吃这一份。
+const showRelatedSuggestions = ref(true)
 // 右栏「引用来源」卡与输入框容量圆环锚定的轮。带计划卡的行也算：被「继续对话」取代那轮正文留空，
 // 但它确实检索过，不算进来这两处就会退回更早那一轮
 const lastAi = computed(() => [...messages.value].reverse().find(m => m.role === 'ai' && !m.loading && (m.content || m.sources?.length || m.planCard)))
@@ -2446,6 +2450,8 @@ const ready = async () => {
   getRuntimeConfig().then(r => {
     if (!r.success) return
     debugDisplayVisible.value = r.data?.ui?.debugEntry === true
+    // 个人显示偏好：缺省/未下发时保持默认开
+    showRelatedSuggestions.value = r.data?.ui?.showRelatedSuggestions !== false
   }).catch(() => {})
   getUserPreference().then(r => {
     userDefaultModel.value = (r && r.data && r.data.defaultModel) || ''
@@ -2851,7 +2857,7 @@ onUnmounted(() => {
     // 模型
     modelMap, currentOverrideModel, userDefaultModel, modelIndex, effectiveModel, effectiveModelLabel,
     effectiveModelIcon, effectiveModelProvider, modelSourceLabel, effectiveModelIssue,
-    debugEntryVisible, debugDisplayVisible,
+    debugEntryVisible, debugDisplayVisible, showRelatedSuggestions,
     // 检索 / 用量 / 来源 / 上下文容量
     lastAi, lastSources, groupedSources, lastTokens, liveTokensPreview, ctxTokens,
     ctxCapData, ctxRingDash, ctxRingLevel, panelAi, sessionArtifacts,

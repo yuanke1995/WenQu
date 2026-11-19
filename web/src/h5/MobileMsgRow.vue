@@ -417,7 +417,7 @@
         </div>
 
         <!-- 追问建议：与 PC 同口径，只在最新一轮出现（更早那几轮的建议已被后面的对话取代） -->
-        <div v-if="lastRound && m.related && m.related.length" class="related">
+        <div v-if="lastRound && showRelated && m.related && m.related.length" class="related">
           <span class="card-dim">接下来可以：</span>
           <button v-for="(q, qi) in m.related" :key="qi" class="related-tag" type="button" @click.stop="$emit('ask', q)">{{ q }}</button>
         </div>
@@ -509,6 +509,8 @@ const props = defineProps({
   isLast: { type: Boolean, default: false },
   /** 是否最新一轮（最后一条 AI 消息，含进行中）：「接下来可以」只在这一轮渲染，与 PC 同口径 */
   lastRound: { type: Boolean, default: false },
+  /** 「接下来可以」是否展示（个人设置 → 对话显示；与 PC 同口径） */
+  showRelated: { type: Boolean, default: true },
   /** 排障显示开关（归属徽标/派遣提示，engine 的 debugDisplayVisible） */
   debugDisplay: { type: Boolean, default: false },
   /** 沙盒运行等富渲染按钮需要会话上下文 */

@@ -236,6 +236,9 @@ public class ConfigService {
             List<String> missing = new ArrayList<>();
             Map<String, String> seeds = defaults();
             for (String key : schema.defaultOnSwitchKeys()) {
+                // personalOnly 键没有全局槽位（值只存在 c_ai_user_config，按用户），
+                // 本来就不会有配置行也不该进 defaults()——不跳过会把「默认开」误报成漏登记。
+                if (schema.isPersonalOnly(key)) continue;
                 if (cache.get(key) == null && !seeds.containsKey(key)) {
                     missing.add(key);
                 }

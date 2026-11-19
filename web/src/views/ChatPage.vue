@@ -575,7 +575,7 @@
               <!-- 只在最新一轮出现（panelAi=最后一条 AI 消息，含进行中）：更早那几轮的建议已被后面的对话取代，
                    每轮都留着会让整页散落着可点的旧问句，翻历史时容易误点重发一个早问过的话题。
                    整行是按钮：编号 + 问题 + 箭头，比灰底小 chip 更像「下一步」 -->
-              <div v-if="m.role === 'ai' && m === panelAi && m.related && m.related.length" class="related">
+              <div v-if="m.role === 'ai' && m === panelAi && showRelatedSuggestions && m.related && m.related.length" class="related">
                 <div class="related-head">
                   <bulb-outlined class="related-ic" />
                   <span class="related-title">接下来可以</span>
@@ -2198,7 +2198,7 @@ const {
   currentSessionId, loading, messages, currentSessionTitle,
   // 模型
   currentOverrideModel, userDefaultModel, modelIndex, effectiveModel, effectiveModelLabel, effectiveModelIcon,
-  effectiveModelProvider, debugEntryVisible, debugDisplayVisible, effectiveModelIssue,
+  effectiveModelProvider, debugEntryVisible, debugDisplayVisible, showRelatedSuggestions, effectiveModelIssue,
   // 检索 / 用量 / 来源
   lastAi, groupedSources, ctxTokens, ctxCapData, ctxRingDash,
   ctxRingLevel, panelAi, sessionArtifacts, sessionTodos,

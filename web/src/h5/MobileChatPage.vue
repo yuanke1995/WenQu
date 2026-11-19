@@ -98,6 +98,7 @@
         <MobileMsgRow
           :m="m" :index="i" :active="activeIdx === i" :is-last="i === messages.length - 1"
           :last-round="m === panelAi"
+          :show-related="showRelatedSuggestions"
           :debug-display="debugDisplayVisible" :session-id="currentSessionId || ''" :loading="loading"
           :variant-switching="variantSwitching" :goal="sessionGoal"
           :delivery="deliveryCardOfMessage(m)" :goal-delivery="goalDelivery"
@@ -758,7 +759,7 @@ const {
   // 运行中插话：发送键与 PC 同一个出口（引擎的 send 在生成中当场送进本轮），
   // 队列条目上那颗主按钮留作「没送达的再送一次」——触屏不引入长按之类的隐藏手势
   steerQueue, sendSteer, editSteer, dropSteer,
-  deepThinkOn, effectiveModelLabel, debugDisplayVisible, regenerate, switchBranch, variantSwitching,
+  deepThinkOn, effectiveModelLabel, debugDisplayVisible, showRelatedSuggestions, regenerate, switchBranch, variantSwitching,
   resolveApproval, askSubmitAll, createNewSession, pendingImages, pendingFiles, pickedSkills, pendingMentions,
   // 提问卡选择状态口径与 PC 同一份（单选/多选同一形状），面板只读不自己数
   pickAskOption, commitAskCustom, askOptionPicked, askCustomPicked, askQuestionAnswered,

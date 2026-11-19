@@ -481,6 +481,21 @@
       "tier": 2
     },
     {
+      "backendKey": "ui.showRelatedSuggestions",
+      "personal": true,
+      "personalOnly": true,
+      "panel": "ui",
+      "section": 0,
+      "group": "ui",
+      "key": "showRelatedSuggestions",
+      "path": "ui.showRelatedSuggestions",
+      "label": "「接下来可以」推荐追问",
+      "type": "switch",
+      "def": true,
+      "note": "在最新一轮回答末尾展示可点击的追问建议（点击即作为新问题发送）。关闭只影响你自己的界面，正文、引用与产物不受影响。",
+      "tier": 3
+    },
+    {
       "backendKey": "tool.enabled",
       "panel": "tool",
       "section": 0,

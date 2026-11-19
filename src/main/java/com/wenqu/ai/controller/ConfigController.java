@@ -152,6 +152,14 @@ public class ConfigController {
         // 「检索调试」「加入评测集」这类必 403 的管理入口仍只在管理员侧单独判定，不复用本值。
         Map<String, Object> ui = new LinkedHashMap<>();
         ui.put("debugEntry", configService.getBoolean("chat.retrievalDebugEnabled"));
+        // 「接下来可以」推荐追问的个人显示开关（个人设置 → 问答偏好 → 对话显示）：
+        // 值存个人层（c_ai_user_config，键 ui.showRelatedSuggestions），这里按登录用户读回，
+        // 让公开的运行时配置端点也能按人下发——聊天页据此决定是否渲染该块。
+        // 未设置 / 未登录 = 默认开（与 schema 的 def:true 一致）。
+        String relatedRaw = userConfigService.personalValue(
+                com.wenqu.ai.util.RequestUser.uid(), "ui.showRelatedSuggestions");
+        ui.put("showRelatedSuggestions", relatedRaw == null || relatedRaw.isBlank()
+                || "true".equalsIgnoreCase(relatedRaw.trim()));
         resp.put("ui", ui);
 
         return ResultJson.ok(resp);
