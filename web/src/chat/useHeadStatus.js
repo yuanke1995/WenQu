@@ -46,12 +46,13 @@ export function useHeadStatus ({
     return -1
   })
 
-  // 顶栏状态胶囊：先切到过程页签再开栏；已经停在过程页签时再点才收起
+  // 顶栏状态胶囊：点它开合右栏。展开态不论停在哪个页签都先收起——与 tooltip
+  // 「收起状态栏」一致；收起态再点则开栏并回到过程页签，让「状态」落到本轮过程上。
   const headStatusClick = () => {
     const openNow = isNarrow() ? mPanelOpen() : panelOpen()
-    if (openNow && railTab.value === 'process') { togglePanel(); return }
+    if (openNow) { togglePanel(); return }
     railTab.value = 'process'
-    if (!openNow) togglePanel()
+    togglePanel()
   }
 
   return {
