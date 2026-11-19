@@ -206,14 +206,13 @@
 import { ref, computed, watch, nextTick, onBeforeUnmount } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { ApartmentOutlined, LoadingOutlined, MoreOutlined, ReloadOutlined } from '@ant-design/icons-vue'
-import * as echarts from 'echarts/core'
-import { GraphChart } from 'echarts/charts'
-import { TooltipComponent } from 'echarts/components'
-import { CanvasRenderer } from 'echarts/renderers'
+// ECharts 统一走完整包：与聊天正文的 `import('echarts')` 保持同一个模块实例。
+// 混用 `echarts/core` 与完整 `echarts` 会在 Vite dev 下被打成多份内部模块（extension/AxisView
+// 各一份），注册 axisPointer 时抛「axisPointer CartesianAxisPointer exists」，图表整体失败。
+import * as echarts from 'echarts'
 // 深路径取内部 ecData 写入器：force graph 的 emphasis.focus 只认 'adjacency'（trajectory 仅桑基图支持），
 // 想聚焦「整条关系链」只能自算索引集后写回元素（GraphView 内部给节点写 focus 用的就是它）
 import { getECData } from 'echarts/lib/util/innerStore.js'
-echarts.use([GraphChart, TooltipComponent, CanvasRenderer])
 import {
   graphBuild, graphRebuildTypes, graphStatus, graphTriples, graphClear,
   graphViewData, graphEntityDetail, graphNeighbor, graphSearchEntity, graphChunk
@@ -829,7 +828,7 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis; white-space: nowrap; }
 .gx-detail-title .sub { font-size: 10.5px; color: var(--app-text3); margin-top: 2px; }
 .gp-cards { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 7px; }
-.gp-card { border: 1px solid var(--app-border); border-radius: 8px; padding: 8px 9px; background: #fff; }
+.gp-card { border: 1px solid var(--app-border); border-radius: 8px; padding: 8px 9px; background: var(--app-panel); }
 .gp-triple { font-size: 11.5px; line-height: 1.65; color: var(--app-text2); word-break: break-word; }
 .gp-triple b { color: var(--app-text); font-weight: 500; }
 .gp-pred { display: inline-block; font-size: 10px; color: var(--app-accent); background: var(--app-accent-weak);
@@ -840,12 +839,12 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis; white-space: nowrap; }
 .gp-cards .graph-note { text-align: center; padding: 16px 0; }
 .gx-legend { position: absolute; left: 10px; bottom: 10px; display: flex; align-items: center; gap: 12px;
-  background: rgba(255,255,255,.94); border: 1px solid var(--app-border); border-radius: 6px;
+  background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 6px;
   padding: 5px 9px; font-size: 10px; color: var(--app-text3); pointer-events: none; }
 .gx-legend .lg { width: 7px; height: 7px; border-radius: 50%; display: inline-block; margin-right: 4px; }
 .gx-legend .lg-note { border-left: 1px solid var(--app-border); padding-left: 10px; }
 .gx-trunc { position: absolute; right: 10px; bottom: 10px; max-width: 300px; font-size: 10px;
-  color: var(--app-text3); background: rgba(255,255,255,.94); border: 1px solid var(--app-border);
+  color: var(--app-text3); background: var(--app-panel); border: 1px solid var(--app-border);
   border-radius: 6px; padding: 5px 9px; line-height: 1.5; pointer-events: none; }
 .gx-right-empty { display: flex; flex-direction: column; align-items: center; text-align: center;
   padding: 26px 8px 18px; }
@@ -859,12 +858,12 @@ onBeforeUnmount(() => {
 .gx-right-note { margin-top: auto; padding-top: 8px; border-top: 1px solid var(--app-border);
   font-size: 10.5px; color: var(--app-text3); line-height: 1.6; }
 .gx-right-fail { flex: none; display: flex; align-items: center; gap: 8px; margin-top: 8px; padding: 7px 9px;
-  border: 1px solid var(--app-warn-border); background: #fffdf7; border-radius: 6px;
+  border: 1px solid var(--app-warn-border); background: var(--app-warn-weak); border-radius: 6px;
   font-size: 10px; color: var(--app-warn-text); line-height: 1.5; }
 .gx-right-fail span { flex: 1; }
 .gx-right-fail .app-link-btn { flex: none; font-size: 10.5px; }
 .gx-build { flex: none; display: flex; align-items: center; gap: 10px; padding: 8px 12px;
-  border: 1px solid var(--app-warn-border); background: #fffdf7; border-radius: 8px;
+  border: 1px solid var(--app-warn-border); background: var(--app-warn-weak); border-radius: 8px;
   font-size: 11px; color: var(--app-warn-text); }
 .gx-build-track { width: 170px; height: 5px; border-radius: 999px; background: var(--app-warn-border); overflow: hidden; }
 .gx-build-track i { display: block; height: 100%; background: var(--app-warn); }

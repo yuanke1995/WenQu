@@ -218,7 +218,6 @@
       <div v-if="!isBuiltin" class="kb-graph">
         <div class="kb-graph-head">
           <span class="kb-graph-name">知识图谱</span>
-          <span class="kb-graph-state">{{ form.graphEnabled ? '已开启' : '已关闭' }}</span>
           <a-switch v-model:checked="form.graphEnabled" class="kb-graph-switch" />
         </div>
         <div class="kb-hint">新文档自动抽三元组，检索时做一跳图扩展；旧文档可在列表点「构建图谱」补建。</div>
@@ -697,9 +696,8 @@ const save = async () => {
 /* 知识图谱：与上面分组同一套小节语法（虚线分节 + 标题行开关），关=两个参数整组收起 */
 .kb-graph { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--app-border); }
 .kb-graph-head { display: flex; align-items: center; gap: 8px; }
-.kb-graph-name { font-size: 13px; font-weight: 600; color: var(--app-text); }
-.kb-graph-state { font-size: 12px; color: var(--app-text3); }
-.kb-graph-switch { margin-left: auto; }
+/* 名称占满标签列（与下方 .kb-graph-label 同宽），开关自然落在值列起点（中间红框），不再靠右悬挂 */
+.kb-graph-name { flex: 0 0 21%; font-size: 13px; font-weight: 600; color: var(--app-text); }
 .kb-graph-row { display: flex; align-items: flex-start; gap: 8px; margin-top: 10px; }
 /* 标签列与高级参数左列标签同一条右对齐线（左列标签占 41.67% 的半个弹窗 ≈ 21% 全宽） */
 .kb-graph-label {
@@ -727,9 +725,9 @@ const save = async () => {
 .kb-engine-line { display: flex; align-items: center; gap: 7px; }
 .kb-engine-name { font-size: 13px; }
 .kb-engine-badge { font-size: 11px; padding: 0 6px; border-radius: 9px; background: var(--app-panel); color: var(--app-text3); }
-.kb-engine-badge.is-available { background: #e6f7ee; color: #00875a; }
-.kb-engine-badge.is-unconfigured, .kb-engine-badge.is-unreachable { background: #fdecea; color: var(--app-danger); }
-.kb-engine-badge.is-timeout, .kb-engine-badge.is-unknown { background: #fff7e6; color: #ad6800; }
+.kb-engine-badge.is-available { background: var(--app-ok-weak); color: var(--app-ok); }
+.kb-engine-badge.is-unconfigured, .kb-engine-badge.is-unreachable { background: var(--app-danger-weak); color: var(--app-danger); }
+.kb-engine-badge.is-timeout, .kb-engine-badge.is-unknown { background: var(--app-warn-weak); color: var(--app-warn-text); }
 .kb-engine-reason { font-size: 11.5px; color: var(--app-text3); }
 .kb-engine-reason.bad { color: var(--app-danger); }
 .kb-engine-error { margin-top: 4px; font-size: 11.5px; color: var(--app-text3); }

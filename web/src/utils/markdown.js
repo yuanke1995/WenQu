@@ -163,9 +163,19 @@ const registerEchartsTheme = () => {
   })
   return echartsThemeName
 }
+/** 懒加载兜底：动态 import 若因网络/缓存/旧 chunk 404 卡住或失败，不能让图表永远停在「准备中」 */
+const ECHARTS_LOAD_TIMEOUT = 20000
 const loadEcharts = async () => {
   if (!echartsMod) {
-    echartsMod = await import('echarts')
+    let timer = 0
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error('图表组件加载超时')), ECHARTS_LOAD_TIMEOUT)
+    })
+    try {
+      echartsMod = await Promise.race([import('echarts'), timeout])
+    } finally {
+      clearTimeout(timer)
+    }
     registerEchartsTheme()
     installChartResize()
   }
@@ -604,14 +614,29 @@ const paintDiagram = async (mermaid, el, code) => {
   el.appendChild(diagramSource(code, false, srcPre))
 }
 
-const showDiagramError = (el, code, e) => {
+const showDiagramError = (el, code, e, onRetry) => {
   el.dataset.state = 'err'
-  el.dataset.done = code
+  // 可重试的失败（组件加载/初始化）不写 data-done：源码不变时下次 enhance 还能再试一次
+  if (onRetry) delete el.dataset.done
+  else el.dataset.done = code
   el.textContent = ''
   const tip = document.createElement('div')
   tip.className = 'md-diagram-err'
   tip.textContent = '图表渲染失败：' + (e && e.message ? String(e.message).split('\n')[0] : '语法错误')
-  el.append(tip, diagramSource(code, true))
+  el.append(tip)
+  if (onRetry) {
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.className = 'md-diagram-retry'
+    btn.textContent = '重试'
+    btn.addEventListener('click', () => {
+      delete el.dataset.state
+      delete el.dataset.done
+      onRetry()
+    })
+    el.appendChild(btn)
+  }
+  el.appendChild(diagramSource(code, true))
 }
 
 /** 源码折叠区：优先复用渲染层已产出的 pre>code（省一次重建，且高亮/转义已在管线里做过） */
@@ -652,6 +677,30 @@ const chartOptionTruncated = code => {
     else if (c === '}' || c === ']') depth--
   }
   return depth > 0 || !/[}\]]\s*$/.test(code)
+}
+
+/**
+ * 补齐直角坐标轴：模型偶尔会给出「有 line/bar/heatmap 系列、却漏了 xAxis/yAxis」的
+ * option（统计图围栏里最典型），ECharts 会直接抛 `xAxis "0" not found` 导致整图渲染失败。
+ * 这里在绘制前按系列类型补一套最小可用的坐标轴——只补真正缺失的那一根，且只处理
+ * cartesian2d 系列（pie/polar/calendar/geo 等本来就不需要 xAxis，原样放行）。
+ * 图表源码区仍展示模型给的原始 JSON，补轴只影响渲染，不改原文。
+ */
+const CARTESIAN_SERIES_TYPES = new Set(['line', 'bar', 'scatter', 'effectScatter', 'candlestick', 'boxplot', 'pictorialBar', 'heatmap'])
+const hasAxis = a => Array.isArray(a) ? a.length > 0 : !!(a && typeof a === 'object')
+const ensureCartesianAxes = opt => {
+  const series = Array.isArray(opt.series) ? opt.series : (opt.series && typeof opt.series === 'object' ? [opt.series] : [])
+  const cart = series.filter(s => s && typeof s === 'object' && CARTESIAN_SERIES_TYPES.has(s.type) && (s.coordinateSystem || 'cartesian2d') === 'cartesian2d')
+  if (!cart.length) return opt
+  const hasHeat = cart.some(s => s.type === 'heatmap')
+  if (!hasAxis(opt.xAxis)) {
+    const x = { type: 'category' }
+    // 折线/散点默认贴轴排布；柱状与热力图保留类目间隙
+    if (!cart.some(s => s.type === 'bar' || s.type === 'heatmap')) x.boundaryGap = false
+    opt.xAxis = x
+  }
+  if (!hasAxis(opt.yAxis)) opt.yAxis = { type: hasHeat ? 'category' : 'value' }
+  return opt
 }
 
 const chartPendingTip = text => {
@@ -717,7 +766,15 @@ const paintEChart = async (el, code) => {
     showDiagramError(el, code, new Error('option 缺少 series 字段（至少要有一组 series 才有东西可画）'))
     return
   }
-  const echarts = await loadEcharts()
+  let echarts
+  try {
+    echarts = await loadEcharts()
+  } catch (e) {
+    el.textContent = ''
+    showDiagramError(el, code, new Error('图表组件加载失败：' + (e && e.message ? e.message : e)),
+      () => paintEChart(el, code))
+    return
+  }
   el.textContent = ''
   // 节点复用：同源码的图刚画过（宿主+canvas+实例都活着、且不在当前文档里——
   // 正是被 v-html 重建挤出去的那份）就直接搬回来，不重画。流式每帧 / 折叠展开
@@ -734,6 +791,7 @@ const paintEChart = async (el, code) => {
   host.className = 'md-echart-canvas'
   el.appendChild(host)
   // 顶部排版校正放在宿主节点挂上之后：百分比定位要按真实画布高度换算
+  ensureCartesianAxes(opt)
   fixChartHeader(opt, host.clientHeight)
   let inst
   try {
@@ -742,7 +800,7 @@ const paintEChart = async (el, code) => {
   } catch (e) {
     try { inst?.dispose() } catch (e2) { /* 尽力而为 */ }
     el.textContent = ''
-    showDiagramError(el, code, e)
+    showDiagramError(el, code, e, () => paintEChart(el, code))
     return
   }
   el.dataset.state = 'ok'
@@ -1048,6 +1106,7 @@ export const snapshotEChart = async code => {
     host = document.createElement('div')
     host.style.cssText = `position:fixed;left:-10000px;top:0;width:${EC_SNAPSHOT_W}px;height:${EC_SNAPSHOT_H}px;`
     document.body.appendChild(host)
+    ensureCartesianAxes(opt)
     fixChartHeader(opt, EC_SNAPSHOT_H)
     // 动画必须关：setOption 后同步取位图拿到的是第 0 帧——柱子和扇形还从 0 长起来，
     // 导出的图就只剩坐标轴和图例。

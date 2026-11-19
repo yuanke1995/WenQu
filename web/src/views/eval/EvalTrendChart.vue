@@ -4,12 +4,8 @@
 
 <script setup>
 import { onMounted, onUnmounted, ref, watch } from 'vue'
-import * as echarts from 'echarts/core'
-import { LineChart } from 'echarts/charts'
-import { GridComponent, LegendComponent, TooltipComponent, MarkLineComponent } from 'echarts/components'
-import { CanvasRenderer } from 'echarts/renderers'
-
-echarts.use([LineChart, GridComponent, LegendComponent, TooltipComponent, MarkLineComponent, CanvasRenderer])
+// ECharts 统一走完整包（与聊天正文同一个模块实例，避免 dev 下多份内部模块重复注册）
+import * as echarts from 'echarts'
 
 const props = defineProps({
   rows: { type: Array, default: () => [] },

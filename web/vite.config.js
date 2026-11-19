@@ -12,6 +12,11 @@ export default defineConfig({
     // dts:false —— 本项目是 JS，不生成 components.d.ts 声明文件。
     Components({ resolvers: [AntDesignVueResolver({ importStyle: false })], dts: false })
   ],
+  // echarts / zrender 只允许一份实例：依赖预打包会按入口拆成多份内部模块，
+  // 完整包与 echarts/core 混用时重复注册 axisPointer 会抛「CartesianAxisPointer exists」。
+  resolve: {
+    dedupe: ['echarts', 'zrender']
+  },
   build: {
     rollupOptions: {
       output: {

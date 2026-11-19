@@ -212,10 +212,10 @@ input:focus-visible, textarea:focus-visible { outline: none; }
 .app-pill::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
 /* 不带状态点的纯文字胶囊（页头计数等）：状态点只在表达「状态」时才有意义 */
 .app-pill.plain::before { display: none; }
-.app-pill.ok { color: var(--app-ok); background: #eaf5ec; }
-.app-pill.warn { color: #a3691b; background: #faf3e6; }
-.app-pill.err { color: var(--app-danger); background: #fbecea; }
-.app-pill.muted { color: var(--app-text3); background: #f1f3f5; }
+.app-pill.ok { color: var(--app-ok); background: var(--app-ok-weak); }
+.app-pill.warn { color: var(--app-warn-text); background: var(--app-warn-weak); }
+.app-pill.err { color: var(--app-danger); background: var(--app-danger-weak); }
+.app-pill.muted { color: var(--app-text3); background: var(--app-bg-layer-3); }
 /* 语义补充色：主色胶囊（内置）与紫色胶囊（页内 Tab / 管理员级） */
 .app-pill.blue { color: var(--app-accent); background: var(--app-accent-weak); }
 .app-pill.violet { color: #7c3aed; background: #f1eafd; }
@@ -230,7 +230,7 @@ html[data-theme='dark'] .app-pill.violet { color: #b69cff; background: #2a2140; 
 }
 .app-icon-btn:hover { color: var(--app-accent); background: var(--app-accent-weak); }
 .app-icon-btn:disabled { opacity: .4; cursor: not-allowed; }
-.app-icon-btn.danger:hover { color: var(--app-danger); background: #fbecea; }
+.app-icon-btn.danger:hover { color: var(--app-danger); background: var(--app-danger-weak); }
 /* 内联 SVG 图标（如侧栏主题切换的日/月）：随按钮字号与 currentColor 走，与 antd 图标同尺寸 */
 .app-icon-btn .theme-ico { width: 1em; height: 1em; display: block; }
 
@@ -249,12 +249,12 @@ html[data-theme='dark'] .app-pill.violet { color: #b69cff; background: #2a2140; 
   padding: 6px 14px; display: inline-flex; align-items: center; gap: 6px;
   background: var(--app-accent); color: #fff; transition: background .15s;
 }
-.app-btn:hover { background: #4a80ef; }
-.app-btn:disabled { background: #c6d4f2; cursor: not-allowed; }
+.app-btn:hover { background: var(--app-accent-hover); }
+.app-btn:disabled { background: var(--app-accent-disabled); cursor: not-allowed; }
 .app-btn.ghost { background: transparent; color: var(--app-text2); border: 1px solid var(--app-border); }
 .app-btn.ghost:hover { color: var(--app-accent); border-color: var(--app-accent); background: var(--app-accent-weak); }
-.app-btn.danger { background: transparent; color: var(--app-danger); border: 1px solid #eecdc2; }
-.app-btn.danger:hover { background: #fbecea; }
+.app-btn.danger { background: transparent; color: var(--app-danger); border: 1px solid var(--app-danger-border); }
+.app-btn.danger:hover { background: var(--app-danger-weak); }
 
 /* ==================== 列表页公共件（工具栏/计数/页脚/横幅） ====================
  * 收编自「权限管理」各页签的 scoped 复制样式（rb-/al-/cs- 三套同款）。

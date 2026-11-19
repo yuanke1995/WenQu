@@ -510,10 +510,8 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
-import * as echarts from 'echarts/core'
-import { LineChart } from 'echarts/charts'
-import { TooltipComponent, GridComponent, MarkLineComponent } from 'echarts/components'
-import { CanvasRenderer } from 'echarts/renderers'
+// ECharts 统一走完整包（与聊天正文同一个模块实例，避免 dev 下多份内部模块重复注册）
+import * as echarts from 'echarts'
 import { SearchOutlined, PlusOutlined, LeftOutlined, RightOutlined } from '@ant-design/icons-vue'
 import EvalCompareModal from '../components/agent/EvalCompareModal.vue'
 import AgentAvatar from '../components/AgentAvatar.vue'
@@ -523,8 +521,6 @@ import {
   agentEvalSummary, agentEvalSuite, agentEvalSaveSuite, agentEvalMutateCases, agentEvalGenerateCases,
   agentEvalStartRun, agentEvalRuns, agentEvalRun, agentEvalCancelRun, agentEvalGate
 } from '../api'
-
-echarts.use([LineChart, TooltipComponent, GridComponent, MarkLineComponent, CanvasRenderer])
 
 const route = useRoute()
 const router = useRouter()

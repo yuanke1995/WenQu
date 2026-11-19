@@ -9,7 +9,6 @@
       <span class="imp-label">导入到</span>
       <a-select v-model:value="target" :options="targetOptions" style="width:260px"
                 :disabled="importing || !!fixedKbId" @change="onTargetChange" />
-      <span class="imp-hint">官方内置库不接受导入</span>
     </div>
 
     <a-upload-dragger :before-upload="onFile" :show-upload-list="false" accept=".zip"
@@ -191,10 +190,10 @@ async function doImport () {
   border-radius: 3px; padding: 0 4px; }
 .imp-tag { font-size: 9.5px; border-radius: 3px; padding: 1px 5px; }
 .imp-tag.warn { color: var(--app-warn-text); background: var(--app-warn-weak); }
-.imp-tag.err { color: var(--app-danger); background: #fff2f0; }
+.imp-tag.err { color: var(--app-danger); background: var(--app-danger-weak); }
 .imp-msg { font-size: 10.5px; color: var(--app-text3); max-width: 220px; overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; }
 .imp-strategy { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-top: 1px solid var(--app-border);
-  background: #fffdf7; }
+  background: var(--app-warn-weak); }
 .imp-foot { display: flex; align-items: center; gap: 8px; margin-top: 14px; }
 </style>

@@ -83,6 +83,23 @@ if (import.meta.env.PROD && 'serviceWorker' in navigator) {
   })
 }
 
+// ==================== 发版后旧壳引用旧 chunk 的兜底 ====================
+// 前端是「带 hash 的 assets 长缓存 + index.html 不缓存」的常规形态。但 iPad Safari 等会
+// 把 index.html 也缓存住：发版后旧壳仍指向已被清理的旧 chunk，动态 import 会 404，
+// Vite 随即派发 vite:preloadError——表现就是聊天里的 ECharts 永远停在「图表准备中…」。
+// 这里自动刷新一次去拿新壳（10 秒内只允许刷一次，避免坏构建造成死循环）。
+if (import.meta.env.PROD) {
+  const PRELOAD_KEY = 'wq:preload-reloaded-at'
+  window.addEventListener('vite:preloadError', e => {
+    let last = 0
+    try { last = Number(sessionStorage.getItem(PRELOAD_KEY) || 0) } catch (err) { /* 存储不可用就当没刷过 */ }
+    if (Date.now() - last < 10000) return
+    try { sessionStorage.setItem(PRELOAD_KEY, String(Date.now())) } catch (err) { /* ignore */ }
+    if (e && typeof e.preventDefault === 'function') e.preventDefault()
+    location.reload()
+  })
+}
+
 const app = createApp(App)
 
 // ==================== 全局错误边界（防白屏） ====================

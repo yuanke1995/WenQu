@@ -2072,12 +2072,12 @@ const fmtTime = t => {
 /* 状态概览：点击即筛选 */
 .doc-statusbar { display: flex; align-items: center; gap: 6px; margin-bottom: 9px; flex-wrap: wrap; }
 .st-chip { height: 26px; padding: 0 9px; display: inline-flex; align-items: center; gap: 5px; border-radius: 6px;
-  border: 1px solid var(--app-border); background: #fff; font-size: 11.5px; color: var(--app-text2); cursor: pointer; }
+  border: 1px solid var(--app-border); background: var(--app-panel); font-size: 11.5px; color: var(--app-text2); cursor: pointer; }
 .st-chip b { font-weight: 600; color: var(--app-text); }
 .st-chip:hover { border-color: var(--app-accent-border); }
 .st-chip.on { border-color: var(--app-accent-border); background: var(--app-accent-weak); color: var(--app-accent); }
 .st-chip.on b { color: var(--app-accent); }
-.st-chip.warn { border-color: var(--app-warn-border); background: #fffdf7; color: var(--app-warn-text); }
+.st-chip.warn { border-color: var(--app-warn-border); background: var(--app-warn-weak); color: var(--app-warn-text); }
 .st-chip .d { width: 5px; height: 5px; border-radius: 50%; display: inline-block; }
 .st-chip .d.ok { background: var(--app-ok); } .st-chip .d.run { background: var(--app-warn); }
 .st-chip .d.err { background: var(--app-danger); } .st-chip .d.off { background: #c9cfd6; }
@@ -2086,7 +2086,7 @@ const fmtTime = t => {
 .doc-toolbar .sp { flex: 1; }
 /* 标签筛选：「标签：」是常驻前缀，只有值区域用占位符「全部」，选中后前缀不丢 */
 .filter-field { display: inline-flex; align-items: center; height: 32px; padding: 0 6px 0 10px;
-  border: 1px solid var(--app-border-strong); border-radius: 6px; background: #fff; }
+  border: 1px solid var(--app-border-strong); border-radius: 6px; background: var(--app-panel); }
 .filter-label { font-size: 12px; color: var(--app-text2); white-space: nowrap; }
 .filter-field :deep(.ant-select-selector) { padding-inline: 0 !important; }
 .filter-field :deep(.ant-select-selection-item) { color: var(--app-text); }
@@ -2132,13 +2132,13 @@ const fmtTime = t => {
 /* 上传队列浮层 */
 /* 队列收起后的悬浮入口：与展开卡同位置，点一下原样展开 */
 .uploadq-pill { position: fixed; right: 24px; bottom: 24px; display: inline-flex; align-items: center; gap: 6px;
-  height: 34px; padding: 0 13px; border-radius: 999px; background: #fff; border: 1px solid var(--app-border);
+  height: 34px; padding: 0 13px; border-radius: 999px; background: var(--app-panel); border: 1px solid var(--app-border);
   box-shadow: 0 12px 32px rgba(16,24,40,.14); font-family: inherit; font-size: 12px; color: var(--app-text2);
   cursor: pointer; z-index: 1000; }
 .uploadq-pill:hover { color: var(--app-accent); border-color: var(--app-accent-border); }
 .upl-run { color: var(--app-warn-text); font-size: 10.5px; }
 .upl-open { color: var(--app-accent); font-size: 11px; }
-.uploadq { position: fixed; right: 24px; bottom: 24px; width: 320px; background: #fff; border: 1px solid var(--app-border);
+.uploadq { position: fixed; right: 24px; bottom: 24px; width: 320px; background: var(--app-panel); border: 1px solid var(--app-border);
   border-radius: 10px; box-shadow: 0 12px 32px rgba(16,24,40,.14); z-index: 1000; overflow: hidden; }
 .uq-head { display: flex; align-items: center; gap: 7px; padding: 9px 11px; border-bottom: 1px solid var(--app-border);
   font-size: 11.5px; font-weight: 600; color: var(--app-text2); }
@@ -2151,7 +2151,7 @@ const fmtTime = t => {
 .uq-main { flex: 1; min-width: 0; }
 .uq-name { font-size: 11px; color: var(--app-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .uq-sub { font-size: 9.5px; color: var(--app-text3); margin-top: 2px; }
-.uq-track { height: 3px; border-radius: 999px; background: #eef0f3; margin-top: 4px; overflow: hidden; }
+.uq-track { height: 3px; border-radius: 999px; background: var(--app-bg-layer-3); margin-top: 4px; overflow: hidden; }
 .uq-track i { display: block; height: 100%; background: var(--app-accent); transition: width .2s; }
 .uq-state { font-size: 10px; color: var(--app-text3); flex: none; }
 .uq-state.done { color: var(--app-ok); }
@@ -2163,7 +2163,7 @@ const fmtTime = t => {
 /* 解析中：状态徽标 + 细进度条 + 进度文案（与效果图一致，不再用带百分比的 a-progress） */
 .parse-cell { display: flex; flex-direction: column; gap: 3px; min-width: 118px; }
 .parse-cell .app-pill { align-self: flex-start; }
-.parse-bar { display: block; height: 3px; border-radius: 999px; background: #eef0f3; overflow: hidden; }
+.parse-bar { display: block; height: 3px; border-radius: 999px; background: var(--app-bg-layer-3); overflow: hidden; }
 .parse-bar i { display: block; height: 100%; background: var(--app-accent); transition: width .2s; }
 /* 解析队列指示：队列非空时常驻页头/状态栏，点工具栏按钮/刷新不会丢；状态栏用与效果图同款琥珀色胶囊 */
 .queue-chip { flex: none; cursor: default; }

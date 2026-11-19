@@ -503,7 +503,7 @@ async function runSelfCheck () {
 <style scoped>
 .wiz-steps { display: flex; align-items: center; gap: 8px; padding: 0 0 12px; border-bottom: 1px solid var(--app-border); }
 .wiz-step { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--app-text3); }
-.wiz-step i { width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--app-border-strong); background: #fff;
+.wiz-step i { width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--app-border-strong); background: var(--app-panel);
   display: inline-flex; align-items: center; justify-content: center; font-style: normal; font-size: 10.5px; font-weight: 600; }
 .wiz-step.on { color: var(--app-text); font-weight: 600; }
 .wiz-step.on i { background: var(--app-accent); border-color: var(--app-accent); color: #fff; }
@@ -514,7 +514,7 @@ async function runSelfCheck () {
 .wiz-body { padding: 14px 0 6px; }
 .tpl-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 .tpl { border: 1px solid var(--app-border); border-radius: 9px; padding: 12px; cursor: pointer; position: relative;
-  background: #fff; transition: border-color .15s, box-shadow .15s; }
+  background: var(--app-panel); transition: border-color .15s, box-shadow .15s; }
 .tpl:hover { border-color: var(--app-accent-border); }
 .tpl.on { border-color: var(--app-accent); box-shadow: 0 0 0 3px rgba(46,107,230,.09); }
 .tpl-chk { position: absolute; top: 9px; right: 9px; width: 16px; height: 16px; border-radius: 50%;
@@ -573,10 +573,10 @@ async function runSelfCheck () {
 .ip-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--app-text); }
 .ip-tag { flex: none; font-size: 9.5px; color: var(--app-warn-text); background: var(--app-warn-weak);
   border-radius: 3px; padding: 1px 5px; }
-.ip-tag.err { color: var(--app-danger); background: #fff2f0; }
+.ip-tag.err { color: var(--app-danger); background: var(--app-danger-weak); }
 .ip-more { padding: 6px 10px; border-top: 1px solid var(--app-border); font-size: 10.5px; color: var(--app-text3); }
 .conflict-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-top: 1px solid var(--app-border);
-  background: #fffdf7; font-size: 11.5px; color: var(--app-text2); }
+  background: var(--app-warn-weak); font-size: 11.5px; color: var(--app-text2); }
 .selfcheck { margin-top: 10px; border: 1px solid var(--app-border); border-radius: 8px; padding: 10px 12px; }
 .sc-head { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; color: var(--app-text2); }
 .sc-head .sp { flex: 1; }

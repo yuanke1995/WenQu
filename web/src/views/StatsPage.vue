@@ -159,14 +159,10 @@
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { message } from 'ant-design-vue'
-import * as echarts from 'echarts/core'
-import { LineChart, PieChart } from 'echarts/charts'
-import { TooltipComponent, GridComponent, TitleComponent } from 'echarts/components'
-import { CanvasRenderer } from 'echarts/renderers'
+// ECharts 统一走完整包（与聊天正文同一个模块实例，避免 dev 下多份内部模块重复注册）
+import * as echarts from 'echarts'
 import { getUsageStats, getMyQuota } from '../api'
 import { themeState } from '../utils/theme'
-
-echarts.use([LineChart, PieChart, TooltipComponent, GridComponent, TitleComponent, CanvasRenderer])
 
 // ==================== 状态与数据 ====================
 const loading = ref(false)

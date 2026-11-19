@@ -151,6 +151,12 @@ body.md-preview-lock { overflow: hidden; }
   color: var(--app-danger); font-size: var(--app-fs-sm);
   padding: 4px 2px 8px; word-break: break-word;
 }
+.md .md-diagram-retry {
+  margin: 0 2px 8px; padding: 3px 12px; font: inherit; font-size: var(--app-fs-sm);
+  color: var(--app-accent); background: var(--app-accent-weak);
+  border: 1px solid var(--app-accent-border); border-radius: 6px; cursor: pointer;
+}
+.md .md-diagram-retry:hover { background: var(--app-panel); }
 .md .md-diagram svg { display: block; max-width: 100%; height: auto; margin: 0 auto; }
 .md .md-diagram-src { margin-top: 8px; }
 .md .md-diagram-src > summary {

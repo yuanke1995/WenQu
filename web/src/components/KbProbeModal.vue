@@ -342,14 +342,14 @@ async function saveMiss () {
 .cfg-params { font-size: 10.5px; color: var(--app-text3); margin-left: auto; }
 .probe-empty { border: 1px dashed var(--app-border); border-radius: 8px; padding: 42px 16px; text-align: center;
   font-size: 12px; color: var(--app-text3); }
-.probe-empty.err { color: var(--app-danger); border-color: #ffccc7; background: #fff2f0; }
+.probe-empty.err { color: var(--app-danger); border-color: var(--app-danger-border); background: var(--app-danger-weak); }
 .probe-split { display: flex; gap: 12px; min-height: 420px; }
 .probe-results { flex: 1; min-width: 0; }
 .res-head { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--app-text3); margin-bottom: 8px; }
 .res-head b { color: var(--app-text); }
 .res-head .sp { flex: 1; }
 .verdict-pill { font-size: 11px; padding: 1px 8px; border-radius: 999px; }
-.verdict-pill.ok { color: var(--app-ok); background: #eaf5ec; }
+.verdict-pill.ok { color: var(--app-ok); background: var(--app-ok-weak); }
 .verdict-pill.none { color: var(--app-warn-text); background: var(--app-warn-weak); }
 .sort-note { font-size: 10.5px; color: var(--app-text3); }
 .hit-badge { flex: none; font-size: 10px; padding: 1px 7px; border-radius: 999px; }
@@ -377,7 +377,7 @@ async function saveMiss () {
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .hit-bars { display: flex; align-items: center; gap: 12px; margin-top: 6px; font-size: 9.5px; color: var(--app-text3); }
 .sbar { display: inline-flex; align-items: center; gap: 5px; }
-.sbar .track { width: 48px; height: 4px; border-radius: 999px; background: #eef0f3; overflow: hidden; }
+.sbar .track { width: 48px; height: 4px; border-radius: 999px; background: var(--app-bg-layer-3); overflow: hidden; }
 .sbar .track i { display: block; height: 100%; background: var(--app-accent); }
 .sbar.key .track i { background: var(--c-teal, #0f8a8a); }
 .hit-bars .sp { flex: 1; }

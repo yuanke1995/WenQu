@@ -757,10 +757,8 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick, h } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
-import * as echarts from 'echarts/core'
-import { LineChart, PieChart, BarChart } from 'echarts/charts'
-import { TooltipComponent, GridComponent, LegendComponent, TitleComponent } from 'echarts/components'
-import { CanvasRenderer } from 'echarts/renderers'
+// ECharts 统一走完整包（与聊天正文同一个模块实例，避免 dev 下多份内部模块重复注册）
+import * as echarts from 'echarts'
 import { themeState } from '../utils/theme'
 import { isSuperadminSync, profileSync } from '../utils/auth'
 import {
@@ -770,8 +768,6 @@ import {
   runTraceSampling, getTraceStats,
   getUsageCost, listQuotas, saveQuota, deleteQuota, listDepartments, listUsers, listTenants
 } from '../api'
-
-echarts.use([LineChart, PieChart, BarChart, TooltipComponent, GridComponent, LegendComponent, TitleComponent, CanvasRenderer])
 
 // ==================================================================================================
 // 全局：时间范围 / 页签 / 自动刷新 / 视图

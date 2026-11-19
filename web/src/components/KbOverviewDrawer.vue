@@ -521,7 +521,7 @@ async function onMenu ({ key }) {
 .dr-sub { font-size: 11px; color: var(--app-text3); margin-top: 3px; }
 .dr-head .sp { flex: 1; }
 .dr-tabs { display: flex; align-items: center; gap: 20px; padding: 4px 20px 0; border-bottom: 1px solid var(--app-border);
-  background: #fff; position: sticky; top: 0; z-index: 3; }
+  background: var(--app-panel); position: sticky; top: 0; z-index: 3; }
 .dr-tab { font-size: 12.5px; color: var(--app-text2); padding: 9px 0 8px; cursor: pointer; position: relative; }
 .dr-tab.on { color: var(--app-accent); font-weight: 600; }
 .dr-tab.on::after { content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--app-accent); }
@@ -533,8 +533,8 @@ async function onMenu ({ key }) {
 .dr-empty { padding: 60px 0; text-align: center; color: var(--app-text3); font-size: 12px; }
 .tip-strip { display: flex; align-items: center; gap: 8px; border-radius: 7px; padding: 8px 11px; font-size: 11.5px;
   margin-bottom: 10px; line-height: 1.6; }
-.tip-strip.warn { background: #fffdf7; border: 1px solid var(--app-warn-border); color: var(--app-warn-text); }
-.tip-strip.info { background: var(--app-info-weak, #f0f6ff); border: 1px solid #d6e4ff; color: var(--app-accent); }
+.tip-strip.warn { background: var(--app-warn-weak); border: 1px solid var(--app-warn-border); color: var(--app-warn-text); }
+.tip-strip.info { background: var(--app-info-weak); border: 1px solid var(--app-info-border); color: var(--app-accent); }
 .tip-strip .tip-link { margin-left: auto; flex: none; font-size: 11px; color: inherit; cursor: pointer;
   text-decoration: underline; }
 .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
@@ -547,7 +547,7 @@ async function onMenu ({ key }) {
 .panel-h .sub { font-weight: 400; font-size: 10.5px; color: var(--app-text3); }
 .panel-h .sp { flex: 1; }
 .panel-h .lnk { font-size: 11px; color: var(--app-accent); font-weight: 400; cursor: pointer; }
-.hbar { display: flex; height: 8px; border-radius: 999px; overflow: hidden; background: #eef0f3; margin-top: 9px; }
+.hbar { display: flex; height: 8px; border-radius: 999px; overflow: hidden; background: var(--app-bg-layer-3); margin-top: 9px; }
 .hbar i { display: block; height: 100%; }
 .hbar .ok { background: var(--app-ok); } .hbar .run { background: var(--app-warn); }
 .hbar .err { background: var(--app-danger); } .hbar .off { background: #c9cfd6; }
@@ -562,7 +562,7 @@ async function onMenu ({ key }) {
 .rank .rk { width: 15px; height: 15px; border-radius: 4px; background: var(--app-panel-2); color: var(--app-text3);
   font-size: 9.5px; display: inline-flex; align-items: center; justify-content: center; flex: none; }
 .rank .nm { width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--app-text2); }
-.rank .bar { flex: 1; height: 5px; border-radius: 999px; background: #eef0f3; overflow: hidden; }
+.rank .bar { flex: 1; height: 5px; border-radius: 999px; background: var(--app-bg-layer-3); overflow: hidden; }
 .rank .bar i { display: block; height: 100%; background: var(--app-accent); border-radius: 999px; }
 .rank .ct { width: 30px; text-align: right; font-size: 10.5px; color: var(--app-text3); }
 .un-row { display: flex; align-items: center; gap: 7px; padding: 7px 0; border-bottom: 1px dashed var(--app-border); }
@@ -588,8 +588,8 @@ async function onMenu ({ key }) {
 .pill-mini { flex: none; font-size: 10px; padding: 2px 7px; border-radius: 999px; }
 .pill-mini.ok { color: var(--app-ok); background: var(--app-ok-weak); }
 .pill-mini.run { color: var(--app-warn-text); background: var(--app-warn-weak); }
-.pill-mini.err { color: var(--app-danger); background: #fff2f0; }
-.pill-mini.off { color: var(--app-text3); background: #eef0f3; }
+.pill-mini.err { color: var(--app-danger); background: var(--app-danger-weak); }
+.pill-mini.off { color: var(--app-text3); background: var(--app-bg-layer-3); }
 .graph-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 10px; }
 .graph-stats .gs { border: 1px solid var(--app-border); background: var(--app-panel-2); border-radius: 8px; padding: 9px 11px; }
 .graph-stats .gs b { display: block; font-size: 18px; font-weight: 650; }
