@@ -1,5 +1,5 @@
 <template>
-  <div class="chat2" @mouseenter="railVis = true" @mouseleave="railVis = false; railHoverIdx = -1">
+  <div class="chat2" ref="chat2Ref" @mouseenter="railVis = true" @mouseleave="railVis = false; railHoverIdx = -1">
     <!-- 中间：标题栏 + 消息流 + 输入区 -->
     <div class="chat-col">
       <!-- PC 标题栏：窄屏隐藏（与移动顶栏形成双顶栏，图里很明显），
@@ -1466,6 +1466,10 @@
     <!-- 右侧状态栏（可收起）：引用来源 / 产物 / 计划（各自有条件才显示）
          宽窄两态共用这一份 DOM：宽屏由 panelOpen 控制（占位列），窄屏由 mPanelOpen 控制
          （浮层/底部 sheet，默认收起）。两态只靠 .as-sheet 类 + CSS 媒体查询区分。 -->
+    <!-- 右栏左缘拖拽条：宽屏两栏此消彼长（消息区 flex:1，右栏定宽）；拖动只改 --rp-w，消息区不会被挤没（有下限）。
+         窄屏右栏是浮层/贴底 sheet，盖在消息之上而非占位，拖动语义不成立，故不显示。 -->
+    <div v-if="panelOpen && !isNarrow" class="rp-divider" role="separator" aria-orientation="vertical"
+         title="拖动调整右栏宽度" @mousedown.prevent="startPanelResize"></div>
     <aside v-if="panelOpen || mPanelOpen" class="right-panel" :class="{ 'as-sheet': isNarrow, 'browser-wide': railTab === 'browser' }">
       <!-- 窄屏下本栏是覆盖式 sheet，必须给一个显式关闭口：宽屏它是常驻列不需要关，
            窄屏开起来后若只能靠顶栏按钮来回切，用户会觉得「关不掉」。仅窄屏渲染。 -->
@@ -2119,6 +2123,31 @@ const onBrowserSnapshot = payload => {
   browserSnapshots.value = [snap, ...browserSnapshots.value].slice(0, MAX_BROWSER_SNAPSHOTS)
 }
 
+// 右栏宽度拖拽：宽屏两栏此消彼长，拖动只改 --rp-w（作用在 .chat2 上）。
+// 下限 280 / 上限 720，且消息区至少留 360px，避免拖到只剩一条缝。
+const RP_W_KEY = 'wenqu.rpWidth'
+const RP_MIN = 280, RP_MAX = 720, CHAT_MIN = 360
+const rpWidth = ref(Math.max(RP_MIN, Math.min(RP_MAX, Number(localStorage.getItem(RP_W_KEY)) || 420)))
+watch(rpWidth, v => { localStorage.setItem(RP_W_KEY, String(v)); applyRpWidth() })
+const chat2Ref = ref(null)
+const applyRpWidth = () => chat2Ref.value?.style.setProperty('--rp-w', rpWidth.value + 'px')
+onMounted(applyRpWidth)
+const startPanelResize = e => {
+  const startX = e.clientX, startW = rpWidth.value
+  const maxByViewport = () => Math.max(RP_MIN, Math.min(RP_MAX, window.innerWidth - CHAT_MIN))
+  const onMove = ev => rpWidth.value = Math.max(RP_MIN, Math.min(maxByViewport(), startW - (ev.clientX - startX)))
+  const onUp = () => {
+    window.removeEventListener('mousemove', onMove)
+    window.removeEventListener('mouseup', onUp)
+    document.body.style.userSelect = ''
+    document.body.style.cursor = ''
+  }
+  document.body.style.userSelect = 'none'
+  document.body.style.cursor = 'col-resize'
+  window.addEventListener('mousemove', onMove)
+  window.addEventListener('mouseup', onUp)
+}
+
 // 引擎先装配：所有视图域的 getter 都能安全读取；视图回调经 page 惰性取值。
 const engine = useChatEngine({
   chatPath: '/chat',
@@ -2634,6 +2663,7 @@ const {
    两侧内边距都按它补偿，差值归零。 */
 .chat2 {
   --chat-col: 860px; --chat-sbw: 0px;
+  --rp-w: 420px; /* 右栏宽度，拖拽条改它；窄屏浮层模式不用 */
   display: flex; height: 100%; min-width: 0; background: var(--app-panel); position: relative;
 }
 .chat-col { flex: 1; min-width: 0; display: flex; flex-direction: column; }
@@ -3641,13 +3671,16 @@ const {
 
 /* 右侧状态栏 */
 .right-panel {
-  width: 230px; flex: none; border-left: 1px solid var(--app-border); background: var(--app-panel-2);
+  width: var(--rp-w); flex: none; border-left: 1px solid var(--app-border); background: var(--app-panel-2);
   /* 底部预留：全局帮助 FAB 悬浮在视口右下角，让卡片不被压住 */
   padding: 12px 10px 56px; display: flex; flex-direction: column; gap: 10px; overflow-y: auto;
 }
-/* 浏览 tab 是读页面快照（长文本 + 链接），230px 的卡片栏放不下——切到这一档就把常驻列加宽，
-   过程/来源/文件三档仍用窄栏，不牺牲正文宽度。窄屏浮层下这条同样生效（在媒体查询里再收口）。 */
-.right-panel.browser-wide { width: 420px; }
+/* 宽屏两栏分隔条：贴着右栏左缘，hover/拖动变强调色；窄屏不渲染（见模板 v-if） */
+.rp-divider { flex: none; width: 5px; margin-left: -3px; cursor: col-resize; z-index: 2;
+  background: transparent; border-left: 3px solid transparent; box-sizing: content-box; }
+.rp-divider:hover, .rp-divider:active { border-left-color: var(--app-accent); }
+/* 浏览档曾经自动加宽到 420px，现在宽度由拖拽条统一控制（--rp-w），不再强行改宽度 */
+.right-panel.browser-wide { width: var(--rp-w); }
 .rp-card { background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 10px; padding: 10px 12px; }
 /* 右栏分段：三颗等宽页签，选中态浮起；失败数是一颗红色小徽标，只压在「过程」上 */
 .rp-tabs {
@@ -4076,8 +4109,8 @@ const {
   .right-panel { position: absolute; right: 12px; top: 56px; bottom: 12px; z-index: 30;
     width: 260px; border: 1px solid var(--app-border); border-radius: var(--app-radius);
     box-shadow: var(--app-shadow-lg); background: var(--app-panel); }
-  /* 浏览档：浮层加宽到 420px，但给左侧正文至少留 280px，小屏不遮满 */
-  .right-panel.browser-wide { width: min(420px, calc(100vw - 300px)); }
+  /* 浮层宽度固定，不跟随 --rp-w（拖拽条只在 >1200 的常驻两栏显示） */
+  .right-panel.browser-wide { width: 260px; }
   .right-panel.as-sheet.browser-wide { width: auto; }
   /* 窄屏输入卡片会贴到右缘，为右下角全局帮助 FAB 让出角落（否则压住发送键一侧）。
      让位量交给输入区组件叠加到它自己的右内边距上（--ci-right-extra），
