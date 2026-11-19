@@ -2,18 +2,13 @@
 
 /** 会话挂在另一台电脑的工作区：历史照常能看，但这台机器不能派文件/命令过去。 */
 export const isForeignWorkspace = (ws, localId) =>
-  !!(ws && !ws.isSsh && !ws.isSshAlias && ws.isLocal && localId && ws.executorId && ws.executorId !== localId)
+  !!(ws && !ws.isSshAlias && ws.isLocal && localId && ws.executorId && ws.executorId !== localId)
 
 /** 未就绪原因按「异机 > 没绑目录 > 执行器离线」排序；隐式工作区不提示。 */
 export const workspaceSetupHintOf = (ws, foreign) => {
   if (!ws || ws.implicit) return ''
   const name = ws.name || '这个工作区'
   if (foreign) return `「${name}」的文件夹在另一台电脑上，这台电脑不能继续使用。`
-  if (ws.isSsh) {
-    if (!ws.roots || !ws.roots.length) return `「${name}」还没绑定远端文件夹，文件与命令暂不可用。`
-    if (ws.executorOnline === false) return '远程主机连不上：检查网络、端口与登录凭据。'
-    return ''
-  }
   if (ws.isSshAlias) {
     if (!ws.roots || !ws.roots.length) return `「${name}」还没绑定远端文件夹，文件与命令暂不可用。`
     if (ws.executorOnline === false) return '本机执行器不在线：先启动 wenqu-agent；远端用本机 ssh ~/.ssh/config。'
@@ -35,11 +30,6 @@ export const workspaceTitleOf = ws => {
 export const permissionCodeOf = ws => (ws && ws.permissionPreset) ? String(ws.permissionPreset) : ''
 
 export const workspaceRefreshNotice = ws => {
-  if (ws && ws.isSsh) {
-    return ws.executorOnline
-      ? { ok: true, text: '远程主机已连上' }
-      : { ok: false, text: '远程主机连不上：检查网络、端口与登录凭据' }
-  }
   if (ws && ws.isSshAlias) {
     return ws.executorOnline
       ? { ok: true, text: '本机执行器已连上（远端经本机 ssh）' }

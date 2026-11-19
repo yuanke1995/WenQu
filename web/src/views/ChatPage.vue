@@ -1571,7 +1571,7 @@
            接口给的是摊平的一维清单，这里按相对路径折回目录树：整条路径摊在一行时名字全被截断，
            认不出哪份是成品；折成树之后行内只剩文件名，腾出的位置给大小。 -->
       <div v-if="railTab === 'files' && (sandboxFiles.length || sandboxErr || sandboxLoading)" class="rp-card">
-        <div class="rp-label">{{ sessionWorkspace && (sessionWorkspace.isSsh || sessionWorkspace.isSshAlias) ? '远端文件' : (sessionWorkspace && (sessionWorkspace.isLocal || sessionWorkspace.wsEffective === 'local') ? '本机文件' : '会话文件') }} · {{ sandboxCount }} 个{{ sandboxBytes ? ' · ' + sbSize(sandboxBytes) : '' }}</div>
+        <div class="rp-label">{{ sessionWorkspace && sessionWorkspace.isSshAlias ? '远端文件' : (sessionWorkspace && (sessionWorkspace.isLocal || sessionWorkspace.wsEffective === 'local') ? '本机文件' : '会话文件') }} · {{ sandboxCount }} 个{{ sandboxBytes ? ' · ' + sbSize(sandboxBytes) : '' }}</div>
         <div v-if="sandboxLocalOffline" class="rp-sb-hint">本机执行器离线，暂显示云端沙盒文件</div>
         <div v-if="sandboxLoading" class="rp-sb-hint">正在读取目录…</div>
         <div v-else-if="sandboxErr" class="rp-sb-err">

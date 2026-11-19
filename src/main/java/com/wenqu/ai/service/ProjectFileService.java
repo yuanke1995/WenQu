@@ -145,7 +145,7 @@ public class ProjectFileService {
             if (project == null || !projectService.isDirect(project)) return null;
             List<ProjectRoot> roots = projectService.rootsOf(project);
             if (roots.isEmpty()) return null;
-            StringBuilder sb = new StringBuilder(projectService.isSsh(project) || projectService.isSshAlias(project)
+            StringBuilder sb = new StringBuilder(projectService.isSshAlias(project)
                     ? "\n\n【远程工作区】这个工作区绑定的是远端 SSH 主机上的真实目录，文件与命令工具直接读写/执行在远端："
                     : "\n\n【本机工作区】这个工作区绑定的是你电脑上的真实目录，文件工具直接读写它们：");
             List<String> parts = new ArrayList<>();
@@ -408,7 +408,7 @@ public class ProjectFileService {
      */
     public void openInOS(String uid, String projectId, String path) {
         Project p = projectService.detail(uid, projectId);
-        if (projectService.isSsh(p) || projectService.isSshAlias(p)) {
+        if (projectService.isSshAlias(p)) {
             throw new IllegalArgumentException("远程主机没有桌面文件管理器，请在文件页里浏览/下载");
         }
         List<ProjectRoot> roots = requireRoots(p);

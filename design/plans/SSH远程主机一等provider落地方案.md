@@ -1,5 +1,11 @@
 # SSH 远程主机一等 provider 落地方案
 
+> **2026-11-19 更新（当前实现口径）**：服务端 JSch + 托管凭据 + SSH 主机管理界面已按产品决定**移除**
+> （代码与 V32 迁移退役 `c_ai_ssh_host` / `c_ai_project.ssh_host_id`）。
+> 当前保留并作为落地形态的是**第 13 节「本机 OpenSSH 别名」`ssh_alias`**：连接在用户本机执行器上，
+> 使用本机 `ssh` 与 `~/.ssh/config`，问渠不保存私钥/密码。第 1–12 节保留为早期设计记录。
+
+
 > 对标 DSH 的 `dsh-ssh` / `dsh-fs-ssh` / `dsh-sandbox-ssh` / `dsh-subprocess-ssh`：
 > 把一台 **远端 POSIX 主机** 当成工作区后端的“一等公民”——文件系统、命令执行、终端全部直连 SSH，
 > 而不是让模型自己在 shell 里再套一层 `ssh`。

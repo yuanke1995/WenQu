@@ -42,11 +42,6 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
-        <!-- SSH 交互式终端（PTY）：WebSocket 桥接浏览器与 JSch ChannelShell -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-websocket</artifactId>
-        </dependency>
         <!-- 通知外发（P1 · 邮件通道）：只做 SMTP，不接第三方邮件 SaaS（私有化部署） -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -171,15 +166,6 @@
             <artifactId>flyway-mysql</artifactId>
         </dependency>
 
-        <!-- SSH 远程主机 provider（P1「SSH 一等 provider」）：
-             JSch 的 mwiede 维护分支，支持 ed25519 / rsa-sha2 / OpenSSH 私钥格式与 passphrase；
-             用于 SFTP 文件系统、ChannelExec 命令与 ChannelShell(PTY) 终端。 -->
-        <dependency>
-            <groupId>com.github.mwiede</groupId>
-            <artifactId>jsch</artifactId>
-            <version>2.28.8</version>
-        </dependency>
-
         <!-- Apache POI 解析 Word/Excel/PPT（scratchpad 承载旧版二进制 .ppt 的 HSLF） -->
         <dependency>
             <groupId>org.apache.poi</groupId>
@@ -281,20 +267,6 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <!-- SSH provider 的集成测试：内嵌 Apache MINA sshd 作为真实远端（SFTP + exec + shell），
-             用真实 JSch 客户端连它跑通 list/read/write/exec/围栏/指纹。仅测试期依赖。 -->
-        <dependency>
-            <groupId>org.apache.sshd</groupId>
-            <artifactId>sshd-core</artifactId>
-            <version>2.15.0</version>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.sshd</groupId>
-            <artifactId>sshd-sftp</artifactId>
-            <version>2.15.0</version>
             <scope>test</scope>
         </dependency>
         <!-- 容器化集成测试：Docker 不可用时 @Testcontainers(disabledWithoutDocker) 自动跳过 -->

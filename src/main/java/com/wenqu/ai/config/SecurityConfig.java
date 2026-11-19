@@ -110,9 +110,6 @@ public class SecurityConfig implements WebMvcConfigurer {
         if (path.equals("/api/ai/executor/device-code")
                 || path.equals("/api/ai/executor/device-code/token")
                 || path.equals("/api/ai/executor/device-code/approve")) return true;
-        // SSH 终端 WebSocket：浏览器升级请求带不了自定义 Authorization 头；凭已登录 HTTP 接口换的一次性
-        // ticket（Redis，60 秒，绑定 uid+hostId）入场，票在 SshTerminalWebSocketHandler 内消费校验。
-        if ("GET".equals(method) && path.equals("/api/ai/ssh-terminal")) return true;
         // 开放契约文档：机器可读，集成方不必先持有 Key 才能读契约
         if (isPublicContractEndpoint(method, path)) return true;
         // 公开只读：运行时公开配置、对话页智能体下拉（脱敏只读）
@@ -259,8 +256,7 @@ public class SecurityConfig implements WebMvcConfigurer {
         // 归属一律按 RequestUser.uid() 校验（别人的设备既看不到也撤不掉）。
         if (path.equals("/api/ai/executor/devices") || path.equals("/api/ai/executor/browse")
                 || path.equals("/api/ai/executor/pick-dir")
-                // SSH 远程主机 / 本机 OpenSSH 别名（同一授权点 executor:self，个人资产）
-                || path.equals("/api/ai/executor/ssh") || path.startsWith("/api/ai/executor/ssh/")
+                // 本机 OpenSSH 别名（同一授权点 executor:self，个人资产）
                 || path.equals("/api/ai/executor/ssh-aliases")
                 || path.equals("/api/ai/executor/ssh-alias") || path.startsWith("/api/ai/executor/ssh-alias/")
                 || ("DELETE".equals(method) && path.matches("/api/ai/executor/device/[^/]+"))) return true;
@@ -689,7 +685,6 @@ public class SecurityConfig implements WebMvcConfigurer {
                     && !isJoinEndpoint(method, path)
                     && !isSandboxCallbackEndpoint(method, path)
                     && !isExecutorEndpoint(method, path)
-                    && !("GET".equals(method) && "/api/ai/ssh-terminal".equals(path))
                     && !isWorkflowWebhookEndpoint(method, path)
                     && !isPublicContractEndpoint(method, path)) {
                 response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);

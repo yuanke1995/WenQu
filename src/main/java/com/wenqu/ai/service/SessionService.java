@@ -238,12 +238,10 @@ public class SessionService {
             m.put("implicit", p == null || Project.SELECTION_IMPLICIT.equals(p.getSelectionStatus()));
             m.put("archived", p != null && Project.STATUS_ARCHIVED.equals(p.getStatus()));
             m.put("isLocal", p != null && projectService.isLocal(p));
-            m.put("isSsh", p != null && projectService.isSsh(p));
             m.put("isSshAlias", p != null && projectService.isSshAlias(p));
             m.put("sshAlias", p == null || p.getSshAlias() == null ? "" : p.getSshAlias());
             String execId = p == null ? null : projectService.executorIdOf(p);
             m.put("executorId", execId == null ? "" : execId);
-            m.put("sshHostId", p == null || p.getSshHostId() == null ? "" : p.getSshHostId());
             // 目录清单：聊天页标题的悬浮提示与「本机文件」入口要用；不把绝对路径塞进页面正文
             java.util.List<Map<String, Object>> roots = new java.util.ArrayList<>();
             if (p != null) {

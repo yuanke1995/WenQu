@@ -4,7 +4,6 @@
       <div class="wq-label">位置</div>
       <a-radio-group v-model:value="backend" button-style="solid">
         <a-radio-button value="local">本机电脑</a-radio-button>
-        <a-radio-button value="ssh">SSH 远程主机</a-radio-button>
         <a-radio-button value="ssh_alias">本机 OpenSSH 别名</a-radio-button>
       </a-radio-group>
       <div v-if="backend === 'ssh_alias'" class="wq-hint">
@@ -45,44 +44,6 @@
           「{{ executor.name }}」的执行器不在线：去那台电脑的终端确认 wenqu-agent 正在运行
         </div>
         <div v-else class="wq-hint">绑定到「{{ executor.name }}」</div>
-      </template>
-
-      <template v-else-if="backend === 'ssh'">
-        <div class="wq-label wq-label-row">
-          <span>SSH 主机</span>
-          <button type="button" class="app-link-btn" @click="sshManagerOpen = true">管理主机</button>
-        </div>
-        <div class="wq-inline">
-          <a-select v-model:value="sshHostId" style="flex:1" placeholder="选择一台已托管的 SSH 主机"
-                    :options="sshHostOptions" @change="onHostChanged" />
-          <span v-if="sshHost" class="wq-badge" :class="sshHost.status === 'active' ? 'on' : 'off'">
-            {{ sshHost.status === 'active' ? '可连接' : '已停用' }}
-          </span>
-        </div>
-        <div v-if="!sshHosts.length" class="wq-hint">
-          还没有 SSH 主机，先点「管理主机」添加一台（地址/端口/用户/密码或私钥）。
-        </div>
-
-        <div class="wq-label wq-label-row">
-          <span>远端源文件夹</span>
-          <button type="button" class="app-link-btn" :disabled="!sshHostId || sshBrowsing" @click="openSshBrowse">
-            <plus-outlined /> 浏览添加
-          </button>
-        </div>
-        <div class="wq-dirs">
-          <div v-for="(d, i) in sshDirs" :key="d.path" class="wq-dir">
-            <FolderOpenOutlined class="wq-dir-ic" />
-            <span class="wq-dir-name" :title="d.path">{{ d.name }}<em class="wq-abs">{{ d.path }}</em></span>
-            <span v-if="i === 0" class="wq-primary">主要</span>
-            <button v-else type="button" class="app-link-btn wq-mini" @click="makeSshPrimary(i)">设为主要</button>
-            <button type="button" class="wq-remove" title="移除" @click="removeSshDir(i)">×</button>
-          </div>
-          <button v-if="!sshDirs.length" type="button" class="wq-drop" :disabled="!sshHostId"
-                  :class="{ busy: sshBrowsing }" @click="openSshBrowse">
-            <FolderOpenOutlined class="wq-drop-ic" />
-            <span>{{ sshHostId ? '点击浏览远端目录并添加（可多个）' : '先选择 SSH 主机' }}</span>
-          </button>
-        </div>
       </template>
 
       <template v-else-if="backend === 'ssh_alias'">
@@ -156,9 +117,7 @@
       </div>
     </div>
 
-    <SshHostManagerModal v-model:open="sshManagerOpen" @changed="loadSshHosts" />
-    <SshBrowseModal v-model:open="sshBrowseOpen" :host-id="sshHostId" @picked="onSshDirPicked" />
-    <SshBrowseModal v-model:open="sshAliasBrowseOpen" mode="alias" :executor-id="executorId"
+    <SshBrowseModal v-model:open="sshAliasBrowseOpen" :executor-id="executorId"
                     :alias-name="sshAlias" @picked="onAliasDirPicked" />
   </a-modal>
 </template>
@@ -169,10 +128,9 @@ import { message } from 'ant-design-vue'
 import { CheckOutlined, FolderOpenOutlined, PlusOutlined } from '@ant-design/icons-vue'
 import { WORKSPACE_ICONS, WORKSPACE_COLORS, workspaceIconOf } from '../utils/workspaceIcons'
 import { localExecutorId } from '../utils/localExecutor'
-import SshHostManagerModal from './SshHostManagerModal.vue'
 import SshBrowseModal from './SshBrowseModal.vue'
-import { createProject, createSshProject, createSshAliasProject, getProject, listExecutors, listProjects,
-         listSshHosts, listSshAliases, pickExecutorDir, updateProject, getWorkspaceMemory,
+import { createProject, createSshAliasProject, getProject, listExecutors, listProjects,
+         listSshAliases, pickExecutorDir, updateProject, getWorkspaceMemory,
          saveWorkspaceMemory } from '../api'
 
 const props = defineProps({ open: { type: Boolean, default: false } })
@@ -191,14 +149,8 @@ const picking = ref(false)
 const templateId = ref(undefined)
 const templates = ref([])
 
-// SSH 远程主机后端
+// 执行后端
 const backend = ref('local')
-const sshHosts = ref([])
-const sshHostId = ref('')
-const sshDirs = ref([])
-const sshManagerOpen = ref(false)
-const sshBrowseOpen = ref(false)
-const sshBrowsing = ref(false)
 
 // 本机 OpenSSH 别名（DSH dsh-ssh 同形态）
 const sshAliases = ref([])
@@ -210,22 +162,15 @@ const templateOptions = computed(() => templates.value.map(p => ({
   value: p.id, label: p.displayName || p.name || '未命名工作区'
 })))
 
-const sshHostOptions = computed(() => sshHosts.value.map(h => ({
-  value: h.id,
-  label: `${h.name || '未命名'}（${h.username}@${h.host}:${h.port}）`
-})))
-const sshHost = computed(() => sshHosts.value.find(h => h.id === sshHostId.value) || null)
 const sshAliasOptions = computed(() => sshAliases.value.map(a => ({ value: a, label: a })))
 
 // 工作区固定建在这台电脑上：设备 id 只从「这台电脑」读，不再让用户挑别的电脑。
 const executor = computed(() => devices.value.find(d => d.id === executorId.value) || null)
 const canCreateLocal = computed(() => dirs.value.length > 0 && name.value.trim()
   && !!executorId.value && !!executor.value && !!executor.value.online)
-const canCreateSsh = computed(() => !!sshHostId.value && sshDirs.value.length > 0 && !!name.value.trim())
 const canCreateAlias = computed(() => !!executorId.value && !!executor.value && !!executor.value.online
   && !!sshAlias.value.trim() && sshAliasDirs.value.length > 0 && !!name.value.trim())
-const canCreate = computed(() => backend.value === 'ssh' ? canCreateSsh.value
-  : backend.value === 'ssh_alias' ? canCreateAlias.value : canCreateLocal.value)
+const canCreate = computed(() => backend.value === 'ssh_alias' ? canCreateAlias.value : canCreateLocal.value)
 
 const goPickDevice = () => {
   emit('update:open', false)
@@ -244,16 +189,6 @@ async function loadDevice () {
     devices.value = (r && r.data) || []
   } catch (e) {
     devices.value = []
-  }
-}
-
-async function loadSshHosts () {
-  try {
-    const r = await listSshHosts()
-    sshHosts.value = (r && r.data) || []
-    if (sshHostId.value && !sshHosts.value.some(h => h.id === sshHostId.value)) sshHostId.value = ''
-  } catch (e) {
-    sshHosts.value = []
   }
 }
 
@@ -285,7 +220,7 @@ async function loadTemplates () {
   try {
     const r = await listProjects()
     templates.value = ((r && r.data) || []).filter(p => !p.isImplicit
-      && p.isLocal && (!p.executorId || p.executorId === localExecutorId()))
+      && (p.isSshAlias || (p.isLocal && (!p.executorId || p.executorId === localExecutorId()))))
   } catch (e) {
     templates.value = []
   }
@@ -303,10 +238,6 @@ watch(templateId, async pid => {
       sshAlias.value = p.sshAlias || sshAlias.value
       sshAliasDirs.value = (p.roots || []).map(x => ({ path: x.path, name: x.alias || baseName(x.path) }))
       loadAliases()
-    } else if (p.isSsh) {
-      backend.value = 'ssh'
-      sshHostId.value = p.sshHostId || sshHostId.value
-      sshDirs.value = (p.roots || []).map(x => ({ path: x.path, name: x.alias || baseName(x.path) }))
     } else {
       backend.value = 'local'
       executorId.value = p.executorId || executorId.value
@@ -352,28 +283,6 @@ async function pickDir () {
   }
 }
 
-function onHostChanged () {
-  sshDirs.value = []
-  if (!name.value.trim() && sshHost.value) name.value = sshHost.value.name || ''
-}
-
-function openSshBrowse () {
-  if (!sshHostId.value) return message.warning('先选择一台 SSH 主机')
-  sshBrowseOpen.value = true
-}
-function onSshDirPicked (p) {
-  if (!p) return
-  if (sshDirs.value.some(d => d.path === p)) return message.info('这个远端文件夹已经添加过了')
-  sshDirs.value.push({ path: p, name: baseName(p) })
-  if (!name.value.trim()) name.value = baseName(p)
-}
-function removeSshDir (i) { sshDirs.value.splice(i, 1) }
-function makeSshPrimary (i) {
-  if (i <= 0) return
-  const [d] = sshDirs.value.splice(i, 1)
-  sshDirs.value.unshift(d)
-}
-
 function removeDir (i) {
   dirs.value.splice(i, 1)
 }
@@ -390,10 +299,7 @@ async function create () {
   creating.value = true
   try {
     let created
-    if (backend.value === 'ssh') {
-      const roots = sshDirs.value.map(d => ({ path: d.path, alias: d.name }))
-      created = await createSshProject(name.value.trim(), sshHostId.value, roots, templateId.value)
-    } else if (backend.value === 'ssh_alias') {
+    if (backend.value === 'ssh_alias') {
       const roots = sshAliasDirs.value.map(d => ({ path: d.path, alias: d.name }))
       created = await createSshAliasProject(name.value.trim(), executorId.value, sshAlias.value.trim(), roots, templateId.value)
     } else {
@@ -422,8 +328,6 @@ watch(() => props.open, open => {
   if (!open) return
   backend.value = 'local'
   dirs.value = []
-  sshDirs.value = []
-  sshHostId.value = ''
   sshAlias.value = ''
   sshAliasDirs.value = []
   name.value = ''
@@ -431,7 +335,6 @@ watch(() => props.open, open => {
   color.value = COLORS[0]
   templateId.value = undefined
   refreshLocalDevice()
-  loadSshHosts()
   loadTemplates()
   loadAliases()
 })
@@ -439,7 +342,6 @@ watch(() => props.open, open => {
 onMounted(() => {
   if (props.open) {
     refreshLocalDevice()
-    loadSshHosts()
   }
 })
 </script>

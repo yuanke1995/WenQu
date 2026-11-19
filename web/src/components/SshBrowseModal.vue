@@ -13,10 +13,7 @@
         <div v-if="!dirs.length" class="sb-empty">{{ loading ? '加载中…' : '没有子文件夹' }}</div>
       </div>
       <div class="sb-foot">
-        <template v-if="mode !== 'alias'">
-          <a-input v-model:value="newName" placeholder="新建文件夹名称" style="width:200px" />
-          <button class="app-btn ghost" type="button" :disabled="!newName.trim()" @click="createDir">新建文件夹</button>
-        </template>
+        <span class="sb-hint">远端路径：{{ path || '（登录用户 home）' }}</span>
         <span class="sb-grow" />
         <button class="app-btn" type="button" :disabled="!path" @click="pick">选择当前目录</button>
       </div>
@@ -27,12 +24,10 @@
 <script setup>
 import { ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
-import { browseSshHost, mkdirSshHost, browseSshAlias } from '../api'
+import { browseSshAlias } from '../api'
 
 const props = defineProps({
   open: { type: Boolean, default: false },
-  mode: { type: String, default: 'host' }, // host=服务端 SSH 主机；alias=本机 OpenSSH 别名
-  hostId: { type: String, default: '' },
   executorId: { type: String, default: '' },
   aliasName: { type: String, default: '' },
   title: { type: String, default: '' },
@@ -44,15 +39,12 @@ const path = ref('')
 const parent = ref('')
 const dirs = ref([])
 const loading = ref(false)
-const newName = ref('')
 
 async function load (p) {
-  if (props.mode === 'alias' ? (!props.executorId || !props.aliasName) : !props.hostId) return
+  if (!props.executorId || !props.aliasName) return
   loading.value = true
   try {
-    const r = props.mode === 'alias'
-      ? await browseSshAlias(props.executorId, props.aliasName, p || '')
-      : await browseSshHost(props.hostId, p || '')
+    const r = await browseSshAlias(props.executorId, props.aliasName, p || '')
     const d = (r && r.data) || {}
     path.value = d.path || ''
     parent.value = d.parent || ''
@@ -70,21 +62,8 @@ function pick () {
   emit('picked', path.value)
   close()
 }
-async function createDir () {
-  const name = newName.value.trim()
-  if (!name) return
-  const target = (path.value.endsWith('/') ? path.value : path.value + '/') + name
-  try {
-    await mkdirSshHost(props.hostId, target)
-    newName.value = ''
-    message.success('已创建')
-    await load(path.value)
-  } catch (e) {
-    message.error('新建失败：' + (e.message || ''))
-  }
-}
 const close = () => emit('update:open', false)
-watch(() => props.open, v => { if (v) { newName.value = ''; load(props.startPath || '') } }, { immediate: true })
+watch(() => props.open, v => { if (v) load(props.startPath || '') }, { immediate: true })
 </script>
 
 <style scoped>
@@ -99,5 +78,6 @@ watch(() => props.open, v => { if (v) { newName.value = ''; load(props.startPath
 .sb-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sb-empty { padding: 40px; text-align: center; color: var(--app-text3); font-size: 13px; }
 .sb-foot { display: flex; align-items: center; gap: 8px; }
+.sb-hint { font-size: 11px; color: var(--app-text3); }
 .sb-grow { flex: 1; }
 </style>

@@ -297,7 +297,7 @@ public class SessionProcService {
      */
     private List<String> localExecutors(Session session, String uid) {
         Project boundProject = projectService.projectOfSession(session.getId());
-        if (boundProject != null && (projectService.isSsh(boundProject) || projectService.isSshAlias(boundProject))) return List.of();
+        if (boundProject != null && projectService.isSshAlias(boundProject)) return List.of();
         String bound = boundExecutor(session);
         if (bound != null) {
             return executorRegistry.online(bound) ? List.of(bound) : List.of();
@@ -308,7 +308,7 @@ public class SessionProcService {
     /** 停止动作要能区分「不在线」与「没登记过」：这里把绑定的那台留着，离线由调用方如实报。 */
     private List<String> killTargets(Session session, String uid) {
         Project boundProject = projectService.projectOfSession(session.getId());
-        if (boundProject != null && (projectService.isSsh(boundProject) || projectService.isSshAlias(boundProject))) return List.of();
+        if (boundProject != null && projectService.isSshAlias(boundProject)) return List.of();
         String bound = boundExecutor(session);
         if (bound != null) return belongs(uid, bound) ? List.of(bound) : List.of();
         return onlineExecutors(uid);

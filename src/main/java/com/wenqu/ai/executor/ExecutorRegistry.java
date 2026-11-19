@@ -358,11 +358,11 @@ public class ExecutorRegistry {
                 return Result.fail("E_IO", "SSH 调用被中断");
             } catch (Exception e) {
                 Throwable c = e.getCause() == null ? e : e.getCause();
-                if (c instanceof com.wenqu.ai.ssh.SshOpException soe) {
-                    return Result.fail(soe.code(), soe.getMessage());
+                if (c instanceof IllegalArgumentException iae) {
+                    return Result.fail("E_INVALID", iae.getMessage());
                 }
                 log.warn("[EXECUTOR] 虚拟执行器调用失败 op={} executor={}: {}", op, executorId, c.getMessage());
-                return Result.fail("E_IO", "SSH 远端执行异常：" + c.getMessage());
+                return Result.fail("E_IO", "远端执行异常：" + c.getMessage());
             }
         }
         if (!online(executorId)) {

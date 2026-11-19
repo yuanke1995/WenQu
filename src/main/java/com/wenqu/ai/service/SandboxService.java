@@ -116,12 +116,6 @@ public class SandboxService {
                     : projectService.primaryRootOf(bound).getPath();
             return projectService.executorIdOf(bound) + ":" + primary;
         }
-        if (bound != null && projectService.isSsh(bound)) {
-            // SSH 工作区：换主机/换主根都必须重建框架实例（文件系统按主机装配）。
-            String primary = projectService.primaryRootOf(bound) == null ? ""
-                    : projectService.primaryRootOf(bound).getPath();
-            return "ssh:" + bound.getSshHostId() + ":" + primary;
-        }
         SessionWorkspaceService.Workspace ws = sessionWorkspace == null
                 ? null : sessionWorkspace.resolve(sessionId, uid);
         if (ws == null) return "project";
