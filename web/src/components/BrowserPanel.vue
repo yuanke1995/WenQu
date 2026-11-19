@@ -1,5 +1,18 @@
 <template>
   <div class="bp-panel rp-card">
+    <!-- 两种浏览形态：助手快照（只读镜像，给人核对助手看到了什么）/ 自己浏览（iframe，人自己逛）。
+         两者不共享页面状态——与 DSH「呈现与执行分离」一致，也不回灌给模型。 -->
+    <div class="bp-modes" role="tablist" aria-label="浏览方式">
+      <button type="button" class="bp-mode" :class="{ on: mode === 'snapshot' }" role="tab"
+              :aria-selected="mode === 'snapshot'" @click="mode = 'snapshot'">助手看到</button>
+      <button type="button" class="bp-mode" :class="{ on: mode === 'embed' }" role="tab"
+              :aria-selected="mode === 'embed'" @click="mode = 'embed'">自己浏览</button>
+    </div>
+
+    <template v-if="mode === 'embed'">
+      <BrowserEmbed />
+    </template>
+    <template v-else>
     <div v-if="!snapshots.length" class="bp-empty">本轮还没有浏览器操作</div>
     <template v-else>
       <!-- 顶部：当前 URL（只读）+ 运行环境徽标 + 时间 + 放大按钮 -->
@@ -23,6 +36,7 @@
           <pre v-if="opened[i]" class="bp-text">{{ s.text || '' }}</pre>
         </div>
       </div>
+    </template>
     </template>
   </div>
 
@@ -55,6 +69,9 @@
 
 <script setup>
 import { computed, reactive, ref, watch } from 'vue'
+import BrowserEmbed from './BrowserEmbed.vue'
+
+const mode = ref('snapshot')
 
 const props = defineProps({
   snapshots: { type: Array, default: () => [] },
@@ -98,7 +115,12 @@ const openCurrent = () => {
 </script>
 
 <style scoped>
-.bp-panel { padding: 10px 12px; }
+.bp-panel { padding: 10px 12px; display: flex; flex-direction: column; gap: 9px; }
+.bp-modes { display: flex; gap: 2px; padding: 2px; flex: none;
+  background: var(--app-panel-3, #f2f4f7); border-radius: 8px; }
+.bp-mode { flex: 1; height: 25px; border: 0; border-radius: 6px; background: transparent;
+  color: var(--app-text2); font: inherit; font-size: 11px; cursor: pointer; }
+.bp-mode.on { background: var(--app-panel); color: var(--app-text); font-weight: 600; box-shadow: var(--app-shadow-sm); }
 .bp-empty { padding: 24px 10px; text-align: center; font-size: 11.5px; color: var(--app-text3); }
 .bp-head { display: flex; flex-direction: column; gap: 5px; padding-bottom: 8px; border-bottom: 1px solid var(--app-border); }
 .bp-url { font-size: 12px; color: var(--app-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
