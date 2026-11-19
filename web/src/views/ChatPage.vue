@@ -2124,18 +2124,18 @@ const onBrowserSnapshot = payload => {
 }
 
 // 右栏宽度拖拽：宽屏两栏此消彼长，拖动只改 --rp-w（作用在 .chat2 上）。
-// 下限 280 / 上限 720，且消息区至少留 360px，避免拖到只剩一条缝。
+// 上限 = 视口宽的 2/3（同时消息区至少留 360px），下限 280。宽度存 localStorage。
 const RP_W_KEY = 'wenqu.rpWidth'
-const RP_MIN = 280, RP_MAX = 720, CHAT_MIN = 360
-const rpWidth = ref(Math.max(RP_MIN, Math.min(RP_MAX, Number(localStorage.getItem(RP_W_KEY)) || 420)))
+const RP_MIN = 280, CHAT_MIN = 360
+const rpMax = () => Math.max(RP_MIN, Math.min(window.innerWidth * 2 / 3, window.innerWidth - CHAT_MIN))
+const rpWidth = ref(Math.max(RP_MIN, Math.min(rpMax(), Number(localStorage.getItem(RP_W_KEY)) || 420)))
 watch(rpWidth, v => { localStorage.setItem(RP_W_KEY, String(v)); applyRpWidth() })
 const chat2Ref = ref(null)
 const applyRpWidth = () => chat2Ref.value?.style.setProperty('--rp-w', rpWidth.value + 'px')
-onMounted(applyRpWidth)
+onMounted(() => { rpWidth.value = Math.max(RP_MIN, Math.min(rpMax(), rpWidth.value)); applyRpWidth() })
 const startPanelResize = e => {
   const startX = e.clientX, startW = rpWidth.value
-  const maxByViewport = () => Math.max(RP_MIN, Math.min(RP_MAX, window.innerWidth - CHAT_MIN))
-  const onMove = ev => rpWidth.value = Math.max(RP_MIN, Math.min(maxByViewport(), startW - (ev.clientX - startX)))
+  const onMove = ev => rpWidth.value = Math.max(RP_MIN, Math.min(rpMax(), startW - (ev.clientX - startX)))
   const onUp = () => {
     window.removeEventListener('mousemove', onMove)
     window.removeEventListener('mouseup', onUp)
