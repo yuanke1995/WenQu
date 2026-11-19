@@ -110,7 +110,6 @@
         <span class="st-chip" @click="openRecycle"><i class="d off"></i>回收站 <b>{{ recycleCount }}</b></span>
         <span class="sp"></span>
         <span v-if="queueText" class="queue-chip"><clock-circle-outlined /> {{ queueText }}</span>
-        <span class="st-chip muted"><database-outlined /> {{ chunkSizeText }}</span>
       </div>
 
       <div class="doc-toolbar">
@@ -267,7 +266,6 @@
           <a-empty v-if="!loading && !shownList.length" :description="`暂无匹配文档，点击右上角上传 ${uploadCfg.allowedExts.join(' / ')} 或导入网页`" style="padding:40px 0" />
         </a-spin>
         <div class="doc-foot">
-          <span>{{ summaryText }}</span>
           <span class="sp"></span>
           <span class="doc-foot-note">解析完成后自动参与检索</span>
         </div>
@@ -912,13 +910,6 @@ const summaryText = computed(() => {
   // 文件区概览（5.4）：源文件总占用，让"存了多少"可见
   const bytes = list.value.reduce((n, d) => n + (d.fileSize || 0), 0)
   return `${total} 个文档 · ${active} 个生效 · ${chunks} 片段 · 占用 ${fmtSize(bytes)}`
-})
-
-/** 状态栏右侧的紧凑口径：知识块 + 占用（与效果图「128 块 · 占用 16.2 MB」对齐） */
-const chunkSizeText = computed(() => {
-  const chunks = list.value.reduce((n, d) => n + (d.chunkCount || 0), 0)
-  const bytes = list.value.reduce((n, d) => n + (d.fileSize || 0), 0)
-  return `${chunks} 块 · 占用 ${fmtSize(bytes)}`
 })
 
 const statusCounts = computed(() => ({
@@ -2087,7 +2078,6 @@ const fmtTime = t => {
 .st-chip.on { border-color: var(--app-accent-border); background: var(--app-accent-weak); color: var(--app-accent); }
 .st-chip.on b { color: var(--app-accent); }
 .st-chip.warn { border-color: var(--app-warn-border); background: #fffdf7; color: var(--app-warn-text); }
-.st-chip.muted { cursor: default; color: var(--app-text3); }
 .st-chip .d { width: 5px; height: 5px; border-radius: 50%; display: inline-block; }
 .st-chip .d.ok { background: var(--app-ok); } .st-chip .d.run { background: var(--app-warn); }
 .st-chip .d.err { background: var(--app-danger); } .st-chip .d.off { background: #c9cfd6; }
