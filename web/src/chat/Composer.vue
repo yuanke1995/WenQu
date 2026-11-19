@@ -16,6 +16,7 @@
  *     字和浏览器刚做的换行一起抹掉。图标靠模板里那排隐藏节点 clone 出来（避免把 SVG 字符串搬进来）。
  */
 import { onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { insertSpan } from './composerSelection.js'
 // 图标必须显式具名导入：unplugin-vue-components 的 AntDesignVueResolver 只管 antd 的 a-xxx，
 // icons-vue 不在它的解析表里——不 import 就退化成运行期 resolveComponent，找不到组件时既不报错也不画图标
 import { FileTextOutlined, DatabaseOutlined, RobotOutlined, HistoryOutlined,
@@ -65,20 +66,18 @@ const serialize = () => {
   return s
 }
 
-/** 光标在正文里的下标（chip 算零宽，所以与 serialize 的口径天然对齐）；焦点不在本框返回 -1 */
-const caretIndex = () => {
+/** DOM 位置（节点 + 偏移）→ 正文下标（chip 算零宽，与 serialize 同一口径）。
+ *  caretIndex 与选区终点共用：打字/粘贴都得知道「正文第几个字」，两处口径必须一致。 */
+const pointIndex = (container, offset) => {
   const el = rootEl.value
-  const sel = window.getSelection()
-  if (!el || !sel || !sel.rangeCount) return -1
-  const r = sel.getRangeAt(0)
-  if (!el.contains(r.startContainer)) return -1
+  if (!el || !el.contains(container)) return -1
   let i = 0
   let found = -1
   const walk = n => {
     for (const c of n.childNodes) {
       if (found >= 0) return
-      if (c === r.startContainer) {
-        found = c.nodeType === 3 ? i + Math.min(r.startOffset, c.nodeValue.length) : i
+      if (c === container) {
+        found = c.nodeType === 3 ? i + Math.min(offset, c.nodeValue.length) : i
         return
       }
       if (c.nodeType === 3) i += c.nodeValue.length
@@ -91,6 +90,24 @@ const caretIndex = () => {
   }
   walk(el)
   return found < 0 ? i : found
+}
+/** 光标在正文里的下标（chip 算零宽，所以与 serialize 的口径天然对齐）；焦点不在本框返回 -1 */
+const caretIndex = () => {
+  const sel = window.getSelection()
+  if (!sel || !sel.rangeCount) return -1
+  const r = sel.getRangeAt(0)
+  return pointIndex(r.startContainer, r.startOffset)
+}
+/** 当前选区的正文起止下标 [from,to)；无选区（折叠光标）返回 null。
+ *  粘贴必须走这里：选中一段后用新文本替换，起点终点都要算，只取起点会变成「插在选区前面」。 */
+const selectionRange = () => {
+  const sel = window.getSelection()
+  if (!sel || !sel.rangeCount || sel.isCollapsed) return null
+  const r = sel.getRangeAt(0)
+  const from = pointIndex(r.startContainer, r.startOffset)
+  const to = pointIndex(r.endContainer, r.endOffset)
+  if (from < 0 || to < 0) return null
+  return [Math.min(from, to), Math.max(from, to)]
 }
 
 /** 正文下标 → DOM 位置；越过 chip 边界时落在它后面（chip 不可切入内部） */
@@ -178,8 +195,12 @@ const replaceRange = (from, to, str) => {
   afterEdit()
 }
 const insertText = str => {
-  const i = caretIndex()
-  replaceRange(i < 0 ? serialize().length : i, i < 0 ? serialize().length : i, str)
+  // 有选区就替换整段（粘贴覆盖是高频操作，只按 caretIndex 起点插会把原文留在后面）；
+  // 无选区（折叠光标）仍按光标位置插入。
+  const range = selectionRange()
+  const caret = range ? null : caretIndex()
+  const [a, b] = insertSpan(range ? range[0] : caret, range ? range[1] : caret, serialize().length)
+  replaceRange(a, b, str)
 }
 
 // ==================== chip 的画与对账 ====================
