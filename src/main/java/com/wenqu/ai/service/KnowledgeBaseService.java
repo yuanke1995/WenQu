@@ -8,6 +8,7 @@ import com.wenqu.ai.mapper.KnowledgeBaseMapper;
 import com.wenqu.ai.model.Agent;
 import com.wenqu.ai.model.AiDocument;
 import com.wenqu.ai.model.KnowledgeBase;
+import com.wenqu.ai.util.TenantContext;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
@@ -113,12 +114,18 @@ public class KnowledgeBaseService {
         return kbMapper.selectById(id);
     }
 
-    /** 官方内置知识库（ManualSeedService 同步的「问渠使用手册」；未同步返回 null） */
+    /**
+     * 官方内置知识库（ManualSeedService 同步的「问渠使用手册」；未同步返回 null）。
+     * <p>内置库是平台全局行（tenant_id=default），但本方法常在特定租户的请求线程里被调用
+     * （内置「问渠」的检索范围、帮助中心）。租户行级闸会给查询拼上当前租户谓词，直接使用会
+     * 把 default 租户的内置库过滤掉——表现为非 default 租户的助手永远搜不到官手册。
+     * 这里以平台视图读这一行，是刻意跨租户的全局读取，与内置库「全员可读」的口径一致。
+     */
     public KnowledgeBase builtinKb() {
-        return kbMapper.selectOne(new LambdaQueryWrapper<KnowledgeBase>()
+        return TenantContext.asPlatform(() -> kbMapper.selectOne(new LambdaQueryWrapper<KnowledgeBase>()
                 .eq(KnowledgeBase::getBuiltin, 1)
                 .eq(KnowledgeBase::getDeleted, 0)
-                .last("LIMIT 1"));
+                .last("LIMIT 1")));
     }
 
     /**

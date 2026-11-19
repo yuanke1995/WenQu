@@ -165,8 +165,13 @@ public class RetrievalScopeService {
         if (agent == null) return null;
         // 与 scopeKbIdsOf 同一条口径：内置「问渠」的固定范围判在 walled 闸之前，登录轮同样收口
         if (builtinScopeKbIds(agent, userId) != null || parentScopeKbIds != null) {
-            return resolvedKbIds == null || resolvedKbIds.isEmpty()
-                    ? null : knowledgeBaseService.docIdsOf(resolvedKbIds);
+            if (resolvedKbIds == null || resolvedKbIds.isEmpty()) return null;
+            // 内置范围含官方手册库（平台全局行、tenant_id=default），文档行同样带 default 租户；
+            // 非 default 租户的请求线程里租户闸会把它滤掉，导致手册块从范围里静默消失。
+            // 此处 kbIds 已由 builtinScopeKbIds 收口（默认库+手册库）或由父轮墙给定，
+            // 以平台视图取文档 ID 只为让全局手册库可见，不放宽任何库级范围。
+            return com.wenqu.ai.util.TenantContext.asPlatform(
+                    () -> knowledgeBaseService.docIdsOf(resolvedKbIds));
         }
         if (!walled) return null;
         Set<String> byKb = null;

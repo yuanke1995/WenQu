@@ -8,6 +8,7 @@ import com.wenqu.ai.mapper.KnowledgeMapper;
 import com.wenqu.ai.model.AiDocument;
 import com.wenqu.ai.model.Knowledge;
 import com.wenqu.ai.util.RequestUser;
+import com.wenqu.ai.util.TenantContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.document.Document;
@@ -1011,7 +1012,9 @@ public class HybridRetrievalService {
         for (KeywordIndexService.ScoredId s : scored) scoreById.put(s.id(), s.score());
         List<Knowledge> loaded;
         try {
-            loaded = knowledgeMapper.selectBatchIds(scoreById.keySet());
+            // 平台视图载回：命中 id 已过库门/文档门，官方手册库的行是 tenant_id=default，
+            // 常规租户视图会把它们滤掉（表现为向量/Meili 命中却载不回正文）。
+            loaded = TenantContext.asPlatform(() -> knowledgeMapper.selectBatchIds(scoreById.keySet()));
         } catch (Exception e) {
             log.warn("[Keyword] 批量载回知识块失败，降级 MySQL: {}", e.getMessage());
             return List.of();
@@ -1097,7 +1100,9 @@ public class HybridRetrievalService {
                     }
                 });
                 wrapper.last("LIMIT " + limit);
-                List<Knowledge> hits = knowledgeMapper.selectList(wrapper);
+                // 平台视图查询：可见性已由 doc_id IN (生效/可见文档) 谓词在 SQL 里强制，
+                // 租户闸不能再按当前租户滤掉 tenant_id=default 的官方手册块。
+                List<Knowledge> hits = TenantContext.asPlatform(() -> knowledgeMapper.selectList(wrapper));
                 if (hits.isEmpty()) return hits;
                 return scoreKeywordHits(hits, terms);
             });
@@ -1290,8 +1295,9 @@ public class HybridRetrievalService {
                 .toList();
         if (ids.isEmpty()) return Map.of();
         try {
-            Map<String, Knowledge> out = knowledgeMapper.selectBatchIds(ids).stream()
-                    .collect(Collectors.toMap(k -> String.valueOf(k.getId()), k -> k, (a, b) -> a));
+            // 平台视图载回：向量命中已过库门，官方手册块是 tenant_id=default，需跨租户载回正文
+            Map<String, Knowledge> out = TenantContext.asPlatform(() -> knowledgeMapper.selectBatchIds(ids))
+                    .stream().collect(Collectors.toMap(k -> String.valueOf(k.getId()), k -> k, (a, b) -> a));
             // 附加索引命中解析：块表查不到的 id → QA 问法表（qa.id）/ 子块表（child.id）→ 来源块行
             List<String> missing = ids.stream().filter(id -> !out.containsKey(id)).toList();
             if (!missing.isEmpty()) {
@@ -1315,7 +1321,8 @@ public class HybridRetrievalService {
                     log.warn("子块命中解析失败: {}", e.getMessage());
                 }
                 if (!kids.isEmpty()) {
-                    Map<String, Knowledge> chunkById = knowledgeMapper.selectBatchIds(kids).stream()
+                    Map<String, Knowledge> chunkById = TenantContext.asPlatform(
+                                    () -> knowledgeMapper.selectBatchIds(kids)).stream()
                             .collect(Collectors.toMap(k -> String.valueOf(k.getId()), k -> k, (a, b) -> a));
                     for (com.wenqu.ai.model.KnowledgeQa qa : knowledgeQaMapper.selectList(
                             new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<com.wenqu.ai.model.KnowledgeQa>()
@@ -1455,6 +1462,13 @@ public class HybridRetrievalService {
                     visible.add(kb.getId());
                 }
             }
+            // 内置手册库是 tenant_id=default 的平台全局行，list() 在租户视图里查不到它；
+            // 若不显式并入，库门下推会把手册库挡在检索之外（非 default 租户助手搜不到官手册）。
+            // builtinKb() 已按平台视图读取，这里并入即恢复「登录即可读」的既定口径。
+            com.wenqu.ai.model.KnowledgeBase manual = knowledgeBaseService.builtinKb();
+            if (manual != null && manual.getId() != null) {
+                visible.add(manual.getId());
+            }
             return visible;
         } catch (Exception e) {
             log.error("[FAIL-LOUD] 查询可见知识库失败: {}", e.getMessage());
@@ -1500,7 +1514,10 @@ public class HybridRetrievalService {
         if (hitDocIds.isEmpty()) return new Eligibility(Set.of(), 0);
 
         try {
-            List<AiDocument> docs = documentMapper.selectBatchIds(hitDocIds);
+            // 平台视图载回命中文档：官方手册文档是 tenant_id=default，常规租户视图会漏掉它们，
+            // 导致手册块在可见性复核里被当成「文档不存在」剔除。此处只取元数据，库级可见性由
+            // 下方 loadVisibleKbIds()（已并入内置库）+ canReadBuiltinKb 判定，不放宽权限。
+            List<AiDocument> docs = TenantContext.asPlatform(() -> documentMapper.selectBatchIds(hitDocIds));
             ResourceVisibilityService.Principal p = new ResourceVisibilityService.Principal(
                     RequestUser.uid(), RequestUser.departmentId(), RequestUser.role());
 
