@@ -1268,11 +1268,11 @@ onMounted(loadOverview)
 .mem-stat .jump { position: absolute; top: 9px; right: 10px; font-size: 10px; color: var(--app-text3);
   opacity: 0; transition: opacity .15s; }
 .mem-stat:hover .jump { opacity: 1; }
-.mem-stat.warn { border-color: var(--app-warn-border); background: #fffdf7; }
+.mem-stat.warn { border-color: var(--app-warn-border); background: var(--app-warn-weak); }
 .mem-stat.warn .txt b { color: var(--app-warn-text); }
 .mem-stat.warn .sic { background: var(--app-warn-weak); color: var(--app-warn); }
 .mem-stat.warn .jump { opacity: 1; color: var(--app-warn-text); }
-.mem-stat.info { border-color: var(--app-accent-border); background: #f8fbff; }
+.mem-stat.info { border-color: var(--app-accent-border); background: var(--app-info-weak); }
 .mem-stat.info .txt b { color: var(--app-accent); }
 .mem-stat.info .sic { background: var(--app-accent-weak); color: var(--app-accent); }
 
@@ -1306,10 +1306,11 @@ onMounted(loadOverview)
 .mem-src { font-size: 10px; color: var(--app-text3); background: var(--app-panel-2);
   border: 1px solid var(--app-border); border-radius: 3px; padding: 1px 5px; white-space: nowrap; }
 .mem-src.lock { color: #7c5cd6; background: #f0ecfb; border-color: transparent; }
+html[data-theme='dark'] .mem-src.lock { color: #b69cff; background: #2a2140; }
 .mem-auth { color: var(--app-text2); font-size: 12px; }
 .mem-login-time { color: var(--app-text2); font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .mem-inline { display: inline-flex; align-items: center; gap: 10px; }
-.mem-more { width: 22px; height: 22px; border-radius: 5px; border: 1px solid var(--app-border); background: #fff;
+.mem-more { width: 22px; height: 22px; border-radius: 5px; border: 1px solid var(--app-border); background: var(--app-panel);
   color: var(--app-text3); display: inline-flex; align-items: center; justify-content: center; padding: 0; }
 .mem-more:hover { color: var(--app-accent); border-color: var(--app-accent-border); }
 .mem-pager { display: flex; align-items: center; gap: 8px; padding: 9px 14px; border-top: 1px solid var(--app-border); }

@@ -55,6 +55,7 @@
   --app-bg-layer-1: var(--app-panel);          /* 最底层：页面卡片 */
   --app-bg-layer-2: var(--app-panel-2);        /* 次级：表头/hover/内嵌 */
   --app-bg-layer-3: #f2f4f7;                   /* 第三级：悬浮/选中底 */
+  --app-panel-3: var(--app-bg-layer-3);        /* 兼容旧名：第三级底（分段轨/进度槽/缩略图底）；此前未定义，暗色下回退成浅灰 */
   --app-border-l1: var(--app-border);          /* 常规分隔 */
   --app-border-l2: var(--app-border-strong);   /* 强调分隔 */
   --app-interactive-hover: var(--app-accent-weak);
