@@ -50,6 +50,7 @@ public class ProjectController {
     private final com.wenqu.ai.service.ProjectItemService projectItemService;
     private final com.wenqu.ai.executor.ExecutorService executorService;
     private final com.wenqu.ai.executor.ExecutorRegistry executorRegistry;
+    private final com.wenqu.ai.ssh.SshHostService sshHostService;
 
     @Operation(summary = "我的工作区列表",
             description = "implicit 兜底容器在前（每人一个、后台懒创建），其余按创建时间倒序。"
@@ -81,9 +82,18 @@ public class ProjectController {
         m.put("memoryIsolated", p.getMemoryIsolated() == null ? 0 : p.getMemoryIsolated());
         m.put("isImplicit", Project.SELECTION_IMPLICIT.equals(p.getSelectionStatus()));
         m.put("isLocal", projectService.isLocal(p));
+        m.put("isSsh", projectService.isSsh(p));
+        m.put("isSshAlias", projectService.isSshAlias(p));
+        m.put("sshAlias", p.getSshAlias() == null ? "" : p.getSshAlias());
+        m.put("backendType", p.getBackendType() == null ? Project.BACKEND_LOCAL : p.getBackendType());
+        String execId = projectService.executorIdOf(p);
+        // executorId 一律指「本机执行器设备」（前端绑定目录/显示在线用）；
+        // 服务端 SSH 主机为空，本机别名是那台设备的 id。真正的后端路由 id 另给 executorVirtualId。
         m.put("executorId", p.getExecutorId() == null ? "" : p.getExecutorId());
-        m.put("executorOnline", p.getExecutorId() != null && !p.getExecutorId().isBlank()
-                && executorRegistry.online(p.getExecutorId()));
+        m.put("executorVirtualId", execId == null ? "" : execId);
+        m.put("executorOnline", execId != null && !execId.isBlank() && executorRegistry.online(execId));
+        m.put("sshHostId", p.getSshHostId() == null ? "" : p.getSshHostId());
+        m.put("sshHostName", sshHostName(p.getSshHostId()));
         List<Map<String, Object>> roots = new ArrayList<>();
         for (ProjectRoot r : projectService.rootsOf(p)) {
             Map<String, Object> one = new LinkedHashMap<>();
@@ -98,6 +108,16 @@ public class ProjectController {
         m.put("color", p.getColor() == null ? "" : p.getColor());
         m.put("createTime", p.getCreateTime() == null ? null : p.getCreateTime().toString());
         return m;
+    }
+
+    private String sshHostName(String sshHostId) {
+        if (sshHostId == null || sshHostId.isBlank()) return "";
+        try {
+            com.wenqu.ai.ssh.SshHost h = sshHostService.byId(sshHostId);
+            return h == null || h.getName() == null ? "" : h.getName();
+        } catch (Exception e) {
+            return "";
+        }
     }
 
     @Operation(summary = "工作区详情", description = "名称 / 外观 / 记忆隔离状态；不存在或不属于你返回可读错误")
@@ -337,43 +357,85 @@ public class ProjectController {
         return m;
     }
 
-    @Operation(summary = "新建本机工作区",
-            description = "body: {name, executorId, roots:[{path, alias?}], fromProjectId?}。"
-                    + "工作区是用户电脑上的一个或多个真实目录：roots 至少一项，第一项为主目录（cwd 与相对路径基准），"
-                    + "全部目录必须在同一台执行器上。服务器只记路径映射，不保存文件副本。"
-                    + "fromProjectId 是模板复制：root 与执行器缺省时沿用源工作区，事项清单复制为 open（不复制文件/会话）")
+    @Operation(summary = "新建工作区",
+            description = "body: {name, executorId?, sshHostId?, roots:[{path, alias?}], fromProjectId?}。"
+                    + "二选一后端：executorId=本机执行器目录；sshHostId=SSH 远程主机。roots 至少一项，第一项为主目录。"
+                    + "服务器只记「哪台机器/哪些绝对路径」，不保存文件副本。"
+                    + "fromProjectId 是模板复制：后端与 roots 缺省时沿用源工作区，事项清单复制为 open（不复制文件/会话）")
     @Permission("project:write")
     @PostMapping
     public ResultJson create(@RequestBody CreateReq req) {
         try {
             String uid = RequestUser.uid();
             String fromProjectId = req == null || req.fromProjectId() == null ? "" : req.fromProjectId().trim();
-            // 模板复制（D）：源工作区只提供「设置」，不带文件与会话
             Project source = fromProjectId.isEmpty() ? null : projectService.ownedOrNull(uid, fromProjectId);
             if (!fromProjectId.isEmpty() && source == null) {
                 return ResultJson.error(400, "模板工作区不存在或不属于你");
             }
-            String executorId = req.executorId() == null ? "" : req.executorId().trim();
-            if (executorId.isEmpty() && source != null && source.getExecutorId() != null) {
-                executorId = source.getExecutorId().trim();
-            }
-            if (executorId.isEmpty()) {
-                return ResultJson.error(400, "请先选择一台在线的本机执行器，再选文件夹");
-            }
-            if (!executorService.belongsTo(uid, executorId)) {
-                return ResultJson.error(403, "这台执行器不属于你，请先在这台电脑上授权");
-            }
             List<com.wenqu.ai.service.ProjectService.RootSpec> roots = new ArrayList<>();
-            if (req.roots() != null) {
+            if (req != null && req.roots() != null) {
                 for (RootReq r : req.roots()) {
                     if (r != null) roots.add(new com.wenqu.ai.service.ProjectService.RootSpec(r.path(), r.alias()));
                 }
             }
-            // 没带目录时沿用源工作区的目录别名配置（同一台电脑上的真实路径）
-            if (roots.isEmpty() && source != null) {
+            String sshAlias = req == null || req.sshAlias() == null ? "" : req.sshAlias().trim();
+            if (sshAlias.isEmpty() && source != null && projectService.isSshAlias(source)) {
+                sshAlias = source.getSshAlias();
+            }
+            if (!sshAlias.isEmpty()) {
+                String aliasExecutor = req == null || req.executorId() == null ? "" : req.executorId().trim();
+                if (aliasExecutor.isEmpty() && source != null && projectService.isSshAlias(source)) {
+                    aliasExecutor = source.getExecutorId();
+                }
+                if (aliasExecutor.isEmpty()) {
+                    return ResultJson.error(400, "本机 OpenSSH 别名工作区必须指定一台本机执行器");
+                }
+                if (!executorService.belongsTo(uid, aliasExecutor)) {
+                    return ResultJson.error(403, "这台执行器不属于你，请先在这台电脑上授权");
+                }
+                if (roots.isEmpty() && source != null && projectService.isSshAlias(source)) {
+                    for (ProjectRoot r : projectService.rootsOf(source)) {
+                        roots.add(new com.wenqu.ai.service.ProjectService.RootSpec(r.getPath(), r.getAlias()));
+                    }
+                }
+                Project p = projectService.createSshAlias(uid, req.name(), aliasExecutor, sshAlias, roots);
+                if (source != null) projectItemService.copyItems(uid, source.getId(), p.getId());
+                return ResultJson.ok(toDto(p), "已创建");
+            }
+            String sshHostId = req == null || req.sshHostId() == null ? "" : req.sshHostId().trim();
+            if (sshHostId.isEmpty() && source != null && projectService.isSsh(source)) {
+                sshHostId = source.getSshHostId();
+            }
+            if (!sshHostId.isEmpty()) {
+                // 模板复制只在本机→本机 / SSH→SSH 同后端时沿用目录；跨后端沿用会把本地路径当远端路径
+                if (roots.isEmpty() && source != null && projectService.isSsh(source)) {
+                    for (ProjectRoot r : projectService.rootsOf(source)) {
+                        roots.add(new com.wenqu.ai.service.ProjectService.RootSpec(r.getPath(), r.getAlias()));
+                    }
+                }
+                if (!sshHostService.belongsTo(uid, sshHostId)) {
+                    return ResultJson.error(403, "这台 SSH 主机不存在或不属于你");
+                }
+                Project p = projectService.createSsh(uid, req.name(), sshHostId, roots);
+                if (source != null) projectItemService.copyItems(uid, source.getId(), p.getId());
+                return ResultJson.ok(toDto(p), "已创建");
+            }
+
+            String executorId = req == null || req.executorId() == null ? "" : req.executorId().trim();
+            if (executorId.isEmpty() && source != null && projectService.isLocal(source)
+                    && source.getExecutorId() != null) {
+                executorId = source.getExecutorId().trim();
+            }
+            if (roots.isEmpty() && source != null && projectService.isLocal(source)) {
                 for (ProjectRoot r : projectService.rootsOf(source)) {
                     roots.add(new com.wenqu.ai.service.ProjectService.RootSpec(r.getPath(), r.getAlias()));
                 }
+            }
+            if (executorId.isEmpty()) {
+                return ResultJson.error(400, "请选择本机执行器或 SSH 远程主机，再选文件夹");
+            }
+            if (!executorService.belongsTo(uid, executorId)) {
+                return ResultJson.error(403, "这台执行器不属于你，请先在这台电脑上授权");
             }
             Project p = projectService.create(uid, req.name(), executorId, roots);
             if (source != null) {
@@ -385,7 +447,8 @@ public class ProjectController {
         }
     }
 
-    public record CreateReq(String name, String executorId, List<RootReq> roots, String fromProjectId) {
+    public record CreateReq(String name, String executorId, String sshHostId, String sshAlias,
+                            List<RootReq> roots, String fromProjectId) {
     }
 
     public record RootReq(String path, String alias) {
@@ -441,6 +504,76 @@ public class ProjectController {
                 }
             }
             return ResultJson.ok(toDto(projectService.bindRoots(uid, id, executorId, roots)), "已保存");
+        } catch (IllegalArgumentException e) {
+            return ResultJson.error(400, e.getMessage());
+        }
+    }
+
+    @Operation(summary = "绑定 SSH 主机与远端目录（替换式）",
+            description = "body: {sshHostId, roots:[{path, alias?}]}。"
+                    + "roots 是远端主机上的绝对路径，第一项为主目录；只改服务器记的映射，不动远端文件。"
+                    + "sshHostId 必须属于当前用户。")
+    @Permission("project:write")
+    @PutMapping("/{id}/ssh")
+    public ResultJson bindSsh(@PathVariable("id") String id,
+                              @RequestBody(required = false) Map<String, Object> body) {
+        try {
+            String uid = RequestUser.uid();
+            Object rawHost = body == null ? null : body.get("sshHostId");
+            String sshHostId = rawHost == null ? "" : String.valueOf(rawHost).trim();
+            if (sshHostId.isEmpty()) return ResultJson.error(400, "工作区必须绑定一台 SSH 主机");
+            if (!sshHostService.belongsTo(uid, sshHostId)) {
+                return ResultJson.error(403, "这台 SSH 主机不存在或不属于你");
+            }
+            List<com.wenqu.ai.service.ProjectService.RootSpec> roots = new ArrayList<>();
+            Object rawRoots = body == null ? null : body.get("roots");
+            if (rawRoots instanceof List<?> list) {
+                for (Object o : list) {
+                    if (o instanceof Map<?, ?> m) {
+                        Object path = m.get("path");
+                        Object alias = m.get("alias");
+                        roots.add(new com.wenqu.ai.service.ProjectService.RootSpec(
+                                path == null ? null : String.valueOf(path),
+                                alias == null ? null : String.valueOf(alias)));
+                    }
+                }
+            }
+            return ResultJson.ok(toDto(projectService.bindSshRoots(uid, id, sshHostId, roots)), "已保存");
+        } catch (IllegalArgumentException e) {
+            return ResultJson.error(400, e.getMessage());
+        }
+    }
+
+    @Operation(summary = "绑定本机 OpenSSH 别名与远端目录（替换式）",
+            description = "body: {executorId, sshAlias, roots:[{path, alias?}]}。"
+                    + "连接从 executorId 这台本机执行器发起，使用它所在电脑的 ~/.ssh/config 里的 Host 别名；"
+                    + "问渠只存别名，不保存私钥/密码。")
+    @Permission("project:write")
+    @PutMapping("/{id}/ssh-alias")
+    public ResultJson bindSshAlias(@PathVariable("id") String id,
+                                   @RequestBody(required = false) Map<String, Object> body) {
+        try {
+            String uid = RequestUser.uid();
+            Object rawEx = body == null ? null : body.get("executorId");
+            String executorId = rawEx == null ? "" : String.valueOf(rawEx).trim();
+            if (executorId.isEmpty()) return ResultJson.error(400, "请选择一台本机执行器");
+            if (!executorService.belongsTo(uid, executorId)) {
+                return ResultJson.error(403, "这台执行器不属于你，请先在这台电脑上授权");
+            }
+            Object rawAlias = body == null ? null : body.get("sshAlias");
+            String sshAlias = rawAlias == null ? "" : String.valueOf(rawAlias).trim();
+            List<com.wenqu.ai.service.ProjectService.RootSpec> roots = new ArrayList<>();
+            Object rawRoots = body == null ? null : body.get("roots");
+            if (rawRoots instanceof List<?> list) {
+                for (Object o : list) {
+                    if (o instanceof Map<?, ?> m) {
+                        roots.add(new com.wenqu.ai.service.ProjectService.RootSpec(
+                                m.get("path") == null ? null : String.valueOf(m.get("path")),
+                                m.get("alias") == null ? null : String.valueOf(m.get("alias"))));
+                    }
+                }
+            }
+            return ResultJson.ok(toDto(projectService.bindSshAliasRoots(uid, id, executorId, sshAlias, roots)), "已保存");
         } catch (IllegalArgumentException e) {
             return ResultJson.error(400, e.getMessage());
         }

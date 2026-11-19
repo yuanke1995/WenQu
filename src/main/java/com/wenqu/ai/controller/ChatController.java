@@ -322,7 +322,7 @@ public class ChatController {
         if (request == null || sessionId == null || sessionId.isBlank()) return;
         if (request.getAttribute(com.wenqu.ai.config.SecurityConfig.ATTR_API_KEY_ID) == null) return;
         com.wenqu.ai.model.Project project = projectService.projectOfSession(sessionId);
-        if (project != null && projectService.isLocal(project)) {
+        if (project != null && projectService.isDirect(project)) {
             throw new BizException("API Key 不开放绑定了本机工作区的会话：请在网页端使用，或改用不绑定执行器的会话");
         }
     }

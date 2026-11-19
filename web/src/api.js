@@ -566,6 +566,23 @@ export const bindProjectExecutor = (projectId, executorId, roots) =>
   request(`/project/${encodeURIComponent(projectId)}/executor`, {
     method: 'PUT', body: JSON.stringify({ executorId, roots })
   })
+// ==== SSH 远程主机（工作区的远端执行后端，个人资产；凭据出参已脱敏） ====
+export const listSshHosts = () => request('/executor/ssh/hosts')
+export const createSshHost = body => request('/executor/ssh/hosts', { method: 'POST', body: JSON.stringify(body || {}), timeout: 60000 })
+export const updateSshHost = (id, body) => request(`/executor/ssh/hosts/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(body || {}), timeout: 60000 })
+export const deleteSshHost = id => request(`/executor/ssh/hosts/${encodeURIComponent(id)}`, { method: 'DELETE' })
+/** 新建前拨测：返回 serverVersion/fingerprint/algorithm/home/os，不落库 */
+export const testSshHostDraft = body => request('/executor/ssh/hosts/test', { method: 'POST', body: JSON.stringify(body || {}), timeout: 60000 })
+/** 测试已存主机：首次连接会 TOFU 记录指纹 */
+export const testSshHost = id => request(`/executor/ssh/hosts/${encodeURIComponent(id)}/test`, { method: 'POST', timeout: 60000 })
+export const browseSshHost = (id, path) => request(`/executor/ssh/hosts/${encodeURIComponent(id)}/browse?path=${encodeURIComponent(path || '')}`, { timeout: 30000 })
+export const mkdirSshHost = (id, path) => request(`/executor/ssh/hosts/${encodeURIComponent(id)}/mkdir`, { method: 'POST', body: JSON.stringify({ path }), timeout: 30000 })
+/** 终端一次性入场券（60 秒），用于 /api/ai/ssh-terminal WebSocket */
+export const issueSshTerminalTicket = id => request(`/executor/ssh/hosts/${encodeURIComponent(id)}/terminal-ticket`, { method: 'POST' })
+// ==== 本机 OpenSSH 别名（DSH dsh-ssh 同形态）：连接在用户本机执行器上用 ~/.ssh/config，问渠不存凭据 ====
+export const listSshAliases = executorId => request(`/executor/ssh-aliases?executorId=${encodeURIComponent(executorId)}`, { timeout: 20000 })
+export const browseSshAlias = (executorId, alias, path) => request(`/executor/ssh-alias/browse?executorId=${encodeURIComponent(executorId)}&alias=${encodeURIComponent(alias)}&path=${encodeURIComponent(path || '')}`, { timeout: 30000 })
+export const testSshAlias = (executorId, alias) => request('/executor/ssh-alias/test', { method: 'POST', body: JSON.stringify({ executorId, alias }), timeout: 30000 })
 // 我的工作区容器（implicit 兜底容器在前，前端会过滤掉）；首次调用会懒创建 implicit 行
 export const listProjects = () => request('/project/list')
 // 工作区 = 本机上的一个或多个真实目录；roots[0] 是主目录（cwd 与相对路径基准）
@@ -574,6 +591,31 @@ export const createProject = (name, executorId, roots, fromProjectId) =>
     method: 'POST',
     body: JSON.stringify(fromProjectId ? { name, executorId, roots, fromProjectId } : { name, executorId, roots })
   }), { k: 'spaces' })
+// 新建 SSH 远程主机工作区：roots 是远端主机上的绝对路径，roots[0] 为主目录
+export const createSshProject = (name, sshHostId, roots, fromProjectId) =>
+  said(request('/project', {
+    method: 'POST',
+    body: JSON.stringify(fromProjectId
+      ? { name, sshHostId, roots, fromProjectId }
+      : { name, sshHostId, roots })
+  }), { k: 'spaces' })
+// 重绑 SSH 工作区：{sshHostId, roots}
+export const bindProjectSsh = (projectId, sshHostId, roots) =>
+  request(`/project/${encodeURIComponent(projectId)}/ssh`, {
+    method: 'PUT', body: JSON.stringify({ sshHostId, roots })
+  })
+// 新建「本机 OpenSSH 别名」工作区：executorId=用户本机执行器，sshAlias=~/.ssh/config 的 Host 名
+export const createSshAliasProject = (name, executorId, sshAlias, roots, fromProjectId) =>
+  said(request('/project', {
+    method: 'POST',
+    body: JSON.stringify(fromProjectId
+      ? { name, executorId, sshAlias, roots, fromProjectId }
+      : { name, executorId, sshAlias, roots })
+  }), { k: 'spaces' })
+export const bindProjectSshAlias = (projectId, executorId, sshAlias, roots) =>
+  request(`/project/${encodeURIComponent(projectId)}/ssh-alias`, {
+    method: 'PUT', body: JSON.stringify({ executorId, sshAlias, roots })
+  })
 // 删除工作区：只摘归属，其下会话与产物仍然保留；本机目录里的文件一个都不动
 export const deleteProject = id =>
   said(request(`/project/${id}`, { method: 'DELETE' }), { k: 'spaces' })

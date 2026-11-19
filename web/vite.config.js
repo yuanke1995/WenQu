@@ -41,6 +41,7 @@ export default defineConfig({
         // （启动时：VITE_PROXY_TARGET=http://localhost:8091/ai npm run dev）
         target: process.env.VITE_PROXY_TARGET || 'http://localhost:8090/ai',
         changeOrigin: true,
+        ws: true,
         rewrite: path => path.replace(/^\/proxy/, '')
       },
       // 对接文档里的 curl 用「origin + /ai」作基址（线上 dist 与后端同域，正是这个形状），

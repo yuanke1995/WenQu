@@ -2675,7 +2675,386 @@ async function opBrowser (args) {
   return { text }
 }
 
+
+// ==================== SSH 别名（DSH dsh-ssh 同形态：用本机 OpenSSH alias） ====================
+//
+// 设计要点（与 DSH 对齐）：
+//  - 只用本机 `ssh` 与 `~/.ssh/config` 里已有的 Host alias；问渠不保存私钥/密码；
+//  - BatchMode + 严格 host-key + ControlMaster 复用；不交互、不转发 agent；
+//  - fs/exec 的语义与本地 op 对齐，服务器侧复用同一套 ExecutorFilesystem/ExecutorFiles。
+const SSH_ALIAS_RE = /^[A-Za-z0-9._@-]+$/
+const SSH_MUTATING_SUBOPS = new Set(['write', 'writeBytes', 'writeChunk', 'mkdir', 'move', 'remove', 'exec'])
+const SSH_READ_SUBOPS = new Set(['list', 'stat', 'read', 'readBytes', 'tree', 'grep', 'find'])
+const SSH_CONTROL_DIR = path.join(os.tmpdir(), `wenqu-ssh-${process.pid}`)
+
+function shq (s) {
+  return "'" + String(s == null ? '' : s).replace(/'/g, "'\\''") + "'"
+}
+
+function remoteNorm (p) {
+  const raw = String(p == null ? '' : p).trim().replace(/\\/g, '/')
+  if (!raw) throw err('E_INVALID', '缺少远端路径')
+  if (!raw.startsWith('/')) throw err('E_INVALID', `远端路径必须是绝对路径：${raw}`)
+  const n = path.posix.normalize(raw)
+  return n === '.' ? '/' : (n.length > 1 ? n.replace(/\/+$/, '') : '/')
+}
+function remoteWithin (p, root) {
+  const r = root === '/' ? '/' : root.replace(/\/+$/, '')
+  return p === r || p.startsWith(r === '/' ? '/' : r + '/')
+}
+function remoteContext (a) {
+  const roots = Array.isArray(a && a.roots)
+    ? a.roots.map(r => String((r && r.path) || '')).filter(Boolean).map(remoteNorm)
+    : []
+  const primary = Array.isArray(a && a.roots)
+    ? (a.roots.find(r => r && r.primary && r.path) || {}).path
+    : null
+  return {
+    roots,
+    primary: primary ? remoteNorm(primary) : (roots[0] || null),
+    policy: a && a.policy === 'danger-full-access' ? 'danger-full-access'
+      : a && a.policy === 'read-only' ? 'read-only' : 'workspace-write'
+  }
+}
+function guardRemote (p, rctx, allowAnyForBrowse) {
+  const n = remoteNorm(p)
+  if (rctx.policy === 'danger-full-access') return n
+  if (!rctx.roots.length) {
+    if (allowAnyForBrowse) return n
+    throw err('E_PATH_OUTSIDE', '没有远端工作区根')
+  }
+  if (!rctx.roots.some(r => remoteWithin(n, r))) {
+    throw err('E_PATH_OUTSIDE', `路径不在远端工作区目录内：${n}`)
+  }
+  return n
+}
+
+function sshArgs (alias, command, controlDir) {
+  fs.mkdirSync(controlDir, { recursive: true, mode: 0o700 })
+  const control = path.join(controlDir, 'cm-' + alias.replace(/[^A-Za-z0-9._-]/g, '_'))
+  return [
+    '-o', 'BatchMode=yes',
+    '-o', 'StrictHostKeyChecking=yes',
+    '-o', 'ConnectTimeout=10',
+    '-o', 'ServerAliveInterval=15',
+    '-o', 'ServerAliveCountMax=3',
+    '-o', 'ControlMaster=auto',
+    '-o', 'ControlPath=' + control,
+    '-o', 'ControlPersist=60',
+    '--', alias, command
+  ]
+}
+
+function sshRun (alias, command, { input, timeoutMs = 60000 } = {}) {
+  if (!SSH_ALIAS_RE.test(String(alias || ''))) {
+    throw err('E_INVALID', '非法 SSH 别名（只允许字母数字 . _ @ -）：' + alias)
+  }
+  return new Promise((resolve, reject) => {
+    let child
+    try {
+      child = spawn('ssh', sshArgs(alias, command, SSH_CONTROL_DIR), { stdio: ['pipe', 'pipe', 'pipe'] })
+    } catch (e) {
+      return reject(err('E_IO', '无法启动本机 ssh：' + (e.message || '')))
+    }
+    const cap = 1024 * 1024
+    const out = []
+    const errOut = []
+    let outLen = 0
+    let errLen = 0
+    let truncated = false
+    let timedOut = false
+    const timer = setTimeout(() => {
+      timedOut = true
+      try { child.kill('SIGKILL') } catch { /* ignore */ }
+    }, Math.max(1000, timeoutMs))
+    child.stdout.on('data', b => {
+      if (outLen >= cap) { truncated = true; return }
+      const take = b.subarray(0, cap - outLen)
+      out.push(take); outLen += take.length
+      if (take.length < b.length) truncated = true
+    })
+    child.stderr.on('data', b => {
+      if (errLen >= 200 * 1024) return
+      const take = b.subarray(0, 200 * 1024 - errLen)
+      errOut.push(take); errLen += take.length
+    })
+    child.on('error', e => { clearTimeout(timer); reject(err('E_IO', '本机 ssh 执行失败：' + (e.message || ''))) })
+    child.on('close', code => {
+      clearTimeout(timer)
+      const stderr = Buffer.concat(errOut).toString('utf8')
+      if (timedOut) return resolve({ code: null, stdout: Buffer.concat(out).toString('utf8'), stderr: stderr || 'timeout', truncated: true, timedOut: true })
+      resolve({ code, stdout: Buffer.concat(out).toString('utf8'), stderr, truncated })
+    })
+    try {
+      if (input == null) child.stdin.end()
+      else child.stdin.end(input)
+    } catch { /* ignore */ }
+  })
+}
+
+function sshError (r, opName) {
+  const errText = (r && r.stderr) || ''
+  const lower = errText.toLowerCase()
+  if (r && r.timedOut) return err('E_TIMEOUT', `SSH 远端 ${opName} 超时`)
+  if (lower.includes('permission denied') || lower.includes('authentication failed')) {
+    return err('E_PERMISSION', '本机 ssh 认证失败（检查 ~/.ssh/config、密钥与 ssh-agent）：' + errText.trim())
+  }
+  if (lower.includes('host key verification failed') || lower.includes('remote host identification has changed')) {
+    return err('E_HOST_KEY_MISMATCH', 'SSH 主机指纹校验失败（先在本机执行一次 ssh 确认 known_hosts）：' + errText.trim())
+  }
+  if ((r && r.code) === 255) {
+    return err('E_EXECUTOR_OFFLINE', '本机 ssh 连不上远端：' + (errText.trim() || 'ssh 退出码 255'))
+  }
+  return err('E_IO', `远端 ${opName} 失败（exit=${r && r.code}）：${errText.trim()}`)
+}
+
+async function sshStat (alias, p, timeoutMs) {
+  const cmd = `stat -c '%s|%Y|%F' ${shq(p)} 2>/dev/null || stat -f '%z|%m|%HT' ${shq(p)}`
+  const r = await sshRun(alias, cmd, { timeoutMs })
+  if (r.code !== 0) throw sshError(r, 'stat')
+  const line = String(r.stdout || '').split('\n').find(Boolean) || ''
+  const parts = line.split('|')
+  const type = (parts[2] || '').toLowerCase()
+  return {
+    path: p,
+    name: path.posix.basename(p),
+    size: Number(parts[0]) || 0,
+    mtimeMs: (Number(parts[1]) || 0) * 1000,
+    isDir: type.includes('dir') || type.includes('folder')
+  }
+}
+
+async function sshRemoteList (alias, dir, rctx, timeoutMs) {
+  const cmd = `find ${shq(dir)} -mindepth 1 -maxdepth 1 2>/dev/null | while IFS= read -r f; do `
+    + `s=$(stat -c '%s' "$f" 2>/dev/null || stat -f '%z' "$f" 2>/dev/null || echo 0); `
+    + `m=$(stat -c '%Y' "$f" 2>/dev/null || stat -f '%m' "$f" 2>/dev/null || echo 0); `
+    + `t=$(stat -c '%F' "$f" 2>/dev/null || stat -f '%HT' "$f" 2>/dev/null || echo file); `
+    + `l=$( [ -L "$f" ] && echo 1 || echo 0 ); `
+    + `printf '%s\\t%s\\t%s\\t%s\\t%s\\n' "$f" "$s" "$m" "$t" "$l"; done`
+  const r = await sshRun(alias, cmd, { timeoutMs })
+  if (r.code !== 0) throw sshError(r, 'list')
+  const entries = []
+  for (const line of String(r.stdout || '').split('\n')) {
+    if (!line) continue
+    const p = line.split('\t')
+    if (!p[0]) continue
+    const type = (p[3] || '').toLowerCase()
+    entries.push({
+      path: p[0],
+      name: path.posix.basename(p[0]),
+      isDir: type.includes('dir') || type.includes('folder'),
+      isSymlink: p[4] === '1',
+      size: Number(p[1]) || 0,
+      mtimeMs: (Number(p[2]) || 0) * 1000
+    })
+  }
+  entries.sort((a, b) => (a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1))
+  return { path: dir, entries }
+}
+
+async function opSsh ({ alias, op, args }, outerCtx) {
+  const sub = String(op || '')
+  const a = args || {}
+  const rctx = remoteContext(a)
+  const timeoutMs = outerCtx && outerCtx.deadline
+    ? Math.max(1000, Math.min(600000, outerCtx.deadline - Date.now()))
+    : 60000
+  if (outerCtx && outerCtx.policy === 'read-only' && SSH_MUTATING_SUBOPS.has(sub)) {
+    throw err('E_SANDBOX_DENIED', `只读档不允许远端 ${sub}`)
+  }
+  if (sub === 'list') {
+    let raw = a.path ? String(a.path) : (rctx.primary || '')
+    if (!raw) {
+      const h = await sshRun(alias, 'printf %s "$HOME"', { timeoutMs: Math.min(timeoutMs, 10000) })
+      raw = String(h.stdout || '').trim() || '/'
+    }
+    const dir = rctx.roots.length ? guardRemote(raw, rctx, false) : remoteNorm(raw)
+    return sshRemoteList(alias, dir, rctx, timeoutMs)
+  }
+  if (sub === 'stat') {
+    const p = guardRemote(a.path, rctx, false)
+    const st = await sshStat(alias, p, timeoutMs)
+    return st
+  }
+  if (sub === 'read') {
+    const p = guardRemote(a.path, rctx, false)
+    const st = await sshStat(alias, p, timeoutMs)
+    if (st.isDir) throw err('E_IO', '是一个文件夹，不能按文本读取：' + p)
+    const r = await sshRun(alias, `base64 < ${shq(p)} | tr -d '\\n'`, { timeoutMs })
+    if (r.code !== 0) throw sshError(r, 'read')
+    const buf = Buffer.from(String(r.stdout || '').trim(), 'base64')
+    if (buf.includes(0)) return { content: '', encoding: 'base64', binary: true }
+    const text = buf.toString('utf8')
+    const lines = text.split('\n')
+    const start = Math.max(0, Number(a.offset) || 0)
+    const end = a.limit && Number(a.limit) > 0 ? start + Number(a.limit) : lines.length
+    return { content: lines.slice(start, end).join('\n'), encoding: 'utf-8', totalLines: lines.length }
+  }
+  if (sub === 'readBytes') {
+    const p = guardRemote(a.path, rctx, false)
+    const st = await sshStat(alias, p, timeoutMs)
+    const start = Math.max(0, Number(a.offset) || 0)
+    const want = Number(a.length) > 0 ? Math.min(Number(a.length), Math.max(0, st.size - start)) : Math.max(0, st.size - start)
+    const r = await sshRun(alias, `dd if=${shq(p)} bs=1 skip=${start} count=${want} 2>/dev/null | base64 | tr -d '\\n'`, { timeoutMs })
+    if (r.code !== 0) throw sshError(r, 'readBytes')
+    return { contentBase64: String(r.stdout || '').trim(), size: want, totalBytes: st.size }
+  }
+  if (sub === 'write' || sub === 'writeBytes') {
+    const p = guardRemote(a.path, rctx, false)
+    const buf = sub === 'write'
+      ? Buffer.from(a.content == null ? '' : String(a.content), 'utf8')
+      : Buffer.from(a.contentBase64 || '', 'base64')
+    if (a.expectedHash) {
+      const cur = await sshRun(alias, `base64 < ${shq(p)} 2>/dev/null | tr -d '\\n'`, { timeoutMs })
+      const actual = createHash('sha256').update(Buffer.from(String(cur.stdout || '').trim(), 'base64')).digest('hex')
+      if (cur.code !== 0 || actual !== String(a.expectedHash)) {
+        throw err('E_CONFLICT', '远端文件已被改动，请重新读取后再改')
+      }
+    }
+    const parent = path.posix.dirname(p)
+    const tmp = path.join(parent, `.wenqu-${Date.now()}-${Math.random().toString(16).slice(2)}.tmp`).replace(/\\/g, '/')
+    const cmd = `umask 077; mkdir -p ${shq(parent)} && cat > ${shq(tmp)} && mv -f ${shq(tmp)} ${shq(p)}`
+    const r = await sshRun(alias, cmd, { input: buf, timeoutMs })
+    if (r.code !== 0) throw sshError(r, 'write')
+    return { path: p, bytes: buf.length }
+  }
+  if (sub === 'writeChunk') {
+    const p = guardRemote(a.path, rctx, false)
+    const buf = Buffer.from(a.contentBase64 || '', 'base64')
+    const off = Math.max(0, Number(a.offset) || 0)
+    const cmd = `umask 077; mkdir -p ${shq(path.posix.dirname(p))} && dd of=${shq(p)} bs=1 seek=${off} conv=notrunc 2>/dev/null`
+    const r = await sshRun(alias, cmd, { input: buf, timeoutMs })
+    if (r.code !== 0) throw sshError(r, 'writeChunk')
+    return { path: p, bytes: buf.length, offset: off }
+  }
+  if (sub === 'mkdir') {
+    const p = guardRemote(a.path, rctx, false)
+    const r = await sshRun(alias, `mkdir -p ${shq(p)}`, { timeoutMs })
+    if (r.code !== 0) throw sshError(r, 'mkdir')
+    return { path: p }
+  }
+  if (sub === 'move') {
+    const from = guardRemote(a.from, rctx, false)
+    const to = guardRemote(a.to, rctx, false)
+    const cmd = `mkdir -p ${shq(path.posix.dirname(to))} && mv -f ${shq(from)} ${shq(to)}`
+    const r = await sshRun(alias, cmd, { timeoutMs })
+    if (r.code !== 0) throw sshError(r, 'move')
+    return { path: to }
+  }
+  if (sub === 'remove') {
+    const p = guardRemote(a.path, rctx, false)
+    if (rctx.roots.includes(p)) throw err('E_INVALID', '不能删除远端工作区根目录本身')
+    const r = await sshRun(alias, `rm -rf -- ${shq(p)}`, { timeoutMs })
+    if (r.code !== 0) throw sshError(r, 'remove')
+    return { removed: true, path: p }
+  }
+  if (sub === 'tree') {
+    const dir = guardRemote(a.path, rctx, false)
+    const cap = Math.max(1, Math.min(Number(a.maxFiles) || 5000, 50000))
+    const depthCap = Math.max(1, Math.min(Number(a.maxDepth) || 8, 32))
+    const cmd = `find ${shq(dir)} -mindepth 1 2>/dev/null | while IFS= read -r f; do `
+      + `s=$(stat -c '%s' "$f" 2>/dev/null || stat -f '%z' "$f" 2>/dev/null || echo 0); `
+      + `m=$(stat -c '%Y' "$f" 2>/dev/null || stat -f '%m' "$f" 2>/dev/null || echo 0); `
+      + `t=$(stat -c '%F' "$f" 2>/dev/null || stat -f '%HT' "$f" 2>/dev/null || echo file); `
+      + `l=$( [ -L "$f" ] && echo 1 || echo 0 ); `
+      + `printf '%s\\t%s\\t%s\\t%s\\t%s\\n' "$f" "$s" "$m" "$t" "$l"; done | head -n ${Math.min(cap * 2, 100000)}`
+    const r = await sshRun(alias, cmd, { timeoutMs })
+    if (r.code !== 0) throw sshError(r, 'tree')
+    const out = []
+    for (const line of String(r.stdout || '').split('\n')) {
+      if (!line) continue
+      const p = line.split('\t')
+      if (!p[0]) continue
+      const rel = path.posix.relative(dir, p[0])
+      if (!rel || rel.startsWith('..')) continue
+      const segs = rel.split('/')
+      if (segs.some(x => x.startsWith('.') || x === 'node_modules' || x === '__pycache__' || x === '.git')) continue
+      if (segs.length > depthCap) continue
+      const type = (p[3] || '').toLowerCase()
+      if (p[4] === '1') continue
+      out.push({ path: rel, name: path.posix.basename(rel), isDir: type.includes('dir') || type.includes('folder'), size: Number(p[1]) || 0, mtimeMs: (Number(p[2]) || 0) * 1000 })
+      if (out.length >= cap) break
+    }
+    return { path: dir, entries: out, capped: out.length >= cap }
+  }
+  if (sub === 'grep') {
+    const base = guardRemote(a.path, rctx, false)
+    const needle = String(a.pattern || '')
+    if (!needle) throw err('E_INVALID', '缺少搜索内容')
+    const cap = Math.max(1, Math.min(Number(a.limit) || 4000, 8000))
+    const cmd = `grep -rHnF -e ${shq(needle)} ${shq(base)} 2>/dev/null | head -n ${cap}`
+    const r = await sshRun(alias, cmd, { timeoutMs })
+    if (r.code !== 0 && r.code !== 1) throw sshError(r, 'grep')
+    const nameRe = a.glob ? globToRegExp(path.posix.basename(String(a.glob))) : null
+    const matches = []
+    for (const line of String(r.stdout || '').split('\n')) {
+      if (!line) continue
+      const i1 = line.indexOf(':')
+      const i2 = line.indexOf(':', i1 + 1)
+      if (i1 < 0 || i2 < 0) continue
+      const file = line.slice(0, i1)
+      const lineNo = Number(line.slice(i1 + 1, i2))
+      const text = line.slice(i2 + 1)
+      if (nameRe && !nameRe.test(path.posix.basename(file))) continue
+      matches.push({ path: file, line: lineNo || 0, text: text.slice(0, 500) })
+      if (matches.length >= cap) break
+    }
+    return { matches, truncated: matches.length >= cap }
+  }
+  if (sub === 'find') {
+    const base = guardRemote(a.path, rctx, false)
+    const pattern = String(a.pattern || '*')
+    const cmd = `find ${shq(base)} -type f -name ${shq(pattern)} 2>/dev/null | head -n 5000`
+    const r = await sshRun(alias, cmd, { timeoutMs })
+    if (r.code !== 0) throw sshError(r, 'find')
+    const entries = String(r.stdout || '').split('\n').filter(Boolean).map(f => ({
+      path: f, name: path.posix.basename(f), isDir: false, size: 0, mtimeMs: 0
+    }))
+    return { entries }
+  }
+  if (sub === 'exec') {
+    const command = String(a.command || '')
+    if (!command) throw err('E_INVALID', '命令不能为空')
+    const cwd = rctx.primary ? guardRemote(rctx.primary, rctx, false) : '~'
+    const seconds = Math.max(1, Math.min(Number(a.timeoutSeconds) || 120, 600))
+    const full = `cd ${cwd === '~' ? '~' : shq(cwd)} && { ${command}\n}`
+    const r = await sshRun(alias, full, { timeoutMs: Math.min(timeoutMs, (seconds + 2) * 1000) })
+    if (r.timedOut) throw err('E_TIMEOUT', `SSH 远端命令超时（${seconds}s）`)
+    if (r.code === null) throw err('E_TIMEOUT', 'SSH 远端命令未返回')
+    return { output: String(r.stdout || '') + (r.stderr ? (r.stdout ? '\n' : '') + r.stderr : ''), exitCode: r.code, truncated: !!r.truncated }
+  }
+  if (sub === 'openPath' || sub === 'pickDir') {
+    throw err('E_UNSUPPORTED', '本机 OpenSSH 别名模式不支持在远端桌面打开/选择目录')
+  }
+  if (sub === 'turnStart' || sub === 'turnEnd' || sub === 'turnDiff') {
+    throw err('E_UNSUPPORTED', '本机 OpenSSH 别名模式暂不支持每轮文件改动快照')
+  }
+  throw err('E_UNSUPPORTED', '不支持的 SSH 子操作：' + sub)
+}
+
+/** 读本机 ~/.ssh/config 的 Host 别名（新工作区选择用）。 */
+async function opSshAliases () {
+  const file = path.join(os.homedir(), '.ssh', 'config')
+  let text = ''
+  try { text = await fsp.readFile(file, 'utf8') } catch { return { aliases: [], configPath: file, exists: false } }
+  const aliases = []
+  const seen = new Set()
+  for (const line of text.split('\n')) {
+    const m = /^\s*Host\s+(.+?)\s*(?:#.*)?$/i.exec(line)
+    if (!m) continue
+    for (const tok of m[1].split(/\s+/)) {
+      if (!tok || tok.includes('*') || tok.includes('?') || tok.startsWith('!')) continue
+      if (seen.has(tok)) continue
+      seen.add(tok)
+      aliases.push(tok)
+    }
+  }
+  return { aliases, configPath: file, exists: true }
+}
+
 const HANDLERS = {
+  ssh: opSsh,
+  sshAliases: opSshAliases,
   browser: opBrowser,
   list: opList,
   pickDir: opPickDir,
@@ -3003,6 +3382,20 @@ function watchIdentities () {
 }
 
 async function main() {
+  // 自检：用当前用户的本机 OpenSSH 别名跑一条远端命令（不连服务器、不需要令牌）。
+  // 用法：node wenqu-agent.mjs --ssh-alias-selftest wenqu
+  const selfTestAlias = arg('ssh-alias-selftest', '')
+  if (selfTestAlias) {
+    try {
+      const out = await opSsh({ alias: selfTestAlias, op: 'exec', args: { command: 'hostname; uptime', timeoutSeconds: 10 } },
+        { policy: 'workspace-write', deadline: Date.now() + 15000 })
+      console.log(JSON.stringify(out, null, 2))
+      process.exit(out && out.exitCode === 0 ? 0 : 3)
+    } catch (e) {
+      console.error(`[ssh-alias-selftest] ${e.code || 'E_IO'}: ${e.message}`)
+      process.exit(2)
+    }
+  }
   log(`执行器启动：${SERVER}  设备=${NAME}`)
   log(`浏览起点：${ROOT}`)
   if (AUTO_YES) log('注意：--yes 已开启，写文件与命令不再逐次确认')

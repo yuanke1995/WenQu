@@ -45,7 +45,8 @@ class ProjectItemControllerTest {
         mvc = MockMvcBuilders.standaloneSetup(new ProjectController(
                 projectService, fileService, itemService,
                 mock(com.wenqu.ai.executor.ExecutorService.class),
-                mock(com.wenqu.ai.executor.ExecutorRegistry.class))).build();
+                mock(com.wenqu.ai.executor.ExecutorRegistry.class),
+                mock(com.wenqu.ai.ssh.SshHostService.class))).build();
     }
 
     @AfterEach

@@ -109,6 +109,19 @@ public class SandboxService {
      * 返回显式工作区标记（文件系统随工作区配置走，不在本方法判）、本机执行器+目录、或 cloud。
      */
     public String sessionWorkspaceKey(String sessionId, String uid) {
+        Project bound = projectService.projectOfSession(sessionId);
+        if (bound != null && projectService.isSshAlias(bound)) {
+            // 本机 OpenSSH 别名：换执行器/别名/主根都要重建框架实例。
+            String primary = projectService.primaryRootOf(bound) == null ? ""
+                    : projectService.primaryRootOf(bound).getPath();
+            return projectService.executorIdOf(bound) + ":" + primary;
+        }
+        if (bound != null && projectService.isSsh(bound)) {
+            // SSH 工作区：换主机/换主根都必须重建框架实例（文件系统按主机装配）。
+            String primary = projectService.primaryRootOf(bound) == null ? ""
+                    : projectService.primaryRootOf(bound).getPath();
+            return "ssh:" + bound.getSshHostId() + ":" + primary;
+        }
         SessionWorkspaceService.Workspace ws = sessionWorkspace == null
                 ? null : sessionWorkspace.resolve(sessionId, uid);
         if (ws == null) return "project";
@@ -234,11 +247,11 @@ public class SandboxService {
         }
         Project local = projectService.projectOfSession(sessionId);
         if (local != null && !Project.SELECTION_IMPLICIT.equals(local.getSelectionStatus())) {
-            // 用户建的工作区只走本机执行器：这里再建服务器沙盒会把文件弄成两份
-            if (!projectService.isLocal(local)) {
-                throw new IllegalStateException("这个工作区还没有绑定本机目录：先在设置里添加源文件夹");
+            // 用户建的工作区只走直连执行后端（本机执行器 / SSH 远端主机）：这里再建服务器沙盒会把文件弄成两份
+            if (!projectService.isDirect(local)) {
+                throw new IllegalStateException("这个工作区还没有绑定执行后端：先在设置里添加源文件夹或绑定 SSH 主机");
             }
-            throw new IllegalStateException("本机工作区没有服务器沙盒：文件与命令都走你那台电脑上的执行器");
+            throw new IllegalStateException("直连工作区没有服务器沙盒：文件与命令都走绑定的执行后端");
         }
         SandboxScope scope = scopeOf(sessionId, uid);
         return new ProvisionerSandboxBackend(provider, scope.scopeId(), uid, scope.workdirPath(),
@@ -286,23 +299,23 @@ public class SandboxService {
             Project boundProject = projectService.projectOfSession(sessionId);
             boolean userWorkspace = boundProject != null
                     && !Project.SELECTION_IMPLICIT.equals(boundProject.getSelectionStatus());
-            if (userWorkspace && !projectService.isLocal(boundProject)) {
-                log.warn("[SANDBOX] 工作区未绑定本机目录，文件工具不可用 project={}", boundProject.getId());
+            if (userWorkspace && !projectService.isDirect(boundProject)) {
+                log.warn("[SANDBOX] 工作区未绑定执行后端，文件工具不可用 project={}", boundProject.getId());
                 return null;
             }
-            if (boundProject != null && projectService.isLocal(boundProject)) {
+            if (boundProject != null && projectService.isDirect(boundProject)) {
                 java.util.List<ExecutorFilesystem.Root> roots = new java.util.ArrayList<>();
                 for (com.wenqu.ai.model.ProjectRoot r : projectService.rootsOf(boundProject)) {
                     roots.add(new ExecutorFilesystem.Root(r.getAlias(), r.getPath(),
                             r.getPrimaryRoot() != null && r.getPrimaryRoot() == com.wenqu.ai.model.ProjectRoot.PRIMARY));
                 }
                 if (roots.isEmpty()) {
-                    log.warn("[SANDBOX] 本机工作区没有源文件夹，文件工具不可用 project={}", boundProject.getId());
+                    log.warn("[SANDBOX] 工作区没有源文件夹，文件工具不可用 project={}", boundProject.getId());
                     return null;
                 }
                 ExecutorFilesystem executorFs = new ExecutorFilesystem(
-                        executorRegistry, boundProject.getExecutorId(), roots, unrestrictedWrites,
-                        // 本机工作区：框架的写类调用带当前轮身份，执行器据此做「改动前捕获」（每轮文件改动）。
+                        executorRegistry, projectService.executorIdOf(boundProject), roots, unrestrictedWrites,
+                        // 直连工作区：框架的写类调用带当前轮身份，执行器据此做「改动前捕获」（每轮文件改动）。
                         // 供给方调用期读取——文件系统实例可能被框架缓存跨轮复用，不能把 turnId 烘焙进来。
                         () -> turnChanges.currentTurnId(sessionId), sessionId, uid);
                 return memoryRouted(executorFs, uid, memoryAgentId);
@@ -718,11 +731,11 @@ public class SandboxService {
         }
         Project local = projectService.projectOfSession(sessionId);
         if (local != null && !Project.SELECTION_IMPLICIT.equals(local.getSelectionStatus())) {
-            // 用户建的工作区只走本机执行器：这里再建服务器沙盒会把文件弄成两份
-            if (!projectService.isLocal(local)) {
-                throw new IllegalStateException("这个工作区还没有绑定本机目录：先在设置里添加源文件夹");
+            // 用户建的工作区只走直连执行后端（本机执行器 / SSH 远端主机）：这里再建服务器沙盒会把文件弄成两份
+            if (!projectService.isDirect(local)) {
+                throw new IllegalStateException("这个工作区还没有绑定执行后端：先在设置里添加源文件夹或绑定 SSH 主机");
             }
-            throw new IllegalStateException("本机工作区没有服务器沙盒：文件与命令都走你那台电脑上的执行器");
+            throw new IllegalStateException("直连工作区没有服务器沙盒：文件与命令都走绑定的执行后端");
         }
         SandboxScope scope = scopeOf(sessionId, uid);
         return new ProvisionerSandboxBackend(provider, scope.scopeId(), uid, scope.workdirPath(), false, true);

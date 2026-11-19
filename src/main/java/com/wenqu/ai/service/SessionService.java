@@ -238,7 +238,12 @@ public class SessionService {
             m.put("implicit", p == null || Project.SELECTION_IMPLICIT.equals(p.getSelectionStatus()));
             m.put("archived", p != null && Project.STATUS_ARCHIVED.equals(p.getStatus()));
             m.put("isLocal", p != null && projectService.isLocal(p));
-            m.put("executorId", p == null || p.getExecutorId() == null ? "" : p.getExecutorId());
+            m.put("isSsh", p != null && projectService.isSsh(p));
+            m.put("isSshAlias", p != null && projectService.isSshAlias(p));
+            m.put("sshAlias", p == null || p.getSshAlias() == null ? "" : p.getSshAlias());
+            String execId = p == null ? null : projectService.executorIdOf(p);
+            m.put("executorId", execId == null ? "" : execId);
+            m.put("sshHostId", p == null || p.getSshHostId() == null ? "" : p.getSshHostId());
             // 目录清单：聊天页标题的悬浮提示与「本机文件」入口要用；不把绝对路径塞进页面正文
             java.util.List<Map<String, Object>> roots = new java.util.ArrayList<>();
             if (p != null) {
@@ -252,8 +257,7 @@ public class SessionService {
                 }
             }
             m.put("roots", roots);
-            m.put("executorOnline", p != null && p.getExecutorId() != null && !p.getExecutorId().isBlank()
-                    && executorRegistry.online(p.getExecutorId()));
+            m.put("executorOnline", execId != null && !execId.isBlank() && executorRegistry.online(execId));
             // 隐式会话的工作区后端（本机执行器目录 / 离线时云端沙盒）：界面按它决定
             // 「权限档位选择器要不要摆」「文件栏是不是本机目录」。
             m.put("wsBackend", s.getWsBackend() == null ? "" : s.getWsBackend());

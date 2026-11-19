@@ -1459,7 +1459,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         boolean localProject = false;
         try {
             com.wenqu.ai.model.Project p = projectService.projectOfSession(sessionId);
-            localProject = p != null && projectService.isLocal(p);
+            localProject = p != null && projectService.isDirect(p);
         } catch (RuntimeException e) {
             log.debug("[PROFILE] 工作区类型解析失败，按沙盒状态判文件系统 session={}: {}",
                     sessionId, e.toString());
@@ -2138,7 +2138,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         try {
             com.wenqu.ai.model.Project p = projectService.projectOfSession(cmd.getSessionId());
             if (p != null && (!com.wenqu.ai.model.Project.SELECTION_IMPLICIT.equals(p.getSelectionStatus())
-                    || projectService.isLocal(p))) {
+                    || projectService.isDirect(p))) {
                 log.info("[PROFILE] profile=workspace reason=bound-project session={}",
                         cmd.getSessionId());
                 return true;
@@ -3598,7 +3598,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         List<String> out = new ArrayList<>();
         try {
             com.wenqu.ai.model.Project p = projectService.projectOfSession(cmd.getSessionId());
-            if (p == null || !projectService.isLocal(p)) return out;
+            if (p == null || !projectService.isDirect(p)) return out;
             com.wenqu.ai.model.ProjectRoot primary = projectService.primaryRootOf(p);
             // 主根必须排第一：相对路径（含 ..）按主根解析，AgentxDestructiveCommands 取 roots.get(0)
             if (primary != null && primary.getPath() != null && !primary.getPath().isBlank()) {

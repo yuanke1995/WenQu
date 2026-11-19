@@ -93,6 +93,27 @@ public class ExecutorRegistry {
         }
     }
 
+    /**
+     * 虚拟执行器：不是一台真实设备，而是本进程内一个把 op 翻译成别的通道的执行器
+     * （目前是 SSH 远端主机：{@code ssh:<hostId>}）。
+     *
+     * <p>为什么加这一层：`ExecutorFilesystem`（模型工具）与 `ExecutorFiles`（文件页）已经有一套完整的
+     * op 协议；SSH 只要实现同一套 op，就能零改动复用文件页、预览、下载、HITL 与权限档位。
+     */
+    public interface VirtualExecutor {
+        boolean online();
+
+        Result execute(String op, Map<String, Object> args);
+
+        default void close() {
+        }
+    }
+
+    /** 虚拟执行器的按需装配口：{@code ssh:<hostId>} → {@link VirtualExecutor}；不认识返回 null。 */
+    public interface VirtualExecutorProvider {
+        VirtualExecutor resolve(String virtualId);
+    }
+
     /** 一次待执行的调用；owner 是发起这次调用、持有等待 future 的副本。 */
     public static final class Call {
         public final String id;
@@ -139,6 +160,48 @@ public class ExecutorRegistry {
     private final Map<String, Call> pending = new ConcurrentHashMap<>();
     private final SecureRandom random = new SecureRandom();
 
+    /** 本进程已装配的虚拟执行器（ssh:<hostId>）。 */
+    private final Map<String, VirtualExecutor> virtuals = new ConcurrentHashMap<>();
+    /** 虚拟执行器的按需装配口（SSH 主机服务）；没有 SSH 能力时保持 null，行为与原来一致。 */
+    private volatile VirtualExecutorProvider virtualProvider;
+    /** 虚拟执行器调用线程池：SSH 网络 IO 不能占住调用方线程，超时由 future 控制。 */
+    private final java.util.concurrent.ExecutorService virtualPool =
+            java.util.concurrent.Executors.newCachedThreadPool(r -> {
+                Thread t = new Thread(r, "executor-virtual");
+                t.setDaemon(true);
+                return t;
+            });
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setVirtualProvider(VirtualExecutorProvider provider) {
+        this.virtualProvider = provider;
+    }
+
+    /** 取/按需装配虚拟执行器；非虚拟 id 返回 null（走原来的 Redis 设备通道）。 */
+    private VirtualExecutor virtualOf(String virtualId) {
+        if (virtualId == null || virtualId.isBlank()) return null;
+        VirtualExecutor v = virtuals.get(virtualId);
+        if (v != null) return v;
+        VirtualExecutorProvider p = virtualProvider;
+        if (p == null) return null;
+        v = p.resolve(virtualId);
+        if (v != null) virtuals.put(virtualId, v);
+        return v;
+    }
+
+    /** 主机被改/删时清缓存（下一次调用重新装配）。 */
+    public void invalidateVirtual(String virtualId) {
+        if (virtualId == null) return;
+        VirtualExecutor v = virtuals.remove(virtualId);
+        if (v != null) {
+            try {
+                v.close();
+            } catch (Exception e) {
+                log.warn("[EXECUTOR] 关闭虚拟执行器失败 {}: {}", virtualId, e.getMessage());
+            }
+        }
+    }
+
     public ExecutorRegistry(StringRedisTemplate redis) {
         this.redis = redis;
         this.replicaId = resolveReplicaId();
@@ -180,6 +243,7 @@ public class ExecutorRegistry {
             log.warn("[EXECUTOR] 注销副本租约失败（交给 TTL）: {}", e.getMessage());
         }
         if (scheduler != null) scheduler.shutdownNow();
+        virtualPool.shutdownNow();
     }
 
     private void refreshReplicaLease() {
@@ -219,6 +283,16 @@ public class ExecutorRegistry {
 
     public boolean online(String executorId) {
         if (executorId == null || executorId.isBlank()) return false;
+        // 虚拟执行器（SSH 远端主机）不走 Redis 在线键：其“在线”由主机状态决定。
+        VirtualExecutor v = virtualOf(executorId);
+        if (v != null) {
+            try {
+                return v.online();
+            } catch (Exception e) {
+                log.warn("[EXECUTOR] 虚拟执行器在线判定失败 {}（按离线处理）: {}", executorId, e.getMessage());
+                return false;
+            }
+        }
         try {
             return Boolean.TRUE.equals(redis.hasKey(ONLINE_KEY + executorId));
         } catch (Exception e) {
@@ -262,6 +336,35 @@ public class ExecutorRegistry {
      * @param timeoutMs 等待上限；执行器侧另收到比它少 1s 的 deadline，超时不会晚到落盘
      */
     public Result call(String executorId, String op, Map<String, Object> args, long timeoutMs) {
+        // 虚拟执行器（SSH 远端主机）：本进程直接执行，不走 Redis 队列。
+        VirtualExecutor virtual = virtualOf(executorId);
+        if (virtual != null) {
+            if (!online(executorId)) {
+                return Result.fail("E_EXECUTOR_OFFLINE", "SSH 主机不可用（已停用或未配置）");
+            }
+            try {
+                // 虚拟执行器跑在独立线程：把租户/身份随调用带过去，审计与凭据隔离不依赖 ThreadLocal 是否被重放。
+                Map<String, Object> vargs = args == null ? new LinkedHashMap<>() : new LinkedHashMap<>(args);
+                String tenant = com.wenqu.ai.util.TenantContext.current();
+                if (tenant != null && !tenant.isBlank()) vargs.putIfAbsent("_tenantId", tenant);
+                String uid = com.wenqu.ai.util.RequestUser.uid();
+                if (uid != null && !uid.isBlank()) vargs.putIfAbsent("_uid", uid);
+                java.util.concurrent.Future<Result> f = virtualPool.submit(() -> virtual.execute(op, vargs));
+                return f.get(timeoutMs, TimeUnit.MILLISECONDS);
+            } catch (TimeoutException e) {
+                return Result.fail("E_TIMEOUT", "SSH 远端执行超时（" + op + "）");
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return Result.fail("E_IO", "SSH 调用被中断");
+            } catch (Exception e) {
+                Throwable c = e.getCause() == null ? e : e.getCause();
+                if (c instanceof com.wenqu.ai.ssh.SshOpException soe) {
+                    return Result.fail(soe.code(), soe.getMessage());
+                }
+                log.warn("[EXECUTOR] 虚拟执行器调用失败 op={} executor={}: {}", op, executorId, c.getMessage());
+                return Result.fail("E_IO", "SSH 远端执行异常：" + c.getMessage());
+            }
+        }
         if (!online(executorId)) {
             return Result.fail("E_EXECUTOR_OFFLINE", "本机执行器不在线，请在那台电脑上启动后再试");
         }

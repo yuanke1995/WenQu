@@ -142,10 +142,12 @@ public class ProjectFileService {
     public String promptBriefOfSession(String sessionId) {
         try {
             Project project = projectService.projectOfSession(sessionId);
-            if (project == null || !projectService.isLocal(project)) return null;
+            if (project == null || !projectService.isDirect(project)) return null;
             List<ProjectRoot> roots = projectService.rootsOf(project);
             if (roots.isEmpty()) return null;
-            StringBuilder sb = new StringBuilder("\n\n【本机工作区】这个工作区绑定的是你电脑上的真实目录，文件工具直接读写它们：");
+            StringBuilder sb = new StringBuilder(projectService.isSsh(project) || projectService.isSshAlias(project)
+                    ? "\n\n【远程工作区】这个工作区绑定的是远端 SSH 主机上的真实目录，文件与命令工具直接读写/执行在远端："
+                    : "\n\n【本机工作区】这个工作区绑定的是你电脑上的真实目录，文件工具直接读写它们：");
             List<String> parts = new ArrayList<>();
             for (ProjectRoot r : roots) {
                 String head = r.getAlias() + "（" + r.getPath() + "）";
@@ -231,7 +233,7 @@ public class ProjectFileService {
             String owner = projectService.uidOfSession(sessionId);
             if (owner == null || owner.isBlank()) throw new IllegalArgumentException("会话不存在或已删除");
             Project p = projectService.projectOfSession(sessionId);
-            if (p != null && projectService.isLocal(p)) {
+            if (p != null && projectService.isDirect(p)) {
                 return viewFromLocal(p, rest.substring(sep + 1));
             }
             SessionWorkspaceService.Workspace sw = sessionLocal(sessionId);
@@ -242,7 +244,7 @@ public class ProjectFileService {
             return viewFromServer(file);
         }
         Project p = projectService.byId(parts[0]);
-        if (p == null || !projectService.isLocal(p)) throw new IllegalArgumentException("工作区不存在或已删除");
+        if (p == null || !projectService.isDirect(p)) throw new IllegalArgumentException("工作区不存在或已删除");
         return viewFromLocal(p, parts[1]);
     }
 
@@ -362,12 +364,12 @@ public class ProjectFileService {
     public String readWorkspaceMemory(String uid, String projectId) {
         try {
             Project p = projectService.detail(uid, projectId);
-            if (!projectService.isLocal(p)) return "";
+            if (!projectService.isDirect(p)) return "";
             List<ProjectRoot> roots = requireRoots(p);
             String abs = memoryAbs(roots);
-            if (!executorFiles.online(p.getExecutorId())) return "";
-            if (!executorFiles.exists(p.getExecutorId(), roots, abs)) return "";
-            return executorFiles.readText(p.getExecutorId(), roots, abs, WORKSPACE_MEMORY_READ_CAP);
+            if (!executorFiles.online(executorId(p))) return "";
+            if (!executorFiles.exists(executorId(p), roots, abs)) return "";
+            return executorFiles.readText(executorId(p), roots, abs, WORKSPACE_MEMORY_READ_CAP);
         } catch (Exception e) {
             log.warn("读取工作区记忆失败（视为空）：{}", e.getMessage());
             return "";
@@ -377,10 +379,10 @@ public class ProjectFileService {
     /** 写回工作区级记忆（{@code 主根/.wenqu/MEMORY.md}），经执行器原子写。 */
     public void saveWorkspaceMemory(String uid, String projectId, String content) {
         Project p = writableProject(uid, projectId);
-        if (!projectService.isLocal(p)) throw new IllegalArgumentException("这个工作区还没有绑定本机目录");
+        if (!projectService.isDirect(p)) throw new IllegalArgumentException("这个工作区还没有绑定执行后端或源文件夹");
         List<ProjectRoot> roots = requireRoots(p);
         String abs = memoryAbs(roots);
-        executorFiles.writeText(p.getExecutorId(), roots, abs, content == null ? "" : content);
+        executorFiles.writeText(executorId(p), roots, abs, content == null ? "" : content);
     }
 
     private static String memoryAbs(List<ProjectRoot> roots) {
@@ -406,6 +408,9 @@ public class ProjectFileService {
      */
     public void openInOS(String uid, String projectId, String path) {
         Project p = projectService.detail(uid, projectId);
+        if (projectService.isSsh(p) || projectService.isSshAlias(p)) {
+            throw new IllegalArgumentException("远程主机没有桌面文件管理器，请在文件页里浏览/下载");
+        }
         List<ProjectRoot> roots = requireRoots(p);
         Target t = target(p, roots, path, true);
         // 不先 stat 一遍：页面上点得到的只有目录行，多一次往返只会多一条失败路径
@@ -476,7 +481,7 @@ public class ProjectFileService {
 
     public Map<String, Object> listSessionFiles(String uid, String sessionId) {
         Project p = projectService.projectOfSession(sessionId);
-        if (p != null && projectService.isLocal(p)) {
+        if (p != null && projectService.isDirect(p)) {
             return localSessionFiles(sessionId, executorId(p), requireRoots(p), p.getId());
         }
         // 隐式会话的本机后端（工作区=用户电脑）：只认已经钉住的目录，打开一条问答会话不该建目录
@@ -533,7 +538,7 @@ public class ProjectFileService {
 
     public Download downloadSessionFile(String uid, String sessionId, String relPath) {
         Project p = projectService.projectOfSession(sessionId);
-        if (p != null && projectService.isLocal(p)) {
+        if (p != null && projectService.isDirect(p)) {
             return download(uid, p.getId(), relPath);
         }
         SessionWorkspaceService.Workspace sw = sessionLocal(sessionId);
@@ -551,16 +556,16 @@ public class ProjectFileService {
     private record Target(ProjectRoot root, String rel, String virtualPath) {
     }
 
-    private static String executorId(Project p) {
-        return p.getExecutorId();
+    private String executorId(Project p) {
+        return projectService.executorIdOf(p);
     }
 
     private List<ProjectRoot> requireRoots(Project p) {
-        if (!projectService.isLocal(p)) {
-            throw new IllegalArgumentException("这个工作区还没有绑定本机目录");
+        if (!projectService.isDirect(p)) {
+            throw new IllegalArgumentException("这个工作区还没有绑定执行后端或源文件夹");
         }
         List<ProjectRoot> roots = projectService.rootsOf(p);
-        if (roots.isEmpty()) throw new IllegalArgumentException("这个工作区还没有绑定本机目录");
+        if (roots.isEmpty()) throw new IllegalArgumentException("这个工作区还没有绑定执行后端或源文件夹");
         return roots;
     }
 

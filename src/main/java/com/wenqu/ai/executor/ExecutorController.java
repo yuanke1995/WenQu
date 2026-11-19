@@ -12,6 +12,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -255,6 +256,78 @@ public class ExecutorController {
         }
         boolean accepted = registry.complete(device.id(), id, result);
         return ResponseEntity.ok(JSON.toJSONString(Map.of("accepted", accepted)));
+    }
+
+    @Operation(summary = "本机 OpenSSH 别名清单", description = "读那台电脑的 ~/.ssh/config 里的 Host 别名（新工作区选择用）")
+    @Permission("executor:self")
+    @GetMapping("/ssh-aliases")
+    public Map<String, Object> sshAliases(@RequestParam("executorId") String executorId) {
+        if (!executorService.belongsTo(RequestUser.uid(), executorId)) return fail(403, "这台执行器不属于你");
+        if (!registry.online(executorId)) return fail(503, "执行器不在线：先在那台电脑上启动 wenqu-agent");
+        ExecutorRegistry.Result r = registry.call(executorId, "sshAliases", new LinkedHashMap<>(), 15_000);
+        if (!r.ok()) return fail(502, r.code() + "：" + r.message());
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("aliases", r.data().get("aliases"));
+        data.put("configPath", r.data().get("configPath"));
+        data.put("exists", r.data().get("exists"));
+        return ok(data);
+    }
+
+    @Operation(summary = "浏览本机 OpenSSH 别名下的远端目录", description = "经那台电脑的本机 ssh 列远端一层目录（只列目录）")
+    @Permission("executor:self")
+    @GetMapping("/ssh-alias/browse")
+    public Map<String, Object> sshAliasBrowse(@RequestParam("executorId") String executorId,
+                                              @RequestParam("alias") String alias,
+                                              @RequestParam(value = "path", required = false) String path) {
+        if (!executorService.belongsTo(RequestUser.uid(), executorId)) return fail(403, "这台执行器不属于你");
+        if (!registry.online(executorId)) return fail(503, "执行器不在线：先在那台电脑上启动 wenqu-agent");
+        Map<String, Object> args = new LinkedHashMap<>();
+        args.put("path", path == null ? "" : path);
+        Map<String, Object> wrapper = new LinkedHashMap<>();
+        wrapper.put("alias", alias);
+        wrapper.put("op", "list");
+        wrapper.put("args", args);
+        ExecutorRegistry.Result r = registry.call(executorId, "ssh", wrapper, 30_000);
+        if (!r.ok()) return fail(502, r.code() + "：" + r.message());
+        List<Map<String, Object>> dirs = new ArrayList<>();
+        Object raw = r.data().get("entries");
+        if (raw instanceof List<?> list) {
+            for (Object item : list) {
+                if (!(item instanceof Map<?, ?> m)) continue;
+                if (!Boolean.TRUE.equals(m.get("isDir"))) continue;
+                Map<String, Object> d = new LinkedHashMap<>();
+                d.put("path", m.get("path"));
+                d.put("name", m.get("name"));
+                dirs.add(d);
+            }
+        }
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("path", r.data().get("path") == null ? (path == null ? "" : path) : r.data().get("path"));
+        data.put("dirs", dirs);
+        return ok(data);
+    }
+
+    @Operation(summary = "测试本机 OpenSSH 别名", description = "body: {executorId, alias}；经那台电脑的本机 ssh 跑 user@host/uname/pwd")
+    @Permission("executor:self")
+    @PostMapping("/ssh-alias/test")
+    public Map<String, Object> sshAliasTest(@RequestBody(required = false) Map<String, Object> body) {
+        String executorId = body == null || body.get("executorId") == null ? "" : String.valueOf(body.get("executorId"));
+        String alias = body == null || body.get("alias") == null ? "" : String.valueOf(body.get("alias"));
+        if (!executorService.belongsTo(RequestUser.uid(), executorId)) return fail(403, "这台执行器不属于你");
+        if (!registry.online(executorId)) return fail(503, "执行器不在线：先在那台电脑上启动 wenqu-agent");
+        Map<String, Object> args = new LinkedHashMap<>();
+        args.put("command", "printf '%s\\n' \"$USER@$HOSTNAME\"; uname -s; pwd");
+        args.put("timeoutSeconds", 10);
+        Map<String, Object> wrapper = new LinkedHashMap<>();
+        wrapper.put("alias", alias);
+        wrapper.put("op", "exec");
+        wrapper.put("args", args);
+        ExecutorRegistry.Result r = registry.call(executorId, "ssh", wrapper, 20_000);
+        if (!r.ok()) return fail(502, r.code() + "：" + r.message());
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("output", r.data().get("output"));
+        data.put("exitCode", r.data().get("exitCode"));
+        return ok(data);
     }
 
     private static String bearer(String header) {

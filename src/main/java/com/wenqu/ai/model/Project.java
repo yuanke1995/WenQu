@@ -48,8 +48,25 @@ public class Project {
     /**
      * 本机执行器 id（c_ai_executor.id）：工作区的所有目录都在这台电脑上，文件/命令工具经它执行。
      * <p>用户建的工作区必填；implicit 容器为空（它没有目录，会话走服务器沙盒）。
+     * <p><b>SSH 工作区此列为空</b>：远端的执行后端记在 {@link #sshHostId}，路由时由
+     * {@code ProjectService#executorIdOf} 统一折算成虚拟执行器 id（{@code ssh:<hostId>}）。
      */
     private String executorId;
+
+    /**
+     * 执行后端类型：{@link #BACKEND_LOCAL}（默认，存量行）/ {@link #BACKEND_SSH}。
+     * <p>implicit 容器为 null（没有实际后端）。
+     */
+    private String backendType;
+
+    /** SSH 主机 id（c_ai_ssh_host.id）；{@code backendType=ssh} 时必填。 */
+    private String sshHostId;
+
+    /**
+     * 本机 OpenSSH 别名（{@code backendType=ssh_alias} 时必填）：如 {@code wenqu}，指向
+     * 用户本机执行器所在电脑的 {@code ~/.ssh/config}。问渠只存别名，不存私钥/密码。
+     */
+    private String sshAlias;
 
     /** 工作区图标（预设图标名；空=默认文件夹） */
     private String icon;
@@ -91,4 +108,13 @@ public class Project {
 
     /** implicit 容器的幂等键固定值 */
     public static final String IMPLICIT_IDEMPOTENCY_KEY = "__implicit__";
+
+    /** 本机执行器目录（默认；存量行 backend_type 为空也按它处理） */
+    public static final String BACKEND_LOCAL = "local";
+
+    /** SSH 远程主机（服务端 JSch + 托管凭据） */
+    public static final String BACKEND_SSH = "ssh";
+
+    /** 本机 OpenSSH 别名（经用户本机执行器的 ssh / ~/.ssh/config，不托管凭据，DSH dsh-ssh 同形态） */
+    public static final String BACKEND_SSH_ALIAS = "ssh_alias";
 }

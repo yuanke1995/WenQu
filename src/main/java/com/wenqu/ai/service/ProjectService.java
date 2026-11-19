@@ -251,6 +251,8 @@ public class ProjectService {
         p.setName(trimmed);
         p.setSelectionStatus(Project.SELECTION_SELECTABLE);
         p.setExecutorId(executorId.trim());
+        p.setBackendType(Project.BACKEND_LOCAL);
+        p.setSshAlias(null);
         p.setStatus(Project.STATUS_ACTIVE);
         p.setDeleted(0);
         p.setCreateTime(java.time.LocalDateTime.now());
@@ -258,6 +260,140 @@ public class ProjectService {
         insertRoots(uid, p.getId(), normalized);
         log.info("[PROJECT] 新建本机工作区 uid={} id={} name={} executor={} roots={}",
                 uid, p.getId(), trimmed, executorId, normalized.size());
+        return p;
+    }
+
+    /**
+     * 用户显式新建一个 SSH 远程主机工作区。
+     *
+     * <p>与 {@link #create} 同构，只是执行后端是 {@code sshHostId}（远端主机）而不是本机执行器；
+     * {@code roots} 是远端主机上的绝对路径。主机归属由 Controller 层校验（个人资产）。
+     */
+    @Transactional
+    public Project createSsh(String uid, String name, String sshHostId, List<RootSpec> roots) {
+        if (uid == null || uid.isBlank() || com.wenqu.ai.util.RequestUser.SYSTEM.equals(uid)) {
+            throw new IllegalArgumentException("请先登录后再新建工作区");
+        }
+        String trimmed = name == null ? "" : name.trim();
+        if (trimmed.isEmpty()) throw new IllegalArgumentException("工作区名不能为空");
+        if (trimmed.length() > MAX_NAME_LEN) throw new IllegalArgumentException("工作区名过长（最多 " + MAX_NAME_LEN + " 字）");
+        if (sshHostId == null || sshHostId.isBlank()) {
+            throw new IllegalArgumentException("请先选择一台 SSH 远程主机");
+        }
+        List<RootSpec> normalized = normalizeRoots(roots);
+        Project p = new Project();
+        p.setId(java.util.UUID.randomUUID().toString().replace("-", ""));
+        p.setUid(uid);
+        p.setName(trimmed);
+        p.setSelectionStatus(Project.SELECTION_SELECTABLE);
+        p.setBackendType(Project.BACKEND_SSH);
+        p.setSshHostId(sshHostId.trim());
+        p.setStatus(Project.STATUS_ACTIVE);
+        p.setDeleted(0);
+        p.setCreateTime(java.time.LocalDateTime.now());
+        projectMapper.insert(p);
+        insertRoots(uid, p.getId(), normalized);
+        log.info("[PROJECT] 新建 SSH 工作区 uid={} id={} name={} host={} roots={}",
+                uid, p.getId(), trimmed, sshHostId, normalized.size());
+        return p;
+    }
+
+    /**
+     * 用户显式新建一个「本机 OpenSSH 别名」工作区（DSH dsh-ssh 同形态）。
+     *
+     * <p>连接从 {@code executorId} 这台本机执行器发起，使用它所在电脑的 {@code ~/.ssh/config} 里的
+     * {@code sshAlias}；问渠只存别名与远端绝对路径，不保存私钥/密码。
+     */
+    @Transactional
+    public Project createSshAlias(String uid, String name, String executorId, String sshAlias,
+                                  List<RootSpec> roots) {
+        if (uid == null || uid.isBlank() || com.wenqu.ai.util.RequestUser.SYSTEM.equals(uid)) {
+            throw new IllegalArgumentException("请先登录后再新建工作区");
+        }
+        String trimmed = name == null ? "" : name.trim();
+        if (trimmed.isEmpty()) throw new IllegalArgumentException("工作区名不能为空");
+        if (trimmed.length() > MAX_NAME_LEN) throw new IllegalArgumentException("工作区名过长（最多 " + MAX_NAME_LEN + " 字）");
+        if (executorId == null || executorId.isBlank()) {
+            throw new IllegalArgumentException("本机 OpenSSH 别名工作区必须绑定一台本机执行器");
+        }
+        String alias = normalizeAlias(sshAlias);
+        List<RootSpec> normalized = normalizeRoots(roots);
+        Project p = new Project();
+        p.setId(java.util.UUID.randomUUID().toString().replace("-", ""));
+        p.setUid(uid);
+        p.setName(trimmed);
+        p.setSelectionStatus(Project.SELECTION_SELECTABLE);
+        p.setBackendType(Project.BACKEND_SSH_ALIAS);
+        p.setExecutorId(executorId.trim());
+        p.setSshAlias(alias);
+        p.setStatus(Project.STATUS_ACTIVE);
+        p.setDeleted(0);
+        p.setCreateTime(java.time.LocalDateTime.now());
+        projectMapper.insert(p);
+        insertRoots(uid, p.getId(), normalized);
+        log.info("[PROJECT] 新建 SSH 别名工作区 uid={} id={} executor={} alias={} roots={}",
+                uid, p.getId(), executorId, alias, normalized.size());
+        return p;
+    }
+
+    /** 把 SSH 别名工作区重绑到另一批远端目录（替换式）。 */
+    @Transactional
+    public Project bindSshAliasRoots(String uid, String projectId, String executorId, String sshAlias,
+                                     List<RootSpec> roots) {
+        Project p = ownedProject(uid, projectId);
+        if (Project.SELECTION_IMPLICIT.equals(p.getSelectionStatus())) {
+            throw new IllegalArgumentException("「会话」栏不是一个工作区，不能绑定目录");
+        }
+        if (executorId == null || executorId.isBlank()) {
+            throw new IllegalArgumentException("请先选择一台本机执行器");
+        }
+        String alias = normalizeAlias(sshAlias);
+        List<RootSpec> normalized = normalizeRoots(roots);
+        projectRootMapper.delete(new LambdaQueryWrapper<ProjectRoot>()
+                .eq(ProjectRoot::getProjectId, p.getId()));
+        insertRoots(uid, p.getId(), normalized);
+        p.setBackendType(Project.BACKEND_SSH_ALIAS);
+        p.setExecutorId(executorId.trim());
+        p.setSshAlias(alias);
+        p.setSshHostId(null);
+        p.setUpdateTime(java.time.LocalDateTime.now());
+        projectMapper.updateById(p);
+        log.info("[PROJECT] SSH 别名工作区已重绑 uid={} project={} executor={} alias={} roots={}",
+                uid, p.getId(), executorId, alias, normalized.size());
+        return p;
+    }
+
+    private static String normalizeAlias(String sshAlias) {
+        String alias = sshAlias == null ? "" : sshAlias.trim();
+        if (alias.isEmpty()) throw new IllegalArgumentException("请填写本机 OpenSSH 别名（~/.ssh/config 里的 Host）");
+        if (!alias.matches("[A-Za-z0-9._@-]+")) {
+            throw new IllegalArgumentException("SSH 别名只允许字母数字和 . _ @ -：" + alias);
+        }
+        return alias;
+    }
+
+    /** 把 SSH 工作区重绑到主机上的另一批远端目录（替换式）。 */
+    @Transactional
+    public Project bindSshRoots(String uid, String projectId, String sshHostId, List<RootSpec> roots) {
+        Project p = ownedProject(uid, projectId);
+        if (Project.SELECTION_IMPLICIT.equals(p.getSelectionStatus())) {
+            throw new IllegalArgumentException("「会话」栏不是一个工作区，不能绑定目录");
+        }
+        if (sshHostId == null || sshHostId.isBlank()) {
+            throw new IllegalArgumentException("请先选择一台 SSH 远程主机");
+        }
+        List<RootSpec> normalized = normalizeRoots(roots);
+        projectRootMapper.delete(new LambdaQueryWrapper<ProjectRoot>()
+                .eq(ProjectRoot::getProjectId, p.getId()));
+        insertRoots(uid, p.getId(), normalized);
+        p.setBackendType(Project.BACKEND_SSH);
+        p.setSshHostId(sshHostId.trim());
+        p.setSshAlias(null);
+        p.setExecutorId(null);
+        p.setUpdateTime(java.time.LocalDateTime.now());
+        projectMapper.updateById(p);
+        log.info("[PROJECT] SSH 工作区已重绑 uid={} project={} host={} roots={}",
+                uid, p.getId(), sshHostId, normalized.size());
         return p;
     }
 
@@ -359,6 +495,9 @@ public class ProjectService {
                 .eq(ProjectRoot::getProjectId, p.getId()));
         insertRoots(uid, p.getId(), normalized);
         p.setExecutorId(executorId.trim());
+        p.setBackendType(Project.BACKEND_LOCAL);
+        p.setSshHostId(null);
+        p.setSshAlias(null);
         projectMapper.updateById(p);
         log.info("[PROJECT] 工作区目录已绑定 uid={} project={} executor={} roots={}",
                 uid, p.getId(), executorId, normalized.size());
@@ -393,7 +532,42 @@ public class ProjectService {
 
     /** 这个工作区是不是「本机目录」形态：绑了执行器且有主目录。 */
     public boolean isLocal(Project p) {
-        return p != null && p.getExecutorId() != null && !p.getExecutorId().isBlank();
+        return p != null && p.getExecutorId() != null && !p.getExecutorId().isBlank()
+                && !Project.BACKEND_SSH.equals(p.getBackendType())
+                && !Project.BACKEND_SSH_ALIAS.equals(p.getBackendType());
+    }
+
+    /** 这个工作区是不是「SSH 远程主机」形态：backend_type=ssh 且绑了主机。 */
+    public boolean isSsh(Project p) {
+        return p != null && Project.BACKEND_SSH.equals(p.getBackendType())
+                && p.getSshHostId() != null && !p.getSshHostId().isBlank();
+    }
+
+    /** 这个工作区是不是「本机 OpenSSH 别名」形态：绑了本机执行器 + 别名。 */
+    public boolean isSshAlias(Project p) {
+        return p != null && Project.BACKEND_SSH_ALIAS.equals(p.getBackendType())
+                && p.getExecutorId() != null && !p.getExecutorId().isBlank()
+                && p.getSshAlias() != null && !p.getSshAlias().isBlank();
+    }
+
+    /**
+     * 这个工作区是否有「直连执行后端」（本机执行器 / SSH 远端主机 / 本机 OpenSSH 别名）。
+     * <p>文件工具/文件页/权限路由都应看这一条，而不是只看 {@link #isLocal}——
+     * 否则 SSH 工作区会被当成“没绑目录”，静默退回服务器沙盒或聊天档。
+     */
+    public boolean isDirect(Project p) {
+        return isLocal(p) || isSsh(p) || isSshAlias(p);
+    }
+
+    /**
+     * 真正的执行器 id：本机=设备 id；SSH={@code ssh:<hostId>}（{@code ExecutorRegistry} 的虚拟执行器）。
+     * <p>这是“工作区 → 执行器”的唯一折算口径，路由层不要各写一份。
+     */
+    public String executorIdOf(Project p) {
+        if (isLocal(p)) return p.getExecutorId();
+        if (isSsh(p)) return com.wenqu.ai.ssh.SshHost.executorIdOf(p.getSshHostId());
+        if (isSshAlias(p)) return com.wenqu.ai.ssh.SshAliasIds.virtualId(p.getExecutorId(), p.getSshAlias());
+        return null;
     }
 
     /** 新建/重绑时的入参：绝对路径 + 可选别名（空=取目录名）。 */
@@ -406,7 +580,7 @@ public class ProjectService {
      */
     private static List<RootSpec> normalizeRoots(List<RootSpec> roots) {
         if (roots == null || roots.isEmpty()) {
-            throw new IllegalArgumentException("请先选择至少一个本机文件夹");
+            throw new IllegalArgumentException("请先选择至少一个源文件夹");
         }
         if (roots.size() > 8) {
             throw new IllegalArgumentException("一个工作区最多绑定 8 个文件夹");

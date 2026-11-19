@@ -84,7 +84,7 @@ public class ToolSpillService {
         if (configService.getBoolean("tool.spillLocalWorkspace", false)) return false;
         try {
             Project project = projectService.projectOfSession(sessionId);
-            return project != null && projectService.isLocal(project);
+            return project != null && projectService.isDirect(project);
         } catch (Exception e) {
             // 归属查不到时按本机工作区处理：宁可少一份可回看原文，也不把不确定来源的内容落盘
             return true;

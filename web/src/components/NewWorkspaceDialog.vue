@@ -1,39 +1,133 @@
 <template>
   <a-modal :open="open" title="新建工作区" :footer="null" :width="560" @cancel="close">
     <div class="wq">
+      <div class="wq-label">位置</div>
+      <a-radio-group v-model:value="backend" button-style="solid">
+        <a-radio-button value="local">本机电脑</a-radio-button>
+        <a-radio-button value="ssh">SSH 远程主机</a-radio-button>
+        <a-radio-button value="ssh_alias">本机 OpenSSH 别名</a-radio-button>
+      </a-radio-group>
+      <div v-if="backend === 'ssh_alias'" class="wq-hint">
+        用「这台电脑」的 <code>~/.ssh/config</code> 里已有的 Host（如 wenqu）连接；问渠不保存私钥/密码。
+      </div>
+
       <div class="wq-label">从现有工作区复制（可选）</div>
       <a-select v-model:value="templateId" allow-clear :options="templateOptions" style="width:100%"
                 placeholder="不复制：空白工作区" />
       <div class="wq-hint">复制清单与记忆，不含文件、会话与产物</div>
 
-      <div class="wq-label wq-label-row">
-        <span>源文件夹</span>
-        <button type="button" class="app-link-btn" :disabled="picking || !executor || !executor.online" @click="pickDir">
-          <plus-outlined /> 添加
-        </button>
-      </div>
-      <div class="wq-dirs">
-        <div v-for="(d, i) in dirs" :key="d.path" class="wq-dir">
-          <FolderOpenOutlined class="wq-dir-ic" />
-          <span class="wq-dir-name" :title="d.path">{{ d.name }}</span>
-          <span v-if="i === 0" class="wq-primary">主要</span>
-          <button v-else type="button" class="app-link-btn wq-mini" @click="makePrimary(i)">设为主要</button>
-          <button type="button" class="wq-remove" title="移除" @click="removeDir(i)">×</button>
+      <template v-if="backend === 'local'">
+        <div class="wq-label wq-label-row">
+          <span>源文件夹</span>
+          <button type="button" class="app-link-btn" :disabled="picking || !executor || !executor.online" @click="pickDir">
+            <plus-outlined /> 添加
+          </button>
         </div>
-        <button v-if="!dirs.length" type="button" class="wq-drop" :class="{ busy: picking }" @click="pickDir">
-          <FolderOpenOutlined class="wq-drop-ic" />
-          <span>{{ picking ? '在那台电脑上选择中…' : '点击添加可读写文件夹（可多个）' }}</span>
-        </button>
-        <div v-else-if="picking" class="wq-hint">在那台电脑上选择中…</div>
-      </div>
-      <div v-if="!executorId || !executor" class="wq-hint">
-        还没指定这台电脑
-        <button type="button" class="app-link-btn" @click="goPickDevice">选择这台电脑</button>
-      </div>
-      <div v-else-if="!executor.online" class="wq-hint">
-        「{{ executor.name }}」的执行器不在线：去那台电脑的终端确认 wenqu-agent 正在运行
-      </div>
-      <div v-else class="wq-hint">绑定到「{{ executor.name }}」</div>
+        <div class="wq-dirs">
+          <div v-for="(d, i) in dirs" :key="d.path" class="wq-dir">
+            <FolderOpenOutlined class="wq-dir-ic" />
+            <span class="wq-dir-name" :title="d.path">{{ d.name }}</span>
+            <span v-if="i === 0" class="wq-primary">主要</span>
+            <button v-else type="button" class="app-link-btn wq-mini" @click="makePrimary(i)">设为主要</button>
+            <button type="button" class="wq-remove" title="移除" @click="removeDir(i)">×</button>
+          </div>
+          <button v-if="!dirs.length" type="button" class="wq-drop" :class="{ busy: picking }" @click="pickDir">
+            <FolderOpenOutlined class="wq-drop-ic" />
+            <span>{{ picking ? '在那台电脑上选择中…' : '点击添加可读写文件夹（可多个）' }}</span>
+          </button>
+          <div v-else-if="picking" class="wq-hint">在那台电脑上选择中…</div>
+        </div>
+        <div v-if="!executorId || !executor" class="wq-hint">
+          还没指定这台电脑
+          <button type="button" class="app-link-btn" @click="goPickDevice">选择这台电脑</button>
+        </div>
+        <div v-else-if="!executor.online" class="wq-hint">
+          「{{ executor.name }}」的执行器不在线：去那台电脑的终端确认 wenqu-agent 正在运行
+        </div>
+        <div v-else class="wq-hint">绑定到「{{ executor.name }}」</div>
+      </template>
+
+      <template v-else-if="backend === 'ssh'">
+        <div class="wq-label wq-label-row">
+          <span>SSH 主机</span>
+          <button type="button" class="app-link-btn" @click="sshManagerOpen = true">管理主机</button>
+        </div>
+        <div class="wq-inline">
+          <a-select v-model:value="sshHostId" style="flex:1" placeholder="选择一台已托管的 SSH 主机"
+                    :options="sshHostOptions" @change="onHostChanged" />
+          <span v-if="sshHost" class="wq-badge" :class="sshHost.status === 'active' ? 'on' : 'off'">
+            {{ sshHost.status === 'active' ? '可连接' : '已停用' }}
+          </span>
+        </div>
+        <div v-if="!sshHosts.length" class="wq-hint">
+          还没有 SSH 主机，先点「管理主机」添加一台（地址/端口/用户/密码或私钥）。
+        </div>
+
+        <div class="wq-label wq-label-row">
+          <span>远端源文件夹</span>
+          <button type="button" class="app-link-btn" :disabled="!sshHostId || sshBrowsing" @click="openSshBrowse">
+            <plus-outlined /> 浏览添加
+          </button>
+        </div>
+        <div class="wq-dirs">
+          <div v-for="(d, i) in sshDirs" :key="d.path" class="wq-dir">
+            <FolderOpenOutlined class="wq-dir-ic" />
+            <span class="wq-dir-name" :title="d.path">{{ d.name }}<em class="wq-abs">{{ d.path }}</em></span>
+            <span v-if="i === 0" class="wq-primary">主要</span>
+            <button v-else type="button" class="app-link-btn wq-mini" @click="makeSshPrimary(i)">设为主要</button>
+            <button type="button" class="wq-remove" title="移除" @click="removeSshDir(i)">×</button>
+          </div>
+          <button v-if="!sshDirs.length" type="button" class="wq-drop" :disabled="!sshHostId"
+                  :class="{ busy: sshBrowsing }" @click="openSshBrowse">
+            <FolderOpenOutlined class="wq-drop-ic" />
+            <span>{{ sshHostId ? '点击浏览远端目录并添加（可多个）' : '先选择 SSH 主机' }}</span>
+          </button>
+        </div>
+      </template>
+
+      <template v-else-if="backend === 'ssh_alias'">
+        <div class="wq-label wq-label-row">
+          <span>本机执行器</span>
+          <button type="button" class="app-link-btn" @click="goPickDevice">选择这台电脑</button>
+        </div>
+        <div class="wq-inline">
+          <span class="wq-badge" :class="executor && executor.online ? 'on' : 'off'">
+            {{ executor ? (executor.online ? '在线：' + executor.name : '离线：' + executor.name) : '未指定这台电脑' }}
+          </span>
+        </div>
+        <div class="wq-label">OpenSSH 别名（~/.ssh/config 的 Host）</div>
+        <div class="wq-inline">
+          <a-select v-model:value="sshAlias" style="flex:1" show-search allow-clear
+                    :options="sshAliasOptions" placeholder="选择或输入 Host 别名，如 wenqu"
+                    @change="onAliasChanged">
+            <template #notFoundContent>没有读到别名，可直接输入 Host 名</template>
+          </a-select>
+          <button type="button" class="app-link-btn" :disabled="!executor || !executor.online" @click="loadAliases">刷新</button>
+        </div>
+        <div v-if="!executor || !executor.online" class="wq-hint">执行器不在线：先在那台电脑上启动 wenqu-agent</div>
+        <div v-else-if="!sshAliases.length" class="wq-hint">没有读到别名，可直接输入。<code>~/.ssh/config</code> 里要有对应 Host。</div>
+
+        <div class="wq-label wq-label-row">
+          <span>远端源文件夹</span>
+          <button type="button" class="app-link-btn" :disabled="!executorId || !sshAlias" @click="sshAliasBrowseOpen = true">
+            <plus-outlined /> 浏览添加
+          </button>
+        </div>
+        <div class="wq-dirs">
+          <div v-for="(d, i) in sshAliasDirs" :key="d.path" class="wq-dir">
+            <FolderOpenOutlined class="wq-dir-ic" />
+            <span class="wq-dir-name" :title="d.path">{{ d.name }}<em class="wq-abs">{{ d.path }}</em></span>
+            <span v-if="i === 0" class="wq-primary">主要</span>
+            <button v-else type="button" class="app-link-btn wq-mini" @click="makeAliasPrimary(i)">设为主要</button>
+            <button type="button" class="wq-remove" title="移除" @click="removeAliasDir(i)">×</button>
+          </div>
+          <button v-if="!sshAliasDirs.length" type="button" class="wq-drop" :disabled="!executorId || !sshAlias"
+                  @click="sshAliasBrowseOpen = true">
+            <FolderOpenOutlined class="wq-drop-ic" />
+            <span>{{ sshAlias ? '点击浏览远端目录并添加（可多个）' : '先选择或输入 OpenSSH 别名' }}</span>
+          </button>
+        </div>
+      </template>
 
       <div class="wq-label">工作区名称</div>
       <a-input v-model:value="name" :maxlength="60" placeholder="输入名称…" />
@@ -61,6 +155,11 @@
         </button>
       </div>
     </div>
+
+    <SshHostManagerModal v-model:open="sshManagerOpen" @changed="loadSshHosts" />
+    <SshBrowseModal v-model:open="sshBrowseOpen" :host-id="sshHostId" @picked="onSshDirPicked" />
+    <SshBrowseModal v-model:open="sshAliasBrowseOpen" mode="alias" :executor-id="executorId"
+                    :alias-name="sshAlias" @picked="onAliasDirPicked" />
   </a-modal>
 </template>
 
@@ -70,8 +169,11 @@ import { message } from 'ant-design-vue'
 import { CheckOutlined, FolderOpenOutlined, PlusOutlined } from '@ant-design/icons-vue'
 import { WORKSPACE_ICONS, WORKSPACE_COLORS, workspaceIconOf } from '../utils/workspaceIcons'
 import { localExecutorId } from '../utils/localExecutor'
-import { createProject, getProject, listExecutors, listProjects, pickExecutorDir, updateProject,
-         getWorkspaceMemory, saveWorkspaceMemory } from '../api'
+import SshHostManagerModal from './SshHostManagerModal.vue'
+import SshBrowseModal from './SshBrowseModal.vue'
+import { createProject, createSshProject, createSshAliasProject, getProject, listExecutors, listProjects,
+         listSshHosts, listSshAliases, pickExecutorDir, updateProject, getWorkspaceMemory,
+         saveWorkspaceMemory } from '../api'
 
 const props = defineProps({ open: { type: Boolean, default: false } })
 const emit = defineEmits(['update:open', 'created', 'pick-device'])
@@ -88,15 +190,43 @@ const creating = ref(false)
 const picking = ref(false)
 const templateId = ref(undefined)
 const templates = ref([])
+
+// SSH 远程主机后端
+const backend = ref('local')
+const sshHosts = ref([])
+const sshHostId = ref('')
+const sshDirs = ref([])
+const sshManagerOpen = ref(false)
+const sshBrowseOpen = ref(false)
+const sshBrowsing = ref(false)
+
+// 本机 OpenSSH 别名（DSH dsh-ssh 同形态）
+const sshAliases = ref([])
+const sshAlias = ref('')
+const sshAliasDirs = ref([])
+const sshAliasBrowseOpen = ref(false)
+
 const templateOptions = computed(() => templates.value.map(p => ({
   value: p.id, label: p.displayName || p.name || '未命名工作区'
 })))
 
+const sshHostOptions = computed(() => sshHosts.value.map(h => ({
+  value: h.id,
+  label: `${h.name || '未命名'}（${h.username}@${h.host}:${h.port}）`
+})))
+const sshHost = computed(() => sshHosts.value.find(h => h.id === sshHostId.value) || null)
+const sshAliasOptions = computed(() => sshAliases.value.map(a => ({ value: a, label: a })))
+
 // 工作区固定建在这台电脑上：设备 id 只从「这台电脑」读，不再让用户挑别的电脑。
-// 设备清单只用于显示本机名字与在线状态（离线设备也要列，否则状态没法说清）。
 const executor = computed(() => devices.value.find(d => d.id === executorId.value) || null)
-const canCreate = computed(() => dirs.value.length > 0 && name.value.trim()
+const canCreateLocal = computed(() => dirs.value.length > 0 && name.value.trim()
   && !!executorId.value && !!executor.value && !!executor.value.online)
+const canCreateSsh = computed(() => !!sshHostId.value && sshDirs.value.length > 0 && !!name.value.trim())
+const canCreateAlias = computed(() => !!executorId.value && !!executor.value && !!executor.value.online
+  && !!sshAlias.value.trim() && sshAliasDirs.value.length > 0 && !!name.value.trim())
+const canCreate = computed(() => backend.value === 'ssh' ? canCreateSsh.value
+  : backend.value === 'ssh_alias' ? canCreateAlias.value : canCreateLocal.value)
+
 const goPickDevice = () => {
   emit('update:open', false)
   emit('pick-device')
@@ -117,11 +247,45 @@ async function loadDevice () {
   }
 }
 
+async function loadSshHosts () {
+  try {
+    const r = await listSshHosts()
+    sshHosts.value = (r && r.data) || []
+    if (sshHostId.value && !sshHosts.value.some(h => h.id === sshHostId.value)) sshHostId.value = ''
+  } catch (e) {
+    sshHosts.value = []
+  }
+}
+
+async function loadAliases () {
+  if (!executorId.value) return
+  try {
+    const r = await listSshAliases(executorId.value)
+    sshAliases.value = (r && r.data && r.data.aliases) || []
+  } catch (e) {
+    sshAliases.value = []
+  }
+}
+
+function onAliasChanged () { sshAliasDirs.value = [] }
+function onAliasDirPicked (p) {
+  if (!p) return
+  if (sshAliasDirs.value.some(d => d.path === p)) return message.info('这个远端文件夹已经添加过了')
+  sshAliasDirs.value.push({ path: p, name: baseName(p) })
+  if (!name.value.trim()) name.value = baseName(p)
+}
+function removeAliasDir (i) { sshAliasDirs.value.splice(i, 1) }
+function makeAliasPrimary (i) {
+  if (i <= 0) return
+  const [d] = sshAliasDirs.value.splice(i, 1)
+  sshAliasDirs.value.unshift(d)
+}
+
 async function loadTemplates () {
   try {
     const r = await listProjects()
     templates.value = ((r && r.data) || []).filter(p => !p.isImplicit
-      && (!p.executorId || p.executorId === localExecutorId()))
+      && p.isLocal && (!p.executorId || p.executorId === localExecutorId()))
   } catch (e) {
     templates.value = []
   }
@@ -133,8 +297,21 @@ watch(templateId, async pid => {
   try {
     const r = await getProject(pid)
     const p = (r && r.data) || {}
-    executorId.value = p.executorId || executorId.value
-    dirs.value = (p.roots || []).map(x => ({ path: x.path, name: x.alias || baseName(x.path) }))
+    if (p.isSshAlias) {
+      backend.value = 'ssh_alias'
+      executorId.value = p.executorId || executorId.value
+      sshAlias.value = p.sshAlias || sshAlias.value
+      sshAliasDirs.value = (p.roots || []).map(x => ({ path: x.path, name: x.alias || baseName(x.path) }))
+      loadAliases()
+    } else if (p.isSsh) {
+      backend.value = 'ssh'
+      sshHostId.value = p.sshHostId || sshHostId.value
+      sshDirs.value = (p.roots || []).map(x => ({ path: x.path, name: x.alias || baseName(x.path) }))
+    } else {
+      backend.value = 'local'
+      executorId.value = p.executorId || executorId.value
+      dirs.value = (p.roots || []).map(x => ({ path: x.path, name: x.alias || baseName(x.path) }))
+    }
     if (!name.value.trim()) name.value = (p.name || '工作区') + ' 副本'
   } catch (e) {
     message.warning('模板工作区读取失败：' + (e.message || '请重试'))
@@ -175,6 +352,28 @@ async function pickDir () {
   }
 }
 
+function onHostChanged () {
+  sshDirs.value = []
+  if (!name.value.trim() && sshHost.value) name.value = sshHost.value.name || ''
+}
+
+function openSshBrowse () {
+  if (!sshHostId.value) return message.warning('先选择一台 SSH 主机')
+  sshBrowseOpen.value = true
+}
+function onSshDirPicked (p) {
+  if (!p) return
+  if (sshDirs.value.some(d => d.path === p)) return message.info('这个远端文件夹已经添加过了')
+  sshDirs.value.push({ path: p, name: baseName(p) })
+  if (!name.value.trim()) name.value = baseName(p)
+}
+function removeSshDir (i) { sshDirs.value.splice(i, 1) }
+function makeSshPrimary (i) {
+  if (i <= 0) return
+  const [d] = sshDirs.value.splice(i, 1)
+  sshDirs.value.unshift(d)
+}
+
 function removeDir (i) {
   dirs.value.splice(i, 1)
 }
@@ -190,8 +389,17 @@ async function create () {
   if (!canCreate.value) return
   creating.value = true
   try {
-    const roots = dirs.value.map(d => ({ path: d.path, alias: d.name }))
-    const created = await createProject(name.value.trim(), executorId.value, roots, templateId.value)
+    let created
+    if (backend.value === 'ssh') {
+      const roots = sshDirs.value.map(d => ({ path: d.path, alias: d.name }))
+      created = await createSshProject(name.value.trim(), sshHostId.value, roots, templateId.value)
+    } else if (backend.value === 'ssh_alias') {
+      const roots = sshAliasDirs.value.map(d => ({ path: d.path, alias: d.name }))
+      created = await createSshAliasProject(name.value.trim(), executorId.value, sshAlias.value.trim(), roots, templateId.value)
+    } else {
+      const roots = dirs.value.map(d => ({ path: d.path, alias: d.name }))
+      created = await createProject(name.value.trim(), executorId.value, roots, templateId.value)
+    }
     const id = (created && created.data && created.data.id) || ''
     if (!id) throw new Error('创建工作区没有返回 id')
     await updateProject(id, { icon: icon.value, color: color.value })
@@ -212,16 +420,28 @@ async function create () {
 
 watch(() => props.open, open => {
   if (!open) return
+  backend.value = 'local'
   dirs.value = []
+  sshDirs.value = []
+  sshHostId.value = ''
+  sshAlias.value = ''
+  sshAliasDirs.value = []
   name.value = ''
   icon.value = 'folder'
   color.value = COLORS[0]
   templateId.value = undefined
   refreshLocalDevice()
+  loadSshHosts()
   loadTemplates()
+  loadAliases()
 })
 
-onMounted(() => { if (props.open) refreshLocalDevice() })
+onMounted(() => {
+  if (props.open) {
+    refreshLocalDevice()
+    loadSshHosts()
+  }
+})
 </script>
 
 <style scoped>
@@ -235,6 +455,8 @@ onMounted(() => { if (props.open) refreshLocalDevice() })
 .wq-dir-ic { color: var(--app-accent); }
 .wq-dir-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-size: 13px; color: var(--app-text); }
+.wq-abs { display: block; font-size: 11px; color: var(--app-text3); font-style: normal;
+  overflow: hidden; text-overflow: ellipsis; }
 .wq-primary { font-size: 11px; line-height: 18px; padding: 0 6px; border-radius: 4px;
   color: var(--app-accent); background: color-mix(in srgb, var(--app-accent) 12%, transparent); }
 .wq-mini { font-size: 11px; }
@@ -244,8 +466,13 @@ onMounted(() => { if (props.open) refreshLocalDevice() })
   color: var(--app-text2); font-size: 13px; padding: 12px; background: none; }
 .wq-drop:hover { border-color: var(--app-accent); background: var(--app-surface2, rgba(0,0,0,.02)); }
 .wq-drop.busy { opacity: .7; pointer-events: none; }
+.wq-drop:disabled { opacity: .55; cursor: not-allowed; }
 .wq-drop-ic { font-size: 18px; color: var(--app-accent); }
 .wq-hint { font-size: 12px; color: var(--app-text3); display: flex; align-items: center; gap: 6px; }
+.wq-inline { display: flex; align-items: center; gap: 8px; }
+.wq-badge { font-size: 11px; padding: 0 8px; line-height: 20px; border-radius: 10px; flex-shrink: 0; }
+.wq-badge.on { color: #0a7a3d; background: rgba(22,163,74,.12); }
+.wq-badge.off { color: var(--app-text3); background: rgba(0,0,0,.06); }
 .wq-icons { display: flex; flex-wrap: wrap; gap: 8px; }
 .wq-icon { width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center;
   border: 1px solid transparent; border-radius: 8px; background: var(--app-surface2, rgba(0,0,0,.04));

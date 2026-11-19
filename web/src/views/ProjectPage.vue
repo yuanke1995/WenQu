@@ -57,6 +57,9 @@
       </div>
 
       <div class="pj-head-actions">
+        <button v-if="form.isSsh" class="app-btn ghost" type="button" @click="sshTerminalOpen = true">
+          终端
+        </button>
         <button v-if="inlinePreview" class="pj-icon-btn" type="button"
                 :title="sideCollapsed ? '展开右侧目录' : '收起右侧目录'" @click="toggleSideCollapsed">
           <menu-unfold-outlined v-if="sideCollapsed" />
@@ -149,17 +152,25 @@
                 </button>
                 <button class="pj-root-path" type="button" title="点击复制完整路径" @click="copyRootPath(r)">{{ r.path }}</button>
                 <span class="pj-root-acts">
-                  <button class="pj-text-btn" type="button" @click="openRoot(r)">打开</button>
+                  <button v-if="!form.isSsh && !form.isSshAlias" class="pj-text-btn" type="button" @click="openRoot(r)">打开</button>
                   <button class="pj-text-btn danger" type="button"
                           :disabled="rootBusy || form.roots.length <= 1" @click="removeRoot(r)">移除</button>
                 </span>
               </div>
 
               <div v-if="!form.roots.length" class="pj-empty">
-                还没有绑定本机目录。
+                {{ form.isSsh || form.isSshAlias ? '还没有绑定远端目录。' : '还没有绑定本机目录。' }}
                 <button class="pj-text-btn" type="button" @click="addRoot">添加文件夹</button>
               </div>
-              <div v-if="!executorId" class="pj-exec-pick">
+              <div v-if="form.isSsh" class="pj-exec-pick">
+                <span class="pj-mini-pill">SSH</span>
+                <span>{{ form.sshHostName || form.sshHostId }}</span>
+              </div>
+              <div v-if="form.isSshAlias" class="pj-exec-pick">
+                <span class="pj-mini-pill">本机 SSH</span>
+                <span>{{ form.sshAlias }}（{{ executorId }}）</span>
+              </div>
+              <div v-if="!form.isSsh && !form.isSshAlias && !executorId" class="pj-exec-pick">
                 <a-select size="small" style="min-width: 200px" :value="executorPick"
                           :options="executorOptions" placeholder="先选择一台在线的电脑" @change="chooseExecutor" />
               </div>
@@ -317,6 +328,13 @@
         </div>
       </a-spin>
     </a-modal>
+
+    <SshBrowseModal v-model:open="sshBrowseOpen" :host-id="form.sshHostId" @picked="onSshRootPicked" />
+    <SshBrowseModal v-model:open="sshAliasBrowseOpen" mode="alias" :executor-id="executorId"
+                    :alias-name="form.sshAlias" @picked="onSshAliasRootPicked" />
+    <SshTerminalModal v-model:open="sshTerminalOpen" :host-id="form.sshHostId"
+                      :host-name="form.sshHostName"
+                      :start-path="((form.roots.find(r => r.primary) || form.roots[0] || {}).path) || ''" />
   </div>
 </template>
 
@@ -349,7 +367,11 @@ const id = computed(() => String(route.params.id || ''))
 
 const loading = ref(true)
 const loadedOnce = ref(false)
-const form = ref({ name: '', status: 'active', memoryIsolated: 0, roots: [], icon: '', color: '' })
+const form = ref({ name: '', status: 'active', memoryIsolated: 0, roots: [], icon: '', color: '',
+  isSsh: false, isSshAlias: false, sshAlias: '', backendType: 'local', sshHostId: '', sshHostName: '' })
+const sshBrowseOpen = ref(false)
+const sshAliasBrowseOpen = ref(false)
+const sshTerminalOpen = ref(false)
 const isArchived = computed(() => form.value.status === 'archived')
 const displayName = computed(() => form.value.name || '未命名工作区')
 const firstLoad = computed(() => loading.value && !loadedOnce.value)
@@ -388,6 +410,56 @@ const bindRoots = async (executor, roots) => {
   return p
 }
 
+/** SSH 工作区：目录改完即存（替换式） */
+const bindSshRoots = async roots => {
+  const r = await bindProjectSsh(id.value, form.value.sshHostId, roots.map(x => ({ path: x.path, alias: x.alias })))
+  const p = (r && r.data) || {}
+  if (Array.isArray(p.roots)) form.value.roots = p.roots.map(x => ({ ...x }))
+  return p
+}
+
+const bindSshAliasRoots = async roots => {
+  const r = await bindProjectSshAlias(id.value, executorId.value, form.value.sshAlias,
+    roots.map(x => ({ path: x.path, alias: x.alias })))
+  const p = (r && r.data) || {}
+  if (Array.isArray(p.roots)) form.value.roots = p.roots.map(x => ({ ...x }))
+  return p
+}
+
+const onSshAliasRootPicked = async picked => {
+  if (!picked) return
+  if (form.value.roots.some(x => x.path === picked)) { message.info('这个文件夹已经添加过了'); return }
+  rootBusy.value = true
+  try {
+    await bindSshAliasRoots([...form.value.roots, { path: picked, alias: baseNameOf(picked) }])
+    const added = form.value.roots.find(x => x.path === picked)
+    if (added) fileDir.value = added.alias
+    message.success('已添加远端文件夹')
+    await loadFiles()
+  } catch (e) {
+    message.error('添加失败：' + (e.message || '请重试'))
+  } finally {
+    rootBusy.value = false
+  }
+}
+
+const onSshRootPicked = async picked => {
+  if (!picked) return
+  if (form.value.roots.some(x => x.path === picked)) { message.info('这个文件夹已经添加过了'); return }
+  rootBusy.value = true
+  try {
+    await bindSshRoots([...form.value.roots, { path: picked, alias: baseNameOf(picked) }])
+    const added = form.value.roots.find(x => x.path === picked)
+    if (added) fileDir.value = added.alias
+    message.success('已添加远端文件夹')
+    await loadFiles()
+  } catch (e) {
+    message.error('添加失败：' + (e.message || '请重试'))
+  } finally {
+    rootBusy.value = false
+  }
+}
+
 const ensureFileDir = () => {
   const roots = form.value.roots
   if (!roots.length) { fileDir.value = ''; return }
@@ -400,6 +472,8 @@ const ensureFileDir = () => {
 
 const addRoot = async () => {
   if (rootPicking.value || rootBusy.value) return
+  if (form.value.isSsh) { sshBrowseOpen.value = true; return }
+  if (form.value.isSshAlias) { sshAliasBrowseOpen.value = true; return }
   const ex = executorId.value || executorPick.value
   if (!ex) { message.warning('先选择一台在线的电脑'); return }
   rootPicking.value = true
@@ -433,6 +507,34 @@ const addRoot = async () => {
 const removeRoot = async root => {
   if (rootBusy.value || rootPicking.value) return
   if (form.value.roots.length <= 1) { message.warning('至少保留一个文件夹'); return }
+  if (form.value.isSshAlias) {
+    rootBusy.value = true
+    try {
+      await bindSshAliasRoots(form.value.roots.filter(x => x.path !== root.path))
+      ensureFileDir()
+      message.success('已移除')
+      await loadFiles()
+    } catch (e) {
+      message.error('移除失败：' + (e.message || '请重试'))
+    } finally {
+      rootBusy.value = false
+    }
+    return
+  }
+  if (form.value.isSsh) {
+    rootBusy.value = true
+    try {
+      await bindSshRoots(form.value.roots.filter(x => x.path !== root.path))
+      ensureFileDir()
+      message.success('已移除')
+      await loadFiles()
+    } catch (e) {
+      message.error('移除失败：' + (e.message || '请重试'))
+    } finally {
+      rootBusy.value = false
+    }
+    return
+  }
   if (!executorId.value) { message.warning('这个工作区还没有绑定执行器'); return }
   rootBusy.value = true
   try {
@@ -463,6 +565,7 @@ const chooseExecutor = async v => {
 }
 
 const openRoot = async root => {
+  if (form.value.isSsh || form.value.isSshAlias) { message.info('远程主机没有桌面文件管理器，请用下方文件列表浏览/下载'); return }
   try {
     await openProjectFolder(id.value, root.alias)
   } catch (e) {
@@ -984,7 +1087,13 @@ const load = async () => {
       memoryIsolated: p.memoryIsolated || 0,
       roots: Array.isArray(p.roots) ? p.roots.map(x => ({ ...x })) : [],
       icon: p.icon || '',
-      color: p.color || ''
+      color: p.color || '',
+      isSsh: !!p.isSsh,
+      isSshAlias: !!p.isSshAlias,
+      sshAlias: p.sshAlias || '',
+      backendType: p.backendType || 'local',
+      sshHostId: p.sshHostId || '',
+      sshHostName: p.sshHostName || ''
     }
     executorId.value = p.executorId || ''
     executorPick.value = undefined
