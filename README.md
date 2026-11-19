@@ -866,6 +866,10 @@ curl -X POST http://localhost:8090/api/ai/v1/chat/completions \
 - 登记为「恒思考」的模型即使界面关闭思考仍会先推理一次；思考强度经各厂商方言贯通，未登记的方言不下发该参数
 - 思考强度的下发口径可在模型登记页改：「参数方言」点名网关真实那一家（默认按模型名判定，中转改名常判不出），「档位参数映射」逐档覆盖 `reasoning_effort` 取值与思考预算 token；留空的档位跟随内置表，内置表随各家文档修正一起生效
 
+## 友情链接
+
+- [Spring AI Alibaba 学习系列](https://github.com/zhongke1214/spring-ai-alibaba-learning) — 面向 Java 开发者的 Spring AI Alibaba 入门与实战教程（学习交流用）
+
 ## 开源许可
 
 本工作区以 [MIT License](LICENSE) 开源。核心依赖均为宽松许可（后端 Spring 生态 Apache-2.0、前端 Vue 生态 MIT / Apache-2.0；`mysql-connector-j` 为 GPLv2 + 通用 FOSS 例外），可放心商用与二次开发。
