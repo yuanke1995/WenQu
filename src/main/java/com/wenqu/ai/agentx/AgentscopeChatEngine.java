@@ -145,6 +145,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     /** 每轮文件改动：轮前快照 / 轮末对比 / 逐文件差异（只经执行器，内容不出用户电脑） */
     private final com.wenqu.ai.service.ProjectTurnChangesService turnChangeService;
     private final ConfigService configService;
+    /** 个人配置（schema personal 字段）：读「接下来可以」推荐追问开关（ui.showRelatedSuggestions，按 uid）。 */
+    private final com.wenqu.ai.service.UserConfigService userConfigService;
     private final AppProperties properties;
     private final WenquAgentxTools tools;
     private final FrameworkSessions sessions;
@@ -353,6 +355,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                                com.wenqu.ai.skill.WenquSkillRepository skillRepository,
                                com.wenqu.ai.skill.SkillStatsStore skillStatsStore,
                                com.wenqu.ai.service.OrgService orgService,
+                               com.wenqu.ai.service.UserConfigService userConfigService,
                                com.wenqu.ai.service.UsageLedgerService usageLedger,
                                com.wenqu.ai.service.UsageQuotaService quotaService,
                                com.wenqu.ai.service.GoalService goalService,
@@ -387,6 +390,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         this.skillRepository = skillRepository;
         this.skillStatsStore = skillStatsStore;
         this.orgService = orgService;
+        this.userConfigService = userConfigService;
         this.usageLedger = usageLedger;
         this.quotaService = quotaService;
         this.goalService = goalService;
@@ -2180,6 +2184,16 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         return s.length() <= 60 ? s : s.substring(0, 60) + "…";
     }
 
+    /**
+     * 「接下来可以」推荐追问是否按本轮生成（个人设置 → 问答偏好 → 对话显示，键 ui.showRelatedSuggestions）。
+     * <p>关掉 = 不再向模型要这段（省输出 token）、也不落库，而不是只在界面上隐藏。
+     * 未设置 / 无 uid（游客、续跑复原）一律按开。
+     */
+    private boolean relatedSuggestionsEnabled(String uid) {
+        String v = userConfigService.personalValue(uid, "ui.showRelatedSuggestions");
+        return v == null || v.isBlank() || "true".equalsIgnoreCase(v.trim());
+    }
+
     private AgentBinding bindingOf(ChatCommand cmd, ExecutionPolicy policy, String modelRef) {
         Agent row = null;
         try {
@@ -2202,6 +2216,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 个人「自动提炼记忆」开关也是 build 期装配（memoryConfig 还是 disableMemoryHooks）：不并进
         // 指纹的话，关掉后要等下一次重建才停，与个人设置里「关掉后下一轮起才停」的说法不符。
         key = key + "|mem=" + orgService.memoryFlushEnabled(cmd.getUserId());
+        // 「接下来可以」开关也烤进系统提示词（关掉就不再挂 RelatedPrompt）：并进指纹，拨动后下一轮即重建实例生效。
+        key = key + "|rel=" + relatedSuggestionsEnabled(cmd.getUserId());
         // 上下文窗口并进指纹：它决定框架的压缩阈值与输入上限，烤死在实例里。
         // 窗口恒等于模型登记上限，并进来是为了管理员改了登记值时这一轮就重建。
         int contextWindow = modelContextWindow(modelRef);
@@ -3352,7 +3368,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                         + PlanCopy.guidance()
                         + com.wenqu.ai.agent.chat.ArtifactPrompt.guidance()
                         + com.wenqu.ai.memory.MemoryPrompts.replyDiscipline()
-                        + com.wenqu.ai.agent.chat.RelatedPrompt.line())
+                        + (relatedSuggestionsEnabled(cmd.getUserId())
+                            ? com.wenqu.ai.agent.chat.RelatedPrompt.line() : ""))
                 // 问渠所有供应商都是 OpenAI 兼容网关。
                 // 用户在界面选的上下文窗口（contextWindow 档位）落到 model 的 contextWindowSize：
                 // 框架的压缩阈值/输入预算都由它推（CompactionMiddleware: window-reserved；
@@ -4119,7 +4136,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 .agentId(cmd.getAgentId())
                 .agentName(snapAgentName)
                 .model(route.modelId())
-                .relatedJson(relatedChips.isEmpty() ? null : com.alibaba.fastjson2.JSON.toJSONString(relatedChips))
+                .relatedJson(relatedChips.isEmpty() || !relatedSuggestionsEnabled(cmd.getUserId()) ? null
+                        : com.alibaba.fastjson2.JSON.toJSONString(relatedChips))
                 .planJson(planRecord == null ? null : com.alibaba.fastjson2.JSON.toJSONString(planRecord))
                 .turnId(framedTurnId)
                 .blocksJson(blocksJson)

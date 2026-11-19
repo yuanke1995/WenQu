@@ -1094,7 +1094,7 @@ const personalGroups = computed(() => {
     out.push({
       key: 'ui',
       title: '对话显示',
-      hint: '决定对话里展示哪些辅助内容，只影响你自己的界面。',
+      hint: '决定对话里生成并展示哪些辅助内容；关掉推荐追随后不再生成这段，省输出 token。',
       fields: ui
     })
   }
