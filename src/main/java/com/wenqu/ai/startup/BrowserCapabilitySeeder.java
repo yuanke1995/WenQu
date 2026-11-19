@@ -259,6 +259,9 @@ public class BrowserCapabilitySeeder implements ApplicationRunner {
                         dirty = true;
                     }
                     // 产品身份：固定名称/图标/用途（子智能体）/非内置/非默认/系统归属
+                    // 工具族迁移（MCP→BROWSER）：一次性修正，由 V29 迁移脚本改存量行的 toolBrowser/toolMcp/mcps。
+                    // 这里不每轮强制归一运行配置——播种注释承诺「运行配置留给管理员改」，不能自相矛盾。
+                    if (Integer.valueOf(1).equals(existing.getIsBuiltin())) { fix.set(Agent::getIsBuiltin, 0); dirty = true; }
                     if (!"网页操作助手".equals(existing.getName())) { fix.set(Agent::getName, "网页操作助手"); dirty = true; }
                     if (!"🌐".equals(existing.getIcon())) { fix.set(Agent::getIcon, "🌐"); dirty = true; }
                     if (!Integer.valueOf(1).equals(existing.getIsSubagent())) { fix.set(Agent::getIsSubagent, 1); dirty = true; }
@@ -291,8 +294,11 @@ public class BrowserCapabilitySeeder implements ApplicationRunner {
         // 纯操作角色：不挂知识库（检索链路整条跳过，省一轮改写与召回）
         a.setKnowledgeDisabled(1);
         a.setToolKnowledge(0);
-        a.setToolMcp(1);
-        a.setMcps(MCP_NAME);
+        // 浏览器工具已收口到独立 BROWSER 族（browser_* 一套），不再挂平台 MCP「浏览器操作」——
+        // 那个 MCP 现在只是 BrowserTools 云执行位置的内部 transport，工具表对它恒为空。
+        a.setToolBrowser(1);
+        a.setToolMcp(0);
+        a.setMcps(null);
         // 必须是 auto：被委派的轮次没有审批通道，ask 档下这一族工具会被整族摘掉
         // （AgentxFrameworkToolGate：分支轮 + ask → 不暴露需审批的工具）。护栏靠 deny 黑名单、
         // 出口隔离与提示词里「不可撤销操作先问人」，不靠逐次确认。

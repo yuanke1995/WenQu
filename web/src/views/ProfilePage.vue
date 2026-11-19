@@ -173,7 +173,11 @@
                   <span v-if="f.type === 'password' && personal.values[f.path] === '********'"
                         class="pf-set-badge">已设置</span>
                 </div>
-                <a-input-number v-if="f.type === 'number'" v-model:value="personalDrafts[f.path]"
+                <!-- switch：个人设置自己渲染（这里没走 SchemaField），必须给真开关而不是文本框，
+                     否则用户能在布尔项里随便写字。个人配置落库是字符串 "true"/"false"，用计算属性双向转。 -->
+                <a-switch v-if="f.type === 'switch'" v-model:checked="personalSwitch[f.path]"
+                          class="pf-ctl" @change="commitPersonalSwitch(f, $event)" />
+                <a-input-number v-else-if="f.type === 'number'" v-model:value="personalDrafts[f.path]"
                                 :min="f.min" :max="f.max" :step="f.step || 1"
                                 :placeholder="personalPlaceholder(f)" class="pf-ctl pf-ctl-sm"
                                 @blur="commitPersonal(f)" @pressEnter="commitPersonal(f)" />
@@ -922,6 +926,7 @@ const saveDefaultModel = async v => {
 // switch 类型不渲染：「未设=用默认」与「显式关」两种状态表达不出来，等真出现个人开关字段再定口径
 const personal = ref({ fields: [], values: {}, globals: {}, tips: {} })
 const personalDrafts = ref({})
+const personalSwitch = ref({})
 // 密钥框显隐与掩码：掩码走 CSS 而非 type=password（见模板注释），逐个字段独立记显隐
 const secretVisible = ref({})
 const cssTextSecurity = typeof CSS !== 'undefined' && typeof CSS.supports === 'function'
@@ -1147,10 +1152,35 @@ const loadPersonal = async () => {
       else drafts[f.path] = raw
     }
     personalDrafts.value = drafts
+    // 布尔项的展示态：未设置时按 schema 默认值（def）显示，设置过按 "true"/"false" 解析。
+    // 与文本草稿分开存，避免 a-switch 的 checked(boolean) 与草稿(string) 互相污染。
+    const sw = {}
+    for (const f of d.fields || []) {
+      if (f.type !== 'switch') continue
+      const raw = (d.values || {})[f.path]
+      sw[f.path] = raw === undefined || raw === '' ? !!f.def : String(raw) === 'true'
+    }
+    personalSwitch.value = sw
     // 自定义但还没填地址：直接展开高级区，省得用户对着「已自定义」找不到必填项
     if (wsPreset.value === 'custom' && !drafts['webSearch.baseUrl']) wsAdvOpen.value = true
   } catch (e) { /* 读取失败按无个人字段渲染：这个面板还有默认模型可管，不必整块报错 */ }
 }
+// 布尔项提交：显式写 "true"/"false" 字符串（后端按 schema 的 switch 类型校验并落 personal 层）。
+// 与 commitPersonal 的「清空=默认」语义不同——布尔项关掉就是 false，它恰好等于默认，不需要清空。
+const commitPersonalSwitch = async (f, checked) => {
+  const normalized = checked ? 'true' : 'false'
+  const savedRaw = (personal.value.values || {})[f.path] ?? ''
+  if (normalized === String(savedRaw) || (normalized === 'false' && savedRaw === '')) return
+  try {
+    await saveUserSettings({ [f.path]: normalized })
+    message.success('已保存')
+    await loadPersonal()
+  } catch (e) {
+    message.error(e.message || '保存失败')
+    await loadPersonal()
+  }
+}
+
 // 提交单项：清空（null/空串）=回落默认；与已存值相同不提交。成败都回读服务端，输入框以服务端为准
 const commitPersonal = async f => {
   const draft = personalDrafts.value[f.path]
