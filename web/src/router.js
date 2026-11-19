@@ -2,7 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { ensureAuth, isAdminSync, isLoggedIn, menuHasPath, profileSync } from './utils/auth'
 import { preferMobileShell } from './h5/mobile'
-import { authVeil, coverAuthVeil, revealAuthVeil } from './utils/authTransition'
+import { authVeil, beginAuthEnter, coverAuthVeil, revealAuthVeil } from './utils/authTransition'
 
 // 视图全部懒加载：每个页面（连带其专属依赖，如 Stats/知识库的 echarts、
 // FlowEditor 的 vue-flow）各自成 chunk，首次导航才下载——手机首屏不再下载全站。
@@ -132,10 +132,12 @@ router.beforeEach(async to => {
 })
 
 // 遮罩在导航落定后 80ms 揭开（给新页面一帧落版时间，避免揭开瞬间看到排版跳动）。
-// 守卫内部的重定向（如手机 /chat → /m/chat）会再触发一次 afterEach，这里重排定时器即可，
-// 不会重复盖遮罩（beforeEach 见 authVeil.visible 就直接放行）。
+// 落位动画比揭罩先起跑：图层提升和首帧藏在还处于不透明的遮罩下面，淡出只做淡出，
+// 两件事错开一帧才不会在交接处一顿。守卫内部的重定向（如手机 /chat → /m/chat）
+// 会再触发一次 afterEach，这里重排定时器即可，不会重复盖遮罩或重启动画。
 router.afterEach(() => {
   if (!authVeil.visible) return
+  beginAuthEnter()
   clearTimeout(veilTimer)
   veilTimer = setTimeout(() => { revealAuthVeil() }, 80)
 })

@@ -1,9 +1,9 @@
 <template>
   <!-- 登录 ⇄ 工作台 的品牌过渡遮罩（状态由 utils/authTransition.js 驱动）。
        in（登录 → 工作台）：从品牌标出发的推镜——
-         源头圆点亮起 → 三道涟漪散开 → 三道活水线画出 → 品牌标胀开成「门」
+         源头圆点亮起 → 三道涟漪散开 → 三道活水线淡入 → 品牌标胀开成「门」
          → 光井绽放 → 画布铺满（换页藏在最后一帧）→ 遮罩整体退去。
-       out（工作台 → 登录）：同一套元素的逆放——工作台以品牌标为圆心后退失焦，
+       out（工作台 → 登录）：同一套元素的逆放——工作台以品牌标为圆心后退，
          涟漪向内收拢、品牌门收成源头圆点、光井收束，登录页再从失焦中落位。
        两种模式共用同一个根节点，reveal 阶段统一整层淡出。 -->
   <div v-if="authVeil.visible" class="auth-veil"
@@ -46,8 +46,9 @@ const anchorStyle = computed(() => authVeil.mode === 'in'
   overflow: hidden; pointer-events: auto;   /* 过渡期间拦住误点 */
 }
 
-/* 整体退场：不动子元素，让仍在中途的品牌层自然被遮罩带走 */
-.auth-veil.reveal { animation: veil-fade-out .42s cubic-bezier(.4, 0, .2, 1) both; }
+/* 整体退场：不动子元素，让仍在中途的品牌层自然被遮罩带走。
+   pointer-events 同步放开：淡出期间新页面已经可点，别让一层透明 div 再拦 420ms。 */
+.auth-veil.reveal { animation: veil-fade-out .42s cubic-bezier(.4, 0, .2, 1) both; pointer-events: none; }
 @keyframes veil-fade-out { from { opacity: 1; } to { opacity: 0; } }
 
 /* ① 画布层：登录页同一套渐变。两种模式都在最后一帧才铺满，让收放动作完整可见 */
@@ -61,29 +62,32 @@ const anchorStyle = computed(() => authVeil.mode === 'in'
 }
 .auth-veil.in.started .veil-wash { animation: veil-wash-in .48s ease-out both; }
 @keyframes veil-wash-in {
-  0%, 78% { opacity: 0; }
+  0%, 55% { opacity: 0; }
   100% { opacity: 1; }
 }
-.auth-veil.out.started .veil-wash { animation: veil-wash-in-out .42s ease-out both; }
+/* out 的 cover 是 .4s，画布必须恰好在放行路由时铺满，不能慢半拍 */
+.auth-veil.out.started .veil-wash { animation: veil-wash-in-out .4s ease-out both; }
 @keyframes veil-wash-in-out {
-  0%, 72% { opacity: 0; }
+  0%, 55% { opacity: 0; }
   100% { opacity: 1; }
 }
 
 /* ==================== in 模式：从品牌标推镜 ==================== */
-/* ③ 三道活水线：从品牌标方向横穿画面，逐条画出后整层退去 */
+/* ③ 三道活水线：从品牌标方向横穿画面，逐条淡入后整层退去。
+   不用 stroke-dashoffset 描边：Safari 每帧都要重绘整条 SVG 路径，桌面端会明显掉帧；
+   改为纯 opacity 动画，观感上仍是三条线依次亮起。 */
 .veil-streams {
   position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none;
 }
 .veil-streams path {
   fill: none; stroke: rgba(46, 107, 230, .30); stroke-width: 1.4;
-  stroke-linecap: round; stroke-dasharray: 1; stroke-dashoffset: 1;
+  stroke-linecap: round; opacity: 0;
 }
-.auth-veil.in.started .veil-streams path { animation: stream-draw .76s cubic-bezier(.3, .6, .2, 1) both; }
-.auth-veil.in.started .veil-streams path:nth-child(2) { animation-delay: .09s; }
-.auth-veil.in.started .veil-streams path:nth-child(3) { animation-delay: .18s; }
-@keyframes stream-draw { to { stroke-dashoffset: 0; } }
-.auth-veil.in.started .veil-streams { animation: streams-fade .42s ease-in .54s both; }
+.auth-veil.in.started .veil-streams path { animation: stream-draw .34s ease-out both; }
+.auth-veil.in.started .veil-streams path:nth-child(2) { animation-delay: .04s; }
+.auth-veil.in.started .veil-streams path:nth-child(3) { animation-delay: .08s; }
+@keyframes stream-draw { to { opacity: 1; } }
+.auth-veil.in.started .veil-streams { animation: streams-fade .18s ease-in .3s both; }
 @keyframes streams-fade { from { opacity: 1; } to { opacity: 0; } }
 
 /* ④ 三道涟漪：对应品牌标里的三道波线，从圆心依次散开 */
@@ -112,10 +116,10 @@ const anchorStyle = computed(() => authVeil.mode === 'in'
 }
 .auth-veil.in.started .veil-gate { animation: gate-open .9s cubic-bezier(.16, 1, .3, 1) .07s both; }
 @keyframes gate-open {
-  0%   { transform: translate(-50%, -50%) scale(.9); opacity: 0; filter: blur(0); }
+  0%   { transform: translate(-50%, -50%) scale(.9); opacity: 0; }
   18%  { transform: translate(-50%, -50%) scale(1.28); opacity: .92; }
   55%  { transform: translate(-50%, -50%) scale(1.42); opacity: .88; }
-  100% { transform: translate(-50%, -50%) scale(2.6); opacity: 0; filter: blur(3px); }
+  100% { transform: translate(-50%, -50%) scale(2.6); opacity: 0; }
 }
 
 /* ⑥ 源头圆点：品牌标右上那颗白点，在起点亮起后隐去 */
@@ -137,7 +141,7 @@ const anchorStyle = computed(() => authVeil.mode === 'in'
 .veil-glow {
   position: absolute; left: var(--ax); top: var(--ay);
   width: 560px; height: 560px; border-radius: 50%; opacity: 0;
-  filter: blur(8px); pointer-events: none;
+  pointer-events: none;
   background: radial-gradient(circle, rgba(255, 255, 255, .98) 0%, rgba(196, 219, 255, .60) 34%, rgba(196, 219, 255, 0) 70%);
   transform: translate(-50%, -50%) scale(.25);
 }
@@ -192,6 +196,19 @@ html[data-theme='dark'] .auth-veil.out .veil-seed {
   background: #5b8cf0;
   box-shadow: 0 0 0 2px rgba(91, 140, 240, .20), 0 0 22px 6px rgba(91, 140, 240, .38);
 }
+
+/* ==================== 揭开阶段：只留整层淡出 ====================
+   必须放在两种模式之后且选择器带 .started：与 .in.started / .out.started 的装饰规则
+   同级，靠顺序压住它们。否则涟漪/活水线/光井的动画会和新页面的落位动画
+   （整屏 scale + 透明度）同时跑，掉帧就出在这一段；它们本来也跑不完——遮罩 0.9s
+   就销毁了，暂停后随整层一起淡出更干净。画布则停在铺满状态，不跟着一起消失。 */
+.auth-veil.reveal.started .veil-wash { animation: none; opacity: 1; }
+.auth-veil.reveal.started .veil-streams,
+.auth-veil.reveal.started .veil-streams path,
+.auth-veil.reveal.started .veil-ripples i,
+.auth-veil.reveal.started .veil-gate,
+.auth-veil.reveal.started .veil-seed,
+.auth-veil.reveal.started .veil-glow { animation-play-state: paused; }
 
 /* ==================== 暗色 ==================== */
 html[data-theme='dark'] .veil-wash {

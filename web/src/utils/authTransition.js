@@ -16,13 +16,16 @@ export const authVeil = reactive({
 })
 
 // 时长与 AuthVeil.vue / LoginPage.vue / app.css 里的动画成对：只改一处等于两处不同步。
-// reveal 是遮罩自身的停留时长（整层淡出 .42s），工作台的落位动画由 app.css 独立跑完，
-// 不跟着遮罩一起等——否则透明遮罩还会多拦几百毫秒的点击。
+// veil-wash 在 cover 末尾刚好铺满，遮罩在 reveal 里整层淡出后立刻销毁：
+//   · cover   —— 推镜/收镜跑完，画布铺满（in .48s / out .40s）
+//   · reveal  —— 只做整层淡出（.42s），同时由 app.css / LoginPage.vue 各自跑落位动画。
+// 早先 reveal 比淡出多留 40~60ms，遮罩已经全透明却还在拦点击；对齐后一点不多留。
+// 另外装饰动画在 reveal 阶段会被 AuthVeil.vue 暂停，避免和新页面的落位动画抢帧。
 const REDUCED = typeof window !== 'undefined' && window.matchMedia &&
   window.matchMedia('(prefers-reduced-motion: reduce)').matches
 export const VEIL_MS = REDUCED
   ? { cover: { in: 60, out: 60 }, reveal: { in: 60, out: 60 } }
-  : { cover: { in: 480, out: 400 }, reveal: { in: 480, out: 460 } }
+  : { cover: { in: 480, out: 400 }, reveal: { in: 420, out: 420 } }
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
 
@@ -81,12 +84,22 @@ export async function coverAuthVeil (mode = 'in') {
   await wait(VEIL_MS.cover[mode])
 }
 
+/** 新页面挂载时先起跑落位动画：图层提升与首帧落在遮罩仍不透明的时段，
+ *  等 80ms 后再揭遮罩，淡出就不会和动画首帧抢同一帧（原先挤在一起会「卡一下」）。
+ *  守卫内部重定向会再走一次 afterEach，已起跑就不重复设置，避免重置动画。 */
+export function beginAuthEnter () {
+  if (REDUCED || !authVeil.visible || authVeil.phase !== 'cover') return
+  const root = document.documentElement
+  if (root.dataset.enter) return
+  startEnter(authVeil.mode === 'in' ? 'push' : 'land')
+}
+
 /** 揭开遮罩：新页面已挂载后调用；in 触发工作台落位，out 触发登录页对焦 */
 export async function revealAuthVeil () {
-  if (!authVeil.visible || authVeil.phase === 'reveal') return
+  if (!authVeil.visible || authVeil.phase !== 'cover') return
   const my = gen
+  beginAuthEnter()                 // 路由还没落定时（如 OIDC 回调）由这里兜底
   authVeil.phase = 'reveal'
-  if (!REDUCED) startEnter(authVeil.mode === 'in' ? 'push' : 'land')
   await wait(VEIL_MS.reveal[authVeil.mode])
   if (my !== gen) return           // 期间又起了新过渡：交给新一代收尾
   authVeil.visible = false

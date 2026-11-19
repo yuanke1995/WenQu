@@ -372,13 +372,14 @@ html[data-theme='dark'] .login-title::after {
 
 /* ==================== 登录 → 工作台：从品牌标推镜 ====================
    触发与时长由 utils/authTransition.js 控制；这里只描述“怎么动”。
-   整页以品牌标为圆心放大失焦，卡片沿同一圆心再放大一点，形成前景视差。 */
+   整页以品牌标为圆心放大，卡片沿同一圆心再放大一点，形成前景视差。
+   全程只用 transform + opacity：整页 blur 会逐帧重栅格化，主线程一忙就掉帧。 */
 html[data-leave='push'] .login-wrap {
   transform-origin: var(--wq-push-x, 50%) var(--wq-push-y, 50%);
   animation:
     wq-login-push .52s linear .04s both,
     wq-login-push-scale .52s cubic-bezier(.16, 1, .3, 1) .04s both;
-  will-change: transform, filter, opacity;
+  will-change: transform, opacity;
 }
 html[data-leave='push'] .login-card {
   transform-origin: var(--wq-card-x, 50%) var(--wq-card-y, 50%);
@@ -389,11 +390,11 @@ html[data-leave='push'] .login-card {
   0%, 55% { opacity: 1; }
   100% { opacity: 0; }
 }
-/* 缩放/失焦走强缓出，透明度留到最后 45% 才收——否则页面在前半程就化没了，
-   推镜只剩一层空画布 */
+/* 缩放走强缓出，透明度留到最后 45% 才收——否则页面在前半程就化没了，
+   推镜只剩一层空画布。不再叠 filter：scale + opacity 都只走合成器。 */
 @keyframes wq-login-push-scale {
-  from { transform: scale(1); filter: blur(0); }
-  to   { transform: scale(1.3); filter: blur(12px); }
+  from { transform: scale(1); }
+  to   { transform: scale(1.3); }
 }
 @keyframes wq-login-card-push {
   from { transform: scale(1); }
@@ -405,15 +406,15 @@ html[data-leave='push'] .login-card {
   html[data-enter='land'] .login-wrap { animation: none; }
 }
 
-/* ==================== 工作台 → 登录：从失焦中对焦落位 ====================
-   与遮罩的反向收镜接续：工作台缩回品牌标后，登录页从一层薄雾里对上焦。 */
+/* ==================== 工作台 → 登录：从远处对焦落位 ====================
+   与遮罩的反向收镜接续：工作台缩回品牌标后，登录页从透明中对上焦。 */
 html[data-enter='land'] .login-wrap {
   animation: wq-login-land .56s cubic-bezier(.16, 1, .3, 1) both;
-  will-change: transform, filter, opacity;
+  will-change: transform, opacity;
 }
 @keyframes wq-login-land {
-  from { transform: scale(1.045); filter: blur(9px); opacity: 0; }
-  to   { transform: none; filter: none; opacity: 1; }
+  from { transform: scale(1.045); opacity: 0; }
+  to   { transform: none; opacity: 1; }
 }
 
 /* ==================== 响应式 ==================== */
