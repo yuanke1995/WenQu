@@ -43,6 +43,7 @@ export const evalKnowledgeIds = m =>
 
 /** 更多动作分派：把菜单 key 解析成待执行的动作描述，副作用留给调用方。 */
 export const moreActionPlan = (key, mi, messages) => {
+  if (key === 'solidify') return { kind: 'solidify', mi }
   if (key === 'debug') return { kind: 'debug', mi }
   if (key === 'addEval') return { kind: 'addEval', mi }
   if (key === 'deleteRound') return { kind: 'deleteRound', mi }

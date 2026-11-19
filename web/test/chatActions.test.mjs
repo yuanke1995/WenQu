@@ -175,6 +175,7 @@ test('纯判据：更多动作分派与分享态', () => {
   assert.deepEqual(pure.moreActionPlan('addEval', 1, msgs), { kind: 'addEval', mi: 1 })
   assert.deepEqual(pure.moreActionPlan('deleteRound', 1, msgs), { kind: 'deleteRound', mi: 1 })
   assert.deepEqual(pure.moreActionPlan('export', 1, msgs), { kind: 'export', mi: 1 })
+  assert.deepEqual(pure.moreActionPlan('solidify', 1, msgs), { kind: 'solidify', mi: 1 })
   const ev = pure.moreActionPlan('events', 1, msgs)
   assert.equal(ev.kind, 'events')
   assert.equal(ev.turnId, 't9')
@@ -556,6 +557,11 @@ test('composable：复制、更多动作分派与加入评测集', async () => {
   c.log.length = 0
   a.onMoreAction('export', 1)
   assert.ok(c.log.some(x => x[0] === 'exportAnswerMd'))
+
+  a.onMoreAction('solidify', 1)
+  assert.equal(a.solidifyOpen.value, true)
+  assert.equal(a.solidifyForm.name, '问题一')
+  a.solidifyOpen.value = false
 
   await a.addToEval(1)
   assert.equal(c.apiCalls.addEvalCase.length, 1)

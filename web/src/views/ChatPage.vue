@@ -600,15 +600,13 @@
                   </div>
           </template>
           <template #actions-more="{ m, i }">
-                <!-- 固化为技能：把这一轮「问题→做法」沉淀成一条可复用的 SKILL.md（弹窗预填、改两行就能用）。
-                     只挂在落库的 AI 回答上（#more 插槽本就在 messageId 判据内），分享页不渲染这一档 -->
-                <a-tooltip title="把这一轮的做法固化为技能">
-                  <button class="app-icon-btn" @click="openSolidify(i)"><thunderbolt-outlined /></button>
-                </a-tooltip>
                 <a-dropdown :trigger="['hover', 'click']">
                   <button class="app-icon-btn" title="更多"><more-outlined /></button>
                   <template #overlay>
                     <a-menu @click="({ key }) => onMoreAction(key, i)">
+                      <!-- 固化为技能：把这一轮「问题→做法」沉淀成一条可复用的 SKILL.md（弹窗预填、改两行就能用）。
+                           收进「更多」菜单，与重新生成等常驻动作分开；只挂在落库的 AI 回答上（#more 插槽本就在 messageId 判据内） -->
+                      <a-menu-item key="solidify" title="把这一轮的做法固化为技能"><thunderbolt-outlined style="margin-right:8px" />固化为技能</a-menu-item>
                       <a-menu-item v-if="debugEntryVisible" key="debug"><bug-outlined style="margin-right:8px" />检索调试</a-menu-item>
                       <!-- 加入评测集 = 差评回流固化到检索评测集（/api/ai/eval 仅管理员可用），属调参排障动作：
                            与「检索调试」同一开关（chat.retrievalDebugEnabled）控制，不给普通用户露出必 403 的入口 -->
@@ -2512,7 +2510,7 @@ const {
   openSharedPage, onInputKeydown, hitsNote, copyAnswer,
   copyUserMessage, onMoreAction, addToEval, solidifyOpen,
   solidifyBusy, solidifyForm, gotoSkillsPage, solidifySlug,
-  openSolidify, submitSolidify, exportRound, deleteRound,
+  submitSolidify, exportRound, deleteRound,
   debugVisible, debugLoading, debugQuestion, debugResult,
   openDebug, runDebug, debugStages
 } = (page.actions = useChatActions({
