@@ -39,33 +39,34 @@
       </div>
       </template>
     </div>
-  </div>
-
-  <!-- 全屏只读浮层：侧栏太窄看不清长快照时铺开看，仍然不能导航/点击回灌模型 -->
-  <Teleport to="body">
-    <div v-if="expanded && snapshots.length" class="bp-fs" role="dialog" aria-label="浏览器快照全屏查看" @click.self="expanded = false">
-      <div class="bp-fs-inner">
-        <div class="bp-fs-head">
-          <div class="bp-fs-url" :title="current.url || ''">{{ current.url || '—' }}</div>
-          <div class="bp-fs-actions">
-            <span class="bp-runtime">{{ runtimeLabel }}</span>
-            <button type="button" class="bp-open" :disabled="!current.url" @click="openCurrent">在新窗口打开</button>
-            <button type="button" class="bp-fs-close" title="关闭全屏" @click="expanded = false">✕</button>
+    <!-- 全屏只读浮层：侧栏太窄看不清长快照时铺开看，仍然不能导航/点击回灌模型。
+         Teleport 必须留在组件唯一根元素内：ChatPage 用 v-show 控制本组件，多根会让
+         v-show 失效，过程/来源/文件 tab 下也会漏出浏览面板。 -->
+    <Teleport to="body">
+      <div v-if="expanded && snapshots.length" class="bp-fs" role="dialog" aria-label="浏览器快照全屏查看" @click.self="expanded = false">
+        <div class="bp-fs-inner">
+          <div class="bp-fs-head">
+            <div class="bp-fs-url" :title="current.url || ''">{{ current.url || '—' }}</div>
+            <div class="bp-fs-actions">
+              <span class="bp-runtime">{{ runtimeLabel }}</span>
+              <button type="button" class="bp-open" :disabled="!current.url" @click="openCurrent">在新窗口打开</button>
+              <button type="button" class="bp-fs-close" title="关闭全屏" @click="expanded = false">✕</button>
+            </div>
           </div>
-        </div>
-        <div class="bp-fs-list">
-          <div v-for="(s, i) in snapshots" :key="'fs|' + (s.turnId || '') + '|' + (s && s.ts) + '|' + i" class="bp-item">
-            <button type="button" class="bp-item-head" @click="toggleFs(i)">
-              <span class="bp-caret" :class="{ open: fsOpened[i] }">›</span>
-              <span class="bp-item-time">{{ timeOf(s.ts) }}</span>
-              <span v-if="i === 0" class="bp-new">最新</span>
-            </button>
-            <pre v-if="fsOpened[i]" class="bp-text bp-text-fs">{{ s.text || '' }}</pre>
+          <div class="bp-fs-list">
+            <div v-for="(s, i) in snapshots" :key="'fs|' + (s.turnId || '') + '|' + (s && s.ts) + '|' + i" class="bp-item">
+              <button type="button" class="bp-item-head" @click="toggleFs(i)">
+                <span class="bp-caret" :class="{ open: fsOpened[i] }">›</span>
+                <span class="bp-item-time">{{ timeOf(s.ts) }}</span>
+                <span v-if="i === 0" class="bp-new">最新</span>
+              </button>
+              <pre v-if="fsOpened[i]" class="bp-text bp-text-fs">{{ s.text || '' }}</pre>
+            </div>
           </div>
         </div>
       </div>
-    </div>
-  </Teleport>
+    </Teleport>
+  </div>
 </template>
 
 <script setup>
