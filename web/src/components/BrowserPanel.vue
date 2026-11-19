@@ -9,13 +9,14 @@
               :aria-selected="mode === 'embed'" @click="mode = 'embed'">自己浏览</button>
     </div>
 
-    <template v-if="mode === 'embed'">
-      <BrowserEmbed />
-    </template>
-    <template v-else>
-    <div v-if="!snapshots.length" class="bp-empty">本轮还没有浏览器操作</div>
-    <template v-else>
-      <!-- 顶部：当前 URL（只读）+ 运行环境徽标 + 时间 + 放大按钮 -->
+    <!-- 用 v-show 而非 v-if 保留各自实例：切到「助手看到」再切回来时，iframe 的地址、
+         历史与已加载页面仍在。v-if 会卸载 BrowserEmbed，用户正在看的页面就没了。
+         两模式仍是独立组件、互不共享状态、也不回灌模型。 -->
+    <BrowserEmbed v-show="mode === 'embed'" />
+    <div v-show="mode === 'snapshot'" class="bp-snapshot">
+      <div v-if="!snapshots.length" class="bp-empty">本轮还没有浏览器操作</div>
+      <template v-else>
+        <!-- 顶部：当前 URL（只读）+ 运行环境徽标 + 时间 + 放大按钮 -->
       <div class="bp-head">
         <div class="bp-url" :title="current.url || ''">{{ current.url || '—' }}</div>
         <div class="bp-meta">
@@ -36,8 +37,8 @@
           <pre v-if="opened[i]" class="bp-text">{{ s.text || '' }}</pre>
         </div>
       </div>
-    </template>
-    </template>
+      </template>
+    </div>
   </div>
 
   <!-- 全屏只读浮层：侧栏太窄看不清长快照时铺开看，仍然不能导航/点击回灌模型 -->
@@ -116,6 +117,7 @@ const openCurrent = () => {
 
 <style scoped>
 .bp-panel { padding: 10px 12px; display: flex; flex-direction: column; gap: 9px; }
+.bp-snapshot { display: flex; flex-direction: column; gap: 9px; }
 .bp-modes { display: flex; gap: 2px; padding: 2px; flex: none;
   background: var(--app-panel-3, #f2f4f7); border-radius: 8px; }
 .bp-mode { flex: 1; height: 25px; border: 0; border-radius: 6px; background: transparent;

@@ -1497,7 +1497,9 @@
           浏览<span v-if="browserSnapshots.length" class="rp-tab-n">{{ browserSnapshots.length }}</span>
         </button>
       </div>
-      <BrowserPanel v-if="railTab === 'browser'" :snapshots="browserSnapshots" />
+      <!-- 用 v-show 保留实例：在「浏览」与过程/来源/文件之间来回切时，侧栏 iframe 的地址与
+           已加载页面不会被卸载重建（v-if 会让正在看的页面消失）。整栏关闭仍由上面的 aside v-if 控制。 -->
+      <BrowserPanel v-show="railTab === 'browser'" :snapshots="browserSnapshots" />
       <!-- 本轮卡（常驻首位）：跑轮时实时滚动「哪几步、每步在做什么事」，答完收成这一轮的动作清单。
            单步耗时不在这里报（整轮用时归气泡那条状态行），要点「查看全部步骤」进账本弹窗。
            会话里还没有 AI 消息时整卡不渲染（新会话不占位）。其余各卡仍是「有数据才显示」。 -->
