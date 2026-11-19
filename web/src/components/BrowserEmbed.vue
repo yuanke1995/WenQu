@@ -22,8 +22,8 @@
     </div>
     <p v-if="!sandboxed" class="be-warn">⚠ 已临时关闭沙箱：页面可下载、弹窗或导航当前应用，刷新后恢复。</p>
     <p v-if="blocked" class="be-blocked">
-      这个站点禁止被嵌入（X-Frame-Options / CSP），页面无法在此显示。
-      <button type="button" class="be-link" @click="openExternal">在系统浏览器打开 ↗</button>
+      {{ blockReason }}
+      <button v-if="currentUrl" type="button" class="be-link" @click="openExternal">在系统浏览器打开 ↗</button>
     </p>
 
     <!-- iframe 载体：同源策略下跨域页面读不到 URL，导航历史由本组件维护 -->
@@ -49,6 +49,7 @@ const hIndex = ref(-1)
 const sandboxed = ref(true)
 const loadState = ref('idle')   // idle | loading | ok | error
 const blocked = ref(false)
+const blockReason = ref('')      // 区分「地址被拒」与「站点拒绝嵌入」，别混用同一句文案
 const unknown = ref(false)      // 页面内部导航后 URL 不可读
 let expectedLoads = 0
 
@@ -70,29 +71,33 @@ const stateText = computed(() => {
 // URL 校验：对齐 DSH 的协议策略——只收 http/https，补全 scheme，拒绝内嵌凭据与自身 origin
 const resolveUrl = raw => {
   let s = String(raw || '').trim()
-  if (!s) return null
-  if (/^(javascript|data|blob|file|vbscript):/i.test(s)) return null
-  if (/^https?:\/\/[^/?#@]*@/i.test(s)) return null
+  if (!s) return { err: '请输入网址' }
+  if (/^(javascript|data|blob|file|vbscript):/i.test(s)) return { err: '只支持 http/https 网页地址' }
+  if (/^https?:\/\/[^/?#@]*@/i.test(s)) return { err: '地址里不能带账号密码' }
   if (!/^https?:\/\//i.test(s)) s = 'https://' + s
   try {
     const u = new URL(s)
-    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null
-    if (u.origin === window.location.origin) return null
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return { err: '只支持 http/https 网页地址' }
+    if (u.origin === window.location.origin) {
+      return { err: '这是问渠自己的地址，不能嵌进问渠自己。要开本会话请在系统浏览器打开，或输入别的网址。' }
+    }
     u.hash = ''
-    return u.href
-  } catch (e) { return null }
+    return { url: u.href }
+  } catch (e) { return { err: '地址格式不对，请检查' } }
 }
 
 const startLoad = url => {
   unknown.value = false
   blocked.value = false
+  blockReason.value = ''
   loadState.value = 'loading'
   expectedLoads++
 }
 
 const go = () => {
-  const url = resolveUrl(input.value)
-  if (!url) { loadState.value = 'error'; blocked.value = true; return }
+  const r = resolveUrl(input.value)
+  if (r.err) { loadState.value = 'error'; blocked.value = true; blockReason.value = r.err; return }
+  const url = r.url
   input.value = url
   // 从当前位置截断（后退后前往 = 丢弃后面的历史），去重连续相同 URL
   const next = history.value.slice(0, hIndex.value + 1)
@@ -136,6 +141,7 @@ const onLoad = () => {
       const href = el && el.contentWindow ? el.contentWindow.location.href : ''
       if (!href || href === 'about:blank' || href.startsWith('chrome-error://')) {
         blocked.value = true
+        blockReason.value = '这个站点禁止被嵌入（X-Frame-Options / CSP），页面无法在这里显示。'
       }
     } catch (e) { /* 跨域成功加载：读不到 URL 是常态，不判失败 */ }
   } else {
@@ -144,10 +150,15 @@ const onLoad = () => {
   }
 }
 
-const onError = () => { loadState.value = 'error'; blocked.value = true }
+const onError = () => {
+  loadState.value = 'error'
+  blocked.value = true
+  blockReason.value = '页面加载失败，可能站点不可达或禁止嵌入。'
+}
 
 const openExternal = () => {
-  const url = currentUrl.value || resolveUrl(input.value)
+  const r = resolveUrl(input.value)
+  const url = currentUrl.value || r.url
   if (url) window.open(url, '_blank', 'noopener')
 }
 </script>
