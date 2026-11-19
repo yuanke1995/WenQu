@@ -46,6 +46,7 @@ test('批准终稿：id/倒计时/待确认；帧带血缘故能回链旧卡', (
   const old = { planCard: { id: 'c1' } }
   const msg = {}
   let scroll = 0
+  const before = Date.now()
   applyPlanApproval(msg, JSON.stringify({
     planApprovalId: 'c2', plan: { summary: '终稿' }, timeoutMs: 5000,
     planBaseId: 'c1', planBaseVersion: 2, planBaseDone: 1, planBaseTotal: 3
@@ -55,7 +56,7 @@ test('批准终稿：id/倒计时/待确认；帧带血缘故能回链旧卡', (
   assert.equal(c.status, 'pending')
   assert.equal(c.plan, '终稿')
   assert.equal(c.timeoutMs, 5000)
-  assert.ok(c.deadline >= Date.now() + 5000)
+  assert.ok(c.deadline >= before + 5000)
   assert.deepEqual(c.adjustFrom, { cardId: 'c1', version: 2, done: 1, total: 3, failed: 0 })
   assert.equal(old.planCard.replannedBy.cardId, 'c2')
   assert.equal(scroll, 1)
