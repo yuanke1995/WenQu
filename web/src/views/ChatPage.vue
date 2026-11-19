@@ -1466,13 +1466,13 @@
     <!-- 右侧状态栏（可收起）：引用来源 / 产物 / 计划（各自有条件才显示）
          宽窄两态共用这一份 DOM：宽屏由 panelOpen 控制（占位列），窄屏由 mPanelOpen 控制
          （浮层/底部 sheet，默认收起）。两态只靠 .as-sheet 类 + CSS 媒体查询区分。 -->
-    <aside v-if="panelOpen || mPanelOpen" class="right-panel" :class="{ 'as-sheet': isNarrow }">
+    <aside v-if="panelOpen || mPanelOpen" class="right-panel" :class="{ 'as-sheet': isNarrow, 'browser-wide': railTab === 'browser' }">
       <!-- 窄屏下本栏是覆盖式 sheet，必须给一个显式关闭口：宽屏它是常驻列不需要关，
            窄屏开起来后若只能靠顶栏按钮来回切，用户会觉得「关不掉」。仅窄屏渲染。 -->
       <button v-if="isNarrow" class="rp-sheet-close" type="button" title="关闭" @click="mPanelOpen = false">
         <close-outlined />
       </button>
-      <!-- 右栏分段：过程 / 来源 / 文件。原先所有卡竖排，本轮最该看的过程会被后面的卡顶出首屏；
+      <!-- 右栏分段：过程 / 来源 / 文件 / 浏览。原先所有卡竖排，本轮最该看的过程会被后面的卡顶出首屏；
            分段把三件事分开，计数与失败数直接标在页签上 -->
       <div class="rp-tabs" role="tablist" aria-label="右栏内容">
         <button type="button" class="rp-tab" :class="{ on: railTab === 'process' }" role="tab"
@@ -1488,7 +1488,12 @@
                 :aria-selected="railTab === 'files'" @click="railTab = 'files'">
           文件<span class="rp-tab-n">{{ fileTabCount }}</span>
         </button>
+        <button type="button" class="rp-tab" :class="{ on: railTab === 'browser' }" role="tab"
+                :aria-selected="railTab === 'browser'" @click="railTab = 'browser'">
+          浏览<span v-if="browserSnapshots.length" class="rp-tab-n">{{ browserSnapshots.length }}</span>
+        </button>
       </div>
+      <BrowserPanel v-if="railTab === 'browser'" :snapshots="browserSnapshots" />
       <!-- 本轮卡（常驻首位）：跑轮时实时滚动「哪几步、每步在做什么事」，答完收成这一轮的动作清单。
            单步耗时不在这里报（整轮用时归气泡那条状态行），要点「查看全部步骤」进账本弹窗。
            会话里还没有 AI 消息时整卡不渲染（新会话不占位）。其余各卡仍是「有数据才显示」。 -->
@@ -2014,6 +2019,8 @@ import ToolSpillButton from '../components/ToolSpillButton.vue'
 import SessionEventsPanel from '../components/SessionEventsPanel.vue'
 // 右栏「过程」卡：跑轮时实时滚动工具步（数据就是引擎那份消息对象，不另取数）
 import RightProcessCard from '../components/RightProcessCard.vue'
+// 右栏「浏览」卡：助手本轮浏览器操作的只读快照镜像（唯一出口是「在新窗口打开」）
+import BrowserPanel from '../components/BrowserPanel.vue'
 // 顶栏「子智能体」药丸：派遣在跑时给一个不随正文滚走的位置（PC 浮层 / 触屏底部 sheet 同一份组件）
 import SubagentPill from '../components/SubagentPill.vue'
 import SkillContentModal from '../components/SkillContentModal.vue'
@@ -2098,10 +2105,26 @@ const icons = { CompressOutlined, AimOutlined, FileTextOutlined, PlusOutlined,
                 PaperClipOutlined, BookOutlined, HistoryOutlined, ThunderboltOutlined,
                 DatabaseOutlined, RobotOutlined, AppstoreOutlined }
 
+// 浏览器能力只读镜像：SSE 事件 browser_snapshot → onBrowserSnapshot 回调（引擎经 hooks 转来）。
+// 同一轮最多保留最近 20 条、最新在前；turn_start / 切会话时清空旧快照。
+const browserSnapshots = ref([])
+const MAX_BROWSER_SNAPSHOTS = 20
+const clearBrowserSnapshots = () => { browserSnapshots.value = [] }
+const onBrowserSnapshot = payload => {
+  let snap = payload
+  if (typeof snap === 'string') {
+    try { snap = JSON.parse(snap) } catch (e) { return }
+  }
+  if (!snap || typeof snap !== 'object') return
+  browserSnapshots.value = [snap, ...browserSnapshots.value].slice(0, MAX_BROWSER_SNAPSHOTS)
+}
+
 // 引擎先装配：所有视图域的 getter 都能安全读取；视图回调经 page 惰性取值。
 const engine = useChatEngine({
   chatPath: '/chat',
   planModeEnabled: true,
+  onBrowserSnapshot,
+  onTurnStart: () => clearBrowserSnapshots(),
   scrollFollow: () => nextTick(() => { page.chrome?.updateTailSpacer?.(); page.chrome?.scroll?.() }),
   scrollForce: () => nextTick(() => { page.chrome?.updateTailSpacer?.(); page.chrome?.scrollForce?.() }),
   scrollSoft: () => page.chrome?.scroll?.(),
@@ -2178,6 +2201,9 @@ const {
   // 「已压缩上下文」分隔线的判据（引擎里，与 H5 共用）：持久那份按消息行标记，另一档补本轮压完到落库之间
   compactDividerAt, liveCompactAt
 } = engine
+
+// 切会话即清空上一会话的浏览器快照（新会话/重新进入都不该看到上一轮的浏览器动作）
+watch(currentSessionId, () => clearBrowserSnapshots())
 
 // 目标条的进度读数：轮次之外再给「已跑多久 / 预算占多少」，让条子一屏读完
 const goalElapsedText = computed(() => {
@@ -3619,6 +3645,9 @@ const {
   /* 底部预留：全局帮助 FAB 悬浮在视口右下角，让卡片不被压住 */
   padding: 12px 10px 56px; display: flex; flex-direction: column; gap: 10px; overflow-y: auto;
 }
+/* 浏览 tab 是读页面快照（长文本 + 链接），230px 的卡片栏放不下——切到这一档就把常驻列加宽，
+   过程/来源/文件三档仍用窄栏，不牺牲正文宽度。窄屏浮层下这条同样生效（在媒体查询里再收口）。 */
+.right-panel.browser-wide { width: 420px; }
 .rp-card { background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 10px; padding: 10px 12px; }
 /* 右栏分段：三颗等宽页签，选中态浮起；失败数是一颗红色小徽标，只压在「过程」上 */
 .rp-tabs {
@@ -4047,6 +4076,9 @@ const {
   .right-panel { position: absolute; right: 12px; top: 56px; bottom: 12px; z-index: 30;
     width: 260px; border: 1px solid var(--app-border); border-radius: var(--app-radius);
     box-shadow: var(--app-shadow-lg); background: var(--app-panel); }
+  /* 浏览档：浮层加宽到 420px，但给左侧正文至少留 280px，小屏不遮满 */
+  .right-panel.browser-wide { width: min(420px, calc(100vw - 300px)); }
+  .right-panel.as-sheet.browser-wide { width: auto; }
   /* 窄屏输入卡片会贴到右缘，为右下角全局帮助 FAB 让出角落（否则压住发送键一侧）。
      让位量交给输入区组件叠加到它自己的右内边距上（--ci-right-extra），
      而不是在这里覆盖 padding-right —— 卡片与拖拽框的几何现在只有组件那一份。 */

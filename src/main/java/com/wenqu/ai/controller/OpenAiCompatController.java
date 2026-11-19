@@ -444,7 +444,7 @@ public class OpenAiCompatController {
                 || n.equals("edit_file") || n.equals("presentArtifact") || n.equals("writeTodo")
                 || n.equals("askUser") || n.startsWith("goal_") || n.startsWith("plan_")
                 || n.startsWith("agent_") || n.startsWith("task_") || n.startsWith("wen_qu")
-                || n.startsWith("wf_") || n.startsWith("localBrowser");
+                || n.startsWith("wf_") || n.startsWith("localBrowser") || n.startsWith("browser");
     }
 
     // ==================== Responses API ====================

@@ -293,6 +293,9 @@ let browserChild = null
 let browserSession = null
 let browserBase = null
 let browserIdleTimer = null
+// 当前浏览器进程是否无头：模式切换（个人设置改 headless）时停掉旧进程重启，
+// 避免同一个 MCP 连接既想有头又想无头。
+let browserHeadless = null
 
 /**
  * 收回整条浏览器子进程树：npx → playwright-mcp → Edge。只杀 npx 不够——Edge 是它的孙进程，
@@ -305,6 +308,7 @@ function stopBrowser () {
   browserChild = null
   browserSession = null
   browserBase = null
+  browserHeadless = null
   if (!child || child.exitCode !== null) return
   try {
     if (process.platform === 'win32') spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'])
@@ -2607,10 +2611,11 @@ function detectBrowserChannel () {
   return 'chromium'
 }
 
-function browserSpawnArgs (port) {
+function browserSpawnArgs (port, headless) {
   const base = ['--yes', '@playwright/mcp@0.0.84',
     '--host', '127.0.0.1', '--port', String(port),
     '--isolated', '--no-webmcp', '--allowed-hosts', '*']
+  if (headless) base.push('--headless')
   const channel = detectBrowserChannel()
   if (channel !== 'chromium') return [...base, '--browser', channel]
   // 随包 Chromium：MCP 默认渠道是 chrome，必须用配置显式指到 chromium
@@ -2619,13 +2624,17 @@ function browserSpawnArgs (port) {
   return [...base, '--config', cfg]
 }
 
-async function ensureBrowser () {
+async function ensureBrowser (headless) {
+  const want = Boolean(headless)
+  // 模式变了：停掉旧进程组按新模式起。同模式才复用连接。
+  if (browserChild && browserHeadless !== want) stopBrowser()
   if (browserSession) return browserSession
   if (!browserChild) {
+    browserHeadless = want
     const port = await freePort()
     browserBase = `http://127.0.0.1:${port}/mcp`
-    log(`启动本机浏览器服务 :${port}（headed，渠道 ${detectBrowserChannel()}）`)
-    browserChild = spawn('npx', browserSpawnArgs(port),
+    log(`启动本机浏览器服务 :${port}（${want ? 'headless' : 'headed'}，渠道 ${detectBrowserChannel()}）`)
+    browserChild = spawn('npx', browserSpawnArgs(port, want),
       // POSIX 下 detached 让子进程自成一组：stopBrowser 用 kill(-pid) 才能把 npx/playwright-mcp/Edge
       // 一起带走。终端 Ctrl+C 的 SIGINT 由执行器自己的钩子处理，不依赖子进程同组。
       { stdio: ['ignore', 'ignore', 'inherit'], detached: process.platform !== 'win32' })
@@ -2650,7 +2659,11 @@ async function ensureBrowser () {
 async function opBrowser (args) {
   const tool = String(args.tool || '')
   if (!tool.startsWith('browser_')) throw err('E_BROWSER_TOOL', '未知的浏览器工具：' + tool)
-  const sid = await ensureBrowser()
+  // headless 可由后端按个人设置下发；未下发时用执行器启动时的环境变量默认
+  const headless = args.headless === undefined
+    ? process.env.WENQU_BROWSER_HEADLESS === '1'
+    : Boolean(args.headless)
+  const sid = await ensureBrowser(headless)
   armBrowserIdleClose()
   const out = await mcpRpc({ jsonrpc: '2.0', id: Date.now() % 100000, method: 'tools/call',
     params: { name: tool, arguments: args.args || {} } }, sid)

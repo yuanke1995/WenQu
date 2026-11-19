@@ -105,10 +105,8 @@ public class McpClientService {
     private final McpCallLogMapper mcpCallLogMapper;
     /** 问答链路等连接的上限：mcp.turnWaitMs（0=不在本轮等，已有工具照用） */
     private final ConfigService configService;
-    /** 本机浏览器工具（判定执行器在线用）：在线时云端平台浏览器让位，避免两套浏览器给模型两种结论 */
-    private final LocalBrowserTools localBrowserTools;
-    /** 个人设置的浏览器执行位置：选了内置浏览器时不再让位给本机（本机族此时也不挂） */
-    private final BrowserLocationService browserLocation;
+    /** 浏览器执行位置统一解析：本机在线时云端平台浏览器让位，避免两套给模型两种结论 */
+    private final BrowserModeResolver browserMode;
 
     /** 连接池按用户隔离：uid → 该用户的连接与状态 */
     private final Map<String, UserPool> pools = new ConcurrentHashMap<>();
@@ -134,17 +132,14 @@ public class McpClientService {
     public McpClientService(UserMcpMapper userMcpMapper, McpToolLabelService labelService,
                             ConfigCryptoService cryptoService, McpCallLogMapper mcpCallLogMapper,
                             ConfigService configService,
-                            /** 判定「本机执行器在线」用：在线时云端平台浏览器让位给本机 localBrowser*（见 toolCallbacks） */
-                            LocalBrowserTools localBrowserTools,
-                            /** 个人设置「内置浏览器」：选中时本机族不挂，云端也不再让位 */
-                            BrowserLocationService browserLocation) {
+                            /** 浏览器执行位置：本机在线走本机、云端让位；选内置走云端 */
+                            BrowserModeResolver browserMode) {
         this.userMcpMapper = userMcpMapper;
         this.labelService = labelService;
         this.cryptoService = cryptoService;
         this.mcpCallLogMapper = mcpCallLogMapper;
         this.configService = configService;
-        this.localBrowserTools = localBrowserTools;
-        this.browserLocation = browserLocation;
+        this.browserMode = browserMode;
     }
 
     @PreDestroy
@@ -187,6 +182,12 @@ public class McpClientService {
      * 所以用 {@link SyncMcpToolCallback} 子类包装。
      */
     public List<ToolCallback> toolCallbacks(String uid, java.util.Set<String> onlyServers, String agentId) {
+        return toolCallbacks(uid, onlyServers, agentId, false);
+    }
+
+    /** internalBrowser=true 时允许「浏览器操作」平台服务进入回调表（BrowserTools 云执行位置直调用）。 */
+    private List<ToolCallback> toolCallbacks(String uid, java.util.Set<String> onlyServers, String agentId,
+                                             boolean internalBrowser) {
         if (onlyServers != null && onlyServers.isEmpty()) {
             return List.of(); // 智能体显式"不使用任何 MCP"：连接都不必建立
         }
@@ -202,30 +203,20 @@ public class McpClientService {
         // （智能体列表转圈的同一根因）。临界区纪律见 {@link UserPool}。
         Map<String, McpSyncClient> snap;
         Map<String, CachedTools> cacheSnap;
-        java.util.Set<String> platformNames = new java.util.HashSet<>();
         synchronized (pool) {
             snap = new LinkedHashMap<>(pool.clients);
             cacheSnap = new LinkedHashMap<>(pool.toolsCache);
-            for (UserMcp row : pool.rows) {
-                if (UserMcp.SCOPE_PLATFORM.equals(row.getScope())) platformNames.add(row.getName());
-            }
         }
         List<ToolCallback> callbacks = new ArrayList<>();
         Map<String, String> failed = new LinkedHashMap<>();
         long now = System.currentTimeMillis();
-        // 本机执行器在线、且用户没选「内置浏览器」时，云端平台浏览器整族让位：两套浏览器并存会让
-        // 模型拿到两种结论（云端看不到 localhost 报「连接被拒绝」，本机却已打开页面）。
-        // 选了内置浏览器时本机族本来就不挂，这里若继续让位会导致两套都没有。
-        boolean localPreferred = localBrowserTools != null
-                && localBrowserTools.onlineExecutor(uid) != null
-                && !browserLocation.builtin(uid);
+        // 平台「浏览器操作」的工具已被 BROWSER 族（BrowserProvider/BrowserTools）统一接管：
+        // 模型侧只挂那一套 browser_*，这里无论是否点名都不得把同一批工具直接挂进 MCP 工具表，
+        // 否则同名工具在模型工具表里出现两次，说明与审批属性都不可控。
+        // BrowserTools 走 invokeTool(uid, "浏览器操作", ...) 直调，不受本过滤影响。
         for (Map.Entry<String, McpSyncClient> entry : snap.entrySet()) {
             if (onlyServers != null && !onlyServers.contains(entry.getKey())) continue;
-            // 平台服务不参与「未指定 = 全部」：否则浏览器这类能力会随平台升级落进每一个现存助手的
-            // 工具表（25 把外部工具足以把选工具的质量拉下来），而助手作者从未同意过。
-            // 要用就在智能体的 MCP 范围里点名它——点名走 onlyServers，不受这条影响。
-            // 例外是「本机执行器在线」：即使点名了也让位给本机 localBrowser*（理由见 localPreferred）。
-            if (platformNames.contains(entry.getKey()) && (onlyServers == null || localPreferred)) continue;
+            if (!internalBrowser && BrowserTools.PLATFORM_BROWSER_SERVER.equals(entry.getKey())) continue;
             McpSyncClient client = entry.getValue();
             CachedTools cached = cacheSnap.get(entry.getKey());
             if (cached != null && cached.fresh(now)) {
@@ -767,8 +758,26 @@ public class McpClientService {
      */
     public Map<String, Object> invokeTool(String uid, String serverName, String toolName,
                                           Map<String, Object> args) {
+        return invokeTool(uid, serverName, toolName, args, false);
+    }
+
+    /**
+     * 浏览器能力内部直调：绕过「平台浏览器不进模型工具表」的过滤。
+     * 仅供 {@link com.wenqu.ai.service.BrowserTools} 使用（云执行位置）。
+     */
+    public String callBrowserTool(String uid, String toolName, Map<String, Object> args) {
+        Map<String, Object> r = invokeTool(uid, BrowserTools.PLATFORM_BROWSER_SERVER, toolName, args, true);
+        if (r == null) return "云端浏览器调用失败：无返回结果";
+        if (Boolean.TRUE.equals(r.get("ok"))) {
+            return r.get("resultText") == null ? "" : String.valueOf(r.get("resultText"));
+        }
+        return "云端浏览器调用失败：" + (r.get("error") == null ? "" : r.get("error"));
+    }
+
+    private Map<String, Object> invokeTool(String uid, String serverName, String toolName,
+                                           Map<String, Object> args, boolean internalBrowser) {
         long start = System.currentTimeMillis();
-        List<ToolCallback> callbacks = toolCallbacks(uid, Set.of(serverName), null);
+        List<ToolCallback> callbacks = toolCallbacks(uid, Set.of(serverName), null, internalBrowser);
         ToolCallback target = callbacks.stream()
                 .filter(c -> toolName.equals(originalToolName(c)))
                 .findFirst().orElse(null);

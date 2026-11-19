@@ -51,6 +51,8 @@ public enum RunEventType {
     COMPACT_STATE("compact_state", "onCompactState", "上下文压缩", null, false, true),
     IMAGE("image", "onImage", null, null, false, false),
     ARTIFACT("artifact", "onArtifact", "产物", "art", true, false),
+    /** 浏览器操作快照：只读镜像推给侧栏「浏览」tab，不进账本、不回灌模型 */
+    BROWSER_SNAPSHOT("browser_snapshot", "onBrowserSnapshot", null, null, false, false),
     /** 运行中插话被模型听到的那一刻（框架 inbox/applied），不是「用户按了发送」。 */
     STEER("steer", "onSteer", "中途插话", null, false, false),
     /** 本轮服务端起表基准：开流第一帧下发，前端据此锚定秒表。 */

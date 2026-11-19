@@ -134,6 +134,7 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         m.put("toolSkill", "技能 Skills");
         m.put("toolArtifact", "产物交付");
         m.put("toolMcp", "MCP 外部工具");
+        m.put("toolBrowser", "浏览器操作");
         m.put("toolWebsearch", "联网搜索");
         m.put("toolHttp", "HTTP 工具");
         m.put("httpTools", "HTTP 工具集");
@@ -720,6 +721,7 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         if (b.containsKey("toolSkill")) uw.set(Agent::getToolSkill, a.getToolSkill());
         if (b.containsKey("toolArtifact")) uw.set(Agent::getToolArtifact, a.getToolArtifact());
         if (b.containsKey("toolMcp")) uw.set(Agent::getToolMcp, a.getToolMcp());
+        if (b.containsKey("toolBrowser")) uw.set(Agent::getToolBrowser, a.getToolBrowser());
         if (b.containsKey("toolWebsearch")) uw.set(Agent::getToolWebsearch, a.getToolWebsearch());
         if (b.containsKey("toolHttp")) uw.set(Agent::getToolHttp, a.getToolHttp());
         if (b.containsKey("httpTools")) uw.set(Agent::getHttpTools, a.getHttpTools());
@@ -831,6 +833,7 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         if (body.containsKey("toolSkill")) a.setToolSkill(toTri(body.get("toolSkill")));
         if (body.containsKey("toolArtifact")) a.setToolArtifact(toTri(body.get("toolArtifact")));
         if (body.containsKey("toolMcp")) a.setToolMcp(toTri(body.get("toolMcp")));
+        if (body.containsKey("toolBrowser")) a.setToolBrowser(toTri(body.get("toolBrowser")));
         if (body.containsKey("toolWebsearch")) a.setToolWebsearch(toTri(body.get("toolWebsearch")));
         if (body.containsKey("toolHttp")) a.setToolHttp(toTri(body.get("toolHttp")));
         // HTTP 工具集：归一化+上限+凭据加密（先于 toolDeny 校验，后者要认识新配置里的动态工具名）
@@ -1264,6 +1267,7 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         uw.set(Agent::getToolSkill, asInt(cfg.get("toolSkill")));
         uw.set(Agent::getToolArtifact, asInt(cfg.get("toolArtifact")));
         uw.set(Agent::getToolMcp, asInt(cfg.get("toolMcp")));
+        uw.set(Agent::getToolBrowser, asInt(cfg.get("toolBrowser")));
         uw.set(Agent::getToolWebsearch, asInt(cfg.get("toolWebsearch")));
         uw.set(Agent::getToolHttp, asInt(cfg.get("toolHttp")));
         uw.set(Agent::getHttpTools, raw(cfg.get("httpTools")));

@@ -496,6 +496,20 @@
       "tier": 2
     },
     {
+      "backendKey": "tool.browser.enabled",
+      "panel": "tool",
+      "section": 0,
+      "group": "tool",
+      "key": "browser.enabled",
+      "path": "tool.browser.enabled",
+      "label": "浏览器操作开关",
+      "type": "switch",
+      "def": true,
+      "note": "关闭后本机与云端两套浏览器工具都不挂载；执行位置在个人设置里选",
+      "core": true,
+      "tier": 2
+    },
+    {
       "backendKey": "browser.location",
       "personal": true,
       "personalOnly": true,
@@ -521,6 +535,22 @@
       "ph": "系统浏览器（默认）",
       "tier": 2,
       "note": "内置浏览器不接触你的电脑，只能访问公网；系统浏览器能访问 localhost 与内网，需本机执行器在线。"
+    },
+    {
+      "backendKey": "browser.headless",
+      "personal": true,
+      "personalOnly": true,
+      "panel": "browser",
+      "section": 0,
+      "group": "browser",
+      "key": "headless",
+      "path": "browser.headless",
+      "label": "后台运行（不打开窗口）",
+      "type": "switch",
+      "def": false,
+      "width": 240,
+      "tier": 2,
+      "note": "系统浏览器在后台无窗口运行；你看不到页面也无法在验证码/登录时人工接手。选内置浏览器时本项无效。"
     },
     {
       "backendKey": "ratelimit.enabled",

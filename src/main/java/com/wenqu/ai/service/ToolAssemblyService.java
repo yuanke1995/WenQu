@@ -212,6 +212,7 @@ public class ToolAssemblyService {
             // 派遣助手已改由框架的 agent_spawn 驱使（登记见 WenquAgentxTools#consultSubagentTargets），
             // 问渠侧没有这一族了。
             case TODO, MCP, LOCAL_BROWSER -> null;
+            case BROWSER -> agent.getToolBrowser();
         };
     }
 

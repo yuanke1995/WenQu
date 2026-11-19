@@ -962,6 +962,9 @@ const CAPS = [
     detail: '跟随系统=挂你登记的全部已启用 MCP（不含平台内置）；指定=只挂勾选的（可勾平台内置）',
     kind: 'list', modeKey: 'mcpMode', listKey: 'mcps', optionsKey: 'mcpOptions',
     gate: ['tool', 'enabled'] },
+  { key: 'toolBrowser', group: '工具与扩展', label: '浏览器操作', desc: '让助手操作网页并读回页面内容', icon: GlobalOutlined,
+    detail: '跟随系统=按平台 tool.browser.enabled；执行位置（本机/内置云端）在个人设置里选，本开关只管开不开',
+    kind: 'switch', gate: ['tool', 'enabled'] },
   // HTTP 工具（OpenAPI 导入）：工具集是智能体自有配置（不是个人资产引用），开启后在本行下方管理；
   // 没有独立全局开关（httpTool.enabled 已退役），只受「工具调用」总闸制约
   { key: 'toolHttp', group: '工具与扩展', label: 'HTTP 工具', desc: '按 OpenAPI 导入宿主 API 工具集', icon: LinkOutlined,
@@ -1222,6 +1225,7 @@ const blankForm = () => ({
   icon: '', isBuiltin: 0,
   // 开关型：'' = 跟随系统默认 / '1' = 开启 / '0' = 关闭
   toolKnowledge: '', toolBuiltin: '', toolSkill: '', toolArtifact: '', toolMcp: '', toolWebsearch: '',
+  toolBrowser: '',  // 浏览器操作（BROWSER 族）：''=跟随平台 tool.browser.enabled
   toolHttp: '',  // HTTP 工具集（数组，HttpToolsEditor 双向绑定；保存整包提交、后端归一+凭据加密）
   httpTools: [],
   toolWorkflow: '',  // 工作流工具集（数组，WorkflowToolsEditor 双向绑定；保存整包提交、后端归一校验）
@@ -1894,6 +1898,7 @@ const openEdit = a => {
     toolSkill: triStr(a.toolSkill),
     toolArtifact: triStr(a.toolArtifact),
     toolMcp: triStr(a.toolMcp),
+    toolBrowser: triStr(a.toolBrowser),
     toolWebsearch: triStr(a.toolWebsearch),
     toolHttp: triStr(a.toolHttp),
     // HTTP 工具集：回显是脱敏后的 JSON（auth.value 已清空），编辑保存时留空 = 沿用旧凭据
@@ -1985,6 +1990,7 @@ const save = async () => {
     toolBuiltin: tri(f.toolBuiltin),
     builtinTools: null,
     toolArtifact: tri(f.toolArtifact),
+    toolBrowser: tri(f.toolBrowser),
     toolWebsearch: tri(f.toolWebsearch),
     // HTTP 工具（v1 对外能力第一批）：整包提交工具集（auth.value 留空=沿用旧凭据，后端按 id 保留密文）
     toolHttp: tri(f.toolHttp),

@@ -46,8 +46,15 @@ public enum ToolFamily {
     SANDBOX("sandbox", "沙盒执行", true),
     /** MCP 外部工具：按用户登记动态合入，没有静态清单；审批 off 档整族不挂 */
     MCP("mcp", "MCP 外部工具", true),
-    /** 本机浏览器：经本机执行器驱动用户电脑上的浏览器（仅执行器在线时挂载）；审批 off 档整族不挂 */
-    LOCAL_BROWSER("local_browser", "本机浏览器", true);
+    /**
+     * 浏览器操作（统一族：本机 headed / 本机 headless / 平台云端三种执行位置共用同一套工具名）。
+     * <p>替换原 LOCAL_BROWSER 族：模型永远只看到一套 browser_* 工具，执行位置由个人设置决定，
+     * 不再有「两套浏览器给模型两种结论」的问题。审批 off 档整族不挂。
+     */
+    BROWSER("browser", "浏览器操作", true),
+    /** 本机浏览器：已并入 BROWSER 族，保留枚举值仅为历史配置/日志兼容，不再有 provider */
+    @Deprecated
+    LOCAL_BROWSER("local_browser", "本机浏览器（已并入浏览器操作）", true);
 
     private final String code;
     private final String familyLabel;

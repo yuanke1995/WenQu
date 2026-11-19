@@ -97,6 +97,9 @@ public class Agent {
     /** MCP 工具：1=开 0=关 NULL=继承 */
     private Integer toolMcp;
 
+    /** 浏览器操作工具（browser_* 统一族）：1=开 0=关 NULL=继承平台 tool.browser.enabled */
+    private Integer toolBrowser;
+
     /** 联网搜索工具（webSearch）：1=开 0=关 NULL=继承 */
     private Integer toolWebsearch;
 

@@ -1904,7 +1904,11 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       // 服务端起表基准（开流第一帧）：合并语义在 streamMerge.applyTurnStart 单源，与分享页共用
       admitted = true
       applyTurnStart(msg, payload, alignTick)
+      // 新一轮开始：通知页面清掉上一轮的只读浏览器快照镜像
+      hooks.onTurnStart?.(payload, msg)
     },
+    // 浏览器只读快照：新事件经 CHAT_EVENT_CB 映射到这里，转给页面自己的镜像状态（不进账本）
+    onBrowserSnapshot: (payload, ev) => hooks.onBrowserSnapshot?.(payload, ev),
     onSnapshot: payload => {
       // 接流的第一帧（只有 resume 那条通道会有这一帧）：本轮已产出的东西一次铺进气泡
       let snap = null
