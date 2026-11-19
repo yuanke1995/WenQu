@@ -108,50 +108,76 @@ test('非 cover 相位重复 reveal 不重复挂动画', async () => {
   assert.equal(authVeil.phase, 'idle')
 })
 
-test('CSS 时长与 VEIL_MS 成对，reveal 阶段只跑整层淡出', () => {
+test('水波分层与登录页 hero-waves 一致，时长成对，揭罩只整层淡出', () => {
   const veil = readFileSync('src/components/AuthVeil.vue', 'utf8')
   const app = readFileSync('src/views/app.css', 'utf8')
   const login = readFileSync('src/views/LoginPage.vue', 'utf8')
 
-  const fade = veil.match(/\.auth-veil\.reveal\s*\{[^}]*?animation:\s*veil-fade-out\s+([\d.]+)s/)
-  assert.ok(fade, 'reveal 缺整层淡出动画')
+  // 关键：过场水波的三层颜色/透明度必须与登录页底部 .hero-waves 完全一致
+  const heroMap = new Map()
+  for (const m of login.matchAll(/\.hero-waves \.w(\d)\s*\{[^}]*fill:\s*(rgba\([^)]*\))/g)) {
+    if (!heroMap.has(m[1])) heroMap.set(m[1], m[2].replace(/\s+/g, ' ').trim())  // 亮色版（首个）优先
+  }
+  const heroFills = [...heroMap].map(([n, fill]) => ({ n, fill }))
+  assert.equal(heroFills.length, 3, '登录页 hero-waves 缺三层')
+  for (const { n, fill } of heroFills) {
+    const re = new RegExp(`\\.w${n} path\\s*\\{\\s*fill:\\s*${fill.replace(/[()]/g, '\\$&').replace(/\s/g, '\\s*')}`)
+    assert.match(veil, re, `遮罩 w${n} 颜色与 hero-waves 不一致（应 ${fill}）`)
+  }
+
+  // reveal 整层淡出时长与状态机对齐，且放开点击
+  const fade = veil.match(/\.auth-veil\.reveal\.in\s*\{\s*animation:\s*wq-drain-down\s+([\d.]+)s/)
+  assert.ok(fade, 'reveal 缺整层淡出')
   assert.equal(Math.round(parseFloat(fade[1]) * 1000), VEIL_MS.reveal.in)
   assert.equal(VEIL_MS.reveal.in, VEIL_MS.reveal.out)
-
-  const outWash = veil.match(/\.auth-veil\.out\.started \.veil-wash\s*\{[^}]*?animation:\s*veil-wash-in-out\s+([\d.]+)s/)
-  assert.ok(outWash, 'out 缺画布铺满动画')
-  assert.equal(Math.round(parseFloat(outWash[1]) * 1000), VEIL_MS.cover.out)
-  assert.match(veil, /\.auth-veil\.in\.started \.veil-wash\s*\{[^}]*?veil-wash-in \.48s/)
-  assert.equal(VEIL_MS.cover.in, 480)
-
-  // 画布停在铺满态，其余装饰冻结；否则它们会和新页面落位动画同时跑，掉帧就在这里
-  assert.match(veil, /\.auth-veil\.reveal\.started \.veil-wash\s*\{[^}]*animation:\s*none;[^}]*opacity:\s*1/)
-  const pauseIdx = veil.indexOf('animation-play-state: paused')
-  assert.ok(pauseIdx > 0, 'reveal 未暂停装饰动画')
-  const pauseBlock = veil.slice(veil.lastIndexOf('\n\n', pauseIdx), veil.indexOf('}', pauseIdx) + 1)
-  for (const sel of ['veil-streams', 'veil-streams path', 'veil-ripples i', 'veil-gate', 'veil-seed', 'veil-glow']) {
-    assert.ok(pauseBlock.includes(`.auth-veil.reveal.started .${sel}`), `reveal 未暂停 .${sel}`)
-  }
-  // 与 .in.started / .out.started 同特异性（都带 .started），必须排在它们后面才生效
-  assert.ok(pauseIdx > veil.indexOf('.auth-veil.in.started .veil-glow'))
-  assert.ok(pauseIdx > veil.indexOf('.auth-veil.out.started .veil-glow'))
   assert.match(veil, /\.auth-veil\.reveal\s*\{[^}]*pointer-events:\s*none/)
 
-  // Safari/Edge 下 stroke-dashoffset 与滤镜动画每帧都要重绘：遮罩里也只用 transform/opacity
-  // （注释里会提到这些属性，先把注释摘掉再看代码）
+  // 画布铺满时长 == cover：in .48s / out .4s
+  const washMs = scope => {
+    const m = veil.match(new RegExp(`\\.auth-veil\\.${scope}\\.started \\.veil-wash\\s*\\{\\s*animation:\\s*wq-wash-in\\s+([\\d.]+)s`))
+    assert.ok(m, `${scope} 缺画布铺满`)
+    return Math.round(parseFloat(m[1]) * 1000)
+  }
+  assert.equal(washMs('in'), VEIL_MS.cover.in)
+  assert.equal(washMs('out'), VEIL_MS.cover.out)
+
+  // 水波必须在放行路由前涨满：w3(最慢一支) 时长+延迟 <= cover。
+  // in 自下而上涨起(wq-rise-3)，out 自上而下漫下(wq-fall-3)。
+  const waterMs = (scope, kf) => {
+    const m = veil.match(new RegExp(`\\.auth-veil\\.${scope}\\.started \\.w3\\s*\\{[^}]*?${kf}\\s+([\\d.]+)s[^}]*?(?:\\.(\\d+)s)?\\s*both`))
+    assert.ok(m, `${scope} 缺 w3 水波动画(${kf})`)
+    return Math.round((parseFloat(m[1]) + (m[2] ? parseFloat('0.' + m[2]) : 0)) * 1000)
+  }
+  assert.ok(waterMs('in', 'wq-rise-3') <= VEIL_MS.cover.in, 'in 水波没在放行前涨满')
+  assert.ok(waterMs('out', 'wq-fall-3') <= VEIL_MS.cover.out, 'out 水波没在放行前漫满')
+  // 方向：登录是自下而上(rise)，退出是自上而下(fall)
+  assert.match(veil, /\.auth-veil\.in\.started \.w1\s*\{[^}]*wq-rise-1/)
+  assert.match(veil, /\.auth-veil\.out\.started \.w1\s*\{[^}]*wq-fall-1/)
+
+
+  // 关键帧只用 transform / opacity：水波靠 translateY，画布/揭罩靠 opacity
+  for (const name of ['wq-rise-1', 'wq-rise-2', 'wq-rise-3', 'wq-fall-1', 'wq-fall-2', 'wq-fall-3', 'wq-drain-up', 'wq-drain-down', 'wq-wash-in']) {
+    const block = veil.match(new RegExp(`@keyframes ${name}\\s*\\{(?:[^{}]|\\{[^{}]*\\})*\\}`))
+    assert.ok(block, `${name} 缺 keyframes`)
+    const body = block[0].replace(/^@keyframes\s+\S+\s*\{/, '').replace(/\}$/, '')
+    assert.doesNotMatch(body, /filter:|blur\(/, `${name} 引入滤镜`)
+    assert.doesNotMatch(body, /\b(?:width|height|top|left|right|bottom|margin|padding)\s*:/, `${name} 动到布局属性`)
+  }
+
+  // 遮罩里不许有描边动画 / 整页 blur；也不许出现「白点起点」(veil-seed)
   const veilCss = veil.replace(/\/\*[\s\S]*?\*\//g, '')
   assert.doesNotMatch(veilCss, /stroke-dashoffset|stroke-dasharray/)
-  for (const name of ['stream-draw', 'gate-open']) {
-    const block = veil.match(new RegExp(`@keyframes ${name}\\s*\\{([\\s\\S]*?)\\n\\}`))
-    assert.ok(block, `${name} 缺 keyframes`)
-    assert.doesNotMatch(block[1], /filter:|blur\(/, `${name} 又引入了滤镜动画`)
-  }
-  assert.doesNotMatch(veil, /\.veil-glow\s*\{[^}]*filter:/)
+  assert.doesNotMatch(veilCss, /filter:/)
+  assert.doesNotMatch(veil, /veil-seed/, '又出现了白点起点')
 
-  // 淡入从 55% 才开始，画布是一次渐显而不是最后 100ms 闪一下；两段 keyframes 同口径
-  assert.equal((veil.match(/0%,\s*55%\s*\{\s*opacity:\s*0/g) || []).length, 2)
+  // 减弱动效覆盖画布与水层
+  const reducedIdx = veil.indexOf('prefers-reduced-motion: reduce')
+  assert.ok(reducedIdx > 0, '遮罩缺减弱动效')
+  const reducedBlock = veil.slice(reducedIdx, veil.indexOf('</style>', reducedIdx))
+  assert.match(reducedBlock, /\.auth-veil \.w\b/, '减弱动效未覆盖水层')
+  assert.match(reducedBlock, /\.auth-veil \.veil-wash\b/, '减弱动效未覆盖画布')
 
-  // 整页 blur 会逐帧重栅格化整屏内容，是掉帧大头：四段落位/退场只准用 transform + opacity
+  // 四段落位/退场仍只准 transform + opacity
   for (const [name, css, keyframe] of [
     ['工作台落位', app, 'wq-app-settle'],
     ['工作台后退', app, 'wq-app-recede'],

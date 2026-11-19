@@ -1,43 +1,61 @@
 <template>
   <!-- 登录 ⇄ 工作台 的品牌过渡遮罩（状态由 utils/authTransition.js 驱动）。
-       in（登录 → 工作台）：从品牌标出发的推镜——
-         源头圆点亮起 → 三道涟漪散开 → 三道活水线淡入 → 品牌标胀开成「门」
-         → 光井绽放 → 画布铺满（换页藏在最后一帧）→ 遮罩整体退去。
-       out（工作台 → 登录）：同一套元素的逆放——工作台以品牌标为圆心后退，
-         涟漪向内收拢、品牌门收成源头圆点、光井收束，登录页再从失焦中落位。
-       两种模式共用同一个根节点，reveal 阶段统一整层淡出。 -->
+       视觉「活水漫屏」：直接把登录页底部那三道水波（.hero-waves）涨起来——
+         登录 → 工作台（in）：底部三层半透明蓝水波自下而上漫过登录页，盖满整屏
+           （换页藏在最后一帧）→ 遮罩整体淡出，露出已落位的工作台。
+         工作台 → 登录（out）：同一套水波再涨一次盖住工作台，换页后淡出，露出对焦后的登录页。
+       颜色分层与登录页 hero-waves 完全一致：w1/w2 取 #5E93F5 的 10%/8%，w3 取 #2A5FE0 的 10%；
+       暗色换成 #5B8CF0 的同档透明度。水波只动 transform、画布只动 opacity，全程走合成器。 -->
   <div v-if="authVeil.visible" class="auth-veil"
        :class="[authVeil.phase, authVeil.mode, { started: authVeil.phase !== 'idle' }]"
-       :style="anchorStyle" aria-hidden="true">
-
-    <!-- 画布层：与登录页同一套渐变。两种模式都在最后一帧才铺满，用来盖住路由切换 -->
+       aria-hidden="true">
+    <!-- 画布层：与登录页/工作台同一套渐变。最后一帧才铺满，用来盖住路由切换 -->
     <div class="veil-wash"></div>
-
-    <!-- 活水线只在推镜（in）出现；收镜（out）靠涟漪与门反向收拢就够了 -->
-    <svg v-if="authVeil.mode === 'in'" class="veil-streams" viewBox="0 0 1440 900" preserveAspectRatio="none">
-      <path pathLength="1" d="M-80,286 C180,226 320,346 560,306 C800,266 940,186 1160,226 C1320,254 1400,286 1520,272" />
-      <path pathLength="1" d="M-80,420 C200,360 360,470 600,436 C840,402 980,330 1200,368 C1360,396 1420,424 1520,412" />
-      <path pathLength="1" d="M-80,554 C220,500 380,598 620,570 C860,542 1000,476 1220,508 C1370,530 1430,556 1520,546" />
+    <!-- 三道水波：颜色/叠放顺序同登录页 .hero-waves（w1 最上最淡、w3 最前最深）。
+         in（登录）用「向下填充」的波面自下而上涨起；out（退出）用「向上填充」的波面自上而下漫下。 -->
+    <svg class="water" viewBox="0 0 1440 900" preserveAspectRatio="none">
+      <g class="w w1"><path :d="authVeil.mode === 'out' ? d1u : d1" /></g>
+      <g class="w w2"><path :d="authVeil.mode === 'out' ? d2u : d2" /></g>
+      <g class="w w3"><path :d="authVeil.mode === 'out' ? d3u : d3" /></g>
     </svg>
-    <!-- 顺序即叠放顺序：涟漪 → 门 → 圆点 → 光井 -->
-    <div class="veil-ripples"><i></i><i></i><i></i></div>
-    <!-- 品牌标「门」只属于推镜；收镜只收成右上角那颗圆点，不再出现图标 -->
-    <div v-if="authVeil.mode === 'in'" class="veil-gate"><BrandMark :size="52" /></div>
-    <div class="veil-seed"></div>
-    <div class="veil-glow"></div>
   </div>
 </template>
 
 <script setup>
-import { computed } from 'vue'
-import BrandMark from './BrandMark.vue'
 import { authVeil } from '../utils/authTransition'
 
-// 涟漪、光井、门的圆心：推镜落在登录页品牌标上；收镜落在登录页右上角的源头圆点上
-// （out 的位置由样式里的 --ax/--ay 给出，见 .auth-veil.out）
-const anchorStyle = computed(() => authVeil.mode === 'in'
-  ? { '--ax': authVeil.anchor.x + 'px', '--ay': authVeil.anchor.y + 'px' }
-  : {})
+// 与 LoginPage 底部水波同样的和缓大曲线：从波峰(crest)向下填充到很远(3000)，
+// 这样整组上移 translateY 到底时波峰越过屏幕顶部，水面必然铺满、波谷也不漏底。
+function wavePath (crest, amp, wl, phase) {
+  const W = 1440
+  let d = `M -120 3000 L -120 ${(crest + amp * Math.sin((-120 / wl) * Math.PI * 2 + phase)).toFixed(1)} `
+  for (let x = -120; x <= W + 120; x += 24) {
+    const y = crest + amp * Math.sin((x / wl) * Math.PI * 2 + phase)
+    d += `L ${x.toFixed(1)} ${y.toFixed(1)} `
+  }
+  d += `L ${W + 120} 3000 Z`
+  return d
+}
+// 三道波峰高度与登录页底部一致：w1 最高最淡、w2 次之、w3 最低最深（最前）
+const d1 = wavePath(470, 26, 1000, 0.2)
+const d2 = wavePath(560, 24, 900, 1.4)
+const d3 = wavePath(650, 22, 820, 2.4)
+
+// 退出方向：同样三条波峰，但向上填充到 -3000。这样整组自上而下平移时，
+// 领先的是「波面下沿」，水就像从顶上漫下来（与登录时的自下而上涨起相反）。
+function wavePathDown (crest, amp, wl, phase) {
+  const W = 1440
+  let d = `M -120 -3000 L -120 ${(crest + amp * Math.sin((-120 / wl) * Math.PI * 2 + phase)).toFixed(1)} `
+  for (let x = -120; x <= W + 120; x += 24) {
+    const y = crest + amp * Math.sin((x / wl) * Math.PI * 2 + phase)
+    d += `L ${x.toFixed(1)} ${y.toFixed(1)} `
+  }
+  d += `L ${W + 120} -3000 Z`
+  return d
+}
+const d1u = wavePathDown(470, 26, 1000, 0.2)
+const d2u = wavePathDown(560, 24, 900, 1.4)
+const d3u = wavePathDown(650, 22, 820, 2.4)
 </script>
 
 <style scoped>
@@ -46,12 +64,7 @@ const anchorStyle = computed(() => authVeil.mode === 'in'
   overflow: hidden; pointer-events: auto;   /* 过渡期间拦住误点 */
 }
 
-/* 整体退场：不动子元素，让仍在中途的品牌层自然被遮罩带走。
-   pointer-events 同步放开：淡出期间新页面已经可点，别让一层透明 div 再拦 420ms。 */
-.auth-veil.reveal { animation: veil-fade-out .42s cubic-bezier(.4, 0, .2, 1) both; pointer-events: none; }
-@keyframes veil-fade-out { from { opacity: 1; } to { opacity: 0; } }
-
-/* ① 画布层：登录页同一套渐变。两种模式都在最后一帧才铺满，让收放动作完整可见 */
+/* ① 画布：与登录页同一套渐变；两种模式都在最后一帧才铺满，盖住换页硬切 */
 .veil-wash {
   position: absolute; inset: 0; opacity: 0;
   background:
@@ -60,155 +73,46 @@ const anchorStyle = computed(() => authVeil.mode === 'in'
     radial-gradient(720px 380px at 12% 6%, rgba(94, 147, 245, .10), transparent 60%),
     linear-gradient(165deg, #f3f7fd 0%, #edf2fa 50%, #e7eef9 100%);
 }
-.auth-veil.in.started .veil-wash { animation: veil-wash-in .48s ease-out both; }
-@keyframes veil-wash-in {
-  0%, 55% { opacity: 0; }
-  100% { opacity: 1; }
-}
-/* out 的 cover 是 .4s，画布必须恰好在放行路由时铺满，不能慢半拍 */
-.auth-veil.out.started .veil-wash { animation: veil-wash-in-out .4s ease-out both; }
-@keyframes veil-wash-in-out {
-  0%, 55% { opacity: 0; }
-  100% { opacity: 1; }
-}
+.auth-veil.in.started .veil-wash { animation: wq-wash-in .48s ease-out both; }
+.auth-veil.out.started .veil-wash { animation: wq-wash-in .4s ease-out both; }
+@keyframes wq-wash-in { 0%, 55% { opacity: 0; } 100% { opacity: 1; } }
 
-/* ==================== in 模式：从品牌标推镜 ==================== */
-/* ③ 三道活水线：从品牌标方向横穿画面，逐条淡入后整层退去。
-   不用 stroke-dashoffset 描边：Safari 每帧都要重绘整条 SVG 路径，桌面端会明显掉帧；
-   改为纯 opacity 动画，观感上仍是三条线依次亮起。 */
-.veil-streams {
-  position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none;
-}
-.veil-streams path {
-  fill: none; stroke: rgba(46, 107, 230, .30); stroke-width: 1.4;
-  stroke-linecap: round; opacity: 0;
-}
-.auth-veil.in.started .veil-streams path { animation: stream-draw .34s ease-out both; }
-.auth-veil.in.started .veil-streams path:nth-child(2) { animation-delay: .04s; }
-.auth-veil.in.started .veil-streams path:nth-child(3) { animation-delay: .08s; }
-@keyframes stream-draw { to { opacity: 1; } }
-.auth-veil.in.started .veil-streams { animation: streams-fade .18s ease-in .3s both; }
-@keyframes streams-fade { from { opacity: 1; } to { opacity: 0; } }
+/* ② 三道水波：颜色分层与登录页 .hero-waves 完全一致（半透明叠色，不是实心蓝） */
+.auth-veil .water { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.auth-veil .w { transform: translateY(820px); will-change: transform; }
+.auth-veil .w path { stroke: none; }
+.auth-veil .w1 path { fill: rgba(94, 147, 245, .10); }
+.auth-veil .w2 path { fill: rgba(94, 147, 245, .08); }
+.auth-veil .w3 path { fill: rgba(42, 95, 224, .10); }
 
-/* ④ 三道涟漪：对应品牌标里的三道波线，从圆心依次散开 */
-.veil-ripples { position: absolute; inset: 0; pointer-events: none; }
-.veil-ripples i {
-  position: absolute; left: var(--ax); top: var(--ay);
-  width: 280px; height: 280px; border-radius: 50%;
-  border: 1px solid rgba(46, 107, 230, .34); opacity: 0;
-  transform: translate(-50%, -50%) scale(.06);
-}
-.veil-ripples i:nth-child(2) { border-color: rgba(46, 107, 230, .26); }
-.veil-ripples i:nth-child(3) { border-color: rgba(46, 107, 230, .18); }
-.auth-veil.in.started .veil-ripples i { animation: ripple-out 1s cubic-bezier(.16, .7, .3, 1) both; }
-.auth-veil.in.started .veil-ripples i:nth-child(2) { animation-duration: 1.14s; animation-delay: .08s; }
-.auth-veil.in.started .veil-ripples i:nth-child(3) { animation-duration: 1.28s; animation-delay: .16s; }
-@keyframes ripple-out {
-  0%   { transform: translate(-50%, -50%) scale(.06); opacity: .5; }
-  100% { transform: translate(-50%, -50%) scale(2.4); opacity: 0; }
-}
+/* ③ cover：水波自下而上漫起。三层错峰，故能看到一道道水浪往上走；
+     终值各让自身波峰越过顶部，保证盖满。in 480ms：0.38+0.08=0.46s 铺满再放行。
+     out 400ms：0.3+0.08=0.38s 内铺满。 */
+.auth-veil.in.started .w1 { animation: wq-rise-1 .38s cubic-bezier(.5, .05, .2, 1) both; }
+.auth-veil.in.started .w2 { animation: wq-rise-2 .38s cubic-bezier(.5, .05, .2, 1) .04s both; }
+.auth-veil.in.started .w3 { animation: wq-rise-3 .38s cubic-bezier(.5, .05, .2, 1) .08s both; }
+.auth-veil.out.started .w1 { animation: wq-fall-1 .3s cubic-bezier(.5, .05, .2, 1) both; }
+.auth-veil.out.started .w2 { animation: wq-fall-2 .3s cubic-bezier(.5, .05, .2, 1) .04s both; }
+.auth-veil.out.started .w3 { animation: wq-fall-3 .3s cubic-bezier(.5, .05, .2, 1) .08s both; }
+@keyframes wq-rise-1 { from { transform: translateY(820px); } to { transform: translateY(-560px); } }
+@keyframes wq-rise-2 { from { transform: translateY(820px); } to { transform: translateY(-640px); } }
+@keyframes wq-rise-3 { from { transform: translateY(820px); } to { transform: translateY(-720px); } }
+/* 退出：水从顶上往下降。起点整组在屏幕上方（波面藏在顶外），终点波面落到底部以下 → 盖满。 */
+@keyframes wq-fall-1 { from { transform: translateY(-980px); } to { transform: translateY(520px); } }
+@keyframes wq-fall-2 { from { transform: translateY(-980px); } to { transform: translateY(420px); } }
+@keyframes wq-fall-3 { from { transform: translateY(-980px); } to { transform: translateY(320px); } }
 
-/* ⑤ 品牌标「门」：在原点胀开，镜头从它中间穿过去 */
-.veil-gate {
-  position: absolute; left: var(--ax); top: var(--ay); width: 52px; height: 52px;
-  opacity: 0; pointer-events: none;
-  transform: translate(-50%, -50%) scale(.9);
-}
-.auth-veil.in.started .veil-gate { animation: gate-open .9s cubic-bezier(.16, 1, .3, 1) .07s both; }
-@keyframes gate-open {
-  0%   { transform: translate(-50%, -50%) scale(.9); opacity: 0; }
-  18%  { transform: translate(-50%, -50%) scale(1.28); opacity: .92; }
-  55%  { transform: translate(-50%, -50%) scale(1.42); opacity: .88; }
-  100% { transform: translate(-50%, -50%) scale(2.6); opacity: 0; }
-}
-
-/* ⑥ 源头圆点：品牌标右上那颗白点，在起点亮起后隐去 */
-.veil-seed {
-  position: absolute; left: var(--ax); top: var(--ay);
-  width: 9px; height: 9px; border-radius: 50%; background: #fff; opacity: 0;
-  box-shadow: 0 0 0 2px rgba(46, 107, 230, .30), 0 0 26px 8px rgba(46, 107, 230, .42);
-  transform: translate(-50%, -50%);
-}
-.auth-veil.in.started .veil-seed { animation: seed-life .8s ease-out both; }
-@keyframes seed-life {
-  0%   { transform: translate(-50%, -50%) scale(.4); opacity: 0; }
-  18%  { transform: translate(-50%, -50%) scale(1); opacity: 1; }
-  60%  { opacity: 1; }
-  82%, 100% { opacity: 0; }
-}
-
-/* ⑦ 光井：穿过品牌标之后迎面而来的光 */
-.veil-glow {
-  position: absolute; left: var(--ax); top: var(--ay);
-  width: 560px; height: 560px; border-radius: 50%; opacity: 0;
-  pointer-events: none;
-  background: radial-gradient(circle, rgba(255, 255, 255, .98) 0%, rgba(196, 219, 255, .60) 34%, rgba(196, 219, 255, 0) 70%);
-  transform: translate(-50%, -50%) scale(.25);
-}
-.auth-veil.in.started .veil-glow { animation: glow-bloom .9s ease-out .2s both; }
-@keyframes glow-bloom {
-  0%   { transform: translate(-50%, -50%) scale(.25); opacity: 0; }
-  55%  { transform: translate(-50%, -50%) scale(1); opacity: .9; }
-  100% { transform: translate(-50%, -50%) scale(1.7); opacity: 0; }
-}
-
-/* ==================== out 模式：反向收镜 ====================
-   落点是登录页右上角的源头圆点（与 LoginPage 的 .hero-dot 位置成对）：
-   工作台以它为圆心后退，涟漪向内收拢、品牌门缩成一点、光井收束，
-   换页后登录页正是从这颗圆点旁落位。 */
-.auth-veil.out {
-  --ax: calc(100vw - 77px);
-  --ay: 61px;
-}
-@media (max-width: 768px) {
-  .auth-veil.out {
-    --ax: calc(100vw - 24px);
-    --ay: calc(8px + var(--sat, 0px) + 16px);
-  }
-}
-.auth-veil.out.started .veil-ripples i { animation: ripple-in .95s cubic-bezier(.3, .65, .2, 1) both; }
-.auth-veil.out.started .veil-ripples i:nth-child(2) { animation-duration: 1.08s; animation-delay: .06s; }
-.auth-veil.out.started .veil-ripples i:nth-child(3) { animation-duration: 1.22s; animation-delay: .12s; }
-@keyframes ripple-in {
-  0%   { transform: translate(-50%, -50%) scale(2.4); opacity: 0; }
-  25%  { opacity: .38; }
-  100% { transform: translate(-50%, -50%) scale(.02); opacity: 0; }
-}
-.auth-veil.out.started .veil-seed { animation: seed-life-out .7s ease-in both; }
-@keyframes seed-life-out {
-  0%   { transform: translate(-50%, -50%) scale(.4); opacity: 0; }
-  16%  { transform: translate(-50%, -50%) scale(1); opacity: 1; }
-  52%  { opacity: 1; }
-  80%, 100% { opacity: 0; }
-}
-.auth-veil.out.started .veil-glow { animation: glow-collapse .85s ease-in both; }
-@keyframes glow-collapse {
-  0%   { transform: translate(-50%, -50%) scale(1.5); opacity: 0; }
-  28%  { transform: translate(-50%, -50%) scale(1.1); opacity: .72; }
-  100% { transform: translate(-50%, -50%) scale(.08); opacity: 0; }
-}
-/* 收镜终点的圆点就是登录页那颗蓝点本身，换成品牌蓝而不是推镜用的白光点 */
-.auth-veil.out .veil-seed {
-  background: #2a5fe0;
-  box-shadow: 0 0 0 2px rgba(42, 95, 224, .18), 0 0 22px 6px rgba(42, 95, 224, .35);
-}
-html[data-theme='dark'] .auth-veil.out .veil-seed {
-  background: #5b8cf0;
-  box-shadow: 0 0 0 2px rgba(91, 140, 240, .20), 0 0 22px 6px rgba(91, 140, 240, .38);
-}
-
-/* ==================== 揭开阶段：只留整层淡出 ====================
-   必须放在两种模式之后且选择器带 .started：与 .in.started / .out.started 的装饰规则
-   同级，靠顺序压住它们。否则涟漪/活水线/光井的动画会和新页面的落位动画
-   （整屏 scale + 透明度）同时跑，掉帧就出在这一段；它们本来也跑不完——遮罩 0.9s
-   就销毁了，暂停后随整层一起淡出更干净。画布则停在铺满状态，不跟着一起消失。 */
-.auth-veil.reveal.started .veil-wash { animation: none; opacity: 1; }
-.auth-veil.reveal.started .veil-streams,
-.auth-veil.reveal.started .veil-streams path,
-.auth-veil.reveal.started .veil-ripples i,
-.auth-veil.reveal.started .veil-gate,
-.auth-veil.reveal.started .veil-seed,
-.auth-veil.reveal.started .veil-glow { animation-play-state: paused; }
+/* ④ reveal：不是把整层淡掉（那样会先一片空白、再整页突然显形），而是让整片水层
+     顺着 cover 的方向滑走——登录时水继续往上退，退出时水往下退。新页面被水线
+     自上/下一点点露出来，连续、没有"啵"的一下。滑走方向与 cover 同向，观感连贯。 */
+.auth-veil.reveal { pointer-events: none; }
+/* 登录：水升上来盖住后，再"退"下去（往下滑），工作台从顶部被露出；
+   退出：水从上面压下来后，再"收"回上方（往上滑），登录页从底部被露出。
+   都是"水来了又退回去"，比淡出更像水、也没有整页突然显形。 */
+.auth-veil.reveal.in { animation: wq-drain-down .42s cubic-bezier(.5, 0, .2, 1) both; }
+.auth-veil.reveal.out { animation: wq-drain-up .42s cubic-bezier(.5, 0, .2, 1) both; }
+@keyframes wq-drain-up { from { transform: translateY(0); } to { transform: translateY(-102%); } }
+@keyframes wq-drain-down { from { transform: translateY(0); } to { transform: translateY(102%); } }
 
 /* ==================== 暗色 ==================== */
 html[data-theme='dark'] .veil-wash {
@@ -218,26 +122,15 @@ html[data-theme='dark'] .veil-wash {
     radial-gradient(720px 380px at 12% 6%, rgba(91, 140, 240, .09), transparent 60%),
     linear-gradient(165deg, #161a24 0%, #14161a 50%, #111420 100%);
 }
-html[data-theme='dark'] .veil-streams path { stroke: rgba(91, 140, 240, .32); }
-html[data-theme='dark'] .veil-ripples i { border-color: rgba(91, 140, 240, .32); }
-html[data-theme='dark'] .veil-ripples i:nth-child(2) { border-color: rgba(91, 140, 240, .24); }
-html[data-theme='dark'] .veil-ripples i:nth-child(3) { border-color: rgba(91, 140, 240, .16); }
-html[data-theme='dark'] .veil-glow {
-  background: radial-gradient(circle, rgba(120, 160, 240, .55) 0%, rgba(70, 105, 180, .28) 36%, rgba(70, 105, 180, 0) 70%);
-}
+html[data-theme='dark'] .w1 path { fill: rgba(91, 140, 240, .10); }
+html[data-theme='dark'] .w2 path { fill: rgba(91, 140, 240, .07); }
+html[data-theme='dark'] .w3 path { fill: rgba(91, 140, 240, .10); }
 
-/* 减弱动效：只保留一次极短的遮挡 */
+/* 减弱动效：只留极短的一次覆盖 */
 @media (prefers-reduced-motion: reduce) {
-  .auth-veil,
   .auth-veil .veil-wash,
-  .auth-veil .veil-streams,
-  .auth-veil .veil-streams path,
-  .auth-veil .veil-ripples i,
-  .auth-veil .veil-gate,
-  .auth-veil .veil-seed,
-  .auth-veil .veil-glow {
-    animation-duration: .06s !important;
-    animation-delay: 0s !important;
-  }
+  .auth-veil .w,
+  .auth-veil.in.started .w,
+  .auth-veil.out.started .w { animation-duration: .06s !important; animation-delay: 0s !important; }
 }
 </style>
