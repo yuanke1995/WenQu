@@ -54,7 +54,7 @@ public class SshChatTool {
 
     @Tool(name = "ssh_exec", description =
             "通过用户本机的 OpenSSH 连接远端主机并执行命令，用户说「ssh <别名> 上去看看／查一下／执行…」时用它。"
-            + "别名是用户本机 ~/.ssh/config 里的 Host 名（例如 wenqu），服务端不保存任何密钥；"
+            + "别名是用户本机 ~/.ssh/config（Windows: %USERPROFILE%\\.ssh\\config）里的 Host 名（例如 wenqu），服务端不保存任何密钥；"
             + "命令在远端执行，返回原始输出和退出码。别名不确定时，失败信息里会列出这台电脑读到的可用别名。"
             + "只在用户明确要求连某台远端机器时使用；不要拿它执行用户没要求的写操作。")
     public Map<String, Object> sshExec(
@@ -92,7 +92,7 @@ public class SshChatTool {
             if (online.isEmpty()) {
                 return fail("E_EXECUTOR_OFFLINE", "本机执行器不在线：先在这台电脑上启动 wenqu-agent 再试");
             }
-            return fail("E_ALIAS_NOT_FOUND", "本机 ~/.ssh/config 里没有 Host 别名「" + a + "」。"
+            return fail("E_ALIAS_NOT_FOUND", "本机 ~/.ssh/config（Windows: %USERPROFILE%\\.ssh\\config）里没有 Host 别名「" + a + "」。"
                     + "读到的别名：" + (aliases.isEmpty() ? "(空)" : String.join("、", aliases)));
         }
 

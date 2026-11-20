@@ -43,6 +43,52 @@ CI 失败绝大多数不是功能写错，而是「行为或数据变了，守�
 | 改前端模块导出 / 装配 | `web` 单测与 `vite build` |
 
 
+## 跨平台开发规范（Linux / Windows / macOS）
+
+问渠主要在 macOS 上开发，但必须保证 Linux 与 Windows 可用。**平台差异只能收敛到少数能力层，禁止在业务代码里散落 `if (win32)` 式补丁或“另一套兜底”。**
+
+### 本机执行器（`scripts/local-agent`）
+
+- OS 相关能力只能放在 `scripts/local-agent/platform/`：`shell`、`sandbox`、`procs`、`system`、`git`、`browser`、`ssh`。
+- 新增平台能力必须同时提供 `darwin / linux / win32` 三套完整实现 + 注入 fake platform 的契约测试；禁止硬编码 `/bin/sh`、`ps`、`lsof`、`ss`、`npx`、`explorer`、`osascript`、`zenity` 等二进制名。
+- 业务代码不得直接读 `process.platform`（设备上报信息字段除外）；路径统一 `path.join/path.resolve`，禁止手拼分隔符。
+- Windows 语义要点：`cmd.exe /d /s /c`、`taskkill /T /F`、`tasklist`/`netstat`、`npx-cli.js`、`explorer` 退出码非 0 属正常、目录选择取消需结构化返回。
+
+### 服务端（Java）
+
+- 文本读写一律走 `com.wenqu.ai.util.TextIo`（显式 UTF-8）；禁止裸 `Files.readString(单参)` / `writeString(单参)`。
+- 落盘/下载文件名一律走 `com.wenqu.ai.util.FileNameSanitizer`（非法字符、Windows 保留名、尾部点空格、长度）。
+- 路径拼接用 `Path.of(...)`，禁止 `System.getProperty("user.dir") + "/..."`。
+- 标识类归一（扩展名、枚举、method、language）用 `Locale.ROOT`；时区统一由 `WenQuApplication` 固定，禁止依赖宿主默认时区。
+- 服务端不得引入宿主进程执行（`Runtime.exec`/`ProcessBuilder`）：命令执行只走沙盒容器或本机执行器。
+
+### 前端（`web/`）
+
+- 路径展示/折目录走 `utils/pathUtil.js`（`toPosix/baseNameOf/dirOf`），禁止直接 `split('/')` 处理可能来自 Windows 的路径。
+- 下载名走 `utils/fileName.js` 的 `sanitizeFileName`；跨源下载由 `utils/download.js` 统一拦截，禁止只依赖 `a[download]`。
+- 复制走 `utils/clipboard.js` 的 `writeClipboard`（`navigator.clipboard` 在 http 内网不存在，禁止直连）。
+- 快捷键统一同时判断 `ctrlKey` 与 `metaKey`；文案用 `saveKeyLabel()`，不要写死 `⌘`。
+- JSON 导入走 `utils/json.js` 的 `parseJsonFile`（剥 BOM）。
+- `package.json` 脚本禁止 POSIX 内联环境变量（`VAR=x node ...`）与 shell glob；测试统一 `node scripts/run-tests.mjs`。
+
+### 脚本 / 部署 / CI
+
+- 统一入口 `node scripts/wenqu.mjs`（Windows 用 `wenqu.bat/.ps1`）；中间件一律 docker compose，不新增 `brew services`/`/opt/homebrew` 依赖。
+- 临时目录用 `os.tmpdir()`（Node）/`tempfile`（Python）；禁止字面 `/tmp`。
+- 外部客户端（mysql/mysqldump）用 `shutil.which` 或 `MYSQL_BIN`/`MYSQLDUMP_BIN`，禁止写死安装路径。
+- 行尾由根 `.gitattributes` 统一：文本 LF，`.bat/.cmd/.ps1` CRLF；新增脚本必须遵守。
+- CI 是三平台矩阵（ubuntu/windows/macos）；涉及平台分支的改动必须在三平台跑通。
+
+### 提交前必跑
+
+```bash
+node scripts/check-eol.mjs          # 行尾策略
+node scripts/check-clipboard.mjs    # 剪贴板单一入口
+node scripts/run-tests.mjs scripts  # 执行器/脚本契约测试
+```
+
+Windows/macOS 相关逻辑必须补 fake platform 契约测试；无法本地真跑的，在 PR 里写清真机冒烟清单（见 `docs/cross-platform-audit.md` 第 7 节）。
+
 ## 代码注释规范
 
 注释只描述**当前行为**：它是什么、为什么这样、改了会怎样，用现在时陈述。演进历史由 git 记录承载，代码与文档里都不留过程性叙述。具体禁忌：
