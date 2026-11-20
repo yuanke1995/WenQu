@@ -1269,6 +1269,107 @@ public class McpClientService {
      * 一起堵在锁上（智能体列表被 MCP 页在线校验/刷新拖住转圈的根因）。锁外操作的回写必须
      * 比对该服务的建连代次（{@code tokens}）或 client 引用，防止过期结果覆盖新一轮的状态。
      */
+    // ==================== MCP Resources（资源面，与工具面并列） ====================
+
+    /** 一条资源的归一化展示（server 归属 + 协议字段）。 */
+    private Map<String, Object> resourceRow(String server, McpSchema.Resource r) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("server", server);
+        m.put("uri", r.uri());
+        m.put("name", r.name());
+        m.put("title", r.title());
+        m.put("description", r.description());
+        m.put("mimeType", r.mimeType());
+        m.put("size", r.size());
+        return m;
+    }
+
+    private Map<String, Object> templateRow(String server, McpSchema.ResourceTemplate t) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("server", server);
+        m.put("uriTemplate", t.uriTemplate());
+        m.put("name", t.name());
+        m.put("title", t.title());
+        m.put("description", t.description());
+        m.put("mimeType", t.mimeType());
+        return m;
+    }
+
+    /**
+     * 列出某用户已连接 server 的资源（resources）或资源模板（resource templates）。
+     * <p>连接失败/未实现 resources 能力的 server 只跳过并记一行失败，不影响其他 server——
+     * 与工具面同一容错口径。返回项都带 {@code server} 字段，调用方据此回读。
+     *
+     * @param templates true=listResourceTemplates，false=listResources
+     */
+    public List<Map<String, Object>> listResources(String uid, Set<String> onlyServers, boolean templates) {
+        if (uid == null || uid.isBlank()) return List.of();
+        UserPool pool = ensureConnections(uid);
+        awaitConnect(pool, Math.max(0, configService.getInt("mcp.turnWaitMs", 1500)));
+        Map<String, McpSyncClient> snap;
+        synchronized (pool) {
+            snap = new LinkedHashMap<>(pool.clients);
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map.Entry<String, McpSyncClient> e : snap.entrySet()) {
+            String server = e.getKey();
+            if (onlyServers != null && !onlyServers.contains(server)) continue;
+            if (BrowserTools.PLATFORM_BROWSER_SERVER.equals(server)) continue;
+            try {
+                if (templates) {
+                    McpSchema.ListResourceTemplatesResult r = e.getValue().listResourceTemplates();
+                    if (r != null && r.resourceTemplates() != null) {
+                        for (McpSchema.ResourceTemplate t : r.resourceTemplates()) out.add(templateRow(server, t));
+                    }
+                } else {
+                    McpSchema.ListResourcesResult r = e.getValue().listResources();
+                    if (r != null && r.resources() != null) {
+                        for (McpSchema.Resource r2 : r.resources()) out.add(resourceRow(server, r2));
+                    }
+                }
+            } catch (Exception ex) {
+                log.info("[MCP] server {} 不支持或读取 {} 失败（跳过）: {}", server,
+                        templates ? "resourceTemplates" : "resources", ex.getMessage());
+            }
+        }
+        return out;
+    }
+
+    /**
+     * 读取一个具体资源（by server + uri）。返回 {@code {server,uri,mimeType,text,blobBase64}} 列表项；
+     * blob 只回编码后的前 64KB，避免把大二进制塞进模型上下文。
+     */
+    public List<Map<String, Object>> readResource(String uid, String server, String uri) {
+        if (uid == null || uid.isBlank()) throw new BizException("需要用户上下文");
+        if (server == null || server.isBlank()) throw new BizException("缺少 server 名");
+        if (uri == null || uri.isBlank()) throw new BizException("缺少资源 uri");
+        UserPool pool = ensureConnections(uid);
+        awaitConnect(pool, Math.max(0, configService.getInt("mcp.turnWaitMs", 1500)));
+        McpSyncClient client;
+        synchronized (pool) {
+            client = pool.clients.get(server);
+        }
+        if (client == null) throw new BizException("MCP 服务未连接或不存在：" + server);
+        McpSchema.ReadResourceResult res = client.readResource(new McpSchema.ReadResourceRequest(uri));
+        List<Map<String, Object>> out = new ArrayList<>();
+        if (res == null || res.contents() == null) return out;
+        for (McpSchema.ResourceContents c : res.contents()) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("server", server);
+            m.put("uri", c.uri());
+            m.put("mimeType", c.mimeType());
+            if (c instanceof McpSchema.TextResourceContents t) {
+                m.put("text", t.text());
+            } else if (c instanceof McpSchema.BlobResourceContents b) {
+                String blob = b.blob() == null ? "" : b.blob();
+                m.put("blobBase64", blob.length() > 65536 ? blob.substring(0, 65536) : blob);
+                m.put("truncated", blob.length() > 65536);
+            }
+            out.add(m);
+        }
+        return out;
+    }
+
     private static final class UserPool {
         /** 本次对齐的配置指纹（变化才做增量对齐） */
         String fingerprint = "";
