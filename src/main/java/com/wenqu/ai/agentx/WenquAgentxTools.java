@@ -41,7 +41,7 @@ public class WenquAgentxTools {
     private static final Set<String> API_KEY_DENIED_TOOLS = Set.of(
             "run_code", "read_file", "write_file", "edit_file", "execute",
             "shell", "shell_execute", "list_files", "grep_files", "glob_files",
-            "ls", "deliver_artifact");
+            "ls", "deliver_artifact", "ssh_exec");
 
     private final KnowledgeRetrievalTool knowledgeRetrieval;
     private final RetrievalScopeService retrievalScope;
@@ -365,7 +365,9 @@ public class WenquAgentxTools {
                     com.wenqu.ai.agent.tool.ToolFamily.TODO,
                     // 沙盒族（run_code）：档位裁剪与审批档都已在 exposes 里，进组后
                     // 「只读档不给脚本」才真的做到「模型看不见」，而不是调了被拒
-                    com.wenqu.ai.agent.tool.ToolFamily.SANDBOX);
+                    com.wenqu.ai.agent.tool.ToolFamily.SANDBOX,
+                    // SSH 族（ssh_exec）：同上，档位/白名单一律按组裁，不能让它无组常驻
+                    com.wenqu.ai.agent.tool.ToolFamily.SSH);
 
     /**
      * 建实例之后才出现在工具表里、又没有问渠描述符的那批框架工具（文件七把、产物交付、记忆与会话日志）。
@@ -897,7 +899,8 @@ public class WenquAgentxTools {
         for (org.springframework.ai.tool.ToolCallback cb : provider.callbacks(mc)) {
             String name = cb.getToolDefinition().name();
             if (AskUserTool.NAME.equals(name)) continue;   // 由框架原生 AskUserTool 顶替
-            rawCallbacks.add(cb);
+            // SSH 远端命令不进 run_code 的子调用清单：脚本不能绕过审批把远端命令当子调用打出去。
+            if (provider.family() != com.wenqu.ai.agent.tool.ToolFamily.SSH) rawCallbacks.add(cb);
             if (provider.family() == com.wenqu.ai.agent.tool.ToolFamily.MCP) mcpToolNames.add(name);
             // 要不要问人沿用问渠的登记（未登记一律要审批，fail-closed）——不在框架侧另判一次「像不像写操作」。
             // 唯一豁免：游客轮里发布者授权名单内的 MCP 工具按「发布者预批」处理——分享页没有审批卡
@@ -916,10 +919,11 @@ public class WenquAgentxTools {
                     () -> withBaseContext(slot.require(), enrichment.apply(name)),
                     () -> policyOf(slot, policy),
                     needsApproval, approvalCanAsk,
-                    // MCP 与沙盒脚本的返回是外部数据：统一加信封并标脏本轮（见适配器字段注释）。
+                    // MCP、沙盒脚本与 SSH 远端输出都是外部数据：统一加信封并标脏本轮（见适配器字段注释）。
                     // 检索/联网/文档几族的信封在各自工具内，不在这里重复。
                     provider.family() == com.wenqu.ai.agent.tool.ToolFamily.MCP
-                            || provider.family() == com.wenqu.ai.agent.tool.ToolFamily.SANDBOX,
+                            || provider.family() == com.wenqu.ai.agent.tool.ToolFamily.SANDBOX
+                            || provider.family() == com.wenqu.ai.agent.tool.ToolFamily.SSH,
                     () -> {
                         AgentxTurnSlot.Turn t = slot.current();
                         return t == null ? null : t.taint();

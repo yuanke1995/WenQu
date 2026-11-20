@@ -75,6 +75,27 @@ class AgentxDestructiveCommandsTest {
     }
 
     @Test
+    @DisplayName("伪设备重定向不算破坏：/dev/tcp 探活、/dev/null、/dev/std*、fd 复制都不该挂确认卡")
+    void pseudoDeviceRedirectsAreNotDestructive() {
+        // 线上真实误报：纯端口探活命令（echo > /dev/tcp/... 是网络伪设备，不写任何文件）
+        String probe = "probe() { (echo > /dev/tcp/127.0.0.1/$1) >/dev/null 2>&1 "
+                + "&& echo \"$2($1): OPEN\" || echo \"$2($1): closed\"; }\n"
+                + "probe 3306 MySQL; probe 6379 Redis; probe 7700 Meilisearch; probe 8090 backend";
+        assertThat(AgentxDestructiveCommands.isDestructive(probe)).isFalse();
+        assertThat(AgentxDestructiveCommands.writesOutside(probe, ROOTS)).isFalse();
+
+        assertThat(AgentxDestructiveCommands.isDestructive("echo hi > /dev/tcp/127.0.0.1/8080")).isFalse();
+        assertThat(AgentxDestructiveCommands.isDestructive("echo hi > /dev/udp/127.0.0.1/53")).isFalse();
+        assertThat(AgentxDestructiveCommands.isDestructive("echo hi > /dev/stdout")).isFalse();
+        assertThat(AgentxDestructiveCommands.isDestructive("echo hi > /dev/stderr")).isFalse();
+        assertThat(AgentxDestructiveCommands.isDestructive("echo hi > /dev/fd/3")).isFalse();
+
+        // 但真实文件覆盖仍要照旧命中——别把修补放大成漏判
+        assertThat(AgentxDestructiveCommands.isDestructive("echo hi > /tmp/x.txt")).isTrue();
+        assertThat(AgentxDestructiveCommands.isDestructive("echo hi > probe.log")).isTrue();
+    }
+
+    @Test
     @DisplayName("写工作区外：重定向/dd/tee/cp 的目标越界才算；工作区内与 /dev/null 不算")
     void writesOutside() {
         assertThat(AgentxDestructiveCommands.writesOutside("echo x > /etc/hosts", ROOTS)).isTrue();

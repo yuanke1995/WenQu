@@ -44,6 +44,12 @@ public enum ToolFamily {
     TODO("todo", "任务清单"),
     /** 沙盒执行（隔离容器里的命令与文件读写）；审批 off 档整族不挂 */
     SANDBOX("sandbox", "沙盒执行", true),
+    /**
+     * SSH 远程命令（经用户本机执行器调用本机 OpenSSH 连远端）。
+     * <p>与 SANDBOX 同口径：真在远端跑命令，审批 off 档整族不挂；
+     * 只读档由 {@code ExecutionPolicy#allowsTool} 按族裁剪，能力面就不给。
+     */
+    SSH("ssh", "SSH 远程命令", true),
     /** MCP 外部工具：按用户登记动态合入，没有静态清单；审批 off 档整族不挂 */
     MCP("mcp", "MCP 外部工具", true),
     /**

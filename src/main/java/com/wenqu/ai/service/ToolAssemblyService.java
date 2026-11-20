@@ -208,7 +208,7 @@ public class ToolAssemblyService {
             case WORKFLOW -> agent.getToolWorkflow();
             case ARTIFACT -> agent.getToolArtifact();
             case SKILL -> agent.getToolSkill();
-            case SANDBOX -> null;   // 沙盒暂无智能体级列（c_ai_agent 未建 toolSandbox，见 SandboxTools 类注释）
+            case SANDBOX, SSH -> null;   // 这两族暂无智能体级列（见 SandboxTools 类注释），跟随全局
             // 派遣助手已改由框架的 agent_spawn 驱使（登记见 WenquAgentxTools#consultSubagentTargets），
             // 问渠侧没有这一族了。
             case TODO, MCP, LOCAL_BROWSER -> null;

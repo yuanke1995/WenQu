@@ -53,7 +53,7 @@ public final class AgentxDestructiveCommands {
                     + "|xargs\\b[^;&|\\n]*\\b(?:rm|shred|unlink)\\b)"
                     + "|(?:\\$\\(|`)[^)`\\n]*\\b(?:rm|shred|unlink)\\b");
 
-    /** 输出重定向到文件（不是 /dev/null、不是 fd 复制）：覆盖写，算破坏性。 */
+    /** 输出重定向到文件（不是 /dev/null、伪设备 /dev/tcp|udp|fd|std*、也不是 fd 复制）：覆盖写，算破坏性。 */
     private static final Pattern REDIRECT = Pattern.compile(
             "(?:^|[^>\\d])>{1,2}\\s*(\"[^\"]*\"|'[^']*'|[^\\s;&|()]+)");
 
@@ -560,9 +560,24 @@ public final class AgentxDestructiveCommands {
         return false;
     }
 
+    /**
+     * 重定向目标是不是「设备 / fd」而非真实文件：这类目标不产生磁盘覆盖，不该算破坏性。
+     * <p>除了 {@code /dev/null} 与 fd 复制（{@code &N}），还要认 bash 的伪设备——
+     * {@code > /dev/tcp/host/port}、{@code > /dev/udp/host/port} 是网络探活，
+     * {@code /dev/fd/*}、{@code /dev/stdin|out|err} 是句柄别名，都不写文件。
+     * 不认它们的话，一条纯端口探活命令会因带 {@code >} 被误判成「覆盖数据」而白挂确认卡。
+     */
     private static boolean isDeviceOrFd(String target) {
         String t = target == null ? "" : target.trim();
-        return t.isEmpty() || t.startsWith("/dev/null") || t.matches("&\\d+") || t.startsWith("&");
+        if (t.isEmpty()) return true;
+        if (t.matches("&\\d+") || t.startsWith("&")) return true;
+        return t.startsWith("/dev/null")
+                || t.startsWith("/dev/tcp/")
+                || t.startsWith("/dev/udp/")
+                || t.startsWith("/dev/fd/")
+                || t.equals("/dev/stdin")
+                || t.equals("/dev/stdout")
+                || t.equals("/dev/stderr");
     }
 
     private static String firstWord(String segment) {

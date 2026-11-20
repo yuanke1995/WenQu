@@ -111,16 +111,16 @@ public record ExecutionPolicy(
 
     /**
      * 这个工具本轮在模型的工具表里出不出现。
-     * <p>先过按名黑名单（跨族，管理员/成员点名禁的那个），再过档位：档位只对沙盒族做裁剪，
+     * <p>先过按名黑名单（跨族，管理员/成员点名禁的那个），再过档位：档位只对会执行外部命令的两族做裁剪，
      * 判据用 {@link SideEffect}（工具会不会动到外部世界）而不是工具名列表——名单会在下一次加沙盒工具时
-     * 忘记更新，等级是描述符上必须填的字段。
-     * <p>档位对其余族不收束：外部 MCP 工具在只读档下照样挂载但要逐项确认——档位在它身上的表达是审批，
+     * 忘记更新，等级是描述符上必须填的字段。SSH 与沙盒同口径：都在用户/远端真跑命令，只读档不该给。
+     * 其余族不收束：外部 MCP 工具在只读档下照样挂载但要逐项确认——档位在它身上的表达是审批，
      * 因为平台无从知道一个外部工具的哪一次调用会写什么。要精确到"只禁其中某个外部工具"就走 deny。
      */
     public boolean allowsTool(ToolDescriptor d) {
         if (d == null) return true;
         if (denies(d.name())) return false;
-        if (d.family() != ToolFamily.SANDBOX) return true;
+        if (d.family() != ToolFamily.SANDBOX && d.family() != ToolFamily.SSH) return true;
         if (sandboxMode == SandboxMode.READ_ONLY) {
             return d.sideEffect() == SideEffect.READ;
         }
