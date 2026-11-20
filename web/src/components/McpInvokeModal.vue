@@ -56,6 +56,7 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { message } from 'ant-design-vue'
+import { writeClipboard } from '../utils/clipboard'
 import { getMcpToolSchema, invokeMcpTool } from '../api'
 
 const props = defineProps({
@@ -171,12 +172,8 @@ const run = async () => {
 const copy = async () => {
   const text = resultText.value
   if (!text) return
-  try {
-    await navigator.clipboard.writeText(text)
-    message.success('已复制')
-  } catch (e) {
-    message.error('复制失败，请手动选择文本')
-  }
+  if (await writeClipboard(text)) message.success('已复制')
+  else message.error('复制失败，请手动选择文本')
 }
 </script>
 

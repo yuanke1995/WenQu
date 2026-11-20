@@ -10,6 +10,7 @@ import com.wenqu.ai.service.KnowledgeBaseService;
 import com.wenqu.ai.service.OcrEngineCatalogService;
 import com.wenqu.ai.service.ResourceVisibilityService;
 import com.wenqu.ai.service.RoleService;
+import com.wenqu.ai.util.FileNameSanitizer;
 import com.wenqu.ai.util.RequestUser;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -261,7 +262,7 @@ public class KnowledgeBaseController {
     public void export(@PathVariable("id") String id, jakarta.servlet.http.HttpServletResponse response) throws java.io.IOException {
         var kb = mustGet(id);
         requireManage(kb);
-        String safeName = (kb.getName() == null ? "kb" : kb.getName()).replaceAll("[\\\\/:*?\"<>|\\s]+", "_");
+        String safeName = FileNameSanitizer.sanitize(kb.getName() == null ? "kb" : kb.getName(), 120);
         response.setContentType("application/zip");
         response.setHeader("Content-Disposition", "attachment; filename*=UTF-8''" +
                 java.net.URLEncoder.encode(safeName + "-" + id.substring(0, 8) + ".zip", java.nio.charset.StandardCharsets.UTF_8));

@@ -675,7 +675,7 @@ public class ProjectFileService {
     public Path workspaceRootOf(String uid) {
         String root = configService.get("sandbox.userDataHostDir");
         if (root == null || root.isBlank()) {
-            root = System.getProperty("user.dir") + "/user-data";
+            root = Path.of(System.getProperty("user.dir"), "user-data").toString();
         }
         return Path.of(root, "shared", SandboxPaths.uidDirname(uid), "workspace").toAbsolutePath().normalize();
     }

@@ -7,11 +7,8 @@ import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-const CACHE = join(homedir(), 'Library/Caches/ms-playwright')
-const CHROME = [
-  join(CACHE, 'chromium-1247/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing'),
-  join(CACHE, 'chromium-1247/chrome-mac-arm64/Chromium.app/Contents/MacOS/Chromium'),
-].find(existsSync) || ''
+import { findChromium, tmpPath } from '../lib/findChromium.mjs'
+const CHROME = findChromium()
 const PORT = 9225
 const BASE = process.env.WEB_BASE || 'http://127.0.0.1:5801'
 const TOKEN = process.env.WENQU_TOKEN || ''
@@ -30,7 +27,7 @@ function connect(u) {
 }
 const evalJs = async (cdp, expression) => (await cdp.send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true })).result.value
 async function main() {
-  const chrome = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${PORT}`, '--user-data-dir=/tmp/wenqu-graph-profile', '--no-first-run', '--disable-gpu', 'about:blank'], { stdio: 'ignore' })
+  const chrome = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${PORT}`, `--user-data-dir=${tmpPath('wenqu-graph-profile')}`, '--no-first-run', '--disable-gpu', 'about:blank'], { stdio: 'ignore' })
   let fail = 0
   try {
     let v = null

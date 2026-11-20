@@ -128,6 +128,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { message } from 'ant-design-vue'
+import { writeClipboard } from '../utils/clipboard'
 import { PlusOutlined } from '@ant-design/icons-vue'
 import { listServiceAccounts, createServiceAccount, updateServiceAccount,
          rotateServiceAccountToken, deleteServiceAccount, getServiceAccountRoles,
@@ -262,13 +263,8 @@ async function loadRoleOptions () {
 
 async function copyToken () {
   copyHint.value = ''
-  try {
-    await navigator.clipboard.writeText(tokenText.value)
-    copyHint.value = '已复制到剪贴板'
-  } catch (e) {
-    // 非安全上下文（http 内网部署）拿不到 clipboard API：文本框已是只读全选态，让用户手动复制
-    copyHint.value = '这个环境不允许网页直接写剪贴板，请在上面框内全选后手动复制'
-  }
+  if (await writeClipboard(tokenText.value)) copyHint.value = '已复制到剪贴板'
+  else copyHint.value = '这个环境不允许网页直接写剪贴板，请在上面框内全选后手动复制'
 }
 
 onMounted(() => { load(); loadRoleOptions() })

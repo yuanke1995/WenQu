@@ -274,8 +274,9 @@ function apiGroupOf(ep) {
 /** 每个账点给一条能直接粘进终端的 curl（占位符 __BASE__ 由 docs.js 按当前基址替换） */
 function curlOf(ep) {
   const url = '__BASE__' + ep.path
-  const body = ep.method === 'POST' ? ` \\\n  -H "Content-Type: application/json" \\\n  -d '{}'` : ''
-  return `curl -X ${ep.method} ${url} \\\n  -H "X-Api-Key: sk-你的Key"${body}`
+  // 单行：Windows cmd/PowerShell 不认 `\` 续行；PowerShell 下把单引号换双引号即可。
+  const body = ep.method === 'POST' ? ` -H "Content-Type: application/json" -d '{}'` : ''
+  return `curl -X ${ep.method} ${url} -H "X-Api-Key: sk-你的Key"${body}`
 }
 
 function renderApiReference(contract) {
@@ -283,6 +284,7 @@ function renderApiReference(contract) {
   html.push(`<p>共 <strong>${contract.endpoints.length}</strong> 个已登记端点，契约版本 <code>${escapeHtml(contract.version)}</code>。` +
     `这张表由 <code>contract/openapi.v1.json</code> 在构建期生成，与后端开放契约注册表同源（<code>@OpenApi</code> + Spring 路由），` +
     `不手写、不做第二份。运行时机器可读版本：<code>GET __BASE__/api/ai/v1/openapi.json</code>。</p>`)
+  html.push(`<p>示例为单行 curl，bash/zsh/cmd 都可直接粘贴；PowerShell 请把单引号换成双引号，或使用 <code>Invoke-RestMethod</code>。</p>`)
 
   const byGroup = new Map()
   for (const ep of contract.endpoints) {

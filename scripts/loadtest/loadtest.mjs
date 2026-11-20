@@ -289,7 +289,7 @@ function purgeRows(uids) {
   }
   const args = ['-h', conf.host, '-P', conf.port, '-u', conf.user, `--default-character-set=utf8mb4`, conf.db];
   if (conf.password) args.push(`-p${conf.password}`);
-  const r = spawnSync('mysql', args, { input: sql, encoding: 'utf8' });
+  const r = spawnSync(process.env.MYSQL_BIN || 'mysql', args, { input: sql, encoding: 'utf8' });
   if (r.status === 0) {
     console.log(`[cleanup] 已清 ${conf.db} 中 ${uids.length} 个压测用户的会话、消息与用量台账`);
   } else {

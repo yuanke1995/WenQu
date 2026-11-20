@@ -5,6 +5,7 @@
 import { message } from 'ant-design-vue'
 import { getHistory } from '../api'
 import { resolveImg, snapshotEChart } from '../utils/markdown'
+import { sanitizeFileName } from '../utils/fileName'
 
 const imgToDataUri = async u => {
   if (!u) return null
@@ -97,7 +98,7 @@ const fmtTime = ts => {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
-const safeFileName = title => (title || new Date().toISOString().slice(0, 10)).replace(/[\\/:*?"<>|]/g, '_')
+const safeFileName = title => sanitizeFileName(title || new Date().toISOString().slice(0, 10))
 
 /**
  * 引用来源行：联网来源（origin=WEB）输出可点击的 Markdown 链接，

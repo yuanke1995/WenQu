@@ -757,10 +757,12 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick, h } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
+import { writeClipboard } from '../utils/clipboard'
 // ECharts 统一走完整包（与聊天正文同一个模块实例，避免 dev 下多份内部模块重复注册）
 import * as echarts from 'echarts'
 import { themeState } from '../utils/theme'
 import { isSuperadminSync, profileSync } from '../utils/auth'
+import { sanitizeFileName } from '../utils/fileName'
 import {
   getAnalytics, getDashboardActions, getDashboardAlerts, getTraceOverview,
   createKnowledge, addEvalCase, getEvalLastReport, runEvalAutoCheck,
@@ -1657,12 +1659,8 @@ const copyLink = async () => {
   if (tab.value === 'pool') q.set('poolStatus', poolStatus.value)
   if (tab.value === 'cost') q.set('costRange', String(costRange.value))
   const url = `${location.origin}${location.pathname}?${q.toString()}`
-  try {
-    await navigator.clipboard.writeText(url)
-    message.success('链接已复制（含当前筛选）')
-  } catch (e) {
-    message.info(url)
-  }
+  if (await writeClipboard(url)) message.success('链接已复制（含当前筛选）')
+  else message.info(url)
 }
 
 function applyQueryState() {
@@ -1720,7 +1718,7 @@ const exportCsv = () => {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = `${filename}-${new Date().toISOString().slice(0, 10)}.csv`
+  a.download = sanitizeFileName(`${filename}-${new Date().toISOString().slice(0, 10)}.csv`)
   a.click()
   setTimeout(() => URL.revokeObjectURL(url), 1000)
   message.success('已导出当前视图')

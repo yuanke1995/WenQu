@@ -32,6 +32,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
@@ -895,7 +896,7 @@ public class WorkflowEngine {
     private Function<OverAllState, NodeOut> httpBody(WorkflowDsl.Node n, WorkflowRunCtx ctx) {
         return state -> {
             Secrets secrets = new Secrets(ctx);   // 本次执行的凭据解析器（明文只活在这里）
-            String method = cfgStr(n, "method", false).toUpperCase();
+            String method = cfgStr(n, "method", false).toUpperCase(Locale.ROOT);
             if (method.isEmpty()) method = "GET";
             if (!List.of("GET", "POST", "PUT", "DELETE").contains(method)) {
                 throw new BizException("节点「" + n.getId() + "」不支持的 HTTP 方法：" + method);
@@ -1021,7 +1022,7 @@ public class WorkflowEngine {
             if (!configService.getBoolean("tool.sandbox.enabled")) {
                 throw new BizException("节点「" + n.getId() + "」代码执行依赖沙盒，请先在设置页开启「沙盒 API 与工作流节点」（tool.sandbox.enabled）");
             }
-            String lang = cfgStr(n, "language", true).toLowerCase();
+            String lang = cfgStr(n, "language", true).toLowerCase(Locale.ROOT);
             if (!List.of("python", "node").contains(lang)) {
                 throw new BizException("节点「" + n.getId() + "」仅支持 python / node（当前 " + lang + "）");
             }

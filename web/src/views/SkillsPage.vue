@@ -328,7 +328,7 @@
                    class="sk-md-editor" @on-save="submitEdit" />
         </a-form-item>
       </a-form>
-      <p class="skill-form-hint">正文、描述与分类可改；<b>技能名必须保持「{{ editForm.name }}」</b>，改名会打断引用。保存前旧版自动留快照，可在详情抽屉「版本」里回滚。⌘/Ctrl+S 直接保存。</p>
+      <p class="skill-form-hint">正文、描述与分类可改；<b>技能名必须保持「{{ editForm.name }}」</b>，改名会打断引用。保存前旧版自动留快照，可在详情抽屉「版本」里回滚。{{ saveKeyLabel() }} 直接保存。</p>
       <div class="key-modal-foot">
         <button class="app-btn ghost" @click="tryCloseEdit">取消</button>
         <button class="app-btn" :disabled="saving" @click="submitEdit">{{ saving ? '保存中…' : '保存' }}</button>
@@ -364,6 +364,7 @@ import SkillDrawer from '../components/SkillDrawer.vue'
 import { MdEditor } from 'md-editor-v3'
 import 'md-editor-v3/lib/style.css'
 import { themeState } from '../utils/theme'
+import { saveKeyLabel, useSaveShortcut } from '../utils/shortcuts'
 
 const mdTheme = computed(() => (themeState.value === 'dark' ? 'dark' : 'light'))
 // 工具栏只留基础排版与预览：与智能体页系统提示词编辑器同一套取舍（图片上传/公式会把大段
@@ -883,6 +884,7 @@ const download = async s => {
 }
 
 onMounted(load)
+useSaveShortcut(() => editOpen.value, submitEdit)
 </script>
 
 <style scoped>

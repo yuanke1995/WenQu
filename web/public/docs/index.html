@@ -911,123 +911,78 @@ async function fallback(runId) {
   <h1>API 参考（自动生成）</h1>
   <p class="page-lead">端点清单由契约快照生成：路径、方法、scope、可达性都不是手写的。</p>
 <p>共 <strong>22</strong> 个已登记端点，契约版本 <code>v1</code>。这张表由 <code>contract/openapi.v1.json</code> 在构建期生成，与后端开放契约注册表同源（<code>@OpenApi</code> + Spring 路由），不手写、不做第二份。运行时机器可读版本：<code>GET __BASE__/api/ai/v1/openapi.json</code>。</p>
+<p>示例为单行 curl，bash/zsh/cmd 都可直接粘贴；PowerShell 请把单引号换成双引号，或使用 <code>Invoke-RestMethod</code>。</p>
 <h3 id="api-me"><a class="anchor" href="#api-me" aria-hidden="true">#</a>自检与契约</h3>
 <div class="tbl-wrap"><table>
 <thead><tr><th style="width:64px">方法</th><th style="width:330px">路径</th><th style="width:112px">scope</th><th>说明</th><th style="width:76px">curl</th></tr></thead>
 <tbody>
-<tr><td><span class="method get">GET</span></td><td><code>/api/ai/v1/me</code></td><td><span class="scope">任意有效 Key</span></td><td>API Key 自检：能力范围、发问身份、限流与近 30 天用量</td><td><button class="copy" type="button" data-copy-text="curl -X GET __BASE__/api/ai/v1/me \
-  -H &quot;X-Api-Key: sk-你的Key&quot;">复制</button></td></tr>
-<tr><td><span class="method get">GET</span></td><td><code>/api/ai/v1/openapi.json</code></td><td><span class="scope">任意有效 Key</span></td><td>开放 API 契约（OpenAPI 3.1）</td><td><button class="copy" type="button" data-copy-text="curl -X GET __BASE__/api/ai/v1/openapi.json \
-  -H &quot;X-Api-Key: sk-你的Key&quot;">复制</button></td></tr>
+<tr><td><span class="method get">GET</span></td><td><code>/api/ai/v1/me</code></td><td><span class="scope">任意有效 Key</span></td><td>API Key 自检：能力范围、发问身份、限流与近 30 天用量</td><td><button class="copy" type="button" data-copy-text="curl -X GET __BASE__/api/ai/v1/me -H &quot;X-Api-Key: sk-你的Key&quot;">复制</button></td></tr>
+<tr><td><span class="method get">GET</span></td><td><code>/api/ai/v1/openapi.json</code></td><td><span class="scope">任意有效 Key</span></td><td>开放 API 契约（OpenAPI 3.1）</td><td><button class="copy" type="button" data-copy-text="curl -X GET __BASE__/api/ai/v1/openapi.json -H &quot;X-Api-Key: sk-你的Key&quot;">复制</button></td></tr>
 </tbody></table></div>
 <h3 id="api-chat"><a class="anchor" href="#api-chat" aria-hidden="true">#</a>问答（OpenAI 兼容）</h3>
 <div class="tbl-wrap"><table>
 <thead><tr><th style="width:64px">方法</th><th style="width:330px">路径</th><th style="width:112px">scope</th><th>说明</th><th style="width:76px">curl</th></tr></thead>
 <tbody>
-<tr><td><span class="method post">POST</span></td><td><code>/api/ai/v1/chat/completions</code></td><td><span class="scope">chat</span></td><td>Chat Completions（OpenAI 兼容）</td><td><button class="copy" type="button" data-copy-text="curl -X POST __BASE__/api/ai/v1/chat/completions \
-  -H &quot;X-Api-Key: sk-你的Key&quot; \
-  -H &quot;Content-Type: application/json&quot; \
-  -d '{}'">复制</button></td></tr>
+<tr><td><span class="method post">POST</span></td><td><code>/api/ai/v1/chat/completions</code></td><td><span class="scope">chat</span></td><td>Chat Completions（OpenAI 兼容）</td><td><button class="copy" type="button" data-copy-text="curl -X POST __BASE__/api/ai/v1/chat/completions -H &quot;X-Api-Key: sk-你的Key&quot; -H &quot;Content-Type: application/json&quot; -d '{}'">复制</button></td></tr>
 </tbody></table></div>
 <h3 id="api-responses"><a class="anchor" href="#api-responses" aria-hidden="true">#</a>问答（Responses 形状）</h3>
 <div class="tbl-wrap"><table>
 <thead><tr><th style="width:64px">方法</th><th style="width:330px">路径</th><th style="width:112px">scope</th><th>说明</th><th style="width:76px">curl</th></tr></thead>
 <tbody>
-<tr><td><span class="method post">POST</span></td><td><code>/api/ai/v1/responses</code></td><td><span class="scope">chat</span></td><td>Responses API（OpenAI 兼容）</td><td><button class="copy" type="button" data-copy-text="curl -X POST __BASE__/api/ai/v1/responses \
-  -H &quot;X-Api-Key: sk-你的Key&quot; \
-  -H &quot;Content-Type: application/json&quot; \
-  -d '{}'">复制</button></td></tr>
+<tr><td><span class="method post">POST</span></td><td><code>/api/ai/v1/responses</code></td><td><span class="scope">chat</span></td><td>Responses API（OpenAI 兼容）</td><td><button class="copy" type="button" data-copy-text="curl -X POST __BASE__/api/ai/v1/responses -H &quot;X-Api-Key: sk-你的Key&quot; -H &quot;Content-Type: application/json&quot; -d '{}'">复制</button></td></tr>
 </tbody></table></div>
 <h3 id="api-agents"><a class="anchor" href="#api-agents" aria-hidden="true">#</a>运行原语 · 建 run</h3>
 <div class="tbl-wrap"><table>
 <thead><tr><th style="width:64px">方法</th><th style="width:330px">路径</th><th style="width:112px">scope</th><th>说明</th><th style="width:76px">curl</th></tr></thead>
 <tbody>
-<tr><td><span class="method post">POST</span></td><td><code>/api/ai/v1/agents/{agentId}/runs</code></td><td><span class="scope">runs.write</span></td><td>创建一次智能体运行（run）</td><td><button class="copy" type="button" data-copy-text="curl -X POST __BASE__/api/ai/v1/agents/{agentId}/runs \
-  -H &quot;X-Api-Key: sk-你的Key&quot; \
-  -H &quot;Content-Type: application/json&quot; \
-  -d '{}'">复制</button></td></tr>
+<tr><td><span class="method post">POST</span></td><td><code>/api/ai/v1/agents/{agentId}/runs</code></td><td><span class="scope">runs.write</span></td><td>创建一次智能体运行（run）</td><td><button class="copy" type="button" data-copy-text="curl -X POST __BASE__/api/ai/v1/agents/{agentId}/runs -H &quot;X-Api-Key: sk-你的Key&quot; -H &quot;Content-Type: application/json&quot; -d '{}'">复制</button></td></tr>
 </tbody></table></div>
 <h3 id="api-runs"><a class="anchor" href="#api-runs" aria-hidden="true">#</a>运行原语 · 查询与控制</h3>
 <div class="tbl-wrap"><table>
 <thead><tr><th style="width:64px">方法</th><th style="width:330px">路径</th><th style="width:112px">scope</th><th>说明</th><th style="width:76px">curl</th></tr></thead>
 <tbody>
-<tr><td><span class="method get">GET</span></td><td><code>/api/ai/v1/runs/{id}</code></td><td><span class="scope">runs.read</span></td><td>查询运行状态与输出（与 run.done 同口径）</td><td><button class="copy" type="button" data-copy-text="curl -X GET __BASE__/api/ai/v1/runs/{id} \
-  -H &quot;X-Api-Key: sk-你的Key&quot;">复制</button></td></tr>
-<tr><td><span class="method post">POST</span></td><td><code>/api/ai/v1/runs/{id}/approvals</code></td><td><span class="scope">runs.write</span></td><td>提交审批卡（approve/reject/revise/supersede/answer/ignore）</td><td><button class="copy" type="button" data-copy-text="curl -X POST __BASE__/api/ai/v1/runs/{id}/approvals \
-  -H &quot;X-Api-Key: sk-你的Key&quot; \
-  -H &quot;Content-Type: application/json&quot; \
-  -d '{}'">复制</button></td></tr>
-<tr><td><span class="method get">GET</span></td><td><code>/api/ai/v1/runs/{id}/artifacts</code></td><td><span class="scope">runs.read</span></td><td>列出本次运行的可下载产物（含签名 URL）</td><td><button class="copy" type="button" data-copy-text="curl -X GET __BASE__/api/ai/v1/runs/{id}/artifacts \
-  -H &quot;X-Api-Key: sk-你的Key&quot;">复制</button></td></tr>
-<tr><td><span class="method get">GET</span></td><td><code>/api/ai/v1/runs/{id}/events</code></td><td><span class="scope">runs.read</span></td><td>SSE 事件流（Last-Event-ID 续传，seq 连续）</td><td><button class="copy" type="button" data-copy-text="curl -X GET __BASE__/api/ai/v1/runs/{id}/events \
-  -H &quot;X-Api-Key: sk-你的Key&quot;">复制</button></td></tr>
-<tr><td><span class="method post">POST</span></td><td><code>/api/ai/v1/runs/{id}/steer</code></td><td><span class="scope">runs.write</span></td><td>运行中插话（纯文本，框架收下才落库）</td><td><button class="copy" type="button" data-copy-text="curl -X POST __BASE__/api/ai/v1/runs/{id}/steer \
-  -H &quot;X-Api-Key: sk-你的Key&quot; \
-  -H &quot;Content-Type: application/json&quot; \
-  -d '{}'">复制</button></td></tr>
-<tr><td><span class="method post">POST</span></td><td><code>/api/ai/v1/runs/{id}/stop</code></td><td><span class="scope">runs.write</span></td><td>停止运行（幂等，终态收成 stopped）</td><td><button class="copy" type="button" data-copy-text="curl -X POST __BASE__/api/ai/v1/runs/{id}/stop \
-  -H &quot;X-Api-Key: sk-你的Key&quot; \
-  -H &quot;Content-Type: application/json&quot; \
-  -d '{}'">复制</button></td></tr>
+<tr><td><span class="method get">GET</span></td><td><code>/api/ai/v1/runs/{id}</code></td><td><span class="scope">runs.read</span></td><td>查询运行状态与输出（与 run.done 同口径）</td><td><button class="copy" type="button" data-copy-text="curl -X GET __BASE__/api/ai/v1/runs/{id} -H &quot;X-Api-Key: sk-你的Key&quot;">复制</button></td></tr>
+<tr><td><span class="method post">POST</span></td><td><code>/api/ai/v1/runs/{id}/approvals</code></td><td><span class="scope">runs.write</span></td><td>提交审批卡（approve/reject/revise/supersede/answer/ignore）</td><td><button class="copy" type="button" data-copy-text="curl -X POST __BASE__/api/ai/v1/runs/{id}/approvals -H &quot;X-Api-Key: sk-你的Key&quot; -H &quot;Content-Type: application/json&quot; -d '{}'">复制</button></td></tr>
+<tr><td><span class="method get">GET</span></td><td><code>/api/ai/v1/runs/{id}/artifacts</code></td><td><span class="scope">runs.read</span></td><td>列出本次运行的可下载产物（含签名 URL）</td><td><button class="copy" type="button" data-copy-text="curl -X GET __BASE__/api/ai/v1/runs/{id}/artifacts -H &quot;X-Api-Key: sk-你的Key&quot;">复制</button></td></tr>
+<tr><td><span class="method get">GET</span></td><td><code>/api/ai/v1/runs/{id}/events</code></td><td><span class="scope">runs.read</span></td><td>SSE 事件流（Last-Event-ID 续传，seq 连续）</td><td><button class="copy" type="button" data-copy-text="curl -X GET __BASE__/api/ai/v1/runs/{id}/events -H &quot;X-Api-Key: sk-你的Key&quot;">复制</button></td></tr>
+<tr><td><span class="method post">POST</span></td><td><code>/api/ai/v1/runs/{id}/steer</code></td><td><span class="scope">runs.write</span></td><td>运行中插话（纯文本，框架收下才落库）</td><td><button class="copy" type="button" data-copy-text="curl -X POST __BASE__/api/ai/v1/runs/{id}/steer -H &quot;X-Api-Key: sk-你的Key&quot; -H &quot;Content-Type: application/json&quot; -d '{}'">复制</button></td></tr>
+<tr><td><span class="method post">POST</span></td><td><code>/api/ai/v1/runs/{id}/stop</code></td><td><span class="scope">runs.write</span></td><td>停止运行（幂等，终态收成 stopped）</td><td><button class="copy" type="button" data-copy-text="curl -X POST __BASE__/api/ai/v1/runs/{id}/stop -H &quot;X-Api-Key: sk-你的Key&quot; -H &quot;Content-Type: application/json&quot; -d '{}'">复制</button></td></tr>
 </tbody></table></div>
 <h3 id="api-retrieval"><a class="anchor" href="#api-retrieval" aria-hidden="true">#</a>知识检索</h3>
 <div class="tbl-wrap"><table>
 <thead><tr><th style="width:64px">方法</th><th style="width:330px">路径</th><th style="width:112px">scope</th><th>说明</th><th style="width:76px">curl</th></tr></thead>
 <tbody>
-<tr><td><span class="method post">POST</span></td><td><code>/api/ai/v1/retrieval</code></td><td><span class="scope">kb.read</span></td><td>知识检索（混合检索直通）</td><td><button class="copy" type="button" data-copy-text="curl -X POST __BASE__/api/ai/v1/retrieval \
-  -H &quot;X-Api-Key: sk-你的Key&quot; \
-  -H &quot;Content-Type: application/json&quot; \
-  -d '{}'">复制</button></td></tr>
+<tr><td><span class="method post">POST</span></td><td><code>/api/ai/v1/retrieval</code></td><td><span class="scope">kb.read</span></td><td>知识检索（混合检索直通）</td><td><button class="copy" type="button" data-copy-text="curl -X POST __BASE__/api/ai/v1/retrieval -H &quot;X-Api-Key: sk-你的Key&quot; -H &quot;Content-Type: application/json&quot; -d '{}'">复制</button></td></tr>
 </tbody></table></div>
 <h3 id="api-kbs"><a class="anchor" href="#api-kbs" aria-hidden="true">#</a>知识库管理</h3>
 <div class="tbl-wrap"><table>
 <thead><tr><th style="width:64px">方法</th><th style="width:330px">路径</th><th style="width:112px">scope</th><th>说明</th><th style="width:76px">curl</th></tr></thead>
 <tbody>
-<tr><td><span class="method get">GET</span></td><td><code>/api/ai/v1/kbs</code></td><td><span class="scope">kb.read</span></td><td>知识库列表</td><td><button class="copy" type="button" data-copy-text="curl -X GET __BASE__/api/ai/v1/kbs \
-  -H &quot;X-Api-Key: sk-你的Key&quot;">复制</button></td></tr>
-<tr><td><span class="method post">POST</span></td><td><code>/api/ai/v1/kbs</code></td><td><span class="scope">kb.write</span></td><td>创建知识库</td><td><button class="copy" type="button" data-copy-text="curl -X POST __BASE__/api/ai/v1/kbs \
-  -H &quot;X-Api-Key: sk-你的Key&quot; \
-  -H &quot;Content-Type: application/json&quot; \
-  -d '{}'">复制</button></td></tr>
-<tr><td><span class="method get">GET</span></td><td><code>/api/ai/v1/kbs/{id}</code></td><td><span class="scope">kb.read</span></td><td>知识库详情</td><td><button class="copy" type="button" data-copy-text="curl -X GET __BASE__/api/ai/v1/kbs/{id} \
-  -H &quot;X-Api-Key: sk-你的Key&quot;">复制</button></td></tr>
-<tr><td><span class="method get">GET</span></td><td><code>/api/ai/v1/kbs/{id}/documents</code></td><td><span class="scope">kb.read</span></td><td>知识库文档列表与解析进度</td><td><button class="copy" type="button" data-copy-text="curl -X GET __BASE__/api/ai/v1/kbs/{id}/documents \
-  -H &quot;X-Api-Key: sk-你的Key&quot;">复制</button></td></tr>
-<tr><td><span class="method post">POST</span></td><td><code>/api/ai/v1/kbs/{id}/documents</code></td><td><span class="scope">kb.write</span></td><td>上传文档</td><td><button class="copy" type="button" data-copy-text="curl -X POST __BASE__/api/ai/v1/kbs/{id}/documents \
-  -H &quot;X-Api-Key: sk-你的Key&quot; \
-  -H &quot;Content-Type: application/json&quot; \
-  -d '{}'">复制</button></td></tr>
+<tr><td><span class="method get">GET</span></td><td><code>/api/ai/v1/kbs</code></td><td><span class="scope">kb.read</span></td><td>知识库列表</td><td><button class="copy" type="button" data-copy-text="curl -X GET __BASE__/api/ai/v1/kbs -H &quot;X-Api-Key: sk-你的Key&quot;">复制</button></td></tr>
+<tr><td><span class="method post">POST</span></td><td><code>/api/ai/v1/kbs</code></td><td><span class="scope">kb.write</span></td><td>创建知识库</td><td><button class="copy" type="button" data-copy-text="curl -X POST __BASE__/api/ai/v1/kbs -H &quot;X-Api-Key: sk-你的Key&quot; -H &quot;Content-Type: application/json&quot; -d '{}'">复制</button></td></tr>
+<tr><td><span class="method get">GET</span></td><td><code>/api/ai/v1/kbs/{id}</code></td><td><span class="scope">kb.read</span></td><td>知识库详情</td><td><button class="copy" type="button" data-copy-text="curl -X GET __BASE__/api/ai/v1/kbs/{id} -H &quot;X-Api-Key: sk-你的Key&quot;">复制</button></td></tr>
+<tr><td><span class="method get">GET</span></td><td><code>/api/ai/v1/kbs/{id}/documents</code></td><td><span class="scope">kb.read</span></td><td>知识库文档列表与解析进度</td><td><button class="copy" type="button" data-copy-text="curl -X GET __BASE__/api/ai/v1/kbs/{id}/documents -H &quot;X-Api-Key: sk-你的Key&quot;">复制</button></td></tr>
+<tr><td><span class="method post">POST</span></td><td><code>/api/ai/v1/kbs/{id}/documents</code></td><td><span class="scope">kb.write</span></td><td>上传文档</td><td><button class="copy" type="button" data-copy-text="curl -X POST __BASE__/api/ai/v1/kbs/{id}/documents -H &quot;X-Api-Key: sk-你的Key&quot; -H &quot;Content-Type: application/json&quot; -d '{}'">复制</button></td></tr>
 </tbody></table></div>
 <h3 id="api-embeddings"><a class="anchor" href="#api-embeddings" aria-hidden="true">#</a>向量化</h3>
 <div class="tbl-wrap"><table>
 <thead><tr><th style="width:64px">方法</th><th style="width:330px">路径</th><th style="width:112px">scope</th><th>说明</th><th style="width:76px">curl</th></tr></thead>
 <tbody>
-<tr><td><span class="method post">POST</span></td><td><code>/api/ai/v1/embeddings</code></td><td><span class="scope">embedding</span></td><td>Embeddings（OpenAI 兼容）</td><td><button class="copy" type="button" data-copy-text="curl -X POST __BASE__/api/ai/v1/embeddings \
-  -H &quot;X-Api-Key: sk-你的Key&quot; \
-  -H &quot;Content-Type: application/json&quot; \
-  -d '{}'">复制</button></td></tr>
+<tr><td><span class="method post">POST</span></td><td><code>/api/ai/v1/embeddings</code></td><td><span class="scope">embedding</span></td><td>Embeddings（OpenAI 兼容）</td><td><button class="copy" type="button" data-copy-text="curl -X POST __BASE__/api/ai/v1/embeddings -H &quot;X-Api-Key: sk-你的Key&quot; -H &quot;Content-Type: application/json&quot; -d '{}'">复制</button></td></tr>
 </tbody></table></div>
 <h3 id="api-models"><a class="anchor" href="#api-models" aria-hidden="true">#</a>模型清单</h3>
 <div class="tbl-wrap"><table>
 <thead><tr><th style="width:64px">方法</th><th style="width:330px">路径</th><th style="width:112px">scope</th><th>说明</th><th style="width:76px">curl</th></tr></thead>
 <tbody>
-<tr><td><span class="method get">GET</span></td><td><code>/api/ai/v1/models/embeddings</code></td><td><span class="scope">embedding</span></td><td>可用向量模型清单</td><td><button class="copy" type="button" data-copy-text="curl -X GET __BASE__/api/ai/v1/models/embeddings \
-  -H &quot;X-Api-Key: sk-你的Key&quot;">复制</button></td></tr>
+<tr><td><span class="method get">GET</span></td><td><code>/api/ai/v1/models/embeddings</code></td><td><span class="scope">embedding</span></td><td>可用向量模型清单</td><td><button class="copy" type="button" data-copy-text="curl -X GET __BASE__/api/ai/v1/models/embeddings -H &quot;X-Api-Key: sk-你的Key&quot;">复制</button></td></tr>
 </tbody></table></div>
 <h3 id="api-workflows"><a class="anchor" href="#api-workflows" aria-hidden="true">#</a>工作流</h3>
 <div class="tbl-wrap"><table>
 <thead><tr><th style="width:64px">方法</th><th style="width:330px">路径</th><th style="width:112px">scope</th><th>说明</th><th style="width:76px">curl</th></tr></thead>
 <tbody>
-<tr><td><span class="method post">POST</span></td><td><code>/api/ai/v1/workflows/{id}/run</code></td><td><span class="scope">workflow.run</span></td><td>触发已发布工作流</td><td><button class="copy" type="button" data-copy-text="curl -X POST __BASE__/api/ai/v1/workflows/{id}/run \
-  -H &quot;X-Api-Key: sk-你的Key&quot; \
-  -H &quot;Content-Type: application/json&quot; \
-  -d '{}'">复制</button></td></tr>
-<tr><td><span class="method get">GET</span></td><td><code>/api/ai/v1/workflows/{id}/run/{runId}</code></td><td><span class="scope">workflow.run</span></td><td>查询工作流运行结果</td><td><button class="copy" type="button" data-copy-text="curl -X GET __BASE__/api/ai/v1/workflows/{id}/run/{runId} \
-  -H &quot;X-Api-Key: sk-你的Key&quot;">复制</button></td></tr>
-<tr><td><span class="method post">POST</span></td><td><code>/api/ai/v1/workflows/webhook/{token}</code></td><td><span class="scope">任意有效 Key</span></td><td>Webhook 入站触发（令牌即凭据）<span class="pill-token">令牌通道</span></td><td><button class="copy" type="button" data-copy-text="curl -X POST __BASE__/api/ai/v1/workflows/webhook/{token} \
-  -H &quot;X-Api-Key: sk-你的Key&quot; \
-  -H &quot;Content-Type: application/json&quot; \
-  -d '{}'">复制</button></td></tr>
+<tr><td><span class="method post">POST</span></td><td><code>/api/ai/v1/workflows/{id}/run</code></td><td><span class="scope">workflow.run</span></td><td>触发已发布工作流</td><td><button class="copy" type="button" data-copy-text="curl -X POST __BASE__/api/ai/v1/workflows/{id}/run -H &quot;X-Api-Key: sk-你的Key&quot; -H &quot;Content-Type: application/json&quot; -d '{}'">复制</button></td></tr>
+<tr><td><span class="method get">GET</span></td><td><code>/api/ai/v1/workflows/{id}/run/{runId}</code></td><td><span class="scope">workflow.run</span></td><td>查询工作流运行结果</td><td><button class="copy" type="button" data-copy-text="curl -X GET __BASE__/api/ai/v1/workflows/{id}/run/{runId} -H &quot;X-Api-Key: sk-你的Key&quot;">复制</button></td></tr>
+<tr><td><span class="method post">POST</span></td><td><code>/api/ai/v1/workflows/webhook/{token}</code></td><td><span class="scope">任意有效 Key</span></td><td>Webhook 入站触发（令牌即凭据）<span class="pill-token">令牌通道</span></td><td><button class="copy" type="button" data-copy-text="curl -X POST __BASE__/api/ai/v1/workflows/webhook/{token} -H &quot;X-Api-Key: sk-你的Key&quot; -H &quot;Content-Type: application/json&quot; -d '{}'">复制</button></td></tr>
 </tbody></table></div>
 <blockquote><p>表的排序与分组是构建脚本按路径前缀归的，不是人工排版。<strong>新增端点</strong>要先标注 <code>@OpenApi</code>、再跑 <code>node scripts/check-openapi-contract.mjs --update</code> 更新快照与变更日志，然后重新构建本站——三步顺序反了 CI 会拦。</p></blockquote>
 <p class="foot-note">成功体的形状不统一：<code>v1/runs/*</code> 与 <code>v1/me</code> 是裸对象，<code>v1/retrieval</code>、<code>v1/workflows/*</code> 是 <code>{success,data,msg}</code> 平台包络。双端 SDK 已各自抹平，手写 curl 时别按同一种解。</p>

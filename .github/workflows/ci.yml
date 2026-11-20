@@ -6,9 +6,33 @@ on:
   pull_request:
 
 jobs:
+  line-endings:
+    name: Line endings (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Assert LF/CRLF policy
+        run: node scripts/check-eol.mjs
+      - name: Local executor platform contract tests
+        run: node scripts/run-tests.mjs scripts
+      - name: Clipboard single-entry guard
+        run: node scripts/check-clipboard.mjs
+
   backend:
-    name: Backend build & test
-    runs-on: ubuntu-latest
+    name: Backend build & test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - name: Set up JDK 17
@@ -21,8 +45,12 @@ jobs:
         run: mvn -B verify
 
   frontend:
-    name: Frontend build
-    runs-on: ubuntu-latest
+    name: Frontend build (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     defaults:
       run:
         working-directory: web
@@ -42,8 +70,12 @@ jobs:
         run: npm run build
 
   sdk:
-    name: SDK version / build / tests
-    runs-on: ubuntu-latest
+    name: SDK version / build / tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - name: Set up Node 20

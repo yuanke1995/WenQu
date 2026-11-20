@@ -26,9 +26,23 @@ const here = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(here, '..', '..')
 const webRoot = path.join(repoRoot, 'web')
 
-const server = process.env.WENQU_EXECUTOR_SERVER || process.env.VITE_PROXY_TARGET || 'http://127.0.0.1:8090/ai'
+// 环境变量仍是通用配置入口，但 npm script 不再依赖 POSIX 的 `VAR=value cmd` 语法：
+// --proxy-target / --web-base 由脚本自己消费，不会透传给 vite。
+const argValue = (name, dflt) => {
+  const i = process.argv.indexOf('--' + name)
+  return i >= 0 && process.argv[i + 1] && !process.argv[i + 1].startsWith('--') ? process.argv[i + 1] : dflt
+}
+const consumedArgs = new Set(['--proxy-target', '--web-base'])
+const passthroughArgs = []
+for (let i = 2; i < process.argv.length; i++) {
+  const a = process.argv[i]
+  if (consumedArgs.has(a)) { i++; continue }
+  passthroughArgs.push(a)
+}
+
+const server = argValue('proxy-target', process.env.WENQU_EXECUTOR_SERVER || process.env.VITE_PROXY_TARGET || 'http://127.0.0.1:8090/ai')
 const root = process.env.WENQU_EXECUTOR_ROOT || '~'
-const web = process.env.WENQU_WEB_BASE || 'http://localhost:5800'
+const web = argValue('web-base', process.env.WENQU_WEB_BASE || 'http://localhost:5800')
 
 /** 本机执行器身份：令牌文件按 server 分键，取出 executorId 注入给 vite，前端据此只列这台电脑的工作区。
  *  同一台电脑可以绑多个账号：授权文件里每个账号一条，带 uid 的按 uid 注入成映射，
@@ -73,7 +87,7 @@ if (process.argv.includes('--pair')) {
 }
 
 function start () {
-  const vite = spawn(process.execPath, [path.join(webRoot, 'node_modules', 'vite', 'bin', 'vite.js'), ...process.argv.slice(2)], {
+  const vite = spawn(process.execPath, [path.join(webRoot, 'node_modules', 'vite', 'bin', 'vite.js'), ...passthroughArgs], {
     cwd: webRoot,
     stdio: 'inherit',
     env: viteEnv

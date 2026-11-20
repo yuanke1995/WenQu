@@ -27,6 +27,7 @@ import com.wenqu.ai.service.ChatAttachmentService;
 import com.wenqu.ai.service.ConfigService;
 import com.wenqu.ai.service.ModelRegistryService;
 import com.wenqu.ai.service.MessageWrite;
+import com.wenqu.ai.util.TextIo;
 import com.wenqu.ai.util.TurnBlocks;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.message.GenerateReason;
@@ -2346,7 +2347,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             java.nio.file.Path md = com.wenqu.ai.memory.MemoryPaths.resolveContent(
                     configService, uid, null, com.wenqu.ai.memory.MemoryPaths.MEMORY_MD);
             if (md == null || !java.nio.file.Files.exists(md)) return "";
-            String content = java.nio.file.Files.readString(md);
+            String content = TextIo.readString(md);
             if (content == null || content.isBlank()) return "";
             String body = com.wenqu.ai.util.UntrustedContent.toolResult("用户全局记忆 MEMORY.md", content);
             return "\n\n【用户全局记忆（只读）】下面是这位用户跨智能体沉淀的长期事实，本次对话应当参考。"

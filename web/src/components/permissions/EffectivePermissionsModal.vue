@@ -56,6 +56,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
+import { writeClipboard } from '../../utils/clipboard'
 import { getEffectivePermissions, getRolePermissions } from '../../api'
 import { domainKey, domainLabel, permissionTitle } from '../../utils/permissions'
 
@@ -160,7 +161,9 @@ function copy () {
   const lines = (result.value.permissions || []).map(p => `${p}\t${titleOf(p)}\t${roleSourceOf(p).join('、')}`)
   const denies = denyCodes.value.map(p => `${p}\t${titleOf(p)}\t禁止`)
   const text = [`账号：${result.value.uid}`, `角色：${(result.value.roles || []).join('、')}`, ...lines, ...denies].join('\n')
-  navigator.clipboard?.writeText(text).then(() => message.success('已复制'), () => message.error('复制失败'))
+  writeClipboard(text).then(ok => {
+    if (ok) message.success('已复制'); else message.error('复制失败')
+  })
 }
 
 function exportJson () {

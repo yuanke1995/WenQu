@@ -16,13 +16,9 @@ import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { findChromium, tmpPath } from '../lib/findChromium.mjs'
 
-const CACHE = join(homedir(), 'Library/Caches/ms-playwright')
-/** Playwright 缓存里的 Chromium 名字随版本变过：按候选顺序找一个存在的。 */
-const CHROME = [
-  join(CACHE, 'chromium-1247/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing'),
-  join(CACHE, 'chromium-1247/chrome-mac-arm64/Chromium.app/Contents/MacOS/Chromium'),
-].find(existsSync) || ''
+const CHROME = findChromium()
 const PORT = 9223
 const BASE = process.env.WEB_BASE || 'http://127.0.0.1:5801'
 const arg = (name, dft) => {
@@ -31,7 +27,7 @@ const arg = (name, dft) => {
 }
 const SESSION = arg('session')
 const SHARE = arg('share')
-const SHOT = arg('shot', '/tmp/wenqu-mobile.png')
+const SHOT = arg('shot', tmpPath('wenqu-mobile.png'))
 const DUMP = arg('dump', '')
 /** 不给 --expect 时按「停止轮」断言（历史默认）；给了就只断言这段话出现且正文够长，可配 --width/--height 看桌面宽度。 */
 const EXPECT = arg('expect', '')
@@ -98,7 +94,7 @@ async function poll(cdp, expression, timeoutMs = 15000) {
 
 const LAUNCH_ARGS = [
   '--headless=new', `--remote-debugging-port=${PORT}`,
-  `--user-data-dir=${join('/tmp', 'wenqu-mobile-profile')}`,
+  `--user-data-dir=${tmpPath('wenqu-mobile-profile')}`,
   '--no-first-run', '--no-default-browser-check', '--disable-gpu', 'about:blank',
 ]
 

@@ -11,6 +11,7 @@
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import urllib.error
@@ -18,9 +19,9 @@ import urllib.request
 from collections import Counter
 
 BASE = os.environ.get("WQ_BASE", "http://127.0.0.1:8090/ai")
-MY = os.environ.get("MYSQL", "/opt/homebrew/opt/mysql@8.0/bin/mysql")
+MY = os.environ.get("MYSQL") or shutil.which("mysql") or "mysql"
 DB = os.environ.get("WQ_DB", "wenqu_ai")
-RCLI = os.environ.get("REDIS_CLI", "/opt/homebrew/bin/redis-cli")
+RCLI = os.environ.get("REDIS_CLI") or shutil.which("redis-cli") or "redis-cli"
 FAILS = []
 
 

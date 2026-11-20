@@ -39,6 +39,10 @@ from pathlib import Path
 
 TABLE_NAME_RE = re.compile(r"^[A-Za-z0-9_]+$")
 
+# 客户端二进制可由环境变量覆盖，默认走 PATH（Windows 上常是 mysql.exe，需把 MySQL bin 加进 PATH）。
+MYSQL_BIN = os.environ.get("MYSQL_BIN") or shutil.which("mysql") or "mysql"
+MYSQLDUMP_BIN = os.environ.get("MYSQLDUMP_BIN") or shutil.which("mysqldump") or "mysqldump"
+
 
 def die(msg, code=2):
     print("错误：" + msg, file=sys.stderr)
@@ -116,7 +120,7 @@ class Db:
         return ["--host=" + self.host, "--port=" + self.port, "--user=" + self.user]
 
     def query(self, sql):
-        p = subprocess.run(["mysql"] + self.base_args() + ["-N", "-B", "-e", sql],
+        p = subprocess.run([MYSQL_BIN] + self.base_args() + ["-N", "-B", "-e", sql],
                            capture_output=True, text=True, env=self._env())
         if p.returncode:
             die("SQL 失败：%s" % p.stderr.strip()[:300])
@@ -124,7 +128,7 @@ class Db:
 
     def run_script(self, path, into_db):
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
-            p = subprocess.run(["mysql"] + self.base_args() + [into_db],
+            p = subprocess.run([MYSQL_BIN] + self.base_args() + [into_db],
                                stdin=f, capture_output=True, text=True, env=self._env())
         if p.returncode:
             die("导入 %s 失败：%s" % (path, p.stderr.strip()[:300]))
@@ -189,7 +193,7 @@ def mysqldump_tenant(db, out_dir, table, tenant):
         env_ = dict(os.environ)
         if db.password:
             env_["MYSQL_PWD"] = db.password
-        cmd = (["mysqldump"] + db.base_args() + ["--no-tablespaces", "--skip-add-locks",
+        cmd = ([MYSQLDUMP_BIN] + db.base_args() + ["--no-tablespaces", "--skip-add-locks",
                "--complete-insert", "--no-create-info", "--default-character-set=utf8mb4",
                "--where", where, db.name, table])
         p = subprocess.run(cmd, stdout=f, stderr=subprocess.PIPE, text=True, env=env_)
@@ -220,7 +224,7 @@ def cmd_backup(be, db, args):
         env0 = dict(os.environ)
         if db.password:
             env0["MYSQL_PWD"] = db.password
-        p0 = subprocess.run(["mysqldump"] + db.base_args() + ["--no-data", "--no-tablespaces",
+        p0 = subprocess.run([MYSQLDUMP_BIN] + db.base_args() + ["--no-data", "--no-tablespaces",
                             "--skip-add-locks", "--routines", "--default-character-set=utf8mb4",
                             db.name], stdout=f, stderr=subprocess.PIPE, text=True, env=env0)
         if p0.returncode:
@@ -236,7 +240,7 @@ def cmd_backup(be, db, args):
             env_ = dict(os.environ)
             if db.password:
                 env_["MYSQL_PWD"] = db.password
-            p = subprocess.run(["mysqldump"] + db.base_args() + ["--no-tablespaces", "--routines",
+            p = subprocess.run([MYSQLDUMP_BIN] + db.base_args() + ["--no-tablespaces", "--routines",
                                "--events", "--single-transaction", "--default-character-set=utf8mb4",
                                "--databases", db.name], stdout=f, stderr=subprocess.PIPE, text=True, env=env_)
             if p.returncode:
@@ -253,7 +257,7 @@ def cmd_backup(be, db, args):
             env_ = dict(os.environ)
             if db.password:
                 env_["MYSQL_PWD"] = db.password
-            p = subprocess.run(["mysqldump"] + db.base_args() + ["--no-tablespaces", "--skip-add-locks",
+            p = subprocess.run([MYSQLDUMP_BIN] + db.base_args() + ["--no-tablespaces", "--skip-add-locks",
                                "--complete-insert", "--no-create-info", "--default-character-set=utf8mb4",
                                "--where", "id='%s'" % tenant, db.name, "c_ai_tenant"],
                                stdout=f, stderr=subprocess.PIPE, text=True, env=env_)

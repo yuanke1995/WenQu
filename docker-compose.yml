@@ -58,7 +58,9 @@ services:
     #     同网关下的沙盒 provisioner(172.17.0.1:8002)，沙盒容器也经此地址回调后端。
     ports:
       - "127.0.0.1:8090:8090"
-      - "172.17.0.1:8090:8090"
+      # 桥接网卡发布：默认 172.17.0.1（Linux 原生 docker）；Docker Desktop(mac/Windows) 宿主没有该地址时
+      # 设 APP_BRIDGE_BIND=127.0.0.1（沙盒回调改用 host.docker.internal 亦可）。
+      - "${APP_BRIDGE_BIND:-172.17.0.1}:8090:8090"
     # 让后端容器内可解析 host.docker.internal → 宿主机网关(172.17.0.1)：后端经此访问同网关下的
     # 沙盒 provisioner(172.17.0.1:8002)，沙盒容器也经此地址回调后端(172.17.0.1:8090)。
     extra_hosts:

@@ -69,6 +69,7 @@ import { CaretRightOutlined, CheckOutlined, CloseCircleOutlined, LoadingOutlined
 import { toolLabel, toolDesc, toolBrief } from '../chat/projections'
 import { roundSteps, roundHold, roundHeadTail, roundPhase, isRunStep } from '../chat/roundSummary'
 import { copyText } from '../utils/clipboard'
+import { baseNameOf } from '../utils/pathUtil'
 
 // msg=最近一条 AI 消息（含跑轮中 loading 的那条）：跑轮时它就是实时流，结束后它就是上一轮
 const props = defineProps({ msg: { type: Object, default: null } })
@@ -108,7 +109,7 @@ const errInfo = t => {
   const noFile = raw.match(/(?:NoSuchFileException|FileNotFoundException):\s*(.+)$/i)
   if (noFile) {
     const path = noFile[1].trim()
-    const base = path.split('/').filter(Boolean).pop() || path
+    const base = baseNameOf(path) || path
     // 只露文件名（长哈希截中段）：完整路径在下面那行原始错误与「复制错误」里
     const short = base.length > 20 ? base.slice(0, 8) + '…' + base.slice(-6) : base
     return { lead: '找不到文件：' + short, raw }

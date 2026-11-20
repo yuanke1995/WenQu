@@ -85,6 +85,7 @@ import { applyTurnStart, applyImageFrame, applyDoneCore } from './streamMerge'
 // 裁决完卡片立刻让铃铛角标重算（后端会把已处理的待办通知收敛为已读），不等 30s 轮询
 import { emitNotifChanged } from './useNotifications'
 import { planReplannedAtOf, setPlanReplanned } from './planUiState'
+import { toPosix } from '../utils/pathUtil'
 
 export function useChatEngine (hooks = {}) {
   const route = useRoute()
@@ -2546,7 +2547,7 @@ async function loadSandboxFiles () {
 const sandboxTree = computed(() => {
   const root = { name: '', path: '', dirs: new Map(), files: [], count: 0, size: 0, newest: 0 }
   for (const f of sandboxFiles.value) {
-    const segs = String(f.path || '').split('/').filter(Boolean)
+    const segs = toPosix(f.path).split('/').filter(Boolean)
     segs.pop()   // 末段是文件名，前面的才是目录
     let node = root
     let acc = ''

@@ -326,6 +326,7 @@
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { message, Modal } from 'ant-design-vue'
+import { writeClipboard } from '../utils/clipboard'
 import { SearchOutlined, ReloadOutlined, PlusOutlined, DeleteOutlined, DownloadOutlined, DownOutlined, WarningOutlined, DatabaseOutlined } from '@ant-design/icons-vue'
 import { getMcpStatus, reloadMcp, probeMcp, addMcpServer, updateMcpServer, setMcpServerEnabled, deleteMcpServer,
          reconnectMcpServer, batchDeleteMcpServers, batchSetMcpServersEnabled, importMcpServers, setMcpToolLabel,
@@ -580,12 +581,8 @@ const toggleRaw = id => { rawOpenId.value = rawOpenId.value === id ? '' : id }
 
 const copyText = async text => {
   if (!text) return
-  try {
-    await navigator.clipboard.writeText(text)
-    message.success('已复制')
-  } catch (e) {
-    message.error('复制失败，请手动选择文本')
-  }
+  if (await writeClipboard(text)) message.success('已复制')
+  else message.error('复制失败，请手动选择文本')
 }
 
 /** 失败卡「测试连接」：用该服务已保存的配置与凭据再探一次，结果只走 toast（不改卡片状态） */

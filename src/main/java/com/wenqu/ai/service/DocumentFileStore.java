@@ -4,6 +4,7 @@ import com.alibaba.fastjson2.JSON;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.config.AppProperties;
+import com.wenqu.ai.util.FileNameSanitizer;
 import com.wenqu.ai.mapper.AiDocumentMapper;
 import com.wenqu.ai.mapper.KnowledgeMapper;
 import com.wenqu.ai.model.AiDocument;
@@ -137,8 +138,8 @@ public class DocumentFileStore {
         }
     }
 
-    /** 文件名清洗（防路径穿越） */
+    /** 文件名清洗：非法字符、Windows 保留名、尾部点/空格、长度统一由 FileNameSanitizer 负责。 */
     public String sanitize(String fileName) {
-        return fileName.replaceAll("[\\\\/:*?\"<>|]", "_");
+        return FileNameSanitizer.sanitize(fileName);
     }
 }

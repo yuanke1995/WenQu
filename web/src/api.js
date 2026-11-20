@@ -8,6 +8,7 @@
 import { announce } from './utils/tabSync'
 import { clearUnreachable, ensureNetworkWatch, markRequestOutcome } from './utils/netState'
 import { CHAT_EVENT_CB } from './chat/eventContract.generated.js'
+import { sanitizeFileName } from './utils/fileName'
 
 const BASE = import.meta.env.VITE_API_BASE || '/proxy/api/ai'
 
@@ -630,7 +631,7 @@ export const downloadProjectFile = async (id, path, filename, dir) => {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = filename || 'download'
+  a.download = sanitizeFileName(filename || 'download')
   document.body.appendChild(a)
   a.click()
   a.remove()
@@ -856,7 +857,7 @@ export async function exportKnowledgeBase (id, kbName) {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = (kbName || '知识库') + '.zip'
+  a.download = sanitizeFileName((kbName || '知识库') + '.zip')
   document.body.appendChild(a)
   a.click()
   a.remove()
@@ -917,7 +918,7 @@ export async function downloadDocumentSource (id, fileName) {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = fileName || 'document'
+  a.download = sanitizeFileName(fileName || 'document')
   document.body.appendChild(a)
   a.click()
   a.remove()
@@ -1132,7 +1133,7 @@ export async function downloadSkillZip(name) {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = (name || 'skill') + '.zip'
+  a.download = sanitizeFileName((name || 'skill') + '.zip')
   document.body.appendChild(a)
   a.click()
   a.remove()
@@ -1215,7 +1216,7 @@ export async function downloadMarketItem (id, name, type) {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = (name || 'market-item') + (type === 'skill' ? '.zip' : '.json')
+  a.download = sanitizeFileName((name || 'market-item') + (type === 'skill' ? '.zip' : '.json'))
   document.body.appendChild(a)
   a.click()
   a.remove()
@@ -2305,7 +2306,7 @@ export const downloadSandboxFile = async (sessionId, path, filename) => {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = filename || 'download'
+  a.download = sanitizeFileName(filename || 'download')
   document.body.appendChild(a)
   a.click()
   a.remove()

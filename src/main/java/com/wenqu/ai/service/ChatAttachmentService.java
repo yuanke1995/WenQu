@@ -1,6 +1,7 @@
 package com.wenqu.ai.service;
 
 import com.wenqu.ai.config.ConfigKeys;
+import com.wenqu.ai.util.FileNameSanitizer;
 
 import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.dto.ChatRequest;
@@ -266,7 +267,7 @@ public class ChatAttachmentService {
     }
 
     private static String sanitizeName(String name) {
-        String n = name == null ? "未命名附件" : name.replaceAll(FORBIDDEN_NAME_CHARS, "");
-        return n.isBlank() ? "未命名附件" : (n.length() > 120 ? n.substring(n.length() - 120) : n);
+        String n = FileNameSanitizer.sanitize(name, 120);
+        return n.isBlank() ? "未命名附件" : n;
     }
 }

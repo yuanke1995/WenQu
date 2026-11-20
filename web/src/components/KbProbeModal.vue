@@ -146,6 +146,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
+import { writeClipboard } from '../utils/clipboard'
 import { addEvalCase, feedbackKnowledgeBase, probeKnowledgeBase, recordKbMiss } from '../api'
 import { modelRefInfo } from '../utils/modelRef'
 import { SafetyOutlined } from '@ant-design/icons-vue'
@@ -242,12 +243,8 @@ async function copyResult () {
       `${i + 1}. 融合 ${h.score} · 向量 ${h.vectorScore ?? '—'} · 关键词 ${h.keywordScore ?? '—'}`
       + ` · 重排 ${h.rerankScore ?? '—'}\n   ${h.docName || ''} ${h.titlePath || h.title || ''}\n   ${h.snippet || ''}`)
   ]
-  try {
-    await navigator.clipboard.writeText(lines.join('\n'))
-    message.success('已复制检索结果')
-  } catch (e) {
-    message.error('复制失败，请手动选中结果复制')
-  }
+  if (await writeClipboard(lines.join('\n'))) message.success('已复制检索结果')
+  else message.error('复制失败，请手动选中结果复制')
 }
 
 function friendlyModel (ref) {

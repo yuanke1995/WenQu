@@ -12,6 +12,8 @@
  */
 import { openSync, readFileSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 const COLS = ['id', 'session_id', 'role', 'create_time', 'end_reason', 'turn_id',
   'content', 'thinking', 'process_text', 'timeline', 'tool_calls', 'artifacts', 'blocks', 'tokens']
@@ -43,9 +45,9 @@ rows.forEach((r, i) => {
     VALUES ('${localId}-${i}','${localId}','${r.role}',${h(r.content)},${h(r.thinking)},${h(r.artifacts)},${h(r.tool_calls)},
       ${h(r.timeline)},${h(r.process_text)},${h(r.tokens)},${i + 1},'${r.create_time}',0,${h(r.blocks)},${h(r.turn_id)},${h(r.end_reason)},'default');`)
 })
-writeFileSync(`/tmp/${localId}.sql`, sql.join('\n'))
+writeFileSync(join(tmpdir(), `${localId}.sql`), sql.join('\n'))
 // 用文件描述符喂 stdin：200KB+ 的整段 SQL 走管道时 mysql 客户端会停在那里等退出。
-execFileSync('mysql', ['-uroot', '-h127.0.0.1', 'wenqu_ai', '--default-character-set=utf8mb4'], {
-  stdio: [openSync(`/tmp/${localId}.sql`, 'r'), 'inherit', 'inherit'],
+execFileSync(process.env.MYSQL_BIN || 'mysql', ['-uroot', '-h127.0.0.1', 'wenqu_ai', '--default-character-set=utf8mb4'], {
+  stdio: [openSync(join(tmpdir(), `${localId}.sql`), 'r'), 'inherit', 'inherit'],
 })
 console.log(localId)

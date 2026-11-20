@@ -1,0 +1,48 @@
+# 行尾策略：索引统一 LF，检出按声明转换。
+# 背景：Git for Windows 默认 core.autocrlf=true，未声明时会把 .sh/.githooks 变成 CRLF，
+# 导致 `#!/usr/bin/env bash` 变成 `bash\r`、脚本全部不可执行；.bat 又必须 CRLF。
+# 自动化验收：node scripts/check-eol.mjs（CI 亦有同名 job）。
+
+* text=auto eol=lf
+
+# Windows 批处理与 PowerShell：检出必须 CRLF，索引仍为 LF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# 明确要求 LF 的可执行/脚本/配置源文件（覆写任何上面的平台默认）
+*.sh        text eol=lf
+*.bash      text eol=lf
+*.mjs       text eol=lf
+*.js        text eol=lf
+*.cjs       text eol=lf
+*.ts        text eol=lf
+*.vue       text eol=lf
+*.java      text eol=lf
+*.py        text eol=lf
+*.md        text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.json      text eol=lf
+*.xml       text eol=lf
+*.sql       text eol=lf
+*.properties text eol=lf
+*.conf      text eol=lf
+*.csv       text eol=lf
+*.tsv       text eol=lf
+.githooks/* text eol=lf
+
+# 二进制：禁止任何行尾/空白转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.pdf binary
+*.zip binary
+*.jar binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary

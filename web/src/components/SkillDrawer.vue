@@ -165,6 +165,7 @@ import {
 } from '@ant-design/icons-vue'
 import { getSkillDetail, getSkillFile, getSkillStats, listSkillVersions, rollbackSkill, setSkillDisabled } from '../api'
 import { renderMd } from '../utils/markdown'
+import { fmtDate, fmtDateTime } from '../utils/format'
 
 const props = defineProps({
   open: Boolean,
@@ -379,8 +380,6 @@ function fmtSize(n) {
   if (n >= 1024) return Math.round(n / 1024) + 'KB'
   return n + 'B'
 }
-function fmtDate(ts) { try { return new Date(ts).toLocaleDateString() } catch (e) { return '' } }
-function fmtDateTime(ts) { try { return new Date(ts).toLocaleString() } catch (e) { return '' } }
 function relTime(ts) {
   if (!ts) return '从未'
   const m = Math.floor((Date.now() - ts) / 60000)

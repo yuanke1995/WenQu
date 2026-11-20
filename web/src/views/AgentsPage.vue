@@ -253,7 +253,7 @@
                   <MdPreview v-else editor-id="ap-system-prompt-view" :model-value="form.systemPrompt"
                              :theme="mdTheme" class="ap-md-editor ap-md-preview" />
                 </template>
-                <div class="ap-hint">{{ identityLocked ? '系统提示词随产品固定，不可修改。' : '支持 Markdown，⌘S 保存' }}</div>
+                <div class="ap-hint">{{ identityLocked ? '系统提示词随产品固定，不可修改。' : '支持 Markdown，' + saveKeyLabel() + ' 保存' }}</div>
               </div>
             </section>
 
@@ -936,6 +936,7 @@ import HttpToolsEditor from '../components/agent/HttpToolsEditor.vue'
 import WorkflowToolsEditor from '../components/agent/WorkflowToolsEditor.vue'
 import { ensureAuth, isAdminSync } from '../utils/auth'
 import { copyText } from '../utils/clipboard'
+import { saveKeyLabel, useSaveShortcut } from '../utils/shortcuts'
 import { locateField } from '../utils/fieldLocate'
 import { MdEditor, MdPreview } from 'md-editor-v3'
 import 'md-editor-v3/lib/style.css'
@@ -944,6 +945,8 @@ import { isDefault, isDisabledAgent, isBuiltin, isPreset, isSub, splitList, triS
 import { useAgentPublish } from '../agents/useAgentPublish'
 import { useDelegationTopo } from '../agents/useDelegationTopo'
 import { useAgentVersions } from '../agents/useAgentVersions'
+import { sanitizeFileName } from '../utils/fileName'
+import { parseJsonFile } from '../utils/json'
 
 const route = useRoute()
 const router = useRouter()
@@ -1521,7 +1524,7 @@ const downloadJson = (obj, filename) => {
   const url = URL.createObjectURL(blob)
   const el = document.createElement('a')
   el.href = url
-  el.download = filename
+  el.download = sanitizeFileName(filename)
   el.click()
   URL.revokeObjectURL(url)
 }
@@ -1571,7 +1574,7 @@ const onImportFile = ev => {
   const rd = new FileReader()
   rd.onload = () => {
     let data = null
-    try { data = JSON.parse(String(rd.result)) } catch (e) { message.error('不是有效的 JSON 文件'); return }
+    try { data = parseJsonFile(rd.result) } catch (e) { message.error('不是有效的 JSON 文件'); return }
     const cfg = data && data.wenquAgentExport === 1
       ? (data.config || (Array.isArray(data.agents) ? data.agents[0] : null))
       : null
@@ -2251,6 +2254,7 @@ const applyConfigDeepLink = () => {
 
 onMounted(async () => { await reload(); applyPubDeepLink(); applyConfigDeepLink() })
 onMounted(async () => { })
+useSaveShortcut(() => !!editingId.value && !identityLocked.value, save)
 </script>
 
 <style scoped>

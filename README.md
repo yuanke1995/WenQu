@@ -36,6 +36,23 @@
 | 长期记忆 | 问答后异步提炼用户画像与事实、跨会话注入、按工作区隔离；智能体可选用户级 / 专属 / 叠加三档记忆域；个人设置提供记忆查看、编辑与清空，平台另有总闸 |
 | 终端形态 | 电脑端工作台与移动端原生壳（触屏窄屏自动切换），人在回路卡片、状态与来源、导出与分享在两端口径一致 |
 
+## 平台支持矩阵
+
+问渠的主要开发机是 macOS，但运行与开发入口已按三平台收口：
+
+| 场景 | macOS | Linux | Windows |
+|---|---|---|---|
+| 服务端（jar / Docker 容器） | 可用 | 生产推荐 | 可用（原生 jar 或 Docker Desktop 跑 Linux 容器） |
+| 服务器沙盒执行域 | Docker Desktop | 原生 Docker | Docker Desktop（容器内恒为 Linux） |
+| 本机执行器·文件工具 | 可用 | 可用 | 可用 |
+| 本机执行器·命令执行 | `sandbox-exec` | `bwrap` | `cmd.exe` + Job Object 进程树约束；写边界由工作区路径围栏负责 |
+| 本机执行器·后台进程/浏览器/SSH/目录选择 | 可用 | 可用 | 可用（对应 `tasklist`/`netstat`/`taskkill`、`npx-cli.js`、省略 ControlMaster、结构化取消） |
+| 开发栈与脚本入口 | `node scripts/wenqu.mjs`（`wenqu.sh` 为薄封装） | 同左 | `wenqu.bat` / `wenqu.ps1` |
+| CI | ✅ | ✅ | ✅ |
+
+> 统一入口：`node scripts/wenqu.mjs --help`、`node scripts/wenqu.mjs infra status`。
+> 行尾由根目录 `.gitattributes` 统一：文本文件 LF，`.bat/.cmd/.ps1` CRLF，CI 有自动断言。
+
 ## 系统架构
 
 ```
@@ -180,8 +197,9 @@ node scripts/local-agent/wenqu-agent.mjs --server http://<服务器>/ai
 # 想强制只允许 https：加 --require-https（本机回环地址始终可用 http）
 # 首次启动打印链接 + 6 位码；浏览器登录后确认，令牌落到 ~/.wenqu/executor.json
 # 工作区源文件夹需要能被执行器访问（默认浏览起点 ~；--root / 可看整盘）
-# 标准档的 shell 会套 OS 写沙箱：macOS 用 sandbox-exec、Linux 用 bwrap，只允许写工作区 roots；
-# 没有可用沙箱时命令直接拒绝执行（不会裸跑），需要全盘命令请把会话权限调到完全权限
+# 标准档的 shell 由平台能力层按 OS 约束：macOS sandbox-exec、Linux bwrap、Windows cmd.exe + Job Object；
+# 写边界统一由工作区路径围栏负责，Windows 的 Job Object 负责进程树生命周期约束；
+# 没有可用能力时命令直接拒绝执行（不会裸跑），需要全盘命令请把会话权限调到完全权限
 # 默认不在终端逐次确认（页面上的权限档位才是闸门）；需要终端确认时加 --ask
 # 每轮文件改动快照落在 ~/.wenqu/executor/turns，重启后仍可看差异；默认保留 14 天/200 轮/2GB，
 # 可用 --data-dir / --turn-ttl-days / --turn-max / --turn-cache-max-mb 调整

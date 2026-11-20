@@ -1,6 +1,7 @@
 package com.wenqu.ai.skill;
 
 import com.wenqu.ai.sandbox.SandboxPaths;
+import com.wenqu.ai.util.TextIo;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -174,7 +175,7 @@ public class SkillStatsStore {
         Path file = fileFor(uid);
         if (Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) {
             try {
-                String text = Files.readString(file);
+                String text = TextIo.readString(file);
                 Map<String, Object> parsed = (Map<String, Object>) com.alibaba.fastjson2.JSON.parse(text);
                 if (parsed != null) data = parsed;
             } catch (Exception e) {
@@ -253,7 +254,7 @@ public class SkillStatsStore {
             }
             try {
                 Path tmp = Files.createTempFile(root, "stats-", ".tmp");
-                Files.writeString(tmp, text);
+                TextIo.writeString(tmp, text);
                 Files.move(tmp, fileFor(uid),
                         StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
                 dirty.remove(uid);

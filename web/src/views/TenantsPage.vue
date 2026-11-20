@@ -503,6 +503,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
+import { writeClipboard } from '../utils/clipboard'
 import { PlusOutlined } from '@ant-design/icons-vue'
 import {
   listTenants, createTenant, setTenantStatus,
@@ -897,19 +898,9 @@ async function resetDelivery (req) {
 function copyText (text) {
   const s = String(text || '')
   if (!s) return
-  if (navigator.clipboard && window.isSecureContext) {
-    navigator.clipboard.writeText(s).then(() => message.success('已复制')).catch(() => fallbackCopy(s))
-  } else fallbackCopy(s)
-}
-function fallbackCopy (s) {
-  const ta = document.createElement('textarea')
-  ta.value = s
-  ta.style.position = 'fixed'
-  ta.style.opacity = '0'
-  document.body.appendChild(ta)
-  ta.select()
-  try { document.execCommand('copy'); message.success('已复制') } catch (e) { message.error('复制失败，请手动选择') }
-  document.body.removeChild(ta)
+  writeClipboard(s).then(ok => {
+    if (ok) message.success('已复制'); else message.error('复制失败，请手动选择')
+  })
 }
 function downloadDelivery () {
   const blob = new Blob([deliveryText.value], { type: 'text/plain;charset=utf-8' })

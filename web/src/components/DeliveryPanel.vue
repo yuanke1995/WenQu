@@ -24,7 +24,7 @@
           打开入口
         </a>
         <a v-else-if="delivery.entry" class="dp-btn primary" :href="hrefOf(delivery.entry)"
-           target="_blank" rel="noopener" :download="delivery.entry.filename">打开入口</a>
+           target="_blank" rel="noopener" :download="sanitizeFileName(delivery.entry.filename)">打开入口</a>
       </div>
     </section>
 
@@ -59,7 +59,7 @@
                  :data-pv-name="f.filename" :data-pv-ext="artifactExt(f)"
                  :data-pv-kind="previewKindOf(f)" :data-pv-size="f.size" :data-pv-id="f.id"
                  :title="'预览 ' + f.filename">预览</a>
-              <a :href="hrefOf(f)" :download="f.filename" target="_blank" rel="noopener"
+              <a :href="hrefOf(f)" :download="sanitizeFileName(f.filename)" target="_blank" rel="noopener"
                  :title="'下载 ' + f.filename">下载</a>
             </span>
           </div>
@@ -82,6 +82,7 @@ import { DownloadOutlined, FileTextOutlined, CaretRightOutlined } from '@ant-des
 import { resolveImg } from '../utils/markdown'
 import { fmtSize } from '../chat/projections'
 import { canPreview, artifactExt, previewKindOf } from '../utils/artifactView'
+import { sanitizeFileName } from '../utils/fileName'
 
 const props = defineProps({
   /** deliveryOf() 产出的交付包视图 */

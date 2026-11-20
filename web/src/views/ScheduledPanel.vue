@@ -496,6 +496,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
+import { writeClipboard } from '../utils/clipboard'
 import { useRoute, useRouter } from 'vue-router'
 import {
   PlusOutlined, SearchOutlined, ReloadOutlined, ClockCircleOutlined, DownOutlined,
@@ -809,8 +810,8 @@ const removeOne = row => {
 }
 const openSession = sid => { if (sid) router.push({ path: '/chat', query: { sid } }) }
 const copyText = async text => {
-  try { await navigator.clipboard.writeText(String(text || '')); message.success('已复制') }
-  catch (e) { message.warning('复制失败，请手动选择文本') }
+  if (await writeClipboard(String(text || ''))) message.success('已复制')
+  else message.warning('复制失败，请手动选择文本')
 }
 
 // ==================== 执行历史抽屉 ====================

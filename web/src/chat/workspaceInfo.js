@@ -11,7 +11,7 @@ export const workspaceSetupHintOf = (ws, foreign) => {
   if (foreign) return `「${name}」的文件夹在另一台电脑上，这台电脑不能继续使用。`
   if (ws.isSshAlias) {
     if (!ws.roots || !ws.roots.length) return `「${name}」还没绑定远端文件夹，文件与命令暂不可用。`
-    if (ws.executorOnline === false) return '本机执行器不在线：先启动 wenqu-agent；远端用本机 ssh ~/.ssh/config。'
+    if (ws.executorOnline === false) return '本机执行器不在线：先启动 wenqu-agent；远端用本机 ssh ~/.ssh/config（Windows: %USERPROFILE%\\.ssh\\config）。'
     return ''
   }
   if (!ws.roots || !ws.roots.length) return `「${name}」还没绑定本机文件夹，文件与命令暂不可用。`

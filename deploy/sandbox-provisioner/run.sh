@@ -32,7 +32,14 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV="$HERE/.venv"
-PY="$VENV/bin/python"
+# POSIX venv 是 .venv/bin/python，Windows venv 是 .venv\Scripts\python.exe
+if [ -x "$VENV/bin/python" ]; then
+  PY="$VENV/bin/python"
+elif [ -x "$VENV/Scripts/python.exe" ]; then
+  PY="$VENV/Scripts/python.exe"
+else
+  PY="$VENV/bin/python"
+fi
 RUN_DIR="$HERE/run"
 PID_FILE="$RUN_DIR/provisioner.pid"
 LOG_FILE="$RUN_DIR/provisioner.log"
@@ -84,8 +91,21 @@ is_running() {
 }
 
 # 两种后端互斥（都占 $PORT），启动前先看端口是否已被别人占住。
+# 用 Python 做 connect 探测：不依赖 lsof（Windows 与精简 Linux 都没有）。
 port_in_use() {
-  lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1
+  local py="$PY"
+  [ -x "$py" ] || py="$BOOTSTRAP_PY"
+  "$py" - "$PORT" <<'PY' >/dev/null 2>&1
+import socket, sys
+s = socket.socket()
+s.settimeout(0.5)
+try:
+    s.connect(('127.0.0.1', int(sys.argv[1])))
+except OSError:
+    sys.exit(1)
+finally:
+    s.close()
+PY
 }
 
 start() {

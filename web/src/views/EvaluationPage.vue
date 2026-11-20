@@ -638,9 +638,11 @@
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
+import { writeClipboard } from '../utils/clipboard'
 import { ThunderboltOutlined } from '@ant-design/icons-vue'
 import EvalTrendChart from './eval/EvalTrendChart.vue'
 import { loadModelIndex, modelRefInfo } from '../utils/modelRef'
+import { sanitizeFileName } from '../utils/fileName'
 import {
   getEvalOverview, getEvalCases, createEvalCase, updateEvalCase, deleteEvalCase,
   importEvalCases, exportEvalCases, startEvalRun, listEvalRuns, getEvalRun,
@@ -1355,12 +1357,8 @@ async function copyRunLink () {
   const id = experiment.runId || latestRunId.value
   if (!id) { message.info('还没有运行记录'); return }
   const url = `${location.origin}${location.pathname}?run=${id}`
-  try {
-    await navigator.clipboard.writeText(url)
-    message.success('运行链接已复制')
-  } catch (e) {
-    message.info(url)
-  }
+  if (await writeClipboard(url)) message.success('运行链接已复制')
+  else message.info(url)
 }
 async function exportLatest () {
   if (experiment.runId) return exportRun({ id: experiment.runId })
@@ -1461,7 +1459,7 @@ function download (filename, content, type) {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = filename
+  a.download = sanitizeFileName(filename)
   a.click()
   URL.revokeObjectURL(url)
 }

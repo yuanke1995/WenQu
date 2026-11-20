@@ -37,6 +37,7 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { CaretRightOutlined, FileTextOutlined } from '@ant-design/icons-vue'
+import { baseNameOf, dirOf } from '../utils/pathUtil'
 
 const props = defineProps({
   /** 消息行上的 changes（{files,total,added,deleted}；null=这一轮没记录） */
@@ -51,12 +52,7 @@ const open = ref(false)
 const rows = computed(() => (props.changes && Array.isArray(props.changes.files)) ? props.changes.files : [])
 if (rows.value.length && rows.value.length <= COLLAPSED) open.value = true
 
-const nameOf = p => String(p || '').split('/').pop()
-const dirOf = p => {
-  const s = String(p || '')
-  const i = s.lastIndexOf('/')
-  return i > 0 ? s.slice(0, i) : ''
-}
+const nameOf = baseNameOf
 </script>
 
 <style scoped>

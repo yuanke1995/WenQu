@@ -6,6 +6,8 @@
 import MarkdownIt from 'markdown-it'
 import DOMPurify from 'dompurify'
 import hljs from 'highlight.js/lib/common'
+import { writeClipboard } from './clipboard'
+import { sanitizeFileName } from './fileName'
 import 'highlight.js/styles/github.css'
 import { message } from 'ant-design-vue'
 import { watch } from 'vue'
@@ -308,29 +310,9 @@ export const copyCode = btn => {
     btn.innerHTML = CHECK_SVG
     setTimeout(() => { btn.classList.remove('copied'); btn.title = '复制'; btn.innerHTML = COPY_SVG }, 1600)
   }
-  const fallbackCopy = () => {
-    try {
-      const ta = document.createElement('textarea')
-      ta.value = txt
-      ta.setAttribute('readonly', '')
-      ta.style.position = 'absolute'
-      ta.style.left = '-9999px'
-      ta.style.top = '0'
-      document.body.appendChild(ta)
-      ta.focus()
-      ta.select()
-      ta.setSelectionRange(0, txt.length)
-      const flag = document.execCommand('copy')
-      ta.remove()
-      if (flag) ok()
-      else message.error('复制失败，请手动复制')
-    } catch (err) { message.error('复制失败，请手动复制') }
-  }
-  if (navigator.clipboard?.writeText) {
-    navigator.clipboard.writeText(txt).then(ok).catch(fallbackCopy)
-  } else {
-    fallbackCopy()
-  }
+  writeClipboard(txt).then(copied => {
+    if (copied) ok(); else message.error('复制失败，请手动复制')
+  })
 }
 
 // 知识块原文：把无编号的 [图片]/[图片：描述] 按 images 顺序编号，供 renderMd() 渲染
@@ -944,7 +926,7 @@ const downloadChart = async card => {
   if (!url) { message.error('这张图暂时导出不了'); return }
   const a = document.createElement('a')
   a.href = url
-  a.download = (chartTitleOf(card._mdOpt) || '图表') + '.png'
+  a.download = sanitizeFileName((chartTitleOf(card._mdOpt) || '图表') + '.png')
   document.body.appendChild(a)
   a.click()
   a.remove()

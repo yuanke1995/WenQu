@@ -12,6 +12,7 @@
 import argparse
 import json
 import os
+import shutil
 import re
 import subprocess
 import sys
@@ -19,7 +20,7 @@ import urllib.error
 import urllib.request
 
 BASE = os.environ.get("WQ_BASE", "http://127.0.0.1:8090/ai")
-MY = os.environ.get("MYSQL", "/opt/homebrew/opt/mysql@8.0/bin/mysql")
+MY = os.environ.get("MYSQL") or shutil.which("mysql") or "mysql"
 DB = os.environ.get("WQ_DB", "wenqu_ai")
 FAILS = []
 SKIPS = []

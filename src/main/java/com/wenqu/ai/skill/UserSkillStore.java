@@ -1012,6 +1012,8 @@ public class UserSkillStore {
     }
 
     private static void restoreExecBit(Path file) {
+        // 说明：执行位只在宿主 POSIX 上补齐；Windows 宿主无此概念，沙盒侧一律用显式解释器
+        // （bash script.sh / python3 x.py）执行，不依赖 ./x.sh，因此不把"可执行"寄托在宿主权限位。
         String name = file.getFileName().toString().toLowerCase(Locale.ROOT);
         boolean script = name.endsWith(".sh") || name.endsWith(".bash") || name.endsWith(".py")
                 || name.endsWith(".rb") || name.endsWith(".pl") || name.endsWith(".js") || name.endsWith(".mjs");

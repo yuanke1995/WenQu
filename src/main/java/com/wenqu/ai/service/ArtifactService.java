@@ -9,6 +9,7 @@ import com.wenqu.ai.mapper.ArtifactMapper;
 import com.wenqu.ai.mapper.SessionMapper;
 import com.wenqu.ai.model.Artifact;
 import com.wenqu.ai.model.Session;
+import com.wenqu.ai.util.FileNameSanitizer;
 import com.wenqu.ai.util.PreviewTypes;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -1036,9 +1037,9 @@ public class ArtifactService {
                 ? row.getDisplayName() : stripExt(row.getFilename());
         String ext = row.getExt();
         String name = base + (ext == null || ext.isBlank() ? "" : "." + ext);
-        name = name.replaceAll("[/\\\\:*?\"<>|\\x00-\\x1f]", "_").trim();
-        if (name.isEmpty() || ".".equals(name) || "..".equals(name)) return "artifact";
-        return name.length() <= 120 ? name : name.substring(0, 120);
+        if (name == null || name.isBlank() || ".".equals(name) || "..".equals(name)) return "artifact";
+        String cleaned = FileNameSanitizer.sanitize(name, 120);
+        return "unnamed".equals(cleaned) ? "artifact" : cleaned;
     }
 
     /** 同名条目自动加 (1)(2)…，避免解压时互相覆盖 */
@@ -1106,12 +1107,12 @@ public class ArtifactService {
         if (trimmed.length() > MAX_NAME_LEN) {
             trimmed = trimmed.substring(0, MAX_NAME_LEN);
         }
-        // 去路径分隔符与危险字符，防目录穿越/命令注入
-        String cleaned = trimmed.replaceAll("[/\\\\:\"'<>|?*\\x00-\\x1f]", "_");
-        if (cleaned.isEmpty() || cleaned.equals(".") || cleaned.equals("..")) return null;
+        // 去路径分隔符与危险字符，防目录穿越/命令注入；保留名与尾部点空格由统一工具处理
+        String cleaned = FileNameSanitizer.sanitize(trimmed, MAX_NAME_LEN);
+        if ("unnamed".equals(cleaned)) return null;
         // 强制扩展名白名单
         int dot = cleaned.lastIndexOf('.');
-        String ext = dot > 0 ? cleaned.substring(dot + 1).toLowerCase() : "";
+        String ext = dot > 0 ? cleaned.substring(dot + 1).toLowerCase(Locale.ROOT) : "";
         if (!allowedExts.contains(ext)) {
             // 无扩展名 → 默认 .md；非法扩展名 → 拒绝
             if (ext.isEmpty()) {

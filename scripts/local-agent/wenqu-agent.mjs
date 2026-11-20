@@ -38,8 +38,12 @@ import os from 'node:os'
 import path from 'node:path'
 import readline from 'node:readline'
 import { createHash, randomBytes } from 'node:crypto'
-import { spawn, execFile, spawnSync } from 'node:child_process'
+import { spawn, execFile } from 'node:child_process'
 import net from 'node:net'
+import { createPlatform } from './platform/index.js'
+
+// 平台能力只在启动这里构造一次；下面所有 OS 差异都走 platform.*，不再散落 process.platform 判断。
+const platform = createPlatform()
 
 const argv = process.argv.slice(2)
 const arg = (name, dflt) => {
@@ -94,8 +98,7 @@ const ASK = flag('ask')
 /** 浏览与执行的起点（默认家目录；`--root /` 即整盘）。
  *  与 DSH 同一口径：宿主把目录树交给界面浏览，选中的目录成为工作区根；
  *  每次调用再单独校验"落在本次工作区根内"——起点的宽窄不代替工作区边界。 */
-const ROOT = path.resolve((arg('root', arg('dir', os.homedir())) || os.homedir())
-  .replace(/^~(?=$|\/)/, os.homedir()))
+const ROOT = path.resolve(platform.system.expandHome(arg('root', arg('dir', os.homedir())) || os.homedir()))
 
 const fmtTime = d => {
   const p = (n, w = 2) => String(n).padStart(w, '0')
@@ -259,7 +262,7 @@ function acquireSingleInstanceLock () {
         // 接管而非退出：否则代码更新后重启 dev 永远加载不到新代码（旧的占着锁）。
         // 只停「确认是同 server 执行器」的进程；PID 被复用成无关进程时宁可退出也不误杀。
         let cmdline = ''
-        try { cmdline = String(spawnSync('ps', ['-p', String(pid), '-o', 'args=']).stdout || '') } catch { /* 无 ps */ }
+        try { cmdline = String(platform.procs.commandLineOf(pid) || '') } catch { /* 读不到就当无法确认 */ }
         const sameAgent = cmdline.includes('wenqu-agent.mjs') && cmdline.includes(SERVER)
         if (!sameAgent) {
           log(`锁被一个无法确认的进程占用（pid=${pid}），本进程退出以免误杀。`)
@@ -311,8 +314,7 @@ function stopBrowser () {
   browserHeadless = null
   if (!child || child.exitCode !== null) return
   try {
-    if (process.platform === 'win32') spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'])
-    else process.kill(-child.pid, 'SIGTERM')
+    platform.procs.kill(child.pid, 'SIGKILL')
   } catch { /* 已退出或没有权限 */ }
 }
 
@@ -785,14 +787,7 @@ async function opRemove({ path: p, userInitiated, turnId }, ctx) {
 /** 在宿主那台电脑上用系统文件管理器打开一个目录（Finder / Explorer / 文件管理器）。 */
 async function opOpenPath({ path: p }, ctx) {
   const target = resolveInRoot(p, ctx)
-  const platform = process.platform
-  const cmd = platform === 'darwin' ? 'open' : (platform === 'win32' ? 'explorer' : 'xdg-open')
-  await new Promise((resolve, reject) => {
-    execFile(cmd, [target], { timeout: 15000 }, e => {
-      if (e) return reject(err('E_IO', '打不开文件夹：' + (e.message || '')))
-      resolve()
-    })
-  })
+  await platform.system.openPath(target)
   return { path: target }
 }
 
@@ -886,91 +881,13 @@ async function writeAtomic(file, buf, expectedHash) {
 // 没有可用沙箱就拒绝执行——宁可不跑命令，也不裸跑一条能写全盘的 shell。
 // danger-full-access 是用户显式选择的完全权限，不套沙箱。
 
-function detectShellSandbox () {
-  if (process.platform === 'darwin') {
-    try {
-      fs.accessSync('/usr/bin/sandbox-exec', fs.constants.X_OK)
-      return 'sandbox-exec'
-    } catch { /* 没有就不跑 */ }
-  }
-  if (process.platform === 'linux') {
-    for (const p of ['/usr/bin/bwrap', '/bin/bwrap']) {
-      try {
-        fs.accessSync(p, fs.constants.X_OK)
-        return 'bwrap'
-      } catch { /* 继续找 */ }
-    }
-  }
-  return null
-}
-
-const SHELL_SANDBOX = detectShellSandbox()
-
-function profilePath (p) {
-  return String(p).replace(/\\/g, '\\\\').replace(/"/g, '\\"')
-}
-
-/** 标准档下命令不该读到的凭据目录，与 Linux 侧 linuxShellArgs 的 --tmpfs 遮罩取同一口径。
- *  Seatbelt 按真实路径匹配，家目录要先过一遍 realpath，避免软链让 subpath 规则落空。 */
-function sensitiveReadPaths () {
-  const home = os.homedir()
-  return [
-    path.join(home, '.wenqu'), path.join(home, '.ssh'), path.join(home, '.aws'),
-    path.join(home, '.kube'), path.join(home, '.docker'), path.join(home, '.gnupg')
-  ].filter(p => fs.existsSync(p)).map(p => {
-    try { return fs.realpathSync.native(p) } catch { return p }
-  })
-}
-
-function macShellProfile (roots) {
-  const writable = [
-    ...roots,
-    '/private/tmp', '/tmp',
-    '/private/var/folders', '/var/folders',
-    '/dev'
-  ]
-  const lines = ['(version 1)', '(allow default)', '(deny file-write*)', '(allow file-write*']
-  for (const p of writable) lines.push(`  (subpath "${profilePath(p)}")`)
-  lines.push(')')
-  // SBPL 按「最后一条匹配的规则生效」求值：读掩码必须排在所有 allow 之后，否则会被覆盖。
-  // 只遮凭据目录，不动 /usr/lib、/System 等自举路径，命令仍能正常启动。
-  for (const p of sensitiveReadPaths()) {
-    lines.push(`(deny file-read* (subpath "${profilePath(p)}"))`)
-  }
-  return lines.join('\n')
-}
-
-function linuxShellArgs (roots, cwd, command) {
-  const args = ['--die-with-parent', '--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '--tmpfs', '/tmp', '--chdir', cwd]
-  for (const r of roots) args.push('--bind', r, r)
-  for (const p of ['.wenqu', '.ssh', '.aws', '.kube', '.docker']) {
-    const abs = path.join(os.homedir(), p)
-    if (fs.existsSync(abs)) args.push('--tmpfs', abs)
-  }
-  args.push('/bin/sh', '-c', command)
-  return args
-}
-
-/** 生成这次命令的 spawn 参数；没有可用沙箱时抛错，由上层回 E_SANDBOX_UNAVAILABLE。 */
-function shellSpawn (command, ctx) {
-  if (ctx.policy === 'danger-full-access') {
-    return { cmd: '/bin/sh', args: ['-c', String(command)] }
-  }
-  if (SHELL_SANDBOX === 'sandbox-exec') {
-    return {
-      cmd: '/usr/bin/sandbox-exec',
-      args: ['-p', macShellProfile(ctx.realRoots), '/bin/sh', '-c', String(command)]
-    }
-  }
-  if (SHELL_SANDBOX === 'bwrap') {
-    return {
-      cmd: '/usr/bin/bwrap',
-      args: linuxShellArgs(ctx.realRoots, curRoot(ctx), String(command))
-    }
-  }
-  throw err('E_SANDBOX_UNAVAILABLE',
-    '当前平台没有可用的命令沙箱（macOS 需要 sandbox-exec，Linux 需要 bwrap）：'
-    + '工作区内修改档不执行 shell。请改用文件工具；确实需要命令时请把会话权限调到完全权限。')
+/**
+ * 生成这次命令的 spawn 规格：解释器由 ShellExecutor 决定，沙箱由 SandboxProvider 包裹。
+ * 能力探测、profile 构造、Windows Job 挂载全部在 platform/ 里，这里不再认识具体 OS。
+ */
+function shellSpawn (command, ctx, env = process.env) {
+  const spec = platform.shell.spawnSpec(String(command), { cwd: curRoot(ctx), env })
+  return platform.sandbox.beforeSpawn(spec, { ...ctx, cwd: curRoot(ctx) })
 }
 
 async function opExec({ command, timeoutSeconds, userInitiated, turnId, sessionId, uid }, ctx) {
@@ -982,22 +899,20 @@ async function opExec({ command, timeoutSeconds, userInitiated, turnId, sessionI
   const remaining = ctx.deadline ? Math.floor((ctx.deadline - Date.now()) / 1000) : requested
   if (ctx.deadline && remaining <= 0) throw err('E_TIMEOUT', '服务端等待时限已过，命令未执行')
   const seconds = Math.max(1, Math.min(requested, remaining))
-  const shell = shellSpawn(command, ctx)
   // 会话进程归属标记：子进程与孙进程天然继承，Linux 侧扫描 /proc 靠它把 setsid 逃出去的认回来；
   // macOS 读不到别人的环境，靠 detached 带来的「同一个进程组」归属（见上面的进程登记段）。
   const tag = procTagFor(sessionId)
+  const spawnEnv = tag ? { ...process.env, [PROC_TAG_VAR]: tag } : process.env
+  const shell = shellSpawn(command, ctx, spawnEnv)
   // 命令也会改文件（构建产物、代码生成、git mv…）：记下这条命令的执行时间窗，
   // 轮末按时间窗把这类改动算作助手自己动的。
   const st = turnId ? turnStateOf(turnId) : null
   const fromMs = Date.now()
   const result = await new Promise(resolve => {
-    // detached：直接子进程成为组长，超时要杀时按进程组杀。只 kill 直接子进程在
-    // 「shell 早已退出、nohup 孙进程还活着」的场景里什么也杀不到，回包会一直挂着。
-    const child = spawn(shell.cmd, shell.args, {
-      cwd: curRoot(ctx),
-      env: tag ? { ...process.env, [PROC_TAG_VAR]: tag } : process.env,
-      detached: true
-    })
+    // detached / windowsHide 由 platform.shell 在 spawnSpec 里一次性决定；这里只负责执行。
+    const child = spawn(shell.cmd, shell.args, shell.options)
+    // POSIX 的沙箱已在 spawn 前包好；Windows 的 Job 必须在进程起来后挂载。
+    const guard = platform.sandbox.afterSpawn(child, ctx)
     // 登记的是「这条会话的这条命令起过哪个进程组」；进程组里还有活口就一直算这条会话的后台进程。
     // 正常退出也不摘：cmd & / nohup 的孙进程恰恰是在 shell 退出后才成为孤儿（以前完全看不见）。
     if (tag && child.pid) {
@@ -1025,8 +940,8 @@ async function opExec({ command, timeoutSeconds, userInitiated, turnId, sessionI
     let settled = false
     let drain = null
     const timer = setTimeout(() => {
-      // 进程组杀：nohup 起的常驻孙进程一并带走，避免失控命令留下孤儿
-      try { process.kill(-child.pid, 'SIGKILL') } catch { try { child.kill('SIGKILL') } catch { /* ignore */ } }
+      // 杀整棵树：POSIX 走进程组信号，Windows 走 Job Object 的 TerminateJobObject。
+      try { platform.sandbox.terminateTree(child, guard, platform.shell) } catch { /* 已退出或没有权限 */ }
       out += `\n（命令超过 ${seconds} 秒未结束，已被强制终止，未拿到退出码）`
     }, seconds * 1000)
     const finish = code => {
@@ -1034,6 +949,8 @@ async function opExec({ command, timeoutSeconds, userInitiated, turnId, sessionI
       settled = true
       clearTimeout(timer)
       if (drain) clearTimeout(drain)
+      // 正常结束只释放约束，不杀残留孙进程（保留后台进程语义）；超时路径已先 terminate。
+      platform.sandbox.release(guard)
       // 没拿到退出码（被杀/信号结束）如实回 null，不伪造 124：服务端按「有没有拿到码」
       // 定性工具卡（拿到=业务结果，没拿到=失败），折码会把「没跑完」读成「超时」。
       resolve({ output: out.slice(0, cap), exitCode: typeof code === 'number' ? code : null, truncated })
@@ -1048,6 +965,7 @@ async function opExec({ command, timeoutSeconds, userInitiated, turnId, sessionI
       settled = true
       clearTimeout(timer)
       if (drain) clearTimeout(drain)
+      platform.sandbox.release(guard)
       resolve({ output: `启动命令失败：${e.message}`, exitCode: null, truncated: false })
     })
   })
@@ -1068,9 +986,8 @@ async function opExec({ command, timeoutSeconds, userInitiated, turnId, sessionI
 // 只用于让模型先读再改，服务端不落库。
 
 /** 快照数据的本地根目录；turns/ 下每轮一个目录（state.json + 私有对象 + 改动前副本）。 */
-const DATA_DIR = path.resolve(
-  (arg('data-dir', process.env.WENQU_EXECUTOR_DATA || '') || path.join(os.homedir(), '.wenqu', 'executor'))
-    .replace(/^~(?=$|\/)/, os.homedir()))
+const DATA_DIR = path.resolve(platform.system.expandHome(
+  arg('data-dir', process.env.WENQU_EXECUTOR_DATA || '') || path.join(os.homedir(), '.wenqu', 'executor')))
 const TURN_STORE = path.join(DATA_DIR, 'turns')
 /** 保留时长、轮数、总容量：三者先到先清，按最旧淘汰。 */
 const TURN_TTL_MS = Math.max(1, Number(arg('turn-ttl-days', '14')) || 14) * 24 * 60 * 60 * 1000
@@ -1116,7 +1033,6 @@ const PROC_MAX = 200
 const PROC_PRUNE_GRACE_MS = 10_000
 const PROC_PIDS_MAX = 400
 const PROC_CMD_MAX = 500
-const IS_LINUX = process.platform === 'linux'
 
 let procEntries = null
 let procSaveTimer = null
@@ -1189,72 +1105,10 @@ function removeProcEntry (tag) {
   return true
 }
 
-function execCapture (cmd, args, timeoutMs = 8000) {
-  return new Promise(resolve => {
-    execFile(cmd, args, { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024 }, (e, stdout) => {
-      resolve({ ok: !e, out: String(stdout || ''), message: e ? e.message : '' })
-    })
-  })
-}
-
-/** ps 的 etime：[dd-]hh:mm:ss / hh:mm:ss / mm:ss → 秒。 */
-function parseProcElapsed (s) {
-  let rest = String(s || '').trim()
-  let days = 0
-  const dash = rest.indexOf('-')
-  if (dash > 0) {
-    days = Number(rest.slice(0, dash)) || 0
-    rest = rest.slice(dash + 1)
-  }
-  const p = rest.split(':').map(v => Number(v))
-  if (!p.length || p.some(v => !Number.isFinite(v))) return 0
-  const sec = p.length === 3 ? p[0] * 3600 + p[1] * 60 + p[2]
-    : p.length === 2 ? p[0] * 60 + p[1] : p[0]
-  return days * 86400 + sec
-}
-
-async function processTable () {
-  const r = await execCapture('ps', ['-A', '-o', 'pid=,ppid=,pgid=,etime=,args='])
-  if (!r.ok) throw err('E_IO', '读不到本机进程表：' + (r.message || 'ps 执行失败'))
-  const byPid = new Map()
-  const byPgid = new Map()
-  for (const line of r.out.split('\n')) {
-    const m = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/.exec(line)
-    if (!m) continue
-    const row = {
-      pid: Number(m[1]), ppid: Number(m[2]), pgid: Number(m[3]),
-      elapsedSec: parseProcElapsed(m[4]), args: m[5]
-    }
-    byPid.set(row.pid, row)
-    const g = byPgid.get(row.pgid) || []
-    g.push(row)
-    byPgid.set(row.pgid, g)
-  }
-  return { byPid, byPgid }
-}
-
-/** Linux：读各进程 environ 里的标记（只读得到自己的进程，读不到就跳过）。 */
-async function tagPidsFromProc () {
-  const out = new Map()
-  let names
-  try { names = await fsp.readdir('/proc') } catch { return out }
-  for (const n of names) {
-    if (!/^\d+$/.test(n)) continue
-    let buf
-    try { buf = await fsp.readFile(`/proc/${n}/environ`) } catch { continue }
-    const m = /(?:^|\0)WQ_PROC_TAG=([^\0]+)/.exec(buf.toString('utf8'))
-    if (!m) continue
-    const arr = out.get(m[1]) || []
-    arr.push(Number(n))
-    out.set(m[1], arr)
-  }
-  return out
-}
-
 /** 把当前进程表折成「登记里的会话进程组」：每个组给出存活 pid、根数、命令与时长。 */
 async function liveProcGroups (sessionFilter, uidFilter) {
-  const table = await processTable()
-  const tagged = IS_LINUX ? await tagPidsFromProc() : new Map()
+  const table = await platform.procs.table()
+  const tagged = await platform.procs.taggedPids()
   const entries = loadProcEntries()
   const now = Date.now()
   const alive = []
@@ -1298,51 +1152,13 @@ function procDisplayCommand (entry, rootRows) {
   return first.length > PROC_CMD_MAX ? first.slice(0, PROC_CMD_MAX) + '…' : first
 }
 
-/** 这些 pid 正在监听的端口：lsof 优先，Linux 无 lsof 时用 ss 兜底；都拿不到就返回空（不猜）。 */
-async function listenPorts (pids) {
-  const out = new Map()
-  if (!pids.length) return out
-  const args = ['-nP', '-Fpn', '-a', '-iTCP', '-sTCP:LISTEN']
-  for (const pid of pids.slice(0, PROC_PIDS_MAX)) args.push('-p', String(pid))
-  const lsof = await execCapture('lsof', args, 6000)
-  if (lsof.ok && lsof.out) {
-    let cur = null
-    for (const line of lsof.out.split('\n')) {
-      if (line.startsWith('p')) cur = Number(line.slice(1))
-      else if (line.startsWith('n') && cur) {
-        const port = /:(\d+)$/.exec(line.slice(1))
-        if (!port) continue
-        const arr = out.get(cur) || []
-        if (!arr.includes(port[1])) arr.push(port[1])
-        out.set(cur, arr)
-      }
-    }
-    return out
-  }
-  if (!IS_LINUX) return out
-  const ss = await execCapture('ss', ['-ltnp'], 6000)
-  if (!ss.ok) return out
-  for (const line of ss.out.split('\n')) {
-    const idm = /pid=(\d+)/.exec(line)
-    const cols = line.trim().split(/\s+/)
-    const addr = cols.length >= 4 ? cols[3] : ''
-    const port = /:(\d+)$/.exec(addr)
-    if (!idm || !port) continue
-    const pid = Number(idm[1])
-    const arr = out.get(pid) || []
-    if (!arr.includes(port[1])) arr.push(port[1])
-    out.set(pid, arr)
-  }
-  return out
-}
-
 /** 按登记里的进程组停进程：TERM → 1.5s → 对幸存者 KILL；返回停掉几个、还剩几个。 */
 async function terminateGroups (entries) {
   const found = entries.length > 0
   if (!found) return { found: false, killed: 0, remaining: 0 }
   const collect = async () => {
-    const table = await processTable()
-    const tagged = IS_LINUX ? await tagPidsFromProc() : new Map()
+    const table = await platform.procs.table()
+    const tagged = await platform.procs.taggedPids()
     const pids = new Set()
     const perEntry = new Map()
     for (const e of entries) {
@@ -1356,12 +1172,13 @@ async function terminateGroups (entries) {
   }
   const first = await collect()
   if (!first.pids.size) return { found: true, killed: 0, remaining: 0 }
-  const term = (pid, sig) => { try { process.kill(pid, sig) } catch { /* 已退出/无权限 */ } }
-  for (const e of entries) term(-e.pgid, 'SIGTERM')
+  const termGroup = (pgid, sig) => { try { platform.procs.killGroup(pgid, sig) } catch { /* 已退出/无权限 */ } }
+  const term = (pid, sig) => { try { platform.procs.kill(pid, sig) } catch { /* 已退出/无权限 */ } }
+  for (const e of entries) termGroup(e.pgid, 'SIGTERM')
   for (const pid of first.pids) term(pid, 'SIGTERM')
   await sleep(1500)
   const second = await collect()
-  for (const e of entries) term(-e.pgid, 'SIGKILL')
+  for (const e of entries) termGroup(e.pgid, 'SIGKILL')
   for (const pid of second.pids) term(pid, 'SIGKILL')
   if (second.pids.size) await sleep(300)
   const third = await collect()
@@ -1379,7 +1196,7 @@ async function opProcs ({ sessionIds }) {
     ? sessionIds.map(s => String(s || '').trim()).filter(Boolean) : []
   const filter = list.length ? new Set(list) : null
   const groups = await liveProcGroups(filter)
-  const ports = await listenPorts(groups.flatMap(g => g.pids))
+  const ports = await platform.procs.listeningPorts(groups.flatMap(g => g.pids))
   return {
     procs: groups.map(g => ({
       tag: g.entry.tag,
@@ -1645,29 +1462,9 @@ function gitRun (exe, args, { cwd, env = {}, maxBytes = TURN_OUT_CAP } = {}) {
 }
 
 let gitExePromise = null
-/** 解析本机 git 可执行文件；macOS 的 /usr/bin/git 是 Xcode 存根（没装开发者工具会弹安装框），当没有 git。 */
+/** 解析本机 git 可执行文件；平台差异（mac Xcode 存根、Windows PATH）在 GitLocator 里。 */
 function resolveGitExecutable () {
-  if (gitExePromise) return gitExePromise
-  gitExePromise = (async () => {
-    try {
-      const probe = await gitRun('git', ['--version'], {})
-      if (probe.exitCode !== 0) return null
-    } catch (e) {
-      return null
-    }
-    if (process.platform === 'darwin') {
-      const where = await new Promise(resolve => {
-        execFile('/usr/bin/which', ['git'], { timeout: 5000 }, (e, out) => resolve(e ? '' : String(out || '').trim()))
-      })
-      if (where === '/usr/bin/git') {
-        const hasTools = await new Promise(resolve => {
-          execFile('/usr/bin/xcode-select', ['-p'], { timeout: 5000 }, e => resolve(!e))
-        })
-        if (!hasTools) return null
-      }
-    }
-    return 'git'
-  })()
+  if (!gitExePromise) gitExePromise = platform.git.locate()
   return gitExePromise
 }
 
@@ -2509,34 +2306,9 @@ function parseNumstat (output) {
 /** 在宿主这台机器上弹系统原生的目录选择框，返回选中的绝对路径。
  *  这就是 DSH 的 native 选择器：远程浏览器够不到宿主桌面时，才退回逐层浏览。 */
 async function opPickDir() {
-  const platform = process.platform
-  let cmd
-  let args
-  if (platform === 'darwin') {
-    cmd = 'osascript'
-    args = ['-e', 'POSIX path of (choose folder with prompt "选择工作区目录")']
-  } else if (platform === 'win32') {
-    cmd = 'powershell'
-    args = ['-NoProfile', '-Command',
-      'Add-Type -AssemblyName System.Windows.Forms; $f = New-Object System.Windows.Forms.FolderBrowserDialog; if ($f.ShowDialog() -eq "OK") { $f.SelectedPath }']
-  } else {
-    cmd = 'zenity'
-    args = ['--file-selection', '--directory', '--title=选择工作区目录']
-  }
-  const selected = await new Promise((resolve, reject) => {
-    execFile(cmd, args, { timeout: 300000 }, (e, stdout) => {
-      if (e) {
-        // osascript 用户取消时退出码 1、stderr 里带 "User canceled"
-        if (/cancel/i.test(String(e.message || '')) || e.code === 1) return reject(err('E_CANCELLED', '没有选择目录'))
-        return reject(err('E_PICK_UNAVAILABLE', '这台电脑弹不出选择框：' + (e.message || '')))
-      }
-      resolve(String(stdout || '').trim())
-    })
-  })
-  const picked = selected.replace(/\/+$/, '') || '/'
-  if (!picked) throw err('E_CANCELLED', '没有选择目录')
-  // 原生选择框本身就是用户授权：不再拿 --root 去卡它（--root 只约束逐层浏览的起点）
-  return { path: picked }
+  const picked = await platform.system.pickDirectory()
+  if (picked.cancelled) throw err('E_CANCELLED', '没有选择目录')
+  return { path: picked.path }
 }
 
 // ==================== 本机浏览器（browser op） =================
@@ -2594,36 +2366,6 @@ async function browserHandshake () {
 
 // @playwright/mcp 默认找系统 Chrome；没装 Chrome 的机器（如只装了 Edge 的 Mac）会直接报
 // 「找不到 Chrome」。这里探测一个真实存在的浏览器渠道；都没有才退回随包 Chromium（需已安装）。
-function detectBrowserChannel () {
-  const exists = p => { try { fs.accessSync(p); return true } catch { return false } }
-  if (process.platform === 'darwin') {
-    if (exists('/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge')) return 'msedge'
-    if (exists('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')) return 'chrome'
-  } else if (process.platform === 'win32') {
-    const pf = process.env['PROGRAMFILES(X86)'] || 'C:\\Program Files (x86)'
-    const pf64 = process.env.PROGRAMFILES || 'C:\\Program Files'
-    if (exists(path.join(pf, 'Microsoft', 'Edge', 'Application', 'msedge.exe'))) return 'msedge'
-    if (exists(path.join(pf64, 'Google', 'Chrome', 'Application', 'chrome.exe'))) return 'chrome'
-  } else {
-    if (exists('/usr/bin/google-chrome')) return 'chrome'
-    if (exists('/usr/bin/microsoft-edge')) return 'msedge'
-  }
-  return 'chromium'
-}
-
-function browserSpawnArgs (port, headless) {
-  const base = ['--yes', '@playwright/mcp@0.0.84',
-    '--host', '127.0.0.1', '--port', String(port),
-    '--isolated', '--no-webmcp', '--allowed-hosts', '*']
-  if (headless) base.push('--headless')
-  const channel = detectBrowserChannel()
-  if (channel !== 'chromium') return [...base, '--browser', channel]
-  // 随包 Chromium：MCP 默认渠道是 chrome，必须用配置显式指到 chromium
-  const cfg = path.join(os.homedir(), '.wenqu', 'browser-mcp-config.json')
-  try { fs.mkdirSync(path.dirname(cfg), { recursive: true }); fs.writeFileSync(cfg, JSON.stringify({ browser: { browserName: 'chromium' } })) } catch { /* 写不了就让 MCP 报缺浏览器 */ }
-  return [...base, '--config', cfg]
-}
-
 async function ensureBrowser (headless) {
   const want = Boolean(headless)
   // 模式变了：停掉旧进程组按新模式起。同模式才复用连接。
@@ -2633,11 +2375,9 @@ async function ensureBrowser (headless) {
     browserHeadless = want
     const port = await freePort()
     browserBase = `http://127.0.0.1:${port}/mcp`
-    log(`启动本机浏览器服务 :${port}（${want ? 'headless' : 'headed'}，渠道 ${detectBrowserChannel()}）`)
-    browserChild = spawn('npx', browserSpawnArgs(port, want),
-      // POSIX 下 detached 让子进程自成一组：stopBrowser 用 kill(-pid) 才能把 npx/playwright-mcp/Edge
-      // 一起带走。终端 Ctrl+C 的 SIGINT 由执行器自己的钩子处理，不依赖子进程同组。
-      { stdio: ['ignore', 'ignore', 'inherit'], detached: process.platform !== 'win32' })
+    const launch = platform.browser.launcher(port, want)
+    log(`启动本机浏览器服务 :${port}（${want ? 'headless' : 'headed'}，渠道 ${launch.channel}）`)
+    browserChild = spawn(launch.cmd, launch.args, launch.options)
     browserChild.on('exit', () => {
       browserChild = null
       browserSession = null
@@ -2730,19 +2470,7 @@ function guardRemote (p, rctx, allowAnyForBrowse) {
 }
 
 function sshArgs (alias, command, controlDir) {
-  fs.mkdirSync(controlDir, { recursive: true, mode: 0o700 })
-  const control = path.join(controlDir, 'cm-' + alias.replace(/[^A-Za-z0-9._-]/g, '_'))
-  return [
-    '-o', 'BatchMode=yes',
-    '-o', 'StrictHostKeyChecking=yes',
-    '-o', 'ConnectTimeout=10',
-    '-o', 'ServerAliveInterval=15',
-    '-o', 'ServerAliveCountMax=3',
-    '-o', 'ControlMaster=auto',
-    '-o', 'ControlPath=' + control,
-    '-o', 'ControlPersist=60',
-    '--', alias, command
-  ]
+  return platform.ssh.argsFor(alias, command, controlDir)
 }
 
 function sshRun (alias, command, { input, timeoutMs = 60000 } = {}) {

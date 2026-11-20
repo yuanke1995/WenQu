@@ -25,6 +25,7 @@ import { registerPwa, watchSwUpdate } from './h5/pwa'
 // 产物/工作区文件的预览台：本行只为装它那两个 document 级委托（预览入口 + 正文复制按钮）
 import './utils/previewStage'
 import { watchPushMessages } from './utils/webpush'
+import { installDownloadInterceptor } from './utils/download'
 
 // ==================== Edge「窗口无法最小化」兼容修复 ====================
 // 现象：Edge 中当「本页是激活标签」时最小化浏览器窗口，窗口缩下去后立即自动弹回；
@@ -63,6 +64,9 @@ initTheme()
 
 // 软键盘视口变量：宽屏全程不启用（--kb 恒为 0、--app-vh 不写），PC 行为零变化
 installKeyboardInset()
+
+// 跨源签名地址的下载：<a download> 在跨源时失效，统一拦截为 fetch→blob
+installDownloadInterceptor()
 
 // PWA 安装：接住 beforeinstallprompt（Android/Chromium），iOS 走图文指引（见 h5/pwa.js）
 registerPwa()

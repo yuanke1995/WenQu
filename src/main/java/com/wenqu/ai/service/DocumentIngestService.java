@@ -1,5 +1,7 @@
 package com.wenqu.ai.service;
 
+import java.util.Locale;
+
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.wenqu.ai.common.BizException;
@@ -412,7 +414,7 @@ public class DocumentIngestService {
 
     private String extOf(String fileName) {
         int idx = fileName.lastIndexOf('.');
-        return idx < 0 ? "" : fileName.substring(idx + 1).toLowerCase();
+        return idx < 0 ? "" : fileName.substring(idx + 1).toLowerCase(Locale.ROOT);
     }
 
     /**

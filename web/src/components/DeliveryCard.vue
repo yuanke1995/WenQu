@@ -13,7 +13,7 @@
     <template v-if="isSingle && one">
       <div class="one-main">
         <a class="one-thumb" :href="oneHref" target="_blank" rel="noopener"
-           :download="oneCanPreview ? null : one.filename"
+           :download="oneCanPreview ? null : sanitizeFileName(one.filename)"
            :title="oneCanPreview ? '预览 ' + one.filename : '下载 ' + one.filename"
            v-bind="pvAttrs(one)">
           <artifact-thumb :file="one" :href-of="hrefOf" :shared="shared" :mobile="mobile" />
@@ -31,7 +31,7 @@
                   <download-outlined v-else />
                 </a>
                 <a v-if="oneCanPreview" class="dlv-btn ghost one-icon-btn" :href="oneHref"
-                   :download="one.filename" target="_blank" rel="noopener" title="下载" aria-label="下载">
+                   :download="sanitizeFileName(one.filename)" target="_blank" rel="noopener" title="下载" aria-label="下载">
                   <download-outlined />
                 </a>
               </template>
@@ -40,12 +40,12 @@
                    rel="noopener" v-bind="pvAttrs(one)" title="打开预览" aria-label="打开预览">
                   <eye-outlined />
                 </a>
-                <a v-else class="dlv-btn primary one-icon-btn" :href="oneHref" :download="one.filename"
+                <a v-else class="dlv-btn primary one-icon-btn" :href="oneHref" :download="sanitizeFileName(one.filename)"
                    target="_blank" rel="noopener" title="下载" aria-label="下载">
                   <download-outlined />
                 </a>
                 <a v-if="oneCanPreview" class="dlv-btn ghost one-icon-btn" :href="oneHref"
-                   :download="one.filename" target="_blank" rel="noopener" title="下载" aria-label="下载">
+                   :download="sanitizeFileName(one.filename)" target="_blank" rel="noopener" title="下载" aria-label="下载">
                   <download-outlined />
                 </a>
               </template>
@@ -79,7 +79,7 @@
               <download-outlined v-else />
             </a>
             <a v-if="delivery.entry && canPreview(delivery.entry)" class="dlv-icon-btn ghost"
-               :href="hrefOf(delivery.entry)" :download="delivery.entry.filename"
+               :href="hrefOf(delivery.entry)" :download="sanitizeFileName(delivery.entry.filename)"
                target="_blank" rel="noopener" title="下载入口文件" aria-label="下载入口文件">
               <download-outlined />
             </a>
@@ -91,7 +91,7 @@
               <eye-outlined />
             </a>
             <a v-else-if="delivery.entry" class="dlv-icon-btn primary"
-               :href="hrefOf(delivery.entry)" :download="delivery.entry.filename"
+               :href="hrefOf(delivery.entry)" :download="sanitizeFileName(delivery.entry.filename)"
                target="_blank" rel="noopener" :title="entryTip" aria-label="下载入口文件">
               <download-outlined />
             </a>
@@ -136,7 +136,7 @@
           <span class="dlv-facts">
             <a v-if="!shared && canPreview(f)" :href="hrefOf(f)" target="_blank" rel="noopener" v-bind="pvAttrs(f)"
                :title="'预览 ' + f.filename" aria-label="预览"><eye-outlined /></a>
-            <a :href="hrefOf(f)" :download="f.filename" target="_blank" rel="noopener"
+            <a :href="hrefOf(f)" :download="sanitizeFileName(f.filename)" target="_blank" rel="noopener"
                :title="'下载 ' + f.filename" aria-label="下载"><download-outlined /></a>
           </span>
         </div>
@@ -160,6 +160,7 @@ import { resolveImg } from '../utils/markdown'
 import { canPreview, artifactExt, previewKindOf } from '../utils/artifactView'
 import { fmtSize } from '../chat/projections'
 import ArtifactThumb from './ArtifactThumb.vue'
+import { sanitizeFileName } from '../utils/fileName'
 
 const props = defineProps({
   /** deliveryOf() 产出的交付包视图（见 chat/projections.js） */

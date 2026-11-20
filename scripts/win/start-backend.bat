@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 REM ============================================================
 REM  Start backend jar (wenqu) - Windows
 REM  JAR: <project root>\target\wenqu.jar

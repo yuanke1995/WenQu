@@ -255,7 +255,7 @@
                     <eye-outlined /> 预览
                   </a>
                   <template v-if="!selectionMode">
-                    <a :href="resolveImg(r.url)" :download="r.originalFilename || r.filename"
+                    <a :href="resolveImg(r.url)" :download="sanitizeFileName(r.originalFilename || r.filename)"
                        class="app-btn ghost small art-icon-act" title="下载">
                       <download-outlined />
                     </a>
@@ -425,6 +425,7 @@ import { pickPreviewLines } from '../utils/artifactPreview'
 import { projectOnThisComputer } from '../utils/localExecutor'
 import { copyText } from '../utils/clipboard'
 import { publicUrl } from '../utils/publicUrl'
+import { sanitizeFileName } from '../utils/fileName'
 import MoveToWorkspaceModal from '../components/MoveToWorkspaceModal.vue'
 
 // ==================== 类型分组与图标 ====================
@@ -852,7 +853,7 @@ const copyLink = async r => {
 const downloadOne = r => {
   const a = document.createElement('a')
   a.href = resolveImg(r.url)
-  a.download = r.originalFilename || r.filename || 'download'
+  a.download = sanitizeFileName(r.originalFilename || r.filename || 'download')
   document.body.appendChild(a)
   a.click()
   a.remove()

@@ -244,6 +244,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
+import { writeClipboard } from '../utils/clipboard'
 import {
   PlusOutlined, EditOutlined, DeleteOutlined, HistoryOutlined, CloudUploadOutlined,
   StopOutlined, RollbackOutlined, TagsOutlined, AppstoreOutlined, UploadOutlined, DownloadOutlined,
@@ -251,6 +252,8 @@ import {
 } from '@ant-design/icons-vue'
 import FlowEditor from './FlowEditor.vue'
 import WorkflowRunHistory from './WorkflowRunHistory.vue'
+import { sanitizeFileName } from '../utils/fileName'
+import { parseJsonFile } from '../utils/json'
 import {
   listWorkflows, deleteWorkflow, publishWorkflow, unpublishWorkflow,
   listWorkflowVersions, rollbackWorkflow,
@@ -540,12 +543,8 @@ const addEventSub = () => {
 
 const copyText = async t => {
   if (!t) return
-  try {
-    await navigator.clipboard.writeText(t)
-    message.success('已复制')
-  } catch (e) {
-    message.warning('复制失败，请手动选择复制')
-  }
+  if (await writeClipboard(t)) message.success('已复制')
+  else message.warning('复制失败，请手动选择复制')
 }
 
 /** 事件订阅下拉的知识库：懒加载一次（/kb/list 只回本人可读的库；写权限由后端 fail-loud 把关） */
@@ -702,7 +701,7 @@ const doImport = async ev => {
   if (!file) return
   try {
     const text = await file.text()
-    const parsed = JSON.parse(text)
+    const parsed = parseJsonFile(text)
     // 批量导出格式（{items:[...]}）：逐条创建，部分失败逐条汇报
     if (parsed && Array.isArray(parsed.items)) { await importMany(parsed.items, file.name); return }
     const dsl = parsed && parsed.dsl ? parsed.dsl : parsed
@@ -774,7 +773,7 @@ const doExport = async row => {
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
-    a.download = `${wf.name || 'workflow'}.workflow.json`
+    a.download = sanitizeFileName(`${wf.name || 'workflow'}.workflow.json`)
     a.click()
     URL.revokeObjectURL(a.href)
   } catch (e) {

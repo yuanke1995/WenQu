@@ -6,6 +6,7 @@ import com.alibaba.fastjson2.JSONObject;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.config.AppProperties;
+import com.wenqu.ai.util.FileNameSanitizer;
 import com.wenqu.ai.mapper.AiDocumentMapper;
 import com.wenqu.ai.mapper.KnowledgeBaseMapper;
 import com.wenqu.ai.model.AiDocument;
@@ -349,6 +350,6 @@ public class KbTransferService {
 
     /** 导出条目文件名清洗（与 DocumentService.sanitize 同规则，目录结构 files/{docId}/{name}） */
     private String safeFileName(String fileName) {
-        return (fileName == null ? "unnamed" : fileName).replaceAll("[\\\\/:*?\"<>|]", "_");
+        return FileNameSanitizer.sanitize(fileName == null ? "unnamed" : fileName);
     }
 }

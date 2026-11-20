@@ -7,7 +7,7 @@
         <a-radio-button value="ssh_alias">本机 OpenSSH 别名</a-radio-button>
       </a-radio-group>
       <div v-if="backend === 'ssh_alias'" class="wq-hint">
-        用「这台电脑」的 <code>~/.ssh/config</code> 里已有的 Host（如 wenqu）连接；问渠不保存私钥/密码。
+        用「这台电脑」的 <code>~/.ssh/config</code>（Windows: <code>%USERPROFILE%\.ssh\config</code>） 里已有的 Host（如 wenqu）连接；问渠不保存私钥/密码。
       </div>
 
       <div class="wq-label">从现有工作区复制（可选）</div>
@@ -56,7 +56,7 @@
             {{ executor ? (executor.online ? '在线：' + executor.name : '离线：' + executor.name) : '未指定这台电脑' }}
           </span>
         </div>
-        <div class="wq-label">OpenSSH 别名（~/.ssh/config 的 Host）</div>
+        <div class="wq-label">OpenSSH 别名（~/.ssh/config；Windows: %USERPROFILE%\.ssh\config）</div>
         <div class="wq-inline">
           <a-select v-model:value="sshAlias" style="flex:1" show-search allow-clear
                     :options="sshAliasOptions" placeholder="选择或输入 Host 别名，如 wenqu"
@@ -66,7 +66,7 @@
           <button type="button" class="app-link-btn" :disabled="!executor || !executor.online" @click="loadAliases">刷新</button>
         </div>
         <div v-if="!executor || !executor.online" class="wq-hint">执行器不在线：先在那台电脑上启动 wenqu-agent</div>
-        <div v-else-if="!sshAliases.length" class="wq-hint">没有读到别名，可直接输入。<code>~/.ssh/config</code> 里要有对应 Host。</div>
+        <div v-else-if="!sshAliases.length" class="wq-hint">没有读到别名，可直接输入。<code>~/.ssh/config</code>（Windows: <code>%USERPROFILE%\.ssh\config</code>） 里要有对应 Host。</div>
 
         <div class="wq-label wq-label-row">
           <span>远端源文件夹</span>

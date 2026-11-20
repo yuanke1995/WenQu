@@ -77,10 +77,10 @@ MVN="${MAVEN_BIN:-}"
 if [ -z "$MVN" ]; then
   if command -v mvn >/dev/null 2>&1; then
     MVN=mvn
-  elif [ -x "/Applications/IntelliJ IDEA.app/Contents/plugins/maven-plugin/lib/maven3/bin/mvn" ]; then
-    MVN="/Applications/IntelliJ IDEA.app/Contents/plugins/maven-plugin/lib/maven3/bin/mvn"
+  elif [ -x "./mvnw" ]; then
+    MVN="./mvnw"
   else
-    echo "找不到 mvn：装 Maven 或设置 MAVEN_BIN 指向 mvn 可执行文件。" >&2
+    echo "找不到 mvn：装 Maven、生成 mvnw，或设置 MAVEN_BIN 指向 mvn 可执行文件。" >&2
     exit 1
   fi
 fi

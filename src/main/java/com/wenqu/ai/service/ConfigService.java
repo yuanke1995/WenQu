@@ -659,7 +659,7 @@ public class ConfigService {
         // 框架会话状态目录：AgentScope 默认写 ~/.agentscope/state/**，
         // 在问渠受管数据目录之外（容器里等于丢）
         d.put("chat.agentscopeStateDir", env("AI_AGENTSCOPE_STATE_DIR",
-                System.getProperty("user.dir") + "/user-data/agentscope"));
+                java.nio.file.Path.of(System.getProperty("user.dir"), "user-data", "agentscope").toString()));
         // 压缩阈值不由配置键控制：
         // 框架里 .maxContextTokens(...) 是 WorkspaceContextMiddleware 的「工作区材料注入预算」
         // （AGENTS.md/MEMORY.md/knowledge 注入上限，框架默认 8000），不是压缩阈值；压缩阈值由
@@ -844,14 +844,16 @@ public class ConfigService {
         // 沙盒里的脚本要回调平台工具时的回程地址。容器各自挂在自己的 bridge 网络上，
         // 开发环境 host.docker.internal 可解析且能打到应用端口；生产拓扑不同，所以这项必须显式配置。
         // 留空 = 不提供子调用（run_code 会明确说"回调地址没配"，而不是让脚本每次都超时）。
-        d.put("sandbox.callbackBaseUrl", env("SANDBOX_CALLBACK_BASE_URL", "http://host.docker.internal:8090/ai"));
+        // 默认留空：本地/容器拓扑各不相同，未显式配置时 run_code 明确报"回调地址没配"，而不是用
+        // Docker Desktop 专属的 host.docker.internal 在原生 Linux Docker 上静默超时。
+        d.put("sandbox.callbackBaseUrl", env("SANDBOX_CALLBACK_BASE_URL", ""));
         // ---------- 沙盒脚本（一次做完一批同类活）----------
         // 默认关：能力形态变化，由管理员决定谁先开
         // 单次运行的子调用总上限（脚本扇出去的工具调用次数）
         // 服务器沙盒数据在宿主上的根：只服务「会话」栏与平台内部轮次的会话沙盒目录；
         // 工作区的文件在用户电脑上，不经这里（本机执行器读写）。
         // 远端 provisioner 部署下这里读不到，接口会如实返回「不可用」而不是假装空列表。
-        d.put("sandbox.userDataHostDir", System.getProperty("user.dir") + "/user-data");
+        d.put("sandbox.userDataHostDir", java.nio.file.Path.of(System.getProperty("user.dir"), "user-data").toString());
         // 沙盒 API / 工作流节点开关（不是聊天里的文件/命令工具）
         // ---------- 权限档位（沙盒执行档 × 工具执行确认，捆成具名预设）----------
         // 档位取值见 PermissionPreset：research=只读调研 standard=常规 autonomous=全自主。
