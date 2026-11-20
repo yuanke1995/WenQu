@@ -7,10 +7,7 @@
         <span v-if="modelLabel" class="ah-model" :title="modelLabel">{{ modelLabel }}</span>
       </div>
       <div class="ah-meta">
-        <svg v-if="running" class="ah-wave" viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true">
-          <path d="M2 6.2c2-2.4 4-2.4 6 0s4 2.4 6 0" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
-          <path d="M2 11c2-2.4 4-2.4 6 0s4 2.4 6 0" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" class="ah-wave-b" />
-        </svg>
+        <TraceWave v-if="running" class="ah-wave" :size="14" />
         <span class="ah-state" :class="{ warn, run: running }" :title="headTitle">{{ head }}</span>
         <template v-if="stepCount">
           <span class="ah-dot"></span>
@@ -40,6 +37,7 @@ import { computed, onBeforeUnmount, watch } from 'vue'
 import { DownOutlined } from '@ant-design/icons-vue'
 import AgentAvatar from './AgentAvatar.vue'
 import AnswerOutline from './AnswerOutline.vue'
+import TraceWave from './TraceWave.vue'
 import { turnShow, turnOpen, toggleTurn, turnHead, turnToggleable, turnWarn, turnExpandable, holdTick } from '../chat/projections'
 import { roundSteps } from '../chat/roundSummary'
 
@@ -107,10 +105,9 @@ onBeforeUnmount(() => { if (releaseTick) releaseTick() })
   font-variant-numeric: tabular-nums;
 }
 .ah-state.run { color: var(--app-accent); }
-/* 跑动状态前的波纹图标：与改版前的整轮状态行同一枚记号，扫光不再做，仅保留明暗呼吸 */
+/* 跑动状态前的波纹图标：就是品牌标那三道波线（components/TraceWave.vue），
+   呼吸动效在组件里，这里只管尺寸与颜色 */
 .ah-wave { flex: none; color: var(--app-accent); }
-.ah-wave-b { opacity: .5; animation: ah-wave-b 1.4s ease-in-out infinite alternate; }
-@keyframes ah-wave-b { from { opacity: .3; } to { opacity: .85; } }
 .ah-state.warn { color: var(--app-warn-text); }
 .ah-dot { width: 2px; height: 2px; border-radius: 50%; background: var(--app-border-strong); flex: none; }
 .ah-steps { flex: none; font-variant-numeric: tabular-nums; }

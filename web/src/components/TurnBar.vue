@@ -14,10 +14,7 @@
     </div>
     <!-- 跑动态：分割线 + 波纹图标 + 扫光文字（答完前它是这一轮唯一进行中的提示） -->
     <div v-else class="tb-status" :title="turnTitle(m)">
-      <svg class="tb-wave" viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true">
-        <path d="M2 6.2c2-2.4 4-2.4 6 0s4 2.4 6 0" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
-        <path d="M2 11c2-2.4 4-2.4 6 0s4 2.4 6 0" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" class="tb-wave-b" />
-      </svg>
+      <TraceWave :size="14" />
       <span class="tb-text" :class="turnWarn(m) ? 'warn' : 'shimmer'">{{ turnHead(m) }}</span>
     </div>
   </div>
@@ -26,6 +23,7 @@
 <script setup>
 import { onBeforeUnmount, watch } from 'vue'
 import { DownOutlined } from '@ant-design/icons-vue'
+import TraceWave from './TraceWave.vue'
 import { turnShow, turnOpen, toggleTurn, turnHead, turnTitle, turnToggleable, turnWarn, turnTop, holdTick } from '../chat/projections'
 
 // 折叠态必须落在消息对象上（m._turnOpen），不能放组件本地 ref：真正决定过程行渲不渲染的是
@@ -62,15 +60,12 @@ onBeforeUnmount(() => { if (releaseTick) releaseTick() })
 .tb-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .tb-chevron { flex: none; margin-left: 4px; font-size: 11px; color: inherit; transition: transform .1s ease; }
 .tb-chevron.open { transform: rotate(180deg); }
-/* 跑动态状态行（DSH RunningStatus 同款）：顶上一条分割线，波纹图标 + 扫光文字，高 28px */
+/* 跑动态状态行（DSH RunningStatus 同款）：顶上一条分割线，品牌三道波线 + 扫光文字，高 28px */
 .tb-status { position: relative; display: flex; align-items: center; gap: 6px; margin-top: 4px; height: 28px; min-width: 0; color: var(--app-accent); }
 .tb-status::before {
   content: ''; position: absolute; top: -4px; left: 0; right: 0; height: 0.5px;
   background: var(--app-border); pointer-events: none;
 }
-.tb-wave { flex: none; }
-.tb-wave-b { opacity: .5; animation: tb-wave-b 1.4s ease-in-out infinite alternate; }
-@keyframes tb-wave-b { from { opacity: .3; } to { opacity: .85; } }
 /* 扫光文字（DSH TextShimmer 简化版）：次要灰底色上一道高光横扫过去，替代旧的整句呼吸变色 */
 .tb-text.shimmer {
   color: transparent; background: linear-gradient(105deg, var(--app-text3) 0%, var(--app-text3) 40%, var(--app-text) 50%, var(--app-text3) 60%, var(--app-text3) 100%);
@@ -82,7 +77,6 @@ onBeforeUnmount(() => { if (releaseTick) releaseTick() })
 .tb-text.warn { color: var(--app-warn-text); background: none; animation: none; }
 @media (prefers-reduced-motion: reduce) {
   .tb-text.shimmer { animation: none; color: var(--app-text3); background: none; }
-  .tb-wave-b { animation: none; opacity: .5; }
   .tb-chevron { transition: none; }
 }
 /* 触屏形态：整行热区保留（40px），样式同样去框去底，只留细底线 */
