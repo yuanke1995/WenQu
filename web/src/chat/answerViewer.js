@@ -18,6 +18,7 @@ import { getKnowledgeDetail } from '../api'
 import { isLoggedIn } from '../utils/auth'
 import { resolveImg, copyCode, handleMdAction } from '../utils/markdown'
 import { externalOrigin } from './projections'
+import { galleryFromRendered } from './imageGallery'
 
 // ==================== 图片灯箱 ====================
 const previewList = ref([])
@@ -221,8 +222,16 @@ const handleBodyClick = (e, ctx = {}) => {
   if (t && t.tagName && t.tagName.toLowerCase() === 'img') {
     const imgs = ctx.images || []
     const seq = Number(t.dataset.seq || 0)
-    const urls = imgs.length ? imgs.map(resolveImg) : [t.getAttribute('src')]
-    const index = imgs.length && seq > 0 && seq <= imgs.length ? seq - 1 : 0
+    // 灯箱只翻「这条正文真正渲染出来的图」：后端 images 是本轮全部命中块配图的编号池，
+    // 正文 [图片N] 往往只引用其中几张；把整表给灯箱会翻出正文里没有的图（4 张 ↔ 17 张）。
+    // 按 DOM 顺序取全部正文图，并用被点节点在 DOM 里的下标定位——原生 markdown 图没有
+    // data-seq，旧代码回落到 0，点最后一张却显示 1/17。
+    const root = e.currentTarget || (t.closest ? t.closest('.md') : null)
+    const nodes = root && root.querySelectorAll ? Array.from(root.querySelectorAll('img')) : []
+    const entries = nodes.map(el => ({ seq: Number(el.dataset.seq || 0), src: el.getAttribute('src') || '' }))
+    const clicked = entries[nodes.indexOf(t)] || { seq, src: t.getAttribute('src') || '' }
+    const { urls, index } = galleryFromRendered(entries, imgs, clicked, resolveImg)
+    if (!urls.length) return
     if (ctx.onImages) ctx.onImages(urls, index)
     else openImages(urls, index)
   }
