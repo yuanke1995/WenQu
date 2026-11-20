@@ -17,7 +17,7 @@
           <!-- 提问随行图片：与另外两页共用 UserBubble，不再让提问里的图只剩文字 -->
           <UserBubble :images="m.images" />
           <div class="sh-user-text">{{ m.content }}</div>
-          <div v-if="m.time" class="sh-time sh-time-user">{{ fmtTime(m.time) }}</div>
+          <div v-if="m.time" class="sh-time">{{ fmtTime(m.time) }}</div>
         </div>
         <div v-else class="sh-bubble ai">
           <AnswerBody :content="m.content" :images="m.images" :citations="false" />
@@ -134,7 +134,9 @@ onMounted(async () => {
 
 <style scoped>
 .sh-page {
-  min-height: 100vh; background: var(--app-bg); color: var(--app-text);
+  /* 与主对话页 / 公开对话页同色（--app-panel）：用户气泡的 --app-panel-2 浅灰要浮在白底上
+     才看得出来。此前用 --app-bg（灰）整体偏暗，浅灰气泡几乎与背景同色。 */
+  min-height: 100vh; background: var(--app-panel); color: var(--app-text);
   display: flex; flex-direction: column; align-items: center; padding: 32px 16px 0;
 }
 .sh-head { width: 100%; max-width: 820px; margin-bottom: 18px; }
@@ -148,22 +150,21 @@ onMounted(async () => {
 .sh-list { width: 100%; max-width: 820px; display: flex; flex-direction: column; gap: 18px; }
 .sh-row { display: flex; }
 .sh-row.user { justify-content: flex-end; }
-.sh-bubble { font-size: 14px; line-height: 1.75; }
+.sh-bubble { font-size: 14px; line-height: 1.65; }
+/* 用户气泡与主对话页（chat/ChatThread.vue 的 .bubble.user）同一套设计语言：
+   --app-panel-2 浅灰底、四角同圆角、宽度贴合内容，不再用主色蓝 + 尖角尾巴。
+   此前这页自创了蓝底气泡，与公开对话页 / 主对话页观感割裂。 */
 .sh-bubble.user {
-  /* 88% 只给用户气泡（长问句留出左侧留白）。若写在 .sh-bubble 上，
-     把 AI 卡也一并卡到 88% —— 用户气泡贴右、回答卡却短一截，右边缘对不齐。 */
-  max-width: 88%;
-  background: var(--app-accent); color: #fff; padding: 9px 13px; border-radius: 12px 12px 2px 12px;
+  background: var(--app-panel-2); color: var(--app-text);
+  padding: 9px 14px; border-radius: 12px;
+  width: fit-content; max-width: 88%;
 }
 /* pre-wrap 只给文字：UserBubble 的图片网格不该被换行规则卷进去 */
 .sh-user-text { white-space: pre-wrap; word-break: break-word; }
-/* 时间落在各自气泡内的末行下方；用户气泡是深色底，字色反过来用半透明白 */
+/* 时间落在气泡内末行下方，浅灰气泡上字色用 --app-text3（与主站一致） */
 .sh-time { margin-top: 6px; font-size: 11px; color: var(--app-text3); }
-.sh-time-user { color: rgba(255, 255, 255, .72); }
-.sh-bubble.ai {
-  background: var(--app-panel); border: 1px solid var(--app-border);
-  padding: 12px 14px; border-radius: 12px 12px 12px 2px; width: 100%;
-}
+/* AI 侧无气泡：正文直接排版，不画边框不画底（与主对话页 .bubble.ai 同口径） */
+.sh-bubble.ai { width: 100%; }
 /* 引用来源：只给文档名与章节，不给库内全文 */
 .sh-src { margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--app-border); }
 .sh-src-t { font-size: 11px; color: var(--app-text3); margin-bottom: 6px; }
@@ -189,7 +190,6 @@ onMounted(async () => {
   .sh-title { font-size: 17px; }
   .sh-list { gap: 12px; }
   .sh-bubble.user { max-width: 92%; }
-  .sh-bubble.ai { padding: 10px 12px; }
   /* 页脚链接是主要交互，44px 触摸热区 */
   .sh-foot { margin: 20px 0 16px; padding-top: 12px; }
   .sh-brand { display: inline-flex; align-items: center; min-height: 44px; }
