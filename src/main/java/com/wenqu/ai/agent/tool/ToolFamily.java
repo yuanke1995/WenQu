@@ -42,6 +42,27 @@ public enum ToolFamily {
     SKILL("skill", "技能（Skills）"),
     /** 任务清单（writeTodo） */
     TODO("todo", "任务清单"),
+    /**
+     * Office 文档处理：格式转换 / 公式重算 / 渲染预览。
+     * <p>只读写工作区或沙盒内的文件（服务端不落用户原件），属 MUTATE，只读档由档位裁剪；
+     * 审批「禁用」档也整族不挂（它确实会产出/改写文件）。
+     */
+    OFFICE("office", "文档处理", true),
+    /**
+     * 桌面操作（Computer Use）：经用户本机执行器在 macOS 上列出应用/窗口、截图、点击、输入。
+     * <p>与 SANDBOX/SSH 同口径：真在用户电脑上动手，审批 off 档整族不挂，只读档由档位裁剪。
+     */
+    COMPUTER_USE("computer_use", "桌面操作", true),
+    /**
+     * 历史对话检索：按关键词检索<b>当前用户自己</b>的问答记录并读取某次对话的往来。
+     * <p>只读、个人资产，游客与子智能体分支都不挂（见 provider 的 exposes）。
+     */
+    SESSION_RETRIEVAL("session_retrieval", "历史对话检索"),
+    /**
+     * MCP 资源：读取外部 MCP server 暴露的 resources / resource templates（与「MCP 工具」是两条协议面）。
+     * <p>出网读外部数据，属 EXTERNAL；只读档不给（与联网搜索同一口径）。
+     */
+    MCP_RESOURCE("mcp_resource", "MCP 资源"),
     /** 沙盒执行（隔离容器里的命令与文件读写）；审批 off 档整族不挂 */
     SANDBOX("sandbox", "沙盒执行", true),
     /**

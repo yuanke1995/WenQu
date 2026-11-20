@@ -41,6 +41,12 @@ final class AgentxTurnProgress {
             "read_file", "list_files", "glob_files", "grep_files",
             "search_knowledge", "webSearch", "session_search", "session_list", "session_history",
             "memory_get", "memory_search",
+            // 新增族里的读/查类工具：结果内容是否变化才代表有没有前进
+            "searchConversations", "readConversation", "session_event_search", "session_event_read", "session_event_trace",
+            "mcpListResources", "mcpListResourceTemplates", "mcpReadResource",
+            "cuaListApps", "cuaListWindows", "cuaScreenshot",
+            // 读图与浏览器观察/抽取：结果内容变没变才代表有没有前进
+            "read_image", "browserObserve", "browserExtract",
             "w_q_resolve_library_id", "w_q_query_docs", "w_q_read_wiki_contents",
             "w_q_read_wiki_structure", "w_q_ask_wiki_question", "w_q_db_overview", "w_q_sql_query");
 

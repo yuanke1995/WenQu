@@ -367,7 +367,12 @@ public class WenquAgentxTools {
                     // 「只读档不给脚本」才真的做到「模型看不见」，而不是调了被拒
                     com.wenqu.ai.agent.tool.ToolFamily.SANDBOX,
                     // SSH 族（ssh_exec）：同上，档位/白名单一律按组裁，不能让它无组常驻
-                    com.wenqu.ai.agent.tool.ToolFamily.SSH);
+                    com.wenqu.ai.agent.tool.ToolFamily.SSH,
+                    // 文档处理 / 桌面操作 / 历史对话检索 / MCP 资源：同样按组管理，档位裁剪才生效
+                    com.wenqu.ai.agent.tool.ToolFamily.OFFICE,
+                    com.wenqu.ai.agent.tool.ToolFamily.COMPUTER_USE,
+                    com.wenqu.ai.agent.tool.ToolFamily.SESSION_RETRIEVAL,
+                    com.wenqu.ai.agent.tool.ToolFamily.MCP_RESOURCE);
 
     /**
      * 建实例之后才出现在工具表里、又没有问渠描述符的那批框架工具（文件七把、产物交付、记忆与会话日志）。
@@ -391,7 +396,10 @@ public class WenquAgentxTools {
             "memory_search",
             "session_search",
             "session_list",
-            "session_history");
+            "session_history",
+            // 读图工具 read_image：由引擎按「模型支持读图 + 有文件系统」条件挂进 Toolkit，
+            // 纳入同一张组管理面后，只读档也按它申报的只读位放行（见 tierAllows）。
+            "read_image");
 
     /** 档位名单覆盖的那几把框架沙盒工具名（系统巡检按它核「有没有漏建组=漏一道闸」）。 */
     public static java.util.List<String> frameworkSurfaceToolNames() {

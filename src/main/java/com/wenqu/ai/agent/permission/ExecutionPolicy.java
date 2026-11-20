@@ -120,7 +120,10 @@ public record ExecutionPolicy(
     public boolean allowsTool(ToolDescriptor d) {
         if (d == null) return true;
         if (denies(d.name())) return false;
-        if (d.family() != ToolFamily.SANDBOX && d.family() != ToolFamily.SSH) return true;
+        // 真在外部世界动手的族按副作用等级裁剪：沙盒/SSH 跑命令，桌面操作控制用户电脑，
+        // 文档处理写文件。只读档下这些变更类工具不进模型工具表（不是调了被拒）。
+        if (d.family() != ToolFamily.SANDBOX && d.family() != ToolFamily.SSH
+                && d.family() != ToolFamily.COMPUTER_USE && d.family() != ToolFamily.OFFICE) return true;
         if (sandboxMode == SandboxMode.READ_ONLY) {
             return d.sideEffect() == SideEffect.READ;
         }
