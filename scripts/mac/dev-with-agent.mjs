@@ -28,6 +28,8 @@ const webRoot = path.join(repoRoot, 'web')
 
 // 环境变量仍是通用配置入口，但 npm script 不再依赖 POSIX 的 `VAR=value cmd` 语法：
 // --proxy-target / --web-base 由脚本自己消费，不会透传给 vite。
+// 注意「消费」不等于「生效」：vite 只读 VITE_PROXY_TARGET（web/vite.config.js），
+// 所以下面必须把 --proxy-target 回填成这个 env，否则它只作用于执行器，前端照旧打本机 8090。
 const argValue = (name, dflt) => {
   const i = process.argv.indexOf('--' + name)
   return i >= 0 && process.argv[i + 1] && !process.argv[i + 1].startsWith('--') ? process.argv[i + 1] : dflt
@@ -63,6 +65,15 @@ function localExecutors () {
   } catch { return { byUid: {}, single: '' } }
 }
 const viteEnv = { ...process.env }
+// --proxy-target 只被本脚本消费掉了（consumedArgs），不会作为参数透传给 vite；
+// 而 vite.config.js 读的是 process.env.VITE_PROXY_TARGET。不回填的话，`npm run dev:prod`
+// 的执行器连的是线上，前端 /proxy 却仍指向本机 8090——本机没起后端时控制台就是一屏
+// 「http proxy error: /api/ai/... ECONNREFUSED」。
+const proxyTargetArg = argValue('proxy-target', '')
+if (proxyTargetArg) viteEnv.VITE_PROXY_TARGET = proxyTargetArg
+if (!process.argv.includes('--pair')) {
+  console.log(`[dev] /proxy 代理目标：${viteEnv.VITE_PROXY_TARGET || 'http://localhost:8090/ai（默认）'}`)
+}
 const local = localExecutors()
 if (Object.keys(local.byUid).length) viteEnv.VITE_LOCAL_EXECUTORS = JSON.stringify(local.byUid)
 if (local.single) viteEnv.VITE_LOCAL_EXECUTOR_ID = local.single
