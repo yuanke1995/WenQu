@@ -68,8 +68,9 @@ const NAME = arg('name', os.hostname())
 const WAIT = Math.max(5, Math.min(30, Number(arg('timeout', '25')) || 25))
 /** 执行器协议版本：v2 起 poll 会带这个头，服务端据此启用 ack 租约与重投；
  *  v3 起支持会话后台进程（procs/liveProcs/killProc/killSession）。旧服务端不认识也无害
- *  （ack 404 时按旧协议放行），旧 agent 不带这个头则服务端按旧协议处理。 */
-const AGENT_VERSION = '3'
+ *  （ack 404 时按旧协议放行），旧 agent 不带这个头则服务端按旧协议处理。
+ *  v4 起支持桌面操作（cua：listApps/openApp/listWindows/screenshot/click/type/key）。 */
+const AGENT_VERSION = '4'
 
 /** 远程 HTTP 目前临时放行，但启动时明确告警：设备令牌与文件内容都在 Bearer/HTTP 体里，
  *  明文过网等于把本机文件读写权交给中间人。正式环境请换 https；
@@ -2416,6 +2417,17 @@ async function ensureBrowser (headless) {
   throw err('E_BROWSER_UNAVAILABLE', '本机浏览器服务启动超时（首次需下载 @playwright/mcp，检查网络）')
 }
 
+// 一条 MCP tools/call，返回拼接后的文本正文。
+async function mcpToolText (sid, tool, toolArgs) {
+  const out = await mcpRpc({ jsonrpc: '2.0', id: Date.now() % 100000, method: 'tools/call',
+    params: { name: tool, arguments: toolArgs || {} } }, sid)
+  const result = out.json && out.json.result
+  if (out.json && out.json.error) throw err('E_BROWSER_TOOL', out.json.error.message || '浏览器调用失败')
+  return result && Array.isArray(result.content)
+    ? result.content.map(c => c.text || '').join('\n')
+    : JSON.stringify(result || {})
+}
+
 async function opBrowser (args) {
   const tool = String(args.tool || '')
   if (!tool.startsWith('browser_')) throw err('E_BROWSER_TOOL', '未知的浏览器工具：' + tool)
@@ -2423,16 +2435,53 @@ async function opBrowser (args) {
   const headless = args.headless === undefined
     ? process.env.WENQU_BROWSER_HEADLESS === '1'
     : Boolean(args.headless)
+  // 浏览器增强（对照 DSH 的 observe / extract）：底层没有同名 MCP 工具，映射到快照/求值。
+  // tabs 直接走 @playwright/mcp 的 browser_tabs（action=list/new/select/close），无需特判。
+  if (tool === 'browser_observe') return observeOp(args, headless)
+  if (tool === 'browser_extract') return extractOp(args, headless)
   const sid = await ensureBrowser(headless)
   armBrowserIdleClose()
-  const out = await mcpRpc({ jsonrpc: '2.0', id: Date.now() % 100000, method: 'tools/call',
-    params: { name: tool, arguments: args.args || {} } }, sid)
-  const result = out.json && out.json.result
-  if (out.json && out.json.error) throw err('E_BROWSER_TOOL', out.json.error.message || '浏览器调用失败')
-  const text = result && Array.isArray(result.content)
-    ? result.content.map(c => c.text || '').join('\n')
-    : JSON.stringify(result || {})
-  return { text }
+  return { text: await mcpToolText(sid, tool, args.args) }
+}
+
+// observe：用页面结构化快照（含元素 ref）当“可操作元素观察”，可选 instruction 只作聚焦说明。
+async function observeOp (args, headless) {
+  const sid = await ensureBrowser(headless)
+  armBrowserIdleClose()
+  const snap = await mcpToolText(sid, 'browser_snapshot', {})
+  const focus = args.args && args.args.instruction ? `（关注：${args.args.instruction}）` : ''
+  return { text: `【页面可操作元素观察】${focus}\n${snap}` }
+}
+
+// extract：默认走 @playwright/mcp 的 browser_evaluate（selector 或 function，确定性、无需模型 Key）；
+// 若显式开启 stagehand 引擎（WENQU_BROWSER_ENGINE=stagehand 且给了 instruction），则用 stagehand 的
+// 自然语言抽取，失败时回退 evaluate。
+async function extractOp (args, headless) {
+  const a = args.args || {}
+  if (process.env.WENQU_BROWSER_ENGINE === 'stagehand' && a.instruction) {
+    try {
+      const { stagehandExtract } = await import('./stagehand.mjs')
+      return { text: await stagehandExtract(a, headless) }
+    } catch (e) {
+      log('stagehand 抽取不可用，回退 @playwright/mcp browser_evaluate：' + (e && e.message))
+    }
+  }
+  let fn = a.function
+  if (!fn && a.selector) {
+    // 通用结构化抽取：把匹配元素映射成 {text,href,src,value} 列表
+    fn = `() => Array.from(document.querySelectorAll(${JSON.stringify(a.selector)})).map(el => ({`
+      + ` text: (el.innerText || el.textContent || '').trim(),`
+      + ` href: el.getAttribute('href') || null, src: el.getAttribute('src') || null,`
+      + ` value: ('value' in el ? el.value : null) }))`
+  }
+  if (!fn) {
+    return { text: '结构化抽取需要提供 selector 或 function（当前用 @playwright/mcp 的 browser_evaluate）。'
+      + '若要“按自然语言 instruction 自动抽取”，请在有执行器的机器上启用 stagehand 引擎：'
+      + '设置 WENQU_BROWSER_ENGINE=stagehand，npm i @browserbasehq/stagehand 并配置模型 Key（如 OPENAI_API_KEY）。' }
+  }
+  const sid = await ensureBrowser(headless)
+  armBrowserIdleClose()
+  return { text: await mcpToolText(sid, 'browser_evaluate', { function: fn }) }
 }
 
 
@@ -2800,10 +2849,168 @@ async function opSshAliases () {
   return { aliases, configPath: file, exists: true }
 }
 
+// ==================== 桌面操作（Computer Use，仅 macOS） ====================
+//
+// 服务端 ComputerUseTools 经 op `cua` 下发 action + args。这里只用系统自带能力：
+//   - AppleScript（System Events）→ 列应用/窗口、激活应用、点击、按键、剪贴板粘贴（支持中文）
+//   - screencapture → 截图
+// 不安装任何第三方二进制。权限（辅助功能 / 屏幕录制）由用户在「系统设置 → 隐私与安全性」授予；
+// 没授权时把 AppleScript 的 -1743 / 1002 明确翻译成 E_CUA_PERMISSION，而不是一句通用的“失败”。
+
+const CUA_KEY_CODES = {
+  return: 36, enter: 76, tab: 48, esc: 53, escape: 53, space: 49, delete: 51, backspace: 51,
+  up: 126, down: 125, left: 123, right: 124, home: 115, end: 119, pageup: 116, pagedown: 121
+}
+
+function cuaErr (e, stderr) {
+  const msg = String(stderr || (e && e.message) || e || '')
+  if (/not authorized|assistive|accessibility|-1743|1002|1708/i.test(msg)) {
+    return err('E_CUA_PERMISSION',
+      '系统未授予辅助功能/屏幕录制权限：请到「系统设置 → 隐私与安全性 → 辅助功能 / 屏幕录制」里勾选运行执行器的终端或问渠执行器，然后重试。原始错误：' + msg.trim())
+  }
+  return err('E_CUA', msg.trim() || '桌面操作失败')
+}
+
+function runCmd (file, args, timeoutMs = 20000) {
+  return new Promise((resolve, reject) => {
+    execFile(file, args, { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 }, (e, stdout, stderr) => {
+      if (e) reject(cuaErr(e, stderr))
+      else resolve(String(stdout == null ? '' : stdout))
+    })
+  })
+}
+
+/** 执行一段 AppleScript，返回 stdout（去掉尾部换行）。 */
+function osa (script, timeoutMs = 20000) {
+  if (platform.name !== 'darwin') {
+    return Promise.reject(err('E_CUA_UNSUPPORTED', '桌面操作目前只支持 macOS；当前执行器运行在 ' + platform.name))
+  }
+  return runCmd('osascript', ['-e', script], timeoutMs)
+}
+
+/** AppleScript 字符串字面量（转义反斜杠与双引号）。 */
+function asStr (s) {
+  return '"' + String(s == null ? '' : s).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"'
+}
+
+async function activateApp (app) {
+  if (!app) return
+  await osa(`tell application ${asStr(app)} to activate`)
+  await new Promise(r => setTimeout(r, 250))
+}
+
+function parseTabLines (raw) {
+  return String(raw || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean).map(line => {
+    const parts = line.split('\t')
+    return parts
+  })
+}
+
+async function opCua (args) {
+  const action = String(args.action || '')
+  const a = args.args || {}
+  switch (action) {
+    case 'listApps': {
+      const raw = await osa(`tell application "System Events"
+  set out to ""
+  repeat with p in (every process whose background only is false)
+    set out to out & (name of p) & tab & (unix id of p) & linefeed
+  end repeat
+  return out
+end tell`)
+      const apps = parseTabLines(raw).map(([name, pid]) => ({ name, pid: Number(pid) || pid }))
+      return { text: apps.map(x => `${x.name}（pid ${x.pid}）`).join('\n') || '（没有正在运行的有界面应用）', apps }
+    }
+    case 'openApp': {
+      const app = String(a.app || '').trim()
+      if (!app) throw err('E_INVALID', '缺少应用名')
+      // 用 open -a 打开（应用名带空格也安全）；找不到时 open 会非 0 退出
+      await runCmd('open', ['-a', app], 20000)
+      return { text: `已打开应用：${app}` }
+    }
+    case 'listWindows': {
+      const app = String(a.app || '').trim()
+      if (!app) throw err('E_INVALID', '缺少应用名')
+      const raw = await osa(`tell application "System Events"
+  if not (exists process ${asStr(app)}) then return ""
+  tell process ${asStr(app)}
+    set out to ""
+    repeat with w in windows
+      set out to out & (name of w) & tab & (item 1 of (position of w)) & "," & (item 2 of (position of w)) & tab & (item 1 of (size of w)) & "," & (item 2 of (size of w)) & linefeed
+    end repeat
+    return out
+  end tell
+end tell`)
+      const windows = parseTabLines(raw).map(([name, pos, size]) => ({ name, position: pos, size }))
+      return { text: windows.length ? windows.map(w => `${w.name}（${w.size} @ ${w.position}）`).join('\n') : `应用 ${app} 没有窗口或未运行`, windows }
+    }
+    case 'screenshot': {
+      const app = String(a.app || '').trim()
+      if (app) await activateApp(app)
+      const dir = path.join(os.homedir(), '.wenqu', 'executor', 'cua')
+      await fsp.mkdir(dir, { recursive: true })
+      const file = path.join(dir, `shot-${Date.now()}.png`)
+      await runCmd('screencapture', ['-x', '-t', 'png', file], 20000)
+      const buf = await fsp.readFile(file)
+      const out = { text: `已截图：${file}（${Math.round(buf.length / 1024)} KB）`, path: file, bytes: buf.length, platform: platform.name }
+      // 2MB 内把图带回去，服务端登记成产物，用户就能在对话里直接看到截图；更大的只回路径
+      if (buf.length <= 2 * 1024 * 1024) out.base64 = buf.toString('base64')
+      return out
+    }
+    case 'click': {
+      const x = Number(a.x), y = Number(a.y)
+      if (!Number.isFinite(x) || !Number.isFinite(y)) throw err('E_INVALID', '点击坐标必须是数字')
+      if (a.app) await activateApp(String(a.app))
+      const n = Math.max(1, Math.min(3, Number(a.clickCount) || 1))
+      const click = `tell application "System Events" to click at {${Math.round(x)}, ${Math.round(y)}}`
+      for (let i = 0; i < n; i++) {
+        await osa(click)
+        if (i < n - 1) await new Promise(r => setTimeout(r, 80))
+      }
+      return { text: `已在 (${Math.round(x)}, ${Math.round(y)}) 点击 ${n} 次` }
+    }
+    case 'type': {
+      const text = String(a.text == null ? '' : a.text)
+      if (!text) throw err('E_INVALID', '缺少要输入的文字')
+      if (a.app) await activateApp(String(a.app))
+      // 走剪贴板粘贴：keystroke 对中文/emoji 不可靠，剪贴板 + Cmd+V 才稳
+      await osa(`set the clipboard to ${asStr(text)}`)
+      await new Promise(r => setTimeout(r, 60))
+      await osa('tell application "System Events" to keystroke "v" using {command down}')
+      return { text: `已输入 ${text.length} 个字符` }
+    }
+    case 'key': {
+      const key = String(a.key || '').trim()
+      if (!key) throw err('E_INVALID', '缺少按键')
+      if (a.app) await activateApp(String(a.app))
+      const mods = String(a.modifiers || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
+      const modMap = { cmd: 'command down', command: 'command down', ctrl: 'control down', control: 'control down', alt: 'option down', option: 'option down', shift: 'shift down' }
+      const using = mods.map(m => modMap[m]).filter(Boolean)
+      const lower = key.toLowerCase()
+      let script
+      if (CUA_KEY_CODES[lower] != null) {
+        script = using.length
+          ? `tell application "System Events" to key code ${CUA_KEY_CODES[lower]} using {${using.join(', ')}}`
+          : `tell application "System Events" to key code ${CUA_KEY_CODES[lower]}`
+      } else {
+        const ch = key.length === 1 ? key : lower
+        script = using.length
+          ? `tell application "System Events" to keystroke ${asStr(ch)} using {${using.join(', ')}}`
+          : `tell application "System Events" to keystroke ${asStr(ch)}`
+      }
+      await osa(script)
+      return { text: `已发送按键：${key}${mods.length ? ' + ' + mods.join('+') : ''}` }
+    }
+    default:
+      throw err('E_CUA_ACTION', '未知的桌面操作：' + action)
+  }
+}
+
 const HANDLERS = {
   ssh: opSsh,
   sshAliases: opSshAliases,
   browser: opBrowser,
+  cua: opCua,
   list: opList,
   pickDir: opPickDir,
   find: opFind,
@@ -2833,7 +3040,7 @@ const HANDLERS = {
  *  turnStart/turnEnd/turnDiff 只读写执行器自己的轮快照目录，不算用户文件改动，故不在此列。 */
 const MUTATING_OPS = new Set([
   'write', 'writeBytes', 'writeChunk', 'mkdir', 'move', 'remove',
-  'exec', 'openPath', 'pickDir', 'browser'
+  'exec', 'openPath', 'pickDir', 'browser', 'cua'
 ])
 
 async function postResult(ident, id, ok, data, error) {
