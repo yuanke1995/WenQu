@@ -69,10 +69,8 @@ public class PresentArtifactTool {
      * @return 产物访问地址与信息
      */
     @Tool(description = "生成并交付一个文件产物（文本类：Markdown/纯文本/CSV/JSON/YAML/XML/代码等；网页：HTML）。"
-            + "当且仅当用户要下载或预览成品文件时调用；"
-            + "用户要拿去复制、粘贴或导入的片段（配置、代码、结构化数据），直接写进回答的代码块，不要调用本工具。"
-            + "产物会实时推送给用户展示为卡片。"
-            + "content 必须是完整文件正文，不能只写文件名或「见 xxx」这类转述；文件已经写在沙盒/工作区时，改用 deliver_artifact 按文件路径交付。")
+            + "当用户要下载或预览成品文件时调用；用户要拿去复制、粘贴或导入的片段，直接写进回答的代码块，不要调用。"
+            + "content 必须是完整文件正文，不能只写文件名或「见 xxx」这类转述。")
     public String presentArtifact(
             @ToolParam(description = "产物完整内容（纯文本；Markdown 表格用 .md，逗号分隔数据用 .csv，结构化数据用 .json/.yaml，网页用 .html）。"
                     + "不是文件名/路径，也不要写「见 index.html」之类的引用句") String content,

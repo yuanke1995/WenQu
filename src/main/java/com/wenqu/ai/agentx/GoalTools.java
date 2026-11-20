@@ -48,10 +48,9 @@ public class GoalTools {
     }
 
     @Tool(name = "goal_submit",
-            description = "提交目标完成/受阻申请（仅目标模式使用）。平台会逐条核验证据后才算完成，"
-                    + "不会仅凭这句话标记完成。evidence 必须是 JSON 数组，元素形如 "
-                    + "{\"kind\":\"artifact\",\"ref\":\"报告.pdf\",\"note\":\"最终交付物\"}；"
-                    + "kind 可用 artifact/file/command/test/url/text。做不完不要调用完成分支。")
+            description = "提交目标完成/受阻申请（仅目标模式）。平台逐条核验证据才算完成，不凭一句话；做不完不要走完成分支。"
+                    + "evidence 是 JSON 数组，元素形如 "
+                    + "{\"kind\":\"artifact\",\"ref\":\"报告.pdf\",\"note\":\"最终交付物\"}，kind 取 artifact/file/command/test/url/text。")
     public String submit(
             @ToolParam(name = "summary", description = "交付说明（给人读的摘要）") String summary,
             @ToolParam(name = "evidence", required = false,

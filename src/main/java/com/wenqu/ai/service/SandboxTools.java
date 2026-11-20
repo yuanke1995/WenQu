@@ -109,21 +109,15 @@ public class SandboxTools {
      * <p>写盘位置走与 write/edit 同一条档位判据（脚本与客户端要落进沙盒目录），所以只读档压根
      * 挂不上这个工具（{@code SideEffect.MUTATE} 被档位裁掉），全自主档也不给它越过工作区的能力。
      */
-    @Tool(name = RUN_CODE_TOOL_NAME, description = "在沙盒里跑一段脚本，用来把<b>多件同类的活一次做完</b>："
-            + "批量读取/转换文件、逐份汇总很多资料、复杂计算与生成文件。"
-            + "language 选 python（默认）或 javascript（Node）。"
-            + "脚本里可以直接用本轮已挂上的工具：Python 写 `import wenqu_tools as wq`，"
-            + "JavaScript 写 `const wq = require('./wenqu_tools')`；"
-            + "模块由平台按本轮工具表自动生成，本轮没挂的工具里面就没有那个函数，"
-            + "调用照常受平台的权限与预算约束。"
-            + "硬性约束：只有标准输出（print / console.log）会回到对话里，函数返回值不会自动出现；"
-            + "请只打印结论与关键数字，不要把整份资料打出来（那和直接调工具没区别）。"
-            + "单次性的取数直接用对应工具即可，不必绕到脚本；脚本的优势是循环与扇出。"
-            + "扇出时注意：脚本模块里能并发调用的是问渠提供的那几把（检索、联网这类）；"
-            + "沙盒的文件读写、列目录与产物交付不在这个模块里——那几把由平台直接提供，请在脚本之外调用。"
-            + "<b>execute（在脚本里再跑命令行）不提供</b>——实测四条并发嵌套命令只有一部分能回到脚本，"
-            + "剩下的连接等不到返回，整段脚本停在上面；要跑命令行请直接调 execute 工具。"
-            + "文件写在 /home/gem/user-data 下并保留，要交给用户仍需用 deliver_artifact。")
+    // 说明的写法：行为与返回 → 关键约束（stdout / 模块边界）→ 何时不用。
+    // 内部机制与并发限制的实现细节不进说明，那是代码注释的事。
+    @Tool(name = RUN_CODE_TOOL_NAME, description = "在沙盒里跑一段脚本，把多件同类的活一次做完："
+            + "批量读写/转换文件、逐份汇总资料、复杂计算、生成文件。"
+            + "脚本里可用本轮已挂的工具：Python 写 `import wenqu_tools as wq`，JavaScript 写 `const wq = require('./wenqu_tools')`；"
+            + "调用同样受权限与预算约束。"
+            + "只有标准输出（print / console.log）会回到对话：只打印结论与关键数字，不要把整份资料打出来。"
+            + "文件读写、列目录、deliver_artifact 不在模块里，请在脚本之外调用；脚本内也不能再跑命令行，要跑就单步调 execute。"
+            + "写出的文件留在沙盒 /home/gem/user-data。")
     public String run_code(
             @ToolParam(description = "脚本正文（Python 3 或 JavaScript/Node）。结果请打印到标准输出") String script,
             @ToolParam(description = "语言：python（默认）或 javascript", required = false) String language,

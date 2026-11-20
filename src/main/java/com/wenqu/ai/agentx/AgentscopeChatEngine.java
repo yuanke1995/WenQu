@@ -2270,6 +2270,39 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     }
 
     /**
+     * 本轮真实挂上的工具注册名，供 {@link ToolDiscipline} 判「该不该说那句跨族分工」。
+     * <p>判据与工具面装配同一份（{@link WenquAgentxTools#turnGroupedNames}），不另写一遍——
+     * 两处判据分家就会漂移成「提示词教了一句本轮没有的能力」。
+     * <p>取不到就按「什么都没挂」处理：少说一句分工，比让整轮因为提示词装配失败更划算。
+     */
+    private java.util.Set<String> mountedToolNames(ChatCommand cmd, ExecutionPolicy policy,
+                                                   AgentxTurnSlot slot) {
+        try {
+            java.util.Set<String> out = new java.util.LinkedHashSet<>(tools.turnGroupedNames(cmd, policy));
+            AgentxTurnSlot.Surface surface = slot == null ? null : slot.surface();
+            if (surface != null) {
+                if (surface.runCodeMounted()) out.add("run_code");
+                // 框架原生工具（deliver_artifact 等）不在这个注册中心里，按工具面那份清单并进来；
+                // 只读档与 API Key 的按名禁用已经落在 policy.deny 里，这里直接复用，不另写一份判据。
+                java.util.Set<String> framework = java.util.Set.copyOf(
+                        WenquAgentxTools.frameworkSurfaceToolNames());
+                if (surface.rawCallbacks() != null
+                        && policy.sandboxMode() != com.wenqu.ai.agent.permission.SandboxMode.READ_ONLY) {
+                    for (var cb : surface.rawCallbacks()) {
+                        if (cb == null || cb.getToolDefinition() == null) continue;
+                        String name = cb.getToolDefinition().name();
+                        if (framework.contains(name) && !policy.denies(name)) out.add(name);
+                    }
+                }
+            }
+            return out;
+        } catch (RuntimeException e) {
+            log.debug("[agentx] 取本轮挂载工具名失败，本轮不追加工具分工段: {}", e.toString());
+            return java.util.Set.of();
+        }
+    }
+
+    /**
      * 续跑时把会话绑定的智能体带回来。
      * <p>续跑入口（{@link #openForContinuation}）是用空问题重建一条 {@link ChatCommand} 的，若不显式带
      * {@code agentId}，重建出来的实例会退回平台默认人设——而用户明明是在某个智能体下问的那一轮。
@@ -3371,6 +3404,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                         // 框架会把工作区渲染成服务器沙盒路径；本机执行器模式要补一段真话压住它
                         + localExecutorEnvironment(cmd)
                         + (subagentTargets.isEmpty() ? "" : tools.dispatchDiscipline())
+                        // 跨族分工（「本机」在 SSH 与桌面两族之间有歧义）：一族的说明代替不了另一族，
+                        // 只有这里能说清，且只在本轮真挂了相关工具时追加。
+                        + ToolDiscipline.guidance(mountedToolNames(cmd, policy, slot))
                         + PlanCopy.guidance()
                         + com.wenqu.ai.agent.chat.ArtifactPrompt.guidance()
                         + com.wenqu.ai.memory.MemoryPrompts.replyDiscipline()
@@ -3436,9 +3472,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 流式可见性闸：框架只在一次模型调用结束时才把 chunk 落盘，而观众跟的是落盘后的日志，
                 // 界面上就是「正文一下粘出几百字」。这里把它拆成 200ms 一片（代价见类注释）。
                 .middleware(new AgentxStreamFlushMiddleware())
-                // 工具说明精简：换的是请求里那份 ToolSchema 的描述文本，注册表、参数 schema、
-                // 只读档位与权限判定一律不动。恒开（代码内置无开关）——见类注释。
-                .middleware(new AgentxToolDescriptionCompact())
                 // 工具面闸：无子智能体/无活跃目标时隐藏对应的编排工具，省 schema 降误选。
                 .middleware(new AgentxToolSurfaceFilter(slot, !subagentTargets.isEmpty()))
                 // 框架默认装备子智能体/技能/工作区上下文/tools.json 等旁路能力。

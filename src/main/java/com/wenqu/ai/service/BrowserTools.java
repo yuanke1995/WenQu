@@ -108,8 +108,8 @@ public class BrowserTools {
     }
 
     @Tool(description = "按结构从当前页面抽取数据，返回结构化结果（JSON 文本）。"
-            + "给 instruction 说明要抽什么；能给出 CSS selector 或取值函数(function)时最稳。"
-            + "例：selector='.product' 抽每个商品；或 function 返回自定义对象。按自然语言 instruction 自动抽取需要本机执行器开启 stagehand 引擎。")
+            + "instruction 说明要抽什么；能给 selector 或 function 时最稳（selector 抽匹配元素，function 在页面里执行并返回可序列化值）。"
+            + "按自然语言 instruction 自动抽取需要本机执行器开启 stagehand 引擎。")
     public String browserExtract(
             @ToolParam(description = "要抽取什么，如「列出所有商品的名称和价格」") String instruction,
             @ToolParam(description = "CSS 选择器：抽取匹配元素的文本/链接/图片等（与 function 二选一）", required = false) String selector,

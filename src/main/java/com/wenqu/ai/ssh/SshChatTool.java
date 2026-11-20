@@ -52,13 +52,14 @@ public class SshChatTool {
         this.registry = registry;
     }
 
+    // 说明的写法：第一句给「做什么 + 什么时候不该用」，后面只补必要的背景；
+    // 边界跟行为写在同一句里，才不会被读成两段互不相干的话。
     @Tool(name = "ssh_exec", description =
-            "通过用户本机的 OpenSSH 连接远端主机并执行命令，用户说「ssh <别名> 上去看看／查一下／执行…」时用它。"
-            + "别名是用户本机 ~/.ssh/config（Windows: %USERPROFILE%\\.ssh\\config）里的 Host 名（例如 wenqu），服务端不保存任何密钥；"
-            + "命令在远端执行，返回原始输出和退出码。别名不确定时，失败信息里会列出这台电脑读到的可用别名。"
-            + "只在用户明确要求连某台远端机器时使用；不要拿它执行用户没要求的写操作。")
+            "通过这台电脑上的 OpenSSH 在远端主机执行命令，返回原始输出与退出码；"
+            + "只在用户明确要求连某台远端主机时使用，不执行用户没要求的写操作。"
+            + "凭据由本机 OpenSSH 管理，平台不保存。")
     public Map<String, Object> sshExec(
-            @ToolParam(description = "本机 OpenSSH 的 Host 别名，如 wenqu") String alias,
+            @ToolParam(description = "这台电脑 ~/.ssh/config 里的 Host 别名，如 wenqu") String alias,
             @ToolParam(description = "要在远端执行的 shell 命令，如 hostname; uptime; df -h /") String command,
             @ToolParam(description = "超时秒数（1~600，默认 60）；仅用户要求长任务时才加大", required = false)
             Integer timeoutSeconds,
@@ -124,11 +125,10 @@ public class SshChatTool {
         return out;
     }
 
+    // 说明只写「自己做什么」：跨族的「开软件该用 cua_* 而不是 ssh 别名」由 ToolDiscipline 那一段说，
+    // 一族的说明替另一族交代只会两处都写、两处都漏。
     @Tool(name = "ssh_list_aliases", description =
-            "列出用户本机 OpenSSH 的 Host 别名清单（读用户本机执行器所在电脑的 ~/.ssh/config，"
-            + "Windows: %USERPROFILE%\\.ssh\\config）。"
-            + "当用户问「我本机有哪些 ssh 别名／ssh 快捷命令／能 ssh 到哪些机器」时，必须调用本工具实测，"
-            + "不要凭记忆或知识库回答；返回每台在线执行器读到的别名、配置文件路径以及是否存在。")
+            "列出这台电脑 ~/.ssh/config 里的 Host 别名，返回别名、配置路径与是否存在；只读，不连远端。")
     public Map<String, Object> sshListAliases(ToolContext toolContext) {
         String uid = resolveUid(toolContext);
         if (uid == null || uid.isBlank() || RequestUser.SYSTEM.equals(uid)) {

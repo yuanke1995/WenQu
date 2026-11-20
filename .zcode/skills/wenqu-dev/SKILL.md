@@ -94,6 +94,14 @@ description: 问渠三仓（wenqu / dynamic-form / dynamic-form-vue）开发规�
 - **平台侧服务不写「本地/自建/localhost」**：统一「平台内置XX服务」；「本地」仅限开发注释与部署方文档。
 - **提交前自检**：搜 `fail-loud|provisioner|embedding|topK|GraphRAG|DSL|cron|webhook|LLM`（前端 + `config-schema.json` + `BizException`），再搜单段 20 字以上可见长句；命中逐条判断是「约束」还是「旁注」。
 
+## 工具说明（模型可见文案）
+
+加工具、改工具说明前先读 [references/tool-copy.md](references/tool-copy.md)。三条最常踩的：
+
+- **说明是模型唯一通道**：问渠没有 DSH 那种 per-tool 提示词小节，边界（只读/副作用/不适用）必须写进 `@Tool` 说明本身。
+- **一条事实只说一次**：参数规则进 `@ToolParam`；跨工具「该用谁」进 `ToolDiscipline`（SSH/桌面、知识/联网/历史、批量/单件、拍板/进度、现写/已落盘五对），不写进任何一把工具的说明。
+- **说明整段下发，不压缩到首句**：压掉边界会让只读工具被当成能力探针；说明长就在源头写短，`ToolCopyDisciplineTest` 拦住 400 字以上与元指令。
+
 ## AI 生成文件落点（强制）
 
 **生成任何文件前先定落点，再动手**：落点不在下表就先在本节登记，不许随手建目录或丢在根目录。

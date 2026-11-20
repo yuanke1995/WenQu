@@ -7,6 +7,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.ai.tool.annotation.Tool;
 
 import java.util.List;
 import java.util.Map;
@@ -136,5 +137,22 @@ class SshChatToolTest {
         assertThat(out.get("ok")).isEqualTo(false);
         Map<String, Object> err = (Map<String, Object>) out.get("error");
         assertThat(err.get("code")).isEqualTo("E_EXECUTOR_OFFLINE");
+    }
+
+    /**
+     * 描述词的护栏：首句给行为与边界，不写「必须调用」这类与模型记忆较劲的元指令，
+     * 也不把「读这台电脑」暗示成「能操作这台电脑」。
+     * <p>「开软件该用 cua_*」这类跨族分工不在这条描述里：那是 {@code ToolDiscipline} 那一段的事
+     * （同一份判据见 {@code ToolDisciplineTest}）。
+     */
+    @Test
+    void aliasToolDescriptionStaysScopedToSshAliases() throws NoSuchMethodException {
+        String description = SshChatTool.class
+                .getMethod("sshListAliases", org.springframework.ai.chat.model.ToolContext.class)
+                .getAnnotation(Tool.class)
+                .description();
+
+        assertThat(description.split("。", 2)[0]).contains("只读").contains("不连远端");
+        assertThat(description).doesNotContain("必须调用").doesNotContain("凭记忆");
     }
 }
