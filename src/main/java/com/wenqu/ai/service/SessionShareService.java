@@ -269,7 +269,10 @@ public class SessionShareService {
             Map<String, Object> one = new LinkedHashMap<>();
             one.put("role", role);
             one.put("content", content);
-            one.put("time", m.get("time"));
+            // 消息时间：`toMessageMap` 里的字段叫 createTime（LocalDateTime），此前误取 "time"
+            // 恒为 null——分享页拿不到时间，多轮对话读不出先后。沿用前端既有的 "time" 键下发，
+            // 前端按 ISO 字符串解析（与主对话页 exportMd 的 createTime 口径一致）。
+            one.put("time", m.get("createTime"));
             // 正文配图随回答一起外发：正文里的 [图片N] 就是按这个数组的下标还原的，
             // 不给它，分享页的图位会退化成「[图片1]」四个字。
             // 边界不变：引用来源仍只给文档名/章节/相关度，知识块全文与块内图不外发。

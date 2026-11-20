@@ -13,7 +13,12 @@
 
     <div v-else class="sh-list">
       <div v-for="(m, i) in info.messages" :key="i" class="sh-row" :class="m.role">
-        <div v-if="m.role === 'user'" class="sh-bubble user">{{ m.content }}</div>
+        <div v-if="m.role === 'user'" class="sh-bubble user">
+          <!-- 提问随行图片：与另外两页共用 UserBubble，不再让提问里的图只剩文字 -->
+          <UserBubble :images="m.images" />
+          <div class="sh-user-text">{{ m.content }}</div>
+          <div v-if="m.time" class="sh-time sh-time-user">{{ fmtTime(m.time) }}</div>
+        </div>
         <div v-else class="sh-bubble ai">
           <AnswerBody :content="m.content" :images="m.images" :citations="false" />
           <!-- 产物：与登录态对话页同一张交付卡（只读形态）。
@@ -35,6 +40,7 @@
               <a v-if="external(s) && s.url" class="sh-src-link" :href="s.url" target="_blank" rel="noopener">打开原网页</a>
             </div>
           </div>
+          <div v-if="m.time" class="sh-time">{{ fmtTime(m.time) }}</div>
         </div>
       </div>
     </div>
@@ -56,6 +62,9 @@ import { useRoute, useRouter } from 'vue-router'
 import { getSharedSession } from '../api'
 // 正文与图片灯箱与主聊天页同源（mermaid 补画也已下沉到 AnswerBody，不再由本页整容器扫一遍）
 import AnswerBody from '../components/AnswerBody.vue'
+// 提问随行图片：与主对话页、智能体公开分享页共用同一份叶子。
+// 后端 publicHistory 已下发 images，此前本页用户气泡只画 m.content，图全被丢掉。
+import UserBubble from '../chat/UserBubble.vue'
 import AnswerViewerHost from '../components/AnswerViewerHost.vue'
 // 交付卡：与登录态对话页同一份组件（只读形态）
 import DeliveryCard from '../components/DeliveryCard.vue'
@@ -145,8 +154,12 @@ onMounted(async () => {
      把 AI 卡也一并卡到 88% —— 用户气泡贴右、回答卡却短一截，右边缘对不齐。 */
   max-width: 88%;
   background: var(--app-accent); color: #fff; padding: 9px 13px; border-radius: 12px 12px 2px 12px;
-  white-space: pre-wrap; word-break: break-word;
 }
+/* pre-wrap 只给文字：UserBubble 的图片网格不该被换行规则卷进去 */
+.sh-user-text { white-space: pre-wrap; word-break: break-word; }
+/* 时间落在各自气泡内的末行下方；用户气泡是深色底，字色反过来用半透明白 */
+.sh-time { margin-top: 6px; font-size: 11px; color: var(--app-text3); }
+.sh-time-user { color: rgba(255, 255, 255, .72); }
 .sh-bubble.ai {
   background: var(--app-panel); border: 1px solid var(--app-border);
   padding: 12px 14px; border-radius: 12px 12px 12px 2px; width: 100%;
