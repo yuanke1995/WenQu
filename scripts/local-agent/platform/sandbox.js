@@ -48,9 +48,10 @@ function noopGuard () {
 }
 
 /**
- * 可写根的**唯一真源**：本次调用允许写入的、已规范化的绝对目录。
- * ctx.realRoots 由 callContext() 用 realpath 解析（逐级向上处理软链）后传入；
- * 文件工具围栏（resolveInRoot）读的也是它。这里只做去重与兜底，不再另算边界。
+ * 可写根的**唯一真源**：本次调用允许写入的目录。
+ * ctx.realRoots 已由 callContext() 用 path.resolve + realpath 处理成「平台原生绝对路径」，
+ * 这里不再二次 path.resolve（那会在 Windows 上把 POSIX 字面量误解析成 C:\ 盘路径），
+ * 只做去空、去重。文件工具围栏（resolveInRoot）读的也是这份 realRoots。
  */
 export function writableRoots (ctx) {
   const src = (ctx && Array.isArray(ctx.realRoots) && ctx.realRoots.length)
@@ -61,10 +62,9 @@ export function writableRoots (ctx) {
   for (const r of src) {
     const s = String(r == null ? '' : r).trim()
     if (!s) continue
-    const abs = path.resolve(s)
-    if (seen.has(abs)) continue
-    seen.add(abs)
-    out.push(abs)
+    if (seen.has(s)) continue
+    seen.add(s)
+    out.push(s)
   }
   return out
 }
