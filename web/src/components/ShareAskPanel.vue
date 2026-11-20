@@ -36,8 +36,7 @@
         <span v-if="cur.multi" class="sa-tick" :class="{ on: customOn }"></span>
         <span class="sa-no">{{ options.length + 1 }}.</span>
         <input v-model="custom" class="sa-input" :maxlength="2000" :disabled="locked"
-               placeholder="自己写（留空则不算一项答案）"
-               @focus="customTouched = true" />
+               placeholder="自己写（留空则不算一项答案）" />
       </div>
     </div>
 
@@ -77,7 +76,7 @@ const locked = computed(() => busy.value || answered.value || expired.value || !
 
 function slot () {
   const k = page.value
-  if (!picks[k]) picks[k] = { sel: new Set(), custom: '', customTouched: false }
+  if (!picks[k]) picks[k] = { sel: new Set(), custom: '' }
   return picks[k]
 }
 // 模板里用 computed 包一层，避免每次渲染都新建 Set 导致勾选丢失
@@ -85,24 +84,26 @@ const cur$ = computed(slot)
 const picked = computed(() => cur$.value.sel)
 const custom = computed({
   get: () => cur$.value.custom,
-  set: v => { cur$.value.custom = v }
+  set: v => {
+    cur$.value.custom = v
+    // 单选：写了自定义答案就清掉勾选，始终只亮一处（与登录态 commitAskCustom 同口径）；
+    // 多选允许候选与自定义并存，不清。
+    if (!cur.value.multi && v.trim()) cur$.value.sel.clear()
+  }
 })
-const customTouched = computed({
-  get: () => cur$.value.customTouched,
-  set: v => { cur$.value.customTouched = v }
-})
-const customOn = computed(() => options.value.length > 0
-  ? (cur$.value.custom.trim() !== '' || cur$.value.customTouched)
-  : true)
+// 自定义行是否算「选中」只看是否有真实文本，不看聚焦——聚焦即亮会让空输入框也显示成一项答案，
+// 于是单选卡在未选择时就同时亮着候选行和「自己写」行（与登录态 askCustomPicked 同口径）。
+const customOn = computed(() => cur$.value.custom.trim() !== '')
 
 function toggle (oi) {
-  const s = cur$.value.sel
+  const st = cur$.value
   if (cur.value.multi) {
-    if (s.has(oi)) s.delete(oi)
-    else s.add(oi)
+    if (st.sel.has(oi)) st.sel.delete(oi)
+    else st.sel.add(oi)
   } else {
-    s.clear()
-    s.add(oi)
+    st.sel.clear()
+    st.sel.add(oi)
+    st.custom = '' // 单选点了候选就清掉自定义，始终只亮一处（登录态 pickAskOption 同口径）
   }
 }
 
@@ -146,12 +147,16 @@ watch(() => props.ask.askId, () => {
 </script>
 
 <style scoped>
+/* 列宽与消息列/输入卡片同源：max-width + margin auto 居中，宽屏下不再铺满整页。
+   --chat-col 未定义时回落 860px，与 .ci-box / ChatThread 的口径一致。 */
 .sa-box {
+  box-sizing: border-box;
+  max-width: var(--chat-col, 860px);
   border: 1px solid var(--app-border, #e5e7eb);
   border-radius: 10px;
   background: var(--app-bg-elevated, #fff);
   padding: 12px 14px;
-  margin: 0 0 10px;
+  margin: 0 auto 10px;
 }
 .sa-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .sa-tag {

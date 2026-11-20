@@ -79,10 +79,14 @@
          分享页没有 + 面板/@ 引用/技能，那些插槽一个都不填——「只填自己有的」。
          页脚放进 #below：它得跟卡片同一个内边距列才居中对齐，包在外面就对不上了。 -->
     <!-- 待裁决计划卡与待答提问卡都整块顶替打字框：模型正卡在工具线程上等答案，
-         此时打字框发出去也没人接。裁决后面板撤下、输入框回归，记录以工具卡形态留在气泡原位。 -->
-    <SharePlanPanel v-if="pendingPlan" ref="planPanelRef" :plan="pendingPlan" @resolve="resolvePlan" />
-    <ShareAskPanel v-if="pendingAsk" ref="askPanelRef" :ask="pendingAsk"
-                   @submit="submitAsk" @ignore="ignoreAsk" />
+         此时打字框发出去也没人接。裁决后面板撤下、输入框回归，记录以工具卡形态留在气泡原位。
+         外层 sc-panel-wrap 复用输入区 .ci 的左右留白，卡片自身按 --chat-col 居中——
+         不包这一层，卡片就是 .sc-page 的整宽 flex 子项，宽屏下会铺满整页（比正文宽出一大截）。 -->
+    <div class="sc-panel-wrap" v-if="pendingAsk || pendingPlan">
+      <SharePlanPanel v-if="pendingPlan" ref="planPanelRef" :plan="pendingPlan" @resolve="resolvePlan" />
+      <ShareAskPanel v-if="pendingAsk" ref="askPanelRef" :ask="pendingAsk"
+                     @submit="submitAsk" @ignore="ignoreAsk" />
+    </div>
     <ChatInput
       v-if="!pendingAsk && !pendingPlan"
       ref="inputRef" v-model="draft" :resolve="chipOf" :placeholder="placeholder"
@@ -1058,6 +1062,13 @@ async function regenerate (aiIndex) {
 
 
 
+/* 提问卡/计划卡顶替打字框时的外层：与 .ci 输入区同一套左右留白与断点，
+   卡片自身按 --chat-col 居中（见 ShareAskPanel / SharePlanPanel 的 max-width）。
+   没有这层，卡片就是 .sc-page 的整宽 flex 子项，宽屏下铺满整页、比正文宽一大截。 */
+.sc-panel-wrap { flex: none; padding: 10px 32px 14px; }
+.sc-page.embed .sc-panel-wrap { padding: 8px 12px; }
+.sc-page.embed-compact .sc-panel-wrap { padding: 6px 8px; }
+
 .sc-foot {
   max-width: 860px; margin: 8px auto 0; display: flex; justify-content: space-between;
   gap: 12px; font-size: 11.5px; color: var(--app-text3);
@@ -1094,6 +1105,8 @@ async function regenerate (aiIndex) {
      /s/:token 不走移动壳（手机直接打开这一页），而主对话页的窄屏是「桌面窗口被拖窄」、
      没有软键盘，所以 16px 不该塞进共享组件里去改主对话页。 */
   .sc-page :deep(.composer-edit) { font-size: 16px; }
+  /* 面板槽与 .ci 输入区同款窄屏留白（10px 左右，与上面的 .sc-list 12px 各有出处） */
+  .sc-panel-wrap { padding: 8px 10px calc(10px + var(--sab, 0px)); }
   .sc-head { padding: calc(10px + var(--sat, 0px)) 12px 10px; gap: 10px; }
   .sc-desc { -webkit-line-clamp: 1; }
   .sc-brand span { display: none; }

@@ -77,12 +77,15 @@ defineExpose({
 </script>
 
 <style scoped>
+/* 列宽与消息列/输入卡片同源：max-width + margin auto 居中，宽屏下不再铺满整页。 */
 .sp-box {
+  box-sizing: border-box;
+  max-width: var(--chat-col, 860px);
   border: 1px solid var(--app-border, #e5e7eb);
   border-radius: 10px;
   background: var(--app-bg-elevated, #fff);
   padding: 12px 14px;
-  margin: 0 0 10px;
+  margin: 0 auto 10px;
 }
 .sp-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .sp-tag { font-size: 12px; color: #7c3aed; background: #f5f3ff; border-radius: 4px; padding: 1px 6px; }
