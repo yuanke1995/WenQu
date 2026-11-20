@@ -45,7 +45,7 @@
 | 服务端（jar / Docker 容器） | 可用 | 生产推荐 | 可用（原生 jar 或 Docker Desktop 跑 Linux 容器） |
 | 服务器沙盒执行域 | Docker Desktop | 原生 Docker | Docker Desktop（容器内恒为 Linux） |
 | 本机执行器·文件工具 | 可用 | 可用 | 可用 |
-| 本机执行器·命令执行 | `sandbox-exec` | `bwrap` | `cmd.exe` + Job Object 进程树约束；写边界由工作区路径围栏负责 |
+| 本机执行器·命令执行 | `sandbox-exec` | `bwrap`（私有 PID） | `cmd.exe` + 受限令牌 ACL 写收束（写能力 SID + Low 完整性，自检不过即拒跑）；进程树 `taskkill /T` 兜底 |
 | 本机执行器·后台进程/浏览器/SSH/目录选择 | 可用 | 可用 | 可用（对应 `tasklist`/`netstat`/`taskkill`、`npx-cli.js`、省略 ControlMaster、结构化取消） |
 | 开发栈与脚本入口 | `node scripts/wenqu.mjs`（`wenqu.sh` 为薄封装） | 同左 | `wenqu.bat` / `wenqu.ps1` |
 | CI | ✅ | ✅ | ✅ |
@@ -197,9 +197,10 @@ node scripts/local-agent/wenqu-agent.mjs --server http://<服务器>/ai
 # 想强制只允许 https：加 --require-https（本机回环地址始终可用 http）
 # 首次启动打印链接 + 6 位码；浏览器登录后确认，令牌落到 ~/.wenqu/executor.json
 # 工作区源文件夹需要能被执行器访问（默认浏览起点 ~；--root / 可看整盘）
-# 标准档的 shell 由平台能力层按 OS 约束：macOS sandbox-exec、Linux bwrap、Windows cmd.exe + Job Object；
-# 写边界统一由工作区路径围栏负责，Windows 的 Job Object 负责进程树生命周期约束；
-# 没有可用能力时命令直接拒绝执行（不会裸跑），需要全盘命令请把会话权限调到完全权限
+# 标准档的 shell 由平台能力层按 OS 约束：macOS sandbox-exec、Linux bwrap（私有 PID）、
+# Windows 受限令牌 ACL runner（写能力 SID + Low 完整性，写只落在 roots + 私有临时目录）；
+# 文件工具另有独立的路径围栏（realpath 逐级解析 + 软链拒绝）；Windows 进程树由 taskkill /T 兜底；
+# 没有可用沙箱时命令直接拒绝执行（不会裸跑），需要全盘命令请把会话权限调到完全权限
 # 默认不在终端逐次确认（页面上的权限档位才是闸门）；需要终端确认时加 --ask
 # 每轮文件改动快照落在 ~/.wenqu/executor/turns，重启后仍可看差异；默认保留 14 天/200 轮/2GB，
 # 可用 --data-dir / --turn-ttl-days / --turn-max / --turn-cache-max-mb 调整

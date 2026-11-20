@@ -877,7 +877,8 @@ async function writeAtomic(file, buf, expectedHash) {
 // ==================== 命令执行围栏 ====================
 //
 // 文件工具能按 roots 收束，shell 不能靠字符串分析约束。标准档下用 OS 沙箱：
-// macOS = sandbox-exec（写只允许 roots + 临时目录），Linux = bwrap（/ 只读，roots 可写）。
+// macOS = sandbox-exec（写只允许 roots + 临时目录）；Linux = bwrap（/ 只读、私有 PID、roots 可写）；
+// Windows = 受限令牌 ACL runner（写只允许 roots + 私有临时目录 + Low 完整性，见 platform/win/acl-runner.ps1）。
 // 没有可用沙箱就拒绝执行——宁可不跑命令，也不裸跑一条能写全盘的 shell。
 // danger-full-access 是用户显式选择的完全权限，不套沙箱。
 
@@ -929,18 +930,24 @@ async function opExec({ command, timeoutSeconds, userInitiated, turnId, sessionI
       })
     }
     let out = ''
+    let err = ''
     let truncated = false
     const cap = 1024 * 1024
     const onData = d => {
       if (out.length < cap) out += d.toString('utf8')
       if (out.length >= cap) truncated = true
     }
+    const onErr = d => {
+      const s = d.toString('utf8')
+      if (err.length < cap) err += s
+      onData(d)
+    }
     child.stdout.on('data', onData)
-    child.stderr.on('data', onData)
+    child.stderr.on('data', onErr)
     let settled = false
     let drain = null
     const timer = setTimeout(() => {
-      // 杀整棵树：POSIX 走进程组信号，Windows 走 Job Object 的 TerminateJobObject。
+      // 杀整棵树：POSIX 走进程组信号；Windows 对 runner 进程树 taskkill /T /F。
       try { platform.sandbox.terminateTree(child, guard, platform.shell) } catch { /* 已退出或没有权限 */ }
       out += `\n（命令超过 ${seconds} 秒未结束，已被强制终止，未拿到退出码）`
     }, seconds * 1000)
@@ -951,9 +958,22 @@ async function opExec({ command, timeoutSeconds, userInitiated, turnId, sessionI
       if (drain) clearTimeout(drain)
       // 正常结束只释放约束，不杀残留孙进程（保留后台进程语义）；超时路径已先 terminate。
       platform.sandbox.release(guard)
+      // 失败语义分流（DSH 口径）：沙箱正常「拒绝」与沙箱「自身故障」不能混为一谈。
+      // 只在拿到非零退出码时判定——超时/信号结束拿到的是 null，不当沙箱故障。
+      let failureKind = null
+      if (ctx.policy !== 'danger-full-access' && typeof code === 'number' && code !== 0
+          && typeof platform.sandbox.classifyFailure === 'function') {
+        try { failureKind = platform.sandbox.classifyFailure({ exitCode: code, stderr: err }) } catch { failureKind = null }
+      }
+      let body = out.slice(0, cap)
+      if (failureKind === 'denied') {
+        body = '[沙箱] 该命令被沙箱拒绝（越界写入等）——这是权限档位的正常拦截，不是命令本身出错。\n' + body
+      } else if (failureKind === 'runner-failure') {
+        body = '[沙箱] 沙箱/runner 自身故障，命令未能正常执行——属基础设施问题，请勿当作业务失败反复重试。\n' + body
+      }
       // 没拿到退出码（被杀/信号结束）如实回 null，不伪造 124：服务端按「有没有拿到码」
       // 定性工具卡（拿到=业务结果，没拿到=失败），折码会把「没跑完」读成「超时」。
-      resolve({ output: out.slice(0, cap), exitCode: typeof code === 'number' ? code : null, truncated })
+      resolve({ output: body, exitCode: typeof code === 'number' ? code : null, truncated, failureKind })
     }
     // close 要等「进程退出 + stdio 管道全部关闭」才触发：nohup/后台起常驻服务时，孙进程
     // 会一直攥着继承来的管道，close 永远不来——这就是「起个后端整轮卡死到服务端判超时」
