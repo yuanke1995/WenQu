@@ -52,6 +52,12 @@ public class BrowserProvider implements ToolFamilyProvider {
                 desc("browserClick", "点击页面元素", "按快照 ref 点击当前页面元素"),
                 desc("browserType", "填写输入框", "按快照 ref 向输入框填文字"),
                 desc("browserScreenshot", "页面截图", "对当前页面截图留证"),
+                // 浏览器增强（对照 DSH 的 observe / extract / tabs）：
+                // observe 用结构化快照列可操作元素；extract 按 selector/function（或 stagehand 引擎）结构化抽数据；
+                // tabs 管理多标签。三者都作用于当前浏览器，属出网操作，与既有 browser_* 同口径（EXTERNAL，需确认）。
+                desc("browserObserve", "观察页面元素", "观察当前页面有哪些可操作元素，决定下一步点什么"),
+                desc("browserExtract", "按结构抽取数据", "按 selector/取值函数从页面抽结构化数据（多行列表/表格）"),
+                desc("browserTabs", "管理多标签页", "列出/新建/切换/关闭浏览器标签页"),
                 // 收尾动作不额外要确认：目标轮收尾本来就会自动关一次
                 new ToolDescriptor("browserClose", ToolFamily.BROWSER,
                         "关闭浏览器页面", "关闭浏览器页面", "关掉当前浏览器页面/窗口",

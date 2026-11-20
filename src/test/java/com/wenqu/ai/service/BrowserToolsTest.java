@@ -3,6 +3,7 @@ package com.wenqu.ai.service;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.ai.chat.model.ToolContext;
 
 import java.util.Map;
@@ -114,5 +115,68 @@ class BrowserToolsTest {
         tools.browserType("输入框", "e5", "hi", ctx());
 
         verify(snapshots, never()).record(any(), any(), any(), any(), any(), any());
+    }
+
+    // ---------- 浏览器增强：observe / extract / tabs（对照 DSH） ----------
+
+    @Test
+    @DisplayName("云端 observe：落到真工具 browser_snapshot，不发明上游没有的 browser_observe")
+    void cloudObserveFallsBackToSnapshot() {
+        when(mode.resolve(UID)).thenReturn(BrowserModeResolver.Mode.CLOUD);
+        when(mcp.callBrowserTool(UID, "browser_snapshot", Map.of())).thenReturn("# T\n- button 登录 [ref=e1]");
+
+        String out = tools.browserObserve("登录表单", ctx());
+
+        assertThat(out).contains("button");
+        verify(mcp).callBrowserTool(UID, "browser_snapshot", Map.of());
+        verify(mcp, never()).callBrowserTool(anyString(), eq("browser_observe"), anyMap());
+    }
+
+    @Test
+    @DisplayName("云端 extract 给 selector：折成 browser_evaluate 的取值函数")
+    void cloudExtractSelectorBuildsEvaluate() {
+        when(mode.resolve(UID)).thenReturn(BrowserModeResolver.Mode.CLOUD);
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> cap = ArgumentCaptor.forClass(Map.class);
+        when(mcp.callBrowserTool(eq(UID), eq("browser_evaluate"), cap.capture())).thenReturn("[{\"text\":\"A\"}]");
+
+        String out = tools.browserExtract("列出商品", ".product", null, null, ctx());
+
+        assertThat(out).contains("A");
+        String fn = String.valueOf(cap.getValue().get("function"));
+        assertThat(fn).contains("querySelectorAll").contains(".product");
+    }
+
+    @Test
+    @DisplayName("云端 extract 只给 instruction：如实说明限制，不空调上游")
+    void cloudExtractInstructionOnlyGuides() {
+        when(mode.resolve(UID)).thenReturn(BrowserModeResolver.Mode.CLOUD);
+
+        String out = tools.browserExtract("列出所有商品", null, null, null, ctx());
+
+        assertThat(out).contains("selector").contains("stagehand");
+        verify(mcp, never()).callBrowserTool(anyString(), anyString(), anyMap());
+    }
+
+    @Test
+    @DisplayName("本机 extract：交给执行器 browser_extract（stagehand 或 evaluate 由执行器决定）")
+    void localExtractDispatchesToExecutor() {
+        when(mode.resolve(UID)).thenReturn(BrowserModeResolver.Mode.LOCAL_HEADED);
+        when(local.call(any(), anyString(), anyMap(), anyBoolean())).thenReturn("[]");
+
+        tools.browserExtract("列出商品", ".product", null, null, ctx());
+
+        verify(local).call(any(), eq("browser_extract"), anyMap(), eq(false));
+    }
+
+    @Test
+    @DisplayName("tabs 是本机/云端同名真工具：两种模式都按 browser_tabs 透传")
+    void tabsPassthrough() {
+        when(mode.resolve(UID)).thenReturn(BrowserModeResolver.Mode.CLOUD);
+        when(mcp.callBrowserTool(eq(UID), eq("browser_tabs"), anyMap())).thenReturn("1 tab");
+
+        tools.browserTabs("list", null, null, ctx());
+
+        verify(mcp).callBrowserTool(eq(UID), eq("browser_tabs"), anyMap());
     }
 }
