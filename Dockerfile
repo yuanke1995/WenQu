@@ -13,8 +13,17 @@ RUN mvn -B clean package -DskipTests
 FROM eclipse-temurin:17-jre
 WORKDIR /app
 COPY --from=build /app/target/wenqu.jar app.jar
-# curl 供 HEALTHCHECK 使用
-RUN apt-get update && apt-get install -y --no-install-recommends curl tzdata \
+# curl 供 HEALTHCHECK 使用。
+# INSTALL_OFFICE=true（默认）额外装 LibreOffice Writer/Calc/Impress 与中文字体：
+# 「文档处理」工具的 PDF 转换与文档渲染依赖 soffice；不需要可 --build-arg INSTALL_OFFICE=false 缩小镜像。
+ARG INSTALL_OFFICE=true
+RUN apt-get update \
+    && if [ "$INSTALL_OFFICE" = "true" ]; then \
+         EXTRA="libreoffice-writer libreoffice-calc libreoffice-impress fonts-noto-cjk"; \
+       else \
+         EXTRA=""; \
+       fi \
+    && apt-get install -y --no-install-recommends curl tzdata $EXTRA \
     && rm -rf /var/lib/apt/lists/* \
     # 图片存储目录（挂载卷；非 root 用户需要写权限）
     # user-data 也必须在这里建好：技能落盘根（skills-builtin / skills-users）挂的是命名卷，

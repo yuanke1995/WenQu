@@ -49,7 +49,12 @@ services:
       start_period: 30s
 
   app:
-    build: .
+    # INSTALL_OFFICE=false 可不装 LibreOffice（镜像小 ~400MB，但「文档处理」的
+    # 转 PDF / 渲染 PNG 会明确失败）；默认装，见 Dockerfile 的 ARG INSTALL_OFFICE。
+    build:
+      context: .
+      args:
+        INSTALL_OFFICE: "${INSTALL_OFFICE:-true}"
     container_name: wen-qu
     # 同时绑定回环与 docker 网桥网关，二者都不挂宿主机公网网卡（避免 8090 直连暴露
     # Swagger/Actuator 等管理端点；浏览器只经 nginx 的 80/443 访问后端）。
