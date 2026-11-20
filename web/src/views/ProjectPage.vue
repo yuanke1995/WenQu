@@ -915,6 +915,7 @@ const chatItem = it => {
     return
   }
   setNewSessionProject(id.value)
+  sessionStore.newChatAgent = ''
   sessionStore.newChatTick++
   router.push({ path: '/chat', query: { ask, ...bind } })
 }
@@ -1015,6 +1016,7 @@ const saveLook = async patch => {
 
 const goChat = () => {
   setNewSessionProject(id.value)
+  sessionStore.newChatAgent = ''
   sessionStore.newChatTick++
   router.push('/chat')
 }

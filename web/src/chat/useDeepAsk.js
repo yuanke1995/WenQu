@@ -283,7 +283,8 @@ export const useDeepAsk = ctx => {
       else if (hit.selectable === false) notify.warning(`技能「${skillPick}」是工作区只读技能，不能在对话中点名`)
       else if (!pickedSkills().includes(skillPick)) ctx.toggleSkill(skillPick)
     }
-    // 智能体管理页「试一试」带进来的预选：本会话下一问起按它作答。先摘参数防刷新重复覆盖手动换人；
+    // 带 ?agent= 的深链（旧的「试一试」入口或外部直达）点名预选：本会话下一问起按它作答。
+    // 先摘参数防刷新重复覆盖手动换人；
     // 清单可能还没拉或刚建的新智能体不在里面——查不到就重拉一次再认，仍不在才提醒
     const agentPick = String(query().agent || '')
     if (agentPick) {

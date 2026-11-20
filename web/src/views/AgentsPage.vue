@@ -105,7 +105,7 @@
                 <div class="ap-card-foot">
                   <!-- 管理入口按后端回填的 manageable 收起：不可管理的智能体不给"点了报错"的死路
                        （写路径后端还会按归属二次判定）。
-                       「试一试」直达对话并预选该智能体——配置完立刻验证，不用去对话页手动找人；
+                       「试一试」新开一条空白对话并预选该智能体——配置完立刻验证，不用去对话页手动找人；
                        子智能体不参与直接对话，不给这个入口 -->
                   <button v-if="!isSub(a) && !isDisabledAgent(a)" class="app-btn small ap-btn-try" @click.stop="tryAgent(a)">试一试</button>
                   <template v-if="a.manageable">
@@ -923,7 +923,7 @@ import {
   CopyOutlined, ExportOutlined, LinkOutlined, ExclamationCircleOutlined,
   LockOutlined, MoreOutlined, PlusOutlined, ImportOutlined
 } from '@ant-design/icons-vue'
-import { listAgents, createAgent, updateAgent, deleteAgent, batchDeleteAgents, setAgentDefault, listKnowledgeBases,
+import { listAgents, createAgent, updateAgent, deleteAgent, batchDeleteAgents, setAgentDefault, setNewSessionProject, listKnowledgeBases,
          listDocuments,
          listAvailableSkills, getMcpStatus, listSubAgents, getToolCatalog, getPermissionPresets,
          getAgentConfigDefaults,
@@ -947,6 +947,7 @@ import { useDelegationTopo } from '../agents/useDelegationTopo'
 import { useAgentVersions } from '../agents/useAgentVersions'
 import { sanitizeFileName } from '../utils/fileName'
 import { parseJsonFile } from '../utils/json'
+import { sessionStore } from './store'
 
 const route = useRoute()
 const router = useRouter()
@@ -1508,8 +1509,17 @@ const updatedAgo = a => {
 // 平台预置不支持公开发布，不显示发布状态点（灰点会被读成「还没发，可以发」）
 const showPubDot = a => a.manageable && !isSub(a) && !isPreset(a) && !isDisabledAgent(a)
 const canSetDefault = a => !isSub(a) && !isDefault(a) && isAdmin.value && !isPreset(a) && !isDisabledAgent(a)
-/** 试一试：直达对话页并预选该智能体（对话页消费 ?agent= 后摘掉参数） */
-const tryAgent = a => router.push({ path: '/chat', query: { agent: String(a.id) } })
+/**
+ * 试一试：先按「新建对话」的同一套规则开一条空白会话，再把该助手钉成这一会话下一问的作答方。
+ * 走跨页 tick 而不是 ?agent=：新建会话会重写地址为 ?sid=...，query 里的兄弟参数会被抹掉；
+ * 预选值交给会话落位链路（sessionStore.newChatAgent → createNewSession 的 presetAgentId）才不会丢。
+ */
+const tryAgent = a => {
+  setNewSessionProject('')              // 试一试不继承侧栏上次选中的工作区
+  sessionStore.newChatAgent = String(a.id)
+  sessionStore.newChatTick++
+  router.push({ path: '/chat' })
+}
 
 // ==================== 复制 / 导出 / 导入（前端整包搬运，创建仍走既有保存链路） ====================
 /** 导出只带配置面字段：id/发布态/管理权等运行时信息带出去只会误导导入方 */

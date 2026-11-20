@@ -1316,6 +1316,7 @@ const goChat = to => {
  */
 const newChat = (projectId = '') => {
   setNewSessionProject(projectId)
+  sessionStore.newChatAgent = ''  // 普通新建不承接「试一试」留下的预选
   sessionStore.newChatTick++
   goChat('/chat')
 }

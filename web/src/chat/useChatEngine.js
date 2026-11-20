@@ -995,6 +995,17 @@ const { createNewSession, deleteSession: handleDeleteSession, autoPick } = creat
   notifySuccess: msg => message.success(msg)
 })
 
+/**
+ * 跨页「新建对话」带的预选智能体（智能体页「试一试」）：消费一次即清。
+ * 不能留在 query 里等对话页再读——createNewSession 会用 query:{sid} 写地址栏，兄弟参数会被抹掉；
+ * 直接把 id 交给 createNewSession 的 presetAgentId，落进新会话的待选值最稳。
+ */
+const takeNewSessionAgent = () => {
+  const agent = sessionStore.newChatAgent || undefined
+  sessionStore.newChatAgent = ''
+  return agent
+}
+
 // 路由 query.sid 驱动：只处理"切到某个会话"；sid 清空（新建/删除当前会话）由 tick 信号接管，
 // 避免两条链路同时触发 autoPick / createNew 的竞态
 watch(() => route.query.sid, sid => {
@@ -1015,7 +1026,7 @@ watch(() => route.query.approval, id => {
 // （不再被"正在回答"拦截：当前会话的流转入后台继续跑）
 watch(() => sessionStore.newChatTick, async tick => {
   sessionStore.newChatSeen = tick
-  if (route.path === hooks.chatPath) await createNewSession()
+  if (route.path === hooks.chatPath) await createNewSession(takeNewSessionAgent())
 })
 // 当前会话被删除 → 自动落到最近会话或新建
 watch(() => sessionStore.autoPickTick, async () => {
@@ -2432,9 +2443,10 @@ const ready = async () => {
   if (sid) {
     await switchSession(sid)
   } else if (sessionStore.newChatTick > sessionStore.newChatSeen) {
-    // 其它页面点过「新建对话」后跳转过来：消费该信号，直接进空会话
+    // 其它页面点过「新建对话」后跳转过来：消费该信号，直接进空会话；
+    // 「试一试」带的预选智能体一并消费，落进新会话的下一问待选值
     sessionStore.newChatSeen = sessionStore.newChatTick
-    await createNewSession()
+    await createNewSession(takeNewSessionAgent())
   } else {
     await autoPick()
   }
