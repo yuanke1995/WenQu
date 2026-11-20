@@ -122,4 +122,30 @@ public interface MessageMapper extends BaseMapper<Message> {
             + "WHERE s.user_id = #{userId} AND s.deleted = 0 AND m.deleted = 0 "
             + "GROUP BY m.session_id) t")
     Long statLongestSessionSeconds(@Param("userId") String userId);
+
+    // ==================== 历史对话检索（平台内「问渠」问答记录，与框架 session_search 不同源） ====================
+
+    /**
+     * 在用户自己的问答记录里按关键词检索消息（命中 content），返回轻量行。
+     * <p>只查 {@code kind != 'temp'} 的真实用户会话、两侧都过滤逻辑删除；按时间倒序限量。
+     */
+    @Select("<script>SELECT m.session_id AS sessionId, m.role AS role, m.content AS content, "
+            + "m.create_time AS createTime, s.title AS title, s.agent_name AS agentName "
+            + "FROM c_ai_message m JOIN c_ai_session s ON s.id = m.session_id "
+            + "WHERE s.user_id = #{userId} AND s.deleted = 0 AND m.deleted = 0 "
+            + "AND (s.kind IS NULL OR s.kind != 'temp') "
+            + "AND m.content LIKE CONCAT('%', #{keyword}, '%') "
+            + "<if test='since != null'>AND m.create_time &gt;= #{since} </if>"
+            + "ORDER BY m.create_time DESC LIMIT #{limit}</script>")
+    java.util.List<java.util.Map<String, Object>> searchMessagesByKeyword(
+            @Param("userId") String userId, @Param("keyword") String keyword,
+            @Param("since") LocalDateTime since, @Param("limit") int limit);
+
+    /** 读取一次会话的往来（按序号升序，限量；只返回角色/正文/时间等轻量列）。 */
+    @Select("SELECT m.id AS id, m.session_id AS sessionId, m.role AS role, m.content AS content, "
+            + "m.sequence AS sequence, m.create_time AS createTime "
+            + "FROM c_ai_message m WHERE m.session_id = #{sessionId} AND m.deleted = 0 "
+            + "ORDER BY m.sequence ASC, m.create_time ASC LIMIT #{limit}")
+    java.util.List<java.util.Map<String, Object>> readConversationMessages(
+            @Param("sessionId") String sessionId, @Param("limit") int limit);
 }
