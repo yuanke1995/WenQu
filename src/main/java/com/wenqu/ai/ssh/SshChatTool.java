@@ -124,6 +124,62 @@ public class SshChatTool {
         return out;
     }
 
+    @Tool(name = "ssh_list_aliases", description =
+            "列出用户本机 OpenSSH 的 Host 别名清单（读用户本机执行器所在电脑的 ~/.ssh/config，"
+            + "Windows: %USERPROFILE%\\.ssh\\config）。"
+            + "当用户问「我本机有哪些 ssh 别名／ssh 快捷命令／能 ssh 到哪些机器」时，必须调用本工具实测，"
+            + "不要凭记忆或知识库回答；返回每台在线执行器读到的别名、配置文件路径以及是否存在。")
+    public Map<String, Object> sshListAliases(ToolContext toolContext) {
+        String uid = resolveUid(toolContext);
+        if (uid == null || uid.isBlank() || RequestUser.SYSTEM.equals(uid)) {
+            return fail("E_UNAUTHENTICATED", "拿不到当前用户，无法找到你的本机执行器");
+        }
+        List<Map<String, Object>> devices = new ArrayList<>();
+        Set<String> merged = new LinkedHashSet<>();
+        boolean anyOnline = false;
+        for (Map<String, Object> row : executorService.list(uid)) {
+            String id = String.valueOf(row.get("id"));
+            if (!registry.online(id)) continue;
+            anyOnline = true;
+            Map<String, Object> device = new LinkedHashMap<>();
+            device.put("executorId", id);
+            if (row.get("name") != null) device.put("name", row.get("name"));
+            try {
+                ExecutorRegistry.Result r = registry.call(id, "sshAliases", Map.of(), ALIAS_LOOKUP_TIMEOUT_MS);
+                if (r.ok() && r.data() != null) {
+                    List<String> names = new ArrayList<>();
+                    if (r.data().get("aliases") instanceof Collection<?> list) {
+                        for (Object o : list) {
+                            if (o != null) names.add(String.valueOf(o));
+                        }
+                    }
+                    merged.addAll(names);
+                    device.put("aliases", names);
+                    device.put("configPath", r.data().get("configPath"));
+                    device.put("exists", r.data().get("exists"));
+                } else {
+                    device.put("aliases", List.of());
+                    device.put("error", (r.code() == null ? "E_IO" : r.code())
+                            + "：" + (r.message() == null ? "读取别名失败" : r.message()));
+                }
+            } catch (Exception e) {
+                log.debug("[SSH-TOOL] 列别名失败 device={}: {}", id, e.toString());
+                device.put("aliases", List.of());
+                device.put("error", safeMessage(e));
+            }
+            devices.add(device);
+        }
+        if (!anyOnline) {
+            return fail("E_EXECUTOR_OFFLINE", "本机执行器不在线：先在这台电脑上启动 wenqu-agent 再试");
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("ok", true);
+        out.put("aliases", new ArrayList<>(merged));
+        out.put("count", merged.size());
+        out.put("executors", devices);
+        return out;
+    }
+
     /** 挑一台「在线且 ~/.ssh/config 里真有这个别名」的执行器；没有就返回 null。 */
     private String pickExecutor(String uid, String alias) {
         for (Map<String, Object> row : executorService.list(uid)) {

@@ -107,4 +107,34 @@ class SshChatToolTest {
 
         assertThat(out.get("ok")).isEqualTo(true);
     }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void listsAliasesFromOnlineExecutor() {
+        when(executors.list("u1")).thenReturn(List.of(Map.of("id", "ex-1", "name", "mac")));
+        when(registry.online("ex-1")).thenReturn(true);
+        when(registry.call("ex-1", "sshAliases", Map.of(), 15_000L))
+                .thenReturn(ExecutorRegistry.Result.ok(Map.of(
+                        "aliases", List.of("das-usm", "das-usm2", "wenqu"),
+                        "configPath", "/Users/wangxi/.ssh/config", "exists", true)));
+
+        Map<String, Object> out = tool.sshListAliases(null);
+
+        assertThat(out.get("ok")).isEqualTo(true);
+        assertThat(out.get("count")).isEqualTo(3);
+        assertThat((List<Object>) out.get("aliases")).containsExactly("das-usm", "das-usm2", "wenqu");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void listAliasesFailsWhenNoExecutorOnline() {
+        when(executors.list("u1")).thenReturn(List.of(Map.of("id", "ex-1", "name", "mac")));
+        when(registry.online("ex-1")).thenReturn(false);
+
+        Map<String, Object> out = tool.sshListAliases(null);
+
+        assertThat(out.get("ok")).isEqualTo(false);
+        Map<String, Object> err = (Map<String, Object>) out.get("error");
+        assertThat(err.get("code")).isEqualTo("E_EXECUTOR_OFFLINE");
+    }
 }

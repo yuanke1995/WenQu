@@ -41,10 +41,17 @@ public class SshToolProvider implements ToolFamilyProvider {
 
     @Override
     public List<ToolDescriptor> descriptors() {
-        return List.of(new ToolDescriptor(
-                "ssh_exec", ToolFamily.SSH,
-                "SSH 远程命令", "连接远端主机执行", "用你本机的 OpenSSH 连过去看一眼、跑条命令",
-                SideEffect.MUTATE, null, false, true));
+        return List.of(
+                new ToolDescriptor(
+                        "ssh_exec", ToolFamily.SSH,
+                        "SSH 远程命令", "连接远端主机执行", "用你本机的 OpenSSH 连过去看一眼、跑条命令",
+                        SideEffect.MUTATE, null, false, true),
+                // 只读：读本机执行器所在电脑的 ~/.ssh/config 别名清单。SideEffect.READ 让它在只读档也挂得上
+                // （ExecutionPolicy#allowsTool 对 SSH 族在只读档只放行 READ），且不参与执行审批。
+                new ToolDescriptor(
+                        "ssh_list_aliases", ToolFamily.SSH,
+                        "本机 SSH 别名清单", "列出本机 SSH 别名", "读你本机 ~/.ssh/config 里有哪些 Host 别名",
+                        SideEffect.READ, null, false, false));
     }
 
     @Override

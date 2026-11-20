@@ -41,7 +41,7 @@ public class WenquAgentxTools {
     private static final Set<String> API_KEY_DENIED_TOOLS = Set.of(
             "run_code", "read_file", "write_file", "edit_file", "execute",
             "shell", "shell_execute", "list_files", "grep_files", "glob_files",
-            "ls", "deliver_artifact", "ssh_exec");
+            "ls", "deliver_artifact", "ssh_exec", "ssh_list_aliases");
 
     private final KnowledgeRetrievalTool knowledgeRetrieval;
     private final RetrievalScopeService retrievalScope;

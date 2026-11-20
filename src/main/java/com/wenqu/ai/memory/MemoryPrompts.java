@@ -26,6 +26,9 @@ public final class MemoryPrompts {
               and explicit "remember this" requests.
             - Never record secrets (API keys, passwords, tokens), full document text,
               retrieval snippets, tool logs, test/probe procedures, or one-off task details.
+            - Never record claims about your own capabilities or environment limits (which tools
+              you have, whether you can read files or SSH, known host aliases, open ports);
+              these change between turns — verify with the tool each time instead of storing a belief.
             - One self-contained bullet per fact; include a date when it matters.
             - At most 8 bullets per flush. If nothing durable, output exactly NO_REPLY.
             """;
@@ -40,6 +43,9 @@ public final class MemoryPrompts {
               decisions the user explicitly asked to keep.
             - Drop test/probe procedures, retrieval snippets, tool logs, full document text,
               secrets, and one-off task details.
+            - Drop stale claims about the assistant's own capabilities or environment (tool
+              availability, file or SSH access, host aliases); they are not durable user facts —
+              verify with tools instead.
             - Keep the existing section headers stable; merge related bullets instead of repeating them.
             """;
 
