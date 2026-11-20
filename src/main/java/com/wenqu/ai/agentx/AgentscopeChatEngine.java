@@ -3350,6 +3350,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 记忆是持久注入面：本轮后续的破坏性命令/越界写要回到人面前确认（见 AgentxTaint）。
         // 实例按会话常驻，这个标记跟着实例走；记忆文件之后新增/清空要等重建才换，方向是「更保守」。
         slot.noteWorkspaceMemoryTainted(!workspaceMemory.isEmpty() || !userMemoryReadonly.isEmpty());
+        // 本轮的沙盒/工作区文件系统：build 期算一次，既喂给 builder 的 abstractFilesystem，
+        // 也给读图工具（read_image）复用同一份——两处若各算一次，可能拿到不同后端、读写与读图指向不同盘。
+        io.agentscope.harness.agent.filesystem.AbstractFilesystem frameworkFs = frameworkFilesystem(cmd,
+                policy.sandboxMode() == com.wenqu.ai.agent.permission.SandboxMode.DANGER_FULL_ACCESS,
+                sandboxEnabled);
         HarnessAgent.Builder agentBuilder = HarnessAgent.builder()
                 .agentId(AGENT_ID)
                 .name("wenqu")
@@ -3496,9 +3501,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 //   HarnessAgent:2903 `new ShellExecuteTool(sandbox)`（filesystem 当沙箱用）
                 // 两者都从 builder 字段取，**不看 RuntimeContext**。
                 // 往 ctx 里 put AbstractFilesystem 无效，必须用 abstractFilesystem(...) 在 build 期传进去。
-                .abstractFilesystem(frameworkFilesystem(cmd,
-                        policy.sandboxMode() == com.wenqu.ai.agent.permission.SandboxMode.DANGER_FULL_ACCESS,
-                        sandboxEnabled))
+                .abstractFilesystem(frameworkFs)
                 .artifactDeliveryTarget(new com.wenqu.ai.sandbox.WenquArtifactDeliveryTarget(artifactService))
                 .disableWebTools();
 
@@ -3548,6 +3551,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         alignWriteFileDescription(agent);
         alignExecuteDescription(agent);
         applyNativeToolGuards(agent, slot, cmd);
+        registerReadImageTool(agent, hooks, frameworkFs);
         return agent;
     }
 
@@ -3595,6 +3599,28 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 绑了本机目录就取源文件夹；服务器沙盒/无工作区返回空表——空表时任何绝对路径都按越界处理，
      * 方向偏保守（最多多一张确认卡），不会把外部路径误判成工作区内。
      */
+    /**
+     * 读图工具（{@code read_image}）挂载：只在「本轮模型支持读图 + 有可用文件系统 + 开关开启」时注册。
+     * <p>读不了图的模型挂上它只会拿到一张上游不认的图片块，与「被禁的能力与不存在不可区分」同口径，
+     * 所以不收窄成「挂了再拒」，而是直接不挂（与提示词只在能读图时才塞 ImageBlock 一个判据）。
+     * <p>体积上限复用对话图片上限口径（{@code ConfigDefaults.CHAT_MAX_IMAGE_MB}，夹在 1~20MB），
+     * 与 ChatController / ShareController 的入站限制同一份真源，避免超大图撑爆上下文。
+     * <p>幂等：实例按会话常驻、每轮都会走这里，已挂过就跳过，不重复注册同名工具。
+     */
+    private void registerReadImageTool(HarnessAgent agent, WenquAgentxTools.TurnHooks hooks,
+                                       io.agentscope.harness.agent.filesystem.AbstractFilesystem fs) {
+        if (agent == null || fs == null) return;
+        Toolkit toolkit = agent.getToolkit();
+        if (toolkit == null) return;
+        if (toolkit.getTool(ReadImageTool.NAME) != null) return;
+        // 不配平台开关：读图是只读能力，挂载条件只有「模型这一轮能读图 + 文件系统可用」；
+        // 要关就按名停用 read_image（平台停用名单/智能体 deny），与文件类工具同一口径。
+        boolean vision = hooks != null && modelRegistry.visionCapableOf(hooks.modelRef());
+        if (!vision) return;
+        int mb = Math.max(1, Math.min(20, ConfigDefaults.CHAT_MAX_IMAGE_MB));
+        toolkit.registerAgentTool(new ReadImageTool(fs, mb * 1024 * 1024));
+    }
+
     private List<String> workspaceRootsOf(ChatCommand cmd) {
         List<String> out = new ArrayList<>();
         try {

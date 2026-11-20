@@ -63,6 +63,7 @@ public final class FrameworkToolLabels {
             Map.entry("session_search", "检索历史会话"),
             Map.entry("session_list", "列出历史会话"),
             Map.entry("session_history", "读取历史会话"),
+            Map.entry("read_image", "读取图片"),
             Map.entry("deliver_artifact", "交付产物"),
             // 子智能体的派活、催话、取结果这六把都在卡上露面。
             Map.entry("agent_spawn", "委派助手执行"),
@@ -97,6 +98,7 @@ public final class FrameworkToolLabels {
             Map.entry("session_search", "在以往的历史会话里按关键词搜"),
             Map.entry("session_list", "列出历史会话都有哪些"),
             Map.entry("session_history", "把某一次历史会话的往来读出来"),
+            Map.entry("read_image", "打开工作区/沙盒里的一张图片来看"),
             Map.entry("deliver_artifact", "把云端沙盒里生成的文件存进会话，可查看下载"),
             Map.entry("agent_spawn", "让一个子助手单独去完成这件事，做完把结果交回来"),
             Map.entry("agent_send", "往已经在跑的助手那儿再递一句话"),
