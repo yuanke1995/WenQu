@@ -73,15 +73,17 @@ echo "本次要跑："
 printf '  - %s\n' "${suites[@]}"
 [ "$list_only" -eq 1 ] && exit 0
 
-MVN="${MAVEN_BIN:-}"
-if [ -z "$MVN" ]; then
-  if command -v mvn >/dev/null 2>&1; then
-    MVN=mvn
-  elif [ -x "./mvnw" ]; then
-    MVN="./mvnw"
-  else
-    echo "找不到 mvn：装 Maven、生成 mvnw，或设置 MAVEN_BIN 指向 mvn 可执行文件。" >&2
-    exit 1
+if [ "$backend" -eq 1 ]; then
+  MVN="${MAVEN_BIN:-}"
+  if [ -z "$MVN" ]; then
+    if command -v mvn >/dev/null 2>&1; then
+      MVN=mvn
+    elif [ -x "./mvnw" ]; then
+      MVN="./mvnw"
+    else
+      echo "找不到 mvn：装 Maven、生成 mvnw，或设置 MAVEN_BIN 指向 mvn 可执行文件。" >&2
+      exit 1
+    fi
   fi
 fi
 

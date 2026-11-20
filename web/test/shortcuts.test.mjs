@@ -11,5 +11,8 @@ test('保存快捷键：Ctrl 与 ⌘ 都命中，Alt 组合不抢', () => {
 })
 
 test('无浏览器平台信息时按 Ctrl+S 展示（Windows/Linux）', () => {
-  assert.equal(saveKeyLabel(), 'Ctrl+S')
+  assert.equal(saveKeyLabel(''), 'Ctrl+S')
+  assert.equal(saveKeyLabel('Win32'), 'Ctrl+S')
+  assert.equal(saveKeyLabel('Linux x86_64'), 'Ctrl+S')
+  assert.equal(saveKeyLabel('MacIntel'), '⌘S')
 })

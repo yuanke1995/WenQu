@@ -1,10 +1,15 @@
 import { onBeforeUnmount, onMounted } from 'vue'
 
 /** 平台判断只用于展示快捷键符号；业务功能永远同时响应 Ctrl 与 ⌘。 */
-const isMac = () => /Mac|iPhone|iPad|iPod/i.test(typeof navigator === 'undefined' ? '' : (navigator.platform || ''))
+const isMac = (platform) => /Mac|iPhone|iPad|iPod/i.test(
+  platform === undefined
+    ? (typeof navigator === 'undefined' ? '' : (navigator.platform || ''))
+    : platform
+)
 
-export function saveKeyLabel () {
-  return isMac() ? '⌘S' : 'Ctrl+S'
+// 第二参数仅供测试注入；线上调用不传，走浏览器 navigator.platform。
+export function saveKeyLabel (platform) {
+  return isMac(platform) ? '⌘S' : 'Ctrl+S'
 }
 
 export function isSaveHotkey (e) {
