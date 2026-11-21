@@ -40,7 +40,17 @@ export default defineConfig({
     // 监听 0.0.0.0，允许局域网内其他设备用内网 IP 访问（如 http://192.168.31.x:5800）
     host: true,
     proxy: {
-      // 前端调 /proxy/**，转发到 AI 服务 http://localhost:8090/ai/**
+      // API 专用：VITE_API_PROXY_TARGET 设了独立根域时（dev:prod），让 /proxy/api/**
+      // 剥掉 /proxy 后走 /api/**（线上 nginx /api/ 关了 proxy_buffering，SSE 实时）；
+      // 未设时回落到 VITE_PROXY_TARGET，与下面 /proxy 行为等价，本地 dev 不受影响。
+      // 必须排在 /proxy 之前：vite 按对象键顺序匹配，/proxy 会吞掉全部 /proxy/**。
+      '/proxy/api': {
+        target: process.env.VITE_API_PROXY_TARGET || process.env.VITE_PROXY_TARGET || 'http://localhost:8090/ai',
+        changeOrigin: true,
+        ws: true,
+        rewrite: path => path.replace(/^\/proxy/, '')
+      },
+      // 其余 /proxy/**（媒体 /images、/artifacts 等）转发到 AI 服务
       '/proxy': {
         // 后端地址：默认 8090；8090 被本机代理占用、后端改跑 8091 时，用 VITE_PROXY_TARGET 覆盖
         // （启动时：VITE_PROXY_TARGET=http://localhost:8091/ai npm run dev）

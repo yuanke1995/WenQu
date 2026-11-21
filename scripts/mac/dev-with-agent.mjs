@@ -34,7 +34,7 @@ const argValue = (name, dflt) => {
   const i = process.argv.indexOf('--' + name)
   return i >= 0 && process.argv[i + 1] && !process.argv[i + 1].startsWith('--') ? process.argv[i + 1] : dflt
 }
-const consumedArgs = new Set(['--proxy-target', '--web-base'])
+const consumedArgs = new Set(['--proxy-target', '--api-proxy-target', '--web-base'])
 const passthroughArgs = []
 for (let i = 2; i < process.argv.length; i++) {
   const a = process.argv[i]
@@ -43,6 +43,13 @@ for (let i = 2; i < process.argv.length; i++) {
 }
 
 const server = argValue('proxy-target', process.env.WENQU_EXECUTOR_SERVER || process.env.VITE_PROXY_TARGET || 'http://127.0.0.1:8090/ai')
+// 执行器连后端的「服务器地址」（要带 /ai 上下文路径：执行器按 ${SERVER}/api/ai/... 拼）。
+// vite 的「API 请求」转发目标可与它分开：线上 nginx 的 SSE 走 /api/（已关 proxy_buffering），
+// 而 /ai/ 直通口在后端 context-path 下会缓冲——dev:prod 前端若把 /proxy/api/** 指向 /ai/**，
+// 一帧孤立的 ask_user（长思考后单独产出）会卡在反代缓冲里迟迟不到浏览器（刷新才出现）。
+// 所以 dev:prod 用 --api-proxy-target 指向根域，让 /proxy/api/** 走 /api/**，与生产同路；
+// 媒体（/proxy/images|artifacts 等）仍走 --proxy-target 的 /ai，互不影响。
+const apiProxyTargetArg = argValue('api-proxy-target', '')
 const root = process.env.WENQU_EXECUTOR_ROOT || '~'
 const web = argValue('web-base', process.env.WENQU_WEB_BASE || 'http://localhost:5800')
 
@@ -71,8 +78,11 @@ const viteEnv = { ...process.env }
 // 「http proxy error: /api/ai/... ECONNREFUSED」。
 const proxyTargetArg = argValue('proxy-target', '')
 if (proxyTargetArg) viteEnv.VITE_PROXY_TARGET = proxyTargetArg
+// API 单独目标：让 /proxy/api/** 走 /api/**（线上 nginx 关了缓冲），媒体仍走 /proxy → /ai。
+if (apiProxyTargetArg) viteEnv.VITE_API_PROXY_TARGET = apiProxyTargetArg
 if (!process.argv.includes('--pair')) {
   console.log(`[dev] /proxy 代理目标：${viteEnv.VITE_PROXY_TARGET || 'http://localhost:8090/ai（默认）'}`)
+  if (viteEnv.VITE_API_PROXY_TARGET) console.log(`[dev] /proxy/api 专用目标：${viteEnv.VITE_API_PROXY_TARGET}`)
 }
 const local = localExecutors()
 if (Object.keys(local.byUid).length) viteEnv.VITE_LOCAL_EXECUTORS = JSON.stringify(local.byUid)
