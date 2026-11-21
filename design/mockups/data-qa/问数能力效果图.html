@@ -1,0 +1,795 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>问渠 · 问数能力效果图</title>
+<style>
+/* ============================================================
+   问渠 · 问数（数据问数）效果图
+   画布 1600×1000；token 取自 web/src/views/app.css（与市场/知识库原型同壳）
+   ============================================================ */
+:root {
+  --app-bg: #f7f8fa;
+  --app-panel: #ffffff;
+  --app-panel-2: #fafbfc;
+  --app-border: #e6e9ed;
+  --app-border-strong: #d8dde3;
+  --app-text: #1f2329;
+  --app-text2: #5f6570;
+  --app-text3: #98a0aa;
+  --app-accent: #2e6be6;
+  --app-accent-hover: #1f5bd8;
+  --app-accent-weak: #eef2f7;
+  --app-accent-border: #bcd0f7;
+  --app-danger: #d4552e;
+  --app-danger-weak: #fff2f0;
+  --app-danger-border: #ffccc7;
+  --app-danger-text: #cf1322;
+  --app-ok: #3b8f4e;
+  --app-ok-weak: #eaf5ec;
+  --app-warn: #c77c14;
+  --app-warn-weak: #faf3e6;
+  --app-warn-border: #f0dfb6;
+  --app-warn-text: #a3691b;
+  --app-info-weak: #f0f6ff;
+  --app-info-border: #d6e4ff;
+  --app-code-bg: #f6f8fa;
+  --app-shadow-sm: 0 1px 2px rgba(16, 24, 40, .04);
+  --app-shadow-lg: 0 12px 32px rgba(16, 24, 40, .14);
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+          'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body { font-family: var(--font); background: #eef1f5; color: var(--app-text); font-size: 13px;
+  -webkit-font-smoothing: antialiased; }
+svg.ic { stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.mono { font-family: var(--mono); }
+
+/* ---------------- 设计稿外壳 ---------------- */
+.sheet { width: 1600px; margin: 0 auto; padding: 34px 0 60px; }
+.sheet-top { padding: 0 2px 20px; }
+.sheet-title { font-size: 22px; font-weight: 600; letter-spacing: .01em; }
+.sheet-sub { margin-top: 8px; font-size: 13px; color: #8a929d; }
+.sheet-sub b { color: #5f6570; font-weight: 500; }
+
+.brief { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 20px 0 30px; }
+.brief-card { background: #fff; border: 1px solid var(--app-border); border-radius: 10px;
+  box-shadow: var(--app-shadow-sm); padding: 14px 16px 15px; }
+.brief-card .k { font-size: 11px; letter-spacing: .08em; color: var(--app-text3); font-weight: 600; }
+.brief-card .t { margin-top: 5px; font-size: 14px; font-weight: 600; }
+.brief-card ul { margin: 9px 0 0; padding: 0 0 0 14px; font-size: 12px; line-height: 1.85; color: var(--app-text2); }
+.brief-card code { font-family: var(--mono); font-size: 11px; background: var(--app-panel-2); border-radius: 3px; padding: 0 3px; }
+
+.scene-block { margin-top: 30px; }
+.cap { display: flex; align-items: baseline; gap: 10px; padding: 0 2px 10px; font-size: 13px; color: #5f6570; }
+.cap b { font-size: 11px; font-weight: 600; color: #98a0aa; letter-spacing: .08em; }
+.cap em { font-style: normal; color: #1f2329; font-weight: 600; font-size: 14px; }
+.cap span { color: #98a0aa; font-size: 12px; }
+.scene { width: 1600px; height: 1000px; display: flex; overflow: hidden;
+  background: var(--app-bg); position: relative; box-shadow: 0 20px 50px rgba(16, 24, 40, .16); }
+.note { position: absolute; z-index: 30; max-width: 230px; background: #143a8f; color: #fff;
+  font-size: 11.5px; line-height: 1.6; padding: 8px 10px; border-radius: 8px;
+  box-shadow: 0 8px 22px rgba(10, 30, 80, .35); }
+.note .h { font-weight: 600; margin-bottom: 3px; font-size: 12px; }
+.note:after { content: ''; position: absolute; left: 22px; bottom: -6px; width: 12px; height: 12px;
+  background: #143a8f; transform: rotate(45deg); }
+/* 覆盖在深色/彩色内容上的注释改为浅色描边卡，避免压花底层内容 */
+.note.lite { background: #fff; color: var(--app-text2); border: 1px solid var(--app-accent-border); }
+.note.lite .h { color: var(--app-accent); }
+.note.lite b { color: var(--app-text); }
+.note.lite:after { display: none; }
+
+/* ---------------- 侧栏 ---------------- */
+.side { width: 232px; flex: none; height: 100%; display: flex; flex-direction: column;
+  background: var(--app-panel); border-right: 1px solid var(--app-border); padding: 10px 8px 8px; }
+.logo-row { display: flex; align-items: center; gap: 8px; padding: 2px 6px 12px; }
+.logo-name { font-size: 13px; font-weight: 500; }
+.nav-item { display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 9px;
+  border-radius: 8px; font-size: 13px; color: var(--app-text2); white-space: nowrap; }
+.nav-item .ic { width: 14px; height: 14px; color: var(--app-text3); flex: none; }
+.nav-item.active { background: var(--app-accent-weak); color: var(--app-text); font-weight: 500; }
+.nav-item.active .ic { color: var(--app-text2); }
+.side-search { flex: none; margin-top: 12px; height: 28px; display: flex; align-items: center; gap: 7px;
+  padding: 0 9px; border: 1px solid var(--app-border); border-radius: 6px; color: var(--app-text3);
+  font-size: 12px; background: var(--app-panel); }
+.side-search .ic { width: 12px; height: 12px; flex: none; }
+.side-sec { margin-top: 16px; display: flex; align-items: center; gap: 4px; padding: 0 7px 5px; }
+.side-sec .t { font-size: 11px; font-weight: 600; color: var(--app-text3); letter-spacing: .04em; }
+.side-sec .plus { margin-left: auto; color: var(--app-text3); }
+.sess-row { display: flex; align-items: center; gap: 7px; height: 27px; padding: 0 7px 0 25px;
+  font-size: 12px; color: var(--app-text3); }
+.sess-row span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sess-row .ic { width: 12px; height: 12px; flex: none; color: var(--app-text3); }
+.side-foot { margin-top: auto; display: flex; align-items: center; gap: 6px; padding: 8px 4px 2px;
+  border-top: 1px solid var(--app-border); }
+.avatar { width: 24px; height: 24px; border-radius: 50%; background: #e8ecf2; color: var(--app-text2);
+  font-size: 12px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; }
+
+/* ---------------- 主区 ---------------- */
+.main { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--app-bg); }
+.page-head { flex: none; height: 56px; display: flex; align-items: center; gap: 12px; padding: 0 20px;
+  background: var(--app-panel); border-bottom: 1px solid var(--app-border); }
+.page-title { font-size: 15px; font-weight: 600; }
+.head-r { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.btn { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 13px;
+  border-radius: 7px; border: none; background: var(--app-accent); color: #fff; font-size: 12px; white-space: nowrap; }
+.btn .ic { width: 12px; height: 12px; }
+.btn.ghost { background: transparent; color: var(--app-text2); border: 1px solid var(--app-border); }
+.btn.sm { height: 26px; padding: 0 10px; font-size: 12px; }
+.pill { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px;
+  border-radius: 999px; font-size: 11px; border: 1px solid var(--app-border); color: var(--app-text2);
+  background: var(--app-panel); }
+.pill.ok { color: var(--app-ok); background: var(--app-ok-weak); border-color: transparent; }
+.pill.warn { color: var(--app-warn-text); background: var(--app-warn-weak); border-color: var(--app-warn-border); }
+.pill.err { color: var(--app-danger-text); background: var(--app-danger-weak); border-color: var(--app-danger-border); }
+.pill.info { color: var(--app-accent); background: var(--app-accent-weak); border-color: var(--app-accent-border); }
+.dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+
+.tabs { flex: none; height: 42px; display: flex; align-items: stretch; gap: 26px; padding: 0 20px;
+  background: var(--app-panel); border-bottom: 1px solid var(--app-border); }
+.tab { display: flex; align-items: center; font-size: 13px; color: var(--app-text); position: relative; }
+.tab.on { color: var(--app-accent); font-weight: 600; }
+.tab.on::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: var(--app-accent); }
+.tab .n { font-style: normal; font-size: 11px; margin-left: 6px; padding: 0 6px; border-radius: 999px;
+  background: var(--app-accent-weak); color: var(--app-text3); }
+.tab.on .n { background: var(--app-accent); color: #fff; }
+
+.body { flex: 1; min-height: 0; padding: 16px 20px; overflow: hidden; }
+
+/* ---------------- 卡片 ---------------- */
+.card { background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 10px;
+  box-shadow: var(--app-shadow-sm); }
+.card-h { display: flex; align-items: center; gap: 8px; padding: 11px 14px; border-bottom: 1px solid var(--app-border); }
+.card-h .t { font-size: 13px; font-weight: 600; }
+.card-h .s { font-size: 11.5px; color: var(--app-text3); }
+.card-b { padding: 12px 14px; }
+
+/* 表格 */
+.tbl { width: 100%; border-collapse: collapse; font-size: 12px; }
+.tbl th { text-align: left; font-weight: 500; color: var(--app-text3); background: var(--app-panel-2);
+  padding: 7px 10px; border-bottom: 1px solid var(--app-border); white-space: nowrap; }
+.tbl td { padding: 8px 10px; border-bottom: 1px solid var(--app-border); color: var(--app-text2); }
+.tbl tr:last-child td { border-bottom: none; }
+.tbl td.strong { color: var(--app-text); font-weight: 500; }
+.tbl td.num { font-family: var(--mono); color: var(--app-text); }
+
+/* 表单 */
+.f-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.f-label { width: 88px; flex: none; font-size: 12px; color: var(--app-text2); text-align: right; }
+.f-label .req { color: var(--app-danger); margin-left: 2px; }
+.f-input { flex: 1; height: 30px; border: 1px solid var(--app-border); border-radius: 6px; background: var(--app-panel);
+  padding: 0 9px; font-size: 12.5px; color: var(--app-text); display: flex; align-items: center; gap: 6px; }
+.f-input.dim { color: var(--app-text3); }
+.f-input.mono { font-family: var(--mono); font-size: 12px; }
+.f-hint { font-size: 11px; color: var(--app-text3); line-height: 1.5; }
+.f-select { flex: 1; height: 30px; border: 1px solid var(--app-border); border-radius: 6px; background: var(--app-panel);
+  padding: 0 9px; font-size: 12.5px; color: var(--app-text); display: flex; align-items: center; justify-content: space-between; }
+.f-select .ic { width: 12px; height: 12px; color: var(--app-text3); }
+
+/* SQL 块 */
+.sqlbox { background: #0f1420; color: #d8e2f2; font-family: var(--mono); font-size: 11.5px; line-height: 1.75;
+  border-radius: 8px; padding: 12px 14px; white-space: pre; overflow: hidden; }
+.sqlbox .kw { color: #7fb2ff; font-weight: 600; }
+.sqlbox .fn { color: #ffc978; }
+.sqlbox .str { color: #9be6b0; }
+.sqlbox .cm { color: #6b7891; }
+.sqlbox .num { color: #f0a8e0; }
+
+/* 迷你柱状图（纯 CSS） */
+.bars { display: flex; align-items: flex-end; gap: 18px; height: 190px; padding: 8px 6px 0; }
+.barcol { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.bar { width: 46px; border-radius: 5px 5px 0 0; background: var(--app-accent); }
+.bar.b2 { background: #36b3f1; }
+.barval { font-family: var(--mono); font-size: 11px; color: var(--app-text2); }
+.barlbl { font-size: 11.5px; color: var(--app-text2); }
+.chart-axis { display: flex; gap: 18px; padding: 6px 6px 0; border-top: 1px solid var(--app-border); margin-top: 8px; }
+
+/* 折线图（SVG） */
+.spark { width: 100%; }
+
+/* 杂项 */
+.kv { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--app-text3); }
+.kv b { color: var(--app-text2); font-weight: 500; }
+.chip { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 999px;
+  background: var(--app-panel-2); border: 1px solid var(--app-border); font-size: 11px; color: var(--app-text2); }
+.chip.on { background: var(--app-accent-weak); border-color: var(--app-accent-border); color: var(--app-accent); }
+.divider { height: 1px; background: var(--app-border); margin: 10px 0; }
+.lock { display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; color: var(--app-text3);
+  border: 1px dashed var(--app-border-strong); padding: 2px 7px; border-radius: 4px; }
+.lock .ic { width: 10px; height: 10px; }
+</style>
+</head>
+<body>
+<div class="sheet">
+
+  <div class="sheet-top">
+    <div class="sheet-title">问渠 · 问数能力效果图（受控 Text2SQL）</div>
+    <div class="sheet-sub">对应方案 <b>design/plans/问数能力立项方案.md</b> · 六个场景：<b>数据源接入 → 数据集语义设计 → 智能体对话问数 → 安全拦截 → 审计与治理 → 定时报表</b> · 画布 1600×1000 · token 取自 <b>web/src/views/app.css</b></div>
+  </div>
+
+  <div class="brief">
+    <div class="brief-card">
+      <div class="k">对象模型</div>
+      <div class="t">数据源 → 数据集 → 指标</div>
+      <ul>
+        <li>数据源 = 一条<b>只读连接</b>（JWE 加密）</li>
+        <li>数据集 = 授权表 + 字段中文名 + 指标口径</li>
+        <li>模型只能看见、只能查数据集圈定的对象</li>
+      </ul>
+    </div>
+    <div class="brief-card">
+      <div class="k">调用链路</div>
+      <div class="t">提问 → 生成 → 校验 → 执行</div>
+      <ul>
+        <li>模型产 <code>{sql, explain, chart}</code></li>
+        <li>JSqlParser AST 白名单校验 + 钳 LIMIT</li>
+        <li>只读账号执行 · 超时 / 限行 / 字节上限</li>
+      </ul>
+    </div>
+    <div class="brief-card">
+      <div class="k">结果呈现</div>
+      <div class="t">表格 + 结论 + 图表</div>
+      <ul>
+        <li>echarts 代码块原位渲染（复用现有）</li>
+        <li>SQL 折叠可核对口径</li>
+        <li>结果套 <code>UntrustedContent</code> 信封</li>
+      </ul>
+    </div>
+    <div class="brief-card">
+      <div class="k">治理闭环</div>
+      <div class="t">审计 · 计量 · 订阅</div>
+      <ul>
+        <li>每次问数落 <code>c_ai_data_query_log</code></li>
+        <li>token 落用量台账 <code>kind=data_qa</code></li>
+        <li>定时报表经邮件 / 站内通知送达</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ================= 场景 1 · 数据源接入 ================= -->
+  <div class="scene-block">
+    <div class="cap"><b>场景 1</b><em>数据源接入 —— 管理员登记一条只读连接</em><span>侧栏「数据问数」新入口 · 数据源 / 数据集 / 问数记录 三个页签</span></div>
+    <div class="scene">
+      <aside class="side">
+        <div class="logo-row"><svg class="ic" width="16" height="16" viewBox="0 0 24 24"><path d="M12 3c4.4 0 8 1.3 8 3s-3.6 3-8 3-8-1.3-8-3 3.6-3 8-3z"/><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/><path d="M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg><span class="logo-name">问渠</span></div>
+        <div class="nav-item"><svg class="ic" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>会话</div>
+        <div class="nav-item"><svg class="ic" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/></svg>工作区</div>
+        <div class="nav-item"><svg class="ic" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>知识库</div>
+        <div class="nav-item"><svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6"/></svg>智能体</div>
+        <div class="nav-item active"><svg class="ic" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg>数据问数<span style="margin-left:auto;font-size:10px;color:var(--app-accent);">新</span></div>
+        <div class="nav-item"><svg class="ic" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 5-6"/></svg>数据看板</div>
+        <div class="nav-item"><svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3h0a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5h0a1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9v0a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>系统设置</div>
+        <div class="side-search"><svg class="ic" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>搜索会话、知识与数据…</div>
+        <div class="side-sec"><span class="t">最近会话</span><span class="plus">＋</span></div>
+        <div class="sess-row"><svg class="ic" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span>双十一复盘 · 销售分析</span></div>
+        <div class="sess-row"><svg class="ic" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span>库存周转异常排查</span></div>
+        <div class="side-foot"><div class="avatar">元</div><span style="font-size:12px;color:var(--app-text2);">yuanke</span></div>
+      </aside>
+
+      <div class="main">
+        <div class="page-head">
+          <div class="page-title">数据问数</div>
+          <span class="pill warn"><span class="dot"></span>平台开关已开启 · 建议绑定只读从库</span>
+          <div class="head-r">
+            <span class="pill info"><span class="dot"></span>数据源 3 · 数据集 5 · 本月问数 1,284 次</span>
+            <button class="btn"><svg class="ic" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>接入数据源</button>
+          </div>
+        </div>
+        <div class="tabs">
+          <div class="tab on">数据源<span class="n">3</span></div>
+          <div class="tab">数据集<span class="n">5</span></div>
+          <div class="tab">问数记录</div>
+          <div class="tab">报表订阅<span class="n">2</span></div>
+        </div>
+
+        <div class="body" style="position:relative;">
+          <div class="note lite" style="top:6px; right:8px;">
+            <div class="h">只读强制</div>
+            连通性探测时即校验账号<b>无写权限</b>；生产环境建议指向只读从库。密码经 JWE 加密落库、界面永不回显。
+          </div>
+          <div class="card">
+            <div class="card-h">
+              <span class="t">数据源</span><span class="s">一条数据源 = 一个受控只读连接，凭据 RSA/JWE 加密存储</span>
+              <div style="margin-left:auto;display:flex;gap:8px;margin-right:240px;">
+                <span class="chip">全部</span><span class="chip on">MySQL</span><span class="chip">PostgreSQL</span><span class="chip">ClickHouse</span>
+              </div>
+            </div>
+            <table class="tbl">
+              <tr><th style="width:34px;"></th><th>名称</th><th>类型 / 地址</th><th>账号</th><th>共享范围</th><th>连通性</th><th>数据集</th><th style="width:120px;">操作</th></tr>
+              <tr>
+                <td><svg class="ic" style="width:14px;color:#2e6be6;" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg></td>
+                <td class="strong">电商业务库（只读从库）</td>
+                <td class="mono">MySQL · 10.20.3.11:3306/shop_ro</td>
+                <td class="mono">shop_reader</td>
+                <td><span class="pill ok">全局</span></td>
+                <td><span class="pill ok"><span class="dot"></span>2 分钟前 · 通</span></td>
+                <td>3</td>
+                <td><a style="color:var(--app-accent);font-size:12px;">探测</a> · <a style="color:var(--app-accent);font-size:12px;">编辑</a></td>
+              </tr>
+              <tr>
+                <td><svg class="ic" style="width:14px;color:#2e6be6;" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg></td>
+                <td class="strong">供应链中台库</td>
+                <td class="mono">MySQL · 10.20.3.12:3306/scm</td>
+                <td class="mono">scm_ro</td>
+                <td><span class="pill info">供应链部</span></td>
+                <td><span class="pill ok"><span class="dot"></span>10 分钟前 · 通</span></td>
+                <td>2</td>
+                <td><a style="color:var(--app-accent);font-size:12px;">探测</a> · <a style="color:var(--app-accent);font-size:12px;">编辑</a></td>
+              </tr>
+              <tr>
+                <td><svg class="ic" style="width:14px;color:var(--app-text3);" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg></td>
+                <td class="strong">用户行为数仓</td>
+                <td class="mono">ClickHouse · ch-prod.internal:8123/dw</td>
+                <td class="mono">dw_analyst</td>
+                <td><span class="pill warn">数据组（指定用户）</span></td>
+                <td><span class="pill err"><span class="dot"></span>1 小时前 · 失败</span></td>
+                <td>0</td>
+                <td><a style="color:var(--app-accent);font-size:12px;">探测</a> · <a style="color:var(--app-danger-text);font-size:12px;">查看原因</a></td>
+              </tr>
+            </table>
+          </div>
+
+          <div class="card" style="margin-top:14px;max-width:760px;">
+            <div class="card-h"><span class="t">接入数据源（弹窗）</span><span class="s">敏感项只写不读</span></div>
+            <div class="card-b">
+              <div class="f-row"><div class="f-label">名称<span class="req">*</span></div><div class="f-input">电商业务库（只读从库）</div></div>
+              <div class="f-row"><div class="f-label">类型<span class="req">*</span></div><div class="f-select">MySQL<svg class="ic" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg><span style="font-size:11px;color:var(--app-text3);">一期支持 MySQL，刀二加 PG / ClickHouse</span></div></div>
+              <div class="f-row"><div class="f-label">地址<span class="req">*</span></div><div class="f-input mono">10.20.3.11</div><div style="width:8px;"></div><div class="f-input mono" style="max-width:90px;">3306</div></div>
+              <div class="f-row"><div class="f-label">数据库<span class="req">*</span></div><div class="f-input mono">shop_ro</div></div>
+              <div class="f-row"><div class="f-label">账号<span class="req">*</span></div><div class="f-input mono">shop_reader</div></div>
+              <div class="f-row"><div class="f-label">密码<span class="req">*</span></div><div class="f-input mono">••••••••••••<span class="lock" style="margin-left:auto;"><svg class="ic" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>JWE 加密 · 仅写入</span></div></div>
+              <div class="f-row"><div class="f-label">共享范围</div><div class="f-select">全局可见（同知识库可见性口径）<svg class="ic" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></div></div>
+              <div class="f-hint" style="margin-left:98px;">连通性探测将校验：① 可连接 ② 账号为只读（存在写权限即拒绝保存）③ 内网地址按部署策略放行。</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 场景 2 · 数据集语义设计 ================= -->
+  <div class="scene-block">
+    <div class="cap"><b>场景 2</b><em>数据集语义设计 —— 圈表、给字段起中文名、定指标口径</em><span>受控与裸奔的分水岭：模型只能看见这里圈定的对象</span></div>
+    <div class="scene">
+      <div class="main">
+        <div class="page-head">
+          <div class="page-title">数据集 · 销售分析</div>
+          <span class="pill ok"><span class="dot"></span>已启用</span>
+          <span class="pill">数据源：电商业务库（只读从库）</span>
+          <div class="head-r">
+            <button class="btn ghost sm">内省库表</button>
+            <button class="btn ghost sm">预览问数</button>
+            <button class="btn sm">保存</button>
+          </div>
+        </div>
+        <div class="body" style="display:grid; grid-template-columns: 470px 1fr; gap:14px; position:relative;">
+          <div class="note lite" style="top:2px; right:16px;">
+            <div class="h">指标 = 单一口径真源</div>
+            模型不再每次自己"估"口径。<b>GMV</b> 的表达式在此定义一次，所有问数、所有智能体、后续报表全部同一口径。
+          </div>
+          <!-- 左：授权表与字段 -->
+          <div class="card" style="display:flex;flex-direction:column;">
+            <div class="card-h"><span class="t">① 授权表与字段</span><span class="s">勾选才可见 · 3 / 47 张表</span>
+              <button class="btn ghost sm" style="margin-left:auto;">从库内省选择</button>
+            </div>
+            <div class="card-b" style="overflow:auto; flex:1; font-size:12px;">
+              <div style="font-weight:600;color:var(--app-text);margin-bottom:6px;" class="mono">dws_sales_order_daily <span style="font-weight:400;color:var(--app-text3);">销售订单日聚合</span></div>
+              <table class="tbl">
+                <tr><th style="width:30px;"></th><th>字段</th><th>中文名（给模型看）</th><th>类型</th></tr>
+                <tr><td>☑</td><td class="mono">stat_date</td><td>统计日期</td><td>date</td></tr>
+                <tr><td>☑</td><td class="mono">channel</td><td>销售渠道</td><td>varchar</td></tr>
+                <tr><td>☑</td><td class="mono">category</td><td>商品类目</td><td>varchar</td></tr>
+                <tr><td>☑</td><td class="mono">order_cnt</td><td>订单数</td><td>int</td></tr>
+                <tr><td>☑</td><td class="mono">gmv_amt</td><td>销售额（元）</td><td>decimal</td></tr>
+                <tr><td>☑</td><td class="mono">refund_amt</td><td>退款额（元）</td><td>decimal</td></tr>
+                <tr><td>☐</td><td class="mono" style="color:var(--app-text3);">user_phone</td><td style="color:var(--app-text3);">买家手机号（敏感 · 不圈选）</td><td>varchar</td></tr>
+                <tr><td>☐</td><td class="mono" style="color:var(--app-text3);">address</td><td style="color:var(--app-text3);">收货地址（不圈选）</td><td>varchar</td></tr>
+              </table>
+              <div class="divider"></div>
+              <div style="font-weight:600;color:var(--app-text);margin-bottom:6px;" class="mono">dim_channel <span style="font-weight:400;color:var(--app-text3);">渠道维度</span></div>
+              <div style="color:var(--app-text3);font-size:11.5px;">已圈 2 字段：channel_id / channel_name</div>
+              <div class="divider"></div>
+              <div style="font-weight:600;color:var(--app-text);margin-bottom:6px;" class="mono">dim_category <span style="font-weight:400;color:var(--app-text3);">类目维度</span></div>
+              <div style="color:var(--app-text3);font-size:11.5px;">已圈 2 字段：category_id / category_name</div>
+              <div class="divider"></div>
+              <div class="f-row" style="margin-bottom:6px;"><div class="f-label">默认时间字段</div><div class="f-select">stat_date（问「最近 / 上月」时用它）<svg class="ic" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></div></div>
+              <div class="f-row" style="margin-bottom:0;"><div class="f-label">行数上限</div><div class="f-input mono" style="max-width:120px;">200</div><span class="f-hint">单次返回 ≤ 200 行，超出截断并标注</span></div>
+            </div>
+          </div>
+          <!-- 右：指标与同义词 -->
+          <div style="display:flex;flex-direction:column;gap:14px;min-width:0;">
+            <div class="card">
+              <div class="card-h"><span class="t">② 指标定义</span><span class="s">名称 + 表达式 + 同义词 + 单位</span>
+                <button class="btn ghost sm" style="margin-left:auto;">＋ 新增指标</button>
+              </div>
+              <table class="tbl">
+                <tr><th>指标</th><th>表达式（SQL 片段）</th><th>同义词</th><th>单位</th></tr>
+                <tr>
+                  <td class="strong">GMV</td>
+                  <td class="mono" style="color:var(--app-text);">SUM(gmv_amt) − SUM(refund_amt)</td>
+                  <td>销售额 · 成交额 · 营业额</td><td>元</td>
+                </tr>
+                <tr>
+                  <td class="strong">退款率</td>
+                  <td class="mono" style="color:var(--app-text);">SUM(refund_amt) / SUM(gmv_amt)</td>
+                  <td>退货率 · 退款占比</td><td>%</td>
+                </tr>
+                <tr>
+                  <td class="strong">订单量</td>
+                  <td class="mono" style="color:var(--app-text);">SUM(order_cnt)</td>
+                  <td>订单数 · 单量</td><td>单</td>
+                </tr>
+              </table>
+            </div>
+            <div class="card" style="flex:1;">
+              <div class="card-h"><span class="t">③ 业务背景（给模型的说明）</span></div>
+              <div class="card-b" style="font-size:12.5px; line-height:1.8; color:var(--app-text2);">
+                本数据集用于电商销售分析。口径约定：<b>GMV = 销售额 − 退款额</b>；渠道维度经 <span class="mono">dim_channel</span> 关联取中文名；
+                时间字段 <span class="mono">stat_date</span> 为 T+1 日聚合，当天数据不出现在表内——若用户问「今天」，需说明数据截至昨日。
+                「大促」指 618 / 双十一 当月。
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-h"><span class="t">④ 可见性</span><span class="s">同知识库共享口径</span></div>
+              <div class="card-b" style="display:flex;gap:8px;">
+                <span class="chip on">private</span><span class="chip">指定部门</span><span class="chip">指定用户</span><span class="chip">global</span>
+                <span class="f-hint" style="margin-left:auto;">问数模型：跟随平台默认（可按数据集覆盖）</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 场景 3 · 对话问数（主场景） ================= -->
+  <div class="scene-block">
+    <div class="cap"><b>场景 3</b><em>对话问数 —— 智能体挂上「数据问数」后的完整一轮</em><span>生成 SQL → 校验 → 只读执行 → 表格 + 结论 + 图表</span></div>
+    <div class="scene">
+      <div class="main">
+        <div class="page-head">
+          <div class="page-title">双十一复盘 · 销售分析</div>
+          <span class="pill info"><svg class="ic" style="width:11px;height:11px;" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/></svg>已挂数据集：销售分析 · 库存分析</span>
+          <span class="pill">GLM-4.7 · temp 0</span>
+          <div class="head-r"><span class="pill"><span class="dot"></span>本轮 token 已入台账（data_qa）</span></div>
+        </div>
+        <div class="body" style="display:flex; gap:14px; overflow:hidden;">
+          <!-- 对话流 -->
+          <div style="flex:1; min-width:0; display:flex; flex-direction:column; gap:9px;">
+            <!-- 用户 -->
+            <div style="display:flex; justify-content:flex-end;">
+              <div style="max-width:560px; background:var(--app-accent); color:#fff; border-radius:12px 12px 4px 12px; padding:10px 14px; font-size:13px; line-height:1.6;">
+                看一下 10 月各渠道的 GMV 和订单量，按 GMV 从高到低排，再画个图。GMV 口径按扣掉退款算。
+              </div>
+            </div>
+            <!-- 工具卡：数据问数（过程块已并入卡头，省一行高度） -->
+            <div class="card" style="max-width:860px;">
+              <div class="card-h">
+                <svg class="ic" style="width:14px;color:#7c3aed;" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg>
+                <span class="t">数据问数</span>
+                <span class="s">销售分析 · 只读查询 · 186ms · 31 行</span>
+                <span class="pill ok" style="margin-left:auto;"><span class="dot"></span>校验通过</span>
+              </div>
+              <div class="card-b" style="padding-top:10px;">
+                <div style="font-size:11.5px;color:var(--app-text3);margin-bottom:6px;">执行 SQL（已自动补 LIMIT 200 · 可展开核对口径）</div>
+                <div class="sqlbox" style="font-size:11px; line-height:1.6;"><span class="cm">-- 生成：模型 · 校验：AST 白名单 ✓ 表 ∈ 授权集 ✓ 单条 SELECT ✓</span>
+<span class="kw">SELECT</span> c.channel_name <span class="kw">AS</span> 渠道,
+       <span class="fn">SUM</span>(s.gmv_amt) - <span class="fn">SUM</span>(s.refund_amt) <span class="kw">AS</span> GMV,
+       <span class="fn">SUM</span>(s.order_cnt) <span class="kw">AS</span> 订单量
+<span class="kw">FROM</span> dws_sales_order_daily s
+<span class="kw">JOIN</span> dim_channel c <span class="kw">ON</span> s.channel = c.channel_id
+<span class="kw">WHERE</span> s.stat_date <span class="kw">BETWEEN</span> <span class="str">'2026-10-01'</span> <span class="kw">AND</span> <span class="str">'2026-10-31'</span>
+<span class="kw">GROUP BY</span> c.channel_name <span class="kw">ORDER BY</span> GMV <span class="kw">DESC</span> <span class="kw">LIMIT</span> <span class="num">200</span></div>
+                <div style="display:flex; gap:8px; margin-top:8px; align-items:center;">
+                  <span class="pill ok"><span class="dot"></span>只读账号执行</span>
+                  <span class="pill"><span class="dot"></span>31 行 / 上限 200</span>
+                  <span class="pill"><span class="dot"></span>186ms</span>
+                  <span class="lock" style="margin-left:auto;"><svg class="ic" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>结果套 UntrustedContent 信封后回模型</span>
+                </div>
+              </div>
+            </div>
+            <!-- 回答：结论 + 表格 + 图表 -->
+            <div class="card" style="max-width:860px;">
+              <div class="card-b" style="font-size:13px; line-height:1.7;">
+                <b>10 月各渠道 GMV 与订单量</b>（口径：GMV = 销售额 − 退款额，数据截至 10-31，T+1）：
+                <table class="tbl" style="margin:8px 0;">
+                  <tr><th>渠道</th><th style="text-align:right;">GMV（元）</th><th style="text-align:right;">订单量</th><th style="text-align:right;">客单价</th></tr>
+                  <tr><td class="strong">天猫</td><td class="num" style="text-align:right;">42,318,600</td><td class="num" style="text-align:right;">128,442</td><td class="num" style="text-align:right;">329.4</td></tr>
+                  <tr><td class="strong">抖音</td><td class="num" style="text-align:right;">31,207,450</td><td class="num" style="text-align:right;">96,780</td><td class="num" style="text-align:right;">322.4</td></tr>
+                  <tr><td class="strong">京东</td><td class="num" style="text-align:right;">22,150,320</td><td class="num" style="text-align:right;">58,341</td><td class="num" style="text-align:right;">379.7</td></tr>
+                  <tr><td class="strong">私域小程序</td><td class="num" style="text-align:right;">9,842,110</td><td class="num" style="text-align:right;">33,015</td><td class="num" style="text-align:right;">298.1</td></tr>
+                </table>
+                <b>结论：</b>天猫贡献 38.6% 居首；抖音 GMV 逼近京东且客单价最低，量大价低；私域客单价 298 元为全渠道最低，适合做会员提频。
+                <div style="border:1px solid var(--app-border); border-radius:8px; margin-top:10px; padding:10px 14px 6px;">
+                  <div style="display:flex;align-items:center;gap:8px;margin-bottom:2px;">
+                    <span style="font-size:12px;font-weight:600;">各渠道 GMV（万元）</span>
+                    <span class="chip on" style="margin-left:auto;">柱状图</span><span class="chip">折线</span><span class="chip">饼图</span><span class="chip">表格</span>
+                  </div>
+                  <div class="bars" style="height:104px; gap:14px;">
+                    <div class="barcol"><div class="barval">4231.9</div><div class="bar" style="width:38px;height:60px;"></div><div class="barlbl">天猫</div></div>
+                    <div class="barcol"><div class="barval">3120.7</div><div class="bar" style="width:38px;height:44px;"></div><div class="barlbl">抖音</div></div>
+                    <div class="barcol"><div class="barval">2215.0</div><div class="bar" style="width:38px;height:31px;"></div><div class="barlbl">京东</div></div>
+                    <div class="barcol"><div class="barval">984.2</div><div class="bar" style="width:38px;height:14px;"></div><div class="barlbl">私域</div></div>
+                    <div class="barcol"><div class="barval">621.1</div><div class="bar" style="width:38px;height:9px;"></div><div class="barlbl">线下</div></div>
+                  </div>
+                  <div style="font-size:10.5px;color:var(--app-text3);padding:4px 2px 2px;">由模型输出 echarts 代码块，正文原位渲染（复用现有能力）· 可切图表类型</div>
+                </div>
+                <div style="display:flex;gap:8px;margin-top:8px;align-items:center;">
+                  <span class="chip">复制 SQL</span><span class="chip">下载 CSV</span><span class="chip">保存为产物</span><span class="chip">加入评估集</span>
+                  <span class="kv" style="margin-left:auto;"><svg class="ic" style="width:11px;" viewBox="0 0 24 24"><path d="M14 9V5a3 3 0 0 0-6 0v4M5 9h14l-1 12H6L5 9z"/></svg>赞 / 踩</span>
+                </div>
+              </div>
+            </div>
+            <!-- 输入框 -->
+            <div style="max-width:860px; margin-top:auto;">
+              <div style="display:flex;align-items:center;gap:8px;background:var(--app-panel);border:1px solid var(--app-border);border-radius:10px;padding:9px 12px;box-shadow:var(--app-shadow-sm);">
+                <svg class="ic" style="width:14px;color:var(--app-text3);" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                <span style="flex:1;font-size:12.5px;color:var(--app-text3);">追问，如「抖音的退款率和 9 月比怎么样？」—— 同口径多轮，不必重复解释</span>
+                <span class="chip on">数据集 ×2</span>
+                <span class="btn sm" style="cursor:default;"><svg class="ic" viewBox="0 0 24 24"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>发送</span>
+              </div>
+            </div>
+          </div>
+          <!-- 右栏：引用与口径 -->
+          <div style="width:300px; flex:none; display:flex; flex-direction:column; gap:10px; overflow:hidden;">
+            <div class="note lite" style="position:static; max-width:none;">
+              <div class="h">回答必须带口径</div>
+              模型被要求在结论里写明时间范围与指标口径（来自数据集「业务背景」）；SQL 折叠可见、可复制，人随时能核对"数是怎么算出来的"。
+            </div>
+            <div class="card">
+              <div class="card-h"><span class="t">本轮问数</span></div>
+              <div class="card-b" style="font-size:12px; line-height:1.9;">
+                <div class="kv"><b>数据集</b>销售分析</div>
+                <div class="kv"><b>数据源</b>电商业务库（只读从库）</div>
+                <div class="kv"><b>生成</b>1 次 · 纠错重试 0 次</div>
+                <div class="kv"><b>耗时</b>生成 2.8s + 执行 186ms</div>
+                <div class="kv"><b>计量</b>2,140 tokens · kind=data_qa</div>
+                <div class="kv"><b>审计</b>已落 c_ai_data_query_log</div>
+              </div>
+            </div>
+            <div class="card" style="flex:1; min-height:0;">
+              <div class="card-h"><span class="t">会话绑定数据集</span><button class="btn ghost sm" style="margin-left:auto;">管理</button></div>
+              <div class="card-b" style="display:flex;flex-direction:column;gap:8px;">
+                <span class="chip on" style="height:28px;">销售分析 · 电商业务库</span>
+                <span class="chip on" style="height:28px;">库存分析 · 供应链中台库</span>
+                <span class="chip" style="height:28px;color:var(--app-text3);">＋ 从我的可见数据集添加</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 场景 4 · 安全拦截 ================= -->
+  <div class="scene-block">
+    <div class="cap"><b>场景 4</b><em>安全拦截 —— fail-closed 的四种典型拒绝</em><span>任何越界都显式告知，不静默降级</span></div>
+    <div class="scene">
+      <div class="main">
+        <div class="page-head">
+          <div class="page-title">问数拦截样例</div>
+          <span class="pill err"><span class="dot"></span>以下 4 问全部被拒 · 每条拒绝均落审计（status=blocked）</span>
+        </div>
+        <div class="body" style="display:grid; grid-template-columns:1fr 1fr; gap:14px;">
+          <div class="card">
+            <div class="card-h"><span class="pill err" style="margin-right:6px;">E_SQL_REJECTED</span><span class="t">尝试写操作</span></div>
+            <div class="card-b">
+              <div style="font-size:12.5px;color:var(--app-text2);margin-bottom:8px;">用户：帮我把这些滞销品的库存状态改成下架</div>
+              <div class="sqlbox" style="font-size:11px;"><span class="kw">UPDATE</span> inventory <span class="kw">SET</span> status = <span class="str">'off'</span> <span class="cm">← 拒</span></div>
+              <div style="margin-top:10px; background:var(--app-danger-weak); border:1px solid var(--app-danger-border); border-radius:8px; padding:10px 12px; font-size:12px; color:var(--app-danger-text); line-height:1.7;">
+                <b>问数只读：</b>数据问数仅支持查询，不能修改业务数据。已拒绝执行并记录审计。如需变更请走业务系统审批流程。
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-h"><span class="pill err" style="margin-right:6px;">E_TABLE_FORBIDDEN</span><span class="t">访问未圈定表</span></div>
+            <div class="card-b">
+              <div style="font-size:12.5px;color:var(--app-text2);margin-bottom:8px;">用户：列出买家手机号和地址，我做个回访名单</div>
+              <div class="sqlbox" style="font-size:11px;"><span class="kw">SELECT</span> user_phone, address <span class="kw">FROM</span> dws_sales_order_daily <span class="cm">← 拒</span></div>
+              <div style="margin-top:10px; background:var(--app-danger-weak); border:1px solid var(--app-danger-border); border-radius:8px; padding:10px 12px; font-size:12px; color:var(--app-danger-text); line-height:1.7;">
+                <b>字段未授权：</b>「买家手机号 / 收货地址」不在数据集「销售分析」的圈定字段内，已拒绝。敏感字段由数据集 owner 在建模时圈出，模型不可见。
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-h"><span class="pill err" style="margin-right:6px;">E_TIMEOUT</span><span class="t">查询超资源上限</span></div>
+            <div class="card-b">
+              <div style="font-size:12.5px;color:var(--app-text2);margin-bottom:8px;">用户：把全部订单明细逐行列出来（约 2.3 亿行）</div>
+              <div class="sqlbox" style="font-size:11px;"><span class="kw">SELECT</span> * <span class="kw">FROM</span> ods_order_item <span class="cm">← 钳 LIMIT 200 后仍超时 15s</span></div>
+              <div style="margin-top:10px; background:var(--app-warn-weak); border:1px solid var(--app-warn-border); border-radius:8px; padding:10px 12px; font-size:12px; color:var(--app-warn-text); line-height:1.7;">
+                <b>超出资源上限：</b>查询超过 15 秒被终止。建议换个问法——问聚合结果（如「各月订单量」）而不是明细导出；明细导出请走数据平台的导出流程。
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-h"><span class="pill err" style="margin-right:6px;">E_NO_DATASET</span><span class="t">无可见数据集</span></div>
+            <div class="card-b">
+              <div style="font-size:12.5px;color:var(--app-text2);margin-bottom:8px;">新用户：上个月销售额多少？</div>
+              <div style="margin-top:10px; background:var(--app-info-weak); border:1px solid var(--app-info-border); border-radius:8px; padding:10px 12px; font-size:12px; color:var(--app-text2); line-height:1.7;">
+                <b>尚未配置可问数的数据集：</b>你还没有可访问的数据集。请联系管理员在「数据问数 → 数据集」中为你开通，或先在知识库里检索相关文档。
+              </div>
+              <div class="divider"></div>
+              <div style="font-size:11.5px;color:var(--app-text3);line-height:1.8;">
+                另有两类静默防线（不出现在对话里）：
+                ① 无 LIMIT / 超限 SQL 被 AST 自动钳到 <span class="mono">max_rows=200</span>；
+                ② 结果集文本统一套 <span class="mono">UntrustedContent</span> 信封——数据里藏的"指令"按数据处理，不执行。
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 场景 5 · 问数记录与治理 ================= -->
+  <div class="scene-block">
+    <div class="cap"><b>场景 5</b><em>问数记录 —— 每次问数可回溯、可评估、可优化</em><span>c_ai_data_query_log 的运营视图</span></div>
+    <div class="scene">
+      <div class="main">
+        <div class="page-head">
+          <div class="page-title">数据问数 · 问数记录</div>
+          <div class="head-r">
+            <span class="chip">近 7 天</span><span class="chip on">全部状态</span><span class="chip">仅拦截</span><span class="chip">仅失败</span>
+            <span class="pill info" style="margin-left:8px;">成功率 92.4% · 平均 412ms</span>
+          </div>
+        </div>
+        <div class="body" style="display:grid; grid-template-columns: 1fr 380px; gap:14px;">
+          <div class="card">
+            <table class="tbl">
+              <tr><th>时间</th><th>提问人</th><th>数据集</th><th>问题</th><th>状态</th><th>行数</th><th>耗时</th><th></th></tr>
+              <tr>
+                <td class="mono" style="font-size:11px;">11-21 09:41</td><td>yuanke</td><td>销售分析</td>
+                <td class="strong">10 月各渠道 GMV 和订单量</td>
+                <td><span class="pill ok"><span class="dot"></span>ok</span></td><td class="num">31</td><td class="num">412ms</td>
+                <td><a style="color:var(--app-accent);font-size:12px;">详情</a></td>
+              </tr>
+              <tr>
+                <td class="mono" style="font-size:11px;">11-21 09:40</td><td>yuanke</td><td>库存分析</td>
+                <td class="strong">滞销品清单（90 天零动销）</td>
+                <td><span class="pill ok"><span class="dot"></span>ok</span></td><td class="num">57</td><td class="num">388ms</td>
+                <td><a style="color:var(--app-accent);font-size:12px;">详情</a></td>
+              </tr>
+              <tr style="background:var(--app-danger-weak);">
+                <td class="mono" style="font-size:11px;">11-21 09:37</td><td>zhongke</td><td>销售分析</td>
+                <td class="strong">列出买家手机号做回访</td>
+                <td><span class="pill err"><span class="dot"></span>blocked</span></td><td class="num">—</td><td class="num">6ms</td>
+                <td><a style="color:var(--app-danger-text);font-size:12px;">E_TABLE_FORBIDDEN</a></td>
+              </tr>
+              <tr>
+                <td class="mono" style="font-size:11px;">11-21 09:31</td><td>liu</td><td>销售分析</td>
+                <td class="strong">双十一当天每小时 GMV 走势</td>
+                <td><span class="pill ok"><span class="dot"></span>ok</span></td><td class="num">24</td><td class="num">1.2s</td>
+                <td><a style="color:var(--app-accent);font-size:12px;">详情</a></td>
+              </tr>
+              <tr style="background:var(--app-warn-weak);">
+                <td class="mono" style="font-size:11px;">11-21 09:28</td><td>liu</td><td>用户行为</td>
+                <td class="strong">全量用户访问明细</td>
+                <td><span class="pill warn"><span class="dot"></span>timeout</span></td><td class="num">—</td><td class="num">15s</td>
+                <td><a style="color:var(--app-warn-text);font-size:12px;">E_TIMEOUT</a></td>
+              </tr>
+              <tr>
+                <td class="mono" style="font-size:11px;">11-21 09:25</td><td>yuanke</td><td>销售分析</td>
+                <td class="strong">退款率高于 8% 的类目</td>
+                <td><span class="pill ok"><span class="dot"></span>ok</span></td><td class="num">3</td><td class="num">276ms</td>
+                <td><a style="color:var(--app-accent);font-size:12px;">详情</a></td>
+              </tr>
+            </table>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:14px;">
+            <div class="card">
+              <div class="card-h"><span class="t">问数详情（抽屉）</span><span class="s">11-21 09:41 · yuanke</span></div>
+              <div class="card-b" style="font-size:12px;">
+                <div class="kv" style="margin-bottom:6px;"><b>问题</b>10 月各渠道 GMV 和订单量</div>
+                <div class="sqlbox" style="font-size:10.5px;"><span class="kw">SELECT</span> c.channel_name…
+<span class="kw">LIMIT</span> <span class="num">200</span> <span class="cm">（AST 钳入）</span></div>
+                <div class="divider"></div>
+                <div class="kv"><b>校验</b>AST 白名单 ✓ · 表 ∈ 授权集 ✓</div>
+                <div class="kv"><b>执行</b>只读账号 · 186ms · 31 行</div>
+                <div class="kv"><b>模型</b>glm-4.7 · 2,140 tokens</div>
+                <div class="kv"><b>反馈</b><span style="color:var(--app-ok);">👍 有用</span></div>
+                <div class="divider"></div>
+                <div style="display:flex;gap:8px;">
+                  <button class="btn ghost sm">回放生成过程</button>
+                  <button class="btn ghost sm">加入 NL2SQL 评估集</button>
+                </div>
+              </div>
+            </div>
+            <div class="card" style="flex:1;">
+              <div class="card-h"><span class="t">质量信号</span><span class="s">接入现有运营闭环</span></div>
+              <div class="card-b" style="font-size:12px; line-height:2;">
+                <div class="kv"><b>差评回流</b>2 条待标注 → 可转评估用例</div>
+                <div class="kv"><b>口径争议</b>「GMV 是否含运费」1 条待 owner 裁决</div>
+                <div class="kv"><b>高频无答案</b>「毛利率」未定义指标 · 建议补</div>
+                <div class="kv"><b>拦截分布</b>越表 62% · 超时 23% · 写操作 15%</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 场景 6 · 定时报表订阅 ================= -->
+  <div class="scene-block">
+    <div class="cap"><b>场景 6</b><em>定时报表订阅 —— 问数结果周期送达</em><span>复用调度中心 + 邮件外发 + 站内通知</span></div>
+    <div class="scene">
+      <div class="main">
+        <div class="page-head">
+          <div class="page-title">数据问数 · 报表订阅</div>
+          <div class="head-r"><button class="btn"><svg class="ic" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>新建订阅</button></div>
+        </div>
+        <div class="body" style="display:grid; grid-template-columns: 1fr 420px; gap:14px;">
+          <div class="card">
+            <table class="tbl">
+              <tr><th>订阅</th><th>问题（固定）</th><th>节奏</th><th>送达</th><th>下次执行</th><th>最近一次</th></tr>
+              <tr>
+                <td class="strong">每日经营晨报</td>
+                <td style="max-width:300px;">昨日 GMV、订单量、退款率，环比前一日并标注异常波动</td>
+                <td>每天 08:30</td>
+                <td><span class="pill info">邮件 + 站内</span></td>
+                <td class="mono">明早 08:30</td>
+                <td><span class="pill ok"><span class="dot"></span>今早已送达 · 6 收件人</span></td>
+              </tr>
+              <tr>
+                <td class="strong">周度渠道复盘</td>
+                <td style="max-width:300px;">近 7 天各渠道 GMV 与环比，输出柱状图与 TOP 类目</td>
+                <td>每周一 09:00</td>
+                <td><span class="pill info">邮件</span></td>
+                <td class="mono">11-23 周一</td>
+                <td><span class="pill ok"><span class="dot"></span>上周已送达</span></td>
+              </tr>
+              <tr>
+                <td class="strong">库存预警</td>
+                <td style="max-width:300px;">动销天数 &gt; 90 且库存 &gt; 500 的 SKU 清单，超 50 条升级警示</td>
+                <td>每 6 小时</td>
+                <td><span class="pill warn">仅异常时通知</span></td>
+                <td class="mono">14:30</td>
+                <td><span class="pill ok"><span class="dot"></span>11-20 无异常</span></td>
+              </tr>
+            </table>
+          </div>
+          <div class="card">
+            <div class="card-h"><span class="t">送达样例 · 每日经营晨报（邮件正文）</span><span class="s">2026-11-21 08:30</span></div>
+            <div class="card-b" style="font-size:12.5px; line-height:1.8;">
+              <div style="font-weight:600;margin-bottom:6px;">📊 昨日经营（11-20）</div>
+              <table class="tbl" style="margin-bottom:10px;">
+                <tr><th>指标</th><th style="text-align:right;">昨日</th><th style="text-align:right;">环比</th></tr>
+                <tr><td>GMV（扣退款）</td><td class="num" style="text-align:right;">¥1,862,400</td><td class="num" style="text-align:right;color:var(--app-ok);">+4.2%</td></tr>
+                <tr><td>订单量</td><td class="num" style="text-align:right;">5,612</td><td class="num" style="text-align:right;color:var(--app-ok);">+2.8%</td></tr>
+                <tr><td>退款率</td><td class="num" style="text-align:right;">5.1%</td><td class="num" style="text-align:right;color:var(--app-danger-text);">+0.9pt ⚠️</td></tr>
+              </table>
+              <b>异常提示：</b>退款率连续两日上行，主要集中在「女装-连衣裙」类目（8.9%），建议核查尺码描述与质检环节。<br>
+              <span style="font-size:11px;color:var(--app-text3);">数据来源：问渠问数 · 销售分析数据集 · 执行 SQL 可在站内记录中查看</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+<script>
+/* 单场景渲染：index.html#s1 ~ #s6 只显示对应场景，便于逐屏截图校验。
+   无 hash 时按设计稿完整平铺浏览。 */
+(function () {
+  var m = location.hash.match(/^#s([1-6])$/);
+  if (!m) return;
+  var n = parseInt(m[1], 10);
+  document.querySelectorAll('.scene-block').forEach(function (b, i) {
+    b.style.display = (i === n - 1) ? '' : 'none';
+  });
+  document.querySelector('.sheet-top').style.display = 'none';
+  document.querySelector('.brief').style.display = 'none';
+  var sheet = document.querySelector('.sheet');
+  sheet.style.padding = '0';
+  sheet.style.width = '1600px';
+  document.body.style.background = '#fff';
+  document.querySelectorAll('.cap').forEach(function (c) { c.style.display = 'none'; });
+  document.querySelectorAll('.scene-block').forEach(function (b) { b.style.marginTop = '0'; });
+  document.documentElement.style.overflow = 'hidden';
+})();
+</script>
+</body>
+</html>
