@@ -99,12 +99,15 @@ PC 壳传与原实现逐字等价的回调；移动壳传自己的滚动与 `/m/
   `retryHistory` 复用 `switchSession`（同 sid 有在途加载就等那一份，不并发发两条）。
   凡是把视图判成「就是空的」的出口（新建会话、复用空会话、删完最后一条）都要**同时清掉它**，
   否则错误卡会挂在新会话上方。
-- **`online`（设备）**：`navigator.onLine` + `online`/`offline` 事件，`visibilitychange` 再对账一次
-  （iOS Safari 从后台回前台时 onLine 会滞后）。它说的是这台设备有没有网，**不等于**问渠的服务器能不能访问。
-- **`serverUnreachable`（服务器）**：判据只有一个来源——接口层 `request()` 的 fetch **没拿到任何响应**。
+- **`serverUnreachable`（横幅唯一判据）**：判据只有一个来源——接口层 `request()` 的 fetch **没拿到任何响应**。
   拿到响应的一切结果（含 4xx/5xx、业务 `success=false`）都算「这台服务器活着」，判据当场退回；
-  自己掐的超时也不算（那是「慢」）。所以只有整台服务不通时横幅才亮，某一条接口挂了不会误报。
+  自己掐的超时也不算（那是「慢」）。所以只有请求真的取不到响应时横幅才亮，某一条接口挂了不会误报。
   退场是被动的（下一次任意请求成功），因此文案**不许写「会自动恢复」这类时间承诺**。
+- **`online`（设备）**：`navigator.onLine` + `online`/`offline` 事件，`visibilitychange` 再对账一次
+  （iOS Safari 从后台回前台时 onLine 会滞后）。它**不参与横幅是否显示**，只在横幅已经亮起时
+  决定说哪句：有网说「连不上服务器」，断网说「设备没有网络」——它解释该去查哪头，不判有没有问题。
+  本机部署时断外网但 localhost 照常通，拿 `navigator.onLine` 当判据会把「问得出话」误报成
+  「消息发不出去」，所以判据必须落在请求结果上。
 
 供信号的地方只有 `api.js` 的 `request` 一处：`markRequestOutcome(true/false)` / `clearUnreachable()`。
 新增取数路径（SSE、XHR 上传、裸 fetch 下载）不接这三个口子就**不参与判据**——它们失败时该由各自的

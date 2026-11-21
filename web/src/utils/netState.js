@@ -1,29 +1,25 @@
 /**
- * 「能不能连上」的两条判据，分开暴露给界面（两端壳共用一份，模块级单例）：
- * - online：本机网卡/系统层面的连通性，来自 navigator.onLine + online/offline 事件。
- *   它说的是「这台设备有没有网」，不等于「问渠的服务器能不能访问」。
- * - serverDown：设备自报有网，但接口层（api.js 的 request）的取数根本没拿到 HTTP 响应。
- *   它说的是「服务器这一头不通」，判据只有这一个事实，不做猜测。
+ * 连通性横幅的唯一判据：接口层的一次请求有没有拿到 HTTP 响应。
  *
- * 为什么要拆：断网时把「服务器不通」写在横幅上是误导（用户会去查服务），
- * 而服务器真挂时说「您已断开网络」同样误导（用户会去查自己的手机）。
- * 两者都是「取数失败」，但不是同一件事，界面必须各说各的。
+ * - noResponse：fetch 在拿到任何响应之前抛错才成立；拿到响应（含 4xx/5xx、业务
+ *   success=false）当场退回，自己掐的超时也不算。没有请求就没有证据，默认 false。
+ *   横幅是否出现只看这一条——这是「事实层」。
+ * - online：navigator.onLine，只用来在横幅已经亮起时选一句解释文案——这是「解释层」。
+ *   本机部署时断外网但 localhost 照常通，拿它当判据会把「问得出话」说成「消息发不出去」；
+ *   反过来设备有网但服务没起时它也帮不上忙。它解释原因，不判事实。
+ *
+ * 两层分开的理由：判据要的是证据（请求真的没拿到响应），文案要的是方向（去查设备还是查服务）。
+ * 断网时不再清判据——那会连带把「服务器真没起来」的证据一起抹掉。
  */
-import { computed, readonly, ref } from 'vue'
+import { readonly, ref } from 'vue'
 
 const online = ref(typeof navigator === 'undefined' ? true : navigator.onLine !== false)
-const unreachable = ref(false)
+const noResponse = ref(false)
 
 let wired = false
-function setOnline (v) {
-  online.value = v !== false
-  // 设备自己说断网时，unreachable 这个「上次请求没通」的残值不再有意义：
-  // 界面此刻只该说「设备离线」，两条判据同时亮会把人引向服务器。
-  if (!online.value) unreachable.value = false
-}
-function syncFromNavigator () { setOnline(navigator.onLine) }
+function syncFromNavigator () { online.value = navigator.onLine !== false }
 
-/** 挂监听 + 给接口层供信号，全局各只装一次（重复调用直接返回同一份状态） */
+/** 挂监听只刷新文案用的 online，全局只装一次（重复调用直接返回） */
 export function ensureNetworkWatch () {
   if (wired) return
   wired = true
@@ -35,19 +31,15 @@ export function ensureNetworkWatch () {
   })
 }
 
-/** 接口层的一次请求结果喂进来：ok=真拿到了响应（含 4xx/5xx，那都是服务器在说话） */
+/** 一次请求的结果喂进来：ok=真拿到了响应（含 4xx/5xx，那都是服务器在说话） */
 export function markRequestOutcome (ok) {
-  if (ok) {
-    unreachable.value = false
-    return
-  }
-  if (online.value) unreachable.value = true
+  noResponse.value = !ok
 }
 
-/** 本轮取数失败但不是服务器不通（超时/HTTP 状态码/业务失败）：不通判据退回，
- *  免得一次超时把「服务器不通」钉在横幅上不下来——那需要「拿不到响应」这个证据。 */
-export function clearUnreachable () { unreachable.value = false }
+/** 本轮取数失败但不是「没拿到响应」（超时/HTTP 状态码/业务失败）：判据退回，
+ *  免得一次超时把横幅钉住——那需要「拿不到响应」这个证据。 */
+export function clearUnreachable () { noResponse.value = false }
 
 export const isOnline = readonly(online)
-/** 设备自报有网、接口却拿不到响应 ⇒ 判定为服务器侧不通 */
-export const serverUnreachable = computed(() => online.value && unreachable.value)
+/** 横幅唯一判据：请求真的没拿到任何响应 */
+export const serverUnreachable = readonly(noResponse)
