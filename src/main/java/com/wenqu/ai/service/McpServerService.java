@@ -875,6 +875,7 @@ public class McpServerService {
             Map<String, Object> r = new LinkedHashMap<>();
             r.put("ref", s.get("ref"));
             r.put("origin", s.get("origin"));
+            r.put("sourceType", s.get("sourceType"));
             r.put("fileName", s.get("fileName"));
             r.put("siteName", s.get("siteName"));
             r.put("url", s.get("url"));
@@ -885,6 +886,16 @@ public class McpServerService {
             out.add(r);
         }
         return out;
+    }
+
+    private static String sourceTypeLabel(String type) {
+        return switch (type == null ? "" : type) {
+            case "official" -> "官方";
+            case "external" -> "外部";
+            case "upload" -> "用户上传";
+            case "internal" -> "内部";
+            default -> "";
+        };
     }
 
     /**
@@ -908,6 +919,8 @@ public class McpServerService {
                 where = file.isEmpty() ? "知识库" : "知识库 · " + file;
             }
             String title = text(s.get("title"));
+            String type = sourceTypeLabel(text(s.get("sourceType")));
+            if (!type.isEmpty()) where += " · " + type;
             String score = s.get("score") == null ? "" : " · 相关度 " + s.get("score");
             sb.append("[").append(text(s.get("ref"))).append("] ").append(where);
             if (!title.isEmpty()) sb.append(" · ").append(title);

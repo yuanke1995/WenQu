@@ -30,6 +30,11 @@ export const groupSources = sources => {
 }
 
 /** 来源条目展示名：外部来源用站点名，库内来源用文件名；有标题时追加「§ 标题」。 */
+/** 库内来源的类型徽标：官方/内部/外部/用户上传；与 origin（联网/MCP）是两套语义。 */
+export const sourceTypeLabel = s => ({
+  official: '官方', internal: '内部', external: '外部', upload: '用户上传'
+})[s?.sourceType] || ''
+
 export const sourceName = s => externalOrigin(s)
   ? (s.siteName || (s.origin === 'MCP' ? 'MCP 来源' : '联网来源')) + (s.title ? ' §' + s.title : '')
   : (s.fileName || (s.docId ? '来源文档不可用' : '手动补充的知识')) + (s.title ? ' §' + s.title : '')

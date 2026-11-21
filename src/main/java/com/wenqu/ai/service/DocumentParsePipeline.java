@@ -118,6 +118,10 @@ public class DocumentParsePipeline {
             int overlap = configService.getInt("chunk.overlap", properties.getChunk().getOverlap());
             // 截断保护：超大文档只保留前 maxChunks 块（防止 embedding 调用数万次/解析失控）
             int maxChunks = configService.getInt(ConfigKeys.CHUNK_MAX_CHUNKS, ConfigDefaults.CHUNK_MAX_CHUNKS);
+            String ft = doc.getFileType() == null ? "" : doc.getFileType().toLowerCase();
+            boolean table = "xlsx".equals(ft) || "csv".equals(ft);
+            // 表格按行成块，100+ 行很常见：给表格一个更高地板，避免被全局 maxChunks 截在前面几行
+            if (table) maxChunks = Math.max(maxChunks, 5000);
             int truncatedChunks = 0;
             if (maxChunks > 0 && chunks.size() > maxChunks) {
                 // fail-loud：截断不再静默——计数入终态 desc（"截断保留前N/共M块"）

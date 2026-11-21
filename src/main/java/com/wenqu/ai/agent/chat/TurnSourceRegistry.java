@@ -7,6 +7,7 @@ import com.wenqu.ai.service.HybridRetrievalService;
 import com.wenqu.ai.service.ImageUrlSigner;
 import com.wenqu.ai.service.RerankService;
 import com.wenqu.ai.service.RetrievalGate;
+import com.wenqu.ai.service.SourceTypeResolver;
 import com.wenqu.ai.service.KbRetrievalParamService;
 import com.wenqu.ai.service.KnowledgeRetrievalTool;
 import com.wenqu.ai.service.websearch.WebSearchResult;
@@ -62,6 +63,7 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
     private final RerankService rerankService;
     private final KbRetrievalParamService kbRetrievalParams;
     private final ImageUrlSigner imageUrlSigner;
+    private final SourceTypeResolver sourceTypeResolver;
     /** 投递与降级登记的出口（刀 5a：池不再借本轮状态袋的 Deps 拿运行时动作，方向仍然是池→运行时单向） */
     private final ChatRunRuntime runtime;
     private final String sessionId;
@@ -112,7 +114,7 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
     public TurnSourceRegistry(ConfigService configService, RerankService rerankService,
                               KbRetrievalParamService kbRetrievalParams,
                               ImageUrlSigner imageUrlSigner, ChatRunRuntime runtime,
-                              String sessionId, String question, SseEmitter emitter,
+                              SourceTypeResolver sourceTypeResolver, String sessionId, String question, SseEmitter emitter,
                               List<Map<String, Object>> sources, Map<Integer, String> imgIndex,
                               Map<Integer, String> imgDescIndex,
                               List<Map<String, String>> degradations, Set<String> degradedCodes) {
@@ -121,6 +123,7 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
         this.kbRetrievalParams = kbRetrievalParams;
         this.imageUrlSigner = imageUrlSigner;
         this.runtime = runtime;
+        this.sourceTypeResolver = sourceTypeResolver;
         this.sessionId = sessionId;
         this.question = question;
         this.emitter = emitter;
@@ -260,6 +263,14 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
      * 模型后续正文才能引用真实存在的 [图片N]，前端 images[N-1] 才映射得到。
      */
     public KnowledgeRetrievalTool.SourceRegistrar.Registration registerToolSource(HybridRetrievalService.Hit h, String snippet) {
+        String sourceType = sourceTypeResolver == null ? SourceTypeResolver.INTERNAL
+                : sourceTypeResolver.resolve(h.kbId(), h.docId());
+        return registerToolSource(h, snippet, sourceType);
+    }
+
+    /** 块级来源类型由调用方给（工具/子智能体统一走 {@link #resolve} 口径），与 origin 是两套语义。 */
+    public KnowledgeRetrievalTool.SourceRegistrar.Registration registerToolSource(
+            HybridRetrievalService.Hit h, String snippet, String sourceType) {
         Integer existing = findExistingSourceRef(h);
         if (existing != null) {
             // 图片清单与来源同锁写入：这里读的也持锁，避免另一路正在给别的来源 put 时读到半更新状态
@@ -294,6 +305,7 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
             src.put("snippet", snippet);
             src.put("images", h.images());
             src.put("origin", "TOOL");
+            src.put("sourceType", sourceType == null ? SourceTypeResolver.INTERNAL : sourceType);
             // 与主链路口径一致：融合分恒有，重排分仅有则透出
             src.put("score", Math.round(h.score() * 1000) / 1000.0);
             if (h.rerankScore() != null) {

@@ -234,7 +234,12 @@ public class DocumentService {
 
 
     public AiDocument upload(MultipartFile file, String description, String kbId, String visionRef) throws Exception {
-        return ingestService.upload(file, description, kbId, visionRef);
+        return upload(file, description, kbId, visionRef, false);
+    }
+
+    public AiDocument upload(MultipartFile file, String description, String kbId, String visionRef,
+                             boolean force) throws Exception {
+        return ingestService.upload(file, description, kbId, visionRef, force);
     }
 
 

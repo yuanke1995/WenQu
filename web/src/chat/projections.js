@@ -206,7 +206,7 @@ export { fmtWindow, usageCtxTokens, usageTip } from './usage.js'
 
 /** 分组内核：入参 sources 数组，返回按 key 分好的组（外部来源 WEB/MCP 单独成组） */
 // 引用来源的口径在 ./sources.js（纯模块，可直接 Node 测试），这里只转出。
-export { groupSources, externalOrigin, sourceName, fmtSourceScore, scoreTitle } from './sources.js'
+export { groupSources, externalOrigin, sourceName, sourceTypeLabel, fmtSourceScore, scoreTitle } from './sources.js'
 
 /** 长文本粘贴转成的附件名（不带扩展名部分；实际文件名补 .txt）。
  *  落库元信息只保留名称/类型/体积，所以刷新后靠这个前缀把卡片形态认回来。

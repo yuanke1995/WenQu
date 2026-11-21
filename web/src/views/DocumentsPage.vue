@@ -21,6 +21,9 @@
         <button v-if="canManageCurrentKb" class="app-btn ghost" @click="graphModal = true">
           <apartment-outlined /> 图谱
         </button>
+        <a-popconfirm v-if="canManageCurrentKb" title="按当前库筛选 xlsx/csv 文档并重新解析？" @confirm="reparseTables">
+          <button class="app-btn ghost">表格重解析</button>
+        </a-popconfirm>
         <a-dropdown :trigger="['click']">
           <button class="app-btn ghost"><more-outlined /> 更多</button>
           <template #overlay>
@@ -1055,7 +1058,23 @@ async function submitFiles (files, desc, visionRef) {
           const sum = uploadQueue.value.reduce((n, x) => n + (x.progress || 0), 0)
           uploadPercent.value = Math.round(sum / files.length)
         }, desc, route.params.kbId, visionRef)
-        const one = (r.data && r.data[0]) || { success: r.success !== false, msg: r.msg }
+        let one = (r.data && r.data[0]) || { success: r.success !== false, msg: r.msg }
+        if (one.conflict === 'newVersion') {
+          const ok = await new Promise(resolve => {
+            Modal.confirm({
+              title: '疑似新版本',
+              content: `${f.name} 与库中同名文档内容不同，确认覆盖并重新解析吗？旧版本会保留快照。`,
+              okText: '确认覆盖', cancelText: '取消',
+              onOk: () => resolve(true), onCancel: () => resolve(false)
+            })
+          })
+          if (ok) {
+            const r2 = await uploadDocumentsBatch([f], undefined, desc, route.params.kbId, visionRef, true)
+            one = (r2.data && r2.data[0]) || { success: r2.success !== false, msg: r2.msg }
+          } else {
+            one = { success: false, msg: '已取消覆盖' }
+          }
+        }
         rows.push(one)
         uploadQueue.value[i].status = one.success === false ? 'error' : 'done'
         uploadQueue.value[i].progress = 100
@@ -1268,6 +1287,19 @@ const batchReparse = async () => {
       startPolling()
     } else message.error(r.msg || '批量重解析失败')
   } catch (e) { message.error(e.message || '批量重解析失败') }
+}
+async function reparseTables () {
+  try {
+    const r = await batchReparseDocuments([], route.params.kbId)
+    if (!r.success) { message.error(r.msg || '表格重解析失败'); return }
+    const rows = r.data || []
+    const failed = rows.filter(x => !x.success)
+    if (!rows.length) message.info('当前库没有可重解析的表格文档')
+    else if (failed.length) message.warning(`已提交 ${rows.length - failed.length} 个，${failed.length} 个失败: ${failed[0].msg || ''}`)
+    else message.success(`已提交 ${rows.length} 个表格重解析`)
+    fetchList()
+    startPolling()
+  } catch (e) { message.error(e.message || '表格重解析失败') }
 }
 async function reparse (id) {
   reparsingId.value = id

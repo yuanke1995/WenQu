@@ -1447,12 +1447,13 @@ export const checkChatAttachmentsLive = fileIds =>
   request('/chat/attachment/live', { method: 'POST', body: JSON.stringify(fileIds || []) })
 
 /** 批量上传（onProgress 接收 0-100 百分比；description/visionRef 可选，应用到所有文件） */
-export function uploadDocumentsBatch(files, onProgress, description, kbId, visionRef) {
+export function uploadDocumentsBatch(files, onProgress, description, kbId, visionRef, force = false) {
   const fd = new FormData()
   files.forEach(f => fd.append('file', f))
   if (description) fd.append('description', description)
   if (kbId) fd.append('kbId', kbId)
   if (visionRef) fd.append('visionRef', visionRef)
+  if (force) fd.append('force', 'true')
   return upload('/document/upload/batch', fd, onProgress)
 }
 
@@ -1465,8 +1466,8 @@ export const importDocumentFromUrl = (url, description, kbId) => {
 }
 
 /** 批量重解析 */
-export const batchReparseDocuments = ids =>
-  request('/document/batch/reparse', { method: 'POST', body: JSON.stringify({ ids }) })
+export const batchReparseDocuments = (ids, kbId) =>
+  request('/document/batch/reparse', { method: 'POST', body: JSON.stringify({ ids, kbId }) })
 
 /** 运行中插话（steer）：本轮还在跑时补一句方向。这句话交给框架会话自己送进正在跑的那一轮，生效点是
  *  下一次模型调用之前（工具循环由框架持有，掐不断正在执行的这一步）；本轮收尾时模型还没收上的，

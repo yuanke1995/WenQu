@@ -1,6 +1,7 @@
 package com.wenqu.ai.controller;
 
 import com.wenqu.ai.common.BizException;
+import com.wenqu.ai.common.DuplicateUploadException;
 import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.service.DocumentFileStore;
 import com.wenqu.ai.service.AuditService;
@@ -23,6 +24,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import com.wenqu.ai.security.Permission;
 
 /**
@@ -131,14 +133,15 @@ public class DocumentController {
             @Parameter(description = "文档描述（可选）") @RequestParam(value = "description", required = false) String description,
             @Parameter(description = "目标知识库（可选；空=默认知识库）") @RequestParam(value = "kbId", required = false) String kbId,
             @Parameter(description = "文档级视觉模型覆盖（可选；空=跟随知识库）") @RequestParam(value = "visionRef", required = false) String visionRef,
+            @Parameter(description = "同名新版本确认覆盖") @RequestParam(value = "force", required = false, defaultValue = "false") boolean force,
             HttpServletRequest httpRequest) throws Exception {
         rateLimitService.checkRateLimit("upload", rateIdentity(httpRequest));
         checkUploadSize(file);
         if (description != null && description.length() > 500) {
             throw new BizException("文档描述过长（最多 500 字）");
         }
-        requireKbManage(kbId);   // 往哪个库传，就要对这个库有管理权
-        var doc = documentService.upload(file, description, kbId, visionRef);
+        requireKbManage(kbId);
+        var doc = documentService.upload(file, description, kbId, visionRef, force);
         audit.record("[AUDIT] 上传文档 operator={} docId={} file={} size={}", RequestUser.uid(),
                 doc.getId(), file.getOriginalFilename(), file.getSize());
         return ResultJson.ok(doc, "已提交解析");
@@ -172,6 +175,7 @@ public class DocumentController {
             @Parameter(description = "批量描述（可选，应用到所有文件）") @RequestParam(value = "description", required = false) String description,
             @Parameter(description = "目标知识库（可选；空=默认知识库）") @RequestParam(value = "kbId", required = false) String kbId,
             @Parameter(description = "文档级视觉模型覆盖（可选，应用到所有文件；空=跟随知识库）") @RequestParam(value = "visionRef", required = false) String visionRef,
+            @Parameter(description = "同名新版本确认覆盖") @RequestParam(value = "force", required = false, defaultValue = "false") boolean force,
             HttpServletRequest httpRequest) {
         rateLimitService.checkRateLimit("upload", rateIdentity(httpRequest));
         if (description != null && description.length() > 500) {
@@ -184,10 +188,14 @@ public class DocumentController {
             item.put("fileName", file.getOriginalFilename());
             try {
                 checkUploadSize(file);
-                var doc = documentService.upload(file, (description == null || description.isBlank()) ? null : description, kbId, visionRef);
+                var doc = documentService.upload(file, (description == null || description.isBlank()) ? null : description, kbId, visionRef, force);
                 item.put("docId", doc.getId());
                 item.put("success", true);
                 item.put("msg", "已提交解析");
+            } catch (DuplicateUploadException e) {
+                item.put("success", false);
+                item.put("conflict", e.conflict());
+                item.put("msg", e.getMessage());
             } catch (Exception e) {
                 item.put("success", false);
                 item.put("msg", e.getMessage());
@@ -480,16 +488,32 @@ public class DocumentController {
     @Permission("document:write")
     @PostMapping("/batch/reparse")
     public ResultJson batchReparse(
-            @Parameter(description = "{\"ids\": [\"docId1\", \"docId2\"]}")
-            @RequestBody Map<String, List<String>> body,
+            @Parameter(description = "{\"ids\": [\"docId1\"], \"kbId\": \"可选，按库筛选表格文档\"}")
+            @RequestBody Map<String, Object> body,
             HttpServletRequest httpRequest) {
-        List<String> ids = body.getOrDefault("ids", List.of());
+        List<String> ids = body.get("ids") instanceof List<?> l
+                ? l.stream().map(String::valueOf).toList() : List.of();
+        String kbId = body.get("kbId") == null ? null : String.valueOf(body.get("kbId"));
+        if (kbId != null && !kbId.isBlank()) {
+            requireKbManage(kbId);
+            Set<String> tableIds = documentService.list(kbId).stream()
+                    .filter(d -> {
+                        String ft = d.getFileType() == null ? "" : d.getFileType().toLowerCase();
+                        return "xlsx".equals(ft) || "csv".equals(ft);
+                    })
+                    .map(com.wenqu.ai.model.AiDocument::getId)
+                    .collect(java.util.stream.Collectors.toSet());
+            ids = ids.isEmpty() ? List.copyOf(tableIds)
+                    : ids.stream().filter(tableIds::contains).toList();
+        }
         List<Map<String, Object>> results = new ArrayList<>();
         for (String id : ids) {
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("id", id);
             try {
-                requireDocManage(documentService.getDoc(id));
+                var doc = documentService.getDoc(id);
+                item.put("fileName", doc == null ? null : doc.getFileName());
+                requireDocManage(doc);
                 documentService.reparse(id);
                 item.put("success", true);
                 item.put("msg", "已提交解析");

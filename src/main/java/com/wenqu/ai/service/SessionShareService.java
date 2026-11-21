@@ -286,6 +286,7 @@ public class SessionShareService {
                     Map<String, Object> r = new LinkedHashMap<>();
                     r.put("ref", s.get("ref"));
                     r.put("origin", s.get("origin"));
+                    r.put("sourceType", s.get("sourceType"));
                     r.put("fileName", s.get("fileName"));
                     r.put("siteName", s.get("siteName"));
                     r.put("url", s.get("url"));

@@ -103,7 +103,8 @@ public class KnowledgeRetrievalTool {
      * 原问题、对话模型、身份、会话号、最近 3 轮历史（懒加载）。
      */
     public record TurnQueryContext(String question, String modelRef, String uid, String sessionId,
-                                   java.util.function.Supplier<java.util.List<java.util.Map<String, Object>>> history) {
+                                   java.util.function.Supplier<java.util.List<java.util.Map<String, Object>>> history,
+                                   boolean rewriteEnabled) {
     }
 
     /** 从本次调用的上下文取注册器（无上下文=非流式直接调用，退回不注册引用的旧行为） */
@@ -146,17 +147,20 @@ public class KnowledgeRetrievalTool {
     private final RerankService rerankService;
     /** 库级检索参数：重排模型按“本轮范围的第一个配了模型的库”收敛（一轮只有一个重排器） */
     private final KbRetrievalParamService kbRetrievalParams;
+    /** 本轮原问题的确定性多问切分（只用于诊断与可选分解，不调 LLM） */
+    private final QuerySplitter querySplitter;
     /** 追问改写：短词/指代词改写成独立检索词，与原词两路并行召回 */
     private final FollowUpQueryRewriter queryRewriter;
 
     public KnowledgeRetrievalTool(HybridRetrievalService hybridRetrievalService, ConfigService configService,
                                   RerankService rerankService, KbRetrievalParamService kbRetrievalParams,
-                                  FollowUpQueryRewriter queryRewriter) {
+                                  FollowUpQueryRewriter queryRewriter, QuerySplitter querySplitter) {
         this.hybridRetrievalService = hybridRetrievalService;
         this.configService = configService;
         this.rerankService = rerankService;
         this.kbRetrievalParams = kbRetrievalParams;
         this.queryRewriter = queryRewriter;
+        this.querySplitter = querySplitter;
     }
 
     /** 诊断日志用的过滤条件摘要（不打印具体标签值之外的用户数据） */
@@ -225,9 +229,14 @@ public class KnowledgeRetrievalTool {
             filter = filter.withKbIds(scope.kbFilter());
         }
         String originalQuery = query.trim();
-        // 追问改写：只在本轮有会话上下文时启用；改写成功走「改写词 + 原词」两路并行，原词路永远保留。
+        // 多问诊断：拆的是本轮用户原问题（不是工具 query）；单问严格短路，diag 里只留一个子问题。
+        String questionForSplit = turnQuery == null || turnQuery.question() == null
+                ? originalQuery : turnQuery.question();
+        QuerySplitter.SplitResult split = querySplitter.analyze(questionForSplit);
+        diag.subQueries(split.queries());
+        // 追问改写：只在本轮有会话上下文且改写开关打开时启用；改写成功走「改写词 + 原词」两路并行，原词路永远保留。
         FollowUpQueryRewriter.Result rewrite = null;
-        if (turnQuery != null) {
+        if (turnQuery != null && turnQuery.rewriteEnabled()) {
             List<Map<String, Object>> history;
             try {
                 history = turnQuery.history() == null ? null : turnQuery.history().get();
@@ -243,6 +252,12 @@ public class KnowledgeRetrievalTool {
             } else {
                 diag.rewriteSkipped(rewrite.skipReason(), rewrite.elapsedMs());
             }
+        }
+        // 明确多问且改写未生效时，在工具内拆多路召回；单问/非知识库轮严格走原 search。
+        // D1 前置检查判定模型已会自行逐问检索，本档降级为只记 subQueries 诊断，检索路径保持单路。
+        if (split.multiQuestion()) {
+            log.info("[RAG-SPLIT] applied=false original=\"{}\" subQueries={} reason=diag-only",
+                    questionForSplit, split.queries());
         }
         try {
             // adaptiveTopK=true：与主链路同口径，权限/元数据条件剔掉的名额由补采补回（工具结果直接进模型上下文，

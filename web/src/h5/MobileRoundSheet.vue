@@ -156,6 +156,9 @@ const debugStages = computed(() => {
     tag: tagFn(it)
   }))
   return [
+    ...((d.retrievalDiag?.subQueries || []).length
+      ? [{ name: `多问识别（仅诊断）`, items: d.retrievalDiag.subQueries.map(q => ({ title: q, docName: '', snippet: '', tag: '子问题' })) }]
+      : []),
     { name: `关键词命中（${(d.keywordHits || []).length}）`, items: map(d.keywordHits, it => '命中率 ' + (it.hitRate ?? 0)) },
     { name: `向量命中（${(d.vectorHits || []).length}）`, items: map(d.vectorHits, it => '相似度 ' + (it.score ?? 0)) },
     { name: `合并后（${(d.merged || []).length}）`, items: map(d.merged, it => '分 ' + (it.score ?? 0)) },

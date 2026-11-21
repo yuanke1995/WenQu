@@ -92,7 +92,7 @@ public class RetrievalEvaluationService {
 
     private final HybridRetrievalService retrievalService;
     private final ConfigService configService;
-    private final KeywordExtractor keywordExtractor;
+    private final QuerySplitter querySplitter;
     private final RerankService rerankService;
     private final KbRetrievalParamService kbRetrievalParams;
     private final MessageMapper messageMapper;
@@ -116,7 +116,7 @@ public class RetrievalEvaluationService {
     });
 
     public RetrievalEvaluationService(HybridRetrievalService retrievalService, ConfigService configService,
-                                      KeywordExtractor keywordExtractor, RerankService rerankService,
+                                      QuerySplitter querySplitter, RerankService rerankService,
                                       KbRetrievalParamService kbRetrievalParams,
                                       MessageMapper messageMapper, KnowledgeMapper knowledgeMapper,
                                       AiDocumentMapper documentMapper, UserMapper userMapper,
@@ -127,7 +127,7 @@ public class RetrievalEvaluationService {
                                       FollowUpQueryRewriter queryRewriter) {
         this.retrievalService = retrievalService;
         this.configService = configService;
-        this.keywordExtractor = keywordExtractor;
+        this.querySplitter = querySplitter;
         this.rerankService = rerankService;
         this.kbRetrievalParams = kbRetrievalParams;
         this.messageMapper = messageMapper;
@@ -398,28 +398,7 @@ public class RetrievalEvaluationService {
     /** 深度思考多路近似：确定性拆子问题后委托生产入口 searchMulti（并行 + 超时降级 + 多路共识加分）。
      * 多路合并直接复用生产实现，评测口径与生产同源，避免两处实现漂移。 */
     private List<HybridRetrievalService.Hit> multiSearch(String question) {
-        return retrievalService.searchMulti(subQueries(question));
-    }
-
-    /** 子问题拆分：含连接词拆段；否则主问题 + 关键词词元组合（确定性近似，不调 LLM） */
-    private List<String> subQueries(String question) {
-        List<String> parts = new ArrayList<>();
-        for (String sep : List.of("和", "与", "、", "及", "，" , ",")) {
-            if (question.contains(sep)) {
-                for (String p : question.split(sep)) {
-                    if (!p.isBlank()) parts.add(p.trim());
-                }
-                break;
-            }
-        }
-        if (parts.isEmpty()) {
-            parts.add(question);
-            List<String> terms = keywordExtractor.extract(question);
-            if (terms.size() >= 2) {
-                parts.add(String.join(" ", terms.subList(0, Math.min(2, terms.size()))));
-            }
-        }
-        return parts.stream().distinct().toList();
+        return retrievalService.searchMulti(querySplitter.split(question));
     }
 
     /**

@@ -136,6 +136,7 @@ public class HybridRetrievalService {
         private String rewrittenQuery;   // 改写后的检索词（未改写为 null）
         private String rewriteSkipReason;// 未改写原因（no-history/standalone/timeout/failed...）
         private long rewriteElapsedMs;   // 改写耗时
+        private List<String> subQueries = List.of(); // 本轮原问题拆出的子问题（只诊断，不改变检索路径）
 
         void vectorFailed(String err) { this.vectorFailed = true; this.lastError = err; }
         void vectorPartialFailed(String err) { this.vectorPartialFailed = true; if (this.lastError == null) this.lastError = err; }
@@ -148,6 +149,7 @@ public class HybridRetrievalService {
         void addMetaFiltered(int n) { if (n > 0) this.metaFiltered.addAndGet(n); }
         void filterPushdown(String mode) { this.filterPushdown = mode; }
         void keywordEngine(String engine) { this.keywordEngine = engine; }
+        public void subQueries(List<String> qs) { this.subQueries = qs == null ? List.of() : List.copyOf(qs); }
         void rewriteApplied(String query, long ms) {
             this.rewriteApplied = true;
             this.rewrittenQuery = query;
@@ -178,6 +180,7 @@ public class HybridRetrievalService {
             this.rewrittenQuery = null;
             this.rewriteSkipReason = null;
             this.rewriteElapsedMs = 0;
+            this.subQueries = List.of();
         }
 
         public boolean isVectorFailed() { return vectorFailed; }
@@ -196,6 +199,7 @@ public class HybridRetrievalService {
         public String rewrittenQuery() { return rewrittenQuery; }
         public String rewriteSkipReason() { return rewriteSkipReason; }
         public long getRewriteElapsedMs() { return rewriteElapsedMs; }
+        public List<String> subQueries() { return subQueries; }
         /** 改写是否属于异常降级（超时/失败）；no-history/standalone 等是正常跳过 */
         public boolean isRewriteFailed() {
             return "timeout".equals(rewriteSkipReason) || "failed".equals(rewriteSkipReason);

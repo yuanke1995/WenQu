@@ -65,6 +65,7 @@ public class WenquAgentxTools {
     private final com.wenqu.ai.agent.runcode.RunCodeSubCallRuntime subCall;
     /** 引用来源的文件名兜底查询：工具首命中的文档不在主检索映射里，靠它按 docId 补查（见 {@link #newPool}）。 */
     private final com.wenqu.ai.service.DocumentMetaCache documentMetaCache;
+    private final com.wenqu.ai.service.SourceTypeResolver sourceTypeResolver;
     /** 本机浏览器：目标轮收尾时把 headed 窗口收掉（用户桌面上真实存在的窗口，不能一直挂着）。 */
     private final com.wenqu.ai.service.LocalBrowserTools localBrowserTools;
     /**
@@ -88,6 +89,7 @@ public class WenquAgentxTools {
                             com.wenqu.ai.agent.subagent.SubAgentBranchRuntime branchRuntime,
                             com.wenqu.ai.agent.runcode.RunCodeSubCallRuntime subCall,
                             com.wenqu.ai.service.DocumentMetaCache documentMetaCache,
+                            com.wenqu.ai.service.SourceTypeResolver sourceTypeResolver,
                             com.wenqu.ai.service.LocalBrowserTools localBrowserTools) {
         this.knowledgeRetrieval = knowledgeRetrieval;
         this.retrievalScope = retrievalScope;
@@ -108,6 +110,7 @@ public class WenquAgentxTools {
         this.branchRuntime = branchRuntime;
         this.subCall = subCall;
         this.documentMetaCache = documentMetaCache;
+        this.sourceTypeResolver = sourceTypeResolver;
         this.localBrowserTools = localBrowserTools;
     }
 
@@ -728,7 +731,7 @@ public class WenquAgentxTools {
     /** 本轮的引用池（编号唯一真源仍是 {@code TurnSourceRegistry}，本类不另写一份）。 */
     public WenquSourcePool newPool(ChatCommand cmd, SseEmitter emitter) {
         return new WenquSourcePool(runtime, configService, rerankService, kbRetrievalParams, imageUrlSigner,
-                cmd.getSessionId(), cmd.getQuestion(), emitter, documentMetaCache);
+                cmd.getSessionId(), cmd.getQuestion(), emitter, documentMetaCache, sourceTypeResolver);
     }
 
     /**
@@ -1086,15 +1089,12 @@ public class WenquAgentxTools {
                 configService.putOverrides(hooks.overrides());
                 configService.putUserOverrides(hooks.userOverrides());
                 try {
-                    // 追问改写默认关闭：A3 未证实增益，避免为中性效果付 2s 延迟。
-                    // 关闭时仍走原 4 参入口，检索行为与改造前一致；开启时补 TurnQueryContext 走两路召回。
-                    if (KNOWLEDGE_REWRITE_ENABLED) {
-                        return delegate.searchKnowledge(query, topK, t.scope(), t.pool().registrar(),
-                                new KnowledgeRetrievalTool.TurnQueryContext(
-                                        hooks.question(), hooks.modelRef(), hooks.userId(),
-                                        hooks.sessionId(), hooks.recentHistory()));
-                    }
-                    return delegate.searchKnowledge(query, topK, t.scope(), t.pool().registrar());
+                    // 本轮原问题用于多问诊断/分解；改写仍由 KNOWLEDGE_REWRITE_ENABLED 控制，默认关时不调改写器。
+                    // context 构造与该开关解绑，否则关闭状态下拿不到 question（见详细实施计划 §0 第 4 条）。
+                    return delegate.searchKnowledge(query, topK, t.scope(), t.pool().registrar(),
+                            new KnowledgeRetrievalTool.TurnQueryContext(
+                                    hooks.question(), hooks.modelRef(), hooks.userId(),
+                                    hooks.sessionId(), hooks.recentHistory(), KNOWLEDGE_REWRITE_ENABLED));
                 } finally {
                     configService.clearOverride();
                     configService.clearUserOverrides();

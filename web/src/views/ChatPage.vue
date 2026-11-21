@@ -1782,6 +1782,11 @@
             <span class="dbg-terms-label">检索词元</span>
             <a-tag v-for="(t, ti) in debugResult.keywordTerms" :key="ti" color="blue" style="margin:2px">{{ t }}</a-tag>
           </div>
+          <div v-if="debugResult.retrievalDiag?.subQueries?.length" class="dbg-terms">
+            <span class="dbg-terms-label">多问识别</span>
+            <a-tag size="small">仅诊断，检索未拆分</a-tag>
+            <a-tag v-for="(sq, qi) in debugResult.retrievalDiag.subQueries" :key="qi" color="purple" style="margin:2px">{{ sq }}</a-tag>
+          </div>
           <a-collapse :bordered="false" :default-active-key="['final']">
             <a-collapse-panel v-for="(s, si) in debugStages" :key="si" :name="si === 4 ? 'final' : String(si)" :header="s.name">
               <div v-if="s.items.length" class="dbg-item" v-for="(it, ii) in s.items" :key="ii">

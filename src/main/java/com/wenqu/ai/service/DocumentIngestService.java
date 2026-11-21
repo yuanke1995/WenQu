@@ -1,10 +1,13 @@
 package com.wenqu.ai.service;
 
+import java.security.DigestInputStream;
+import java.security.MessageDigest;
 import java.util.Locale;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.wenqu.ai.common.BizException;
+import com.wenqu.ai.common.DuplicateUploadException;
 import com.wenqu.ai.mapper.AiDocumentMapper;
 import com.wenqu.ai.mapper.KnowledgeMapper;
 import com.wenqu.ai.mapper.KnowledgeBaseMapper;
@@ -87,6 +90,12 @@ public class DocumentIngestService {
      * 不留到解析期静默跳过图片描述）；空 = 跟随知识库双槽位配置。
      */
     public AiDocument upload(MultipartFile file, String description, String kbId, String visionRef) throws Exception {
+        return upload(file, description, kbId, visionRef, false);
+    }
+
+    /** force=true 仅用于同名新版本的确认覆盖；内容完全相同仍一律拦下。 */
+    public AiDocument upload(MultipartFile file, String description, String kbId, String visionRef,
+                             boolean force) throws Exception {
         String fileName = file.getOriginalFilename();
         if (fileName == null || fileName.isBlank()) {
             throw new BizException("文件名为空");
@@ -118,10 +127,30 @@ public class DocumentIngestService {
                 throw new BizException("目标知识库不存在或已删除");
             }
         }
+        String contentSha = sha256(file);
+        List<AiDocument> sameContent = documentMapper.selectList(new LambdaQueryWrapper<AiDocument>()
+                .eq(AiDocument::getKbId, targetKbId)
+                .eq(AiDocument::getContentSha256, contentSha)
+                .in(AiDocument::getStatus, 0, 2, 3)
+                .last("limit 1"));
+        if (!sameContent.isEmpty()) {
+            throw new DuplicateUploadException("exists", "已存在内容完全相同的文档，无需重复上传");
+        }
+        if (!force) {
+            List<AiDocument> sameName = documentMapper.selectList(new LambdaQueryWrapper<AiDocument>()
+                    .eq(AiDocument::getKbId, targetKbId)
+                    .eq(AiDocument::getFileName, fileName)
+                    .in(AiDocument::getStatus, 0, 2, 3)
+                    .last("limit 1"));
+            if (!sameName.isEmpty() && !contentSha.equals(sameName.get(0).getContentSha256())) {
+                throw new DuplicateUploadException("newVersion", "同名文档内容已变更，确认后覆盖旧版本");
+            }
+        }
         Object lock = uploadLocks.computeIfAbsent(fileName, k -> new Object());
         try {
             synchronized (lock) {
-                return doUpload(file, fileName, ext, description, parser, targetKbId, docVisionRef.isBlank() ? null : docVisionRef);
+                return doUpload(file, fileName, ext, description, parser, targetKbId,
+                        docVisionRef.isBlank() ? null : docVisionRef, contentSha);
             }
         } finally {
             uploadLocks.remove(fileName, lock);
@@ -129,8 +158,15 @@ public class DocumentIngestService {
     }
 
     /** 上传主体（已按文件名串行）：优先复用同名文档走 diff，否则新建 */
+    /** 网页导入/文本写入入口：没有上传前置去重，但仍按文件字节记指纹。 */
     private AiDocument doUpload(MultipartFile file, String fileName, String ext, String description,
                                 DocumentParser parser, String targetKbId, String visionRef) throws Exception {
+        return doUpload(file, fileName, ext, description, parser, targetKbId, visionRef, sha256(file));
+    }
+
+    private AiDocument doUpload(MultipartFile file, String fileName, String ext, String description,
+                                DocumentParser parser, String targetKbId, String visionRef,
+                                String contentSha) throws Exception {
         // 背压：队列排满时**在落盘建记录之前**就拒绝，而不是先收下、再在线程池里丢掉解析任务。
         if (parseQueue.isBackpressured()) {
             throw new BizException("解析队列已满（" + parseQueue.queuedCount() + "/" + parseQueue.capacity()
@@ -138,9 +174,9 @@ public class DocumentIngestService {
         }
         // 同名文档优先复用其 docId 走 diff 重解析（upsert 语义：文档身份/knowledgeId 稳定，未变块增量复用、只重嵌变更处）；
         // 无可复用（无同名，或同名均解析中已清理）时走全新上传
-        AiDocument reusable = reusableTarget(fileName);
+        AiDocument reusable = reusableTarget(fileName, targetKbId);
         if (reusable != null) {
-            AiDocument doc = replaceExisting(reusable, file, description, parser, visionRef);
+            AiDocument doc = replaceExisting(reusable, file, description, parser, visionRef, contentSha);
             // 同名复用是 upsert 语义：文档身份不变；目标库与现归属不同时移动归属（向量模型不同会异步迁移向量）
             if (targetKbId != null && !targetKbId.equals(doc.getKbId())) {
                 String fromKbId = doc.getKbId();
@@ -160,6 +196,7 @@ public class DocumentIngestService {
         AiDocument doc = new AiDocument();
         doc.setFileName(fileName);
         doc.setFileType(ext);
+        doc.setContentSha256(contentSha);
         doc.setFileSize(file.getSize());
         doc.setStatus(2); // 解析中
         doc.setDescription(description);
@@ -449,10 +486,11 @@ public class DocumentIngestService {
      * 同名复用目标：查同名文档（status 0/2/3，弃用记录保留），优先复用最近一条 status 0（生效）、其次 status 3（失败）的，
      * 其余同名文档（含正在解析 status=2 的旧任务）删除，保持"替换"语义。无可复用返回 null。
      */
-    private AiDocument reusableTarget(String fileName) {
+    private AiDocument reusableTarget(String fileName, String kbId) {
         List<AiDocument> existing = documentMapper.selectList(
                 new LambdaQueryWrapper<AiDocument>()
                         .eq(AiDocument::getFileName, fileName)
+                        .eq(AiDocument::getKbId, kbId)
                         .in(AiDocument::getStatus, 0, 2, 3)
                         .orderByDesc(AiDocument::getCreateTime)
                         .last("limit 10"));
@@ -479,6 +517,11 @@ public class DocumentIngestService {
      */
     private AiDocument replaceExisting(AiDocument existing, MultipartFile file, String description,
                                        DocumentParser parser, String visionRef) throws Exception {
+        return replaceExisting(existing, file, description, parser, visionRef, sha256(file));
+    }
+
+    private AiDocument replaceExisting(AiDocument existing, MultipartFile file, String description,
+                                       DocumentParser parser, String visionRef, String contentSha) throws Exception {
         String docId = existing.getId();
         int origStatus = existing.getStatus() == null ? 0 : existing.getStatus();
         // 未成功提交时一并回滚解析态字段：fail_reason 下方会置 null、parse_desc 会被改写为
@@ -500,6 +543,7 @@ public class DocumentIngestService {
             fileStore.saveSourceFile(file, docId, existing.getFileName());
             // 更新元数据并置解析中（visionRef 同步为本次上传的选择：null=清覆盖回跟随知识库）
             existing.setFileSize(file.getSize());
+            existing.setContentSha256(contentSha);
             existing.setDescription(description);
             existing.setVisionRef(visionRef);
             existing.setStatus(2);
@@ -508,6 +552,7 @@ public class DocumentIngestService {
             documentMapper.update(null, new LambdaUpdateWrapper<AiDocument>()
                     .eq(AiDocument::getId, docId)
                     .set(AiDocument::getFileSize, existing.getFileSize())
+                    .set(AiDocument::getContentSha256, contentSha)
                     .set(AiDocument::getDescription, existing.getDescription())
                     .set(AiDocument::getVisionRef, existing.getVisionRef())
                     .set(AiDocument::getStatus, 2)
@@ -535,6 +580,20 @@ public class DocumentIngestService {
                 }
             }
         }
+    }
+
+    /** 文件字节 SHA-256（流式读，不把整个文件读进内存） */
+    private static String sha256(MultipartFile file) throws Exception {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        try (DigestInputStream in = new DigestInputStream(file.getInputStream(), digest)) {
+            byte[] buf = new byte[8192];
+            while (in.read(buf) != -1) {
+                // 只读以喂给摘要
+            }
+        }
+        StringBuilder sb = new StringBuilder(64);
+        for (byte b : digest.digest()) sb.append(String.format("%02x", b & 0xff));
+        return sb.toString();
     }
 
     /** 并发防护（多实例也原子）：CAS 抢占"解析中"状态，失败说明已有解析在进行 */

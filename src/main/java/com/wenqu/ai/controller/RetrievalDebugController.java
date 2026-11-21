@@ -10,6 +10,7 @@ import com.wenqu.ai.service.HybridRetrievalService;
 import com.wenqu.ai.service.KbRetrievalParamService;
 import com.wenqu.ai.service.KnowledgeBaseService;
 import com.wenqu.ai.service.KeywordExtractor;
+import com.wenqu.ai.service.QuerySplitter;
 import com.wenqu.ai.service.RerankService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -40,6 +41,7 @@ public class RetrievalDebugController {
     private final RerankService rerankService;
     private final DocumentMetaCache documentMetaCache;
     private final KeywordExtractor keywordExtractor;
+    private final QuerySplitter querySplitter;
     private final KnowledgeMapper knowledgeMapper;
     private final KnowledgeBaseService kbService;
     private final com.wenqu.ai.service.ConfigService configService;
@@ -134,6 +136,7 @@ public class RetrievalDebugController {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("query", query);
         HybridRetrievalService.RetrievalDiag diag = new HybridRetrievalService.RetrievalDiag();
+        diag.subQueries(querySplitter.analyze(query).queries());
         // 可选元数据过滤（与生产同一份 RetrievalFilter）：用于复现「标签/类型/时间下为什么搜不到」
         com.wenqu.ai.service.RetrievalFilter filter = parseFilter(body);
         // 可选按智能体复现：资料范围与文档条件走生产同一条解析链路；显式 filter 优先于智能体配置
@@ -228,6 +231,7 @@ public class RetrievalDebugController {
         diagOut.put("keywordEngine", diag.keywordEngine());
         diagOut.put("graphExpanded", diag.getGraphExpanded());
         diagOut.put("aclPushdownError", diag.aclPushdownError());
+        diagOut.put("subQueries", diag.subQueries());
         result.put("retrievalDiag", diagOut);
 
         // 每库生效参数：只列**本轮真正命中的库**（命中块已过可见性判定），不把范围外的库名/模型带出去。

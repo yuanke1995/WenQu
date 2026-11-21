@@ -22,6 +22,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Excel 解析器（POI）
@@ -73,37 +74,41 @@ public class ExcelParser implements DocumentParser {
                 Sheet sheet = workbook.getSheetAt(s);
                 if (sheet == null) continue;
                 String sheetName = sheet.getSheetName();
-                StringBuilder buf = new StringBuilder();
-                int rowCount = 0;
-
+                Map<Integer, String> headers = null;
                 for (Row row : sheet) {
-                    StringBuilder line = new StringBuilder();
-                    boolean hasCell = false;
-                    for (Cell cell : row) {
-                        String v = cellValue(cell, evaluator);
-                        if (!v.isEmpty()) {
-                            if (hasCell) line.append(" | ");
-                            line.append(v);
-                            hasCell = true;
-                        }
+                    Map<Integer, String> cells = rowCells(row, evaluator);
+                    if (cells.isEmpty()) continue;
+                    if (headers == null) {
+                        headers = cells;
+                        continue;
                     }
-                    if (!hasCell) continue;
-                    rowCount++;
-
-                    if (buf.length() + line.length() > maxSize && buf.length() > 0) {
-                        chunks.add(new Chunk(sheetName + "（前" + rowCount + "行）", buf.toString().trim(), List.of()));
-                        buf.setLength(0);
+                    int rowNo = row.getRowNum() + 1;
+                    StringBuilder line = new StringBuilder("第").append(rowNo).append("行：");
+                    for (Map.Entry<Integer, String> e : cells.entrySet()) {
+                        String name = headers.getOrDefault(e.getKey(), "列" + (e.getKey() + 1));
+                        if (line.length() > 9) line.append(" | ");
+                        line.append(name).append(": ").append(e.getValue());
                     }
-                    if (buf.length() > 0) buf.append("\n");
-                    buf.append(line);
-                }
-                if (buf.length() > 0) {
-                    chunks.add(new Chunk(sheetName, buf.toString().trim(), List.of()));
+                    String text = line.toString();
+                    if (text.length() > maxSize) text = text.substring(0, maxSize) + "…（已截断）";
+                    // 坐标走 titlePath：前端引用已支持章节路径，零 schema 改动即可定位到行
+                    chunks.add(new Chunk(sheetName + " 第" + rowNo + "行", text, List.of(),
+                            sheetName + "/第" + rowNo + "行"));
                 }
             }
         }
-        log.info("[Excel] {} 解析出 {} 个分块", fileName, chunks.size());
+        log.info("[Excel] {} 解析出 {} 个行级分块", fileName, chunks.size());
         return chunks;
+    }
+
+    /** 按物理列号保留单元格位置，空单元格不占位错列 */
+    private Map<Integer, String> rowCells(Row row, FormulaEvaluator evaluator) {
+        Map<Integer, String> cells = new java.util.LinkedHashMap<>();
+        for (Cell cell : row) {
+            String v = cellValue(cell, evaluator);
+            if (!v.isEmpty()) cells.put(cell.getColumnIndex(), v);
+        }
+        return cells;
     }
 
     private String cellValue(Cell cell, FormulaEvaluator evaluator) {

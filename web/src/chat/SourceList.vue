@@ -13,7 +13,7 @@
 import { ref } from 'vue'
 import { CaretRightOutlined, DislikeOutlined, LikeOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
-import { externalOrigin, sourceName } from './projections'
+import { externalOrigin, sourceName, sourceTypeLabel } from './projections'
 import { openSource } from './answerViewer'
 import { feedbackKnowledgeByChunk } from '../api'
 
@@ -75,6 +75,7 @@ async function sendFb (s, useful) {
           <span class="rt-ref-tag">[{{ s.ref }}]</span>
           <span v-if="s.origin === 'WEB'" class="rt-ref-web">联网</span>
           <span v-else-if="s.origin === 'MCP'" class="rt-ref-web" title="MCP 工具返回的来源">MCP</span>
+          <span v-if="!externalOrigin(s) && sourceTypeLabel(s)" class="rt-ref-type">{{ sourceTypeLabel(s) }}</span>
           {{ sourceName(s) }}
           <div v-if="showSnippet && s.snippet" class="rt-snip">{{ s.snippet }}</div>
         </div>
@@ -129,6 +130,10 @@ async function sendFb (s, useful) {
 .rt-ref-web {
   margin: 0 6px; padding: 0 5px; border-radius: 4px; background: var(--app-panel-2);
   color: var(--app-text3); font-size: 11px;
+}
+.rt-ref-type {
+  margin: 0 6px; padding: 0 5px; border-radius: 4px; background: var(--app-accent-weak);
+  color: var(--app-accent); font-size: 11px;
 }
 .rt-snip { color: var(--app-text3); margin-top: 2px; }
 /* 折叠箭头（与时间线共用同一个类名与旋转口径） */
