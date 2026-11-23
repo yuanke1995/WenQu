@@ -164,6 +164,7 @@ const members = ref([])
 const tasks = ref({ nodes: [], edges: [] })
 const messages = ref([])
 const feed = ref([])
+const extraAgents = ref([])
 const loading = ref(false)
 
 const taskOpen = ref(false)
@@ -181,8 +182,9 @@ const AV = [
 function avatarBg(i) { return AV[i % AV.length] }
 // 按 agentId / agentName 解析真实智能体对象，交给 AgentAvatar 渲染真实 logo
 function agentOf(m) {
-  const list = props.agents || []
-  if (!list.length || !m) return null
+  if (!m) return null
+  const list = [...(props.agents || []), ...(extraAgents.value || [])]
+  if (!list.length) return null
   return list.find(a => a.id === m.agentId) || list.find(a => a.name === m.agentName) || null
 }
 const leadAgent = computed(() => props.agent || (props.agents || []).find(a => a.name === props.agentName) || null)
@@ -314,6 +316,20 @@ async function load() {
     const msgs = await api.getTeamMessages(props.sessionId)
     messages.value = Array.isArray(msgs) ? msgs : []
   } catch (e) { /* 忽略 */ }
+  // 成员头像需要子智能体的 icon：/agent/list（管理端，含全部+icon）；失败回退可咨询列表
+  if (!extraAgents.value.length) {
+    try {
+      const r = await api.listAgents()
+      const arr = Array.isArray(r && r.data) ? r.data : (Array.isArray(r) ? r : [])
+      if (arr.length) extraAgents.value = arr
+    } catch (e) {
+      try {
+        const r2 = await api.listConsultableAgents()
+        const arr2 = Array.isArray(r2 && r2.data) ? r2.data : (Array.isArray(r2) ? r2 : [])
+        if (arr2.length) extraAgents.value = arr2
+      } catch (e2) { /* 无权限则回退机器人图标 */ }
+    }
+  }
   await buildFeed()
 }
 
