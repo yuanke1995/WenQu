@@ -2321,6 +2321,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         return "\n\n## 智能体团队（已开启）\n"
                 + "复杂或多步、需要协作跟踪的任务，用团队任务板（`team` 工具）："
                 + "`team(action=createTask, subject=…, owner=成员名)` 建任务并可直接派给某位成员，"
+                + "任务有先后时用 `team_task_depend(from, to)` 登记依赖（前置完成，后继才可认领）；"
                 + "`team(action=listClaimableTasks)` 看待认领 → `team(action=claimTask)` 认领 → "
                 + "`team(action=completeTask/failTask)` 完成或失败。"
                 + "需要别的成员补充信息/分工时：`agent_spawn` 派人、`agent_send` 追加消息、"
@@ -3396,6 +3397,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // teamsMode 自动注册的 team 工具（见下方 build 前的 teamsMode 装配）。这里不再挂任何
         // 自研 team_* / team_task_* 工具（对齐 DSH：薄 team 层，不造第二套）。
         holders.add(new GoalTools(goalService, slot));
+        // 团队任务依赖 shim：框架 TeamTool.createTask 不暴露 blockedBy，模型经这一把声明 DAG 依赖。
+        if (teamActive(cmd) && teamGateway != null) {
+            tools.mountRawHolders(holders, policy,
+                    !cmd.isGuestMode() && !cmd.isApiKey() && interactiveTurn(cmd), slot,
+                    new com.wenqu.ai.agentx.team.TeamTaskDependTool(teamGateway, sessionService, slot));
+        }
         java.util.Set<String> groupedNames = tools.registerWithGroups(toolkit, holders);
         // 工具表随实例跨轮稳定，登记到槽位：脚本子调用要把框架申报只读的那几把也纳进名册
         slot.noteToolkit(toolkit);

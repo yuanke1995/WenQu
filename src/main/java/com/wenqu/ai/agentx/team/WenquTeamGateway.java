@@ -229,4 +229,82 @@ public class WenquTeamGateway {
             return false;
         }
     }
+
+    /**
+     * 给两个任务加一条依赖（from 完成后 to 才可认领）。
+     * <p>框架 {@code TeamTool.createTask} 不暴露 {@code blockedBy}、{@code TeamClient} 也没有独立的
+     * addDependency，所以这里在框架的 BaseStore 任务条目上做一次 CAS 追加——只是暴露框架数据模型的
+     * 一个缺口，不是另造一套任务板。返回 null=成功，否则错误文本。
+     */
+    public String addDependency(String rootSessionId, String fromRef, String toRef) {
+        String fromId = resolveTaskId(rootSessionId, fromRef);
+        String toId = resolveTaskId(rootSessionId, toRef);
+        if (fromId == null) return "找不到前置任务「" + fromRef + "」";
+        if (toId == null) return "找不到后继任务「" + toRef + "」";
+        if (fromId.equals(toId)) return "不能给自己加依赖";
+        List<TeamTask> tasks;
+        try {
+            tasks = client.listTasks(namespace(), teamName(rootSessionId)).block();
+        } catch (RuntimeException e) {
+            return "读取任务板失败：" + e.getMessage();
+        }
+        if (tasks == null) return "读取任务板失败";
+        Map<String, TeamTask> byId = new HashMap<>();
+        for (TeamTask t : tasks) byId.put(t.taskId(), t);
+        TeamTask from = byId.get(fromId);
+        TeamTask to = byId.get(toId);
+        if (from == null || to == null) return "任务不存在或不属于本团队";
+        if (to.blockedBy() != null && to.blockedBy().contains(fromId)) return "依赖已存在";
+        // 成环检测：from 若已（传递地）依赖 to，再加 to→from 就成环
+        if (dependsTransitively(byId, fromId, toId)) return "依赖会成环";
+        List<String> blocked = new ArrayList<>(to.blockedBy() == null ? List.of() : to.blockedBy());
+        blocked.add(fromId);
+        Map<String, Object> value = new LinkedHashMap<>();
+        value.put("taskId", to.taskId());
+        value.put("teamName", to.teamName());
+        value.put("namespace", to.namespace());
+        value.put("subject", to.subject());
+        value.put("description", to.description());
+        value.put("state", to.state());
+        value.put("owner", to.owner());
+        value.put("blockedBy", blocked);
+        value.put("result", to.result());
+        value.put("version", to.version() + 1);
+        boolean ok = store.putIfVersion(
+                List.of("teams", namespace(), teamName(rootSessionId), "tasks"),
+                to.taskId(), value, to.version());
+        return ok ? null : "任务刚被改动，请重试";
+    }
+
+    /** from 顺着 blockedBy 能否走到 target（用于成环判定）。 */
+    private static boolean dependsTransitively(Map<String, TeamTask> byId, String from, String target) {
+        java.util.Deque<String> stack = new java.util.ArrayDeque<>();
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        stack.push(from);
+        int guard = 0;
+        while (!stack.isEmpty() && guard++ < 1000) {
+            String cur = stack.pop();
+            if (!seen.add(cur)) continue;
+            if (cur.equals(target)) return true;
+            TeamTask t = byId.get(cur);
+            if (t == null || t.blockedBy() == null) continue;
+            for (String b : t.blockedBy()) stack.push(b);
+        }
+        return false;
+    }
+
+    /** 任务标题或 id → 任务 id（同板内标题唯一）。 */
+    private String resolveTaskId(String rootSessionId, String ref) {
+        if (ref == null || ref.isBlank()) return null;
+        String r = ref.trim();
+        try {
+            List<TeamTask> tasks = client.listTasks(namespace(), teamName(rootSessionId)).block();
+            if (tasks == null) return null;
+            for (TeamTask t : tasks) if (r.equals(t.taskId())) return t.taskId();
+            for (TeamTask t : tasks) if (r.equals(t.subject())) return t.taskId();
+        } catch (RuntimeException e) {
+            return null;
+        }
+        return null;
+    }
 }
