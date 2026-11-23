@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>问渠 · Agent Team / 任务 DAG 待拍板 UI 对照</title>
+<style>
+:root{
+  --bg:#f6f7f9; --panel:#fff; --panel2:#fafbfc; --panel3:#f2f4f7;
+  --border:#e6e9ed; --border2:#d8dde3;
+  --text:#1f2329; --text2:#5f6570; --text3:#98a0aa;
+  --accent:#2e6be6; --accent-hover:#1f5bd8; --accent-weak:#eef4ff; --accent-border:#c9dbfb;
+  --ok:#3b8f4e; --ok-weak:#eaf5ec; --ok-border:#cfe4d3;
+  --warn:#a3691b; --warn-weak:#faf3e6; --warn-border:#f0dfb6;
+  --danger:#cf1322; --danger-weak:#fff2f0; --danger-border:#f3c9c9;
+  --violet:#7c3aed; --violet-weak:#f5f3ff; --violet-border:#ddd6fe;
+  --shadow-sm:0 1px 2px rgba(16,24,40,.04);
+  --shadow:0 3px 12px rgba(16,24,40,.07);
+  --font:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Hiragino Sans GB','Microsoft YaHei','Helvetica Neue',Helvetica,Arial,sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:13px;line-height:1.6;-webkit-font-smoothing:antialiased}
+button{font-family:var(--font);cursor:pointer}
+.ic{width:14px;height:14px;flex:none;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+
+/* 页头 */
+.page{max-width:1480px;margin:0 auto;padding:22px 26px 60px}
+.h1{font-size:20px;font-weight:650;letter-spacing:-.01em;margin:0 0 4px}
+.sub{color:var(--text2);font-size:12.5px;margin:0 0 16px}
+.tabs{display:flex;gap:6px;border-bottom:1px solid var(--border);margin-bottom:18px;flex-wrap:wrap}
+.tab{border:0;background:transparent;color:var(--text2);padding:9px 13px;font-size:13px;border-bottom:2px solid transparent;margin-bottom:-1px}
+.tab.on{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
+.tab:hover{color:var(--text)}
+.panel{display:none}
+.panel.on{display:block}
+
+/* 对照卡 */
+.compare{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.opt{background:var(--panel);border:1px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:var(--shadow-sm)}
+.opt-head{padding:13px 16px;border-bottom:1px solid var(--border);display:flex;gap:10px;align-items:flex-start;background:var(--panel2)}
+.badge{font-size:11px;font-weight:700;padding:2px 7px;border-radius:999px;background:var(--accent-weak);color:var(--accent);border:1px solid var(--accent-border);flex:none}
+.badge.b{background:var(--violet-weak);color:var(--violet);border-color:var(--violet-border)}
+.opt-title{font-size:13.5px;font-weight:600;line-height:1.4}
+.opt-desc{font-size:11.5px;color:var(--text2);margin-top:2px}
+.mock{padding:16px;background:#fff;min-height:360px}
+
+/* 迷你问渠外壳 */
+.mini{border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--panel2);height:330px;display:flex;flex-direction:column}
+.mini-top{height:38px;flex:none;display:flex;align-items:center;gap:8px;padding:0 12px;border-bottom:1px solid var(--border);background:#fff;font-size:11.5px;color:var(--text2)}
+.mini-top .dot{width:7px;height:7px;border-radius:50%;background:#d4d9e0}
+.mini-top .t{color:var(--text);font-weight:600;font-size:12px}
+.mini-body{flex:1;display:flex;min-height:0}
+.mini-chat{flex:1;min-width:0;padding:12px 14px;overflow:hidden}
+.mini-rail{width:224px;flex:none;border-left:1px solid var(--border);background:#fff;padding:10px;overflow:hidden}
+.mini-rail.wide{width:100%;border-left:0}
+.mini-msg{background:#fff;border:1px solid var(--border);border-radius:9px;padding:9px 11px;margin-bottom:10px;font-size:11.5px;color:var(--text2)}
+.mini-msg.user{background:var(--panel3);border-color:transparent;color:var(--text);margin-left:40px}
+.mini-msg.ai{color:var(--text)}
+.mini-msg .strong{color:var(--text);font-weight:600}
+
+/* 任务图 */
+.card-title{font-size:11.5px;font-weight:600;display:flex;align-items:center;gap:6px;margin:0 0 8px}
+.card-title .count{margin-left:auto;font-size:10px;color:var(--text3);font-weight:400}
+.scope{display:inline-flex;align-items:center;gap:4px;font-size:10px;color:var(--text2);background:var(--panel3);border:1px solid var(--border);border-radius:999px;padding:1px 7px;margin-bottom:8px}
+.dag{display:flex;flex-direction:column;gap:7px}
+.dag-row{display:flex;align-items:center;gap:5px}
+.node{flex:1;min-width:0;border:1px solid var(--border);border-radius:7px;background:#fff;padding:6px 7px;position:relative}
+.node .nt{font-size:10.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.node .nm{font-size:9.5px;color:var(--text3);margin-top:1px;display:flex;gap:5px;align-items:center}
+.node.ready{border-color:var(--accent-border);background:var(--accent-weak)}
+.node.done{border-color:var(--ok-border);background:var(--ok-weak)}
+.node.wait{border-color:var(--warn-border);background:var(--warn-weak)}
+.node.blocked{opacity:.72;border-style:dashed}
+.node.fail{border-color:var(--danger-border);background:var(--danger-weak)}
+.node .st{font-size:9px;padding:0 4px;border-radius:4px;font-weight:600}
+.node.done .st{color:var(--ok)} .node.ready .st{color:var(--accent)}
+.node.wait .st{color:var(--warn)} .node.blocked .st{color:var(--text3)} .node.fail .st{color:var(--danger)}
+.arrow{font-size:12px;color:#b9c0c9;flex:none;line-height:1}
+.arrow.lit{color:var(--ok)}
+.legend{display:flex;gap:9px;flex-wrap:wrap;font-size:10px;color:var(--text3);margin-top:9px;border-top:1px dashed var(--border);padding-top:7px}
+.legend i{width:7px;height:7px;border-radius:2px;display:inline-block;margin-right:3px;vertical-align:middle}
+
+/* 独立页 */
+.fullpage{border:1px solid var(--border);border-radius:10px;overflow:hidden;background:#fff;height:330px;display:flex;flex-direction:column}
+.fp-top{height:38px;flex:none;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:9px;padding:0 12px;font-size:12px;color:var(--text2)}
+.fp-top .t{font-weight:600;color:var(--text)}
+.fp-body{flex:1;display:flex;min-height:0}
+.fp-list{width:178px;flex:none;border-right:1px solid var(--border);padding:9px}
+.fp-item{font-size:10.5px;padding:6px 8px;border-radius:6px;margin-bottom:3px;color:var(--text2)}
+.fp-item.on{background:var(--accent-weak);color:var(--accent);font-weight:600}
+.fp-canvas{flex:1;padding:16px 20px;overflow:hidden}
+.fp-canvas .dag{max-width:520px;margin:12px auto 0}
+
+/* 等待卡 / 时间线 */
+.waitcard{border:1px solid var(--warn-border);background:var(--warn-weak);border-radius:8px;padding:9px 11px;font-size:11px;color:var(--warn);display:flex;gap:8px;align-items:flex-start}
+.spin{width:11px;height:11px;border:1.6px solid var(--warn-border);border-top-color:var(--warn);border-radius:50%;animation:sp .9s linear infinite;flex:none;margin-top:3px}
+@keyframes sp{to{transform:rotate(360deg)}}
+.tline{border-left:1.5px solid var(--border);padding-left:11px;margin-left:5px;font-size:10.5px;color:var(--text2)}
+.tline div{position:relative;margin-bottom:8px}
+.tline div:before{content:'';position:absolute;left:-15px;top:5px;width:6px;height:6px;border-radius:50%;background:#cbd2da}
+.tline div.hi:before{background:var(--warn)}
+.tline b{color:var(--text);font-weight:600}
+
+/* 说明条 */
+.note{margin-top:12px;padding:10px 13px;border:1px solid var(--border);border-radius:8px;background:var(--panel2);font-size:11.5px;color:var(--text2)}
+.note b{color:var(--text)}
+.note .row{margin:3px 0}
+.note .y{color:var(--ok)} .note .n{color:var(--danger)}
+@media(max-width:1100px){.compare{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="page">
+  <h1 class="h1">问渠 · Agent Team / 任务 DAG 待拍板 UI 对照</h1>
+  <p class="sub">静态效果图，仅用于四项拍板对比；不代表最终实现。点击上方标签切换。</p>
+
+  <div class="tabs">
+    <button class="tab on" data-p="p1">拍板 1 · 入口形态</button>
+    <button class="tab" data-p="p2">拍板 2 · 任务作用域</button>
+    <button class="tab" data-p="p3">拍板 3 · 子智能体分支</button>
+    <button class="tab" data-p="p4">拍板 4 · 等待实现</button>
+  </div>
+
+  <!-- 拍板 1 -->
+  <div class="panel on" id="p1">
+    <div class="compare">
+      <div class="opt">
+        <div class="opt-head"><span class="badge">A 推荐</span><div><div class="opt-title">对话页右栏「任务图」卡</div><div class="opt-desc">与「本轮」卡并列，不离开当前问答上下文</div></div></div>
+        <div class="mock">
+          <div class="mini">
+            <div class="mini-top"><span class="dot"></span><span class="t">竞品分析报告</span><span style="margin-left:auto">模型 · claude</span></div>
+            <div class="mini-body">
+              <div class="mini-chat">
+                <div class="mini-msg user">帮我做一份竞品分析报告，先抓官网和财报，再对比。</div>
+                <div class="mini-msg ai"><span class="strong">已拆成 5 个任务</span>，2 个在跑，下游等依赖中…</div>
+                <div class="mini-msg ai" style="color:var(--text3)">正文继续输出，不被过程打断</div>
+              </div>
+              <div class="mini-rail">
+                <div class="card-title">本轮 <span class="count">2 / 5 进行中</span></div>
+                <div class="card-title" style="margin-top:14px">任务图 <span class="count">5 节点</span></div>
+                <div class="dag">
+                  <div class="dag-row">
+                    <div class="node done"><div class="nt">抓官网信息</div><div class="nm"><span class="st">完成</span><span>1m12s</span></div></div>
+                    <div class="node ready"><div class="nt">抓财报数据</div><div class="nm"><span class="st">在跑</span><span>0m48s</span></div></div>
+                  </div>
+                  <div class="dag-row"><span class="arrow">↓</span><span class="arrow lit">↓</span></div>
+                  <div class="dag-row">
+                    <div class="node blocked"><div class="nt">整理访谈记录</div><div class="nm"><span class="st">等依赖</span><span>财报</span></div></div>
+                  </div>
+                  <div class="dag-row"><span class="arrow">↓</span></div>
+                  <div class="dag-row">
+                    <div class="node blocked"><div class="nt">对比分析 → 出报告</div><div class="nm"><span class="st">待 2 项</span></div></div>
+                  </div>
+                </div>
+                <div class="legend"><span><i style="background:var(--ok)"></i>完成</span><span><i style="background:var(--accent)"></i>在跑</span><span><i style="background:#cbd2da"></i>阻塞</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="note"><b>代价：</b>窄栏容纳大图需缩放；适合 ≤10 节点。<br><b>收益：</b>零新增一级入口，与回答同屏，改一次 CSS + 一个组件。</div>
+        </div>
+      </div>
+
+      <div class="opt">
+        <div class="opt-head"><span class="badge b">B</span><div><div class="opt-title">独立 /tasks 页</div><div class="opt-desc">大画布 + 左侧任务清单，可跨会话查看</div></div></div>
+        <div class="mock">
+          <div class="fullpage">
+            <div class="fp-top"><span class="t">任务图</span><span class="scope">项目 / 竞品分析</span><span style="margin-left:auto">+ 新建任务</span></div>
+            <div class="fp-body">
+              <div class="fp-list">
+                <div class="fp-item on">● 竞品分析报告</div>
+                <div class="fp-item">○ 官网信息更新追踪</div>
+                <div class="fp-item">○ 季度数据核对</div>
+                <div class="fp-item" style="color:var(--text3);margin-top:10px">— 近 7 天 —</div>
+                <div class="fp-item">✓ 上次白皮书</div>
+              </div>
+              <div class="fp-canvas">
+                <div class="card-title">竞品分析报告 <span class="count">5 节点 · 4 条依赖</span></div>
+                <div class="dag">
+                  <div class="dag-row">
+                    <div class="node done"><div class="nt">抓官网信息</div><div class="nm"><span class="st">完成</span></div></div>
+                    <div class="node ready"><div class="nt">抓财报数据</div><div class="nm"><span class="st">在跑</span></div></div>
+                    <div class="node blocked"><div class="nt">整理访谈</div><div class="nm"><span class="st">等依赖</span></div></div>
+                  </div>
+                  <div class="dag-row"><span class="arrow">↓</span><span class="arrow lit">↓</span><span class="arrow">↓</span></div>
+                  <div class="dag-row">
+                    <div class="node blocked" style="margin:0 33%"><div class="nt">对比分析 → 出报告</div><div class="nm"><span class="st">待 2 项</span></div></div>
+                  </div>
+                </div>
+                <div class="legend"><span>点节点查看执行帧与来源轮次</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="note"><b>代价：</b>新增一级菜单 + 页面，任务脱离问答现场。<br><b>收益：</b>大图与跨会话历史好展示；P1 多用户共享时更自然。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 拍板 2 -->
+  <div class="panel" id="p2">
+    <div class="compare">
+      <div class="opt">
+        <div class="opt-head"><span class="badge">A 推荐</span><div><div class="opt-title">session 级（本会话）</div><div class="opt-desc">任务跟着这一条对话走，不跨会话</div></div></div>
+        <div class="mock">
+          <div class="mini">
+            <div class="mini-top"><span class="dot"></span><span class="t">竞品分析报告</span></div>
+            <div class="mini-body">
+              <div class="mini-chat">
+                <div class="mini-msg user">帮我做一份竞品分析报告…</div>
+                <div class="mini-msg ai">已建 5 个任务，均归属本会话。</div>
+              </div>
+              <div class="mini-rail">
+                <div class="scope">◉ 仅本会话 · sid: 8f3c…</div>
+                <div class="card-title">任务图 <span class="count">5 节点</span></div>
+                <div class="dag">
+                  <div class="dag-row">
+                    <div class="node done"><div class="nt">抓官网</div><div class="nm"><span class="st">完成</span></div></div>
+                    <div class="node ready"><div class="nt">抓财报</div><div class="nm"><span class="st">在跑</span></div></div>
+                  </div>
+                  <div class="dag-row"><span class="arrow">↓</span><span class="arrow lit">↓</span></div>
+                  <div class="dag-row"><div class="node blocked"><div class="nt">对比分析 → 报告</div><div class="nm"><span class="st">待依赖</span></div></div></div>
+                </div>
+                <div class="legend"><span>新会话 = 新图，互不干扰</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="note"><b>P0 实现：</b><span class="y">最简单</span>——`scope_type=session`，归属校验只看 sessionId + owner。<br><b>局限：</b>换个会话继续同一项目时看不到旧任务。</div>
+        </div>
+      </div>
+
+      <div class="opt">
+        <div class="opt-head"><span class="badge b">B</span><div><div class="opt-title">project 级（工作区/项目）</div><div class="opt-desc">同一项目下多个会话共享一张图</div></div></div>
+        <div class="mock">
+          <div class="mini">
+            <div class="mini-top"><span class="dot"></span><span class="t">项目：竞品分析</span><span style="margin-left:auto">3 条会话</span></div>
+            <div class="mini-body">
+              <div class="mini-chat">
+                <div class="mini-msg user">继续上次的分析，补一下访谈部分。</div>
+                <div class="mini-msg ai">已看到项目任务图，2 个节点来自上一条会话。</div>
+              </div>
+              <div class="mini-rail">
+                <div class="scope">◉ 项目 / 竞品分析 · 跨 3 会话</div>
+                <div class="card-title">任务图 <span class="count">7 节点</span></div>
+                <div class="dag">
+                  <div class="dag-row">
+                    <div class="node done"><div class="nt">抓官网</div><div class="nm"><span class="st">完成</span><span>会话①</span></div></div>
+                    <div class="node done"><div class="nt">抓财报</div><div class="nm"><span class="st">完成</span><span>会话①</span></div></div>
+                  </div>
+                  <div class="dag-row"><span class="arrow lit">↓</span><span class="arrow lit">↓</span></div>
+                  <div class="dag-row">
+                    <div class="node ready"><div class="nt">整理访谈</div><div class="nm"><span class="st">在跑</span><span>本会话</span></div></div>
+                  </div>
+                </div>
+                <div class="legend"><span>节点标注来源会话</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="note"><b>代价：</b>要处理工作区归属（`c_ai_project`）与跨会话写冲突，节点需显示来源会话。<br><b>收益：</b>长项目可跨会话续做；但工作区事项此前已被主动退役，需先确认不再冲突。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 拍板 3 -->
+  <div class="panel" id="p3">
+    <div class="compare">
+      <div class="opt">
+        <div class="opt-head"><span class="badge">A 推荐</span><div><div class="opt-title">子智能体分支不挂 TASK 工具</div><div class="opt-desc">与 writeTodo 同口径：分支只干活，不改全局任务图</div></div></div>
+        <div class="mock">
+          <div class="mini">
+            <div class="mini-top"><span class="dot"></span><span class="t">任务图 · 主智能体编排</span></div>
+            <div class="mini-body"><div class="mini-rail wide">
+              <div class="card-title">节点负责人 <span class="count">主智能体 5 / 子助手 0</span></div>
+              <div class="dag">
+                <div class="dag-row">
+                  <div class="node done"><div class="nt">抓官网</div><div class="nm"><span class="st">完成</span><span>由「检索助手」作答</span></div></div>
+                  <div class="node ready"><div class="nt">抓财报</div><div class="nm"><span class="st">在跑</span><span>由「数据助手」作答</span></div></div>
+                </div>
+                <div class="dag-row"><span class="arrow">↓</span><span class="arrow lit">↓</span></div>
+                <div class="dag-row"><div class="node blocked"><div class="nt">对比分析</div><div class="nm"><span class="st">待依赖</span><span>主智能体</span></div></div></div>
+              </div>
+              <div class="note" style="margin-top:14px">子助手以「<b>被委派作答</b>」身份出现在节点详情里，<span class="y">没有认领/完成按钮</span>；任务状态只由主智能体经工具推进。</div>
+            </div></div>
+          </div>
+          <div class="note"><b>代价：</b>无法实现真正的"团队成员各自领任务"。<br><b>收益：</b>分支是跑完即删的临时会话，不处理跨会话等待恢复；风险最低。</div>
+        </div>
+      </div>
+
+      <div class="opt">
+        <div class="opt-head"><span class="badge b">B</span><div><div class="opt-title">子智能体分支挂 TASK 工具</div><div class="opt-desc">团队成员可 claim / done 节点</div></div></div>
+        <div class="mock">
+          <div class="mini">
+            <div class="mini-top"><span class="dot"></span><span class="t">任务图 · 团队认领</span></div>
+            <div class="mini-body"><div class="mini-rail wide">
+              <div class="card-title">节点负责人 <span class="count">主 2 / 子助手 3</span></div>
+              <div class="dag">
+                <div class="dag-row">
+                  <div class="node done"><div class="nt">抓官网</div><div class="nm"><span class="st">完成</span><span>检索助手 · 已交付</span></div></div>
+                  <div class="node ready"><div class="nt">抓财报</div><div class="nm"><span class="st">在跑</span><span>数据助手 · 已认领</span></div></div>
+                </div>
+                <div class="dag-row"><span class="arrow lit">↓</span><span class="arrow">↓</span></div>
+                <div class="dag-row"><div class="node blocked"><div class="nt">对比分析</div><div class="nm"><span class="st">待 2 项</span><span>可认领</span></div></div></div>
+              </div>
+              <div class="note" style="margin-top:14px">节点显示<b>助手名 + 认领状态</b>；分支轮也能写任务状态，<span class="n">但临时会话删除后等待中的节点需要跨会话恢复</span>（P0 需额外做）。</div>
+            </div></div>
+          </div>
+          <div class="note"><b>代价：</b>分支临时会话与持久任务的状态对齐、`task_wait` 在分支里恢复，都会显著增加复杂度。<br><b>收益：</b>真正的 Agent Team 协作形态。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 拍板 4 -->
+  <div class="panel" id="p4">
+    <div class="compare">
+      <div class="opt">
+        <div class="opt-head"><span class="badge">A 推荐</span><div><div class="opt-title">轮内挂起（ToolSuspendException）</div><div class="opt-desc">同一轮里停住，依赖满足后原地继续</div></div></div>
+        <div class="mock">
+          <div class="mini">
+            <div class="mini-top"><span class="dot"></span><span class="t">竞品分析报告</span></div>
+            <div class="mini-body">
+              <div class="mini-chat">
+                <div class="mini-msg user">等财报数据到位再开始对比。</div>
+                <div class="mini-msg ai"><span class="strong">已建任务并挂起等待</span></div>
+                <div class="waitcard"><div class="spin"></div><div><b>等待依赖：抓财报数据</b><br>超时 30 分钟后自动收尾 · <span style="text-decoration:underline">查看任务图</span></div></div>
+                <div class="mini-msg ai" style="color:var(--text3)">回答上方保持一张等待卡，依赖完成后同一轮继续输出</div>
+              </div>
+              <div class="mini-rail">
+                <div class="card-title">任务图 <span class="count">2 / 5</span></div>
+                <div class="dag">
+                  <div class="dag-row"><div class="node ready"><div class="nt">抓财报数据</div><div class="nm"><span class="st">在跑</span></div></div></div>
+                  <div class="dag-row"><span class="arrow lit">↓</span></div>
+                  <div class="dag-row"><div class="node wait"><div class="nt">对比分析</div><div class="nm"><span class="st">等待中</span><span>30m 超时</span></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="note"><b>代价：</b>依赖框架 pending 卡支持自定义类型，需 1 天 spike；不支持则走 B。<br><b>收益：</b>用户感知连续，不用另起一轮。</div>
+        </div>
+      </div>
+
+      <div class="opt">
+        <div class="opt-head"><span class="badge b">B</span><div><div class="opt-title">跨轮续跑（GoalScheduler 唤醒）</div><div class="opt-desc">本轮正常收尾，依赖满足后自动起下一轮</div></div></div>
+        <div class="mock">
+          <div class="mini">
+            <div class="mini-top"><span class="dot"></span><span class="t">竞品分析报告</span></div>
+            <div class="mini-body">
+              <div class="mini-chat">
+                <div class="mini-msg user">等财报数据到位再开始对比。</div>
+                <div class="mini-msg ai"><span class="strong">已登记等待</span>，本轮先到这里；数据到位后我会自动继续。</div>
+                <div class="tline">
+                  <div><b>第 1 轮</b> · 建任务，财报抓取在跑</div>
+                  <div class="hi"><b>等待中</b> · 依赖「抓财报数据」，未阻塞回答</div>
+                  <div><b>第 2 轮</b> · 财报完成 → 自动续跑开始对比</div>
+                </div>
+              </div>
+              <div class="mini-rail">
+                <div class="card-title">任务图 <span class="count">3 / 5</span></div>
+                <div class="dag">
+                  <div class="dag-row"><div class="node done"><div class="nt">抓财报数据</div><div class="nm"><span class="st">完成</span></div></div></div>
+                  <div class="dag-row"><span class="arrow lit">↓</span></div>
+                  <div class="dag-row"><div class="node ready"><div class="nt">对比分析</div><div class="nm"><span class="st">续跑第 2 轮</span></div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="note"><b>代价：</b>等待跨轮，用户会看到回答分两段。<br><b>收益：</b>完全复用 `c_ai_goal` 的 `next_run_at` + `claimReady`，<span class="y">零框架风险</span>，P0 可确定性交付。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="note" style="margin-top:18px">
+    <b>我的建议组合：</b>拍板 1 选 A（右栏卡）+ 拍板 2 选 A（session 级）+ 拍板 3 选 A（分支不挂）+ 拍板 4 先 spike，失败就走 B（跨轮续跑）。
+    这样 P0 全部落在问渠已有底座内，风险最低；B 组选项都可在 P1 叠加，不需要推翻 P0 的数据结构。
+  </div>
+</div>
+<script>
+function activate(id){
+  document.querySelectorAll('.tab').forEach(function(x){x.classList.toggle('on', x.dataset.p===id)});
+  document.querySelectorAll('.panel').forEach(function(x){x.classList.toggle('on', x.id===id)});
+}
+document.querySelectorAll('.tab').forEach(function(t){
+  t.addEventListener('click',function(){
+    activate(t.dataset.p);
+    history.replaceState(null,'','#'+t.dataset.p);
+  });
+});
+if(location.hash && document.getElementById(location.hash.slice(1))) activate(location.hash.slice(1));
+</script>
+</body>
+</html>
