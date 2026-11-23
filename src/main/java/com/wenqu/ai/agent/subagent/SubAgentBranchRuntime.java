@@ -206,18 +206,17 @@ public class SubAgentBranchRuntime {
                 if (req.teamMode() && teamService() != null) {
                     teamService().markRunning(childSession);
                 }
+                if (req.teamMode() && teamGateway != null) {
+                    String rootId = req.teamRootSessionId() == null ? req.parentSessionId() : req.teamRootSessionId();
+                    String rosterName = (req.memberName() == null || req.memberName().isBlank())
+                            ? req.childAgentName() : req.memberName();
+                    teamGateway.addMember(rootId, rosterName, req.childAgentId(), childSession);
+                }
                 handle = new BranchHandle(childSession, req.userId(), sink);
                 registerBranch(parentSessionId, handle);
                 String question = req.question();
-                if (req.teamMode() && teamService() != null) {
-                    var pending = teamService().pendingMessagesWithCursor(childSession, req.userId());
-                    if (pending.text() != null && !pending.text().isBlank()) {
-                        question = "你有以下未读的团队消息，请先读完再处理当前任务：\n" + pending.text()
-                                + "\n\n———— 当前任务 ————\n" + question;
-                        // 注入即推进游标：注入成功就是已读（下一轮不再重复带同一批）
-                        sessionService.advanceReadCursor(childSession, pending.cursor());
-                    }
-                }
+                // 未读团队消息的注入交给框架 InboxMiddleware（MessageBus 收件箱在模型步前 drain），
+                // 不再从自研事件账本读 team_message。
                 turn.run(ChatCommand.builder()
                         .sessionId(childSession)
                         .question(question)
@@ -409,6 +408,10 @@ public class SubAgentBranchRuntime {
 
     @org.springframework.beans.factory.annotation.Autowired
     private volatile com.wenqu.ai.agent.team.AgentTeamService teamService;
+
+    /** 框架团队门面：团队成员创建后补一条名册（任务板/邮箱由框架 TeamClient 承担）。 */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private volatile com.wenqu.ai.agentx.team.WenquTeamGateway teamGateway;
 
     /**
      * 运行视角的落库：这一支的关键帧流随收束写一条 {@code type=subagent} 账本事件，

@@ -38,7 +38,7 @@
 | 能力 | 现状 | 完善项 |
 |---|---|---|
 | 成员持久会话（`kind=team`） | ✅ `SessionService.createTeamSession` + `SubAgentBranchRuntime` 团队分支持久不删 | — |
-| 成员树 / 命名（`lead`、`reviewer`、`reviewer/checker`） | ✅ `AgentTeamService.listMembers/rootOf`，`member_name` 落库 | 面板展示 slash 全路径可折叠 |
+| 成员树 / 命名（`lead`、`reviewer`、`reviewer/checker`） | ✅ 一层（深度1，对齐 DSH maxDepth 默认）；名册由框架 TeamClient 承担 | 更深代（reviewer/checker）需提高深度上限，属预留 |
 | 在线状态（执行中/等消息/空闲/已停止/离线） | ✅ `member_state` + `FrameworkSessions.peek` 合成 | 状态词中文化与颜色统一（现分散在前端映射） |
 | 按需委派 | ✅ 模型经 `agent_spawn` 派成员（`teamMode` 下建 team 会话） | 面板提供「让 lead 派一位…」快捷话术入口 |
 | 手动增删成员 | ⬜ | 明确不做（委派归模型），仅提供引导话术 |
@@ -46,8 +46,8 @@
 ### 1.2 成员消息
 | 能力 | 现状 | 完善项 |
 |---|---|---|
-| 模型侧互发（`team_send`） | ✅ 在线 `steer`、离线落 `team_message` 事件 + 唤醒 | — |
-| `team_wait` 挂起/恢复 | 🟡 `TeamWaitTool` 抛 `ToolSuspendException`；恢复靠 `respondRaw` | 冷恢复/跨副本下等待一致性验证 |
+| 模型侧互发（框架 `team(action=sendMessage)` 邮箱） | ✅ 框架邮箱入库 + `TeamWakeups`→Redis `MessageBus` 唤醒 | — |
+| 等待成员消息 | ✅ 框架 `wait_async_results` / InboxMiddleware 收件箱注入（不再自研 team_wait） | — |
 | 用户→成员消息 | 🟡 后端 `POST /team/{root}/send` 通了；**`TeamPanel.vue` 模板里没有输入框**（`sendTo/toggleMsg` 是死代码） | **补面板内联输入区**（文本+图片+文件） |
 | 消息附件（图片/文件） | ⬜ 复用 `/chat/attachment` 上传，成员被唤醒时带 `filed`/图片 | 输入区加「图片/文件」，消息卡渲染缩略图/文件 chip |
 | 未读游标去重 | ✅ `last_read_event_id` + `pendingMessagesWithCursor` | 面板显示未读徽标 |

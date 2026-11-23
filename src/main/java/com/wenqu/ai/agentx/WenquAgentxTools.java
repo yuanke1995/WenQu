@@ -657,6 +657,11 @@ public class WenquAgentxTools {
         com.wenqu.ai.agent.permission.ExecutionPolicy policy =
                 toolAssembly.resolvePermissionPolicy(agentOf(cmd), sessionPreset,
                         cmd.getInheritedApprovalMode(), cmd.isGuestMode());
+        // 团队成员不得越过根会话的能力上限：以根会话当前生效策略为封顶，取更严的沙盒/审批、并集 deny。
+        // 这不是“给成员另设一套权限”，而是把「委派不放大权限」这条不变量钉在唯一的策略出口上。
+        if (cmd.getMemberSessionId() != null && !cmd.getMemberSessionId().isBlank()) {
+            policy = capToTeamRoot(cmd, policy);
+        }
         if (!cmd.isApiKey()) return policy;
         // API Key 只开放问答：把文件/命令工具按名禁用。装配侧（allowsTool）与执行闸
         // （AgentxFrameworkToolGate.permits）读的是同一份 deny，框架原生工具也拦得住。
@@ -681,6 +686,68 @@ public class WenquAgentxTools {
     public static boolean asksHuman(com.wenqu.ai.agent.permission.ExecutionPolicy policy) {
         String approval = policy == null ? "ask" : policy.approvalMode();
         return "ask".equalsIgnoreCase(approval == null ? "auto" : approval.trim());
+    }
+
+    /**
+     * 把成员轮的策略钳到根会话当前生效策略之下：沙盒取更严档、审批取更严档、deny 取并集。
+     * 根会话解析不到时原样返回（fail-open 会放大权限，故这里选择“查不到就不额外收紧”，
+     * 但根会话本身已受它自己的策略约束，成员默认也继承 cmd.inheritedApprovalMode）。
+     */
+    private com.wenqu.ai.agent.permission.ExecutionPolicy capToTeamRoot(
+            ChatCommand cmd, com.wenqu.ai.agent.permission.ExecutionPolicy memberPolicy) {
+        try {
+            String root = cmd.getTeamRootSessionId();
+            if (root == null || root.isBlank()) {
+                var ms = sessionService.sessionById(cmd.getMemberSessionId());
+                root = ms == null ? null : ms.getRootSessionId();
+            }
+            if (root == null || root.isBlank()) return memberPolicy;
+            var rootSession = sessionService.sessionById(root);
+            if (rootSession == null) return memberPolicy;
+            com.wenqu.ai.model.Agent rootAgent = agentService.get(rootSession.getAgentId());
+            String rootPreset = sessionService.permissionPresetOf(root);
+            var rootPolicy = toolAssembly.resolvePermissionPolicy(rootAgent, rootPreset, null, false);
+            if (rootPolicy == null) return memberPolicy;
+            return capPolicy(memberPolicy, rootPolicy);
+        } catch (RuntimeException e) {
+            return memberPolicy;
+        }
+    }
+
+    /**
+     * 纯函数：成员策略 ∩ 根策略（沙盒取更严、审批取更严、deny 并集、writableRoot 取成员自身）。
+     * 抽成静态便于单测覆盖，不依赖会话/DB。
+     */
+    static com.wenqu.ai.agent.permission.ExecutionPolicy capPolicy(
+            com.wenqu.ai.agent.permission.ExecutionPolicy memberPolicy,
+            com.wenqu.ai.agent.permission.ExecutionPolicy rootPolicy) {
+        var mSm = memberPolicy.sandboxMode();
+        var rSm = rootPolicy.sandboxMode();
+        var sm = mSm.rank() <= rSm.rank() ? mSm : rSm;
+        var preset = rSm.rank() < mSm.rank() ? rootPolicy.preset() : memberPolicy.preset();
+        String approval = stricterApproval(memberPolicy.approvalMode(), rootPolicy.approvalMode());
+        java.util.Set<String> deny = new java.util.LinkedHashSet<>(memberPolicy.deny());
+        deny.addAll(rootPolicy.deny());
+        var enforcement = (sm == com.wenqu.ai.agent.permission.SandboxMode.WORKSPACE_WRITE && sm.executable())
+                ? com.wenqu.ai.agent.permission.SandboxEnforcement.PARTIAL
+                : com.wenqu.ai.agent.permission.SandboxEnforcement.FULL;
+        return new com.wenqu.ai.agent.permission.ExecutionPolicy(
+                preset, sm, approval, enforcement, memberPolicy.writableRoot(),
+                java.util.Set.copyOf(deny));
+    }
+
+    /** 审批档严格度：off（禁用副作用工具）&gt; ask（逐项确认）&gt; auto（免确认）；null 视为 auto。 */
+    private static String stricterApproval(String a, String b) {
+        return approvalRank(a) >= approvalRank(b) ? a : b;
+    }
+
+    private static int approvalRank(String mode) {
+        String m = mode == null ? "auto" : mode.trim().toLowerCase();
+        return switch (m) {
+            case "off" -> 2;
+            case "ask" -> 1;
+            default -> 0;
+        };
     }
 
     public int maxToolSteps(ChatCommand cmd) {
@@ -857,6 +924,11 @@ public class WenquAgentxTools {
                     ? cmd.getTeamRootSessionId() : parentSession;
             com.wenqu.ai.model.Agent childAgent = agentService.get(childAgentId);
             String memberName = childAgent == null ? null : childAgent.getName();
+            // 团队嵌套：孙代成员名带父路径（reviewer/checker），保证全树唯一与可寻址。
+            if (memberName != null && cmd.getMemberSessionId() != null
+                    && cmd.getMemberName() != null && !cmd.getMemberName().isBlank()) {
+                memberName = cmd.getMemberName() + "/" + memberName;
+            }
             com.wenqu.ai.agent.subagent.SubAgentConsultService.Ctx ctx =
                     new com.wenqu.ai.agent.subagent.SubAgentConsultService.Ctx(
                             parentSession, t.turnId(), cmd.getUserId(), hooks.modelRef(),
@@ -906,15 +978,25 @@ public class WenquAgentxTools {
      * </ul>
      */
     private boolean dispatchAllowed(ChatCommand cmd, ExecutionPolicy policy) {
-        if (cmd.branchTurn() || cmd.isGuestMode()) return false;
+        boolean teamMember = cmd.isTeamMode()
+                && cmd.getMemberSessionId() != null && !cmd.getMemberSessionId().isBlank();
+        // 非团队的子轮不许再派（防乘数扇出）；团队成员允许继续派，受深度上限约束（框架 agent_spawn 硬上限 3）。
+        if (cmd.isGuestMode()) return false;
+        if (cmd.branchTurn() && !teamMember) return false;
+        if (teamMember && cmd.getSubagentDepth() >= TEAM_MAX_DEPTH) return false;
         var mc = toolAssembly.mountContext(agentOf(cmd), cmd.getUserId(), cmd.isGuestMode(),
                 cmd.branchTurn(), cmd.getWfDepth(), (code, message) -> {
                 }, policy, cmd.getGuestMcpServers());
-        if (!mc.masterOn() || mc.approvalOff() || (mc.branchTurn() && mc.approvalAsk())) return false;
+        if (!mc.masterOn() || mc.approvalOff()) return false;
+        // 成员的审批档是 ask 时不因此禁止其继续派：团队里有人在看面板，不能按“没人答”处理。
+        if (mc.branchTurn() && mc.approvalAsk() && !teamMember) return false;
         var p = mc.permissionPolicy();
         if (p != null && p.sandboxMode() == com.wenqu.ai.agent.permission.SandboxMode.READ_ONLY) return false;
         return !mc.deniesTool(FRAMEWORK_SPAWN_TOOL);
     }
+
+    /** 团队嵌套深度上限：lead(0)→成员(1) 可再派一层（reviewer/checker=2），与框架 MAX_SPAWN_DEPTH=3 对齐且留余量。 */
+    private static final int TEAM_MAX_DEPTH = 2;
 
     /** 框架派遣工具的裸名（问渠不注册它，只按名判黑名单） */
     private static final String FRAMEWORK_SPAWN_TOOL = "agent_spawn";

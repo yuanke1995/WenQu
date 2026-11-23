@@ -165,10 +165,25 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      */
     private static final long DRIFT_NOTE_WAIT_MS = 3000L;
     private final com.wenqu.ai.service.SessionService sessionService;
-    /** 智能体团队服务（会话级开关；仅团队会话轮挂载 team_* 工具）。 */
+    /** 智能体团队服务（会话级开关；成员生命周期/叫停/drain；模型工具面由框架 teamsMode 提供）。 */
     private final com.wenqu.ai.agent.team.AgentTeamService teamService;
-    /** 智能体团队任务板服务（DAG 节点与依赖解锁）。 */
-    private final com.wenqu.ai.agent.team.TeamTaskService teamTaskService;
+    /** 框架团队门面与 Redis 总线：由 AgentxConfiguration 构造后注入；测试环境可为 null。 */
+    private volatile com.wenqu.ai.agentx.team.WenquTeamGateway teamGateway;
+    private volatile com.wenqu.ai.agentx.team.WenquRedisMessageBus teamBus;
+    /** 团队是否对本轮生效（根开启 / 成员轮）。 */
+    private boolean teamActive(ChatCommand cmd) {
+        try {
+            return cmd.isTeamMode() || sessionService.isTeamEnabled(cmd.getSessionId());
+        } catch (RuntimeException e) {
+            return cmd.isTeamMode();
+        }
+    }
+    /** 框架团队门面接入（AgentxConfiguration 在 new 完引擎后调用，避开 60 参构造器继续膨胀）。 */
+    public void bindTeamFramework(com.wenqu.ai.agentx.team.WenquTeamGateway gateway,
+                                  com.wenqu.ai.agentx.team.WenquRedisMessageBus bus) {
+        this.teamGateway = gateway;
+        this.teamBus = bus;
+    }
     /** 附件元信息落库的共用口径（与工作流路径同一个方法，见 metasJson 的类注释）。 */
     private final ChatAttachmentService attachments;
     private final TurnPromptAssembler promptAssembler;
@@ -345,7 +360,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                                FrameworkSessions sessions,
                                com.wenqu.ai.service.SessionService sessionService,
                                com.wenqu.ai.agent.team.AgentTeamService teamService,
-                               com.wenqu.ai.agent.team.TeamTaskService teamTaskService,
                                ChatAttachmentService attachments,
                                com.wenqu.ai.service.UserImageService userImages,
                                com.wenqu.ai.service.KeywordExtractor keywordExtractor,
@@ -384,7 +398,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         this.sessions = sessions;
         this.sessionService = sessionService;
         this.teamService = teamService;
-        this.teamTaskService = teamTaskService;
         this.attachments = attachments;
         this.userImages = userImages;
         this.keywordExtractor = keywordExtractor;
@@ -2300,23 +2313,19 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
 
     /**
      * 团队模式的工具使用引导：只在会话开启团队（或成员轮）时追加。
-     * <p>为什么必须显式教：team_task_* / team_send 这些工具描述很简短，模型默认不会主动建任务板或
-     * 给成员发消息——上一版就是「有工具但没人用」，任务图/成员消息永远空。这里用一小段说清何时用。
+     * <p>团队工具全部由框架提供（{@code teamsMode} 注册的 {@code team} 工具 + 框架 agent_*），
+     * 但模型默认不会主动用任务板/邮箱；这里用一小段说清何时用、action 叫什么。
      */
     private String teamGuidance(ChatCommand cmd) {
-        boolean on;
-        try {
-            on = cmd.isTeamMode() || sessionService.isTeamEnabled(cmd.getSessionId());
-        } catch (Exception e) {
-            on = false;
-        }
-        if (!on) return "";
+        if (!teamActive(cmd)) return "";
         return "\n\n## 智能体团队（已开启）\n"
-                + "复杂或多步、需要协作跟踪的任务，用**团队任务板**管理："
-                + "`team_task_create` 建任务 → `team_task_depend` 加依赖（from 完成 to 才可认领）→ "
-                + "`team_task_claim` 认领 → `team_task_complete` 完成（失败传 failed=true）；"
-                + "前置完成后继会自动解锁。需要别的成员补充信息/分工时用 `team_send`（目标名取自 `team_list`），"
-                + "需要等成员回消息用 `team_wait`。简单一问一答不要建任务，也不要为凑数建任务。";
+                + "复杂或多步、需要协作跟踪的任务，用团队任务板（`team` 工具）："
+                + "`team(action=createTask, subject=…, owner=成员名)` 建任务并可直接派给某位成员，"
+                + "`team(action=listClaimableTasks)` 看待认领 → `team(action=claimTask)` 认领 → "
+                + "`team(action=completeTask/failTask)` 完成或失败。"
+                + "需要别的成员补充信息/分工时：`agent_spawn` 派人、`agent_send` 追加消息、"
+                + "`agent_list` 看在跑的成员；跨成员写信走 `team(action=sendMessage, to_member=…)`。"
+                + "简单一问一答不要建任务，也不要为凑数建任务。";
     }
 
     /**
@@ -3383,16 +3392,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 sandboxEnabled);
         // 目标模式的控制工具常驻注册：实例按会话常驻，目标可能在建实例之后才建立，
         // 不能等到目标建立再往 Toolkit 里加工具（那需要重建实例）。非目标轮调用会落空返回。
-        // 智能体团队：会话级开关（team_enabled），成员会话也继承根的模式；关掉时这一族完全不挂。
-        if (sessionService.isTeamEnabled(cmd.getSessionId()) || cmd.isTeamMode()) {
-            // 团队工具是「按会话 new 出来的裸 @Tool holder」，必须包成 SpringAiToolAdapter 才会被
-            // Toolkit.registerTool 真正注册（直接 holders.add 会被忽略，模型看不到这些工具）。
-            tools.mountRawHolders(holders, policy,
-                    !cmd.isGuestMode() && !cmd.isApiKey() && interactiveTurn(cmd), slot,
-                    new TeamTools(teamService, sessionService, slot),
-                    new TeamTaskTools(teamTaskService, teamService, slot));
-            toolkit.registerTool(new TeamWaitTool());
-        }
+        // 智能体团队：模型面全部由框架提供——成员发现/消息用框架 agent_*，任务板/邮箱用
+        // teamsMode 自动注册的 team 工具（见下方 build 前的 teamsMode 装配）。这里不再挂任何
+        // 自研 team_* / team_task_* 工具（对齐 DSH：薄 team 层，不造第二套）。
         holders.add(new GoalTools(goalService, slot));
         java.util.Set<String> groupedNames = tools.registerWithGroups(toolkit, holders);
         // 工具表随实例跨轮稳定，登记到槽位：脚本子调用要把框架申报只读的那几把也纳进名册
@@ -3643,11 +3645,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         if (distributedStore != null) {
             agentBuilder.distributedStore(distributedStore);
         }
-        // 消息总线/异步工具注册表换成无操作实现：问渠不使用这两个通道（steer 走 SessionInbox，
-        // 异步工具未启用），不换的话框架回落到沙盒文件系统版——InboxMiddleware 每轮在模型调用前
-        // 做 inboxDrain + findStale，两次判定各打一次到沙盒容器的同步 HTTP，
-        // 全部换回空列表（NoopBusComponents 类注释有完整机制说明）。
-        agentBuilder.messageBus(NoopBusComponents.MESSAGE_BUS);
+        // 消息总线/异步工具注册表：非团队轮仍用无操作实现（避免沙盒文件系统版的每轮 HTTP 往返）；
+        // 团队轮换成 Redis 总线，TeamsMiddleware 的 mailbox 唤醒与 InboxMiddleware 的收件箱注入才生效。
+        boolean teamOn = teamActive(cmd) && teamBus != null;
+        agentBuilder.messageBus(teamOn ? teamBus : NoopBusComponents.MESSAGE_BUS);
         agentBuilder.asyncToolRegistry(NoopBusComponents.ASYNC_TOOL_REGISTRY);
         // 动态子智能体声明关掉：问渠的子智能体全部走 subagentFactory 静态注册，工作区里从不放
         // subagents/*.md 声明文件——而 DynamicSubagentsMiddleware 每轮模型调用前都会 glob 扫一遍
@@ -3662,6 +3663,17 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 不是一件事，也不共用编号体系。
         for (WenquAgentxTools.SubagentTarget target : subagentTargets) {
             agentBuilder.subagentFactory(target.agentId(), target.description(), target.factory());
+        }
+        // 框架原生团队模式：自动挂 TeamsMiddleware（团队提示/看板摘要/唤醒桥）并注册角色裁剪的
+        // team 工具。根=lead，成员=worker；任务板/邮箱/名册全部由框架 TeamClient 承担。
+        if (teamActive(cmd) && teamGateway != null) {
+            String root = cmd.getTeamRootSessionId() != null && !cmd.getTeamRootSessionId().isBlank()
+                    ? cmd.getTeamRootSessionId() : cmd.getSessionId();
+            boolean isLead = cmd.getMemberSessionId() == null || cmd.getMemberSessionId().isBlank();
+            String role = isLead ? com.wenqu.ai.agentx.team.WenquTeamGateway.LEAD : cmd.getMemberName();
+            teamGateway.ensureTeam(root, cmd.getAgentId());
+            agentBuilder.teamsMode(teamGateway.client(),
+                    teamGateway.contextFor(root, role, isLead), cmd.getSessionId());
         }
         HarnessAgent agent = agentBuilder.build();
         alignWriteFileDescription(agent);

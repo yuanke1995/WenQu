@@ -25,13 +25,13 @@ public class TeamController {
 
     private final AgentTeamService teamService;
     private final SessionService sessionService;
-    private final com.wenqu.ai.agent.team.TeamTaskService taskService;
+    private final com.wenqu.ai.agentx.team.WenquTeamGateway teamGateway;
 
     public TeamController(AgentTeamService teamService, SessionService sessionService,
-                          com.wenqu.ai.agent.team.TeamTaskService taskService) {
+                          com.wenqu.ai.agentx.team.WenquTeamGateway teamGateway) {
         this.teamService = teamService;
         this.sessionService = sessionService;
-        this.taskService = taskService;
+        this.teamGateway = teamGateway;
     }
 
     @Operation(summary = "读取会话团队开关", description = "从会话行读取（不是系统设置）")
@@ -60,23 +60,23 @@ public class TeamController {
         return ResultJson.ok(teamService.listMembers(rootId, uid));
     }
 
-    @Operation(summary = "最近团队消息", description = "跨成员聚合的最近消息（成员消息卡）")
+    @Operation(summary = "最近团队消息", description = "跨成员聚合的最近消息（成员消息卡，读框架 TeamClient 邮箱）")
     @GetMapping("/{rootId}/messages")
     public ResultJson<Object> messages(@PathVariable String rootId,
                                        @RequestParam(defaultValue = "20") int limit) {
         String uid = RequestUser.uid();
         sessionService.assertOwned(rootId, uid);
-        return ResultJson.ok(teamService.recentMessages(uid, rootId, Math.min(Math.max(1, limit), 100)));
+        return ResultJson.ok(teamGateway.messages(rootId, Math.min(Math.max(1, limit), 100)));
     }
 
-    @Operation(summary = "向成员发消息", description = "用户从面板向成员发消息（模型侧另有 team_send 工具）")
+    @Operation(summary = "向成员发消息", description = "用户从面板向成员发消息（走框架 TeamClient 邮箱 + 唤醒）")
     @PostMapping("/{rootId}/send")
     public ResultJson<Map<String, Object>> send(@PathVariable String rootId,
                                                 @RequestParam String member,
                                                 @RequestParam String message) {
         String uid = RequestUser.uid();
         sessionService.assertOwned(rootId, uid);
-        boolean ok = teamService.sendMessage(uid, rootId, rootId, member, message);
+        boolean ok = teamGateway.send(rootId, "lead", member, message);
         return ResultJson.ok(Map.of("delivered", ok));
     }
 
@@ -112,19 +112,19 @@ public class TeamController {
         return ResultJson.ok(sessionService.getHistory(memberId));
     }
 
-    @Operation(summary = "团队任务图", description = "任务板节点与依赖边（模型侧由 team_task_* 工具写入）")
+    @Operation(summary = "团队任务图", description = "任务板节点与依赖边（读框架 TeamClient，写入由 team 工具承担）")
     @GetMapping("/{rootId}/tasks")
     public ResultJson<Object> tasks(@PathVariable String rootId) {
         String uid = RequestUser.uid();
         sessionService.assertOwned(rootId, uid);
-        return ResultJson.ok(taskService.graph(rootId));
+        return ResultJson.ok(teamGateway.tasks(rootId));
     }
 
-    @Operation(summary = "任务事件时间线", description = "单个任务的创建/认领/完成/解锁事件")
+    @Operation(summary = "任务事件时间线", description = "框架任务板无逐任务事件账本，返回空列表（前端兼容）")
     @GetMapping("/{rootId}/tasks/{taskId}/events")
     public ResultJson<Object> taskEvents(@PathVariable String rootId, @PathVariable String taskId) {
         String uid = RequestUser.uid();
         sessionService.assertOwned(rootId, uid);
-        return ResultJson.ok(taskService.events(rootId, taskId));
+        return ResultJson.ok(List.of());
     }
 }
