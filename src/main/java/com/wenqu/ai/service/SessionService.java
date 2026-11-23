@@ -69,6 +69,13 @@ public class SessionService {
     public static final String KIND_TEMP = "temp";
 
     /**
+     * 会话种类：智能体团队的持久成员会话。与 {@link #KIND_TEMP} 不同，它<b>跑完不删</b>，
+     * 可被后续 `team_send` 唤醒、可冷恢复；同样挂在真实用户名下，所以也要显式排除出用户会话列表。
+     * 一棵团队树的成员通过 `root_session_id` / `parent_session_id` 归集，只在团队面板呈现。
+     */
+    public static final String KIND_TEAM = "team";
+
+    /**
      * 会话列表的「不属于任何真实工作区」过滤占位符。
      *
      * <p>与 {@link ArtifactService#UNASSIGNED_PROJECT}（{@code __unassigned__}，仅
@@ -141,6 +148,112 @@ public class SessionService {
      */
     public String createTempSession(String userId) {
         return createSession(userId, KIND_TEMP);
+    }
+
+    /**
+     * 建一条智能体团队成员会话：持久（不随一轮结束删）、不进普通会话列表，归属仍是真实用户
+     * （权限与检索按调用者身份），但显式标成 {@link #KIND_TEAM}，只在团队面板里呈现。
+     *
+     * @param rootSessionId  团队根会话 id
+     * @param parentSessionId 直接创建者会话 id（根派出的成员即根会话 id）
+     * @param memberName     模型可见名（短名或 slash 全路径）
+     */
+    public String createTeamSession(String userId, String rootSessionId, String parentSessionId,
+                                    String memberName, String agentId) {
+        String id = createSession(userId, KIND_TEAM);
+        Session row = new Session();
+        row.setId(id);
+        row.setRootSessionId(rootSessionId);
+        row.setParentSessionId(parentSessionId);
+        row.setMemberName(memberName);
+        row.setMemberState("RUNNING");
+        if (agentId != null && !agentId.isBlank()) row.setAgentId(agentId);
+        sessionMapper.updateById(row);
+        return id;
+    }
+
+    /** 会话级团队开关：写进会话行（不是系统配置）；仅根会话有意义。 */
+    public void setTeamEnabled(String userId, String sessionId, boolean enabled) {
+        Session owned = assertOwned(sessionId, userId);
+        Session patch = new Session();
+        patch.setId(owned.getId());
+        patch.setTeamEnabled(enabled ? 1 : 0);
+        sessionMapper.updateById(patch);
+    }
+
+    /** 会话是否开启团队模式（读会话行，无缓存——开关改动立即生效）。 */
+    public boolean isTeamEnabled(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) return false;
+        Session s = sessionMapper.selectById(sessionId);
+        return s != null && Integer.valueOf(1).equals(s.getTeamEnabled());
+    }
+
+    /**
+     * 团队/委派分支的父轮上下文摘要（fork 语义，仅直接子代注入）：
+     * 父会话最近若干条已完成消息，按预算裁剪。只取 user/assistant 文本，不把工具过程带下去。
+     * 返回空串表示不带（无历史）。
+     */
+    public String parentBriefOf(String parentSessionId, int maxChars) {
+        if (parentSessionId == null || parentSessionId.isBlank()) return "";
+        List<com.wenqu.ai.model.Message> rows = messageMapper.selectList(
+                new LambdaQueryWrapper<com.wenqu.ai.model.Message>()
+                        .eq(com.wenqu.ai.model.Message::getSessionId, parentSessionId)
+                        .eq(com.wenqu.ai.model.Message::getDeleted, 0)
+                        .in(com.wenqu.ai.model.Message::getRole, java.util.List.of("user", "assistant"))
+                        .orderByDesc(com.wenqu.ai.model.Message::getSequence));
+        StringBuilder sb = new StringBuilder();
+        int budget = Math.max(200, maxChars);
+        for (com.wenqu.ai.model.Message m : rows) {
+            String text = m.getContent();
+            if (text == null || text.isBlank()) continue;
+            if (text.length() > 600) text = text.substring(0, 600) + "…";
+            String line = ("user".equals(m.getRole()) ? "用户：" : "助手：") + text + "\n";
+            if (sb.length() + line.length() > budget) break;
+            sb.append(line);
+        }
+        return sb.toString().stripTrailing();
+    }
+
+    /** 一棵团队树的所有成员会话（按创建顺序），不含根会话本身；归属校验由调用方做。 */
+    public List<Session> listTeamMembers(String rootSessionId) {
+        if (rootSessionId == null || rootSessionId.isBlank()) return List.of();
+        return sessionMapper.selectList(new LambdaQueryWrapper<Session>()
+                .eq(Session::getRootSessionId, rootSessionId)
+                .eq(Session::getKind, KIND_TEAM)
+                .eq(Session::getDeleted, 0)
+                .orderByAsc(Session::getCreateTime));
+    }
+
+    /** 按名字或 id 找团队成员（限定同一棵树）；找不到返回 null。 */
+    public Session findTeamMember(String rootSessionId, String nameOrId) {
+        if (nameOrId == null || nameOrId.isBlank()) return null;
+        List<Session> all = listTeamMembers(rootSessionId);
+        for (Session s : all) {
+            if (nameOrId.equals(s.getId()) || nameOrId.equals(s.getMemberName())) return s;
+        }
+        return null;
+    }
+
+    /** 更新成员在线状态快照。 */
+    public void updateMemberState(String memberSessionId, String state) {
+        Session patch = new Session();
+        patch.setId(memberSessionId);
+        patch.setMemberState(state);
+        sessionMapper.updateById(patch);
+    }
+
+    /** 团队成员已读消息的事件游标：只读 >= 该 id 之后的事件（游标本身不重复注入）。 */
+    public long lastReadEventId(String memberSessionId) {
+        Session s = sessionById(memberSessionId);
+        return s == null || s.getLastReadEventId() == null ? 0L : s.getLastReadEventId();
+    }
+
+    /** 推进已读游标（只在成功把消息注入成员上下文后调用）。 */
+    public void advanceReadCursor(String memberSessionId, long eventId) {
+        Session patch = new Session();
+        patch.setId(memberSessionId);
+        patch.setLastReadEventId(eventId);
+        sessionMapper.updateById(patch);
     }
 
     private String createSession(String userId, String kind) {
@@ -405,6 +518,7 @@ public class SessionService {
         q.eq(Session::getUserId, uid)
                 .eq(Session::getMessageCount, 0)
                 .ne(Session::getKind, KIND_TEMP)
+                .ne(Session::getKind, KIND_TEAM)
                 .and(w -> w.isNull(Session::getIsPinned).or().ne(Session::getIsPinned, 1))
                 .orderByDesc(Session::getUpdateTime)
                 .last("LIMIT 1");
@@ -594,6 +708,7 @@ public class SessionService {
         LambdaQueryWrapper<Session> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(Session::getUserId, uid);
         wrapper.ne(Session::getKind, KIND_TEMP);
+        wrapper.ne(Session::getKind, KIND_TEAM);
         wrapper.gt(Session::getMessageCount, 0);
         // 工作区过滤（可选）：
         //   __nospace__      = 不属于任何真实工作区（没挂工作区 + implicit 兜底容器）
@@ -744,6 +859,7 @@ public class SessionService {
         q.eq(Session::getUserId, requireUser(userId))
                 .eq(Session::getAgentId, agentId)
                 .ne(Session::getKind, KIND_TEMP)
+                .ne(Session::getKind, KIND_TEAM)
                 .gt(Session::getMessageCount, 0)
                 .orderByDesc(Session::getUpdateTime)
                 .orderByDesc(Session::getId)

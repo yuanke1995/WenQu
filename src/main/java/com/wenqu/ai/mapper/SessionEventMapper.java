@@ -29,7 +29,7 @@ public interface SessionEventMapper extends BaseMapper<SessionEvent> {
             + "e.type AS type, e.payload AS payload, e.created_at AS createdAt, s.title AS title "
             + "FROM c_ai_session_event e JOIN c_ai_session s ON s.id = e.session_id "
             + "WHERE s.user_id = #{userId} AND s.deleted = 0 "
-            + "AND (s.kind IS NULL OR s.kind != 'temp') "
+            + "AND (s.kind IS NULL OR (s.kind != 'temp' AND s.kind != 'team')) "
             + "<if test='type != null and type != \"\"'>AND e.type = #{type} </if>"
             + "<if test='since != null'>AND e.created_at &gt;= #{since} </if>"
             + "AND e.payload LIKE CONCAT('%', #{keyword}, '%') "

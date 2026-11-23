@@ -873,6 +873,19 @@ public class FrameworkSessions {
     }
 
     /**
+     * 这条会话当前挂着的第一个框架待办 requestId（团队消息等待用）：
+     * team_wait 挂起后，后来的成员消息要据此 respond 恢复那一轮。没有待办返回 null。
+     */
+    public String pendingRequestIdOf(String userId, String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) return null;
+        String key = (userId == null || userId.isBlank() ? "guest" : userId) + "|" + sessionId;
+        for (Map.Entry<String, String> e : pendingOwner.entrySet()) {
+            if (key.equals(e.getValue())) return e.getKey();
+        }
+        return null;
+    }
+
+    /**
      * 等待预算用尽或用户叫停：把这条会话还挂着的待办落成终态并摘掉归属。
      * <p>不落终态的话库里永远留着 PENDING——刷新后端点还会把一张已经作废的卡片重建出来，
      * 用户答了才发现什么都没发生。超时与叫停都不替用户代答（既有口径），这里只改状态。
@@ -1142,6 +1155,24 @@ public class FrameworkSessions {
             log.warn("[agentx] 框架活摘要读不出 (session={}): {}", sessionId, e.toString());
             return null;
         }
+    }
+
+    /**
+     * 丢掉某会话的常驻实例，让下一轮按最新配置重建（会话状态在 stateStore，历史不丢）。
+     * <p>用于「会话级配置改变，只影响 build 期装配」的场景——典型是团队开关：团队模式决定
+     * 是否挂 team_* / team_task_* 工具与团队提示词，这些都烤在常驻实例里，开关一变必须重建，
+     * 否则新工具永远挂不上、模型永远看不到。
+     */
+    public void evictSession(String userId, String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) return;
+        String key = (userId == null || userId.isBlank() ? "guest" : userId) + "|" + sessionId;
+        Held h = held.remove(key);
+        if (h != null) {
+            order.remove(key);
+            cluster.releaseHeld(key);
+            closeQuietly(key, h);
+        }
+        turnSlots.remove(key);
     }
 
     /** 登记一次强制压缩并丢掉常驻实例（下一轮会带新配置重建；会话状态在 stateStore 里，不丢历史）。 */

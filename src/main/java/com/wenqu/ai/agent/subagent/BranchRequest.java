@@ -26,14 +26,28 @@ package com.wenqu.ai.agent.subagent;
  *                        null = 父轮无墙——子轮随之不限库。空集合是「父墙存在但为空」，与 null 不同义。
  * @param timeoutMs       这一支的等待上限（超时按失败处理，不拖垮父轮）
  * @param branchIndex     这一支在编排视图里的序号（父轮卡片靠它把实时步骤归到正确那一行）
+ * @param teamMode        是否团队模式（持久成员会话、可被消息唤醒）
+ * @param teamRootSessionId 团队根会话 id（teamMode 时必填）
+ * @param memberName      团队成员名（teamMode 时必填）
  * @author yuanke
  */
 public record BranchRequest(String parentSessionId, String parentTurnId, String childAgentId,
                             String childAgentName, String question, String parentBrief, int depth,
                             String userId, String modelRef, boolean guestMode,
                             java.util.Collection<String> parentScopeKbIds, long timeoutMs,
-                            int branchIndex) {
+                            int branchIndex,
+                            boolean teamMode, String teamRootSessionId, String memberName) {
 
+    /** 兼容既有 13 参调用：非团队分支默认。 */
+    public BranchRequest(String parentSessionId, String parentTurnId, String childAgentId,
+                         String childAgentName, String question, String parentBrief, int depth,
+                         String userId, String modelRef, boolean guestMode,
+                         java.util.Collection<String> parentScopeKbIds, long timeoutMs,
+                         int branchIndex) {
+        this(parentSessionId, parentTurnId, childAgentId, childAgentName, question, parentBrief, depth,
+                userId, modelRef, guestMode, parentScopeKbIds, timeoutMs, branchIndex,
+                false, null, null);
+    }
     /** 日志与异常信息里的一行身份（哪个父会话的第几层哪一支） */
     public String describe() {
         return "branch[" + childAgentName + " @" + depth + "] parent=" + parentSessionId;

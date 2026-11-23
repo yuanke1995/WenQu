@@ -194,12 +194,33 @@ public class SubAgentBranchRuntime {
             });
             BranchHandle handle = null;
             try {
-                childSession = sessionService.createTempSession(req.userId());
+                childSession = req.teamMode()
+                        ? sessionService.createTeamSession(req.userId(),
+                                req.teamRootSessionId() == null ? req.parentSessionId() : req.teamRootSessionId(),
+                                req.parentSessionId(),
+                                // 名字兜底：memberName 为空时用子智能体名，绝不留空（否则面板只能显示 sessionId）
+                                (req.memberName() == null || req.memberName().isBlank())
+                                        ? req.childAgentName() : req.memberName(),
+                                req.childAgentId())
+                        : sessionService.createTempSession(req.userId());
+                if (req.teamMode() && teamService() != null) {
+                    teamService().markRunning(childSession);
+                }
                 handle = new BranchHandle(childSession, req.userId(), sink);
                 registerBranch(parentSessionId, handle);
+                String question = req.question();
+                if (req.teamMode() && teamService() != null) {
+                    var pending = teamService().pendingMessagesWithCursor(childSession, req.userId());
+                    if (pending.text() != null && !pending.text().isBlank()) {
+                        question = "你有以下未读的团队消息，请先读完再处理当前任务：\n" + pending.text()
+                                + "\n\n———— 当前任务 ————\n" + question;
+                        // 注入即推进游标：注入成功就是已读（下一轮不再重复带同一批）
+                        sessionService.advanceReadCursor(childSession, pending.cursor());
+                    }
+                }
                 turn.run(ChatCommand.builder()
                         .sessionId(childSession)
-                        .question(req.question())
+                        .question(question)
                         .userId(req.userId())
                         .userImages(List.of())
                         .attachments(List.of())
@@ -218,6 +239,13 @@ public class SubAgentBranchRuntime {
                                 ? null : List.copyOf(req.parentScopeKbIds()))
                         .inheritedApprovalMode(inheritedApprovalMode)
                         .source(source)
+                        // 团队模式：成员跑在持久 team 会话里，带成员身份与根 id
+                        .teamMode(req.teamMode())
+                        .memberSessionId(req.teamMode() ? childSession : null)
+                        .memberName(req.memberName())
+                        .teamRootSessionId(req.teamMode()
+                                ? (req.teamRootSessionId() == null ? req.parentSessionId() : req.teamRootSessionId())
+                                : null)
                         .build(), sink);
                 // 强制同步时父轮会一直等到这里返回。分支必须在 force_sync 截止前收口（留 5s 让回报送达），
                 // 否则会出现「父轮报同步超时、子轮还在跑」的孤儿。没有开强制同步时不做这道硬截止。
@@ -358,15 +386,29 @@ public class SubAgentBranchRuntime {
                 // 收集型通道不触发 onCompletion，登记必须主动清（否则整轮台账与断开表挂着引用）
                 ChatRunRuntime.forgetSseChannel(sink);
                 if (childSession != null) {
-                    try {
-                        sessionService.deleteSession(req.userId(), childSession);
-                    } catch (Exception ignored) {
-                        // 删失败只多留一条临时会话，不影响回答；硬抛会把已跑完的分支报成失败
+                    if (req.teamMode()) {
+                        // 团队成员会话持久：不删，只回到 IDLE，等待下一次 team_send 唤醒
+                        com.wenqu.ai.agent.team.AgentTeamService svc = teamService();
+                        if (svc != null) svc.markIdle(childSession);
+                    } else {
+                        try {
+                            sessionService.deleteSession(req.userId(), childSession);
+                        } catch (Exception ignored) {
+                            // 删失败只多留一条临时会话，不影响回答；硬抛会把已跑完的分支报成失败
+                        }
                     }
                 }
             }
         };
     }
+
+    /** 延迟取团队服务，避免构造环（团队服务由问答侧装配）。 */
+    private com.wenqu.ai.agent.team.AgentTeamService teamService() {
+        return teamService;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    private volatile com.wenqu.ai.agent.team.AgentTeamService teamService;
 
     /**
      * 运行视角的落库：这一支的关键帧流随收束写一条 {@code type=subagent} 账本事件，

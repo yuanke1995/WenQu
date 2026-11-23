@@ -160,6 +160,13 @@ public final class TurnPromptAssembler {
                     .append(com.wenqu.ai.util.UntrustedContent.envelope("eval-prefix", cmd.getReplayPrefix()))
                     .append("\n\n");
         }
+        // 团队/委派分支的父轮上下文（fork 语义，仅直接子代带）：与前文回放同口径套信封，
+        // 父级历史是引用数据，里面的指令不得当系统指令执行。
+        if (cmd.getParentBrief() != null && !cmd.getParentBrief().isBlank()) {
+            sb.append("【父轮上下文】（你是由父会话派出的成员，以下是父轮已完成对话的摘要）\n")
+                    .append(com.wenqu.ai.util.UntrustedContent.envelope("parent-brief", cmd.getParentBrief()))
+                    .append("\n\n");
+        }
         String q = cmd.getQuestion() == null ? "" : cmd.getQuestion();
         // 插话没赶上本轮、随收尾交回后作为新一轮补发的那一条：不带这句声明，模型看到的是孤零零一句
         // 新用户消息，会当成「用户又问了一遍」重新起题。

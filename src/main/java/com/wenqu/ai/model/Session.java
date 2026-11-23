@@ -76,13 +76,33 @@ public class Session {
     private String todos;
 
     /**
-     * 会话种类：chat=用户发起的对话；temp=平台内部临时会话（子智能体分支、工作流子智能体节点
-     * 各跑一整轮问答用的那条会话，跑完即删）。
+     * 会话种类：chat=用户对话；temp=平台内部临时会话（子智能体分支、工作流节点，跑完即删）；
+     * team=智能体团队的持久成员会话（可恢复、可被消息唤醒，不进普通会话列表）。
      * <p>temp 必须与用户会话分开：它挂在<b>真实用户</b>名下（分支要按调用者的权限跑检索、
      * 产物也要收养进父会话），但它是平台自己派出来的一轮，不是用户开的对话。
-     * 见 {@link com.wenqu.ai.service.SessionService#KIND_TEMP}。
+     * 见 {@link com.wenqu.ai.service.SessionService#KIND_TEMP} 与 {@link com.wenqu.ai.service.SessionService#KIND_TEAM}。
      */
     private String kind;
+
+    // ============ 智能体团队（会话级开关，不做系统配置） ============
+
+    /** 会话级团队开关：1=本会话开启智能体团队（仅根会话有意义，成员恒为 0）；0=关闭。 */
+    private Integer teamEnabled;
+
+    /** 所属团队根会话 id（父子传递；根会话自身为 NULL）。 */
+    private String rootSessionId;
+
+    /** 直接创建者会话 id（成员树边；根会话自身为 NULL）。 */
+    private String parentSessionId;
+
+    /** 团队内模型可见名（短名或 slash 全路径）；仅 kind=team 有值。 */
+    private String memberName;
+
+    /** 成员在线快照：IDLE/RUNNING/WAITING/STOPPED/OFFLINE；仅 kind=team 有值。 */
+    private String memberState;
+
+    /** 团队成员已读消息的事件游标（c_ai_session_event.id）；避免未读消息重复注入。 */
+    private Long lastReadEventId;
 
     /**
      * 所属工作区（{@code c_ai_project.id}）。

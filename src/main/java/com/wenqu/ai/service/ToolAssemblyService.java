@@ -214,7 +214,7 @@ public class ToolAssemblyService {
             // OFFICE / COMPUTER_USE / SESSION_RETRIEVAL / MCP_RESOURCE 暂无智能体级三态列，
             // 也不配平台开关：只受 tool.enabled 总闸 + 权限档位 + 停用名单收口
             // （桌面操作另由「只在完全权限档挂载」当闸门，见 ComputerUseProvider）。
-            case TODO, MCP, LOCAL_BROWSER, OFFICE, COMPUTER_USE, SESSION_RETRIEVAL, MCP_RESOURCE -> null;
+            case TODO, TEAM, MCP, LOCAL_BROWSER, OFFICE, COMPUTER_USE, SESSION_RETRIEVAL, MCP_RESOURCE -> null;
             case BROWSER -> agent.getToolBrowser();
         };
     }

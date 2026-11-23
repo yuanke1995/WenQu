@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>问渠 · 智能体团队 · 任务图（全画布）</title>
+<style>
+:root{
+  --bg:#eef0f3;--panel:#fff;--panel2:#fafbfc;--panel3:#f2f4f7;--border:#e6e9ed;--border2:#d8dde3;
+  --text:#1f2329;--text2:#5f6570;--text3:#98a0aa;
+  --accent:#2e6be6;--accent-weak:#eef4ff;--accent-border:#c9dbfb;
+  --violet:#7c3aed;--violet-weak:#f5f3ff;--violet-border:#ddd6fe;
+  --ok:#3b8f4e;--ok-weak:#eaf5ec;--ok-border:#cfe4d3;
+  --warn:#a3691b;--warn-weak:#faf3e6;--warn-border:#f0dfb6;
+  --danger:#cf1322;--danger-weak:#fff2f0;--danger-border:#f3c9c9;
+  --font:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --shadow-sm:0 1px 2px rgba(16,24,40,.04);
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{width:1440px;margin:0 auto;background:var(--bg);font-family:var(--font);color:var(--text);font-size:14px;line-height:1.6;-webkit-font-smoothing:antialiased}
+.ic{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.ic.sm{width:13px;height:13px}
+button{font-family:var(--font);cursor:pointer}
+
+.board{background:var(--panel);border:1px solid var(--border);border-radius:16px;overflow:hidden;box-shadow:0 6px 24px rgba(16,24,40,.08)}
+.bhead{display:flex;align-items:center;gap:14px;padding:14px 20px;border-bottom:1px solid var(--border);background:var(--panel2)}
+.bhead .ti{display:flex;align-items:center;gap:10px}
+.bhead .ti .ic{color:var(--violet)}
+.bhead h2{font-size:15px;margin:0;font-weight:700}
+.bhead .sub{font-size:11.5px;color:var(--text3);margin-top:1px}
+.stat{display:flex;gap:8px;margin-left:8px}
+.pill{height:24px;padding:0 10px;border-radius:6px;background:var(--panel);border:1px solid var(--border);font-size:11px;color:var(--text2);display:inline-flex;align-items:center;gap:5px}
+.pill b{color:var(--text);font-weight:650}
+.bhead .sp{margin-left:auto;display:flex;gap:8px;align-items:center}
+.btn{height:30px;padding:0 12px;border-radius:8px;border:1px solid var(--border);background:#fff;color:var(--text2);font-size:12px;display:inline-flex;align-items:center;gap:6px}
+.btn.primary{background:var(--violet);border-color:var(--violet);color:#fff;font-weight:600}
+
+.bbody{display:flex;min-height:600px}
+/* 左侧清单 */
+.list{width:280px;flex:none;border-right:1px solid var(--border);background:var(--panel2);padding:12px 10px;overflow:auto}
+.lgrp{font-size:10.5px;font-weight:700;color:var(--text3);padding:10px 8px 5px;display:flex;align-items:center;gap:6px;letter-spacing:.02em}
+.lgrp .c{margin-left:auto;font-weight:600;color:var(--text3)}
+.litem{display:flex;align-items:flex-start;gap:8px;padding:8px;border-radius:9px;cursor:pointer;margin-bottom:2px}
+.litem:hover{background:var(--panel3)}
+.litem.sel{background:#fff;box-shadow:0 0 0 1px var(--violet-border) inset}
+.lbox{width:15px;height:15px;border-radius:4px;flex:none;margin-top:1px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800;border:1px solid}
+.lbox.done{background:var(--ok-weak);border-color:var(--ok-border);color:var(--ok)}
+.lbox.prog{background:var(--accent-weak);border-color:var(--accent-border);color:var(--accent)}
+.lbox.ready{background:var(--warn-weak);border-color:var(--warn-border);color:var(--warn)}
+.lbox.wait{background:var(--panel);border-color:var(--border2);color:var(--text3)}
+.lmain{min-width:0;flex:1}
+.lnm{font-size:12px;font-weight:550;line-height:1.4}
+.lmeta{font-size:10px;color:var(--text3);margin-top:2px}
+
+/* 画布 */
+.canvas{flex:1;position:relative;background:
+  radial-gradient(circle at 1px 1px, #eceef1 1px, transparent 0) 0 0/18px 18px, var(--panel);min-width:0;overflow:hidden}
+.canvas-pad{position:relative;width:720px;height:520px;margin:36px auto}
+svg.edges{position:absolute;left:0;top:0;width:720px;height:520px;overflow:visible}
+.node{position:absolute;width:210px;height:64px;border-radius:11px;background:var(--panel);border:1px solid var(--border);box-shadow:var(--shadow-sm);padding:9px 12px 9px 13px;display:flex;flex-direction:column;justify-content:center;gap:3px}
+.node:before{content:"";position:absolute;left:0;top:9px;bottom:9px;width:3px;border-radius:3px}
+.node.done:before{background:var(--ok)} .node.prog:before{background:var(--accent)}
+.node.ready:before{background:var(--warn)} .node.wait:before{background:var(--border2)}
+.node.sel{box-shadow:0 0 0 2px var(--violet-border),0 4px 14px rgba(124,58,237,.14)}
+.node-t{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:44px}
+.node-m{display:flex;align-items:center;gap:6px;font-size:10px;color:var(--text3)}
+.chip{position:absolute;top:9px;right:9px;height:16px;padding:0 6px;border-radius:4px;font-size:9px;font-weight:650;display:inline-flex;align-items:center}
+.chip.done{background:var(--ok-weak);color:var(--ok)} .chip.prog{background:var(--accent-weak);color:var(--accent)}
+.chip.ready{background:var(--warn-weak);color:var(--warn)} .chip.wait{background:var(--panel3);color:var(--text3)}
+.avatar-xs{width:15px;height:15px;border-radius:4px;display:inline-flex;align-items:center;justify-content:center;color:#fff;font-size:8px;font-weight:700}
+
+/* 右侧详情 */
+.detail{width:360px;flex:none;border-left:1px solid var(--border);background:var(--panel);display:flex;flex-direction:column}
+.dhead{padding:14px 16px;border-bottom:1px solid var(--border)}
+.dstate{height:20px;padding:0 8px;border-radius:5px;font-size:10.5px;font-weight:650;display:inline-flex;align-items:center;background:var(--warn-weak);color:var(--warn);margin-bottom:8px}
+.dtitle{font-size:14px;font-weight:700;line-height:1.4}
+.ddesc{font-size:12px;color:var(--text2);margin-top:6px;line-height:1.6}
+.dmeta{display:flex;gap:16px;margin-top:12px}
+.dmeta .k{font-size:10px;color:var(--text3)}
+.dmeta .v{font-size:12px;color:var(--text);font-weight:600;margin-top:2px;display:flex;align-items:center;gap:5px}
+.dbody{padding:14px 16px;overflow:auto;flex:1}
+.dsec-t{font-size:11px;font-weight:700;color:var(--text3);letter-spacing:.03em;margin-bottom:12px;display:flex;align-items:center;gap:6px}
+.tl{position:relative;padding-left:18px}
+.tl:before{content:"";position:absolute;left:5px;top:4px;bottom:6px;width:1px;background:var(--border)}
+.tli{position:relative;padding-bottom:16px}
+.tli:last-child{padding-bottom:0}
+.tli .dot{position:absolute;left:-17px;top:3px;width:9px;height:9px;border-radius:50%;background:var(--panel);border:2px solid var(--border2)}
+.tli.ok .dot{border-color:var(--ok);background:var(--ok)}
+.tli.prog .dot{border-color:var(--accent);background:var(--accent)}
+.tli .tt{font-size:11.5px;font-weight:650}
+.tli .tm{font-size:10px;color:var(--text3);margin-top:1px}
+.tli .td{font-size:11px;color:var(--text2);margin-top:3px;line-height:1.5}
+.dep{display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--text2);padding:6px 9px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px;background:var(--panel2)}
+.dep .st{width:14px;height:14px;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:800;flex:none}
+.dfoot{padding:10px 16px;border-top:1px solid var(--border);background:var(--panel2);font-size:10.5px;color:var(--text3);display:flex;align-items:center;gap:6px}
+
+.legend{display:flex;gap:16px;flex-wrap:wrap;padding:10px 20px;border-top:1px solid var(--border);background:var(--panel2);font-size:11.5px;color:var(--text2)}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.ld{width:9px;height:9px;border-radius:3px}
+</style>
+</head>
+<body>
+<svg style="position:absolute;width:0;height:0" aria-hidden="true"><defs>
+<symbol id="i-chart" viewBox="0 0 24 24"><path d="M3 3v18h18M7 15l4-4 3 3 5-6"/></symbol>
+<symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+<symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.5 1.5"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.5-1.5"/></symbol>
+<symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+<symbol id="i-expand" viewBox="0 0 24 24"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></symbol>
+<symbol id="i-lock" viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></symbol>
+</defs></svg>
+
+<div class="board">
+  <div class="bhead">
+    <div class="ti"><svg class="ic"><use href="#i-chart"/></svg>
+      <div><h2>任务图 · 本次会话</h2><div class="sub">由模型经 team_task_* 工具写入 · 只读</div></div>
+    </div>
+    <div class="stat">
+      <span class="pill"><b>5</b> 节点</span>
+      <span class="pill"><b>4</b> 依赖</span>
+      <span class="pill" style="color:var(--ok)"><b style="color:var(--ok)">2</b> 完成</span>
+      <span class="pill" style="color:var(--accent)"><b style="color:var(--accent)">1</b> 执行中</span>
+    </div>
+    <div class="sp">
+      <button class="btn"><svg class="ic sm"><use href="#i-expand"/></svg>适应画布</button>
+      <button class="btn primary"><svg class="ic sm"><use href="#i-plus"/></svg>让模型新建任务</button>
+    </div>
+  </div>
+
+  <div class="bbody">
+    <!-- 左清单 -->
+    <div class="list">
+      <div class="lgrp">已就绪 / 待判断 <span class="c">1</span></div>
+      <div class="litem"><span class="lbox ready">4</span><div class="lmain"><div class="lnm">决策：deep_think 事件名是否保留</div><div class="lmeta">待你确认 · 不阻塞其他任务</div></div></div>
+      <div class="lgrp">执行中 <span class="c">1</span></div>
+      <div class="litem"><span class="lbox prog">…</span><div class="lmain"><div class="lnm">审计后端兼容层与旧字段</div><div class="lmeta">后端助手 · 进行中</div></div></div>
+      <div class="lgrp">待前置 <span class="c">1</span></div>
+      <div class="litem"><span class="lbox wait">·</span><div class="lmain"><div class="lnm">汇总输出审计报告</div><div class="lmeta">待前置 2 项</div></div></div>
+      <div class="lgrp">已完成 <span class="c">2</span></div>
+      <div class="litem"><span class="lbox done">✓</span><div class="lmain"><div class="lnm">梳理 web/src 结构与兼容清单</div><div class="lmeta">lead · 0:34</div></div></div>
+      <div class="litem"><span class="lbox done">✓</span><div class="lmain"><div class="lnm">审计旧 SSE 事件名与 storage 键</div><div class="lmeta">审计助手 · 0:34</div></div></div>
+    </div>
+
+    <!-- 画布 -->
+    <div class="canvas">
+      <div class="canvas-pad">
+        <svg class="edges" viewBox="0 0 720 520">
+          <defs>
+            <marker id="ar" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6" fill="none" stroke="#b9c0c9" stroke-width="1.4"/></marker>
+            <marker id="arDark" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6" fill="none" stroke="#8f98a3" stroke-width="1.4"/></marker>
+          </defs>
+          <!-- T1 -> T2 -->
+          <path d="M226,260 C244,260 232,128 258,128" fill="none" stroke="#b9c0c9" stroke-width="1.5" marker-end="url(#ar)"/>
+          <!-- T1 -> T3 -->
+          <path d="M226,260 C244,260 232,392 258,392" fill="none" stroke="#b9c0c9" stroke-width="1.5" marker-end="url(#ar)"/>
+          <!-- T2 -> T5 (done, dark) -->
+          <path d="M468,128 L500,128" fill="none" stroke="#8f98a3" stroke-width="1.6" marker-end="url(#arDark)"/>
+          <!-- T3 -> T4 (blocked edge grey) -->
+          <path d="M468,392 C486,392 484,332 500,332" fill="none" stroke="#cfd5dc" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#ar)"/>
+          <!-- T5 -> T4 -->
+          <path d="M605,160 L605,300" fill="none" stroke="#cfd5dc" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#ar)"/>
+        </svg>
+
+        <div class="node done" style="left:16px;top:228px">
+          <span class="chip done">完成</span>
+          <div class="node-t">梳理 web/src 结构与兼容清单</div>
+          <div class="node-m"><span class="avatar-xs" style="background:linear-gradient(135deg,#5E93F5,#2A5FE0)">问</span>lead · 0:34</div>
+        </div>
+
+        <div class="node done" style="left:258px;top:96px">
+          <span class="chip done">完成</span>
+          <div class="node-t">审计旧 SSE 事件名与 storage 键</div>
+          <div class="node-m"><span class="avatar-xs" style="background:linear-gradient(135deg,#8B7CF6,#6D28D9)">R</span>审计助手 · 0:34</div>
+        </div>
+
+        <div class="node prog" style="left:258px;top:360px">
+          <span class="chip prog">执行中</span>
+          <div class="node-t">审计后端兼容层与旧字段</div>
+          <div class="node-m"><span class="avatar-xs" style="background:linear-gradient(135deg,#F5A442,#C2761B)">A</span>后端助手 · 进行中</div>
+        </div>
+
+        <div class="node ready sel" style="left:500px;top:96px">
+          <span class="chip ready">待判断</span>
+          <div class="node-t">决策：deep_think 事件名是否保留</div>
+          <div class="node-m">未认领 · 等待你确认</div>
+        </div>
+
+        <div class="node wait" style="left:500px;top:300px">
+          <span class="chip wait">待前置</span>
+          <div class="node-t">汇总输出审计报告</div>
+          <div class="node-m">未认领 · 待前置 2 项</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 右侧详情 -->
+    <div class="detail">
+      <div class="dhead">
+        <span class="dstate">待判断 · READY</span>
+        <div class="dtitle">决策：deep_think 事件名是否保留</div>
+        <div class="ddesc">综合两位成员的分歧：审计助手建议删除旧事件名，取数助手建议保留兼容。需要主会话给出最终口径后，汇总报告才能定稿。</div>
+        <div class="dmeta">
+          <div><div class="k">认领人</div><div class="v">未认领</div></div>
+          <div><div class="k">前置</div><div class="v"><svg class="ic sm"><use href="#i-link"/></svg>1 项</div></div>
+          <div><div class="k">版本</div><div class="v">v3</div></div>
+        </div>
+      </div>
+      <div class="dbody">
+        <div class="dsec-t"><svg class="ic sm"><use href="#i-clock"/></svg>前置依赖</div>
+        <div class="dep"><span class="st done" style="background:var(--ok-weak);color:var(--ok);border:1px solid var(--ok-border)">✓</span>审计旧 SSE 事件名与 storage 键 · 完成</div>
+
+        <div class="dsec-t" style="margin-top:18px"><svg class="ic sm"><use href="#i-clock"/></svg>任务时间线</div>
+        <div class="tl">
+          <div class="tli ok"><span class="dot"></span><div class="tt">创建任务</div><div class="tm">21:41 · lead</div><div class="td">由主会话在拆解阶段创建</div></div>
+          <div class="tli ok"><span class="dot"></span><div class="tt">登记依赖 T2 → T4</div><div class="tm">21:41 · lead</div></div>
+          <div class="tli prog"><span class="dot"></span><div class="tt">进入 READY（前置 T2 完成）</div><div class="tm">21:55 · 系统</div><div class="td">前置全部满足，可被认领</div></div>
+          <div class="tli"><span class="dot"></span><div class="tt">等待认领</div><div class="tm">当前</div></div>
+        </div>
+      </div>
+      <div class="dfoot"><svg class="ic sm"><use href="#i-lock"/></svg>拓扑只读；改图请由模型「新建任务 + 新边」，历史不变</div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <span><i class="ld" style="background:var(--ok)"></i>COMPLETED 完成</span>
+    <span><i class="ld" style="background:var(--accent)"></i>IN_PROGRESS 执行中</span>
+    <span><i class="ld" style="background:var(--warn)"></i>READY 可认领 / 待判断</span>
+    <span><i class="ld" style="background:var(--border2)"></i>PENDING 待前置</span>
+    <span><i class="ld" style="background:var(--danger)"></i>FAILED 失败（不解锁下游）</span>
+    <span style="margin-left:auto;color:var(--text3)">实线=已解锁 · 虚线=仍被阻塞</span>
+  </div>
+</div>
+</body>
+</html>

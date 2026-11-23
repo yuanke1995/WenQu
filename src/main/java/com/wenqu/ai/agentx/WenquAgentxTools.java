@@ -366,6 +366,7 @@ public class WenquAgentxTools {
                     com.wenqu.ai.agent.tool.ToolFamily.WEBSEARCH,
                     com.wenqu.ai.agent.tool.ToolFamily.ARTIFACT,
                     com.wenqu.ai.agent.tool.ToolFamily.TODO,
+                    com.wenqu.ai.agent.tool.ToolFamily.TEAM,
                     // 沙盒族（run_code）：档位裁剪与审批档都已在 exposes 里，进组后
                     // 「只读档不给脚本」才真的做到「模型看不见」，而不是调了被拒
                     com.wenqu.ai.agent.tool.ToolFamily.SANDBOX,
@@ -503,9 +504,16 @@ public class WenquAgentxTools {
     public java.util.Set<String> registerWithGroups(io.agentscope.core.tool.Toolkit toolkit,
                                                     List<Object> holders) {
         java.util.Set<String> before = new java.util.LinkedHashSet<>(toolkit.getToolNames());
-        for (Object holder : holders) toolkit.registerTool(holder);
+        for (Object holder : holders) {
+            try {
+                toolkit.registerTool(holder);
+            } catch (Throwable t) {
+                log.warn("[agentx] registerTool 失败 holder={}: {}", holder.getClass().getSimpleName(), t.toString());
+            }
+        }
         java.util.Set<String> added = new java.util.LinkedHashSet<>(toolkit.getToolNames());
         added.removeAll(before);
+        log.debug("[agentx] 本轮注册新增工具 {} 个: {}", added.size(), added);
         java.util.Set<String> groupable = groupableNames();
         java.util.Set<String> grouped = new java.util.LinkedHashSet<>();
         for (String name : added) {
@@ -842,9 +850,16 @@ public class WenquAgentxTools {
         return question -> {
             AgentxTurnSlot.Turn t = slot.require();
             TurnHooks hooks = t.hooks();
+            // 团队模式：会话行上的 team_enabled（不是系统配置）。根派出的成员会话持久、可回消息。
+            String parentSession = cmd.getSessionId();
+            boolean teamMode = sessionService.isTeamEnabled(parentSession) || cmd.isTeamMode();
+            String rootId = cmd.getTeamRootSessionId() != null && !cmd.getTeamRootSessionId().isBlank()
+                    ? cmd.getTeamRootSessionId() : parentSession;
+            com.wenqu.ai.model.Agent childAgent = agentService.get(childAgentId);
+            String memberName = childAgent == null ? null : childAgent.getName();
             com.wenqu.ai.agent.subagent.SubAgentConsultService.Ctx ctx =
                     new com.wenqu.ai.agent.subagent.SubAgentConsultService.Ctx(
-                            cmd.getSessionId(), t.turnId(), cmd.getUserId(), hooks.modelRef(),
+                            parentSession, t.turnId(), cmd.getUserId(), hooks.modelRef(),
                             cmd.isGuestMode(), cmd.getSubagentDepth(),
                             cmd.getAgentId() == null ? "" : cmd.getAgentId(),
                             // @ 提及强制咨询那一位：框架引擎这一侧没有 mentions 那一段编排，如实留空
@@ -857,7 +872,11 @@ public class WenquAgentxTools {
                             (consultedId, consultedName) -> t.channel().emit(
                                     com.wenqu.ai.engine.RunEventType.AGENT_CONSULTED,
                                     com.alibaba.fastjson2.JSON.toJSONString(
-                                            Map.of("id", consultedId, "name", consultedName))));
+                                            Map.of("id", consultedId, "name", consultedName))),
+                            teamMode, rootId, memberName,
+                            // fork 语义只给直接子代：孙代由各自父轮再摘要，控制 token 成本
+                            (cmd.getSubagentDepth() == 0
+                                    ? sessionService.parentBriefOf(parentSession, 3000) : ""));
             com.wenqu.ai.agent.subagent.BranchRunner runner = branchTurnRunner == null ? null
                     : branchRuntime.branchRunner(branchTurnRunner, cmd.getSessionId(), t.turnId(),
                             cmd.getUserId(), cmd.isGuestMode(), cmd.isApiKey(), t.channel().emitter(),
@@ -940,6 +959,32 @@ public class WenquAgentxTools {
                         return t == null ? null : t.taint();
                     },
                     () -> slot.toolAllowedForSession(name)));
+        }
+    }
+
+    /**
+     * 把「裸 @Tool holder」包成 {@link SpringAiToolAdapter} 再放进 holders。
+     * <p>为什么需要：框架的 {@code Toolkit.registerTool(Object)} 只认 {@code ToolBase} 一类，
+     * 直接塞一个带 {@code @Tool} 的普通对象进去不会注册任何工具（团队工具因此一直挂不上）。
+     * provider 工具是经 {@code mountFrom} 包成 SpringAiToolAdapter 才生效的，这里对团队这种
+     * 「按会话 new 出来的 holder」用同一套包装。
+     */
+    public void mountRawHolders(java.util.List<Object> holders,
+                                com.wenqu.ai.agent.permission.ExecutionPolicy policy,
+                                boolean approvalCanAsk, AgentxTurnSlot slot, Object... rawHolders) {
+        for (Object h : rawHolders) {
+            if (h == null) continue;
+            for (org.springframework.ai.tool.ToolCallback cb : org.springframework.ai.support.ToolCallbacks.from(h)) {
+                String name = cb.getToolDefinition().name();
+                boolean readOnly = toolRegistry.find(name)
+                        .map(com.wenqu.ai.agent.tool.ToolDescriptor::readOnly).orElse(false);
+                holders.add(new SpringAiToolAdapter(cb, readOnly,
+                        () -> withBaseContext(slot.require(), java.util.Map.of()),
+                        () -> policyOf(slot, policy),
+                        false, approvalCanAsk, false,
+                        () -> { AgentxTurnSlot.Turn t = slot.current(); return t == null ? null : t.taint(); },
+                        () -> slot.toolAllowedForSession(name)));
+            }
         }
     }
 

@@ -2,10 +2,20 @@
   <div class="chat2" ref="chat2Ref" @mouseenter="railVis = true" @mouseleave="railVis = false; railHoverIdx = -1">
     <!-- 中间：标题栏 + 消息流 + 输入区 -->
     <div class="chat-col">
+      <!-- 团队成员会话：宽屏并入标题栏；窄屏此细条提示 -->
+      <div v-if="memberViewRoot && isNarrow" style="display:flex;align-items:center;gap:10px;padding:8px 16px;border-bottom:1px solid #e6e9ed;background:#f5f3ff;flex:none;">
+        <button @click="backToRootSession" style="border:1px solid #ddd6fe;background:#fff;color:#7c3aed;border-radius:8px;padding:4px 10px;font-size:12px;cursor:pointer;">← 返回主会话</button>
+        <span style="font-size:11px;font-weight:650;color:#7c3aed;background:#fff;border:1px solid #ddd6fe;border-radius:5px;padding:1px 7px;">团队成员会话</span>
+        <span v-if="memberViewName" style="font-size:12px;color:#5f6570;">{{ memberViewName }}</span>
+      </div>
       <!-- PC 标题栏：窄屏隐藏（与移动顶栏形成双顶栏，图里很明显），
            其中的会话查找/分享/状态三个动作改由下面的 MobileChatHead 以图标提供 -->
       <div v-if="!isNarrow" class="chat-head">
-        <span class="chat-title">{{ currentSessionTitle }}</span>
+        <template v-if="memberViewRoot">
+          <button @click="backToRootSession" style="border:1px solid #ddd6fe;background:#fff;color:#7c3aed;border-radius:8px;padding:4px 10px;font-size:12px;cursor:pointer;flex:none;">← 返回主会话</button>
+          <span style="font-size:11px;font-weight:650;color:#7c3aed;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:5px;padding:1px 7px;flex:none;">团队成员会话</span>
+        </template>
+        <span class="chat-title">{{ memberViewRoot ? (memberViewName || '成员会话') : currentSessionTitle }}</span>
         <!-- 当前工作区标识：约定每轮注入 system prompt，用户有权在聊天的当场看见它在生效；
              没挂工作区的会话接口仍返回档位等字段，但 projectId 为空——这里按它判断，标识不显示（不编名字）。
              点它直接进工作区页面（目录/记忆/隔离都在那一页） -->
@@ -17,6 +27,9 @@
         <!-- 免责声明从标题栏下沉到每条回答的脚注（见 msg-disclaimer）：它该出现在读结论的现场 -->
         <!-- 头部动作区：右对齐一组，图标按钮无框安静 -->
         <div class="head-actions">
+          <TeamPill v-if="!memberViewRoot" :session-id="currentSessionId || ''" @open="openTeamPanel" />
+          <button v-if="memberViewRoot" type="button" title="停止该成员当前轮" @click="stopNow"
+                  style="height:26px;padding:0 10px;border:1px solid #f3c9c9;background:#fff2f0;color:#cf1322;border-radius:7px;font-size:12px;cursor:pointer;margin-right:4px;">停止</button>
           <button class="app-icon-btn" title="在本会话中查找（Ctrl/⌘ + F）" @click="openSearch">
             <search-outlined />
           </button>
@@ -1273,7 +1286,7 @@
                否则用户在没有工作区标识的会话里永远改不了档位。
                胶囊与菜单都只报具体档位，不再有「跟随智能体」这一项：没在本会话选过时，
                报的就是这位智能体自己的档位（由后端下发的档位名册 + 智能体档位算出）。 -->
-          <a-dropdown v-if="currentSessionId" :trigger="['click']" placement="topLeft">
+          <a-dropdown v-if="currentSessionId && !memberViewRoot" :trigger="['click']" placement="topLeft">
             <button class="perm-pill" :class="{ on: !!sessionPermission && effectivePermission !== 'autonomous', danger: effectivePermission === 'autonomous' }"
                     type="button"
                     :title="'权限：' + permissionLabel">
@@ -1291,7 +1304,7 @@
               </a-menu>
             </template>
           </a-dropdown>
-          <a-dropdown v-model:open="agentPickerOpen" :trigger="['click']" placement="topLeft">
+          <a-dropdown v-if="!memberViewRoot" v-model:open="agentPickerOpen" :trigger="['click']" placement="topLeft">
           <button class="agent-pill" :class="{ on: !!currentAgentId, open: agentPickerOpen, 'as-icon': isNarrow }"
           title="选择作答的智能体：换人立即生效（下一问起就是它）；不挑就沿用本会话上一问的智能体，新会话用默认助手。模型在右侧选择">
           <AgentAvatar v-if="currentAgent" :agent="currentAgent" :size="16" />
@@ -1494,10 +1507,15 @@
                 :aria-selected="railTab === 'browser'" @click="railTab = 'browser'">
           浏览<span v-if="browserSnapshots.length" class="rp-tab-n">{{ browserSnapshots.length }}</span>
         </button>
+        <button v-if="!memberViewRoot" type="button" class="rp-tab" :class="{ on: railTab === 'team' }" role="tab"
+                :aria-selected="railTab === 'team'" @click="railTab = 'team'">
+          团队
+        </button>
       </div>
       <!-- 用 v-show 保留实例：在「浏览」与过程/来源/文件之间来回切时，侧栏 iframe 的地址与
            已加载页面不会被卸载重建（v-if 会让正在看的页面消失）。整栏关闭仍由上面的 aside v-if 控制。 -->
       <BrowserPanel v-show="railTab === 'browser'" :snapshots="browserSnapshots" />
+      <TeamPanel v-if="railTab === 'team' && !memberViewRoot" :session-id="currentSessionId || ''" :session-title="currentSessionTitle" :agent-name="currentAgentName" :agent="agentBadgeOf(agentList, currentAgentId, currentAgentName)" :agents="agentList" />
       <!-- 本轮卡（常驻首位）：跑轮时实时滚动「哪几步、每步在做什么事」，答完收成这一轮的动作清单。
            单步耗时不在这里报（整轮用时归气泡那条状态行），要点「查看全部步骤」进账本弹窗。
            会话里还没有 AI 消息时整卡不渲染（新会话不占位）。其余各卡仍是「有数据才显示」。 -->
@@ -2028,6 +2046,8 @@ import ToolSpillButton from '../components/ToolSpillButton.vue'
 import SessionEventsPanel from '../components/SessionEventsPanel.vue'
 // 右栏「过程」卡：跑轮时实时滚动工具步（数据就是引擎那份消息对象，不另取数）
 import RightProcessCard from '../components/RightProcessCard.vue'
+import TeamPanel from '../components/TeamPanel.vue'
+import TeamPill from '../components/TeamPill.vue'
 // 右栏「浏览」卡：助手本轮浏览器操作的只读快照镜像（唯一出口是「在新窗口打开」）
 import BrowserPanel from '../components/BrowserPanel.vue'
 // 顶栏「子智能体」药丸：派遣在跑时给一个不随正文滚走的位置（PC 浮层 / 触屏底部 sheet 同一份组件）
@@ -2099,6 +2119,13 @@ import { useDeepAsk } from '../chat/useDeepAsk'
 const page = {}
 const router = useRouter()
 const route = useRoute()
+// 团队成员会话视图：从「团队」面板点成员打开，顶部提供返回主会话
+const memberViewRoot = computed(() => { const v = route.query.teamRoot; return Array.isArray(v) ? v[0] : (v || '') })
+const memberViewName = computed(() => { const v = route.query.memberName; return Array.isArray(v) ? v[0] : (v || '') })
+function backToRootSession() {
+  const sid = memberViewRoot.value
+  if (sid) router.push({ path: '/chat', query: { sid } }).catch(() => {})
+}
 // 输入框与编辑卡的 DOM ref 由布局层持有：命令面板与两个域指向同一份元素。
 const composerRef = ref(null)
 const editingRef = ref(null)
@@ -2269,6 +2296,20 @@ const {
   panelOpen: () => panelOpen.value, mPanelOpen: () => mPanelOpen.value,
   isNarrow: () => isNarrow.value, togglePanel: (...a) => togglePanel(...a),
   deliveryPackages, sandboxCount, procs, sandboxErr, sandboxLoading, procCardVisible, messages
+})
+
+// 顶栏团队胶囊 → 打开右栏「团队」分段（宽屏占位列 / 窄屏 sheet）
+function openTeamPanel() {
+  try {
+    railTab.value = 'team'
+    if (isNarrow.value) mPanelOpen.value = true
+    else panelOpen.value = true
+  } catch (e) { /* 忽略 */ }
+}
+
+// 成员会话页里「团队」分段不适用（团队是根会话的概念）：进入时自动让位到「过程」
+watch(memberViewRoot, (v) => {
+  try { if (v && railTab.value === 'team') railTab.value = 'process' } catch (e) { /* 忽略 */ }
 })
 
 // 运行设置（见 ../chat/useRunSettings）

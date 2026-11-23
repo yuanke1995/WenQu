@@ -2464,3 +2464,46 @@ export const updateTenantBrand = (id, body) =>
   request(`/tenant/${encodeURIComponent(id)}/brand`, { method: 'POST', body: JSON.stringify(body || {}) })
 /** 新租户首登引导状态（五项按真实数据计算） */
 export const getTenantOnboarding = () => request('/tenant/onboarding')
+
+// 智能体团队全套接口：request() 返回的是统一信封 {success,code,msg,data}，不是载荷本身。
+// 这里像 listAvailableModels 一样就地解包 data 再交给面板（漏解包 → 开关点了弹回、成员/任务/消息恒空态）。
+/** 智能体团队：会话级开关（写会话行，不是系统设置） */
+export const setTeamEnabled = (sid, enabled) =>
+  request(`/team/${encodeURIComponent(sid)}/enabled?enabled=${enabled ? 'true' : 'false'}`, { method: 'POST', body: '{}' })
+    .then(r => (r && r.data) || {})
+/** 智能体团队：成员列表 */
+export const getTeamMembers = rootId =>
+  request(`/team/${encodeURIComponent(rootId)}/members`)
+    .then(r => (r && Array.isArray(r.data) ? r.data : []))
+/** 智能体团队：用户从面板向成员发消息 */
+export const sendTeamMessage = (rootId, member, message) =>
+  request(`/team/${encodeURIComponent(rootId)}/send?member=${encodeURIComponent(member)}&message=${encodeURIComponent(message)}`,
+          { method: 'POST', body: '{}' })
+    .then(r => (r && r.data) || {})
+/** 智能体团队：查看成员自己的问答历史（回放） */
+export const getTeamMemberHistory = (rootId, memberId) =>
+  request(`/team/${encodeURIComponent(rootId)}/member/${encodeURIComponent(memberId)}/history`)
+    .then(r => (r && Array.isArray(r.data) ? r.data : []))
+/** 智能体团队：叫停成员当前轮 / 收起整棵树 */
+export const interruptTeamMember = (rootId, memberId) =>
+  request(`/team/${encodeURIComponent(rootId)}/interrupt?memberSessionId=${encodeURIComponent(memberId)}`, { method: 'POST', body: '{}' })
+    .then(r => (r && r.data) || {})
+export const drainTeam = rootId =>
+  request(`/team/${encodeURIComponent(rootId)}/drain`, { method: 'POST', body: '{}' })
+    .then(r => (r && r.data) || {})
+/** 智能体团队：读取会话级开关 */
+export const getTeamEnabled = sid =>
+  request(`/team/${encodeURIComponent(sid)}/enabled`)
+    .then(r => (r && r.data) || { enabled: false })
+/** 智能体团队：任务图（节点+依赖边） */
+export const getTeamTasks = rootId =>
+  request(`/team/${encodeURIComponent(rootId)}/tasks`)
+    .then(r => (r && r.data) || { nodes: [], edges: [] })
+/** 智能体团队：任务事件时间线 */
+export const getTeamTaskEvents = (rootId, taskId) =>
+  request(`/team/${encodeURIComponent(rootId)}/tasks/${encodeURIComponent(taskId)}/events`)
+    .then(r => (r && r.data) || [])
+/** 智能体团队：最近成员消息 */
+export const getTeamMessages = rootId =>
+  request(`/team/${encodeURIComponent(rootId)}/messages?limit=20`)
+    .then(r => (r && Array.isArray(r.data) ? r.data : []))

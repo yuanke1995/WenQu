@@ -630,6 +630,7 @@ import './app.css'
 
 const route = useRoute()
 const router = useRouter()
+
 const isAdmin = ref(isAdminSync())
 // 侧栏显示名：读 auth.js 的响应式镜像——个人设置改完昵称 ensureAuth(true) 后这里立即跟着变，无需刷新
 const userName = computed(() => {

@@ -55,6 +55,12 @@ public enum RunEventType {
     BROWSER_SNAPSHOT("browser_snapshot", "onBrowserSnapshot", null, null, false, false),
     /** 运行中插话被模型听到的那一刻（框架 inbox/applied），不是「用户按了发送」。 */
     STEER("steer", "onSteer", "中途插话", null, false, false),
+    /** 智能体团队成员上线/状态变化（团队面板成员树实时刷新）。 */
+    TEAM_MEMBER("team_member", "onTeamMember", "团队成员", "sub", true, true),
+    /** 成员间消息（仅摘要上屏，全文在成员会话账本里）。 */
+    TEAM_MESSAGE("team_message", "onTeamMessage", "成员消息", "sub", true, true),
+    /** 团队任务板节点状态变化（任务图卡实时刷新）。 */
+    TEAM_TASK("team_task", "onTeamTask", "团队任务", "sub", true, true),
     /** 本轮服务端起表基准：开流第一帧下发，前端据此锚定秒表。 */
     TURN_START("turn_start", "onTurnStart", null, null, false, false),
     SNAPSHOT("snapshot", "onSnapshot", null, null, false, false),

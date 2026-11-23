@@ -95,7 +95,7 @@ public class ConversationSearchService {
     public Map<String, Object> recent(String uid, int limit) {
         List<Session> rows = sessionMapper.selectList(new LambdaQueryWrapper<Session>()
                 .eq(Session::getUserId, uid)
-                .and(w -> w.isNull(Session::getKind).or().ne(Session::getKind, "temp"))
+                .and(w -> w.isNull(Session::getKind).or().and(x -> x.ne(Session::getKind, "temp").ne(Session::getKind, "team")))
                 .orderByDesc(Session::getUpdateTime)
                 .last("LIMIT " + limit));
         List<Map<String, Object>> list = new ArrayList<>();
@@ -119,7 +119,7 @@ public class ConversationSearchService {
         if (uid == null || uid.isBlank()) throw new IllegalArgumentException("需要用户上下文");
         if (sessionId == null || sessionId.isBlank()) return null;
         Session s = sessionMapper.selectById(sessionId);
-        if (s == null || !uid.equals(s.getUserId()) || "temp".equals(s.getKind())) return null;
+        if (s == null || !uid.equals(s.getUserId()) || "temp".equals(s.getKind()) || "team".equals(s.getKind())) return null;
         int n = limit == null ? 40 : Math.max(1, Math.min(200, limit));
         List<Map<String, Object>> msgs = messageMapper.readConversationMessages(sessionId, n);
         List<Map<String, Object>> out = new ArrayList<>();

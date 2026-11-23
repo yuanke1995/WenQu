@@ -23,6 +23,8 @@ public class AgentxConfiguration {
                                WenquAgentxTools tools,
                                FrameworkSessions sessions,
                                com.wenqu.ai.service.SessionService sessionService,
+                               com.wenqu.ai.agent.team.AgentTeamService teamService,
+                               com.wenqu.ai.agent.team.TeamTaskService teamTaskService,
                                com.wenqu.ai.service.ChatAttachmentService attachments,
                                com.wenqu.ai.service.UserImageService userImages,
                                com.wenqu.ai.service.KeywordExtractor keywordExtractor,
@@ -54,7 +56,7 @@ public class AgentxConfiguration {
                                com.wenqu.ai.mapper.KnowledgeMapper knowledgeMapper,
                                com.wenqu.ai.mapper.AiDocumentMapper documentMapper) {
         AgentscopeChatEngine engine = new AgentscopeChatEngine(modelRegistry, configService, properties, tools,
-                sessions, sessionService, attachments, userImages, keywordExtractor, artifactService,
+                sessions, sessionService, teamService, teamTaskService, attachments, userImages, keywordExtractor, artifactService,
                 sandboxService, consultService, citations, redisProperties, qaLog, toolRegistry, projectService,
                 projectFileService, turnChangeService, skillRepository, skillStatsStore,
                 orgService, userConfigService, usageLedger, quotaService,
@@ -63,6 +65,8 @@ public class AgentxConfiguration {
                 journalRotation, knowledgeMapper, documentMapper,
                 chatService::resolveTurnModel);
         factory.bindFramework(engine);
+        // 智能体团队：空闲成员被消息唤醒时起一轮的接缝（与分支执行器同一个 chatService.chat 入口）
+        teamService.bindTurnRunner(chatService::chat);
         // 插话待发队列的唤醒口：只在框架 inbox/opened（run 真活着）时 drain，绝不 submit 新一轮
         engine.bindSteerQueue(steerQueueService);
         // 目标模式跨轮续跑的发起口：控制流归框架，问渠只数轮数——续跑轮由引擎 submit + 跟随

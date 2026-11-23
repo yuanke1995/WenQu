@@ -165,6 +165,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      */
     private static final long DRIFT_NOTE_WAIT_MS = 3000L;
     private final com.wenqu.ai.service.SessionService sessionService;
+    /** 智能体团队服务（会话级开关；仅团队会话轮挂载 team_* 工具）。 */
+    private final com.wenqu.ai.agent.team.AgentTeamService teamService;
+    /** 智能体团队任务板服务（DAG 节点与依赖解锁）。 */
+    private final com.wenqu.ai.agent.team.TeamTaskService teamTaskService;
     /** 附件元信息落库的共用口径（与工作流路径同一个方法，见 metasJson 的类注释）。 */
     private final ChatAttachmentService attachments;
     private final TurnPromptAssembler promptAssembler;
@@ -340,6 +344,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                                AppProperties properties, WenquAgentxTools tools,
                                FrameworkSessions sessions,
                                com.wenqu.ai.service.SessionService sessionService,
+                               com.wenqu.ai.agent.team.AgentTeamService teamService,
+                               com.wenqu.ai.agent.team.TeamTaskService teamTaskService,
                                ChatAttachmentService attachments,
                                com.wenqu.ai.service.UserImageService userImages,
                                com.wenqu.ai.service.KeywordExtractor keywordExtractor,
@@ -377,6 +383,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         this.tools = tools;
         this.sessions = sessions;
         this.sessionService = sessionService;
+        this.teamService = teamService;
+        this.teamTaskService = teamTaskService;
         this.attachments = attachments;
         this.userImages = userImages;
         this.keywordExtractor = keywordExtractor;
@@ -2291,6 +2299,27 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     }
 
     /**
+     * 团队模式的工具使用引导：只在会话开启团队（或成员轮）时追加。
+     * <p>为什么必须显式教：team_task_* / team_send 这些工具描述很简短，模型默认不会主动建任务板或
+     * 给成员发消息——上一版就是「有工具但没人用」，任务图/成员消息永远空。这里用一小段说清何时用。
+     */
+    private String teamGuidance(ChatCommand cmd) {
+        boolean on;
+        try {
+            on = cmd.isTeamMode() || sessionService.isTeamEnabled(cmd.getSessionId());
+        } catch (Exception e) {
+            on = false;
+        }
+        if (!on) return "";
+        return "\n\n## 智能体团队（已开启）\n"
+                + "复杂或多步、需要协作跟踪的任务，用**团队任务板**管理："
+                + "`team_task_create` 建任务 → `team_task_depend` 加依赖（from 完成 to 才可认领）→ "
+                + "`team_task_claim` 认领 → `team_task_complete` 完成（失败传 failed=true）；"
+                + "前置完成后继会自动解锁。需要别的成员补充信息/分工时用 `team_send`（目标名取自 `team_list`），"
+                + "需要等成员回消息用 `team_wait`。简单一问一答不要建任务，也不要为凑数建任务。";
+    }
+
+    /**
      * 本轮真实挂上的工具注册名，供 {@link ToolDiscipline} 判「该不该说那句跨族分工」。
      * <p>判据与工具面装配同一份（{@link WenquAgentxTools#turnGroupedNames}），不另写一遍——
      * 两处判据分家就会漂移成「提示词教了一句本轮没有的能力」。
@@ -3354,6 +3383,16 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 sandboxEnabled);
         // 目标模式的控制工具常驻注册：实例按会话常驻，目标可能在建实例之后才建立，
         // 不能等到目标建立再往 Toolkit 里加工具（那需要重建实例）。非目标轮调用会落空返回。
+        // 智能体团队：会话级开关（team_enabled），成员会话也继承根的模式；关掉时这一族完全不挂。
+        if (sessionService.isTeamEnabled(cmd.getSessionId()) || cmd.isTeamMode()) {
+            // 团队工具是「按会话 new 出来的裸 @Tool holder」，必须包成 SpringAiToolAdapter 才会被
+            // Toolkit.registerTool 真正注册（直接 holders.add 会被忽略，模型看不到这些工具）。
+            tools.mountRawHolders(holders, policy,
+                    !cmd.isGuestMode() && !cmd.isApiKey() && interactiveTurn(cmd), slot,
+                    new TeamTools(teamService, sessionService, slot),
+                    new TeamTaskTools(teamTaskService, teamService, slot));
+            toolkit.registerTool(new TeamWaitTool());
+        }
         holders.add(new GoalTools(goalService, slot));
         java.util.Set<String> groupedNames = tools.registerWithGroups(toolkit, holders);
         // 工具表随实例跨轮稳定，登记到槽位：脚本子调用要把框架申报只读的那几把也纳进名册
@@ -3446,6 +3485,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                         // 框架会把工作区渲染成服务器沙盒路径；本机执行器模式要补一段真话压住它
                         + localExecutorEnvironment(cmd, ew)
                         + (subagentTargets.isEmpty() ? "" : tools.dispatchDiscipline())
+                        // 团队模式：告诉模型何时用团队任务板与成员消息（只有本会话开着团队才追加）
+                        + teamGuidance(cmd)
                         // 跨族分工（「本机」在 SSH 与桌面两族之间有歧义）：一族的说明代替不了另一族，
                         // 只有这里能说清，且只在本轮真挂了相关工具时追加。
                         + ToolDiscipline.guidance(mountedToolNames(cmd, policy, slot))

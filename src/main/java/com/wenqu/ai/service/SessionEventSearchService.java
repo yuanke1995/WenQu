@@ -193,7 +193,7 @@ public class SessionEventSearchService {
     private Session ownedSession(String uid, String sessionId) {
         if (sessionId == null || sessionId.isBlank()) return null;
         Session s = sessionMapper.selectById(sessionId);
-        if (s == null || !uid.equals(s.getUserId()) || "temp".equals(s.getKind())) return null;
+        if (s == null || !uid.equals(s.getUserId()) || "temp".equals(s.getKind()) || "team".equals(s.getKind())) return null;
         return s;
     }
 

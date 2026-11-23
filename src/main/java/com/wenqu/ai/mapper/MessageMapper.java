@@ -133,7 +133,7 @@ public interface MessageMapper extends BaseMapper<Message> {
             + "m.create_time AS createTime, s.title AS title, s.agent_name AS agentName "
             + "FROM c_ai_message m JOIN c_ai_session s ON s.id = m.session_id "
             + "WHERE s.user_id = #{userId} AND s.deleted = 0 AND m.deleted = 0 "
-            + "AND (s.kind IS NULL OR s.kind != 'temp') "
+            + "AND (s.kind IS NULL OR (s.kind != 'temp' AND s.kind != 'team')) "
             + "AND m.content LIKE CONCAT('%', #{keyword}, '%') "
             + "<if test='since != null'>AND m.create_time &gt;= #{since} </if>"
             + "ORDER BY m.create_time DESC LIMIT #{limit}</script>")

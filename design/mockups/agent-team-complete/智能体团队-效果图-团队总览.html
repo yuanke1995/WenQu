@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>问渠 · 智能体团队 · 团队总览（整页）</title>
+<style>
+:root{
+  --bg:#f6f7f9;--panel:#fff;--panel2:#fafbfc;--panel3:#f2f4f7;--border:#e6e9ed;--border2:#d8dde3;
+  --text:#1f2329;--text2:#5f6570;--text3:#98a0aa;
+  --accent:#2e6be6;--accent-weak:#eef4ff;--accent-border:#c9dbfb;
+  --violet:#7c3aed;--violet-weak:#f5f3ff;--violet-border:#ddd6fe;
+  --ok:#3b8f4e;--ok-weak:#eaf5ec;--ok-border:#cfe4d3;
+  --warn:#a3691b;--warn-weak:#faf3e6;--warn-border:#f0dfb6;
+  --danger:#cf1322;--danger-weak:#fff2f0;--danger-border:#f3c9c9;
+  --font:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --shadow-sm:0 1px 2px rgba(16,24,40,.04);
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{width:1440px;margin:0 auto;background:var(--bg);color:var(--text);font-family:var(--font);font-size:14px;line-height:1.65;-webkit-font-smoothing:antialiased}
+.ic{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.ic.sm{width:13px;height:13px}
+button{font-family:var(--font);cursor:pointer}
+
+.app{display:flex;min-height:780px;background:var(--panel);border-left:1px solid var(--border);border-right:1px solid var(--border)}
+
+/* 左侧栏 */
+.side{width:236px;flex:none;border-right:1px solid var(--border);background:var(--panel2);display:flex;flex-direction:column}
+.brand{display:flex;align-items:center;gap:9px;padding:16px 16px 8px;font-weight:700;font-size:16px}
+.brand .logo{width:28px;height:28px;border-radius:8px;background:linear-gradient(135deg,#5E93F5,#2A5FE0);display:flex;align-items:center;justify-content:center;color:#fff;font-size:14px}
+.newchat{margin:10px 12px;height:34px;border-radius:9px;background:var(--panel);border:1px solid var(--border);color:var(--text2);font-size:12.5px;display:flex;align-items:center;justify-content:center;gap:6px}
+.side-scroll{padding:6px 8px;overflow:auto;flex:1}
+.grp{font-size:11px;font-weight:650;color:var(--text3);padding:12px 8px 6px;display:flex;align-items:center;gap:6px}
+.sess{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:8px;font-size:12.5px;color:var(--text);cursor:pointer;white-space:nowrap;overflow:hidden}
+.sess:hover{background:var(--panel3)}
+.sess.sel{background:#fff;box-shadow:var(--shadow-sm);font-weight:600}
+.sess .nm{overflow:hidden;text-overflow:ellipsis}
+.teamtree{padding-left:10px;margin-left:14px;border-left:1px dashed var(--border2)}
+.msess{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:8px;font-size:12px;color:var(--text2);cursor:pointer}
+.msess:hover,.msess.sel{background:var(--violet-weak);color:var(--violet);font-weight:600}
+.mini-av{width:20px;height:20px;border-radius:6px;flex:none;display:flex;align-items:center;justify-content:center;color:#fff;font-size:10px;font-weight:700}
+.sdot{width:6px;height:6px;border-radius:50%;flex:none;margin-left:auto}
+.sdot.run{background:var(--ok)}.sdot.wait{background:var(--warn)}.sdot.off{background:#c8ced6}
+
+/* 主区 */
+.main{flex:1;display:flex;flex-direction:column;min-width:0}
+.topbar{height:56px;flex:none;display:flex;align-items:center;gap:12px;padding:0 20px;border-bottom:1px solid var(--border)}
+.tb-title{font-size:14.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:360px}
+.ws-chip{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 9px;border-radius:999px;border:1px solid var(--border);background:var(--panel2);color:var(--text2);font-size:12px;white-space:nowrap}
+.tb-right{margin-left:auto;display:flex;align-items:center;gap:8px}
+.team-pill{display:inline-flex;align-items:center;gap:7px;height:28px;padding:0 12px;border-radius:999px;border:1px solid var(--violet-border);background:var(--violet-weak);color:var(--violet);font-size:12px;font-weight:650}
+.team-pill .dp{width:6px;height:6px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 3px rgba(59,143,78,.16)}
+.icon-btn{width:30px;height:30px;border:0;border-radius:8px;background:transparent;color:var(--text2);display:inline-flex;align-items:center;justify-content:center}
+.icon-btn:hover{background:var(--panel3)}
+
+.scroll{flex:1;padding:22px 28px 40px;min-height:0}
+.col{max-width:720px;margin:0 auto}
+.row-user{display:flex;justify-content:flex-end;margin-bottom:22px}
+.bubble-user{max-width:560px;background:var(--panel3);border-radius:14px 14px 4px 14px;padding:10px 15px;font-size:14px;line-height:1.7}
+.ans-head{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+.avatar{width:30px;height:30px;border-radius:9px;flex:none;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#5E93F5,#2A5FE0);box-shadow:0 2px 6px rgba(46,107,230,.25)}
+.avatar svg{width:18px;height:18px}
+.ans-name{font-size:14px;font-weight:650;display:flex;align-items:center;gap:7px}
+.tag-lead{height:18px;padding:0 6px;border-radius:5px;background:var(--accent-weak);border:1px solid var(--accent-border);color:var(--accent);font-size:10px;font-weight:650;display:inline-flex;align-items:center}
+.ans-meta{font-size:11.5px;color:var(--text3)}
+.md{font-size:14.5px;line-height:1.8}
+.md p{margin:0 0 13px}
+.md b{font-weight:650}
+.code{font-family:var(--mono);font-size:12px;background:var(--panel3);padding:1px 5px;border-radius:4px}
+
+/* 成员汇报卡 */
+.report{border:1px solid var(--border);border-radius:12px;background:var(--panel2);margin:14px 0;overflow:hidden}
+.report-h{display:flex;align-items:center;gap:8px;padding:9px 13px;background:var(--panel3);border-bottom:1px solid var(--border)}
+.report-h .who{font-size:12.5px;font-weight:650;display:flex;align-items:center;gap:7px}
+.rv-av{width:22px;height:22px;border-radius:7px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:700;flex:none}
+.badge-sm{height:18px;padding:0 6px;border-radius:5px;background:var(--violet-weak);color:var(--violet);border:1px solid var(--violet-border);font-size:10px;font-weight:650;display:inline-flex;align-items:center}
+.report-h .time{margin-left:auto;font-size:11px;color:var(--text3)}
+.report-b{padding:11px 13px;font-size:13px;line-height:1.75}
+.report-b .q{color:var(--text2);font-size:12px;margin-bottom:7px}
+.report-b .a b{color:var(--accent)}
+.report-f{display:flex;gap:6px;padding:8px 13px;border-top:1px solid var(--border);background:var(--panel)}
+.mini-btn{height:26px;padding:0 10px;border-radius:7px;border:1px solid var(--border);background:var(--panel);color:var(--text2);font-size:11.5px;display:inline-flex;align-items:center;gap:5px}
+.mini-btn:hover{border-color:var(--violet-border);color:var(--violet);background:var(--violet-weak)}
+.mini-btn.primary{border-color:var(--violet-border);color:var(--violet);background:var(--violet-weak);font-weight:600}
+.mini-btn .ic{width:12px;height:12px}
+
+/* 右栏 */
+.rail{width:384px;flex:none;border-left:1px solid var(--border);background:var(--panel2);display:flex;flex-direction:column}
+.rail-tabs{display:flex;gap:2px;padding:8px 10px 0;border-bottom:1px solid var(--border);background:var(--panel2)}
+.rail-tab{flex:1;height:32px;border:0;border-bottom:2px solid transparent;background:transparent;color:var(--text2);font-size:12px;display:flex;align-items:center;justify-content:center;gap:5px;white-space:nowrap;position:relative}
+.rail-tab.on{color:var(--violet);border-bottom-color:var(--violet);font-weight:650}
+.rail-tab .n{font-size:10px;color:var(--text3)}
+.rail-tab.on .n{color:var(--violet)}
+.rail-tab .badge{position:absolute;top:4px;right:8px;min-width:14px;height:14px;padding:0 4px;border-radius:7px;background:var(--danger);color:#fff;font-size:9px;font-weight:700;display:flex;align-items:center;justify-content:center}
+.rail-body{flex:1;min-height:0;overflow:auto;padding:13px;display:flex;flex-direction:column;gap:13px}
+
+.tp-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.tp-head-l{display:flex;align-items:center;gap:10px}
+.tp-ic{width:32px;height:32px;border-radius:9px;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#8B7CF6,#6D28D9);color:#fff;box-shadow:0 2px 6px rgba(109,40,217,.28)}
+.tp-ic svg{width:18px;height:18px}
+.tp-title{font-size:14px;font-weight:650}
+.tp-sub{font-size:11px;color:var(--text3);margin-top:1px}
+.sw{width:38px;height:21px;border-radius:11px;background:var(--violet);position:relative;flex:none;cursor:pointer}
+.sw i{position:absolute;top:2px;right:2px;width:17px;height:17px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2)}
+
+.sec{border:1px solid var(--border);border-radius:12px;background:var(--panel);overflow:hidden;box-shadow:var(--shadow-sm)}
+.sec-hd{display:flex;align-items:center;justify-content:space-between;padding:9px 12px;border-bottom:1px solid #eef0f3;background:var(--panel2)}
+.sec-t{font-size:12px;font-weight:650;display:flex;align-items:center;gap:6px}
+.sec-t .ic{color:var(--violet);width:14px;height:14px}
+.sec-n{font-size:10.5px;color:var(--text3)}
+.members{padding:4px}
+.member{display:flex;align-items:center;gap:10px;padding:8px;border-radius:9px;position:relative}
+.member:hover{background:var(--panel2)}
+.member.sel{background:var(--violet-weak)}
+.av{width:32px;height:32px;border-radius:9px;flex:none;display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;font-weight:700;box-shadow:0 1px 3px rgba(16,24,40,.12)}
+.m-body{min-width:0;flex:1}
+.m-top{display:flex;align-items:center;gap:6px}
+.m-name{font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:120px}
+.m-tag{height:15px;padding:0 5px;border-radius:4px;background:var(--accent-weak);color:var(--accent);border:1px solid var(--accent-border);font-size:9px;font-weight:650;display:inline-flex;align-items:center}
+.m-chip{height:15px;padding:0 5px;border-radius:4px;background:var(--violet-weak);color:var(--violet);border:1px solid var(--violet-border);font-size:9px;font-weight:650;display:inline-flex;align-items:center}
+.m-status{margin-left:auto;display:inline-flex;align-items:center;gap:4px;font-size:10px;color:var(--text2)}
+.m-status .dot{width:6px;height:6px;border-radius:50%;background:#c8ced6}
+.m-status.run{color:var(--ok)}.m-status.run .dot{background:var(--ok);box-shadow:0 0 0 3px rgba(59,143,78,.15)}
+.m-status.wait{color:var(--warn)}.m-status.wait .dot{background:var(--warn)}
+.m-status.stop{color:var(--danger)}.m-status.stop .dot{background:var(--danger)}
+.m-sub{font-size:10.5px;color:var(--text3);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.m-acts{display:flex;gap:1px;flex:none}
+.mact{border:0;background:transparent;color:var(--text2);font-size:10.5px;padding:3px 6px;border-radius:6px}
+.mact:hover{background:var(--panel3);color:var(--accent)}
+.mact.on{background:var(--violet-weak);color:var(--violet);font-weight:650}
+.mact.danger{color:var(--danger)}.mact.danger:hover{background:var(--danger-weak)}
+.tree-indent{padding-left:18px;position:relative}
+.tree-indent:before{content:"";position:absolute;left:9px;top:2px;bottom:16px;width:1px;background:var(--border)}
+.tree-indent .member:before{content:"";position:absolute;left:-9px;top:24px;width:10px;height:1px;background:var(--border)}
+.compose{margin:2px 8px 9px 50px;border:1px solid var(--violet-border);border-radius:10px;background:var(--panel);box-shadow:0 2px 8px rgba(109,40,217,.10);overflow:hidden}
+.compose-atts{display:flex;gap:7px;padding:9px 10px 0}
+.thumb{position:relative;width:48px;height:48px;border-radius:8px;background:linear-gradient(135deg,#cfe0ff,#eef4ff);border:1px solid var(--accent-border);display:flex;align-items:center;justify-content:center;color:#5E93F5}
+.filec{position:relative;display:flex;align-items:center;gap:7px;height:48px;padding:0 12px 0 9px;border-radius:8px;background:var(--panel2);border:1px solid var(--border);font-size:11px}
+.filec .fic{width:24px;height:24px;border-radius:6px;background:#fff;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;color:var(--accent);font-size:12px}
+.filec small{display:block;color:var(--text3);font-size:9px}
+.x{position:absolute;top:-6px;right:-6px;width:16px;height:16px;border-radius:50%;background:#5f6570;color:#fff;font-size:9px;display:flex;align-items:center;justify-content:center}
+.compose-in{padding:9px 11px;font-size:12.5px;color:var(--text)}
+.compose-in .ph{color:var(--text3)}
+.compose-bar{display:flex;align-items:center;gap:6px;padding:7px 9px;border-top:1px solid #f0f2f5}
+.tb{height:28px;padding:0 9px;border-radius:7px;border:1px solid var(--border);background:#fff;color:var(--text2);font-size:11.5px;display:inline-flex;align-items:center;gap:5px}
+.tb:hover{border-color:var(--violet-border);color:var(--violet);background:var(--violet-weak)}
+.tb .ic{width:13px;height:13px}
+.send{margin-left:auto;height:28px;padding:0 14px;border:0;border-radius:7px;background:var(--violet);color:#fff;font-size:12px;font-weight:600;display:inline-flex;align-items:center;gap:5px}
+.card-foot{display:flex;align-items:center;gap:6px;padding:8px 12px;border-top:1px solid var(--border);background:var(--panel2);font-size:11px;color:var(--text2)}
+.card-foot .link{margin-left:auto;color:var(--violet);display:inline-flex;align-items:center;gap:4px;cursor:pointer;font-weight:600}
+
+/* 任务小图 */
+.tasks{padding:5px 10px 7px}
+.tnode{display:flex;align-items:flex-start;gap:9px;padding:7px 4px}
+.tbox{width:16px;height:16px;border-radius:5px;flex:none;margin-top:2px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800;border:1px solid}
+.tbox.done{background:var(--ok-weak);border-color:var(--ok-border);color:var(--ok)}
+.tbox.prog{background:var(--accent-weak);border-color:var(--accent-border);color:var(--accent)}
+.tbox.ready{background:var(--panel);border-color:var(--border2);color:var(--text3)}
+.tbox.wait{background:var(--warn-weak);border-color:var(--warn-border);color:var(--warn)}
+.tbox.fail{background:var(--danger-weak);border-color:var(--danger-border);color:var(--danger)}
+.tmain{min-width:0;flex:1}
+.trow{display:flex;align-items:center;gap:6px}
+.tname{font-size:12px;font-weight:550;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tstate{flex:none;font-size:9.5px;padding:0 5px;height:16px;border-radius:4px;display:inline-flex;align-items:center;margin-left:auto}
+.tstate.done{background:var(--ok-weak);color:var(--ok)}.tstate.prog{background:var(--accent-weak);color:var(--accent)}
+.tstate.ready{background:var(--panel3);color:var(--text3)}.tstate.wait{background:var(--warn-weak);color:var(--warn)}
+.towner{font-size:10.5px;color:var(--text3);margin-top:1px}
+.tedge{font-size:10px;color:var(--text3);padding-left:24px;margin:-3px 0 1px;display:flex;align-items:center;gap:4px}
+.tedge .ic{width:10px;height:10px}
+
+/* 消息卡 */
+.msgs{padding:4px 10px}
+.mitem{padding:8px 4px;border-bottom:1px solid var(--border)}
+.mitem:last-child{border-bottom:0}
+.mtop{display:flex;align-items:center;gap:6px}
+.mfrom{font-weight:650;font-size:11.5px}.mto{color:var(--text3);font-size:10.5px}
+.mtime{margin-left:auto;font-size:10px;color:var(--text3)}
+.mtext{color:var(--text2);font-size:11.5px;margin-top:2px;line-height:1.55;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.matts{display:flex;gap:8px;margin-top:7px}
+.mthumb{width:64px;height:46px;border-radius:7px;background:linear-gradient(135deg,#cfe0ff,#eef4ff);border:1px solid var(--accent-border);display:flex;align-items:center;justify-content:center;color:#5E93F5}
+.mfile{display:inline-flex;align-items:center;gap:7px;height:32px;padding:0 11px;border-radius:7px;border:1px solid var(--border);background:#fff;font-size:11px}
+.mfile .fic{color:var(--accent)}
+.msg-compose{display:flex;gap:6px;padding:8px 10px;border-top:1px solid var(--border);background:var(--panel2)}
+.msg-compose input{flex:1;height:30px;border:1px solid var(--border);border-radius:7px;padding:0 9px;font-size:11.5px;font-family:var(--font);outline:none;background:var(--panel);color:var(--text3)}
+.msg-compose .send{height:30px}
+
+/* 决策卡 */
+.decide{border:1px solid var(--violet-border);border-radius:12px;background:var(--violet-weak);padding:13px 15px;margin:14px 0 6px}
+.decide-h{display:flex;align-items:center;gap:9px;margin-bottom:10px}
+.decide-h .k{font-size:10px;font-weight:700;color:#fff;background:var(--violet);border-radius:5px;padding:2px 7px}
+.decide-h .t{font-size:13px;font-weight:650}
+.decide-opts{display:flex;gap:9px}
+.opt{flex:1;background:#fff;border:1px solid var(--border);border-radius:9px;padding:9px 11px}
+.opt b{font-size:12.5px;display:block}
+.opt span{font-size:11px;color:var(--text3);display:block;margin-top:2px;line-height:1.5}
+.opt.rec{border-color:var(--violet-border);box-shadow:0 0 0 1px var(--violet-border) inset}
+.opt.rec b{color:var(--violet)}
+.decide-foot{font-size:11px;color:var(--text3);margin-top:9px}
+.final-note{font-size:12.5px;color:var(--text2);line-height:1.75}
+
+
+/* 聊天输入区 */
+.chat-composer{flex:none;padding:12px 28px 18px;border-top:1px solid var(--border);background:var(--panel)}
+.chat-composer .ci{max-width:720px;margin:0 auto;border:1px solid var(--border);border-radius:12px;background:var(--panel);box-shadow:var(--shadow-sm);overflow:hidden}
+.chat-composer .inp{min-height:44px;padding:12px 14px;font-size:13.5px;color:var(--text3);display:flex;align-items:center;gap:8px}
+.chat-composer .bar{display:flex;align-items:center;gap:6px;padding:7px 10px;border-top:1px solid #f2f4f7}
+.chat-composer .tb{height:30px;padding:0 10px;border-radius:8px;border:1px solid var(--border);background:#fff;color:var(--text2);font-size:12px;display:inline-flex;align-items:center;gap:5px}
+.chat-composer .tb .ic{width:14px;height:14px}
+.chat-composer .snd{margin-left:auto;height:30px;padding:0 16px;border:0;border-radius:8px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;display:inline-flex;align-items:center;gap:5px}
+.chat-composer .hint{font-size:11px;color:var(--text3);margin-left:6px}
+
+</style>
+</head>
+<body>
+<svg style="position:absolute;width:0;height:0" aria-hidden="true"><defs>
+<symbol id="i-team" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 20c0-3 2.7-5 6-5s6 2 6 5"/><circle cx="17" cy="9" r="2"/><path d="M16 20c0-2 1.5-3.5 3.5-3.5S23 18 23 20"/></symbol>
+<symbol id="i-msg" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></symbol>
+<symbol id="i-chart" viewBox="0 0 24 24"><path d="M3 3v18h18M7 15l4-4 3 3 5-6"/></symbol>
+<symbol id="i-eye" viewBox="0 0 24 24"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></symbol>
+<symbol id="i-play" viewBox="0 0 24 24"><path d="M6 4l14 8-14 8z"/></symbol>
+<symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.5 1.5"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.5-1.5"/></symbol>
+<symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></symbol>
+<symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+<symbol id="i-img" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></symbol>
+<symbol id="i-file" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></symbol>
+<symbol id="i-send" viewBox="0 0 24 24"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></symbol>
+</defs></svg>
+
+<div class="app">
+  <!-- 左栏 -->
+  <aside class="side">
+    <div class="brand"><span class="logo">渠</span>问渠</div>
+    <div class="newchat"><svg class="ic sm"><use href="#i-plus"/></svg>新建对话</div>
+    <div class="side-scroll">
+      <div class="grp">会话</div>
+      <div class="sess sel"><span class="nm">审计 web/src 历史兼容代码</span></div>
+      <div class="sess"><span class="nm">本周销售数据复盘</span></div>
+      <div class="grp"><svg class="ic sm" style="color:var(--violet)"><use href="#i-team"/></svg>团队 · 本次会话</div>
+      <div class="teamtree">
+        <div class="msess sel"><span class="mini-av" style="background:linear-gradient(135deg,#5E93F5,#2A5FE0)">问</span>问渠<span class="sdot run"></span></div>
+        <div class="msess"><span class="mini-av" style="background:linear-gradient(135deg,#8B7CF6,#6D28D9)">R</span>审计助手<span class="sdot off"></span></div>
+        <div class="msess"><span class="mini-av" style="background:linear-gradient(135deg,#22B8A6,#0E7490)">W</span>取数助手<span class="sdot off"></span></div>
+        <div class="msess"><span class="mini-av" style="background:linear-gradient(135deg,#F5A442,#C2761B)">A</span>后端助手<span class="sdot run"></span></div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- 主区 -->
+  <main class="main">
+    <div class="topbar">
+      <span class="tb-title">审计 web/src 历史兼容代码</span>
+      <span class="ws-chip">问渠工作台</span>
+      <div class="tb-right">
+        <span class="team-pill"><span class="dp"></span><svg class="ic sm"><use href="#i-team"/></svg>团队 · 3 成员</span>
+        <button class="icon-btn"><svg class="ic"><use href="#i-search"/></svg></button>
+      </div>
+    </div>
+    <div class="scroll">
+      <div class="col">
+        <div class="row-user"><div class="bubble-user">把 web/src 的兼容层代码审一遍，按文件和行号列出产物。需要本机执行器读文件。</div></div>
+        <div class="ans-head">
+          <div class="avatar"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z"/><path d="M12 12l8-4.5M12 12v9M12 12L4 7.5"/></svg></div>
+          <div><div class="ans-name">问渠 <span class="tag-lead">lead</span></div><div class="ans-meta">本轮已拆成三支并行审计，成员各自检索并回传结论</div></div>
+        </div>
+        <div class="md">
+          <p>三路审计都已回传，结论一致的部分我直接采用了。关键分歧是 <span class="code">sse/stream.js</span> 的旧事件名是否保留——审计助手建议删、取数助手建议留兼容，我把这个决策留给你（见任务图 <span class="code">T4</span>）。</p>
+        </div>
+
+        <div class="report">
+          <div class="report-h">
+            <span class="who"><span class="rv-av" style="background:linear-gradient(135deg,#8B7CF6,#6D28D9)">R</span>审计助手 · 前端兼容层 <span class="dot on" style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--ok)"></span></span>
+            <span class="badge-sm">reviewer</span>
+            <span class="time">用时 34s · 工具 12 步</span>
+          </div>
+          <div class="report-b">
+            <div class="q">任务：审计 web/src 的旧 SSE 事件名与 localStorage 键</div>
+            <div class="a"><b>结论 3 条：</b>① <span class="code">sessionStorage</span> 两处遗留键已无读者；② <span class="code">legacyStream</span> 分支仍被两处调用；③ 事件名 <span class="code">deep_think</span> 与新版重复。详见来源 [1][3]。</div>
+          </div>
+          <div class="report-f">
+            <button class="mini-btn"><svg class="ic"><use href="#i-play"/></svg>执行过程 12 步</button>
+            <button class="mini-btn primary"><svg class="ic"><use href="#i-msg"/></svg>向它追问</button>
+            <button class="mini-btn"><svg class="ic"><use href="#i-eye"/></svg>查看成员会话</button>
+          </div>
+        </div>
+
+        <div class="report">
+          <div class="report-h">
+            <span class="who"><span class="rv-av" style="background:linear-gradient(135deg,#22B8A6,#0E7490)">W</span>取数助手 · 数据与文案</span>
+            <span class="badge-sm">writer</span>
+            <span class="time">用时 21s · 工具 8 步</span>
+          </div>
+          <div class="report-b">
+            <div class="q">任务：核对旧版文案与文档残留</div>
+            <div class="a"><b>结论 2 条：</b>README 中仍有 4 处旧版口径，数据库字段说明里 <span class="code">legacy_flag</span> 已无引用。资料已登记进引用表 [5][6]。</div>
+          </div>
+          <div class="report-f">
+            <button class="mini-btn"><svg class="ic"><use href="#i-play"/></svg>执行过程 8 步</button>
+            <button class="mini-btn"><svg class="ic"><use href="#i-msg"/></svg>向它追问</button>
+          </div>
+        </div>
+
+        <div class="md" style="margin-top:8px"><p>两位成员的分歧收敛成一条：<b>deep_think</b> 这个事件名要不要保留。利弊已列在下面，你拍一下——定了我就让后端助手按口径收尾。</p></div>
+        <div class="decide">
+          <div class="decide-h"><span class="k">待你拍板</span><span class="t">deep_think 事件名是否保留？</span></div>
+          <div class="decide-opts">
+            <div class="opt"><b>保留兼容</b><span>旧客户端不受影响，多留一个名字</span></div>
+            <div class="opt rec"><b>删除旧名</b><span>命名统一，需同步改两处调用</span></div>
+          </div>
+          <div class="decide-foot">选一个，或直接回复你的口径 →</div>
+        </div>
+        <div class="final-note">其余结论已并入正文；任务图里 <b>T4</b> 就是这道决策，定了会自动解锁「汇总审计报告」。</div>
+      </div>
+    </div>
+
+    <div class="chat-composer">
+      <div class="ci">
+        <div class="inp">继续追问，或 <b style="color:var(--violet);font-weight:650">@审计助手</b> 让它接着处理…<span class="hint">Enter 发送 · Shift+Enter 换行</span></div>
+        <div class="bar">
+          <button class="tb"><svg class="ic"><use href="#i-file"/></svg>文件</button>
+          <button class="tb"><svg class="ic"><use href="#i-img"/></svg>图片</button>
+          <button class="tb" style="color:var(--violet)"><svg class="ic"><use href="#i-team"/></svg>@ 成员</button>
+          <button class="snd"><svg class="ic sm"><use href="#i-send"/></svg>发送</button>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- 右栏团队面板 -->
+  <aside class="rail">
+    <div class="rail-tabs">
+      <button class="rail-tab">过程<span class="n">20</span></button>
+      <button class="rail-tab">来源<span class="n">6</span></button>
+      <button class="rail-tab">文件<span class="n">2</span></button>
+      <button class="rail-tab on">团队<span class="n">4</span><span class="badge">2</span></button>
+    </div>
+    <div class="rail-body">
+      <!-- 头部 -->
+      <div class="tp-head">
+        <div class="tp-head-l">
+          <span class="tp-ic"><svg><use href="#i-team"/></svg></span>
+          <div><div class="tp-title">智能体团队</div><div class="tp-sub">本会话派出、可被消息唤醒的成员</div></div>
+        </div>
+        <span class="sw"><i></i></span>
+      </div>
+
+      <!-- 成员 -->
+      <section class="sec">
+        <div class="sec-hd"><span class="sec-t"><svg class="ic"><use href="#i-team"/></svg>团队成员</span><span class="sec-n">1 在线 · 2 空闲 · 1 执行</span></div>
+        <div class="members">
+          <div class="member">
+            <div class="av" style="background:linear-gradient(135deg,#5E93F5,#2A5FE0)">问</div>
+            <div class="m-body">
+              <div class="m-top"><span class="m-name">问渠</span><span class="m-tag">根</span><span class="m-status run"><span class="dot"></span>执行中</span></div>
+              <div class="m-sub">综合三路结论 · 正在写正文</div>
+            </div>
+          </div>
+          <div class="tree-indent">
+            <div class="member">
+              <div class="av" style="background:linear-gradient(135deg,#8B7CF6,#6D28D9)">R</div>
+              <div class="m-body">
+                <div class="m-top"><span class="m-name">审计助手</span><span class="m-chip">reviewer</span><span class="m-status wait"><span class="dot"></span>等消息</span></div>
+                <div class="m-sub">前端兼容层 · 已完成 T2，可继续委派</div>
+              </div>
+              <div class="m-acts"><button class="mact">回看</button><button class="mact on">消息</button><button class="mact danger">叫停</button></div>
+            </div>
+            <!-- 就地展开的输入区 -->
+            <div class="compose">
+              <div class="compose-atts">
+                <span class="thumb"><svg class="ic"><use href="#i-img"/></svg><span class="x">×</span></span>
+                <span class="filec"><span class="fic">▤</span><span>字段清单.xlsx<small>48 KB</small></span><span class="x">×</span></span>
+              </div>
+              <div class="compose-in">这是最新截图和后端字段清单，按这个口径核对…</div>
+              <div class="compose-bar">
+                <button class="tb"><svg class="ic"><use href="#i-file"/></svg>文件</button>
+                <button class="tb"><svg class="ic"><use href="#i-img"/></svg>图片</button>
+                <button class="send"><svg class="ic sm"><use href="#i-send"/></svg>发送</button>
+              </div>
+            </div>
+            <div class="member">
+              <div class="av" style="background:linear-gradient(135deg,#22B8A6,#0E7490)">W</div>
+              <div class="m-body">
+                <div class="m-top"><span class="m-name">取数助手</span><span class="m-chip">writer</span><span class="m-status"><span class="dot"></span>空闲</span></div>
+                <div class="m-sub">数据与文案 · 等待新任务</div>
+              </div>
+              <div class="m-acts"><button class="mact">回看</button><button class="mact">消息</button></div>
+            </div>
+            <div class="member">
+              <div class="av" style="background:linear-gradient(135deg,#F5A442,#C2761B)">A</div>
+              <div class="m-body">
+                <div class="m-top"><span class="m-name">后端助手</span><span class="m-chip">analyzer</span><span class="m-status run"><span class="dot"></span>执行中</span></div>
+                <div class="m-sub">后端兼容层 · 阅读第 17 个文件</div>
+              </div>
+              <div class="m-acts"><button class="mact">回看</button><button class="mact">消息</button><button class="mact danger">叫停</button></div>
+            </div>
+          </div>
+        </div>
+        <div class="card-foot"><span>模型可见名：lead / reviewer / writer / analyzer</span><span class="link">派新成员<svg class="ic sm"><use href="#i-link"/></svg></span></div>
+      </section>
+
+      <!-- 任务图 -->
+      <section class="sec">
+        <div class="sec-hd"><span class="sec-t"><svg class="ic"><use href="#i-chart"/></svg>任务图</span><span class="sec-n">5 项 · 2 依赖</span></div>
+        <div class="tasks">
+          <div class="tnode"><span class="tbox done">✓</span><div class="tmain"><div class="trow"><span class="tname">梳理 web/src 结构与兼容清单</span><span class="tstate done">完成</span></div><div class="towner">lead · 0:34</div></div></div>
+          <div class="tedge"><svg class="ic"><use href="#i-link"/></svg>依赖 T1 →</div>
+          <div class="tnode"><span class="tbox done">✓</span><div class="tmain"><div class="trow"><span class="tname">审计旧 SSE 事件名与 storage 键</span><span class="tstate done">完成</span></div><div class="towner">reviewer · 0:34</div></div></div>
+          <div class="tnode"><span class="tbox prog">…</span><div class="tmain"><div class="trow"><span class="tname">审计后端兼容层与旧字段</span><span class="tstate prog">执行中</span></div><div class="towner">analyzer · 进行中</div></div></div>
+          <div class="tnode"><span class="tbox ready">4</span><div class="tmain"><div class="trow"><span class="tname">决策：deep_think 事件名是否保留</span><span class="tstate wait">待判断</span></div><div class="towner">等待你确认 · 不阻塞其他任务</div></div></div>
+        </div>
+        <div class="card-foot"><span>状态词同源 c_ai_team_task.state</span><span class="link">展开画布<svg class="ic sm"><use href="#i-chart"/></svg></span></div>
+      </section>
+
+      <!-- 成员消息 -->
+      <section class="sec">
+        <div class="sec-hd"><span class="sec-t"><svg class="ic"><use href="#i-msg"/></svg>成员消息</span><span class="sec-n">最近 3 条</span></div>
+        <div class="msgs">
+          <div class="mitem">
+            <div class="mtop"><span class="mfrom">后端助手</span><span class="mto">→ lead</span><span class="mtime">2 分钟前</span></div>
+            <div class="mtext">后端旧字段里有两处还被 SQL 引用，我先按“保留”处理，完成前列进清单。</div>
+            <div class="matts">
+              <span class="mthumb"><svg class="ic"><use href="#i-img"/></svg></span>
+              <span class="mfile"><span class="fic">▤</span>字段清单.xlsx</span>
+            </div>
+          </div>
+          <div class="mitem">
+            <div class="mtop"><span class="mfrom">lead</span><span class="mto">→ 审计助手</span><span class="mtime">5 分钟前</span></div>
+            <div class="mtext">把 deep_think 事件名的两份调用位置也标一下，方便我决策。</div>
+          </div>
+        </div>
+        <div class="msg-compose"><input placeholder="发给成员…（Enter 发送，可附图片/文件）"><button class="send"><svg class="ic sm"><use href="#i-send"/></svg>发送</button></div>
+      </section>
+    </div>
+  </aside>
+</div>
+</body>
+</html>

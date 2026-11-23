@@ -190,6 +190,20 @@ public final class ChatCommand {
      */
     final String inheritedApprovalMode;
 
+    // ============ 智能体团队（会话级开关，成员运行在持久 team 会话里） ============
+
+    /** 本轮运行在团队模式下（根会话 team_enabled=1，或由根派出的团队成员轮）。默认 false。 */
+    final boolean teamMode;
+
+    /** 团队成员的会话 id（持久 team 会话；根会话轮为 null）。 */
+    final String memberSessionId;
+
+    /** 团队成员的模型可见名（短名或 slash 全路径；根会话轮为 null）。 */
+    final String memberName;
+
+    /** 团队根会话 id（成员轮必填；用于成员树、消息寻址与冷恢复）。 */
+    final String teamRootSessionId;
+
     /**
      * 本轮的<b>发起方身份</b>（工作区轮次守卫展示用）：{@code user}=网页问答（缺省）、
      * {@code scheduled}=定时任务、{@code workflow}=工作流子智能体节点、{@code eval}=智能体评测回归

@@ -61,7 +61,18 @@ public class SubAgentConsultService {
     public record Ctx(String parentSessionId, String parentTurnId, String userId, String modelRef,
                       boolean guestMode, int depth, String selfAgentId, String preConsultedAgentId,
                       java.util.Collection<String> parentScopeKbIds,
-                      java.util.function.BiConsumer<String, String> onConsulted) {
+                      java.util.function.BiConsumer<String, String> onConsulted,
+                      boolean teamMode, String teamRootSessionId, String memberName,
+                      String parentBrief) {
+
+        /** 兼容既有调用：非团队模式、无父摘要。 */
+        public Ctx(String parentSessionId, String parentTurnId, String userId, String modelRef,
+                   boolean guestMode, int depth, String selfAgentId, String preConsultedAgentId,
+                   java.util.Collection<String> parentScopeKbIds,
+                   java.util.function.BiConsumer<String, String> onConsulted) {
+            this(parentSessionId, parentTurnId, userId, modelRef, guestMode, depth, selfAgentId,
+                    preConsultedAgentId, parentScopeKbIds, onConsulted, false, null, null, "");
+        }
     }
 
     /**
@@ -190,8 +201,9 @@ public class SubAgentConsultService {
         BranchReport report;
         try {
             report = runner.run(new BranchRequest(ctx.parentSessionId(), ctx.parentTurnId(),
-                    a.getId(), a.getName(), question, "", ctx.depth() + 1, ctx.userId(),
-                    ctx.modelRef(), ctx.guestMode(), ctx.parentScopeKbIds(), timeoutMs, -1));
+                    a.getId(), a.getName(), question, ctx.parentBrief(), ctx.depth() + 1, ctx.userId(),
+                    ctx.modelRef(), ctx.guestMode(), ctx.parentScopeKbIds(), timeoutMs, -1,
+                    ctx.teamMode(), ctx.teamRootSessionId(), ctx.memberName()));
         } catch (Exception e) {
             // 执行器契约是不外抛；真抛了说明契约破了，这里兜住并留真因（CompletableFuture 那类包装的 message 常为 null）
             Throwable cause = e.getCause() != null ? e.getCause() : e;
