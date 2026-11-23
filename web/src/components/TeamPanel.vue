@@ -35,7 +35,7 @@
           <div class="mem-row lead">
             <AgentAvatar v-if="leadAgent" :agent="leadAgent" :size="30" /><span v-else class="avatar lead">{{ (agentName || '问渠').slice(0, 1) }}</span>
             <div class="mem-main">
-              <div class="mem-top"><span class="mem-name" :title="agentName || 'lead'">{{ agentName || 'lead' }}</span><span class="tag-root">根</span></div>
+              <div class="mem-top"><span class="mem-name" :title="agentName || 'lead'">{{ agentName || 'lead' }}</span><span class="tag-root">主</span></div>
               <div v-if="sessionTitle" class="mem-sub" :title="sessionTitle">{{ sessionTitle }}</div>
             </div>
           </div>
