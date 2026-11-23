@@ -46,14 +46,16 @@ class ToolDisciplineTest {
         String knowledgeOnly = ToolDiscipline.guidance(Set.of("search_knowledge"));
         assertThat(knowledgeOnly).contains("search_knowledge");
         assertThat(knowledgeOnly).doesNotContain("webSearch")
+                .doesNotContain("webFetch")
                 .doesNotContain("searchConversations")
                 .doesNotContain("session_event_search");
 
         String all = ToolDiscipline.guidance(Set.of(
-                "search_knowledge", "webSearch", "searchConversations", "session_event_search"));
+                "search_knowledge", "webSearch", "webFetch", "searchConversations", "session_event_search"));
 
         assertThat(all).contains("业务知识与文档用 search_knowledge")
                 .contains("时效与外部事实用 webSearch")
+                .contains("已有网址要读原文用 webFetch")
                 .contains("我之前问过什么")
                 .contains("哪一轮跑过什么");
     }
@@ -77,13 +79,14 @@ class ToolDisciplineTest {
     @Test
     void fullSetHasOneSectionHeaderAndOneBulletPerRule() {
         String text = ToolDiscipline.guidance(Set.of(
-                "ssh_exec", "cuaOpenApp", "search_knowledge", "webSearch",
+                "ssh_exec", "cuaOpenApp", "search_knowledge", "webSearch", "webFetch",
                 "searchConversations", "session_event_search", "run_code",
                 "askUser", "writeTodo", "presentArtifact", "deliver_artifact"));
 
         assertThat(text).startsWith("\n\n## 工具分工\n");
         assertThat(text.chars().filter(c -> c == '\n').count()).isEqualTo(8); // 两个前导换行 + 标题行 + 5 条
         assertThat(text).contains("ssh_* 只连远端主机")
+                .contains("已有网址要读原文用 webFetch")
                 .contains("run_code 只用于循环")
                 .contains("deliver_artifact 按路径交付");
     }

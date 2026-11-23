@@ -26,6 +26,7 @@ public final class ToolDiscipline {
     private static final String DESKTOP = "cua";
     private static final String KNOWLEDGE = "search_knowledge";
     private static final String WEB = "webSearch";
+    private static final String WEB_FETCH = "webFetch";
     private static final String HISTORY_CHAT = "searchConversations";
     private static final String HISTORY_EVENT = "session_event_search";
     private static final String RUN_CODE = "run_code";
@@ -56,10 +57,11 @@ public final class ToolDiscipline {
                         : "，不能打开或操作那台电脑上的软件。"));
         }
 
-        // ② 查什么走哪一路：正文 / 时效 / 历史正文 / 历史过程，四把工具的边界谁都替不了谁
+        // ② 查什么走哪一路：正文 / 时效 / 原文 / 历史正文 / 历史过程，几把工具的边界谁都替不了谁
         List<String> lookup = new ArrayList<>();
         if (has(mounted, KNOWLEDGE)) lookup.add("业务知识与文档用 search_knowledge");
         if (has(mounted, WEB)) lookup.add("时效与外部事实用 webSearch");
+        if (has(mounted, WEB_FETCH)) lookup.add("已有网址要读原文用 webFetch");
         if (has(mounted, HISTORY_CHAT)) lookup.add("「我之前问过什么」用 searchConversations");
         if (has(mounted, HISTORY_EVENT)) lookup.add("「哪一轮跑过什么」用 session_event_search");
         if (!lookup.isEmpty()) {

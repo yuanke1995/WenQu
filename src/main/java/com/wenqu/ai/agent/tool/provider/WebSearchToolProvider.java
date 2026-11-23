@@ -40,9 +40,13 @@ public class WebSearchToolProvider implements ToolFamilyProvider {
 
     @Override
     public List<ToolDescriptor> descriptors() {
-        return List.of(new ToolDescriptor(WebSearchTools.TOOL_NAME, ToolFamily.WEBSEARCH,
-                "联网搜索", "联网搜索", "上网搜索相关资料，结果会作为引用来源",
-                SideEffect.EXTERNAL, "webSearch.enabled", false, false));
+        return List.of(
+                new ToolDescriptor(WebSearchTools.TOOL_NAME, ToolFamily.WEBSEARCH,
+                        "联网搜索", "联网搜索", "上网搜索相关资料，结果会作为引用来源",
+                        SideEffect.EXTERNAL, "webSearch.enabled", false, false),
+                new ToolDescriptor(WebSearchTools.FETCH_TOOL_NAME, ToolFamily.WEBSEARCH,
+                        "网页正文抓取", "网页正文抓取", "按网址读取网页正文，结果会作为引用来源",
+                        SideEffect.EXTERNAL, "webSearch.enabled", false, false));
     }
 
     /**

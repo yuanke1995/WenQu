@@ -247,7 +247,7 @@ class WebSearchPersonalLayerTest {
                 return "test: 本轮不重排，走词面兜底";
             }
         };
-        WebSearchTools tools = new WebSearchTools(service(cfg), cfg, noRerank);
+        WebSearchTools tools = new WebSearchTools(service(cfg), cfg, noRerank, null);
 
         String out = tools.webSearch(List.of("人工智能", "大模型", "人工智能"), 3,
                 (WebSearchTools.WebSearchSink) null);
@@ -265,7 +265,7 @@ class WebSearchPersonalLayerTest {
         platform.put("webSearch.baseUrl", base());
         ConfigService cfg = stub();
         WebSearchService svc = service(cfg);
-        WebSearchTools tools = new WebSearchTools(svc, cfg, null);   // 缺 Key 在重排之前就 fail，rerank 不会触达
+        WebSearchTools tools = new WebSearchTools(svc, cfg, null, null);   // 缺 Key 在重排之前就 fail，rerank 不会触达
 
         String out = tools.webSearch(List.of("x"), 1, new ToolContext(Map.of(
                 WebSearchTools.CTX_SINK, (WebSearchTools.WebSearchSink) new WebSearchTools.WebSearchSink() {
@@ -312,7 +312,7 @@ class WebSearchPersonalLayerTest {
                 return candidates;
             }
         };
-        WebSearchTools tools = new WebSearchTools(service(cfg), cfg, fake);
+        WebSearchTools tools = new WebSearchTools(service(cfg), cfg, fake, null);
         tools.webSearch(List.of("问渠"), 1, new WebSearchTools.WebSearchSink() {
             public boolean tryConsumeQuota() { return true; }
             public String question() { return "问渠"; }

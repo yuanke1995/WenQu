@@ -27,7 +27,7 @@
     },
     {
       "key": "webSearch",
-      "title": "联网搜索（工具 webSearch；结果进引用体系）",
+      "title": "联网搜索与网页抓取（结果进引用体系）",
       "sections": [
         "服务商与连接（需工具总开关开启）",
         "检索行为与配额"
@@ -938,7 +938,7 @@
       "def": false,
       "vif": "tool.enabled",
       "tier": 2,
-      "note": "开启后模型可自主联网搜索；需先开「工具调用」",
+      "note": "开启后模型可联网搜索，或按确切网址抓取网页正文；需先开「工具调用」",
       "tips": "webSearchEnabled"
     },
     {
@@ -2024,7 +2024,7 @@
     "webSearchModel": "custom 请求体模板里 {{model}} 占位的替换值（OpenAI Responses / 百炼口径需要；智谱口径留空）",
     "webSearchMaxResults": "每次联网搜索返回的条数上限（1~50，默认 10），只对计费服务商生效：模型请求的条数不会超过它；各服务商另有自己的上限（如 Tavily 最多 20、DeepSeek 1~50），越多越费 token。平台内置搜索固定 10 条、不读取此项",
     "webSearchCustomFieldPaths": "结果条目内取字段的点路径：智谱 标题=title/链接=link/摘要=content/时间=publish_date；博查 name/url/snippet；百炼 title/url（无摘要，留空）",
-    "webSearchEnabled": "联网搜索总开关；需先开「工具调用」",
+    "webSearchEnabled": "联网搜索与网页抓取总开关；需先开「工具调用」。两把工具共用单轮次数配额",
     "webSearchBaseUrl": "平台内置 SearXNG 地址（个人 generic 默认回落此值）；generic / custom 必填（custom 的 POST 是端点地址、GET 是含 {{query}} 的 URL 模板）",
     "webSearchMaxCallsPerTurn": "单轮搜索次数上限（按工具调用计，一次调用可带 1~4 个查询）；0=不限",
     "notificationTurnEnabled": "问答/计划/审批/目标通知总闸；个人可在通知偏好里按类型静音",

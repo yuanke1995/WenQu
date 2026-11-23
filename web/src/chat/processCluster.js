@@ -67,8 +67,8 @@ export const CLUSTER_KIND_DONE = { search: '已检索知识库', web: '已联网
 export const CLUSTER_KIND_LIVE = { search: '正在检索知识库', web: '正在联网搜索', tools: '正在调用工具', thinking: '正在分析' }
 export const clusterKindOfTool = t => {
   const s = String((t && (t.name || t.label)) || '')
-  // 联网工具的内部名是 webSearch：不先认出来会落进下面的 search 分支，簇头误报成「检索知识库」
-  if (/web_?search|联网|上网搜索/i.test(s)) return 'web'
+  // 联网工具的内部名是 webSearch / webFetch：不先认出来会落进下面的 search 分支，簇头误报成「检索知识库」
+  if (/web_?search|web_?fetch|联网|上网搜索|抓取网页|网页正文/i.test(s)) return 'web'
   return /search|kb|检索|知识库|知识/i.test(s) ? 'search' : 'tools'
 }
 /** 簇内按发生顺序去重的类别表：罗列与簇头图标都按这个顺序取。 */
