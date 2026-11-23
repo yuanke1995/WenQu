@@ -21,7 +21,12 @@ import org.springframework.stereotype.Service;
  * 而是在执行器上给这条会话一个目录（{@code <执行器根>/WenQu/workspaces/<日期>-<标题或短id>}），
  * 文件工具经执行器执行；只有执行器不在线时才退回云端沙盒（文件在服务器，界面必须说明）。
  *
- * <p>解析结果首轮落库（{@code c_ai_session.ws_*}）后钉住：目录跟着会话走，不因为本轮换了
+ * <p><b>绑定与派生的分界</b>：{@code wsBackend/wsExecutorId/wsRoot} 三列只存<b>已钉住的本机绑定</b>，
+ * 一次钉住后不因执行器上下线或会话改名而变。{@code cloud} 不是可落库的状态，而是每轮由在线探测派生的
+ * 瞬时后端：离线时 {@link #resolve} / {@link #effectivePinned} 返回 cloud，但库里的绑定原样保留，
+ * 重连后凭 {@code wsRoot} 找回同一目录（目录名含标题 slug，清掉 root 会找不到旧文件）。
+ *
+ * <p>解析结果首轮落库后钉住：目录跟着会话走，不因为本轮换了
  * 哪台在线设备而搬文件。显式工作区（用户建的 selectable）完全不经过这里，沿用原有执行器路径。
  */
 @Service
@@ -134,6 +139,15 @@ public class SessionWorkspaceService {
         }
     }
 
+    /**
+     * 已钉住的本机<b>绑定</b>（只读库，不探测、不建目录）：这是持久状态，与后端无关。
+     * <p>派生状态请用 {@link #effectivePinned}（本轮后端）或 {@link #resolve}（含建目录）。
+     * 三者不可混用：拿绑定当"当前后端"会在离线时误导，拿派生当绑定会在改名后找不到旧目录。
+     */
+    public Workspace pinnedLocalBinding(String sessionId) {
+        return existingLocal(sessionId);
+    }
+
     /** 已经落库的本机后端（不探测、不建目录）：文件栏/预览取数用，避免「只是打开一条问答会话就建目录」。 */
     public Workspace existingLocal(String sessionId) {
         if (sessionId == null || sessionId.isBlank()) return null;
@@ -149,6 +163,19 @@ public class SessionWorkspaceService {
     public boolean localOnline(String sessionId) {
         Workspace ws = existingLocal(sessionId);
         return ws != null && executorRegistry.online(ws.executorId());
+    }
+
+    /**
+     * 已钉住的会话<b>本轮实际后端</b>（只读库 + 在线探测，绝不建目录）。
+     * <p>与 {@link #resolve} 的已钉住分支同口径：在线→本机，离线→本轮云端并带提示。
+     * 供提示词装配等 build 期调用——那里不能有建目录副作用，又必须反映本轮真实后端。
+     * <p>未钉住（含显式工作区）返回 null：没解析过就不在这里创建。
+     */
+    public Workspace effectivePinned(String sessionId) {
+        Workspace pinned = existingLocal(sessionId);
+        if (pinned == null) return null;
+        if (executorRegistry.online(pinned.executorId())) return pinned;
+        return new Workspace(BACKEND_CLOUD, null, null, FALLBACK_OFFLINE);
     }
 
     /** 本轮是否已经钉住本机后端（只看库，不建目录）：分档粘性判据用。 */

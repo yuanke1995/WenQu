@@ -337,8 +337,10 @@ public class FrameworkSessions {
             if (modelChanged) {
                 log.info("[agentx] 会话 {} 模型切换 {}→{}，重建实例并接管同一会话", key, current.modelRef(), modelRef);
             } else {
-                log.info("[agentx] 会话 {} 智能体换绑/改配置（{}→{}），重建实例并接管同一会话",
-                        key, current.bindingKey(), wantBinding);
+                // bindingKey 现在含本机绝对路径（显式工作区的 root、隐式会话的 wsRoot），不落日志原文：
+                // 只打短哈希供「这次是不是同一份键」排障，完整串仅内存比较。
+                log.info("[agentx] 会话 {} 智能体换绑/改配置（binding {}→{}），重建实例并接管同一会话",
+                        key, bindingFingerprint(current.bindingKey()), bindingFingerprint(wantBinding));
             }
         }
         String ctxUid = cmd.getUserId() == null || cmd.getUserId().isBlank() ? "guest" : cmd.getUserId();
@@ -1392,6 +1394,22 @@ public class FrameworkSessions {
         if (turnSlots.size() > MAX_HELD * 4) {
             turnSlots.entrySet().removeIf(e ->
                     !held.containsKey(e.getKey()) && !e.getValue().active());
+        }
+    }
+
+    /** bindingKey 含本机绝对路径，日志只留短指纹（SHA-256 前 12 位），够判「是不是同一份键」。 */
+    private static String bindingFingerprint(String bindingKey) {
+        if (bindingKey == null || bindingKey.isEmpty()) return "-";
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(bindingKey.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < digest.length && sb.length() < 12; i++) {
+                sb.append(String.format("%02x", digest[i]));
+            }
+            return sb.toString();
+        } catch (java.security.NoSuchAlgorithmException e) {
+            return Integer.toHexString(bindingKey.hashCode());
         }
     }
 

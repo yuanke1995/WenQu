@@ -2,6 +2,8 @@ package com.wenqu.ai.sandbox;
 
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.harness.agent.filesystem.model.ExecuteResponse;
+import io.agentscope.harness.agent.filesystem.model.EditResult;
+import io.agentscope.harness.agent.filesystem.model.GrepResult;
 import io.agentscope.harness.agent.filesystem.model.FileData;
 import io.agentscope.harness.agent.filesystem.model.FileDownloadResponse;
 import io.agentscope.harness.agent.filesystem.model.FileInfo;
@@ -234,6 +236,11 @@ public class ProvisionerSandboxFilesystem extends BaseSandboxFilesystem {
             String path = entry.getKey();
             byte[] content = entry.getValue();
             String target = backend.workspaceAbsolutePath(path);
+            String denied = backend.guardWrite(target);
+            if (denied != null) {
+                results.add(FileUploadResponse.fail(path, denied));
+                continue;
+            }
             File tmp = null;
             try {
                 tmp = File.createTempFile("wq-upload-", ".bin", new File(UPLOAD_TMP_DIR));
@@ -273,6 +280,12 @@ public class ProvisionerSandboxFilesystem extends BaseSandboxFilesystem {
         }
         for (String path : paths) {
             try {
+                String target = backend.workspaceAbsolutePath(path);
+                String denied = backend.guardRead(target);
+                if (denied != null) {
+                    results.add(FileDownloadResponse.fail(path, denied));
+                    continue;
+                }
                 ByteArrayOutputStream buf = new ByteArrayOutputStream();
                 for (byte[] chunk : backend.getClient().downloadFile(
                         backend.workspaceAbsolutePath(path), DOWNLOAD_TIMEOUT)) {
@@ -324,6 +337,8 @@ public class ProvisionerSandboxFilesystem extends BaseSandboxFilesystem {
     @Override
     public LsResult ls(RuntimeContext runtimeContext, String path) {
         String target = backend.workspaceAbsolutePath(path);
+        String denied = backend.guardList(target);
+        if (denied != null) return LsResult.fail(denied);
         try {
             List<FileInfo> entries = new ArrayList<>();
             for (SandboxRuntimeClient.SandboxFileEntry entry
@@ -379,6 +394,28 @@ public class ProvisionerSandboxFilesystem extends BaseSandboxFilesystem {
     }
 
     /**
+     * 局部编辑：框架的 {@code BaseSandboxFilesystem#edit} 靠 shell 改写文件，绕过结构化端点的路径围栏。
+     * 这里先过与 read/write 同一份 allowlist，再交给框架实现——shell 本身不受围栏，但这条路至少不接绝对路径越界。
+     */
+    @Override
+    public EditResult edit(RuntimeContext runtimeContext, String path, String oldString,
+                           String newString, boolean replaceAll) {
+        String target = backend.workspaceAbsolutePath(path);
+        String denied = backend.guardWrite(target);
+        if (denied != null) return EditResult.fail(denied);
+        return super.edit(runtimeContext, target, oldString, newString, replaceAll);
+    }
+
+    /** grep 同理：框架默认走 shell，先在 Java 侧把搜索根收束进围栏。 */
+    @Override
+    public GrepResult grep(RuntimeContext runtimeContext, String pattern, String path, String filePattern) {
+        String target = backend.workspaceAbsolutePath(path);
+        String denied = backend.guardList(target);
+        if (denied != null) return GrepResult.fail(denied);
+        return super.grep(runtimeContext, pattern, target, filePattern);
+    }
+
+    /**
      * 按文件名模式找文件：同样走结构化端点（{@code recursive=true} 一次取全，再在 Java 侧按 basename 匹配）。
      *
      * <p>不用 runtime 的 {@code /v1/file/find}：它的 glob 只匹配同一层（在 {@code skills/} 下找
@@ -392,6 +429,8 @@ public class ProvisionerSandboxFilesystem extends BaseSandboxFilesystem {
     @Override
     public GlobResult glob(RuntimeContext runtimeContext, String pattern, String path) {
         String target = backend.workspaceAbsolutePath(path);
+        String denied = backend.guardList(target);
+        if (denied != null) return GlobResult.fail(denied);
         String namePattern = pattern != null && pattern.startsWith("**/")
                 ? pattern.substring(3) : pattern;
         // 0 命中 / 路径不存在的探测（沙盒技能清单、子智能体声明这类框架固定扫描，多数工作区是空的）

@@ -4,6 +4,7 @@ import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.memory.MemoryBudget;
 import com.wenqu.ai.memory.MemoryCappedFilesystem;
 import com.wenqu.ai.model.Project;
+import com.wenqu.ai.model.ProjectRoot;
 import com.wenqu.ai.sandbox.ExecutorFilesystem;
 import com.wenqu.ai.sandbox.ProvisionerSandboxBackend;
 import com.wenqu.ai.sandbox.ProvisionerSandboxClient;
@@ -39,15 +40,13 @@ import java.util.concurrent.TimeoutException;
 /**
  * 沙盒生命周期与 backend 装配（本工程特有的那一层薄壳）。
  *
- * <p><b>作用域：工作区优先，会话兜底。</b>沙盒 identity 由 {@code sha256(uid + ":" + scopeId)} 决定
- * （见 {@code ProvisionerSandboxProvider#sandboxIdForThread}），所以「换一个 scopeId」就等于
- * 「换一个容器 + 换一个 workdir」，不需要任何新机制：
- * <ul>
- *   <li>会话有工作区 ⇒ scope = <b>工作区 id</b>，workdir = 工作区的 {@code projects/{工作区 id}}。
- *       同一工作区的多个会话因此共用同一个容器与同一个工作区——这是「围绕一件事反复干活」
- *       这件事在盘上的落地；容器空闲回收后 workdir 仍在，<b>文件不丢</b>；</li>
- *   <li>会话无工作区（存量会话、SYSTEM、没挂工作区）⇒ scope = <b>会话 id</b>，workdir 仍是 {@code null}。</li>
- * </ul>
+ * <p><b>作用域：显式工作区走直连执行后端，服务器沙盒只服务无工作区会话。</b>
+ * 沙盒 identity 由 {@code sha256(uid + ":" + scopeId)} 决定
+ * （见 {@code ProvisionerSandboxProvider#sandboxIdForThread}）。显式工作区（本机目录 / SSH）
+ * 的 cwd 与文件走绑定的执行器，<b>不经服务器沙盒</b>——给它再建一个容器只会把文件弄成两份。
+ * 服务器沙盒的 scope 由 {@link #scopeOf} 决定：默认 = 会话 id；
+ * {@code sandbox.userScope=true} 时 = uid（同一用户的无工作区会话复用一个容器，配合热池）。
+ * {@code workdirPath} 恒为 null，文件都落在沙盒的 user-data 虚拟根下。
  *
  * <p>释放不靠「run 结束」（本工程没有 run 队列），而是<b>空闲回收</b>
  * （{@link #releaseIdle()}，由 {@code ScheduleCenter} 定期调用）——否则每个用过沙盒的会话都会永久留一个容器。
@@ -105,21 +104,76 @@ public class SandboxService {
     }
 
     /**
-     * 工作区后端的实例键：框架实例把文件系统烤在 build 期，本机↔云端切换时必须重建。
-     * 返回显式工作区标记（文件系统随工作区配置走，不在本方法判）、本机执行器+目录、或 cloud。
+     * 工作区后端的实例键：框架实例把文件系统烤在 build 期，工作根/后端任一变化都必须重建。
+     * <p>实现即 {@link #resolveWorkspace(String, String, boolean)} 的 key 字段——单一真相源，
+     * 不许在这里另算一份（两份实现漂移正是"key 变了但 FS 仍旧"的根因）。
      */
     public String sessionWorkspaceKey(String sessionId, String uid) {
+        EffectiveWorkspace ew = resolveWorkspace(sessionId, uid, true);
+        return ew == null ? "" : ew.key();
+    }
+
+    /**
+     * 解析本轮工作目录的<b>完整描述</b>——所有 build 期消费者（实例键、文件系统、prompt、
+     * guard roots、技能根）必须共用这一份，不许各自查库再算一遍。
+     *
+     * @param wantsSandbox 本轮是否工作区档；聊天档返回 scratch 形态（无 shell、无容器）
+     */
+    public EffectiveWorkspace resolveWorkspace(String sessionId, String uid, boolean wantsSandbox) {
+        if (sessionId == null || sessionId.isBlank() || uid == null || uid.isBlank()) return null;
         Project bound = projectService.projectOfSession(sessionId);
-        if (bound != null && projectService.isSshAlias(bound)) {
-            // 本机 OpenSSH 别名：换执行器/别名/主根都要重建框架实例。
-            String primary = projectService.primaryRootOf(bound) == null ? ""
-                    : projectService.primaryRootOf(bound).getPath();
-            return projectService.executorIdOf(bound) + ":" + primary;
+        boolean explicit = bound != null && !Project.SELECTION_IMPLICIT.equals(bound.getSelectionStatus());
+        if (explicit) {
+            List<ProjectRoot> roots = new ArrayList<>(projectService.rootsOf(bound));
+            roots.sort(Comparator.comparing(r -> r.getPath() == null ? "" : r.getPath()));
+            String primary = null;
+            List<String> paths = new ArrayList<>();
+            for (ProjectRoot r : roots) {
+                if (r.getPath() == null || r.getPath().isBlank()) continue;
+                paths.add(r.getPath());
+                if (primary == null && r.getPrimaryRoot() != null
+                        && r.getPrimaryRoot() == ProjectRoot.PRIMARY) primary = r.getPath();
+            }
+            if (primary == null && !paths.isEmpty()) primary = paths.get(0);
+            String exec = String.valueOf(projectService.executorIdOf(bound));
+            StringBuilder k = new StringBuilder("project:").append(bound.getId())
+                    .append("|exec=").append(exec);
+            for (ProjectRoot r : roots) {
+                k.append('|').append(r.getPath() == null ? "" : r.getPath())
+                        .append(r.getPrimaryRoot() != null && r.getPrimaryRoot() == ProjectRoot.PRIMARY ? "*" : "");
+            }
+            EffectiveWorkspace.Kind kind = projectService.isSshAlias(bound)
+                    ? EffectiveWorkspace.Kind.EXPLICIT_SSH : EffectiveWorkspace.Kind.EXPLICIT_LOCAL;
+            return new EffectiveWorkspace(sessionId, uid, k.toString(), kind, bound.getId(), paths, primary,
+                    projectService.executorIdOf(bound), null, false, null, bound.getName());
         }
         SessionWorkspaceService.Workspace ws = sessionWorkspace == null
                 ? null : sessionWorkspace.resolve(sessionId, uid);
-        if (ws == null) return "project";
-        return ws.local() ? "local:" + ws.executorId() + ":" + ws.rootPath() : "cloud";
+        if (wantsSandbox && ws != null && ws.local()) {
+            String key = "local:" + ws.executorId() + ":" + ws.rootPath();
+            return new EffectiveWorkspace(sessionId, uid, key, EffectiveWorkspace.Kind.IMPLICIT_LOCAL, null,
+                    List.of(ws.rootPath()), ws.rootPath(), ws.executorId(), null, false,
+                    ws.fallbackNotice(), null);
+        }
+        if (!wantsSandbox) {
+            return new EffectiveWorkspace(sessionId, uid, "scratch:" + uid + ":" + sessionId,
+                    EffectiveWorkspace.Kind.CHAT_SCRATCH, null, List.of(), null, null, null,
+                    false, null, null);
+        }
+        SandboxScope scope = scopeOf(sessionId, uid);
+        return new EffectiveWorkspace(sessionId, uid, "cloud:" + scope.scopeId(),
+                EffectiveWorkspace.Kind.IMPLICIT_CLOUD, null, List.of(), null, null,
+                scope.scopeId(), true, ws == null ? null : ws.fallbackNotice(), null);
+    }
+
+    /**
+     * 本轮会话工作区的解析结果（含后端、执行器、根目录与离线回退说明）。
+     * <p>与 {@link #pinnedLocalWorkspaceRoot} 的区别：后者只读库里的钉住值，这里返回本轮实际后端——
+     * 执行器离线时会是 cloud，提示词必须据此渲染，不能拿库里的本机路径骗模型。
+     * <p>显式工作区返回 null（它不走这条解析链）。
+     */
+    public SessionWorkspaceService.Workspace sessionWorkspaceOf(String sessionId, String uid) {
+        return sessionWorkspace == null ? null : sessionWorkspace.effectivePinned(sessionId);
     }
 
     /**
@@ -273,6 +327,63 @@ public class SandboxService {
     public AbstractFilesystem frameworkFilesystem(String sessionId, String uid, boolean unrestrictedWrites,
                                                  boolean sandboxReady) {
         return frameworkFilesystem(sessionId, uid, unrestrictedWrites, sandboxReady, null);
+    }
+
+    /**
+     * 带本轮解析结果的取法（引擎 build 期专用）：ew 与实例键同源，FS 不会和 key/prompt 漂移。
+     */
+    public AbstractFilesystem frameworkFilesystem(EffectiveWorkspace ew, boolean unrestrictedWrites,
+                                                  boolean sandboxReady, String memoryAgentId) {
+        if (ew == null) return null;
+        String sid = ew.sessionId();
+        String uidOfEw = ew.uid();
+        try {
+            if (ew.kind() == EffectiveWorkspace.Kind.CHAT_SCRATCH) {
+                return chatScratchFilesystem(sid, uidOfEw, memoryAgentId);
+            }
+            if (ew.explicit()) {
+                if (!projectService.isDirect(projectService.byId(ew.projectId()))) {
+                    log.warn("[SANDBOX] 工作区未绑定执行后端，文件工具不可用 project={}", ew.projectId());
+                    return null;
+                }
+                java.util.List<ExecutorFilesystem.Root> roots = new java.util.ArrayList<>();
+                com.wenqu.ai.model.Project p = projectService.byId(ew.projectId());
+                for (com.wenqu.ai.model.ProjectRoot r : projectService.rootsOf(p)) {
+                    roots.add(new ExecutorFilesystem.Root(r.getAlias(), r.getPath(),
+                            r.getPrimaryRoot() != null
+                                    && r.getPrimaryRoot() == com.wenqu.ai.model.ProjectRoot.PRIMARY));
+                }
+                if (roots.isEmpty()) {
+                    log.warn("[SANDBOX] 工作区没有源文件夹，文件工具不可用 project={}", ew.projectId());
+                    return null;
+                }
+                ExecutorFilesystem executorFs = new ExecutorFilesystem(
+                        executorRegistry, ew.executorId(), roots, unrestrictedWrites,
+                        () -> turnChanges.currentTurnId(sid), sid, uidOfEw);
+                return memoryRouted(executorFs, uidOfEw, memoryAgentId);
+            }
+            if (ew.kind() == EffectiveWorkspace.Kind.IMPLICIT_LOCAL) {
+                java.util.List<ExecutorFilesystem.Root> roots = java.util.List.of(
+                        new ExecutorFilesystem.Root("workspace", ew.primaryRoot(), true));
+                ExecutorFilesystem executorFs = new ExecutorFilesystem(
+                        executorRegistry, ew.executorId(), roots, unrestrictedWrites,
+                        () -> turnChanges.currentTurnId(sid), sid, uidOfEw);
+                return memoryRouted(executorFs, uidOfEw, memoryAgentId);
+            }
+            if (!sandboxReady) {
+                log.warn("[SANDBOX] 本轮沙盒未装配成功，框架文件系统退回本地（不挂沙盒）: ew={}", ew.key());
+                return null;
+            }
+            ProvisionerSandboxBackend backend = new ProvisionerSandboxBackend(
+                    provider, ew.scopeId(), uidOfEw, null,
+                    true, true, unrestrictedWrites, ProvisionerSandboxBackend.procTagFor(sid));
+            String sandboxId = ProvisionerSandboxProvider.sandboxIdForThread(ew.scopeId(), uidOfEw);
+            ProvisionerSandboxFilesystem sandboxFs = new ProvisionerSandboxFilesystem(backend, sandboxId);
+            return memoryRouted(sandboxFs, uidOfEw, memoryAgentId);
+        } catch (Exception e) {
+            log.warn("[SANDBOX] 框架文件系统装配失败 (ew={}): {}", ew.key(), e.getMessage());
+            return null;
+        }
     }
 
     /**

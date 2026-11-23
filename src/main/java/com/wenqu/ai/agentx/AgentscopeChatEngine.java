@@ -647,13 +647,15 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 只按裸名判「模型没换」就不重建实例，于是换了供应商仍拿旧网关旧 Key 跑，且日志上一切正常。
         // 档位也进键：聊天档/工作区档的工具面与文件系统不同，切档必须重建实例。
         AgentSession session;
-        // 文件系统在 build 期固定：本机目录 ↔ 云端沙盒切换必须换实例键，否则会继续用旧的那一套
-        String wsKey = (sandboxWanted && sandboxService != null)
-                ? sandboxService.sessionWorkspaceKey(cmd.getSessionId(), cmd.getUserId()) : "";
+        // 文件系统在 build 期固定：本机目录 ↔ 云端沙盒切换必须换实例键，否则会继续用旧的那一套。
+        // 同一份 EW 既出键、又喂给 buildAgent 的 FS/prompt/guard roots——不许两处各算各的。
+        com.wenqu.ai.service.EffectiveWorkspace ew = (sandboxWanted && sandboxService != null)
+                ? sandboxService.resolveWorkspace(cmd.getSessionId(), cmd.getUserId(), true) : null;
+        String wsKey = ew == null ? "" : ew.key();
         try {
             session = sessions.open(cmd, ref,
                     binding.key() + "|sb=" + (sandboxWanted ? "1" : "0") + "|ws=" + wsKey,
-                    ctx -> buildAgent(cmd, policy, route, hooks, binding, slot, sandboxWanted),
+                    ctx -> buildAgent(cmd, policy, route, hooks, binding, slot, sandboxWanted, ew),
                     sandboxWanted);
         } catch (RuntimeException e) {
             // 建实例失败也要把槽位收回：否则这一会话的「当前轮」永远停在一次没跑起来的轮上
@@ -1383,12 +1385,13 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         AgentxTurnSlot slot = sessions.turnSlot(cmd);
         slot.noteProfile(sandboxWanted ? "workspace" : "chat");
         AgentSession session;
-        String wsKey = (sandboxWanted && sandboxService != null)
-                ? sandboxService.sessionWorkspaceKey(cmd.getSessionId(), cmd.getUserId()) : "";
+        com.wenqu.ai.service.EffectiveWorkspace ew = (sandboxWanted && sandboxService != null)
+                ? sandboxService.resolveWorkspace(cmd.getSessionId(), cmd.getUserId(), true) : null;
+        String wsKey = ew == null ? "" : ew.key();
         try {
             session = sessions.open(cmd, ref,
                     binding.key() + "|sb=" + (sandboxWanted ? "1" : "0") + "|ws=" + wsKey,
-                    ctx -> buildAgent(cmd, policy, route, hooks, binding, slot, sandboxWanted),
+                    ctx -> buildAgent(cmd, policy, route, hooks, binding, slot, sandboxWanted, ew),
                     sandboxWanted);
         } catch (Exception e) {
             log.warn("[agentx] 重建会话失败 session={}: {}", sessionId, e.toString());
@@ -1451,10 +1454,29 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      */
     private io.agentscope.harness.agent.filesystem.AbstractFilesystem frameworkFilesystem(
             ChatCommand cmd, boolean unrestrictedWrites, boolean sandboxEnabled) {
+        return frameworkFilesystem(cmd, unrestrictedWrites, sandboxEnabled, null);
+    }
+
+    /** ew 非空时用建实例那轮的解析结果决定文件系统（与实例键同源）；null=旁路现查。 */
+    private io.agentscope.harness.agent.filesystem.AbstractFilesystem frameworkFilesystem(
+            ChatCommand cmd, boolean unrestrictedWrites, boolean sandboxEnabled,
+            com.wenqu.ai.service.EffectiveWorkspace ew) {
         if (sandboxService == null) return null;
         String uid = cmd.getUserId();
         String sessionId = cmd.getSessionId();
         if (uid == null || uid.isBlank() || sessionId == null || sessionId.isBlank()) return null;
+        String memoryAgentId = memoryAgentIdOf(cmd);
+        if (ew != null) {
+            if (!sandboxEnabled || ew.kind() == com.wenqu.ai.service.EffectiveWorkspace.Kind.CHAT_SCRATCH) {
+                return sandboxService.chatScratchFilesystem(sessionId, uid, memoryAgentId);
+            }
+            if (ew.kind() == com.wenqu.ai.service.EffectiveWorkspace.Kind.IMPLICIT_CLOUD
+                    && !sessions.sandboxAttached(sessions.key(cmd))) {
+                return sandboxService.chatScratchFilesystem(sessionId, uid, memoryAgentId);
+            }
+            return sandboxService.frameworkFilesystem(ew, unrestrictedWrites,
+                    sessions.sandboxAttached(sessions.key(cmd)), memoryAgentId);
+        }
         // 聊天档：宿主会话临时目录（文件工具可用，shell 不注册），不建容器。
         // 工作区档若沙盒没装配成功（超时/失败），也退到同一份临时目录，避免回落到宿主共享目录。
         boolean localProject = false;
@@ -1475,7 +1497,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                         sessionId, e.toString());
             }
         }
-        String memoryAgentId = memoryAgentIdOf(cmd);
         if (!sandboxEnabled || (!localProject && !localSession
                 && !sessions.sandboxAttached(sessions.key(cmd)))) {
             return sandboxService.chatScratchFilesystem(sessionId, uid, memoryAgentId);
@@ -2418,13 +2439,33 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 并把 {@code ExecutorFilesystem} 当作沙盒容器渲染成「Sandbox root: /workspace」——这两个路径都在
      * 服务器上，而 execute / 文件工具实际跑在用户电脑上。不纠正的话模型第一发就去 {@code ls} 这两个
      * 不存在的路径，失败后又当成可重试，反复空转。
-     * <p>只读库取根目录（{@link com.wenqu.ai.service.SandboxService#pinnedLocalWorkspaceRoot}），
-     * 不在装配期建目录；不是本机后端就整段缺席。
+     * <p>取本轮实际解析结果（{@link com.wenqu.ai.service.SandboxService#sessionWorkspaceOf}）的后端与根目录，
+     * 不读库里的钉住值：执行器离线那一轮实际跑在云端，再写本机路径就是骗模型。不是本机后端就整段缺席。
      */
     private String localExecutorEnvironment(ChatCommand cmd) {
-        String root = sandboxService == null ? null
-                : sandboxService.pinnedLocalWorkspaceRoot(cmd.getSessionId());
+        return localExecutorEnvironment(cmd, null);
+    }
+
+    /** ew 非空时用建实例那轮的解析结果（build 期消费者）；null=运行期现查。 */
+    private String localExecutorEnvironment(ChatCommand cmd, com.wenqu.ai.service.EffectiveWorkspace ew) {
+        if (ew != null) {
+            if (ew.kind() != com.wenqu.ai.service.EffectiveWorkspace.Kind.IMPLICIT_LOCAL
+                    && ew.kind() != com.wenqu.ai.service.EffectiveWorkspace.Kind.EXPLICIT_LOCAL
+                    && ew.kind() != com.wenqu.ai.service.EffectiveWorkspace.Kind.EXPLICIT_SSH) return "";
+            String root = ew.primaryRoot();
+            if (root == null || root.isBlank()) return "";
+            return localEnvText(root, ew.fallbackNotice());
+        }
+        com.wenqu.ai.service.SessionWorkspaceService.Workspace ws = sandboxService == null ? null
+                : sandboxService.sessionWorkspaceOf(cmd.getSessionId(), cmd.getUserId());
+        if (ws == null || !ws.local()) return "";
+        String root = ws.rootPath();
         if (root == null || root.isBlank()) return "";
+        return localEnvText(root, ws.fallbackNotice());
+    }
+
+    private static String localEnvText(String root, String notice) {
+        String note = notice == null ? "" : "\n- " + notice;
         return "\n## 执行环境（本机执行器，以此段为准）\n"
                 + "文件与命令工具都在用户自己的电脑上执行，不在服务器容器里。"
                 + "当前工作区根目录：" + root + "\n"
@@ -2433,7 +2474,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 + "那些路径在这台电脑上不存在，不要用 execute / read_file 去读。\n"
                 + "- 交付产物用 presentArtifact（返回值即访问地址），不要在磁盘上找 artifacts 目录。\n"
                 + "- 复合命令的退出码由最后一条子命令决定：不要用 2>/dev/null 掩盖失败；"
-                + "可能不存在的目录单独探测或加 `|| true`。\n";
+                + "可能不存在的目录单独探测或加 `|| true`。" + note + "\n";
     }
 
     /**
@@ -3279,7 +3320,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     private HarnessAgent buildAgent(ChatCommand cmd, ExecutionPolicy policy,
                                     ModelRegistryService.ModelRoute route,
                                     WenquAgentxTools.TurnHooks hooks, AgentBinding binding,
-                                    AgentxTurnSlot slot, boolean sandboxEnabled) {
+                                    AgentxTurnSlot slot, boolean sandboxEnabled,
+                                    com.wenqu.ai.service.EffectiveWorkspace ew) {
         // 状态目录：相对路径会按工作目录（user.dir）解析，等价于种子默认值 user.dir/user-data/agentscope。
         // 防御式兜底：配置被清空或缺失时退回默认，避免 Path.of("") 抛 InvalidPathException 把整轮打挂。
         String stateDirRaw = configService.get("chat.agentscopeStateDir");
@@ -3387,7 +3429,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 也给读图工具（read_image）复用同一份——两处若各算一次，可能拿到不同后端、读写与读图指向不同盘。
         io.agentscope.harness.agent.filesystem.AbstractFilesystem frameworkFs = frameworkFilesystem(cmd,
                 policy.sandboxMode() == com.wenqu.ai.agent.permission.SandboxMode.DANGER_FULL_ACCESS,
-                sandboxEnabled);
+                sandboxEnabled, ew);
         HarnessAgent.Builder agentBuilder = HarnessAgent.builder()
                 .agentId(AGENT_ID)
                 .name("wenqu")
@@ -3402,7 +3444,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                         + workspaceMemory
                         + userMemoryReadonly
                         // 框架会把工作区渲染成服务器沙盒路径；本机执行器模式要补一段真话压住它
-                        + localExecutorEnvironment(cmd)
+                        + localExecutorEnvironment(cmd, ew)
                         + (subagentTargets.isEmpty() ? "" : tools.dispatchDiscipline())
                         // 跨族分工（「本机」在 SSH 与桌面两族之间有歧义）：一族的说明代替不了另一族，
                         // 只有这里能说清，且只在本轮真挂了相关工具时追加。
@@ -3583,7 +3625,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         HarnessAgent agent = agentBuilder.build();
         alignWriteFileDescription(agent);
         alignExecuteDescription(agent);
-        applyNativeToolGuards(agent, slot, cmd);
+        applyNativeToolGuards(agent, slot, cmd, ew);
         registerReadImageTool(agent, hooks, frameworkFs);
         return agent;
     }
@@ -3598,10 +3640,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * <p>只包会返回外部内容的几把：read/grep/glob/list/execute。write/edit 只管越界确认，
      * 不包结果（它们返回的是「成功/失败」，不是数据）。
      */
-    private void applyNativeToolGuards(HarnessAgent agent, AgentxTurnSlot slot, ChatCommand cmd) {
+    private void applyNativeToolGuards(HarnessAgent agent, AgentxTurnSlot slot, ChatCommand cmd,
+                                       com.wenqu.ai.service.EffectiveWorkspace ew) {
         Toolkit toolkit = agent.getToolkit();
         if (toolkit == null) return;
-        List<String> roots = workspaceRootsOf(cmd);
+        List<String> roots = workspaceRootsOf(cmd, ew);
         // 游客分享/API Key 轮没有审批卡通道：污点触发时直接拒，别挂一张没人答的卡等超时
         boolean canAsk = !cmd.isGuestMode() && !cmd.isApiKey() && interactiveTurn(cmd);
         wrapNative(toolkit, slot, roots, canAsk, FrameworkToolLabels.FilesystemToolNames.READ_FILE,
@@ -3655,20 +3698,38 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     }
 
     private List<String> workspaceRootsOf(ChatCommand cmd) {
+        return workspaceRootsOf(cmd, null);
+    }
+
+    /**
+     * @param ew 建实例那轮的解析结果（build 期消费者传）；null=运行期现查（审批卡等），
+     *           两者口径一致：都取显式工作区的全部根、主根排第一。
+     */
+    private List<String> workspaceRootsOf(ChatCommand cmd, com.wenqu.ai.service.EffectiveWorkspace ew) {
         List<String> out = new ArrayList<>();
         try {
-            com.wenqu.ai.model.Project p = projectService.projectOfSession(cmd.getSessionId());
-            if (p == null || !projectService.isDirect(p)) return out;
-            com.wenqu.ai.model.ProjectRoot primary = projectService.primaryRootOf(p);
-            // 主根必须排第一：相对路径（含 ..）按主根解析，AgentxDestructiveCommands 取 roots.get(0)
-            if (primary != null && primary.getPath() != null && !primary.getPath().isBlank()) {
-                out.add(realRoot(primary.getPath()));
+            List<String> raw;
+            if (ew != null && ew.explicit()) {
+                // 主根排第一（ew.primaryRoot 已按 primaryRoot 标记选出）；其余按 ew.roots 顺序
+                raw = new ArrayList<>();
+                if (ew.primaryRoot() != null) raw.add(ew.primaryRoot());
+                for (String p : ew.roots()) if (!p.equals(ew.primaryRoot())) raw.add(p);
+            } else {
+                com.wenqu.ai.model.Project p = projectService.projectOfSession(cmd.getSessionId());
+                if (p == null || !projectService.isDirect(p)) return out;
+                com.wenqu.ai.model.ProjectRoot primary = projectService.primaryRootOf(p);
+                raw = new ArrayList<>();
+                // 主根必须排第一：相对路径（含 ..）按主根解析，AgentxDestructiveCommands 取 roots.get(0)
+                if (primary != null && primary.getPath() != null && !primary.getPath().isBlank()) {
+                    raw.add(primary.getPath());
+                }
+                for (com.wenqu.ai.model.ProjectRoot r : projectService.rootsOf(p)) {
+                    if (r == null || r.getPath() == null || r.getPath().isBlank()) continue;
+                    if (primary != null && r.getPath().equals(primary.getPath())) continue;
+                    raw.add(r.getPath());
+                }
             }
-            for (com.wenqu.ai.model.ProjectRoot r : projectService.rootsOf(p)) {
-                if (r == null || r.getPath() == null || r.getPath().isBlank()) continue;
-                if (primary != null && r.getPath().equals(primary.getPath())) continue;
-                out.add(realRoot(r.getPath()));
-            }
+            for (String p : raw) out.add(realRoot(p));
         } catch (Exception e) {
             log.warn("[agentx] 工作区根解析失败（越界写确认按无根处理）session={}: {}",
                     cmd.getSessionId(), e.getMessage());

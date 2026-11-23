@@ -106,15 +106,19 @@ public class Session {
     private String permissionPreset;
 
     /**
-     * 会话工作区后端：{@code local}=本机执行器上的会话目录 / {@code cloud}=服务器沙盒。
-     * NULL=还没解析过（隐式会话首次真正用到文件时解析并落库）。
-     * 显式工作区（用户建的 selectable）不看这一列，仍走工作区自己的执行器目录。
+     * <b>已钉住的本机工作区绑定</b>：{@code local}=本机会话目录，NULL=还没钉住。
+     * <p><b>这里不存 {@code cloud}</b>：{@code cloud} 是每轮由执行器在线状态派生的瞬时后端
+     * （见 {@link com.wenqu.ai.service.SessionWorkspaceService#resolve}），执行器离线只是本轮回退，
+     * 不是改绑。落库 cloud / 清空 wsRoot 会让改名后的会话在新目录里找不到旧文件
+     * （目录名含标题 slug，见 {@code dirNameOf}）。
+     * <p>显式工作区（用户建的 selectable）不看这一列，仍走工作区自己的执行器目录。
      */
     private String wsBackend;
 
-    /** 本机后端所在的执行器 id（c_ai_executor.id）；cloud 为 NULL。 */
+    /** 本机绑定的执行器 id（c_ai_executor.id）；未钉住为 NULL。 */
     private String wsExecutorId;
 
-    /** 本机后端的会话目录（执行器上的绝对路径），首次使用时创建；cloud 为 NULL。 */
+    /** 本机绑定的会话目录（执行器上的绝对路径），首次使用时创建；未钉住为 NULL。
+     *  <p>一次钉住后不因执行器上下线或会话改名而变——改名不迁移目录，靠这一列把旧目录找回来。 */
     private String wsRoot;
 }

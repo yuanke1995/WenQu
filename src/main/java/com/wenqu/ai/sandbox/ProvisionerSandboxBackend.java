@@ -233,6 +233,44 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
         return false;
     }
 
+    // ==================== 围栏入口（框架文件系统主链路也走这里） ====================
+
+    /**
+     * 读写授权判据的<b>唯一入口</b>：{@link #read} / {@link #write} 与框架文件系统
+     * {@link ProvisionerSandboxFilesystem} 的每条结构化 I/O 都先过这里，不许另写一份前缀判断。
+     *
+     * @return null=放行；否则返回给模型/调用方的错误串
+     */
+    String guardRead(String path) {
+        String normalized;
+        try {
+            normalized = normalizePath(path);
+        } catch (RuntimeException e) {
+            return "Error: Invalid path '" + path + "': " + e.getMessage();
+        }
+        return canReadPath(normalized) ? null : "Error: " + permissionError("read", normalized);
+    }
+
+    String guardList(String path) {
+        String normalized;
+        try {
+            normalized = normalizePath(path);
+        } catch (RuntimeException e) {
+            return "Error: Invalid path '" + path + "': " + e.getMessage();
+        }
+        return canListPath(normalized) ? null : "Error: " + permissionError("list", normalized);
+    }
+
+    String guardWrite(String path) {
+        String normalized;
+        try {
+            normalized = normalizePath(path);
+        } catch (RuntimeException e) {
+            return "Error: Invalid path '" + path + "': " + e.getMessage();
+        }
+        return canWritePath(normalized) ? null : "Error: " + permissionError("write", normalized);
+    }
+
     private List<String> readableSearchPaths(String path) {
         if (canReadPath(path)) {
             return List.of(path);
@@ -694,6 +732,11 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
 
     /**
      * 把命令包成「先进入工作目录再执行」，并打上进程归属标记。
+     * <p><b>cd 只是默认工作目录，不是访问边界</b>：runtime 的 shell 在容器里有完整权限，
+     * {@code /etc}、{@code /tmp} 等路径照样可达，只是不在宿主 bind mount 上、容器回收即丢。
+     * 真正把访问关在容器里的是 Docker 命名空间，真正把文件留在宿主的是 bind mount——这两层都不是
+     * 本类的路径 allowlist。路径围栏只覆盖结构化文件工具（read/write/edit/list/glob/grep/download），
+     * 不覆盖 shell 命令内的读写。
      * <p>用 {@code cd ... &&} 而不是 {@code ;}：进不去工作目录时应当**失败**，
      * 而不是继续在 {@code /home/gem} 执行然后把文件丢在没有挂载的地方。
      * <p>用<b>子 shell</b> {@code ( ... )} 而不是花括号组包住原命令：runtime 那条 exec 跑在
