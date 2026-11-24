@@ -28,9 +28,10 @@ class ToolMountVisibilityServiceTest {
     @Mock ResourceVisibilityService visibility;
     @Mock UserMapper userMapper;
     @Mock UserRoleService userRoleService;
+    @Mock AgentBindingService bindingService;
 
     private ToolMountVisibilityService service() {
-        return new ToolMountVisibilityService(agentMapper, platformAgentLookup, visibility, userMapper, userRoleService);
+        return new ToolMountVisibilityService(agentMapper, platformAgentLookup, visibility, userMapper, userRoleService, bindingService);
     }
 
     @Test

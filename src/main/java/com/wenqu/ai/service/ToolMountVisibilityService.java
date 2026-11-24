@@ -26,13 +26,18 @@ public class ToolMountVisibilityService {
     private final ResourceVisibilityService visibility;
     private final UserMapper userMapper;
     private final UserRoleService userRoleService;
+    /** 能力绑定门面：切读时以绑定表覆盖能力列（工作流/HTTP 工具引用都在能力列里） */
+    private final AgentBindingService bindingService;
 
     /** mount 期重新取智能体：平台固定 id 兜底、停用拒绝、游客沿用 token 授权。 */
     public Agent agentForMount(String agentId, String userId, boolean guest) {
         if (agentId == null || agentId.isBlank()) return null;
         Agent a = agentMapper.selectById(agentId);
         if (a == null && PlatformAgentLookup.isShared(agentId)) a = platformAgentLookup.find(agentId);
-        if (a == null || AgentService.isDisabled(a)) return null;
+        if (a == null) return null;
+        // 切读：能力列（workflowTools/httpTools 等）以绑定表为准，否则 mount 会拿到旧配置
+        if (bindingService != null && bindingService.isBindingRead()) bindingService.applyTo(a);
+        if (AgentService.isDisabled(a)) return null;
         if (guest) return a;   // token 即授权，见 AgentShareService.resolveGuest
         if (Integer.valueOf(1).equals(a.getIsBuiltin())
                 || AgentService.isPlatformPreset(a)

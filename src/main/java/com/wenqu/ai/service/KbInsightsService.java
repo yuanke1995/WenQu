@@ -60,6 +60,8 @@ public class KbInsightsService {
     private final RoleService roleService;
     private final AgentService agentService;
     private final AgentMapper agentMapper;
+    /** 能力绑定门面：切读时以绑定表覆盖能力列，写回后同步 */
+    private final AgentBindingService bindingService;
     private final AiDocumentMapper documentMapper;
     private final QaLogMapper qaLogMapper;
     private final KnowledgeMapper knowledgeMapper;
@@ -648,6 +650,7 @@ public class KbInsightsService {
                 .collect(Collectors.toSet());
         try {
             for (Agent a : agentMapper.selectList(new LambdaQueryWrapper<Agent>())) {
+                bindingService.applyTo(a);   // 切读：能力列以绑定表为准
                 if (WenquAgentxTools.blocksKnowledge(a)) continue;
                 if (Integer.valueOf(1).equals(a.getIsBuiltin())) {
                     for (String kbId : builtinScoped) out.merge(kbId, 1, Integer::sum);
@@ -696,6 +699,7 @@ public class KbInsightsService {
         int changed = 0;
         try {
             for (Agent a : agentMapper.selectList(new LambdaQueryWrapper<Agent>())) {
+                bindingService.applyTo(a);   // 切读：能力列以绑定表为准
                 String csv = a.getKnowledgeBaseIds();
                 if (csv == null || csv.isBlank()) continue;
                 List<String> kept = new ArrayList<>();
@@ -708,6 +712,7 @@ public class KbInsightsService {
                 if (!hit) continue;
                 a.setKnowledgeBaseIds(String.join(",", new LinkedHashSet<>(kept)));
                 agentMapper.updateById(a);
+                bindingService.syncFromAgent(a);   // 双写：绑定表同步
                 changed++;
             }
         } catch (Exception e) {
