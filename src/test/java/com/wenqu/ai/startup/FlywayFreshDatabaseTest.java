@@ -66,8 +66,18 @@ class FlywayFreshDatabaseTest {
         // V15：内容安全退役（V1 基线仍建表、本迁移删除）——新库终态不得再有这张表
         assertThat(tables).as("V15 已删除内容安全规则表").doesNotContain("c_ai_content_rule");
         assertThat(columns("c_ai_agent")).as("V2 已删除 chatflow 列").doesNotContain("workflow_id");
-        // V27：智能体检索的文档级条件（与 knowledge_tags 并列，不迁移历史标签）
-        assertThat(columns("c_ai_agent")).as("V27 已加检索文档条件列").contains("knowledge_filter");
+        // V41/V42：能力绑定迁至 c_ai_agent_binding；V27 加的 knowledge_filter 随之退役
+        assertThat(tables).as("V41 已建能力绑定表").contains("c_ai_agent_binding");
+        assertThat(columns("c_ai_agent"))
+                .as("V42 已删除能力列（含 V27 的 knowledge_filter）")
+                .doesNotContain("knowledge_filter", "knowledge_base_ids", "tool_mcp",
+                        "skills", "mcps", "http_tools", "workflow_tools", "tool_deny");
+        assertThat(columns("c_ai_agent"))
+                .as("V42 后身份/人设/策略列必须保留")
+                .contains("name", "system_prompt", "permission_preset", "tool_approval_mode");
+        assertThat(columns("c_ai_agent_binding"))
+                .as("V41 绑定表结构")
+                .contains("agent_id", "capability", "flag", "selection", "config");
         // V16：深度执行预算退役（V1 基线仍建列、本迁移删除；SchemaMigrator 以 RETIRED_COLUMNS 防复活）
         assertThat(columns("c_ai_goal"))
                 .as("V16 已删除目标预算四列")

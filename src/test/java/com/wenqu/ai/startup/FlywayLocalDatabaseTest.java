@@ -71,6 +71,23 @@ class FlywayLocalDatabaseTest {
             assertThat(columns(url, "c_ai_agent"))
                     .as("V2 已删除 chatflow 列")
                     .doesNotContain("workflow_id");
+            // V41/V42：能力绑定迁至 c_ai_agent_binding，Agent 行只留身份/人设/策略
+            assertThat(tables(url)).as("V41 已建能力绑定表").contains("c_ai_agent_binding");
+            assertThat(columns(url, "c_ai_agent"))
+                    .as("V42 已删除能力列（绑定表接管）")
+                    .doesNotContain("knowledge_base_ids", "knowledge_tags", "knowledge_filter",
+                            "knowledge_scope", "knowledge_disabled",
+                            "tool_knowledge", "tool_builtin", "tool_skill", "tool_artifact",
+                            "tool_mcp", "tool_browser", "tool_websearch", "tool_http",
+                            "tool_workflow", "tool_deny",
+                            "skills", "mcps", "builtin_tools", "http_tools", "workflow_tools");
+            assertThat(columns(url, "c_ai_agent"))
+                    .as("V42 后身份/人设/策略列必须保留")
+                    .contains("name", "icon", "description", "system_prompt",
+                            "permission_preset", "tool_approval_mode", "memory_mode", "goal_enabled");
+            assertThat(columns(url, "c_ai_agent_binding"))
+                    .as("V41 绑定表结构")
+                    .contains("tenant_id", "agent_id", "capability", "flag", "selection", "config");
             // V16：深度执行预算退役（V1 基线仍建列、本迁移删除；SchemaMigrator 以 RETIRED_COLUMNS 防复活）
             assertThat(columns(url, "c_ai_goal"))
                     .as("V16 已删除目标预算四列")

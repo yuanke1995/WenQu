@@ -16,7 +16,10 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 
 /**
- * 能力绑定表的一次性回填（幂等）：把 {@code c_ai_agent} 现有能力列搬进 {@code c_ai_agent_binding}。
+ * 能力绑定表的补充回填（幂等兜底）：把 {@code c_ai_agent} 现有能力列搬进 {@code c_ai_agent_binding}。
+ * <p><b>权威回填在 Flyway V42</b>（建表 V41 之后、删列 V43 之前）：启动任务跑在 Flyway 之后，
+ * 单独依赖它会在「V43 已删列」时无列可搬（演练库实测绑定表 0 行）。本类只负责
+ * 「V42 之后新增/修补的存量行」以及异常场景下的兜底，正常部署不会产生任何写入。
  * <p>为什么不写在 SQL 迁移里：列 ↔ 绑定的映射只允许有一份实现（{@link AgentBindingCodec}），
  * 在 SQL 里再写一遍 INSERT ... SELECT 就是第二份真源，改一处必漏另一处；而且 SQL 版本
  * 一旦写错（语法/字符集/JSON 函数差异）会让整次迁移失败，回填却什么都没做。
