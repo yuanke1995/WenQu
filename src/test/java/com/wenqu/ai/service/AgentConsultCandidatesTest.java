@@ -55,7 +55,9 @@ class AgentConsultCandidatesTest {
                 mock(com.wenqu.ai.agent.tool.ToolRegistry.class),
                 mock(com.wenqu.ai.service.httptool.HttpToolService.class),
                 mock(com.wenqu.ai.service.workflowtool.WorkflowToolService.class),
-                mock(ConfigCryptoService.class));
+                mock(ConfigCryptoService.class),
+                mock(com.wenqu.ai.service.AgentBindingService.class),
+                mock(com.wenqu.ai.mapper.AgentBindingMapper.class));
     }
 
     private static Agent agent(String id, Integer isSubagent, String subAgentIds) {

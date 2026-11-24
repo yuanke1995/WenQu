@@ -110,6 +110,10 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
     private final com.wenqu.ai.service.workflowtool.WorkflowToolService workflowToolService;
     /** 配置加密（JWE）：轮终回调签名密钥落库前加密（v2 对外能力第二批——webhook 出站） */
     private final com.wenqu.ai.service.ConfigCryptoService cryptoService;
+    /** 能力绑定门面：双写与切读（c_ai_agent 能力列 → c_ai_agent_binding） */
+    private final AgentBindingService agentBindingService;
+    /** 绑定表删除（智能体删除时清孤儿行） */
+    private final com.wenqu.ai.mapper.AgentBindingMapper bindingMapper;
 
     /**
      * 配置快照字段白名单（有序：字段 → 中文名），只快照「调优内容」——改动才产生新版本的字段。
@@ -517,7 +521,12 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         if (!StringUtils.hasText(id)) return null;
         Agent a = mapper.selectById(id);
         if (a == null) a = globalAgent(id);
-        return (a != null && readable(a)) ? a : null;
+        if (a == null) return null;
+        // 切读：绑定表是能力列的权威存储时，用它覆盖行上的能力字段（身份/人设/策略仍来自行）
+        if (agentBindingService != null && agentBindingService.isBindingRead()) {
+            agentBindingService.applyTo(a);
+        }
+        return readable(a) ? a : null;
     }
 
     /** 是否已停用（NULL 视为启用：V22 之前的存量行由列默认值归一为 0） */
@@ -538,15 +547,23 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
     public Agent getForShare(String id) {
         if (!StringUtils.hasText(id)) return null;
         Agent a = mapper.selectById(id);
+        if (a == null) return null;
+        if (agentBindingService != null && agentBindingService.isBindingRead()) {
+            agentBindingService.applyTo(a);
+        }
         return isDisabled(a) ? null : a;
     }
 
     /** 默认智能体（无则返回 null）；已停用的行不参与默认解析 */
     public Agent defaultAgent() {
-        return mapper.selectOne(new LambdaQueryWrapper<Agent>()
+        Agent a = mapper.selectOne(new LambdaQueryWrapper<Agent>()
                 .eq(Agent::getIsDefault, 1)
                 .and(w -> w.isNull(Agent::getDisabled).or().eq(Agent::getDisabled, 0))
                 .last("LIMIT 1"));
+        if (a != null && agentBindingService != null && agentBindingService.isBindingRead()) {
+            agentBindingService.applyTo(a);
+        }
+        return a;
     }
 
     /** 新建智能体；isDefault=true 时先清空其它默认 */
@@ -568,6 +585,8 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
             a.setIsDefault(0);
         }
         mapper.insert(a);
+        // 双写：能力列 → 绑定表（迁移期两处同时维护，读侧由 binding-read 开关决定以哪边为准）
+        agentBindingService.syncFromAgent(a);
         snapshot(a, "创建");
         maskHttpTools(a);
         log.info("[AGENT] 新建智能体 {}（{}）", a.getId(), a.getName());
@@ -691,6 +710,9 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
             recordVersion(id, beforeJson, "初始");
         }
         updateColumns(id, body, a);
+        // 双写：整份能力配置覆盖绑定表，保证「取消某个能力」不会在切读后复活
+        Agent saved = mapper.selectById(id);
+        if (saved != null) agentBindingService.syncFromAgent(saved);
         snapshot(a, "保存");
         maskHttpTools(a);
         log.info("[AGENT] 更新智能体 {}（{}）", a.getId(), a.getName());
@@ -770,6 +792,8 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         // 版本快照随智能体一并清理（无独立价值，留着只是孤儿数据）
         versionMapper.delete(new LambdaQueryWrapper<AgentVersion>()
                 .eq(AgentVersion::getAgentId, id));
+        bindingMapper.delete(new LambdaQueryWrapper<com.wenqu.ai.model.AgentBinding>()
+                .eq(com.wenqu.ai.model.AgentBinding::getAgentId, id));
         log.info("[AGENT] 删除智能体 {}", id);
     }
 
@@ -1048,6 +1072,7 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         if (target == null) throw new BizException(404, "版本 v" + targetVersion + " 不存在");
         applyConfig(id, parseConfig(target.getConfig()), Integer.valueOf(1).equals(agent.getIsBuiltin()));
         Agent updated = mapper.selectById(id);
+        if (updated != null) agentBindingService.syncFromAgent(updated);
         // 版本记录 best-effort：配置已应用，快照写失败不应把回滚报成失败（否则用户以为没回滚、实际已回滚）
         recordVersion(id, snapshotJson(updated), "回滚自 v" + targetVersion);
         maskHttpTools(updated);

@@ -33,13 +33,15 @@ class AgentServiceResolveForTurnTest {
     @Mock AgentMapper agentMapper;
     @Mock AgentVersionMapper versionMapper;
     @Mock com.wenqu.ai.service.workflowtool.WorkflowToolService workflowToolService;
+    @Mock AgentBindingService bindingService;
     @Mock ConfigService configService;
     @Mock com.wenqu.ai.service.ResourceVisibilityService resourceVisibilityService;
 
     private AgentService service() {
         when(resourceVisibilityService.canRead(any(), nullable(String.class))).thenReturn(true);
         return new AgentService(null, agentMapper, versionMapper, null, configService,
-                resourceVisibilityService, null, null, null, workflowToolService, null);
+                resourceVisibilityService, null, null, null, workflowToolService, null,
+                bindingService, null);
     }
 
     @Test
