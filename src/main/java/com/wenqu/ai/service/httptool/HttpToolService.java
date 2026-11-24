@@ -6,6 +6,7 @@ import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.mapper.AgentMapper;
 import com.wenqu.ai.model.Agent;
 import com.wenqu.ai.service.ConfigCryptoService;
+import com.wenqu.ai.service.ToolMountVisibilityService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.model.ToolContext;
@@ -35,6 +36,7 @@ public class HttpToolService {
 
     private final AgentMapper agentMapper;
     private final ConfigCryptoService cryptoService;
+    private final ToolMountVisibilityService mountVisibility;
 
     /** 每轮装配产物：{@code problem} 非空 = 配置坏了，provider 据此走轮内可见降级 */
     public record Mount(List<ToolCallback> tools, String problem) {
@@ -45,8 +47,13 @@ public class HttpToolService {
      * 未配置/未启用 = 空表（与「没有这个能力」不可区分，不在模型面前出现）。
      */
     public Mount mount(String agentId) {
+        return mount(agentId, null, false);
+    }
+
+    /** 带触发者身份的重载：运行期复核智能体仍可读/未停用（市场安装裁剪不是安全边界）。 */
+    public Mount mount(String agentId, String userId, boolean guest) {
         if (agentId == null || agentId.isBlank()) return new Mount(List.of(), null);
-        Agent agent = agentMapper.selectById(agentId);
+        Agent agent = mountVisibility.agentForMount(agentId, userId, guest);
         if (agent == null) return new Mount(List.of(), null);
         List<HttpToolModels.HttpToolset> sets = HttpToolModels.parseStored(agent.getHttpTools());
         if (sets == null) {

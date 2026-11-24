@@ -62,7 +62,7 @@ public class HttpApiToolProvider implements ToolFamilyProvider {
 
         HttpToolService.Mount mount;
         try {
-            mount = httpToolService.mount(mc.agentId());
+            mount = httpToolService.mount(mc.agentId(), mc.userId(), mc.guestMode());
         } catch (Exception e) {
             log.warn("[HTTP-TOOL] 装配失败（跳过，不影响问答）agent={}: {}", mc.agentId(), e.getMessage());
             return List.of();

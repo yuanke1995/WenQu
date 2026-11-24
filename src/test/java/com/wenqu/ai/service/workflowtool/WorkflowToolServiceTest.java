@@ -9,6 +9,7 @@ import com.wenqu.ai.mapper.UserMapper;
 import com.wenqu.ai.mapper.WorkflowMapper;
 import com.wenqu.ai.model.Agent;
 import com.wenqu.ai.model.Workflow;
+import com.wenqu.ai.service.ToolMountVisibilityService;
 import com.wenqu.ai.service.UserRoleService;
 import com.wenqu.ai.service.WorkflowService;
 import org.junit.jupiter.api.BeforeEach;
@@ -57,9 +58,21 @@ class WorkflowToolServiceTest {
     @Mock UserMapper userMapper;
     @Mock UserRoleService userRoleService;
     @Mock ObjectProvider<WorkflowService> workflowServiceProvider;
+    @Mock ToolMountVisibilityService mountVisibility;
 
     @InjectMocks
     WorkflowToolService service;
+
+    @BeforeEach
+    void stubMountVisibility() {
+        // 既有 mount 用例只测装配判据（发布态/深度/游客安全），可见性单独用新用例覆盖。
+        when(mountVisibility.agentForMount(anyString(), any(), anyBoolean())).thenAnswer(i -> {
+            String id = i.getArgument(0);
+            if ("agent-demo".equals(id)) return agent;
+            return agentMapper.selectById(id);   // 保留 mapper mock 对额外 agent 的既有用法（如命名冲突用例）
+        });
+        when(mountVisibility.canReadWorkflow(any(), any())).thenReturn(true);
+    }
 
     Agent agent;
     Workflow wfReadOnly;
@@ -155,6 +168,37 @@ class WorkflowToolServiceTest {
             when(agentMapper.selectById("a2")).thenReturn(a);
             WorkflowToolService.Mount m = service.mount("a2", "u1", 0);
             assertTrue(m.tools().isEmpty());
+        }
+
+        @Test
+        @DisplayName("触发者无工作流读取权 → 静默跳过")
+        void workflowNotVisibleSkipped() {
+            when(agentMapper.selectById("agent-demo")).thenReturn(agent);
+            when(workflowMapper.selectById("wf-1")).thenReturn(wfReadOnly);
+            when(workflowMapper.selectById("wf-2")).thenReturn(wfWithSideEffect);
+            when(mountVisibility.canReadWorkflow("u1", wfReadOnly)).thenReturn(false);
+
+            WorkflowToolService.Mount m = service.mount("agent-demo", "u1", 0);
+            assertEquals(1, m.tools().size(), "只挂可见的 wf-2");
+            assertTrue(toolNameOf(m.tools().get(0)).contains("wf"), "挂的是 wf-2");
+        }
+
+        @Test
+        @DisplayName("工作流重新发布/改名 → 实例指纹变化")
+        void bindingFingerprintTracksPublication() {
+            Agent a = new Agent();
+            a.setWorkflowTools(JSON.toJSONString(List.of("wf-1")));
+            wfReadOnly.setStatus("published");
+            wfReadOnly.setPublishedVersion(3);
+            when(workflowMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(List.of(wfReadOnly));
+
+            String before = service.bindingFingerprint(a);
+            assertTrue(before.contains("published/3"), before);
+
+            wfReadOnly.setPublishedVersion(4);
+            wfReadOnly.setName("只读查询 V2");
+            String after = service.bindingFingerprint(a);
+            assertNotEquals(before, after, "发布新版本/改名后常驻实例必须重建");
         }
 
         @Test

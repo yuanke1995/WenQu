@@ -230,6 +230,8 @@ public class ChatController {
         final List<ChatRequest.Mention> mentions;
         final List<ChatRequest.HistoryRef> historyRefs;
         String editVariantGroup = null;
+        String effectiveAgentId = request.getAgentId() == null || request.getAgentId().isBlank()
+                ? null : request.getAgentId().trim();
         try {
             // 模型引用归属校验：普通用户只能用自己可用的供应商（平台级 + 自己登记的个人级）。
             // 放在发起问答之前 fail-loud——否则引用他人个人级供应商时会拿对方的 Key 跑通，事后无从发现。
@@ -257,12 +259,19 @@ public class ChatController {
             // 所选智能体停用校验（同步段 fail-loud）：已有会话/旧页签还钉着已停用的助手时，
             // 不能静默回落全局配置——用户会以为还是它在答。这里只拦「停用」；
             // 已删除/不可读仍按原降级语义处理（流水线内带降级提示照常作答）。
-            String requestedAgentId = request.getAgentId();
-            if (requestedAgentId != null && !requestedAgentId.isBlank()) {
-                var picked = agentService.findReadable(requestedAgentId.trim());
+            if (effectiveAgentId != null) {
+                var picked = agentService.findReadable(effectiveAgentId);
                 if (picked != null && com.wenqu.ai.service.AgentService.isDisabled(picked)) {
                     throw new BizException("智能体「" + picked.getName() + "」已停用，请切换其它智能体后再提问");
                 }
+            }
+            // 未选智能体 = 默认智能体作答（与 DeepController.start 同一口径）。补在入口而不是
+            // WenquAgentxTools.agentOf：后端人设/权限/检索范围与消息落库 agentId、派遣清单、
+            // 检索开关覆盖都读 cmd.agentId，只改低层读取器会留下「半绑定」。
+            // 用 get() 再过一遍可读/停用；平台没配默认或默认不可读时留空，按平台默认档降级，不抛 400。
+            if (effectiveAgentId == null) {
+                var def = agentService.defaultAgent();
+                if (def != null && agentService.get(def.getId()) != null) effectiveAgentId = def.getId();
             }
 
             // @ 引用校验（同样必须在发起问答前 fail-loud）：类型合法 + 资源存在 + 在当前用户共享范围内。
@@ -302,7 +311,7 @@ public class ChatController {
                 .apiKey(httpRequest.getAttribute(com.wenqu.ai.config.SecurityConfig.ATTR_API_KEY_ID) != null)
                 .userImages(images).attachments(attachments).skills(request.getSkills())
                 .mentions(mentions).historyRefs(historyRefs)
-                .deepThink(request.isDeepThink()).agentId(request.getAgentId())
+                .deepThink(request.isDeepThink()).agentId(effectiveAgentId)
                 .modelOverride(request.getModel())
                 .teamMode(teamMemberTurn)
                 .memberSessionId(teamMemberTurn ? sessionId : null)

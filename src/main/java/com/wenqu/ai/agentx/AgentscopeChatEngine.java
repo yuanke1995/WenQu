@@ -2256,6 +2256,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 目标模式开关同样烤在实例里（taskContext 投影参数是 build 期装配）：智能体改了
         // goal_enabled 不重建，就会出现「库里开着、实例没投影」或反过来——界面与模型看到的不是一套
         key = key + "|goal=" + (row != null && row.getGoalEnabled() != null ? row.getGoalEnabled() : "-");
+        // 工作流工具只存 id（Agent.java 的 workflowTools 注释承诺「重新发布即时生效」），但发布/回滚/
+        // 改名不会改 agent.update_time，工具表又是 build 期固化的。把引用工作流的发布态并进指纹，
+        // 让同一会话的下一次开轮重建实例并重新 mount 工具，兑现那条承诺。
+        key = key + tools.workflowBindingFingerprint(row);
         // 个人「自动提炼记忆」开关也是 build 期装配（memoryConfig 还是 disableMemoryHooks）：不并进
         // 指纹的话，关掉后要等下一次重建才停，与个人设置里「关掉后下一轮起才停」的说法不符。
         key = key + "|mem=" + orgService.memoryFlushEnabled(cmd.getUserId());

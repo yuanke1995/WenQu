@@ -68,6 +68,8 @@ public class WenquAgentxTools {
     private final com.wenqu.ai.service.SourceTypeResolver sourceTypeResolver;
     /** 本机浏览器：目标轮收尾时把 headed 窗口收掉（用户桌面上真实存在的窗口，不能一直挂着）。 */
     private final com.wenqu.ai.service.LocalBrowserTools localBrowserTools;
+    /** 工作流工具的发布态指纹（常驻实例键需要，workflowTools 只存 id 不存版本）。 */
+    private final com.wenqu.ai.service.workflowtool.WorkflowToolService workflowToolService;
     /**
      * 问答侧的「跑一整轮」入口（分支执行器要它起子轮）。用函数注册而不是注入 {@code ChatService}：
      * 认一个可调用口、不认那个上帝类本身，否则构造环与「框架引擎反过来依赖问渠编排」这两件事同时发生。
@@ -90,7 +92,8 @@ public class WenquAgentxTools {
                             com.wenqu.ai.agent.runcode.RunCodeSubCallRuntime subCall,
                             com.wenqu.ai.service.DocumentMetaCache documentMetaCache,
                             com.wenqu.ai.service.SourceTypeResolver sourceTypeResolver,
-                            com.wenqu.ai.service.LocalBrowserTools localBrowserTools) {
+                            com.wenqu.ai.service.LocalBrowserTools localBrowserTools,
+                             com.wenqu.ai.service.workflowtool.WorkflowToolService workflowToolService) {
         this.knowledgeRetrieval = knowledgeRetrieval;
         this.retrievalScope = retrievalScope;
         this.agentService = agentService;
@@ -112,6 +115,7 @@ public class WenquAgentxTools {
         this.documentMetaCache = documentMetaCache;
         this.sourceTypeResolver = sourceTypeResolver;
         this.localBrowserTools = localBrowserTools;
+        this.workflowToolService = workflowToolService;
     }
 
     /** 收掉用户机器上的浏览器窗口（没有在跑的执行器时是空操作）。 */
@@ -757,6 +761,14 @@ public class WenquAgentxTools {
     /** 用户是否已点「停止本轮」：问答侧那套把手是唯一的判据，框架引擎不另立一套停止语义。 */
     public boolean stopRequested(ChatCommand cmd) {
         return runtime.turnStopRequested(cmd.getSessionId());
+    }
+
+    /**
+     * 工作流工具的发布态指纹：workflowTools 只存 id，发布/回滚/改名都不动 agent.update_time，
+     * 必须由 bindingOf 并进实例键，才能让同一会话下一轮重挂工具（见 WorkflowToolService.bindingFingerprint）。
+     */
+    public String workflowBindingFingerprint(Agent agent) {
+        return workflowToolService == null ? "" : workflowToolService.bindingFingerprint(agent);
     }
 
     /** 本轮的智能体行（无智能体绑定返回 null＝按平台默认档与使用者可见范围走）。 */

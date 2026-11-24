@@ -9,6 +9,7 @@ import com.wenqu.ai.model.Agent;
 import com.wenqu.ai.model.User;
 import com.wenqu.ai.model.Workflow;
 import com.wenqu.ai.model.WorkflowRun;
+import com.wenqu.ai.service.ToolMountVisibilityService;
 import com.wenqu.ai.service.UserRoleService;
 import com.wenqu.ai.service.WorkflowService;
 import lombok.RequiredArgsConstructor;
@@ -73,6 +74,7 @@ public class WorkflowToolService {
     private final UserMapper userMapper;
     private final UserRoleService userRoleService;
     private final ObjectProvider<WorkflowService> workflowServiceProvider;
+    private final ToolMountVisibilityService mountVisibility;
 
     /** 每轮装配产物：{@code problem} 非空 = 配置坏了，provider 据此走轮内可见降级 */
     public record Mount(List<ToolCallback> tools, String problem) {
@@ -95,7 +97,7 @@ public class WorkflowToolService {
     public Mount mount(String agentId, String userId, int wfDepth, boolean guest) {
         if (agentId == null || agentId.isBlank()) return new Mount(List.of(), null);
         if (wfDepth >= MAX_WF_DEPTH) return new Mount(List.of(), null);   // 防环：到顶不再挂（见类注释）
-        Agent agent = agentMapper.selectById(agentId);
+        Agent agent = mountVisibility.agentForMount(agentId, userId, guest);
         if (agent == null) return new Mount(List.of(), null);
         List<String> ids = parseStored(agent.getWorkflowTools());
         if (ids == null) {
@@ -110,6 +112,12 @@ public class WorkflowToolService {
             Workflow row = workflowMapper.selectById(id);
             if (row == null || !"published".equals(row.getStatus())) {
                 log.debug("[WF-TOOL] 智能体引用的工作流不可用（已删除或未发布），本轮跳过: agent={} workflow={}", agentId, id);
+                continue;
+            }
+            // 市场安装时裁剪只是 UX：装完之后归属/角色范围会变，运行期按本轮触发者重判。
+            // 不能写成 uid 相等——角色数据范围授予的 READ 是合法读者。
+            if (!mountVisibility.canReadWorkflow(userId, row)) {
+                log.debug("[WF-TOOL] 触发者无可读取权，本轮跳过: agent={} workflow={} uid={}", agentId, id, userId);
                 continue;
             }
             if (guest && !isGuestSafe(row)) {
@@ -195,6 +203,41 @@ public class WorkflowToolService {
             }
         }
         return dedup.isEmpty() ? null : JSON.toJSONString(new ArrayList<>(dedup));
+    }
+
+    /**
+     * 本智能体引用的工作流「发布态指纹」，供常驻实例的绑定键使用。
+     * <p>为什么必须有：工具表在 build 期由 {@link #mount} 一次性构建，而工作流的发布/回滚/改名
+     * 只改工作流行、不改 {@code agent.update_time}。实例键若只含 agentId@updateTime，同一会话里
+     * 重新发布后工具名与 DSL 都留在旧版本，实体注释承诺的「即时生效」就不会发生。
+     * <p>把 id + 状态 + 发布版本号 + 名称一并纳入：发布/回滚改版本，下线改状态，改名改工具名；
+     * 三者任一变化都必须换实例。查询随每轮 bindingOf 走 mapper 的租户过滤，与 mount 同一口径。
+     *
+     * @return 形如 {@code |wf=id1:published/3/合同审核,id2:...}；无引用返回空串
+     */
+    public String bindingFingerprint(Agent agent) {
+        List<String> ids = parseStored(agent == null ? null : agent.getWorkflowTools());
+        if (ids == null || ids.isEmpty()) return "";
+        List<Workflow> rows = workflowMapper.selectList(new LambdaQueryWrapper<Workflow>()
+                .in(Workflow::getId, ids));
+        Map<String, Workflow> byId = new LinkedHashMap<>();
+        for (Workflow row : rows) byId.put(row.getId(), row);
+        StringBuilder out = new StringBuilder("|wf=");
+        for (String id : ids) {
+            Workflow row = byId.get(id);
+            out.append(id).append(':');
+            if (row == null) {
+                out.append("missing");
+            } else {
+                out.append(row.getStatus() == null ? "-" : row.getStatus())
+                        .append('/')
+                        .append(row.getPublishedVersion() == null ? "-" : row.getPublishedVersion())
+                        .append('/')
+                        .append(row.getName() == null ? "" : row.getName().replaceAll("[|/,=:]", "_"));
+            }
+            out.append(',');
+        }
+        return out.toString();
     }
 
     /** 既有配置的全部对话工具名（toolDeny 校验白名单扩展用；不可用的条目算不出名字，跳过） */

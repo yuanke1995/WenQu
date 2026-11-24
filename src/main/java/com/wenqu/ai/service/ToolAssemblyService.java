@@ -214,7 +214,11 @@ public class ToolAssemblyService {
             // OFFICE / COMPUTER_USE / SESSION_RETRIEVAL / MCP_RESOURCE 暂无智能体级三态列，
             // 也不配平台开关：只受 tool.enabled 总闸 + 权限档位 + 停用名单收口
             // （桌面操作另由「只在完全权限档挂载」当闸门，见 ComputerUseProvider）。
-            case TODO, TEAM, MCP, LOCAL_BROWSER, OFFICE, COMPUTER_USE, SESSION_RETRIEVAL, MCP_RESOURCE -> null;
+            case TODO, TEAM, LOCAL_BROWSER, OFFICE, COMPUTER_USE, SESSION_RETRIEVAL, MCP_RESOURCE -> null;
+            // MCP 有智能体级三态列：UI 的「不使用 / 指定 / 跟随全局」分别写 0 / 1 / null，
+            // 1 时具体项由 agent.mcps 再收一层（McpToolProvider 读 agentSelection）。
+            // 这里若不映射，McpToolProvider 的 flag=0 判据永远拿不到值，界面关掉 MCP 仍会挂载。
+            case MCP -> agent.getToolMcp();
             case BROWSER -> agent.getToolBrowser();
         };
     }
