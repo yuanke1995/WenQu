@@ -27,7 +27,12 @@
         <!-- 免责声明从标题栏下沉到每条回答的脚注（见 msg-disclaimer）：它该出现在读结论的现场 -->
         <!-- 头部动作区：右对齐一组，图标按钮无框安静 -->
         <div class="head-actions">
-          <TeamPill v-if="!memberViewRoot" :session-id="currentSessionId || ''" @open="openTeamPanel" />
+          <!-- 顶栏这组「派了谁」两颗药丸口径互斥，别读成重复：
+               · 团队 · N（TeamPill）——名册，只在会话开了智能体团队时出现（关着时它无事可做，开关在右栏团队的未开启空态里）；
+               · N 位助手 / N 位在跑（SubagentPill）——本轮派遣卡，只在团队关闭或仍有派遣在跑时出现。
+               「开着团队且本轮没人在跑」时只剩团队 · N：派遣结果已经收进名册，再挂一颗只会让人问「这是不是同一件事」。
+               两边的显隐都由各自组件内部按数据判定（TeamPill 读团队开关，SubagentPill 读 runs），这里只传消息。 -->
+          <TeamPill v-if="!memberViewRoot" :session-id="currentSessionId || ''" :msg="processMsg" @open="openTeamPanel" />
           <button v-if="memberViewRoot" type="button" title="停止该成员当前轮" @click="stopNow"
                   style="height:26px;padding:0 10px;border:1px solid #f3c9c9;background:#fff2f0;color:#cf1322;border-radius:7px;font-size:12px;cursor:pointer;margin-right:4px;">停止</button>
           <button class="app-icon-btn" title="在本会话中查找（Ctrl/⌘ + F）" @click="openSearch">
@@ -42,7 +47,7 @@
           <!-- 子智能体药丸：这一轮派出去几位、几位还在跑。它坐在标题栏而不是正文里，是因为
                派遣一跑就是两三分钟，而正文在这期间一直在往下长——跟在正文里的东西要滚到
                最新那一段才看得见，等它跑完才出现的东西等于没给。 -->
-          <SubagentPill :msg="processMsg" @focus="focusSpawn" />
+          <SubagentPill :msg="processMsg" :session-id="currentSessionId || ''" @focus="focusSpawn" />
           <!-- 过程账本入口收成图标：过程本身已经挂到回答头上，顶栏只留「事后回看」这条路 -->
           <button class="app-icon-btn" title="看这个会话是怎么跑出来的：工具步与耗时、三张卡、产物、停止与失败"
                   @click="openEvents()"><history-outlined /></button>
@@ -56,7 +61,7 @@
       </div>
       <!-- 窄屏动作行：标题归顶栏，这里只放查找/分享/状态三个图标 -->
       <MobileChatHead v-if="isNarrow" :share-active="shareActive" @search="openSearch" @share="openShare" @panel="togglePanel">
-        <SubagentPill mobile :msg="processMsg" @focus="focusSpawn" />
+        <SubagentPill mobile :msg="processMsg" :session-id="currentSessionId || ''" @focus="focusSpawn" />
       </MobileChatHead>
 
       <!-- 执行过程（事件账本）：按轮列出这一会话跑过什么——工具步与耗时、审批/提问/计划三张卡、
@@ -1515,7 +1520,7 @@
       <!-- 用 v-show 保留实例：在「浏览」与过程/来源/文件之间来回切时，侧栏 iframe 的地址与
            已加载页面不会被卸载重建（v-if 会让正在看的页面消失）。整栏关闭仍由上面的 aside v-if 控制。 -->
       <BrowserPanel v-show="railTab === 'browser'" :snapshots="browserSnapshots" />
-      <TeamPanel v-if="railTab === 'team' && !memberViewRoot" :session-id="currentSessionId || ''" :session-title="currentSessionTitle" :agent-name="currentAgentName" :agent="agentBadgeOf(agentList, currentAgentId, currentAgentName)" :agents="agentList" />
+      <TeamPanel v-if="railTab === 'team' && !memberViewRoot" :session-id="currentSessionId || ''" :session-title="currentSessionTitle" :agent-name="currentAgentName" :agent="agentBadgeOf(agentList, currentAgentId, currentAgentName)" :agents="agentList" :msg="processMsg" />
       <!-- 本轮卡（常驻首位）：跑轮时实时滚动「哪几步、每步在做什么事」，答完收成这一轮的动作清单。
            单步耗时不在这里报（整轮用时归气泡那条状态行），要点「查看全部步骤」进账本弹窗。
            会话里还没有 AI 消息时整卡不渲染（新会话不占位）。其余各卡仍是「有数据才显示」。 -->

@@ -2,8 +2,10 @@
   <!-- 顶栏「子智能体」药丸：一轮里派出去几位、几位还在跑、最长那支跑了多久。
        数据全从最新一条 AI 消息的派遣卡里摊（判据在 projections.subagentRunsOf），本组件不取数、
        不起轮询——刷新与后台轮重连接的是同一个消息对象，药丸自然跟着有数。
-       触屏形态（mobile）没有常驻右栏，点开走底部 sheet；PC 走药丸正下方那块浮层。 -->
-  <div v-if="runs.length" class="sap" :class="{ 'sap-m': mobile }">
+       触屏形态（mobile）没有常驻右栏，点开走底部 sheet；PC 走药丸正下方那块浮层。
+       去重：会话开着智能体团队时，跑完的派遣已经收进名册（顶栏「团队 · N」），这颗就不再挂——
+       只在还有人在跑的时候出现（在跑 = 此刻需要悬在顶栏看的那件事）。团队关着时它照旧是唯一口径。 -->
+  <div v-if="runs.length && show" class="sap" :class="{ 'sap-m': mobile }">
     <button class="sap-pill" :class="{ on: open }" type="button"
             :aria-expanded="open ? 'true' : 'false'" :title="tip" :aria-label="tip" @click="toggle">
       <loading-outlined v-if="runningCount" spin class="sap-ic" />
@@ -42,19 +44,43 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { ApartmentOutlined, CheckOutlined, CloseCircleOutlined, CloseOutlined, LoadingOutlined } from '@ant-design/icons-vue'
+import * as api from '../api'
 import { nowTick, holdTick, subagentRunsOf, toolDuration } from '../chat/projections'
 
 const props = defineProps({
   /** 最近一条 AI 消息（含跑轮中那颗）——与右栏「过程」卡同一份数据源 */
   msg: { type: Object, default: null },
   /** 触屏形态：点开走底部 sheet，而不是右上角浮层 */
-  mobile: Boolean
+  mobile: Boolean,
+  /** 当前会话 id：用来读团队开关（开着且本轮没人在跑时这颗让位给「团队 · N」） */
+  sessionId: { type: String, default: '' }
 })
 const emit = defineEmits(['focus'])
 
 const open = ref(false)
 const runs = computed(() => subagentRunsOf(props.msg))
 const runningCount = computed(() => runs.value.filter(r => r.running).length)
+
+// 团队开关：只读、只在这里用来决定显隐；20s 兜底轮询（与 TeamPill 同一档），团队事件/换会话时重拉。
+// 读不到一律按「关」——宁可多挂一颗，也不要因为一次失败把进度藏掉。
+const teamOn = ref(false)
+let teamTimer = null
+async function loadTeam () {
+  if (!props.sessionId) { teamOn.value = false; return }
+  try {
+    const on = await api.getTeamEnabled(props.sessionId)
+    teamOn.value = !!(on && on.enabled)
+  } catch (e) { teamOn.value = false }
+}
+function onTeamEvent () { loadTeam() }
+function onMountedTeam () {
+  loadTeam()
+  if (!teamTimer) teamTimer = window.setInterval(loadTeam, 20000)
+  window.addEventListener('wq:team-event', onTeamEvent)
+}
+watch(() => props.sessionId, onMountedTeam, { immediate: true })
+// 团队开启且本轮没有派遣在跑 → 名册那颗（团队 · N）已经说完了，这颗不重复
+const show = computed(() => !teamOn.value || runningCount.value > 0)
 // 悬浮这句说全「派了几位、几位在跑」（触屏没有悬浮，点开浮层的标题「这一轮派出去的助手」
 // 就是同一句话的落地版）
 const tip = computed(() => (runningCount.value
@@ -87,6 +113,8 @@ watch(runningCount, n => {
 }, { immediate: true })
 onBeforeUnmount(() => {
   if (releaseTick) releaseTick()
+  if (teamTimer) { window.clearInterval(teamTimer); teamTimer = null }
+  window.removeEventListener('wq:team-event', onTeamEvent)
   document.removeEventListener('click', onDocClick, true)
 })
 

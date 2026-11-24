@@ -45,7 +45,7 @@
 
           <div v-else class="mem-tree">
             <div v-for="row in memberRows" :key="row.m.sessionId" class="mem-row clickable nested"
-                 :class="{ deep: row.depth > 1 }"
+                 :class="{ deep: row.depth > 1, hot: !!roundInfoOf(row.m) }"
                  :style="row.depth > 1 ? { paddingLeft: (8 + (row.depth - 1) * 16) + 'px' } : null"
                  @click="openMember(row.m)">
               <AgentAvatar v-if="agentOf(row.m)" :agent="agentOf(row.m)" :size="30" /><span v-else class="avatar" :style="{ background: avatarBg(row.color) }">{{ avatarText(row.m) }}</span>
@@ -53,6 +53,10 @@
                 <div class="mem-top">
                   <span class="mem-name" :title="displayName(row.m)">{{ displayName(row.m) }}</span>
                   <span v-if="codeName(row.m)" class="tag-code">{{ codeName(row.m) }}</span>
+                  <!-- 本轮派遣：名册是跨轮持久的，「这一轮谁被派了」只在这里补一眼；
+                       不单开一张卡——顶栏那颗「N 位助手」与它读的是同一份派遣卡，换个壳再列一遍就是重复 -->
+                  <span v-if="roundInfoOf(row.m)" class="tag-round" :class="{ run: roundInfoOf(row.m).running }"
+                        :title="roundInfoOf(row.m).task">{{ roundInfoOf(row.m).running ? '本轮在跑' : '本轮已回' }}</span>
                 </div>
                 <div v-if="subText(row.m)" class="mem-sub" :title="subText(row.m)">{{ subText(row.m) }}</div>
               </div>
@@ -160,13 +164,16 @@ import { message } from 'ant-design-vue'
 import * as api from '../api'
 import TaskDagBoard from './TaskDagBoard.vue'
 import AgentAvatar from './AgentAvatar.vue'
+import { dispatchArgsOf, dispatchMemberOf } from '../chat/consult'
 
 const props = defineProps({
   sessionId: { type: String, default: '' },
   sessionTitle: { type: String, default: '' },
   agentName: { type: String, default: '' },
   agent: { type: Object, default: null },
-  agents: { type: Array, default: () => [] }
+  agents: { type: Array, default: () => [] },
+  /** 最近一条 AI 消息：只用来给名册标注「本轮在跑 / 本轮已回」（如传） */
+  msg: { type: Object, default: null }
 })
 const router = useRouter()
 
@@ -301,6 +308,31 @@ const memberRows = computed(() => {
   walk('__root__', 1)
   return rows
 })
+// 本轮派遣（跨轮名册之外的「这一轮」那一层）：按助手名/成员名对上名册里的成员——后端派成员时
+// memberName 就是助手名，孙代带父路径，所以按路径末段再比一次。同名多次派遣合并成一条：
+// 有在跑的算「本轮在跑」，否则算「本轮已回」。这份数据与顶栏「N 位助手」读的是同一份派遣卡。
+const roundByMember = computed(() => {
+  const calls = props.msg && Array.isArray(props.msg.toolCalls) ? props.msg.toolCalls : []
+  const spawns = calls.filter(t => t && (t.name === 'agent_spawn' || t.name === 'consultAgent'))
+    .map(t => ({ name: dispatchMemberOf(t), running: t.status === 'start', task: dispatchArgsOf(t).task || '' }))
+    .filter(s => s.name)
+  const map = new Map()
+  if (!spawns.length) return map
+  const tail = s => (s.includes('/') ? s.slice(s.lastIndexOf('/') + 1) : s)
+  for (const m of members.value) {
+    const names = new Set([m.memberName, m.name, m.agentName, realName(m)].filter(Boolean))
+    const hit = spawns.filter(s => names.has(s.name) || names.has(tail(s.name)))
+    if (!hit.length) continue
+    const running = hit.some(s => s.running)
+    map.set(m.sessionId, {
+      running,
+      task: (hit.find(s => s.task) || {}).task || '',
+      n: hit.length
+    })
+  }
+  return map
+})
+function roundInfoOf (m) { return m ? (roundByMember.value.get(m.sessionId) || null) : null }
 const summary = computed(() => {
   const run = members.value.filter(m => m.state === 'RUNNING').length
   const idle = members.value.length - run
@@ -486,6 +518,9 @@ onUnmounted(() => {
 .mem-name{font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:130px}
 .tag-root{height:15px;padding:0 5px;border-radius:4px;background:#eef4ff;color:#2e6be6;border:1px solid #c9dbfb;font-size:9px;font-weight:650;display:inline-flex;align-items:center}
 .tag-code{height:15px;padding:0 5px;border-radius:4px;background:#f5f3ff;color:#7c3aed;border:1px solid #ddd6fe;font-size:9px;font-weight:650;display:inline-flex;align-items:center}
+/* 本轮派遣：已回是中性灰（只表明「这一轮动过」），在跑才用强调绿跟着状态点 */
+.tag-round{height:15px;padding:0 5px;border-radius:4px;background:var(--panel-2,#f6f7f9);color:var(--text-2,#5f6570);border:1px solid var(--border,#e6e9ed);font-size:9px;font-weight:650;display:inline-flex;align-items:center}
+.tag-round.run{background:#f0fbf3;color:#2f7d42;border-color:#c9ebd2}
 .mem-sub{font-size:10.5px;color:var(--text-3,#98a0aa);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .mem-state{flex:none;display:inline-flex;align-items:center;gap:4px;font-size:10px;color:var(--text-2,#5f6570)}
 .mem-state .d{width:6px;height:6px;border-radius:50%;background:#c8ced6}

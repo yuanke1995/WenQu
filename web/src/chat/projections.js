@@ -42,7 +42,8 @@ export { askUserView, askAnswerLabel, askNoticeText } from './askUser.js'
 
 /** 耗时文案：<1s 用 ms，1~60s 留一位小数，≥60s 换成「3m46s」，≥60m 再换成「1h2m」——226.0s 这种长小数读不出量级 */
 // 委派/咨询口径在 ./consult.js（纯模块），这里只转出。
-export { rememberAgents, consultNameOf, consultChatView, isDispatchTool, dispatchTaskOf, spawnAnchorOf, subagentRunsOf } from './consult.js'
+export { rememberAgents, consultNameOf, consultChatView, isDispatchTool, dispatchArgsOf, dispatchMemberOf,
+         dispatchTaskOf, spawnAnchorOf, subagentRunsOf } from './consult.js'
 
 // ==================== 时间线（正文一条流，工具只作过程步骤） ====================
 // timeline 是事件段数组：

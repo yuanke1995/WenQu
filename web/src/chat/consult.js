@@ -69,6 +69,15 @@ export const dispatchTaskOf = t => {
 /** 卡片定位锚：同一位助手不会在同一毫秒被派两次。 */
 export const spawnAnchorOf = t => (Number(t?.startedAtMs) || 0) + '-' + (t?.name || '')
 
+/** 派遣卡的入参：解析失败给空对象，调用方不必各包一层 try。 */
+export const dispatchArgsOf = t => {
+  try { return JSON.parse(t?.args || 'null') || {} } catch (e) { return {} }
+}
+
+/** 派遣的成员名：团队开启时 agent_spawn 派出去的是「持久成员」，名册用它做唯一键
+ *  （后端 memberName 就是助手名，孙代带父路径）。 */
+export const dispatchMemberOf = t => String(t?.subChat?.memberName || consultNameOf(t) || '')
+
 /** 顶栏「子智能体」一排：把派遣卡摊成一支一行；live 只活一次，刷新后退回卡片步数。 */
 export const subagentRunsOf = m => {
   if (!m || !Array.isArray(m.toolCalls)) return []
