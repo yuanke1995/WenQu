@@ -62,6 +62,7 @@ public class ChatController {
      */
     private final com.wenqu.ai.agent.hitl.HitlDecisionService hitl;
     private final com.wenqu.ai.agentx.FrameworkSessions frameworkSessions;
+    private final com.wenqu.ai.agentx.SessionToolGrants sessionToolGrants;
     /** 任务清单的存储桥（权威真源是框架 AgentState，这里读它；读不到才回落会话表） */
     private final com.wenqu.ai.service.TodoBridge todoBridge;
     /** 历史轮次的任务清单（账本 type=todo 留痕）：旧计划刷新后要能读回它那一轮的 N/M */
@@ -656,6 +657,11 @@ public class ChatController {
         boolean ok = frameworkSessions.respond(approvalId, approved,
                 approved ? null : reason, scope)
                 || hitl.resolveApproval(approvalId, approved, com.wenqu.ai.util.RequestUser.uid());
+        // 会话级放行还要把同根会话下同工具已挂着的卡一并批掉：那些调用已经在等审批，
+        // 只写下放行 (下一次生效) 救不了它们；返回 ids 让前端把卡一起收掉。
+        java.util.List<String> autoResolved = (ok && approved && "session".equals(scope))
+                ? frameworkSessions.resolveSiblingsAfterSessionGrant(approvalId)
+                : java.util.List.of();
         if (!ok) {
             // 行还是 PENDING 说明只是这一次没投递进去（同一会话上一张卡刚批完、子轮正在执行），
             // 卡片仍有效，别报成「已失效」让用户以为白点了
@@ -664,6 +670,11 @@ public class ChatController {
                 return ResultJson.error("这一步还在执行上一步，请稍后再点一次（卡片仍有效）");
             }
             return ResultJson.error("审批请求不存在或已失效（可能已超时）");
+        }
+        if (!autoResolved.isEmpty()) {
+            return ResultJson.ok(java.util.Map.of(
+                    "msg", approved ? "已批准" : "已拒绝",
+                    "autoResolved", autoResolved));
         }
         return ResultJson.ok(approved ? "已批准" : "已拒绝");
     }
@@ -996,6 +1007,8 @@ public class ChatController {
         Object raw = body == null ? null : body.get("preset");
         String applied = sessionService.setPermissionPreset(RequestUser.uid(), sessionId,
                 raw == null ? "" : String.valueOf(raw));
+        // 用户显式改档位 = 重新做权限决定：旧的「本次会话都允许」不跨档位继承
+        sessionToolGrants.clearForSession(RequestUser.uid(), sessionId);
         java.util.Map<String, Object> out = new java.util.HashMap<>();
         out.put("permissionPreset", applied == null ? "" : applied);
         return ResultJson.ok(out);

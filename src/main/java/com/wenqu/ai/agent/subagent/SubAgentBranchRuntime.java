@@ -72,6 +72,17 @@ public class SubAgentBranchRuntime {
     private record BranchHandle(String childSession, String userId, CollectingSseEmitter sink) {
     }
 
+    /**
+     * 这一轮派出去、跑完后<b>保留</b>的子会话。
+     * <p>以前分支一结束就删：续问只能重建一条失忆的子轮，审批放行也跟着一条临时会话一起消失。
+     * 现在保留到父轮收尾再统一回收，同一轮内的 agent_send 能续上下文；团队成员的持久会话不删。
+     */
+    private record ChildSession(String sessionId, String userId, boolean teamMode) {
+    }
+
+    private final java.util.Map<String, java.util.Set<ChildSession>> childSessions =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
     public SubAgentBranchRuntime(ConfigService configService,
                                 SessionService sessionService,
                                 ArtifactService artifactService,
@@ -167,7 +178,7 @@ public class SubAgentBranchRuntime {
                             branchIndex, type, sent, parentSessionId);
                 }
                 // 干活视角采步：只认终态帧（start 那张卡在前端直播里自己会转圈）；
-                // toolCard 载荷不带 denied，被挡下的区分靠 done 载荷那一步的对齐（见下）。
+                // toolCard 现在带 denied 第三态，时间线据此区分「被挡下」与「跑完了」。
                 // 同一次调用的帧可能经两条路各到一遍（SSE 直发 + 总线扇出）——
                 // 按 name+startedAtMs 去重，同一把工具只进时间线一次
                 if ("tool_status".equals(type) && workSteps.size() < BranchReport.MAX_STEPS) {
@@ -175,7 +186,8 @@ public class SubAgentBranchRuntime {
                         com.alibaba.fastjson2.JSONObject tc =
                                 com.alibaba.fastjson2.JSON.parseObject(String.valueOf(content == null ? "" : content));
                         String st = tc == null ? null : tc.getString("status");
-                        if (tc != null && tc.getString("name") != null && ("done".equals(st) || "error".equals(st))) {
+                        if (tc != null && tc.getString("name") != null
+                                && ("done".equals(st) || "error".equals(st) || "denied".equals(st))) {
                             String stepKey = tc.getString("name") + "#" + tc.getLongValue("startedAtMs");
                             if (seenStepKeys.add(stepKey)) {
                                 Map<String, Object> one = new LinkedHashMap<>();
@@ -183,6 +195,8 @@ public class SubAgentBranchRuntime {
                                 if (tc.getString("label") != null) one.put("l", tc.getString("label"));
                                 long ms = tc.getLongValue("elapsedMs");
                                 if (ms > 0) one.put("ms", ms);
+                                // 被挡下是独立一格：时间线上显示「被挡下」，不与「跑成了」混在一起
+                                if (tc.getBooleanValue("denied") || "denied".equals(st)) one.put("d", true);
                                 one.put("s", "error".equals(st) ? "error" : "done");
                                 workSteps.add(one);
                             }
@@ -194,15 +208,8 @@ public class SubAgentBranchRuntime {
             });
             BranchHandle handle = null;
             try {
-                childSession = req.teamMode()
-                        ? sessionService.createTeamSession(req.userId(),
-                                req.teamRootSessionId() == null ? req.parentSessionId() : req.teamRootSessionId(),
-                                req.parentSessionId(),
-                                // 名字兜底：memberName 为空时用子智能体名，绝不留空（否则面板只能显示 sessionId）
-                                (req.memberName() == null || req.memberName().isBlank())
-                                        ? req.childAgentName() : req.memberName(),
-                                req.childAgentId())
-                        : sessionService.createTempSession(req.userId());
+                childSession = childSessionFor(req);
+                if (req.conversation() != null) req.conversation().childSessionId(childSession);
                 if (req.teamMode() && teamService() != null) {
                     teamService().markRunning(childSession);
                 }
@@ -233,6 +240,7 @@ public class SubAgentBranchRuntime {
                         .parentBrief(req.parentBrief())
                         .parentSessionId(req.parentSessionId())
                         .parentTurnId(parentTurnId)
+                        .rootSessionId(rootFor(req))
                         // 「父 ∪ 子」口径的父侧：父轮本轮的库级墙原样带进子轮的范围解析
                         .parentScopeKbIds(req.parentScopeKbIds() == null
                                 ? null : List.copyOf(req.parentScopeKbIds()))
@@ -384,19 +392,13 @@ public class SubAgentBranchRuntime {
                 }
                 // 收集型通道不触发 onCompletion，登记必须主动清（否则整轮台账与断开表挂着引用）
                 ChatRunRuntime.forgetSseChannel(sink);
-                if (childSession != null) {
-                    if (req.teamMode()) {
-                        // 团队成员会话持久：不删，只回到 IDLE，等待下一次 team_send 唤醒
-                        com.wenqu.ai.agent.team.AgentTeamService svc = teamService();
-                        if (svc != null) svc.markIdle(childSession);
-                    } else {
-                        try {
-                            sessionService.deleteSession(req.userId(), childSession);
-                        } catch (Exception ignored) {
-                            // 删失败只多留一条临时会话，不影响回答；硬抛会把已跑完的分支报成失败
-                        }
-                    }
+                if (childSession != null && req.teamMode()) {
+                    // 团队成员会话持久：不删，只回到 IDLE，等待下一次 team_send 唤醒
+                    com.wenqu.ai.agent.team.AgentTeamService svc = teamService();
+                    if (svc != null) svc.markIdle(childSession);
                 }
+                // 临时子会话不在分支结束时删：同一轮的 agent_send 要续用它的上下文，
+                // 审批放行也按根会话生效。统一在父轮收尾时由 cleanupChildSessions 回收。
             }
         };
     }
@@ -524,6 +526,98 @@ public class SubAgentBranchRuntime {
                 }
             }
         }
+    }
+
+    /**
+     * 这一支该跑在哪条子会话：同一句柄的第二次咨询续用第一次那条，否则新建。
+     * <p>续用前按库验存（子轮可能已被回收/删除）；团队成员的持久会话按名册复用，跑完只回 IDLE。
+     */
+    private String childSessionFor(BranchRequest req) {
+        String reuse = req.conversation() == null ? null : req.conversation().childSessionId();
+        if (reuse != null && !reuse.isBlank()) {
+            try {
+                com.wenqu.ai.model.Session s = sessionService.sessionById(reuse);
+                if (s != null && req.userId() != null && req.userId().equals(s.getUserId())) {
+                    trackChild(req, reuse);
+                    log.info("[SUBAGENT] 续用子会话: agent={} session={} parent={}",
+                            req.childAgentName(), reuse, req.parentSessionId());
+                    return reuse;
+                }
+            } catch (RuntimeException e) {
+                log.debug("[SUBAGENT] 续用子会话校验失败，按新建处理 session={}: {}", reuse, e.getMessage());
+            }
+            log.info("[SUBAGENT] 续用目标已不存在，重建子会话: agent={} old={}",
+                    req.childAgentName(), reuse);
+        }
+        String child;
+        if (req.teamMode()) {
+            child = sessionService.createTeamSession(req.userId(),
+                    req.teamRootSessionId() == null ? req.parentSessionId() : req.teamRootSessionId(),
+                    req.parentSessionId(),
+                    // 名字兜底：memberName 为空时用子智能体名，绝不留空（否则面板只能显示 sessionId）
+                    (req.memberName() == null || req.memberName().isBlank())
+                            ? req.childAgentName() : req.memberName(),
+                    req.childAgentId());
+        } else {
+            child = sessionService.createTempSession(req.userId());
+            // 临时会话也要有父链：审批放行按根会话归集、嵌套派遣回溯都靠这两个字段。
+            // 没有它，子会话自己会被当成根，放行就挂到一条下一次不再使用的临时会话上。
+            sessionService.bindBranchLineage(child, req.parentSessionId(), rootFor(req));
+        }
+        trackChild(req, child);
+        return child;
+    }
+
+    private String rootFor(BranchRequest req) {
+        if (req.teamRootSessionId() != null && !req.teamRootSessionId().isBlank()) {
+            return req.teamRootSessionId();
+        }
+        if (req.parentSessionId() != null) {
+            try {
+                com.wenqu.ai.model.Session parent = sessionService.sessionById(req.parentSessionId());
+                if (parent != null && parent.getRootSessionId() != null
+                        && !parent.getRootSessionId().isBlank()) {
+                    return parent.getRootSessionId();
+                }
+            } catch (RuntimeException ignored) {
+                // 父会话读不到就按它自身当根：至少不把放行挂到子会话自己头上
+            }
+        }
+        return req.parentSessionId();
+    }
+
+    private void trackChild(BranchRequest req, String childSession) {
+        if (childSession == null || childSession.isBlank()) return;
+        childSessions.computeIfAbsent(req.parentSessionId(), k -> java.util.concurrent.ConcurrentHashMap.newKeySet())
+                .add(new ChildSession(childSession, req.userId(), req.teamMode()));
+    }
+
+    /**
+     * 父轮收尾：回收这一轮建出来的临时子会话（团队成员的持久会话只回 IDLE，不删）。
+     * <p>延迟几秒再删：父轮收口时的 cancelAll 只是叫停，子轮可能还在写终态；立即删会把那一段截断。
+     */
+    public void cleanupChildSessions(String parentSessionId) {
+        java.util.Set<ChildSession> set = parentSessionId == null ? null : childSessions.remove(parentSessionId);
+        if (set == null || set.isEmpty()) return;
+        java.util.List<ChildSession> temp = set.stream().filter(c -> !c.teamMode()).toList();
+        if (temp.isEmpty()) return;
+        java.util.concurrent.CompletableFuture.delayedExecutor(5, java.util.concurrent.TimeUnit.SECONDS)
+                .execute(() -> {
+                    for (ChildSession c : temp) {
+                        // 5 秒内已经开启了新一轮（同一轮续问/紧接着的"继续"）：这一条还在用，留给下一次收尾。
+                        if (runtime.turnIdOf(c.sessionId()) != null) continue;
+                        try {
+                            frameworkSessions.evictSession(c.userId(), c.sessionId());
+                        } catch (RuntimeException ignored) {
+                            // 实例可能早已回收
+                        }
+                        try {
+                            sessionService.deleteSession(c.userId(), c.sessionId());
+                        } catch (RuntimeException e) {
+                            log.debug("[SUBAGENT] 临时子会话回收失败 session={}: {}", c.sessionId(), e.getMessage());
+                        }
+                    }
+                });
     }
 
     /**

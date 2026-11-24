@@ -133,6 +133,9 @@ public class FrameworkSessions {
      */
     private final com.wenqu.ai.agent.hitl.HitlDecisionService hitl;
 
+    /** 根会话级工具放行：「本次会话都允许」跨子助手/团队成员生效（Redis 存储）。 */
+    private final SessionToolGrants sessionToolGrants;
+
     /**
      * 沙盒装配：按官网「自管沙箱实例」的 {@code externalSandbox} 模式，
      * 在建会话实例时把本轮沙盒上下文挂进 {@link RuntimeContext}——框架的 {@code SandboxLifecycleMiddleware}
@@ -152,13 +155,15 @@ public class FrameworkSessions {
             SessionLogArchive archive,
             AgentxCluster cluster,
             com.wenqu.ai.service.ConfigService configService,
-            TransientSessionState transientState) {
+            TransientSessionState transientState,
+            SessionToolGrants sessionToolGrants) {
         this.hitl = hitl;
         this.sandboxService = sandboxService;
         this.archive = archive;
         this.cluster = cluster;
         this.configService = configService;
         this.transientState = transientState;
+        this.sessionToolGrants = sessionToolGrants;
     }
 
     /** 持有者侧执行方：答复在别的副本点下来时，由<b>持有实例的这个进程</b>照本地路径跑一遍 */
@@ -264,9 +269,12 @@ public class FrameworkSessions {
                                  String toolName, String requestArgs, String reason) {
         if (requestId == null || requestId.isBlank()) return false;
         pendingOwner.put(requestId, sessionKey);
-        // 分支轮的父会话/父轮一并落库：审批卡上翻后，父会话刷新与通知都要靠它找回这张卡
+        // 归集父会话：分支轮用直接的 parent，团队成员轮用根（成员轮 parent 为空，但审批必须归到根，
+        // 否则「本会话都允许」与同工具待办的批量放行找不到它）。
+        String approvalParent = cmd.getRootSessionId() != null && !cmd.getRootSessionId().isBlank()
+                ? cmd.getRootSessionId() : cmd.getParentSessionId();
         return hitl.recordFrameworkPending(requestId, cmd.getSessionId(), cmd.getUserId(), turnId, toolName, requestArgs,
-                cmd.getParentSessionId(), cmd.getParentTurnId(), reason);
+                approvalParent, cmd.getParentTurnId(), reason);
     }
 
 
@@ -641,6 +649,38 @@ public class FrameworkSessions {
     }
 
     /**
+     * 「本次会话都允许」之后，把同一根会话下同一把工具<b>已经挂着</b>的其它卡一并批准。
+     * <p>为什么必须做：同一步并发发出 4 个 SQL 时，框架会挂 4 张卡；只批第一张并写下会话放行，
+     * 另外 3 张仍停在审批等待里——放行只影响「下一次调用」，救不了已经在等的那几次。
+     * <p>失败不抛出：单张卡投递失败只留它与用户的点击，不让一次放行回滚。
+     *
+     * @return 成功一并批准的审批号（前端据此把这些卡一起收掉）
+     */
+    public java.util.List<String> resolveSiblingsAfterSessionGrant(String approvalId) {
+        var row = hitl.findApproval(approvalId);
+        if (row == null) return java.util.List.of();
+        String root = sessionToolGrants.rootSessionIdForApproval(row);
+        var others = hitl.pendingSameToolUnderRoot(root, row.getToolName(), row.getUserId(), approvalId);
+        if (others.isEmpty()) return java.util.List.of();
+        java.util.List<String> resolved = new java.util.ArrayList<>();
+        for (var other : others) {
+            String id = other.getId();
+            if (id == null || id.isBlank()) continue;
+            try {
+                if (respond(id, true, null, null)) resolved.add(id);
+            } catch (RuntimeException e) {
+                log.warn("[agentx] 会话放行后一并批准失败（保留原卡） id={} tool={}: {}",
+                        id, row.getToolName(), e.toString());
+            }
+        }
+        if (!resolved.isEmpty()) {
+            log.info("[agentx] 会话放行后一并批准同工具待办: approval={} tool={} count={}",
+                    approvalId, row.getToolName(), resolved.size());
+        }
+        return resolved;
+    }
+
+    /**
      * 实例在别的副本上：把这次裁决转投给持有者执行。
      * <p>不在本地重建实例是刻意的——同一条会话两个进程各持一份框架实例会撞会话写租约
      * （"Session already has an active writer"），而且两边都会各落一条助手消息。
@@ -660,17 +700,25 @@ public class FrameworkSessions {
     }
 
     /**
-     * 登记「本次会话都允许」：按审批行上的工具名落到这条会话的槽位上。
-     * <p>登记在<b>执行侧</b>（持有实例的副本）才有效——权限判定读的就是那份槽位，所以转投时
-     * scope 也要跟着过去。工具名取库里的那一行，不信客户端传的名字。
+     * 登记「本次会话都允许」：按审批行上的工具名落到<b>根会话</b>的作用域。
+     * <p>为什么不是执行侧的子会话：用户点的「本会话」是对话页那条根会话，而执行发生在一次次派出去的
+     * 临时子会话/团队成员会话里。挂在子会话上，下一次派遣就换了一条会话，放行随之丢失。
+     * <p>写 Redis 是刻意的：审批可能在另一个副本上点、下一次派遣可能在另一个副本建实例，
+     * 进程内槽位跨不过去。工具名取库里的那一行，不信客户端传的名字。
      */
     private void allowToolForSession(String approvalId, String sessionKey) {
-        String key = sessionKey == null ? ownerOf(approvalId) : sessionKey;
         var row = hitl.findApproval(approvalId);
-        String tool = row == null ? null : row.getToolName();
-        if (key == null || tool == null || tool.isBlank()) return;
-        turnSlot(key).allowToolForSession(tool);
-        log.info("[agentx] 本次会话都允许: session={} tool={}", key, tool);
+        if (row == null) return;
+        String tool = row.getToolName();
+        if (tool == null || tool.isBlank()) return;
+        String scope = sessionToolGrants.scopeKeyForApproval(row);
+        if (scope == null) {
+            // 审批行缺会话归属时保留旧行为：至少让当前执行会话下一次不再问
+            log.warn("[FAIL-LOUD] 本会话放行找不到根会话作用域 approval={} session={}", approvalId, sessionKey);
+            return;
+        }
+        sessionToolGrants.grant(scope, tool);
+        log.info("[agentx] 本次会话都允许: scope={} tool={} approval={}", scope, tool, approvalId);
     }
 
     private boolean respondLocal(String approvalId, boolean approved, String reason, boolean forSession) {

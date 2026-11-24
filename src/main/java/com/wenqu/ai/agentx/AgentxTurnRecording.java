@@ -677,6 +677,7 @@ public final class AgentxTurnRecording {
                 java.util.Map<String, Object> prior = toolCalls.get(i);
                 if (name.equals(prior.get("name")) && "start".equals(prior.get("status"))) {
                     prior.put("status", status);
+                    if ("denied".equals(status)) prior.put("denied", true);
                     putTiming(prior, elapsedMs, beganAtMs, waitedMs);
                     if (result != null && !result.isBlank()) prior.put("result", result);
                     String spill = takeSpill(name);
@@ -703,6 +704,7 @@ public final class AgentxTurnRecording {
             // 落库的这份是刷新后重建工具卡的唯一依据，写裸名等于把中文名全押在前端那份手抄映射上
             displayNames.putDisplayFields(entry, uid, name);
             entry.put("status", status);
+            if ("denied".equals(status)) entry.put("denied", true);
             // 步骤归属随卡落库（取值时刻＝开工这一刻）：刷新后执行详情仍能把工具归到原步骤。
             // 终态回填时不覆盖——那时清单可能已经推进到下一步，拿它盖会把这一步的工具挪到下一步去
             int stepId = hooks.step().index();

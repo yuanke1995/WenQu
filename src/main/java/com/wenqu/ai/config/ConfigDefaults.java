@@ -209,6 +209,14 @@ public final class ConfigDefaults {
 
     // ---- 智能体内部参数 ----
     public static final int AGENT_MAX_TOOL_STEPS = 0;
+    /**
+     * agent.subagentMaxToolSteps：被派遣的子助手/团队成员的单轮工具步数上限（0=跟随智能体自己的
+     * {@code max_tool_steps}，不做额外限制）。
+     * <p>旧口径按派遣深度对半砍（50 → 25 → 12），把「委派」当成「降级」：真正干活的子助手先被砍，
+     * 父轮再花咨询额度补问，长任务必然做不完。扇出改由深度上限、并发分支数与咨询额度控制，
+     * 需要额外保护时在这里设一个统一上限，而不是按层做隐式缩水。
+     */
+    public static final int AGENT_SUBAGENT_MAX_TOOL_STEPS = 0;
     public static final int AGENT_VERSION_KEEP = 20;
     /** 轮终 webhook 首发失败后的重试次数上限（与 c_ai_config 的 agentWebhook.retryMax 同源） */
     public static final int AGENT_WEBHOOK_RETRY_MAX = 4;

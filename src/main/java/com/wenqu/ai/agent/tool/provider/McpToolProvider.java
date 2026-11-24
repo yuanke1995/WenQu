@@ -60,8 +60,17 @@ public class McpToolProvider implements ToolFamilyProvider {
      */
     @Override
     public List<ToolCallback> callbacks(ToolMountContext mc) {
-        if (mc == null || !mc.masterOn()
-                || !mc.approvalPolicyAllows(ToolFamily.MCP)) {
+        if (mc == null || !mc.masterOn()) return List.of();
+        if (!mc.approvalPolicyAllows(ToolFamily.MCP)) {
+            // 能力不是「调了被拒」而是「压根没挂」：必须让用户看见原因。
+            // 这条同时覆盖 off 档与「本轮没人可答」——此前两者都静默返回空表，
+            // 后者更糟：模型会去调一个没挂上的工具，拿到框架那句 Permission denied by rules。
+            if (mc.approvalOff()) {
+                mc.degrade("mcpApprovalOff", "工具执行确认已关闭（off），MCP 外部工具本轮不挂载");
+            } else {
+                mc.degrade("mcpNoApprover", "本轮没有可确认工具执行的人（定时任务/工作流/评测等），"
+                        + "MCP 外部工具本轮不挂载");
+            }
             return List.of();
         }
         // 游客白名单：未授权（空名单）整族照旧不挂；授权后与智能体自己的具体项选择取交集——

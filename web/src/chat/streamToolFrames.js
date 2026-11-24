@@ -83,6 +83,8 @@ export const applyToolStatus = (msg, raw, ctx) => {
       const last = [...list].reverse().find(x => x.name === t.name && x.status === 'start' && sameArgs(x))
       if (last) {
         last.status = t.status
+        // 被权限/守卫挡下：卡片显示「被挡下」且不计入已执行；老后端只给 status，新后端两者都给
+        if (t.denied || t.status === 'denied') last.denied = true
         last.elapsedMs = t.elapsedMs || 0
         // 起点以服务端那份为准：跨度是在同一个钟上减的，混进前端收到帧的时刻就会被时钟差与网络排队带歪
         // 等待账同理：漏了它，簇头就会把用户读卡答题那几分钟也算进机器时间

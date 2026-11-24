@@ -325,6 +325,29 @@ public class HitlDecisionService {
         return out;
     }
 
+    /**
+     * 同一根会话下、同一把工具仍挂着的其它审批卡（用于「本次会话都允许」时一并放行）。
+     * <p>只认根会话与直接子代（团队/分支的 parent_session_id 落的就是根）；更深的嵌套下一次调用
+     * 已经能读到根 grants，不再靠这张表推导。
+     */
+    public List<ToolApproval> pendingSameToolUnderRoot(String rootSessionId, String toolName,
+                                                       String uid, String excludeId) {
+        if (rootSessionId == null || rootSessionId.isBlank()
+                || toolName == null || toolName.isBlank()) return List.of();
+        try {
+            return toolApprovalMapper.selectList(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<ToolApproval>()
+                    .eq(ToolApproval::getStatus, "PENDING")
+                    .eq(ToolApproval::getUserId, uid)
+                    .eq(ToolApproval::getToolName, toolName)
+                    .ne(excludeId != null && !excludeId.isBlank(), ToolApproval::getId, excludeId)
+                    .and(w -> w.eq(ToolApproval::getSessionId, rootSessionId)
+                            .or().eq(ToolApproval::getParentSessionId, rootSessionId)));
+        } catch (Exception e) {
+            log.debug("[AGENTX] 列同工具待办失败（按空集处理）: {}", e.getMessage());
+            return List.of();
+        }
+    }
+
     /** 挂起一张 askUser 提问卡（一卡多问）：问题列表存 request_args，答案数组存 answer。 */
     public WaitHandle<String> openAsk(String askId, String sessionId, String userId, String turnId,
                                       List<QItem> questions) {

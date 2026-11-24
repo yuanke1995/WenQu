@@ -21,6 +21,9 @@ export const resolveApproval = async (m, card, approved, ctx, scope) => {
     }
     if (approved && scope === 'session') {
       ctx.notify.success(`已设为本次会话都允许：「${a.label || a.tool}」后续不再询问`)
+      // 后端把同根会话下同工具已挂着的卡一并批了：把这些卡一起收掉，别留可点的僵尸卡
+      const auto = r && r.data && Array.isArray(r.data.autoResolved) ? r.data.autoResolved : []
+      if (auto.length && ctx.dropApprovals) ctx.dropApprovals(auto)
     }
     ctx.emitNotifChanged('chat')
     if (m && Array.isArray(m.approvals)) m.approvals = m.approvals.filter(x => x.id !== a.id)

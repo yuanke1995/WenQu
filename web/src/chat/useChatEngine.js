@@ -1042,7 +1042,17 @@ watch(() => sessionStore.autoPickTick, async () => {
 const resolveApproval = (m, card, approved, scope) => resolveApprovalImpl(m, card, approved, {
   chatStreams, currentSid: () => currentSessionId.value, notify: message, emitNotifChanged,
   pollRestoredAnswer: sid => pollRestoredAnswer(sid), scrollSoft: () => hooks.scrollSoft?.(),
-  approveApi: approveToolCall, approvalLeftSec: approvalLeftSecOf
+  approveApi: approveToolCall, approvalLeftSec: approvalLeftSecOf,
+  // 「本会话都允许」时后端会一并批准同工具的其它挂起卡；把它们的卡从所有气泡里摘掉
+  dropApprovals: ids => {
+    const set = new Set((ids || []).map(String))
+    for (const msg of messages.value) {
+      if (Array.isArray(msg.approvals)) {
+        const left = msg.approvals.filter(x => !set.has(String(x.id)))
+        if (left.length !== msg.approvals.length) msg.approvals = left
+      }
+    }
+  }
 }, scope)
 
 /**

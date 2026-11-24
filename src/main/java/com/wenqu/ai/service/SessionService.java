@@ -61,10 +61,10 @@ public class SessionService {
      * 会话种类：平台内部临时会话——派遣出去的子轮（框架的 agent_spawn 驱使）与工作流的子智能体节点
      * 各要跑一整轮问答，需要一个独立 sessionId 来占轮次互斥锁、落消息、当沙盒目录名。
      * <p>它跑在<b>真实用户</b>名下（分支要按调用者的权限检索、产物随后收养进父会话），所以
-     * 只靠"跑完即删"挡不住用户看见它：一支跑几十秒，这期间任何一次列表刷新（切页回聊天页、
-     * 搜索、置顶/删除别的会话）都会把「用户想开发一个智能报表系统…」这种内部提问当成一个新会话
-     * 抬进侧栏，而侧栏整表刷新只在首条消息 done 时发生——那条幽灵会话会一直挂到下次刷新为止，
-     * 点进去还是半条别人的对话。故显式打标，用户侧的查询一律排除。
+     * 它现在会保留到父轮收尾（同一轮的续问要复用上下文与审批放行），不再是"跑完即删"；
+     * 只靠删除时机挡不住用户看见它：任何一次列表刷新（切页回聊天页、搜索、置顶/删除别的会话）
+     * 都可能把「用户想开发一个智能报表系统…」这种内部提问当成一个新会话抬进侧栏。
+     * 故显式打标，用户侧的查询一律排除。
      */
     public static final String KIND_TEMP = "temp";
 
@@ -239,6 +239,25 @@ public class SessionService {
         Session patch = new Session();
         patch.setId(memberSessionId);
         patch.setMemberState(state);
+        sessionMapper.updateById(patch);
+    }
+
+    /** 记下临时子会话的父链（审批放行按根会话归集、嵌套派遣按链回溯都读它）。 */
+    public void bindBranchLineage(String childSessionId, String parentSessionId, String rootSessionId) {
+        if (childSessionId == null || childSessionId.isBlank()) return;
+        Session patch = new Session();
+        patch.setId(childSessionId);
+        if (parentSessionId != null && !parentSessionId.isBlank()) patch.setParentSessionId(parentSessionId);
+        if (rootSessionId != null && !rootSessionId.isBlank()) patch.setRootSessionId(rootSessionId);
+        sessionMapper.updateById(patch);
+    }
+
+    /** 修正成员绑定的智能体（历史上有成员因身份缺失落成 agent=null，重派时按显式 agent_ref 补上）。 */
+    public void updateMemberAgent(String memberSessionId, String agentId) {
+        if (memberSessionId == null || agentId == null || agentId.isBlank()) return;
+        Session patch = new Session();
+        patch.setId(memberSessionId);
+        patch.setAgentId(agentId);
         sessionMapper.updateById(patch);
     }
 

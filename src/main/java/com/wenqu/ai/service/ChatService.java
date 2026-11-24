@@ -468,6 +468,13 @@ public class ChatService {
                             log.warn("[SUBAGENT] 父轮结束收分支失败 session={}: {}", sessionId, e.getMessage());
                         }
                     }
+                    // 临时子会话保留到父轮收尾（同一轮的续问要复用上下文与审批放行），
+                    // 这里统一回收；团队成员的持久会话只回 IDLE，不删。子轮自己的孙代也在这里收。
+                    try {
+                        branchRuntime.cleanupChildSessions(sessionId);
+                    } catch (Exception e) {
+                        log.warn("[SUBAGENT] 回收临时子会话失败 session={}: {}", sessionId, e.getMessage());
+                    }
                     runtime.endTurnMutex(sessionId);
                     // 身份与租户同生命周期：池化线程复用，必须清，否则下一轮会带着上一轮的身份
                     // 判可见性、带着上一轮的租户去过滤别人的行（跨租户串读）。

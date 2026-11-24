@@ -83,7 +83,10 @@ public class TeamWakeService {
                 .memberSessionId(member ? sessionId : null)
                 .memberName(member ? s.getMemberName() : null)
                 .teamRootSessionId(root)
-                .source("team")
+                // 审批卡与放行按「根会话」归集；成员轮本身仍是顶层轮（parentSessionId 为空），
+                // 通知/看门狗不该因为审批归集而被当成子轮静音。
+                .rootSessionId(root)
+                .source(com.wenqu.ai.service.TurnSource.TEAM)
                 .build();
         java.util.concurrent.CompletableFuture.runAsync(() -> {
             try {

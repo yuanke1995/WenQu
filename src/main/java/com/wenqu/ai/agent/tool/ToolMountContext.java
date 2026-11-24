@@ -138,9 +138,20 @@ public interface ToolMountContext {
     default boolean approvalPolicyAllows(ToolFamily family) {
         if (!family.blockedWhenApprovalOff()) return true;
         if (approvalOff()) return false;
-        // 分支轮 + 「执行前确认」= 这一族不给：没有人能批那张卡，挂上去只会让这一支在审批等待里
+        // 「执行前确认」+ 本轮没有可应答的人 = 这一族不给：挂上去只会让这一支在审批等待里
         // 耗尽整支超时。与 off 档同一处置口径——要拦的能力让模型看不见，而不是给了再等一个不会来的答复。
-        return !(branchTurn() && approvalAsk());
+        // 判据是「有没有人可答」而不是「是不是分支轮」：分支/团队成员的卡能上翻到父轮或团队面板，
+        // 那是有人的；定时任务/工作流/评测/API Key 才是真的没人。
+        return !(approvalAsk() && !approvalCapable());
+    }
+
+    /**
+     * 本轮能不能把审批卡送到一个活人面前：网页问答、可上翻的分支、团队成员会话都可以；
+     * 定时任务/工作流节点/评测/API Key/游客不行。装配期据此决定「需要确认」的能力挂不挂，
+     * 执行期 {@code SpringAiToolAdapter} 用同一判据决定「问」还是「拒」。
+     */
+    default boolean approvalCapable() {
+        return true;
     }
 
     /** 智能体的「工具执行确认」档位是否为 off（禁用有副作用能力） */
@@ -193,8 +204,11 @@ public interface ToolMountContext {
         if (!policyAllows(d)) return false;
         // 游客轮不挂「要等人点确认」的工具：分享页没有审批卡通道（ShareChatPage 不处理
         // approval_required、服务端也没有游客审批端点），挂上去那轮只会静默等到审批超时。
-        // 与分支轮同一条口径——要拦的能力让模型看不见，而不是给了再等一个不会来的答复。
+        // 与「本轮没人可答」同一条口径——要拦的能力让模型看不见，而不是给了再等一个不会来的答复。
         if (guestMode() && d != null && d.requiresApproval()) return false;
+        // 审批档是 ask、而本轮没有任何人能应答：有副作用的工具在装配期就不挂。
+        // 动态族（MCP）没有描述符，由 approvalPolicyAllows 走同一判据。
+        if (approvalAsk() && !approvalCapable() && d != null && d.requiresApproval()) return false;
         return !branchTurn() || d == null || !d.viewerRequired();
     }
 

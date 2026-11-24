@@ -593,13 +593,16 @@ class SubAgentConsultServiceTest {
         }
 
         @Test
-        @DisplayName("并发 start 累加次数")
+        @DisplayName("咨询额度按不同助手计：同一助手续问不占新名额")
         void usedCount() {
             SubAgentConsultService.Ledger ledger = service.newLedger();
             assertEquals(0, ledger.used());
-            ledger.start();
-            ledger.start();
+            assertTrue(ledger.reserve("a1", 2));
+            assertTrue(ledger.reserve("a1", 2));
+            assertEquals(1, ledger.used());
+            assertTrue(ledger.reserve("a2", 2));
             assertEquals(2, ledger.used());
+            assertFalse(ledger.reserve("a3", 2));
         }
     }
 

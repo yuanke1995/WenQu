@@ -581,6 +581,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
 
         // 本轮身份（轮级互斥外壳已经登记好 turnId）：待办落库、任务清单留痕、步数预算归零都认它
         String turnId = turnIdOf(cmd);
+        // 本轮生效策略一行看全：分支继承、团队根封顶、显式 auto 是否真的生效，排障时不必再从
+        // 审批现象反推。description 里已含档位/沙盒/审批/约束/可写根/禁用。
+        log.info("[PERM] session={} turn={} source={} depth={} agent={} {}",
+                cmd.getSessionId(), turnId, cmd.getSource(), cmd.getSubagentDepth(), cmd.getAgentId(),
+                policy.describe());
 
         // 本轮用户图片：先落盘换 URL，再决定「原图要不要进模型」。
         // 两条链路的分叉点只有一个——聊天模型能不能读图（visionCapableOf，与发布游客模型时同一个判据）：
@@ -2007,7 +2012,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     /** 这一轮有没有在场观众能答审批卡：网页问答（source 空/user）才有；定时任务/工作流没有。 */
     private static boolean interactiveTurn(ChatCommand cmd) {
         String src = cmd == null ? null : cmd.getSource();
-        return src == null || src.isBlank() || "user".equalsIgnoreCase(src);
+        // 团队成员会话有可见的成员页/团队面板，用户就能点卡；把它当「无人可答」会让成员的 MCP/沙箱
+        // 全部在调用期被拒。定时任务、工作流节点、评测与 API Key 仍按 headless（fail-closed）。
+        return src == null || src.isBlank()
+                || com.wenqu.ai.service.TurnSource.USER.equalsIgnoreCase(src)
+                || com.wenqu.ai.service.TurnSource.TEAM.equalsIgnoreCase(src);
     }
 
     /**
@@ -2880,10 +2889,13 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 //    （非 0 也是 done，码与输出都原样交给了模型），没拿到码=工具失败；
                 // ③ 其余工具 → 结构化 state 判定。
                 boolean failed = recording.hooks.infra().take(name) != null || toolResultFailed(data);
+                // 被权限/守卫拒绝是第三种终态：既不是成功（✓），也不是工具执行失败（error）。
+                // 以前只分 failed/非 failed，被拒的卡全落成 done——用户看到 6 个 ✓，实际一个都没跑。
+                boolean denied = toolResultDenied(data);
                 // 输出文本只取一次：落库那份和 SSE 那一帧必须是同一串，否则刷新前后两张卡说的不是一件事
                 String resultText = toolResultText(data);
                 // 进度账：失败/被拒的一步没有让任何东西向前走——换一个参数再失败也还是原地踏步
-                recording.progress().note(name, args, resultText, failed || toolResultDenied(data));
+                recording.progress().note(name, args, resultText, failed || denied);
                 // 耗时＝墙钟窗口扣掉这段等待：提问卡挂三分钟不是「这个工具跑三分钟」，是「用户读了三分钟」。
                 // 扣掉的那段另发一份 waitedMs：整段跨度减它才剩机器时间，只在单卡上扣会留在区间中间出不去。
                 long beganAt = recording.takeToolStart(callKey);
@@ -2893,9 +2905,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 long charged = recording.takeToolCharge(callKey);
                 long elapsed = beganAt <= 0L ? 0L
                         : Math.max(0L, System.currentTimeMillis() - beganAt - covered);
-                java.util.Map<String, Object> subChat = recording.toolCall(name, failed ? "error" : "done", args, elapsed, beganAt, charged, resultText);
+                String terminal = failed ? "error" : (denied ? "denied" : "done");
+                java.util.Map<String, Object> subChat = recording.toolCall(name, terminal, args, elapsed, beganAt, charged, resultText);
                 // 前台等待到点的提问：这一帧不是「问完了」，卡片仍可答（答案稍后作为新发言送达）
-                emit(channel, RunEventType.TOOL_STATUS, toolCard(recording.uid, name, failed ? "error" : "done",
+                emit(channel, RunEventType.TOOL_STATUS, toolCard(recording.uid, name, terminal,
                         elapsed, beganAt, charged, args, resultText, subChat, recording.hooks.step().index(),
                         false, 0L, null, recording.isAskContinued(toolCallIdOf(data))));
             }
@@ -3115,6 +3128,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             String note = AgentxNativeToolGuard.forcedAskNote(kind, input, t.policy(), t.taint(),
                     workspaceRootsOf(cmd));
             if (note != null) return note;
+        }
+        // MCP 动态工具没有静态描述符，卡片上用通用话术会让人以为这条 SELECT 也在改数据。
+        // 认本轮挂载面里的 mcpToolNames（与装配同一份），把「在哪里执行」说清楚。
+        var surface = sessions.turnSlot(cmd).surface();
+        if (surface != null && surface.mcpToolNames().contains(tool)) {
+            return "MCP 外部工具：将在你登记的 MCP 服务里执行这一步。";
         }
         return "当前要求执行前确认：这一步会改动外部状态。";
     }
@@ -3728,27 +3747,37 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         List<String> roots = workspaceRootsOf(cmd, ew);
         // 游客分享/API Key 轮没有审批卡通道：污点触发时直接拒，别挂一张没人答的卡等超时
         boolean canAsk = !cmd.isGuestMode() && !cmd.isApiKey() && interactiveTurn(cmd);
+        // 根会话级放行：用户在父轮点过「本会话都允许」的工具，这一支的污点确认不再问
+        String grantScope = tools.toolGrantScope(cmd);
         wrapNative(toolkit, slot, roots, canAsk, FrameworkToolLabels.FilesystemToolNames.READ_FILE,
-                AgentxNativeToolGuard.Kind.DATA);
+                AgentxNativeToolGuard.Kind.DATA, () -> tools.toolGranted(grantScope,
+                        FrameworkToolLabels.FilesystemToolNames.READ_FILE));
         wrapNative(toolkit, slot, roots, canAsk, FrameworkToolLabels.FilesystemToolNames.GREP_FILES,
-                AgentxNativeToolGuard.Kind.DATA);
+                AgentxNativeToolGuard.Kind.DATA, () -> tools.toolGranted(grantScope,
+                        FrameworkToolLabels.FilesystemToolNames.GREP_FILES));
         wrapNative(toolkit, slot, roots, canAsk, FrameworkToolLabels.FilesystemToolNames.GLOB_FILES,
-                AgentxNativeToolGuard.Kind.DATA);
+                AgentxNativeToolGuard.Kind.DATA, () -> tools.toolGranted(grantScope,
+                        FrameworkToolLabels.FilesystemToolNames.GLOB_FILES));
         wrapNative(toolkit, slot, roots, canAsk, FrameworkToolLabels.FilesystemToolNames.LIST_FILES,
-                AgentxNativeToolGuard.Kind.DATA);
+                AgentxNativeToolGuard.Kind.DATA, () -> tools.toolGranted(grantScope,
+                        FrameworkToolLabels.FilesystemToolNames.LIST_FILES));
         wrapNative(toolkit, slot, roots, canAsk, FrameworkToolLabels.FilesystemToolNames.EXECUTE,
-                AgentxNativeToolGuard.Kind.EXEC);
+                AgentxNativeToolGuard.Kind.EXEC, () -> tools.toolGranted(grantScope,
+                        FrameworkToolLabels.FilesystemToolNames.EXECUTE));
         wrapNative(toolkit, slot, roots, canAsk, FrameworkToolLabels.FilesystemToolNames.WRITE_FILE,
-                AgentxNativeToolGuard.Kind.WRITE);
+                AgentxNativeToolGuard.Kind.WRITE, () -> tools.toolGranted(grantScope,
+                        FrameworkToolLabels.FilesystemToolNames.WRITE_FILE));
         wrapNative(toolkit, slot, roots, canAsk, FrameworkToolLabels.FilesystemToolNames.EDIT_FILE,
-                AgentxNativeToolGuard.Kind.EDIT);
+                AgentxNativeToolGuard.Kind.EDIT, () -> tools.toolGranted(grantScope,
+                        FrameworkToolLabels.FilesystemToolNames.EDIT_FILE));
     }
 
     private static void wrapNative(Toolkit toolkit, AgentxTurnSlot slot, List<String> roots,
-                                   boolean canAsk, String name, AgentxNativeToolGuard.Kind kind) {
+                                   boolean canAsk, String name, AgentxNativeToolGuard.Kind kind,
+                                   java.util.function.BooleanSupplier sessionApproved) {
         AgentTool tool = toolkit.getTool(name);
         if (tool == null || tool instanceof AgentxNativeToolGuard) return;
-        toolkit.registerAgentTool(new AgentxNativeToolGuard(tool, kind, slot, roots, canAsk));
+        toolkit.registerAgentTool(new AgentxNativeToolGuard(tool, kind, slot, roots, canAsk, sessionApproved));
     }
 
     /**
@@ -4801,6 +4830,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         if (hint != null) sb.append(",\"hint\":\"").append(esc(hint)).append("\"");
         sb.append(",\"status\":\"").append(status)
                 .append("\",\"elapsedMs\":").append(elapsedMs);
+        // 被挡下是独立终态：前端据此显示「被挡下」、不计入「已执行」。
+        // status=denied 之外再带一个布尔位，历史卡片/旧前端都能按字段读，不必猜状态词。
+        if ("denied".equals(status)) sb.append(",\"denied\":true");
         // 步骤归属：清单里当时唯一 doing 的那一项（-1=还没进到某一步，不写字段）。
         // 执行详情靠它把工具与产物归到具体步骤；缺了这块，前端只能按调用顺序猜，串步是常态。
         if (stepId >= 0) sb.append(",\"stepId\":").append(stepId);

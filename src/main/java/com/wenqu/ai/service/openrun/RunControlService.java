@@ -139,6 +139,9 @@ public class RunControlService {
         out.put("kind", plan ? "plan_approval" : (ask ? "ask_user" : "tool_approval"));
         out.put("decision", decision);
         out.put("accepted", true);
+        if (!ask && !plan && "approve".equals(decision) && "session".equals(str(b.get("scope")))) {
+            out.put("autoResolved", frameworkSessions.resolveSiblingsAfterSessionGrant(approvalId));
+        }
         return out;
     }
 

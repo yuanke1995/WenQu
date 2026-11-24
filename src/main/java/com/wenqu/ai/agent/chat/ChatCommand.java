@@ -183,6 +183,13 @@ public final class ChatCommand {
     /** 派出这一支的父轮 id：审批卡上翻后刷新恢复要挂回父轮气泡（仅分支轮有值） */
     final String parentTurnId;
     /**
+     * 本轮归属的<b>根会话 id</b>（审批放行、审批卡归集用；不影响「是不是子轮」的判定）。
+     * <p>团队成员轮是有自己界面的顶层轮（parentSessionId 为空，通知/看门狗照常），但它的审批
+     * 必须归到团队根上，否则「本会话都允许」跨不到下一次成员唤醒。分支轮沿用父轮根。
+     * null = 按 parentSessionId / 会话行 / 自身回落。
+     */
+    final String rootSessionId;
+    /**
      * 父轮本轮实际解析出的检索库集合（仅派遣分支轮有值）：子轮范围 = 本集合 ∪ 子智能体绑定库
      * （「父 ∪ 子」口径，见 {@code RetrievalScopeService}）。null = 父轮无墙或非分支轮——
      * 子轮随之按普通口径走（登录轮不限库、围墙轮按绑定库）。

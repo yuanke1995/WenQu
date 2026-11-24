@@ -32,7 +32,7 @@ import java.util.Map;
  *       并标脏本轮；</li>
  *   <li><b>入口加确认</b>：本轮已读过外部内容时，{@code execute} 里的删除/覆盖命令、完全权限档下
  *       写到工作区外的文件工具，返回 {@code ask} 让人在场确认（{@link AgentxTaint}）。
- *       用户在审批卡上选过「本次会话都允许」的那把工具除外（{@link AgentxTurnSlot#toolAllowedForSession}）。</li>
+ *       用户在审批卡上选过「本次会话都允许」的那把工具除外（根会话级放行，{@code SessionToolGrants}）。</li>
  * </ol>
  *
  * <p>只包这七把：它们是「内容来自用户电脑」的出口。知识检索/联网/文档几族的信封在各自工具内部，
@@ -59,15 +59,22 @@ public final class AgentxNativeToolGuard extends ToolBase {
     private final AgentxTurnSlot slot;
     /** 工作区根（绝对路径，规范化后）；只用于「绝对路径是否越界」的词法判断。 */
     private final List<String> roots;
-    /** 本轮有没有可应答的确认通道（游客分享/API Key 轮没有）：没有就拒绝而不是挂一张没人答的卡。 */
+    /** 本轮有没有可应答的确认通道（游客分享/API Key/定时任务轮没有）：没有就拒绝而不是挂一张没人答的卡。 */
     private final boolean canAsk;
+    /** 根会话已放行的工具判定（跨子助手/团队成员）；null=未接入，按未放行处理。 */
+    private final java.util.function.BooleanSupplier sessionApproved;
 
     public AgentxNativeToolGuard(AgentTool inner, Kind kind, AgentxTurnSlot slot, List<String> roots) {
-        this(inner, kind, slot, roots, true);
+        this(inner, kind, slot, roots, true, null);
     }
 
     public AgentxNativeToolGuard(AgentTool inner, Kind kind, AgentxTurnSlot slot, List<String> roots,
                                  boolean canAsk) {
+        this(inner, kind, slot, roots, canAsk, null);
+    }
+
+    public AgentxNativeToolGuard(AgentTool inner, Kind kind, AgentxTurnSlot slot, List<String> roots,
+                                 boolean canAsk, java.util.function.BooleanSupplier sessionApproved) {
         super(inner.getName(), inner.getDescription(), inner.getParameters(), inner.isReadOnly(),
                 concurrencySafe(inner), external(inner), mcpName(inner), stateInjected(inner),
                 inner.isReturnDirect());
@@ -76,6 +83,7 @@ public final class AgentxNativeToolGuard extends ToolBase {
         this.slot = slot;
         this.roots = roots == null ? List.of() : List.copyOf(roots);
         this.canAsk = canAsk;
+        this.sessionApproved = sessionApproved;
     }
 
     @Override
@@ -128,8 +136,8 @@ public final class AgentxNativeToolGuard extends ToolBase {
      */
     private PermissionDecision forcedConfirmation(Map<String, Object> input) {
         AgentxTurnSlot.Turn turn = slot == null ? null : slot.current();
-        // 本会话已对这把工具选过「本次会话都允许」：不再问人（按工具名放行，别的工具照问）
-        if (slot != null && slot.toolAllowedForSession(getName())) return null;
+        // 根会话已对这把工具选过「本次会话都允许」：不再问人（按工具名放行，别的工具照问）
+        if (sessionApproved != null && sessionApproved.getAsBoolean()) return null;
         ExecutionPolicy policy = turn == null ? null : turn.policy();
         AgentxTaint taint = turn == null ? null : turn.taint();
         String note = forcedAskNote(kind, input, policy, taint, roots);

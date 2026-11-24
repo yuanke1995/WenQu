@@ -73,7 +73,7 @@ class WenquTeamClientEventTest {
 
             // 依赖 shim 也留痕
             TeamTask t3 = client.createTask(ns, team, "汇总", "", List.of(), "").block();
-            WenquTeamGateway gateway = new WenquTeamGateway(store, null, events, null, null, null);
+            WenquTeamGateway gateway = new WenquTeamGateway(store, null, events, null, null, null, null);
             assertThat(gateway.addDependency(team, t1.taskId(), t3.taskId())).isNull();
             assertThat(events.list(team, t3.taskId())).extracting(m -> m.get("kind"))
                     .contains("created", "depended");

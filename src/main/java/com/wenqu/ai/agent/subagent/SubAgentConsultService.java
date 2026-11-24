@@ -110,7 +110,8 @@ public class SubAgentConsultService {
          * 单槽会被后跑的那一位盖掉前一位（问答侧取走即摘，见 {@link #takeReport}）。
          */
         private final Map<String, Map<String, Object>> reports = new ConcurrentHashMap<>();
-        private int started;
+        /** 本轮咨询过的<b>不同</b>助手：同一助手的续问/追问不占新额度（否则一次长任务三次就被掐死）。 */
+        private final java.util.Set<String> consultedAgents = new java.util.LinkedHashSet<>();
 
         synchronized String cached(String agentId, String question) {
             return answered.get(cacheKey(agentId, question));
@@ -125,13 +126,21 @@ public class SubAgentConsultService {
             return agentId + '\u0000' + (question == null ? "" : question.strip());
         }
 
-        /** 记一次已发起的咨询（上限判定在 consult 里做，这里只计数） */
-        synchronized void start() {
-            started++;
+        /** 本轮已经咨询过几位不同的助手。 */
+        synchronized int used() {
+            return consultedAgents.size();
         }
 
-        synchronized int used() {
-            return started;
+        synchronized boolean consulted(String agentId) {
+            return agentId != null && consultedAgents.contains(agentId);
+        }
+
+        /** 原子占位：同一助手不重复占额，超过上限返回 false；并发派遣下不会同时挤进上限之外。 */
+        synchronized boolean reserve(String agentId, int cap) {
+            if (agentId != null && consultedAgents.contains(agentId)) return true;
+            if (consultedAgents.size() + 1 > cap) return false;
+            if (agentId != null && !agentId.isBlank()) consultedAgents.add(agentId);
+            return true;
         }
 
         void report(String agentId, Map<String, Object> payload) {
@@ -156,6 +165,15 @@ public class SubAgentConsultService {
      */
     public String consult(Ledger ledger, Ctx ctx, BranchRunner runner, SourceSink sink,
                           String agentId, String question) {
+        return consult(ledger, ctx, runner, sink, agentId, question, null);
+    }
+
+    /**
+     * 带「连续对话句柄」的咨询：同一句柄的第二次咨询续用第一次的子会话，子助手记得上一轮结论。
+     * 句柄由 {@code WenquConsultSubagent} 按框架 SpawnedAgent 粒度持有（见 {@link SubagentConversation}）。
+     */
+    public String consult(Ledger ledger, Ctx ctx, BranchRunner runner, SourceSink sink,
+                          String agentId, String question, SubagentConversation conversation) {
         if (agentId == null || agentId.isBlank()) return "错误：agent_id 不能为空，请从「派遣助手」清单里取 id。";
         if (question == null || question.isBlank()) return "错误：question 不能为空，写清楚要它查什么。";
         if (runner == null) return "咨询通道本轮未就绪（没有可用的执行器），请基于已有资料回答。";
@@ -190,11 +208,12 @@ public class SubAgentConsultService {
             return hit + "\n\n（提示：这个问题本轮已经问过这位助手，上面就是它的回报，不要再重复问。）";
         }
         int cap = Math.max(1, ConfigDefaults.AGENT_CONSULT_MAX_PER_TURN);
-        if (ledger.used() + 1 > cap) {
-            log.info("[CONSULT] 本轮咨询已达上限 {}，拒绝对 {} 的咨询", cap, a.getName());
+        // 额度按「不同助手」算：同一助手的追问/续做是同一个人的上下文，不占新名额。
+        // 旧口径按总调用次数，spawn→send→spawn 三次就把长任务掐死了。
+        if (!ledger.reserve(id, cap)) {
+            log.info("[CONSULT] 本轮咨询助手数已达上限 {}，拒绝对 {} 的咨询", cap, a.getName());
             return "本轮最多咨询 " + cap + " 位助手，额度已用完。请基于已拿到的资料作答。";
         }
-        ledger.start();
 
         long timeoutMs = Math.max(5_000, (long) ConfigDefaults.AGENT_CONSULT_TIMEOUT_MS);
         long t0 = System.currentTimeMillis();
@@ -203,7 +222,7 @@ public class SubAgentConsultService {
             report = runner.run(new BranchRequest(ctx.parentSessionId(), ctx.parentTurnId(),
                     a.getId(), a.getName(), question, ctx.parentBrief(), ctx.depth() + 1, ctx.userId(),
                     ctx.modelRef(), ctx.guestMode(), ctx.parentScopeKbIds(), timeoutMs, -1,
-                    ctx.teamMode(), ctx.teamRootSessionId(), ctx.memberName()));
+                    ctx.teamMode(), ctx.teamRootSessionId(), ctx.memberName(), conversation));
         } catch (Exception e) {
             // 执行器契约是不外抛；真抛了说明契约破了，这里兜住并留真因（CompletableFuture 那类包装的 message 常为 null）
             Throwable cause = e.getCause() != null ? e.getCause() : e;

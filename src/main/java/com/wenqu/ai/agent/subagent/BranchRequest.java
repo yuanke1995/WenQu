@@ -36,7 +36,8 @@ public record BranchRequest(String parentSessionId, String parentTurnId, String 
                             String userId, String modelRef, boolean guestMode,
                             java.util.Collection<String> parentScopeKbIds, long timeoutMs,
                             int branchIndex,
-                            boolean teamMode, String teamRootSessionId, String memberName) {
+                            boolean teamMode, String teamRootSessionId, String memberName,
+                            SubagentConversation conversation) {
 
     /** 兼容既有 13 参调用：非团队分支默认。 */
     public BranchRequest(String parentSessionId, String parentTurnId, String childAgentId,
@@ -46,7 +47,19 @@ public record BranchRequest(String parentSessionId, String parentTurnId, String 
                          int branchIndex) {
         this(parentSessionId, parentTurnId, childAgentId, childAgentName, question, parentBrief, depth,
                 userId, modelRef, guestMode, parentScopeKbIds, timeoutMs, branchIndex,
-                false, null, null);
+                false, null, null, null);
+    }
+
+    /** 兼容既有 16 参调用：没有连续对话句柄。 */
+    public BranchRequest(String parentSessionId, String parentTurnId, String childAgentId,
+                         String childAgentName, String question, String parentBrief, int depth,
+                         String userId, String modelRef, boolean guestMode,
+                         java.util.Collection<String> parentScopeKbIds, long timeoutMs,
+                         int branchIndex,
+                         boolean teamMode, String teamRootSessionId, String memberName) {
+        this(parentSessionId, parentTurnId, childAgentId, childAgentName, question, parentBrief, depth,
+                userId, modelRef, guestMode, parentScopeKbIds, timeoutMs, branchIndex,
+                teamMode, teamRootSessionId, memberName, null);
     }
     /** 日志与异常信息里的一行身份（哪个父会话的第几层哪一支） */
     public String describe() {

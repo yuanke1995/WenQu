@@ -46,8 +46,11 @@ public class ToolAssemblyService {
         int base = (v == null || v < 0) ? global : v;
         if (depth <= 0) return Math.max(0, base);
         if (v != null && v == 0 && global > 0) base = global;
-        if (base <= 0) return 0;
-        return Math.max(3, base >> depth);
+        // 分支不再按深度做隐式右移：那是把「委派」当「降级」，真正干活的子助手先被砍。
+        // 每个子轮用智能体自己的预算；需要平台级保护时用 subagentMaxToolSteps 显式封顶。
+        int subCap = ConfigDefaults.AGENT_SUBAGENT_MAX_TOOL_STEPS;
+        if (subCap <= 0) return Math.max(0, base);
+        return base <= 0 ? subCap : Math.min(base, subCap);
     }
 
     /**
@@ -90,6 +93,20 @@ public class ToolAssemblyService {
                                          boolean branchTurn, int wfDepth,
                                          BiConsumer<String, String> degradationSink,
                                          ExecutionPolicy turnPolicy, java.util.Set<String> guestMcpServers) {
+        return mountContext(agent, userId, guestMode, branchTurn, wfDepth, degradationSink,
+                turnPolicy, guestMcpServers, true);
+    }
+
+    /**
+     * 带「本轮有没有可应答的人」的全量重载：装配期据此决定需要确认的能力挂不挂。
+     * <p>与 {@code SpringAiToolAdapter} 的 {@code approvalCanAsk} 同一份判据，避免
+     * 「装配说能问、执行说没人」或反过来——两条口径分家时，前者会白挂一个调不动的工具。
+     */
+    public ToolMountContext mountContext(Agent agent, String userId, boolean guestMode,
+                                         boolean branchTurn, int wfDepth,
+                                         BiConsumer<String, String> degradationSink,
+                                         ExecutionPolicy turnPolicy, java.util.Set<String> guestMcpServers,
+                                         boolean approvalCapable) {
         java.util.Set<String> guestAllow = guestMode && guestMcpServers != null
                 ? guestMcpServers : java.util.Set.of();
         return new ToolMountContext() {
@@ -141,13 +158,28 @@ public class ToolAssemblyService {
             @Override
             public boolean approvalOff() {
                 // 工具执行确认=off（禁用）：不给模型沙盒/MCP 这类有副作用工具，与 UI/手册的语义承诺一致。
-                // 联网搜索不受本档管辖（族上未标）
-                return agent != null && "off".equalsIgnoreCase(agent.getToolApprovalMode());
+                // 联网搜索不受本档管辖（族上未标）。读本轮生效策略而不是智能体字面值：
+                // 分支继承、团队根封顶都会改变实际审批档，装配与执行必须看同一份。
+                return "off".equalsIgnoreCase(effectiveApprovalMode());
             }
 
             @Override
             public boolean approvalAsk() {
-                return agent != null && "ask".equalsIgnoreCase(agent.getToolApprovalMode());
+                return "ask".equalsIgnoreCase(effectiveApprovalMode());
+            }
+
+            @Override
+            public boolean approvalCapable() {
+                return approvalCapable;
+            }
+
+            private String effectiveApprovalMode() {
+                if (turnPolicy != null && turnPolicy.approvalMode() != null
+                        && !turnPolicy.approvalMode().isBlank()) {
+                    return turnPolicy.approvalMode().trim();
+                }
+                return agent == null || agent.getToolApprovalMode() == null
+                        ? "auto" : agent.getToolApprovalMode().trim();
             }
 
             @Override

@@ -61,18 +61,22 @@ public class WenquTeamGateway {
     private final ChatRunBus chatRunBus;
     private final com.wenqu.ai.service.AgentService agentService;
     private final TeamWakeService teamWakeService;
+    /** 框架团队工具线程没有请求身份：解析 agentRef / 建成员行都要按根会话用户重放身份。 */
+    private final com.wenqu.ai.service.UserIdentityService userIdentityService;
     private final TeamClient client;
 
     public WenquTeamGateway(WenquMysqlBaseStore store, SessionService sessionService,
                             TeamTaskEventService taskEvents, ChatRunBus chatRunBus,
                             com.wenqu.ai.service.AgentService agentService,
-                            TeamWakeService teamWakeService) {
+                            TeamWakeService teamWakeService,
+                            com.wenqu.ai.service.UserIdentityService userIdentityService) {
         this.store = store;
         this.sessionService = sessionService;
         this.taskEvents = taskEvents;
         this.chatRunBus = chatRunBus;
         this.agentService = agentService;
         this.teamWakeService = teamWakeService;
+        this.userIdentityService = userIdentityService;
         // LocalTeamClient 的消息序号是实例内 AtomicLong：必须全应用单实例，否则消息 id 撞车。
         // 外层 WenquTeamClient：旁听任务/消息变更（账本 + 实时事件）+ 承接框架 spawnMember 的成员生命周期。
         this.client = new WenquTeamClient(new LocalTeamClient(store), taskEvents, chatRunBus,
@@ -138,27 +142,70 @@ public class WenquTeamGateway {
     /**
      * 框架 {@code team(action=spawnMember)} 的落点：建一条问渠 {@code kind=team} 持久成员会话，并补进框架名册。
      * <p>这是「control-plane」该做的事——{@code LocalTeamClient.spawnMember} 只是抛
-     * “requires control-plane TeamClient”。{@code agentRef} 若是真实问渠智能体 id 就用它，
-     * 否则回落到根会话自己的 agent（保证成员一定能跑起来），成员名仍按调用方给的 slug。
+     * “requires control-plane TeamClient”。{@code agentRef} 必须是当前根用户可读的真实智能体 id：
+     * 解析失败 fail-loud 回给 lead，不再静默回落成「无 agent 成员」；未指定时才用根会话/平台默认智能体。
      */
     public void spawnMemberSession(String rootSessionId, String memberName, String agentRef) {
-        if (rootSessionId == null || rootSessionId.isBlank() || memberName == null || memberName.isBlank()) return;
+        if (rootSessionId == null || rootSessionId.isBlank() || memberName == null || memberName.isBlank()) {
+            throw new com.wenqu.ai.common.BizException(400, "团队成员名或根会话为空，未创建成员");
+        }
         Session root = sessionService.sessionById(rootSessionId);
         if (root == null) {
-            log.warn("[TEAM] spawnMember 找不到根会话 root={}", rootSessionId);
-            return;
+            throw new com.wenqu.ai.common.BizException(404, "根会话不存在，未创建团队成员");
         }
-        String agentId = agentRef;
-        if (agentId == null || agentId.isBlank() || (agentService != null && agentService.resolveForTurn(agentId, null) == null)) {
-            agentId = root.getAgentId();
+        String uid = root.getUserId();
+        if (uid == null || uid.isBlank()) {
+            throw new com.wenqu.ai.common.BizException(409, "根会话没有归属用户，未创建团队成员");
         }
-        String child = sessionService.createTeamSession(root.getUserId(), rootSessionId, rootSessionId,
-                memberName, agentId);
-        // 刚建出来还没跑：置 IDLE 等 lead 发消息唤醒（createTeamSession 默认 RUNNING 只适用于首轮即跑的分支）
-        sessionService.updateMemberState(child, "IDLE");
-        addMember(rootSessionId, memberName, agentId, child);
-        log.info("[TEAM] spawnMember root={} member={} agent={} session={}",
-                rootSessionId, memberName, agentId, child);
+        // 框架团队工具跑在它自己的线程上：不重放身份，agentService.resolveForTurn 会把用户自己的智能体
+        // 判成不可读，成员就静默变成「无 agent」——随后落到平台默认档，MCP 等需要确认的能力全部不可用。
+        userIdentityService.asUser(uid, () -> {
+            String agentId = resolveMemberAgent(root, agentRef);
+            // 成员名是团队内唯一可寻址的身份：已存在就复用/修正，不再新建一条同名会话
+            com.wenqu.ai.model.Session existing = sessionService.findTeamMember(rootSessionId, memberName);
+            if (existing != null) {
+                String bound = existing.getAgentId();
+                if (bound == null || bound.isBlank()) {
+                    sessionService.updateMemberAgent(existing.getId(), agentId);
+                    addMember(rootSessionId, memberName, agentId, existing.getId());
+                    log.info("[TEAM] spawnMember 复用并修正既有成员 root={} member={} agent={} session={}",
+                            rootSessionId, memberName, agentId, existing.getId());
+                    return;
+                }
+                throw new com.wenqu.ai.common.BizException(409,
+                        "团队成员「" + memberName + "」已存在；要换人请先 shutdownMember 再重新派");
+            }
+            String child = sessionService.createTeamSession(uid, rootSessionId, rootSessionId,
+                    memberName, agentId);
+            // 刚建出来还没跑：置 IDLE 等 lead 发消息唤醒（createTeamSession 默认 RUNNING 只适用于首轮即跑的分支）
+            sessionService.updateMemberState(child, "IDLE");
+            addMember(rootSessionId, memberName, agentId, child);
+            log.info("[TEAM] spawnMember root={} member={} agent={} session={}",
+                    rootSessionId, memberName, agentId, child);
+        });
+    }
+
+    /**
+     * 解析成员智能体：显式 agentRef 必须真实可读，解析失败 fail-loud（回给 lead 一句能改的话），
+     * 不再静默回落成「无 agent 成员」。未指定时才用根会话自己的智能体，再退到平台默认智能体。
+     */
+    private String resolveMemberAgent(Session root, String agentRef) {
+        if (agentRef != null && !agentRef.isBlank()) {
+            com.wenqu.ai.model.Agent a = agentService.resolveForTurn(agentRef.trim(), null);
+            if (a == null) {
+                throw new com.wenqu.ai.common.BizException(404,
+                        "agent_ref「" + agentRef + "」不存在、已停用或当前用户无权使用；未创建团队成员");
+            }
+            return a.getId();
+        }
+        if (root.getAgentId() != null && !root.getAgentId().isBlank()) {
+            com.wenqu.ai.model.Agent a = agentService.resolveForTurn(root.getAgentId(), null);
+            if (a != null) return a.getId();
+        }
+        com.wenqu.ai.model.Agent def = agentService.defaultAgent();
+        if (def != null && def.getId() != null && !def.getId().isBlank()) return def.getId();
+        throw new com.wenqu.ai.common.BizException(409,
+                "根会话没有可用的智能体，且平台没有默认智能体；未创建团队成员");
     }
 
     /** 框架 {@code team(action=shutdownMember)}：把成员标 STOPPED（会话与历史保留，可再唤醒）。 */

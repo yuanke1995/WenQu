@@ -143,7 +143,8 @@ public class TurnNotifyService {
     /** 智能体提问卡挂起等用户作答。{@code askText} 是题面（界面上那张卡问的就是那句问题）。 */
     public void onAskPending(ChatCommand cmd, String askId, String askText) {
         if (!turnDoneEnabled()) return;
-        String uid = turnUid(cmd);
+        // 待决类通知：团队成员会话也要叫人（它有可打开的成员页）；「跑完了」仍按用户发起的轮过滤。
+        String uid = pendingUid(cmd);
         if (uid == null) return;
         String sessionId = cmd.getSessionId();
         submit("提问待决通知", () -> notifications.create(uid, Notification.TYPE_TOOL_ASK,
@@ -157,7 +158,7 @@ public class TurnNotifyService {
     public void onApprovalPending(ChatCommand cmd, String approvalId, String label) {
         if (!turnDoneEnabled()) return;
         String sid = cmd.getSessionId();
-        String resolvedUid = turnUid(cmd);
+        String resolvedUid = pendingUid(cmd);
         if (resolvedUid == null) {
             // 分支轮没有自己的观众：通知要落回父会话，否则点进去是一条看不见的临时会话
             String parent = cmd.getParentSessionId();
@@ -178,7 +179,7 @@ public class TurnNotifyService {
     /** 计划确认卡挂起：确认后这一轮才动手，不确认会超时并停止本轮。 */
     public void onPlanPending(ChatCommand cmd, String planApprovalId) {
         if (!turnDoneEnabled()) return;
-        String uid = turnUid(cmd);
+        String uid = pendingUid(cmd);
         if (uid == null) return;
         String sessionId = cmd.getSessionId();
         submit("计划待确认通知", () -> notifications.create(uid, Notification.TYPE_PLAN_APPROVAL,
@@ -258,9 +259,22 @@ public class TurnNotifyService {
      * 一处挡齐三类（定时任务 / 工作流子智能体 / 被咨询出去的子轮），新增发起方时只需看这里。
      */
     private String turnUid(ChatCommand cmd) {
+        return turnUid(cmd, false);
+    }
+
+    /** 待决类（审批/提问/计划）通知的可送达身份：团队成员会话也在内，用户能从成员页点卡。 */
+    private String pendingUid(ChatCommand cmd) {
+        return turnUid(cmd, true);
+    }
+
+    private String turnUid(ChatCommand cmd, boolean allowTeam) {
         if (cmd == null || cmd.getSessionId() == null || cmd.getSessionId().isBlank()) return null;
         String src = cmd.getSource();
-        if (src != null && !src.isBlank() && !TurnSource.USER.equals(src)) return null;
+        boolean sourceOk = src == null || src.isBlank() || TurnSource.USER.equals(src)
+                || (allowTeam && TurnSource.TEAM.equals(src));
+        if (!sourceOk) return null;
+        // 团队成员轮没有 parent（它自己的成员会话就是可打开的那条），待决通知就落在这条会话上；
+        // 真正的分支轮仍按父会话通知（onApprovalPending 的 parent 回落）。
         if (cmd.getParentSessionId() != null && !cmd.getParentSessionId().isBlank()) return null;
         return ownerUid(cmd.getSessionId());
     }

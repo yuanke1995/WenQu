@@ -83,18 +83,21 @@ class AgentxNativeToolGuardTest {
     @DisplayName("选过「本次会话都允许」的工具不再弹卡；别的工具照问")
     void sessionAllowedToolSkipsAsk() {
         AgentxTurnSlot slot = slot(taint(true));
+        java.util.Set<String> granted = new java.util.HashSet<>();
         AgentxNativeToolGuard exec = guard(slot, AgentxNativeToolGuard.Kind.EXEC,
-                ExecutionPolicy.of(PermissionPreset.STANDARD, null, "/Users/me/work", null));
+                ExecutionPolicy.of(PermissionPreset.STANDARD, null, "/Users/me/work", null),
+                () -> granted.contains("execute"));
         assertThat(decision(exec, Map.of("command", "rm -rf build")))
                 .isEqualTo(PermissionBehavior.ASK);
 
-        slot.allowToolForSession("execute");
+        granted.add("execute");
         assertThat(decision(exec, Map.of("command", "rm -rf build")))
                 .isEqualTo(PermissionBehavior.ALLOW);
 
         // 按工具名放行：别把另一把工具也一起放过去
         AgentxNativeToolGuard write = guard(slot, AgentxNativeToolGuard.Kind.WRITE,
-                ExecutionPolicy.of(PermissionPreset.AUTONOMOUS, null, "/Users/me/work", null));
+                ExecutionPolicy.of(PermissionPreset.AUTONOMOUS, null, "/Users/me/work", null),
+                () -> granted.contains("write_file"));
         assertThat(write.getName()).isEqualTo("write_file");
         assertThat(decision(write, Map.of("path", "/etc/hosts", "content", "x")))
                 .isEqualTo(PermissionBehavior.ASK);
@@ -120,11 +123,17 @@ class AgentxNativeToolGuardTest {
 
     private static AgentxNativeToolGuard guard(AgentxTurnSlot slot, AgentxNativeToolGuard.Kind kind,
                                                ExecutionPolicy policy) {
+        return guard(slot, kind, policy, () -> false);
+    }
+
+    private static AgentxNativeToolGuard guard(AgentxTurnSlot slot, AgentxNativeToolGuard.Kind kind,
+                                               ExecutionPolicy policy,
+                                               java.util.function.BooleanSupplier sessionApproved) {
         // policy 以轮上的那份为准（guard 读 slot.current().policy()）
         slot.begin(new AgentxTurnSlot.Turn("t1", null, null, null, policy, null,
                 slot.current().taint()));
         // 名字按 kind 取真实工具名：会话级放行是按名字判的，拿 execute 冒充 write_file 就测不到
-        return new AgentxNativeToolGuard(new FakeTool(nameOf(kind)), kind, slot, ROOTS);
+        return new AgentxNativeToolGuard(new FakeTool(nameOf(kind)), kind, slot, ROOTS, true, sessionApproved);
     }
 
     private static String nameOf(AgentxNativeToolGuard.Kind kind) {
