@@ -84,10 +84,229 @@ CI 失败绝大多数不是功能写错，而是「行为或数据变了，守�
 ```bash
 node scripts/check-eol.mjs          # 行尾策略
 node scripts/check-clipboard.mjs    # 剪贴板单一入口
+node scripts/check-duplication.mjs  # SHA-256 / 下载 / 批量勾选走单一实现
 node scripts/run-tests.mjs scripts  # 执行器/脚本契约测试
 ```
 
 Windows/macOS 相关逻辑必须补 fake platform 契约测试；无法本地真跑的，在 PR 里写清真机冒烟清单（见 `docs/cross-platform-audit.md` 第 7 节）。
+
+## 复用与死代码
+
+写新代码前先查已收口的实现（`util/`、`web/src/utils/`）。下面的规则只回答一件事：
+**什么该复用、什么该新建、什么算死代码**。适用范围 `src/main/java` 与 `web/src`。
+
+### 0. 一句话原则
+
+**同一个概念，全仓只允许一处实现。** 判断标准不是「代码像不像」，而是：
+
+> 如果这条规则明天变了（时区口径、空值语义、撤销时机、审批顺序），我需要改几个地方？
+
+如果需要改两个以上，就是重复建设，必须在**这次**改动里收口。
+
+### 1. 复用优先：先查，再写
+
+写任何工具方法前，按顺序查三处：
+
+| 顺序 | 位置 | 例子 |
+| --- | --- | --- |
+| 1 | `src/main/java/com/wenqu/ai/util/` | `Hashes`、`TextIo`、`FileNameSanitizer`、`SsrfGuard`、`UntrustedContent` |
+| 2 | 同包已有类 | 沙箱路径判断用 `SandboxPaths.isSameOrChild` |
+| 3 | `web/src/utils/` | `format`、`download`、`fileName`、`clipboard`、`token`、`useBatchSelect` |
+
+#### 1.1 已提供的公共实现（禁止再造）
+
+**后端**
+
+| 能力 | 唯一入口 | 禁用写法 |
+| --- | --- | --- |
+| SHA-256 / 定长前缀 | `util.Hashes.sha256Hex` / `sha256HexPrefix` / `sha256HexSalted` | 内联 `MessageDigest.getInstance("SHA-256")` |
+| 文本读写（显式 UTF-8） | `util.TextIo` | 单参 `Files.readString` / `writeString` |
+| 文件名清洗 | `util.FileNameSanitizer` | 自行 replace 路径分隔符 |
+| 出站 URL 安全 | `util.SsrfGuard` | 自行解析 host 判内网 |
+| 外部内容标注 | `util.UntrustedContent` | 直接把网页/MCP 返回拼进提示词 |
+
+**前端**
+
+| 能力 | 唯一入口 | 禁用写法 |
+| --- | --- | --- |
+| 文件体积 | `utils/format.fmtSize` | 页面内重写 `n >= 1024 ? ...` |
+| 表格时间（原始串截断） | `utils/format.fmtClock(ts, len, empty)` | `String(s).replace('T',' ').slice(0,16)` |
+| 详情时间（本地化） | `utils/format.fmtDate` / `fmtDateTime` | 手拼 `getFullYear()` |
+| 内存内容落盘 | `utils/download.downloadBlob` | `createObjectURL → a.click → revoke` |
+| 批量勾选 | `utils/useBatchSelect` + `reportBatchResult` | 各页面写 `toggleBatchMode` 五件套 |
+| 文件名清洗 | `utils/fileName.sanitizeFileName` | 自行正则 |
+
+#### 1.2 两条硬约束
+
+**（a）失败不要静默降级成弱实现。**
+
+```java
+// ✗ 摘要失败降级成 32 位 hashCode：碰撞概率从 2^-128 掉到 2^-32，调用方完全无感
+} catch (Exception e) {
+    return Integer.toHexString(text.hashCode());
+}
+
+// ✓ 硬失败：SHA-256 缺失说明运行环境已坏，继续跑只会产生弱指纹
+throw new IllegalStateException("SHA-256 不可用", e);
+```
+
+**（b）空值语义必须显式命名，不能靠「大家都懂」。**
+
+同一个 `str(Object)` 曾同时存在三种口径（`null` / `""` / `trim` 后 `""`），
+直接把一个换成另一个是**行为变更**。做法：
+
+- 需要 `null` 透传 → `str(...)`
+- 需要空串兜底 → `strOrEmpty(...)`
+- 需要 trim → 名字里带 trim，或调用点自己 `.trim()`
+
+> 禁止「为了统一而统一」：两种语义若都被业务依赖，就保留两个**名字不同**的函数，而不是合并成一个。
+
+#### 1.3 什么情况**应该**新写实现
+
+- 语义确实不同（例如 `SandboxPaths.isSameOrChild` 是纯字符串前缀判定，`AgentxDestructiveCommands.outside`
+  需要 `Path.normalize` + 设备/fd 识别——**刻意不合并**）
+- 每个「工具族」一个 provider 的既定模式（`McpToolProvider` / `HttpApiToolProvider` / `WorkflowToolProvider`
+  形状相同但各自绑定一个 `ToolFamily`，这是设计，不是重复）
+- 分层服务（`DocumentVectorOps` ← `DocumentChunkService` ← `DocumentParsePipeline`）职责清晰时
+
+判断口诀：**重复的是「同一份知识」，还是「同一个模式的实例」？** 前者收口，后者保留。
+
+### 2. 死代码：什么算、怎么处置
+
+#### 2.1 判定（按可靠性排序）
+
+| 手段 | 可靠性 | 说明 |
+| --- | --- | --- |
+| 前端 import 图全扫 | 高 | `web/src` 中无人 import 且非入口 → 基本可判死 |
+| 全仓 grep 类名/方法名（含 `.vue`/`.xml`/`.yml`/`.md`） | 高 | 排除反射后可信 |
+| `jdeps` 字节码入向依赖 | **低，必须复核** | 同类内引用、同包引用它看不见，误报率高 |
+| 「零引用方法」正则扫描 | **低，必须复核** | 重载、接口实现、Spring 回调全是误报 |
+
+#### 2.2 不要误判为死代码的东西
+
+以下都**不是**死代码，删了会出事：
+
+- **Spring 组件**：`@Component` / `@Service` / `@RestController` / `@Configuration`，
+  包括通过 `List<ToolGuard>`、`List<ToolFamilyProvider>` 这类集合注入被收集的（如 `UserStoppedGuard`）
+- **`@Controller` 的所有端点**：前端可能尚未接线（见 2.4）
+- **接口 + 单一实现**（如 `ChatEngine` / `TurnStateStore`）：是接缝，不是冗余
+- **`[保留]` 标记的文件**：仓库里有一批文件头带 `// [保留] …勿删` 的显式标记，
+  说明过为何保留。改之前先读标记理由
+- **事件/序列化契约**：`RunEventType`、`run events` 契约、`config-schema.json` 的键
+
+#### 2.3 移除流程
+
+1. grep 全仓（含 `web/`、`src/main/resources`、`contract/`、`.md`）确认零引用
+2. 若功能已被别处重写，**先确认新实现覆盖了旧的边界**（如 `MembersPage` 比 `InviteMemberModal`
+   多「已失效邀请·最近 30 天」）
+3. 删除后必须：`mvn compile` + `npm run build` + 前端单测
+4. commit message 写清「该能力现由 X 承载」
+
+#### 2.4 例外：后端已实现、前端无入口的端点
+
+这类**不删也不留白**。二选一，且写进代码：
+
+- 产品确定要做 → 保留，并在 controller 方法上加注释说明计划/责任人
+- 确定不做 → 删端点，同时删 `web/src/api.js` 里对应导出
+
+**禁止**长期处于「后端有、前端死导出」的中间态——下一个开发者会照着它再实现一遍。
+
+### 3. 文档与实现一致
+
+代码注释描述**当前行为**（细则见 `CONTRIBUTING.md · 代码注释规范`）。本规范额外要求：
+
+**当某个类只在「旁路」上生效时，必须在类注释里写明主路径走的是谁。**
+
+真实例子：`ApprovalGate` / `StepBudgetGuard` / `PermissionGuard` 三者挂在
+`ToolPipelineFactory` 守卫链上，而全仓只有 `RunCodeSubCallRuntime`（`run_code` 子调用）
+一处调用 `wrap`，该路径上 `approvalMode()` 恒为 `"off"`。若注释不写清楚，
+读者会以为主对话轮的审批走这条链——**这比死代码更危险**，因为它看起来是活的。
+
+写法模板：
+
+```java
+/**
+ * <p>
+ * <b>现状（勿误读）</b>：本类在唯一活路径 X 上恒放行；主路径的同类判定在 Y。
+ */
+```
+
+### 4. 前端专项
+
+#### 4.1 页面间共享的行为必须抽 composable
+
+一个交互模式出现在第 **2** 个页面时就该抽，不要等到第 6 个。判定信号：
+`toggleXxx`、`xxxMode`、五件套齐全、注释逐字相同。
+
+```js
+// 六个运营页共用
+const { batchMode, selected, allChecked, someChecked, toggleSelect, toggleBatchMode, toggleAll }
+  = useBatchSelect(selectableIds)
+```
+
+composable **不要**自己去取 `message` / `Modal` 全局实例，从参数注入，
+否则 `web/test` 里没法验证（参见 `reportBatchResult(r, verb, unit, { message, Modal })`）。
+
+#### 4.2 组件复制 vs 参数化
+
+两个组件「只有一处字面量不同」→ 参数化，不要复制。
+
+`KbIcon` / `AgentAvatar` 归一化后只差：一个 icon 组件、一个 CSS 类名、一处布尔强转。
+现在两者都是 `EntityIcon` 的薄封装（只做字段翻译），解析口径只剩一份。
+
+#### 4.3 两种时间格式化不通用
+
+- `fmtClock`：后端原始串截断，**不做时区换算** → 用于列表、要可对齐可排序
+- `fmtDate` / `fmtDateTime`：`toLocaleString`，**跟随本地时区** → 用于详情给用户看
+
+两者不能互相替代；也不要在页面里另写第三个。
+
+#### 4.4 抽取后必须补单测
+
+抽 composable / 工具函数时，在 `web/test/` 加对应用例（参考 `useBatchSelect.test.mjs`），
+把「退出批量清空勾选」「空列表不算全选」这类易回归的边界锁住。
+
+### 5. 本节的提交前自检
+
+| 改动 | 必须同步 |
+| --- | --- |
+| 新增工具方法 | 先确认 `util/`、`web/src/utils/` 无等价实现；有则复用 |
+| 新增 composable / 抽公共组件 | `web/test/` 对应用例 |
+| 删除类/组件/端点 | 全仓 grep 零引用证据 + 写清能力去向 |
+| 改摘要/加密/令牌相关 | 重点检查是否引入静默降级 |
+| `src/main/java/com/wenqu/ai/agent/tool/guard/` | 复核守卫链是否仍被 `wrap` 调用 |
+
+```bash
+mvn -o -DskipTests compile          # 后端编译
+cd web && npm run build             # 前端构建
+cd web && npm test                  # 前端单测（当前 649 例）
+node scripts/check-duplication.mjs  # 复用守卫（本规范第 1 节的落地检查）
+./scripts/ci-local.sh               # 按改动面挑跑全部闸门
+```
+
+#### 5.1 复用守卫
+
+`scripts/check-duplication.mjs` 把本规范可机械检出的三条落成 CI 闸门，已接入
+`.github/workflows/ci.yml` 与 `scripts/ci-local.sh`：
+
+| 规则 | 拦截写法 | 正确入口 |
+| --- | --- | --- |
+| `sha256` | 内联 `MessageDigest.getInstance("SHA-256")` | `util.Hashes` |
+| `download-blob` | `URL.createObjectURL` 后造 `<a download>` 并 click | `utils/download.downloadBlob` |
+| `batch-select` | 页面内声明 `allChecked` | `utils/useBatchSelect` |
+
+**确属特例时**：在该规则 `allow` 列表登记文件路径，并**写明为什么这次不合并**。
+已登记的特例本身就是文档（如 `sandboxIdForThread` 的派生 ID 必须与既有数据保持稳定）。
+
+### 6. 审查清单（Code Review 用）
+
+- [ ] 这个工具函数是不是抄来的？查过 `util/` 和 `utils/` 了吗？
+- [ ] 两个实现的两个变体，是不是只差一个参数？
+- [ ] 失败分支里有没有 `return "unknown"` / `hashCode()` / 空集合 这类静默降级？
+- [ ] 空值语义是 `null` 还是 `""`？改调用方会变行为吗？
+- [ ] 新类的注释里，「谁在调用我、我在主路径还是旁路」写清楚了吗？
+- [ ] 删除的东西，确认过不是 Spring 收集、不是接口接缝、不是 `[保留]` 的吗？
+- [ ] 新增/合并的行为，有没有对应单测？
 
 ## 代码注释规范
 

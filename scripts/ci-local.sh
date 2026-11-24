@@ -48,6 +48,7 @@ while IFS= read -r f; do
     sdk/js/*) sdk_js=1 ;;
     sdk/python/*) sdk_py=1 ;;
     contract/*|scripts/check-openapi-contract.mjs) contract=1 ;;
+    scripts/check-duplication.mjs|scripts/check-clipboard.mjs) web=1; backend=1 ;;
     .github/workflows/*|scripts/ci-local.sh|.githooks/*) all=1 ;;
   esac
 done <<< "$changed"
@@ -102,6 +103,7 @@ run() {
 
 [ "$backend" -eq 1 ] && run "backend" "$MVN" -B verify
 [ "$contract" -eq 1 ] && run "contract" node scripts/check-openapi-contract.mjs --check
+[ "$web" -eq 1 ] && run "duplication" node scripts/check-duplication.mjs
 [ "$web" -eq 1 ] && run "web" bash -c 'cd web && npm test && npm run build'
 if [ "$sdk_js" -eq 1 ] || [ "$sdk_py" -eq 1 ]; then
   run "sdk-version" node scripts/check-sdk-version.mjs
