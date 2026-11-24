@@ -114,6 +114,15 @@ public enum RunEventType {
         return mirror;
     }
 
+    /** 按 SSE 名反查枚举；不认识的名字返回 null（不抛：调用方多半在处理外部/历史帧）。 */
+    public static RunEventType bySseName(String name) {
+        if (name == null || name.isBlank()) return null;
+        for (RunEventType t : values()) {
+            if (t.sseName.equals(name)) return t;
+        }
+        return null;
+    }
+
     /** 进 SSE 账本的事件名集合（ChatRunRuntime 用）。 */
     public static java.util.Set<String> sseLedgerNames() {
         return java.util.Arrays.stream(values())

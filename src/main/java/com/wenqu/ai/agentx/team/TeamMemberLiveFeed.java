@@ -77,7 +77,7 @@ public class TeamMemberLiveFeed {
      * 是能就地操作的三张卡，产物与来源是交付物。
      * <p>不抄的：心跳、snapshot（它是本类的出口不是入口）、done/error（本类自己发）。
      */
-    private static final java.util.Set<RunEventType> RELAY = java.util.EnumSet.of(
+    static final java.util.Set<RunEventType> RELAYABLE = java.util.EnumSet.of(
             RunEventType.TURN_START, RunEventType.TOKEN, RunEventType.PROCESS, RunEventType.THINKING,
             RunEventType.THINKING_DONE, RunEventType.TOOL_STATUS, RunEventType.TOOL_OUTPUT,
             RunEventType.RUNCODE_PROGRESS, RunEventType.SUBAGENT_STEP, RunEventType.AGENT_DELEGATED,
@@ -112,6 +112,15 @@ public class TeamMemberLiveFeed {
     }
 
     private final Map<String, Feed> feeds = new ConcurrentHashMap<>();
+    /**
+     * 逐帧旁听口：key=会话 id，value=关心这一场的订阅者。
+     * <p>与 SSE 观众不同，它是<b>进程内回调</b>——给「父轮要拿子轮正文」这类同进程消费方用。
+     * 为什么不复用 {@code ChatRunBus.tap}：那条路只在总线登记的轮上推送，而子轮/成员轮的出口是
+     * 收集型通道，压根不在总线上，tap 一帧都收不到（线上实测：12 个 subagent_step 全是 tool_status，
+     * 正文 token 为 0）。直播台本来就是这些轮的帧汇聚点，从这里分出去才是对的。
+     */
+    private final Map<String, List<java.util.function.BiConsumer<String, String>>> liveListeners =
+            new ConcurrentHashMap<>();
     /** 一个 daemon 线程足够：心跳与回收都是低频小活。 */
     private final ScheduledExecutorService timer = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "team-live-feed");
@@ -149,7 +158,7 @@ public class TeamMemberLiveFeed {
         if (event == null || event.type() == null) return;
         Feed f = sessionId == null ? null : feeds.get(sessionId);
         if (f == null || f.done) return;
-        if (!RELAY.contains(event.type())) return;
+        if (!RELAYABLE.contains(event.type())) return;
         f.lastActiveAt = System.currentTimeMillis();
         Frame frame = new Frame(event.type().sseName(),
                 event.content() == null ? "" : event.content(), f.seq.incrementAndGet());
@@ -162,6 +171,34 @@ public class TeamMemberLiveFeed {
             if (overflow) f.backlog.subList(0, f.backlog.size() - MAX_BACKLOG).clear();
         }
         push(f, frame);
+        // 进程内旁听：父轮据此拿到子轮逐字正文（与 SSE 观众同一个汇聚点，不另建一条通路）
+        List<java.util.function.BiConsumer<String, String>> listeners = liveListeners.get(sessionId);
+        if (listeners != null) {
+            String raw = frame.data();
+            for (var l : listeners) {
+                try {
+                    l.accept(frame.event(), raw);
+                } catch (RuntimeException ignored) {
+                    // 单个旁听者出错不影响这一次校准：它拿不到就不拿，主链路照旧
+                }
+            }
+        }
+    }
+
+    /**
+     * 进程内旁听一场直播的帧。
+     *
+     * @return 取消旁听
+     */
+    public Runnable listen(String sessionId, java.util.function.BiConsumer<String, String> listener) {
+        if (sessionId == null || sessionId.isBlank() || listener == null) return () -> { };
+        List<java.util.function.BiConsumer<String, String>> list =
+                liveListeners.computeIfAbsent(sessionId, k -> new CopyOnWriteArrayList<>());
+        list.add(listener);
+        return () -> {
+            list.remove(listener);
+            if (list.isEmpty()) liveListeners.remove(sessionId, list);
+        };
     }
 
     /** 成员轮收场：推 done 帧、摘掉在场观众的心跳。积压留着等迟到的人。 */
@@ -326,7 +363,11 @@ public class TeamMemberLiveFeed {
                 if (now - f.lastActiveAt > RETAIN_AFTER_DONE_MS * 30L) feeds.remove(e.getKey(), f);
                 continue;
             }
-            if (now - f.doneAt > RETAIN_AFTER_DONE_MS) feeds.remove(e.getKey(), f);
+            if (now - f.doneAt > RETAIN_AFTER_DONE_MS) {
+                feeds.remove(e.getKey(), f);
+                // 旁听者由父轮自己摘（它握着取消句柄）；这里只在整场回收时兜底清一次，防泄漏
+                liveListeners.remove(e.getKey());
+            }
         }
     }
 }

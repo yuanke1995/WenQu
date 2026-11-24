@@ -155,6 +155,7 @@ public class SubAgentBranchRuntime {
         return req -> {
             long start = System.currentTimeMillis();
             String childSession = null;
+            // 先占位：拿到 childSession 之后才知道往哪个直播台抄，所以这里声明成变量、在开台那一刻换成直播版
             CollectingSseEmitter sink = new CollectingSseEmitter();
             // 干活视角的逐步记录：转发帧里每张终态工具卡顺手留一份摘要（名字/中文名/单步耗时/成败），
             // 随 BranchReport 进 subChat 落库——刷新后卡片上那条「执行过程」时间线的真身就是它。
@@ -259,13 +260,33 @@ public class SubAgentBranchRuntime {
                 // TurnRunner 的出口就是这条收集型 emitter：直播开台后它自动抄送（见 CollectingSseEmitter 的 tap），
                 // 不需要在这里换通道类型——换了反而要改 TurnRunner 契约。
                 if (live != null) {
-                    live.open(childSession);
-                    liveSid = childSession;
+                    // lambda 只能捕获 effectively final：childSession 在上面被赋值过，这里取一份 final 别名
+                    final String liveSession = childSession;
+                    live.open(liveSession);
+                    liveSid = liveSession;
+                    // 把这个出口的每一帧都抄给直播台：TurnRunner 的契约钉死 SseEmitter（换通道类型要改接口），
+                    // 而 CollectingSseEmitter 本来就有「全帧转发口」——复用它，不新增子类也不替换 sink。
+                    // 抄送目标是 childSession，所以只能在这里装（上面才刚算出来）。
+                    sink.forwardAllFrames((type, raw) -> {
+                        try {
+                            com.wenqu.ai.engine.RunEventType kind =
+                                    com.wenqu.ai.engine.RunEventType.bySseName(type);
+                            if (kind == null) return;
+                            int at = raw == null ? -1 : raw.indexOf("data:");
+                            if (at < 0) return;
+                            com.alibaba.fastjson2.JSONObject o = com.alibaba.fastjson2.JSON.parseObject(
+                                    raw.substring(at + 5).trim());
+                            if (o == null) return;
+                            live.relay(liveSession, com.wenqu.ai.engine.RunEvent.of(kind, o.getString("content"), false));
+                        } catch (RuntimeException ignored) {
+                            // 单帧抄送失败不影响这一轮：观众少一帧，落库与收尾一切照旧
+                        }
+                    });
                     // 父轮卡片订阅这一支的正文：开台必须在订阅之前（订阅时先回 snapshot，
                     // 否则开头那几帧会落在订阅之前，卡片上看到的是半截话）
                     if (intoText != null) {
                         try {
-                            untap = intoText.apply(childSession);
+                            untap = intoText.apply(liveSession);
                         } catch (RuntimeException e) {
                             log.warn("[SUBAGENT] 子轮正文订阅失败（退化为只有步骤上翻）session={}: {}",
                                     childSession, e.toString());

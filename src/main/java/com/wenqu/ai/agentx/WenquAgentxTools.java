@@ -1097,9 +1097,11 @@ public class WenquAgentxTools {
             // 前端同一个消费口就能把正文挂到对应的派遣卡下面。
             int branchIndex = Math.max(0, cmd.getSubagentDepth());
             String branchAgent = nameOfAgent(childAgentId);
-            java.util.function.Function<String, Runnable> intoText = (liveFeed == null || chatRunBus == null)
+            // 从直播台旁听（不是 ChatRunBus.tap）：子轮的出口是收集型通道、不登记在总线上，
+            // 从前那条 tap 一帧都收不到——线上实测 12 个 subagent_step 全是 tool_status、正文为 0。
+            java.util.function.Function<String, Runnable> intoText = liveFeed == null
                     ? null
-                    : sid -> chatRunBus.tap(sid, (frameType, raw) -> {
+                    : sid -> liveFeed.listen(sid, (frameType, raw) -> {
                 if (!"token".equals(frameType) && !"thinking".equals(frameType)) return;
                 Object content = frameContentOf(raw);
                 if (content == null || String.valueOf(content).isEmpty()) return;
