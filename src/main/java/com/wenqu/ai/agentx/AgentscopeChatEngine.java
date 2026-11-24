@@ -563,8 +563,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 入参 channel 不许重新赋值：它被后面几十个 lambda 捕获，一旦变成非 effectively final 整轮都编译不过；
         // 而下面的语句会自己把 channel 再读一遍——所以先算好「要不要包」，一次构造出当轮出口。
         final com.wenqu.ai.agentx.team.TeamMemberLiveFeed feed = memberLiveFeed;
+        // 要不要直播抄送：成员会话（成员页/唤醒）或子助手分支轮（depth>0）。
+        // 子轮必须也包上——它的会话行是 KIND_TEMP，单看 kind 判不出来，
+        // 而它的正文正是父轮派遣卡要显示的那一段（线上实测：漏了这一条，subagent_step 只有工具步）。
         final boolean liveThisTurn = feed != null && cmd.getSessionId() != null
-                && !cmd.getSessionId().isBlank() && isTeamMemberSession(cmd);
+                && !cmd.getSessionId().isBlank()
+                && (isTeamMemberSession(cmd) || cmd.getSubagentDepth() > 0);
         // 幂等：唤醒/分支那两处可能已经开过台（含更早的积压帧），这里只是确保有
         if (liveThisTurn) feed.open(cmd.getSessionId());
         final RunChannel turnChannel = liveThisTurn
@@ -4493,6 +4497,17 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // done 之后必须收通道：手写侧是 runChat 自己 completeEmitter；不收的话帧都到了、
         // 连接却挂着直到看门狗 300s 超时截断，前端「这一轮结束」要等五分钟才落地
         channel.complete();
+        // 收台：成员页手动发起的轮不经过 TeamWakeService，那里收不到尾——不收的话直播台永远
+        // done=false，前端每次进页面都拿到一份「还在跑」的旧快照并反复重连（标题一直显示「重连中」）。
+        // 挂在 finish 里而不是各调用方：轮结束的路径有好几条（正常/停止/超时/失败），
+        // 只有引擎这一处是必经之路。
+        if (memberLiveFeed != null && cmd.getSessionId() != null && !cmd.getSessionId().isBlank()) {
+            try {
+                memberLiveFeed.finish(cmd.getSessionId(), "这一轮已结束");
+            } catch (RuntimeException e) {
+                log.debug("[TEAM] 直播收台失败（不影响本轮）session={}: {}", cmd.getSessionId(), e.toString());
+            }
+        }
     }
 
     /**

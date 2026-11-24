@@ -94,6 +94,25 @@ test('接流层：done 帧收尾一次；快照不带 done 则保持接流', () 
   assert.deepEqual(ends, ['done'], '多路终态只通知一次')
 })
 
+test('接流层：一条流没有任何 snapshot 就结束 = 没有直播可看，不标重连、不重连', () => {
+  // 后端在没有直播台时回空流；把它当断线会让成员页标题一直闪「重连中」
+  const starts = [], ends = [], statuses = [], timers = []
+  const live = createMemberLive({
+    subscribe: (sid, o) => { starts.push(o) },
+    onFrame: () => {}, onSnapshot: () => {},
+    onEnd: why => ends.push(why),
+    onStatus: st => statuses.push(st),
+    onWarn: () => {},
+    setTimer: (fn) => { timers.push(fn); return timers.length },
+    clearTimer: () => {}
+  })
+  live.start('memb-empty')
+  starts[0].onDone()
+  assert.deepEqual(ends, ['closed'], '收场理由是「没有直播」而不是断线')
+  assert.deepEqual(statuses, ['live', 'closed'], '状态不经过 reconnecting')
+  assert.equal(timers.length, 0, '不排重连')
+})
+
 test('接流层：断线后退避重连，重连拿到快照即恢复直播（不退回历史）', () => {
   const starts = []
   const ends = []
@@ -109,7 +128,8 @@ test('接流层：断线后退避重连，重连拿到快照即恢复直播（�
   })
   live.start('memb-r')
   assert.equal(starts.length, 1)
-  // 第一条连接断了
+  // 先收到过直播（snapshot），之后的断开才算「看着看着断了」
+  starts[0].onSnapshot({ done: false, frames: [] })
   starts[0].onError('读取失败: network', 'interrupted')
   assert.equal(ends.length, 0, '断线不等于这一轮结束：不许立刻收场')
   assert.equal(warns.length, 1, '第一次断线要告诉用户「正在重连」')
@@ -135,6 +155,7 @@ test('接流层：重连多次仍接不上才收场（如实退回历史）', ()
     clearTimer: () => {}
   })
   live.start('memb-x')
+  starts[0].onSnapshot({ done: false, frames: [] })
   // 一直断：每次都会排下一次重连，直到超出退避表
   for (let i = 0; i < 10; i++) {
     const last = starts[starts.length - 1]

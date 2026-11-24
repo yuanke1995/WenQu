@@ -47,6 +47,9 @@ export const createMemberLive = ctx => {
     const sid = token.sid
     const abort = new AbortController()
     token.abort = abort
+    // 这一次连接有没有真的收到过直播（snapshot 或任意帧）。没有就退避重连，
+    // 收到过又断才说明是「看着看着断了」——两者对用户的意义完全不同。
+    token.sawFrames = false
     state = token
     if (!reconnect && typeof ctx.onStatus === 'function') ctx.onStatus('live')
     ctx.subscribe(sid, {
@@ -66,11 +69,21 @@ export const createMemberLive = ctx => {
       },
       onSnapshot: snap => {
         if (token.ended) return
+        token.sawFrames = true
         ctx.onSnapshot(snap || { done: false, frames: [] }, sid)
         // 快照就带着 done：这一轮在我们进页面之前已跑完——历史里已有结果，直播到此为止
         if (snap && snap.done) endWith('done', token)
       },
-      onDone: () => endWith('done', token),
+      onDone: () => {
+        // 没收到过 snapshot 就结束了 = 后端没有这一场的直播台（204/空流）。
+        // 这不是「断线」，而是「现在没东西可看」：不能标成重连中，也不必重连——
+        // 历史里已经有这一轮的结果，再重连只会让标题一直闪「重连中」。
+        if (!token.sawFrames) {
+          endWith('closed', token)
+          return
+        }
+        endWith('done', token)
+      },
       onError: (err, kind) => onBroken(token, err, kind)
     })
   }
