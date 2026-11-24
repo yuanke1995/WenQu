@@ -18,8 +18,9 @@
         <span class="chat-title">{{ memberViewRoot ? (memberViewName || '成员会话') : currentSessionTitle }}</span>
         <!-- 当前工作区标识：约定每轮注入 system prompt，用户有权在聊天的当场看见它在生效；
              没挂工作区的会话接口仍返回档位等字段，但 projectId 为空——这里按它判断，标识不显示（不编名字）。
+             implicit 兜底容器也一样不显示：它没有目录，名字被兜成「会话」，挂出来只会被读成会话标题重复。
              点它直接进工作区页面（目录/记忆/隔离都在那一页） -->
-        <button v-if="sessionWorkspace && sessionWorkspace.projectId" class="head-ws" :class="{ 'head-ws-archived': sessionWorkspace.archived }"
+        <button v-if="sessionWorkspace && sessionWorkspace.projectId && !sessionWorkspace.implicit" class="head-ws" :class="{ 'head-ws-archived': sessionWorkspace.archived }"
                 :title="wsTitle" @click="router.push('/project/' + sessionWorkspace.projectId)">
           <folder-open-outlined class="head-ws-ic" />
           <span class="head-ws-name">{{ sessionWorkspace.name }}</span>
