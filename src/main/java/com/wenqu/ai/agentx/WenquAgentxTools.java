@@ -766,15 +766,36 @@ public class WenquAgentxTools {
             ChatCommand cmd, com.wenqu.ai.agent.permission.ExecutionPolicy memberPolicy) {
         try {
             String root = cmd.getTeamRootSessionId();
+            // 这一轮是不是根会话自己发的（根派成员时 depth=0、会话 id 就是根）
+            boolean isRootItself = false;
             if (root == null || root.isBlank()) {
                 var ms = sessionService.sessionById(cmd.getMemberSessionId());
                 root = ms == null ? null : ms.getRootSessionId();
             }
+            isRootItself = root != null && root.equals(cmd.getSessionId());
             if (root == null || root.isBlank()) return memberPolicy;
             var rootSession = sessionService.sessionById(root);
             if (rootSession == null) return memberPolicy;
-            com.wenqu.ai.model.Agent rootAgent = agentService.resolveForTurn(rootSession.getAgentId(), null);
+            // 根会话这一轮的作答方从哪来：c_ai_session.agent_id 是「最近一次作答的智能体」
+            // （见 SessionService#findEmptySession 的注释），新建会话在首轮之前它恒为 NULL。
+            // 拿它当「根的策略来源」就会读出 rootAgent=null → 回落 standard/ask，
+            // 把成员显式配的 auto 压成 ask（线上实测：首轮派遣必弹审批卡）。
+            // 所以优先用本轮真正生效的智能体：
+            //   ① 这一轮本身就是根会话（自己派成员）→ cmd.agentId 就是用户左下角选的那一位；
+            //   ② 从成员回溯到根（成员轮）→ 只能读会话行那份快照。
+            String rootAgentId = isRootItself ? cmd.getAgentId() : rootSession.getAgentId();
+            com.wenqu.ai.model.Agent rootAgent = agentService.resolveForTurn(rootAgentId, null);
             String rootPreset = sessionService.permissionPresetOf(root);
+            // 根侧「根本没有配置」与「根配的是 ask」是两件事：前者不该封顶成员。
+            // 根没有作答方、也没选过会话档位时，它的策略只是一份平台默认值——拿默认值去压
+            // 成员自己的显式设置，等于让「还没答过一轮的会话」决定成员的权限。
+            // 这不是放开权限：成员策略本身仍受它自己的档位/黑名单约束，封顶只在根确有配置时生效。
+            if (rootHasNoPolicy(rootAgent, rootPreset)) {
+                log.info("[PERM] 根会话没有作答方也没有档位，成员策略原样生效（不做封顶）: member={} root={} "
+                                + "memberAgent={}({})", cmd.getMemberSessionId(), root, cmd.getAgentId(),
+                        memberPolicy.approvalMode());
+                return memberPolicy;
+            }
             var rootPolicy = toolAssembly.resolvePermissionPolicy(rootAgent, rootPreset, null, false);
             if (rootPolicy == null) return memberPolicy;
             var capped = capPolicy(memberPolicy, rootPolicy);
@@ -785,7 +806,7 @@ public class WenquAgentxTools {
                 log.info("[PERM] 成员审批档被根会话封顶: member={} root={} memberAgent={}({}) rootAgent={}({}) "
                                 + "memberApproval={} → {}（取更严的一侧；要免确认就放宽根会话的结果）",
                         cmd.getMemberSessionId(), root, cmd.getAgentId(),
-                        memberPolicy.approvalMode(), rootSession.getAgentId(), rootPolicy.approvalMode(),
+                        memberPolicy.approvalMode(), rootAgentId, rootPolicy.approvalMode(),
                         memberPolicy.approvalMode(), capped.approvalMode());
             }
             return capped;
@@ -814,6 +835,17 @@ public class WenquAgentxTools {
         return new com.wenqu.ai.agent.permission.ExecutionPolicy(
                 preset, sm, approval, enforcement, memberPolicy.writableRoot(),
                 java.util.Set.copyOf(deny));
+    }
+
+    /**
+     * 根会话是否「根本没有自己的策略」——没有作答方，也没选过会话档位。
+     * <p>与「根配的是 ask」必须分开：前者该原样返回成员策略，后者才该封顶。
+     * 判错的后果不对称——把「没配置」当成 ask，成员显式配的 auto 就被一个不存在的策略压死
+     * （线上实测：新建会话首轮派遣必弹审批卡）；反过来把「配了 ask」当成没配置，则委派会放大权限。
+     * 所以这里只认「两样都空」这一种情形，且必须由单测钉住。
+     */
+    static boolean rootHasNoPolicy(com.wenqu.ai.model.Agent rootAgent, String rootPreset) {
+        return rootAgent == null && (rootPreset == null || rootPreset.isBlank());
     }
 
     private static boolean sameApproval(com.wenqu.ai.agent.permission.ExecutionPolicy a,
