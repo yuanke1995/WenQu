@@ -73,3 +73,36 @@
 - Phase 4：证据/凭据保持现状并说明原因，不硬迁。
 - Phase 5：死代码已删；旧列/旧适配器保留为待独立迁移项。
 - 全量测试：483 tests / 0 failures / 0 errors / 2 skipped。
+
+---
+
+## 目标偏离说明（2026-11-24 复核）
+
+原架构方案 §2.2 写的是「Agent 不再持有能力字段，而持有版本化的绑定声明（`CapabilityBinding`）」，
+§6 验收写的是「`c_ai_agent` 只有身份、人设、策略字段；新增能力不新增列」。
+
+**这一条没有做到，属于明确未完成项，不是已完成项。**
+
+现状：
+
+- `c_ai_agent` 仍有 21 个能力绑定列（`toolKnowledge/toolBuiltin/toolSkill/toolArtifact/toolMcp/toolBrowser/`
+  `toolWebsearch/toolHttp/toolWorkflow/skills/mcps/builtinTools/httpTools/workflowTools/`
+  `knowledgeBaseIds/knowledgeTags/knowledgeFilter/knowledgeScope/knowledgeDisabled/toolDeny/toolApprovalMode`）。
+- 已完成的只是**读侧收敛**：所有列只由 `AgentToolSelectionAdapter` 读取，装配层与 provider 不再直读；
+  写侧仍是原有逐列保存。
+- 因此「新增能力不新增列」目前**不成立**：新增一族仍要加列 + 改适配器 + 改前端。
+
+为什么没有一起做：
+
+1. 删列/换结构是数据迁移，涉及 `c_ai_agent_version` 历史快照、市场模板导入导出、前端表单、回滚路径；
+2. 必须先有双写 + 回滚 + 兼容读的过渡方案，否则历史版本重测与模板安装会静默丢配置；
+3. 这属于独立迁移项目，塞进本次重构会同时扩大风险面与验收面。
+
+后续建议（独立立项）：
+
+- 新增 `c_ai_agent_binding`（agent_id / revision / capability_id / config / enabled），双写期读旧列、写新表；
+- 读侧切到新表并保留旧列兜底一个版本周期；
+- 市场模板改为分发绑定集合，安装时按安装人权限重写；
+- 最后一次性 drop 旧列，并删 `AgentToolSelectionAdapter` 的列映射分支。
+
+在此之前，`AgentToolSelectionAdapter` 就是那道「新增能力只改一处」的收口点，但它不等于已完成表结构收敛。
