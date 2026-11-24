@@ -9,29 +9,18 @@ import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** 按名禁用交给框架 ToolsConfig；不误伤框架平台工具。 */
+/** 允许集合 + 按名禁用都交给框架 ToolsConfig；不误伤框架平台工具。 */
 class ToolConfigFactoryTest {
 
     @Test
     @DisplayName("policy deny 进入 ToolsConfig.deny，框架 ToolFilter 能拦住")
     void denyReachesFrameworkFilter() {
         ExecutionPolicy policy = ExecutionPolicy.of(PermissionPreset.STANDARD, "auto", "/workspace", "grep_files,wen_qugithub_search");
-        ToolsConfig config = ToolConfigFactory.fromPolicy(policy);
+        ToolsConfig config = ToolConfigFactory.fromPolicyAndAllow(policy, java.util.List.of("searchKnowledge", "grep_files"));
         assertThat(config.getDeny()).containsExactlyInAnyOrder("grep_files", "wen_qugithub_search");
         assertThat(ToolFilter.isAllowed("grep_files", config)).isFalse();
         assertThat(ToolFilter.isAllowed("wen_qugithub_search", config)).isFalse();
         assertThat(ToolFilter.isAllowed("searchKnowledge", config)).isTrue();
-    }
-
-    @Test
-    @DisplayName("无 deny 时不设 allow/default 收窄，平台工具保持可用")
-    void emptyDenyDoesNotRestrict() {
-        ToolsConfig config = ToolConfigFactory.fromPolicy(null);
-        assertThat(config.getDeny()).isNull();
-        assertThat(config.getAllow()).isNull();
-        assertThat(config.isStrictAllow()).isFalse();
-        assertThat(config.isDefaultToolsEnabled()).isTrue();
-        assertThat(ToolFilter.isAllowed("read_file", config)).isTrue();
     }
 
     @Test

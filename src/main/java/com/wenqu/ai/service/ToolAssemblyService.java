@@ -8,10 +8,7 @@ import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.model.Agent;
 import org.springframework.stereotype.Service;
 
-import java.util.Arrays;
-import java.util.Set;
 import java.util.function.BiConsumer;
-import java.util.stream.Collectors;
 
 /**
  * 本轮工具装配判据的<b>唯一实现</b>（原先私有在 {@code ChatService} 里）。
@@ -19,8 +16,8 @@ import java.util.stream.Collectors;
  * 「这一族这一轮挂不挂」。留在上帝类里只有两种下场——框架侧另抄一份判据，或框架侧干脆不判。
  * 这两条都是仓库注释反复警告过的事故形状：游客可见性收窄与权限档位裁剪各写一遍时，
  * 管理员收紧一处、另一处照旧放行，后果是越权读库/越权执行，不是难看。
- * <p>「族 → {@code c_ai_agent} 的哪一列」这条映射仍然留在问答侧（service 层）而不是通用装配层
- * （{@code agent/tool}）：Agent 是业务实体，通用层不该认识它，否则下一族想加开关得先改通用层。
+ * <p>「族 → {@code c_ai_agent} 的哪一列」的映射在 {@link AgentToolSelectionAdapter}（业务适配器）；
+ * 本类与通用装配层都不认识 Agent 字段，下一族加开关只需改适配器。
  */
 @Service
 public class ToolAssemblyService {

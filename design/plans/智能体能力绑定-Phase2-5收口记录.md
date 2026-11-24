@@ -58,7 +58,9 @@
   - `resolveTurnAgent`
   - `resolveDelegatedAgent`
   - `emitAgentDelegated`
-- 保留旧 `c_ai_agent` 列与 `LegacyAgentBindingAdapter` 计划：**不做一次性删列**。
+- 删除已被 allow+deny 版本取代的 `ToolConfigFactory.fromPolicy`，只保留 `fromPolicyAndAllow`。
+- 清理 `ToolAssemblyService` 中随族→列映射一起退役的 `Arrays/Set/Collectors` import 与过期注释。
+- 旧 `c_ai_agent` 列与 `LegacyAgentBindingAdapter` 计划：**不做一次性删列**。
   - 原因：数据迁移 + 旧客户端/历史快照/市场模板兼容面未收敛；删除列属于独立迁移项目，必须先有双写/回滚方案。
   - 当前状态是「旧列只由业务适配器读，新逻辑走 selection/resolveForTurn」；等新读路径稳定后再做 drop migration。
 

@@ -813,7 +813,7 @@ public class WenquAgentxTools {
 
     /**
      * 平台默认作答智能体 id（未设返回 null）。
-     * <p>与问答侧 {@code ChatService.resolveTurnAgent} 的回落同源：用户在问答页直接说话时
+     * <p>与问答侧默认智能体回落同源：用户在问答页直接说话时
      * 请求里没有 agentId，当轮按默认智能体作答；续跑轮必须落到同一个身份上，
      * 否则同一会话会出现「用户轮 auto、目标轮逐次确认」。
      */

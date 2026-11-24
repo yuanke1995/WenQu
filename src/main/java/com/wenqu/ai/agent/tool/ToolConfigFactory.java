@@ -16,15 +16,6 @@ public final class ToolConfigFactory {
     private ToolConfigFactory() {
     }
 
-    /** 只表达 deny：用于还没迁移 allow 的旧调用。 */
-    public static ToolsConfig fromPolicy(com.wenqu.ai.agent.permission.ExecutionPolicy policy) {
-        ToolsConfig config = base(policy);
-        config.setStrictAllow(false);
-        config.setDefaultToolsEnabled(true);
-        config.setAllow(null);
-        return config;
-    }
-
     /**
      * 表达「允许集合 + deny」：allow 之外的问渠工具被框架移除，平台工具由框架的 platform 白名单放行。
      * <p>{@code strictAllow=false}：框架自己的 team/subagent/plan/skill_manage 等平台工具不在
