@@ -98,6 +98,17 @@ test('终态：认不到 start 卡就补一张；askUser 终态撤提问卡、ru
   assert.equal(msg.runBoard, null)
 })
 
+test('终态：只有终态帧（无 start）时也带「被挡下」第三态', () => {
+  // 观众中途进来（接流/成员直播）手里没有 start 卡，只能靠终态帧自建；
+  // 少了 denied，被拒的那一步就会显示成一张「已执行」的绿√
+  const msg = {}
+  const { ctx } = ctxOf()
+  applyToolStatus(msg, { name: 'w_q_sql_query', status: 'denied', args: '{"sql":"select 1"}' }, ctx)
+  assert.equal(msg.toolCalls.length, 1)
+  assert.equal(msg.toolCalls[0].status, 'denied')
+  assert.equal(msg.toolCalls[0].denied, true)
+})
+
 test('坏载荷：不抛错也不动卡片', () => {
   const msg = {}
   const { ctx, calls } = ctxOf()

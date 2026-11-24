@@ -393,6 +393,49 @@ export function resumeChat (sessionId, opts = {}) {
 /** 探测：该会话是否还有一轮在跑（有才值得开一条接流通道，省一次「什么都没有」的流） */
 export const getChatRun = sid => request(`/chat/run?sessionId=${encodeURIComponent(sid)}`, { timeout: 8000 })
 
+/**
+ * 团队成员轮直播：订阅某位成员<b>正在跑的那一轮</b>。
+ * <p>为什么要有这条通道：成员轮由框架唤醒在后台起跑、没有请求线程，它的 SSE 出口是一次性的收集型通道
+ * （写完即丢）。成员会话页因此只能等整轮跑完读历史——看到的是「一次性蹦出来的结果」。
+ * 后端在起跑那一刻开了直播台，这条 GET 就是观众席：第一帧 snapshot 带这一段已产生的全部帧
+ * （按原顺序），之后逐帧增量，事件名与主问答<b>完全同一套</b>（token/thinking/tool_status/
+ * approval_required/artifact… 直到 done），所以前端用的是同一个派发器。
+ * <p>没有在跑的轮时后端回 204 / 空流：调用方读不到 snapshot 即按「没有直播」退回历史，不当错误。
+ * {@code onSnapshot} 拿到的参数是 {sessionId, done, frames:[{event,data,seq}]}。
+ */
+export function subscribeMemberLive (memberSessionId, opts = {}) {
+  const { onSnapshot, onDone, onError, signal, idleTimeoutMs = 180000 } = opts
+  if (typeof onSnapshot !== 'function' || typeof onDone !== 'function') return
+  // 首帧 snapshot 在这里先被拿走（帧要按原顺序逐条派发），之后的增量走主问答同一个派发器
+  return streamChatSse(signal => fetch(
+    `${BASE}/team/member/${encodeURIComponent(memberSessionId)}/live`,
+    { method: 'GET', headers: authHeaders(), signal }
+  ), {
+    ...opts,
+    idleTimeoutMs,
+    onSnapshot: (content) => {
+      const snap = parseLooseJson(content)
+      // 快照里的帧逐条按主问答同一套回调派发；派发完再通知调用方「补完了」
+      const frames = snap && Array.isArray(snap.frames) ? snap.frames : []
+      for (const f of frames) {
+        if (!f || !f.event) continue
+        opts.onFrame && opts.onFrame(f.event, f.data == null ? '' : f.data, f)
+      }
+      onSnapshot(snap || { sessionId: memberSessionId, done: false, frames: [] })
+    },
+    onDone: (payload) => onDone(payload),
+    onError: (err, kind) => { if (onError) onError(err, kind) },
+    seqFloor: -1
+  })
+}
+
+/** 宽松解析：SSE 的 data 可能是字符串也可能是已解析对象（快照/后端各处的写法不一） */
+function parseLooseJson (content) {
+  if (content == null || content === '') return null
+  if (typeof content === 'object') return content
+  try { return JSON.parse(content) } catch (e) { return null }
+}
+
 /** 新建会话 */
 // 新建对话的目标工作区：由侧栏工作区行的「+」/ 工作区页入口设置。
 // 为什么放在这里而不是让调用方传参：newSession() 的唯一调用点在 chat/useChatEngine.js

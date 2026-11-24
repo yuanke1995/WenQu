@@ -34,6 +34,18 @@
       <SubAgentRunFrames v-if="fullOpen" :frames="fullFrames" :live="live" style="margin-top:4px" />
     </div>
 
+    <!-- 执行中它正在写什么：子轮正文（token）实时长出来。此前这一支的正文从不上翻，
+         父轮只能等它跑完才看到整段回答——这正是「派遣像单线、过程只停在步数」的观感来源。
+         终态答案到达后由下面的正式回答段接管，这里自动退场。 -->
+    <div v-if="live && (t._liveThinking || t._liveText)" class="sac-line">
+      <div class="sac-label">
+        <span>{{ t._liveText ? '它正在写' : '它在想' }}</span>
+        <span class="sac-meta sac-live-dot" title="实时">●</span>
+      </div>
+      <div v-if="t._liveThinking && !t._liveText" class="sac-live-think">{{ liveThinkTail }}</div>
+      <div v-if="t._liveText" class="sac-live-text">{{ liveTextTail }}<span class="sac-caret-blink">▍</span></div>
+    </div>
+
     <div v-if="!live" class="sac-line">
       <div class="sac-label">
         <AgentAvatar :agent="agent" :size="14" />
@@ -108,6 +120,17 @@ const v = computed(() => consultChatView(props.t) || {
   question: '', name: '', answer: '', steps: 0, stepList: [], dur: '', sources: [], artifacts: [],
   failed: false, error: ''
 })
+/** 直播正文只留尾部一段：观众要看的是「它此刻在写什么」，前面那截等终态答案接手 */
+const LIVE_TAIL = 600
+const liveTextTail = computed(() => {
+  const s = String(props.t?._liveText || '')
+  return s.length > LIVE_TAIL ? '…' + s.slice(-LIVE_TAIL) : s
+})
+const liveThinkTail = computed(() => {
+  const s = String(props.t?._liveThinking || '')
+  return s.length > 300 ? '…' + s.slice(-300) : s
+})
+
 /** 终态优先落库那份（steps 字段）；直播退回 _steps——两者同源同形，切换无跳变 */
 const stepsView = computed(() => v.value.stepList.length
   ? v.value.stepList
@@ -157,6 +180,15 @@ const fmtSize = n => n >= 1048576 ? `${(n / 1048576).toFixed(1)}MB`
 /* 内边距随所在壳走：PC 工具卡头是 4px 9px、移动端是 10px 12px，由宿主用 :deep 覆盖这个变量，
    否则卡里的正文会与卡片头左右错位（与 AskRecordCard 同一手法） */
 .sa-chat { padding: var(--sa-chat-pad, 0 9px 6px); }
+/* 子轮实时正文：与终态答案同一档字号行高，只是略淡——它在长，还不是定稿 */
+.sac-live-text { white-space: pre-wrap; word-break: break-word; font-size: 13px; line-height: 1.7;
+  color: var(--app-text-2, #5f6570); max-height: 220px; overflow: auto; }
+.sac-live-think { white-space: pre-wrap; word-break: break-word; font-size: 12px; line-height: 1.65;
+  color: var(--app-text-3, #8a9099); max-height: 120px; overflow: auto; border-left: 2px solid var(--app-border, #e6e9ed);
+  padding-left: 8px; }
+.sac-live-dot { color: var(--app-accent, #4f6ef7); animation: sac-blink 1.2s ease-in-out infinite; }
+.sac-caret-blink { display: inline-block; margin-left: 1px; animation: sac-blink 1s step-end infinite; color: var(--app-accent, #4f6ef7); }
+@keyframes sac-blink { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
 .sac-line { margin: 6px 0; }
 .sac-label {
   display: flex; align-items: center; gap: 5px; margin-bottom: 3px;

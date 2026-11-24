@@ -56,7 +56,8 @@ public class AgentxConfiguration {
                                com.wenqu.ai.mapper.AiDocumentMapper documentMapper,
                                com.wenqu.ai.agentx.team.WenquTeamGateway teamGateway,
                                com.wenqu.ai.agentx.team.WenquRedisMessageBus teamBus,
-                               com.wenqu.ai.agentx.team.TeamWakeService teamWakeService) {
+                               com.wenqu.ai.agentx.team.TeamWakeService teamWakeService,
+                               com.wenqu.ai.agentx.team.TeamMemberLiveFeed teamLiveFeed) {
         AgentscopeChatEngine engine = new AgentscopeChatEngine(modelRegistry, configService, properties, tools,
                 sessions, sessionService, teamService, attachments, userImages, keywordExtractor, artifactService,
                 sandboxService, consultService, citations, redisProperties, qaLog, toolRegistry, projectService,
@@ -66,6 +67,10 @@ public class AgentxConfiguration {
                 chatRunBus, mcpToolLabelService,
                 journalRotation, knowledgeMapper, documentMapper,
                 chatService::resolveTurnModel);
+        // 后台轮直播：成员轮（框架唤醒）与子助手分支（分支执行器）都是 headless 轮，
+        // 共用同一个直播台——成员会话页订阅它，父轮的派遣卡也订阅它（拿子轮逐字正文）。
+        engine.bindMemberLiveFeed(teamLiveFeed);
+        tools.bindLiveFeed(teamLiveFeed);
         factory.bindFramework(engine);
         // 智能体团队框架化：引擎接上框架 TeamClient 门面 + Redis 总线；成员被 mailbox 消息唤醒时，
         // 由 TeamWakeService 走与分支执行器同一个 chatService.chat 入口起一轮。

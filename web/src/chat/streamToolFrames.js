@@ -98,6 +98,9 @@ export const applyToolStatus = (msg, raw, ctx) => {
         if (t.subChat) last.subChat = t.subChat
       } else {
         const card = { ...t }
+        // 没有 start 的终态帧（接流中途进来、或成员页直播观众）同样要带上第三态：
+        // 少这一行，被挡下的那一步在卡片上就是一张「已执行」的绿√——正是线上「6 个 ✓ 实际一个没跑」
+        if (t.denied || t.status === 'denied') card.denied = true
         list.push(card)
         ctx.pushTimelineTool(msg, card)
       }

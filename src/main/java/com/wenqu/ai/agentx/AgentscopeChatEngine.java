@@ -80,6 +80,18 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     private static final Logger log = LoggerFactory.getLogger(AgentscopeChatEngine.class);
 
     /**
+     * 成员轮直播台（由装配层绑定）：成员会话的每一轮在<b>起跑这一刻</b>开台，
+     * 前端成员页订阅 /team/member/{sid}/live 就能拿到逐字正文与逐步工具卡——与主问答同一条事件契约。
+     * 非成员轮为 null，零开销。
+     */
+    private volatile com.wenqu.ai.agentx.team.TeamMemberLiveFeed memberLiveFeed;
+
+    /** 绑定成员轮直播台（启动期一次）。 */
+    public void bindMemberLiveFeed(com.wenqu.ai.agentx.team.TeamMemberLiveFeed feed) {
+        this.memberLiveFeed = feed;
+    }
+
+    /**
      * 聊天档/工作区档的意图词。命中就走工作区档（建沙盒、全量工具），否则走聊天档
      * （宿主临时目录 + 文件工具，无容器、无 shell）。
      *
@@ -545,23 +557,36 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
 
     @Override
     public void chat(ChatCommand cmd, RunChannel channel) {
+        // 成员轮直播：这一轮是成员会话（成员页发起的，或框架唤醒起的）就同时抄送一份给直播台。
+        // 包装只加这一条抄送——本轮的出口、收尾、看门狗、落库全部还是原来那条 channel。
+        // 已有直播（唤醒路径在起跑前已开台）时直接沿用：那一条的积压里已经有开头帧，不能被换掉。
+        // 入参 channel 不许重新赋值：它被后面几十个 lambda 捕获，一旦变成非 effectively final 整轮都编译不过；
+        // 而下面的语句会自己把 channel 再读一遍——所以先算好「要不要包」，一次构造出当轮出口。
+        final com.wenqu.ai.agentx.team.TeamMemberLiveFeed feed = memberLiveFeed;
+        final boolean liveThisTurn = feed != null && cmd.getSessionId() != null
+                && !cmd.getSessionId().isBlank() && isTeamMemberSession(cmd);
+        // 幂等：唤醒/分支那两处可能已经开过台（含更早的积压帧），这里只是确保有
+        if (liveThisTurn) feed.open(cmd.getSessionId());
+        final RunChannel turnChannel = liveThisTurn
+                ? new com.wenqu.ai.agentx.team.TeamMemberLiveChannel(channel, feed, cmd.getSessionId())
+                : channel;
         // 模型引用按问答侧同一条链解析（请求覆盖 > 会话固定 > 个人默认）：只认请求里那一份时，
         // 靠个人默认作答的轮会解析不出路由（NPE 打断整轮，连错误帧都没有）
         com.wenqu.ai.service.ChatService.TurnModel turn = modelResolver.apply(cmd);
         if (turn.unusableMessage() != null) {
             // 已停用的模型不发给上游：上游只会回一句 401/404，用户读到的是「网关坏了」，
             // 而不是「你选的这个模型已经不能用了，去这儿改」
-            failLoud(cmd, channel, turn.unusableMessage());
+            failLoud(cmd, turnChannel, turn.unusableMessage());
             return;
         }
         String ref = turn.ref();
         if (ref == null || ref.isBlank()) {
-            failLoud(cmd, channel, "未指定模型：请在对话右上角选择模型，或在个人设置中配置默认模型");
+            failLoud(cmd, turnChannel, "未指定模型：请在对话右上角选择模型，或在个人设置中配置默认模型");
             return;
         }
         ModelRegistryService.ModelRoute route = modelRegistry.chatRoute(ref);
         if (route == null) {
-            failLoud(cmd, channel, "模型「" + ref + "」未登记或已不可用：请在「智能体 → 模型供应商」里确认该供应商与模型");
+            failLoud(cmd, turnChannel, "模型「" + ref + "」未登记或已不可用：请在「智能体 → 模型供应商」里确认该供应商与模型");
             return;
         }
         ExecutionPolicy policy = tools.policyFor(cmd);
@@ -569,9 +594,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 没有后台轮时，用户这一轮就是目标的一轮（它结束后的那一拍会由目标自己续上），
         // 在那时把目标打断等于「用户刚说完话，目标就停了」。
         if (backgroundGoalTurns.stream().anyMatch(k -> k.startsWith(cmd.getSessionId() + "|"))) {
-            goalService.noteUserTurn(cmd.getSessionId(), cmd.getUserId(), channel);
+            goalService.noteUserTurn(cmd.getSessionId(), cmd.getUserId(), turnChannel);
         }
-        WenquSourcePool pool = tools.newPool(cmd, channel.emitter());
+        WenquSourcePool pool = tools.newPool(cmd, turnChannel.emitter());
         // 本轮改过用户存过的选择（失效的会话模型已清除、改用他的默认模型）必须说出来。
         // 只登记降级、不再另发一条 WARN：降级随消息落库、刷新后仍在，WARN 是同一句话的第二份，
         // 两条都会渲染成警示条（同一个原因上下各一条）
@@ -645,7 +670,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 本轮落点：工具表在 build 期定型、实例按会话常驻，pool/channel/hooks 只能放进会话级槽位，
         // 由这里在 submit 之前换掉。早于 sessions.open 是为了让建实例期的降级也能发到当轮通道上。
         AgentxTurnSlot slot = sessions.turnSlot(cmd);
-        slot.begin(tools.newTurn(cmd, pool, channel, policy, hooks, slot.workspaceMemoryTainted()));
+        slot.begin(tools.newTurn(cmd, pool, turnChannel, policy, hooks, slot.workspaceMemoryTainted()));
         // 每轮文件改动：提交前先让执行器拍轮前快照（异步入队、FIFO 先于本轮第一次写），
         // 顺带对账「用户上一次回答之后改了什么」。对账结果在下文拼进本轮输入；快照本身仍由
         // settle 在轮末等齐。非本机工作区/执行器离线都在服务内部静默跳过。
@@ -662,7 +687,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 String wsNotice = sandboxService.sessionWorkspaceNotice(cmd.getSessionId(), cmd.getUserId());
                 if (wsNotice != null) {
                     pool.registrar().degrade("workspaceFallback", wsNotice);
-                    channel.emit(RunEventType.WARN, wsNotice);
+                    turnChannel.emit(RunEventType.WARN, wsNotice);
                 }
             } catch (RuntimeException e) {
                 log.warn("[PROFILE] 工作区后端提示解析失败 session={}: {}", cmd.getSessionId(), e.toString());
@@ -707,7 +732,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         if (stepBudget != null) {
             stepBudget.beginTurn(turnId, tools.maxToolSteps(cmd), (code, message) -> {
                 pool.registrar().degrade(code, message);
-                channel.emit(RunEventType.WARN, message);
+                turnChannel.emit(RunEventType.WARN, message);
             }, text -> sessions.steer(cmd.getUserId(), cmd.getSessionId(), text));
         }
         // 重复调用闸同样按轮归零：不归零就是上一轮的调用签名判这一轮
@@ -715,7 +740,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         if (repeatGuard != null) {
             repeatGuard.beginTurn((code, message) -> {
                 pool.registrar().degrade(code, message);
-                channel.emit(RunEventType.WARN, message);
+                turnChannel.emit(RunEventType.WARN, message);
             });
         }
         // 框架工具档位闸按轮更新标签：拒了什么要能在日志里追到是哪一轮。
@@ -742,7 +767,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         if (planWanted && !planEngaged) {
             log.warn("[PLAN] 计划模式请求但未进入激活位（框架侧未就位），本轮不展示计划卡: session={}",
                     cmd.getSessionId());
-            channel.emit(RunEventType.WARN, "计划模式未能启用（框架侧未进入计划位），本轮将不使用计划卡");
+            turnChannel.emit(RunEventType.WARN, "计划模式未能启用（框架侧未进入计划位），本轮将不使用计划卡");
         }
         // 送进模型的不只是问题原文：附件正文 / @ 引用 / # 历史引用都在这一段拼进去。
         // 只送问题原文的话，用户传的东西模型一概看不见——落库只保证人能回看到，不等于模型收到了。
@@ -783,7 +808,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 并把「配置允许的名单」与「框架真正下发给模型的工具表」逐名比对一次——不一致就发 warn，
         // 静默少一道闸正是这套机制最初要治的病。
         for (String surfaceProblem : sessions.applyToolSurface(cmd, tools.turnGroupedNames(cmd, policy), policy)) {
-            channel.emit(RunEventType.WARN, surfaceProblem);
+            turnChannel.emit(RunEventType.WARN, surfaceProblem);
         }
         // 装配期（沙盒/实例要几十秒到几分钟）用户点了停止：不再发起模型调用，直接交给下面的跟随循环
         // 按停止收口（它第一跳就会 interrupt 并退出）。不在这里 return 是因为 slot / 跟随位 / 目标接续
@@ -809,12 +834,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                     ? Math.max(0L, startedAt - cmd.getReceivedAtMs()) : 0L;
             // 起表基准早帧：外壳在请求入口已发过一帧（收到提问→此刻），这里用开轮后的准确 prepMs
             // 再校准一次；两帧同一基准，重锚不会让读数跳。没有请求体的入口这一帧就是它唯一的起表基准。
-            channel.emit(RunEventType.TURN_START, com.alibaba.fastjson2.JSON.toJSONString(
+            turnChannel.emit(RunEventType.TURN_START, com.alibaba.fastjson2.JSON.toJSONString(
                     java.util.Map.of("wallMs", prepMs, "prepMs", prepMs)));
             // 本轮点名的技能：正文已由装配段注入上下文，这里记用量并给前端发命中帧——
             // 没有这一帧，「选了技能」这件事在界面上是静默的，用户永远不知道模型到底照没照做。
-            emitPickedSkillHits(cmd, channel);
-            followTurn(session, cmd, channel, pool, route, hooks, turnId, historyBefore, startCursor,
+            emitPickedSkillHits(cmd, turnChannel);
+            followTurn(session, cmd, turnChannel, pool, route, hooks, turnId, historyBefore, startCursor,
                     userMessageId, current, recording, startedAt, prepMs, binding.contextWindow(), false);
         } finally {
             sessions.releaseFollower(sessionKey);
@@ -2007,6 +2032,27 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             case ASK -> configService.getLong("chat.askTimeoutMs", 3600000L);
             case APPROVAL -> configService.getLong("chat.approvalTimeoutMs", 600000L);
         };
+    }
+
+    /**
+     * 这一轮是不是「团队成员会话」（决定要不要挂直播抄送）。
+     * <p>两条判据任一成立即可：
+     * <ul>
+     *   <li>命令里带了成员身份（{@code memberSessionId}）——成员页自己发起的轮；</li>
+     *   <li>会话行 {@code kind=team}——框架唤醒起的成员轮、以及成员页刷新后重发的那一轮。
+     *       根会话（lead）的唤醒也走 {@code source=team}，但它的会话行不是 team，不该被当成成员直播。</li>
+     * </ul>
+     * 查库失败按「不是成员」处理：这里判错的代价只是少一条直播（前端照旧读历史），
+     * 不能让它变成打断本轮的理由。
+     */
+    private boolean isTeamMemberSession(ChatCommand cmd) {
+        if (cmd.getMemberSessionId() != null && !cmd.getMemberSessionId().isBlank()) return true;
+        try {
+            var s = sessionService.sessionById(cmd.getSessionId());
+            return s != null && com.wenqu.ai.service.SessionService.KIND_TEAM.equals(s.getKind());
+        } catch (RuntimeException e) {
+            return false;
+        }
     }
 
     /** 这一轮有没有在场观众能答审批卡：网页问答（source 空/user）才有；定时任务/工作流没有。 */

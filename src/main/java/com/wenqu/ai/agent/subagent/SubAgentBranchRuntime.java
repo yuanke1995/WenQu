@@ -83,6 +83,13 @@ public class SubAgentBranchRuntime {
     private final java.util.Map<String, java.util.Set<ChildSession>> childSessions =
             new java.util.concurrent.ConcurrentHashMap<>();
 
+    /**
+     * 后台轮直播台（可选）：挂上之后分支的<b>正文 token 与思考</b>也能被父轮接走——
+     * {@code forwardProcess} 那份白名单刻意不含增量（它服务的是"父轮卡片上的步骤"），
+     * 而直播台服务的是"这一支正在写什么"，两者不是一回事。为 null 时行为与改造前逐字相同。
+     */
+    private volatile com.wenqu.ai.agentx.team.TeamMemberLiveFeed liveFeed;
+
     public SubAgentBranchRuntime(ConfigService configService,
                                 SessionService sessionService,
                                 ArtifactService artifactService,
@@ -99,6 +106,11 @@ public class SubAgentBranchRuntime {
         this.frameworkSessions = frameworkSessions;
         this.hitl = hitl;
         this.sessionEventService = sessionEventService;
+    }
+
+    /** 装配期绑定直播台（启动期一次；不绑也能跑，只是子轮正文不上翻）。 */
+    public void bindLiveFeed(com.wenqu.ai.agentx.team.TeamMemberLiveFeed feed) {
+        this.liveFeed = feed;
     }
 
     /**
@@ -126,6 +138,20 @@ public class SubAgentBranchRuntime {
     public BranchRunner branchRunner(TurnRunner turn, String parentSessionId, String parentTurnId, String userId,
                                      boolean guestMode, boolean apiKey, SseEmitter parentEmitter,
                                      String inheritedApprovalMode, String source) {
+        return branchRunner(turn, parentSessionId, parentTurnId, userId, guestMode, apiKey, parentEmitter,
+                inheritedApprovalMode, source, null);
+    }
+
+    /**
+     * 带「子轮正文上翻」入口的版本。
+     *
+     * @param intoText 子会话 id → 订阅其直播帧（父轮卡片据此刻画出这一支正在写的正文）。
+     *                 返回的是取消订阅句柄；null=不订阅（本轮不需要正文直播）
+     */
+    public BranchRunner branchRunner(TurnRunner turn, String parentSessionId, String parentTurnId, String userId,
+                                     boolean guestMode, boolean apiKey, SseEmitter parentEmitter,
+                                     String inheritedApprovalMode, String source,
+                                     java.util.function.Function<String, Runnable> intoText) {
         return req -> {
             long start = System.currentTimeMillis();
             String childSession = null;
@@ -207,6 +233,9 @@ public class SubAgentBranchRuntime {
                 }
             });
             BranchHandle handle = null;
+            String liveSid = null;
+            Runnable untap = null;
+            com.wenqu.ai.agentx.team.TeamMemberLiveFeed live = liveFeed;
             try {
                 childSession = childSessionFor(req);
                 if (req.conversation() != null) req.conversation().childSessionId(childSession);
@@ -224,6 +253,25 @@ public class SubAgentBranchRuntime {
                 String question = req.question();
                 // 未读团队消息的注入交给框架 InboxMiddleware（MessageBus 收件箱在模型步前 drain），
                 // 不再从自研事件账本读 team_message。
+                // 子轮正文直播：分支轮同样是 headless 轮，父轮的 forwardProcess 白名单刻意不含
+                // token/thinking（那是「步骤」不是「正文」）。这里开一条直播台并把通道包一层抄送，
+                // 父轮用 ChatRunBus.tap 就能拿到它逐字写出来的正文——与成员会话页同一套实现。
+                // TurnRunner 的出口就是这条收集型 emitter：直播开台后它自动抄送（见 CollectingSseEmitter 的 tap），
+                // 不需要在这里换通道类型——换了反而要改 TurnRunner 契约。
+                if (live != null) {
+                    live.open(childSession);
+                    liveSid = childSession;
+                    // 父轮卡片订阅这一支的正文：开台必须在订阅之前（订阅时先回 snapshot，
+                    // 否则开头那几帧会落在订阅之前，卡片上看到的是半截话）
+                    if (intoText != null) {
+                        try {
+                            untap = intoText.apply(childSession);
+                        } catch (RuntimeException e) {
+                            log.warn("[SUBAGENT] 子轮正文订阅失败（退化为只有步骤上翻）session={}: {}",
+                                    childSession, e.toString());
+                        }
+                    }
+                }
                 turn.run(ChatCommand.builder()
                         .sessionId(childSession)
                         .question(question)
@@ -381,6 +429,11 @@ public class SubAgentBranchRuntime {
                 return rep;
             } finally {
                 if (handle != null) unregisterBranch(parentSessionId, handle);
+                if (untap != null) {
+                    try { untap.run(); } catch (RuntimeException ignored) { /* 订阅已摘 */ }
+                }
+                // 直播收台：无论成功/失败/超时/异常，观众都要收到终帧，否则父轮卡片会一直转圈
+                if (live != null && liveSid != null) live.finish(liveSid, "子助手这一支已结束");
                 // 子轮结束（正常/异常/被叫停）时还挂着的待办一律落 STOPPED：
                 // 临时会话马上要删，PENDING 留着只会在父会话刷新时被重建出一张点了没反应的卡
                 if (childSession != null) {

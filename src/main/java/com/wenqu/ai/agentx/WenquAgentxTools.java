@@ -19,6 +19,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -72,6 +73,10 @@ public class WenquAgentxTools {
     private final com.wenqu.ai.service.workflowtool.WorkflowToolService workflowToolService;
     /** 根会话级工具放行（「本次会话都允许」跨子助手/团队成员生效）。 */
     private final SessionToolGrants sessionToolGrants;
+    /** 运行总线：分支正文上翻要 tap 子会话的帧流（null=关闭该能力，行为回到只有「步骤」上翻）。 */
+    private final com.wenqu.ai.service.ChatRunBus chatRunBus;
+    /** 后台轮直播台：分支起跑时开台，父轮据此拿到子轮逐字正文（null=不直播）。 */
+    private volatile com.wenqu.ai.agentx.team.TeamMemberLiveFeed liveFeed;
     /**
      * 问答侧的「跑一整轮」入口（分支执行器要它起子轮）。用函数注册而不是注入 {@code ChatService}：
      * 认一个可调用口、不认那个上帝类本身，否则构造环与「框架引擎反过来依赖问渠编排」这两件事同时发生。
@@ -96,7 +101,8 @@ public class WenquAgentxTools {
                             com.wenqu.ai.service.SourceTypeResolver sourceTypeResolver,
                             com.wenqu.ai.service.LocalBrowserTools localBrowserTools,
                              com.wenqu.ai.service.workflowtool.WorkflowToolService workflowToolService,
-                             SessionToolGrants sessionToolGrants) {
+                             SessionToolGrants sessionToolGrants,
+                             com.wenqu.ai.service.ChatRunBus chatRunBus) {
         this.knowledgeRetrieval = knowledgeRetrieval;
         this.retrievalScope = retrievalScope;
         this.agentService = agentService;
@@ -120,6 +126,13 @@ public class WenquAgentxTools {
         this.localBrowserTools = localBrowserTools;
         this.workflowToolService = workflowToolService;
         this.sessionToolGrants = sessionToolGrants;
+        this.chatRunBus = chatRunBus;
+    }
+
+    /** 装配期绑定后台轮直播台（与分支执行器共用同一份，启动期一次）。 */
+    public void bindLiveFeed(com.wenqu.ai.agentx.team.TeamMemberLiveFeed feed) {
+        this.liveFeed = feed;
+        if (branchRuntime != null) branchRuntime.bindLiveFeed(feed);
     }
 
     /** 本轮的根会话放行作用域键；供框架原生工具护栏与装配层共用。 */
@@ -764,7 +777,18 @@ public class WenquAgentxTools {
             String rootPreset = sessionService.permissionPresetOf(root);
             var rootPolicy = toolAssembly.resolvePermissionPolicy(rootAgent, rootPreset, null, false);
             if (rootPolicy == null) return memberPolicy;
-            return capPolicy(memberPolicy, rootPolicy);
+            var capped = capPolicy(memberPolicy, rootPolicy);
+            // 封顶「悄悄」改档是线上最容易被读成 bug 的一件事：成员自己配的是自动执行，界面也显示自动执行，
+            // 却照样弹审批卡——用的人看到的是「配置没生效」。这里把两边一起说出来，
+            // 排障时 `成员 auto ask` 一眼就知道该去改哪一头。
+            if (!sameApproval(memberPolicy, capped)) {
+                log.info("[PERM] 成员审批档被根会话封顶: member={} root={} memberAgent={}({}) rootAgent={}({}) "
+                                + "memberApproval={} → {}（取更严的一侧；要免确认就放宽根会话的结果）",
+                        cmd.getMemberSessionId(), root, cmd.getAgentId(),
+                        memberPolicy.approvalMode(), rootSession.getAgentId(), rootPolicy.approvalMode(),
+                        memberPolicy.approvalMode(), capped.approvalMode());
+            }
+            return capped;
         } catch (RuntimeException e) {
             return memberPolicy;
         }
@@ -790,6 +814,13 @@ public class WenquAgentxTools {
         return new com.wenqu.ai.agent.permission.ExecutionPolicy(
                 preset, sm, approval, enforcement, memberPolicy.writableRoot(),
                 java.util.Set.copyOf(deny));
+    }
+
+    private static boolean sameApproval(com.wenqu.ai.agent.permission.ExecutionPolicy a,
+                                        com.wenqu.ai.agent.permission.ExecutionPolicy b) {
+        String x = a == null || a.approvalMode() == null ? "auto" : a.approvalMode().trim();
+        String y = b == null || b.approvalMode() == null ? "auto" : b.approvalMode().trim();
+        return x.equalsIgnoreCase(y);
     }
 
     /** 审批档严格度：off（禁用副作用工具）&gt; ask（逐项确认）&gt; auto（免确认）；null 视为 auto。 */
@@ -1026,10 +1057,34 @@ public class WenquAgentxTools {
                             // fork 语义只给直接子代：孙代由各自父轮再摘要，控制 token 成本
                             (cmd.getSubagentDepth() == 0
                                     ? sessionService.parentBriefOf(parentSession, 3000) : ""));
+            // 子轮<b>正文</b>上翻：分支的 forwardProcess 白名单刻意不含 token/thinking（那些是「步骤」不是「正文」），
+            // 所以父轮卡一直只显示「跑了 N 步」。这里补一条增量通道：子轮的 token/thinking 也包成
+            // subagent_step 帧推给父轮通道——前端按 i（分支序号）与 agent 名字归到对应的派遣卡下面，
+            // 与「过程」帧走同一个消费口，不新增协议。
+            // 帧形与 forwardProcess 转来的那份一致（i=分支序号、agent=这一支的名字），
+            // 前端同一个消费口就能把正文挂到对应的派遣卡下面。
+            int branchIndex = Math.max(0, cmd.getSubagentDepth());
+            String branchAgent = nameOfAgent(childAgentId);
+            java.util.function.Function<String, Runnable> intoText = (liveFeed == null || chatRunBus == null)
+                    ? null
+                    : sid -> chatRunBus.tap(sid, (frameType, raw) -> {
+                if (!"token".equals(frameType) && !"thinking".equals(frameType)) return;
+                Object content = frameContentOf(raw);
+                if (content == null || String.valueOf(content).isEmpty()) return;
+                Map<String, Object> step = new LinkedHashMap<>();
+                step.put("i", branchIndex);
+                step.put("agent", branchAgent);
+                step.put("type", frameType);
+                step.put("content", String.valueOf(content));
+                step.put("branch", sid);
+                t.channel().emit(com.wenqu.ai.engine.RunEventType.SUBAGENT_STEP,
+                        com.alibaba.fastjson2.JSON.toJSONString(step));
+            });
             com.wenqu.ai.agent.subagent.BranchRunner runner = branchTurnRunner == null ? null
                     : branchRuntime.branchRunner(branchTurnRunner, cmd.getSessionId(), t.turnId(),
                             cmd.getUserId(), cmd.isGuestMode(), cmd.isApiKey(), t.channel().emitter(),
-                            t.policy() == null ? null : t.policy().approvalMode(), cmd.getSource());
+                            t.policy() == null ? null : t.policy().approvalMode(), cmd.getSource(),
+                            intoText);
             // runner=null 时咨询服务自己回一句「通道未就绪」给模型（可见降级），不 NPE 也不静默。
             // asCaller 罩住整次咨询：子轮是在这条弹性线程上「再起一整轮」的，身份与覆盖得跟着进去
             return asCaller(hooks,
@@ -1145,6 +1200,27 @@ public class WenquAgentxTools {
                         () -> { AgentxTurnSlot.Turn t = slot.current(); return t == null ? null : t.taint(); },
                         () -> false));
             }
+        }
+    }
+
+    /** 智能体显示名（拿不到就空串）：只用于把子轮正文归到对应的派遣卡下面。 */
+    private String nameOfAgent(String agentId) {
+        try {
+            com.wenqu.ai.model.Agent a = agentService == null ? null : agentService.findReadable(agentId);
+            return a == null || a.getName() == null ? "" : a.getName();
+        } catch (RuntimeException e) {
+            return "";
+        }
+    }
+
+    /** 从一条会话帧的原始 JSON 里取 content（tap 拿到的是整帧文本）。取不出就是 null，调用方跳过。 */
+    private static Object frameContentOf(String raw) {
+        if (raw == null || raw.isBlank()) return null;
+        try {
+            com.alibaba.fastjson2.JSONObject o = com.alibaba.fastjson2.JSON.parseObject(raw);
+            return o == null ? null : o.get("content");
+        } catch (RuntimeException e) {
+            return null;
         }
     }
 

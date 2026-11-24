@@ -10,7 +10,32 @@
 export const applySubagentStep = (msg, raw, ctx) => {
   try {
     const o = typeof raw === 'string' ? JSON.parse(raw) : raw
-    if (!o || !o.agent) return
+    if (!o || (!o.agent && !o.branch && !o.i)) return
+    // 子轮<b>正文</b>（token/thinking）：与「步骤」帧同一个消费口，但落点是卡片上的实时正文，
+    // 不是过程抽屉。此前这两类帧根本不上翻，父轮卡只能显示「跑了 N 步」——这一支写什么都不见。
+    if (o.type === 'token' || o.type === 'thinking') {
+      const all = Array.isArray(msg.toolCalls) ? msg.toolCalls : []
+      const dispatchOf = x => ctx.isDispatchTool(x.name) && x.status === 'start'
+      let card = o.agent
+        ? [...all].reverse().find(x => dispatchOf(x) && ctx.consultNameOf(x) === o.agent)
+        : null
+      if (!card) {
+        const running = all.filter(dispatchOf)
+        // 没有名字可认（或名字没落到）时，只有一支在跑才敢认领：两支并发认领错就是张冠李戴
+        if (running.length === 1) card = running[0]
+      }
+      if (!card) return
+      const text = typeof o.content === 'string' ? o.content : String(o.content ?? '')
+      if (!text) return
+      if (o.type === 'thinking') card._liveThinking = (card._liveThinking || '') + text
+      else card._liveText = (card._liveText || '') + text
+      // 上限与正文同样的量级：直播是「看得见它在写」，不是把整篇留在过程消息里
+      if (card._liveText && card._liveText.length > 20000) card._liveText = card._liveText.slice(-20000)
+      if (card._liveThinking && card._liveThinking.length > 20000) card._liveThinking = card._liveThinking.slice(-20000)
+      ctx.onScroll()
+      return
+    }
+    if (!o.agent) return
     const dispatchOf = x => ctx.isDispatchTool(x.name) && x.status === 'start' && ctx.consultNameOf(x) === o.agent
     // 完整过程的直播帧：关键帧全量累积进派遣卡的 _frames，「完整过程」抽屉直播就吃它。
     // 同一帧可能经两条路各到一遍（SSE 直发 + 总线扇出），按类型+内容前缀去重；上限 240 帧，超出丢最早。

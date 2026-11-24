@@ -6,7 +6,9 @@ import com.wenqu.ai.util.RequestUser;
 import com.wenqu.ai.service.SessionService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.List;
 import java.util.Map;
@@ -27,14 +29,17 @@ public class TeamController {
     private final SessionService sessionService;
     private final com.wenqu.ai.agentx.team.WenquTeamGateway teamGateway;
     private final com.wenqu.ai.agent.team.TeamTaskEventService taskEventService;
+    private final com.wenqu.ai.agentx.team.TeamMemberLiveFeed liveFeed;
 
     public TeamController(AgentTeamService teamService, SessionService sessionService,
                           com.wenqu.ai.agentx.team.WenquTeamGateway teamGateway,
-                          com.wenqu.ai.agent.team.TeamTaskEventService taskEvents) {
+                          com.wenqu.ai.agent.team.TeamTaskEventService taskEvents,
+                          com.wenqu.ai.agentx.team.TeamMemberLiveFeed liveFeed) {
         this.teamService = teamService;
         this.sessionService = sessionService;
         this.teamGateway = teamGateway;
         this.taskEventService = taskEvents;
+        this.liveFeed = liveFeed;
     }
 
     @Operation(summary = "读取会话团队开关", description = "从会话行读取（不是系统设置）")
@@ -113,6 +118,30 @@ public class TeamController {
             throw new com.wenqu.ai.common.BizException(403, "该会话不是本团队的成员");
         }
         return ResultJson.ok(sessionService.getHistory(memberId));
+    }
+
+    @Operation(summary = "成员轮直播流", description = "订阅某位团队成员<b>正在跑的那一轮</b>，事件与主问答完全相同"
+            + "（token/thinking/tool_status/approval_required/artifact… 直到 done），区别只是出口：成员轮由框架唤醒在"
+            + "后台起跑、没有请求线程，这条独立流把它的帧实时转给成员会话页。"
+            + "第一帧恒定是 snapshot（含这一段已产生的帧，按原顺序；done=true 表示这一轮已结束，前端改读历史），"
+            + "之后逐帧增量。没有在跑的轮（未唤醒 / 别的副本起的 / 已过保留期）时返回 204，前端按常规历史回显，不算错误。")
+    @GetMapping(value = "/member/{memberId}/live", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter memberLive(@PathVariable String memberId) {
+        String uid = RequestUser.uid();
+        com.wenqu.ai.model.Session member = sessionService.sessionById(memberId);
+        // 归属按成员会话所属的树校验：能看成员页的人才能接它的直播
+        if (member == null || !com.wenqu.ai.service.SessionService.KIND_TEAM.equals(member.getKind())
+                || !uid.equals(member.getUserId())) {
+            throw new com.wenqu.ai.common.BizException(403, "该会话不是你的团队成员");
+        }
+        SseEmitter emitter = liveFeed.subscribe(memberId);
+        if (emitter == null) {
+            // 没有直播：回一条立即结束的空流，前端读不到 snapshot 即走历史
+            SseEmitter empty = new SseEmitter(0L);
+            empty.complete();
+            return empty;
+        }
+        return emitter;
     }
 
     @Operation(summary = "团队任务图", description = "任务板节点与依赖边（读框架 TeamClient，写入由 team 工具承担）")

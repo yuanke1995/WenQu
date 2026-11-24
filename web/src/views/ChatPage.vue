@@ -16,6 +16,12 @@
           <span style="font-size:11px;font-weight:650;color:#7c3aed;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:5px;padding:1px 7px;flex:none;">团队成员会话</span>
         </template>
         <span class="chat-title">{{ memberViewRoot ? (memberViewName || '成员会话') : currentSessionTitle }}</span>
+        <span v-if="memberViewRoot && memberLiveStatus === 'live'" class="member-live-tag" title="正在直播这一轮：正文与工具步骤实时更新">
+          <i class="mlt-dot"></i>直播中
+        </span>
+        <span v-else-if="memberViewRoot && memberLiveStatus === 'reconnecting'" class="member-live-tag is-warn" title="连接中断，正在重连">
+          <i class="mlt-dot"></i>重连中…
+        </span>
         <!-- 当前工作区标识：约定每轮注入 system prompt，用户有权在聊天的当场看见它在生效；
              没挂工作区的会话接口仍返回档位等字段，但 projectId 为空——这里按它判断，标识不显示（不编名字）。
              implicit 兜底容器也一样不显示：它没有目录，名字被兜成「会话」，挂出来只会被读成会话标题重复。
@@ -2118,6 +2124,9 @@ import { toolLabel, toolDesc, toolCallsView, executedCount, toolDuration,
 import { useChatChrome } from '../chat/useChatChrome'
 import { useCommandPanels } from '../chat/useCommandPanels'
 import { useChatActions } from '../chat/useChatActions'
+import { createMemberLive } from '../chat/memberLive'
+import { subscribeMemberLive } from '../api'
+import { createMemberLiveState } from '../chat/memberLiveState'
 import { usePlanPanels } from '../chat/usePlanPanels'
 import { useDeepAsk } from '../chat/useDeepAsk'
 
@@ -2317,6 +2326,41 @@ function openTeamPanel() {
 watch(memberViewRoot, (v) => {
   try { if (v && railTab.value === 'team') railTab.value = 'process' } catch (e) { /* 忽略 */ }
 })
+
+// ===== 成员轮直播：与主问答同一条事件契约，只换了出口 =====
+// 成员轮由框架唤醒在后台起跑、没有请求线程，原先页面只能等跑完读历史（一次性蹦出结果）。
+// 后端在该轮起跑时开了直播台，这里进页面就挂观众席：帧按主问答同一套回调拼成一条「直播态」气泡，
+// 轮一结束就按历史重载——落库那份是权威，直播只是让人看得见它正在长出来。
+const memberLiveState = createMemberLiveState({
+  appendMessage: m => {
+    const list = messages.value || []
+    if (!list.includes(m)) messages.value = [...list, m]
+  },
+  // 只重载正在看的这一条：换了成员/离开之后才回来的收尾，重载会把用户正在看的别处冲掉
+  reload: sid => {
+    if (currentSessionId.value === sid) engine.switchSession(sid).catch(() => {})
+  },
+  onScroll: () => page.chrome?.scroll?.(),
+  setTodos: () => {}
+})
+// 直播连接状态：成员页标题旁那颗小标用它说「直播中 / 重连中」——观众要知道自己看的是实时还是回放
+const memberLiveStatus = ref('') // '' | 'live' | 'reconnecting' | 'done' | 'closed'
+const memberLive = createMemberLive({
+  subscribe: (sid, opts) => subscribeMemberLive(sid, opts),
+  onFrame: (cb, content) => memberLiveState.onFrame(cb, content),
+  onSnapshot: (snap, sid) => memberLiveState.applySnapshot(snap, sid),
+  onEnd: why => memberLiveState.finish(why),
+  onStatus: st => { memberLiveStatus.value = st },
+  setTimer: (fn, ms) => setTimeout(fn, ms),
+  clearTimer: t => clearTimeout(t),
+  onWarn: text => { try { message.warning(text) } catch (e) { /* 提示失败不影响直播 */ } }
+})
+// 进成员会话页就挂上，换成员/离开就摘掉：一条成员会话同一时刻只需要一个观众
+watch([memberViewRoot, currentSessionId], ([root, sid]) => {
+  if (root && sid) memberLive.start(sid)
+  else memberLive.stop()
+}, { immediate: true })
+onUnmounted(() => memberLive.stop())
 
 // 运行设置（见 ../chat/useRunSettings）
 const {
@@ -3735,6 +3779,12 @@ const {
 .right-panel.browser-wide { width: var(--rp-w); }
 .rp-card { background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 10px; padding: 10px 12px; }
 /* 右栏分段：三颗等宽页签，选中态浮起；失败数是一颗红色小徽标，只压在「过程」上 */
+.member-live-tag { display: inline-flex; align-items: center; gap: 5px; flex: none; font-size: 11px;
+  font-weight: 600; color: var(--app-accent, #4f6ef7); background: rgba(79,110,247,.08);
+  border: 1px solid rgba(79,110,247,.22); border-radius: 999px; padding: 1px 8px; line-height: 17px; }
+.member-live-tag.is-warn { color: #b26a00; background: rgba(250,173,20,.10); border-color: rgba(250,173,20,.3); }
+.mlt-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: mlt-blink 1.2s ease-in-out infinite; }
+@keyframes mlt-blink { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
 .rp-tabs {
   display: flex; gap: 2px; padding: 3px; flex: none;
   background: var(--app-panel-3, #f2f4f7); border-radius: 9px;

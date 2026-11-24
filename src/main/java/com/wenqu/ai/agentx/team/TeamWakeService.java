@@ -9,6 +9,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
 
 /**
@@ -28,17 +30,68 @@ public class TeamWakeService {
 
     private final SessionService sessionService;
     private final ChatRunRuntime runtime;
+    /** 成员轮直播台：唤醒起的这一轮在无请求线程上跑，帧经它抄送给成员会话页里的观众。 */
+    private final TeamMemberLiveFeed liveFeed;
     private volatile BiConsumer<ChatCommand, org.springframework.web.servlet.mvc.method.annotation.SseEmitter> runner;
 
-    public TeamWakeService(SessionService sessionService, ChatRunRuntime runtime) {
+    /**
+     * 成员轮专用有界池（核心 4、峰值 16、队列 256）。
+     * <p>原先挂在 {@code ForkJoinPool.commonPool()} 上：成员轮是长阻塞（在等人的审批卡上一挂就是几分钟），
+     * 公共池被拖住会连带压垮同一个 JVM 里所有走公共池的杂活。队列满时<b>直接丢弃并记 warn</b>：
+     * 消息已经在框架收件箱里，下一轮或用户手动发一句都能捞回来——比无声阻塞强。
+     */
+    private final java.util.concurrent.ThreadPoolExecutor executor;
+    /** 同时在跑的唤醒数量上限：与池的峰值一致，超出的直接放弃（同上：消息不丢，只少一次自动唤醒）。 */
+    private final Semaphore inFlight = new Semaphore(16);
+
+    public TeamWakeService(SessionService sessionService, ChatRunRuntime runtime, TeamMemberLiveFeed liveFeed) {
         this.sessionService = sessionService;
         this.runtime = runtime;
+        this.liveFeed = liveFeed;
+        java.util.concurrent.atomic.AtomicInteger n = new java.util.concurrent.atomic.AtomicInteger();
+        this.executor = new java.util.concurrent.ThreadPoolExecutor(4, 16, 60L, TimeUnit.SECONDS,
+                new java.util.concurrent.LinkedBlockingQueue<>(256),
+                r -> {
+                    Thread t = new Thread(r, "team-wake-" + n.incrementAndGet());
+                    t.setDaemon(true);
+                    return t;
+                },
+                (r, pool) -> log.warn("[TEAM] 唤醒队列已满，放弃一次自动唤醒（消息仍在收件箱，下一轮或手动发消息可捞回）"));
     }
 
     /** 由问答侧绑定「起一轮」入口（chatService::chat），避免 TeamWakeService ↔ ChatService 构造环。 */
     public void bindRunner(
             BiConsumer<ChatCommand, org.springframework.web.servlet.mvc.method.annotation.SseEmitter> runner) {
         this.runner = runner;
+    }
+
+    /**
+     * 起一轮并把它跑完；无论正常/异常都收台。
+     * <p>为什么用 {@code awaitDone} 而不是等回调：收集型通道没有完成回调，{@code awaitDone} 是它
+     * 唯一能「等到 done/error 帧」的口径（也正因为如此，这里必须给它一个上限，不能在无观众时无限等）。
+     */
+    private void runWake(BiConsumer<ChatCommand, org.springframework.web.servlet.mvc.method.annotation.SseEmitter> r,
+                         ChatCommand cmd, String sessionId) {
+        if (!inFlight.tryAcquire()) {
+            log.warn("[TEAM] 同时唤醒的成员已达上限，放弃一次自动唤醒（消息仍在收件箱）session={}", sessionId);
+            return;
+        }
+        // 开台与起跑必须在同一个任务里、并且紧挨着：在提交线程上开台的话，
+        // 排队期间进页面的观众会拿到一份空快照然后干等；在这里开，快照里至少已经有这一轮的开头帧。
+        liveFeed.open(sessionId);
+        com.wenqu.ai.service.CollectingSseEmitter sink = new com.wenqu.ai.service.CollectingSseEmitter();
+        String ending = "这一轮已结束";
+        try {
+            r.accept(cmd, sink);
+            // 上限取整轮预算的同量级：成员轮最长就跑这么久，超过就是异常残留，如实收台而不是挂着
+            sink.awaitDone(60L * 60_000L);
+        } catch (Exception e) {
+            ending = "这一轮没跑成：" + e.getClass().getSimpleName();
+            log.warn("[TEAM] 唤醒失败 session={}: {}", sessionId, e.toString());
+        } finally {
+            inFlight.release();
+            liveFeed.finish(sessionId, ending);
+        }
     }
 
     /** 唤醒一名成员：已有活轮则跳过（收件箱由活轮的 InboxMiddleware 读）。 */
@@ -88,12 +141,13 @@ public class TeamWakeService {
                 .rootSessionId(root)
                 .source(com.wenqu.ai.service.TurnSource.TEAM)
                 .build();
-        java.util.concurrent.CompletableFuture.runAsync(() -> {
-            try {
-                r.accept(cmd, new com.wenqu.ai.service.CollectingSseEmitter());
-            } catch (Exception e) {
-                log.warn("[TEAM] 唤醒失败 session={}: {}", sessionId, e.toString());
-            }
-        }, java.util.concurrent.ForkJoinPool.commonPool());
+        // 直播：先开台再起跑。前端成员会话页订阅 /team/member/{sid}/live，拿到的就是这一轮
+        // 逐字长出来的正文与逐步追加的工具卡——与主问答同一套事件契约，只换了出口。
+        try {
+            executor.execute(() -> runWake(r, cmd, sessionId));
+        } catch (java.util.concurrent.RejectedExecutionException rejected) {
+            // 池已关（进程收尾）或队列已满：这一轮没起跑，也就不开台——成员页照旧读历史
+            log.warn("[TEAM] 唤醒被拒绝 session={}: {}", sessionId, rejected.toString());
+        }
     }
 }
