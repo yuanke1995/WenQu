@@ -1,9 +1,13 @@
 package com.wenqu.ai.agentx.team;
 
+import com.alibaba.fastjson2.JSON;
+import com.wenqu.ai.agent.team.TeamTaskEventService;
 import com.wenqu.ai.model.Session;
+import com.wenqu.ai.service.ChatRunBus;
 import com.wenqu.ai.service.SessionService;
 import com.wenqu.ai.util.TenantContext;
 import io.agentscope.harness.agent.team.LocalTeamClient;
+import io.agentscope.harness.agent.team.TeamClient;
 import io.agentscope.harness.agent.team.TeamConflictException;
 import io.agentscope.harness.agent.team.TeamContext;
 import io.agentscope.harness.agent.team.TeamCreateSpec;
@@ -39,11 +43,12 @@ public class WenquTeamGateway {
 
     public static final String LEAD = "lead";
 
-    /** 框架 TeamTool 支持的动作（spawn/shutdown/submitPlan 等因 LocalTeamClient 不支持而排除）。 */
+    /** 框架 TeamTool 支持的动作（spawn/shutdown 由本网关接到问渠成员生命周期；submitPlan 等仍不支持）。 */
     private static final List<String> LEAD_ACTIONS = List.of(
             "listTasks", "createTask", "assignTask", "claimTask", "unclaimTask",
             "completeTask", "failTask", "listClaimableTasks",
-            "sendMessage", "broadcastMessage", "listMessages", "listMembers", "completeTeam");
+            "sendMessage", "broadcastMessage", "listMessages", "listMembers",
+            "spawnMember", "shutdownMember", "completeTeam");
 
     private static final List<String> WORKER_ACTIONS = List.of(
             "listTasks", "listClaimableTasks", "claimTask", "unclaimTask",
@@ -52,16 +57,44 @@ public class WenquTeamGateway {
 
     private final WenquMysqlBaseStore store;
     private final SessionService sessionService;
-    private final LocalTeamClient client;
+    private final TeamTaskEventService taskEvents;
+    private final ChatRunBus chatRunBus;
+    private final com.wenqu.ai.service.AgentService agentService;
+    private final TeamWakeService teamWakeService;
+    private final TeamClient client;
 
-    public WenquTeamGateway(WenquMysqlBaseStore store, SessionService sessionService) {
+    public WenquTeamGateway(WenquMysqlBaseStore store, SessionService sessionService,
+                            TeamTaskEventService taskEvents, ChatRunBus chatRunBus,
+                            com.wenqu.ai.service.AgentService agentService,
+                            TeamWakeService teamWakeService) {
         this.store = store;
         this.sessionService = sessionService;
+        this.taskEvents = taskEvents;
+        this.chatRunBus = chatRunBus;
+        this.agentService = agentService;
+        this.teamWakeService = teamWakeService;
         // LocalTeamClient 的消息序号是实例内 AtomicLong：必须全应用单实例，否则消息 id 撞车。
-        this.client = new LocalTeamClient(store);
+        // 外层 WenquTeamClient：旁听任务/消息变更（账本 + 实时事件）+ 承接框架 spawnMember 的成员生命周期。
+        this.client = new WenquTeamClient(new LocalTeamClient(store), taskEvents, chatRunBus,
+                new WenquTeamClient.MemberController() {
+                    @Override
+                    public void spawn(String root, String memberName, String agentRef) {
+                        spawnMemberSession(root, memberName, agentRef);
+                    }
+
+                    @Override
+                    public void shutdown(String root, String memberName) {
+                        shutdownMemberSession(root, memberName);
+                    }
+
+                    @Override
+                    public void wake(String root, String memberName, String message) {
+                        wakeMember(root, memberName, message);
+                    }
+                });
     }
 
-    public LocalTeamClient client() {
+    public TeamClient client() {
         return client;
     }
 
@@ -100,6 +133,55 @@ public class WenquTeamGateway {
         value.put("deployMode", "byo");
         value.put("isLead", LEAD.equals(memberName));
         store.put(List.of("teams", namespace(), teamName(rootSessionId), "members"), memberName, value);
+    }
+
+    /**
+     * 框架 {@code team(action=spawnMember)} 的落点：建一条问渠 {@code kind=team} 持久成员会话，并补进框架名册。
+     * <p>这是「control-plane」该做的事——{@code LocalTeamClient.spawnMember} 只是抛
+     * “requires control-plane TeamClient”。{@code agentRef} 若是真实问渠智能体 id 就用它，
+     * 否则回落到根会话自己的 agent（保证成员一定能跑起来），成员名仍按调用方给的 slug。
+     */
+    public void spawnMemberSession(String rootSessionId, String memberName, String agentRef) {
+        if (rootSessionId == null || rootSessionId.isBlank() || memberName == null || memberName.isBlank()) return;
+        Session root = sessionService.sessionById(rootSessionId);
+        if (root == null) {
+            log.warn("[TEAM] spawnMember 找不到根会话 root={}", rootSessionId);
+            return;
+        }
+        String agentId = agentRef;
+        if (agentId == null || agentId.isBlank() || (agentService != null && agentService.get(agentId) == null)) {
+            agentId = root.getAgentId();
+        }
+        String child = sessionService.createTeamSession(root.getUserId(), rootSessionId, rootSessionId,
+                memberName, agentId);
+        // 刚建出来还没跑：置 IDLE 等 lead 发消息唤醒（createTeamSession 默认 RUNNING 只适用于首轮即跑的分支）
+        sessionService.updateMemberState(child, "IDLE");
+        addMember(rootSessionId, memberName, agentId, child);
+        log.info("[TEAM] spawnMember root={} member={} agent={} session={}",
+                rootSessionId, memberName, agentId, child);
+    }
+
+    /** 框架 {@code team(action=shutdownMember)}：把成员标 STOPPED（会话与历史保留，可再唤醒）。 */
+    public void shutdownMemberSession(String rootSessionId, String memberName) {
+        Session m = sessionService.findTeamMember(rootSessionId, memberName);
+        if (m != null) sessionService.updateMemberState(m.getId(), "STOPPED");
+    }
+
+    /**
+     * 主动叫起某成员一轮。框架 {@code TeamWakeups} 只认「已实例化的 TeamsMiddleware」，
+     * 刚 spawn 还没跑过的成员拿不到 hook；这里用宿主 {@link TeamWakeService} 直接把收件箱那一轮跑起来。
+     */
+    public void wakeMember(String rootSessionId, String memberName, String message) {
+        if (teamWakeService == null || rootSessionId == null || memberName == null) return;
+        Session m = sessionService.findTeamMember(rootSessionId, memberName);
+        if (m == null) return;
+        Session root = sessionService.sessionById(rootSessionId);
+        String uid = root == null ? m.getUserId() : root.getUserId();
+        try {
+            teamWakeService.wake(uid, m.getId(), m.getAgentId(), message);
+        } catch (Exception e) {
+            log.warn("[TEAM] 唤醒成员失败 root={} member={}: {}", rootSessionId, memberName, e.toString());
+        }
     }
 
     /** 构造某会话的 TeamContext（根=lead，成员=worker）。 */
@@ -219,7 +301,6 @@ public class WenquTeamGateway {
             return false;
         }
     }
-
     /** 团队已存在（名册非空）判定，供引擎决定是否种名册。 */
     public boolean teamExists(String rootSessionId) {
         try {
@@ -273,7 +354,21 @@ public class WenquTeamGateway {
         boolean ok = store.putIfVersion(
                 List.of("teams", namespace(), teamName(rootSessionId), "tasks"),
                 to.taskId(), value, to.version());
-        return ok ? null : "任务刚被改动，请重试";
+        if (!ok) return "任务刚被改动，请重试";
+        // 时间线 + 实时：创建/认领/完成等由 WenquTeamClient 旁听，唯独「依赖」这个 shim 自己补
+        try {
+            taskEvents.record(rootSessionId, to.taskId(), "depended",
+                    "前置：" + from.subject() + " → 后继：" + to.subject());
+            Map<String, Object> frame = new LinkedHashMap<>();
+            frame.put("taskId", to.taskId());
+            frame.put("subject", to.subject());
+            frame.put("state", to.state());
+            frame.put("owner", to.owner());
+            chatRunBus.publishToSession(rootSessionId, "team_task", JSON.toJSONString(frame));
+        } catch (Exception ignored) {
+            // 时间线/实时失败不影响依赖本身
+        }
+        return null;
     }
 
     /** from 顺着 blockedBy 能否走到 target（用于成环判定）。 */

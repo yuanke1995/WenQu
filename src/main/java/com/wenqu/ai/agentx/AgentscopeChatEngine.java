@@ -2323,9 +2323,15 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 + "`team(action=createTask, subject=…, owner=成员名)` 建任务并可直接派给某位成员，"
                 + "任务有先后时用 `team_task_depend(from, to)` 登记依赖（前置完成，后继才可认领）；"
                 + "`team(action=listClaimableTasks)` 看待认领 → `team(action=claimTask)` 认领 → "
-                + "`team(action=completeTask/failTask)` 完成或失败。"
-                + "需要别的成员补充信息/分工时：`agent_spawn` 派人、`agent_send` 追加消息、"
-                + "`agent_list` 看在跑的成员；跨成员写信走 `team(action=sendMessage, to_member=…)`。"
+                + "`team(action=completeTask/failTask)` 完成或失败。\n"
+                + "**要派出「持久成员」（会出现在右栏团队面板、可被再次唤醒），必须调用 `spawnMember` 工具"
+                + "（`spawnMember(member_name=<团队内短名>, agent_ref=<真实智能体id>)`；等价于 `team` 的 spawnMember 动作）**："
+                + "`member_name` 是 1–32 位小写字母/数字/连字符（如 reviewer），`agent_ref` 必须逐字取自 "
+                + "「## Subagents / Available agent ids」，**不要自己编名字**；拿不准就用当前根助手自己的 id。"
+                + "派出后再用 `sendMessage(to_member=<member_name>, message=…)`（或 `team(action=sendMessage, …)`）给它派活。"
+                + "`agent_spawn` 只是**临时同步子轮**（跑完即散、不进团队面板、无任务板写权限），"
+                + "不要用 `agent_spawn` 建团队成员，也不要用它替代 `spawnMember`。"
+                + "跨成员写信同样走 `team(action=sendMessage, to_member=…)`。"
                 + "简单一问一答不要建任务，也不要为凑数建任务。";
     }
 

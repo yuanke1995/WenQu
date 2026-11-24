@@ -290,6 +290,11 @@ public class ChatController {
         // 人在回路的提问卡/审批等待会被算进去，用户在第二张卡上选完答案整轮已被掐断。
         // 整轮截断改由 ChatRunRuntime 的存活看门狗按「机器耗时」判定（chat.sseTimeoutMs，人工等待不计入）。
         SseEmitter emitter = new SseEmitter(0L);
+        // 团队成员会话的普通问答：在成员页/面板发消息时，这一轮必须仍按「团队成员轮」跑
+        // （挂框架 team 工具、成员权限封顶、团队上下文），否则成员页发出的指令会丢团队能力。
+        com.wenqu.ai.model.Session teamSess = sessionService.sessionById(sessionId);
+        boolean teamMemberTurn = teamSess != null
+                && com.wenqu.ai.service.SessionService.KIND_TEAM.equals(teamSess.getKind());
         // regenerate：重新生成/自动重试的重发——该问题的用户消息已随上一轮请求即时落库，跳过重复落库
         chatService.chat(ChatCommand.builder()
                 .sessionId(sessionId).question(question).userId(userId)
@@ -299,6 +304,10 @@ public class ChatController {
                 .mentions(mentions).historyRefs(historyRefs)
                 .deepThink(request.isDeepThink()).agentId(request.getAgentId())
                 .modelOverride(request.getModel())
+                .teamMode(teamMemberTurn)
+                .memberSessionId(teamMemberTurn ? sessionId : null)
+                .memberName(teamMemberTurn ? teamSess.getMemberName() : null)
+                .teamRootSessionId(teamMemberTurn ? teamSess.getRootSessionId() : null)
                 .regenerate(request.isRegenerate()).replaceMessageId(request.getReplaceMessageId())
                 .reasoningLevel(request.getReasoningLevel())
                 .editVariantGroup(editVariantGroup).planMode(request.isPlanMode())

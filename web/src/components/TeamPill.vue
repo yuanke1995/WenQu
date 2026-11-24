@@ -43,8 +43,16 @@ async function load() {
 
 watch(() => props.sessionId, () => load(), { immediate: true })
 let timer = null
-onMounted(() => { load(); timer = window.setInterval(load, 6000) })
-onUnmounted(() => { if (timer) window.clearInterval(timer) })
+function onTeamEvent() { load() }
+onMounted(() => {
+  load()
+  timer = window.setInterval(load, 20000)
+  window.addEventListener('wq:team-event', onTeamEvent)
+})
+onUnmounted(() => {
+  if (timer) window.clearInterval(timer)
+  window.removeEventListener('wq:team-event', onTeamEvent)
+})
 </script>
 
 <style scoped>

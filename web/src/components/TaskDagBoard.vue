@@ -94,7 +94,7 @@ function stateLabel(s) {
   return ({ PENDING: '待前置', READY: '可认领', IN_PROGRESS: '执行中', COMPLETED: '完成', FAILED: '失败', CANCELLED: '已取消' })[s] || s
 }
 function eventLabel(kind) {
-  return ({ created: '创建任务', depended: '登记依赖', ready: '进入就绪', blocked: '等待前置', claimed: '认领', completed: '完成', failed: '失败', cancelled: '取消' })[kind] || kind
+  return ({ created: '创建任务', depended: '登记依赖', ready: '进入就绪', blocked: '等待前置', claimed: '认领', assigned: '指派', unclaimed: '取消认领', completed: '完成', failed: '失败', cancelled: '取消' })[kind] || kind
 }
 
 // 分层：最长路径定 level，得到从左到右的 DAG 列

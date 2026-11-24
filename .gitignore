@@ -74,3 +74,4 @@ config/application-local.yml
 /web/scripts/
 /.wenqu/
 /docs/
+/tmp_db_copy/

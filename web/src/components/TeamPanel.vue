@@ -109,6 +109,17 @@
             </div>
           </div>
         </div>
+        <!-- 用户 → 成员：走框架邮箱（写库 + 唤醒），成员空闲时被叫起一轮 -->
+        <div class="feed-send">
+          <select v-model="msgTo" class="fs-sel" :disabled="!members.length">
+            <option v-for="m in members" :key="m.sessionId" :value="m.memberName || m.name">{{ displayName(m) }}</option>
+          </select>
+          <input v-model="msgText" class="fs-inp" :disabled="!members.length"
+                 :placeholder="members.length ? '发给成员…（Enter 发送）' : '暂无成员'" @keyup.enter="sendMsg" />
+          <button class="fs-btn" type="button" :disabled="!msgText.trim() || sending || !msgTo" @click="sendMsg">
+            {{ sending ? '…' : '发送' }}
+          </button>
+        </div>
       </section>
     </template>
 
@@ -166,6 +177,9 @@ const messages = ref([])
 const feed = ref([])
 const extraAgents = ref([])
 const loading = ref(false)
+const msgTo = ref('')
+const msgText = ref('')
+const sending = ref(false)
 
 const taskOpen = ref(false)
 const taskDetail = ref({})
@@ -253,7 +267,7 @@ function taskLabel(s) {
   return ({ PENDING: '待前置', READY: '可认领', IN_PROGRESS: '执行中', COMPLETED: '完成', FAILED: '失败', CANCELLED: '已取消' })[s] || s
 }
 function eventLabel(kind) {
-  return ({ created: '创建任务', depended: '登记依赖', ready: '进入就绪', blocked: '等待前置', claimed: '认领', completed: '完成', failed: '失败', cancelled: '取消' })[kind] || kind
+  return ({ created: '创建任务', depended: '登记依赖', ready: '进入就绪', blocked: '等待前置', claimed: '认领', assigned: '指派', unclaimed: '取消认领', completed: '完成', failed: '失败', cancelled: '取消' })[kind] || kind
 }
 function relTime(at) {
   if (!at) return ''
@@ -387,15 +401,57 @@ async function openTask(n) {
 }
 function openTaskCanvas() { canvasOpen.value = true }
 
+async function sendMsg() {
+  const text = msgText.value.trim()
+  if (!text || !msgTo.value) return
+  sending.value = true
+  try {
+    await api.sendTeamMessage(props.sessionId, msgTo.value, text)
+    msgText.value = ''
+    message.success('已发给成员，空闲的会被叫起')
+    load()
+  } catch (e) {
+    message.error('发送失败：成员未收到')
+  } finally {
+    sending.value = false
+  }
+}
+
 watch(() => props.sessionId, () => load(), { immediate: true })
+// 成员刷新后若当前收件人已不存在，回落到第一位
+watch(members, (list) => {
+  if (!list.length) { msgTo.value = ''; return }
+  if (!list.some(m => (m.memberName || m.name) === msgTo.value)) {
+    msgTo.value = list[0].memberName || list[0].name
+  }
+})
+
 let refreshTimer = null
+let reloadTimer = null
+// 团队实时事件（team_member/team_message/team_task）由聊天流经 useChatEngine 转成 window 事件；
+// 这里去抖重拉，避免一轮里几十条事件各拉一次。轮询降为 15s 兜底（无活轮时仍有更新）。
+function scheduleReload() {
+  if (!enabled.value || taskOpen.value || canvasOpen.value) return
+  if (reloadTimer) return
+  reloadTimer = window.setTimeout(() => { reloadTimer = null; load() }, 400)
+}
+function onVisible() { if (document.visibilityState === 'visible') scheduleReload() }
 onMounted(() => {
   if (props.sessionId) load()
   refreshTimer = window.setInterval(() => {
     if (enabled.value && !taskOpen.value && !canvasOpen.value) load()
-  }, 3000)
+  }, 15000)
+  window.addEventListener('wq:team-event', scheduleReload)
+  window.addEventListener('focus', scheduleReload)
+  document.addEventListener('visibilitychange', onVisible)
 })
-onUnmounted(() => { if (refreshTimer) window.clearInterval(refreshTimer) })
+onUnmounted(() => {
+  if (refreshTimer) window.clearInterval(refreshTimer)
+  if (reloadTimer) window.clearTimeout(reloadTimer)
+  window.removeEventListener('wq:team-event', scheduleReload)
+  window.removeEventListener('focus', scheduleReload)
+  document.removeEventListener('visibilitychange', onVisible)
+})
 </script>
 
 <style scoped>
@@ -477,6 +533,12 @@ onUnmounted(() => { if (refreshTimer) window.clearInterval(refreshTimer) })
 .feed-line b{font-size:11px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .feed-time{margin-left:auto;flex:none;font-size:9.5px;color:var(--text-3,#98a0aa)}
 .feed-text{font-size:11.5px;color:var(--text-2,#5f6570);margin-top:1px;line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.feed-send{display:flex;align-items:center;gap:6px;padding:8px 10px 10px;border-top:1px solid var(--border,#eef0f3)}
+.fs-sel{flex:none;max-width:104px;height:28px;border:1px solid var(--border,#e6e9ed);border-radius:7px;background:var(--panel,#fff);font-size:11.5px;color:var(--text-2,#5f6570);padding:0 4px}
+.fs-inp{flex:1;min-width:0;height:28px;border:1px solid var(--border,#e6e9ed);border-radius:7px;padding:0 9px;font-size:12px;background:var(--panel,#fff);color:var(--text-1,#1f2329)}
+.fs-inp:focus{outline:none;border-color:#ddd6fe;box-shadow:0 0 0 2px rgba(124,58,237,.1)}
+.fs-btn{flex:none;height:28px;padding:0 12px;border-radius:7px;border:1px solid #ddd6fe;background:#f5f3ff;color:#7c3aed;font-size:12px;font-weight:650;cursor:pointer}
+.fs-btn:disabled{opacity:.5;cursor:default}
 
 /* 任务详情 */
 .task-detail{display:flex;flex-direction:column;gap:10px}

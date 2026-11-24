@@ -79,8 +79,25 @@ public class AgentTeamService {
         if (rootSessionId == null || rootSessionId.isBlank()) return out;
         for (Session s : sessionService.listTeamMembers(rootSessionId)) {
             String state = s.getMemberState() == null ? "OFFLINE" : s.getMemberState();
-            boolean live = frameworkSessions.peek(uid, s.getId()) != null;
-            if (live && ("OFFLINE".equals(state) || "IDLE".equals(state))) state = "RUNNING";
+            // 「正在执行」以真实在跑的轮为准（唤醒轮不经过分支执行器，不会写 member_state）。
+            // 若只按框架实例是否常驻判断，成员跑完后实例仍 held，会永远显示“执行中”。
+            boolean running;
+            try {
+                running = chatRunRuntime.turnIdOf(s.getId()) != null;
+            } catch (Exception e) {
+                running = false;
+            }
+            boolean warm = frameworkSessions.peek(uid, s.getId()) != null;
+            if (running) {
+                state = "RUNNING";
+            } else if ("STOPPED".equals(state)) {
+                // 显式终态保留
+            } else if (warm) {
+                state = "IDLE";
+            } else if ("RUNNING".equals(state)) {
+                // 上一轮结束没回写：按空闲处理，别让面板一直转
+                state = "IDLE";
+            }
             out.add(new Member(s.getId(), s.getMemberName(), s.getParentSessionId(),
                     s.getRootSessionId(), state, s.getAgentId(), s.getMemberName(),
                     s.getAgentName(), roleOf(s)));

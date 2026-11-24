@@ -43,28 +43,45 @@ public class TeamWakeService {
 
     /** 唤醒一名成员：已有活轮则跳过（收件箱由活轮的 InboxMiddleware 读）。 */
     public void wake(String uid, String sessionId, String agentIdHint) {
+        wake(uid, sessionId, agentIdHint, null);
+    }
+
+    /**
+     * 唤醒一名成员并把「这一句」作为本轮问题带进去（null=用默认的“处理收件箱”文案）。
+     * <p>为什么要显式带内容：框架 {@code TeamWakeups} 依赖已实例化的 TeamsMiddleware 才会
+     * 把消息 push 进 inbox；刚 spawn、还没跑过的成员拿不到那个 hook，收件箱可能是空的。
+     * 由宿主直接把消息正文作为本轮问题，保证成员一定看得到要它做什么。
+     */
+    public void wake(String uid, String sessionId, String agentIdHint, String question) {
         if (sessionId == null || sessionId.isBlank()) return;
         BiConsumer<ChatCommand, org.springframework.web.servlet.mvc.method.annotation.SseEmitter> r = runner;
         if (r == null) return;
         Session s = sessionService.sessionById(sessionId);
-        if (s == null || !SessionService.KIND_TEAM.equals(s.getKind())) return;
+        if (s == null) return;
+        boolean member = SessionService.KIND_TEAM.equals(s.getKind());
+        // 成员轮唤醒成员；lead 会话唤醒根（成员完成任务后要能让 lead 接着汇总）。
+        if (!member && !sessionService.isTeamEnabled(sessionId)) return;
         if (runtime.turnIdOf(sessionId) != null) {
             // 已经有活轮在跑：消息已入收件箱，活轮下一步会读到，不另起一轮
             return;
         }
         String agent = s.getAgentId() == null || s.getAgentId().isBlank() ? agentIdHint : s.getAgentId();
-        String root = s.getRootSessionId();
+        String root = member ? s.getRootSessionId() : sessionId;
+        String q = (question != null && !question.isBlank()) ? question
+                : (member
+                    ? "你收到了团队消息，请先处理收件箱里的内容（如需执行任务按任务板执行），处理完简要回报。"
+                    : "团队成员有新的进展或任务结果，请查看任务板与收件箱，必要时继续推进，并把结论汇总给用户。");
         ChatCommand cmd = ChatCommand.builder()
                 .sessionId(sessionId)
-                .question("你收到了团队消息，请先处理收件箱里的内容（如需执行任务按任务板执行），处理完简要回报。")
+                .question(q)
                 .userId(uid)
                 .userImages(List.of())
                 .attachments(List.of())
                 .skills(List.of())
                 .agentId(agent)
                 .teamMode(true)
-                .memberSessionId(sessionId)
-                .memberName(s.getMemberName())
+                .memberSessionId(member ? sessionId : null)
+                .memberName(member ? s.getMemberName() : null)
                 .teamRootSessionId(root)
                 .source("team")
                 .build();
@@ -72,7 +89,7 @@ public class TeamWakeService {
             try {
                 r.accept(cmd, new com.wenqu.ai.service.CollectingSseEmitter());
             } catch (Exception e) {
-                log.warn("[TEAM] 唤醒成员失败 session={}: {}", sessionId, e.toString());
+                log.warn("[TEAM] 唤醒失败 session={}: {}", sessionId, e.toString());
             }
         }, java.util.concurrent.ForkJoinPool.commonPool());
     }

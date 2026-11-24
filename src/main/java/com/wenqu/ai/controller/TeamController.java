@@ -26,12 +26,15 @@ public class TeamController {
     private final AgentTeamService teamService;
     private final SessionService sessionService;
     private final com.wenqu.ai.agentx.team.WenquTeamGateway teamGateway;
+    private final com.wenqu.ai.agent.team.TeamTaskEventService taskEventService;
 
     public TeamController(AgentTeamService teamService, SessionService sessionService,
-                          com.wenqu.ai.agentx.team.WenquTeamGateway teamGateway) {
+                          com.wenqu.ai.agentx.team.WenquTeamGateway teamGateway,
+                          com.wenqu.ai.agent.team.TeamTaskEventService taskEvents) {
         this.teamService = teamService;
         this.sessionService = sessionService;
         this.teamGateway = teamGateway;
+        this.taskEventService = taskEvents;
     }
 
     @Operation(summary = "读取会话团队开关", description = "从会话行读取（不是系统设置）")
@@ -120,11 +123,11 @@ public class TeamController {
         return ResultJson.ok(teamGateway.tasks(rootId));
     }
 
-    @Operation(summary = "任务事件时间线", description = "框架任务板无逐任务事件账本，返回空列表（前端兼容）")
+    @Operation(summary = "任务事件时间线", description = "任务变更账本（WenquTeamClient 投影）：创建/依赖/指派/认领/完成/失败，供面板与 DAG 画布展示")
     @GetMapping("/{rootId}/tasks/{taskId}/events")
     public ResultJson<Object> taskEvents(@PathVariable String rootId, @PathVariable String taskId) {
         String uid = RequestUser.uid();
         sessionService.assertOwned(rootId, uid);
-        return ResultJson.ok(List.of());
+        return ResultJson.ok(taskEventService.list(rootId, taskId));
     }
 }

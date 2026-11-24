@@ -107,6 +107,12 @@ const text = ref('')
  * 初始恒 false，也不落 localStorage（旧键 ai_plan_mode 不再读取，避免残留值让下一轮冒出一张计划卡）。
  * 这道闸仍是必要的：没有计划卡 UI 的壳（如分享页）被拦在门外。
  */
+// 团队实时事件的中转：聊天流里收到 team_* 帧（CHAT_EVENT_CB 映射到 onTeam*）后，
+// 用 window 自定义事件通知旁侧的团队面板/胶囊去抖重拉。帧本身不进正文时间线。
+function dispatchTeamEvent () {
+  try { window.dispatchEvent(new CustomEvent('wq:team-event')) } catch (e) { /* 无 window 时忽略 */ }
+}
+
 const planModeEnabled = hooks.planModeEnabled === true
 const planModeOn = ref(false)
 const setPlanMode = v => {
@@ -1925,6 +1931,11 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
     },
     // 浏览器只读快照：新事件经 CHAT_EVENT_CB 映射到这里，转给页面自己的镜像状态（不进账本）
     onBrowserSnapshot: (payload, ev) => hooks.onBrowserSnapshot?.(payload, ev),
+    // 团队实时事件：团队面板/胶囊在旁侧监听同一个 window 事件做去抖重拉。
+    // 只做通知（不把团队帧塞进正文时间线），面板自己按根会话 id 拉最新成员/任务/消息。
+    onTeamMember: () => dispatchTeamEvent(),
+    onTeamMessage: () => dispatchTeamEvent(),
+    onTeamTask: () => dispatchTeamEvent(),
     onSnapshot: payload => {
       // 接流的第一帧（只有 resume 那条通道会有这一帧）：本轮已产出的东西一次铺进气泡
       let snap = null
