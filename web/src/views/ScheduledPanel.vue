@@ -508,6 +508,7 @@ import {
 import ModelSelect from '../components/ModelSelect.vue'
 import { locateField } from '../utils/fieldLocate'
 import { localExecutorId } from '../utils/localExecutor'
+import { useBatchSelect, reportBatchResult } from '../utils/useBatchSelect'
 import {
   listScheduledJobs, getScheduledOverview, previewScheduledCron, createScheduledJob,
   updateScheduledJob, deleteScheduledJob, toggleScheduledJob, runScheduledJob,
@@ -658,20 +659,13 @@ const onVisibility = () => {
 }
 
 // ==================== 批量与撤销 ====================
-const batchMode = ref(false)
-const selected = ref([])
 const batchBusy = ref(false)
 const undo = ref(null)
 let undoTimer = null
-const toggleBatchMode = () => {
-  batchMode.value = !batchMode.value
-  if (!batchMode.value) selected.value = []
-}
-const toggleSelect = id => {
-  selected.value = selected.value.includes(id)
-    ? selected.value.filter(x => x !== id)
-    : [...selected.value, id]
-}
+// 本页没有「全选」，只做逐条勾选；可勾选集合随列表变化，供退出时收敛无效勾选用
+const {
+  batchMode, selected, toggleSelect, toggleBatchMode
+} = useBatchSelect(computed(() => rows.value.map(r => r.id)))
 const doBatchEnabled = async on => {
   if (!selected.value.length) return
   batchBusy.value = true
@@ -706,17 +700,7 @@ const doBatchDelete = () => {
     }
   })
 }
-const reportBatch = (r, verb) => {
-  const data = (r && r.data) || {}
-  const okCount = (data.succeeded || []).length
-  const failed = data.failed || []
-  if (!failed.length) { message.success(`已${verb} ${okCount} 个任务`); return }
-  Modal.warning({
-    title: `${verb}完成：成功 ${okCount} 个，失败 ${failed.length} 个`,
-    content: failed.map(f => `「${f.name || f.id}」：${f.error}`).join('；'),
-    okText: '知道了'
-  })
-}
+const reportBatch = (r, verb) => reportBatchResult(r, verb, '个任务', { message, Modal })
 const showUndo = ids => {
   if (undoTimer) clearTimeout(undoTimer)
   undo.value = { ids, count: ids.length }

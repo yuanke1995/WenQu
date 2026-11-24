@@ -365,6 +365,7 @@ import { MdEditor } from 'md-editor-v3'
 import 'md-editor-v3/lib/style.css'
 import { themeState } from '../utils/theme'
 import { saveKeyLabel, useSaveShortcut } from '../utils/shortcuts'
+import { useBatchSelect } from '../utils/useBatchSelect'
 
 const mdTheme = computed(() => (themeState.value === 'dark' ? 'dark' : 'light'))
 // 工具栏只留基础排版与预览：与智能体页系统提示词编辑器同一套取舍（图片上传/公式会把大段
@@ -476,25 +477,35 @@ const clearFilters = () => {
 }
 
 // ---------------- 批量操作 ----------------
-const batchMode = ref(false)
-const selected = ref([])
+// 技能的「身份」是 来源+名称（同名技能在不同来源下是两条），故以该复合键勾选，
+// 与其余运营页共用一个 useBatchSelect。
 const batching = ref(false)
-const toggleBatchMode = () => {
-  batchMode.value = !batchMode.value
-  if (!batchMode.value) selected.value = []
-}
-const exitBatch = () => { batchMode.value = false; selected.value = [] }
-const isSelected = s => selected.value.some(x => x.source === s.source && x.name === s.name)
+const skillKey = s => `${s.source}::${s.name}`
+// 键 ↔ 技能对象并行维护：批量接口只收名称，但名称可能自带 '::'，不能靠拆键还原
+const selectedSkills = ref([])
+const batch = useBatchSelect(computed(() => sorted.value || []), { keyOf: skillKey })
+const { batchMode, selected, toggleBatchMode } = batch
+// 模板传的是技能对象而不是键，这里包一层，避免模板里到处拼 key
+const isSelected = s => batch.isSelected(skillKey(s))
 const toggleSelect = s => {
-  const i = selected.value.findIndex(x => x.source === s.source && x.name === s.name)
-  if (i >= 0) selected.value.splice(i, 1)
-  else selected.value.push(s)
+  const k = skillKey(s)
+  const had = batch.isSelected(k)
+  batch.toggleSelect(k)
+  selectedSkills.value = had
+    ? selectedSkills.value.filter(x => skillKey(x) !== k)
+    : [...selectedSkills.value, s]
 }
+const exitBatch = () => {
+  batch.exitBatch()
+  selectedSkills.value = []
+}
+/** 批量接口只收名称；保留来源相同、名称也相同的两条（它们本就是不同技能） */
+const selectedNames = () => selectedSkills.value.map(s => s.name)
 const runBatch = async action => {
   if (!selected.value.length) return
   batching.value = true
   try {
-    const r = await batchSkills({ names: selected.value.map(s => s.name), action })
+    const r = await batchSkills({ names: selectedNames(), action })
     if (!r || !r.success) throw new Error((r && r.msg) || '批量操作失败')
     const ok = r.data?.ok || 0
     const failed = r.data?.failed || 0
@@ -503,6 +514,7 @@ const runBatch = async action => {
     if (failed) message.warning(`批量${verb}：成功 ${ok}，失败 ${failed}：` + fails.slice(0, 3).map(f => f.name + (f.msg ? `（${f.msg}）` : '')).join('、'))
     else message.success(`已${verb} ${ok} 个技能`)
     selected.value = []
+    selectedSkills.value = []
     await load()
   } catch (e) {
     message.error('批量操作失败：' + errText(e))

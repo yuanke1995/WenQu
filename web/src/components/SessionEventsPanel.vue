@@ -173,6 +173,7 @@ import { toolDuration } from '../chat/projections'
 import { buildTurnView, describeTurn } from '../chat/processEvents'
 import AnswerBody from './AnswerBody.vue'
 import SubAgentRunFrames from './SubAgentRunFrames.vue'
+import { downloadBlob } from '../utils/download'
 
 // viewer=false（移动壳）时正文里的角标/图片点击往外抛，由页面用它自己的底部抽屉展示——
 // 不许在面板里留一个点了没反应的角标
@@ -366,15 +367,7 @@ function downloadJson () {
   }
   const suffix = String(props.turnId || ('session-' + (props.sessionId || 'process')))
     .replace(/[^\w.-]+/g, '_')
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `wenqu-process-${suffix}.json`
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  downloadBlob(JSON.stringify(data, null, 2), `wenqu-process-${suffix}.json`, 'application/json')
 }
 
 const pad2 = n => (n < 10 ? '0' + n : '' + n)

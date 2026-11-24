@@ -14,3 +14,21 @@ export function fmtDate (ts) {
 export function fmtDateTime (ts) {
   try { return new Date(ts).toLocaleString('zh-CN', { hour12: false }) } catch (e) { return '' }
 }
+
+/**
+ * 表格里「只要到分钟」的时钟口径：后端返回 ISO 串时直接截断，不做时区换算。
+ *
+ * 用一个 len 参数收口两种精度（16=到分钟、19=到秒），避免各页面自己 slice 出两套口径。
+ *
+ * 与 {@link fmtDateTime} 的区别：那个走 toLocaleString（跟随本地时区与语言），适合「给人看的详情」；
+ * 这个保持后端原样，适合「列表里要对齐、要可排序」的场景。两者不要互相替代。
+ *
+ * @param ts ISO 时间串或 Date
+ * @param len 16 = 到分钟（yyyy-MM-dd HH:mm）；19 = 到秒
+ * @param empty 空值占位，默认 '—'
+ */
+export function fmtClock (ts, len = 16, empty = '—') {
+  if (ts === null || ts === undefined || ts === '') return empty
+  const s = ts instanceof Date ? ts.toISOString() : String(ts)
+  return s.replace('T', ' ').slice(0, len)
+}

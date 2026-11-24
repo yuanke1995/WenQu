@@ -250,10 +250,12 @@ import {
   StopOutlined, RollbackOutlined, TagsOutlined, AppstoreOutlined, UploadOutlined, DownloadOutlined,
   ClockCircleOutlined, ApiOutlined, PlayCircleOutlined
 } from '@ant-design/icons-vue'
+import { downloadBlob } from '../utils/download'
 import FlowEditor from './FlowEditor.vue'
 import WorkflowRunHistory from './WorkflowRunHistory.vue'
-import { sanitizeFileName } from '../utils/fileName'
 import { parseJsonFile } from '../utils/json'
+import { useBatchSelect, reportBatchResult } from '../utils/useBatchSelect'
+import { fmtClock } from '../utils/format'
 import {
   listWorkflows, deleteWorkflow, publishWorkflow, unpublishWorkflow,
   listWorkflowVersions, rollbackWorkflow,
@@ -291,38 +293,15 @@ const draftCount = computed(() => totalCount.value - publishedCount.value)
 const canManage = r => r.myPermission === 'MANAGE'
 
 // ---- 批量操作：卡片勾选 + 全选 + 批量发布/下线/导出/删除 ----
-const selected = ref([])        // 勾选的工作流 id
 const batchBusy = ref(false)
-// 批量模式默认关闭：卡片不显示勾选框，点「批量管理」才进入（退出即清空勾选）
-const batchMode = ref(false)
-const toggleBatchMode = () => {
-  batchMode.value = !batchMode.value
-  if (!batchMode.value) selected.value = []
-}
-const allChecked = computed(() => mine.value.length > 0 && selected.value.length === mine.value.length)
-const someChecked = computed(() => selected.value.length > 0 && selected.value.length < mine.value.length)
-const toggleSelect = id => {
-  selected.value = selected.value.includes(id)
-    ? selected.value.filter(x => x !== id)
-    : [...selected.value, id]
-}
-const toggleAll = () => { selected.value = allChecked.value ? [] : mine.value.map(r => r.id) }
+/** 工作流页的可勾选集合恒为「我的」列表（个人资产，无需再过滤） */
+const selectableItems = computed(() => mine.value)
+const {
+  batchMode, selected, allChecked, someChecked, toggleSelect, toggleBatchMode, toggleAll
+} = useBatchSelect(selectableItems)
 
 /** 批量结果汇报：全成功走 message；有失败条目逐条弹 Modal 列出原因（不静默吞） */
-const reportBatch = (r, verb) => {
-  const data = (r && r.data) || {}
-  const okCount = (data.succeeded || []).length
-  const failed = data.failed || []
-  if (!failed.length) {
-    message.success(`已${verb} ${okCount} 个工作流`)
-    return
-  }
-  Modal.warning({
-    title: `${verb}完成：成功 ${okCount} 个，失败 ${failed.length} 个`,
-    content: failed.map(f => `「${f.name || f.id}」：${f.error}`).join('；'),
-    okText: '知道了'
-  })
-}
+const reportBatch = (r, verb) => reportBatchResult(r, verb, '个工作流', { message, Modal })
 
 const doBatchDelete = () => {
   Modal.confirm({
@@ -386,12 +365,7 @@ const doBatchExport = async () => {
       exportedAt: new Date().toISOString(),
       items
     }
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
-    const a = document.createElement('a')
-    a.href = URL.createObjectURL(blob)
-    a.download = `workflows-${items.length}.workflow.json`
-    a.click()
-    URL.revokeObjectURL(a.href)
+    downloadBlob(JSON.stringify(payload, null, 2), `workflows-${items.length}.workflow.json`, 'application/json')
     message.success(`已导出 ${items.length} 个工作流`)
   } catch (e) {
     message.error('批量导出失败：' + (e.message || ''))
@@ -770,12 +744,7 @@ const doExport = async row => {
       description: wf.description,
       dsl: JSON.parse(wf.dsl)   // 导出为 DSL 对象（可读），导入时 stringify 回字符串
     }
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
-    const a = document.createElement('a')
-    a.href = URL.createObjectURL(blob)
-    a.download = sanitizeFileName(`${wf.name || 'workflow'}.workflow.json`)
-    a.click()
-    URL.revokeObjectURL(a.href)
+    downloadBlob(JSON.stringify(payload, null, 2), `${wf.name || 'workflow'}.workflow.json`, 'application/json')
   } catch (e) {
     message.error('导出失败：' + (e.message || ''))
   }
@@ -783,7 +752,7 @@ const doExport = async row => {
 
 const runLabel = s => ({ queued: '排队中', running: '运行中', success: '成功', failed: '失败', timeout: '超时', waiting_approval: '待审批' }[s] || s)
 const runColor = s => ({ queued: 'default', running: 'processing', success: 'green', failed: 'red', timeout: 'orange', waiting_approval: 'orange' }[s] || 'default')
-const fmtTime = t => (t ? String(t).replace('T', ' ').slice(0, 16) : '—')
+const fmtTime = t => fmtClock(t)
 
 onMounted(load)
 // 通知深链：停留在工作流 Tab 时再次点击不同通知 → 重新定位 run

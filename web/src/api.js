@@ -10,6 +10,22 @@ import { clearUnreachable, ensureNetworkWatch, markRequestOutcome } from './util
 import { CHAT_EVENT_CB } from './chat/eventContract.generated.js'
 import { sanitizeFileName } from './utils/fileName'
 
+/**
+ * 二进制下载的唯一落地点：blob → <a download> → click → revoke。
+ * 撤销统一延迟 2000ms（立即 revoke 会让 Firefox / Safari 的异步取流中断）。
+ * 与 utils/download.js 的 downloadBlob 同一口径；api.js 不便引入 DOM 工具时用它。
+ */
+const saveBlob = (blob, filename) => {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = sanitizeFileName(filename || 'download')
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 2000)
+}
+
 const BASE = import.meta.env.VITE_API_BASE || '/proxy/api/ai'
 
 // 登录令牌（本地登录后写入 localStorage('ai_token')；请求头 Authorization: Bearer <token>）
@@ -670,15 +686,7 @@ export const downloadProjectFile = async (id, path, filename, dir) => {
     headers: authHeaders()
   })
   if (!res.ok) throw new Error(`下载失败(${res.status})`)
-  const blob = await res.blob()
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = sanitizeFileName(filename || 'download')
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  setTimeout(() => URL.revokeObjectURL(url), 2000)
+  saveBlob(await res.blob(), filename || 'download')
 }
 // 更新工作区设置：传才改（name / memoryIsolated / icon / color）
 export const updateProject = (id, body) =>
@@ -896,15 +904,7 @@ export async function exportKnowledgeBase (id, kbName) {
     try { const j = await r.json(); if (j && j.msg) msg = j.msg } catch (e) { /* 非 JSON 响应保留默认文案 */ }
     throw new Error(msg)
   }
-  const blob = await r.blob()
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = sanitizeFileName((kbName || '知识库') + '.zip')
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  URL.revokeObjectURL(url)
+  saveBlob(await r.blob(), (kbName || '知识库') + '.zip')
 }
 
 /** 导入文档包（导出 zip）到目标知识库：逐文档走既有解析管线，返回逐条结果；
@@ -957,15 +957,7 @@ export async function downloadDocumentSource (id, fileName) {
     try { const j = await r.json(); if (j && j.msg) msg = j.msg } catch (e) { /* 非 JSON 响应保留默认文案 */ }
     throw new Error(msg)
   }
-  const blob = await r.blob()
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = sanitizeFileName(fileName || 'document')
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  URL.revokeObjectURL(url)
+  saveBlob(await r.blob(), fileName || 'document')
 }
 
 // ==================== MCP 外部工具（个人资产：每人管自己登记的 Server） ====================
@@ -1172,15 +1164,7 @@ export async function downloadSkillZip(name) {
     try { const data = await res.json(); msg = data && data.msg } catch (e) { /* 非 JSON */ }
     throw new Error(msg || ('下载失败(' + res.status + ')'))
   }
-  const blob = await res.blob()
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = sanitizeFileName((name || 'skill') + '.zip')
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  saveBlob(await res.blob(), (name || 'skill') + '.zip')
 }
 // ==================== 市场（技能 / 应用模板 / 工作流：上架 → 发现 → 一键安装；安装即复制） ====================
 /** 市场列表：{type?: skill|agent|workflow, keyword?, tag?, mine?}——上架中的物品 + 我上架的（mine=true 含已下架） */
@@ -1255,15 +1239,7 @@ export async function downloadMarketItem (id, name, type) {
     try { const data = await res.json(); msg = data && data.msg } catch (e) { /* 非 JSON */ }
     throw new Error(msg || ('下载失败(' + res.status + ')'))
   }
-  const blob = await res.blob()
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = sanitizeFileName((name || 'market-item') + (type === 'skill' ? '.zip' : '.json'))
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  saveBlob(await res.blob(), (name || 'market-item') + (type === 'skill' ? '.zip' : '.json'))
 }
 
 export const listAgents = () => request('/agent/list')
@@ -1760,15 +1736,7 @@ export const exportUsersCsv = async (params = {}) => {
   if (params.loggedInToday) q.set('loggedInToday', 'true')
   const res = await fetch(`${BASE}/user/export?${q}`, { headers: authHeaders() })
   if (!res.ok) throw new Error(`导出失败(${res.status})`)
-  const blob = await res.blob()
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `wenqu-members-${new Date().toISOString().slice(0, 10)}.csv`
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  URL.revokeObjectURL(url)
+  saveBlob(await res.blob(), `wenqu-members-${new Date().toISOString().slice(0, 10)}.csv`)
   return true
 }
 export const createDepartment = body => request('/department', { method: 'POST', body: JSON.stringify(body) })
@@ -1981,13 +1949,7 @@ export const verifyAuditChain = maxRows => request('/audit/verify' + (maxRows ? 
 export const exportAuditCsv = async params => {
   const res = await fetch(`${BASE}/audit/export?${params}`, { headers: authHeaders() })
   if (!res.ok) throw new Error(`导出失败（${res.status}）`)
-  const blob = await res.blob()
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `wenqu-audit-${new Date().toISOString().slice(0, 10)}.csv`
-  a.click()
-  URL.revokeObjectURL(url)
+  saveBlob(await res.blob(), `wenqu-audit-${new Date().toISOString().slice(0, 10)}.csv`)
 }
 
 /** 追加单条评估 case（差评回流：问题 → 引用过的知识块） */
@@ -2346,15 +2308,7 @@ export const downloadSandboxFile = async (sessionId, path, filename) => {
   const q = `sessionId=${encodeURIComponent(sessionId)}&path=${encodeURIComponent(path)}`
   const res = await fetch(`${BASE}/sandbox/files/download?${q}`, { headers: authHeaders() })
   if (!res.ok) throw new Error(`下载失败(${res.status})`)
-  const blob = await res.blob()
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = sanitizeFileName(filename || 'download')
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  setTimeout(() => URL.revokeObjectURL(url), 2000)
+  saveBlob(await res.blob(), filename || 'download')
 }
 
 // ---------- GraphRAG（知识图谱；管理员） ----------

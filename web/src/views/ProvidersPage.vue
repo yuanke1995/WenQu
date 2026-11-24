@@ -748,6 +748,7 @@ import { BRAND_PATHS, BRAND_BADGES } from '../assets/providerIcons.js'
 import { fmtWindow } from '../chat/projections'
 import { authUser } from '../utils/auth'
 import { refreshSetupGuide } from '../utils/setupGuide'
+import { useBatchSelect, reportBatchResult } from '../utils/useBatchSelect'
 import {
 listProviders, createProvider, updateProvider, setProviderEnabled, deleteProvider,
   listProviderModels, saveProviderModels, fetchProviderModels, testProvider,
@@ -1210,40 +1211,14 @@ const entryPriceText = e => (e.inputPrice == null && e.outputPrice == null)
   ? '未计价' : `¥${e.inputPrice ?? 0}/¥${e.outputPrice ?? 0}`
 
 // ---- 批量操作：列表里的供应商都是自己可管理的，可勾选 ----
-const selected = ref([])
 const batchBusy = ref(false)
-// 批量模式默认关闭：卡片不显示勾选框，点「批量管理」才进入（退出即清空勾选）
-const batchMode = ref(false)
-const toggleBatchMode = () => {
-  batchMode.value = !batchMode.value
-  if (!batchMode.value) selected.value = []
-}
 const selectableIds = computed(() => list.value.filter(p => p.manageable).map(p => p.id))
-const allChecked = computed(() =>
-  selectableIds.value.length > 0 && selectableIds.value.every(id => selected.value.includes(id)))
-const someChecked = computed(() => selected.value.length > 0 && !allChecked.value)
-const toggleSelect = id => {
-  selected.value = selected.value.includes(id)
-    ? selected.value.filter(x => x !== id)
-    : [...selected.value, id]
-}
-const toggleAll = () => { selected.value = allChecked.value ? [] : [...selectableIds.value] }
+const {
+  batchMode, selected, allChecked, someChecked, toggleSelect, toggleBatchMode, toggleAll
+} = useBatchSelect(selectableIds)
 
 /** 批量结果汇报：全成功走 message；有失败逐条弹 Modal 列出原因（不静默吞） */
-const reportBatch = (r, verb) => {
-  const data = (r && r.data) || {}
-  const okCount = (data.succeeded || []).length
-  const failed = data.failed || []
-  if (!failed.length) {
-    message.success(`已${verb} ${okCount} 个供应商`)
-    return
-  }
-  Modal.warning({
-    title: `${verb}完成：成功 ${okCount} 个，失败 ${failed.length} 个`,
-    content: failed.map(f => `「${f.name || f.id}」：${f.error}`).join('；'),
-    okText: '知道了'
-  })
-}
+const reportBatch = (r, verb) => reportBatchResult(r, verb, '个供应商', { message, Modal })
 
 const doBatchEnabled = async on => {
   batchBusy.value = true

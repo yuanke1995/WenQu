@@ -129,6 +129,7 @@ import {
   listWorkflowRuns, getWorkflowRun, getWorkflowPendingApproval, resolveWorkflowApproval, resumeWorkflowRun,
   subscribeWorkflowRun
 } from '../api'
+import { fmtClock } from '../utils/format'
 
 const props = defineProps({
   workflowId: { type: String, required: true },
@@ -354,7 +355,7 @@ const doResume = async () => {
 const triggerLabel = t => ({ manual: '手动调试', api: 'API 触发', agent: '智能体对话' }[t] || t || '—')
 const runLabel = s => ({ queued: '排队中', running: '运行中', success: '成功', failed: '失败', timeout: '超时', waiting_approval: '待审批', retrying: '重试中' }[s] || s)
 const runColor = s => ({ queued: 'default', running: 'processing', success: 'green', failed: 'red', timeout: 'orange', waiting_approval: 'orange', retrying: 'orange' }[s] || 'default')
-const fmtTime = t => (t ? String(t).replace('T', ' ').slice(0, 16) : '—')
+const fmtTime = t => fmtClock(t)
 const fmtMs = ms => (ms == null ? '' : ms >= 1000 ? (ms / 1000).toFixed(1) + ' s' : ms + ' ms')
 const safeParse = s => { try { return JSON.parse(s) } catch (e) { return null } }
 const pretty = s => {

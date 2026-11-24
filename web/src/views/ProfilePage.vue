@@ -620,6 +620,7 @@ import {
   QuestionCircleOutlined, ReadOutlined, SafetyCertificateOutlined, SettingOutlined,
   ShareAltOutlined, UserOutlined
 } from '@ant-design/icons-vue'
+import { downloadBlob } from '../utils/download'
 import { authUser, clearAuth, ensureAuth } from '../utils/auth'
 import { refreshSetupGuide } from '../utils/setupGuide'
 import { copyText } from '../utils/clipboard'
@@ -1648,15 +1649,7 @@ const onDeleteDaily = date => {
 const downloadMemory = () => {
   const text = memOverview.value.content || ''
   if (!text) return
-  const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = 'MEMORY.md'
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  URL.revokeObjectURL(url)
+  downloadBlob(text, 'MEMORY.md', 'text/markdown;charset=utf-8')
 }
 
 // ---- 分享管理（会话只读链接的统一回看与停用） ----

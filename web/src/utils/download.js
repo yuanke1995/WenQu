@@ -17,7 +17,22 @@ export function shouldInterceptDownload (href, pageOrigin) {
 export async function downloadFromUrl (url, filename) {
   const res = await fetch(url, { credentials: 'include' })
   if (!res.ok) throw new Error(`下载失败(${res.status})`)
-  const blob = await res.blob()
+  downloadBlob(await res.blob(), filename || 'download')
+}
+
+/**
+ * 把一段内存里的内容直接存成文件（导出 CSV / Markdown / JSON 等）。
+ *
+ * 内存内容落盘的唯一入口。内联 write 极易分叉出三套撤销时机（立即 / 1000ms / 2000ms），
+ * 其中立即 revoke 会让 Firefox / Safari 的异步取流中断；从已改写的 a.href 读回对象再 revoke
+ * 更是直接 revoke 错对象。
+ *
+ * @param content 文件内容（string / Blob / ArrayBuffer）
+ * @param filename 文件名（会过 sanitizeFileName）
+ * @param type 非 Blob 内容时的 MIME，默认纯文本 UTF-8
+ */
+export function downloadBlob (content, filename, type = 'text/plain;charset=utf-8') {
+  const blob = content instanceof Blob ? content : new Blob([content], { type })
   const objectUrl = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = objectUrl
@@ -26,6 +41,7 @@ export async function downloadFromUrl (url, filename) {
   document.body.appendChild(a)
   a.click()
   a.remove()
+  // 立即 revoke 在部分浏览器会让下载中断（Firefox / Safari 异步取流），故延迟统一 2000ms。
   setTimeout(() => URL.revokeObjectURL(objectUrl), 2000)
 }
 

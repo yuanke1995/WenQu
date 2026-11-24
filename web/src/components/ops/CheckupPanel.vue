@@ -202,6 +202,8 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { getOpsCheckupHistory, getOpsCheckupTrend, getOpsCheckupDetail } from '../../api'
+import { fmtClock } from '../../utils/format'
+import { downloadBlob } from '../../utils/download'
 
 const props = defineProps({
   report: { type: Object, default: null },
@@ -282,7 +284,7 @@ const trendTitle = d => d.overall === 'empty'
   ? `${d.date} · 无巡检`
   : `${d.date} · ${d.runs} 次 · 失败 ${d.fail || 0} · 留意 ${d.warn || 0}`
 
-const fmtTime = s => (s ? String(s).replace('T', ' ').slice(0, 19) : '—')
+const fmtTime = s => fmtClock(s, 19)
 const levelText = l => ({ ok: '正常', warn: '留意', fail: '必须处理' }[l] || l || '—')
 const levelPill = l => l === 'ok' ? 'ok' : l === 'warn' ? 'warn' : 'err'
 const levelClass = l => l === 'ok' ? 'ok' : l === 'warn' ? 'warn' : 'err'
@@ -378,13 +380,8 @@ async function loadHistoryDetail (h) {
 
 function exportReport () {
   if (!props.report) return
-  const blob = new Blob([JSON.stringify(props.report, null, 2)], { type: 'application/json' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `wenqu-checkup-${String(props.report.at || '').replace(/[:T]/g, '-').slice(0, 19)}.json`
-  a.click()
-  URL.revokeObjectURL(url)
+  downloadBlob(JSON.stringify(props.report, null, 2),
+    `wenqu-checkup-${String(props.report.at || '').replace(/[:T]/g, '-').slice(0, 19)}.json`, 'application/json')
 }
 function goAudit () {
   detailOpen.value = false

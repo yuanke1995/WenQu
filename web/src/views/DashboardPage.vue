@@ -4,7 +4,7 @@
       <h3 class="app-page-title">数据看板</h3>
       <span class="head-stat">问答质量、执行记录与知识回流闭环</span>
       <div class="head-acts">
-        <span class="data-ts" :title="fmtTime(summary.dataThrough)">数据截至 {{ fmtClock(summary.dataThrough) }}</span>
+        <span class="data-ts" :title="fmtTime(summary.dataThrough)">数据截至 {{ fmtClockLocal(summary.dataThrough) }}</span>
         <template v-if="tab === 'overview'">
           <a-segmented v-model:value="range" size="small" :options="rangeOptions" @change="onRangeChange" />
           <a-checkbox v-model:checked="compare">对比上期</a-checkbox>
@@ -762,7 +762,6 @@ import { writeClipboard } from '../utils/clipboard'
 import * as echarts from 'echarts'
 import { themeState } from '../utils/theme'
 import { isSuperadminSync, profileSync } from '../utils/auth'
-import { sanitizeFileName } from '../utils/fileName'
 import {
   getAnalytics, getDashboardActions, getDashboardAlerts, getTraceOverview,
   createKnowledge, addEvalCase, getEvalLastReport, runEvalAutoCheck,
@@ -770,6 +769,8 @@ import {
   runTraceSampling, getTraceStats,
   getUsageCost, listQuotas, saveQuota, deleteQuota, listDepartments, listUsers, listTenants
 } from '../api'
+import { fmtClock } from '../utils/format'
+import { downloadBlob } from '../utils/download'
 
 // ==================================================================================================
 // 全局：时间范围 / 页签 / 自动刷新 / 视图
@@ -1714,13 +1715,7 @@ const exportCsv = () => {
   const headers = Object.keys(rows[0])
   const escape = v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`
   const csv = '\ufeff' + headers.join(',') + '\n' + rows.map(r => headers.map(k => escape(r[k])).join(',')).join('\n')
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = sanitizeFileName(`${filename}-${new Date().toISOString().slice(0, 10)}.csv`)
-  a.click()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  downloadBlob(csv, `${filename}-${new Date().toISOString().slice(0, 10)}.csv`, 'text/csv;charset=utf-8')
   message.success('已导出当前视图')
 }
 
@@ -1997,14 +1992,19 @@ onBeforeUnmount(() => {
 // 格式化
 // ==================================================================================================
 const fmtInt = n => (Number(n) || 0).toLocaleString('zh-CN')
-const fmtTime = t => (t ? String(t).replace('T', ' ').slice(0, 16) : '—')
-const fmtClock = t => {
-  if (!t) return '—'
-  const s = String(t).replace('T', ' ')
+// 看板时间口径：当天只显示时分（表头「数据截至 14:32」更紧凑），跨天给完整日期。
+// 两者都基于 utils 的 fmtClock（原始串截断，不做时区换算），今天分支另走 slice。
+const isToday = s => {
   const now = new Date()
   const ymd = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-  return s.startsWith(ymd) ? s.slice(11, 16) : s.slice(0, 16)
+  return s.replace('T', ' ').startsWith(ymd)
 }
+const fmtClockLocal = t => {
+  if (!t) return '—'
+  const s = String(t).replace('T', ' ')
+  return isToday(s) ? s.slice(11, 16) : fmtClock(s)
+}
+const fmtTime = t => fmtClockLocal(t)
 const fmtAgo = t => {
   if (!t) return ''
   const ts = new Date(String(t).replace(' ', 'T')).getTime()

@@ -169,6 +169,7 @@ import {
   pageUsers, listDepartments, forceLogoutUser, batchForceLogoutUsers, listAuditEvents, getOpsPresence
 } from '../../api'
 import UserAvatar from '../UserAvatar.vue'
+import { fmtClock } from '../../utils/format'
 
 // 抽屉外壳与原型对齐：自定义 eyebrow 标题栏、18px 内边距、底部动作条
 const drawerHeaderStyle = { padding: '16px 18px 12px', borderBottom: '1px solid var(--app-border)' }
@@ -238,7 +239,7 @@ async function loadPresence (uids = []) {
   }
 }
 
-const fmtTime = s => (s ? String(s).replace('T', ' ').slice(0, 19) : '')
+const fmtTime = s => fmtClock(s, 19, '')
 const fullTime = s => (s ? String(s).replace('T', ' ') : '')
 const relativeTime = s => {
   if (!s) return ''

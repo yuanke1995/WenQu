@@ -642,7 +642,6 @@ import { writeClipboard } from '../utils/clipboard'
 import { ThunderboltOutlined } from '@ant-design/icons-vue'
 import EvalTrendChart from './eval/EvalTrendChart.vue'
 import { loadModelIndex, modelRefInfo } from '../utils/modelRef'
-import { sanitizeFileName } from '../utils/fileName'
 import {
   getEvalOverview, getEvalCases, createEvalCase, updateEvalCase, deleteEvalCase,
   importEvalCases, exportEvalCases, startEvalRun, listEvalRuns, getEvalRun,
@@ -650,6 +649,7 @@ import {
   evalGenerate, runAnswerEval, answerEvalReport,
   getConfig, listKnowledgeBases, searchKnowledge, getAuthMe, runEvalAutoCheck
 } from '../api'
+import { downloadBlob } from '../utils/download'
 
 const route = useRoute()
 const activeTab = ref('overview')
@@ -1454,15 +1454,7 @@ function runStatusText (s) {
 function runPillTone (s) {
   return { succeeded: 'ok', partial: 'warn', running: 'blue', failed: 'err', cancelled: 'grey' }[s] || 'grey'
 }
-function download (filename, content, type) {
-  const blob = new Blob([content], { type: type || 'text/plain;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = sanitizeFileName(filename)
-  a.click()
-  URL.revokeObjectURL(url)
-}
+const download = (filename, content, type) => downloadBlob(content, filename, type)
 
 // ==================== 生命周期 ====================
 onMounted(async () => {

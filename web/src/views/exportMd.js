@@ -6,6 +6,7 @@ import { message } from 'ant-design-vue'
 import { getHistory } from '../api'
 import { resolveImg, snapshotEChart } from '../utils/markdown'
 import { sanitizeFileName } from '../utils/fileName'
+import { downloadBlob } from '../utils/download'
 
 const imgToDataUri = async u => {
   if (!u) return null
@@ -78,17 +79,7 @@ const chartAppendix = ctx => {
   return lines
 }
 
-const downloadMd = (md, fileName) => {
-  const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = fileName
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  URL.revokeObjectURL(url)
-}
+const downloadMd = (md, fileName) => downloadBlob(md, fileName, 'text/markdown;charset=utf-8')
 
 const fmtTime = ts => {
   if (!ts) return ''

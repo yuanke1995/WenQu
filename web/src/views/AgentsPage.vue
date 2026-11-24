@@ -938,6 +938,7 @@ import { ensureAuth, isAdminSync } from '../utils/auth'
 import { copyText } from '../utils/clipboard'
 import { saveKeyLabel, useSaveShortcut } from '../utils/shortcuts'
 import { locateField } from '../utils/fieldLocate'
+import { useBatchSelect, reportBatchResult } from '../utils/useBatchSelect'
 import { MdEditor, MdPreview } from 'md-editor-v3'
 import 'md-editor-v3/lib/style.css'
 import { themeState } from '../utils/theme'
@@ -945,9 +946,9 @@ import { isDefault, isDisabledAgent, isBuiltin, isPreset, isSub, splitList, triS
 import { useAgentPublish } from '../agents/useAgentPublish'
 import { useDelegationTopo } from '../agents/useDelegationTopo'
 import { useAgentVersions } from '../agents/useAgentVersions'
-import { sanitizeFileName } from '../utils/fileName'
 import { parseJsonFile } from '../utils/json'
 import { sessionStore } from './store'
+import { downloadBlob } from '../utils/download'
 
 const route = useRoute()
 const router = useRouter()
@@ -1530,15 +1531,7 @@ const EXPORT_KEYS = ['name', 'icon', 'description', 'systemPrompt', 'knowledgeBa
   'goalEnabled', 'toolApprovalMode', 'permissionPreset', 'toolDeny', 'maxToolSteps', 'memoryMode',
   'callbackUrl', 'queryParams', 'isSubagent', 'subAgentIds']
 const agentExportConfig = a => Object.fromEntries(EXPORT_KEYS.filter(k => a[k] !== undefined).map(k => [k, a[k]]))
-const downloadJson = (obj, filename) => {
-  const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' })
-  const url = URL.createObjectURL(blob)
-  const el = document.createElement('a')
-  el.href = url
-  el.download = sanitizeFileName(filename)
-  el.click()
-  URL.revokeObjectURL(url)
-}
+const downloadJson = (obj, filename) => downloadBlob(JSON.stringify(obj, null, 2), filename, 'application/json')
 const exportAgent = a => downloadJson({ wenquAgentExport: 1, exportedAt: new Date().toISOString(), config: agentExportConfig(a) },
   `智能体-${a.name || a.id}.json`)
 const doBatchExport = () => {
@@ -2128,42 +2121,16 @@ const doDelete = async id => {
 }
 
 // ==================== 批量操作：内置智能体不可删，不进勾选范围 ====================
-const selected = ref([])
 const batchBusy = ref(false)
-// 批量模式默认关闭：卡片不显示勾选框，点「批量管理」才进入（退出即清空勾选）
-const batchMode = ref(false)
-const toggleBatchMode = () => {
-  batchMode.value = !batchMode.value
-  if (!batchMode.value) selected.value = []
-}
 /** 可勾选集合 = 当前搜索过滤后的非内置智能体（两组：主 + 子；平台预置同样不可删） */
 const selectableIds = computed(() =>
   sections.value.flatMap(sec => sec.members.filter(a => !isBuiltin(a) && !isPreset(a)).map(a => a.id)))
-const allChecked = computed(() =>
-  selectableIds.value.length > 0 && selectableIds.value.every(id => selected.value.includes(id)))
-const someChecked = computed(() => selected.value.length > 0 && !allChecked.value)
-const toggleSelect = id => {
-  selected.value = selected.value.includes(id)
-    ? selected.value.filter(x => x !== id)
-    : [...selected.value, id]
-}
-const toggleAll = () => { selected.value = allChecked.value ? [] : [...selectableIds.value] }
+const {
+  batchMode, selected, allChecked, someChecked, toggleSelect, toggleBatchMode, toggleAll
+} = useBatchSelect(selectableIds)
 
 /** 批量结果汇报：全成功走 message；有失败逐条弹 Modal 列出原因（不静默吞） */
-const reportBatch = (r, verb) => {
-  const data = (r && r.data) || {}
-  const okCount = (data.succeeded || []).length
-  const failed = data.failed || []
-  if (!failed.length) {
-    message.success(`已${verb} ${okCount} 个智能体`)
-    return
-  }
-  Modal.warning({
-    title: `${verb}完成：成功 ${okCount} 个，失败 ${failed.length} 个`,
-    content: failed.map(f => `「${f.name || f.id}」：${f.error}`).join('；'),
-    okText: '知道了'
-  })
-}
+const reportBatch = (r, verb) => reportBatchResult(r, verb, '个智能体', { message, Modal })
 
 const doBatchDelete = () => {
   Modal.confirm({

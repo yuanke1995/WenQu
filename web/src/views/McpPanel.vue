@@ -327,6 +327,7 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { writeClipboard } from '../utils/clipboard'
+import { useBatchSelect, reportBatchResult } from '../utils/useBatchSelect'
 import { SearchOutlined, ReloadOutlined, PlusOutlined, DeleteOutlined, DownloadOutlined, DownOutlined, WarningOutlined, DatabaseOutlined } from '@ant-design/icons-vue'
 import { getMcpStatus, reloadMcp, probeMcp, addMcpServer, updateMcpServer, setMcpServerEnabled, deleteMcpServer,
          reconnectMcpServer, batchDeleteMcpServers, batchSetMcpServersEnabled, importMcpServers, setMcpToolLabel,
@@ -334,6 +335,7 @@ import { getMcpStatus, reloadMcp, probeMcp, addMcpServer, updateMcpServer, setMc
 import { isAdminSync } from '../utils/auth'
 import McpInvokeModal from '../components/McpInvokeModal.vue'
 import McpStatsDrawer from '../components/McpStatsDrawer.vue'
+import { downloadBlob } from '../utils/download'
 
 /** 平台行为全员提供（地址与工具名由管理员维护）：普通用户只读可用，连启停开关都不给 */
 const isAdmin = isAdminSync()
@@ -450,40 +452,14 @@ const filtered = computed(() => {
 })
 
 // ---- 批量操作：全选作用于当前搜索过滤后的可见项 ----
-const selected = ref([])
 const batchBusy = ref(false)
-// 批量模式默认关闭：卡片不显示勾选框，点「批量管理」才进入（退出即清空勾选）
-const batchMode = ref(false)
-const toggleBatchMode = () => {
-  batchMode.value = !batchMode.value
-  if (!batchMode.value) selected.value = []
-}
 const selectableIds = computed(() => filtered.value.filter(s => !isPlatform(s)).map(s => s.id))
-const allChecked = computed(() =>
-  selectableIds.value.length > 0 && selectableIds.value.every(id => selected.value.includes(id)))
-const someChecked = computed(() => selected.value.length > 0 && !allChecked.value)
-const toggleSelect = id => {
-  selected.value = selected.value.includes(id)
-    ? selected.value.filter(x => x !== id)
-    : [...selected.value, id]
-}
-const toggleAll = () => { selected.value = allChecked.value ? [] : [...selectableIds.value] }
+const {
+  batchMode, selected, allChecked, someChecked, toggleSelect, toggleBatchMode, toggleAll
+} = useBatchSelect(selectableIds)
 
 /** 批量结果汇报：全成功走 message；有失败逐条弹 Modal 列出原因（不静默吞） */
-const reportBatch = (r, verb) => {
-  const data = (r && r.data) || {}
-  const okCount = (data.succeeded || []).length
-  const failed = data.failed || []
-  if (!failed.length) {
-    message.success(`已${verb} ${okCount} 个服务`)
-    return
-  }
-  Modal.warning({
-    title: `${verb}完成：成功 ${okCount} 个，失败 ${failed.length} 个`,
-    content: failed.map(f => `「${f.name || f.id}」：${f.error}`).join('；'),
-    okText: '知道了'
-  })
-}
+const reportBatch = (r, verb) => reportBatchResult(r, verb, '个服务', { message, Modal })
 
 const doBatchEnabled = async on => {
   batchBusy.value = true
@@ -619,15 +595,7 @@ const downloadExport = () => {
   if (withHeaders.length) {
     payload['x-wenqu-notes'] = `以下服务配置了请求头，导入后需重新填写：${withHeaders.join('、')}`
   }
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = 'wenqu-mcp-servers.json'
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  URL.revokeObjectURL(url)
+  downloadBlob(JSON.stringify(payload, null, 2), 'wenqu-mcp-servers.json', 'application/json')
   message.success(`已导出 ${servers.value.length} 个服务`)
 }
 

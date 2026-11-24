@@ -514,6 +514,8 @@ import {
   listTenantOpenInvites, createTenantOpenInvite, revokeTenantOpenInvite
 } from '../api'
 import { isSuperadminSync } from '../utils/auth'
+import { fmtClock } from '../utils/format'
+import { downloadBlob } from '../utils/download'
 
 const superadmin = isSuperadminSync()
 const route = useRoute()
@@ -554,7 +556,7 @@ const fmtTokens = n => {
   if (v >= 1000) return (v / 1000).toFixed(1) + 'K'
   return String(v)
 }
-const fmtTime = s => s ? String(s).replace('T', ' ').slice(0, 16) : ''
+const fmtTime = s => fmtClock(s, 16, '')
 const fmtDate = s => s ? String(s).slice(0, 10) : '—'
 
 async function load () {
@@ -903,12 +905,7 @@ function copyText (text) {
   })
 }
 function downloadDelivery () {
-  const blob = new Blob([deliveryText.value], { type: 'text/plain;charset=utf-8' })
-  const a = document.createElement('a')
-  a.href = URL.createObjectURL(blob)
-  a.download = '工作区凭据-' + (delivery.value.tenantId || 'tenant') + '.txt'
-  a.click()
-  setTimeout(() => URL.revokeObjectURL(a.href), 1000)
+  downloadBlob(deliveryText.value, '工作区凭据-' + (delivery.value.tenantId || 'tenant') + '.txt')
 }
 
 // ---- 驳回 ----

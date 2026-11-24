@@ -427,6 +427,7 @@ import { copyText } from '../utils/clipboard'
 import { publicUrl } from '../utils/publicUrl'
 import { sanitizeFileName } from '../utils/fileName'
 import MoveToWorkspaceModal from '../components/MoveToWorkspaceModal.vue'
+import { fmtClock } from '../utils/format'
 
 // ==================== 类型分组与图标 ====================
 // 判据只认服务端下发的 kind（扩展名清单只在后端 PreviewTypes 一处）。
@@ -978,7 +979,7 @@ const fmtSize = n => {
   if (v >= 1024) return (v / 1024).toFixed(1) + ' KB'
   return v + ' B'
 }
-const fmtTime = s => (s ? String(s).replace('T', ' ').slice(0, 16) : '—')
+const fmtTime = s => fmtClock(s)
 const gridTime = s => (s ? String(s).replace('T', ' ').slice(5, 10) : '')
 const DAY_MS = 24 * 3600 * 1000
 const expireDaysLeft = t => {

@@ -59,6 +59,7 @@ import { message } from 'ant-design-vue'
 import { writeClipboard } from '../../utils/clipboard'
 import { getEffectivePermissions, getRolePermissions } from '../../api'
 import { domainKey, domainLabel, permissionTitle } from '../../utils/permissions'
+import { downloadBlob } from '../../utils/download'
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -175,11 +176,7 @@ function exportJson () {
     globalDenies: denyCodes.value,
     sources: sources.value
   }, null, 2)], { type: 'application/json' })
-  const a = document.createElement('a')
-  a.href = URL.createObjectURL(blob)
-  a.download = `effective-permissions-${result.value.uid}.json`
-  a.click()
-  URL.revokeObjectURL(a.href)
+  downloadBlob(blob, `effective-permissions-${result.value.uid}.json`)
 }
 </script>
 

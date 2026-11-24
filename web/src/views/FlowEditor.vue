@@ -630,6 +630,7 @@ import {
   listCredentials, createCredential, updateCredential, deleteCredential,
   listProjects
 } from '../api'
+import { fmtClock } from '../utils/format'
 
 const props = defineProps({
   workflowId: { type: String, default: '' },  // 空 = 新建
@@ -1756,7 +1757,7 @@ const traceTagColor = s => ({ success: 'green', failed: 'red', waiting: 'orange'
 const traceTagText = s => ({ success: '成功', failed: '失败', waiting: '等待审核', retrying: '重试中' }[s] || s)
 const runLabel = s => ({ queued: '排队中', running: '运行中', success: '成功', failed: '失败', timeout: '超时', waiting_approval: '待审批', retrying: '重试中' }[s] || s)
 const runColor = s => ({ queued: 'default', running: 'processing', success: 'green', failed: 'red', timeout: 'orange', waiting_approval: 'orange' }[s] || 'default')
-const fmtTime = t => (t ? String(t).replace('T', ' ').slice(0, 19) : '—')
+const fmtTime = t => fmtClock(t, 19)
 
 load()
 </script>
