@@ -1335,8 +1335,7 @@ public class MarketService {
     /** 文件 SHA-256（hex）。失败抛业务异常——指纹缺失会让徽标退回版本比对，宁可上架失败也不静默降级。 */
     private static String sha256Of(byte[] bytes) {
         try {
-            return java.util.HexFormat.of()
-                    .formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(bytes));
+            return com.wenqu.ai.util.Hashes.sha256Hex(bytes);
         } catch (Exception e) {
             throw new BizException("计算物品指纹失败：" + e.getMessage());
         }

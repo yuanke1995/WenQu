@@ -23,6 +23,12 @@ import org.springframework.stereotype.Component;
  * <p>
  * 两条判据的覆盖面不同：按名黑名单对<b>全部</b>工具生效（含 MCP 动态工具），档位裁剪只对有静态声明的
  * 工具生效——外部工具的性质平台无从知道，档位在它身上的表达是审批而不是隐藏。
+ * <p>
+ * <b>现状（勿误读）</b>：档位裁剪依赖 {@code inv.descriptor()}，而它由 {@code ToolPipelineFactory}
+ * 构造时从 {@code ToolRegistry} 查表填入；该注册表只收 {@code ToolFamilyProvider} 声明的静态工具，
+ * <b>框架原生工具（read_file/write_file/agent_spawn…）与 MCP 动态工具都不在其中</b>，descriptor 为 null
+ * → 本条直接放行。所以在唯一活路径（{@code run_code} 子调用）上，本闸实际生效的是<b>按名黑名单</b>
+ * 那一路。主对话轮的档位判定在装配阶段与 {@code SpringAiToolAdapter.checkPermissions}，不是这里。
  *
  * @author yuanke
  */

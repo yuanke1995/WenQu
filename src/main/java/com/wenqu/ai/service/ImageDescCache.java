@@ -1,5 +1,6 @@
 package com.wenqu.ai.service;
 
+import com.wenqu.ai.util.Hashes;
 import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.mapper.ImageDescMapper;
 import com.wenqu.ai.model.ImageDesc;
@@ -7,7 +8,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -47,13 +47,8 @@ public class ImageDescCache {
     /** 缓存 key：v{版本}_{sha256(model+prompt+bytes)}；版本变化 → 前缀变化 → 全部 miss（强制重生成） */
     public String key(byte[] imageBytes, String prompt, String model) {
         try {
-            MessageDigest md = MessageDigest.getInstance("SHA-256");
             String salt = (model == null ? "" : model) + "\n" + (prompt == null ? "" : prompt) + "\n";
-            md.update(salt.getBytes(StandardCharsets.UTF_8));
-            byte[] d = md.digest(imageBytes);
-            StringBuilder sb = new StringBuilder(64);
-            for (byte b : d) sb.append(String.format("%02x", b));
-            return "v" + version() + "_" + sb;
+            return "v" + version() + "_" + Hashes.sha256HexSalted(salt, imageBytes);
         } catch (Exception e) {
             log.warn("[ImageDescCache] key 计算失败: {}", e.getMessage());
             return null;

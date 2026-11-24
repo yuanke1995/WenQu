@@ -2003,12 +2003,9 @@ public class GoalService {
     }
 
     private static String sha256(String text) {
-        try {
-            MessageDigest md = MessageDigest.getInstance("SHA-256");
-            return HexFormat.of().formatHex(md.digest(text.getBytes(StandardCharsets.UTF_8)));
-        } catch (Exception e) {
-            return Integer.toHexString(text.hashCode());
-        }
+        // 摘要失败不再降级为 hashCode()：8 位 32 位哈希会让同一条证据被误判为「重复」或「不同」，
+        // 而目标核验正是靠这个指纹判断证据有没有变。见 com.wenqu.ai.util.Hashes 类注释。
+        return com.wenqu.ai.util.Hashes.sha256Hex(text);
     }
 
     private static String clip(String s, int max) {

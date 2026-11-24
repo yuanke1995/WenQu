@@ -1,5 +1,6 @@
 package com.wenqu.ai.service;
 
+import com.wenqu.ai.util.Hashes;
 import com.wenqu.ai.agent.chat.ChatRunRuntime;
 import com.wenqu.ai.agent.chat.ChatCommand;
 import com.wenqu.ai.config.ConfigDefaults;
@@ -32,8 +33,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.function.ServerRequest;
 import org.springframework.web.servlet.function.ServerResponse;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -1052,14 +1051,7 @@ public class McpServerService {
 
     /** token → 稳定短摘要（派生访客 uid，不泄露 token 本身） */
     private static String digest(String token) {
-        try {
-            byte[] h = MessageDigest.getInstance("SHA-256").digest(token.getBytes(StandardCharsets.UTF_8));
-            StringBuilder sb = new StringBuilder();
-            for (int i = 0; i < 8; i++) sb.append(String.format("%02x", h[i]));
-            return sb.toString();
-        } catch (Exception e) {
-            throw new IllegalStateException("SHA-256 不可用", e);
-        }
+        return Hashes.sha256HexPrefix(token, 16);
     }
 
     private static McpSchema.CallToolResult toolError(String message) {

@@ -1,11 +1,10 @@
 package com.wenqu.ai.service;
 
+import com.wenqu.ai.util.Hashes;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -216,15 +215,7 @@ public class OnlinePresenceService {
     }
 
     private static String fingerprint(String token) {
-        try {
-            byte[] d = MessageDigest.getInstance("SHA-256")
-                    .digest(String.valueOf(token).getBytes(StandardCharsets.UTF_8));
-            StringBuilder sb = new StringBuilder("t");
-            for (int i = 0; i < 8; i++) sb.append(String.format("%02x", d[i]));
-            return sb.toString();
-        } catch (Exception e) {
-            return "legacy";
-        }
+        return "t" + Hashes.sha256HexPrefix(String.valueOf(token), 16);
     }
 
     private static String isoTime(long epochMs) {

@@ -1,11 +1,9 @@
 package com.wenqu.ai.executor;
 
+import com.wenqu.ai.util.Hashes;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 
@@ -22,12 +20,7 @@ public class ExecutorService {
     }
 
     private static String sha256(String raw) {
-        try {
-            MessageDigest md = MessageDigest.getInstance("SHA-256");
-            return HexFormat.of().formatHex(md.digest(raw.getBytes(StandardCharsets.UTF_8)));
-        } catch (Exception e) {
-            throw new IllegalStateException("SHA-256 unavailable", e);
-        }
+        return Hashes.sha256Hex(raw);
     }
 
     /** 签发设备令牌（只回一次）；同名设备不重复创建。 */

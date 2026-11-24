@@ -29,12 +29,7 @@ public final class DocumentTextUtils {
         try {
             String img = images == null || images.isEmpty() ? "" : String.join(",", images);
             String path = titlePath == null ? "" : titlePath;
-            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
-            byte[] d = md.digest((title + "\n" + path + "\n" + content + "\n" + img)
-                    .getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            StringBuilder sb = new StringBuilder(64);
-            for (byte b : d) sb.append(String.format("%02x", b));
-            return sb.toString();
+            return com.wenqu.ai.util.Hashes.sha256Hex(title + "\n" + path + "\n" + content + "\n" + img);
         } catch (Exception e) {
             return null;
         }

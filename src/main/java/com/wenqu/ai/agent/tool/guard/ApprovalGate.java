@@ -24,6 +24,14 @@ import org.springframework.stereotype.Component;
  *   <li>超时：按拒绝（默认 120s，见 {@code chat.approvalTimeoutMs}）；</li>
  *   <li>叫停：本轮已停，等待中止。</li>
  * </ul>
+ * <p>
+ * <b>现状（勿误读）</b>：守卫链当前只有一个活的挂载点——{@code RunCodeSubCallRuntime} 的
+ * {@code run_code} 子调用（{@code ToolPipelineFactory.wrap} 在全仓仅此一处调用）。该路径上的
+ * {@link ToolTurnContext} 由 {@code WenquAgentxTools} 实现，{@code approvalMode()} 恒返回
+ * {@code "off"}、{@code requiresApproval()} 恒 false，所以<b>本闸在该路径上恒放行</b>。
+ * 主对话轮的工具审批走的是框架侧 {@code SpringAiToolAdapter.checkPermissions}，不在这里。
+ * 保留本类是因为契约（{@link ToolApprover}、{@code ToolTurnContext#approvalMode}）仍需被实现，
+ * 且工作流/技能旁路将来接入时要用同一套闸。
  */
 @Slf4j
 @Component

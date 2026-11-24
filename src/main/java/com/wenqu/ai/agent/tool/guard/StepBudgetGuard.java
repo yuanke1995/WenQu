@@ -17,6 +17,12 @@ import org.springframework.stereotype.Component;
  * 「过闸即计数、审批被拒的那一步同样计入预算」的时序保持一致。之所以不挪到管线里另一处计数：
  * 计数点与判定点一分家，「审批被拒算不算用掉一步」就变成两条代码各自的理解，实测表现是
  * 上限 15 步的会话实际跑了三十几次工具调用。
+ * <p>
+ * <b>现状（勿误读）</b>：本守卫在唯一活路径（{@code run_code} 子调用）上取的是<b>子调用自己</b>
+ * 的那一摞计数——{@code WenquAgentxTools} 的 {@code ToolTurnContext} 实现里
+ * {@code stepsTaken()} 如实报 0、{@code takeStep()} 为空实现，而 {@code subCallTurnContext}
+ * 又把预算换成了 {@code subCallMax}。也就是说<b>主对话轮的步数闸是 {@code AgentxStepBudget}</b>，
+ * 不是这里；本类只负责脚本内部再调工具时的那层子预算。改主路径步数逻辑请改 AgentxStepBudget。
  */
 @Slf4j
 @Component

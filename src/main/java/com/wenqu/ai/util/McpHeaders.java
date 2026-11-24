@@ -152,14 +152,9 @@ public final class McpHeaders {
     /** 配置指纹用摘要：密文变化即视为配置变化，避免把整段凭据塞进指纹串 */
     public static String digest(String stored) {
         if (stored == null || stored.isBlank()) return "-";
-        try {
-            byte[] d = MessageDigest.getInstance("SHA-256").digest(stored.getBytes(StandardCharsets.UTF_8));
-            StringBuilder sb = new StringBuilder(16);
-            for (int i = 0; i < 8; i++) sb.append(String.format("%02x", d[i]));
-            return sb.toString();
-        } catch (Exception e) {
-            return Integer.toHexString(stored.hashCode());
-        }
+        // 取 8 字节（16 位十六进制）足够判「密文变了没」；失败不降级为 hashCode()，
+        // 否则指纹会静默换成弱哈希，见 Hashes 类注释。
+        return Hashes.sha256HexPrefix(stored, 16);
     }
 
     public static boolean isForbidden(String key) {

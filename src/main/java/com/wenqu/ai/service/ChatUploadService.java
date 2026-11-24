@@ -1,5 +1,6 @@
 package com.wenqu.ai.service;
 
+import com.wenqu.ai.util.Hashes;
 import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.config.ConfigKeys;
 import com.alibaba.fastjson2.JSON;
@@ -14,7 +15,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.security.MessageDigest;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
@@ -176,14 +176,6 @@ public class ChatUploadService {
 
     /** 目录名 = uid 的 SHA-256 前 16 位（uid 可能含中文/特殊字符，直接做目录名会带来路径与编码坑） */
     private static String hashUid(String uid) {
-        try {
-            MessageDigest md = MessageDigest.getInstance("SHA-256");
-            byte[] d = md.digest(String.valueOf(uid).getBytes(StandardCharsets.UTF_8));
-            StringBuilder sb = new StringBuilder();
-            for (int i = 0; i < 8; i++) sb.append(String.format("%02x", d[i]));
-            return sb.toString();
-        } catch (Exception e) {
-            return "unknown";
-        }
+        return Hashes.sha256HexPrefix(uid, 16);
     }
 }

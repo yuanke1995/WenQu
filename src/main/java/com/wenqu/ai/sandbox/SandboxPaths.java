@@ -1,8 +1,5 @@
 package com.wenqu.ai.sandbox;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.regex.Pattern;
 
 /**
@@ -98,17 +95,14 @@ public final class SandboxPaths {
         return candidate.equals(root) || candidate.startsWith(root + "/");
     }
 
-    /** SHA-256 十六进制（小写）；本工程其它地方无此工具，故随本类携带。 */
+    /**
+     * SHA-256 十六进制（小写）。实现已收口到 {@link com.wenqu.ai.util.Hashes}，
+     * 这里保留为薄转发：沙箱侧调用点较多，改名成本高于收益。
+     *
+     * @deprecated 新代码请直接用 {@code com.wenqu.ai.util.Hashes#sha256Hex(String)}。
+     */
+    @Deprecated
     public static String sha256Hex(String value) {
-        try {
-            byte[] digest = MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8));
-            StringBuilder hex = new StringBuilder(digest.length * 2);
-            for (byte b : digest) {
-                hex.append(Character.forDigit((b >> 4) & 0xF, 16)).append(Character.forDigit(b & 0xF, 16));
-            }
-            return hex.toString();
-        } catch (NoSuchAlgorithmException exc) {
-            throw new IllegalStateException("SHA-256 unavailable", exc);
-        }
+        return com.wenqu.ai.util.Hashes.sha256Hex(value);
     }
 }
