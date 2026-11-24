@@ -2256,6 +2256,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 目标模式开关同样烤在实例里（taskContext 投影参数是 build 期装配）：智能体改了
         // goal_enabled 不重建，就会出现「库里开着、实例没投影」或反过来——界面与模型看到的不是一套
         key = key + "|goal=" + (row != null && row.getGoalEnabled() != null ? row.getGoalEnabled() : "-");
+        // 本轮配置覆盖（历史版本复测/临时换资料）进实例指纹：改 revision 或 knowledgePatch 必须重建，
+        // 否则工具表、技能滤镜、人设仍来自上一次 build 的实例；无 override 时不追加，旧行为逐字节不变。
+        if (cmd.getAgentConfigOverride() != null && !cmd.getAgentConfigOverride().isEmpty()) {
+            key = key + "|ov=" + cmd.getAgentConfigOverride().fingerprint();
+        }
         // 工作流工具只存 id（Agent.java 的 workflowTools 注释承诺「重新发布即时生效」），但发布/回滚/
         // 改名不会改 agent.update_time，工具表又是 build 期固化的。把引用工作流的发布态并进指纹，
         // 让同一会话的下一次开轮重建实例并重新 mount 工具，兑现那条承诺。
@@ -2304,9 +2309,13 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         for (String line : raw.split("[\\r\\n,，;；]+")) {
             String ref = line.trim();
             if (ref.isEmpty()) continue;
-            int slash = ref.lastIndexOf('/');
-            String name = slash >= 0 ? ref.substring(slash + 1) : ref;
-            if (!name.isBlank()) out.add(name.trim());
+            // 规范引用（builtin/user/workspace）与历史 {uid}/{name} 都解析成裸名：
+            // 框架的 SkillFilter 只按 AgentSkill.getName() 比较，不能把 fullRef 塞进去。
+            try {
+                out.add(com.wenqu.ai.skill.SkillRef.parse(ref).filterName());
+            } catch (RuntimeException e) {
+                log.warn("[SKILL] 智能体技能引用非法，已忽略: {}", ref);
+            }
         }
         return out;
     }

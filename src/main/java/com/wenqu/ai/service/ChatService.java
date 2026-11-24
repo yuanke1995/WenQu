@@ -95,11 +95,12 @@ public class ChatService {
      * 与「null/空=全部继承全局设置」的字段口径一致。清理由本轮 finally 的
      * {@code clearOverride()} 负责，本方法不自行清理（它在引擎跑完整轮之前不能撤）。
      */
-    private void loadAgentQueryOverrides(String agentId) {
+    private void loadAgentQueryOverrides(String agentId,
+                                         com.wenqu.ai.agent.chat.AgentTurnOverride override) {
         if (agentId == null || agentId.isBlank()) return;
         Agent bound;
         try {
-            bound = agentService.get(agentId);
+            bound = agentService.resolveForTurn(agentId, override);
         } catch (Exception e) {
             log.warn("[AGENT] 智能体检索开关装载失败（本轮按全局设置检索）: agent={} err={}",
                     agentId, e.getMessage());
@@ -400,7 +401,7 @@ public class ChatService {
                 // （是否重排），阈值/权重归知识库、由检索层逐库生效，不在这里压成回合级标量。
                 // 装在与个人覆盖同一段、同一生命周期——下面的 finally 早就在清它。
                 // 优先级：显式覆盖(此处) > 个人覆盖 > 全局默认。
-                loadAgentQueryOverrides(agentId);
+                loadAgentQueryOverrides(agentId, cmd.getAgentConfigOverride());
                 try {
                 // 分派点刻意放在这一段：会话轮级互斥、turnId 登记、断线总线、看门狗、身份与个人覆盖
                 // 装载都是「这一轮」的外壳，两种引擎都要；被替换的只是外壳里面那段推理循环本身。

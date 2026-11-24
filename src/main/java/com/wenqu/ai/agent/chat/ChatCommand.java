@@ -55,6 +55,11 @@ public final class ChatCommand {
     final boolean deepThink;
     /** 本轮使用的智能体（为空则默认入口） */
     final String agentId;
+    /**
+     * 本轮智能体配置覆盖（评测历史版本重测 / 临时换资料范围）：只读、不写库。
+     * null 或无覆盖 = 当前配置；调用变量不要走这里（应进用户消息侧）。
+     */
+    final AgentTurnOverride agentConfigOverride;
     /** 聊天页的会话级模型覆盖（仅用户手动切换时传；引用或遗留名） */
     final String modelOverride;
     /** 提问用户：解析个人默认模型、个人资产（技能/MCP）归属、数据权限都按它 */

@@ -1203,6 +1203,81 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         return v == null ? "" : String.valueOf(v);
     }
 
+    /**
+     * 本轮智能体视图：历史版本快照 + 白名单 override，<b>只读、不改库</b>。
+     * <p>评测重测和历史对比必须走这里，不能回滚线上配置——回滚会改变别的会话下一轮看到的智能体。
+     * 版本快照是展示层共用的同一份白名单 JSON，不经过脱敏（脱敏只在版本列表出参做）。
+     * revision 不存在、智能体不可读/已停用、内置智能体被要求改知识范围时 fail-loud，不静默回落。
+     */
+    public Agent resolveForTurn(String agentId, com.wenqu.ai.agent.chat.AgentTurnOverride override) {
+        Agent current = get(agentId);          // 可读 + 未停用，游客/API 路径也走同一道闸
+        if (current == null) return null;
+        if (override == null || override.isEmpty()) return current;
+
+        Agent view = new Agent();
+        org.springframework.beans.BeanUtils.copyProperties(current, view);
+        Integer revision = override.revision();
+        if (revision != null) {
+            AgentVersion row = versionMapper.selectOne(new LambdaQueryWrapper<AgentVersion>()
+                    .eq(AgentVersion::getAgentId, agentId)
+                    .eq(AgentVersion::getVersion, revision));
+            if (row == null) throw new BizException(404, "智能体版本 v" + revision + " 不存在");
+            applySnapshotToView(view, parseConfig(row.getConfig()));
+        }
+        var knowledge = override.knowledge();
+        if (knowledge != null) {
+            if (Integer.valueOf(1).equals(view.getIsBuiltin())
+                    && (knowledge.hasKbIds() || knowledge.disabled() != null)) {
+                throw new BizException("内置智能体的知识范围由平台固定，不能在本轮覆盖");
+            }
+            knowledge.applyTo(view);
+        }
+        return view;
+    }
+
+    /** 把版本快照的配置字段写进内存视图（与 {@link #applyConfig} 同一份白名单和归一口径，但不写库）。 */
+    private void applySnapshotToView(Agent a, Map<String, Object> cfg) {
+        boolean builtin = Integer.valueOf(1).equals(a.getIsBuiltin());
+        String name = raw(cfg.get("name"));
+        if (StringUtils.hasText(name)) a.setName(name);
+        if (builtin) {
+            a.setIcon(BUILTIN_ICON);
+            a.setIsSubagent(0);
+        } else {
+            a.setIcon(raw(cfg.get("icon")));
+        }
+        a.setDescription(raw(cfg.get("description")));
+        a.setSystemPrompt(raw(cfg.get("systemPrompt")));
+        a.setKnowledgeScope(raw(cfg.get("knowledgeScope")));
+        a.setKnowledgeBaseIds(raw(cfg.get("knowledgeBaseIds")));
+        a.setKnowledgeTags(raw(cfg.get("knowledgeTags")));
+        a.setKnowledgeFilter(raw(cfg.get("knowledgeFilter")));
+        a.setKnowledgeDisabled(asInt(cfg.get("knowledgeDisabled")));
+        a.setToolKnowledge(asInt(cfg.get("toolKnowledge")));
+        a.setToolBuiltin(asInt(cfg.get("toolBuiltin")));
+        a.setToolSkill(asInt(cfg.get("toolSkill")));
+        a.setToolArtifact(asInt(cfg.get("toolArtifact")));
+        a.setToolMcp(asInt(cfg.get("toolMcp")));
+        a.setToolBrowser(asInt(cfg.get("toolBrowser")));
+        a.setToolWebsearch(asInt(cfg.get("toolWebsearch")));
+        a.setToolHttp(asInt(cfg.get("toolHttp")));
+        a.setHttpTools(raw(cfg.get("httpTools")));
+        a.setToolWorkflow(asInt(cfg.get("toolWorkflow")));
+        a.setWorkflowTools(raw(cfg.get("workflowTools")));
+        a.setCallbackUrl(raw(cfg.get("callbackUrl")));
+        a.setMemoryMode(asInt(cfg.get("memoryMode")));
+        a.setToolApprovalMode(raw(cfg.get("toolApprovalMode")));
+        a.setPermissionPreset(raw(cfg.get("permissionPreset")));
+        a.setToolDeny(raw(cfg.get("toolDeny")));
+        a.setMaxToolSteps(asInt(cfg.get("maxToolSteps")));
+        a.setSkills(raw(cfg.get("skills")));
+        a.setMcps(raw(cfg.get("mcps")));
+        a.setBuiltinTools(raw(cfg.get("builtinTools")));
+        if (!builtin) a.setIsSubagent(asInt(cfg.get("isSubagent")));
+        a.setSubAgentIds(raw(cfg.get("subAgentIds")));
+        a.setQueryParams(raw(cfg.get("queryParams")));
+    }
+
     /** 当前版本号（保存即 +1 的计数口径）：评测运行快照与「有变更未评测」门禁判据的读数出口 */
     public int currentVersionNumber(String agentId) {
         return versionCount(agentId);

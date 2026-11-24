@@ -171,6 +171,38 @@ public class WenquSkillRepository implements RuntimeContextSkillRepository {
     }
 
     /**
+     * 按规范引用解析技能：内置/本人/会话工作区都按来源与归属精确取，不让同名技能跨人顶替。
+     * 老裸名走原 {@link #resolve} 的兼容口径（当前用户优先，内置兜底）。
+     */
+    public SkillEntry resolveRef(RuntimeContext ctx, String sessionId, String ref) {
+        SkillRef parsed = SkillRef.parse(ref);
+        if (!parsed.canonical()) return resolve(ctx, sessionId, parsed.name());
+        String uid = uidOf(ctx);
+        // 不能直接查合并后的 catalog：同名时用户版会覆盖内置版，canonical builtin: 就取不到内置正文。
+        // 按引用指定的来源直接读那一路，再按归属/会话精确定位。
+        if (WenquSkillRepository.SOURCE_BUILTIN.equals(parsed.source())) {
+            return firstNamed(readAll(builtinRoot), parsed.name(), SOURCE_BUILTIN, Set.of());
+        }
+        if (WenquSkillRepository.SOURCE_USER.equals(parsed.source())) {
+            if (uid == null || !uid.equals(parsed.owner())) return null;
+            Set<String> disabled = userSkillStore == null ? Set.of() : userSkillStore.disabledNames(uid);
+            return firstNamed(readAll(userSkillStore.userDir(uid)), parsed.name(), SOURCE_USER, disabled);
+        }
+        if (WenquSkillRepository.SOURCE_WORKSPACE.equals(parsed.source())) {
+            if (sessionId == null || !sessionId.equals(parsed.owner())) return null;
+            return firstNamed(readWorkspace(ctx, sessionId), parsed.name(), SOURCE_WORKSPACE, Set.of());
+        }
+        return resolve(ctx, sessionId, parsed.name());
+    }
+
+    private static SkillEntry firstNamed(List<AgentSkill> skills, String name, String source, Set<String> disabled) {
+        for (AgentSkill s : skills) {
+            if (name.equals(s.getName())) return entry(s, source, disabled);
+        }
+        return null;
+    }
+
+    /**
      * 按名解析一条技能（<b>含已停用的</b>）：「本轮点名带正文」与「查看正文」共用这一处，
      * 保证界面上读到的和模型真吃到的字节是同一份。
      * <p>点名是明确意图，优先于停用清单——所以这里不过滤。

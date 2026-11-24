@@ -1255,11 +1255,14 @@ public class WorkflowEngine {
             StringBuilder sb = new StringBuilder();
             List<String> loaded = new ArrayList<>();
             int maxChars = com.wenqu.ai.config.ConfigDefaults.SKILL_MAX_FILE_CHARS;
-            for (String name : names) {
+            for (String refText : names) {
+                com.wenqu.ai.skill.SkillRef parsed = com.wenqu.ai.skill.SkillRef.parse(refText);
+                String name = parsed.filterName();
                 String content = withReplay(ctx, () -> {
-                    io.agentscope.core.skill.AgentSkill sk =
-                            skillRepository.getSkill(name, io.agentscope.core.agent.RuntimeContext.builder()
-                                    .userId(ctx.uid).sessionId("workflow").build());
+                    var entry = skillRepository.resolveRef(
+                            io.agentscope.core.agent.RuntimeContext.builder().userId(ctx.uid).sessionId("workflow").build(),
+                            "workflow", refText);
+                    io.agentscope.core.skill.AgentSkill sk = entry == null ? null : entry.skill();
                     return sk == null ? null : sk.getSkillContent();
                 });
                 if (content == null || content.isBlank()) {
@@ -1269,7 +1272,7 @@ public class WorkflowEngine {
                 if (content.length() > maxChars) {
                     content = content.substring(0, maxChars) + "\n…（正文超长已截断）";
                 }
-                loaded.add(name);
+                loaded.add(parsed.canonicalText());
                 sb.append("\n\n### 技能：").append(name).append("\n").append(content);
             }
             String text = "\n\n【工作流指定技能】请先完整阅读以下技能说明，再严格按技能要求处理后续任务：" + sb;

@@ -415,7 +415,7 @@ public class SkillController {
 
     private WenquSkillRepository.SkillEntry requireEntry(String uid, String sessionId, String name) {
         if (name == null || name.isBlank()) throw new BizException("缺少技能名");
-        WenquSkillRepository.SkillEntry e = skills.resolve(ctx(uid), sessionId, name.trim());
+        WenquSkillRepository.SkillEntry e = skills.resolveRef(ctx(uid), sessionId, name.trim());
         if (e == null) throw new BizException("没有这条技能，或它当前对你不可见");
         return e;
     }
@@ -468,7 +468,10 @@ public class SkillController {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("name", name);
         m.put("dirName", meta == null ? name : meta.dirName());
-        m.put("ref", mine ? uid + "/" + name : name);
+        m.put("ref", WenquSkillRepository.SOURCE_USER.equals(source)
+                ? "user:" + uid + ":" + name
+                : WenquSkillRepository.SOURCE_WORKSPACE.equals(source)
+                    ? "workspace:skill-list:" + name : "builtin:" + name);
         m.put("description", s.getDescription());
         m.put("source", source);
         m.put("disabled", e.disabled());

@@ -366,7 +366,7 @@
                                 :placeholder="'选择' + c.label + '（一项都不选则等同「不使用」）'" />
                       <div v-if="c.listKey === 'skills' && form[c.listKey].length" class="ap-pick-docs">
                         已选正文：<button v-for="n in form[c.listKey]" :key="n" class="app-link-btn"
-                                      @click="openSkillDoc(n)">{{ String(n).split('/').pop() }}</button>
+                                      @click="openSkillDoc(n)">{{ skillRefName(n) }}</button>
                       </div>
                       <div v-if="!optionsOf(c).length" class="ap-pick-empty">
                         当前系统里没有可选项 —— 需先在设置页配置{{ c.label }}
@@ -1172,7 +1172,8 @@ const reloadSkillOptions = () => listAvailableSkills()
     .then(r => { if (r && r.success && Array.isArray(r.data)) applySkillList(r.data) })
     .catch(() => {})
 /** 「指定」里存的是引用串（个人技能带 {uid}/ 前缀），取回裸名；条目按名字现取，快照会停在改动前那份 */
-const openSkillDoc = refStr => { skillDoc.value = String(refStr || '').split('/').pop() }
+const skillRefName = refStr => String(refStr || '').split(':').pop().split('/').pop()
+const openSkillDoc = refStr => { skillDoc.value = skillRefName(refStr) }
 const skillDocEntry = computed(() => skillRaw.value.find(s => s.name === skillDoc.value) || {})
 const mcpOptions = ref([])
 // 可委派的子智能体下拉（4.3：来自 /agent/sub，仅作为主智能体的委派候选，本身不参与对话）

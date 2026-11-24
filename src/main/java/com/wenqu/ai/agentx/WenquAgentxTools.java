@@ -568,8 +568,12 @@ public class WenquAgentxTools {
                                        com.wenqu.ai.engine.RunChannel channel,
                                        ExecutionPolicy policy, TurnHooks hooks,
                                        boolean workspaceMemoryTainted) {
+        var override = cmd.getAgentConfigOverride();
+        // 登录父轮默认不限库；本轮显式指定 kbIds 时必须形成围墙，否则 patch 静默无效。
+        boolean walledByOverride = override != null && override.knowledge() != null
+                && override.knowledge().hasKbIds();
         KnowledgeRetrievalTool.KbScope scope = retrievalScope.resolve(agentOf(cmd), cmd.getUserId(),
-                cmd.isGuestMode(), cmd.getParentScopeKbIds());
+                cmd.isGuestMode() || walledByOverride, cmd.getParentScopeKbIds());
         java.util.Set<String> mentionedKbIds = mentionedKbIdsOf(cmd);
         // @ 知识库提及的收窄：向量路的 kbIds 只在「没有围墙域」时收成点名的库——围墙域原样保留，
         // 域外被点名的库不因提及越界；kbFilter 编译进 filter.kbIds 下推，命中块所属库必须落在
@@ -773,7 +777,8 @@ public class WenquAgentxTools {
 
     /** 本轮的智能体行（无智能体绑定返回 null＝按平台默认档与使用者可见范围走）。 */
     public Agent agentOf(ChatCommand cmd) {
-        return cmd.getAgentId() == null || cmd.getAgentId().isBlank() ? null : agentService.get(cmd.getAgentId());
+        if (cmd.getAgentId() == null || cmd.getAgentId().isBlank()) return null;
+        return agentService.resolveForTurn(cmd.getAgentId(), cmd.getAgentConfigOverride());
     }
 
     /**

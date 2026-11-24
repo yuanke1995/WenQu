@@ -1653,7 +1653,7 @@ async function loadSkillOptions () {
   if (skillOptions.value.length) return
   try {
     const r = await listAvailableSkills()
-    skillOptions.value = ((r && r.data) || []).map(s => ({ value: s.name, label: s.name + (s.description ? ` — ${String(s.description).slice(0, 30)}` : '') }))
+    skillOptions.value = ((r && r.data) || []).map(s => ({ value: s.ref || s.name, label: s.name + (s.description ? ` — ${String(s.description).slice(0, 30)}` : '') }))
   } catch (e) { /* 下拉加载失败不阻断编辑 */ }
 }
 

@@ -119,8 +119,8 @@ public final class TurnPromptAssembler {
         StringBuilder sb = new StringBuilder();
         for (String raw : picked) {
             if (raw == null || raw.isBlank()) continue;
-            // 智能体「指定」模式存的是引用串 {uid}/{name}（个人技能要精确到归属人），输入框点名给的是裸名
-            String name = raw.contains("/") ? raw.substring(raw.lastIndexOf('/') + 1) : raw;
+            com.wenqu.ai.skill.SkillRef ref = com.wenqu.ai.skill.SkillRef.parse(raw);
+            String name = ref.filterName();
             sb.append("\n\n【本轮指定技能：").append(name).append("】\n");
             // 智能体的「技能范围」是能力边界，不是建议：点名也不能越过它。
             if (filter != null && !filter.isAllowed(name)) {
@@ -129,7 +129,9 @@ public final class TurnPromptAssembler {
                 continue;
             }
             try {
-                AgentSkill sk = skillRepository.getSkill(name, ctx);
+                com.wenqu.ai.skill.WenquSkillRepository.SkillEntry entry = skillRepository.resolveRef(ctx,
+                        cmd.getSessionId(), raw);
+                AgentSkill sk = entry == null ? null : entry.skill();
                 String body = sk == null ? null : sk.getSkillContent();
                 if (body == null || body.isBlank()) {
                     sb.append("（这条技能当前对当前用户不可用：可能已被删除或改名。请如实告知用户，不要凭记忆代答）");
