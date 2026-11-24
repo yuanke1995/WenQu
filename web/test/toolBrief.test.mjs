@@ -23,6 +23,19 @@ test('工具摘要：派遣亮助手名，技能读亮裸技能名', () => {
   assert.equal(toolBrief({ name: 'read_skill', args: JSON.stringify({ skillId: '写报告_workspace' }) }), '写报告')
 })
 
+test('工具摘要：团队工具亮成员名/任务标题，不把消息正文搬上标题', () => {
+  assert.equal(toolBrief({ name: 'spawnMember', args: JSON.stringify({ member_name: 'reviewer', agent_ref: 'a1b2c3' }) }), 'reviewer')
+  assert.equal(toolBrief({ name: 'createTask', args: JSON.stringify({ subject: '写一句团队口号', owner: 'writer' }) }), '写一句团队口号')
+  assert.equal(toolBrief({ name: 'sendMessage', args: JSON.stringify({ to_member: 'writer', message: '很长的一段正文' }) }), 'writer')
+  assert.equal(toolBrief({ name: 'team_task_depend', args: JSON.stringify({ from: '调研', to: '汇总' }) }), '调研')
+})
+
+test('工具摘要：统一入口 team(action=…) 把动作换成中文并带上关键入参', () => {
+  assert.equal(toolBrief({ name: 'team', args: JSON.stringify({ action: 'listTasks' }) }), '查看团队任务')
+  assert.equal(toolBrief({ name: 'team', args: JSON.stringify({ action: 'sendMessage', to_member: 'writer' }) }), '给成员发消息 · writer')
+  assert.equal(toolBrief({ name: 'team', args: JSON.stringify({ action: 'createTask', subject: '写口号', owner: 'writer' }) }), '创建团队任务 · 写口号')
+})
+
 test('实时输出：运行中取尾部，超长加省略提示；终态用 result', () => {
   assert.equal(liveOutput({ status: 'start', liveOutput: 'x'.repeat(5000), outputTruncated: false }).length, 4000)
   assert.ok(liveOutput({ status: 'start', liveOutput: 'abc', outputTruncated: true }).startsWith('…（前面输出已省略）'))

@@ -2,7 +2,10 @@
 import { consultNameOf, isDispatchTool } from './consult.js'
 import { toolLabel } from './tools.js'
 
-export const TOOL_BRIEF_KEYS = ['command', 'query', 'path', 'dir', 'filename', 'url', 'kbIds', 'message']
+// 团队工具那四个键排在 message 之前：给成员发消息时标题该亮「发给谁」，
+// 而不是把消息正文整段搬到卡片标题上（message 只服务 askUser 那种一问一答）。
+export const TOOL_BRIEF_KEYS = ['command', 'query', 'path', 'dir', 'filename', 'url', 'kbIds',
+  'member_name', 'subject', 'to_member', 'task_id', 'message']
 const SKILL_READ_TOOL_NAMES = new Set(['load_skill_through_path', 'read_skill', 'use_skill'])
 
 const bareSkillNameOf = id => {
@@ -17,6 +20,15 @@ const bareSkillNameOf = id => {
 export const oneLine = (s, n) => {
   const x = String(s).replace(/\s+/g, ' ').trim()
   return x.length > n ? x.slice(0, n) + '…' : x
+}
+
+/** 团队动作这次拿什么去做：优先成员名/任务标题，其次任务 id；都没有返回空串。 */
+const teamActionDetail = obj => {
+  for (const k of ['member_name', 'to_member', 'subject', 'task_id']) {
+    const v = obj[k]
+    if (typeof v === 'string' && v.trim()) return oneLine(v, 40)
+  }
+  return ''
 }
 
 export const toolBrief = t => {
@@ -35,6 +47,14 @@ export const toolBrief = t => {
     if (who) return oneLine(who, 56)
   }
   if (!obj || typeof obj !== 'object') return oneLine(t.args, 56)
+  // 统一入口 team(action=…)：动作名是 camelCase 英文，卡片上要换成对应的中文动作名，
+  // 再拼上这次动作的关键入参（发给谁 / 任务标题）。只靠下面那张白名单的话，
+  // team(action=listTasks) 这类无入参的调用会退化成「第一个非空字符串字段」= 英文 action。
+  if (t.name === 'team' && typeof obj.action === 'string' && obj.action.trim()) {
+    const act = toolLabel(obj.action.trim())
+    const detail = teamActionDetail(obj)
+    return oneLine(detail ? act + ' · ' + detail : act, 56)
+  }
   if (SKILL_READ_TOOL_NAMES.has(t.name)) {
     const nm = bareSkillNameOf(obj.skillId || obj.skill_id || obj.skill_name || obj.skillName || obj.name)
     if (nm) return oneLine(nm, 56)

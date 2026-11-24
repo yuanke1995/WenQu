@@ -17,6 +17,17 @@ test('工具说明：后端 hint 优先，其次本地表（含 MCP 裸名）', 
   assert.equal(toolDesc('w_q_sql_query'), '')
 })
 
+test('团队工具：camelCase 动作名也有中文名与说明（框架 TeamTool 逐动作注册）', () => {
+  assert.equal(toolLabel('spawnMember'), '派出团队成员')
+  assert.equal(toolLabel('createTask'), '创建团队任务')
+  assert.equal(toolLabel('sendMessage'), '给成员发消息')
+  assert.equal(toolLabel('listTasks'), '查看团队任务')
+  assert.equal(toolLabel('completeTeam'), '结束团队任务')
+  assert.equal(toolLabel('team_task_depend'), '登记任务依赖')
+  assert.equal(toolDesc('spawnMember'), '新建一位持久成员，会出现在团队面板、可被再次唤醒')
+  assert.equal(toolDesc('team_task_depend'), '登记两个任务的先后依赖（前置完成，后继才可认领）')
+})
+
 test('已执行计数：denied 不计数', () => {
   assert.equal(executedCount([{ name: 'a' }, { name: 'b', denied: true }, null]), 1)
   assert.equal(executedCount(null), 0)
