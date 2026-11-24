@@ -4207,12 +4207,16 @@ const {
    ≤768：手机窄屏 —— 收内边距（32px 在 375px 屏上占 17% 宽）、放大触控热区、
         键盘避让、把 hover 浮层改底部 sheet。 */
 @media (max-width: 1200px) {
-  /* 状态栏让位给消息区（消息是主内容；需要时用户可点「状态」按钮，面板改浮层由按钮控制） */
+  /* 状态栏让位给消息区（消息是主内容；需要时用户可点「状态」按钮，面板改浮层由按钮控制）。
+     宽度不再写死 260px：常驻两栏让位给浮层，但浮层在两栏宽度（--rp-w，默认 420）附近才装得下内容——
+     260px 时卡片内只剩 208px，团队名册一行（头像 + 名字 + 状态 + 动作）名字栏只剩 45px、带「叫停」的行直接 0px。
+     iPad 竖屏 1024 / 分屏 900 / 横屏 1180 全落在这个档位，所以按视口取宽：最多 400，且始终给左侧留 80px
+     能点回对话区（浮层是覆盖式，点外面收起靠宽度留缝）。手机（≤768）由下面的 .as-sheet 覆盖成底部全宽。 */
   .right-panel { position: absolute; right: 12px; top: 56px; bottom: 12px; z-index: 30;
-    width: 260px; border: 1px solid var(--app-border); border-radius: var(--app-radius);
+    width: min(400px, calc(100vw - 80px)); border: 1px solid var(--app-border); border-radius: var(--app-radius);
     box-shadow: var(--app-shadow-lg); background: var(--app-panel); }
-  /* 浮层宽度固定，不跟随 --rp-w（拖拽条只在 >1200 的常驻两栏显示） */
-  .right-panel.browser-wide { width: 260px; }
+  /* 浮层宽度跟随视口、不跟随 --rp-w（拖拽条只在 >1200 的常驻两栏显示） */
+  .right-panel.browser-wide { width: min(400px, calc(100vw - 80px)); }
   .right-panel.as-sheet.browser-wide { width: auto; }
   /* 窄屏输入卡片会贴到右缘，为右下角全局帮助 FAB 让出角落（否则压住发送键一侧）。
      让位量交给输入区组件叠加到它自己的右内边距上（--ci-right-extra），

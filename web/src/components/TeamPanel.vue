@@ -58,9 +58,14 @@
                   <span v-if="roundInfoOf(row.m)" class="tag-round" :class="{ run: roundInfoOf(row.m).running }"
                         :title="roundInfoOf(row.m).task">{{ roundInfoOf(row.m).running ? '本轮在跑' : '本轮已回' }}</span>
                 </div>
-                <div v-if="subText(row.m)" class="mem-sub" :title="subText(row.m)">{{ subText(row.m) }}</div>
+                <!-- 职责与状态并进副行：右栏在 iPad 上是 400px 的浮层，一行塞不下「名字 + 状态 + 两个动作」——
+                     名字栏会被压到 45px（带叫停的行是 0px）。首行只留名字与动作，副行承担职责并拖尾状态。 -->
+                <div v-if="subText(row.m)" class="mem-sub" :title="subText(row.m)">
+                  <span class="ms-txt">{{ subText(row.m) }}</span>
+                  <span class="mem-state" :class="statusClass(row.m.state)"><i class="d"></i>{{ statusLabel(row.m.state) }}</span>
+                </div>
+                <div v-else class="mem-sub"><span class="mem-state solo" :class="statusClass(row.m.state)"><i class="d"></i>{{ statusLabel(row.m.state) }}</span></div>
               </div>
-              <span class="mem-state" :class="statusClass(row.m.state)"><i class="d"></i>{{ statusLabel(row.m.state) }}</span>
               <div class="mem-acts" @click.stop>
                 <button class="iact" type="button" title="进入会话发消息" @click="openMember(row.m)">
                   <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 9h8M8 13h5"/></svg>
@@ -508,31 +513,38 @@ onUnmounted(() => {
 
 /* 成员 */
 .mem-list{padding:4px}
+/* 行内三段：头像 | 名字/职责 | 动作。行整体居中（名字 14px 行高 + 副行 14px 才 28px，比头像矮，顶对齐会把头像顶出去） */
 .mem-row{display:flex;align-items:center;gap:10px;padding:8px;border-radius:9px}
 .mem-row.clickable{cursor:pointer}
 .mem-row:hover{background:var(--panel-2,#fafbfc)}
 .avatar{width:30px;height:30px;border-radius:8px;flex:none;display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;font-weight:700;box-shadow:0 1px 3px rgba(16,24,40,.12)}
 .avatar.lead{background:linear-gradient(135deg,#5E93F5,#2A5FE0)}
 .mem-main{min-width:0;flex:1}
-.mem-top{display:flex;align-items:center;gap:6px}
-.mem-name{font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:130px}
-.tag-root{height:15px;padding:0 5px;border-radius:4px;background:#eef4ff;color:#2e6be6;border:1px solid #c9dbfb;font-size:9px;font-weight:650;display:inline-flex;align-items:center}
-.tag-code{height:15px;padding:0 5px;border-radius:4px;background:#f5f3ff;color:#7c3aed;border:1px solid #ddd6fe;font-size:9px;font-weight:650;display:inline-flex;align-items:center}
+.mem-top{display:flex;align-items:center;gap:6px;min-width:0;overflow:hidden}
+/* max-width 去掉：那是 260px 浮层时代的妥协，名字能拿到的就是首行剩余宽度，超了才省略 */
+.mem-name{font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:0 1 auto;min-width:0}
+.tag-root{flex:none;height:15px;padding:0 5px;border-radius:4px;background:#eef4ff;color:#2e6be6;border:1px solid #c9dbfb;font-size:9px;font-weight:650;display:inline-flex;align-items:center}
+.tag-code{flex:none;height:15px;padding:0 5px;border-radius:4px;background:#f5f3ff;color:#7c3aed;border:1px solid #ddd6fe;font-size:9px;font-weight:650;display:inline-flex;align-items:center}
 /* 本轮派遣：已回是中性灰（只表明「这一轮动过」），在跑才用强调绿跟着状态点 */
-.tag-round{height:15px;padding:0 5px;border-radius:4px;background:var(--panel-2,#f6f7f9);color:var(--text-2,#5f6570);border:1px solid var(--border,#e6e9ed);font-size:9px;font-weight:650;display:inline-flex;align-items:center}
+.tag-round{flex:none;height:15px;padding:0 5px;border-radius:4px;background:var(--panel-2,#f6f7f9);color:var(--text-2,#5f6570);border:1px solid var(--border,#e6e9ed);font-size:9px;font-weight:650;display:inline-flex;align-items:center}
 .tag-round.run{background:#f0fbf3;color:#2f7d42;border-color:#c9ebd2}
-.mem-sub{font-size:10.5px;color:var(--text-3,#98a0aa);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.mem-state{flex:none;display:inline-flex;align-items:center;gap:4px;font-size:10px;color:var(--text-2,#5f6570)}
+/* 副行 = 职责 + 状态：职责先省略，状态永远看得见（它是这一行唯一的状态真相） */
+.mem-sub{display:flex;align-items:center;gap:6px;min-width:0;margin-top:2px;font-size:10.5px;color:var(--text-3,#98a0aa)}
+.ms-txt{min-width:0;flex:0 1 auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mem-state{flex:none;display:inline-flex;align-items:center;gap:4px;font-size:10px;color:var(--text-2,#5f6570);white-space:nowrap}
+.mem-state:not(.solo)::before{content:"";width:1px;height:8px;background:var(--border,#e6e9ed);margin-right:1px}
+.mem-state.solo{margin-left:auto}
 .mem-state .d{width:6px;height:6px;border-radius:50%;background:#c8ced6}
 .mem-state.run{color:#3b8f4e}.mem-state.run .d{background:#3b8f4e;box-shadow:0 0 0 3px rgba(59,143,78,.15)}
 .mem-state.wait{color:#a3691b}.mem-state.wait .d{background:#a3691b}
 .mem-state.stop{color:#cf1322}.mem-state.stop .d{background:#cf1322}
-.mem-acts{flex:none;display:flex;gap:1px;opacity:1}
-.iact{width:24px;height:24px;border:0;background:transparent;border-radius:6px;color:var(--text-3,#98a0aa);display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:0}
+.mem-acts{flex:none;display:flex;gap:4px;margin-left:auto;align-self:center;opacity:1}
+.iact{width:30px;height:30px;border:1px solid var(--border,#e6e9ed);background:var(--panel,#fff);border-radius:8px;color:var(--text-3,#98a0aa);display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:0}
 .iact svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
 .iact:hover{background:var(--panel-3,#f2f4f7);color:var(--accent,#2e6be6)}
 .iact.on{background:#f5f3ff;color:#7c3aed}
-.iact.danger:hover{background:#fff2f0;color:#cf1322}
+.iact.danger{border-color:#ffccc7;background:#fff1f0;color:#cf1322}
+.iact.danger:hover{border-color:#ffa39e;color:#a8071a}
 
 /* 输入区 */
 
