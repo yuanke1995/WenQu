@@ -133,3 +133,21 @@
 - 出口：provider 内不再按 `exposes` 过滤；全量 `mvn test` 480 tests 全绿。
 - 待办：把 `ToolAssemblyService.agentFlagFor` 的族→列映射迁成独立 `AgentToolSelection` 业务适配器，
   让提示词侧与工具表侧都只读同一份 selection（此项不改变行为，只是删除重复入口）。
+
+### 已完成：Phase 1-A 收尾 + Phase 1-B 契约核对（2026-11-24）
+
+- 新增 `ToolSelection` / `AgentToolSelectionAdapter`：`ToolAssemblyService` 不再认识 Agent 的族→列映射；
+  `ToolMountContext.agentFlag/agentSelection` 统一从 `selection()` 读取。装配层、provider、提示词侧
+  共享同一份业务选择。
+- `AgentxPermissions` 已确认是 `ExecutionPolicy → PermissionContextState/PermissionMode/PermissionRule`
+  的薄翻译，没有另造判定；新增 `AgentxPermissionsTest` 锁住三档映射与 deny 规则。
+- `AgentxFrameworkToolGate` 保留为**业务补充 middleware**（完成检查轮、子轮禁写记忆、中文拒绝文案），
+  它不是第二套通用权限引擎；通用只读/deny 仍由框架 `PermissionEngine` + 本适配器表达。
+- 全量 `mvn test`：483 tests / 0 failures / 0 errors / 2 skipped。
+
+### Phase 1-B 剩余（如需进一步收薄）
+
+- 把 `AgentxFrameworkToolGate` 的通用 deny/readOnly 判断删到只剩业务补充（completionCheck/memory），
+  需要先确认框架 `PermissionEngine` 的中间件执行顺序对框架后挂工具 100% 覆盖；在确认前保持双保险。
+- 将 `ToolRegistry.requiresApproval` 的 ask 语义翻译成框架 `PermissionRule(ASK)`，让 `SpringAiToolAdapter`
+  只做协议搬运，不再自己决定 `ask/deny`。

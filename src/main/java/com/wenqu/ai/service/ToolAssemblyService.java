@@ -137,13 +137,8 @@ public class ToolAssemblyService {
             }
 
             @Override
-            public Integer agentFlag(ToolFamily family) {
-                return agentFlagFor(family, agent);
-            }
-
-            @Override
-            public Set<String> agentSelection(ToolFamily family) {
-                return agentSelectionFor(family, agent);
+            public com.wenqu.ai.agent.tool.ToolSelection selection() {
+                return AgentToolSelectionAdapter.from(agent);
             }
 
             @Override
@@ -198,50 +193,6 @@ public class ToolAssemblyService {
     }
 
     /** 族 → 智能体级三态列（null = 本族没有智能体级开关，跟随全局） */
-    public Integer agentFlagFor(ToolFamily family, Agent agent) {
-        if (agent == null) return null;
-        return switch (family) {
-            case ASK_USER -> agent.getToolBuiltin();
-            case KNOWLEDGE -> agent.getToolKnowledge();
-            case WEBSEARCH -> agent.getToolWebsearch();
-            case HTTP_API -> agent.getToolHttp();
-            case WORKFLOW -> agent.getToolWorkflow();
-            case ARTIFACT -> agent.getToolArtifact();
-            case SKILL -> agent.getToolSkill();
-            case SANDBOX, SSH -> null;   // 这两族暂无智能体级列（见 SandboxTools 类注释），跟随全局
-            // 派遣助手已改由框架的 agent_spawn 驱使（登记见 WenquAgentxTools#consultSubagentTargets），
-            // 问渠侧没有这一族了。
-            // OFFICE / COMPUTER_USE / SESSION_RETRIEVAL / MCP_RESOURCE 暂无智能体级三态列，
-            // 也不配平台开关：只受 tool.enabled 总闸 + 权限档位 + 停用名单收口
-            // （桌面操作另由「只在完全权限档挂载」当闸门，见 ComputerUseProvider）。
-            case TODO, TEAM, LOCAL_BROWSER, OFFICE, COMPUTER_USE, SESSION_RETRIEVAL, MCP_RESOURCE -> null;
-            // MCP 有智能体级三态列：UI 的「不使用 / 指定 / 跟随全局」分别写 0 / 1 / null，
-            // 1 时具体项由 agent.mcps 再收一层（McpToolProvider 读 agentSelection）。
-            // 这里若不映射，McpToolProvider 的 flag=0 判据永远拿不到值，界面关掉 MCP 仍会挂载。
-            case MCP -> agent.getToolMcp();
-            case BROWSER -> agent.getToolBrowser();
-        };
-    }
+    // 已迁至 AgentToolSelectionAdapter：本类不再认识 Agent 的列。
 
-    /** 族 → 智能体的「具体项」选择（null=未指定，本族全挂）；只有内置与 MCP 有这一层 */
-    public Set<String> agentSelectionFor(ToolFamily family, Agent agent) {
-        if (agent == null) return null;
-        return switch (family) {
-            case ASK_USER -> scopeOf(agent.getBuiltinTools());
-            case MCP -> scopeOf(agent.getMcps());
-            default -> null;
-        };
-    }
-
-    /**
-     * 「具体项范围」字段解析：null=跟随全局不筛具体项；空串=显式一个都不用；"a,b"=只用这些。
-     */
-    public static Set<String> scopeOf(String v) {
-        if (v == null) return null;
-        if (v.isBlank()) return java.util.Collections.emptySet();
-        return Arrays.stream(v.split(","))
-                .map(String::trim)
-                .filter(s -> !s.isEmpty())
-                .collect(Collectors.toSet());
-    }
 }

@@ -86,17 +86,28 @@ public interface ToolMountContext {
     boolean masterOn();
 
     /**
-     * 智能体级三态覆盖：1=强制挂、0=强制不挂、null=跟随全局。
-     * <p>映射到 c_ai_agent 的哪一列由问答侧决定（那是业务实体，不该被通用装配层认识）。
+     * 本轮的工具业务选择（Agent 列翻译结果，见 {@link ToolSelection}）。
+     * <p>装配层与 provider 只读这一份；具体哪列映射到哪个族，在 service 层业务适配器里。
      */
-    Integer agentFlag(ToolFamily family);
+    default ToolSelection selection() {
+        return ToolSelection.EMPTY;
+    }
+
+    /**
+     * 智能体级三态覆盖：1=强制挂、0=强制不挂、null=跟随全局。
+     * <p>实现已收口到 {@link #selection()}：本方法只是给 provider 的便捷读法，不再各自持有映射。
+     */
+    default Integer agentFlag(ToolFamily family) {
+        return selection().flag(family);
+    }
 
     /**
      * 智能体对本族「具体项」的选择：null=未指定（本族全挂），空集=显式一个都不用。
      * <p>与 {@link #agentFlag} 是两道独立的闸：三态决定「这一族开不开」，白名单决定「这一族里挂哪几个」。
-     * 内置工具、技能、MCP 都有这一层，其余族没有（返回 null）。
      */
-    java.util.Set<String> agentSelection(ToolFamily family);
+    default java.util.Set<String> agentSelection(ToolFamily family) {
+        return selection().selection(family);
+    }
 
     /**
      * 三态判据：智能体显式设了 1/0 就用它，否则落到全局开关；
