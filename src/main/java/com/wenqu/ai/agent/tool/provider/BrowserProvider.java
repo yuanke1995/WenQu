@@ -71,7 +71,7 @@ public class BrowserProvider implements ToolFamilyProvider {
 
     @Override
     public List<ToolCallback> callbacks(ToolMountContext mc) {
-        return mountFiltered(mc, d -> exposes(d, mc));
+        return mountFiltered(mc, d -> true);
     }
 
     @Override

@@ -33,4 +33,15 @@ class ToolConfigFactoryTest {
         assertThat(config.isDefaultToolsEnabled()).isTrue();
         assertThat(ToolFilter.isAllowed("read_file", config)).isTrue();
     }
+
+    @Test
+    @DisplayName("允许集合：名单内工具保留、名单外问渠工具被裁掉、平台工具豁免")
+    void allowSetFiltersBusinessTools() {
+        ToolsConfig config = ToolConfigFactory.fromPolicyAndAllow(null, java.util.List.of("searchKnowledge"));
+        assertThat(config.isStrictAllow()).isFalse();
+        assertThat(config.isDefaultToolsEnabled()).isFalse();
+        assertThat(ToolFilter.isAllowed("searchKnowledge", config)).isTrue();
+        assertThat(ToolFilter.isAllowed("officeConvert", config)).isFalse();
+        assertThat(ToolFilter.isAllowed("agent_spawn", config)).isTrue(); // 平台工具由框架放行
+    }
 }

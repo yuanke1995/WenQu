@@ -3,24 +3,45 @@ package com.wenqu.ai.agent.tool;
 import io.agentscope.harness.agent.tools.ToolsConfig;
 
 import java.util.ArrayList;
+import java.util.Collection;
 
 /**
  * 问渠业务策略 → 框架 {@link ToolsConfig} 的薄适配器。
- * <p>只做一件事：把本轮的按名禁用名单交给框架 {@code ToolFilter}。三态族开关与具体项白名单仍由
- * 问渠业务层解析，不在这里重新实现一遍；等 Agent 表收敛后再把「允许集合」也迁进来。
+ * <p>只做两件事：把本轮的按名禁用名单交给框架，并把问渠算出的「允许集合」交给框架裁剪。
+ * 三态族开关与具体项白名单的业务解析在问渠装配层（{@code ToolRegistry.exposes} 单点），
+ * 不在这里重新实现；框架负责 schema/查找/执行三处同时消失。
  */
 public final class ToolConfigFactory {
 
     private ToolConfigFactory() {
     }
 
+    /** 只表达 deny：用于还没迁移 allow 的旧调用。 */
     public static ToolsConfig fromPolicy(com.wenqu.ai.agent.permission.ExecutionPolicy policy) {
-        ToolsConfig config = new ToolsConfig();
-        // 不设 allow 白名单：strictAllow 会误伤框架 build 期后挂的文件/记忆/子智能体工具；
-        // deny 是叠加语义，正好表达「其余照旧、只拿掉点名的那几个」。
+        ToolsConfig config = base(policy);
         config.setStrictAllow(false);
         config.setDefaultToolsEnabled(true);
         config.setAllow(null);
+        return config;
+    }
+
+    /**
+     * 表达「允许集合 + deny」：allow 之外的问渠工具被框架移除，平台工具由框架的 platform 白名单放行。
+     * <p>{@code strictAllow=false}：框架自己的 team/subagent/plan/skill_manage 等平台工具不在
+     * 问渠 allow 名单里，必须由框架的 platform 判定放行，不能一并裁掉。
+     */
+    public static ToolsConfig fromPolicyAndAllow(com.wenqu.ai.agent.permission.ExecutionPolicy policy,
+                                                 Collection<String> allowedToolNames) {
+        ToolsConfig config = base(policy);
+        config.setStrictAllow(false);
+        config.setDefaultToolsEnabled(false);
+        config.setAllow(allowedToolNames == null || allowedToolNames.isEmpty()
+                ? new ArrayList<>() : new ArrayList<>(allowedToolNames));
+        return config;
+    }
+
+    private static ToolsConfig base(com.wenqu.ai.agent.permission.ExecutionPolicy policy) {
+        ToolsConfig config = new ToolsConfig();
         config.setDeny(policy == null || policy.deny().isEmpty()
                 ? null : new ArrayList<>(policy.deny()));
         return config;

@@ -126,6 +126,10 @@
 
 ### 下一步：Phase 1-A 第二刀（三态族 → ToolsConfig allow）
 
-- 把 `ToolAssemblyService.agentFlagFor` 的族→列翻译收敛为「业务开关 → 允许工具名集合」单点。
-- 静态族先改为「挂全量、由 `ToolsConfig.allow` 裁剪」；动态族保留 provider 的资源选择（只决定连哪些 server/toolset），最终再交 `ToolsConfig` 过滤。
-- 退出条件：删除 provider 内 `agentFlag`/`agentSelection`/`exposes` 三处重复判断，提示词判据与工具表都读同一份 allow 集合。
+- 已落：`ToolConfigFactory.fromPolicyAndAllow` + `WenquAgentxTools.toolsConfig(cmd, policy, registeredNames)`：
+  业务判据由 `ToolRegistry.exposes` 单点计算允许集合，静态 provider 改为挂候选工具，由框架
+  `ToolFilter.apply` 做最终裁剪；`FRAMEWORK_SURFACE_TOOLS`、`HarnessPlatformTools.NAMES`、
+  `load_skill_through_path` 显式放行，避免误伤框架后挂工具。
+- 出口：provider 内不再按 `exposes` 过滤；全量 `mvn test` 480 tests 全绿。
+- 待办：把 `ToolAssemblyService.agentFlagFor` 的族→列映射迁成独立 `AgentToolSelection` 业务适配器，
+  让提示词侧与工具表侧都只读同一份 selection（此项不改变行为，只是删除重复入口）。

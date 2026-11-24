@@ -87,6 +87,6 @@ public List<ToolDescriptor> descriptors() {
      */
     @Override
     public List<ToolCallback> callbacks(ToolMountContext mc) {
-        return mountFiltered(mc, d -> exposes(d, mc));
+        return mountFiltered(mc, d -> true);
     }
 }

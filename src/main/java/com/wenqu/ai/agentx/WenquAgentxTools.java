@@ -360,15 +360,33 @@ public class WenquAgentxTools {
     }
 
     /**
-     * 本轮交给框架的 {@code ToolsConfig}：只表达跨能力的按名禁用（{@code toolDeny}）。
-     * <p>为什么把 deny 放框架：{@code ToolFilter.apply} 在 build 阶段直接从 Toolkit 移除该工具，
-     * schema、查找、执行三处一起消失；MCP/HTTP/工作流三类动态工具的名字只有 provider 挂载后才知道，
-     * 走框架过滤比每个 provider 各写一遍 {@code removeIf} 更不容易漏。三态族/具体项仍由问渠业务适配层决定。
-     * <p>刻意不设 allow 白名单：strictAllow 会误伤框架自己后挂的文件/记忆/子智能体工具；deny 是叠加语义。
+     * 本轮交给框架的 {@code ToolsConfig}：由问渠业务判据算出「允许集合」，再交框架 {@code ToolFilter}
+     * 做最终裁剪（schema/查找/执行一起消失）。
+     * <p>业务判据仍只在 {@code ToolRegistry.exposes} 一处：族三态、具体项、档位、游客、分支、按名黑名单
+     * 都从那里读；这里不复制 if，只把结果并成 allow 名单。框架自己的平台工具（team/subagent/plan 等）
+     * 不在名单里，由框架的 platform 白名单放行。
      */
     public io.agentscope.harness.agent.tools.ToolsConfig toolsConfig(
-            com.wenqu.ai.agent.permission.ExecutionPolicy policy) {
-        return com.wenqu.ai.agent.tool.ToolConfigFactory.fromPolicy(policy);
+            ChatCommand cmd, com.wenqu.ai.agent.permission.ExecutionPolicy policy,
+            java.util.Collection<String> registeredNames) {
+        var mc = toolAssembly.mountContext(agentOf(cmd), cmd.getUserId(), cmd.isGuestMode(),
+                cmd.branchTurn(), cmd.getWfDepth(), (code, message) -> {}, policy, cmd.getGuestMcpServers());
+        java.util.Set<String> allow = new java.util.LinkedHashSet<>();
+        if (registeredNames != null) {
+            for (String name : registeredNames) {
+                // 有静态描述符的按业务判据过滤；动态族（MCP/HTTP/工作流）没有描述符，
+                // provider 已经按自身资源选择筛过，直接保留。
+                var d = toolRegistry.find(name);
+                if (d.isPresent() && !toolRegistry.exposes(d.get().family(), name, mc)) continue;
+                allow.add(name);
+            }
+        }
+        // 框架在 build 期后挂的工具没有问渠描述符：文件/记忆/会话/产物/读图按既有名单纳入。
+        allow.addAll(FRAMEWORK_SURFACE_TOOLS);
+        // 平台工具（team/subagent/plan/skill_manage 等）与按路径加载技能的工具不在问渠登记处。
+        allow.addAll(io.agentscope.harness.agent.tools.HarnessPlatformTools.NAMES);
+        allow.add("load_skill_through_path");
+        return com.wenqu.ai.agent.tool.ToolConfigFactory.fromPolicyAndAllow(policy, allow);
     }
 
     /**
