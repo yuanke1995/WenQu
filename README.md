@@ -640,7 +640,7 @@ spring:
 
 ### 系统设置（80 项行为参数 + 15 项个人专属）
 
-设置项 schema 唯一定义源是 `src/main/resources/config-schema.json`：后端据此校验并下发前端渲染设置页，缺失即启动失败。共 95 个字段，按**层级**标注（必需 1 项 / 调优 33 项 / 工程参数 61 项）；其中 15 项 `personalOnly`（知识块填充上限 + 浏览器执行位置 + 后台运行 + 联网搜索整套 + 「接下来可以」推荐追问开关）不下发管理端设置页、只在**个人设置**维护，管理端可见 80 项。设置页默认全部铺开（工程参数可在面板头整体收起）；另有 50 项内部键只从 `ConfigService.defaults()` 读取、不进设置页（如 `chat.resumeEnabled`、`ratelimit.chatPerMinute`、`sandbox.provisionerUrl`、`share.guestDailyTurns`、`webpush.enabled` 等）。
+设置项 schema 唯一定义源是 `src/main/resources/config-schema.json`：后端据此校验并下发前端渲染设置页，缺失即启动失败。共 95 个字段，按**层级**标注（必需 1 项 / 调优 33 项 / 工程参数 61 项）；其中 15 项 `personalOnly`（知识块填充上限 + 浏览器执行位置 + 后台运行 + 联网搜索整套 + 「接下来可以」推荐追问开关）不下发管理端设置页、只在**个人设置**维护，管理端可见 80 项。设置页默认全部铺开（工程参数可在面板头整体收起）；另有 51 项内部键只从 `ConfigService.defaults()` 读取、不进设置页（如 `chat.resumeEnabled`、`ratelimit.chatPerMinute`、`sandbox.provisionerUrl`、`share.guestDailyTurns`、`webpush.enabled` 等）。
 
 **归属分层**：
 

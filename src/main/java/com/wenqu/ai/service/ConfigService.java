@@ -915,6 +915,8 @@ public class ConfigService {
         d.put("chat.maxHistoryRefsPerMessage", "10");
         d.put("chat.attachmentMaxChars", "8000");
         d.put("chat.attachmentTotalChars", "24000");
+        // 会话级工具放行的 TTL（SessionToolGrants 根会话 Redis 键的过期时间；小时）
+        d.put("chat.toolGrantTtlHours", "168");
         // chunk.maxImages/maxChunks、parse.childSize/ocrDpi/ocrMinText 全局槽位已退役（2026-11-14）：
         // 默认值只归知识库弹窗（ConfigDefaults 常量经 param-defaults 下发），读点 fallback 兜底
         d.put("graphrag.chunkViewMaxChars", "4000");

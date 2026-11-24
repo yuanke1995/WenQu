@@ -50,6 +50,7 @@ class ConfigContractTest {
             //   检索/解析参数全局默认值层退役（2026-11-14）：defaults() 不再种子，读点 fallback 兜底）
             "chat.maxAttachmentsPerMessage", "chat.maxAttachmentMb", "chat.maxMentionsPerMessage",
             "chat.maxHistoryRefsPerMessage", "chat.attachmentMaxChars", "chat.attachmentTotalChars",
+            "chat.toolGrantTtlHours",
             "graphrag.chunkViewMaxChars", "keyword.timeoutMillis", "keyword.failCooldownMs",
             "rerank.timeoutMillis", "rerank.failCooldownMs", "retrieval.keywordMaxTerms",
             "retrieval.keywordMaxTotal", "retrieval.keywordTimeoutMs", "tenant.autoApprove.enabled",
