@@ -3638,7 +3638,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 但问渠有 PlanCopy.guidance()（提示词「正文/计划/清单不写路径与工具名」）
                 // + PlanCopy.stripInternalPaths（计划卡兜底剥路径）两层护栏，与它共存无冲突。
                 .disableAtPathExpansion()
-                .disableToolsConfig()
+                // 跨能力按名禁用交给框架 ToolFilter：deny 名单从 ExecutionPolicy 来，build 期直接从
+                // Toolkit 移除（schema/查找/执行一起消失）。三态与具体项仍由问渠业务适配层决定。
+                .toolsConfig(tools.toolsConfig(policy))
                 // 沙箱与文件系统：**框架接管**。
                 // 关键：框架的工具在 **build 期**绑定文件系统——
                 //   HarnessAgent:2895 `new FilesystemTool(filesystem, pathNormalizer)`

@@ -71,9 +71,7 @@ public class HttpApiToolProvider implements ToolFamilyProvider {
             mc.degrade("agentHttpToolsInvalid", mount.problem());
             return List.of();
         }
-        // 按名黑名单：动态工具没有静态描述符，档位裁剪不到它，与 MCP 同一粒度
-        List<ToolCallback> out = new ArrayList<>(mount.tools());
-        out.removeIf(cb -> mc.deniesTool(cb.getToolDefinition().name()));
-        return out;
+        // 按名黑名单统一交给框架 ToolsConfig.deny，不在 provider 再写一遍
+        return mount.tools();
     }
 }

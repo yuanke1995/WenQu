@@ -70,10 +70,8 @@ public class WorkflowToolProvider implements ToolFamilyProvider {
             mc.degrade("agentWorkflowToolsInvalid", mount.problem());
             return List.of();
         }
-        // 按名黑名单：动态工具没有静态描述符，档位裁剪不到它，与 MCP / HTTP 工具同一粒度
-        List<ToolCallback> out = new ArrayList<>(mount.tools());
-        out.removeIf(cb -> mc.deniesTool(cb.getToolDefinition().name()));
-        log.info("[WF-TOOL] 本轮装配 {} 把工作流工具: agent={} depth={}", out.size(), mc.agentId(), mc.turnWfDepth());
-        return out;
+        // 按名黑名单统一交给框架 ToolsConfig.deny，不在 provider 再写一遍
+        log.info("[WF-TOOL] 本轮装配 {} 把工作流工具: agent={} depth={}", mount.tools().size(), mc.agentId(), mc.turnWfDepth());
+        return mount.tools();
     }
 }

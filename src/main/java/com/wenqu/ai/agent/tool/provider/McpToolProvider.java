@@ -112,15 +112,8 @@ public class McpToolProvider implements ToolFamilyProvider {
             }
         }
         try {
-            List<ToolCallback> out = new ArrayList<>(
-                    mcpClientService.toolCallbacks(mc.userId(), onlyServers, mc.agentId()));
-            // 按名黑名单：本族没有静态描述符，档位裁剪不到它，唯一的粒度就是这里按名字逐字剔
-            int before = out.size();
-            out.removeIf(cb -> mc.deniesTool(cb.getToolDefinition().name()));
-            if (out.size() < before) {
-                log.info("[TOOL] MCP 按本轮黑名单剔除 {} 个外部工具（uid={}）", before - out.size(), mc.userId());
-            }
-            return out;
+            // 按名黑名单统一交给框架 ToolsConfig.deny 在 build 期从 Toolkit 移除，不在 provider 再写一遍。
+            return new ArrayList<>(mcpClientService.toolCallbacks(mc.userId(), onlyServers, mc.agentId()));
         } catch (Exception e) {
             log.warn("[MCP] 加载外部工具失败（跳过，不影响问答）: {}", e.getMessage());
             return List.of();

@@ -360,6 +360,18 @@ public class WenquAgentxTools {
     }
 
     /**
+     * 本轮交给框架的 {@code ToolsConfig}：只表达跨能力的按名禁用（{@code toolDeny}）。
+     * <p>为什么把 deny 放框架：{@code ToolFilter.apply} 在 build 阶段直接从 Toolkit 移除该工具，
+     * schema、查找、执行三处一起消失；MCP/HTTP/工作流三类动态工具的名字只有 provider 挂载后才知道，
+     * 走框架过滤比每个 provider 各写一遍 {@code removeIf} 更不容易漏。三态族/具体项仍由问渠业务适配层决定。
+     * <p>刻意不设 allow 白名单：strictAllow 会误伤框架自己后挂的文件/记忆/子智能体工具；deny 是叠加语义。
+     */
+    public io.agentscope.harness.agent.tools.ToolsConfig toolsConfig(
+            com.wenqu.ai.agent.permission.ExecutionPolicy policy) {
+        return com.wenqu.ai.agent.tool.ToolConfigFactory.fromPolicy(policy);
+    }
+
+    /**
      * 交给框架组管理的族（注册名经别名换算后逐把建组）。
      * <p>MCP 刻意不在这里：动态工具没有静态描述符，激活集无从按 {@code exposes} 问它，
      * 由 {@link FrameworkSessions#applyToolSurface} 那侧按档位与黑名单单独算。
