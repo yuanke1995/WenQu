@@ -1283,6 +1283,12 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         return versionCount(agentId);
     }
 
+    /** 当前最新版本快照号（c_ai_agent_version.version；没有快照返回 0）。 */
+    public Integer currentRevision(String agentId) {
+        AgentVersion latest = latestVersion(agentId);
+        return latest == null ? null : latest.getVersion();
+    }
+
     /**
      * 保存前门禁：待保存 payload 与当前配置的字段级 diff（{@link #VERSION_FIELDS} 白名单）。
      * <p>payload <b>没带的键视为不变</b>（合并在当前快照之上再比）——前端按模式省略字段

@@ -94,7 +94,7 @@ public class AgentEvalController {
         }
     }
 
-    @Operation(summary = "启动回归", description = "body: {caseIds?, trigger?, allowSideEffects?}；默认跑全部启用用例；评测只读（需人工确认的工具自动拒绝）")
+    @Operation(summary = "启动回归", description = "body: {caseIds?, trigger?, allowSideEffects?, revision?}；默认跑全部启用用例；revision 非空按历史版本快照执行（不改线上配置）；评测只读（需人工确认的工具自动拒绝）")
     @Permission("agentEval:write")
     @PostMapping("/agents/{agentId}/runs")
     public ResultJson startRun(@PathVariable("agentId") String agentId,
@@ -104,7 +104,8 @@ public class AgentEvalController {
                     ? null : body.getJSONArray("caseIds").toJavaList(String.class);
             String trigger = body == null ? null : body.getString("trigger");
             boolean allowSideEffects = body != null && Boolean.TRUE.equals(body.getBoolean("allowSideEffects"));
-            return ResultJson.ok(agentEvalService.startRun(agentId, trigger, caseIds, allowSideEffects));
+            Integer revision = body == null ? null : body.getInteger("revision");
+            return ResultJson.ok(agentEvalService.startRun(agentId, trigger, caseIds, allowSideEffects, revision));
         } catch (BizException e) {
             return ResultJson.error(e.getCode(), e.getMessage());
         }

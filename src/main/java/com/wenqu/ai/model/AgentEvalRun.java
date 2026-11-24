@@ -33,6 +33,12 @@ public class AgentEvalRun {
     /** 运行时智能体版本号快照（versionCount） */
     private Integer agentVersion;
 
+    /** 实际执行的版本快照号（c_ai_agent_version.version；null=当前配置） */
+    private Integer agentRevision;
+
+    /** 本轮 AgentTurnOverride 指纹（null=无覆盖；用于复现/对比） */
+    private String overrideFingerprint;
+
     /** 触发方式: manual / gate / scheduled（列名 trigger_kind 避开保留字 trigger） */
     private String triggerKind;
 

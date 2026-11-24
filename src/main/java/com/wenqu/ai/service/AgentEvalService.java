@@ -279,6 +279,15 @@ public class AgentEvalService {
 
     /** 启动回归（闸门：套件 / 用例数 / 每智能体 1 个 / 全局并发）；返回 run 行 */
     public AgentEvalRun startRun(String agentId, String trigger, List<String> caseIds, boolean allowSideEffects) {
+        return startRun(agentId, trigger, caseIds, allowSideEffects, null);
+    }
+
+    /**
+     * 启动回归；{@code revision} 非空时按该历史版本快照执行（不修改线上智能体）。
+     * <p>评测的历史重测/对比必须走 revision，不得回滚线上配置——回滚会改变其它会话下一轮看到的智能体。
+     */
+    public AgentEvalRun startRun(String agentId, String trigger, List<String> caseIds,
+                                 boolean allowSideEffects, Integer revision) {
         if (allowSideEffects) {
             // 安全边界（plan §10）：默认只读评测；「允许副作用工具」需要显式开关——当前仅支持只读，
             // 打开即拒，宁可报错也不静默放宽。
@@ -288,6 +297,12 @@ public class AgentEvalService {
         // manageable 恒为 false，按管理权判会把它的回归永远挡在门外（线上实测 403）。
         Agent agent = mustReadable(agentId);
         AgentEvalSuite suite = mustSuite(agentId);
+        com.wenqu.ai.agent.chat.AgentTurnOverride override =
+                revision == null ? null : com.wenqu.ai.agent.chat.AgentTurnOverride.revision(revision);
+        if (override != null) {
+            // 提前 fail-loud：版本不存在/不可读不要等到几十条用例都跑完才发现
+            agentService.resolveForTurn(agentId, override);
+        }
 
         List<AgentEvalCase> cases;
         if (caseIds != null && !caseIds.isEmpty()) {
@@ -324,6 +339,8 @@ public class AgentEvalService {
         run.setSuiteId(suite.getId());
         run.setAgentId(agentId);
         run.setAgentVersion(agentService.currentVersionNumber(agentId));
+        run.setAgentRevision(revision != null ? revision : agentService.currentRevision(agentId));
+        run.setOverrideFingerprint(override == null ? null : override.fingerprint());
         run.setTriggerKind(trigger == null || trigger.isBlank() ? "manual" : trigger);
         run.setStatus("running");
         run.setTotal(cases.size());
@@ -800,6 +817,8 @@ public class AgentEvalService {
         m.put("avgScore", r.getAvgScore());
         m.put("avgLatencyMs", r.getAvgLatencyMs());
         m.put("agentVersion", r.getAgentVersion());
+        m.put("agentRevision", r.getAgentRevision());
+        m.put("overrideFingerprint", r.getOverrideFingerprint());
         m.put("trigger", r.getTriggerKind());
         m.put("startedAt", r.getStartedAt());
         m.put("finishedAt", r.getFinishedAt());

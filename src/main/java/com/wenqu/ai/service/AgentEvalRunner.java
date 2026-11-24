@@ -200,11 +200,15 @@ public class AgentEvalRunner {
         try {
             String replayPrefix = replayPrefixOf(c);
             CollectingSseEmitter sink = new CollectingSseEmitter();
+            com.wenqu.ai.agent.chat.AgentTurnOverride override =
+                    run.getAgentRevision() == null ? null
+                            : com.wenqu.ai.agent.chat.AgentTurnOverride.revision(run.getAgentRevision());
             boolean timeout;
             try {
                 chatService.chat(ChatCommand.of(sessionId, c.getQuestion(), uid)
                         .userImages(List.of()).attachments(List.of()).skills(List.of())
                         .agentId(run.getAgentId())
+                        .agentConfigOverride(override)
                         .replayPrefix(replayPrefix)
                         .source(TurnSource.EVAL).sourceName("评测 · " + ctx.agentName)
                         .build(), sink);
