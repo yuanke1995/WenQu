@@ -151,3 +151,9 @@
   需要先确认框架 `PermissionEngine` 的中间件执行顺序对框架后挂工具 100% 覆盖；在确认前保持双保险。
 - 将 `ToolRegistry.requiresApproval` 的 ask 语义翻译成框架 `PermissionRule(ASK)`，让 `SpringAiToolAdapter`
   只做协议搬运，不再自己决定 `ask/deny`。
+
+### Phase 1-C 结论（2026-11-24）
+
+- `SkillUsageStore/SkillAuditLog`：按 workspace/文件系统，没有 uid/tenant 维度，不能替换问渠按 uid 聚合的管理统计；保留 `SkillStatsStore` 业务投影。
+- `ContextSource`：`ContextRequest` 不带本轮附件/@引用正文，硬迁会引入跨轮单例/ThreadLocal 串轮风险；保留 `TurnPromptAssembler`，只借鉴其分层形状。
+- 详见 [智能体能力绑定-Phase1C-框架复用评估.md](智能体能力绑定-Phase1C-框架复用评估.md)。
