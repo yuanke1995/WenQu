@@ -41,6 +41,8 @@ public class Agent {
     private String systemPrompt;
 
     /** 知识库范围：all 或 文档 ID 逗号分隔（空=all，即继承全局全部文档） */
+    // 已迁至 c_ai_agent_binding（见 AgentBindingCodec）：本字段是内存视图，不再映射表列
+    @TableField(exist = false)
     private String knowledgeScope;
 
     /**
@@ -49,6 +51,8 @@ public class Agent {
      * 因此不需要（也不应该）再由智能体逐个指定文档。
      * 原 {@link #knowledgeScope} 降级为「库内再细选文档」的可选项：先按库过滤，再按文档 ID 取交集。
      */
+    // 已迁至 c_ai_agent_binding（见 AgentBindingCodec）：本字段是内存视图，不再映射表列
+    @TableField(exist = false)
     private String knowledgeBaseIds;
 
     /**
@@ -56,6 +60,8 @@ public class Agent {
      * 与 {@link #knowledgeBaseIds} 叠加生效（先按库界检索，再按标签过滤）。标签作为文档级条件
      * 参与召回配额计算，不是召回后削薄；空/NULL=不按标签过滤。
      */
+    // 已迁至 c_ai_agent_binding（见 AgentBindingCodec）：本字段是内存视图，不再映射表列
+    @TableField(exist = false)
     private String knowledgeTags;
 
     /**
@@ -64,6 +70,8 @@ public class Agent {
      * <p>保存期做白名单校验（类型集合、天数范围），读取期非法 JSON 记 ERROR 并按「无此条件」处理；
      * 新增维度只写本列，不迁移历史标签。
      */
+    // 已迁至 c_ai_agent_binding（见 AgentBindingCodec）：本字段是内存视图，不再映射表列
+    @TableField(exist = false)
     private String knowledgeFilter;
 
     /**
@@ -71,6 +79,8 @@ public class Agent {
      * （改写/深度思考检索/命中填充/子代理编排都不跑；用户手动 @ 的文档仍会被前置——手动指定优先于配置）。
      * 用于「通用法律顾问 / 写作助手」这类不挂资料的角色；与 knowledgeScope 互斥，开启时忽略范围。
      */
+    // 已迁至 c_ai_agent_binding（见 AgentBindingCodec）：本字段是内存视图，不再映射表列
+    @TableField(exist = false)
     private Integer knowledgeDisabled;
 
     /**
@@ -83,30 +93,48 @@ public class Agent {
     private Integer isBuiltin;
 
     /** 知识库检索工具：1=开 0=关 NULL=继承 */
+    // 已迁至 c_ai_agent_binding（见 AgentBindingCodec）：本字段是内存视图，不再映射表列
+    @TableField(exist = false)
     private Integer toolKnowledge;
 
     /** 内置工具：1=开 0=关 NULL=继承 */
+    // 已迁至 c_ai_agent_binding（见 AgentBindingCodec）：本字段是内存视图，不再映射表列
+    @TableField(exist = false)
     private Integer toolBuiltin;
 
     /** 技能工具（readSkill）：1=开 0=关 NULL=继承 */
+    // 已迁至 c_ai_agent_binding（见 AgentBindingCodec）：本字段是内存视图，不再映射表列
+    @TableField(exist = false)
     private Integer toolSkill;
 
     /** 产物交付工具：1=开 0=关 NULL=继承 */
+    // 已迁至 c_ai_agent_binding（见 AgentBindingCodec）：本字段是内存视图，不再映射表列
+    @TableField(exist = false)
     private Integer toolArtifact;
 
     /** MCP 工具：1=开 0=关 NULL=继承 */
+    // 已迁至 c_ai_agent_binding（见 AgentBindingCodec）：本字段是内存视图，不再映射表列
+    @TableField(exist = false)
     private Integer toolMcp;
 
     /** 浏览器操作工具（browser_* 统一族）：1=开 0=关 NULL=继承平台 tool.browser.enabled */
+    // 已迁至 c_ai_agent_binding（见 AgentBindingCodec）：本字段是内存视图，不再映射表列
+    @TableField(exist = false)
     private Integer toolBrowser;
 
     /** 联网搜索工具（webSearch）：1=开 0=关 NULL=继承 */
+    // 已迁至 c_ai_agent_binding（见 AgentBindingCodec）：本字段是内存视图，不再映射表列
+    @TableField(exist = false)
     private Integer toolWebsearch;
 
     /** HTTP 工具（OpenAPI 导入的宿主 API 工具集）：1=开 0=关 NULL=继承 */
+    // 已迁至 c_ai_agent_binding（见 AgentBindingCodec）：本字段是内存视图，不再映射表列
+    @TableField(exist = false)
     private Integer toolHttp;
 
     /** 工作流工具（已发布工作流挂载为对话工具）：1=开 0=关 NULL=继承 */
+    // 已迁至 c_ai_agent_binding（见 AgentBindingCodec）：本字段是内存视图，不再映射表列
+    @TableField(exist = false)
     private Integer toolWorkflow;
 
     /**
@@ -151,6 +179,8 @@ public class Agent {
      * <p>它也是 MCP 外部工具唯一的粒度：动态工具没有静态描述符，档位裁剪不到它，只能按名字剔。
      * NULL/空=不禁用任何具体工具。
      */
+    // 已迁至 c_ai_agent_binding（见 AgentBindingCodec）：本字段是内存视图，不再映射表列
+    @TableField(exist = false)
     private String toolDeny;
 
     /**
@@ -165,12 +195,18 @@ public class Agent {
      * NULL=跟随全局（注入全部可用技能）；空串=显式不注入任何技能；逗号分隔的技能名=只注入这些。
      * 与 toolSkill 的分工：toolSkill 决定"这类能力开不开"，本字段在其开启后限定"具体用哪几个"。
      */
+    // 已迁至 c_ai_agent_binding（见 AgentBindingCodec）：本字段是内存视图，不再映射表列
+    @TableField(exist = false)
     private String skills;
 
     /** MCP Server 范围（具体项筛选）：NULL=跟随全局（连全部已启用 server）；空串=一个都不连；逗号分隔=只连这些 */
+    // 已迁至 c_ai_agent_binding（见 AgentBindingCodec）：本字段是内存视图，不再映射表列
+    @TableField(exist = false)
     private String mcps;
 
     /** 内置工具范围（具体项筛选）：NULL=跟随全局；空串=不用任何内置工具；逗号分隔=只用这些 */
+    // 已迁至 c_ai_agent_binding（见 AgentBindingCodec）：本字段是内存视图，不再映射表列
+    @TableField(exist = false)
     private String builtinTools;
 
     /**
@@ -178,6 +214,8 @@ public class Agent {
      * [{id,name,baseUrl,timeoutMs,enabled,auth:{type,header,value(JWE 密文)},ops:[{name,method,path,summary,params,hasBody,inputSchema}]}]
      * 每轮由 {@code HttpApiToolProvider} 按它动态构建对话工具。NULL=未配置（该族无工具可挂）。
      */
+    // 已迁至 c_ai_agent_binding（见 AgentBindingCodec）：本字段是内存视图，不再映射表列
+    @TableField(exist = false)
     private String httpTools;
 
     /**
@@ -185,6 +223,8 @@ public class Agent {
      * 每轮由 {@code WorkflowToolProvider} 按它动态构建对话工具（引用平台内资产而非外部规格，故只存
      * id 不存快照——运行时读发布版本，回滚/重新发布对工具即时生效）。NULL=未配置（该族无工具可挂）。
      */
+    // 已迁至 c_ai_agent_binding（见 AgentBindingCodec）：本字段是内存视图，不再映射表列
+    @TableField(exist = false)
     private String workflowTools;
 
     /**

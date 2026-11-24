@@ -30,7 +30,7 @@ class BuiltinKbCrossTenantTest {
                 mock(AgentMapper.class), mock(ModelRegistryService.class),
                 mock(UserMapper.class), mock(KbVectorStoreRegistry.class),
                 mock(ConfigService.class), mock(RoleService.class),
-                mock(DynamicEmbeddingModel.class));
+                mock(DynamicEmbeddingModel.class), mock(AgentBindingService.class));
     }
 
     @AfterEach

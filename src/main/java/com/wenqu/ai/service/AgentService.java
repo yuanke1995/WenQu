@@ -585,7 +585,7 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
             a.setIsDefault(0);
         }
         mapper.insert(a);
-        // 双写：能力列 → 绑定表（迁移期两处同时维护，读侧由 binding-read 开关决定以哪边为准）
+        // 能力列已退役（V42）：能力只写绑定表
         agentBindingService.syncFromAgent(a);
         snapshot(a, "创建");
         maskHttpTools(a);
@@ -689,6 +689,9 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
                 }
             }
         }
+        // 能力列已退役（V42）：existing 行上不再有能力的值，先把绑定表灌回来，
+        // 否则 toEntity 合并后 a 的能力字段全空，保存会把没提交的能力一并清掉。
+        agentBindingService.applyTo(existing);
         // 改动前的快照串先算好：toEntity 会就地改写 existing（合并 body 字段），之后就拿不到原值了
         String beforeJson = snapshotJson(existing);
         Agent a = toEntity(body, existing);
@@ -710,9 +713,9 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
             recordVersion(id, beforeJson, "初始");
         }
         updateColumns(id, body, a);
-        // 双写：整份能力配置覆盖绑定表，保证「取消某个能力」不会在切读后复活
-        Agent saved = mapper.selectById(id);
-        if (saved != null) agentBindingService.syncFromAgent(saved);
+        // 能力列已退役（V42）：能力只写绑定表。a 上是本次保存后的完整能力视图，
+        // 直接以它为权威做全量覆盖，避免「取消某个能力」在绑定表里留下旧行。
+        agentBindingService.syncFromAgent(a);
         snapshot(a, "保存");
         maskHttpTools(a);
         log.info("[AGENT] 更新智能体 {}（{}）", a.getId(), a.getName());
@@ -733,22 +736,6 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         if (b.containsKey("icon")) uw.set(Agent::getIcon, a.getIcon());
         if (b.containsKey("description")) uw.set(Agent::getDescription, a.getDescription());
         if (b.containsKey("systemPrompt")) uw.set(Agent::getSystemPrompt, a.getSystemPrompt());
-        if (b.containsKey("knowledgeScope")) uw.set(Agent::getKnowledgeScope, a.getKnowledgeScope());
-        if (b.containsKey("knowledgeBaseIds")) uw.set(Agent::getKnowledgeBaseIds, a.getKnowledgeBaseIds());
-        if (b.containsKey("knowledgeTags")) uw.set(Agent::getKnowledgeTags, a.getKnowledgeTags());
-        if (b.containsKey("knowledgeFilter")) uw.set(Agent::getKnowledgeFilter, a.getKnowledgeFilter());
-        if (b.containsKey("knowledgeDisabled")) uw.set(Agent::getKnowledgeDisabled, a.getKnowledgeDisabled());
-        if (b.containsKey("toolKnowledge")) uw.set(Agent::getToolKnowledge, a.getToolKnowledge());
-        if (b.containsKey("toolBuiltin")) uw.set(Agent::getToolBuiltin, a.getToolBuiltin());
-        if (b.containsKey("toolSkill")) uw.set(Agent::getToolSkill, a.getToolSkill());
-        if (b.containsKey("toolArtifact")) uw.set(Agent::getToolArtifact, a.getToolArtifact());
-        if (b.containsKey("toolMcp")) uw.set(Agent::getToolMcp, a.getToolMcp());
-        if (b.containsKey("toolBrowser")) uw.set(Agent::getToolBrowser, a.getToolBrowser());
-        if (b.containsKey("toolWebsearch")) uw.set(Agent::getToolWebsearch, a.getToolWebsearch());
-        if (b.containsKey("toolHttp")) uw.set(Agent::getToolHttp, a.getToolHttp());
-        if (b.containsKey("httpTools")) uw.set(Agent::getHttpTools, a.getHttpTools());
-        if (b.containsKey("toolWorkflow")) uw.set(Agent::getToolWorkflow, a.getToolWorkflow());
-        if (b.containsKey("workflowTools")) uw.set(Agent::getWorkflowTools, a.getWorkflowTools());
         if (b.containsKey("callbackUrl")) uw.set(Agent::getCallbackUrl, a.getCallbackUrl());
         if (b.containsKey("callbackSecret")) uw.set(Agent::getCallbackSecret, a.getCallbackSecret());
         if (b.containsKey("memoryMode")) uw.set(Agent::getMemoryMode, a.getMemoryMode());
@@ -757,12 +744,8 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         // 权限档位（null=跟随平台默认档）
         if (b.containsKey("permissionPreset")) uw.set(Agent::getPermissionPreset, a.getPermissionPreset());
         // 工具黑名单（null/空=不禁用任何具体工具）
-        if (b.containsKey("toolDeny")) uw.set(Agent::getToolDeny, a.getToolDeny());
         // 单轮工具步数上限（null=继承全局）
         if (b.containsKey("maxToolSteps")) uw.set(Agent::getMaxToolSteps, a.getMaxToolSteps());
-        if (b.containsKey("skills")) uw.set(Agent::getSkills, a.getSkills());
-        if (b.containsKey("mcps")) uw.set(Agent::getMcps, a.getMcps());
-        if (b.containsKey("builtinTools")) uw.set(Agent::getBuiltinTools, a.getBuiltinTools());
         if (b.containsKey("isSubagent")) uw.set(Agent::getIsSubagent, a.getIsSubagent());
         if (b.containsKey("subAgentIds")) uw.set(Agent::getSubAgentIds, a.getSubAgentIds());
         if (b.containsKey("isDefault")) uw.set(Agent::getIsDefault, a.getIsDefault());
@@ -1363,36 +1346,45 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         }
         uw.set(Agent::getDescription, raw(cfg.get("description")));
         uw.set(Agent::getSystemPrompt, raw(cfg.get("systemPrompt")));
-        uw.set(Agent::getKnowledgeScope, raw(cfg.get("knowledgeScope")));
-        uw.set(Agent::getKnowledgeBaseIds, raw(cfg.get("knowledgeBaseIds")));
-        uw.set(Agent::getKnowledgeTags, raw(cfg.get("knowledgeTags")));
-        uw.set(Agent::getKnowledgeFilter, raw(cfg.get("knowledgeFilter")));
-        uw.set(Agent::getKnowledgeDisabled, asInt(cfg.get("knowledgeDisabled")));
-        uw.set(Agent::getToolKnowledge, asInt(cfg.get("toolKnowledge")));
-        uw.set(Agent::getToolBuiltin, asInt(cfg.get("toolBuiltin")));
-        uw.set(Agent::getToolSkill, asInt(cfg.get("toolSkill")));
-        uw.set(Agent::getToolArtifact, asInt(cfg.get("toolArtifact")));
-        uw.set(Agent::getToolMcp, asInt(cfg.get("toolMcp")));
-        uw.set(Agent::getToolBrowser, asInt(cfg.get("toolBrowser")));
-        uw.set(Agent::getToolWebsearch, asInt(cfg.get("toolWebsearch")));
-        uw.set(Agent::getToolHttp, asInt(cfg.get("toolHttp")));
-        uw.set(Agent::getHttpTools, raw(cfg.get("httpTools")));
-        uw.set(Agent::getToolWorkflow, asInt(cfg.get("toolWorkflow")));
-        uw.set(Agent::getWorkflowTools, raw(cfg.get("workflowTools")));
         uw.set(Agent::getCallbackUrl, raw(cfg.get("callbackUrl")));
         uw.set(Agent::getMemoryMode, asInt(cfg.get("memoryMode")));
         uw.set(Agent::getToolApprovalMode, raw(cfg.get("toolApprovalMode")));
         uw.set(Agent::getPermissionPreset, raw(cfg.get("permissionPreset")));
-        uw.set(Agent::getToolDeny, raw(cfg.get("toolDeny")));
         uw.set(Agent::getMaxToolSteps, asInt(cfg.get("maxToolSteps")));
-        uw.set(Agent::getSkills, raw(cfg.get("skills")));
-        uw.set(Agent::getMcps, raw(cfg.get("mcps")));
-        uw.set(Agent::getBuiltinTools, raw(cfg.get("builtinTools")));
         if (!builtin) uw.set(Agent::getIsSubagent, asInt(cfg.get("isSubagent")));
         uw.set(Agent::getSubAgentIds, raw(cfg.get("subAgentIds")));
         uw.set(Agent::getQueryParams, raw(cfg.get("queryParams")));
         uw.set(Agent::getUpdateTime, LocalDateTime.now());
         mapper.update(null, uw);
+        // 能力列已退役（V42）：回滚时能力由快照重建到绑定表，与行上的人设/策略分开写
+        agentBindingService.syncFromAgent(agentViewOf(agentId, cfg));
+    }
+
+    /** 用「行 + 快照里的能力字段」拼一个能力视图（只用于重建绑定，不落库）。 */
+    private Agent agentViewOf(String agentId, Map<String, Object> cfg) {
+        Agent view = new Agent();
+        view.setId(agentId);
+        view.setKnowledgeScope(raw(cfg.get("knowledgeScope")));
+        view.setKnowledgeBaseIds(raw(cfg.get("knowledgeBaseIds")));
+        view.setKnowledgeTags(raw(cfg.get("knowledgeTags")));
+        view.setKnowledgeFilter(raw(cfg.get("knowledgeFilter")));
+        view.setKnowledgeDisabled(asInt(cfg.get("knowledgeDisabled")));
+        view.setToolKnowledge(asInt(cfg.get("toolKnowledge")));
+        view.setToolBuiltin(asInt(cfg.get("toolBuiltin")));
+        view.setToolSkill(asInt(cfg.get("toolSkill")));
+        view.setToolArtifact(asInt(cfg.get("toolArtifact")));
+        view.setToolMcp(asInt(cfg.get("toolMcp")));
+        view.setToolBrowser(asInt(cfg.get("toolBrowser")));
+        view.setToolWebsearch(asInt(cfg.get("toolWebsearch")));
+        view.setToolHttp(asInt(cfg.get("toolHttp")));
+        view.setHttpTools(raw(cfg.get("httpTools")));
+        view.setToolWorkflow(asInt(cfg.get("toolWorkflow")));
+        view.setWorkflowTools(raw(cfg.get("workflowTools")));
+        view.setToolDeny(raw(cfg.get("toolDeny")));
+        view.setSkills(raw(cfg.get("skills")));
+        view.setMcps(raw(cfg.get("mcps")));
+        view.setBuiltinTools(raw(cfg.get("builtinTools")));
+        return view;
     }
 
     private static String raw(Object v) {

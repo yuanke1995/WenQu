@@ -25,12 +25,32 @@ public class AgentBindingService {
 
     private final AgentBindingMapper bindingMapper;
 
-    /** 读侧是否以绑定表为准（false=读旧列；上线顺序：先双写、核对、再切 true）。 */
-    @Value("${wenqu.agent.binding-read:false}")
+    /** 读侧是否以绑定表为准。V42 删列后旧列已不存在，默认 true；保留开关便于回滚到旧版本。 */
+    @Value("${wenqu.agent.binding-read:true}")
     private boolean bindingRead;
 
     public boolean isBindingRead() {
         return bindingRead;
+    }
+
+    /**
+     * 引用了某知识库的智能体 ID（按绑定表查，不依赖能力列）。
+     * <p>知识库删除/归档要摘引用；迁移收尾删掉能力列后，LIKE 列的写法会静默失效，
+     * 所以查询入口统一在这里。
+     */
+    public java.util.List<String> agentIdsReferencingKnowledge(String kbId) {
+        if (kbId == null || kbId.isBlank()) return java.util.List.of();
+        java.util.List<String> out = new java.util.ArrayList<>();
+        java.util.List<AgentBinding> rows = bindingMapper.selectList(new LambdaQueryWrapper<AgentBinding>()
+                .eq(AgentBinding::getCapability, AgentBindingCodec.CAP_KNOWLEDGE));
+        for (AgentBinding b : rows) {
+            String cfg = b.getConfig();
+            if (cfg == null || cfg.isBlank()) continue;
+            if (cfg.contains("\"" + kbId + "\"") || cfg.contains(kbId)) {
+                if (!out.contains(b.getAgentId())) out.add(b.getAgentId());
+            }
+        }
+        return out;
     }
 
     /** 某智能体的全部绑定（按能力名稳定排序，便于对比与测试）。 */

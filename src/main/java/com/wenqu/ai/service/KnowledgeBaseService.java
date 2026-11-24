@@ -50,6 +50,8 @@ public class KnowledgeBaseService {
     private final KnowledgeBaseMapper kbMapper;
     private final AiDocumentMapper docMapper;
     private final AgentMapper agentMapper;
+    /** 能力绑定门面：知识库引用以绑定表为准 */
+    private final AgentBindingService bindingService;
     private final com.wenqu.ai.service.ModelRegistryService modelRegistryService;
     /** 归属人查询（谁建归谁，原全局默认库已划转给第一个管理员）；仅依赖 Mapper，无循环依赖 */
     private final com.wenqu.ai.mapper.UserMapper userMapper;
@@ -72,7 +74,8 @@ public class KnowledgeBaseService {
                                 com.wenqu.ai.mapper.UserMapper userMapper,
                                 KbVectorStoreRegistry kbVectorStores,
                                 ConfigService configService, RoleService roleService,
-                                DynamicEmbeddingModel dynamicEmbeddingModel) {
+                                DynamicEmbeddingModel dynamicEmbeddingModel,
+                                AgentBindingService bindingService) {
         this.kbMapper = kbMapper;
         this.docMapper = docMapper;
         this.agentMapper = agentMapper;
@@ -82,6 +85,7 @@ public class KnowledgeBaseService {
         this.configService = configService;
         this.roleService = roleService;
         this.dynamicEmbeddingModel = dynamicEmbeddingModel;
+        this.bindingService = bindingService;
     }
 
     // ==================== 读写 ====================
@@ -349,15 +353,23 @@ public class KnowledgeBaseService {
         }
     }
 
-    /** 知识库删除后同步摘除各智能体 knowledgeBaseIds 中的该库 ID（like 预筛 + splitIds 精确匹配） */
+    /**
+     * 知识库删除后同步摘除各智能体对它的引用。
+     * <p>能力绑定的权威存储是 {@code c_ai_agent_binding}（见 AgentBindingCodec）：这里按绑定表找候选，
+     * 再走 Agent 行的能力视图改写并双写回去。不直接 LIKE 能力列——列在迁移收尾阶段会被删除，
+     * 依赖它的查询会在那之后静默失效（清理不到引用，比报错更难发现）。
+     */
     private void cleanupAgentReferences(String kbId) {
-        List<Agent> candidates = agentMapper.selectList(new LambdaQueryWrapper<Agent>()
-                .like(Agent::getKnowledgeBaseIds, kbId));
-        for (Agent a : candidates) {
+        List<String> agentIds = bindingService.agentIdsReferencingKnowledge(kbId);
+        for (String agentId : agentIds) {
+            Agent a = agentMapper.selectById(agentId);
+            if (a == null) continue;
+            bindingService.applyTo(a);
             Set<String> ids = splitIds(a.getKnowledgeBaseIds());
             if (!ids.remove(kbId)) continue;
             a.setKnowledgeBaseIds(ids.isEmpty() ? null : String.join(",", ids));
             agentMapper.updateById(a);
+            bindingService.syncFromAgent(a);
             log.info("[KB] 智能体 {}（{}）已摘除对已删除知识库 {} 的引用", a.getId(), a.getName(), kbId);
         }
     }
