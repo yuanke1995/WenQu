@@ -164,7 +164,7 @@ public class SubAgentConsultService {
         if (id.equals(ctx.selfAgentId())) {
             return "你自己就是这位助手，无需咨询自己。请直接回答，或改问清单里的其他助手。";
         }
-        Agent a = agentService.get(id);
+        Agent a = agentService.resolveForTurn(id, null);
         if (a == null) {
             Agent raw = agentService.findReadable(id);
             if (raw != null && com.wenqu.ai.service.AgentService.isDisabled(raw)) {

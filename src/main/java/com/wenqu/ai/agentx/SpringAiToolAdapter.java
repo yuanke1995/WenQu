@@ -143,9 +143,8 @@ public final class SpringAiToolAdapter extends ToolBase {
         if (current == null) {
             return Mono.just(PermissionDecision.deny("本轮未解析权限档位，已按最保守处理：" + getName()));
         }
-        if (current.denies(getName())) {
-            return Mono.just(PermissionDecision.deny("该工具已被本轮档位点名禁用：" + getName()));
-        }
+        // 按名禁用已经由框架 PermissionContextState 的 DENY 规则在调用本方法之前裁掉；
+        // 这里不再重复判 current.denies(...)，避免同一名单在装配/引擎/适配器三处各写一遍。
         // 审批口径只有一处来源：本轮生效的权限档位（会话栏 > 智能体 > 平台默认）与工具的登记性质。
         // 这里不再按「污点」自行加一道 ASK：它会在「自动执行」档下凭空多出确认卡（线上一条普通命令
         // 就弹了卡），而外部内容带来的破坏性风险由 AgentxNativeToolGuard 兜（只对删除/覆盖/外发/越界写

@@ -1078,7 +1078,7 @@ public class WorkflowEngine {
             String agentId = cfgStr(n, "agentId", true);
             String prompt = render(cfgStr(n, "prompt", true), ref -> resolveRef(ref, ctx, state));
             String modelRef = cfgStr(n, "modelRef", false);   // 空 → 走触发者个人默认（管线内解析）
-            Agent agent = withReplay(ctx, () -> agentService.get(agentId));
+            Agent agent = withReplay(ctx, () -> agentService.resolveForTurn(agentId, null));
             if (agent == null) {
                 throw new BizException("节点「" + n.getId() + "」智能体不存在或对当前用户不可见");
             }

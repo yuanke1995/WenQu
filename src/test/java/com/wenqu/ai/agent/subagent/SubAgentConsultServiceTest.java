@@ -102,7 +102,7 @@ class SubAgentConsultServiceTest {
         @Test
         @DisplayName("runner 为 null → 返回通道未就绪")
         void runnerNull() {
-            when(agentService.get("agent-zhibao")).thenReturn(targetAgent);
+            when(agentService.resolveForTurn("agent-zhibao", null)).thenReturn(targetAgent);
             String r = service.consult(newLedger(), ctx(), null, null, "agent-zhibao", "查询数据");
             assertTrue(r.contains("通道本轮未就绪"), "实际: " + r);
         }
@@ -119,7 +119,7 @@ class SubAgentConsultServiceTest {
         @Test
         @DisplayName("咨询自己 → 拦截")
         void consultSelf() {
-            when(agentService.get("self-agent-id")).thenReturn(selfAgent);
+            when(agentService.resolveForTurn("self-agent-id", null)).thenReturn(selfAgent);
             when(agentService.consultCandidates("self-agent-id")).thenReturn(List.of(targetAgent));
             String r = service.consult(newLedger(), ctx(), mock(BranchRunner.class), null,
                     "self-agent-id", "你自己是什么");
@@ -129,7 +129,7 @@ class SubAgentConsultServiceTest {
         @Test
         @DisplayName("查无这位助手 → 拦截")
         void agentNotFound() {
-            when(agentService.get("agent-nonexist")).thenReturn(null);
+            when(agentService.resolveForTurn("agent-nonexist", null)).thenReturn(null);
             BranchRunner runner = mock(BranchRunner.class);
             String r = service.consult(newLedger(), ctx(), runner, null,
                     "agent-nonexist", "查询数据");
@@ -140,7 +140,7 @@ class SubAgentConsultServiceTest {
         @Test
         @DisplayName("不在本轮派遣清单 → 拒绝并区分于猜错 id")
         void notInCandidates() {
-            when(agentService.get("agent-zhibao")).thenReturn(targetAgent);
+            when(agentService.resolveForTurn("agent-zhibao", null)).thenReturn(targetAgent);
             // selfAgent 的候选清单里没有智报
             when(agentService.consultCandidates("self-agent-id")).thenReturn(List.of(otherAgent));
             BranchRunner runner = mock(BranchRunner.class);
@@ -156,7 +156,7 @@ class SubAgentConsultServiceTest {
             SubAgentConsultService.Ctx ctxWithPre = new SubAgentConsultService.Ctx(
                     "parent-sess", "parent-turn", "user-1", "model-v1", false, 0,
                     "self-agent-id", "agent-zhibao", null, null);
-            when(agentService.get("agent-zhibao")).thenReturn(targetAgent);
+            when(agentService.resolveForTurn("agent-zhibao", null)).thenReturn(targetAgent);
             when(agentService.consultCandidates("self-agent-id")).thenReturn(List.of(targetAgent));
             BranchRunner runner = mock(BranchRunner.class);
             String r = service.consult(newLedger(), ctxWithPre, runner, null,
@@ -177,7 +177,7 @@ class SubAgentConsultServiceTest {
         @Test
         @DisplayName("同助手同问题 → 不真跑 runner，直接回缓存")
         void sameAgentSameQuestionDedup() {
-            when(agentService.get("agent-zhibao")).thenReturn(targetAgent);
+            when(agentService.resolveForTurn("agent-zhibao", null)).thenReturn(targetAgent);
             when(agentService.consultCandidates("self-agent-id")).thenReturn(List.of(targetAgent));
 
             BranchRunner runner = mock(BranchRunner.class);
@@ -200,7 +200,7 @@ class SubAgentConsultServiceTest {
         @Test
         @DisplayName("同助手不同问题 → 真跑第二条子轮")
         void sameAgentDifferentQuestions() {
-            when(agentService.get("agent-zhibao")).thenReturn(targetAgent);
+            when(agentService.resolveForTurn("agent-zhibao", null)).thenReturn(targetAgent);
             when(agentService.consultCandidates("self-agent-id")).thenReturn(List.of(targetAgent));
 
             BranchRunner runner = mock(BranchRunner.class);
@@ -216,8 +216,8 @@ class SubAgentConsultServiceTest {
         @Test
         @DisplayName("同问题不同助手 → 真跑两条子轮")
         void sameQuestionDifferentAgents() {
-            when(agentService.get("agent-zhibao")).thenReturn(targetAgent);
-            when(agentService.get("agent-ops")).thenReturn(otherAgent);
+            when(agentService.resolveForTurn("agent-zhibao", null)).thenReturn(targetAgent);
+            when(agentService.resolveForTurn("agent-ops", null)).thenReturn(otherAgent);
             when(agentService.consultCandidates("self-agent-id")).thenReturn(List.of(targetAgent, otherAgent));
 
             BranchRunner runner = mock(BranchRunner.class);
@@ -243,8 +243,8 @@ class SubAgentConsultServiceTest {
         @DisplayName("达到上限后拒绝后续咨询")
         void capReached() {
             // 上限已固定为平台常量 3（ConfigDefaults.AGENT_CONSULT_MAX_PER_TURN）
-            when(agentService.get("agent-zhibao")).thenReturn(targetAgent);
-            when(agentService.get("agent-ops")).thenReturn(otherAgent);
+            when(agentService.resolveForTurn("agent-zhibao", null)).thenReturn(targetAgent);
+            when(agentService.resolveForTurn("agent-ops", null)).thenReturn(otherAgent);
             when(agentService.consultCandidates("self-agent-id"))
                     .thenReturn(List.of(targetAgent, otherAgent));
 
@@ -261,7 +261,7 @@ class SubAgentConsultServiceTest {
             Agent third = new Agent();
             third.setId("agent-third");
             third.setName("第三助手");
-            when(agentService.get("agent-third")).thenReturn(third);
+            when(agentService.resolveForTurn("agent-third", null)).thenReturn(third);
             when(agentService.consultCandidates("self-agent-id"))
                     .thenReturn(List.of(targetAgent, otherAgent, third));
             String r3 = service.consult(ledger, ctx(), runner, null, "agent-third", "Q3");
@@ -270,7 +270,7 @@ class SubAgentConsultServiceTest {
             Agent fourth = new Agent();
             fourth.setId("agent-fourth");
             fourth.setName("第四助手");
-            when(agentService.get("agent-fourth")).thenReturn(fourth);
+            when(agentService.resolveForTurn("agent-fourth", null)).thenReturn(fourth);
             when(agentService.consultCandidates("self-agent-id"))
                     .thenReturn(List.of(targetAgent, otherAgent, third, fourth));
             String r4 = service.consult(ledger, ctx(), runner, null, "agent-fourth", "Q4");
@@ -297,7 +297,7 @@ class SubAgentConsultServiceTest {
         @Test
         @DisplayName("runner 抛异常 → 兜住并返回错误文本，台账记账")
         void runnerThrows() {
-            when(agentService.get("agent-zhibao")).thenReturn(targetAgent);
+            when(agentService.resolveForTurn("agent-zhibao", null)).thenReturn(targetAgent);
             when(agentService.consultCandidates("self-agent-id")).thenReturn(List.of(targetAgent));
 
             BranchRunner runner = req -> { throw new RuntimeException("timeout connecting"); };
@@ -313,7 +313,7 @@ class SubAgentConsultServiceTest {
         @Test
         @DisplayName("BranchReport 不可用（status=failed）→ 返回没拿到结果")
         void reportFailed() {
-            when(agentService.get("agent-zhibao")).thenReturn(targetAgent);
+            when(agentService.resolveForTurn("agent-zhibao", null)).thenReturn(targetAgent);
             when(agentService.consultCandidates("self-agent-id")).thenReturn(List.of(targetAgent));
 
             BranchRunner runner = req -> BranchReport.failed(BranchReport.FAILED, "没查到相关资料", 1000, List.of());
@@ -328,7 +328,7 @@ class SubAgentConsultServiceTest {
         @Test
         @DisplayName("BranchReport 超时 → 返回没拿到结果")
         void reportTimeout() {
-            when(agentService.get("agent-zhibao")).thenReturn(targetAgent);
+            when(agentService.resolveForTurn("agent-zhibao", null)).thenReturn(targetAgent);
             when(agentService.consultCandidates("self-agent-id")).thenReturn(List.of(targetAgent));
 
             BranchRunner runner = req -> BranchReport.failed(BranchReport.TIMEOUT, "超过 300s", 300_000L, List.of());
@@ -342,7 +342,7 @@ class SubAgentConsultServiceTest {
         @Test
         @DisplayName("BranchReport.done 但 answer 空 → 视为不可用")
         void doneButEmptyAnswer() {
-            when(agentService.get("agent-zhibao")).thenReturn(targetAgent);
+            when(agentService.resolveForTurn("agent-zhibao", null)).thenReturn(targetAgent);
             when(agentService.consultCandidates("self-agent-id")).thenReturn(List.of(targetAgent));
 
             BranchRunner runner = req -> new BranchReport(BranchReport.DONE, "", List.of(), List.of(),
@@ -366,7 +366,7 @@ class SubAgentConsultServiceTest {
         @Test
         @DisplayName("子轮正文中的 [N] 和 [图片N] 角标全部清掉")
         void childRefsStripped() {
-            when(agentService.get("agent-zhibao")).thenReturn(targetAgent);
+            when(agentService.resolveForTurn("agent-zhibao", null)).thenReturn(targetAgent);
             when(agentService.consultCandidates("self-agent-id")).thenReturn(List.of(targetAgent));
 
             BranchRunner runner = req -> doneReport(
@@ -387,7 +387,7 @@ class SubAgentConsultServiceTest {
         @Test
         @DisplayName("有 SourceSink → 登记成功的引用号出现在回报里")
         void withSink() {
-            when(agentService.get("agent-zhibao")).thenReturn(targetAgent);
+            when(agentService.resolveForTurn("agent-zhibao", null)).thenReturn(targetAgent);
             when(agentService.consultCandidates("self-agent-id")).thenReturn(List.of(targetAgent));
 
             List<Map<String, Object>> childSources = new ArrayList<>();
@@ -424,7 +424,7 @@ class SubAgentConsultServiceTest {
         @Test
         @DisplayName("SourceSink 全部拒绝登记 → 回报里不提引用")
         void sinkAllRejected() {
-            when(agentService.get("agent-zhibao")).thenReturn(targetAgent);
+            when(agentService.resolveForTurn("agent-zhibao", null)).thenReturn(targetAgent);
             when(agentService.consultCandidates("self-agent-id")).thenReturn(List.of(targetAgent));
 
             List<Map<String, Object>> childSources = List.of(Map.of("title", "无关资料"));
@@ -442,7 +442,7 @@ class SubAgentConsultServiceTest {
         @Test
         @DisplayName("SourceSink 部分登记 → 如实列出登记号 + 说明未登记数")
         void sinkPartial() {
-            when(agentService.get("agent-zhibao")).thenReturn(targetAgent);
+            when(agentService.resolveForTurn("agent-zhibao", null)).thenReturn(targetAgent);
             when(agentService.consultCandidates("self-agent-id")).thenReturn(List.of(targetAgent));
 
             List<Map<String, Object>> childSources = new ArrayList<>();
@@ -471,7 +471,7 @@ class SubAgentConsultServiceTest {
         @Test
         @DisplayName("sink=null 时回报里不提引用（兼容无上下文的调用）")
         void sinkNull() {
-            when(agentService.get("agent-zhibao")).thenReturn(targetAgent);
+            when(agentService.resolveForTurn("agent-zhibao", null)).thenReturn(targetAgent);
             when(agentService.consultCandidates("self-agent-id")).thenReturn(List.of(targetAgent));
 
             List<Map<String, Object>> childSources = List.of(Map.of("title", "有资料"));
@@ -486,7 +486,7 @@ class SubAgentConsultServiceTest {
         @Test
         @DisplayName("回报里包含工具步数、用时、产物名")
         void toolStepsAndArtifacts() {
-            when(agentService.get("agent-zhibao")).thenReturn(targetAgent);
+            when(agentService.resolveForTurn("agent-zhibao", null)).thenReturn(targetAgent);
             when(agentService.consultCandidates("self-agent-id")).thenReturn(List.of(targetAgent));
 
             BranchRunner runner = req -> new BranchReport(BranchReport.DONE,
@@ -514,7 +514,7 @@ class SubAgentConsultServiceTest {
         @Test
         @DisplayName("成功咨询触发回调")
         void callbackOnSuccess() {
-            when(agentService.get("agent-zhibao")).thenReturn(targetAgent);
+            when(agentService.resolveForTurn("agent-zhibao", null)).thenReturn(targetAgent);
             when(agentService.consultCandidates("self-agent-id")).thenReturn(List.of(targetAgent));
 
             BranchRunner runner = req -> doneReport("OK", List.of());
@@ -543,7 +543,7 @@ class SubAgentConsultServiceTest {
         @Test
         @DisplayName("失败/异常不触发回调")
         void noCallbackOnFailure() {
-            when(agentService.get("agent-zhibao")).thenReturn(targetAgent);
+            when(agentService.resolveForTurn("agent-zhibao", null)).thenReturn(targetAgent);
             when(agentService.consultCandidates("self-agent-id")).thenReturn(List.of(targetAgent));
 
             BranchRunner runner = req -> BranchReport.failed(BranchReport.FAILED, "挂了", 1000, List.of());

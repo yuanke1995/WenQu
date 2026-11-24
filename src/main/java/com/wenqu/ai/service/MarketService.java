@@ -547,7 +547,7 @@ public class MarketService {
                 payload = skillZipBytes(uid, meta.name());
             }
             case MarketItem.TYPE_AGENT -> {
-                Agent a = agentService.get(ref);
+                Agent a = agentService.resolveForTurn(ref, null);
                 if (a == null) throw new BizException(404, "智能体不存在或对当前用户不可见");
                 if (!agentService.manageable(a)) throw new BizException("只能上架自己可管理的智能体");
                 itemKey = a.getName();

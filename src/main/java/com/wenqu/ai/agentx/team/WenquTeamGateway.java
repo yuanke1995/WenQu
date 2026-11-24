@@ -149,7 +149,7 @@ public class WenquTeamGateway {
             return;
         }
         String agentId = agentRef;
-        if (agentId == null || agentId.isBlank() || (agentService != null && agentService.get(agentId) == null)) {
+        if (agentId == null || agentId.isBlank() || (agentService != null && agentService.resolveForTurn(agentId, null) == null)) {
             agentId = root.getAgentId();
         }
         String child = sessionService.createTeamSession(root.getUserId(), rootSessionId, rootSessionId,

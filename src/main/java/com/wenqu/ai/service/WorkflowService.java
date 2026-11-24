@@ -446,7 +446,7 @@ public class WorkflowService {
      * 不可见的委派关系不静默裁剪——fail-loud 报出第一个不可见者。
      */
     public Workflow createFromAgent(String agentId) {
-        Agent agent = agentService.get(agentId);
+        Agent agent = agentService.resolveForTurn(agentId, null);
         if (agent == null) {
             throw new BizException(404, "智能体不存在或对当前用户不可见");
         }
@@ -457,7 +457,7 @@ public class WorkflowService {
         // 子智能体逐个可见性校验（顺带拿名称做节点标注；不可见 = 编排关系对当前用户不完整）
         Map<String, Agent> subs = new LinkedHashMap<>();
         for (String sid : subIds) {
-            Agent sub = agentService.get(sid);
+            Agent sub = agentService.resolveForTurn(sid, null);
             if (sub == null) {
                 throw new BizException("子智能体（" + sid + "）不存在或对当前用户不可见，无法转换完整编排");
             }

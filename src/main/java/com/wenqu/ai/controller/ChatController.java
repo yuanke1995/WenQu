@@ -271,7 +271,7 @@ public class ChatController {
             // 用 get() 再过一遍可读/停用；平台没配默认或默认不可读时留空，按平台默认档降级，不抛 400。
             if (effectiveAgentId == null) {
                 var def = agentService.defaultAgent();
-                if (def != null && agentService.get(def.getId()) != null) effectiveAgentId = def.getId();
+                if (def != null && agentService.resolveForTurn(def.getId(), null) != null) effectiveAgentId = def.getId();
             }
 
             // @ 引用校验（同样必须在发起问答前 fail-loud）：类型合法 + 资源存在 + 在当前用户共享范围内。

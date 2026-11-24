@@ -742,7 +742,7 @@ public class WenquAgentxTools {
             if (root == null || root.isBlank()) return memberPolicy;
             var rootSession = sessionService.sessionById(root);
             if (rootSession == null) return memberPolicy;
-            com.wenqu.ai.model.Agent rootAgent = agentService.get(rootSession.getAgentId());
+            com.wenqu.ai.model.Agent rootAgent = agentService.resolveForTurn(rootSession.getAgentId(), null);
             String rootPreset = sessionService.permissionPresetOf(root);
             var rootPolicy = toolAssembly.resolvePermissionPolicy(rootAgent, rootPreset, null, false);
             if (rootPolicy == null) return memberPolicy;
@@ -946,7 +946,7 @@ public class WenquAgentxTools {
                 .stream().anyMatch(a -> mentionedId.equals(a.getId()));
         if (!listed) {
             // 助手存在但不在当前智能体的委派清单里（subAgentIds 白名单）：用户点了名，不能一声不响
-            if (agentService.get(mentionedId) == null) return "";
+            if (agentService.resolveForTurn(mentionedId, null) == null) return "";
             return "\n（用户点名要求本轮先咨询助手「" + shown + "」，但当前智能体的委派清单里没有这一位："
                     + "请如实告诉用户它未被授权委派，不要假装咨询过它。）";
         }
@@ -969,7 +969,7 @@ public class WenquAgentxTools {
             boolean teamMode = sessionService.isTeamEnabled(parentSession) || cmd.isTeamMode();
             String rootId = cmd.getTeamRootSessionId() != null && !cmd.getTeamRootSessionId().isBlank()
                     ? cmd.getTeamRootSessionId() : parentSession;
-            com.wenqu.ai.model.Agent childAgent = agentService.get(childAgentId);
+            com.wenqu.ai.model.Agent childAgent = agentService.resolveForTurn(childAgentId, null);
             String memberName = childAgent == null ? null : childAgent.getName();
             // 团队嵌套：孙代成员名带父路径（reviewer/checker），保证全树唯一与可寻址。
             if (memberName != null && cmd.getMemberSessionId() != null

@@ -130,7 +130,7 @@ public class OpenAiCompatController {
         rateLimitService.checkRateLimit("chat", uid);
 
         // 智能体可见性：与 agent/available 同一口径，不可见一律 404（不泄露存在性）
-        Agent agent = agentService.get(agentId);
+        Agent agent = agentService.resolveForTurn(agentId, null);
         if (agent == null) {
             return org.springframework.http.ResponseEntity.status(404)
                     .body(error("not_found", "model 不存在或不可用"));
@@ -466,7 +466,7 @@ public class OpenAiCompatController {
         // scope 闸（Key 通道）：Responses 与 chat/completions 同属问答能力
         apiKeyService.requireScope(apiKeyId, com.wenqu.ai.service.ApiKeyService.SCOPE_CHAT);
         rateLimitService.checkRateLimit("chat", uid);
-        Agent agent = agentService.get(agentId);
+        Agent agent = agentService.resolveForTurn(agentId, null);
         if (agent == null) {
             return org.springframework.http.ResponseEntity.status(404)
                     .body(error("not_found", "model 不存在或不可用"));
