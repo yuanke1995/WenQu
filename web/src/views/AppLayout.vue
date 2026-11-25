@@ -284,10 +284,14 @@
                          @blur="commitProjectRename(row)" />
                   <span v-else class="space-name">{{ row.name }}<span v-if="sec.single" class="space-tag"> · 工作区</span></span>
                   <a-spin v-if="row.loading" class="space-spin" size="small" />
-                  <!-- 展开/收起指示：与分区表头、已归档同一枚箭头，随状态转 90°。
+                  <!-- 展开/收起指示：与分区表头、已归档同一种读法（向右关、向下开），但换一枚更轻的箭头。
                        工作区的自定义图标没有「打开/关闭」两态（如咖啡），只靠图标变化无法表达折叠，
-                       箭头负责把这一行能不能点、现在是开还是关统一说清。 -->
-                  <right-outlined class="group-caret space-caret" :class="{ open: !spaceHidden(row) }" />
+                       箭头负责把这一行能不能点、现在是开还是关统一说清。
+                       用 down 一枚 + rotate(-90°) 而不是 right 转 90°：后者在 8~9px 下轮廓偏向「›」，
+                       三个图标挤在一起时最容易读成装饰。尺寸/旋转/键位都收进 .space-caret。
+                       不常驻：展开态与 ⋯/＋ 同档（平时隐身、hover 显形），折叠态才常显——
+                       开着的工作区里折叠由图标底色 + 收起的会话表达，箭头只在它是唯一线索时才占位置。 -->
+                  <down-outlined class="space-caret" :class="{ open: !spaceHidden(row) }" />
                   <a-dropdown v-if="row.selectable && renameProjectId !== row.id" trigger="['click']" placement="bottomRight">
                     <button class="space-op" title="工作区操作" @click.stop><more-outlined /></button>
                     <template #overlay>
@@ -380,6 +384,10 @@
                   <div v-if="!row.error && !row.loading && !row.items.length" class="side-empty">
                     {{ searchKw ? '没有匹配的会话' : '暂无会话' }}
                   </div>
+                  <!-- 工作区页脚：「查看更多 (N)」常驻；「收起」只在真的多铺过页时才给。
+                       首次进入 expanded 恒为 false、hasMore=true，于是只挂一个「查看更多」——
+                       用户没展开过却先看到「收起」，那是把首屏快照的默认态说成了用户的选择。
+                       会话已铺完（hasMore=false 且未展开）：整行收掉，不占高度。 -->
                   <div v-if="!row.error && (row.hasMore || row.expanded)" class="space-foot">
                     <button v-if="row.hasMore" class="side-more-btn" :disabled="row.loadingMore" @click="loadSpaceMore(row)">
                       {{ row.loadingMore ? '加载中…' : `查看更多 (${Math.max(0, row.count - row.items.length)})` }}
@@ -2150,8 +2158,16 @@ watch(() => route.fullPath, () => {
    否则只有文件夹图标会开合、别的图标点下去毫无反馈。 */
 .space-head.open .space-icon,
 .space-head:hover .space-icon { background: var(--app-accent-weak); }
-/* 折叠箭头不跟操作组一起隐身：它是这一行能否点开、现在是开还是关的常驻提示 */
-.space-caret { margin-left: 0; color: var(--app-text3); }
+/* 折叠箭头按状态分两档：折叠态常显（此时它是这一行收着的唯一线索）；展开态不常驻，
+   与 ⋯/＋ 一样平时隐身、hover 这一行才浮现。开着的工作区本来就有一串会话在下面，
+   箭头再一直挂着只是把每行行尾变成一排「>」，反而和「查看更多 (N)」、归档头混在一起读。
+   箭头比 ⋯/＋ 更淡：这一行的主开关是名字，箭头只回答「开还是关」，不该和操作图标等重。 */
+.space-caret {
+  /* 覆盖 .group-caret 的 margin-left:auto——名字的 flex:1 已经把箭头推到右侧，这里只留 2px 呼吸 */
+  flex: none; margin-left: 0; font-size: 8px; color: var(--app-text3);
+  opacity: .85; transition: transform .15s, opacity .12s;
+}
+.space-caret.open { transform: rotate(-90deg); opacity: 0; }
 .space-name {
   flex: 1; min-width: 0; font-size: 12.5px; font-weight: 500; color: var(--app-text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -2170,21 +2186,26 @@ watch(() => route.fullPath, () => {
 .space-spin { flex: none; margin-right: 2px; }
 /* ⋯ 与 ＋：触屏/窄屏没有 hover，走这里的常显档（压到 .8 不与工作区名抢注意力）；
    有鼠标的环境下默认隐身、移到这一行才浮现（见下方 hover 媒体查询）。
-   只改 opacity 不改 display ⇒ 工作区名的可用宽度两种状态一致，不会一动就重排。 */
+   只改 opacity 不改 display ⇒ 工作区名的可用宽度两种状态一致，不会一动就重排。
+   两者同一个 20×20 命中框（触屏 24、可点面积不缩），字形一律 12px；
+   只有描边/底色的存在感不同：⋯ 常驻无描边，＋ 默认近乎隐形、hover 到这一行才显出圆扣。 */
 .space-op, .space-add {
   flex: none; padding: 0; border: none; background: transparent;
   color: var(--app-text2); cursor: pointer; opacity: .8;
   display: inline-flex; align-items: center; justify-content: center;
   transition: opacity .12s, color .12s, background .12s, border-color .12s;
 }
-.space-op { width: 18px; height: 18px; border-radius: 5px; font-size: 12px; }
-/* + 用一圈细边的小圆扣，和 ⋯ 区分开（一个管管理，一个管新建） */
+.space-op { width: 20px; height: 20px; border-radius: 5px; font-size: 12px; }
+/* + 用一圈细边的小圆扣，和 ⋯ 区分开（一个管管理，一个管新建）。
+   默认不描边：三个图标同时带边框就是三个不同的感叹号，眼睛不知道看哪；
+   描边只在 hover / 键盘聚焦这一行时才亮出来，作为「可以点」的提示。 */
 .space-add {
-  width: 16px; height: 16px; border-radius: 50%; font-size: 9px;
-  border: 1px solid var(--app-border);
+  width: 20px; height: 20px; border-radius: 50%; font-size: 12px;
+  border: 1px solid transparent;
 }
 .space-head:hover .space-op,
 .space-head:hover .space-add { opacity: 1; }
+.space-head:hover .space-add { border-color: var(--app-border); }
 .space-op:hover { color: var(--app-accent); background: var(--app-accent-weak); }
 .space-add:hover { color: var(--app-accent); border-color: var(--app-accent); background: var(--app-accent-weak); }
 /* ---- 有悬停能力的环境：表头操作组与工作区行右侧图标一律「平时隐身、hover 这一行显形」 ----
@@ -2202,6 +2223,10 @@ watch(() => route.fullPath, () => {
   .space-head:hover .space-add,
   .space-head:has(:focus-visible) .space-op,
   .space-head:has(:focus-visible) .space-add { opacity: 1; }
+  /* 展开态的折叠箭头同档隐身；折叠态常显，不吃这条——收着的工作区没有别的线索 */
+  .space-caret.open { opacity: 0; }
+  .space-head:hover .space-caret,
+  .space-head:has(:focus-visible) .space-caret { opacity: .85; }
 }
 /* 已归档工作区整体压暗：仍可点进去，但不该与"正在推进"的工作区抢注意力 */
 .space.archived .space-head { opacity: .72; }
