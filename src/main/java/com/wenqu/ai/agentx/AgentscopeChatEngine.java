@@ -91,23 +91,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         this.memberLiveFeed = feed;
     }
 
-    /**
-     * 聊天档/工作区档的意图词。命中就走工作区档（建沙盒、全量工具），否则走聊天档
-     * （宿主临时目录 + 文件工具，无容器、无 shell）。
-     *
-     * <p>这一版刻意「宁可多判工作区」：误判工作区只是多付一次 3 秒装配，误判聊天会让
-     * 「跑/构建/改文件」这类请求失去能力。纯问答（例如 {@code 1+1=?}）不含这些词，直接走聊天档。
-     * 后续可按 shadow 日志收敛词表，或换成显式 UI 选择。
-     */
-    private static final Pattern SANDBOX_INTENT_EN = Pattern.compile(
-            "(?i)\\b(file|folder|directory|project|code|script|run|execute|build|compile|install|deploy|debug|terminal|command|read|write|save|edit|export|package|zip|excel|csv|json|python|node|npm|bash|shell|git|docker)\\b");
-    private static final Pattern SANDBOX_INTENT_EXT = Pattern.compile(
-            "(?i)\\.(py|js|ts|java|html|css|json|csv|md|xlsx|zip|sh|sql)\\b");
-    private static final String[] SANDBOX_INTENT_ZH = {
-            "文件", "目录", "文件夹", "项目", "代码", "脚本", "运行", "执行", "构建", "编译",
-            "安装", "部署", "调试", "终端", "命令行", "读取", "写入", "保存", "编辑", "修改",
-            "导出", "打包", "压缩", "解压", "表格", "数据库"
-    };
 
     /** 推荐块里条目长过这个字数就按正文处理（与手写侧 {@code RELATED_PROSE_MIN_CHARS} 同值同理由）。 */
     private static final int RELATED_PROSE_MIN_CHARS = 80;
@@ -209,6 +192,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     private final AgentxAskCard askCardBuilder;
     /** 框架事件 → 前端事件名的翻译层 */
     private final AgentxEventTranslator eventTranslator;
+    /** 聊天档/工作区档判档 */
+    private final AgentxSandboxIntent sandboxIntent;
     /** 计划卡快照构建（接流/新页签重建计划卡，本类只在需要时调它） */
     private final AgentxPlanCardSnapshot planCardSnapshot;
     /**
@@ -436,6 +421,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         this.toolCardBuilder = new AgentxToolCardBuilder(displayNames);
         this.askCardBuilder = new AgentxAskCard(configService);
         this.eventTranslator = new AgentxEventTranslator(toolCardBuilder, skillStatsStore, () -> steerQueueHooks);
+        this.sandboxIntent = new AgentxSandboxIntent(sessions, sandboxService, projectService);
         this.skillRepository = skillRepository;
         this.skillStatsStore = skillStatsStore;
         this.orgService = orgService;
@@ -695,7 +681,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 cmd.isApiKey() ? null : turnChangeService.start(cmd.getSessionId(), turnId);
         // 本轮智能体绑定一次解析：实例重建判据、人设、技能白名单三处共用同一份（避免一轮读三遍库，
         // 也避免「判据说没换、人设却按另一份装配」这种自相矛盾）
-        boolean sandboxWanted = wantsSandbox(cmd, policy);
+        boolean sandboxWanted = sandboxIntent.wants(cmd, policy);
         slot.noteProfile(sandboxWanted ? "workspace" : "chat");
         // 本机执行器离线时的兜底必须让用户看见：这一轮文件在服务器上，不在他的电脑上。
         if (sandboxWanted && sandboxService != null) {
@@ -1433,7 +1419,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         WenquAgentxTools.TurnHooks hooks = tools.newHooks(cmd, ref, () -> turnId, spills,
                 consultService.newLedger());
         AgentBinding binding = bindingOf(cmd, policy, ref);
-        boolean sandboxWanted = wantsSandbox(cmd, policy);
+        boolean sandboxWanted = sandboxIntent.wants(cmd, policy);
         AgentxTurnSlot slot = sessions.turnSlot(cmd);
         slot.noteProfile(sandboxWanted ? "workspace" : "chat");
         AgentSession session;
@@ -2159,70 +2145,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                                 int contextWindow, int maxOutput) {
     }
 
-    /**
-     * 本轮是否走工作区档（建沙盒、全量工具）。聊天档不建容器，直接建实例。
-     *
-     * <p>判据只有三类：
-     * <ol>
-     *   <li>会话绑了显式工作区（本机目录或用户建的工作区）——能力必须完整；</li>
-     *   <li>续跑/空问题——有常驻实例就沿用上一次的档位，没有则保守走工作区；</li>
-     *   <li>问题里有明确的执行/文件意图——走工作区；其余默认聊天。</li>
-     * </ol>
-     * 默认聊天是这刀的目的：{@code 1+1=?} 这种问题不该为「可能用到文件工具」先付 3 秒沙盒。
-     */
-    private boolean wantsSandbox(ChatCommand cmd, ExecutionPolicy policy) {
-        String key = sessions.key(cmd);
-        // 粘性：已经建过工作区档实例的会话，不因为下一句普通问题降回聊天档——
-        // 否则整条会话会在两档之间反复重建，工具面和文件系统也跟着来回换。
-        // 本机会话目录同样算「已进入工作区档」：它没有 SandboxContext，sandboxAttached 永远是 false。
-        boolean pinnedLocal = sandboxService != null && sandboxService.pinnedLocalSessionWorkspace(cmd.getSessionId());
-        if (sessions.hasHeld(key) && (sessions.sandboxAttached(key) || pinnedLocal)) {
-            log.info("[PROFILE] profile=workspace reason=sticky session={}", cmd.getSessionId());
-            return true;
-        }
-        try {
-            com.wenqu.ai.model.Project p = projectService.projectOfSession(cmd.getSessionId());
-            if (p != null && (!com.wenqu.ai.model.Project.SELECTION_IMPLICIT.equals(p.getSelectionStatus())
-                    || projectService.isDirect(p))) {
-                log.info("[PROFILE] profile=workspace reason=bound-project session={}",
-                        cmd.getSessionId());
-                return true;
-            }
-        } catch (RuntimeException e) {
-            log.debug("[PROFILE] 工作区解析失败，按问题意图判档 session={}: {}",
-                    cmd.getSessionId(), e.toString());
-        }
-        String q = cmd.getQuestion();
-        if (q == null || q.isBlank()) {
-            boolean sandbox = sessions.hasHeld(key)
-                    ? (sessions.sandboxAttached(key)
-                        || (sandboxService != null && sandboxService.pinnedLocalSessionWorkspace(cmd.getSessionId())))
-                    : true;
-            log.info("[PROFILE] profile={} reason=continuation session={}",
-                    sandbox ? "workspace" : "chat", cmd.getSessionId());
-            return sandbox;
-        }
-        String lower = q.toLowerCase(Locale.ROOT);
-        String reason = null;
-        if (SANDBOX_INTENT_EXT.matcher(q).find() || SANDBOX_INTENT_EN.matcher(lower).find()) {
-            reason = "intent-en";
-        } else {
-            for (String word : SANDBOX_INTENT_ZH) {
-                if (q.contains(word)) {
-                    reason = "intent-zh:" + word;
-                    break;
-                }
-            }
-        }
-        if (reason == null) {
-            log.info("[PROFILE] profile=chat reason=no-intent session={} q={}",
-                    cmd.getSessionId(), AgentxTextUtil.briefQuestion(q));
-            return false;
-        }
-        log.info("[PROFILE] profile=workspace reason={} session={} q={}",
-                reason, cmd.getSessionId(), AgentxTextUtil.briefQuestion(q));
-        return true;
-    }
 
 
     /**
