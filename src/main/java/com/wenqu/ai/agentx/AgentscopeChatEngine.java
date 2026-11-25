@@ -189,6 +189,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     private final AgentxEventTranslator eventTranslator;
     /** 聊天档/工作区档判档 */
     private final AgentxSandboxIntent sandboxIntent;
+    /** 本轮智能体绑定解析与实例指纹 */
+    private final AgentxAgentBinding agentBinding;
     /** 计划卡快照构建（接流/新页签重建计划卡，本类只在需要时调它） */
     private final AgentxPlanCardSnapshot planCardSnapshot;
     /**
@@ -417,6 +419,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         this.askCardBuilder = new AgentxAskCard(configService);
         this.eventTranslator = new AgentxEventTranslator(toolCardBuilder, skillStatsStore, () -> steerQueueHooks);
         this.sandboxIntent = new AgentxSandboxIntent(sessions, sandboxService, projectService);
+        this.agentBinding = new AgentxAgentBinding(tools, orgService, userConfigService, modelRegistry);
         this.skillRepository = skillRepository;
         this.skillStatsStore = skillStatsStore;
         this.orgService = orgService;
@@ -690,7 +693,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 log.warn("[PROFILE] 工作区后端提示解析失败 session={}: {}", cmd.getSessionId(), e.toString());
             }
         }
-        AgentBinding binding = bindingOf(cmd, policy, ref);
+        AgentBinding binding = agentBinding.build(cmd, policy, ref);
         // 实例键用完整引用而不是裸模型名：同一个模型名可以挂在好几个供应商下（各自的 baseUrl 与 Key 不同），
         // 只按裸名判「模型没换」就不重建实例，于是换了供应商仍拿旧网关旧 Key 跑，且日志上一切正常。
         // 档位也进键：聊天档/工作区档的工具面与文件系统不同，切档必须重建实例。
@@ -1359,7 +1362,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 new java.util.concurrent.ConcurrentLinkedQueue<>();
         WenquAgentxTools.TurnHooks hooks = tools.newHooks(cmd, ref, () -> turnId, spills,
                 consultService.newLedger());
-        AgentBinding binding = bindingOf(cmd, policy, ref);
+        AgentBinding binding = agentBinding.build(cmd, policy, ref);
         boolean sandboxWanted = sandboxIntent.wants(cmd, policy);
         AgentxTurnSlot slot = sessions.turnSlot(cmd);
         slot.noteProfile(sandboxWanted ? "workspace" : "chat");
@@ -1781,41 +1784,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         startFollowing(f, TurnSessionGateway.taskForTurn(f.session(), turnId));
     }
 
-    /**
-     * 本轮生效的模型上下文窗口（token），落到 {@link OpenAIChatModel} 的
-     * {@code contextWindowSize}。框架的压缩阈值与输入预算都由它推导：
-     * <ul>
-     *   <li>{@code CompactionMiddleware#onReasoning}：{@code window - reserved(20k)} 为动态压缩阈值</li>
-     *   <li>{@code HarnessContextBuilder#inputLimit}：{@code window - output - safety} 为输入上限，
-     *       再减去「系统提示词＋运行时投影＋工具声明」才是<b>对话</b>那一份的压缩阈值</li>
-     * </ul>
-     * 问渠登记的窗口优先于框架内置表：登记值是模型真实口径，框架 {@code ModelContextWindows} 按前缀
-     * 猜名、对中文大模型常缺条目（{@code deepseek-v4.1-flash} 在框架的 OPENAI 表里就查不到）。
-     * <p><b>返回 0 只有一种情况</b>：模型没登记窗口（或引用解析不出登记行）。这时调用方必须
-     * <b>整个不调</b> {@code contextWindowSize}——该 setter 的判据是 {@code >= 0 即用显式值}，
-     * 把 0 塞进去等于向框架声明「窗口=0」，框架随即改用 64000 的兜底输入上限，
-     * 大窗口模型也会被压成很早就折一次上下文。
-     * <p>窗口一律取模型登记上限，界面不提供「上下文窗口档位」选择，
-     * 因为「选小窗口」省下的只是压缩时机，代价是检索资料被提前折掉且界面看不出差别——
-     * 用户要的是「带上更多资料」，那件事该由检索与压缩参数管，不该由一个窗口下拉框代答。
-     */
-    private int modelContextWindow(String modelRef) {
-        com.wenqu.ai.model.ModelInfo mi = modelRegistry.modelInfoOf(modelRef);
-        Integer max = mi == null ? null : mi.getContextWindow();
-        return max == null || max <= 0 ? 0 : max;
-    }
 
-    /**
-     * 模型登记的最大输出 token（作为 max_tokens 随请求下发）；未登记返回 0=不下发，交厂商默认。
-     * <p>为什么必须有这一刀：单次补全上限若只沿用厂商默认，模型把大产物内联进
-     * 工具参数时输出会在参数中途被截断，框架只收到空参 {}。
-     * 口径与 {@link #modelContextWindow} 同源：登记什么下发什么，登记为空行为零变化。
-     */
-    private int modelMaxOutput(String modelRef) {
-        com.wenqu.ai.model.ModelInfo mi = modelRegistry.modelInfoOf(modelRef);
-        Integer max = mi == null ? null : mi.getMaxOutput();
-        return max == null || max <= 0 ? 0 : max;
-    }
 
     /**
      * 本轮墙钟上限（秒），恒定取问答侧 SSE 超时：两套运行时共用一个天花板。
@@ -2051,20 +2020,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     }
 
 
-    /**
-     * 智能体显示名随消息落库：agentId 有而名字没有，刷新后气泡上那一行「由 XX 作答」就空着。
-     * <p>取不到就回 null（不编一个名字）：这里可能在流水线线程也可能在续跑线程上跑，
-     * 后者没有请求身份，归属校验会把智能体判成不可读——那种情况下宁缺不假。
-     */
-    private String agentNameOf(ChatCommand cmd) {
-        if (cmd.getAgentId() == null || cmd.getAgentId().isBlank()) return null;
-        try {
-            com.wenqu.ai.model.Agent a = tools.agentOf(cmd);
-            return a == null ? null : a.getName();
-        } catch (Exception e) {
-            return null;
-        }
-    }
 
     /**
      * 本轮的角色提示词段（{@code sysPrompt} 的第一段）：智能体人设优先，为空回落平台默认。
@@ -2082,65 +2037,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      *
      * @param key 智能体 id + 配置更新时间：换人、改配置都会让它变
      */
-    private record AgentBinding(Agent row, String key, io.agentscope.core.skill.SkillFilter skillFilter,
-                                int contextWindow, int maxOutput) {
-    }
 
 
 
-    /**
-     * 「接下来可以」推荐追问是否按本轮生成（个人设置 → 问答偏好 → 对话显示，键 ui.showRelatedSuggestions）。
-     * <p>关掉 = 不再向模型要这段（省输出 token）、也不落库，而不是只在界面上隐藏。
-     * 未设置 / 无 uid（游客、续跑复原）一律按开。
-     */
-    private boolean relatedSuggestionsEnabled(String uid) {
-        String v = userConfigService.personalValue(uid, "ui.showRelatedSuggestions");
-        return v == null || v.isBlank() || "true".equalsIgnoreCase(v.trim());
-    }
 
-    private AgentBinding bindingOf(ChatCommand cmd, ExecutionPolicy policy, String modelRef) {
-        Agent row = null;
-        try {
-            row = tools.agentOf(cmd);
-        } catch (RuntimeException e) {
-            // 解析失败不打断本轮：按「无绑定」走平台默认档（与 rolePrompt 的兜底一致）
-            log.warn("[agentx] 本轮智能体解析失败，回落平台默认档: session={} err={}",
-                    cmd.getSessionId(), e.getMessage());
-        }
-        String key = row == null
-                ? ""
-                : row.getId() + "@" + (row.getUpdateTime() == null ? "" : row.getUpdateTime());
-        // 执行档位也是 build 期烤进实例的（permissionContext、闸、适配器兜底），档位变了必须重建：
-        // 管理员在设置页改审批档，不能等整条会话换个模型才生效。
-        key = key + "|" + (policy == null ? "" : policy.preset() + "/" + policy.sandboxMode()
-                + "/" + policy.approvalMode() + "/" + policy.deny().stream().sorted().toList());
-        // 目标模式开关同样烤在实例里（taskContext 投影参数是 build 期装配）：智能体改了
-        // goal_enabled 不重建，就会出现「库里开着、实例没投影」或反过来——界面与模型看到的不是一套
-        key = key + "|goal=" + (row != null && row.getGoalEnabled() != null ? row.getGoalEnabled() : "-");
-        // 本轮配置覆盖（历史版本复测/临时换资料）进实例指纹：改 revision 或 knowledgePatch 必须重建，
-        // 否则工具表、技能滤镜、人设仍来自上一次 build 的实例；无 override 时不追加，旧行为逐字节不变。
-        if (cmd.getAgentConfigOverride() != null && !cmd.getAgentConfigOverride().isEmpty()) {
-            key = key + "|ov=" + cmd.getAgentConfigOverride().fingerprint();
-        }
-        // 工作流工具只存 id（Agent.java 的 workflowTools 注释承诺「重新发布即时生效」），但发布/回滚/
-        // 改名不会改 agent.update_time，工具表又是 build 期固化的。把引用工作流的发布态并进指纹，
-        // 让同一会话的下一次开轮重建实例并重新 mount 工具，兑现那条承诺。
-        key = key + tools.workflowBindingFingerprint(row);
-        // 个人「自动提炼记忆」开关也是 build 期装配（memoryConfig 还是 disableMemoryHooks）：不并进
-        // 指纹的话，关掉后要等下一次重建才停，与个人设置里「关掉后下一轮起才停」的说法不符。
-        key = key + "|mem=" + orgService.memoryFlushEnabled(cmd.getUserId());
-        // 「接下来可以」开关也烤进系统提示词（关掉就不再挂 RelatedPrompt）：并进指纹，拨动后下一轮即重建实例生效。
-        key = key + "|rel=" + relatedSuggestionsEnabled(cmd.getUserId());
-        // 上下文窗口并进指纹：它决定框架的压缩阈值与输入上限，烤死在实例里。
-        // 窗口恒等于模型登记上限，并进来是为了管理员改了登记值时这一轮就重建。
-        int contextWindow = modelContextWindow(modelRef);
-        // 最大输出同理烤在实例里（作为 max_tokens 随请求下发），登记值改了也得重建才生效。
-        int maxOutput = modelMaxOutput(modelRef);
-        key = key + "|ctx=" + contextWindow + "|out=" + maxOutput;
-        // 思考开关仍留在指纹外：它同样烤在实例里，但续跑轮的 ChatCommand 复原不了它，并进来会让
-        // 续跑按默认档重建。那一档的变更仍欠「按调用传 GenerateOptions」那一刀。
-        return new AgentBinding(row, key, AgentxSkillFilter.of(row), contextWindow, maxOutput);
-    }
+
 
 
     private String rolePrompt(Agent bound) {
@@ -2807,7 +2708,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                         + PlanCopy.guidance()
                         + com.wenqu.ai.agent.chat.ArtifactPrompt.guidance()
                         + com.wenqu.ai.memory.MemoryPrompts.replyDiscipline()
-                        + (relatedSuggestionsEnabled(cmd.getUserId())
+                        + (agentBinding.relatedSuggestionsEnabled(cmd.getUserId())
                             ? com.wenqu.ai.agent.chat.RelatedPrompt.line() : ""))
                 // 问渠所有供应商都是 OpenAI 兼容网关。
                 // 用户在界面选的上下文窗口（contextWindow 档位）落到 model 的 contextWindowSize：
@@ -3174,7 +3075,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         snap.put("prepMs", prepMs);
         if (cmd.getAgentId() != null && !cmd.getAgentId().isBlank()) {
             snap.put("agentId", cmd.getAgentId());
-            String name = agentNameOf(cmd);
+            String name = agentBinding.agentNameOf(cmd);
             if (name != null) snap.put("agentName", name);
         }
         return snap;
@@ -3386,7 +3287,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         String snapWarn = channel.lastWarn();
         boolean snapRetrievalAttempted = pool.retrievalAttempted();
         List<String> snapRetrievalKbIds = pool.retrievalKbIds();
-        String snapAgentName = agentNameOf(cmd);
+        String snapAgentName = agentBinding.agentNameOf(cmd);
         String snapSourcesJson = com.alibaba.fastjson2.JSON.toJSONString(snapSources);
         String snapDegradesJson = snapDegrades.isEmpty() ? null
                 : com.alibaba.fastjson2.JSON.toJSONString(snapDegrades);
@@ -3408,7 +3309,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 .agentId(cmd.getAgentId())
                 .agentName(snapAgentName)
                 .model(route.modelId())
-                .relatedJson(relatedChips.isEmpty() || !relatedSuggestionsEnabled(cmd.getUserId()) ? null
+                .relatedJson(relatedChips.isEmpty() || !agentBinding.relatedSuggestionsEnabled(cmd.getUserId()) ? null
                         : com.alibaba.fastjson2.JSON.toJSONString(relatedChips))
                 .planJson(planRecord == null ? null : com.alibaba.fastjson2.JSON.toJSONString(planRecord))
                 .turnId(framedTurnId)
