@@ -1285,14 +1285,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * @return 给用户看的失败原因；没有失败痕迹时返回 null（那是「还在等/已停止/正常跑完」）
      */
     private static String runFailure(AgentSession session, AgentSession.Task current) {
-        String error = session.executionError();
-        if (error != null && !error.isBlank()) {
-            return error.length() > 200 ? error.substring(0, 200) : error;
-        }
-        if (current != null && "rejected".equals(current.status())) {
-            return current.error() == null ? "运行被框架拒绝" : current.error();
-        }
-        return null;
+        return AgentxHistoryText.runFailure(session, current);
     }
 
     /**
@@ -4361,19 +4354,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 框架的执行异常留在旧实例里，新实例读不到失败痕迹，光靠 {@code failure == null} 挡不住。
      */
     private static String lastAssistantText(AgentSession session, int historyBefore) {
-        List<Msg> messages = session.transcript().messages();
-        if (messages.size() <= historyBefore) return "";
-        // 下界必须停在 historyBefore：submit 后用户行必然已 commit，本轮 transcript 里再没有
-        // 可用的 assistant 正文时（思考吃光 max_tokens 的 0-token 轮、出字前被叫停），
-        // 一路扫到 0 就穿透进上一轮——把上一轮的回答当本轮正文存档
-        for (int i = messages.size() - 1; i >= historyBefore; i--) {
-            Msg m = messages.get(i);
-            if (!"ASSISTANT".equals(String.valueOf(m.getRole()))) continue;
-            if (GenerateReason.INTERRUPTED == m.getGenerateReason()) return "";
-            String text = m.getTextContent();
-            if (text != null && !text.isBlank()) return text;
-        }
-        return "";
+        return AgentxHistoryText.lastAssistantText(session, historyBefore);
     }
 
     /**
@@ -4387,16 +4368,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 添过行就没有「本轮的收尾」可取。
      */
     private static String maxIterationsWrapUp(AgentSession session, int historyBefore) {
-        List<Msg> messages = session.transcript().messages();
-        if (messages.size() <= historyBefore) return null;
-        for (int i = messages.size() - 1; i >= 0; i--) {
-            Msg m = messages.get(i);
-            if (!"ASSISTANT".equals(String.valueOf(m.getRole()))) continue;
-            if (GenerateReason.MAX_ITERATIONS != m.getGenerateReason()) return null;
-            String text = m.getTextContent();
-            return text == null || text.isBlank() ? null : text.strip();
-        }
-        return null;
+        return AgentxHistoryText.maxIterationsWrapUp(session, historyBefore);
     }
 
     /**
@@ -4408,12 +4380,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 推荐块时并回回答」那道护栏、以及 {@code <process>} 分流都住在它身上，同一件事不该有第二份口径。
      */
     private static String stripFallbackBody(AgentxTurnRecording recording, String raw) {
-        if (raw == null || raw.isEmpty()) return "";
-        // 只取正文、不补发 token 帧：done 的 finalContent 就在下一毫秒，重放一遍等于把同一截话发两次
-        ModelOutputParser.Delta fed = recording.related.feed(raw);
-        ModelOutputParser.Delta finished = recording.related.finish();
-        recording.process(fed.process() + finished.process());
-        return fed.text() + finished.text();
+        return AgentxHistoryText.stripFallbackBody(recording, raw);
     }
 
     /**
