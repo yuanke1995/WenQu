@@ -1994,6 +1994,8 @@ import { useMemberLiveView } from '../chat/useMemberLiveView'
 import { usePanelResize } from './usePanelResize'
 import { useBrowserSnapshots } from './useBrowserSnapshots'
 import { useGoalBarText } from './useGoalBarText'
+import { useChatPageView } from './useChatPageView'
+import { useGoalBarCollapse } from './useGoalBarCollapse'
 import { useRouter, useRoute } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import { LoadingOutlined, DownOutlined, CaretRightOutlined, CheckOutlined, CloseCircleOutlined, FileTextOutlined, DownloadOutlined, GlobalOutlined, ApiOutlined,
@@ -2129,10 +2131,6 @@ const route = useRoute()
 // 团队成员会话视图：从「团队」面板点成员打开，顶部提供返回主会话
 const memberViewRoot = computed(() => { const v = route.query.teamRoot; return Array.isArray(v) ? v[0] : (v || '') })
 const memberViewName = computed(() => { const v = route.query.memberName; return Array.isArray(v) ? v[0] : (v || '') })
-function backToRootSession() {
-  const sid = memberViewRoot.value
-  if (sid) router.push({ path: '/chat', query: { sid } }).catch(() => {})
-}
 // 输入框与编辑卡的 DOM ref 由布局层持有：命令面板与两个域指向同一份元素。
 const composerRef = ref(null)
 const editingRef = ref(null)
@@ -2257,19 +2255,6 @@ const {
   deliveryPackages, sandboxCount, procs, sandboxErr, sandboxLoading, procCardVisible, messages
 })
 
-// 顶栏团队胶囊 → 打开右栏「团队」分段（宽屏占位列 / 窄屏 sheet）
-function openTeamPanel() {
-  try {
-    railTab.value = 'team'
-    if (isNarrow.value) mPanelOpen.value = true
-    else panelOpen.value = true
-  } catch (e) { /* 忽略 */ }
-}
-
-// 成员会话页里「团队」分段不适用（团队是根会话的概念）：进入时自动让位到「过程」
-watch(memberViewRoot, (v) => {
-  try { if (v && railTab.value === 'team') railTab.value = 'process' } catch (e) { /* 忽略 */ }
-})
 
 // 成员轮直播：订阅/收台逻辑已抽到 useMemberLiveView.js（与主问答同一条事件契约，只换出口）。
 const { memberLive, memberLiveStatus } = useMemberLiveView({
@@ -2577,18 +2562,12 @@ const {
   }))
 
 // 目标条折叠：收起时只留身份行（原文/版本/状态），进度与动作键藏起来；
-// 收起同时撤掉取消确认，避免确认条孤零零挂在收起的行下面
-function toggleGoalBar() {
-  goalOpen.value = !goalOpen.value
-  if (!goalOpen.value) goalCancelArmed.value = false
-}
-// 编辑入口不止条子上的按钮（过程抽屉里也能改）：进编辑态一律先摊开，
-// 否则文本域会长在一行收起的条子下面
-watch(goalEditing, v => { if (v) goalOpen.value = true })
-// 折叠是「这一条目标」的本地偏好：换到另一条目标（新会话/重设目标）时回到展开，
-// 免得另一次执行一上来就被上一条的折叠连坐
-watch(() => sessionGoal.value && sessionGoal.value.goalId, (id, prev) => {
-  if (id && id !== prev) goalOpen.value = true
+// 视图导航与目标条折叠已抽到 useChatPageView / useGoalBarCollapse（此处依赖均已就绪）
+const { backToRootSession, openTeamPanel } = useChatPageView({
+  router, memberViewRoot, railTab, isNarrow, mPanelOpen, panelOpen
+})
+const { toggleGoalBar } = useGoalBarCollapse({
+  goalOpen, goalCancelArmed, goalEditing, sessionGoal
 })
 
 // ---- 会话工作区与权限档位 ----
