@@ -127,11 +127,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     /** 辅助调用（记忆提炼／上下文压缩）的尝试次数：慢一次没人等，不值得再烧一整段静默。 */
     private static final int AUX_MODEL_MAX_ATTEMPTS = 2;
 
-    /**
-     * 「流出过正文，但上游没给末块就把连接收了」的内部指纹——它不是上游原文，所以不参与
-     * 额度／限流那套文案分类，在 {@link #emitRunFailure} 里单独说一句人话。
-     */
-    private static final String UPSTREAM_STREAM_CUT = "wenqu:upstream-stream-cut";
 
     private final ModelRegistryService modelRegistry;
     /** 工作区约定：注入 system prompt 的工作背景段（无工作区/无约定时为空） */
@@ -1158,7 +1153,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 都读不出来。
         // 框架不报，就只能问渠自己报：这个判据出自模型出口那一层，不靠上游错误文本。
         if (failure == null && turnModel != null && turnModel.abruptCloses() > abruptBefore) {
-            failure = UPSTREAM_STREAM_CUT;
+            failure = AgentxRunFailure.UPSTREAM_STREAM_CUT;
             log.warn("[FAIL-LOUD] 本轮上游中途断流（流出过正文但没有末块）: session={} turn={}",
                     cmd.getSessionId(), turnId);
         }
@@ -1198,7 +1193,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             // answer 空时才出声，症状是「气泡照报已完成、正文停在半句」，而错误卡与「这一轮中断」
             // 那句状态全都没长出来——用户得自己发现它没说完。
             // 叫停那一支不套用：那是用户自己按的，再说一句「AI 回复失败」就是把他的动作报成故障。
-            spokenFailure = emitRunFailure(pool, channel, failure);
+            spokenFailure = AgentxRunFailure.emit(pool, channel, failure);
         }
         // 框架撞步数上限时补的那条收尾正文要接回来：它走 SUMMARY 用途，被 translate() 那道
         // 「只透传 REASONING」的闸挡在流外（那道闸是为压缩摘要与记忆提炼加的，那两样确实不该进聊天流）。
@@ -1278,60 +1273,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     }
 
 
-    /**
-     * 把框架留下的失败痕迹说成用户能行动的一句话。判据与文案都取手写引擎那一组
-     * （{@code ChatService} 的 stream-error 分支：额度／限流／连不上／其它）——同一件 402 在两条
-     * 运行时里必须长成同一句话，否则灰度一切换，用户看到的指引就换了。
-     *
-     * @return 那句给用户看的话（站内通知复用它，不再抄上游原始串）
-     */
-    private String emitRunFailure(WenquSourcePool pool, RunChannel channel, String raw) {
-        // 断流自己说一句：把它塞进上面那套「额度／限流／连不上」的分类会得到一句通用的
-        // 「AI 回复失败，请稍后重试」——可那一轮其实<b>说出了半截话</b>，用户要的是「这段不完整」，
-        // 不是「重试就好」。
-        if (UPSTREAM_STREAM_CUT.equals(raw)) {
-            String msg = "模型这一轮中途断流，上面这段可能不完整：上游没有给出结束标记就收了连接。可以发一句「继续」让它接着说";
-            pool.registrar().degrade("upstreamStreamCut", msg);
-            channel.emit(RunEventType.ERROR, msg);
-            log.info("[agentx] 本轮断流收束: session 侧已提示不完整");
-            return msg;
-        }
-        // 自家配额闸那句已经点名的规则、用了多少、什么时候恢复——比通用那句「额度不足去充值」准，比通用那句「额度不足去充值」准，
-        // 原样交给用户（它本来就是写给人看的中文）。落到下面的通用分类会把「找管理员放宽月度预算」
-        // 说成「去模型供应商充值」，指错方向。
-        if (raw.startsWith(com.wenqu.ai.service.UsageQuotaService.REFUSAL_PREFIX)) {
-            pool.registrar().degrade("tenantQuotaExhausted", raw);
-            channel.emit(RunEventType.ERROR, raw);
-            log.info("[agentx] 本轮被配额闸拦下: {}", raw);
-            return raw;
-        }
-        boolean quota = com.wenqu.ai.service.ModelQuotaGuard.isQuotaText(raw);
-        boolean limited = !quota && com.wenqu.ai.service.ModelQuotaGuard.isRateLimitedText(raw);
-        // 静默判死那条（ModelUtils 的 timeout 包成 ModelException「Model request timeout after PT60S」，
-        // 重试烧完再包成「Retries exhausted: 2/2」）必须单独说一句：通用那句「请稍后重试」不知道重试
-        // 也是白重试——上游已经按设置的时长判死过两轮。指出的动作是「等一会再问」或「换个响应快的
-        // 模型」，不是原地反复按发送。只认 timeout 这个词的话，Retries exhausted 那一支照样落进通用文案。
-        String lower = raw.toLowerCase(java.util.Locale.ROOT);
-        if (!quota && !limited && (lower.contains("timeout") || lower.contains("timed out")
-                || lower.contains("retries exhausted"))) {
-            String msg = "模型服务没有响应：上游长时间不回内容，已按「模型无响应上限」判死并重试过仍无结果。"
-                    + "稍后再问，或在「智能体 → 模型供应商」换一个响应快的模型";
-            pool.registrar().degrade("modelUnresponsive", msg);
-            channel.emit(RunEventType.ERROR, msg);
-            log.info("[agentx] 本轮上游无响应收束: 原文={}", raw.length() > 200 ? raw.substring(0, 200) : raw);
-            return msg;
-        }
-        boolean unreachable = !quota && !limited
-                && raw.toLowerCase(java.util.Locale.ROOT).contains("connect");
-        String msg = quota ? "模型服务额度不足：请到「模型供应商」充值，或改用其他模型"
-                : limited ? "模型服务限流，请稍后重试"
-                : unreachable ? "无法连接 AI 服务，请检查网络或 API 地址"
-                : "AI 回复失败，请稍后重试";
-        pool.registrar().degrade(quota ? "modelQuotaExhausted" : "streamError", "模型输出中断：" + msg);
-        channel.emit(RunEventType.ERROR, msg);
-        log.info("[agentx] 本轮失败收束: {} 原文={}", msg, raw.length() > 200 ? raw.substring(0, 200) : raw);
-        return msg;
-    }
 
     /** 重启后续跑的执行线程：单线程串行——同一条会话不该被两轮同时驱动。 */
     private static final java.util.concurrent.ExecutorService RESUME_POOL =
