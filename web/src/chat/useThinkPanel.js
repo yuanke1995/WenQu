@@ -20,7 +20,7 @@ const THINK_LEAVE_DELAY = 200  // 留出移入面板的时间
 export const useThinkPanel = ({ isCoarse, effectiveModel, currentOverrideModel, modelIndex,
                                 thinkCapsOf, levelOptionsOf, currentLevelOf, deepOnOf, fmtWindow,
                                 viewport = () => ({ w: window.innerWidth, h: window.innerHeight }),
-                                schedule = setTimeout, cancel = clearTimeout, onViewportChange = f => watch(() => 0, f) }) => {
+                                schedule = setTimeout, cancel = clearTimeout }) => {
   const thinkHoverRef = ref('')            // 宽屏：当前悬浮的模型引用（''=无，面板隐藏）
   const thinkPanelPos = ref({ top: 0, left: 0 })
   const thinkPanelEl = ref(null)

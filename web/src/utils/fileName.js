@@ -2,6 +2,7 @@
  * 下载文件名净化：与后端 FileNameSanitizer 同口径。
  * 平台判断只用于文件名规则，功能逻辑不依赖 UA。
  */
+// eslint-disable-next-line no-control-regex -- 与后端 FileNameSanitizer 同口径：文件名必须过滤控制字符
 const ILLEGAL = /[\\/:*?"<>|\x00-\x1f]/g
 const RESERVED = new Set([
   'CON', 'PRN', 'AUX', 'NUL',

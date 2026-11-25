@@ -222,16 +222,20 @@ export default [
       'vue/no-unused-vars': 'off',
       'vue/no-mutating-props': 'off',
       'vue/no-dupe-keys': 'off',
+      // 中文 UI 文案里用全角空格排版（如「全角竖线」两侧），是有意的排版而非误输入
+      'no-irregular-whitespace': 'off',
     },
   },
 
-  // 测试与脚本：允许大文件与 console
+  // 测试与脚本：允许大文件与 console；测试桩的参数名（如 (msg, blocks) => ...）
+  // 是断言可读性的一部分，基础 no-unused-vars 会把它们当死代码误报。
   {
     files: ['test/**', '../scripts/**', '*.config.js', 'vite.config.js'],
     rules: {
       'max-lines': 'off',
       'max-lines-per-function': 'off',
       'no-console': 'off',
+      'no-unused-vars': 'off',
     },
   },
 ]

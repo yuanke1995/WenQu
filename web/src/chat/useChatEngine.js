@@ -14,7 +14,7 @@ import { sendQuestion, resumeChat, getChatRun, newSession, getHistory, deleteSes
          listKnowledgeBases, listDocuments, uploadChatAttachment, getSessionTodosApi,
          listSandboxFiles, downloadSandboxFile, sandboxFileToArtifact,
          listSessionProcs, killSessionProc, killAllSessionProcs,
-         startGoalApi, goalActionApi, getPendingGoalApi, getSessionGoalApi, getGoalEventsApi,
+         startGoalApi, goalActionApi, getPendingGoalApi, getSessionGoalApi,
          downloadArtifactsZip,
          refreshArtifactSignsApi } from './chatTransport.js'
 import { sessionStore, loadSessions, chatStreams, todosMap, markSessionActive, touchSessionRow, refreshProcBadges } from '../views/store'
@@ -28,14 +28,13 @@ import { approvalStatusText, approvalLeftSec } from './approval'
 import {
          groupSources, ensureTick, alignTick, mergeDoneToolCalls, restoreTimeline, extendTimelineText, extendTimelineProcess,
          pushTimelineTool, pushTimelineArtifact, pushTimelineSteer, ensureThinkSegment,
-         snapshotVersion, histItemDigest,
-         resumedStartAt, earlierStart,
+         histItemDigest,
          goalTerminalOf, goalBarVisibleOf, goalPhraseOf, goalStateLabelOf, goalStateClassOf,
          goalBlockReasonOf, goalBarTitleOf, goalBarMetaOf, goalRoundLineOf,
          goalCanPauseOf, goalCanResumeOf, goalCanEditOf, goalCanCancelOf, goalCanClearRecordOf,
          goalPreemptedOf, goalVersionLabelOf, goalProgressPercentOf,
          goalTerminalCardOf, goalTerminalTitleOf, goalTerminalNoteOf,
-         deliveryOf, deliverySubjectOf, deliveryCardOf, artifactPendingOf,
+         deliverySubjectOf, deliveryCardOf, artifactPendingOf,
          turnSteerRows,
          rememberAgents, isDispatchTool, consultNameOf, stepBriefOf, applyBlocks } from './projections'
 import { goalDeliveryOf, turnDeliveriesOf, deliveriesByMessage } from './deliveries.js'
@@ -54,7 +53,7 @@ import { createStopTurn } from './stopTurn.js'
 import { buildHistoryList, dropSteeredUserRows } from './historyRows.js'
 import { createSessionActions } from './sessionActions.js'
 import { createSend } from './sendFlow.js'
-import { restoreAbortedDraft, settleAbortedPlan } from './planAbort.js'
+import { settleAbortedPlan } from './planAbort.js'
 import { failTurn } from './turnFail.js'
 import { createSessionSwitch } from './sessionSwitch.js'
 import { planText } from './planText.js'
@@ -76,7 +75,7 @@ import { goalAct as goalActImpl } from './goalActions.js'
 import { askAnswerText, askAutoSubmittable, askQuestionAnswered, askAnsweredCount, askNextUnanswered,
          pickAskOption, commitAskCustom, askOptionPicked, askCustomPicked, askHintText } from './askUser.js'
 import { submitAsk as submitAskImpl, ignoreAsk as ignoreAskImpl } from './askActions.js'
-import { buildAskCard, attachAskCard, retireAskCard } from './askReducer.js'
+import { attachAskCard, retireAskCard } from './askReducer.js'
 import { resolveApproval as resolveApprovalImpl } from './approvalActions.js'
 import { submitPlanApproval as submitPlanApprovalImpl, revisePlanInPlace as revisePlanInPlaceImpl,
          steerPlanAdjustment as steerPlanAdjustmentImpl, adjustPlanAfterApproval as adjustPlanAfterApprovalImpl,
@@ -92,16 +91,9 @@ import { toPosix } from '../utils/pathUtil'
 export function useChatEngine (hooks = {}) {
   const route = useRoute()
   const router = useRouter()
-  // hooks 全部可选（缺省安全）：PC 端传原行为的实现；hook 实现方自己决定滚动时序
-  const {
-    chatPath = '/chat',      // 引擎内所有 route.path 判断与 router.replace 的落点（移动壳传 '/m/chat'）
-    scrollFollow = () => {}, // 跟随最新内容滚动（更新尾部留白后）
-    scrollForce = () => {},  // 强制滚动（更新尾部留白后）
-    scrollSoft = () => {},   // 审批定位用的滚动
-    closePanels = () => {},  // send() 清空面板时调用（PC 传 closeAllPanels）
-    focusInput = () => {}    // 聚焦输入框
-  } = hooks
-
+  // hooks 全部可选（缺省安全）：PC 端传原行为的实现；hook 实现方自己决定滚动时序。
+  // 可用字段：chatPath / scrollFollow / scrollForce / scrollSoft / closePanels / focusInput。
+  // 这里不再解构：调用点统一走 hooks.xxx?.()，解构出来的默认值反而会和调用点漂移。
 const text = ref('')
 /**
  * 计划模式（人在回路）已并入深度执行：用户不再单独开关，只有引擎内部的
@@ -140,7 +132,7 @@ const { skillList, pickedSkills, skillDoc, loadSkills, toggleSkill, skillAvaStyl
 // 清单/会话待选/当前作答方/徽标去重在 ./agentPicker.js
 const isAdmin = ref(isAdminSync())
 const agentPickerOpen = ref(false)
-const { agentList, agentMap, defaultAgentId, hasDefaultAgent, lastTurnAgent, currentAgentId,
+const { agentList, agentMap, defaultAgentId, hasDefaultAgent, currentAgentId,
         pickAgent, currentAgentName, currentAgent, showAgentTag, loadAgents } = createAgentPicker({
   currentSid: () => currentSessionId.value,
   messages: () => messages.value,
@@ -358,7 +350,7 @@ const sessionRetrieval = computed(() => {
 // 附件/图片的待发状态与上传逻辑已抽到 createAttachmentPicker（见 attachmentPicker.js）。
 // 这里解构出同名变量，下面所有读写点不动，行为等价。
 const {
-  pendingImages, removePendingImage, pendingFiles, uploadOneFile, hasUploadingFile,
+  pendingImages, removePendingImage, pendingFiles, hasUploadingFile,
   addFiles, removePendingFile, attachUploaded, attachImage, takePastedFiles, takePastedText,
 } = createAttachmentPicker({
   uploadApi: uploadChatAttachment, notify: message, markLive,
@@ -372,7 +364,7 @@ const {
 const {
   mentionOpen, mentionTab, mentionQuery, mentionLoading, mentionKbs, mentionDocs,
   pendingMentions, mentionHi, MAX_MENTIONS, isMentioned, toggleMention, removeMention,
-  switchMentionTab, loadMentionCandidates, mentionDocStatus, mentionMatch, mentionQueryNorm,
+  switchMentionTab, loadMentionCandidates, mentionDocStatus, mentionQueryNorm,
   mentionKbFiltered, mentionAgents, mentionAgentFiltered, mentionDocFiltered,
 } = createMentionPicker({
   listKbApi: listKnowledgeBases, listDocApi: listDocuments,
@@ -590,6 +582,7 @@ const freshDeliveryOf = m => {
 }
 
 /** 一轮交付包的主语：取该轮之前最近一条用户问题（"做一个问渠官网，…" → "问渠官网"） */
+// eslint-disable-next-line no-unused-vars -- 交付主题口径保留，尚未接入新交付面板
 function turnSubjectOf (aiIndex) {
   for (let j = aiIndex - 1; j >= 0; j--) {
     const u = messages.value[j]
@@ -1152,6 +1145,7 @@ async function continuePlanConversation (m, text) {
   streamAnswer(q, [], null, messages.value.length === 1, 1, deepThinkOn.value, [], [], [], null, [], '', userMsg, true)
 }
 // 插话调整在 ./planActions.js（actions 层）；重新计划仍在本文件（依赖停止/收尾/开新轮）。
+// eslint-disable-next-line no-unused-vars -- 保留供后续计划调整入口接线
 const steerPlanAdjustment = (m, raw) => steerPlanAdjustmentImpl(m, raw,
   { messages: () => messages.value, loading: () => loading.value, steer: q => steer(q) })
 
@@ -1734,7 +1728,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
   // 本轮视角归位：留白补足并落屏后贴底，问题正好落在视口最上（与空会话首问同一落点）
   if (viewing()) hooks.scrollForce?.()
   // 流式渲染节流（token/过程批量落屏、接流去重）在 ./streamBuffer.js
-  const { flushNow, flushSoon, resetFromContent, appendToken, appendProcess, gotToken } = createStreamBuffer({
+  const { flushNow, resetFromContent, appendToken, appendProcess, gotToken } = createStreamBuffer({
     msg,
     extendText: (m, from, to) => extendTimelineText(m, from, to),
     extendProcess: (m, from, to) => extendTimelineProcess(m, from, to),
@@ -1980,7 +1974,7 @@ const stop = createStopTurn({
 
 // 运行中插话队列（服务端持有、刷新可恢复）在 ./steerQueue.js（actions 层）
 const { steerQueue, steerResend, steer, stageSteer, sendSteer, editSteer, dropSteer, moveSteer, dropApplied,
-        restoreSteerQueue, enqueuePlanAdjust, deliverPlanAdjust } = createSteerQueue({
+        restoreSteerQueue, enqueuePlanAdjust } = createSteerQueue({
   currentSid: () => currentSessionId.value,
   hasLiveStream: sid => chatStreams.has(sid),
   steerApi: steerChatTurn,

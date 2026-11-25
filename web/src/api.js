@@ -420,7 +420,7 @@ export const getChatRun = sid => request(`/chat/run?sessionId=${encodeURICompone
  * {@code onSnapshot} 拿到的参数是 {sessionId, done, frames:[{event,data,seq}]}。
  */
 export function subscribeMemberLive (memberSessionId, opts = {}) {
-  const { onSnapshot, onDone, onError, signal, idleTimeoutMs = 180000 } = opts
+  const { onSnapshot, onDone, onError, idleTimeoutMs = 180000 } = opts
   if (typeof onSnapshot !== 'function' || typeof onDone !== 'function') return
   // 首帧 snapshot 在这里先被拿走（帧要按原顺序逐条派发），之后的增量走主问答同一个派发器
   return streamChatSse(signal => fetch(

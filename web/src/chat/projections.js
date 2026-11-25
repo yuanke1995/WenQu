@@ -3,11 +3,7 @@
 // 工具名映射、时间线视图、工具卡片、编排卡片、来源分组与各处格式化。
 // 模块内唯一的响应式状态是 nowTick（运行中工具的实时耗时 tick），自产自销；
 // 组件卸载时由消费方在 onUnmounted 里调 stopTick() 收尾。
-import { ref } from 'vue'
-import { chatStreams } from '../views/store'
-import { fmtTokens } from '../utils/token'
 import { fmtSize } from '../utils/format'
-import { durZh } from '../utils/duration'
 import { turnElapsedMs as elapsedAt, turnPrepMs, turnWaitMs, resumedStartAt, earlierStart, turnTitle as titleAt } from './turnTiming'
 // 粘贴文本附件的名字前缀：产地是取材层（./intake.js），这里借用并原样再导出。
 // 本模块只用它来「认回」这类附件（isPastedText），并不定义它
@@ -72,7 +68,6 @@ export { extendTimelineText, extendTimelineProcess, pushTimelineThink, extendTim
 // ——与思考段同款（thinkGrowing 流式期展开那一段，收场后自动折叠），历史消息恒折叠。
 // 思考/过程段的折叠与提要口径在 ./segments.js（纯模块），这里只转出并按需使用。
 export { procOpen, toggleProc, procSlice, thinkSlice, thinkPeek, thinkGrowing, thinkSegOpen, toggleThinkSeg, ensureThinkSegment } from './segments.js'
-import { procOpen, toggleProc, procSlice, thinkSlice, thinkPeek, thinkGrowing, thinkSegOpen, toggleThinkSeg, ensureThinkSegment, peekText } from './segments.js'
 
 // ==================== 过程簇（连续思考/过程/工具的二次折叠） ====================
 /* 为什么需要这一层：模型一轮里常是「思考→工具→思考→工具」交替，而过程块遇 think/process 段
@@ -96,7 +91,6 @@ import { procOpen, toggleProc, procSlice, thinkSlice, thinkPeek, thinkGrowing, t
  * （对比用 from 做键不成立：工具段与独白段的下标来自两套独立空间。）*/
 // 过程聚簇在 ./processCluster.js（纯模块），这里只转出并供 turnProcessRows 使用。
 export { CLUSTER_RUN, clusterize, markGrowingCluster, clusterOpen, clusterAutoOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterProcCount, clusterKinds, clusterTitle, clusterHeadKind, clusterLiveText, clusterLiveRows, CLUSTER_KIND_DONE, CLUSTER_KIND_LIVE } from './processCluster.js'
-import { clusterize, markGrowingCluster } from './processCluster.js'
 
 /** 展开态的簇＝「一行一步」轻量清单（clusterLiveRows）：思考段与过程独白段不再各占一行标题，
  *  落进它之后第一个工具那一行的展开详情（那里本来就是「想了这些才动手」的那个位置）。
@@ -120,11 +114,10 @@ const turnTitle = m => titleAt(m, nowTick.value)
 
 // 折叠/可见性判据在 ./turnFold.js（纯模块），这里只转出并按 nowTick 包装耗时。
 export { turnOpen, toggleTurn, turnExpandable, turnWarn } from './turnFold.js'
-import { turnOpen, toggleTurn, turnExpandable, turnWarn, turnShow as foldShow, turnToggleable as foldToggleable } from './turnFold.js'
+import { turnShow as foldShow, turnToggleable as foldToggleable } from './turnFold.js'
 
 // 终态标注与识别在 ./turnStatus.js（纯模块），这里只转出并供本模块内部使用。
 export { TURN_STOP_SUFFIX, TURN_TRUNC_SUFFIX, TURN_BUDGET_SUFFIX, TURN_TIMEOUT_SUFFIX, turnMarker } from './turnStatus.js'
-import { turnMarker } from './turnStatus.js'
 
 const turnShow = m => foldShow(m, turnElapsedMs(m))
 const turnToggleable = m => foldToggleable(m, turnElapsedMs(m))
@@ -156,7 +149,6 @@ export { turnAnswerText, turnSteerRows, turnBodyRows } from './turnBody.js'
 
 // 过程块投影在 ./turnProcess.js（纯模块），这里只转出并供折叠态使用。
 export { turnProcessRows } from './turnProcess.js'
-import { turnProcessRows } from './turnProcess.js'
 
 // 工具摘要/实时输出在 ./toolBrief.js（纯模块），这里只转出。
 export { TOOL_BRIEF_KEYS, oneLine, toolBrief, prettyIo, LIVE_TAIL_CHARS, liveOutput, stepBriefOf } from './toolBrief.js'

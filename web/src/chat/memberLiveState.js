@@ -16,7 +16,7 @@ import {
 import { applyToolStatus } from './streamToolFrames.js'
 import { applyRunCodeProgress } from './streamInfoFrames.js'
 import { createStreamBuffer } from './streamBuffer.js'
-import { attachAskCard, retireAskCard } from './askReducer.js'
+import { attachAskCard } from './askReducer.js'
 import { extendTimelineText, extendTimelineProcess, pushTimelineTool } from './timelineWrite.js'
 
 /** 直播气泡的初始形状：与主问答 fresh 那份对齐（同一批字段名，渲染器不用分支） */

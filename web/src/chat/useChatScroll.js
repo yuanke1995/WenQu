@@ -8,7 +8,7 @@ import { ref, computed, nextTick } from 'vue'
  * @param ctx.qaAnchors ref<锚点[]>（轨上点亮用）
  * @param ctx.styleOf (el) => CSSStyleDeclaration（测试注入）
  */
-export const useChatScroll = ({ box, messagesOf, qaAnchorsOf, styleOf = el => getComputedStyle(el) }) => {
+export const useChatScroll = ({ box, qaAnchorsOf, styleOf = el => getComputedStyle(el) }) => {
   const stickToBottom = ref(true)
   const AUTO_SCROLL_MARGIN = 80
   // 尾随留白高度（px）：把本轮问题下方补足到一屏，使「贴底」的落点正好是问题置顶。

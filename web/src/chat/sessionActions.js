@@ -1,5 +1,4 @@
 // 会话生命周期动作（actions 层）：新建（复用空会话优先）、自动落到最近会话、删除后的落点。
-import { ref } from 'vue'
 
 /**
  * @param creating        ref<boolean> 新建在途标志（防连点）
