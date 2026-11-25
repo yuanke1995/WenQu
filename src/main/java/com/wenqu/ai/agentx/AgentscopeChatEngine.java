@@ -191,6 +191,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     private final AgentxSandboxIntent sandboxIntent;
     /** 本轮智能体绑定解析与实例指纹 */
     private final AgentxAgentBinding agentBinding;
+    /** 框架基础设施单例：Redis / 会话状态存储 / distributed store / 模型传输 */
+    private final AgentxFrameworkInfra infra;
     /** 计划卡快照构建（接流/新页签重建计划卡，本类只在需要时调它） */
     private final AgentxPlanCardSnapshot planCardSnapshot;
     /**
@@ -308,13 +310,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 会话状态存储：单副本用框架自带的本地文件实现（落在受管数据目录）；多副本部署时切换到 Redis，
      * 避免「待办/续跑落在别的实例」却读不到 stateStore 而失败。解析一次后缓存，配置不常变。
      */
-    private volatile AgentStateStore cachedStateStore;
-    private volatile boolean stateStoreResolved;
     /** 多副本协调（StoreBackedPeriodicGate + consolidation watermark）：与 stateStore 复用同一个 Jedis。 */
-    private volatile io.agentscope.harness.agent.DistributedStore cachedDistributedStore;
-    private volatile boolean distributedStoreResolved;
-    private volatile UnifiedJedis cachedJedis;
-    private volatile boolean jedisResolved;
     /**
      * 引擎级共享的模型 HTTP 通道（OkHttp）：连接池跨会话、跨实例常驻。
      * <p>每个会话实例各建一个 transport 就等于各一份连接池：轮与轮之间连接虽能复用，
@@ -324,7 +320,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 让活跃供应商的连接始终保持热：ping 对 HTTP/2 连接生效（防网关闲除断连），
      * 对 HTTP/1.1 连接无感，openai 兼容网关两种形态都覆盖。
      */
-    private volatile io.agentscope.core.model.transport.OkHttpTransport cachedModelTransport;
 
     /**
      * 插话待发队列的信号口（装配期由 {@code AgentxConfiguration} 登记）。
@@ -337,29 +332,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         this.steerQueueHooks = hooks;
     }
 
-    /** 懒建的共享模型传输层（见字段注释）；超时口径沿用原 per-session 配置。 */
-    private io.agentscope.core.model.transport.OkHttpTransport sharedModelTransport() {        io.agentscope.core.model.transport.OkHttpTransport t = cachedModelTransport;
-        if (t != null) return t;
-        synchronized (this) {
-            if (cachedModelTransport != null) return cachedModelTransport;
-            okhttp3.OkHttpClient client = new okhttp3.OkHttpClient.Builder()
-                    // 连接超时 8 秒：框架默认的 30 秒是一条已经死掉的连接在慢慢超时，
-                    // 重试也得等满才出字，所以把连接这一截压到 8 秒。
-                    .connectTimeout(java.time.Duration.ofSeconds(8))
-                    .readTimeout(java.time.Duration.ofMinutes(5))
-                    .writeTimeout(java.time.Duration.ofSeconds(30))
-                    .pingInterval(java.time.Duration.ofSeconds(30))
-                    .connectionPool(new okhttp3.ConnectionPool(16, 5, java.util.concurrent.TimeUnit.MINUTES))
-                    .build();
-            cachedModelTransport = io.agentscope.core.model.transport.OkHttpTransport.builder()
-                    .client(client)
-                    .config(io.agentscope.core.model.transport.HttpTransportConfig.builder()
-                            .connectTimeout(java.time.Duration.ofSeconds(8))
-                            .build())
-                    .build();
-            return cachedModelTransport;
-        }
-    }
 
     public AgentscopeChatEngine(ModelRegistryService modelRegistry, ConfigService configService,
                                AppProperties properties, WenquAgentxTools tools,
@@ -420,6 +392,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         this.eventTranslator = new AgentxEventTranslator(toolCardBuilder, skillStatsStore, () -> steerQueueHooks);
         this.sandboxIntent = new AgentxSandboxIntent(sessions, sandboxService, projectService);
         this.agentBinding = new AgentxAgentBinding(tools, orgService, userConfigService, modelRegistry);
+        this.infra = new AgentxFrameworkInfra(configService, redisProperties);
         this.skillRepository = skillRepository;
         this.skillStatsStore = skillStatsStore;
         this.orgService = orgService;
@@ -449,7 +422,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 不归 Spring 管，{@code @PostConstruct} 不会执行——所以由装配处显式调本方法。
      */
     void requireRedisForSessionState() {
-        stateStore();
+        infra.stateStore();
     }
 
     /**
@@ -470,80 +443,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         });
     }
 
-    /**
-     * 解析并缓存会话状态存储。<b>恒走 Redis</b>，没有本地文件兜底。
-     * <p>会话状态（对话上下文、待办、续跑游标）落在本地文件时，容器一重建就全丢：
-     * 下一轮只能看到当前这一个问题，等价于每轮独立问答。
-     * <p>所以 Redis 是硬依赖：连不上就抛，<b>不静默退回本地实现</b>。
-     */
-    private AgentStateStore stateStore() {
-        if (stateStoreResolved) return cachedStateStore;
-        synchronized (this) {
-            if (stateStoreResolved) return cachedStateStore;
-            cachedStateStore = RedisAgentStateStore.builder()
-                    .jedisClient(requireRedis())
-                    .keyPrefix(AgentxTextUtil.firstNonBlank(configService.get("chat.agentscopeRedisPrefix"), "agentscope:session:"))
-                    .build();
-            stateStoreResolved = true;
-            return cachedStateStore;
-        }
-    }
 
-    /**
-     * 全局 Redis 连接（stateStore 与 distributedStore 共用一条，避免一个引擎建两条连接）。
-     * <p>失败即抛：会话状态没有第二落点，宁可让应用起不来，也不要带着「每轮失忆」对外服务。
-     * <p>连接参数复用 {@code spring.data.redis}（{@code REDIS_HOST / REDIS_PORT / REDIS_PASSWORD}）。
-     */
-    private UnifiedJedis requireRedis() {
-        if (jedisResolved && cachedJedis != null) return cachedJedis;
-        synchronized (this) {
-            if (jedisResolved && cachedJedis != null) return cachedJedis;
-            String host = redisProperties.getHost() == null || redisProperties.getHost().isBlank()
-                    ? "localhost" : redisProperties.getHost();
-            int port = redisProperties.getPort() > 0 ? redisProperties.getPort() : 6379;
-            String password = redisProperties.getPassword();
-            try {
-                DefaultJedisClientConfig.Builder cfg = DefaultJedisClientConfig.builder()
-                        .database(Math.max(0, redisProperties.getDatabase()))
-                        .ssl(redisProperties.getSsl().isEnabled());
-                if (password != null && !password.isBlank()) cfg.password(password);
-                UnifiedJedis jedis = new UnifiedJedis(new HostAndPort(host, port), cfg.build());
-                jedis.ping();
-                cachedJedis = jedis;
-                jedisResolved = true;
-                log.info("[agentx] 框架 Redis 已连接: {}:{} db={}", host, port, redisProperties.getDatabase());
-            } catch (Throwable e) {
-                // 不置 jedisResolved：下一次调用还能重试（启动自检失败后进程退出，不靠重试兜底）
-                throw new IllegalStateException("框架会话状态存储依赖 Redis（" + host + ":" + port
-                        + "），连接失败：" + e + "。会话状态没有本地兜底（本地文件方案已退役：容器重建即丢，"
-                        + "会导致多轮对话失忆），请先恢复 Redis 再启动应用。", e);
-            }
-            return cachedJedis;
-        }
-    }
 
-    /**
-     * 多副本协调：{@link io.agentscope.extensions.redis.RedisDistributedStore} 提供跨副本的
-     * {@code PeriodicGate}（flush/consolidation 节流不再各副本各跑一份）与 {@code BaseStore}
-     * （consolidation watermark 的 CAS），否则多副本会同时合并同一个 {@code MEMORY.md}。
-     * <p>它不搬记忆文件：{@code MEMORY.md} 与日账仍在 {@code chat.agentscopeStateDir} 本地目录，
-     * 多副本必须把该目录挂成共享卷（NFS/EFS/RWX PVC），否则同一用户在不同副本看到不同记忆。
-     * <p>与状态存储同源：Redis 已是硬依赖，这里不再保留「退回单副本节流」的分支——
-     * 那会让同一份记忆在多副本下被并发合并。
-     */
-    private io.agentscope.harness.agent.DistributedStore distributedStore() {
-        if (distributedStoreResolved) return cachedDistributedStore;
-        synchronized (this) {
-            if (distributedStoreResolved) return cachedDistributedStore;
-            cachedDistributedStore = io.agentscope.extensions.redis.RedisDistributedStore
-                    .fromJedis(requireRedis(), "agentscope:");
-            distributedStoreResolved = true;
-            log.info("[agentx] 记忆/压缩节流与 consolidation watermark 使用 Redis 跨副本协调");
-            log.warn("[agentx] 多副本提示：记忆文件仍落本地 chat.agentscopeStateDir，"
-                    + "请确保各副本挂同一共享卷，否则同一用户在不同副本记忆不一致");
-            return cachedDistributedStore;
-        }
-    }
 
 
     @Override
@@ -2638,7 +2539,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         //    跟着主链开思考就是拿最贵的 token 去写一段算完即扔的推理。两条请求参数不同，只能是两个实例；
         //    transport 提出来复用，否则多建一个 OkHttp 客户端＝多一份连接池。
         // 两处的用量各按 kind 分开记账（chat/subagent/memory/compress），窗口都照抄登记值。
-        io.agentscope.core.model.transport.OkHttpTransport modelTransport = sharedModelTransport();
+        io.agentscope.core.model.transport.OkHttpTransport modelTransport = infra.sharedModelTransport();
         String completionsPath = route.completionsPath() == null || route.completionsPath().isBlank()
                 ? "/v1/chat/completions" : route.completionsPath();
         OpenAIChatModel.Builder modelBuilder = OpenAIChatModel.builder()
@@ -2750,7 +2651,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 .workspace(stateDir)
                 // 会话状态恒存 Redis，没有本地文件兜底（容器重建即丢，会让多轮对话退化成每轮独立问答）。
                 // Redis 连不上时应用起不来——宁可启动失败，也不要带着「每轮失忆」对外服务。
-                .stateStore(stateStore())
+                .stateStore(infra.stateStore())
                 // 权限由框架持有：档位→模式、按名黑名单→deny 规则；工具级不可绕过的判定落在
                 // SpringAiToolAdapter#checkPermissions。游客 MCP 授权名单一并传入：
                 // 名单非空的游客轮框架模式从 EXPLORE 提到 DEFAULT（EXPLORE 对非只读工具
@@ -2856,7 +2757,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         } else {
             agentBuilder.memory(modelConfig.memoryConfig(cmd, auxModel, hooks.modelRef()));
         }
-        io.agentscope.harness.agent.DistributedStore distributedStore = distributedStore();
+        io.agentscope.harness.agent.DistributedStore distributedStore = infra.distributedStore();
         if (distributedStore != null) {
             agentBuilder.distributedStore(distributedStore);
         }
