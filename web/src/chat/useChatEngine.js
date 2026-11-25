@@ -14,7 +14,7 @@ import { sendQuestion, resumeChat, getChatRun, newSession, getHistory, deleteSes
          listKnowledgeBases, listDocuments, uploadChatAttachment, getSessionTodosApi,
          listSandboxFiles, downloadSandboxFile, sandboxFileToArtifact,
          listSessionProcs, killSessionProc, killAllSessionProcs,
-         startGoalApi, goalActionApi, getPendingGoalApi, getSessionGoalApi,
+         startGoalApi, goalActionApi, getSessionGoalApi,
          downloadArtifactsZip,
          refreshArtifactSignsApi } from './chatTransport.js'
 import { sessionStore, loadSessions, chatStreams, todosMap, markSessionActive, touchSessionRow, refreshProcBadges } from '../views/store'
@@ -27,14 +27,12 @@ import { approvalStatusText } from './approval'
 import {
          groupSources, ensureTick, alignTick, mergeDoneToolCalls, restoreTimeline, extendTimelineText, extendTimelineProcess,
          pushTimelineTool, pushTimelineArtifact, pushTimelineSteer, ensureThinkSegment,
-         histItemDigest,
 
 
 
 
 
          artifactPendingOf,
-         turnSteerRows,
          rememberAgents, isDispatchTool, consultNameOf, stepBriefOf, applyBlocks } from './projections'
 import { createThinkingLevels } from './thinkingLevels.js'
 import { createSkillPicker } from './skillPicker.js'
@@ -62,6 +60,10 @@ import { createSessionSwitch } from './sessionSwitch.js'
 import { planCardFromRecord, linkPlanLineage } from './planCards.js'
 import { usePendingCards } from './usePendingCards.js'
 import { useApprovalClock } from './useApprovalClock.js'
+import { useSessionTodos } from './useSessionTodos.js'
+import { useGoalState } from './useGoalState.js'
+import { useHistoryRefs } from './useHistoryRefs.js'
+import { usePendingPlan } from './usePendingPlan.js'
 import { useHitlRestore } from './useHitlRestore.js'
 import { applyPlanDelta, applyPlanApproval, applyPlanCancelled, applyPlanSuperseded } from './streamPlanFrames.js'
 import { createStreamBuffer } from './streamBuffer.js'
@@ -86,7 +88,7 @@ import { resolveApproval as resolveApprovalImpl } from './approvalActions.js'
 import { submitPlanApproval as submitPlanApprovalImpl, revisePlanInPlace as revisePlanInPlaceImpl,
          steerPlanAdjustment as steerPlanAdjustmentImpl, adjustPlanAfterApproval as adjustPlanAfterApprovalImpl,
          replanAfterApproval as replanAfterApprovalImpl } from './planActions.js'
-import { planExecProgress, planTodosOfTurn, planAdjustsOf, planVersionOf, planStepCount } from './plan'
+import { planVersionOf, planStepCount } from './plan'
 // 起表/配图/done 公共合并语义单源（与分享页共用，分叉史见 streamMerge 头注释）
 import { applyTurnStart, applyImageFrame, applyDoneCore } from './streamMerge'
 // 裁决完卡片立刻让铃铛角标重算（后端会把已处理的待办通知收敛为已读），不等 30s 轮询
@@ -263,26 +265,9 @@ const {
   listKbApi: listKnowledgeBases, listDocApi: listDocuments,
   agentList, notify: message,
 })
-const MAX_HISTORY_REFS = 10
-const pendingHistoryRefs = ref([])
-// 候选池：当前会话已落库的消息（有 messageId=服务端已确认、非流式中、正文非空）。
-// 历史回放的消息自带 messageId（getHistory 下发），当场发的消息在 done 事件回填后也可引用
-const histPool = computed(() => messages.value.filter(m =>
-  m.messageId && !m.loading && m.content && String(m.content).trim()
-    && (m.role === 'user' || m.role === 'ai' || m.role === 'assistant')))
-const isHistPicked = id => pendingHistoryRefs.value.some(h => h.messageId === id)
-const toggleHistoryRef = m => {
-  if (isHistPicked(m.messageId)) {
-    pendingHistoryRefs.value = pendingHistoryRefs.value.filter(h => h.messageId !== m.messageId)
-    return
-  }
-  if (pendingHistoryRefs.value.length >= MAX_HISTORY_REFS) {
-    message.warning(`一次最多引用 ${MAX_HISTORY_REFS} 条历史消息`)
-    return
-  }
-  pendingHistoryRefs.value.push({ messageId: m.messageId, role: m.role, digest: histItemDigest(m) })
-}
-const removeHistoryRef = i => pendingHistoryRefs.value.splice(i, 1)
+// 历史消息引用已抽到 useHistoryRefs.js。这里解构接回同名符号。
+const { MAX_HISTORY_REFS, pendingHistoryRefs, histPool, isHistPicked, toggleHistoryRef, removeHistoryRef } =
+  useHistoryRefs({ messages, notify: message })
 // ==================== 会话 ====================
 /**
  * 各会话当前任务清单：sid → {turnId, items:[{content,status}], updatedAt}。
@@ -290,140 +275,14 @@ const removeHistoryRef = i => pendingHistoryRefs.value.splice(i, 1)
  * 数据本身是模块单例（store.js）：轮内切走路由再回来会重建这个引擎，清单挂在实例上就会
  * 只剩切走那一刻的旧值、且再也不更新（见 store.js 里 todosMap 的注释）。
  */
-const sessionTodos = computed(() => todosMap.value[currentSessionId.value] || null)
-function setTodos (sid, doc) { todosMap.value = { ...todosMap.value, [sid]: doc } }
-
-/**
- * 历史轮次的任务清单：会话表只留最新一份，旧已批准计划刷新后要靠账本读回它那一轮的 N/M。
- * 按 `${sid}|${turnId}` 缓存，切走再回来不重复请求；拉不到的轮次保持“没有清单”，不拿当前清单冒充。
- */
-const turnTodos = ref({})
-const turnTodoPending = new Set()
-const turnTodoKey = (sid, turnId) => String(sid || '') + '|' + String(turnId || '')
-const turnTodosOf = (sid, turnId) => {
-  if (!sid || !turnId) return null
-  return turnTodos.value[turnTodoKey(sid, turnId)] || null
-}
-/** 取一张已批准计划所属轮次的清单（无 turnId/不是已批准/已拉到/正在拉都不发请求） */
-function ensureTurnTodos (sid, list) {
-  if (!sid) return
-  const ids = new Set()
-  for (const m of (list || [])) {
-    if (!m || !m.planCard || m.planCard.status !== 'approved') continue
-    if (!m.turnId) continue
-    if (sessionTodos.value && sessionTodos.value.turnId === m.turnId) continue
-    const key = turnTodoKey(sid, m.turnId)
-    if (turnTodos.value[key] || turnTodoPending.has(key)) continue
-    ids.add(m.turnId)
-  }
-  for (const turnId of ids) {
-    const key = turnTodoKey(sid, turnId)
-    turnTodoPending.add(key)
-    getSessionTodosApi(sid, turnId).then(r => {
-      if (r && r.success && r.data && r.data.todos) {
-        turnTodos.value = { ...turnTodos.value, [key]: r.data.todos }
-      }
-    }).catch(() => { /* 拉不到就保持无进度：不猜、不拿当前清单顶替 */ })
-      .finally(() => turnTodoPending.delete(key))
-  }
-}
-
-// 新一轮开始写清单后，旧已批准计划的分步进度会被最新一份顶掉：按轮把账本清单补回来
-// （只在新一轮出现时触发，同一轮内的实时更新仍走 sessionTodos，不重复拉取）
-watch(() => sessionTodos.value && sessionTodos.value.turnId, tid => {
-  if (tid) ensureTurnTodos(currentSessionId.value, messages.value)
-})
-
-/** 计划执行进度：实时清单（属于这一轮）→ 该轮账本清单 → 收尾冻结快照，依次回退 */
-const planExecProgressOf = m => {
-  if (!m || !m.planCard) return null
-  const sid = currentSessionId.value
-  const turnId = m.turnId || ''
-  const live = sessionTodos.value
-  // 目标已暂停：这一轮即使还在收尾也不再算「正在跑」，卡上不能继续转圈说进行中
-  const goalPaused = !!sessionGoal.value && sessionGoal.value.status === 'PAUSED'
-  const running = loading.value && m === panelAi.value && !goalPaused
-  if (live && planTodosOfTurn(live, m, messages.value)) {
-    return planExecProgress(m.planCard, live, turnId, running, m.planCard.execSnapshot)
-  }
-  const hist = turnTodosOf(sid, turnId)
-  if (hist) return planExecProgress(m.planCard, hist, turnId, false, m.planCard.execSnapshot)
-  return planExecProgress(m.planCard, null, turnId, false, m.planCard.execSnapshot)
-}
-/** 计划卡上的「本轮调整」：仅已批准计划，取本轮时间线里的 steer 段 */
-const planAdjustsOfMsg = m => planAdjustsOf(m && m.planCard, turnSteerRows(m))
-
-/**
- * 最新一轮挂着计划卡（深度执行 / 执行计划）：这一轮的进度归卡，底部任务清单不再另占一栏。
- * 计划卡的步骤行读的就是同一份清单，两边都画＝同一份进度说两遍；计划跑完也不放开——
- * 卡收成一行后仍写着「7/7 已完成」，与底部清单完全重复。
- * 未批准的卡不算：那张卡只报「未批准」，步骤与进度都不画，清单是唯一还能看到执行项的地方。
- * 只认最新那条助手消息：旧计划收场、用户又开始普通提问时，新一轮没有计划卡，清单照常露。
- */
-const planOwnsTodos = computed(() => {
-  const list = messages.value
-  let ai = null
-  for (let i = list.length - 1; i >= 0; i--) {
-    if (list[i] && list[i].role === 'ai') { ai = list[i]; break }
-  }
-  const c = ai && ai.planCard
-  return !!(c && c.status !== 'rejected' && !c.replannedBy && !c.replannedAt)
-})
-
-/**
- * 清单计数行：只报非零的几档（「3 已完成 · 1 进行中 · 5 待处理」）。
- * 不报「x/y」那种分数：它看不出进行中那一项是谁，而长任务里用户问的正是「现在卡在哪」。
- */
-const todoSummary = computed(() => {
-  const items = (sessionTodos.value && sessionTodos.value.items) || []
-  const n = s => items.filter(i => i.status === s).length
-  const done = n('done')
-  const doing = n('doing')
-  const failed = n('failed')
-  const parts = []
-  if (done) parts.push(`${done} 已完成`)
-  if (doing) parts.push(`${doing} 进行中`)
-  if (failed) parts.push(`${failed} 失败`)
-  if (items.length - done - doing - failed > 0) parts.push(`${items.length - done - doing - failed} 待处理`)
-  return parts.length ? parts.join(' · ') : `${items.length} 项`
-})
-
-/** 清单是否全部收口：全 done 之后它就从「还剩几步」变成「这一轮做成了什么」，
- *  不再是进行中的进度板，去留按「还看不看得到最后一轮」来定（见 todoBarVisible）。 */
-const todoAllDone = computed(() => {
-  const items = (sessionTodos.value && sessionTodos.value.items) || []
-  return items.length > 0 && items.every(i => i.status === 'done')
-})
-
-/**
- * 任务清单何时露：
- *  - 未完成：照常跨轮保留（目标模式/长任务靠它接着推，新一轮不自动清）；
- *  - 全 done：留在它自己那一轮里给人看最后一眼，**下一次用户发话（新一轮开始）收场**。
- * 判据是「清单所属轮之后是否已出现用户消息」：轮身份用清单的 turnId 去消息流里认——
- * 实时 done/接流快照与历史回放都会给用户行和回答行盖上同一个 turnId（与落库同源）。
- * 认不出来（存量清单没 turnId、或那一轮的消息已被过滤）按「还没开始新一轮」处理：
- * 宁可多留一条，也不能把正在推进的清单藏掉。
- * <p>两端同吃这一份派生态，页面只留折叠态这种纯 UI 开关。
- */
-const todoBarVisible = computed(() => {
-  // 这一轮的进度已经在计划卡上，清单不重复占一栏
-  if (planOwnsTodos.value) return false
-  const doc = sessionTodos.value
-  const items = (doc && doc.items) || []
-  if (!items.length) return false
-  if (!todoAllDone.value) return true
-  const tid = doc.turnId
-  if (!tid) return true
-  const list = messages.value
-  let idx = -1
-  for (let i = list.length - 1; i >= 0; i--) {
-    if (list[i] && list[i].turnId === tid) { idx = i; break }
-  }
-  if (idx < 0) return true
-  for (let i = idx + 1; i < list.length; i++) {
-    if (list[i] && list[i].role === 'user') return false
-  }
-  return true
+// 会话任务清单与计划执行进度已抽到 useSessionTodos.js。
+// sessionGoal 定义在本块之后，故以惰性 getter 传入；这里解构接回同名符号，模板引用不变。
+const {
+  sessionTodos, setTodos, ensureTurnTodos,
+  planExecProgressOf, planAdjustsOfMsg,
+  todoSummary, todoAllDone, todoBarVisible,
+} = useSessionTodos({
+  currentSessionId, messages, loading, panelAi, sessionGoalOf: () => sessionGoal,
 })
 
 /**
@@ -432,9 +291,15 @@ const todoBarVisible = computed(() => {
  * 切会话/刷新按需回捞（后端读 DB 不读框架：重启/换副本后面板照常长出来）。
  * 与 sessionTodos 同形：会话级一份、不挂气泡——目标横跨多轮，不是某一轮的东西。
  */
-const goalsMap = ref({})
-const sessionGoal = computed(() => goalsMap.value[currentSessionId.value] || null)
-function setGoal (sid, doc) { goalsMap.value = { ...goalsMap.value, [sid]: doc } }
+// 会话目标状态与轮询已抽到 useGoalState.js。这里解构接回同名符号，模板/其它块引用不变。
+const {
+  goalsMap, sessionGoal, setGoal, goalModeOn, goalRunning,
+  ensureGoalPlaceholder, dropGoalPlaceholder, takeGoalPlaceholder,
+  watchGoalTurn, loadGoalFor, dropGoalPlaceholderIfOther, goalPlaceholderFor,
+} = useGoalState({
+  currentSessionId, currentAgent, messages, hooks,
+  attachRunningTurnOf: () => attachRunningTurn,
+})
 
 // ==================== 交付包（产物 → 一个可验收的交付对象） ====================
 // 投影与 ZIP 下载已抽到 useDeliveryPackages.js。sessionGoal 定义在本块之后，
@@ -448,142 +313,14 @@ const {
 })
 
 
-/** 目标模式开不开：只认当前智能体那一格（服务端 AgentService 已归一成 1/0）。
- *  平台级总闸已去掉——判据与后端 GoalService.enabledFor 同源（引擎侧目标上下文注入也看它），
- *  界面露入口而引擎不再带目标上下文就是「教了用户一件没有的能力」那种漂移 */
-const goalModeOn = computed(() => {
-  const a = currentAgent.value
-  return !a || Number(a.goalEnabled) === 1
-})
-
-/**
- * 目标态的两条兜底：面板取数 + 接回后台那一轮。
- * <p>后台续跑轮由服务端自己起（没有浏览器发起通道），它登记在运行总线上，但「有没有人在看」
- * 只能由这一侧决定：本地没有这一轮的流、服务端却还在跑，就开一条接流通道。不接的表现为
- * 目标自己跑了好几轮、聊天区一颗气泡都没长——正文全在库里，刷新才读得到。
- * <p>只有 RUNNING 才可能有轮在飞：暂停与终态都不开轮询、也不去探测（白跑请求）。
- * 接流探测要勤（2.5 秒一跳，一轮通常跑一两分钟，太慢就等于没接上），面板取数不必（每三跳一次）。
- * 有动作在飞时不覆盖（busy 态是本地的乐观锁，被轮询冲掉会让人以为按钮没生效）。
- */
-const goalRunning = computed(() => sessionGoal.value?.status === 'RUNNING')
-let goalPollTimer = null
-let goalTick = 0
-/**
- * 目标轮的占位气泡。从「按下回车」到「总线上探得到这一轮」之间有一段真空：调度器一拍 2 秒，
- * 加上实例冷启动装配（模型客户端 / MCP / 记忆 / 沙盒供给）5 秒起、可拖到数十秒，
- * 那几秒里聊天区只有用户那句话——看着像根本没发出去。
- * <p>这颗气泡只带 loading，TurnBar 当场说「正在溯源」；总线一登记上就把**同一颗**交给接流通道
- * （attachRunningTurn 的 reuseMsg），不另起一颗、秒数也不倒回去。它不是那一轮本身，所以目标一停下
- * 或转终态就撤——没有真轮接上时不许留一行呼吸中的假状态。
- */
-let goalPlaceholder = null
-// 占位气泡挂在哪条会话上：同一会话的历史重铺（新建后补 sid、侧栏回填都会触发一次）不许把它抹掉
-let goalPlaceholderSid = null
-const ensureGoalPlaceholder = () => {
-  const sid = currentSessionId.value
-  if (!sid || !goalRunning.value) return
-  if (chatStreams.has(sid)) return                          // 真流已经接上，不缺这一颗
-  if (goalPlaceholder && messages.value.includes(goalPlaceholder)) return
-  if (messages.value.some(m => m && m.loading)) return      // 已有在跑的气泡，别叠第二行状态
-  goalPlaceholder = reactive({ role: 'ai', content: '', images: [], sources: [], related: [],
-    degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkLoading: false,
-    time: Date.now(), turnMs: 0, humanWaitMs: 0, artifacts: [], toolCalls: [], plan: null,
-    planCard: null, timeline: [], errorCard: null, model: '', messageId: null, goalWaiting: true })
-  goalPlaceholderSid = sid
-  messages.value.push(goalPlaceholder)
-  ensureTick()   // 秒针：这一行是跟着秒走的计时器，不挂表数字停在 0 秒不动
-  hooks.scrollFollow?.()
-}
-/** 撤下占位气泡（目标停了/终态/用户自己发了一轮）；已经交给接流通道的那颗不归这里管 */
-const dropGoalPlaceholder = () => {
-  const m = goalPlaceholder
-  goalPlaceholder = null
-  goalPlaceholderSid = null
-  if (!m) return
-  const i = messages.value.indexOf(m)
-  if (i >= 0) { m.loading = false; messages.value.splice(i, 1) }
-}
-/** 把占位气泡交给接流通道：交接即脱手，之后它是一颗普通 live 气泡 */
-const takeGoalPlaceholder = sid => {
-  const m = goalPlaceholder
-  if (!m || sid !== currentSessionId.value || !messages.value.includes(m)) return null
-  goalPlaceholder = null
-  goalPlaceholderSid = null
-  return m
-}
-const watchGoalTurn = sid => {
-  if (chatStreams.has(sid)) return      // 这一轮本地已经在看了，别另起一颗气泡
-  ensureGoalPlaceholder()               // 探测那一跳（几百毫秒）也别让聊天区空着
-  getChatRun(sid).then(r => {
-    if (!r || !r.success || !r.data || !r.data.running) return
-    if (currentSessionId.value !== sid) return
-    attachRunningTurn(sid).catch(() => {})
-  }).catch(() => { /* 探测失败不提示：下一跳再试 */ })
-}
-/** 切会话时的目标回捞：先取 /goal/pending（还活着的那一条：RUNNING/PAUSED），没有再取
- *  /session/{id}/goal（当前/最近一条，含已达成/已删除的终态记录）。
- *  两个口的形状不同：/goal/pending 套一层 goal，/session/{id}/goal 直接给视图。 */
-const loadGoalFor = async sid => {
-  const r = await getPendingGoalApi(sid).catch(() => null)
-  if (r && r.success && r.data && r.data.goal) return r.data.goal
-  if (!r || !r.success) return null      // 拉取失败≠没有目标：不许拿「最近一条」把失败盖成空态
-  const g = await getSessionGoalApi(sid).catch(() => null)
-  if (g && g.success && g.data && g.data.goalId) return g.data
-  return null
-}
-const pollGoal = () => {
-  const sid = currentSessionId.value
-  if (!sid) return
-  const cur = goalsMap.value[sid]
-  if (cur && cur.busy) return
-  getPendingGoalApi(sid).then(r => {
-    if (!r || !r.success || !r.data) return
-    if (currentSessionId.value !== sid) return
-    const g = r.data.goal
-    if (!g) {
-      // 服务端已经没有「还归用户管」的这一条了（跑完/失败/被删），本地那份 RUNNING 是陈的：
-      // 不结算的话目标条永远「进行中」、占位气泡的秒数永远涨。后台标签页回来必现——
-      // setInterval 被浏览器掐住的那几分钟里终态那帧 goal_state 没人收，只能靠这一跳对账。
-      const prev = goalsMap.value[sid]
-      if (!prev || !prev.goalId) return
-      getSessionGoalApi(sid).then(t => {
-        if (!t || !t.success) return                       // 拉取失败≠没有目标：不许盖成空态
-        if (currentSessionId.value !== sid) return
-        const term = t.data && t.data.goalId === prev.goalId ? t.data : null
-        setGoal(sid, term)                                 // 库里真没这条了就直接撤下（term=null）
-      }).catch(() => {})
-      return
-    }
-    const prev = goalsMap.value[sid]
-    if (prev && prev.busy) return
-    // 同一目标同一档不重写，避免无谓的响应式抖动；轮次/提示/停因变了是实质进展，要收下
-    if (prev && prev.goalId === g.goalId && prev.status === g.status && prev.round === g.round
-        && prev.hint === g.hint && prev.endReason === g.endReason) return
-    setGoal(sid, { ...g })
-  }).catch(() => { /* 拉不动不提示：目标面板下次帧/下次轮询再试 */ })
-}
-watch(goalRunning, v => {
-  if (v && !goalPollTimer) {
-    goalTick = 2   // 第一跳就取一次面板（接流探测不必等）
-    goalPollTimer = setInterval(() => {
-      const sid = currentSessionId.value
-      if (!sid) return
-      if (goalRunning.value) watchGoalTurn(sid)
-      if (goalTick++ % 3 === 0) pollGoal()
-    }, 2500)
-  }
-  if (!v && goalPollTimer) { clearInterval(goalPollTimer); goalPollTimer = null }
-  if (!v) dropGoalPlaceholder()   // 不再自动推进＝这一轮不会再来了，占位那一行必须跟着撤
-})
-onUnmounted(() => { if (goalPollTimer) clearInterval(goalPollTimer) })
 
 // 会话切换编排（历史加载/在途复用/失败回退/接流与卡片恢复）在 ./sessionSwitch.js
 const { switchSession, historyLoads } = createSessionSwitch({
   currentSid: () => currentSessionId.value,
   setCurrentSid: sid => { currentSessionId.value = sid },
   settleSteer: () => settleSteerOnLeave(),
-  dropGoalPlaceholderIfOther: sid => { if (goalPlaceholderSid !== sid) { goalPlaceholder = null; goalPlaceholderSid = null } },
-  goalPlaceholderFor: sid => (goalPlaceholder && goalPlaceholderSid === sid && goalRunning.value ? goalPlaceholder : null),
+  dropGoalPlaceholderIfOther: sid => dropGoalPlaceholderIfOther(sid),
+  goalPlaceholderFor: sid => goalPlaceholderFor(sid),
   modelMap,
   getSessionModel: sid => getSessionModelApi(sid),
   todosMap,
@@ -709,41 +446,8 @@ const resolveApproval = (m, card, approved, scope) => resolveApprovalImpl(m, car
   }
 }, scope)
 
-/**
- * 待批准的计划卡（两端共用，与提问面板同判据）：倒着找最后一条还挂着 pending 计划的助手消息。
- * <p>计划数据两端都拿得到（hydratePendingPlans 在引擎内），派生放在这里两端共用同一份，
- * 不会出现「卡片在 messages 里、界面上一个字都没有」。
- */
-const pendingPlan = computed(() => {
-  const list = messages.value
-  for (let i = list.length - 1; i >= 0; i--) {
-    const m = list[i]
-    // 退回重出期间（revising）也必须继续算「待确认」：否则底部确认栏会在升版途中消失，
-    // 打字框冒出来，用户可能在模型重做计划的同一轮里又发一条新消息
-    if (m && m.role === 'ai' && m.planCard && (m.planCard.status === 'pending' || m.planCard.revising)) return m
-  }
-  return null
-})
-const curPlanCard = computed(() => pendingPlan.value?.planCard || null)
-// 倒计时心跳（仅待确认卡挂 deadline 时走表，与提问卡的 askNow 同一套节奏）
-const planNow = ref(Date.now())
-let planTimer = null
-watch(() => messages.value.some(m => m.planCard && m.planCard.status === 'pending' && m.planCard.deadline), v => {
-  if (v && !planTimer) planTimer = setInterval(() => { planNow.value = Date.now() }, 1000)
-  if (!v && planTimer) { clearInterval(planTimer); planTimer = null }
-})
-onUnmounted(() => { if (planTimer) clearInterval(planTimer) })
-// 已过 deadline（后端超时收尾的 plan_cancelled 马上到）：操作锁住，避免批准必然失败的那一下
-const planExpired = computed(() => {
-  const c = curPlanCard.value
-  return !!(c && c.deadline && planNow.value >= c.deadline)
-})
-const planCountdownText = computed(() => {
-  const c = curPlanCard.value
-  if (!c || !c.deadline) return ''
-  const s = Math.max(0, Math.ceil((c.deadline - planNow.value) / 1000))
-  return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0')
-})
+// 待批准计划卡与倒计时已抽到 usePendingPlan.js。这里解构接回同名符号。
+const { pendingPlan, curPlanCard, planExpired, planCountdownText } = usePendingPlan({ messages })
 // 计划卡中断收尾在 ./planAbort.js（纯模块）。
 
 // ==================== 目标模式（Goal Mode） ====================
