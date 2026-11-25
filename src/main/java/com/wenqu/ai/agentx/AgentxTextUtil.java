@@ -79,4 +79,28 @@ public final class AgentxTextUtil {
             return Path.of(p).toAbsolutePath().normalize().toString();
         }
     }
+
+    /** 计划正文取值：plan_write 攒下的正文 → plan_exit 的 summary → 入参纯文本 → 兜底说明。 */
+    public static String planTextOf(Object input, String planMarkdown) {
+        if (planMarkdown != null && !planMarkdown.isBlank()) return planMarkdown.trim();
+        String fallback;
+        if (input instanceof java.util.Map<?, ?> in) {
+            fallback = com.wenqu.ai.agentx.AgentxToolCardCodec.str(in.get("summary")).trim();
+        } else {
+            fallback = com.wenqu.ai.agentx.AgentxToolCardCodec.str(input).trim();
+        }
+        if (!fallback.isEmpty()) return fallback;
+        return NO_PLAN_BODY;
+    }
+
+    /** 计划正文取不到时给用户的那句话（同时也是 announcePending 里「该记一条日志」的判据）。 */
+    public static final String NO_PLAN_BODY = "（这一轮没有取到计划内容，可以直接重试，或把要求写得更具体一些）";
+
+    /** 本轮的「有可见交互」判定：空来源/用户/团队成员为真，定时任务/工作流/评测/API Key 为 headless。 */
+    public static boolean interactiveTurn(com.wenqu.ai.agent.chat.ChatCommand cmd) {
+        String src = cmd == null ? null : cmd.getSource();
+        return src == null || src.isBlank()
+                || com.wenqu.ai.service.TurnSource.USER.equalsIgnoreCase(src)
+                || com.wenqu.ai.service.TurnSource.TEAM.equalsIgnoreCase(src);
+    }
 }

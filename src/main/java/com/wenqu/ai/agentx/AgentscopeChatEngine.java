@@ -2000,12 +2000,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
 
     /** 这一轮有没有在场观众能答审批卡：网页问答（source 空/user）才有；定时任务/工作流没有。 */
     private static boolean interactiveTurn(ChatCommand cmd) {
-        String src = cmd == null ? null : cmd.getSource();
-        // 团队成员会话有可见的成员页/团队面板，用户就能点卡；把它当「无人可答」会让成员的 MCP/沙箱
-        // 全部在调用期被拒。定时任务、工作流节点、评测与 API Key 仍按 headless（fail-closed）。
-        return src == null || src.isBlank()
-                || com.wenqu.ai.service.TurnSource.USER.equalsIgnoreCase(src)
-                || com.wenqu.ai.service.TurnSource.TEAM.equalsIgnoreCase(src);
+        return AgentxTextUtil.interactiveTurn(cmd);
     }
 
     /**
@@ -3002,22 +2997,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * @param planMarkdown 本轮 {@code plan_write} 攒下的正文，可空（没调过 plan_write）
      */
     static String planTextOf(Object input, String planMarkdown) {
-        if (planMarkdown != null && !planMarkdown.isBlank()) return planMarkdown.trim();
-        String fallback;
-        if (input instanceof Map<?, ?> in) {
-            fallback = str(in.get("summary")).trim();
-        } else {
-            // 入参本身就是一段文字（框架改了 inputSchema，或模型把正文直接塞进了 plan_exit）
-            fallback = str(input).trim();
-        }
-        if (!fallback.isEmpty()) return fallback;
-        // 有 plan_exit 但没落过 plan_write：说清「这里没有计划可看」就行，内部原因是哪个工具没调
-        // 归日志（见 announcePending），不印在用户要点批准的卡片上
-        return NO_PLAN_BODY;
+        return AgentxTextUtil.planTextOf(input, planMarkdown);
     }
 
     /** 计划正文取不到时给用户的那句话（同时也是 {@code announcePending} 里「该记一条日志」的判据） */
-    static final String NO_PLAN_BODY = "（这一轮没有取到计划内容，可以直接重试，或把要求写得更具体一些）";
+    static final String NO_PLAN_BODY = AgentxTextUtil.NO_PLAN_BODY;
 
     /**
      * 计划正文里算「内部路径」的根，补在 {@link PlanCopy} 内置名单之外：
