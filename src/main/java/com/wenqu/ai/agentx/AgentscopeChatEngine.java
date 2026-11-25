@@ -191,6 +191,14 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     private final AgentxSandboxIntent sandboxIntent;
     /** 本轮智能体绑定解析与实例指纹 */
     private final AgentxAgentBinding agentBinding;
+    /** 收尾待办卡收口 */
+    private final AgentxPendingAbandoner pendingAbandoner;
+    /** 待办卡宣布（计划/提问/审批三种卡） */
+    private final AgentxPendingAnnouncer pendingAnnouncer;
+    /** 接流快照构建 */
+    private final AgentxTurnSnapshot turnSnapshotBuilder;
+    /** 一轮里的通用小动作：问题落库/提问超时回送/挂载工具名/技能命中帧 */
+    private final AgentxTurnSupport turnSupport;
     /** 框架基础设施单例：Redis / 会话状态存储 / distributed store / 模型传输 */
     private final AgentxFrameworkInfra infra;
     /** system prompt 上下文装配 */
@@ -394,6 +402,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         this.eventTranslator = new AgentxEventTranslator(toolCardBuilder, skillStatsStore, () -> steerQueueHooks);
         this.sandboxIntent = new AgentxSandboxIntent(sessions, sandboxService, projectService);
         this.agentBinding = new AgentxAgentBinding(tools, orgService, userConfigService, modelRegistry);
+        this.pendingAbandoner = new AgentxPendingAbandoner(sessions, toolCardBuilder);
+        this.pendingAnnouncer = new AgentxPendingAnnouncer(sessions, askCardBuilder, configService, displayNames, turnNotify, this::workspaceRootsOf);
         this.infra = new AgentxFrameworkInfra(configService, redisProperties);
         this.promptCtx = new AgentxPromptContext(properties, projectFileService, projectService, tools,
                 configService, sessionService, cmd -> teamActive(cmd));
@@ -415,6 +425,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         this.modelConfig = new AgentxModelConfig(modelRegistry, configService, sessions, usageLedger, quotaService, orgService);
         this.turnUsage = new AgentxTurnUsage(keywordExtractor);
         this.planCardSnapshot = new AgentxPlanCardSnapshot(sessions, configService);
+        this.turnSnapshotBuilder = new AgentxTurnSnapshot(agentBinding, artifactService, planCardSnapshot);
+        this.turnSupport = new AgentxTurnSupport(attachments, sessionService, sessions, tools, skillStatsStore);
     }
 
     /**
@@ -555,7 +567,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 整条会话会被当成空会话隐藏。
         // 附件/@/#历史引用随用户消息一并持久化，刷新后回显不丢。
         String userMessageId = cmd.isRegenerate() || cmd.isFromSteer() ? null
-                : appendQuestion(cmd, turnId, userImgUrls);
+                : turnSupport.appendQuestion(cmd, turnId, userImgUrls);
         // 装配前已点停止（流水线排队/建实例之前）：这一问照样留在库里，但不再建实例、不调模型。
         // 必须排在 appendQuestion 之后——早于落库就返回会让用户「问出去了，刷新后连问题都没有」。
         // 目标态的收尾照常走：onRoundSettled(stopped=true) 会把目标轮结算并转暂停，
@@ -743,7 +755,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                     java.util.Map.of("wallMs", prepMs, "prepMs", prepMs)));
             // 本轮点名的技能：正文已由装配段注入上下文，这里记用量并给前端发命中帧——
             // 没有这一帧，「选了技能」这件事在界面上是静默的，用户永远不知道模型到底照没照做。
-            emitPickedSkillHits(cmd, turnChannel);
+            turnSupport.emitPickedSkillHits(cmd, turnChannel);
             followTurn(session, cmd, turnChannel, pool, route, hooks, turnId, historyBefore, startCursor,
                     userMessageId, current, recording, startedAt, prepMs, binding.contextWindow(), false);
         } finally {
@@ -781,7 +793,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         long modelErrBefore = turnModel == null ? 0L : turnModel.modelErrors();
         // 接流快照改由本轮自己供：外壳开轮时只有「还没出字」那份空快照，而正文/工具卡/时间线
         // 只活在这里的 AgentxTurnRecording 与引用池里。不回填的表现为——生成中刷新，气泡接回来是一片空白。
-        channel.offerSnapshot(() -> turnSnapshot(cmd, channel, pool, route, recording, turnId, startedAt, prepMs));
+        channel.offerSnapshot(() -> turnSnapshotBuilder.build(cmd, channel, pool, route, recording, turnId, startedAt, prepMs));
         // 人在回路等待/超时状态机：人工等待累计、三档预算与超时决策都收在协调器里，
         // 引擎只负责 begin/end 台账与超时后的发帧/回送。
         TurnInteractionCoordinator interactions = new TurnInteractionCoordinator(
@@ -868,7 +880,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
 
             @Override
             public void announcePending(Map<String, SessionEvent> pending) {
-                AgentscopeChatEngine.this.announcePending(pending, cmd, channel,
+                pendingAnnouncer.announce(pending, cmd, channel,
                         loop.announcedApprovals(), turnId, recording);
             }
 
@@ -925,7 +937,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
 
             @Override
             public boolean answerTimedOutAsk(Map<String, SessionEvent> pending) {
-                return AgentscopeChatEngine.this.answerTimedOutAsk(pending, cmd, recording);
+                return turnSupport.answerTimedOutAsk(pending, cmd, recording);
             }
 
             @Override
@@ -1040,7 +1052,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         }
         // 这一轮到此不再有人跟随：还挂在人身上的待办当场收口（框架结算 + 卡片终态 + 待办行落库）。
         // neverLaunched 那一支不碰——那些待办属于**上一轮**，卡片可能正等用户答，本轮没启动不是它的错。
-        if (!loop.neverLaunched()) abandonPendingInteractions(session, cmd, channel, recording, loop.stopped() || loop.stalled(), pendingAtClose);
+        if (!loop.neverLaunched()) pendingAbandoner.abandon(session, cmd, channel, recording, loop.stopped() || loop.stalled(), pendingAtClose);
         sessions.setPlanMode(cmd, false);
         // 正文取哪一份：优先本轮实际流出来的那一截（与发出去的 token 帧同源）；只有它为空、且这一轮
         // 本身没失败，才回退到会话里最后一条有正文的助手消息。先查会话会拿到<b>上一轮的答复</b>：
@@ -1736,27 +1748,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         agentWebhookService.onTurnFinished(cmd, null, "failed", message, "", null, Map.of(), List.of(), 0L);
     }
 
-    /**
-     * 提问行的一次落库——正常轮与失败轮共用，这一行的形状只在这里定义一遍。
-     * <p>编辑重发要挂上被替换旧分支的版本组键（与工作流路径同口径）：被编辑的旧分支已在控制器
-     * 同步段软删留档，不挂组键的话「‹ n/N ›」切换器出不来，被替换的旧版本也无法回看。
-     */
-    private String appendQuestion(ChatCommand cmd, String turnId, List<String> userImgUrls) {
-        String messageId = sessionService.appendMessage(MessageWrite.builder()
-                .sessionId(cmd.getSessionId())
-                .role("user")
-                .content(cmd.getQuestion())
-                .images(userImgUrls == null || userImgUrls.isEmpty() ? null : userImgUrls)
-                .attachments(attachments.metasJson(cmd.getAttachments(), cmd.uploadOwnerUid()))
-                .mentions(TurnPromptAssembler.mentionsJson(cmd.getMentions()))
-                .historyRefs(TurnPromptAssembler.historyRefsJson(cmd.getHistoryRefs()))
-                .turnId(turnId)
-                .build());
-        if (messageId != null && cmd.getEditVariantGroup() != null && !cmd.getEditVariantGroup().isBlank()) {
-            sessionService.setMessageVariant(messageId, cmd.getEditVariantGroup());
-        }
-        return messageId;
-    }
 
     /**
      * 失败轮的那一问。图片走 {@code processDisplay}（只落盘回显）：本轮压根没进模型，
@@ -1766,7 +1757,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         if (cmd.isRegenerate() || cmd.isFromSteer()) return;   // 提问在上一句请求里已经落过
         if (cmd.getQuestion() == null || cmd.getQuestion().isBlank()) return;
         try {
-            appendQuestion(cmd, turnIdOf(cmd), userImages.processDisplay(cmd.getUserImages()).stream()
+            turnSupport.appendQuestion(cmd, turnIdOf(cmd), userImages.processDisplay(cmd.getUserImages()).stream()
                     .map(com.wenqu.ai.service.UserImageService.UserImage::url).toList());
         } catch (Exception e) {
             // 问没留住不碍「这一轮失败」这件事本身：帧照发、日志照记，只是刷新后读不回这一句
@@ -1813,116 +1804,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         return AgentxTextUtil.interactiveTurn(cmd);
     }
 
-    /**
-     * 提问卡前台等待到点：把「还没收到作答，问题仍可答」送回原工具，让模型接着往下走，
-     * <b>不</b>把这一轮掐掉，也<b>不</b>把这张卡作废。
-     * <p>与 DSH 的 timed 提问同语义：超时是 pending，不是用户跳过——卡片留在界面上仍可作答，
-     * 答案稍后作为一条新的用户消息送进会话（跑着就插话、空闲就新一轮）。写成「用户未回答」
-     * 会让模型连下一轮都不再问。
-     * <p>走 {@code respondRaw} 而不是 {@code respondAsk}：后者末尾会 {@code ensureFollowing} 补起跟随者，
-     * 而这里本来就有一个活着的跟随循环在跑，补第二个会有两个循环读同一条会话、各落一条助手消息。
-     */
-    private boolean answerTimedOutAsk(Map<String, SessionEvent> pending, ChatCommand cmd, AgentxTurnRecording recording) {
-        String sessionKey = sessions.key(cmd);
-        for (Map.Entry<String, SessionEvent> e : pending.entrySet()) {
-            Map<String, Object> data = e.getValue().data() == null ? Map.of() : e.getValue().data();
-            if ("confirmation".equals(str(data.get("kind")))) continue;
-            String notice = TurnInteractionCoordinator.ASK_PENDING_NOTICE;
-            try {
-                if (sessions.respondRaw(sessionKey, e.getKey(), "ask", true, null, notice) == null) {
-                    continue;   // 这条待办接不动，试下一条
-                }
-            } catch (Exception ex) {
-                log.warn("[agentx] 提问超时回送 pending 失败 {} session={}: {}", e.getKey(),
-                        cmd.getSessionId(), ex.toString());
-                continue;
-            }
-            sessions.markAskContinued(e.getKey(), notice);
-            // 随后那条 tool/result 要带上「这张卡仍可答」，否则前端按终态把提问面板撤了
-            recording.markAskContinued(e.getKey());
-            log.info("[agentx] 提问前台等待结束，按 pending 送回模型继续本轮（卡片仍可答）: requestId={} session={}",
-                    e.getKey(), cmd.getSessionId());
-            return true;
-        }
-        return false;
-    }
 
-    /**
-     * 这一轮不再有人跟随：把还挂在人身上的待办当场收口。三件事必须一起做，少一件就有一件用户看得见的事坏掉。
-     * <ul>
-     *  <li><b>卡片终态</b>：挂在提问卡上的那一次工具调用只有 {@code tool/requested}、没有结果，不补终态
-     *      那张卡就永远转圈——落库那份 {@code status} 停在 start，刷新一次还是转圈。</li>
-     *  <li><b>框架侧结算</b>（{@link SessionRecovery#cancelPending}）：那一跑在框架台账里留的是
-     *      {@code run/end status=suspended}，而 {@code Turn.ended()} 只认 completed/cancelled——不补这一刀，
-     *      这条会话之后每一轮都只进收件箱不启动（与 {@code reconcileStalledTurn} 那条 failed 轮同一种病）。</li>
-     *  <li><b>待办行落终态</b>：停在 PENDING 的卡片刷新后仍会被恢复端点重建出来，用户答了才发现没人接。</li>
-     * </ul>
-     * <p><b>终态帧由问渠自己发，不重放框架那条合成结果</b>：框架为取消补写的 {@code tool/result} 说的是
-     * 英文内部话（"Caller cancelled this pending interaction…"），而且下面 {@link AgentxTurnRecording#toolCall}
-     * 已经把 start 卡关掉了，再让 {@link #translate} 读一遍会因配不上 start 而多推一张重复卡。
-     *
-     * @param stopped true=用户叫停，false=等待预算用尽（落库状态与卡片措辞都按它分）
-     */
-    private void abandonPendingInteractions(AgentSession session, ChatCommand cmd, RunChannel channel,
-                                            AgentxTurnRecording recording, boolean stopped,
-                                            Map<String, SessionEvent> pendingAtClose) {
-        // 用收尾那份权威快照，不再自己读一遍（pending() 全量回放在万级事件日志上要十几秒）
-        Map<String, SessionEvent> pending = new java.util.LinkedHashMap<>(pendingAtClose);
-        if (pending.isEmpty()) return;
-        String why = stopped ? "本轮已停止" : "等待超时";
-        // 结构性收口排在发帧之前：通道可能已经被停止/断开收掉了，那一帧发不出去是小事，
-        // 结算没做才是大事（这条会话之后就再也起不动）。
-        Set<String> frameworkTurns = new LinkedHashSet<>();
-        for (SessionEvent e : pending.values()) {
-            if (e.turnId() != null && !e.turnId().isBlank()) frameworkTurns.add(e.turnId());
-        }
-        for (String fwTurn : frameworkTurns) {
-            try {
-                SessionRecovery.cancelPending(session.log(), fwTurn);
-            } catch (RuntimeException refused) {
-                log.warn("[FAIL-LOUD] 框架待办取消失败（不落 turn/cancelled 这条会话之后可能起不动）"
-                        + " session={} turn={}: {}", cmd.getSessionId(), fwTurn, refused.toString());
-            }
-        }
-        sessions.markPendingTerminal(sessions.key(cmd), stopped ? "STOPPED" : "TIMEOUT");
-        for (Map.Entry<String, SessionEvent> entry : pending.entrySet()) {
-            Map<String, Object> data = entry.getValue().data() == null ? Map.of() : entry.getValue().data();
-            Object call = firstNonNull(data.get("call"), data);
-            String name = toolNameOf(call);
-            if (name.isBlank()) name = recording.lastToolName;
-            if (name.isBlank()) continue;
-            // 已经出过终态的那一把不补（例如 plan_exit：确认是另一件事，工具结果早到了）——
-            // 补了就是 AgentxTurnRecording 找不到 start 而整张新卡，一次调用两张卡
-            if (!recording.hasOpenTool(name)) continue;
-            String id = call instanceof Map<?, ?> cm && cm.get("id") != null
-                    ? String.valueOf(cm.get("id")) : entry.getKey();
-            String callKey = AgentxTurnRecording.toolCallKey(id, name);
-            long beganAt = recording.takeToolStart(callKey);
-            long covered = recording.takeToolWait(callKey);
-            long charged = recording.takeToolCharge(callKey);
-            String args = recording.toolInputByKey.remove(callKey);
-            if (args == null) args = recording.lastToolInput;
-            long elapsed = beganAt <= 0L ? 0L
-                    : Math.max(0L, System.currentTimeMillis() - beganAt - covered);
-            // 提问卡：没答就是没答，按「未作答」收尾（那句前缀是前端 askAnswerLabel 的判据，别改词）；
-            // 其它工具：那一步确实没执行，按失败收——给一个 ✓ 就是假装它跑完了
-            boolean ask = AskUserTool.NAME.equals(name);
-            String status = TurnInteractionCoordinator.abandonStatus(ask);
-            String result = TurnInteractionCoordinator.abandonResult(ask, why);
-            // 落库那份先写、无条件：刷新读的就是它（那句解释也要一起落，刷新后卡片才说得出为什么没跑）
-            recording.toolCall(name, status, args, elapsed, beganAt, charged, result);
-            try {
-                AgentxEmitUtil.emit(channel, RunEventType.TOOL_STATUS,
-                        toolCardBuilder.toolCard(recording.uid, name, status, elapsed, beganAt, charged, args, result, null,
-                                recording.hooks.step().index()));
-            } catch (RuntimeException gone) {
-                log.info("[agentx] 待办终态帧没发出去（通道已收），落库那份仍在: session={} tool={}",
-                        cmd.getSessionId(), name);
-            }
-        }
-        log.info("[agentx] 本轮不再跟随，{} 条待办已收口: session={} 原因={}",
-                pending.size(), cmd.getSessionId(), why);
-    }
 
 
 
@@ -1951,38 +1833,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
 
 
 
-    /**
-     * 本轮真实挂上的工具注册名，供 {@link ToolDiscipline} 判「该不该说那句跨族分工」。
-     * <p>判据与工具面装配同一份（{@link WenquAgentxTools#turnGroupedNames}），不另写一遍——
-     * 两处判据分家就会漂移成「提示词教了一句本轮没有的能力」。
-     * <p>取不到就按「什么都没挂」处理：少说一句分工，比让整轮因为提示词装配失败更划算。
-     */
-    private java.util.Set<String> mountedToolNames(ChatCommand cmd, ExecutionPolicy policy,
-                                                   AgentxTurnSlot slot) {
-        try {
-            java.util.Set<String> out = new java.util.LinkedHashSet<>(tools.turnGroupedNames(cmd, policy));
-            AgentxTurnSlot.Surface surface = slot == null ? null : slot.surface();
-            if (surface != null) {
-                if (surface.runCodeMounted()) out.add("run_code");
-                // 框架原生工具（deliver_artifact 等）不在这个注册中心里，按工具面那份清单并进来；
-                // 只读档与 API Key 的按名禁用已经落在 policy.deny 里，这里直接复用，不另写一份判据。
-                java.util.Set<String> framework = java.util.Set.copyOf(
-                        WenquAgentxTools.frameworkSurfaceToolNames());
-                if (surface.rawCallbacks() != null
-                        && policy.sandboxMode() != com.wenqu.ai.agent.permission.SandboxMode.READ_ONLY) {
-                    for (var cb : surface.rawCallbacks()) {
-                        if (cb == null || cb.getToolDefinition() == null) continue;
-                        String name = cb.getToolDefinition().name();
-                        if (framework.contains(name) && !policy.denies(name)) out.add(name);
-                    }
-                }
-            }
-            return out;
-        } catch (RuntimeException e) {
-            log.debug("[agentx] 取本轮挂载工具名失败，本轮不追加工具分工段: {}", e.toString());
-            return java.util.Set.of();
-        }
-    }
 
 
 
@@ -2106,25 +1956,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      */
 
 
-    /** 本轮点名的技能：记用量 + 发 skill_hit 帧（正文由 TurnPromptAssembler 注入，这里只报结果）。 */
-    private void emitPickedSkillHits(ChatCommand cmd, RunChannel channel) {
-        List<String> picked = cmd.getSkills();
-        if (picked == null || picked.isEmpty()) return;
-        for (String raw : picked) {
-            if (raw == null || raw.isBlank()) continue;
-            // 智能体「指定」模式存的是 {uid}/{name} 引用串，命中帧与统计都用裸名
-            String name = raw.contains("/") ? raw.substring(raw.lastIndexOf('/') + 1) : raw.trim();
-            if (name.isEmpty()) continue;
-            skillStatsStore.recordRead(cmd.getUserId(), name, cmd.getSessionId());
-            try {
-                channel.emit(RunEventType.SKILL_HIT, com.alibaba.fastjson2.JSON.toJSONString(
-                        java.util.Map.of("name", name, "source", "picked")));
-            } catch (RuntimeException gone) {
-                log.debug("[SKILL] skill_hit 帧没发出去（通道已收）: session={} skill={}",
-                        cmd.getSessionId(), name);
-            }
-        }
-    }
 
 
 
@@ -2134,124 +1965,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
 
 
 
-    /** 框架待办（一等公民）→ 问渠确认卡；审批号↔会话的归属登记好，答复端点靠它找回。 */
-    private void announcePending(Map<String, SessionEvent> pending, ChatCommand cmd, RunChannel channel,
-                                 Set<String> announced, String turnId, AgentxTurnRecording recording) {
-        if (pending.isEmpty()) return;
-        String sessionKey = sessions.key(cmd);
-        sessions.notePending(sessionKey, pending);
-        for (Map.Entry<String, SessionEvent> entry : pending.entrySet()) {
-            if (!announced.add(entry.getKey())) continue;
-            Map<String, Object> data = entry.getValue().data() == null ? Map.of() : entry.getValue().data();
-            String tool = toolNameOf(firstNonNull(data.get("call"), firstNonNull(data.get("toolUse"),
-                    firstNonNull(data.get("message"), data))));
-            String args = str(firstNonNull(toolInputOf(data.get("call")),
-                    firstNonNull(toolInputOf(data.get("toolUse")), toolInputOf(data))));
-            // 两种待办按 kind 分流（工具挂起=external_execution，权限确认=confirmation）。
-            // 分错的后果是「给用户的卡答不上它真正在等的事」，所以未知 kind 也走提问卡——
-            // 题面至少能呈现，绝不静默吞掉
-            String kind = str(data.get("kind"));
-            if ("confirmation".equals(kind) && tool.startsWith("plan_")) {
-                // 计划模式的退出确认走问渠的计划卡（deep_plan_approval），不是普通工具审批卡：
-                // 两者在界面上是两张不同的卡，用户在那里能看到整份计划
-                Map<String, Object> planCard = new java.util.LinkedHashMap<>();
-                String rawPlan = planTextOf(toolInputOf(data.get("call")),
-                        recording == null ? null : recording.planMarkdown);
-                if (NO_PLAN_BODY.equals(rawPlan)) {
-                    // 「模型没调 plan_write」是排查用的内部原因，只进日志——它印在用户要点批准的卡片上没意义
-                    log.warn("[PLAN] 本轮 plan_exit 没带计划正文（未取得 plan_write 的 content）: session={} tool={}",
-                            cmd.getSessionId(), tool);
-                }
-                // 用户口径的保底：正文里出现沙盒/运行目录路径就收成文件名（提示词已经教过，这里防它照抄工具说明）
-                String planText = PlanCopy.stripInternalPaths(rawPlan, planInternalRoots());
-                planCard.put("planApprovalId", entry.getKey());
-                planCard.put("plan", planText);
-                planCard.put("timeoutMs", configService.getInt("chat.planTimeoutMs", 3600000));
-                // 血缘随 deep_plan_approval 一起下发：这张新计划是基于哪一版旧计划、带过来多少执行进度。
-                // 断线接流/换设备时没有原始 userMsg，只能靠帧自身带；待批卡则从 request_args 里取同一份。
-                if (cmd.getPlanBaseId() != null && !cmd.getPlanBaseId().isBlank()) {
-                    planCard.put("planBaseId", cmd.getPlanBaseId());
-                    planCard.put("planBaseVersion", cmd.getPlanBaseVersion());
-                    planCard.put("planBaseDone", cmd.getPlanBaseDone());
-                    planCard.put("planBaseTotal", cmd.getPlanBaseTotal());
-                    planCard.put("planBaseFailed", cmd.getPlanBaseFailed());
-                }
-                if (recording != null) {
-                    // 产出这一版的意见就是用户上一次「退回重出」提交的正文；首次计划没有意见
-                    String produceFeedback = sessions.peekPlanFeedback(sessionKey);
-                    recording.planVersion(planText, produceFeedback, entry.getKey());
-                    // 新一版已挂出待确认：退回重出状态到此结束（下一次 revise 由裁决入口重新置位）
-                    sessions.markPlanPending(sessionKey);
-                }
-                channel.emit(RunEventType.DEEP_PLAN_APPROVAL, com.alibaba.fastjson2.JSON.toJSONString(planCard));
-                // 落同一张 c_ai_tool_approval（tool_name=planApproval）：不落的话刷新后这张卡取不回来。
-                // 血缘也一起存进 request_args：待批准的新计划刷新后要能显示「调整自 vN」，
-                // 而此刻还没有助手消息行可挂 plan 记录（那张卡要等本轮收尾才落库）。
-                Map<String, Object> pendingArgs = new java.util.LinkedHashMap<>();
-                pendingArgs.put("plan", planText);
-                if (cmd.getPlanBaseId() != null && !cmd.getPlanBaseId().isBlank()) {
-                    pendingArgs.put("planBaseId", cmd.getPlanBaseId());
-                    pendingArgs.put("planBaseVersion", cmd.getPlanBaseVersion());
-                    pendingArgs.put("planBaseDone", cmd.getPlanBaseDone());
-                    pendingArgs.put("planBaseTotal", cmd.getPlanBaseTotal());
-                    pendingArgs.put("planBaseFailed", cmd.getPlanBaseFailed());
-                }
-                sessions.recordPending(cmd, sessionKey, turnId, entry.getKey(), "planApproval",
-                        com.alibaba.fastjson2.JSON.toJSONString(pendingArgs));
-                // 计划卡等人拍板是有时限的：不确认这一轮会超时并停止。屏幕外的人看不见那张卡，
-                // 只能靠这一句把人叫回来
-                turnNotify.onPlanPending(cmd, entry.getKey());
-                continue;
-            }
-            // 提问工具被框架记成「确认」是不该发生的（AskUserTool 已声明权限放行）：真出现时留一条日志，
-            // 否则用户拿到的是一张点了也恢复不了的审批卡，线上没法从现象倒推
-            if ("confirmation".equals(kind) && AskUserTool.NAME.equals(tool)) {
-                log.warn("[AGENTX] 提问工具被记成确认待办，按审批卡处理: session={} request={}",
-                        cmd.getSessionId(), entry.getKey());
-            }
-            if (!"confirmation".equals(kind)) {
-                Object call = firstNonNull(data.get("call"), data);
-                String askPayload = askCardBuilder.askCard(entry.getKey(), toolInputOf(call), tool);
-                channel.emit(RunEventType.ASK_USER, askPayload);
-                // 载荷与手写侧 askArgsJson 同形（都按 {"questions":[…]} 解析），恢复端点可直接复用
-                sessions.recordPending(cmd, sessionKey, turnId, entry.getKey(), "askUser", askPayload);
-                // 通知正文带<b>第一题的题面</b>：手机上「智能体在等你回答」不说明在等什么，
-                // 人得先点进来才知道——把那句问题直接抄进通知，看一眼就能决定要不要回来
-                turnNotify.onAskPending(cmd, entry.getKey(), firstAskText(toolInputOf(call)));
-                continue;
-            }
-            // 审批卡：展示名与工具卡同源（注册中心 → 框架工具表），不再把裸工具名当 label 下发。
-            // 「重新生成后会看到同一张卡」靠的就是这份一致——前端那句「请求执行工具「X」」读的是 label
-            Map<String, Object> approvalCard = new java.util.LinkedHashMap<>();
-            approvalCard.put("approvalId", entry.getKey());
-            approvalCard.put("tool", tool);
-            approvalCard.put("args", args);
-            approvalCard.put("timeoutMs", configService.getInt("chat.approvalTimeoutMs", 600000));
-            // 「为什么问人」与执行期守卫同一份判据：卡上不写理由时，用户看到的就是一张无缘无故的拦截卡
-            String reason = approvalReason(cmd, tool, firstNonNull(toolInputOf(data.get("call")),
-                    firstNonNull(toolInputOf(data.get("toolUse")), toolInputOf(data))));
-            if (!reason.isEmpty()) approvalCard.put("reason", reason);
-            displayNames.putDisplayFields(approvalCard, cmd.getUserId(), tool);
-            // 工具表没收过这个名字（MCP 动态工具常见）：补一句说明，让用户至少知道这张卡在问什么，
-            // 而不是光秃秃一个英文名——但绝不拿工具名冒充展示名（前端会把它当「后端认真取过」）
-            if (!approvalCard.containsKey("hint")) {
-                approvalCard.put("hint", "执行前请确认这一步");
-            }
-            channel.emit(RunEventType.APPROVAL_REQUIRED,
-                    com.alibaba.fastjson2.JSON.toJSONString(approvalCard));
-            // 先落库、只有真的插入了才发帧：同一 approvalId 两个跟随者各宣布一次时，
-            // 数据库侧本来就是幂等的，而 emit 侧原来没有闸——线上那张卡就是这么发了两遍。
-            boolean inserted = sessions.recordPending(cmd, sessionKey, turnId, entry.getKey(), tool, args, reason);
-            if (!inserted) {
-                log.info("[AGENTX] 审批卡已存在，跳过重复下发: session={} approval={}",
-                        cmd.getSessionId(), entry.getKey());
-                continue;
-            }
-            // 审批卡同样等人：正文带展示名（与那张卡同源的一个词）。名字没收过就只报会话，
-            // 绝不拿裸工具名冒充展示名
-            turnNotify.onApprovalPending(cmd, entry.getKey(), str(approvalCard.get("label")));
-        }
-    }
 
     /**
      * 审批卡上的「为什么问」：与执行期守卫同一份判据——本机文件/命令工具由污点护栏接管
@@ -2260,24 +1973,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * <p>不在这里再判一次「像不像写操作」：工具性质在登记处，强制确认在 {@link AgentxNativeToolGuard}。
      */
     @SuppressWarnings("unchecked")
-    private String approvalReason(ChatCommand cmd, String tool, Object inputObj) {
-        AgentxTurnSlot.Turn t = sessions.turnSlot(cmd).current();
-        if (t == null) return "";
-        AgentxNativeToolGuard.Kind kind = nativeGuardKind(tool);
-        if (kind != null) {
-            Map<String, Object> input = inputObj instanceof Map ? (Map<String, Object>) inputObj : null;
-            String note = AgentxNativeToolGuard.forcedAskNote(kind, input, t.policy(), t.taint(),
-                    workspaceRootsOf(cmd));
-            if (note != null) return note;
-        }
-        // MCP 动态工具没有静态描述符，卡片上用通用话术会让人以为这条 SELECT 也在改数据。
-        // 认本轮挂载面里的 mcpToolNames（与装配同一份），把「在哪里执行」说清楚。
-        var surface = sessions.turnSlot(cmd).surface();
-        if (surface != null && surface.mcpToolNames().contains(tool)) {
-            return "MCP 外部工具：将在你登记的 MCP 服务里执行这一步。";
-        }
-        return "当前要求执行前确认：这一步会改动外部状态。";
-    }
 
 
     /**
@@ -2298,27 +1993,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     /** 计划正文取不到时给用户的那句话（同时也是 {@code announcePending} 里「该记一条日志」的判据） */
     static final String NO_PLAN_BODY = AgentxTextUtil.NO_PLAN_BODY;
 
-    /**
-     * 计划正文里算「内部路径」的根，补在 {@link PlanCopy} 内置名单之外：
-     * 沙盒虚拟工作区（{@code sandbox.virtualPathPrefix}）与框架状态目录
-     * （{@code chat.agentscopeStateDir}，框架的 {@code plans/PLAN.md} 就落在这里面）。
-     * 相对与绝对两种写法都要给：状态目录配的是相对路径时，模型拿到的 banner 是解析成绝对路径后的样子。
-     */
-    private List<String> planInternalRoots() {
-        List<String> roots = new ArrayList<>();
-        String prefix = configService.get("sandbox.virtualPathPrefix");
-        if (prefix != null && !prefix.isBlank()) roots.add(prefix.trim());
-        String stateDir = configService.get("chat.agentscopeStateDir");
-        if (stateDir != null && !stateDir.isBlank()) {
-            roots.add(stateDir.trim());
-            try {
-                roots.add(Path.of(stateDir.trim()).toAbsolutePath().normalize().toString());
-            } catch (Exception ignored) {
-                // 配置成了非法路径：内置名单照样兜底，不为这一条把整轮打挂
-            }
-        }
-        return roots;
-    }
 
     /**
      * 本轮下发给模型网关的参数——与手写主链路的生成段同一条口径（{@code ChatService} 里那段
@@ -2479,7 +2153,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                         + promptCtx.teamGuidance(cmd)
                         // 跨族分工（「本机」在 SSH 与桌面两族之间有歧义）：一族的说明代替不了另一族，
                         // 只有这里能说清，且只在本轮真挂了相关工具时追加。
-                        + ToolDiscipline.guidance(mountedToolNames(cmd, policy, slot))
+                        + ToolDiscipline.guidance(turnSupport.mountedToolNames(cmd, policy, slot))
                         + PlanCopy.guidance()
                         + com.wenqu.ai.agent.chat.ArtifactPrompt.guidance()
                         + com.wenqu.ai.memory.MemoryPrompts.replyDiscipline()
@@ -2792,73 +2466,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
 
 
 
-    /**
-     * 收尾帧沿用前端 {@code done} 的信封字段。来源与降级都取自本轮引用池——与手写运行时同一个
-     * {@code TurnSourceRegistry}，前端引用面板不需要为框架引擎写第二套渲染。
-     */
-    /**
-     * 半程轮的用户可见标注。三种成因必须分开写（与问渠台账 {@code TurnRecorder} 同一组终态标记口径）：
-     * 用户自己按了停止 ≠ 没人答卡等到超时 ≠ 连接断了或被看门狗掐——把后两种写成「已停止本轮」是在怪用户。
-     * <p>措辞按卡种分：卡是提问还是审批，决定超时这件事该说成「你有机会答但没答」还是「闸门没被放行」。
-     * 提问卡超时后这一轮本来就不该走到这里（走的是「按未作答继续」那条），所以这里出现的多半是
-     * 计划卡或审批卡——用「确认」统称即可，不必替用户猜是哪一种。
-     */
-    /**
-     * 接流快照：本轮到此刻已经产出的东西，一次交全给总线（见 {@code ChatRunBus#attach}）。
-     * <p>字段名与前端 {@code applyTurnSnapshot} 一一对齐，且与「刷新后读历史」那份同源同形：
-     * 正文/思考/工具卡/时间线出自 {@link AgentxTurnRecording#snapshotFields()}，引用出自本轮引用池，产物走
-     * {@code takeArtifacts} 那份不消费的副本。缺哪一项，前端只是那一段还没长出来，不会报错。
-     * <p>提问/审批卡不含：它们的时限与「唤醒句柄还在不在」以库为准，前端走既有的 pending 端点恢复；
-     * 计划卡例外——它有自己的运行态（草稿/待确认/退回重出/已批准），必须随快照下发，否则新页签在
-     * 计划批准后的人机等待期里整张卡都不见了。也不含逐字增量，正文取缓冲本身比回放上千条 token 帧快。
-     *
-     * @param startedAt 本轮开轮时刻（服务端墙上钟，见 {@code followTurn} 的入参）
-     * @param prepMs    开轮前准备那一段（服务端收到提问 → 开轮起表）；0 = 这一跑没有「收到提问」基准
-     */
-    private Map<String, Object> turnSnapshot(ChatCommand cmd, RunChannel channel, WenquSourcePool pool,
-                                             ModelRegistryService.ModelRoute route, AgentxTurnRecording recording,
-                                             String turnId, long startedAt, long prepMs) {
-        Map<String, Object> snap = recording.snapshotFields();
-        snap.put("running", true);
-        snap.put("phase", "generating");
-        snap.put("sources", new java.util.ArrayList<>(pool.sources()));
-        // 配图清单随快照一起给：image 帧是「有新增才发全量」的状态事件，接流方漏不上那一帧就是
-        // 整轮没有图位（前端按 images[N-1] 还原，缺数组则 [图片N] 原样留在正文里）
-        snap.put("images", pool.signedImages());
-        snap.put("artifacts", artifactService.takeArtifacts(cmd.getSessionId()));
-        snap.put("model", route.modelId());
-        snap.put("turnId", turnId);
-        // 计划卡：草稿/待确认/退回重出/已批准都按运行时状态重建；落库的 planRecord 只在收尾有
-        Map<String, Object> planCard = planCardForSnapshot(cmd, recording);
-        if (planCard != null) snap.put("planCard", planCard);
-        // 游客接流同样只给答案块；完整 blocks 留在服务端与登录态历史里
-        if (cmd.isGuestMode() && snap.get("blocks") != null) {
-            Map<String, Object> minimal = TurnBlocks.answerOnly(snap.get("blocks"));
-            if (minimal == null) snap.remove("blocks");
-            else snap.put("blocks", minimal);
-        }
-        // 到此刻已经跑掉的毫秒（每次 attach 现算）：接流那端的秒表是从接上那一刻起表的，不给这个数，
-        // 刷新一下「正在溯源，用时 N 秒」就从 0 重新跳一遍——已经跑掉的那段在用户眼里不算数了。
-        // 给「跑掉了多久」而不给「绝对开轮时刻」：前端本地钟与 nowTick 都在客户端钟上，跨钟相减会把
-        // 两边的偏差直接算进用户眼里；给时长则只差这一帧在路上的时间。
-        long elapsedMs = Math.max(0L, System.currentTimeMillis() - startedAt);
-        snap.put("elapsedMs", elapsedMs);
-        // 整轮墙钟（含开轮前准备）与那一段准备一起给：接流那端的秒表按这一份起表，
-        // 否则「刷新一次」会把排队+装配那几秒抹掉（用户看见的数凭空变小，与 done 同一件事）。
-        // 没有请求体的入口 prepMs=0、基准就是开轮时刻——照样给，刷新后才接得上同一本账。
-        snap.put("wallMs", elapsedMs + prepMs);
-        snap.put("prepMs", prepMs);
-        if (cmd.getAgentId() != null && !cmd.getAgentId().isBlank()) {
-            snap.put("agentId", cmd.getAgentId());
-            String name = agentBinding.agentNameOf(cmd);
-            if (name != null) snap.put("agentName", name);
-        }
-        return snap;
-    }
 
-    private Map<String, Object> planCardForSnapshot(ChatCommand cmd, AgentxTurnRecording recording) {
-        return planCardSnapshot.build(cmd, recording);
-    }
 
 
     /**
@@ -3211,30 +2819,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
 
 
 
-    /**
-     * 提问卡载荷：前端认 {@code {askId, questions, timeoutMs}}。挂起原因里带的是
-     * {@code AskQuestion} 列表的 JSON，原样转过去；解不开就退成一题纯文本，
-     * 让问题至少能到用户眼前（不能因为格式就吞掉）。
-     * <p>{@code timeoutMs} 必须与 {@link #pendingBudgetMs} 用的那份配置同源：前端倒计时读它，
-     * 而真正决定这张卡什么时候作废的是后端那个循环。两处不同源的表现是「界面还在数 8 分钟、
-     * 后端两分钟就把这一轮收了」——用户对着一个已经作废的输入框作答，提交后只得到一句失败提示。
-     */
-    /**
-     * 提问卡<b>第一题的题面</b>（站内通知正文用）。
-     * <p>形状与 {@link #askCard} 认的那一份同源：一卡多问取 {@code questions[0].question}，单题取
-     * {@code question}，两者都不是（模型直接给了一段文本）就把那段当题面。取不到就交回空串——
-     * 通知少一句正文，比拼出一句错话好。
-     */
-    static String firstAskText(Object input) {
-        if (!(input instanceof Map<?, ?> in)) return input == null ? "" : String.valueOf(input).strip();
-        Object qs = in.get("questions");
-        if (qs instanceof List<?> list && !list.isEmpty()) {
-            Object first = list.get(0);
-            if (first instanceof Map<?, ?> q) return str(q.get("question"));
-            return String.valueOf(first).strip();
-        }
-        return str(in.get("question"));
-    }
 
 
 
