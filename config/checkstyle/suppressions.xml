@@ -62,6 +62,13 @@
     <suppress files="[\\/]agent[\\/]tool[\\/]provider[\\/]McpToolProvider\.java\z" checks="CyclomaticComplexity|NPathComplexity"/>
 
     <!-- agentx -->
+    <!--
+      引擎（4602 行，阈值 1200；2026-11 起点 4957，已抽 AgentxModelConfig / TurnMirror / ToolDescription）。
+      剩余阻塞：buildAgent(334行)、followTurn(414行)、finish(304行) 处于问答主链路，
+      与十几个内层状态深耦合。2026-11 曾试抽 translate 层（427行），因与 6 个私有方法互引、
+      编译错误连锁而回退——确认必须配实机浏览器验证（工具调用/审批卡/断线重连）才能动。
+      删除本条目的前置条件：文件 ≤1200 行且所有方法 ≤80 行，非「拆了一块就算」。
+    -->
     <suppress files="[\\/]agentx[\\/]AgentscopeChatEngine\.java\z" checks="FileLength|MethodLength|ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity|ExecutableStatementCount"/>
     <suppress files="[\\/]agentx[\\/]AgentxConfiguration\.java\z" checks="ClassFanOutComplexity"/>
     <suppress files="[\\/]agentx[\\/]AgentxDestructiveCommands\.java\z" checks="MethodLength|CyclomaticComplexity|NPathComplexity|ExecutableStatementCount"/>

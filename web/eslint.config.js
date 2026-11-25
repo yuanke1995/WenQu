@@ -57,7 +57,7 @@ const GRANDFATHERED = [
   'src/chat/turnProcess.js',
   'src/chat/useChatActions.js',
   'src/chat/useChatChrome.js',
-  'src/chat/useChatEngine.js',
+  'src/chat/useChatEngine.js', // 2444行/阈值800；已抽 mention/attachment/sandboxFiles/sandboxProcs。剩余 useChatEngine() 单函数 1879 行，streamAnswer 依赖 40+ 状态，需实机验证才能拆
   'src/chat/useChatScroll.js',
   'src/chat/useCommandPanels.js',
   'src/chat/useDeepAsk.js',
@@ -94,7 +94,7 @@ const GRANDFATHERED = [
   'src/views/AgentEvalPage.vue',
   'src/views/AgentsPage.vue',
   'src/views/AppLayout.vue',
-  'src/views/ChatPage.vue',
+  'src/views/ChatPage.vue', // 2754行/阈值800；CSS 已外置。消息模板 1332 行含 569 个不同标识符，抽子组件=重写渲染层，需实机验证
   'src/views/DashboardPage.vue',
   'src/views/DocumentsPage.vue',
   'src/views/EvaluationPage.vue',
