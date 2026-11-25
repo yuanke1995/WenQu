@@ -193,6 +193,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     private final AgentxAgentBinding agentBinding;
     /** 框架基础设施单例：Redis / 会话状态存储 / distributed store / 模型传输 */
     private final AgentxFrameworkInfra infra;
+    /** system prompt 上下文装配 */
+    private final AgentxPromptContext promptCtx;
     /** 计划卡快照构建（接流/新页签重建计划卡，本类只在需要时调它） */
     private final AgentxPlanCardSnapshot planCardSnapshot;
     /**
@@ -393,6 +395,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         this.sandboxIntent = new AgentxSandboxIntent(sessions, sandboxService, projectService);
         this.agentBinding = new AgentxAgentBinding(tools, orgService, userConfigService, modelRegistry);
         this.infra = new AgentxFrameworkInfra(configService, redisProperties);
+        this.promptCtx = new AgentxPromptContext(properties, projectFileService, projectService, tools,
+                configService, sessionService, cmd -> teamActive(cmd));
         this.skillRepository = skillRepository;
         this.skillStatsStore = skillStatsStore;
         this.orgService = orgService;
@@ -1240,7 +1244,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                                           String guestUid, boolean planFirst, String agentOverride) {
         if (sessionId == null || sessionId.isBlank()) return null;
         String resolvedAgentId = agentOverride == null || agentOverride.isBlank()
-                ? agentIdOfSession(sessionId) : agentOverride;
+                ? promptCtx.agentIdOfSession(sessionId) : agentOverride;
         ChatCommand cmd = ChatCommand.builder().sessionId(sessionId).question("")
                 .userId(userId == null || userId.isBlank() ? "guest" : userId)
                 .agentId(resolvedAgentId)
@@ -1348,7 +1352,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         String uid = cmd.getUserId();
         String sessionId = cmd.getSessionId();
         if (uid == null || uid.isBlank() || sessionId == null || sessionId.isBlank()) return null;
-        String memoryAgentId = memoryAgentIdOf(cmd);
+        String memoryAgentId = promptCtx.memoryAgentIdOf(cmd);
         if (ew != null) {
             if (!sandboxEnabled || ew.kind() == com.wenqu.ai.service.EffectiveWorkspace.Kind.CHAT_SCRATCH) {
                 return sandboxService.chatScratchFilesystem(sessionId, uid, memoryAgentId);
@@ -1549,7 +1553,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             return;
         }
         boolean recover = "ORPHANED".equals(goal.getErrorClass());
-        Following f = openForContinuation(sessionId, uid, turnId, recover, null, n == 1, goalAgentId(goal));
+        Following f = openForContinuation(sessionId, uid, turnId, recover, null, n == 1, promptCtx.goalAgentId(goal));
         if (f == null) {
             goalService.markContinueFailed(goal, "会话实例装配不出来（模型/路由解析失败）");
             goalService.releaseSession(sessionId);
@@ -1945,33 +1949,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
 
 
 
-    private String rolePrompt(Agent bound) {
-        return RolePrompt.of(bound, properties.getSystemPrompt());
-    }
 
-    /**
-     * 团队模式的工具使用引导：只在会话开启团队（或成员轮）时追加。
-     * <p>团队工具全部由框架提供（{@code teamsMode} 注册的 {@code team} 工具 + 框架 agent_*），
-     * 但模型默认不会主动用任务板/邮箱；这里用一小段说清何时用、action 叫什么。
-     */
-    private String teamGuidance(ChatCommand cmd) {
-        if (!teamActive(cmd)) return "";
-        return "\n\n## 智能体团队（已开启）\n"
-                + "复杂或多步、需要协作跟踪的任务，用团队任务板（`team` 工具）："
-                + "`team(action=createTask, subject=…, owner=成员名)` 建任务并可直接派给某位成员，"
-                + "任务有先后时用 `team_task_depend(from, to)` 登记依赖（前置完成，后继才可认领）；"
-                + "`team(action=listClaimableTasks)` 看待认领 → `team(action=claimTask)` 认领 → "
-                + "`team(action=completeTask/failTask)` 完成或失败。\n"
-                + "**要派出「持久成员」（会出现在右栏团队面板、可被再次唤醒），必须调用 `spawnMember` 工具"
-                + "（`spawnMember(member_name=<团队内短名>, agent_ref=<真实智能体id>)`；等价于 `team` 的 spawnMember 动作）**："
-                + "`member_name` 是 1–32 位小写字母/数字/连字符（如 reviewer），`agent_ref` 必须逐字取自 "
-                + "「## Subagents / Available agent ids」，**不要自己编名字**；拿不准就用当前根助手自己的 id。"
-                + "派出后再用 `sendMessage(to_member=<member_name>, message=…)`（或 `team(action=sendMessage, …)`）给它派活。"
-                + "`agent_spawn` 只是**临时同步子轮**（跑完即散、不进团队面板、无任务板写权限），"
-                + "不要用 `agent_spawn` 建团队成员，也不要用它替代 `spawnMember`。"
-                + "跨成员写信同样走 `team(action=sendMessage, to_member=…)`。"
-                + "简单一问一答不要建任务，也不要为凑数建任务。";
-    }
 
     /**
      * 本轮真实挂上的工具注册名，供 {@link ToolDiscipline} 判「该不该说那句跨族分工」。
@@ -2006,115 +1984,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         }
     }
 
-    /**
-     * 续跑时把会话绑定的智能体带回来。
-     * <p>续跑入口（{@link #openForContinuation}）是用空问题重建一条 {@link ChatCommand} 的，若不显式带
-     * {@code agentId}，重建出来的实例会退回平台默认人设——而用户明明是在某个智能体下问的那一轮。
-     * 会话表里存着这份归属（{@code c_ai_session.agent_id}），读一次即可，读不到按默认助手继续。
-     */
-    private String agentIdOfSession(String sessionId) {
-        try {
-            com.wenqu.ai.model.Session s = sessionService.sessionById(sessionId);
-            return s == null ? null : s.getAgentId();
-        } catch (RuntimeException e) {
-            log.warn("[agentx] 续跑解析会话归属智能体失败，按默认助手继续 session={}: {}",
-                    sessionId, e.toString());
-            return null;
-        }
-    }
 
-    /**
-     * 目标续跑轮的作答方：目标行 → 会话列 → 平台默认智能体。
-     * <p>三段缺一不可：目标行是「建目标时是谁在答」，会话列是这轮问答的兜底，
-     * 平台默认是最后一格。少了它，续跑轮就没有智能体绑定，权限档位与审批方式都会回落平台默认，
-     * 用户看到的正是「智能体明明设了自动执行，目标模式仍然逐条弹确认卡」。
-     */
-    private String goalAgentId(com.wenqu.ai.model.Goal goal) {
-        String id = goal == null ? null : goal.getAgentId();
-        if (id == null || id.isBlank()) id = agentIdOfSession(goal == null ? null : goal.getSessionId());
-        if (id == null || id.isBlank()) id = tools.defaultAgentId();
-        return id;
-    }
 
-    /**
-     * 本轮的**工作背景段**：工作区目录的文件简报（目录里有什么，模型才知道该去读哪份）。
-     * <p>取不到就缺席：目录不共用/读失败不注入读不到的清单——不能因为工作背景读失败就把整轮打挂，
-     * 也不能凭空塞「这是兜底容器」的噪声（每轮都是纯 token 成本）。
-     */
-    private String projectContext(ChatCommand cmd) {
-        try {
-            String files = projectFileService.promptBriefOfSession(cmd.getSessionId());
-            return files == null ? "" : files;
-        } catch (Exception e) {
-            log.warn("[agentx] 工作背景读取失败（本轮不注入）session={}: {}", cmd.getSessionId(), e.getMessage());
-            return "";
-        }
-    }
 
-    /**
-     * 工作区级记忆（独立于用户级记忆）：读工作区根目录 .wenqu/MEMORY.md 注入为一段上下文。
-     * 无工作区 / 未绑目录 / 文件不存在 / 执行器离线 / 读失败 → 返回空串，绝不拖累一轮对话。
-     * 写由模型经沙盒文件工具完成（edit_file / write 到 .wenqu/MEMORY.md），前端面板也可直接编辑。
-     */
-    /**
-     * 本轮的智能体记忆域（对外能力第二批）：智能体 memory_mode=专属(1)/叠加(2) 时返回智能体 id——
-     * 记忆路由换到 {@code {uid}/agents/{agentId}} 专属根（注入/工具读写/flush/合并都随根走，框架
-     * WorkspaceContextMiddleware 读的是路由后的那份）；其余（null/0）返回 null = 用户级记忆。
-     */
-    private String memoryAgentIdOf(ChatCommand cmd) {
-        Agent agent = tools.agentOf(cmd);
-        if (agent == null || agent.getId() == null) return null;
-        Integer mode = agent.getMemoryMode();
-        if (mode == null || (mode != 1 && mode != 2)) return null;
-        return agent.getId();
-    }
 
-    /**
-     * 叠加档（memory_mode=2）的用户级全局记忆只读注入：框架记忆根已换到智能体专属根（活跃写），
-     * 用户全局 MEMORY.md 以「资料」身份再注入一份——消毒套信封（与 workspaceMemoryContext 同一
-     * 处置），并明说只读：全局记忆不因本智能体的对话改写，写类工具也落不到它（路由已换根）。
-     * 专属档（1）不注入：替换语义，智能体只看自己的记忆。
-     */
-    private String userMemoryReadonlyContext(ChatCommand cmd) {
-        try {
-            Agent agent = tools.agentOf(cmd);
-            if (agent == null || agent.getMemoryMode() == null || agent.getMemoryMode() != 2) return "";
-            String uid = cmd.getUserId();
-            if (uid == null || uid.isBlank()) return "";
-            java.nio.file.Path md = com.wenqu.ai.memory.MemoryPaths.resolveContent(
-                    configService, uid, null, com.wenqu.ai.memory.MemoryPaths.MEMORY_MD);
-            if (md == null || !java.nio.file.Files.exists(md)) return "";
-            String content = TextIo.readString(md);
-            if (content == null || content.isBlank()) return "";
-            String body = com.wenqu.ai.util.UntrustedContent.toolResult("用户全局记忆 MEMORY.md", content);
-            return "\n\n【用户全局记忆（只读）】下面是这位用户跨智能体沉淀的长期事实，本次对话应当参考。"
-                    + "它是只读背景：本助手的专属记忆在别处维护，不要试图用文件工具修改这份全局记忆。\n" + body;
-        } catch (Exception e) {
-            log.warn("[agentx] 用户全局记忆只读注入失败（跳过）session={}: {}", cmd.getSessionId(), e.getMessage());
-            return "";
-        }
-    }
 
-    private String workspaceMemoryContext(ChatCommand cmd) {
-        try {
-            String projectId = projectService.projectIdOfSession(cmd.getSessionId());
-            if (projectId == null || projectId.isBlank()) return "";
-            String content = projectFileService.readWorkspaceMemory(cmd.getUserId(), projectId);
-            if (content == null || content.isBlank()) return "";
-            // 记忆是用户可直接编辑、也可能被上一轮读到的外部文档污染的文件：按「资料」处理，
-            // 消毒后套信封。持久注入最怕的是它长得像系统指令——信封先于攻击到达模型。
-            String body = com.wenqu.ai.util.UntrustedContent.toolResult(
-                    "工作区记忆 .wenqu/MEMORY.md", content);
-            return "\n\n【工作区记忆】下面是本工作区长期沉淀的项目事实（存于工作区根目录 .wenqu/MEMORY.md），"
-                    + "本次对话应当参考它们。\n" + body
-                    + "\n\n你可以用文件编辑工具（edit_file / write）更新 .wenqu/MEMORY.md，"
-                    + "把本次对话中获得、对今后在本工作区工作有价值的稳定事实（约定、决策、结构、坑、偏好）沉淀进去；"
-                    + "不要写入临时性或一次性的内容。";
-        } catch (Exception e) {
-            log.warn("[agentx] 读取工作区记忆失败（跳过注入）session={}: {}", cmd.getSessionId(), e.getMessage());
-            return "";
-        }
-    }
 
     /**
      * 本机执行器模式的真实执行环境说明。
@@ -2574,9 +2448,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         List<WenquAgentxTools.SubagentTarget> subagentTargets =
                 tools.consultSubagentTargets(cmd, policy, slot);
         // 工作区记忆只读一次：既要拼进系统提示词，也要让本轮污点知道「上下文里已经混有可编辑资料」
-        String workspaceMemory = workspaceMemoryContext(cmd);
+        String workspaceMemory = promptCtx.workspaceMemoryContext(cmd);
         // 叠加档（memory_mode=2）：用户全局 MEMORY.md 以只读资料身份跟注入（专属档不注入，见方法注释）
-        String userMemoryReadonly = userMemoryReadonlyContext(cmd);
+        String userMemoryReadonly = promptCtx.userMemoryReadonlyContext(cmd);
         // 记忆是持久注入面：本轮后续的破坏性命令/越界写要回到人面前确认（见 AgentxTaint）。
         // 实例按会话常驻，这个标记跟着实例走；记忆文件之后新增/清空要等重建才换，方向是「更保守」。
         slot.noteWorkspaceMemoryTainted(!workspaceMemory.isEmpty() || !userMemoryReadonly.isEmpty());
@@ -2595,14 +2469,14 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 用户口径那条（正文/计划/清单不写沙盒路径与工具名）也要跟着挂：框架这一路没人再说第二遍，
                 // 而框架的 PLAN banner 与沙盒工具说明反而主动把路径喂给模型——不挂，
                 // 计划卡就变成「它打算在沙盒里怎么写文件」的说明书
-                .sysPrompt(rolePrompt(binding.row()) + projectContext(cmd)
+                .sysPrompt(promptCtx.rolePrompt(binding.row()) + promptCtx.projectContext(cmd)
                         + workspaceMemory
                         + userMemoryReadonly
                         // 框架会把工作区渲染成服务器沙盒路径；本机执行器模式要补一段真话压住它
                         + localExecutorEnvironment(cmd, ew)
                         + (subagentTargets.isEmpty() ? "" : tools.dispatchDiscipline())
                         // 团队模式：告诉模型何时用团队任务板与成员消息（只有本会话开着团队才追加）
-                        + teamGuidance(cmd)
+                        + promptCtx.teamGuidance(cmd)
                         // 跨族分工（「本机」在 SSH 与桌面两族之间有歧义）：一族的说明代替不了另一族，
                         // 只有这里能说清，且只在本轮真挂了相关工具时追加。
                         + ToolDiscipline.guidance(mountedToolNames(cmd, policy, slot))
