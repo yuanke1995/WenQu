@@ -6,7 +6,7 @@
 import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { isAdminSync, isLoggedIn } from '../utils/auth'
-import { message, Modal } from 'ant-design-vue'
+import { message } from 'ant-design-vue'
 import { sendQuestion, resumeChat, getChatRun, newSession, getHistory, deleteSessionApi, switchMessageVariant, compactSessionApi, sessionHistorySummaryApi, getConfig, getRuntimeConfig, listAvailableAgents, listConsultableAgents,
          listAvailableSkills, getUserPreference, approveToolCall, getToolApproval, answerAgentAsk, ignoreAgentAsk, stopChatTurn, steerChatTurn,
          enqueueSteer, steerQueueList, steerQueued, dropQueued,
@@ -43,6 +43,8 @@ import { createThinkingLevels } from './thinkingLevels.js'
 import { createSkillPicker } from './skillPicker.js'
 import { createMentionPicker } from './mentionPicker.js'
 import { createAttachmentPicker } from './attachmentPicker.js'
+import { useSandboxFiles } from './useSandboxFiles.js'
+import { useSandboxProcs } from './useSandboxProcs.js'
 import { createAgentPicker } from './agentPicker.js'
 import { createModelSelection } from './modelSelection.js'
 import { createTurnDividers } from './turnDividers.js'
@@ -86,7 +88,6 @@ import { applyTurnStart, applyImageFrame, applyDoneCore } from './streamMerge'
 // 裁决完卡片立刻让铃铛角标重算（后端会把已处理的待办通知收敛为已读），不等 30s 轮询
 import { emitNotifChanged } from './useNotifications'
 import { planReplannedAtOf, setPlanReplanned } from './planUiState'
-import { toPosix } from '../utils/pathUtil'
 
 export function useChatEngine (hooks = {}) {
   const route = useRoute()
@@ -2324,339 +2325,33 @@ if (typeof window !== 'undefined') {
   try { onUnmounted(stopSignTimer) } catch (e) { /* 无当前实例：定时器随页面存活，可接受 */ }
 }
 
-// ==================== 本会话沙盒目录（两端同吃这一份） ====================
-// 模型写进沙盒、却没交付成产物的文件也列在这里：工作区文件栏只读 projects/{工作区}，
-// 会话没挂工作区时那份文件躺在 sessions/{会话} 下，本栏按宿主目录读，容器空闲回收后照样列得出来。
-// 两端同吃这一份，「助手在沙盒里做了文件」在手机上也看得见。
-// 与任务清单同一刀：取数、判据、折树只算一份，页面只管怎么摆。
-const sandboxFiles = ref([])
-const sandboxTotal = ref(0)
-const sandboxErr = ref('')
-/** 本机执行器离线、当前列的是云端沙盒文件：界面要说明本机旧文件暂时看不到 */
-const sandboxLocalOffline = ref(false)
-const sandboxLoading = ref(false)
-/** 本轮已取回成产物的路径：按钮点过一次就改口，不邀请重复点（重复点会落出一条同名重复产物） */
-const sandboxTaken = ref(new Set())
-/** 被展开的目录。默认<b>全部收起</b>：这个工作区一上来就摊开上百个文件，右栏那点宽度全被目录行占满，
- *  真正要找的那份成品反而要往下翻。用户点开哪个记哪个（一轮收尾重拉文件列表时保留，不把人家刚点开的收回去），
- *  切会话才清空——换了份目录，旧路径没有指代对象。 */
-const sandboxOpened = ref(new Set())
-// 沙盒系工具名单：与后端 FrameworkToolLabels.FilesystemToolNames 同口径，另加 run_code（SANDBOX 族仅存的
-// 一把）与 deliver_artifact（把沙盒里做出来的文件存进会话）；ls 是老名，只为按裸名落库的历史兜底。
-const SANDBOX_TOOL_NAMES = new Set(['execute', 'run_code', 'read_file', 'write_file', 'edit_file',
-                                    'grep_files', 'glob_files', 'list_files', 'ls', 'deliver_artifact'])
-/** 本会话是否真用过沙盒：沙盒目录要等模型第一次往里写东西才由 provisioner 建出来——没用过沙盒
- *  工具的会话（新用户第一问最典型）连本人 workspace 根都还没有，这时去拉文件列表只会撞上
- *  「沙盒可能部署在另一台机器上」的假故障。判据认「成功跑完的沙盒系工具调用」：
- *  被拒/失败的调用没建出任何目录，不算——只认 done 顺带把「审批被拒却报目录故障」也挡掉。
- *  会话目录里出现文件 ⟺ 本会话有过成功的沙盒系调用（附件、模板复制都落各自的目录，不进这里）。 */
-const sessionSandboxActive = computed(() => messages.value.some(m => m.role !== 'user'
-  && Array.isArray(m.toolCalls)
-  && m.toolCalls.some(t => t && t.status === 'done' && SANDBOX_TOOL_NAMES.has(t.name))))
-
-async function loadSandboxFiles () {
-  const sid = currentSessionId.value
-  sandboxTaken.value = new Set()
-  if (!sid || !sessionSandboxActive.value) {
-    sandboxFiles.value = []
-    sandboxTotal.value = 0
-    sandboxErr.value = ''
-    sandboxLocalOffline.value = false
-    sandboxLoading.value = false
-    return
-  }
-  sandboxLoading.value = true
-  sandboxErr.value = ''
-  try {
-    const r = await listSandboxFiles(sid)
-    // 迟到的结果不上屏：await 期间可能已切走会话、或判据翻假（切会话那一瞬 messages 还是
-    // 上一个会话的，历史落位才揭出本会话没用过沙盒）——上屏就会把误报/旧文件盖进当前视图
-    if (currentSessionId.value !== sid || !sessionSandboxActive.value) return
-    sandboxLocalOffline.value = Boolean(r?.data?.localOffline)
-    sandboxFiles.value = (r && r.data && r.data.files) || []
-    // 条数认服务端给的总数，不认到手这一截：一屏只回最新 300 个，只报到手数量会把「没列全」说成「就这些」
-    sandboxTotal.value = Number(r?.data?.total) || sandboxFiles.value.length
-  } catch (e) {
-    if (currentSessionId.value !== sid || !sessionSandboxActive.value) return
-    // 失败必须说出来并给重试：静默成空列表，用户读到的是「我让它做的文件没了」
-    sandboxFiles.value = []
-    sandboxTotal.value = 0
-    sandboxErr.value = e?.message || '沙盒目录读取失败'
-    sandboxLocalOffline.value = false
-  } finally {
-    // 只收拾自己这个会话的 loading：切换后新一次加载正在飞，别把它的小字提示掐了
-    if (currentSessionId.value === sid) sandboxLoading.value = false
-  }
-}
-
-/** 相对路径折回目录树；目录行的个数/体积是**整棵子树**的，所以一个上百文件的构建目录先看计数就知道值不值得点 */
-const sandboxTree = computed(() => {
-  const root = { name: '', path: '', dirs: new Map(), files: [], count: 0, size: 0, newest: 0 }
-  for (const f of sandboxFiles.value) {
-    const segs = toPosix(f.path).split('/').filter(Boolean)
-    segs.pop()   // 末段是文件名，前面的才是目录
-    let node = root
-    let acc = ''
-    for (const seg of segs) {
-      acc = acc ? acc + '/' + seg : seg
-      let d = node.dirs.get(seg)
-      if (!d) {
-        d = { name: seg, path: acc, dirs: new Map(), files: [], count: 0, size: 0, newest: 0 }
-        node.dirs.set(seg, d)
-      }
-      node = d
-    }
-    node.files.push(f)
-  }
-  const roll = d => {
-    for (const f of d.files) {
-      d.count += 1
-      d.size += Number(f.size) || 0
-      d.newest = Math.max(d.newest, Number(f.mtime) || 0)
-    }
-    for (const sub of d.dirs.values()) {
-      roll(sub)
-      d.count += sub.count
-      d.size += sub.size
-      d.newest = Math.max(d.newest, sub.newest)
-    }
-    return d
-  }
-  return roll(root)
+// 本会话沙盒目录的状态与取数已抽到 useSandboxFiles.js（含三个重拉 watch）。
+// 这里解构出同名变量，下面所有读写点一行不改。
+const {
+  sandboxFiles, sandboxErr, sandboxLocalOffline, sandboxLoading,
+  sandboxTaken, sessionSandboxActive, loadSandboxFiles,
+  sandboxDownload, sandboxTake, sandboxRows, sandboxCount, sandboxBytes, sandboxRest,
+  sbSize, toggleSandboxDir,
+} = useSandboxFiles({
+  currentSessionId, loading, messages, notify: message,
+  listApi: listSandboxFiles, downloadApi: downloadSandboxFile, takeApi: sandboxFileToArtifact,
 })
-/** 树按收起状态摊平成可渲染的行。同层先目录后文件——文件夹跟文件按时间混排时，一个刚写进去的名字
- *  就把目录行挤到下面，脉络读不出来；组内仍按最新在前（整栏的读法仍是「刚做出来的在最上面」） */
-const sandboxRows = computed(() => {
-  const out = []
-  const walk = (node, depth) => {
-    const kids = [
-      ...[...node.dirs.values()].map(d => ({ dir: true, node: d, newest: d.newest })),
-      ...node.files.map(f => ({ dir: false, node: f, newest: Number(f.mtime) || 0 })),
-    ].sort((a, b) => (b.dir === a.dir ? 0 : b.dir ? 1 : -1) || b.newest - a.newest)
-    for (const k of kids) {
-      if (!k.dir) {
-        out.push({ type: 'file', key: k.node.path, depth, file: k.node })
-        continue
-      }
-      const open = sandboxOpened.value.has(k.node.path)
-      out.push({ type: 'dir', key: 'd:' + k.node.path, depth, dir: k.node, open })
-      if (open) walk(k.node, depth + 1)
-    }
-  }
-  walk(sandboxTree.value, 0)
-  return out
+// 会话后台进程的状态与取数已抽到 useSandboxProcs.js（重拉 watch 同在模块内）。
+// onSandboxRan 与生命周期钩子留在本文件：onUnmounted 还管着恢复态轮询与重挂循环，不归进程块。
+const {
+  procs, procSides, procNotices, procErr, procLoading, procCardVisible, procScanActive,
+  killingTag, killingAll, procAge, sandboxRanOnce,
+  loadSandboxProcs, killProc, killAllProcs, stopProcTimer,
+} = useSandboxProcs({
+  currentSessionId, loading, messages, notify: message,
+  listApi: listSessionProcs, killApi: killSessionProc, killAllApi: killAllSessionProcs,
+  refreshBadges: refreshProcBadges,
 })
-const sandboxCount = computed(() => sandboxTotal.value || sandboxFiles.value.length)
-const sandboxBytes = computed(() => sandboxTree.value.size)
-const sandboxRest = computed(() => Math.max(0, sandboxTotal.value - sandboxFiles.value.length))
-/** 体积文案要省着写：10 KB 以下留一位小数（1.4 KB 分得出大小），往上取整（146 KB 不需要那两位） */
-const sbSize = n => {
-  const v = Number(n) || 0
-  return v >= 1024 * 1024 ? (v / 1024 / 1024).toFixed(1) + ' MB'
-    : v >= 10 * 1024 ? Math.round(v / 1024) + ' KB'
-    : v >= 1024 ? (v / 1024).toFixed(1) + ' KB' : v + ' B'
-}
-const toggleSandboxDir = path => {
-  const next = new Set(sandboxOpened.value)
-  if (next.has(path)) next.delete(path)
-  else next.add(path)
-  sandboxOpened.value = next
-}
-async function sandboxDownload (f) {
-  const sid = currentSessionId.value
-  if (!sid) return
-  try {
-    await downloadSandboxFile(sid, f.path, f.name)
-  } catch (e) {
-    message.warning(`下载失败：${e?.message || '沙盒目录读不到这个文件'}`)
-  }
-}
-async function sandboxTake (f) {
-  const sid = currentSessionId.value
-  if (!sid) return
-  try {
-    await sandboxFileToArtifact(sid, f.path)
-    sandboxTaken.value = new Set([...sandboxTaken.value, f.path])
-    message.success('已存为产物，可在「我的产物」里查看')
-  } catch (e) {
-    message.warning(`存为产物失败：${e?.message || '文件过大或该类型不支持作为产物'}`)
-  }
-}
-
-// 三个重拉时机，与 PC 原行为逐字等价：切会话（顺带把展开态归零）、一轮收尾（交付物是那轮做出来的，
-// 不重拉就要刷新页面才看得见）、判据翻转（切会话那一瞬判据可能还是上一个会话的旧值）
-watch(currentSessionId, () => { sandboxOpened.value = new Set(); loadSandboxFiles() })
-watch(() => loading.value, (v, prev) => { if (prev && !v) loadSandboxFiles() })
-watch(sessionSandboxActive, () => { loadSandboxFiles() })
-
-// ==================== 会话后台进程（两端同吃这一份） ====================
-// 助手「把写好的前后端跑起来自己看效果」时起的是 npm run dev 这类**不会自己退**的进程。
-// 两个来源合成一张清单：工作区会话跑在本机执行器（进程在你电脑上），会话栏会话跑在服务器沙盒；
-// 同一条会话在执行器离线的那几轮会退回沙盒，两边都可能背着进程，所以这里不按来源拆两张卡。
-// 真源各自在源头：执行器读自己的进程登记 + ps 实况，沙盒读容器 /proc，服务端不留台账——
-// 执行器重启、后端重启都照得到；进程自己退了/被回收，清单自然清空。
-const procs = ref([])
-/** 来源状态：local/sandbox 各自 {applicable,available,reason,message}。读不到与没有进程是两件事 */
-const procSides = ref({})
-const procErr = ref('')
-const procLoading = ref(false)
-/** 本会话点过回答里的「在沙盒中运行」：那条路没有工具调用记录，光靠 sessionSandboxActive 判不出用过沙盒 */
-const sandboxRanOnce = ref(false)
-/** 能起进程的工具：execute（本机/沙盒命令）与 run_code（沙盒脚本）。
- *  只读写文件的会话没得扫，别为它们去问执行器（那会让「执行器离线」在纯读文件的会话上白弹一句）。 */
-const PROC_TOOL_NAMES = new Set(['execute', 'run_code'])
-const sessionProcActive = computed(() => messages.value.some(m => m.role !== 'user'
-  && Array.isArray(m.toolCalls)
-  && m.toolCalls.some(t => t && t.status === 'done' && PROC_TOOL_NAMES.has(t.name))))
-/** 要不要扫：本会话跑过命令/脚本（或点过回答里的「在沙盒中运行」）。没用过就没得扫。
- *  这条与「卡要不要露脸」必须分开——判据里若掺进 procs 是否为空，空清单会让这里短路，
- *  于是下一次扫永远发不出去，起了真进程也再也不会显示。 */
-const procScanActive = computed(() => sessionProcActive.value || sandboxRanOnce.value)
-/** 来源给的提醒（离线/版本旧/读取失败）：卡上要看得见，绝不静默成「没有进程」 */
-const procNotices = computed(() => {
-  const out = []
-  const sides = procSides.value || {}
-  for (const side of ['local', 'sandbox']) {
-    const s = sides[side]
-    if (!s || !s.message) continue
-    if (s.available && s.reason !== 'executor-too-old') continue
-    out.push({ side, reason: s.reason || 'error', message: s.message })
-  }
-  return out
-})
-/** 卡只在<b>扫到了东西</b>或<b>有提醒/失败</b>时露脸：一条都没扫到就整张不显示。
- *  常驻一句「后台进程 · 没有」等于把「我查过了，没事」当成用户要看的东西，
- *  而这在用过命令的会话里是绝大多数情况。读不到 ≠ 没有，所以那种情形照显示，且给重试。 */
-const procCardVisible = computed(() => procScanActive.value
-  && (procs.value.length > 0 || procNotices.value.length > 0 || !!procErr.value))
-/** 正在停的那一棵：只让这一行的按钮变灰变字，别把整张卡按成 loading（用户还在看其余几行） */
-const killingTag = ref('')
-/** 全部停止进行中：整卡按钮置灰，避免连点 */
-const killingAll = ref(false)
-/** 秒针（1s）：「跑了多久」按 startedAt 现算，不是每次重扫——不然数字停在「17 秒」看着像整张卡死了 */
-const nowTick = ref(Date.now())
-async function loadSandboxProcs () {
-  const sid = currentSessionId.value
-  if (!sid || !procScanActive.value) {
-    procs.value = []
-    procSides.value = {}
-    procErr.value = ''
-    procLoading.value = false
-    return
-  }
-  procLoading.value = true
-  procErr.value = ''
-  try {
-    const r = await listSessionProcs(sid)
-    if (currentSessionId.value !== sid || !procScanActive.value) return
-    procs.value = (r && r.data && r.data.procs) || []
-    procSides.value = (r && r.data && r.data.sides) || {}
-  } catch (e) {
-    if (currentSessionId.value !== sid || !procScanActive.value) return
-    // 「读不到进程表」和「没有后台进程」是两件事，静默成空列表会把一个正占着端口的服务读成不存在
-    procs.value = []
-    procSides.value = {}
-    procErr.value = e?.message || '读不到会话里的进程'
-  } finally {
-    if (currentSessionId.value === sid) {
-      procLoading.value = false
-      ensureProcTimer()   // 有在跑的就挂秒针，全停完了就把定时器摘掉
-    }
-  }
-}
-/** 跑了多久：这一栏答的是「忘了关的那个跑了多久」，分钟以上就不必再报秒 */
-function procAge (p) {
-  const s = p.startedAt ? Math.max(0, Math.floor((nowTick.value - p.startedAt) / 1000)) : (Number(p.elapsedSec) || 0)
-  if (s < 60) return `${s} 秒`
-  const m = Math.floor(s / 60)
-  if (m < 60) return `${m} 分钟`
-  const h = Math.floor(m / 60)
-  return `${h} 小时 ${m % 60} 分`
-}
-/** 秒针（1s）与实况重扫（30s）共用一个定时器：只在卡上有进程时挂着，空卡不白问执行器 */
-let procTimer = null
-function ensureProcTimer () {
-  const need = procs.value.length > 0
-  if (!need && procTimer) { clearInterval(procTimer); procTimer = null; return }
-  if (need && !procTimer) {
-    let n = 0
-    procTimer = setInterval(() => {
-      nowTick.value = Date.now()
-      // 定时重扫：进程在别处被杀掉、或自己退出了，这一行要自己消失，而不是挂着个「在跑」骗人
-      if (++n % 30 === 0 && !killingTag.value && !killingAll.value && !procLoading.value) loadSandboxProcs()
-    }, 1000)
-  }
-}
-async function killProc (p) {
-  const sid = currentSessionId.value
-  if (!sid || killingTag.value || killingAll.value) return
-  killingTag.value = p.tag
-  try {
-    const r = await killSessionProc(sid, p.side || 'sandbox', p.tag)
-    const killed = Number(r?.data?.killed) || 0
-    const remaining = Number(r?.data?.remaining) || 0
-    // 三种结果分开说：停掉了几个 / 有停不下来的 / 它本来就自己退了——最后那种不能报「已停止」，
-    // 用户会以为是自己这一刀救回来的
-    if (remaining > 0) message.error(`有 ${remaining} 个进程停不下来（可能卡在不可中断的读写上），可再刷新确认`)
-    else if (killed > 0) message.success(`已停掉 ${killed} 个进程，占用的端口随之释放`)
-    else message.info('这个进程已经自己退出了')
-  } catch (e) {
-    message.error(e?.message || '停止失败')
-  } finally {
-    killingTag.value = ''
-    await loadSandboxProcs()
-    // 停完顺手喊侧栏重扫：那一行的「还背着进程」不该再等下一轮轮询才灭
-    refreshProcBadges()
-  }
-}
-/** 停掉本会话起的全部进程树（按当前清单里出现过的来源分别停） */
-async function killAllProcs () {
-  const sid = currentSessionId.value
-  if (!sid || killingTag.value || killingAll.value) return
-  const sides = [...new Set(procs.value.map(p => p.side || 'sandbox'))]
-  if (!sides.length) return
-  const total = procs.value.length
-  Modal.confirm({
-    title: '停止本会话全部后台进程？',
-    content: `会停掉 ${total} 棵进程树并释放端口${sides.includes('local') ? '（本机执行器上的进程）' : ''}`
-      + `${sides.includes('sandbox') && sides.includes('local') ? '、' : ''}${sides.includes('sandbox') ? '（沙盒里只有本会话起的）' : ''}。`,
-    okText: '全部停止',
-    okType: 'danger',
-    cancelText: '取消',
-    onOk: async () => {
-      killingAll.value = true
-      let killed = 0
-      let remaining = 0
-      let failed = 0
-      for (const side of sides) {
-        try {
-          const r = await killAllSessionProcs(sid, side)
-          killed += Number(r?.data?.killed) || 0
-          remaining += Number(r?.data?.remaining) || 0
-        } catch {
-          failed++
-        }
-      }
-      killingAll.value = false
-      if (failed && !killed && !remaining) message.error('全部停止失败，可刷新后重试')
-      else if (remaining > 0) message.error(`已停 ${killed} 个，还有 ${remaining} 个停不下来`)
-      else if (killed > 0) message.success(`已停掉 ${killed} 个进程，占用的端口随之释放`)
-      else message.info('这些进程已经自己退出了')
-      await loadSandboxProcs()
-      refreshProcBadges()
-    }
-  })
-}
-// 重扫时机与沙盒文件同一批：一轮跑完（占端口的服务恰恰是在这一轮里起的）、判据翻转、切会话。
-// 「点过运行按钮」是这一会话的事，切走就作废。
-watch(() => loading.value, (v, prev) => { if (prev && !v) { loadSandboxProcs(); refreshProcBadges() } })
-watch(sessionProcActive, () => { loadSandboxProcs() })
-watch(currentSessionId, () => { sandboxRanOnce.value = false; loadSandboxProcs() })
 const onSandboxRan = () => { sandboxRanOnce.value = true; loadSandboxProcs() }
 onMounted(() => window.addEventListener('app:sandbox-ran', onSandboxRan))
 onUnmounted(() => {
   window.removeEventListener('app:sandbox-ran', onSandboxRan)
-  if (procTimer) { clearInterval(procTimer); procTimer = null }
+  stopProcTimer()
   // 恢复态轮询的自停条件只看「会话没变」，组件卸载改变不了它——不摘就是离开聊天页后
   // 每 4s 一次 getHistory 最多再打 45 跳
   stopRestoredPoll()
