@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>右侧团队面板 · iPad 适配效果图</title>
+<style>
+  :root{
+    --app-panel:#fff; --app-panel-2:#fafbfc; --app-panel-3:#f2f4f7;
+    --app-border:#e6e9ed; --app-border-2:#eef0f3;
+    --app-text:#1f2329; --app-text2:#5f6570; --app-text3:#98a0aa;
+    --app-accent:#4f6ef7; --app-accent-weak:#eef4ff; --app-accent-border:#c9dbfb;
+    --app-shadow-lg:0 12px 32px rgba(16,24,40,.14);
+    --app-radius:12px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:28px;background:#eef1f5;color:var(--app-text);
+       font:13px/1.5 -apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue",sans-serif}
+  h1{font-size:20px;margin:0 0 6px;letter-spacing:-.01em}
+  .lead{color:var(--app-text2);margin:0 0 22px;font-size:12.5px;max-width:1100px;line-height:1.75}
+  .grid{display:flex;gap:26px;align-items:flex-start;flex-wrap:wrap}
+  .col{display:flex;flex-direction:column;gap:10px}
+  .cap{font-size:12px;color:var(--app-text2)}
+  .cap b{color:var(--app-text)}
+  .tagline{display:inline-flex;gap:6px;align-items:center;font-size:11px;font-weight:650;padding:1px 8px;border-radius:999px}
+  .tagline.bad{background:#fff1f0;color:#cf1322;border:1px solid #ffccc7}
+  .tagline.good{background:#f0fbf3;color:#2f7d42;border:1px solid #c9ebd2}
+
+  /* 视口模拟：iPad 竖屏 1024（右栏走 ≤1200 浮层档）与 900 分屏，以及 1180 横屏 */
+  .vp{position:relative;background:#fff;border:1px solid #cfd6df;border-radius:14px;overflow:hidden;box-shadow:0 1px 2px rgba(16,24,40,.06)}
+  .vp .bar{height:40px;display:flex;align-items:center;gap:8px;padding:0 12px;border-bottom:1px solid var(--app-border);font-size:11.5px;color:var(--app-text3);background:#fff}
+  .vp .bar .tt{font-weight:650;color:var(--app-text)}
+  .vp .bar .pill{margin-left:auto;display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border:1px solid var(--app-border);border-radius:999px;background:#fff;color:var(--app-text2)}
+  .vp .body{position:relative;background:#fff;height:560px}
+  .vp .ghost{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#c3c9d2;font-size:12px;background:repeating-linear-gradient(135deg,#fbfcfd 0 12px,#f6f8fa 12px 24px)}
+  /* 右栏面板：与 .right-panel 同形（浮层档：右贴边、上留 56、下留 12；圆角、投影、左右内边距 10） */
+  .panel{position:absolute;top:14px;right:12px;bottom:12px;width:var(--pw);display:flex;flex-direction:column;
+         background:var(--app-panel);border:1px solid var(--app-border);border-radius:var(--app-radius);
+         box-shadow:var(--app-shadow-lg);padding:12px 10px 56px;gap:10px;overflow:hidden}
+  .tabs{display:flex;gap:2px;padding:3px;background:var(--app-panel-3);border-radius:9px;flex:none}
+  .tab{flex:1;min-width:0;height:27px;padding:0 5px;border-radius:7px;display:inline-flex;align-items:center;justify-content:center;gap:5px;
+       font-size:11.5px;color:var(--app-text2);white-space:nowrap}
+  .tab .n{font-size:10px;color:var(--app-text3);font-variant-numeric:tabular-nums}
+  .tab.on{background:var(--app-panel);color:var(--app-text);font-weight:600;box-shadow:0 1px 2px rgba(16,24,40,.06)}
+  .tab.on .n{color:var(--app-accent)}
+
+  .tp-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex:none}
+  .tp-head-l{display:flex;align-items:center;gap:10px;min-width:0}
+  .tp-ic{width:32px;height:32px;flex:none;border-radius:9px;display:flex;align-items:center;justify-content:center;
+         background:linear-gradient(135deg,#8B7CF6,#6D28D9);color:#fff;box-shadow:0 2px 6px rgba(109,40,217,.28)}
+  .tp-ic svg{width:18px;height:18px}
+  .tp-title{font-size:14px;font-weight:650;letter-spacing:-.01em}
+  .tp-sub{font-size:11px;color:var(--app-text3);margin-top:1px}
+  .sw{width:38px;height:22px;border-radius:999px;background:var(--app-accent);position:relative;flex:none}
+  .sw::after{content:"";position:absolute;top:2px;left:18px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2)}
+
+  .card{border:1px solid var(--app-border);border-radius:12px;background:var(--app-panel);overflow:hidden;flex:none}
+  .card-hd{display:flex;align-items:center;justify-content:space-between;padding:9px 12px;border-bottom:1px solid var(--app-border-2);background:var(--app-panel-2)}
+  .card-t{font-size:12px;font-weight:650}
+  .card-meta{font-size:10.5px;color:var(--app-text3)}
+  .mem-list{padding:4px}
+
+  /* ===== 成员行：改前 ===== */
+  .mem-row{display:flex;align-items:center;gap:10px;padding:8px;border-radius:9px}
+  .avatar{width:30px;height:30px;border-radius:8px;flex:none;display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;font-weight:700;box-shadow:0 1px 3px rgba(16,24,40,.12)}
+  .mem-main{min-width:0;flex:1}
+  .mem-top{display:flex;align-items:center;gap:6px}
+  .mem-name{font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:130px}
+  .mem-sub{font-size:10.5px;color:var(--app-text3);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mem-state{flex:none;display:inline-flex;align-items:center;gap:4px;font-size:10px;color:var(--app-text2)}
+  .mem-state .d{width:6px;height:6px;border-radius:50%;background:#c8ced6}
+  .mem-state.run{color:#3b8f4e}.mem-state.run .d{background:#3b8f4e;box-shadow:0 0 0 3px rgba(59,143,78,.15)}
+  .mem-state.wait{color:#a3691b}.mem-state.wait .d{background:#a3691b}
+  .mem-acts{flex:none;display:flex;gap:1px}
+  .iact{width:24px;height:24px;border:0;background:transparent;border-radius:6px;color:var(--app-text3);display:inline-flex;align-items:center;justify-content:center;padding:0}
+  .iact svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+  .iact.danger{color:#cf1322}
+  .mem-tree{margin-left:16px;padding-left:8px;border-left:1px dashed var(--app-border);display:flex;flex-direction:column;gap:2px}
+  .mem-row.nested{position:relative}
+  .mem-row.nested::before{content:"";position:absolute;left:-8px;top:50%;width:10px;height:1px;background:var(--app-border)}
+  .tag-root{height:15px;padding:0 5px;border-radius:4px;background:var(--app-accent-weak);color:#2e6be6;border:1px solid var(--app-accent-border);font-size:9px;font-weight:650;display:inline-flex;align-items:center}
+  .tag-code{height:15px;padding:0 5px;border-radius:4px;background:#f5f3ff;color:#7c3aed;border:1px solid #ddd6fe;font-size:9px;font-weight:650;display:inline-flex;align-items:center}
+  .squash .mem-name{max-width:none;flex:1;min-width:0}
+  .squash .mem-state,.squash .mem-acts{flex:none}
+  .squash .mem-row{flex-wrap:nowrap;overflow:hidden}
+
+  /* ===== 成员行：改后 ===== */
+  .after .mem-name{max-width:none;flex:0 1 auto;min-width:0}
+  .after .mem-top{min-width:0}
+  .after .mem-acts{flex:none;display:flex;gap:4px;margin-left:auto;align-self:flex-start;margin-top:-2px}
+  .after .iact{width:30px;height:30px;border-radius:8px;border:1px solid var(--app-border);background:var(--app-panel)}
+  .after .iact.danger{background:#fff1f0;border-color:#ffccc7;color:#cf1322}
+  .after .mem-state{font-size:10px}
+  .after .mem-state::before{content:"";width:1px;height:8px;background:var(--app-border);margin-right:3px}
+  .after .mem-state.solo::before{display:none}
+  .after .mem-row{align-items:flex-start}
+  .after .avatar{margin-top:1px}
+  .after .mem-main{flex:1;min-width:0}
+  .after .mem-top{display:flex;align-items:center;gap:6px;flex-wrap:nowrap;overflow:hidden}
+  .after .mem-sub{display:flex;align-items:center;min-width:0}
+  .after .mem-sub .txt{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:flex;align-items:center;gap:6px}
+
+  .note{margin-top:22px;background:#fff;border:1px solid var(--app-border);border-radius:12px;padding:14px 18px;max-width:1100px}
+  .note h2{font-size:13px;margin:0 0 8px}
+  .note ol,.note ul{margin:0;padding-left:20px;font-size:12.5px;line-height:1.85;color:var(--app-text2)}
+  .note code{font-size:11.5px;background:#f2f4f7;border-radius:4px;padding:1px 5px;color:#3b4148}
+  .measure{font-size:11px;color:var(--app-text3);margin-top:6px}
+</style>
+</head>
+<body>
+  <h1>右侧「团队」面板 · iPad 适配</h1>
+  <p class="lead">
+    现象：iPad（竖屏 1024 / 分屏 900 / 横屏 1180）上，右栏走的是 <code>≤1200</code> 的浮层档，宽度被写死 260px。
+    外框 260 − 内边距 20 − 卡片边框/内边距 18 − 树缩进 24 = 成员行只剩约 175px，再扣掉头像 30、间距 20、状态 30～40、动作 24～49，
+    名字一栏只剩 <b>45px</b>（「取数助手」5 个字要 50px）——名字被截成「取数…」，带「等消息 + 叫停」的行名字栏直接 <b>0px</b>，
+    行内只剩头像和两个按钮。触屏没有 hover，动作又必须常驻，横向更挤。
+  </p>
+
+  <div class="grid">
+    <!-- 改前 -->
+    <div class="col">
+      <div class="cap"><span class="tagline bad">改前</span> iPad 竖屏 1024 · 右栏浮层 260px</div>
+      <div class="vp" style="width:520px">
+        <div class="bar"><span class="tt">新对话</span><span class="pill">● 团队 · 5</span></div>
+        <div class="body">
+          <div class="ghost">对话区</div>
+          <div class="panel" style="--pw:260px">
+            <div class="tabs"><span class="tab">过程<span class="n">0</span></span><span class="tab">来源<span class="n">0</span></span><span class="tab">文件<span class="n">0</span></span><span class="tab">浏览</span><span class="tab on">团队</span></div>
+            <div class="tp-head">
+              <div class="tp-head-l">
+                <span class="tp-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3"/><path d="M3 20c0-3 2.7-5 6-5s6 2 6 5"/><circle cx="17" cy="9" r="2"/><path d="M16 20c0-2 1.5-3.5 3.5-3.5S23 18 23 20"/></svg></span>
+                <div><div class="tp-title">智能体团队</div><div class="tp-sub">本会话派出、可被消息唤醒的成员</div></div>
+              </div>
+              <span class="sw"></span>
+            </div>
+            <section class="card squash after-reset" style="flex:none">
+              <div class="card-hd"><span class="card-t">团队成员</span><span class="card-meta">5 空闲/离线</span></div>
+              <div class="mem-list">
+                <div class="mem-row">
+                  <span class="avatar" style="background:linear-gradient(135deg,#5E93F5,#2A5FE0)">问</span>
+                  <div class="mem-main"><div class="mem-top"><span class="mem-name">问渠</span><span class="tag-root">主</span></div><div class="mem-sub">新对话</div></div>
+                </div>
+                <div class="mem-tree">
+                  <div class="mem-row nested">
+                    <span class="avatar" style="background:linear-gradient(135deg,#8B7CF6,#6D28D9)">取</span>
+                    <div class="mem-main"><div class="mem-top"><span class="mem-name">取数…</span></div><div class="mem-sub">请按以…</div></div>
+                    <span class="mem-state"><i class="d"></i>空闲</span>
+                    <div class="mem-acts"><button class="iact"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 9h8M8 13h5"/></svg></button></div>
+                  </div>
+                  <div class="mem-row nested">
+                    <span class="avatar" style="background:linear-gradient(135deg,#F5A442,#C2761B)">数</span>
+                    <div class="mem-main"><div class="mem-top"><span class="mem-name">数据…</span></div><div class="mem-sub">数据核…</div></div>
+                    <span class="mem-state"><i class="d"></i>空闲</span>
+                    <div class="mem-acts"><button class="iact"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 9h8M8 13h5"/></svg></button></div>
+                  </div>
+                  <div class="mem-row nested" style="padding-left:24px">
+                    <span class="avatar" style="background:linear-gradient(135deg,#5E93F5,#2A5FE0)">子</span>
+                    <div class="mem-main"><div class="mem-top"><span class="mem-name">子…</span></div><div class="mem-sub">慢…</div></div>
+                    <span class="mem-state"><i class="d"></i>空闲</span>
+                    <div class="mem-acts"><button class="iact"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 9h8M8 13h5"/></svg></button></div>
+                  </div>
+                  <div class="mem-row nested" style="padding-left:24px">
+                    <span class="avatar" style="background:linear-gradient(135deg,#22B8A6,#0E7490)">审</span>
+                    <div class="mem-main"><div class="mem-top"><span class="mem-name" style="max-width:0;opacity:0">审查助手</span></div><div class="mem-sub" style="opacity:0">审查…</div></div>
+                    <span class="mem-state wait"><i class="d"></i>等消息</span>
+                    <div class="mem-acts">
+                      <button class="iact"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 9h8M8 13h5"/></svg></button>
+                      <button class="iact"><svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </div>
+        </div>
+      </div>
+      <div class="measure">行内可用 175px：头像 30 + 间距 20 + 状态 30～40 + 动作 24～49 → 名字 45px / 0px</div>
+    </div>
+
+    <!-- 改后：1024 -->
+    <div class="col">
+      <div class="cap"><span class="tagline good">改后</span> iPad 竖屏 1024 · 右栏 <b>400px</b>（min(400, 视口−80)）· 真实运行截图</div>
+      <div class="vp" style="width:664px">
+        <img src="改后-iPad1024.png" style="display:block;width:664px;height:auto">
+      </div>
+      <div class="measure">名字 50/50（完整）· 职责与状态在副行 · 动作 30×30 常驻行尾；改前同样数据是 45/50 与 0/50</div>
+    </div>
+  </div>
+
+  <div class="grid" style="margin-top:22px">
+    <div class="col">
+      <div class="cap">iPad 分屏 900 · 右栏 400px · 真实运行截图</div>
+      <div class="vp" style="width:420px"><img src="改后-iPad900.png" style="display:block;width:420px;height:auto"></div>
+    </div>
+    <div class="col" style="max-width:560px">
+      <div class="cap">手机 420 · 右栏仍是底部 sheet（<code>.as-sheet</code> 的 <code>width:auto</code> 覆盖浮层宽度）· 真实运行截图</div>
+      <div class="vp" style="width:300px"><img src="改后-手机420.png" style="display:block;width:300px;height:auto"></div>
+    </div>
+  </div>
+
+  <div class="note">
+    <h2>改法（两处，都不改数据与交互语义）</h2>
+    <ol>
+      <li><b>外框：浮层档宽度不再写死 260px。</b> <code>@media (max-width:1200px) .right-panel{width:260px}</code> 改为
+        <code>width: min(400px, 100vw - 80px)</code>。900 视口得 400；600 得 520 前的 400；再窄（手机 375）得 295，仍留 80px 能点到对话区外关闭。
+        宽屏常驻两栏（>1200）继续由拖拽条 <code>--rp-w</code> 控制，本图不变。</li>
+      <li><b>成员行改成两段式。</b> 首行只放头像 + 名字（+ 代号/本轮徽标）+ 动作；「职责副标题」与「状态」合并到副行，
+        状态落在副行右端、长职责自己省略。名字 <code>max-width:130px</code> 的硬上限去掉（那是对更宽旧版式的妥协，现在名字拿到的是整行剩余宽度）。
+        触屏仍常驻动作（手指无 hover），只是从 24px 放大到 30px 并给出可见边框。</li>
+    </ol>
+    <h2>不动的东西</h2>
+    <ul>
+      <li>成员排序/树形缩进/状态词与配色/点击进成员会话/叫停逻辑：全部原样。</li>
+      <li>右栏其余页签（过程 / 来源 / 文件 / 浏览）在同一外框下变宽，本来就按 <code>min-width:0</code> + 省略号写，只会更松。</li>
+      <li>手机（&lt;=768）右栏是底部 sheet，<code>as-sheet</code> 的 <code>width:auto</code> 覆盖本改动，形态不变。</li>
+    </ul>
+  </div>
+</body>
+</html>
