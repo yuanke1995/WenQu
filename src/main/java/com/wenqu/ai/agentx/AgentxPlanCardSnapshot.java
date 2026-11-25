@@ -33,6 +33,24 @@ public class AgentxPlanCardSnapshot {
         java.util.List<Map<String, Object>> all = recording.planVersionsCopy();
         String draft = recording.planDraftText();
 
+        Map<String, Object> card = baseCard(recording, timeoutMs);
+        boolean ok = "approve".equals(outcome) || "supersede".equals(outcome) || "reject".equals(outcome);
+        if (ok) {
+            if (!fillFinal(card, outcome, all)) return null;
+        } else if (!draft.isEmpty()) {
+            fillDraft(card, draft, all, revising, revisionFeedback);
+        } else if (recording.planPendingNow() && !all.isEmpty()) {
+            fillPending(card, all, revising, revisionFeedback, recording, timeoutMs);
+        } else {
+            return null;
+        }
+
+        addLineage(card, cmd);
+        return card;
+    }
+
+    /** 每张卡共有的固定字段（id 与几个前端必然要读的占位）。 */
+    private Map<String, Object> baseCard(AgentxTurnRecording recording, long timeoutMs) {
         Map<String, Object> card = new java.util.LinkedHashMap<>();
         card.put("id", recording.planApprovalIdValue() == null ? "" : recording.planApprovalIdValue());
         card.put("auto", false);
@@ -43,60 +61,71 @@ public class AgentxPlanCardSnapshot {
         card.put("pendingFeedback", "");
         card.put("timeoutMs", timeoutMs);
         card.put("remainingMs", 0L);
+        return card;
+    }
 
-        boolean finalOutcome = "approve".equals(outcome) || "supersede".equals(outcome)
-                || "reject".equals(outcome);
-
+    /** 终态：最后一条版本是结果，前面的进 prior。版本链空 = 这条卡已经没有可展示内容。 */
+    private boolean fillFinal(Map<String, Object> card, String outcome, java.util.List<Map<String, Object>> all) {
+        if (all.isEmpty()) return false;
+        Map<String, Object> last = all.get(all.size() - 1);
         java.util.List<Map<String, Object>> prior = new java.util.ArrayList<>();
-        if (finalOutcome) {
-            if (all.isEmpty()) return null;
-            Map<String, Object> last = all.get(all.size() - 1);
-            for (int i = 0; i < all.size() - 1; i++) prior.add(AgentxPlanSteerUtil.planVersionOut(all.get(i)));
-            card.put("status", "approve".equals(outcome) ? "approved"
-                    : "supersede".equals(outcome) ? "superseded" : "rejected");
-            card.put("plan", str(last.get("plan")));
-            card.put("feedback", str(last.get("feedback")));
-            card.put("versions", prior);
-        } else if (!draft.isEmpty()) {
-            for (Map<String, Object> v : all) prior.add(AgentxPlanSteerUtil.planVersionOut(v));
-            card.put("status", "drafting");
-            card.put("plan", draft);
-            card.put("feedback", revising ? (revisionFeedback == null ? "" : revisionFeedback) : "");
-            card.put("versions", prior);
-            if (revising) {
-                card.put("revising", true);
-                card.put("revisingStarted", true);
-                card.put("pendingFeedback", revisionFeedback == null ? "" : revisionFeedback);
-                card.put("busy", true);
-            }
-        } else if (recording.planPendingNow() && !all.isEmpty()) {
-            Map<String, Object> last = all.get(all.size() - 1);
-            for (int i = 0; i < all.size() - 1; i++) prior.add(AgentxPlanSteerUtil.planVersionOut(all.get(i)));
-            card.put("status", "pending");
-            card.put("plan", str(last.get("plan")));
-            card.put("feedback", str(last.get("feedback")));
-            card.put("versions", prior);
-            if (revising) {
-                card.put("revising", true);
-                card.put("revisingStarted", false);
-                card.put("pendingFeedback", revisionFeedback == null ? "" : revisionFeedback);
-                card.put("busy", true);
-            } else {
-                long remaining = Math.max(0L, recording.planPendingAtMs() + timeoutMs - System.currentTimeMillis());
-                card.put("remainingMs", remaining);
-            }
-        } else {
-            return null;
-        }
+        for (int i = 0; i < all.size() - 1; i++) prior.add(AgentxPlanSteerUtil.planVersionOut(all.get(i)));
+        card.put("status", "approve".equals(outcome) ? "approved"
+                : "supersede".equals(outcome) ? "superseded" : "rejected");
+        card.put("plan", str(last.get("plan")));
+        card.put("feedback", str(last.get("feedback")));
+        card.put("versions", prior);
+        return true;
+    }
 
-        if (cmd.getPlanBaseId() != null && !cmd.getPlanBaseId().isBlank()) {
-            Map<String, Object> from = new java.util.LinkedHashMap<>();
-            from.put("cardId", cmd.getPlanBaseId());
-            from.put("version", cmd.getPlanBaseVersion());
-            from.put("done", cmd.getPlanBaseDone());
-            from.put("total", cmd.getPlanBaseTotal());
-            from.put("failed", cmd.getPlanBaseFailed());
-            card.put("adjustFrom", from);
+    /** 草稿态：整条版本链都进 prior，plan 用当前草稿文本。 */
+    private void fillDraft(Map<String, Object> card, String draft, java.util.List<Map<String, Object>> all,
+                           boolean revising, String revisionFeedback) {
+        java.util.List<Map<String, Object>> prior = new java.util.ArrayList<>();
+        for (Map<String, Object> v : all) prior.add(AgentxPlanSteerUtil.planVersionOut(v));
+        card.put("status", "drafting");
+        card.put("plan", draft);
+        card.put("feedback", revising ? (revisionFeedback == null ? "" : revisionFeedback) : "");
+        card.put("versions", prior);
+        if (revising) markRevising(card, true, revisionFeedback);
+    }
+
+    /** 待确认态：最后一条版本是待批稿；有退回意见时保留「重出中」标记，否则给倒计时。 */
+    private void fillPending(Map<String, Object> card, java.util.List<Map<String, Object>> all,
+                             boolean revising, String revisionFeedback,
+                             AgentxTurnRecording recording, long timeoutMs) {
+        Map<String, Object> last = all.get(all.size() - 1);
+        java.util.List<Map<String, Object>> prior = new java.util.ArrayList<>();
+        for (int i = 0; i < all.size() - 1; i++) prior.add(AgentxPlanSteerUtil.planVersionOut(all.get(i)));
+        card.put("status", "pending");
+        card.put("plan", str(last.get("plan")));
+        card.put("feedback", str(last.get("feedback")));
+        card.put("versions", prior);
+        if (revising) {
+            markRevising(card, false, revisionFeedback);
+        } else {
+            long remaining = Math.max(0L, recording.planPendingAtMs() + timeoutMs - System.currentTimeMillis());
+            card.put("remainingMs", remaining);
         }
-        return card;    }
+    }
+
+    /** 退回重出的三个标记（revising/revisingStarted/pendingFeedback）始终一起写。 */
+    private void markRevising(Map<String, Object> card, boolean started, String revisionFeedback) {
+        card.put("revising", true);
+        card.put("revisingStarted", started);
+        card.put("pendingFeedback", revisionFeedback == null ? "" : revisionFeedback);
+        card.put("busy", true);
+    }
+
+    /** 重新计划的血缘：只在请求显式带了 planBaseId 时写入。 */
+    private void addLineage(Map<String, Object> card, ChatCommand cmd) {
+        if (cmd.getPlanBaseId() == null || cmd.getPlanBaseId().isBlank()) return;
+        Map<String, Object> from = new java.util.LinkedHashMap<>();
+        from.put("cardId", cmd.getPlanBaseId());
+        from.put("version", cmd.getPlanBaseVersion());
+        from.put("done", cmd.getPlanBaseDone());
+        from.put("total", cmd.getPlanBaseTotal());
+        from.put("failed", cmd.getPlanBaseFailed());
+        card.put("adjustFrom", from);
+    }
 }
