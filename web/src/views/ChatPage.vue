@@ -1990,6 +1990,7 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch, shallowRef, h } from 'vue'
+import { useMemberLiveView } from '../chat/useMemberLiveView'
 import { useRouter, useRoute } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import { LoadingOutlined, DownOutlined, CaretRightOutlined, CheckOutlined, CloseCircleOutlined, FileTextOutlined, DownloadOutlined, GlobalOutlined, ApiOutlined,
@@ -2124,9 +2125,7 @@ import { toolLabel, toolDesc, toolCallsView, executedCount, toolDuration,
 import { useChatChrome } from '../chat/useChatChrome'
 import { useCommandPanels } from '../chat/useCommandPanels'
 import { useChatActions } from '../chat/useChatActions'
-import { createMemberLive } from '../chat/memberLive'
 import { subscribeMemberLive } from '../api'
-import { createMemberLiveState } from '../chat/memberLiveState'
 import { usePlanPanels } from '../chat/usePlanPanels'
 import { useDeepAsk } from '../chat/useDeepAsk'
 
@@ -2327,40 +2326,14 @@ watch(memberViewRoot, (v) => {
   try { if (v && railTab.value === 'team') railTab.value = 'process' } catch (e) { /* 忽略 */ }
 })
 
-// ===== 成员轮直播：与主问答同一条事件契约，只换了出口 =====
-// 成员轮由框架唤醒在后台起跑、没有请求线程，原先页面只能等跑完读历史（一次性蹦出结果）。
-// 后端在该轮起跑时开了直播台，这里进页面就挂观众席：帧按主问答同一套回调拼成一条「直播态」气泡，
-// 轮一结束就按历史重载——落库那份是权威，直播只是让人看得见它正在长出来。
-const memberLiveState = createMemberLiveState({
-  appendMessage: m => {
-    const list = messages.value || []
-    if (!list.includes(m)) messages.value = [...list, m]
-  },
-  // 只重载正在看的这一条：换了成员/离开之后才回来的收尾，重载会把用户正在看的别处冲掉
-  reload: sid => {
-    if (currentSessionId.value === sid) engine.switchSession(sid).catch(() => {})
-  },
-  onScroll: () => page.chrome?.scroll?.(),
-  setTodos: () => {}
+// 成员轮直播：订阅/收台逻辑已抽到 useMemberLiveView.js（与主问答同一条事件契约，只换出口）。
+const { memberLive, memberLiveStatus } = useMemberLiveView({
+  messages, currentSessionId, memberViewRoot,
+  switchSession: sid => engine.switchSession(sid),
+  scroll: () => page.chrome?.scroll?.(),
+  subscribeApi: (sid, opts) => subscribeMemberLive(sid, opts),
+  notify: message,
 })
-// 直播连接状态：成员页标题旁那颗小标用它说「直播中 / 重连中」——观众要知道自己看的是实时还是回放
-const memberLiveStatus = ref('') // '' | 'live' | 'reconnecting' | 'done' | 'closed'
-const memberLive = createMemberLive({
-  subscribe: (sid, opts) => subscribeMemberLive(sid, opts),
-  onFrame: (cb, content) => memberLiveState.onFrame(cb, content),
-  onSnapshot: (snap, sid) => memberLiveState.applySnapshot(snap, sid),
-  onEnd: why => memberLiveState.finish(why),
-  onStatus: st => { memberLiveStatus.value = st },
-  setTimer: (fn, ms) => setTimeout(fn, ms),
-  clearTimer: t => clearTimeout(t),
-  onWarn: text => { try { message.warning(text) } catch (e) { /* 提示失败不影响直播 */ } }
-})
-// 进成员会话页就挂上，换成员/离开就摘掉：一条成员会话同一时刻只需要一个观众
-watch([memberViewRoot, currentSessionId], ([root, sid]) => {
-  if (root && sid) memberLive.start(sid)
-  else memberLive.stop()
-}, { immediate: true })
-onUnmounted(() => memberLive.stop())
 
 // 运行设置（见 ../chat/useRunSettings）
 const {
