@@ -205,6 +205,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     private final AgentxTurnUsage turnUsage;
     /** 工具卡载荷（tool_status 帧 JSON）构建 */
     private final AgentxToolCardBuilder toolCardBuilder;
+    /** 提问卡载荷（askId/questions/timeoutMs）构建 */
+    private final AgentxAskCard askCardBuilder;
     /** 计划卡快照构建（接流/新页签重建计划卡，本类只在需要时调它） */
     private final AgentxPlanCardSnapshot planCardSnapshot;
     /**
@@ -430,6 +432,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         this.persister = new com.wenqu.ai.agent.chat.TurnPersister(sessionService, qaLog);
         this.displayNames = new ToolDisplayNames(toolRegistry, mcpToolLabelService);
         this.toolCardBuilder = new AgentxToolCardBuilder(displayNames);
+        this.askCardBuilder = new AgentxAskCard(configService);
         this.skillRepository = skillRepository;
         this.skillStatsStore = skillStatsStore;
         this.orgService = orgService;
@@ -1970,11 +1973,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
 
 
 
-    /**
-     * 各形态的等待预算，与手写侧同一组配置键（{@code HitlDecisionService} 的三个读取口）：
-     * 提问 {@code chat.askTimeoutMs}、计划 {@code chat.planTimeoutMs}、工具审批 {@code chat.approvalTimeoutMs}。
-     * <p>提问不能和工具审批挤同一份短预算：它恰恰是最需要人从容看完题面的一类。
-     */
+
+    /** 各形态的等待预算：提问/计划/工具审批各走独立配置键（提问最需要人从容看完题面，不和审批挤短预算）。 */
     private long pendingBudgetMs(PendingKind kind) {
         return switch (kind) {
             case PLAN -> configService.getLong("chat.planTimeoutMs", 3600000L);
@@ -2922,7 +2922,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             }
             if (!"confirmation".equals(kind)) {
                 Object call = firstNonNull(data.get("call"), data);
-                String askPayload = askCard(entry.getKey(), toolInputOf(call), tool);
+                String askPayload = askCardBuilder.askCard(entry.getKey(), toolInputOf(call), tool);
                 channel.emit(RunEventType.ASK_USER, askPayload);
                 // 载荷与手写侧 askArgsJson 同形（都按 {"questions":[…]} 解析），恢复端点可直接复用
                 sessions.recordPending(cmd, sessionKey, turnId, entry.getKey(), "askUser", askPayload);
@@ -3947,33 +3947,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         return str(in.get("question"));
     }
 
-    private String askCard(String askId, Object input, String toolName) {
-        Object questions;
-        if (input instanceof Map<?, ?> in) {
-            Object askList = in.get("questions");
-            if (askList instanceof List<?> list && !list.isEmpty()) {
-                // 一卡多问：每题自带 multi，原样透传（这里不替它判单选）
-                questions = list;
-            } else {
-                Map<String, Object> one = new java.util.LinkedHashMap<>();
-                String inTopic = str(in.get("topic"));
-                one.put("topic", !inTopic.isBlank() ? inTopic
-                        : (toolName == null || toolName.isBlank() ? "确认" : toolName));
-                one.put("question", str(in.get("question")));
-                Object options = in.get("options");
-                one.put("options", options instanceof List<?> l ? l : List.of());
-                // multi 只在为真时写：省略=单选，别让用户侧多认一种「显式 false」的写法
-                if (boolOf(in.get("multi"))) one.put("multi", true);
-                questions = List.of(one);
-            }
-        } else {
-            questions = List.of(Map.of("question", str(input)));
-        }
-        // 交给 fastjson 序列化而不是手拼转义：题面里出现引号或换行是常态，手拼必出错
-        return com.alibaba.fastjson2.JSON.toJSONString(Map.of(
-                "askId", askId, "questions", questions,
-                "timeoutMs", pendingBudgetMs(PendingKind.ASK)));
-    }
 
 
 
