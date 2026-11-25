@@ -23,7 +23,7 @@ import { markLive, splitAtts } from './attachments'
 import { MAX_IMAGES, MAX_FILES, classifyIntake, rejectText, REJECT, compressImage, pasteFilesOf,
          isLongPaste, pasteNameOf } from './intake'
 import { loadModelIndex } from '../utils/modelRef'
-import { approvalStatusText, approvalLeftSec } from './approval'
+import { approvalStatusText } from './approval'
 import {
          groupSources, ensureTick, alignTick, mergeDoneToolCalls, restoreTimeline, extendTimelineText, extendTimelineProcess,
          pushTimelineTool, pushTimelineArtifact, pushTimelineSteer, ensureThinkSegment,
@@ -61,6 +61,7 @@ import { failTurn } from './turnFail.js'
 import { createSessionSwitch } from './sessionSwitch.js'
 import { planCardFromRecord, linkPlanLineage } from './planCards.js'
 import { usePendingCards } from './usePendingCards.js'
+import { useApprovalClock } from './useApprovalClock.js'
 import { applyPlanDelta, applyPlanApproval, applyPlanCancelled, applyPlanSuperseded } from './streamPlanFrames.js'
 import { createStreamBuffer } from './streamBuffer.js'
 import { applyCompactState, applyPlanFrame, applyGoalState, applyGoalTurn } from './streamStateFrames.js'
@@ -1105,38 +1106,10 @@ const hydratePendingApprovals = async (sid, onlyId = '') => {
 
 // 审批倒计时：只在屏上还有带 deadline 的审批卡时走表（停/批准后自动停），
 // 与计划卡的 planNow 同一套节奏。PC 与移动壳都读这一份。
-const approvalNow = ref(Date.now())
-let approvalTimer = null
-watch(() => messages.value.some(m => m && Array.isArray(m.approvals)
-  && m.approvals.some(a => a && a.deadline)), v => {
-  if (v && !approvalTimer) approvalTimer = setInterval(() => { approvalNow.value = Date.now() }, 1000)
-  if (!v && approvalTimer) { clearInterval(approvalTimer); approvalTimer = null }
+// 审批秒针与清理已抽到 useApprovalClock.js。这里解构接回同名符号，调用点不改。
+const { approvalNow, approvalLeftSecOf, clearApprovalQuery, clearApprovalCard } = useApprovalClock({
+  messages, route, router, hooks,
 })
-onUnmounted(() => { if (approvalTimer) { clearInterval(approvalTimer); approvalTimer = null } })
-const approvalLeftSecOf = card => approvalLeftSec(card, approvalNow.value)
-
-/** 清掉地址栏的 approval 参数（刷新不再把已经处理过/失效的卡再恢复一遍） */
-const clearApprovalQuery = approvalId => {
-  if (String(route.query.approval || '') !== String(approvalId)) return
-  const q = { ...route.query }
-  delete q.approval
-  router.replace({ path: hooks.chatPath, query: q }).catch(() => {})
-}
-
-/** 撤掉屏上同一张（另一页签已裁决/已超时）：别留两颗点了只会报错的按钮 */
-const clearApprovalCard = approvalId => {
-  let changed = false
-  for (const m of messages.value) {
-    if (!m || !Array.isArray(m.approvals)) continue
-    const next = m.approvals.filter(a => !a || String(a.id) !== String(approvalId))
-    if (next.length !== m.approvals.length) {
-      m.approvals = next
-      changed = true
-    }
-  }
-  if (changed) hooks.scrollSoft?.()
-}
-
 /**
  * 通知深链（/chat?sid=&approval=<id>）的落点：
  * - 还在等批准：挂回对话里那一步，滚动过去并闪一圈（hooks.revealApproval），不再另画顶部横幅；
