@@ -62,6 +62,7 @@ import { createSessionSwitch } from './sessionSwitch.js'
 import { planCardFromRecord, linkPlanLineage } from './planCards.js'
 import { usePendingCards } from './usePendingCards.js'
 import { useApprovalClock } from './useApprovalClock.js'
+import { useHitlRestore } from './useHitlRestore.js'
 import { applyPlanDelta, applyPlanApproval, applyPlanCancelled, applyPlanSuperseded } from './streamPlanFrames.js'
 import { createStreamBuffer } from './streamBuffer.js'
 import { applyCompactState, applyPlanFrame, applyGoalState, applyGoalTurn } from './streamStateFrames.js'
@@ -1018,197 +1019,23 @@ const { hydratePendingAsk, hydratePendingPlans } = usePendingCards({
   attachAskCard, listPendingAsks, listPendingPlans, cardTargetFor, msgByTurn,
 })
 
-/** 恢复态轮询句柄（同一时刻只留一份：切会话/答完即停） */
-let restoredPoll = null
-const stopRestoredPoll = () => { if (restoredPoll) { clearInterval(restoredPoll); restoredPoll = null } }
-
-
-
-
-/**
- * 会话加载/切换后恢复待批准计划卡（计划模式，与提问卡恢复同一套语义）：计划已落库、等待批准期间
- * 断线不中止本轮，刷新/换设备后那根流水线线程还阻塞着，批准照样送得回去，回答转后台生成落库。
- * 只重建「未过期且唤醒句柄还在」的最新一张。
- */
-
-/**
- * 会话加载/接流后恢复「等你批准执行」的审批卡（与提问卡、计划卡同一套人在回路恢复口径）。
- * 审批只有 120 秒时限，卡片不落库时刷新或换设备接回这一轮就看不见那张卡，
- * 而本轮又豁免断线宽限、会一直等——用户读到的就是「智能体莫名其妙不动了」。
- * 只重建**未过期且唤醒句柄还在**（live）的审批卡；{@code onlyId} 是通知深链点名的
- * 那一张（同一轮挂着多张时也只挂它），并按记录带的 turnId 挂回它自己那一轮的气泡：
- * 那一轮在这台设备的视图里还没有气泡时补占位泡（live 就代表它真的卡在审批上，不挂等于看不见）。
- *
- * @returns {Promise<'mounted'|'exists'|'dead'|'gone'|'none'>}
- *   mounted=这次挂上了；exists=屏上已有同一张；dead=还在 120 秒窗口里但唤醒句柄已不在；
- *   gone=窗口已过/已不在待批列表；none=与当前会话无关
- */
-const hydratePendingApprovals = async (sid, onlyId = '') => {
-  if (!sid) return 'none'
-  const st = chatStreams.get(sid)
-  // 实时卡已挂着：深链点名的那张已在屏上时不重复挂
-  const liveCards = (st && st.msg && Array.isArray(st.msg.approvals)) ? st.msg.approvals : []
-  if (liveCards.length && (!onlyId || liveCards.some(x => String(x.id) === String(onlyId)))) return 'exists'
-  let items
-  try {
-    const r = await listPendingApprovals(sid)
-    items = (r && r.data && Array.isArray(r.data.items)) ? r.data.items : []
-  } catch (e) { return 'error' }   // 拉不动不提示：审批自己有超时兜底，不该打断正常浏览
-  if (currentSessionId.value !== sid) return 'none'   // 快速切会话：晚到响应不覆盖当前视图
-  const matched = items.filter(x => x && x.approvalId && (!onlyId || x.approvalId === onlyId))
-  const alive = matched.filter(x => x.live)
-  const dead = matched.filter(x => !x.live)
-  if (!alive.length) {
-    if (!onlyId) return 'none'
-    return dead.length ? 'dead' : 'gone'
-  }
-  // 多卡：alive 全部挂上（按 id 去重）；同一轮没有气泡的合并成一个占位泡
-  const orphanByTurn = new Map()
-  let mounted = 0
-  for (const item of alive) {
-    const remainMs = Number(item.remainingMs) || 0
-    // timeoutMs 传「还剩多少」而不是整窗：卡片倒计时直接读 deadline，
-    // 恢复出来的卡若给整窗，用户会以为还有两分钟，实际下一秒就超时按拒绝了
-    const card = {
-      id: item.approvalId, tool: item.tool, label: item.label, hint: item.hint, args: item.args,
-      reason: item.reason || '',
-      subagent: item.subagent || (item.parentSessionId ? { kind: 'subagent', agent: '子助手' } : null),
-      timeoutMs: remainMs, deadline: remainMs > 0 ? Date.now() + remainMs : 0, busy: false, restored: true
-    }
-    const target = cardTargetFor(st, item.turnId)
-    if (target) {
-      const list = Array.isArray(target.approvals) ? target.approvals : []
-      if (list.some(x => String(x.id) === String(card.id))) continue
-      target.approvals = [...list, card]
-      mounted++
-      continue
-    }
-    const key = item.turnId || ''
-    if (!orphanByTurn.has(key)) orphanByTurn.set(key, { turnId: item.turnId || '', cards: [] })
-    orphanByTurn.get(key).cards.push(card)
-  }
-  // 这一轮在这台设备的视图里没有气泡（在别的设备上跑、或本轮的助手消息还没落库）：
-  // 补一个「等你批准执行」的占位泡。那一轮是真的卡在审批上（live=唤醒句柄还在），
-  // 什么都不挂就是用户读到的「智能体莫名其妙不动了」
-  for (const g of orphanByTurn.values()) {
-    const anchor = reactive({ role: 'ai', content: '', images: [], sources: [], related: [],
-      degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '',
-      thinkLoading: false, time: Date.now(), artifacts: [],
-      toolCalls: [], plan: null, planCard: null, timeline: [], errorCard: null,
-      model: '', approvals: g.cards, turnId: g.turnId })
-    messages.value = [...messages.value, anchor]
-    mounted += g.cards.length
-  }
-  if (!onlyId && mounted) hooks.scrollForce?.()
-  if (onlyId) return mounted ? 'mounted' : 'exists'
-  return mounted ? 'mounted' : 'none'
-}
-
-// 审批倒计时：只在屏上还有带 deadline 的审批卡时走表（停/批准后自动停），
-// 与计划卡的 planNow 同一套节奏。PC 与移动壳都读这一份。
-// 审批秒针与清理已抽到 useApprovalClock.js。这里解构接回同名符号，调用点不改。
+// 审批倒计时/清理（秒针 ref、清地址栏参数、撤同卡）
 const { approvalNow, approvalLeftSecOf, clearApprovalQuery, clearApprovalCard } = useApprovalClock({
   messages, route, router, hooks,
 })
-/**
- * 通知深链（/chat?sid=&approval=<id>）的落点：
- * - 还在等批准：挂回对话里那一步，滚动过去并闪一圈（hooks.revealApproval），不再另画顶部横幅；
- * - 已批准/已拒绝/已超时：只给一句结果，并把 approval 参数清掉；
- * - 窗口过了或唤醒句柄已不在：直接说失效，不给一个点了只会报错的按钮。
- */
-const handleApprovalDeepLink = async (sid, approvalId) => {
-  if (!sid || !approvalId || currentSessionId.value !== sid) return
-  let rec
-  try {
-    const r = await getToolApproval(approvalId)
-    rec = (r && r.data) || null
-  } catch (e) {
-    message.error('恢复审批失败：' + (e.message || '网络异常'))
-    return
-  }
-  if (currentSessionId.value !== sid) return
-  if (!rec) {
-    message.info('该审批请求不存在或已失效')
-    clearApprovalCard(approvalId)
-    clearApprovalQuery(approvalId)
-    return
-  }
-  // 链接里的审批不属于当前会话（旧链接/会话已切走）：不在这里裁决，也不冒充「已失效」。
-  // 子助手分支上翻的卡 sessionId 是临时子会话，归属看 parentSessionId
-  const recSid = rec.sessionId ? String(rec.sessionId) : ''
-  const recParent = rec.parentSessionId ? String(rec.parentSessionId) : ''
-  if ((recSid || recParent) && recSid !== String(sid) && recParent !== String(sid)) {
-    clearApprovalQuery(approvalId)
-    return
-  }
-  if (rec.status !== 'PENDING') {
-    message.info('该审批已处理：' + approvalStatusText(rec.status))
-    clearApprovalCard(approvalId)
-    clearApprovalQuery(approvalId)
-    return
-  }
-  const res = await hydratePendingApprovals(sid, approvalId)
-  if (currentSessionId.value !== sid) return
-  if (res === 'mounted' || res === 'exists') {
-    hooks.revealApproval?.(approvalId)
-    clearApprovalQuery(approvalId)
-    return
-  }
-  if (res === 'error') {
-    // 待批列表没取回来：别把它说成「已失效」，也别清参数——刷新还能再试
-    message.warning('待审批记录没取回来，稍后刷新再试')
-    return
-  }
-  if (res === 'dead') {
-    message.warning('该审批已失效（本轮已结束或服务已重启），无法再批准')
-  } else {
-    message.warning('该审批已超时或已失效，无法再批准')
-  }
-  clearApprovalCard(approvalId)
-  clearApprovalQuery(approvalId)
-}
 
-/**
- * 恢复态卡片答完后的答案取回：本设备没有这一轮的流式通道，回答在后台生成。
- * 先记下当前历史条数，每 4s 比一次——多出那条（助手回答落库）即完成，重载会话视图。
- */
-const pollRestoredAnswer = async sid => {
-  stopRestoredPoll()
-  let baseline = -1
-  try {
-    const r = await getHistory(sid, { silentForbidden: true })
-    baseline = Array.isArray(r?.data) ? r.data.length : -1
-  } catch (e) { /* 拿不到基线就不轮询，用户自己回到会话仍能看到答案 */ }
-  if (baseline < 0) return
-  let ticks = 0
-  restoredPoll = setInterval(async () => {
-    if (currentSessionId.value !== sid) { stopRestoredPoll(); return }
-    if (++ticks > 45) {
-      stopRestoredPoll()
-      message.warning('这一轮回答还在生成，稍后回到本会话查看')
-      return
-    }
-    try {
-      const r = await getHistory(sid, { silentForbidden: true })
-      const list = Array.isArray(r?.data) ? r.data : null
-      if (!list || list.length <= baseline) return
-      stopRestoredPoll()
-      await switchSession(sid)
-    } catch (e) { /* 单次失败等下一轮 */ }
-  }, 4000)
-}
-
-// 提问卡动作在 ./askActions.js（actions 层），依赖经 ctx 注入。
-const askCtx = () => ({
-  answerApi: answerAgentAsk, ignoreApi: ignoreAgentAsk, notify: message, emitNotifChanged,
-  retireAskCard: m => retireAskCard(m), stopRestoredPoll: () => stopRestoredPoll(),
-  pollRestoredAnswer: sid => pollRestoredAnswer(sid), switchSession: sid => switchSession(sid),
-  // 迟到作答（DSH continued）：走与用户亲手打字完全同一条发送出口（跑着就插话、空闲就新一轮）
-  deliverContinuedAnswer: t => { text.value = t; send() },
-  currentSid: () => currentSessionId.value, scrollSoft: () => hooks.scrollSoft?.()
+// HITL 恢复（审批卡恢复/通知深链/恢复态轮询/提问卡动作）已抽到 useHitlRestore.js。
+// restoredPoll 随块搬进模块；stopRestoredPoll/pollRestoredAnswer 等由模块导出、这里解构接回，
+// planCtx（较早定义、惰性调用）与 onUnmounted 用的是解构后的同名符号。
+const {
+  stopRestoredPoll, hydratePendingApprovals, handleApprovalDeepLink,
+  pollRestoredAnswer, askSubmitAll, ignoreAsk,
+} = useHitlRestore({
+  chatStreams, currentSessionId, messages, hooks, text, send: () => send(), switchSession,
+  listPendingApprovals, getToolApproval, getHistory, answerAgentAsk, ignoreAgentAsk,
+  retireAskCard, emitNotifChanged, submitAskImpl, ignoreAskImpl,
+  cardTargetFor, approvalStatusText, clearApprovalCard, clearApprovalQuery, notify: message,
 })
-const askSubmitAll = m => submitAskImpl(m, askCtx())
-const ignoreAsk = m => ignoreAskImpl(m, askCtx())
 
 /**
  * 接流气泡的收场：这一轮其实已经没了（服务端刚好收尾、服务重启、或通道再也接不上）时用它。
