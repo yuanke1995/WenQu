@@ -1029,12 +1029,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
 
             @Override
             public void beginHumanWait(Map<String, SessionEvent> pending) {
-                AgentscopeChatEngine.beginHumanWait(channel, recording, pending);
+                AgentxEmitUtil.beginHumanWait(channel, recording, pending);
             }
 
             @Override
             public void endHumanWait() {
-                AgentscopeChatEngine.endHumanWait(channel, recording);
+                AgentxEmitUtil.endHumanWait(channel, recording);
             }
 
             @Override
@@ -1053,7 +1053,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 兜底：超时收尾 / stopRequested 跳出都可能停在「仍在等人」的状态上。
         // 不收口的话台账的 openWaits 永远 >0，之后这一轮算出来的机器耗时永远是负数/偏小，
         // 看门狗形同虚设；而引擎自己的墙钟已经进了下一轮比较，必须先把这段补齐再往下走。
-        interactions.settle(() -> endHumanWait(channel, recording));
+        interactions.settle(() -> AgentxEmitUtil.endHumanWait(channel, recording));
         // 收尾把游标跑到 head：这一轮的尾巴增量不能再漏（镜像传 null——出轮之后没人读状态）
         drain(session, loop.cursor(), loop.emitFrom(), turnId, channel, recording, null);
 
@@ -1154,7 +1154,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         final boolean streamedBody = !answer.isBlank();
         // 失败判据必须排在回填前面：回填不问这一轮是不是失败的那一跑，上游 401 的轮因此会顶着
         // 「答好了」的样子把上一轮的正文存进历史，失败一个字没提。
-        String failure = runFailure(session, current);
+        String failure = AgentxHistoryText.runFailure(session, current);
         // 上游把连接直接收了、没给带 finishReason/usage 的末块：框架那一跑看到的是「正常结束」，
         // executionError 为空、done 帧照发——屏幕上是一段凭空短掉的正文，刷新后连「这一轮断过」
         // 都读不出来。
@@ -1182,8 +1182,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 failure = failure + " | " + detail;
             }
         }
-        if (answer.isBlank() && failure == null) answer = stripFallbackBody(
-                recording, lastAssistantText(session, historyBefore));
+        if (answer.isBlank() && failure == null) answer = AgentxHistoryText.stripFallbackBody(
+                recording, AgentxHistoryText.lastAssistantText(session, historyBefore));
         // 框架那一跑本身失败（上游 402 额度、网关异常、运行被拒……）必须说出来：它只发一条
         // 「done + 空正文」，用户看到的是「它答了个空」，而不是「这次没答出来，原因是额度不足」。
         // 失败判据用框架自己留的 executionError / 任务终态。
@@ -1207,12 +1207,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 不接的表现：正文停在半句，气泡照报「已完成」，而它其实一步都没做完——沙盒里已经生成的
         // 文件也没机会交付出去。只在<b>流里确有正文</b>时补：空正文那一支上面已经把这条收尾消息
         // 回退取走了（同一个 ModelOutputParser 喂两遍还会把推荐芯片数成两份）。
-        String wrapUp = maxIterationsWrapUp(session, historyBefore);
+        String wrapUp = AgentxHistoryText.maxIterationsWrapUp(session, historyBefore);
         boolean cutByMaxIters = wrapUp != null && !loop.stopped() && !loop.timedOut() && !loop.neverLaunched() && failure == null;
         if (cutByMaxIters && streamedBody) {
             // 过同一个剥离器：这条收尾正文同样可能被模型塞进 <related>／<process>，
             // 而推荐芯片只在 related 那一份状态上算，绕过它等于这一轮最后那颗芯片凭空少一源
-            String extra = stripFallbackBody(recording, wrapUp).strip();
+            String extra = AgentxHistoryText.stripFallbackBody(recording, wrapUp).strip();
             if (!extra.isEmpty() && !answer.contains(extra)) {
                 String tail = "\n\n" + extra;
                 answer = answer + tail;
@@ -1279,14 +1279,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 turnId != null && turnId.startsWith(com.wenqu.ai.service.GoalService.GOAL_TURN_ID_PREFIX));
     }
 
-    /**
-     * 这一跑是不是「失败收场」：框架把执行异常留在 {@code executionError()}，被拒的命令留在任务状态里。
-     *
-     * @return 给用户看的失败原因；没有失败痕迹时返回 null（那是「还在等/已停止/正常跑完」）
-     */
-    private static String runFailure(AgentSession session, AgentSession.Task current) {
-        return AgentxHistoryText.runFailure(session, current);
-    }
 
     /**
      * 把框架留下的失败痕迹说成用户能行动的一句话。判据与文案都取手写引擎那一组
@@ -1977,33 +1969,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         }
     }
 
-    /**
-     * 人在回路等待的登记/收口，都收敛到这两个入口。
-     * <p>收集型通道（定时任务/MCP/子智能体节点）的 {@code emitter()} 为 null，台账里没有它那一行，
-     * 直接跳过——{@code ConcurrentHashMap.get(null)} 会抛 NPE，所以这里的判空不能省。
-     * <p>成对出现是硬要求：只 begin 不 end，台账的 {@code openWaits} 会永久停在 1，之后这一轮算出来的
-     * 机器耗时一直偏小，看门狗形同虚设；只 end 不 begin 则这段等待照扣预算，正是本次修的那个 bug。
-     * <p>整轮台账与工具卡计时必须同时开始、同时结束，所以两处只留这一个入口：分头调用的下一次漂移，
-     * 表现是「看门狗不截断了，但提问卡上写着 3m12s」——同一个数在两个地方各扣各的。
-     */
-    private static void beginHumanWait(RunChannel channel, AgentxTurnRecording recording,
-                                       Map<String, SessionEvent> pending) {
-        AgentxEmitUtil.beginHumanWait(channel, recording, pending);
-    }
 
-    private static void endHumanWait(RunChannel channel, AgentxTurnRecording recording) {
-        AgentxEmitUtil.endHumanWait(channel, recording);
-    }
 
-    /**
-     * 现在挂着的那（几）张卡属于哪一次工具调用：配对键与 {@link AgentxTurnRecording#toolCallKey} 同一套算法，
-     * 这样「这段等待」对外记在挂卡那一张头上（每张卡自己的耗时另有按在飞清单摊的扣账，见
-     * {@code AgentxTurnRecording#endToolWait}）。
-     * <p>认不出来（字段形状变了）时返回空集合，由 {@link AgentxTurnRecording#endToolWait} 兜底记给在飞的第一把。
-     */
-    private static java.util.List<String> pendingCallKeys(Map<String, SessionEvent> pending) {
-        return AgentxEmitUtil.pendingCallKeys(pending);
-    }
 
     /**
      * 各形态的等待预算，与手写侧同一组配置键（{@code HitlDecisionService} 的三个读取口）：
@@ -2316,27 +2283,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         key = key + "|ctx=" + contextWindow + "|out=" + maxOutput;
         // 思考开关仍留在指纹外：它同样烤在实例里，但续跑轮的 ChatCommand 复原不了它，并进来会让
         // 续跑按默认档重建。那一档的变更仍欠「按调用传 GenerateOptions」那一刀。
-        return new AgentBinding(row, key, skillFilterOf(row), contextWindow, maxOutput);
+        return new AgentBinding(row, key, AgentxSkillFilter.of(row), contextWindow, maxOutput);
     }
 
-    /**
-     * 智能体「技能范围」三态 → 框架技能滤镜。
-     * <ul>
-     *   <li>{@code null} = 跟随全局：不限（{@code SkillFilter.all()}）</li>
-     *   <li>{@code 0} = 关闭：一条都不给（{@code SkillFilter.none()}）</li>
-     *   <li>{@code 1} = 指定：只给名单里那几条（{@code SkillFilter.only}）。名单为空就是一条都不给
-     *       ——用户点的是「指定」，空名单是有意的「不给」，不是「没选所以全给」</li>
-     * </ul>
-     * 名单里个人技能存的是 {@code {uid}/{name}} 引用串，框架按 {@code skill.getName()} 比对，故剥成裸名。
-     */
-    private static io.agentscope.core.skill.SkillFilter skillFilterOf(Agent a) {
-        return AgentxSkillFilter.of(a);
-    }
 
-    /** 技能引用串列表 → 裸名集合（与只读清单、点名注入同一套剥法）。 */
-    private static Set<String> skillNames(String raw) {
-        return AgentxSkillFilter.names(raw);
-    }
     private String rolePrompt(Agent bound) {
         return RolePrompt.of(bound, properties.getSystemPrompt());
     }
@@ -2738,19 +2688,19 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                             continue;
                         }
                         // 正文开始 = 这一段思考收场：补一条 thinking_done，前端据此停转圈并折叠就地那段
-                        closeThinkingFrame(channel, recording);
+                        AgentxEmitUtil.closeThinkingFrame(channel, recording);
                         ModelOutputParser.Delta parsed = recording.related.feed(rawText);
                         // 同一个 delta 里可能同时有过程与正文：必须按原文先后下发（processFirst），
                         // 否则「过程独白紧跟正文」被拆到正文后面，过程块就劈成两段。
                         boolean processFirst = parsed.processFirst();
-                        if (processFirst) emitProcess(channel, recording, parsed.process());
+                        if (processFirst) AgentxEmitUtil.emitProcess(channel, recording, parsed.process());
                         if (!parsed.text().isEmpty()) {
                             recording.answer(parsed.text());
                             emit(channel, RunEventType.TOKEN, parsed.text());
                         }
                         // 过程独白（<process> 标签内）按增量实时下发 PROCESS：正文走 TOKEN，
                         // 过程另走一条通道，前端 onProcess 累积成「执行过程」灰字块。收尾帧在 finish() 里补齐。
-                        if (!processFirst) emitProcess(channel, recording, parsed.process());
+                        if (!processFirst) AgentxEmitUtil.emitProcess(channel, recording, parsed.process());
                     } else if ("tool_use".equals(b.get("type"))) {
                         // 入参还在流式生成：先把「这一步在跑」发给前端（见 PREPARING_MIN_CHARS 那段说明）。
                         // 真正的 tool/requested 随后到达时，前端把同名早产卡升级成正式卡，不会再推第二张。
@@ -2763,7 +2713,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 recording.clearPreparing();
                 // 调工具也是「这一段想完了」的信号：不在这儿收场，思考段会一直挂着转圈直到下一段正文出现，
                 // 而时间线里这段思考也会压到工具卡后面（区间是按关闭时刻写的，顺序即到达顺序）
-                closeThinkingFrame(channel, recording);
+                AgentxEmitUtil.closeThinkingFrame(channel, recording);
                 // 载荷形状：{toolCallId, call:{type,id,name,input}} —— 名字在 call.name 里，
                 // 不在顶层；按顶层取会拿到空串，工具卡就成了没有名字的空白行
                 recording.lastToolName = toolNameOf(data.get("call"));
@@ -3874,7 +3824,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 收尾这一发是终值（与 done 里的 tokens 同一份快照）；流式期间那几发见 emitLiveUsage，
         // 两拨都出自 usageOf，不做第二套估算
         // 整轮结束而思考段还开着（只思考没出正文、或被叫停）：照样补一条收尾帧，别让转圈永远挂着
-        closeThinkingFrame(channel, recording);
+        AgentxEmitUtil.closeThinkingFrame(channel, recording);
         // 思考字数进台账：这一族关着思考也照样回 reasoning，单列出来放量时才看得出
         // 「框架引擎多烧的那一截」是思考而不是正文（§29 成本账那条）
         tokens.put("thinkingChars", recording.thinking.length());
@@ -4129,19 +4079,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         return handle == null ? cmd.getSessionId() : handle.turnId();
     }
 
-    /**
-     * 检索状态行（豆包式，回答上方常驻「搜索 N 个关键词，参考 M 段资料」）。
-     * <p>框架引擎没有问渠的预检索这一步，命中全靠模型自己调工具——所以这一帧的时机只能跟着
-     * 引用池增长走（每次工具注册进新引用就补发一帧），而不是像主链路那样在生成前一次性给出。
-     * 不发的后果是前端缺引用预览、且那一轮的「参考 N 段资料」永远空白。
-     *
-     * @param announced 上一次已发的引用数；传 -1 表示无条件补发（收尾时用，保证终值与落库一致）
-     * @return 已发的引用数
-     */
-    /** 过程独白增量：空串不发帧也不入块（同一 delta 只有正文时不该多一帧空气）。 */
-    private static void emitProcess(RunChannel channel, AgentxTurnRecording recording, String delta) {
-        AgentxEmitUtil.emitProcess(channel, recording, delta);
-    }
 
     private int emitRetrieved(ChatCommand cmd, WenquSourcePool pool, RunChannel channel, int announced, AgentxTurnRecording recording) {
         int refs = pool.sources().size();
@@ -4295,56 +4232,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         AgentxEmitUtil.emit(channel, type, content);
     }
 
-    /**
-     * 收场当前这一段思考：记时间线区间 + 补一条 {@code thinking_done}（带本轮累计全文）。
-     * 没在思考中就是空操作，不发空帧。
-     */
-    private static void closeThinkingFrame(RunChannel channel, AgentxTurnRecording recording) {
-        AgentxEmitUtil.closeThinkingFrame(channel, recording);
-    }
 
-    /**
-     * 本轮流式一截正文都没攒到时的回退取法：取会话记录里最后一条有正文的 assistant 消息。
-     * <p>最后一条若是框架被叫停时补的那句 recovery 文本（"I noticed that you have interrupted me…"，
-     * generateReason=INTERRUPTED）就**停在这里返回空**，不再往前翻：它是这一跑留在上下文里的最后一条，
-     * 前面那条属于**上一轮**，捞出来就是拿别人的话给这一轮存档（上面那条注释记过的旧坑）。
-     * 空正文的停止轮会落到「只有过程、没有正文」那一支——界面上只剩工具卡与「已停止本轮」标注，
-     * 这才是这一轮真实留下的东西。
-     * 判据用框架自己留的 generateReason，不比对文案。
-     * <p><b>只看这一跑添的那几行</b>（与 {@link #usageOf} 同一个 {@code historyBefore} 口径）：
-     * 回退要补的是「模型答了、正文没进过流式剥离器」，而这一跑一个字也没添时，transcript 尾部那条
-     * 必然属于上一轮——拿它当本轮正文存档，就是把别人的话记在这一轮名下。实例被重建过尤其如此：
-     * 框架的执行异常留在旧实例里，新实例读不到失败痕迹，光靠 {@code failure == null} 挡不住。
-     */
-    private static String lastAssistantText(AgentSession session, int historyBefore) {
-        return AgentxHistoryText.lastAssistantText(session, historyBefore);
-    }
 
-    /**
-     * 框架因<b>步数上限</b>收场时补的那条收尾正文（会话记录里最后一条助手消息带
-     * {@code generateReason=MAX_ITERATIONS}）；这一轮不是撞上限收场就返回 null。
-     * <p>判据只用框架自己留在消息上的 generateReason，不比对文案——那句
-     * "You have failed to generate response within the maximum iterations" 是框架的内部提示词，
-     * 跟着文案走等于把判据挂在别人会改的东西上。
-     * <p>只看<b>最后一条</b>助手消息、不往前翻：往前翻会把上一轮撞上限的那条捞给这一轮存档
-     * （{@link #lastAssistantText} 的注释记过同一类串轮坑）。同一条护栏：这一跑没往 transcript
-     * 添过行就没有「本轮的收尾」可取。
-     */
-    private static String maxIterationsWrapUp(AgentSession session, int historyBefore) {
-        return AgentxHistoryText.maxIterationsWrapUp(session, historyBefore);
-    }
 
-    /**
-     * 回退那一份正文的收尾处理：它出自框架的 transcript，从没进过流式剥离器（{@code model/chunk}
-     * 的增量才是它的正常入口），所以标签得在这儿剥掉。
-     * <p>不剥的表现为两件事同时发生：{@code <related>…</related>} 原文印进回答，而「接下来可以」
-     * 那排芯片一个也没有——芯片正是从这块里拆出来的。
-     * <p>过同一个 {@link AgentxTurnRecording#related} 而不是在这里补一条正则：推荐条数、「模型把正文写进
-     * 推荐块时并回回答」那道护栏、以及 {@code <process>} 分流都住在它身上，同一件事不该有第二份口径。
-     */
-    private static String stripFallbackBody(AgentxTurnRecording recording, String raw) {
-        return AgentxHistoryText.stripFallbackBody(recording, raw);
-    }
 
     /**
      * 提问卡载荷：前端认 {@code {askId, questions, timeoutMs}}。挂起原因里带的是
