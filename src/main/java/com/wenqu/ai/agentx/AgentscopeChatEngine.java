@@ -547,10 +547,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     }
 
     private static String firstNonBlank(String... values) {
-        for (String v : values) {
-            if (v != null && !v.isBlank()) return v;
-        }
-        return null;
+        return AgentxTextUtil.firstNonBlank(values);
     }
 
     @Override
@@ -1927,9 +1924,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 计划卡读五分钟，循环下一跳算出来的机器时间就已经涨满 300s，整轮在人还没裁决时被静默收口。
      */
     private static long machineMs(long startedAt, long humanWaitMs, boolean waitingOnHuman, long waitBeganAt) {
-        long now = System.currentTimeMillis();
-        long waiting = humanWaitMs + (waitingOnHuman && waitBeganAt > 0 ? now - waitBeganAt : 0);
-        return now - startedAt - waiting;
+        return AgentxTextUtil.machineMs(startedAt, humanWaitMs, waitingOnHuman, waitBeganAt);
     }
 
     /**
@@ -2285,8 +2280,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     }
 
     private static String briefQuestion(String q) {
-        String s = q.replaceAll("\\s+", " ").trim();
-        return s.length() <= 60 ? s : s.substring(0, 60) + "…";
+        return AgentxTextUtil.briefQuestion(q);
     }
 
     /**
@@ -2585,16 +2579,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     }
 
     private static String localEnvText(String root, String notice) {
-        String note = notice == null ? "" : "\n- " + notice;
-        return "\n## 执行环境（本机执行器，以此段为准）\n"
-                + "文件与命令工具都在用户自己的电脑上执行，不在服务器容器里。"
-                + "当前工作区根目录：" + root + "\n"
-                + "- `execute` 的 pwd 就是这个目录，相对路径都从这里解析；路径含空格/括号时要加引号。\n"
-                + "- 其它段落若把工作区写成 `/workspace` 或 `/app/data/agentscope`（服务器沙盒/框架状态目录），"
-                + "那些路径在这台电脑上不存在，不要用 execute / read_file 去读。\n"
-                + "- 交付产物用 presentArtifact（返回值即访问地址），不要在磁盘上找 artifacts 目录。\n"
-                + "- 复合命令的退出码由最后一条子命令决定：不要用 2>/dev/null 掩盖失败；"
-                + "可能不存在的目录单独探测或加 `|| true`。" + note + "\n";
+        return AgentxTextUtil.localEnvText(root, notice);
     }
 
     /**
@@ -2637,16 +2622,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 从接回时刻起读会让落库的工具卡只剩批准之后的半截。找不到（这一轮还没写过事件）就退回 fallback。
      */
     private static long turnStartSeq(AgentSession session, String frameworkTurnId, long fallback) {
-        if (frameworkTurnId == null || frameworkTurnId.isBlank()) return fallback;
-        long first = Long.MAX_VALUE;
-        try {
-            for (SessionEvent e : session.log().scan(0, session.log().head().seq())) {
-                if (frameworkTurnId.equals(e.turnId()) && e.seq() < first) first = e.seq();
-            }
-        } catch (Exception e) {
-            return fallback;
-        }
-        return first == Long.MAX_VALUE ? fallback : first;
+        return AgentxTextUtil.turnStartSeq(session, frameworkTurnId, fallback);
     }
 
     /**
@@ -3667,13 +3643,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     }
 
     private static String realRoot(String raw) {
-        String p = raw == null ? "" : raw.trim();
-        if (p.isEmpty()) return p;
-        try {
-            return Path.of(p).toRealPath().toString();
-        } catch (Exception e) {
-            return Path.of(p).toAbsolutePath().normalize().toString();
-        }
+        return AgentxTextUtil.realRoot(raw);
     }
 
 
