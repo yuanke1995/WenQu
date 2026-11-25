@@ -201,6 +201,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     private final TurnPromptAssembler promptAssembler;
     /** 模型/记忆配置的全部决定已抽出到这里（本类保留同名薄委托，调用点不动） */
     private final AgentxModelConfig modelConfig;
+    /** 计划卡快照构建（接流/新页签重建计划卡，本类只在需要时调它） */
+    private final AgentxPlanCardSnapshot planCardSnapshot;
     /**
      * 用户上传图片的落盘链路（data URL → 文件 + 回显 URL）。
      * <p><b>为什么必须有这一环</b>：{@code appendMessage} 拿到的是原始 base64 data URL，而 {@code c_ai_message.images} 是
@@ -439,6 +441,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         this.modelResolver = modelResolver;
         this.promptAssembler = new TurnPromptAssembler(attachments, skillRepository, knowledgeMapper, documentMapper);
         this.modelConfig = new AgentxModelConfig(modelRegistry, configService, sessions, usageLedger, quotaService, orgService);
+        this.planCardSnapshot = new AgentxPlanCardSnapshot(sessions, configService);
     }
 
     /**
@@ -3574,94 +3577,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         return snap;
     }
 
-    /**
-     * 计划卡的接流快照：把 AgentxTurnRecording 的运行态翻译成前端 PlanCard 的字段形状。
-     * <p>判定顺序：
-     * <ol>
-     *   <li>用户已裁决（approve/reject/supersede）→ 终态卡，版本链取已产各版；</li>
-     *   <li>草稿非空（首版生成中 / 退回重出新稿流式）→ drafting；</li>
-     *   <li>等待裁决 → pending；若 FrameworkSessions 标着 revising（修改已提交、新稿还没开始）→
-     *       仍显示原稿，但锁住裁决控件并标“修改中”；</li>
-     *   <li>都没有 → 不下发。</li>
-     * </ol>
-     * <p>{@code remainingMs} 只给时长，由前端按本机钟换算 deadline，避免两端钟差。
-     */
     private Map<String, Object> planCardForSnapshot(ChatCommand cmd, AgentxTurnRecording recording) {
-        if (recording == null || !recording.hasPlanActivity()) return null;
-        String sessionKey = sessions.key(cmd);
-        String outcome = sessions.peekPlanOutcome(sessionKey);
-        String revisionFeedback = sessions.peekPlanFeedback(sessionKey);
-        boolean revising = sessions.isPlanRevising(sessionKey);
-        long timeoutMs = configService.getInt("chat.planTimeoutMs", 3600000);
-        java.util.List<Map<String, Object>> all = recording.planVersionsCopy();
-        String draft = recording.planDraftText();
-
-        Map<String, Object> card = new java.util.LinkedHashMap<>();
-        card.put("id", recording.planApprovalIdValue() == null ? "" : recording.planApprovalIdValue());
-        card.put("auto", false);
-        card.put("busy", false);
-        card.put("editText", "");
-        card.put("revising", false);
-        card.put("revisingStarted", false);
-        card.put("pendingFeedback", "");
-        card.put("timeoutMs", timeoutMs);
-        card.put("remainingMs", 0L);
-
-        boolean finalOutcome = "approve".equals(outcome) || "supersede".equals(outcome)
-                || "reject".equals(outcome);
-
-        java.util.List<Map<String, Object>> prior = new java.util.ArrayList<>();
-        if (finalOutcome) {
-            if (all.isEmpty()) return null;
-            Map<String, Object> last = all.get(all.size() - 1);
-            for (int i = 0; i < all.size() - 1; i++) prior.add(AgentxPlanSteerUtil.planVersionOut(all.get(i)));
-            card.put("status", "approve".equals(outcome) ? "approved"
-                    : "supersede".equals(outcome) ? "superseded" : "rejected");
-            card.put("plan", str(last.get("plan")));
-            card.put("feedback", str(last.get("feedback")));
-            card.put("versions", prior);
-        } else if (!draft.isEmpty()) {
-            for (Map<String, Object> v : all) prior.add(AgentxPlanSteerUtil.planVersionOut(v));
-            card.put("status", "drafting");
-            card.put("plan", draft);
-            card.put("feedback", revising ? (revisionFeedback == null ? "" : revisionFeedback) : "");
-            card.put("versions", prior);
-            if (revising) {
-                card.put("revising", true);
-                card.put("revisingStarted", true);
-                card.put("pendingFeedback", revisionFeedback == null ? "" : revisionFeedback);
-                card.put("busy", true);
-            }
-        } else if (recording.planPendingNow() && !all.isEmpty()) {
-            Map<String, Object> last = all.get(all.size() - 1);
-            for (int i = 0; i < all.size() - 1; i++) prior.add(AgentxPlanSteerUtil.planVersionOut(all.get(i)));
-            card.put("status", "pending");
-            card.put("plan", str(last.get("plan")));
-            card.put("feedback", str(last.get("feedback")));
-            card.put("versions", prior);
-            if (revising) {
-                card.put("revising", true);
-                card.put("revisingStarted", false);
-                card.put("pendingFeedback", revisionFeedback == null ? "" : revisionFeedback);
-                card.put("busy", true);
-            } else {
-                long remaining = Math.max(0L, recording.planPendingAtMs() + timeoutMs - System.currentTimeMillis());
-                card.put("remainingMs", remaining);
-            }
-        } else {
-            return null;
-        }
-
-        if (cmd.getPlanBaseId() != null && !cmd.getPlanBaseId().isBlank()) {
-            Map<String, Object> from = new java.util.LinkedHashMap<>();
-            from.put("cardId", cmd.getPlanBaseId());
-            from.put("version", cmd.getPlanBaseVersion());
-            from.put("done", cmd.getPlanBaseDone());
-            from.put("total", cmd.getPlanBaseTotal());
-            from.put("failed", cmd.getPlanBaseFailed());
-            card.put("adjustFrom", from);
-        }
-        return card;
+        return planCardSnapshot.build(cmd, recording);
     }
 
 
