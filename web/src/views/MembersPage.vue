@@ -113,7 +113,7 @@
           <a-spin :spinning="loading">
             <a-table :data-source="users" :row-key="r => r.uid" size="middle" :pagination="false"
                      :row-selection="{ selectedRowKeys: selectedUids, onChange: onSelect }" :scroll="{ x: 900 }">
-              <a-table-column title="成员" key="member" width="210">
+              <a-table-column key="member" title="成员" width="210">
                 <template #default="{ record }">
                   <div class="mem-user">
                     <UserAvatar :avatar="record.avatar" :name="record.username" :size="26" />
@@ -124,14 +124,14 @@
                   </div>
                 </template>
               </a-table-column>
-              <a-table-column title="部门" key="department" width="120">
+              <a-table-column key="department" title="部门" width="120">
                 <template #default="{ record }">
                   <span v-if="record.departmentId" class="mem-dept">{{ deptName(record.departmentId) }}</span>
                   <span v-else class="mem-none">未分配</span>
                 </template>
               </a-table-column>
               <!-- 角色与来源：角色名 + 「手动 / 组映射·不可改」两段显示，与编辑弹窗的置灰口径同源 -->
-              <a-table-column title="角色与来源" key="roles" width="230">
+              <a-table-column key="roles" title="角色与来源" width="230">
                 <template #default="{ record }">
                   <span class="mem-roles">
                     <span v-for="rc in roleCodes(record)" :key="rc" class="role-pill" :class="'r-' + rc">
@@ -142,7 +142,7 @@
                   </span>
                 </template>
               </a-table-column>
-              <a-table-column title="认证方式" key="identities" width="140">
+              <a-table-column key="identities" title="认证方式" width="140">
                 <template #default="{ record }">
                   <span v-if="(record.identities || []).length" class="mem-auth">
                     {{ record.identities.map(i => providerName(i.providerId)).join('、') }}
@@ -150,18 +150,18 @@
                   <span v-else class="mem-none">本地账号</span>
                 </template>
               </a-table-column>
-              <a-table-column title="状态" key="status" width="92">
+              <a-table-column key="status" title="状态" width="92">
                 <template #default="{ record }">
                   <span class="app-pill" :class="statusPill(record)">{{ statusText(record) }}</span>
                 </template>
               </a-table-column>
-              <a-table-column title="最近登录" key="lastLoginTime" width="140">
+              <a-table-column key="lastLoginTime" title="最近登录" width="140">
                 <template #default="{ record }">
                   <span v-if="record.lastLoginTime" class="mem-login-time">{{ fmt(record.lastLoginTime) }}</span>
                   <span v-else class="mem-none">从未登录</span>
                 </template>
               </a-table-column>
-              <a-table-column title="操作" key="action" width="150">
+              <a-table-column key="action" title="操作" width="150">
                 <template #default="{ record }">
                   <span class="mem-inline">
                     <button class="app-link-btn" @click="open360(record)">详情</button>
@@ -266,7 +266,7 @@
                   <button class="app-link-btn" @click="gotoUsersByDept(selectedDeptId)">在用户页签查看</button>
                 </div>
                 <a-table :data-source="deptMembers" :row-key="r => r.uid" size="small" :pagination="false">
-                  <a-table-column title="成员" key="member">
+                  <a-table-column key="member" title="成员">
                     <template #default="{ record }">
                       <div class="mem-user">
                         <UserAvatar :avatar="record.avatar" :name="record.username" :size="24" />
@@ -277,7 +277,7 @@
                       </div>
                     </template>
                   </a-table-column>
-                  <a-table-column title="角色" key="roles" width="220">
+                  <a-table-column key="roles" title="角色" width="220">
                     <template #default="{ record }">
                       <span class="mem-roles">
                         <span v-for="rc in roleCodes(record)" :key="rc" class="role-pill" :class="'r-' + rc">
@@ -286,12 +286,12 @@
                       </span>
                     </template>
                   </a-table-column>
-                  <a-table-column title="状态" key="status" width="88">
+                  <a-table-column key="status" title="状态" width="88">
                     <template #default="{ record }">
                       <span class="app-pill" :class="statusPill(record)">{{ statusText(record) }}</span>
                     </template>
                   </a-table-column>
-                  <a-table-column title="最近登录" key="lastLoginTime" width="140">
+                  <a-table-column key="lastLoginTime" title="最近登录" width="140">
                     <template #default="{ record }">
                       <span v-if="record.lastLoginTime" class="mem-login-time">{{ fmt(record.lastLoginTime) }}</span>
                       <span v-else class="mem-none">从未登录</span>
@@ -372,24 +372,24 @@
             </div>
             <a-table :data-source="pendingInvites" :row-key="r => r.id" size="small" :pagination="false"
                      :loading="invitesLoading">
-              <a-table-column title="角色 / 部门" key="roles">
+              <a-table-column key="roles" title="角色 / 部门">
                 <template #default="{ record }">
                   <div class="mem-name">{{ inviteRoleText(record.roleIds) }}</div>
                   <div class="form-tip">{{ record.deptId ? deptName(record.deptId) : '未指定部门' }} · 邀请人 {{ record.createdBy || '—' }}</div>
                 </template>
               </a-table-column>
-              <a-table-column title="已用" key="uses" width="84">
+              <a-table-column key="uses" title="已用" width="84">
                 <template #default="{ record }">{{ record.usedCount || 0 }} / {{ record.maxUses === 0 ? '不限' : record.maxUses }}</template>
               </a-table-column>
-              <a-table-column title="到期" key="expiresAt" width="140">
+              <a-table-column key="expiresAt" title="到期" width="140">
                 <template #default="{ record }">{{ fmt(record.expiresAt) }}</template>
               </a-table-column>
-              <a-table-column title="状态" key="status" width="88">
+              <a-table-column key="status" title="状态" width="88">
                 <template #default="{ record }">
                   <span class="app-pill" :class="inviteStatusPill(record.status)">{{ inviteStatusText(record.status) }}</span>
                 </template>
               </a-table-column>
-              <a-table-column title="操作" key="action" width="90">
+              <a-table-column key="action" title="操作" width="90">
                 <template #default="{ record }">
                   <button v-if="record.status === 'active'" class="app-link-btn danger" @click="revokeInvite(record)">撤销</button>
                   <span v-else class="mem-none">—</span>
@@ -406,19 +406,19 @@
                 <span class="app-list-count">不可再使用，但保留痕迹</span>
               </div>
               <a-table :data-source="expiredInvites" :row-key="r => r.id" size="small" :pagination="false">
-                <a-table-column title="角色 / 部门" key="roles">
+                <a-table-column key="roles" title="角色 / 部门">
                   <template #default="{ record }">
                     <div class="mem-name">{{ inviteRoleText(record.roleIds) }}</div>
                     <div class="form-tip">{{ record.deptId ? deptName(record.deptId) : '未指定部门' }} · 邀请人 {{ record.createdBy || '—' }}</div>
                   </template>
                 </a-table-column>
-                <a-table-column title="已用" key="uses" width="84">
+                <a-table-column key="uses" title="已用" width="84">
                   <template #default="{ record }">{{ record.usedCount || 0 }} / {{ record.maxUses === 0 ? '不限' : record.maxUses }}</template>
                 </a-table-column>
-                <a-table-column title="到期" key="expiresAt" width="140">
+                <a-table-column key="expiresAt" title="到期" width="140">
                   <template #default="{ record }">{{ fmt(record.expiresAt) }}</template>
                 </a-table-column>
-                <a-table-column title="状态" key="status" width="88">
+                <a-table-column key="status" title="状态" width="88">
                   <template #default="{ record }">
                     <span class="app-pill" :class="inviteStatusPill(record.status)">{{ inviteStatusText(record.status) }}</span>
                   </template>
@@ -480,9 +480,9 @@
               <code class="mem-expire-role">{{ c }}</code>
               <a-date-picker :value="(userForm.roleExpires || {})[c]"
                              :disabled-date="d => d && d.valueOf() < Date.now() - 86400000"
-                             @update:value="v => setExpiry(c, v)"
-                             show-time size="small" value-format="YYYY-MM-DDTHH:mm:ss"
-                             placeholder="永久" style="width:196px" />
+                             show-time
+                             size="small" value-format="YYYY-MM-DDTHH:mm:ss" placeholder="永久"
+                             style="width:196px" @update:value="v => setExpiry(c, v)" />
               <button v-if="(userForm.roleExpires || {})[c]" class="app-link-btn"
                       @click="setExpiry(c, null)">改回永久</button>
             </div>
@@ -996,7 +996,7 @@ async function saveUser () {
   if (!f.isEdit) {
     const uid = String(f.uid || '').trim()
     if (!uid) { uidError.value = '请填写登录账号'; return }
-    if (!/^[A-Za-z0-9_@.\-]+$/.test(uid)) { uidError.value = '仅允许字母、数字及 _ @ . -'; return }
+    if (!/^[A-Za-z0-9_@.-]+$/.test(uid)) { uidError.value = '仅允许字母、数字及 _ @ . -'; return }
     if (!f.password || f.password.length < 6) { pwdError.value = '密码至少 6 位'; return }
     if (f.password !== f.confirm) { pwdError.value = '两次输入的密码不一致'; return }
   }

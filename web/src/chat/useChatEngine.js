@@ -1819,8 +1819,11 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         liveScroll()
       } catch (e) { /* 忽略 */ }
     },
-    onDeepPlanDelta: t => applyPlanDelta(msg, t, { userMsg, onScroll: liveScroll }),
-    onDeepPlanApproval: payload => applyPlanApproval(msg, payload, { userMsg, messages: messages.value, onScroll: liveScroll }),
+    // 计划帧的血缘由 msg.planCard.adjustFrom 自己维护（applyPlanDelta 首帧写、linkPlanLineage 双向指认），
+    // 这里没有可用的 userMsg 作用域——传 null 走 handler 默认值，不要再引用那个不存在的变量。
+    // 之前写的是裸 userMsg（从未定义），每帧都 ReferenceError、被外层 catch 吞掉，表现为计划卡不更新。
+    onDeepPlanDelta: t => applyPlanDelta(msg, t, { userMsg: null, onScroll: liveScroll }),
+    onDeepPlanApproval: payload => applyPlanApproval(msg, payload, { userMsg: null, messages: messages.value, onScroll: liveScroll }),
     onDeepPlanCancelled: () => applyPlanCancelled(msg, { onScroll: liveScroll }),
     onDeepPlanSuperseded: () => applyPlanSuperseded(msg, { onScroll: liveScroll }),
     onImage: imgs2 => {

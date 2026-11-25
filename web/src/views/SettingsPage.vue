@@ -64,13 +64,13 @@
                  与解析并发数同节）；
                  导航仍只保留一个「检索设置」（与工具调用把「联网搜索」并进去同一个做法）。
                  pane 留空只当页签条，内容在下方按 ragTab 对应的 panel 字段渲染 -->
-            <a-tabs v-if="current === 'retrieval'" v-model:activeKey="ragTab" class="sched-tabs">
+            <a-tabs v-if="current === 'retrieval'" v-model:active-key="ragTab" class="sched-tabs">
               <a-tab-pane key="retrieval" tab="关键词引擎" />
             </a-tabs>
             <!-- 工具相关面板的合并入口：总开关 / 联网搜索（沙盒相关设置归「沙盒」面板）——
                  避免左侧导航随工具面板膨胀；页签风格与「定时任务」一致（a-tabs），
                  pane 留空只当页签条，内容在下方按 toolTab 对应的 panel 字段渲染 -->
-            <a-tabs v-if="current === 'tool'" v-model:activeKey="toolTab" class="sched-tabs">
+            <a-tabs v-if="current === 'tool'" v-model:active-key="toolTab" class="sched-tabs">
               <a-tab-pane key="tool" tab="总开关" />
               <a-tab-pane key="webSearch" tab="联网搜索" />
             </a-tabs>
@@ -78,7 +78,7 @@
                  页签风格与「智能体」hub 一致（a-tabs）；pane 留空只当页签条，内容在下方按 maintTab 切换。
                  「索引与健康」不跟任务表同屏：运行状态是 fill 模式（表格体按容器高限高、外层不滚），
                  把索引/健康卡塞在表格下面会被 overflow:hidden 裁掉，且两者本来就不属于周期任务 -->
-            <a-tabs v-if="current === 'maintenance'" v-model:activeKey="maintTab" class="sched-tabs">
+            <a-tabs v-if="current === 'maintenance'" v-model:active-key="maintTab" class="sched-tabs">
               <a-tab-pane key="config" tab="参数配置" />
               <a-tab-pane key="status" tab="运行状态" />
               <a-tab-pane key="logs" tab="执行日志" />
@@ -228,8 +228,8 @@
                   <a-table :data-source="visibleScheduleTasks" size="small" row-key="name" :pagination="false"
                            :loading="schedLoading" :scroll="{ x: 1020, y: tableScrollY }"
                            class="sched-table"
-                           :expanded-row-keys="expandedTasks" @expandedRowsChange="onExpandChange">
-                    <a-table-column title="任务" key="name" width="190">
+                           :expanded-row-keys="expandedTasks" @expanded-rows-change="onExpandChange">
+                    <a-table-column key="name" title="任务" width="190">
                       <template #default="{ record }">
                         <a-tooltip :title="record.desc">
                           <span class="key-name">{{ record.name }}</span>
@@ -244,7 +244,7 @@
                         <div v-else class="sched-cfgkey key-dim">内置节拍</div>
                       </template>
                     </a-table-column>
-                    <a-table-column title="间隔" key="interval" width="150">
+                    <a-table-column key="interval" title="间隔" width="150">
                       <template #default="{ record }">
                         <!-- 间隔就地编辑：单行内改完即存，不跳页签。内置节拍（无配置键）只读 -->
                         <IntervalEditor
@@ -257,14 +257,14 @@
                         <span v-else class="key-dim">{{ fmtInterval(record.intervalMs) }}</span>
                       </template>
                     </a-table-column>
-                    <a-table-column title="状态" key="state" width="80">
+                    <a-table-column key="state" title="状态" width="80">
                       <template #default="{ record }">
                         <span v-if="record.running" class="audit-chip run">执行中</span>
                         <span v-else-if="record.paused" class="audit-chip paused">已暂停</span>
                         <span v-else class="audit-chip idle">待触发</span>
                       </template>
                     </a-table-column>
-                    <a-table-column title="上次结果" key="last" width="180">
+                    <a-table-column key="last" title="上次结果" width="180">
                       <template #default="{ record }">
                         <template v-if="record.lastFinishedAt">
                           <span class="audit-chip" :class="record.lastSuccess ? 'pass' : 'fail'">
@@ -278,20 +278,20 @@
                         <span v-else class="key-dim">本轮等待中</span>
                       </template>
                     </a-table-column>
-                    <a-table-column title="下次预计" key="next" width="100">
+                    <a-table-column key="next" title="下次预计" width="100">
                       <template #default="{ record }">
                         <span v-if="record.paused || record.running" class="key-dim">—</span>
                         <span v-else class="key-dim">{{ fmtCountdown(record.nextDueAt, record.now) }}</span>
                       </template>
                     </a-table-column>
-                    <a-table-column title="成败" key="cnt" width="76">
+                    <a-table-column key="cnt" title="成败" width="76">
                       <template #default="{ record }">
                         <span class="sched-ok">{{ record.successCount }}</span>
                         <span class="key-dim"> / </span>
                         <span :class="{ 'sched-bad': record.failCount > 0 }">{{ record.failCount }}</span>
                       </template>
                     </a-table-column>
-                    <a-table-column title="暂停" key="pause" width="70">
+                    <a-table-column key="pause" title="暂停" width="70">
                       <template #default="{ record }">
                         <a-tooltip v-if="record.editable"
                                    :title="record.paused ? '已暂停，点击恢复默认间隔' : '暂停该任务（间隔写 0，下个节拍生效）'">
@@ -308,7 +308,7 @@
                         </a-tooltip>
                       </template>
                     </a-table-column>
-                    <a-table-column title="操作" key="act" width="90">
+                    <a-table-column key="act" title="操作" width="90">
                       <template #default="{ record }">
                         <button class="app-link-btn" :disabled="record.running" @click="doTrigger(record)">
                           {{ record.running ? '执行中…' : '立即执行' }}
@@ -419,22 +419,22 @@
                     <a-table :data-source="healthRows" size="small" row-key="kbId" :loading="healthLoading"
                              :pagination="{ pageSize: 10, size: 'small', hideOnSinglePage: true, showTotal: t => `共 ${t} 条` }"
                              :scroll="{ x: 840 }" :locale="{ emptyText: '暂无知识库数据' }">
-                      <a-table-column title="知识库" key="kbName" width="220">
+                      <a-table-column key="kbName" title="知识库" width="220">
                         <template #default="{ record }">
                           <span>{{ record.kbName }}</span>
                           <a-tag v-if="record.builtin" color="gold" style="margin-left:6px">内置</a-tag>
                         </template>
                       </a-table-column>
-                      <a-table-column title="文档 生效/弃用/解析中/失败" key="docs" width="230">
+                      <a-table-column key="docs" title="文档 生效/弃用/解析中/失败" width="230">
                         <template #default="{ record }">
                           <span>{{ record.docActive }} / {{ record.docDeprecated }} / {{ record.docParsing }} /
                             <span :class="{ 'sched-bad': record.docFailed > 0 }">{{ record.docFailed }}</span></span>
                         </template>
                       </a-table-column>
-                      <a-table-column title="知识块" key="chunks" width="100">
+                      <a-table-column key="chunks" title="知识块" width="100">
                         <template #default="{ record }">{{ record.chunkTotal }}</template>
                       </a-table-column>
-                      <a-table-column title="回收站块" key="recycled" width="100">
+                      <a-table-column key="recycled" title="回收站块" width="100">
                         <template #default="{ record }">
                           <a-tooltip v-if="record.chunkRecycled > 0" title="回收站文档（可恢复，超期后连块一起清理）的块：不参与关键词索引">
                             <span class="key-dim">{{ record.chunkRecycled }}</span>
@@ -442,7 +442,7 @@
                           <span v-else class="key-dim">0</span>
                         </template>
                       </a-table-column>
-                      <a-table-column title="未向量化" key="nv" width="110">
+                      <a-table-column key="nv" title="未向量化" width="110">
                         <template #default="{ record }">
                           <span :class="{ 'sched-bad': record.chunkNoVector > 0 }">{{ record.chunkNoVector }}</span>
                           <a-tooltip v-if="record.chunkNoVector > 0" title="重解析对应文档可补齐（向量模型换绑期间也会暂缺）">
@@ -482,21 +482,21 @@
                   </div>
                   <a-table :data-source="runLogRows" size="small" row-key="id" :pagination="false"
                            :loading="runLogLoading" :scroll="{ x: 820 }">
-                    <a-table-column title="开始时间" key="started" width="140">
+                    <a-table-column key="started" title="开始时间" width="140">
                       <template #default="{ record }"><span class="key-dim">{{ fmtTs(record.startedAt) }}</span></template>
                     </a-table-column>
-                    <a-table-column title="任务" key="task" width="170" ellipsis>
+                    <a-table-column key="task" title="任务" width="170" ellipsis>
                       <template #default="{ record }">{{ record.taskName }}</template>
                     </a-table-column>
-                    <a-table-column title="触发" key="trigger" width="80">
+                    <a-table-column key="trigger" title="触发" width="80">
                       <template #default="{ record }">
                         <span class="key-dim">{{ { startup: '启动', auto: '周期', manual: '手动' }[record.triggerType] || record.triggerType }}</span>
                       </template>
                     </a-table-column>
-                    <a-table-column title="耗时" key="dur" width="90">
+                    <a-table-column key="dur" title="耗时" width="90">
                       <template #default="{ record }">{{ fmtDuration(record.durationMs) }}</template>
                     </a-table-column>
-                    <a-table-column title="结果" key="ok">
+                    <a-table-column key="ok" title="结果">
                       <template #default="{ record }">
                         <a-tooltip v-if="!record.success && record.errorMsg" :title="record.errorMsg">
                           <span class="audit-chip fail">失败</span>
@@ -1386,16 +1386,15 @@ watch(() => current.value, v => {
 // 「索引与健康」页签是索引运维卡的唯一宿主：切进来时补拉一次（换库/重建后的最新状态）
 watch(maintTab, v => { if (v === 'index') { loadIndexOps(); loadHealth(); ensureIdxKbOptions() } })
 
-/** 手动触发一次：异步执行，稍后自动刷一次状态与日志 */const doTrigger = async record => {
+/** 手动触发一次：异步执行，稍后自动刷一次状态与日志 */
+const doTrigger = async record => {
   try {
     const r = await triggerScheduleTask(record.name)
     if (r.success && r.data?.accepted) {
       message.success(`「${record.name}」已提交执行`)
       loadSchedule()
-      setTimeout(() => {
-        if (schedOpen.value) loadSchedule()
-        if (runLogOpen.value) loadRunLogs(false)
-      }, 3000)
+      // 3 秒后再刷一次状态与日志（异步任务通常这时已经跑起来）
+      setTimeout(() => { loadSchedule(); loadRunLogs(false) }, 3000)
     } else {
       message.warning(r.data?.reason || r.msg || '触发被拒绝（上一轮可能还在执行）')
     }

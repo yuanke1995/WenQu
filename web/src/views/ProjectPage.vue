@@ -70,7 +70,7 @@
     </div>
 
     <div class="app-page-body pj-body">
-      <div class="pj-wrap" ref="pjWrapEl" :class="{ 'pj-single': !inlinePreview }">
+      <div ref="pjWrapEl" class="pj-wrap" :class="{ 'pj-single': !inlinePreview }">
         <a-skeleton v-if="firstLoad" class="pj-skeleton" active :paragraph="{ rows: 6 }" />
 
         <template v-else>
@@ -341,7 +341,8 @@ import {
   getProject, updateProject, bindProjectExecutor, pickExecutorDir, openProjectFolder,
   listExecutors, listProjectFiles, getWorkspaceMemory, saveWorkspaceMemory,
   listProjectItems, createProjectItem, updateProjectItem, deleteProjectItem,
-  downloadProjectFile, setNewSessionProject, projectFileContent, saveProjectFileContent
+  downloadProjectFile, setNewSessionProject, projectFileContent, saveProjectFileContent,
+  bindProjectSshAlias
 } from '../api'
 import { sessionStore, loadSessions as refreshSidebarSessions } from './store'
 import { WORKSPACE_ICONS, WORKSPACE_COLORS, workspaceIconOf } from '../utils/workspaceIcons'

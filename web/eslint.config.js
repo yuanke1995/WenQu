@@ -196,23 +196,27 @@ export default [
     },
   },
 
+  // Vue SFC 里 script-setup 定义的变量绝大多数只被模板引用，基础 no-unused-vars 的 JS
+  // parser 看不到 template，会把它们全部误报（ChatPage.vue 实测 155 个全是误报）。
+  // 插件版 vue/no-unused-vars 能同时看 script 与 template，这里关掉基础版、保留插件版。
+  {
+    files: ['**/*.vue'],
+    rules: {
+      'no-unused-vars': 'off',
+    },
+  },
+
   // 存量超大文件：只豁免「规模」两条，其余缺陷类规则照常生效。
   // 这样这些文件在重构过程中仍然会被抓出真实 bug，只是不再因为行数报警。
   {
     files: GRANDFATHERED,
     rules: {
-      // 存量文件：只豁免本次新引入的规则，其余照常
+      // 存量文件只豁免规模类规则；不豁免缺陷类（no-debugger/eqeqeq 等始终生效）
       'max-lines': 'off',
       'max-lines-per-function': 'off',
       'complexity': 'off',
       'max-depth': 'off',
       'max-params': 'off',
-      'no-unused-vars': 'off',
-      'no-undef': 'off',
-      'no-irregular-whitespace': 'off',
-      'no-control-regex': 'off',
-      'no-useless-escape': 'off',
-      'no-dupe-keys': 'off',
       'prefer-const': 'off',
       'vue/no-use-v-if-with-v-for': 'off',
       'vue/no-unused-vars': 'off',

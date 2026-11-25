@@ -1,10 +1,10 @@
 <template>
-  <div class="chat2" ref="chat2Ref" @mouseenter="railVis = true" @mouseleave="railVis = false; railHoverIdx = -1">
+  <div ref="chat2Ref" class="chat2" @mouseenter="railVis = true" @mouseleave="railVis = false; railHoverIdx = -1">
     <!-- 中间：标题栏 + 消息流 + 输入区 -->
     <div class="chat-col">
       <!-- 团队成员会话：宽屏并入标题栏；窄屏此细条提示 -->
       <div v-if="memberViewRoot && isNarrow" style="display:flex;align-items:center;gap:10px;padding:8px 16px;border-bottom:1px solid #e6e9ed;background:#f5f3ff;flex:none;">
-        <button @click="backToRootSession" style="border:1px solid #ddd6fe;background:#fff;color:#7c3aed;border-radius:8px;padding:4px 10px;font-size:12px;cursor:pointer;">← 返回主会话</button>
+        <button style="border:1px solid #ddd6fe;background:#fff;color:#7c3aed;border-radius:8px;padding:4px 10px;font-size:12px;cursor:pointer;" @click="backToRootSession">← 返回主会话</button>
         <span style="font-size:11px;font-weight:650;color:#7c3aed;background:#fff;border:1px solid #ddd6fe;border-radius:5px;padding:1px 7px;">团队成员会话</span>
         <span v-if="memberViewName" style="font-size:12px;color:#5f6570;">{{ memberViewName }}</span>
       </div>
@@ -12,7 +12,7 @@
            其中的会话查找/分享/状态三个动作改由下面的 MobileChatHead 以图标提供 -->
       <div v-if="!isNarrow" class="chat-head">
         <template v-if="memberViewRoot">
-          <button @click="backToRootSession" style="border:1px solid #ddd6fe;background:#fff;color:#7c3aed;border-radius:8px;padding:4px 10px;font-size:12px;cursor:pointer;flex:none;">← 返回主会话</button>
+          <button style="border:1px solid #ddd6fe;background:#fff;color:#7c3aed;border-radius:8px;padding:4px 10px;font-size:12px;cursor:pointer;flex:none;" @click="backToRootSession">← 返回主会话</button>
           <span style="font-size:11px;font-weight:650;color:#7c3aed;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:5px;padding:1px 7px;flex:none;">团队成员会话</span>
         </template>
         <span class="chat-title">{{ memberViewRoot ? (memberViewName || '成员会话') : currentSessionTitle }}</span>
@@ -40,15 +40,15 @@
                「开着团队且本轮没人在跑」时只剩团队 · N：派遣结果已经收进名册，再挂一颗只会让人问「这是不是同一件事」。
                两边的显隐都由各自组件内部按数据判定（TeamPill 读团队开关，SubagentPill 读 runs），这里只传消息。 -->
           <TeamPill v-if="!memberViewRoot" :session-id="currentSessionId || ''" :msg="processMsg" @open="openTeamPanel" />
-          <button v-if="memberViewRoot" type="button" title="停止该成员当前轮" @click="stopNow"
-                  style="height:26px;padding:0 10px;border:1px solid #f3c9c9;background:#fff2f0;color:#cf1322;border-radius:7px;font-size:12px;cursor:pointer;margin-right:4px;">停止</button>
+          <button v-if="memberViewRoot" type="button" title="停止该成员当前轮" style="height:26px;padding:0 10px;border:1px solid #f3c9c9;background:#fff2f0;color:#cf1322;border-radius:7px;font-size:12px;cursor:pointer;margin-right:4px;"
+                  @click="stopNow">停止</button>
           <button class="app-icon-btn" title="在本会话中查找（Ctrl/⌘ + F）" @click="openSearch">
             <search-outlined />
           </button>
           <!-- 分享激活态：图标转琥珀，与侧栏会话行的分享标记同色（链接还开着不进弹窗也得有感知） -->
-          <button class="app-icon-btn" :class="{ 'share-on': shareActive }" @click="openShare"
-                  :title="shareActive ? '这段对话正在对外分享（只读链接生效中）' : '分享这段对话（只读链接）'"
-                  :aria-label="shareActive ? '这段对话正在对外分享（只读链接生效中）' : '分享这段对话（只读链接）'">
+          <button class="app-icon-btn" :class="{ 'share-on': shareActive }" :title="shareActive ? '这段对话正在对外分享（只读链接生效中）' : '分享这段对话（只读链接）'"
+                  :aria-label="shareActive ? '这段对话正在对外分享（只读链接生效中）' : '分享这段对话（只读链接）'"
+                  @click="openShare">
             <share-alt-outlined />
           </button>
           <!-- 子智能体药丸：这一轮派出去几位、几位还在跑。它坐在标题栏而不是正文里，是因为
@@ -59,8 +59,8 @@
           <button class="app-icon-btn" title="看这个会话是怎么跑出来的：工具步与耗时、三张卡、产物、停止与失败"
                   @click="openEvents()"><history-outlined /></button>
           <!-- 状态胶囊：把「本轮跑成什么样」放回顶栏；失败时变红，点它开合右栏 -->
-          <button class="head-status" :class="headStatusClass" @click="headStatusClick"
-                  :title="headStatusTitle">
+          <button class="head-status" :class="headStatusClass" :title="headStatusTitle"
+                  @click="headStatusClick">
             <span class="hs-dot" aria-hidden="true"></span>
             <span>{{ headStatusText }}</span>
           </button>
@@ -135,7 +135,7 @@
       <!-- 智能体提问不走顶部横幅：卡片已落库、等待期间断线不中止本轮，恢复由引擎在会话加载时
            按待答记录重建底部答题面板（hydratePendingAsk），与实时卡同一处、同一套交互。 -->
 
-      <div class="messages" ref="box" @scroll="onMessagesScroll">
+      <div ref="box" class="messages" @scroll="onMessagesScroll">
         <!-- 历史没取回来：这是一次失败，不是「这个会话还没有消息」。画成欢迎页会让人以为
              会话被清空了，实际是请求挂了——错误卡占住空态位置，给出原因和重试出口（与移动壳同一判据） -->
         <div v-if="historyError" class="hist-err" role="alert">
@@ -384,7 +384,7 @@
                       <span class="tl-caret" :class="{ open: seg.tools[0]._groupOpen }"><caret-right-outlined /></span>
                     </button>
                     <!-- 有组条时全文挂在组条下面（批次折叠着也点得开）；没有组条时挂在它所属那张卡下面 -->
-                    <NoteBody v-if="groupHasBar(seg)" v-for="(nt, ni) in seg.notes" :key="'note' + ni" :m="m" :note="nt" />
+                    <NoteBody v-for="(nt, ni) in seg.notes" v-if="groupHasBar(seg)" :key="'note' + ni" :m="m" :note="nt" />
                     <div v-if="seg.tools.length === 1 || seg.tools[0]._groupOpen" class="tl-group-body" :class="{ solo: seg.tools.length === 1 }">
                       <div v-for="(t, ti) in seg.tools" :key="ti" class="tl-card" :data-spawn="spawnAnchorOf(t)"
                            :class="{ run: t.status === 'start', err: t.status === 'error' }">
@@ -404,10 +404,10 @@
                           <span v-if="t.status === 'error'" class="tool-fail">失败</span>
                           <!-- 这一轮的思考/独白并到步的行尾（不各占一行标题，免得展开态一半高度由它买单）：
                                它本来就长在「想了这些才动手」的那个位置；标签只写类别名，量级展开后自己看 -->
-                          <NoteTag v-if="ti === 0 && !groupHasBar(seg)" v-for="(nt, ni) in seg.notes" :key="ni" :m="m" :note="nt" />
+                          <NoteTag v-for="(nt, ni) in seg.notes" v-if="ti === 0 && !groupHasBar(seg)" :key="ni" :m="m" :note="nt" />
                           <span class="tl-caret tl-caret-btn" :class="{ open: toolCardOpen(t) }"><caret-right-outlined /></span>
                         </button>
-                        <NoteBody v-if="!groupHasBar(seg)" v-for="(nt, ni) in seg.notes" :key="'note' + ni" :m="m" :note="nt" />
+                        <NoteBody v-for="(nt, ni) in seg.notes" v-if="!groupHasBar(seg)" :key="'note' + ni" :m="m" :note="nt" />
                         <!-- askUser 问答记录：可折叠（默认展开），刷新/历史恢复同构 -->
                         <AskRecordCard v-if="t.name === 'askUser' && t.status !== 'start'" :t="t" />
                         <!-- 咨询另一位助手：这一问一答在过程块里成卡（那份 subChat 随后端工具卡一起落库，
@@ -591,10 +591,10 @@
           </template>
           <template #sources="{ m, i }">
               <SourceList v-if="m.role === 'ai' && (retrievalLineTitle(m) || toolSearchQueries(m).length || (m.sources && m.sources.length))"
-                          :sources="m.sources" :title="retrievalLineTitle(m)" :note="hitsNote(m)"
-                          :terms="m.retrieved && m.retrieved.terms" :tool-queries="toolSearchQueries(m)"
-                          :question="questionFor(i)" :can-feedback="true"
-                          show-snippet v-model:open="m.rtOpen" />
+                          v-model:open="m.rtOpen" :sources="m.sources" :title="retrievalLineTitle(m)"
+                          :note="hitsNote(m)" :terms="m.retrieved && m.retrieved.terms"
+                          :tool-queries="toolSearchQueries(m)" :question="questionFor(i)"
+                          :can-feedback="true" show-snippet />
           </template>
           <template #sources-after="{ m, i }">
               <!-- 只在最新一轮出现（panelAi=最后一条 AI 消息，含进行中）：更早那几轮的建议已被后面的对话取代，
@@ -855,9 +855,9 @@
                之上这一列）。插话队列仍排在它下面：那是「还没发出去的话」，要离输入框最近。 -->
           <div v-if="todoBarVisible"
                class="todo-bar" :class="{ collapsed: !todoOpen }">
-            <button type="button" class="tb-head" @click="todoOpen = !todoOpen"
-                    :title="todoOpen ? '收起任务清单' : '展开任务清单'"
-                    :aria-label="todoOpen ? '收起任务清单' : '展开任务清单'">
+            <button type="button" class="tb-head" :title="todoOpen ? '收起任务清单' : '展开任务清单'"
+                    :aria-label="todoOpen ? '收起任务清单' : '展开任务清单'"
+                    @click="todoOpen = !todoOpen">
               <ordered-list-outlined class="tb-ico" />
               <span class="tb-label">任务清单</span>
               <span class="tb-count">{{ todoSummary }}</span>
@@ -1147,7 +1147,7 @@
         {{ histPool.length ? '没有匹配的历史问答' : '本会话还没有可引用的历史问答' }}
         </div>
         </div>
-        <div class="mention-foot">↑↓ 选择 · Enter 确认 · Esc 关闭　|　# 引用历史问答（仅本轮，最多 10 条）</div>
+        <div class="mention-foot">↑↓ 选择 · Enter 确认 · Esc 关闭 | # 引用历史问答（仅本轮，最多 10 条）</div>
         </div>
         <!-- 「+」面板（分层菜单）：输入框唯一的候选面板。两个入口同一块面板——
         点「+」先出一级轻菜单（上传文件/图片一击直达，引用/历史/命令进二级列表），
@@ -1549,7 +1549,7 @@
         </button>
         <div v-if="srcCardOpen">
           <div v-for="g in groupedSources" :key="g.key" class="rp-group">
-            <div class="rp-group-head" @click="toggleSrc(g)" :title="srcOpenOf(g) ? '收起片段' : '展开片段'">
+            <div class="rp-group-head" :title="srcOpenOf(g) ? '收起片段' : '展开片段'" @click="toggleSrc(g)">
               <global-outlined v-if="g.icon === 'web'" class="rp-src-ic" />
               <api-outlined v-else-if="g.icon === 'mcp'" class="rp-src-ic" />
               <file-text-outlined v-else class="rp-src-ic" />
@@ -1613,8 +1613,8 @@
                用户电脑上真实存在的文件夹，要拿到 Finder 里接着干时不必再绕回工作区页 -->
           <div v-if="row.type === 'dir'" class="rp-sb-dir">
             <button type="button" class="rp-sb-dir-main"
-                    @click="toggleSandboxDir(row.dir.path)"
-                    :title="(row.open ? '收起 ' : '展开 ') + row.dir.path + '/（' + row.dir.count + ' 个文件 · ' + fmtSize(row.dir.size) + '）'">
+                    :title="(row.open ? '收起 ' : '展开 ') + row.dir.path + '/（' + row.dir.count + ' 个文件 · ' + fmtSize(row.dir.size) + '）'"
+                    @click="toggleSandboxDir(row.dir.path)">
               <span v-for="i in row.depth" :key="i" class="rp-sb-ind" />
               <caret-right-outlined class="tl-caret" :class="{ open: row.open }" />
               <folder-open-outlined v-if="row.open" class="rp-art-ic" />
@@ -1704,8 +1704,8 @@
       <!-- 计划：本会话每轮出过的计划各列一条（继续对话/退回重出后每次重做都算一份），点开右侧完整计划抽屉。
            待确认的计划自动展开并置顶，避免「计划要批」这件事被藏住；历史计划沉底折叠。 -->
       <div v-if="railTab === 'process' && sessionPlans.length" class="rp-card">
-        <button type="button" class="rp-card-head rp-plan-head" @click="planOpen = !planOpen"
-                :title="planOpen ? '收起计划' : '展开计划'">
+        <button type="button" class="rp-card-head rp-plan-head" :title="planOpen ? '收起计划' : '展开计划'"
+                @click="planOpen = !planOpen">
           <span class="rp-label rp-label-h">计划 · {{ sessionPlans.length }} 份</span>
           <span class="rp-plan-badge" :class="{ 'is-pending': sessionPlans.some(p => p.status === 'pending') }">
             {{ planHeadText }}
@@ -1714,8 +1714,8 @@
         </button>
         <div class="rp-group-body" :class="{ open: planOpen }">
           <div class="rp-group-body-in">
-            <button v-for="p in sessionPlans" :key="p.mi" type="button" class="rp-plan-row" @click="openPlanFromRail(p)"
-                    :title="p.label + ' · ' + p.steps + ' 步'">
+            <button v-for="p in sessionPlans" :key="p.mi" type="button" class="rp-plan-row" :title="p.label + ' · ' + p.steps + ' 步'"
+                    @click="openPlanFromRail(p)">
               <span class="rp-plan-dot" :class="'is-' + p.status"></span>
               <span class="rp-plan-t">{{ p.label }}</span>
               <span class="rp-plan-st" :class="'is-' + p.status"><template v-if="p.vers">v{{ p.vers + 1 }} · </template>{{ planStateText(p.status) }}</span>
@@ -1792,7 +1792,7 @@
     <!-- 检索调试弹窗 -->
     <a-modal v-model:open="debugVisible" title="检索调试（为什么这么答）" :footer="null" :width="780">
       <div style="display:flex;gap:8px;margin-bottom:12px">
-        <a-input v-model:value="debugQuestion" placeholder="输入要调试的问题" @pressEnter="runDebug" />
+        <a-input v-model:value="debugQuestion" placeholder="输入要调试的问题" @press-enter="runDebug" />
         <button class="app-btn" :disabled="debugLoading" @click="runDebug">调试</button>
       </div>
       <a-spin :spinning="debugLoading">
@@ -1819,7 +1819,7 @@
           </div>
           <a-collapse :bordered="false" :default-active-key="['final']">
             <a-collapse-panel v-for="(s, si) in debugStages" :key="si" :name="si === 4 ? 'final' : String(si)" :header="s.name">
-              <div v-if="s.items.length" class="dbg-item" v-for="(it, ii) in s.items" :key="ii">
+              <div v-for="(it, ii) in s.items" v-if="s.items.length" :key="ii" class="dbg-item">
                 <div class="dbg-head">
                   <span class="dbg-title">{{ it.title }}</span>
                   <a-tag v-if="it.docName" size="small">{{ it.docName }}</a-tag>
@@ -2447,7 +2447,6 @@ const g = {
   adjustPlanAfterApproval, planExecProgressOf, planAdjustsOfMsg,
   askSubmitAll, commitAskCustom, pickAskOption, ignoreAsk,
   startGoal, saveGoalEdit, startGoalInlineEdit, recompactWith, ready,
-  thinkCapsOf, levelOptionsOf, deepOnOf, currentLevelOf,
   pickAgent, switchBranch, regenerate, retryHistory
 }
 
