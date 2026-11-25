@@ -224,7 +224,7 @@ public class SessionShareService {
      * 直接删会让访问量统计断档、也让用户失去"这条还在外发"的感知——必须先走停止分享。
      * 会话已删除的悬空记录天然是停用态，所以这是它们唯一的清理出口。
      *
-     * <p>调用方须先按 created_by 校验归属（见 ChatController 的对应端点）。
+     * <p>调用方须先按 created_by 校验归属（见 ChatSessionController 的对应端点）。
      *
      * @return 是否真的删掉了一条（false = 不存在、不是本人的、或仍在生效中）
      */

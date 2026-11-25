@@ -3840,7 +3840,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * <p>读不了图的模型挂上它只会拿到一张上游不认的图片块，与「被禁的能力与不存在不可区分」同口径，
      * 所以不收窄成「挂了再拒」，而是直接不挂（与提示词只在能读图时才塞 ImageBlock 一个判据）。
      * <p>体积上限复用对话图片上限口径（{@code ConfigDefaults.CHAT_MAX_IMAGE_MB}，夹在 1~20MB），
-     * 与 ChatController / ShareController 的入站限制同一份真源，避免超大图撑爆上下文。
+     * 与 ChatRunController / ShareController 的入站限制同一份真源，避免超大图撑爆上下文。
      * <p>幂等：实例按会话常驻、每轮都会走这里，已挂过就跳过，不重复注册同名工具。
      */
     private void registerReadImageTool(HarnessAgent agent, WenquAgentxTools.TurnHooks hooks,

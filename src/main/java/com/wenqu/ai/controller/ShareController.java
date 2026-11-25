@@ -229,7 +229,7 @@ public class ShareController {
         // 签名是一次性凭据不能落库，所以每次响应现场签。少了这一步，游客刷新页面后图片全 404
         // （首轮能看到图，因为 SSE 下发时已签过）。
         imageUrlSigner.signMessageMedia(history);
-        // 评价状态回填（与 ChatController.history 同口径）：游客点过 👍/👎 之后刷新，
+        // 评价状态回填（与 ChatHitlController.history 同口径）：游客点过 👍/👎 之后刷新，
         // 按钮得还是「已评价」的锁定态。不回填的话界面显示成没评过——游客以为反馈丢了会再点一次，
         // 而服务端按 messageId 唯一只会覆盖，发布者那边看到的一次不多、游客这边却白白多疑一次。
         List<String> msgIds = history.stream()
@@ -463,7 +463,7 @@ public class ShareController {
 
     /**
      * 游客发图校验：发布者开关 → 数量 → 形状（须 data:image/* 的 data URL）→ 单张体积。
-     * 与 {@code ChatController.chat} 的图片校验同一套口径（那里也校验 data URL 前缀与 base64 字符量）。
+     * 与 {@code ChatHitlController.chat} 的图片校验同一套口径（那里也校验 data URL 前缀与 base64 字符量）。
      * <p>开关关着却带图 = fail-loud，不静默丢弃：静默丢弃会让发布者收到一条"游客说发了图但答非所问"
      * 的投诉，而双方都看不出真正原因。
      */
@@ -657,7 +657,7 @@ public class ShareController {
         // 与超时/留空同词根——三种「没答」在模型眼里不该是三种形状，更不能替用户选一个答案
         String answerText = ignore
                 ? "（用户未回答这一题（点了忽略））"
-                : ChatController.frameworkAskText(ChatController.answersFromBody(body));
+                : com.wenqu.ai.agent.hitl.AskAnswerText.toModelText(com.wenqu.ai.agent.hitl.AskAnswerText.answersFromBody(body));
         boolean ok = frameworkSessions.respondAsk(askId, answerText);
         audit.record("[AUDIT] 游客回答提问 ip={} agent={} session={} ask={} ignore={} ok={}",
                 clientIp(httpRequest), ctx.agent().getId(), row.getSessionId(), askId, ignore, ok);
@@ -686,7 +686,7 @@ public class ShareController {
         var items = hitl.listPendingAsksForSession(sessionId.trim()).stream()
                 .filter(x -> !Boolean.TRUE.equals(x.get("continued")))
                 .toList();
-        return ResultJson.ok(Map.of("items", ChatController.markFrameworkLive(items, frameworkSessions)));
+        return ResultJson.ok(Map.of("items", ChatHitlController.markFrameworkLive(items, frameworkSessions)));
     }
 
     /**
@@ -750,7 +750,7 @@ public class ShareController {
         agentShareService.resolveGuest(token);
         String visitorUid = AgentShareService.visitorUid(visitorId);
         sessionService.assertOwned(sessionId.trim(), visitorUid);
-        return ResultJson.ok(Map.of("items", ChatController.markFrameworkLive(
+        return ResultJson.ok(Map.of("items", ChatHitlController.markFrameworkLive(
                 hitl.listPendingPlansForSession(sessionId.trim()), frameworkSessions)));
     }
 

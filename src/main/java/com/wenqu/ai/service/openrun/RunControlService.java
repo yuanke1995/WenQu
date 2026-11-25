@@ -28,7 +28,7 @@ import java.util.function.BooleanSupplier;
 /**
  * v1 run 的控制面：审批 / 产物 / 插话 / 停止（A1 第二批）。
  *
- * <p><b>全部复用现有实现，不复制第二条引擎</b>：审批照 {@code ChatController} 的三段顺序
+ * <p><b>全部复用现有实现，不复制第二条引擎</b>：审批照 {@code ChatHitlController} 的三段顺序
  * （框架待办优先 → 旧人在回路回退 → CONTINUED 收尾），插话/停止直接调 {@code ChatRunRuntime}，
  * 产物走 {@code ArtifactService.listBySession} + {@code ImageUrlSigner}。跨副本不用另造总线
  * 分支：{@code FrameworkSessions.respond*} 内部已有 {@code routeAnswerElsewhere}，是带 5s 回执
@@ -92,12 +92,12 @@ public class RunControlService {
 
         boolean ok;
         if (ask) {
-            List<String> answers = answersFromBody(b);
+            List<String> answers = com.wenqu.ai.agent.hitl.AskAnswerText.answersFromBody(b);
             if ("ignore".equals(decision)) {
                 ok = hitl.resolveAskIgnore(approvalId, uid);
             } else {
-                // 与 ChatController.answerAgentAsk 同口径：框架先收，旧通道回退，CONTINUED 卡收尾
-                ok = frameworkRespond(() -> frameworkSessions.respondAsk(approvalId, frameworkAskText(answers)),
+                // 与 ChatHitlController.answerAgentAsk 同口径：框架先收，旧通道回退，CONTINUED 卡收尾
+                ok = frameworkRespond(() -> frameworkSessions.respondAsk(approvalId, com.wenqu.ai.agent.hitl.AskAnswerText.toModelText(answers)),
                         "ask", approvalId)
                         || hitl.resolveAsk(approvalId, answers, uid)
                         || hitl.closeContinuedAsk(approvalId, uid, answers);
@@ -177,23 +177,7 @@ public class RunControlService {
         }
     }
 
-    private static List<String> answersFromBody(Map<String, Object> body) {
-        List<String> out = new ArrayList<>();
-        Object raw = body.get("answers");
-        if (raw instanceof List<?> list) {
-            for (Object x : list) if (x != null) out.add(String.valueOf(x));
-        }
-        return out;
-    }
-
-    /** 与 ChatController.frameworkAskText 同口径：单题原样、多题 JSON 数组、空答不代编 */
-    private static String frameworkAskText(List<String> answers) {
-        if (answers.isEmpty()) return "（用户未回答这一题（点了提交但没有选择答案））";
-        List<String> one = answers.stream().map(String::trim)
-                .map(x -> x.isEmpty() ? "（用户未回答这一题（点了提交但没有选择答案））" : x).toList();
-        return one.size() == 1 ? one.get(0) : JSON.toJSONString(one);
-    }
-
+    /** 作答文本的单一真源：见 {@link com.wenqu.ai.agent.hitl.AskAnswerText}（原先此处复写了一份） */
     // ==================== 产物 ====================
 
     /** 只回本次 run 之后、归属本会话的可下载产物；签名 URL 当场换发（1 小时） */

@@ -145,7 +145,7 @@ public class SecurityConfig implements WebMvcConfigurer {
             return true;
         }
         if ("POST".equals(method) && path.equals("/api/ai/chat")) return true;
-        // 聊天附件上传（问答链路材料）：上传换 fileId，文件按登录 uid 隔离落盘并限频（ChatController 内处理）
+        // 聊天附件上传（问答链路材料）：上传换 fileId，文件按登录 uid 隔离落盘并限频（ChatAttachmentController 内处理）
         if ("POST".equals(method) && path.equals("/api/ai/chat/attachment")) return true;
         // 实时聊天附件（同一条上传链路的流式变体）：同样按登录 uid 隔离落盘。
         // 漏放行的症状是普通用户发图直接被 403，管理员靠直通看不出来。

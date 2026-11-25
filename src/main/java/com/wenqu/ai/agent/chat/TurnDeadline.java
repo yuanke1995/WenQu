@@ -12,7 +12,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * <p>背景：askUser 提问卡单卡允许等 chat.askTimeoutMs（默认 10 分钟）、工具审批 120s，而容器级 SSE
  * 超时是<b>从请求开始一路走到头的墙钟</b>且不可续期（Spring 在 async 启动后禁止改 timeout，发心跳
  * 也不复位）。于是「用户慢慢答完第二张卡」必然在答题途中被掐断：提问线程被中断、askId 落库改成 TIMEOUT，
- * 用户点提交收到「提问不存在、已回答或已超时」。现 emitter 不设容器超时（见 ChatController），
+ * 用户点提交收到「提问不存在、已回答或已超时」。现 emitter 不设容器超时（见 ChatRunController），
  * 截断判定改由本台账 + 问答侧的整轮看门狗负责。
  *
  * @author yuanke
