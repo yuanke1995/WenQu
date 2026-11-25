@@ -1988,13 +1988,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      */
     private static void beginHumanWait(RunChannel channel, AgentxTurnRecording recording,
                                        Map<String, SessionEvent> pending) {
-        if (channel.emitter() != null) TurnRegistry.beginHumanWait(channel.emitter());
-        recording.beginToolWait(pendingCallKeys(pending));
+        AgentxEmitUtil.beginHumanWait(channel, recording, pending);
     }
 
     private static void endHumanWait(RunChannel channel, AgentxTurnRecording recording) {
-        if (channel.emitter() != null) TurnRegistry.endHumanWait(channel.emitter());
-        recording.endToolWait();
+        AgentxEmitUtil.endHumanWait(channel, recording);
     }
 
     /**
@@ -2004,16 +2002,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * <p>认不出来（字段形状变了）时返回空集合，由 {@link AgentxTurnRecording#endToolWait} 兜底记给在飞的第一把。
      */
     private static java.util.List<String> pendingCallKeys(Map<String, SessionEvent> pending) {
-        java.util.List<String> out = new java.util.ArrayList<>();
-        for (SessionEvent e : pending.values()) {
-            Map<String, Object> data = e.data() == null ? Map.of() : e.data();
-            Object call = firstNonNull(data.get("call"), data);
-            String name = toolNameOf(call);
-            String id = call instanceof Map<?, ?> cm && cm.get("id") != null ? String.valueOf(cm.get("id")) : null;
-            if (name.isBlank() && (id == null || id.isBlank())) continue;
-            out.add(AgentxTurnRecording.toolCallKey(id, name));
-        }
-        return out;
+        return AgentxEmitUtil.pendingCallKeys(pending);
     }
 
     /**
@@ -4151,9 +4140,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      */
     /** 过程独白增量：空串不发帧也不入块（同一 delta 只有正文时不该多一帧空气）。 */
     private static void emitProcess(RunChannel channel, AgentxTurnRecording recording, String delta) {
-        if (delta == null || delta.isEmpty()) return;
-        channel.emit(RunEventType.PROCESS, delta);
-        recording.process(delta);
+        AgentxEmitUtil.emitProcess(channel, recording, delta);
     }
 
     private int emitRetrieved(ChatCommand cmd, WenquSourcePool pool, RunChannel channel, int announced, AgentxTurnRecording recording) {
@@ -4305,7 +4292,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     }
 
     private static void emit(RunChannel channel, RunEventType type, String content) {
-        if (content != null && !content.isEmpty()) channel.emit(type, content);
+        AgentxEmitUtil.emit(channel, type, content);
     }
 
     /**
@@ -4313,10 +4300,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 没在思考中就是空操作，不发空帧。
      */
     private static void closeThinkingFrame(RunChannel channel, AgentxTurnRecording recording) {
-        String closed = recording.closeThinking();
-        if (closed == null) return;
-        channel.emit(RunEventType.THINKING_DONE,
-                com.alibaba.fastjson2.JSON.toJSONString(Map.of("thinking", closed)));
+        AgentxEmitUtil.closeThinkingFrame(channel, recording);
     }
 
     /**
