@@ -1,0 +1,337 @@
+<?xml version="1.0"?>
+<!DOCTYPE suppressions PUBLIC
+        "-//Checkstyle//DTD SuppressionFilter Configuration 1.2//EN"
+        "https://checkstyle.org/dtds/suppressions_1_2.dtd">
+<!--
+  存量违规白名单（棘轮策略）
+  ==========================================================================
+  这里登记的每一行都是「已存在但暂不修复」的违规，不是「允许违规」。
+  新增代码不在名单里，一旦违反 checkstyle.xml 的规则就会让 mvn verify 失败。
+
+  规则：
+  1. 新增条目只能来自「本次改动之前就已存在」的违规，且必须在 commit message 里写清理由。
+  2. 已修复的文件必须从名单里删掉对应条目，不许留僵尸白名单。
+  3. 每次重构批次结束，重跑 mvn verify 并收紧名单。
+
+  统计口径（基线 2026-11，共 865 个 Java 文件）：
+    - 行宽/格式类（NeedBraces 5862、LineLength 522）属存量风格债，一次性格式化可清
+    - 复杂度/解耦类（MethodLength 60、CyclomaticComplexity 139、ClassFanOutComplexity 109、
+      NPathComplexity 315）需要按模块逐个重构，见重构批次记录
+  ==========================================================================
+-->
+<suppressions>
+
+    <!--
+      ===== 一、规则级豁免：只对「已知会大量误报」的检查整体关闭 =====
+      AvoidStarImport / ImportOrder 在本仓库的 Spring 聚合 import 场景下噪声远大于收益。
+    -->
+
+<!-- 三、存量复杂度/解耦债务（199 个文件）：清单由 checkstyle 实测生成（target/checkstyle-result.xml），不是手估。
+     这些是本仓库最该重构的地方；每拆完一个就删掉它那一行，删到空为止。 -->
+
+    <!-- agent/chat -->
+    <suppress files="[\\/]agent[\\/]chat[\\/]ChatRunRuntime\.java\z" checks="ClassFanOutComplexity|NPathComplexity"/>
+    <suppress files="[\\/]agent[\\/]chat[\\/]TurnSourceRegistry\.java\z" checks="MethodLength|ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity"/>
+
+    <!-- agent/context -->
+    <suppress files="[\\/]agent[\\/]context[\\/]CitationIntegrityService\.java\z" checks="NPathComplexity"/>
+    <suppress files="[\\/]agent[\\/]context[\\/]RetrievalScopeService\.java\z" checks="NPathComplexity"/>
+
+    <!-- agent/goal -->
+    <suppress files="[\\/]agent[\\/]goal[\\/]GoalVerifier\.java\z" checks="CyclomaticComplexity|NPathComplexity"/>
+
+    <!-- agent/hitl -->
+    <suppress files="[\\/]agent[\\/]hitl[\\/]HitlDecisionService\.java\z" checks="ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity"/>
+
+    <!-- agent/plan -->
+    <suppress files="[\\/]agent[\\/]plan[\\/]PlanCopy\.java\z" checks="NPathComplexity"/>
+
+    <!-- agent/runcode -->
+    <suppress files="[\\/]agent[\\/]runcode[\\/]RunCodeService\.java\z" checks="CyclomaticComplexity|NPathComplexity"/>
+    <suppress files="[\\/]agent[\\/]runcode[\\/]RunCodeSubCallRuntime\.java\z" checks="MethodLength|ClassFanOutComplexity|NPathComplexity"/>
+    <suppress files="[\\/]agent[\\/]runcode[\\/]ToolStubRenderer\.java\z" checks="NPathComplexity"/>
+
+    <!-- agent/subagent -->
+    <suppress files="[\\/]agent[\\/]subagent[\\/]SubAgentBranchRuntime\.java\z" checks="MethodLength|ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity|ExecutableStatementCount"/>
+    <suppress files="[\\/]agent[\\/]subagent[\\/]SubAgentConsultService\.java\z" checks="CyclomaticComplexity|NPathComplexity"/>
+
+    <!-- agent/tool -->
+    <suppress files="[\\/]agent[\\/]tool[\\/]ToolPipelineFactory\.java\z" checks="NPathComplexity"/>
+
+    <!-- agent/tool/provider -->
+    <suppress files="[\\/]agent[\\/]tool[\\/]provider[\\/]McpToolProvider\.java\z" checks="CyclomaticComplexity|NPathComplexity"/>
+
+    <!-- agentx -->
+    <suppress files="[\\/]agentx[\\/]AgentscopeChatEngine\.java\z" checks="FileLength|MethodLength|ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity|ExecutableStatementCount"/>
+    <suppress files="[\\/]agentx[\\/]AgentxConfiguration\.java\z" checks="ClassFanOutComplexity"/>
+    <suppress files="[\\/]agentx[\\/]AgentxDestructiveCommands\.java\z" checks="MethodLength|CyclomaticComplexity|NPathComplexity|ExecutableStatementCount"/>
+    <suppress files="[\\/]agentx[\\/]AgentxFrameworkToolGate\.java\z" checks="ClassFanOutComplexity|NPathComplexity"/>
+    <suppress files="[\\/]agentx[\\/]AgentxNativeToolGuard\.java\z" checks="CyclomaticComplexity|NPathComplexity"/>
+    <suppress files="[\\/]agentx[\\/]AgentxRepeatGuard\.java\z" checks="NPathComplexity"/>
+    <suppress files="[\\/]agentx[\\/]AgentxTurnRecording\.java\z" checks="CyclomaticComplexity|NPathComplexity"/>
+    <suppress files="[\\/]agentx[\\/]FrameworkSessions\.java\z" checks="FileLength|ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity"/>
+    <suppress files="[\\/]agentx[\\/]JournalRotation\.java\z" checks="NPathComplexity"/>
+    <suppress files="[\\/]agentx[\\/]MeteredModel\.java\z" checks="NPathComplexity"/>
+    <suppress files="[\\/]agentx[\\/]ReadImageTool\.java\z" checks="CyclomaticComplexity|NPathComplexity"/>
+    <suppress files="[\\/]agentx[\\/]ToolDiscipline\.java\z" checks="NPathComplexity"/>
+    <suppress files="[\\/]agentx[\\/]WenquAgentxTools\.java\z" checks="FileLength|ClassFanOutComplexity|NPathComplexity"/>
+
+    <!-- agentx/output -->
+    <suppress files="[\\/]agentx[\\/]output[\\/]ModelOutputParser\.java\z" checks="CyclomaticComplexity"/>
+
+    <!-- agentx/team -->
+    <suppress files="[\\/]agentx[\\/]team[\\/]TeamWakeService\.java\z" checks="NPathComplexity"/>
+    <suppress files="[\\/]agentx[\\/]team[\\/]WenquTeamGateway\.java\z" checks="ClassFanOutComplexity|NPathComplexity"/>
+
+    <!-- agentx/turn -->
+    <suppress files="[\\/]agentx[\\/]turn[\\/]TurnDonePayload\.java\z" checks="NPathComplexity"/>
+    <suppress files="[\\/]agentx[\\/]turn[\\/]TurnFollowLoop\.java\z" checks="MethodLength|CyclomaticComplexity|NPathComplexity"/>
+    <suppress files="[\\/]agentx[\\/]turn[\\/]TurnPromptAssembler\.java\z" checks="CyclomaticComplexity|NPathComplexity"/>
+
+    <!-- config -->
+    <suppress files="[\\/]config[\\/]ConfigSchemaService\.java\z" checks="CyclomaticComplexity|NPathComplexity"/>
+    <suppress files="[\\/]config[\\/]SecurityConfig\.java\z" checks="MethodLength|CyclomaticComplexity|NPathComplexity"/>
+    <suppress files="[\\/]config[\\/]UserContextInterceptor\.java\z" checks="CyclomaticComplexity|NPathComplexity"/>
+
+    <!-- controller -->
+    <suppress files="[\\/]controller[\\/]AgentController\.java\z" checks="ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity"/>
+    <suppress files="[\\/]controller[\\/]ApiKeyController\.java\z" checks="ClassFanOutComplexity"/>
+    <suppress files="[\\/]controller[\\/]ArtifactController\.java\z" checks="ClassFanOutComplexity"/>
+    <suppress files="[\\/]controller[\\/]ChatController\.java\z" checks="FileLength|MethodLength|ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity"/>
+    <suppress files="[\\/]controller[\\/]ConfigController\.java\z" checks="ClassFanOutComplexity"/>
+    <suppress files="[\\/]controller[\\/]DocumentController\.java\z" checks="ClassFanOutComplexity"/>
+    <suppress files="[\\/]controller[\\/]EvaluationController\.java\z" checks="ClassFanOutComplexity|NPathComplexity"/>
+    <suppress files="[\\/]controller[\\/]IdentityAdminController\.java\z" checks="ClassFanOutComplexity"/>
+    <suppress files="[\\/]controller[\\/]KbApiController\.java\z" checks="ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity"/>
+    <suppress files="[\\/]controller[\\/]KnowledgeBaseController\.java\z" checks="ClassFanOutComplexity"/>
+    <suppress files="[\\/]controller[\\/]KnowledgeController\.java\z" checks="ClassFanOutComplexity|NPathComplexity"/>
+    <suppress files="[\\/]controller[\\/]ManualController\.java\z" checks="ClassFanOutComplexity"/>
+    <suppress files="[\\/]controller[\\/]MarketController\.java\z" checks="ClassFanOutComplexity"/>
+    <suppress files="[\\/]controller[\\/]McpController\.java\z" checks="ClassFanOutComplexity|NPathComplexity"/>
+    <suppress files="[\\/]controller[\\/]MenuController\.java\z" checks="ClassFanOutComplexity"/>
+    <suppress files="[\\/]controller[\\/]OpenAiCompatController\.java\z" checks="MethodLength|ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity|ExecutableStatementCount"/>
+    <suppress files="[\\/]controller[\\/]OpenAiEmbeddingsController\.java\z" checks="MethodLength|ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity|ExecutableStatementCount"/>
+    <suppress files="[\\/]controller[\\/]OpsController\.java\z" checks="ClassFanOutComplexity|NPathComplexity"/>
+    <suppress files="[\\/]controller[\\/]ProjectController\.java\z" checks="ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity"/>
+    <suppress files="[\\/]controller[\\/]ProviderController\.java\z" checks="ClassFanOutComplexity"/>
+    <suppress files="[\\/]controller[\\/]RetrievalDebugController\.java\z" checks="MethodLength|ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity|ExecutableStatementCount"/>
+    <suppress files="[\\/]controller[\\/]RoleController\.java\z" checks="ClassFanOutComplexity"/>
+    <suppress files="[\\/]controller[\\/]SandboxController\.java\z" checks="ClassFanOutComplexity"/>
+    <suppress files="[\\/]controller[\\/]SandboxToolCallbackController\.java\z" checks="NPathComplexity"/>
+    <suppress files="[\\/]controller[\\/]ScimController\.java\z" checks="ClassFanOutComplexity"/>
+    <suppress files="[\\/]controller[\\/]ShareController\.java\z" checks="ClassFanOutComplexity|NPathComplexity"/>
+    <suppress files="[\\/]controller[\\/]SkillController\.java\z" checks="ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity"/>
+    <suppress files="[\\/]controller[\\/]TenantController\.java\z" checks="ClassFanOutComplexity"/>
+    <suppress files="[\\/]controller[\\/]UserController\.java\z" checks="ClassFanOutComplexity"/>
+
+    <!-- executor -->
+    <suppress files="[\\/]executor[\\/]ExecutorController\.java\z" checks="ClassFanOutComplexity"/>
+    <suppress files="[\\/]executor[\\/]ExecutorRegistry\.java\z" checks="ClassFanOutComplexity|NPathComplexity"/>
+
+    <!-- memory -->
+    <suppress files="[\\/]memory[\\/]MemoryBudget\.java\z" checks="CyclomaticComplexity|NPathComplexity"/>
+
+    <!-- openapi -->
+    <suppress files="[\\/]openapi[\\/]OpenApiRegistry\.java\z" checks="NPathComplexity"/>
+
+    <!-- parser -->
+    <suppress files="[\\/]parser[\\/]DocxParser\.java\z" checks="MethodLength|ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity|ExecutableStatementCount"/>
+    <suppress files="[\\/]parser[\\/]ExcelParser\.java\z" checks="ClassFanOutComplexity"/>
+    <suppress files="[\\/]parser[\\/]WebParser\.java\z" checks="CyclomaticComplexity|NPathComplexity"/>
+
+    <!-- parser/ocr -->
+    <suppress files="[\\/]parser[\\/]ocr[\\/]MinerUOcrEngine\.java\z" checks="ClassFanOutComplexity"/>
+
+    <!-- sandbox -->
+    <suppress files="[\\/]sandbox[\\/]AgentSandboxRuntimeClient\.java\z" checks="ClassFanOutComplexity"/>
+    <suppress files="[\\/]sandbox[\\/]ExecutorFilesystem\.java\z" checks="NPathComplexity"/>
+    <suppress files="[\\/]sandbox[\\/]ProvisionerSandboxBackend\.java\z" checks="FileLength|MethodLength|ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity"/>
+    <suppress files="[\\/]sandbox[\\/]ProvisionerSandboxFilesystem\.java\z" checks="ClassFanOutComplexity|NPathComplexity"/>
+    <suppress files="[\\/]sandbox[\\/]ProvisionerSandboxProvider\.java\z" checks="NPathComplexity"/>
+
+    <!-- schedule -->
+    <suppress files="[\\/]schedule[\\/]ScheduleCenter\.java\z" checks="MethodLength|ClassFanOutComplexity"/>
+
+    <!-- service -->
+    <suppress files="[\\/]service[\\/]AgentEvalRunner\.java\z" checks="MethodLength|ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity|ExecutableStatementCount"/>
+    <suppress files="[\\/]service[\\/]AgentEvalScorer\.java\z" checks="CyclomaticComplexity|NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]AgentEvalService\.java\z" checks="MethodLength|ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity|ExecutableStatementCount"/>
+    <suppress files="[\\/]service[\\/]AgentService\.java\z" checks="FileLength|MethodLength|ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity|ExecutableStatementCount"/>
+    <suppress files="[\\/]service[\\/]AnnouncementService\.java\z" checks="CyclomaticComplexity|NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]ArtifactService\.java\z" checks="ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]AuditService\.java\z" checks="ClassFanOutComplexity|NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]BrowserTools\.java\z" checks="NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]ChatAttachmentService\.java\z" checks="ClassFanOutComplexity"/>
+    <suppress files="[\\/]service[\\/]ChatRunBus\.java\z" checks="ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]ChatService\.java\z" checks="MethodLength|ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]ConfigService\.java\z" checks="FileLength|MethodLength|ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity|ExecutableStatementCount"/>
+    <suppress files="[\\/]service[\\/]ConversationSearchService\.java\z" checks="NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]DashboardService\.java\z" checks="NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]DeploymentSecrets\.java\z" checks="ClassFanOutComplexity"/>
+    <suppress files="[\\/]service[\\/]DirectorySyncService\.java\z" checks="ClassFanOutComplexity|NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]DocumentChunkService\.java\z" checks="CyclomaticComplexity|NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]DocumentIngestService\.java\z" checks="ClassFanOutComplexity|NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]DocumentMetaCache\.java\z" checks="NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]DocumentParsePipeline\.java\z" checks="MethodLength|ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity|ExecutableStatementCount"/>
+    <suppress files="[\\/]service[\\/]DocumentRecycleService\.java\z" checks="ClassFanOutComplexity|NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]DocumentService\.java\z" checks="ClassFanOutComplexity"/>
+    <suppress files="[\\/]service[\\/]DocumentStatsService\.java\z" checks="MethodLength|ExecutableStatementCount"/>
+    <suppress files="[\\/]service[\\/]DocumentVectorOps\.java\z" checks="ClassFanOutComplexity|NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]DocumentVersionService\.java\z" checks="MethodLength|ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity|ExecutableStatementCount"/>
+    <suppress files="[\\/]service[\\/]DynamicOpenAiChatModel\.java\z" checks="ClassFanOutComplexity"/>
+    <suppress files="[\\/]service[\\/]ExternalUserService\.java\z" checks="ClassFanOutComplexity"/>
+    <suppress files="[\\/]service[\\/]GoalService\.java\z" checks="FileLength|MethodLength|ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity|ExecutableStatementCount"/>
+    <suppress files="[\\/]service[\\/]GraphRagService\.java\z" checks="MethodLength|ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity|ExecutableStatementCount"/>
+    <suppress files="[\\/]service[\\/]HybridRetrievalService\.java\z" checks="FileLength|MethodLength|ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity|ExecutableStatementCount"/>
+    <suppress files="[\\/]service[\\/]IdentityProviderService\.java\z" checks="NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]KbInsightsService\.java\z" checks="MethodLength|ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity|ExecutableStatementCount"/>
+    <suppress files="[\\/]service[\\/]KbTransferService\.java\z" checks="MethodLength|ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity|ExecutableStatementCount"/>
+    <suppress files="[\\/]service[\\/]KbVectorStoreRegistry\.java\z" checks="ClassFanOutComplexity"/>
+    <suppress files="[\\/]service[\\/]KeywordIndexService\.java\z" checks="NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]KnowledgeBaseService\.java\z" checks="MethodLength|ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]KnowledgeRetrievalTool\.java\z" checks="MethodLength|ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity|ExecutableStatementCount"/>
+    <suppress files="[\\/]service[\\/]MailDispatchService\.java\z" checks="ClassFanOutComplexity|NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]MarketService\.java\z" checks="FileLength|MethodLength|ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity|ExecutableStatementCount"/>
+    <suppress files="[\\/]service[\\/]McpClientService\.java\z" checks="FileLength|MethodLength|ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]McpServerService\.java\z" checks="ClassFanOutComplexity|NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]MenuService\.java\z" checks="CyclomaticComplexity|NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]ModelReferenceScanner\.java\z" checks="ClassFanOutComplexity|NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]ModelRegistryService\.java\z" checks="FileLength|ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]NotificationService\.java\z" checks="ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]OfficeDocumentService\.java\z" checks="ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]OidcService\.java\z" checks="ClassFanOutComplexity|NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]OpsCheckupService\.java\z" checks="ClassFanOutComplexity"/>
+    <suppress files="[\\/]service[\\/]OrgService\.java\z" checks="ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]ParseQueueService\.java\z" checks="ClassFanOutComplexity"/>
+    <suppress files="[\\/]service[\\/]PlanLineageService\.java\z" checks="NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]ProjectFileService\.java\z" checks="NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]ProjectService\.java\z" checks="NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]ProjectTurnChangesService\.java\z" checks="CyclomaticComplexity|NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]ProviderReferenceReplaceService\.java\z" checks="ClassFanOutComplexity|NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]QaIndexService\.java\z" checks="MethodLength|ClassFanOutComplexity|NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]ResourceVisibilityService\.java\z" checks="CyclomaticComplexity|NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]RetrievalEvalCatalogService\.java\z" checks="NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]RetrievalEvalRunService\.java\z" checks="MethodLength|CyclomaticComplexity|NPathComplexity|ExecutableStatementCount"/>
+    <suppress files="[\\/]service[\\/]RetrievalEvalRunner\.java\z" checks="MethodLength|ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity|ExecutableStatementCount"/>
+    <suppress files="[\\/]service[\\/]RetrievalEvaluationService\.java\z" checks="MethodLength|ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity|ExecutableStatementCount"/>
+    <suppress files="[\\/]service[\\/]RetrievalFilter\.java\z" checks="CyclomaticComplexity|NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]RetrievalGate\.java\z" checks="NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]RoleService\.java\z" checks="ClassFanOutComplexity|NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]SamlService\.java\z" checks="ClassFanOutComplexity"/>
+    <suppress files="[\\/]service[\\/]SandboxProcService\.java\z" checks="CyclomaticComplexity|NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]SandboxService\.java\z" checks="ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]ScheduledJobService\.java\z" checks="MethodLength|ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity|ExecutableStatementCount"/>
+    <suppress files="[\\/]service[\\/]ScimService\.java\z" checks="ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]ServiceAccountService\.java\z" checks="NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]SessionEventSearchService\.java\z" checks="NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]SessionEventService\.java\z" checks="CyclomaticComplexity|NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]SessionProcService\.java\z" checks="NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]SessionService\.java\z" checks="FileLength|MethodLength|ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity|ExecutableStatementCount"/>
+    <suppress files="[\\/]service[\\/]SessionShareService\.java\z" checks="NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]SessionWorkspaceService\.java\z" checks="NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]SourceTypeResolver\.java\z" checks="NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]TenantInviteService\.java\z" checks="NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]TenantOpenInviteService\.java\z" checks="CyclomaticComplexity|NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]TenantRequestService\.java\z" checks="MethodLength|ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]TenantService\.java\z" checks="CyclomaticComplexity|NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]TodoService\.java\z" checks="NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]ToolMountVisibilityService\.java\z" checks="NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]ToolSpillService\.java\z" checks="NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]TraceService\.java\z" checks="ClassFanOutComplexity|NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]TurnNotifyService\.java\z" checks="NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]UsageLedgerService\.java\z" checks="CyclomaticComplexity|NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]UsageQuotaService\.java\z" checks="ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]UsageStatsService\.java\z" checks="MethodLength|CyclomaticComplexity|NPathComplexity|ExecutableStatementCount"/>
+    <suppress files="[\\/]service[\\/]UserConfigService\.java\z" checks="CyclomaticComplexity|NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]UserRoleService\.java\z" checks="ClassFanOutComplexity"/>
+    <suppress files="[\\/]service[\\/]WebPushNotifier\.java\z" checks="CyclomaticComplexity|NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]WorkflowEngine\.java\z" checks="FileLength|MethodLength|ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]WorkflowService\.java\z" checks="FileLength|ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]WorkflowValidator\.java\z" checks="MethodLength|CyclomaticComplexity|NPathComplexity|ExecutableStatementCount"/>
+
+    <!-- service/httptool -->
+    <suppress files="[\\/]service[\\/]httptool[\\/]HttpToolExecutor\.java\z" checks="CyclomaticComplexity|NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]httptool[\\/]HttpToolModels\.java\z" checks="CyclomaticComplexity|NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]httptool[\\/]OpenApiSpecParser\.java\z" checks="CyclomaticComplexity|NPathComplexity"/>
+
+    <!-- service/openapi -->
+    <suppress files="[\\/]service[\\/]openapi[\\/]OpenApiFunnelService\.java\z" checks="MethodLength|NPathComplexity|ExecutableStatementCount"/>
+
+    <!-- service/openrun -->
+    <suppress files="[\\/]service[\\/]openrun[\\/]OpenRunService\.java\z" checks="ClassFanOutComplexity|NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]openrun[\\/]RunControlService\.java\z" checks="CyclomaticComplexity|NPathComplexity"/>
+
+    <!-- service/webhook -->
+    <suppress files="[\\/]service[\\/]webhook[\\/]AgentWebhookService\.java\z" checks="CyclomaticComplexity|NPathComplexity"/>
+
+    <!-- service/websearch -->
+    <suppress files="[\\/]service[\\/]websearch[\\/]BochaSearchProvider\.java\z" checks="NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]websearch[\\/]CustomSearchProvider\.java\z" checks="NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]websearch[\\/]GenericSearchProvider\.java\z" checks="NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]websearch[\\/]WebSearchService\.java\z" checks="CyclomaticComplexity|NPathComplexity"/>
+    <suppress files="[\\/]service[\\/]websearch[\\/]WebSearchTools\.java\z" checks="MethodLength|ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity|ExecutableStatementCount"/>
+
+    <!-- service/workflowtool -->
+    <suppress files="[\\/]service[\\/]workflowtool[\\/]WorkflowToolService\.java\z" checks="NPathComplexity"/>
+
+    <!-- skill -->
+    <suppress files="[\\/]skill[\\/]UserSkillStore\.java\z" checks="ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity"/>
+
+    <!-- ssh -->
+    <suppress files="[\\/]ssh[\\/]SshAliasVirtualExecutor\.java\z" checks="NPathComplexity"/>
+    <suppress files="[\\/]ssh[\\/]SshChatTool\.java\z" checks="NPathComplexity"/>
+
+    <!-- startup -->
+    <suppress files="[\\/]startup[\\/]ApiEndpointScanner\.java\z" checks="MethodLength|ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity|ExecutableStatementCount"/>
+    <suppress files="[\\/]startup[\\/]ManualSeedService\.java\z" checks="MethodLength|ClassFanOutComplexity|ExecutableStatementCount"/>
+    <suppress files="[\\/]startup[\\/]RbacSeedRunner\.java\z" checks="MethodLength|ClassFanOutComplexity|CyclomaticComplexity|NPathComplexity|ExecutableStatementCount"/>
+    <suppress files="[\\/]startup[\\/]SchemaMigrator\.java\z" checks="NPathComplexity"/>
+
+    <!-- util -->
+    <suppress files="[\\/]util[\\/]AuthCrypto\.java\z" checks="NPathComplexity"/>
+    <suppress files="[\\/]util[\\/]ClientIp\.java\z" checks="NPathComplexity"/>
+    <suppress files="[\\/]util[\\/]FileNameSanitizer\.java\z" checks="NPathComplexity"/>
+    <suppress files="[\\/]util[\\/]McpHeaders\.java\z" checks="NPathComplexity"/>
+    <suppress files="[\\/]util[\\/]TurnBlocks\.java\z" checks="NPathComplexity"/>
+
+    <!-- 三、全局豁免：以下检查的存量违规较多且待批量清理，先整体豁免，清理完再逐条开启。 -->
+
+    <!-- 文件末尾空行 / 行宽：存量风格债，用 IDE 一次格式化即可清除，清完后删掉这两行即为开启。
+         行尾空白已清空存量（5 行，2026-11）并从全局豁免中撤出，现在对全部文件生效。 -->
+    <suppress checks="NewlineAtEndOfFile"/>
+    <suppress checks="LineLength"/>
+
+    <!-- 缺花括号（阿里规约要求 if/for 必须带花括号）：存量 5862 处，
+     IDE "Add missing braces" 可批量修复，修复后删除本行。 -->
+    <suppress checks="NeedBraces"/>
+
+    <!-- 其它存量格式类 -->
+    <suppress checks="WhitespaceAround"/>
+    <suppress checks="EmptyLineSeparator"/>
+    <suppress checks="OneStatementPerLine"/>
+    <suppress checks="AvoidStarImport"/>
+    <suppress checks="RedundantImport"/>
+    <suppress checks="ConstantName"/>
+    <suppress checks="ParameterName"/>
+    <suppress checks="MethodName"/>
+    <suppress checks="TypeName"/>
+    <suppress checks="IllegalCatch"/>
+    <suppress checks="MissingSwitchDefault"/>
+
+    <!-- 未使用 import / 方法参数过多 / 语句数：存量债务，随重构逐步清除 -->
+    <suppress checks="UnusedImports"/>
+    <suppress checks="ParameterNumber"/>
+    <suppress checks="ClassDataAbstractionCoupling"/>
+
+    <!-- 字段声明处写全限定类名：以下 89 个存量文件按「类名」豁免（清单实测生成）。
+         不按规则 id 全局豁免，否则这条规则对新代码也失效；新文件写全限定名会被拦下。 -->
+    <suppress id="FullyQualifiedFieldType" files="(?:AgentController|AgentEvalService|AgentService|AgentTeamService|AgentscopeChatEngine|AgentxTurnRecording|ApiKeyController|AuthController|ChatAttachmentController|ChatHistorySummaryController|ChatHitlController|ChatIdentityController)\.java"/>
+    <suppress id="FullyQualifiedFieldType" files="(?:ChatMessageGroupController|ChatReconnectController|ChatRunController|ChatRunRuntime|ChatService|ChatSessionOverrideController|ChatSessionStateController|ChatShareController|ChatSteerController|ChatTurnChangesController|ChatTurnLauncher|ConfigController)\.java"/>
+    <suppress id="FullyQualifiedFieldType" files="(?:ConfigService|DeepController|DocumentController|DocumentParsePipeline|DocumentRecycleService|DocumentService|DocumentVectorOps|ExternalUserService|FrameworkSessions|GoalService|HybridRetrievalService|KbVectorStoreRegistry)\.java"/>
+    <suppress id="FullyQualifiedFieldType" files="(?:KnowledgeBaseController|KnowledgeBaseService|KnowledgeController|MeteredModel|ModelQuotaService|ModelReferenceScanner|ModelRegistryService|NotificationController|NotificationService|OidcController|OpenAiCompatController|OpsCheckupService)\.java"/>
+    <suppress id="FullyQualifiedFieldType" files="(?:OpsController|OrgService|OrphanTurnRunner|ParseQueueService|PdfParser|ProjectController|ProjectService|ProviderController|ProviderReferenceReplaceService|QaController|RbacSeedRunner|RetrievalDebugController)\.java"/>
+    <suppress id="FullyQualifiedFieldType" files="(?:RoleController|RoleService|SandboxService|SandboxTools|ScheduleCenter|ScheduledJobService|ScimController|SecurityConfig|SessionProcService|SessionService|SessionWorkspaceService|ShareController)\.java"/>
+    <suppress id="FullyQualifiedFieldType" files="(?:SkillController|SubAgentBranchRuntime|TeamController|TenantController|TenantOpenInviteService|TenantService|TraceController|UsageStatsController|UsageStatsService|UserContextInterceptor|UserController|WebPushController)\.java"/>
+    <suppress id="FullyQualifiedFieldType" files="(?:WebSearchTools|WenquAgentxTools|WenquSkillRepository|WenquTeamGateway|WorkflowEngine)\.java"/>
+
+</suppressions>

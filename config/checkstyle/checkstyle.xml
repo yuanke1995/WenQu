@@ -1,0 +1,226 @@
+<?xml version="1.0"?>
+<!DOCTYPE module PUBLIC
+        "-//Checkstyle//DTD Checkstyle Configuration 1.3//EN"
+        "https://checkstyle.org/dtds/configuration_1_3.dtd">
+<!--
+  问渠（WenQu）后端编码约束
+  ==========================================================================
+  这套规则不是《阿里巴巴 Java 开发手册》的全文复刻，而是从中挑出「AI 生成代码最容易
+  退化、且能被机器判定」的几条，尤其是复杂度与解耦相关的硬指标：
+
+    - 单文件 / 单方法长度上限   → 防止「往大文件里继续追加」的增量腐败
+    - 类外耦合上限              → 拦住「每加一个功能就给 Controller 加一个字段」
+    - MVC 分层                  → 拦住 Controller 直接注入 Mapper
+    - 异常 / 日志 / 命名        → 手册里一眼可判的条款
+
+  存量白名单见 suppressions.xml：只有登记在案的既有违规被豁免，
+  新增文件从第一天起就必须合规（棘轮策略：只许变好，不许变坏）。
+  往白名单里加条目必须在 commit message 里写清理由。
+-->
+<module name="Checker">
+    <property name="charset" value="UTF-8"/>
+    <property name="severity" value="error"/>
+    <!-- 源文件按 \n 换行（仓库另有 check-eol.mjs 管跨平台） -->
+    <property name="fileExtensions" value="java"/>
+
+    <!-- 存量白名单：maven-checkstyle-plugin 的 suppressionsLocation 只负责把文件拷到
+         target/checkstyle-suppressions.xml，必须在这里显式声明过滤器才会真正生效。 -->
+    <module name="SuppressionFilter">
+        <property name="file" value="${checkstyle.suppressions.file}"/>
+        <property name="optional" value="false"/>
+    </module>
+
+    <!-- ================== 文件级 ================== -->
+
+    <!-- 单文件行数：超长的类应当拆分，而不是继续增长 -->
+    <module name="FileLength">
+        <property name="max" value="1200"/>
+    </module>
+
+    <!-- 禁止行尾空白；文件末尾留空行 -->
+    <module name="RegexpSingleline">
+        <property name="id" value="TrailingWhitespace"/>
+        <property name="format" value="\s+$"/>
+        <property name="message" value="行尾不允许有空白字符（阿里规约：行宽与空白规范）。"/>
+    </module>
+    <!-- 禁用字段注入：必须构造器注入（配合 Lombok @RequiredArgsConstructor + final）。
+         判定形态：@Autowired/@Resource 紧跟着一个「字段声明」（而非方法/构造器签名）。
+         RegexpMultiline 只能挂在 Checker 下，故这个检查不在 TreeWalker 里。阿里规约 M5。 -->
+    <module name="RegexpMultiline">
+        <property name="id" value="FieldInjection"/>
+        <property name="format" value="(?m)^\s*@(Autowired|Resource)\s*\n\s*(private|protected|public)\s+[^\n(]*;\s*$"/>
+        <property name="message" value="禁止字段注入 @Autowired/@Resource：改用构造器注入（private final + @RequiredArgsConstructor）。阿里规约 M5。"/>
+    </module>
+
+    <module name="NewlineAtEndOfFile"/>
+
+    <!-- 禁止 Tab 缩进（统一 4 空格） -->
+    <module name="FileTabCharacter">
+        <property name="eachLine" value="true"/>
+    </module>
+
+    <!-- 行宽 120（阿里规约：单行不超过 120 字符） -->
+    <module name="LineLength">
+        <property name="max" value="120"/>
+        <property name="ignorePattern" value="^package.*|^import.*|^ *\* *[^ ]+ https?://|href|@see|@link"/>
+    </module>
+
+    <module name="TreeWalker">
+
+        <!-- ================== 命名（阿里 M 组） ================== -->
+
+        <module name="PackageName">
+            <property name="format" value="^[a-z]+(\.[a-z][a-z0-9]*)*$"/>
+        </module>
+        <module name="TypeName">
+            <property name="format" value="^[A-Z][a-zA-Z0-9]*$"/>
+        </module>
+        <module name="ConstantName"/>
+        <!-- 成员变量 camelCase；禁止 a/b/c 单字母（阿里：杜绝完全不规范的缩写） -->
+        <module name="MemberName">
+            <property name="format" value="^[a-z][a-zA-Z0-9]*$"/>
+        </module>
+        <module name="ParameterName">
+            <property name="format" value="^[a-z][a-zA-Z0-9]*$"/>
+        </module>
+        <module name="LocalVariableName">
+            <property name="format" value="^[a-z][a-zA-Z0-9]*$"/>
+        </module>
+        <module name="MethodName">
+            <property name="format" value="^[a-z][a-zA-Z0-9]*$"/>
+        </module>
+        <module name="AbbreviationAsWordInName">
+            <property name="allowedAbbreviationLength" value="2"/>
+            <property name="ignoreFinal" value="false"/>
+            <property name="ignoreStatic" value="false"/>
+            <property name="ignoreStaticFinal" value="true"/>
+        </module>
+
+        <!-- ================== 复杂度与耦合（核心） ================== -->
+
+        <!-- 单方法 80 行（阿里规约）。超过就该抽私有方法或独立的协作者 -->
+        <module name="MethodLength">
+            <property name="max" value="80"/>
+            <property name="countEmpty" value="false"/>
+        </module>
+
+        <!-- 圈复杂度：量化「一个方法里塞了几件事」 -->
+        <module name="CyclomaticComplexity">
+            <property name="max" value="20"/>
+        </module>
+        <module name="NPathComplexity">
+            <property name="max" value="800"/>
+        </module>
+
+        <!-- 认知复杂度缺席（Checkstyle 无此模块），用嵌套深度兜底：>4 层 if/for 基本等于没解耦 -->
+        <module name="NestedIfDepth">
+            <property name="max" value="4"/>
+        </module>
+        <module name="NestedForDepth">
+            <property name="max" value="4"/>
+        </module>
+        <module name="NestedTryDepth">
+            <property name="max" value="3"/>
+        </module>
+
+        <!-- 类外耦合上限 20：直接拦住「往 Controller 里继续加依赖字段」。
+             33 个依赖的类在这一条下不可能通过。 -->
+        <module name="ClassFanOutComplexity">
+            <property name="max" value="20"/>
+            <!-- 注解包不构成业务耦合：一个控制器挂 @Tag/@Operation/@Permission 就凭空多算
+                 五六个类型。Checkstyle 官方默认已排除 java.lang 与常见集合类。
+                 排除后本仓库基线：884 个类中位数 8、P90 16（重组前实测），阈值 20 因此是紧的。 -->
+            <property name="excludedPackages"
+                      value="io.swagger.v3.oas.annotations,org.springframework.web.bind.annotation,lombok,jakarta.validation,jakarta.servlet.http"/>
+        </module>
+        <module name="ClassDataAbstractionCoupling">
+            <property name="max" value="20"/>
+        </module>
+
+        <!-- 方法参数上限 5（阿里：超过用对象封装） -->
+        <module name="ParameterNumber">
+            <property name="max" value="5"/>
+            <property name="ignoreOverriddenMethods" value="true"/>
+            <property name="tokens" value="METHOD_DEF"/>
+        </module>
+
+        <!-- 方法体 30 行提示用「语句数」再压一层（与 MethodLength 互补） -->
+        <module name="ExecutableStatementCount">
+            <property name="max" value="60"/>
+        </module>
+
+        <!-- ================== 依赖注入与分层（阿里 + MVC） ================== -->
+
+        <!-- 禁止在声明处写全限定类名：必须先 import 再写短名 -->
+        <module name="RegexpSinglelineJava">
+            <property name="id" value="FullyQualifiedFieldType"/>
+            <property name="format" value="^\s*(private|protected|public)\s+(static\s+)?final\s+com\.wenqu\."/>
+            <property name="message" value="字段声明处禁止写全限定类名：请 import 后使用短名。"/>
+        </module>
+
+        <!-- 禁止通配符 import（阿里规约） -->
+        <module name="AvoidStarImport"/>
+
+        <!-- 未使用的 import（AI 增删代码最容易留的垃圾） -->
+        <module name="UnusedImports">
+            <property name="processJavadoc" value="true"/>
+        </module>
+        <module name="RedundantImport"/>
+        <module name="ImportOrder">
+            <property name="groups" value="java,javax,jakarta,org,com,io"/>
+            <property name="ordered" value="false"/>
+            <property name="separated" value="false"/>
+            <property name="option" value="under"/>
+            <property name="severity" value="warning"/>
+        </module>
+
+        <!-- ================== 异常与日志（阿里 M 组） ================== -->
+
+        <module name="IllegalCatch">
+            <property name="illegalClassNames" value="java.lang.Throwable,java.lang.Error"/>
+        </module>
+        <module name="IllegalThrows">
+            <property name="illegalClassNames" value="java.lang.Throwable,java.lang.Error"/>
+        </module>
+        <!-- 禁止 printStackTrace：统一走 slf4j -->
+        <module name="RegexpSinglelineJava">
+            <property name="id" value="NoPrintStackTrace"/>
+            <property name="format" value="\.printStackTrace\s*\("/>
+            <property name="message" value="禁止 printStackTrace：统一用 slf4j（log.error）。阿里规约 M1。"/>
+        </module>
+        <!-- 禁止 System.out/err 打印：统一走日志 -->
+        <module name="RegexpSinglelineJava">
+            <property name="id" value="NoSystemOut"/>
+            <property name="format" value="System\.(out|err)\.print"/>
+            <property name="message" value="禁止 System.out/System.err 打印：统一用日志。阿里规约 M1。"/>
+        </module>
+        <module name="EmptyCatchBlock">
+            <property name="exceptionVariableName" value="expected|ignored"/>
+        </module>
+        <module name="MissingSwitchDefault"/>
+        <module name="FallThrough">
+            <property name="severity" value="warning"/>
+        </module>
+
+        <!-- ================== 其他阿里条款 ================== -->
+
+        <module name="EqualsHashCode"/>
+        <module name="MissingOverride"/>
+        <module name="NeedBraces"/>
+        <module name="OneStatementPerLine"/>
+        <module name="StringLiteralEquality"/>
+        <module name="SimplifyBooleanExpression"/>
+        <module name="SimplifyBooleanReturn"/>
+        <module name="UpperEll"/>
+        <module name="ArrayTypeStyle"/>
+        <module name="ModifierOrder"/>
+        <module name="EmptyLineSeparator">
+            <property name="allowNoEmptyLineBetweenFields" value="true"/>
+            <property name="tokens" value="PACKAGE_DEF,IMPORT,CLASS_DEF,INTERFACE_DEF,ENUM_DEF,STATIC_INIT,INSTANCE_INIT,METHOD_DEF,CTOR_DEF"/>
+        </module>
+        <module name="WhitespaceAround">
+            <property name="tokens" value="ASSIGN,BAND,BAND_ASSIGN,BOR,BOR_ASSIGN,BSR,BSR_ASSIGN,BXOR,BXOR_ASSIGN,DIV,DIV_ASSIGN,EQUAL,GE,GT,LAND,LE,LITERAL_ASSERT,LITERAL_CATCH,LITERAL_DO,LITERAL_ELSE,LITERAL_FINALLY,LITERAL_FOR,LITERAL_IF,LITERAL_RETURN,LITERAL_SWITCH,LITERAL_SYNCHRONIZED,LITERAL_TRY,LITERAL_WHILE,LOR,LT,MINUS,MINUS_ASSIGN,MOD,MOD_ASSIGN,NOT_EQUAL,PLUS,PLUS_ASSIGN,QUESTION,SL,SL_ASSIGN,SR,SR_ASSIGN,STAR,STAR_ASSIGN,LAMBDA"/>
+        </module>
+
+    </module>
+</module>

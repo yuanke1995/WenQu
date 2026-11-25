@@ -350,6 +350,34 @@
                     </excludes>
                 </configuration>
             </plugin>
+            <!-- 编码约束闸门：规则见 config/checkstyle/checkstyle.xml（复杂度/解耦/MVC 分层/命名/异常），
+                 存量违规登记在 suppressions.xml（棘轮策略：只许变好不许变坏）。
+                 绑定 verify：CI 的 mvn verify 会直接拦下新增违规。
+                 本地只想编译跳过检查：mvn -Dcheckstyle.skip=true compile -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-checkstyle-plugin</artifactId>
+                <version>3.6.0</version>
+                <configuration>
+                    <configLocation>${project.basedir}/config/checkstyle/checkstyle.xml</configLocation>
+                    <suppressionsLocation>${project.basedir}/config/checkstyle/suppressions.xml</suppressionsLocation>
+                    <includeTestSourceDirectory>false</includeTestSourceDirectory>
+                    <consoleOutput>true</consoleOutput>
+                    <failOnViolation>true</failOnViolation>
+                    <violationSeverity>error</violationSeverity>
+                    <linkXRef>false</linkXRef>
+                    <inputEncoding>UTF-8</inputEncoding>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>checkstyle-verify</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
         </plugins>
     </build>
 </project>

@@ -64,6 +64,8 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - name: npm ci
         run: npm ci
+      - name: lint (编码约束闸门)
+        run: npm run lint
       - name: unit test (pure modules)
         run: npm test
       - name: vite build
