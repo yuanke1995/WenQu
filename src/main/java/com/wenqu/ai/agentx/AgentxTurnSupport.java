@@ -13,6 +13,7 @@ import com.wenqu.ai.service.ChatAttachmentService;
 import com.wenqu.ai.service.SessionService;
 import com.wenqu.ai.skill.SkillStatsStore;
 import io.agentscope.core.session.SessionEvent;
+import com.wenqu.ai.service.ConfigService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
@@ -38,6 +39,7 @@ public class AgentxTurnSupport {
     private final FrameworkSessions sessions;
     private final WenquAgentxTools tools;
     private final SkillStatsStore skillStatsStore;
+    private final ConfigService configService;
 
     public String appendQuestion(ChatCommand cmd, String turnId, List<String> userImgUrls) {
         String messageId = sessionService.appendMessage(MessageWrite.builder()
@@ -126,5 +128,14 @@ public class AgentxTurnSupport {
                         cmd.getSessionId(), name);
             }
         }
+    }
+
+    /** 各形态的等待预算：提问/计划/工具审批各走独立配置键（提问最需要人从容看完题面）。 */
+    public long pendingBudgetMs(com.wenqu.ai.agentx.turn.TurnInteractionCoordinator.PendingKind kind) {
+        return switch (kind) {
+            case PLAN -> configService.getLong("chat.planTimeoutMs", 3600000L);
+            case ASK -> configService.getLong("chat.askTimeoutMs", 3600000L);
+            case APPROVAL -> configService.getLong("chat.approvalTimeoutMs", 600000L);
+        };
     }
 }

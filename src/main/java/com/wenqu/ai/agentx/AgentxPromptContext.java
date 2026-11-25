@@ -132,4 +132,24 @@ public class AgentxPromptContext {
             return "";
         }
     }
+
+    /**
+     * 建实例期的系统提示词拼装：角色 + 工作区约定 + 工作区记忆 + 用户记忆（只读）+ 本机执行环境说明
+     * + 派遣纪律 + 团队指引 + 跨族分工 + 计划/产物/记忆/推荐追问纪律。
+     *
+     * <p>本机执行环境那段必须在本机执行器模式下补：框架会把工作区渲染成服务器沙盒路径，
+     * 不补一段真话压住它，模型就会去读不存在的路径。
+     */
+    public String sysPromptOf(com.wenqu.ai.agent.chat.ChatCommand cmd, com.wenqu.ai.model.Agent bound,
+                              String workspaceMemory, String userMemoryReadonly, String localEnv,
+                              String dispatchDiscipline, String teamGuidance, java.util.Set<String> mountedToolNames,
+                              boolean relatedSuggestions) {
+        return rolePrompt(bound) + projectContext(cmd) + workspaceMemory + userMemoryReadonly + localEnv
+                + dispatchDiscipline + teamGuidance
+                + ToolDiscipline.guidance(mountedToolNames)
+                + com.wenqu.ai.agent.plan.PlanCopy.guidance()
+                + com.wenqu.ai.agent.chat.ArtifactPrompt.guidance()
+                + com.wenqu.ai.memory.MemoryPrompts.replyDiscipline()
+                + (relatedSuggestions ? com.wenqu.ai.agent.chat.RelatedPrompt.line() : "");
+    }
 }

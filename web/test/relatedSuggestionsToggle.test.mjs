@@ -60,14 +60,14 @@ test('后端生成：关掉即不注入推荐提示词、并进实例指纹、�
   // 三处读点随重构分散到协作类（行为等价，语义未变）：
   //  · 提示词注入 → AgentxPromptContext（先算 relatedSuggestions 布尔再决定挂 RelatedPrompt）
   //  · 实例指纹   → AgentxAgentBinding.bindingOf
-  //  · 落库过滤   → AgentxTurnFinisher
+  //  · 落库过滤   → AgentxTurnPersister（relatedJson 为空或开关关掉时不写）
   const prompt = read('../src/main/java/com/wenqu/ai/agentx/AgentxPromptContext.java')
   const binding = read('../src/main/java/com/wenqu/ai/agentx/AgentxAgentBinding.java')
-  const finisher = read('../src/main/java/com/wenqu/ai/agentx/AgentxTurnFinisher.java')
+  const persister = read('../src/main/java/com/wenqu/ai/agentx/AgentxTurnPersister.java')
   // 提示词按用户开关决定挂不挂 RelatedPrompt
   assert.match(prompt, /relatedSuggestions\s*\?\s*com\.wenqu\.ai\.agent\.chat\.RelatedPrompt\.line\(\)/)
   // 开关并进常驻实例指纹：拨动后下一轮重建才生效
   assert.match(binding, /key = key \+ "\|rel=" \+ relatedSuggestionsEnabled\(cmd\.getUserId\(\)\)/)
   // 关掉时不把 related 写进消息（即使模型偶发吐了也不会存）
-  assert.match(finisher, /relatedChips\.isEmpty\(\) \|\| !agentBinding\.relatedSuggestionsEnabled\(c\.cmd\.getUserId\(\)\)/)
+  assert.match(persister, /relatedChips\.isEmpty\(\) \|\| !agentBinding\.relatedSuggestionsEnabled\(c\.cmd\.getUserId\(\)\)/)
 })
