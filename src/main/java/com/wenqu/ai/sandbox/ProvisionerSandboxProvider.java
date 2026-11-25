@@ -514,8 +514,8 @@ public class ProvisionerSandboxProvider {
             try {
                 client().delete(connection.getSandboxId(), connection.getGeneration());
             } catch (RuntimeException exc) {
-                System.err.println("Failed to release idle sandbox " + connection.getSandboxId()
-                        + " for " + cacheKey + ": " + exc);
+                log.warn("[SANDBOX] 空闲沙盒回收失败 {} for {}: {}",
+                        connection.getSandboxId(), cacheKey, exc.toString());
             }
             // 删除失败也把缓存条目摘掉：连接可能已经不在了，留着只会每次重试都撞同一堵墙
             connections.remove(cacheKey);
@@ -546,8 +546,8 @@ public class ProvisionerSandboxProvider {
                 client().delete(connection.getSandboxId(), connection.getGeneration());
             } catch (RuntimeException exc) {
                 // keepalive 失败仅告警
-                System.err.println("Failed to release sandbox " + connection.getSandboxId()
-                        + " for " + connection.getCacheKey() + ": " + exc);
+                log.warn("[SANDBOX] 停机回收沙盒失败 {} for {}: {}",
+                        connection.getSandboxId(), connection.getCacheKey(), exc.toString());
             }
         }
     }

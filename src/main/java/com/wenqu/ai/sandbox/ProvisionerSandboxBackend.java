@@ -17,6 +17,8 @@ import java.util.regex.Pattern;
 import java.util.Set;
 import java.util.HexFormat;
 
+import lombok.extern.slf4j.Slf4j;
+
 /**
  * 沙盒 backend（对应参考实现 backends/sandbox/backend.py 的 {@code ProvisionerSandboxBackend}）。
  *
@@ -66,6 +68,7 @@ import java.util.HexFormat;
  * （见 {@code SandboxTools} 与沙盒浏览端点），其余方法保留原样但暂未接线——不是遗漏，是等对应的
  * 使用场景出现（如产物从沙盒落回「我的产物」的批量/目录形态）再接。
  */
+@Slf4j
 public class ProvisionerSandboxBackend implements SandboxFsBackend {
 
     /** 沙盒内 user-data 虚拟根（可读写；新栈读 SANDBOX_VIRTUAL_PATH_PREFIX）。 */
@@ -825,7 +828,7 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
             // infraError=true：异常来自「连不上/调用沙盒失败」这层，而非命令本身跑失败
             // 退出码留 null（这一步根本没执行，报 1 会被读成「命令跑了、返回 1」）；
             // 语义由下面这句话承担，工具层把 null 统一记成「没跑完」。
-            System.err.println("Sandbox execute failed for thread " + threadId + ": " + exc);
+            log.warn("[SANDBOX] 执行失败 thread={}: {}", threadId, exc.toString());
             return new ExecuteResponse("沙盒不可达，这条命令没有真正执行（不是命令本身失败，重试这条命令也没用）："
                     + exc, null, false, true);
         }
@@ -1113,7 +1116,7 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
             }
             return new ExecuteResponse(output, exitCode, truncated, false, fullOutput);
         } catch (RuntimeException exc) {
-            System.err.println("Sandbox streaming execute failed for thread " + threadId + ": " + exc);
+            log.warn("[SANDBOX] 流式执行失败 thread={}: {}", threadId, exc.toString());
             return new ExecuteResponse("Error: " + exc, 1, false, true);
         }
     }
@@ -1712,7 +1715,7 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
                     }
                     throw exc;
                 }
-                System.err.println("Failed to remove sandbox file snapshot " + exportPath + ": " + exc);
+                log.warn("[SANDBOX] 清理文件快照失败 {}: {}", exportPath, exc.toString());
             }
         }
     }
