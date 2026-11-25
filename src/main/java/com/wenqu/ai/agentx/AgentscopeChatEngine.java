@@ -2341,34 +2341,13 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 名单里个人技能存的是 {@code {uid}/{name}} 引用串，框架按 {@code skill.getName()} 比对，故剥成裸名。
      */
     private static io.agentscope.core.skill.SkillFilter skillFilterOf(Agent a) {
-        if (a == null || a.getToolSkill() == null) {
-            return io.agentscope.core.skill.SkillFilter.all();
-        }
-        if (a.getToolSkill() == 0) {
-            return io.agentscope.core.skill.SkillFilter.none();
-        }
-        Set<String> names = skillNames(a.getSkills());
-        return io.agentscope.core.skill.SkillFilter.only(names.toArray(new String[0]));
+        return AgentxSkillFilter.of(a);
     }
 
     /** 技能引用串列表 → 裸名集合（与只读清单、点名注入同一套剥法）。 */
     private static Set<String> skillNames(String raw) {
-        Set<String> out = new LinkedHashSet<>();
-        if (raw == null || raw.isBlank()) return out;
-        for (String line : raw.split("[\\r\\n,，;；]+")) {
-            String ref = line.trim();
-            if (ref.isEmpty()) continue;
-            // 规范引用（builtin/user/workspace）与历史 {uid}/{name} 都解析成裸名：
-            // 框架的 SkillFilter 只按 AgentSkill.getName() 比较，不能把 fullRef 塞进去。
-            try {
-                out.add(com.wenqu.ai.skill.SkillRef.parse(ref).filterName());
-            } catch (RuntimeException e) {
-                log.warn("[SKILL] 智能体技能引用非法，已忽略: {}", ref);
-            }
-        }
-        return out;
+        return AgentxSkillFilter.names(raw);
     }
-
     private String rolePrompt(Agent bound) {
         return RolePrompt.of(bound, properties.getSystemPrompt());
     }
