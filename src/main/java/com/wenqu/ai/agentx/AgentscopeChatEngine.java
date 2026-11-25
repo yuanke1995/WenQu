@@ -3074,31 +3074,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      */
     // ===== 模型与记忆配置：实现已抽出到 AgentxModelConfig，这里只留薄委托（调用点不动） =====
 
-    private io.agentscope.core.model.GenerateOptions generateOptions(ChatCommand cmd, String ref, int maxOutput) {
-        return modelConfig.generateOptions(cmd, ref, maxOutput);
-    }
 
-    private io.agentscope.core.model.GenerateOptions auxGenerateOptions(ChatCommand cmd, String ref) {
-        return modelConfig.auxGenerateOptions(cmd, ref);
-    }
 
-    private io.agentscope.core.model.ExecutionConfig modelExecutionConfig(int maxAttempts) {
-        return modelConfig.modelExecutionConfig(maxAttempts);
-    }
 
-    private io.agentscope.harness.agent.memory.MemoryConfig memoryConfig(
-            ChatCommand cmd, io.agentscope.core.model.Model auxModel, String modelRef) {
-        return modelConfig.memoryConfig(cmd, auxModel, modelRef);
-    }
 
-    private boolean memoryOn(ChatCommand cmd) {
-        return modelConfig.memoryOn(cmd);
-    }
 
-    private io.agentscope.harness.agent.memory.compaction.CompactionConfig compactionConfig(
-            ChatCommand cmd, io.agentscope.core.model.Model auxModel, String modelRef) {
-        return modelConfig.compactionConfig(cmd, auxModel, modelRef);
-    }
 
     private HarnessAgent buildAgent(ChatCommand cmd, ExecutionPolicy policy,
                                     ModelRegistryService.ModelRoute route,
@@ -3185,7 +3165,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 .modelName(route.modelId())
                 .stream(true)
                 .httpTransport(modelTransport)
-                .generateOptions(generateOptions(cmd, hooks.modelRef(), binding.maxOutput()))
+                .generateOptions(modelConfig.generateOptions(cmd, hooks.modelRef(), binding.maxOutput()))
                 .endpointPath(completionsPath);
         // 窗口拿得到登记值才交给模型：没拿到时一次都不调，让框架按模型名查它自己的内置表。
         // 显式传 0 会被框架当成「这条模型的窗口是 0」，输入上限直接掉到 64000 兜底值——
@@ -3198,7 +3178,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 辅助调用那一份：同一个 builder 换参数再 build（build() 只读字段、不复用实例），
         // 因此两条路径共用 transport 与窗口，只有请求参数不同。
         io.agentscope.core.model.Model auxModel = modelBuilder
-                .generateOptions(auxGenerateOptions(cmd, hooks.modelRef()))
+                .generateOptions(modelConfig.auxGenerateOptions(cmd, hooks.modelRef()))
                 .build();
         io.agentscope.core.model.Model chatModel = new MeteredModel(baseModel, usageLedger, quotaService,
                 com.wenqu.ai.util.UsageAttr.of(cmd.getUserId(), cmd.getSessionId(), null,
@@ -3284,7 +3264,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 用户选的窗口已落到 model.contextWindowSize（见 .model(...) 段），压缩阈值由它推导，
                 // 这里不再单独传 maxContextTokens（那是 WorkspaceContextMiddleware 的注入预算，非压缩阈值）。
                 // 压缩摘要用独立的 MeteredModel（kind=compress），成本才进得了台账。
-                .compaction(compactionConfig(cmd, auxModel, hooks.modelRef()))
+                .compaction(modelConfig.compactionConfig(cmd, auxModel, hooks.modelRef()))
                 .workspace(stateDir)
                 // 会话状态恒存 Redis，没有本地文件兜底（容器重建即丢，会让多轮对话退化成每轮独立问答）。
                 // Redis 连不上时应用起不来——宁可启动失败，也不要带着「每轮失忆」对外服务。
@@ -3389,10 +3369,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         //    约定+绑定资料域+目录文件承担。
         if (cmd.isGuestMode() || projectService.memoryIsolatedOfSession(cmd.getSessionId())) {
             agentBuilder.disableMemoryHooks().disableMemoryTools();
-        } else if (cmd.branchTurn() || !memoryOn(cmd)) {
+        } else if (cmd.branchTurn() || !modelConfig.memoryOn(cmd)) {
             agentBuilder.disableMemoryHooks();
         } else {
-            agentBuilder.memory(memoryConfig(cmd, auxModel, hooks.modelRef()));
+            agentBuilder.memory(modelConfig.memoryConfig(cmd, auxModel, hooks.modelRef()));
         }
         io.agentscope.harness.agent.DistributedStore distributedStore = distributedStore();
         if (distributedStore != null) {
