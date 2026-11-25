@@ -27,8 +27,9 @@ const collectTags = (file, tag) => {
 
 test('BrowserPanel 保持单根，ChatPage 的 v-show 才能隐藏整个浏览面板', () => {
   assert.deepEqual(readRoots('src/components/BrowserPanel.vue'), ['div'])
-  assert.match(readFileSync('src/views/ChatPage.vue', 'utf8'),
-    /<BrowserPanel\s+v-show="railTab === 'browser'"/)
+  // 右栏在 ChatPage 拆分后落在子组件里；v-show 仍绑定 railTab === 'browser'（语义不变）。
+  assert.match(readFileSync('src/views/chatpage/ChatRightPanel.vue', 'utf8'),
+    /<BrowserPanel\s+v-show="store\.railTab === 'browser'"/)
 })
 
 test('BrowserPanel 的全屏浮层仍在组件内，Teleport 没有变成第二个根节点', () => {

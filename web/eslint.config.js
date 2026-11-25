@@ -57,7 +57,6 @@ const GRANDFATHERED = [
   'src/chat/turnProcess.js',
   'src/chat/useChatActions.js',
   'src/chat/useChatChrome.js',
-  'src/chat/useChatEngine.js', // 2444行/阈值800；已抽 mention/attachment/sandboxFiles/sandboxProcs。剩余 useChatEngine() 单函数 1879 行，streamAnswer 依赖 40+ 状态，需实机验证才能拆
   'src/chat/useChatScroll.js',
   'src/chat/useCommandPanels.js',
   'src/chat/useDeepAsk.js',
@@ -94,7 +93,6 @@ const GRANDFATHERED = [
   'src/views/AgentEvalPage.vue',
   'src/views/AgentsPage.vue',
   'src/views/AppLayout.vue',
-  'src/views/ChatPage.vue', // 2754行/阈值800；CSS 已外置。消息模板 1332 行含 569 个不同标识符，抽子组件=重写渲染层，需实机验证
   'src/views/DashboardPage.vue',
   'src/views/DocumentsPage.vue',
   'src/views/EvaluationPage.vue',
@@ -224,6 +222,17 @@ export default [
       'vue/no-dupe-keys': 'off',
       // 中文 UI 文案里用全角空格排版（如「全角竖线」两侧），是有意的排版而非误输入
       'no-irregular-whitespace': 'off',
+    },
+  },
+
+  // 装配层函数：这两个文件已达标 max-lines（≤800），但 useChatEngine() 主函数是
+  // 「把各 useXxx/createXxx 装配起来」的线性接线（400+ 行、无逻辑分支可拆），
+  // 硬拆只会把装配打散、并引入 TDZ。只豁免这两条的 max-lines-per-function，
+  // 其余规则（complexity/max-params/no-unused-vars 等）对它们全部生效。
+  {
+    files: ['src/chat/useChatEngine.js', 'src/views/ChatPage.vue'],
+    rules: {
+      'max-lines-per-function': 'off',
     },
   },
 

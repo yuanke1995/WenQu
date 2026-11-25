@@ -1,20 +1,28 @@
+import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { isAdminSync, isLoggedIn } from '../utils/auth'
+import { message } from 'ant-design-vue'
+import { applyPlanFrame, applyGoalState, applyGoalTurn } from './streamStateFrames.js'
+import { applyPlanDelta, applyPlanApproval, applyPlanCancelled, applyPlanSuperseded } from './streamPlanFrames.js'
+import { applyImageFrame, applyTurnStart } from './streamMerge.js'
+import { applyRetrievedFrame, applySkillHitFrame, applyAgentDelegated, applyApprovalCardFrame, applyRunCodeProgress, applyTodoFrame, applyUsageFrame } from './streamInfoFrames.js'
+import { applySubagentStep } from './streamSubagentFrames.js'
+import { applyToolStatus, appendToolOutput } from './streamToolFrames.js'
+import { buildTurnRequest } from './turnRequest.js'
+
+import { sendQuestion, resumeChat, getChatRun, newSession, getHistory, deleteSessionApi, switchMessageVariant, compactSessionApi, sessionHistorySummaryApi, listAvailableAgents, listConsultableAgents,
 // ==================== 聊天引擎 composable ====================
 // 承载聊天页的「引擎逻辑」：思考/模型/智能体状态、会话生命周期、附件与 @ 引用载荷、
 // 发送与 SSE 流式回答、审批、重新生成与分支切换。与视图的接缝全部收在 hooks 里
 // （滚动、收面板、聚焦），PC 端由 ChatPage 按原行为传参；移动壳可传自己的落点
 // （如 '/m/chat'）与滚动实现复用同一套引擎。纯函数/常量见 ./projections.js。
-import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import { isAdminSync, isLoggedIn } from '../utils/auth'
-import { message } from 'ant-design-vue'
-import { sendQuestion, resumeChat, getChatRun, newSession, getHistory, deleteSessionApi, switchMessageVariant, compactSessionApi, sessionHistorySummaryApi, getConfig, getRuntimeConfig, listAvailableAgents, listConsultableAgents,
-         listAvailableSkills, getUserPreference, approveToolCall, getToolApproval, answerAgentAsk, ignoreAgentAsk, stopChatTurn, steerChatTurn,
+         listAvailableSkills, approveToolCall, getToolApproval, answerAgentAsk, ignoreAgentAsk, stopChatTurn, steerChatTurn,
          enqueueSteer, steerQueueList, steerQueued, dropQueued,
          listPendingAsks, listPendingApprovals, resolvePlanApproval, supersedePlanApproval, revisePlanApproval, listPendingPlans, updateSessionModelApi, getSessionModelApi,
          listKnowledgeBases, listDocuments, uploadChatAttachment, getSessionTodosApi,
          listSandboxFiles, downloadSandboxFile, sandboxFileToArtifact,
          listSessionProcs, killSessionProc, killAllSessionProcs,
-         startGoalApi, goalActionApi, getSessionGoalApi,
+         startGoalApi, goalActionApi,
          downloadArtifactsZip,
          refreshArtifactSignsApi } from './chatTransport.js'
 import { sessionStore, loadSessions, chatStreams, todosMap, markSessionActive, touchSessionRow, refreshProcBadges } from '../views/store'
@@ -22,18 +30,17 @@ import { markLive, splitAtts } from './attachments'
 // 取材判定层：图片压缩参数、附件白名单与各项限额都在这里（分享页共用同一份，见 ./intake.js）
 import { MAX_IMAGES, MAX_FILES, classifyIntake, rejectText, REJECT, compressImage, pasteFilesOf,
          isLongPaste, pasteNameOf } from './intake'
-import { loadModelIndex } from '../utils/modelRef'
 import { approvalStatusText } from './approval'
 import {
-         groupSources, ensureTick, alignTick, mergeDoneToolCalls, restoreTimeline, extendTimelineText, extendTimelineProcess,
-         pushTimelineTool, pushTimelineArtifact, pushTimelineSteer, ensureThinkSegment,
+         groupSources, ensureTick, alignTick, restoreTimeline, extendTimelineText, extendTimelineProcess,
+         pushTimelineArtifact, pushTimelineSteer, ensureThinkSegment,
 
 
 
 
 
          artifactPendingOf,
-         rememberAgents, isDispatchTool, consultNameOf, stepBriefOf, applyBlocks } from './projections'
+         rememberAgents, applyBlocks } from './projections'
 import { createThinkingLevels } from './thinkingLevels.js'
 import { createSkillPicker } from './skillPicker.js'
 import { createMentionPicker } from './mentionPicker.js'
@@ -47,12 +54,16 @@ import { useDeliveryPackages } from './useDeliveryPackages.js'
 import { createAgentPicker } from './agentPicker.js'
 import { createModelSelection } from './modelSelection.js'
 import { createTurnDividers } from './turnDividers.js'
-import { switchVersion as switchVersionImpl, regenerate as regenerateImpl, createBranchSwitcher } from './versionActions.js'
-import { STOP_PLACEHOLDER, markStoppedTurn } from './turnCloseout.js'
-import { createSteerQueue } from './steerQueue.js'
-import { createStopTurn } from './stopTurn.js'
+import { useSteerDispatch } from './useSteerDispatch.js'
+import { usePlanActions } from './usePlanActions.js'
+import { useGoalEntry } from './useGoalEntry.js'
+import { useTurnReconnect } from './useTurnReconnect.js'
+import { useChatRouting } from './useChatRouting.js'
+import { useSessionLifecycle } from './useSessionLifecycle.js'
+import { useEngineBootstrap } from './useEngineBootstrap.js'
+import { useSteerAndVersion } from './useSteerAndVersion.js'
+import { switchVersion as switchVersionImpl, regenerate as regenerateImpl } from './versionActions.js'
 import { buildHistoryList, dropSteeredUserRows } from './historyRows.js'
-import { createSessionActions } from './sessionActions.js'
 import { createSend } from './sendFlow.js'
 import { settleAbortedPlan } from './planAbort.js'
 import { failTurn } from './turnFail.js'
@@ -64,33 +75,21 @@ import { useSessionTodos } from './useSessionTodos.js'
 import { useGoalState } from './useGoalState.js'
 import { useHistoryRefs } from './useHistoryRefs.js'
 import { usePendingPlan } from './usePendingPlan.js'
+import { pushTimelineTool } from './timelineWrite.js'
+import { isDispatchTool, consultNameOf, stepBriefOf } from './projections'
+import { createFrameHandlers, createClosingHandlers } from './streamAnswerHandlers.js'
 import { useHitlRestore } from './useHitlRestore.js'
-import { applyPlanDelta, applyPlanApproval, applyPlanCancelled, applyPlanSuperseded } from './streamPlanFrames.js'
 import { createStreamBuffer } from './streamBuffer.js'
-import { applyCompactState, applyPlanFrame, applyGoalState, applyGoalTurn } from './streamStateFrames.js'
+import { applyCompactState } from './streamStateFrames.js'
 import { createThoughtFrames } from './streamThoughtFrames.js'
-import { buildTurnRequest } from './turnRequest.js'
-import { applySubagentStep } from './streamSubagentFrames.js'
 import { closeoutDoneTurn } from './turnDoneCloseout.js'
 import { applyDonePayload } from './applyDonePayload.js'
-import { applyToolStatus, appendToolOutput } from './streamToolFrames.js'
-import { applyTodoFrame, applyUsageFrame, applyRetrievedFrame, applySkillHitFrame, applyApprovalCardFrame, applyRunCodeProgress, applyAgentDelegated } from './streamInfoFrames.js'
-import { createStreamLifecycle } from './streamLifecycle.js'
-import { applyTurnSnapshot as reduceTurnSnapshot, settlePreparingCards, finishResumedShell as finishResumedShellImpl, replaySnapshotExtras } from './streamReducer.js'
-import { attachRunningTurn as attachRunningTurnImpl } from './streamAttach.js'
-import { createTurnReconnect } from './turnReconnect.js'
-import { goalAct as goalActImpl } from './goalActions.js'
+import { applyTurnSnapshot as reduceTurnSnapshot, settlePreparingCards, replaySnapshotExtras } from './streamReducer.js'
 import { askAnswerText, askAutoSubmittable, askQuestionAnswered, askAnsweredCount, askNextUnanswered,
          pickAskOption, commitAskCustom, askOptionPicked, askCustomPicked, askHintText } from './askUser.js'
 import { submitAsk as submitAskImpl, ignoreAsk as ignoreAskImpl } from './askActions.js'
 import { attachAskCard, retireAskCard } from './askReducer.js'
-import { resolveApproval as resolveApprovalImpl } from './approvalActions.js'
-import { submitPlanApproval as submitPlanApprovalImpl, revisePlanInPlace as revisePlanInPlaceImpl,
-         steerPlanAdjustment as steerPlanAdjustmentImpl, adjustPlanAfterApproval as adjustPlanAfterApprovalImpl,
-         replanAfterApproval as replanAfterApprovalImpl } from './planActions.js'
 import { planVersionOf, planStepCount } from './plan'
-// 起表/配图/done 公共合并语义单源（与分享页共用，分叉史见 streamMerge 头注释）
-import { applyTurnStart, applyImageFrame, applyDoneCore } from './streamMerge'
 // 裁决完卡片立刻让铃铛角标重算（后端会把已处理的待办通知收敛为已读），不等 30s 轮询
 import { emitNotifChanged } from './useNotifications'
 import { setPlanReplanned } from './planUiState'
@@ -354,222 +353,40 @@ const { switchSession, historyLoads } = createSessionSwitch({
   autoPick: () => autoPick()
 })
 
-/**
- * 重试取当前会话的历史（两端错误卡上那颗钮用）。
- * 直接走 switchSession：同 sid 有在途加载时它会复用结果，不会并发发两份。
- */
-const retryHistory = async () => {
-  const sid = currentSessionId.value
-  if (!sid) return
-  historyError.value = ''
-  await switchSession(sid)
-}
-
-// 会话生命周期（新建/删除/自动落点）在 ./sessionActions.js
-const creatingSession = ref(false)
-/** 归属可能在会话没换 id 的情况下改变（服务端复用空会话时会改挂），页面上凡是按工作区判的东西
-    （权限档位药丸、目录提示、头部标识）都要靠这个重新取一次工作区摘要 */
-const workspaceEpoch = ref(0)
-const { createNewSession, deleteSession: handleDeleteSession, autoPick } = createSessionActions({
-  creating: creatingSession,
-  workspaceEpoch,
-  currentSid: () => currentSessionId.value,
-  setCurrentSid: sid => { currentSessionId.value = sid },
-  list: () => sessionStore.list,
-  streams: chatStreams,
-  settleSteer: () => settleSteerOnLeave(),
-  switchSession: sid => switchSession(sid),
-  clearView: () => { messages.value = []; historyError.value = '' },
-  setAgentMemory: (sid, agentId) => { agentMap.value = { ...agentMap.value, [sid]: agentId || '' } },
-  replaceRoute: sid => router.replace({ path: hooks.chatPath, query: { sid } }),
-  replaceHome: () => router.replace(hooks.chatPath),
-  focusInput: () => hooks.focusInput?.(),
-  createApi: newSession,
-  deleteApi: deleteSessionApi,
-  reloadSessions: loadSessions,
-  isLoggedIn,
-  notifyError: msg => message.error(msg),
-  notifySuccess: msg => message.success(msg)
+// 会话生命周期已抽到 useSessionLifecycle.js。
+const { retryHistory, creatingSession, workspaceEpoch, createNewSession,
+        handleDeleteSession, autoPick, takeNewSessionAgent } = useSessionLifecycle({
+  currentSessionId, messages, historyError, sessionStore, chatStreams, agentMap, hooks,
+  switchSession, settleSteerOnLeave, router, newSession, deleteSessionApi, loadSessions,
+  isLoggedIn, notify: message,
 })
 
-/**
- * 跨页「新建对话」带的预选智能体（智能体页「试一试」）：消费一次即清。
- * 不能留在 query 里等对话页再读——createNewSession 会用 query:{sid} 写地址栏，兄弟参数会被抹掉；
- * 直接把 id 交给 createNewSession 的 presetAgentId，落进新会话的待选值最稳。
- */
-const takeNewSessionAgent = () => {
-  const agent = sessionStore.newChatAgent || undefined
-  sessionStore.newChatAgent = ''
-  return agent
-}
-
-// 路由 query.sid 驱动：只处理"切到某个会话"；sid 清空（新建/删除当前会话）由 tick 信号接管，
-// 避免两条链路同时触发 autoPick / createNew 的竞态
-watch(() => route.query.sid, sid => {
-  if (route.path !== hooks.chatPath || !sid) return
-  if (sid !== currentSessionId.value) switchSession(sid)
+// 路由 watcher 与审批动作已抽到 useChatRouting.js。
+const { resolveApproval } = useChatRouting({
+  route, hooks, currentSessionId, historyLoads, switchSession, handleApprovalDeepLink,
+  createNewSession, autoPick, takeNewSessionAgent, sessionStore, chatStreams, messages,
+  notify: message, emitNotifChanged, pollRestoredAnswer: sid => pollRestoredAnswer(sid),
+  approveToolCall, approvalLeftSecOf,
 })
-// 通知深链的 approval：会话已经落在当前页时（点通知时页面没跳走）也要能定位。
-// 切会话那一次由 switchSession 末尾统一处理；这里只管「当前会话内的 query 变化」，
-// 并且避开正在加载的窗口——否则同一张卡会被两条链路各挂一遍。
-watch(() => route.query.approval, id => {
-  if (!id) return
-  const sid = String(route.query.sid || '')
-  if (!sid || sid !== currentSessionId.value || historyLoads.has(sid)) return
-  void handleApprovalDeepLink(sid, String(id))
-})
-// 侧边栏「新建对话」信号（消费后回写 seen，跨页积累的 tick 只消费一次）
-// 注意不依赖 route.query 状态：tick 触发时路由 push 可能尚未完成，条件里查 sid 会偶发落空
-// （不再被"正在回答"拦截：当前会话的流转入后台继续跑）
-watch(() => sessionStore.newChatTick, async tick => {
-  sessionStore.newChatSeen = tick
-  if (route.path === hooks.chatPath) await createNewSession(takeNewSessionAgent())
-})
-// 当前会话被删除 → 自动落到最近会话或新建
-watch(() => sessionStore.autoPickTick, async () => {
-  if (route.path === hooks.chatPath) await autoPick()
-})
-// 工具审批动作在 ./approvalActions.js（actions 层）。
-const resolveApproval = (m, card, approved, scope) => resolveApprovalImpl(m, card, approved, {
-  chatStreams, currentSid: () => currentSessionId.value, notify: message, emitNotifChanged,
-  pollRestoredAnswer: sid => pollRestoredAnswer(sid), scrollSoft: () => hooks.scrollSoft?.(),
-  approveApi: approveToolCall, approvalLeftSec: approvalLeftSecOf,
-  // 「本会话都允许」时后端会一并批准同工具的其它挂起卡；把它们的卡从所有气泡里摘掉
-  dropApprovals: ids => {
-    const set = new Set((ids || []).map(String))
-    for (const msg of messages.value) {
-      if (Array.isArray(msg.approvals)) {
-        const left = msg.approvals.filter(x => !set.has(String(x.id)))
-        if (left.length !== msg.approvals.length) msg.approvals = left
-      }
-    }
-  }
-}, scope)
 
 // 待批准计划卡与倒计时已抽到 usePendingPlan.js。这里解构接回同名符号。
 const { pendingPlan, curPlanCard, planExpired, planCountdownText } = usePendingPlan({ messages })
 // 计划卡中断收尾在 ./planAbort.js（纯模块）。
 
-// ==================== 目标模式（Goal Mode） ====================
-// 对齐 DSH：用户写一句目标，系统自己跨轮往下推进，做完了就停——没有验收标准、没有人工确认、
-// 没有逐条核验与倒计时。用户在目标条上只能做三件事：改目标原文、停止/继续、删除。
-// 目标是会话级的一份（横跨多轮），不是某一轮的东西；终态记录进右栏面板，条子只在
-// RUNNING/PAUSED 两档露出（做完了/删掉了都不是「还等你处理」）。
-
-/**
- * 目标入口（工具条按钮 /goal 命令共用这一出口）：建行即开跑。
- * 目标原文就是模型这一侧唯一要看到的东西——不传验收标准、不传启动策略。
- */
-async function startGoal (objective) {
-  const sid = currentSessionId.value
-  if (!sid) return null
-  const obj = String(objective || '').trim()
-  if (!obj) { message.warning('先写一句这件事要做到什么'); return null }
-  // 用户这句话先落地再发包：建目标是一次同步重活（建行 + 起首轮，冷启动要几秒），
-  // 等 POST 回来再 push 的话，输入框已被 startGoalNow 清空、聊天区空空如也，用户以为这句话
-  // 根本没发出去。与普通发送同口径（send() 也是先 push 气泡再开流）：goalCommand 等 goalId
-  // 回来补上，失败再把这条 optimistic 气泡撤掉（startGoalNow 会把原文还回输入框）。
-  // goalPending 补的是那几秒的空窗：两壳的身份胶囊与「撤动作键」都按 goalCommand 判，
-  // 只等 goalId 的话这条回声在响应回来前长得跟普通提问一模一样，编辑重发能把目标指令重跑一轮。
-  const echo = reactive({ role: 'user', content: obj, goalCommand: '', goalPending: true,
-                          images: [], attachments: [], attachData: [],
-                          skills: [], mentions: [], historyRefs: [], deepThink: false,
-                          time: Date.now(), messageId: null })
-  messages.value.push(echo)
-  // 与普通提问同一落点：补尾随留白再贴底（=本轮问题置顶）。这里不能用 scrollSoft——它只跟着
-  // 「还在贴底」走，用户上翻过就什么都不做，目标这句话既不留白也不归位，要等助手气泡接上才跳
-  hooks.scrollForce?.()
-  // 失败摘除：只发生在「服务端没写库」与「写库了但响应丢了」两种情形，后者由 catch 里的
-  // 回读兜底先判掉，剩下的确实是没建成——气泡撤掉后界面回到发送前的样子
-  const dropEcho = () => {
-    const i = messages.value.indexOf(echo)
-    if (i >= 0) messages.value.splice(i, 1)
-  }
-  try {
-    const r = await startGoalApi(sid, obj, currentAgentId.value || '')
-    if (r && r.success === false) { dropEcho(); message.warning(r.msg || '目标创建失败'); return null }
-    if (r && r.data) {
-      setGoal(sid, { ...r.data })
-      // 建目标即开跑：首轮由调度器起（一拍 2 秒）+ 实例冷启动装配，POST 回来的这一刻总线上
-      // 通常还探不到。走 watchGoalTurn 而不是直接 attachRunningTurn：先挂占位气泡（「正在溯源」
-      // 当场出现），探测到那一轮登记上总线再接流；接不上由 2.5s 轮询继续探（同 attachRunningTurn
-      // 那条路径），不许让聊天区在那几秒里空着。
-      if (goalRunning.value) watchGoalTurn(sid)
-      // 对话里那一行回声服务端同一条已落库（echoGoalCommand），刷新/切会话读的是库里那份；
-      // 这里只补命令标注。目标横跨多轮，状态在摘要条与详情面，但「什么时候定了什么目标」
-      // 得能在对话里读出来
-      echo.goalCommand = r.data.goalId || ''
-      echo.goalPending = !echo.goalCommand
-      // 侧栏要立刻看得见这条会话：目标会话在第一条回答落地之前 message_count 一直是 0，而会话列表
-      // 隐藏空会话——用户在工作区里定了目标，回头看那个工作区读到的是「暂无会话」。
-      // 标题用目标原文：这条会话讲的就是这件事，比「新对话」认得出来。
-      markSessionActive(sid, obj)
-      return r.data
-    }
-    dropEcho()
-    return null
-  } catch (e) {
-    // 响应丢了不等于没建成：超时/5xx 时服务端可能已经写库并起了首轮（kickContinuation 抛在
-    // 提交之后就是这种）。这时候撤气泡 + 还回原文，用户会重发一遍，把刚建好的目标重开一遍。
-    // 回读一次会话目标（按 objective + 创建时间认领），确认建成了就按成功结算。
-    const g = await getSessionGoalApi(sid).catch(() => null)
-    const created = g && g.success && g.data && g.data.goalId
-      && String(g.data.objective || '').trim() === obj
-      && Date.now() - new Date(g.data.createdAt).getTime() < 120000
-    if (created) {
-      setGoal(sid, { ...g.data })
-      echo.goalCommand = g.data.goalId || ''
-      echo.goalPending = !echo.goalCommand
-      markSessionActive(sid, obj)
-      message.warning('响应中断，但已从服务端确认目标创建成功')
-      return g.data
-    }
-    dropEcho()
-    message.error(e.message || '目标创建失败')
-    return null
-  }
-}
-
-// 目标动作在 ./goalActions.js（actions 层），依赖经 ctx 注入。
-const goalAct = (action, extra) => goalActImpl(action, extra, {
-  goal: () => sessionGoal.value, goalOf: sid => goalsMap.value[sid], setGoal,
-  currentSid: () => currentSessionId.value, action: goalActionApi,
-  watchGoalTurn, barVisible: () => goalBarVisible.value, notify: message
+// 目标模式入口（startGoal / goalAct）已抽到 useGoalEntry.js。
+const { startGoal, goalAct } = useGoalEntry({
+  currentSessionId, messages, hooks, currentAgentId, sessionGoal, goalsMap, setGoal,
+  goalRunning, goalBarVisible, watchGoalTurn, startGoalApi, goalActionApi, markSessionActive, notify: message,
 })
 
 // 目标条状态投影与就地编辑已抽到 useGoalProjection.js（投影函数从 projections.js 直接导入）。
 // 这里解构出同名符号，下面所有读写点一行不改。
 const {
-  goalTerminal,
-  goalBarVisible,
-  goalPhrase,
-  goalStateLabel,
-  goalStateClass,
-  goalRoundLine,
-  goalBlockReason,
-  goalBarTitle,
-  goalBarMeta,
-  goalCanPause,
-  goalCanResume,
-  goalCanEdit,
-  goalCanCancel,
-  goalCanClearRecord,
-  goalPreempted,
-  goalVersionLabel,
-  goalProgressPercent,
-  goalTerminalCard,
-  goalTerminalTitle,
-  goalTerminalNote,
-  goalTurnStreaming,
-  surrenderGoalStream,
-  goalBarError,
-  runGoalAction,
-  goalEditing,
-  goalEditBusy,
-  goalEdit,
-  goalEditSaveable,
-  startGoalInlineEdit,
-  saveGoalEdit,
+  goalTerminal, goalBarVisible, goalPhrase, goalStateLabel, goalStateClass, goalRoundLine,
+  goalBlockReason, goalBarTitle, goalBarMeta, goalCanPause, goalCanResume, goalCanEdit,
+  goalCanCancel, goalCanClearRecord, goalPreempted, goalVersionLabel, goalProgressPercent, goalTerminalCard,
+  goalTerminalTitle, goalTerminalNote, goalTurnStreaming, surrenderGoalStream, goalBarError, runGoalAction,
+  goalEditing, goalEditBusy, goalEdit, goalEditSaveable, startGoalInlineEdit, saveGoalEdit,
 } = useGoalProjection({ sessionGoal, currentSessionId, chatStreams, messages, goalAct })
 
 /**
@@ -578,101 +395,19 @@ const {
  *  action='cancel' 取消本轮，卡片定格「未批准」。
  *  对计划不满意走 {@link continuePlanConversation}（带着意见继续对话，本版作废）。
  *  恢复态卡（restored）：本设备没有这一轮的流，批准在后台进行，靠轮询取回结果。 */
-// 计划裁决动作在 ./planActions.js（actions 层）。
-const planCtx = () => ({
-  resolveApi: resolvePlanApproval, reviseApi: revisePlanApproval, notify: message, emitNotifChanged,
+// 计划模式动作已抽到 usePlanActions.js（streamAnswer 以惰性包装注入）。
+const {
+  submitPlanApproval, revisePlanInPlace, continuePlanConversation,
+  adjustPlanAfterApproval,
+} = usePlanActions({
+  currentSessionId, messages, loading, hooks, deepThinkOn, effectiveModel,
+  goalRunning: { get value () { return goalRunning.value } },
+  chatStreams, steer, stop, streamAnswer: (...a) => streamAnswer(...a), notify: message,
+  resolvePlanApproval, revisePlanApproval, supersedePlanApproval, emitNotifChanged,
   stopRestoredPoll: () => stopRestoredPoll(), pollRestoredAnswer: sid => pollRestoredAnswer(sid),
-  switchSession: sid => switchSession(sid), currentSid: () => currentSessionId.value,
-  scrollSoft: () => hooks.scrollSoft?.()
+  switchSession, enqueuePlanAdjust,
+  planExecProgressOf, setPlanReplanned, planVersionOf, planStepCount,
 })
-const submitPlanApproval = (m, action) => submitPlanApprovalImpl(m, action, planCtx())
-const revisePlanInPlace = (m, text) => revisePlanInPlaceImpl(m, text, planCtx())
-
-/** 旧轮收尾等待：后端先落「取代」收尾消息、前端再把意见作为新消息发出（落库顺序不乱）。
- *  恢复态卡没有本轮的流可等，只给后端落库留一小段时间 */
-const planRoundSettled = m => new Promise(resolve => {
-  if (!m || m.restored) { setTimeout(resolve, 800); return }
-  if (!m.loading) { resolve(); return }
-  const t0 = Date.now()
-  const tick = () => { if (!m.loading || Date.now() - t0 > 5000) resolve(); else setTimeout(tick, 150) }
-  tick()
-})
-
-/**
- * 计划「继续对话」（计划模式）：用户对当前计划不满意，把输入框里的意见作为一条正式用户消息发出——
- * 本版计划先按「已被取代」作废（supersede），随后这条消息在**同一会话里继续对话**：完整新一轮
- * （重新检索），模型带着上一版计划按意见产出修改后的计划卡。可反复，直到点「确认」才执行。
- */
-async function continuePlanConversation (m, text) {
-  const c = m && m.planCard
-  if (!c || c.busy || c.status !== 'pending') return
-  const q = String(text || '').trim()
-  if (!q) { message.warning('先写下要改什么，再点「继续对话」'); return }
-  c.busy = true
-  try {
-    const r = await supersedePlanApproval(c.id, q)
-    if (r && r.success === false) { message.warning(r.msg || '提交失败'); c.busy = false; return }
-    emitNotifChanged('chat')
-  } catch (e) {
-    message.error(e.message || '提交失败')
-    c.busy = false
-    return
-  }
-  // 本地立刻定格「已被取代」，不等 plan_superseded 事件：这一版作废已是既成事实，而等事件的这段
-  // 里卡片停在 busy=true——确认/取消/输入框整片灰、再点「继续对话」被开头那道判据静默 return，
-  // 恢复态卡片更是没有本轮的流可等（第二次继续对话整个确认栏会冻死）。
-  c.status = 'superseded'
-  c.busy = false
-  c.editText = ''
-  m.planSuperseded = true
-  await planRoundSettled(m)
-  // 旧轮已收尾（或恢复态给了落库时间）：把意见作为用户消息发出，继续同一会话的对话
-  const userMsg = reactive({ role: 'user', content: q, images: [], attachments: [], attachData: [],
-                            skills: [], mentions: [], historyRefs: [], deepThink: deepThinkOn.value,
-                            planMode: true, time: Date.now(), messageId: null })
-  messages.value.push(userMsg)
-  // 强制计划模式：本轮的目的就是按意见重做计划（后端据此再走计划闸门）
-  streamAnswer(q, [], null, messages.value.length === 1, 1, deepThinkOn.value, [], [], [], null, [], '', userMsg, true)
-}
-// 插话调整在 ./planActions.js（actions 层）；重新计划仍在本文件（依赖停止/收尾/开新轮）。
-// eslint-disable-next-line no-unused-vars -- 保留供后续计划调整入口接线
-const steerPlanAdjustment = (m, raw) => steerPlanAdjustmentImpl(m, raw,
-  { messages: () => messages.value, loading: () => loading.value, steer: q => steer(q) })
-
-/**
- * 批准后调整：停止并重新计划。控制流在 ./planActions.js（actions 层），这里只提供引擎侧依赖。
- */
-const replanAfterApproval = (m, raw) => replanAfterApprovalImpl(m, raw, {
-  messages: () => messages.value,
-  sid: () => currentSessionId.value,
-  model: () => effectiveModel.value,
-  loading: () => loading.value,
-  progressOf: planExecProgressOf,
-  hasLocalStream: sid => chatStreams.has(sid),
-  stop: () => stop(),
-  settle: mm => planRoundSettled(mm),
-  markReplanned: setPlanReplanned,
-  versionOf: planVersionOf,
-  stepCount: planStepCount,
-  launch: (q, from) => {
-    const userMsg = reactive({
-      role: 'user', content: q, images: [], attachments: [], attachData: [],
-      skills: [], mentions: [], historyRefs: [], deepThink: deepThinkOn.value,
-      planMode: true, planAdjustFrom: from, time: Date.now(), messageId: null
-    })
-    messages.value.push(userMsg)
-    // 强制计划模式：本轮的目就是按意见重做计划；planBaseId 交给服务端拼血缘与上一版上下文
-    streamAnswer(q, [], null, messages.value.length === 1, 1, deepThinkOn.value, [], [], [], null, [], '',
-                 userMsg, true, false, false, { planBaseId: from.cardId })
-  }
-})
-
-const adjustPlanAfterApproval = (m, text, mode) => adjustPlanAfterApprovalImpl(m, text, mode,
-  { replan: (mm, t) => replanAfterApproval(mm, t), messages: () => messages.value, loading: () => loading.value, steer: q => steer(q),
-    // 送不进去时的落点：只有目标还在跑（深度执行会自己起下一轮）才值得排队；否则把原因交回面板
-    queuePlanAdjust: t => goalRunning.value
-      ? enqueuePlanAdjust(t, currentSessionId.value) : null })
-
 /**
  * 智能体提问（一卡多问）：在某题上点一个候选——只记录选择，不提交（提交由 askSubmitAll 一次性批量完成）。
  * <p>单选（默认）与多选走同一个状态形状（{@code picks} 永远是下标数组），差别只在写入规则：
@@ -741,45 +476,11 @@ const {
   cardTargetFor, approvalStatusText, clearApprovalCard, clearApprovalQuery, notify: message,
 })
 
-/**
- * 接流气泡的收场：这一轮其实已经没了（服务端刚好收尾、服务重启、或通道再也接不上）时用它。
- * 不许留一颗转圈的气泡骗用户「还在跑」——摘掉登记、收掉进行中态，并按历史重显真实结果。
- */
-const finishResumedShell = (msg, st, sid, reload = true) => finishResumedShellImpl(msg, st, sid, reload,
-  { chatStreams, currentSid: () => currentSessionId.value, switchSession })
-
-
-// 接流生命周期（探测去重/重连计数/已收场轮）在 ./streamLifecycle.js（transport 层）。
-const streamLifecycle = createStreamLifecycle()
-
-// 接流入口在 ./streamAttach.js（transport 层）。
-const attachRunningTurn = (sid, reuseMsg) => attachRunningTurnImpl(sid, reuseMsg, {
-  chatStreams, lifecycle: streamLifecycle, getChatRun,
-  ensureGoalPlaceholder, takeGoalPlaceholder, currentSid: () => currentSessionId.value, streamAnswer
+// 接流与断线重挂已抽到 useTurnReconnect.js。
+const { finishResumedShell, streamLifecycle, attachRunningTurn, turnReconnect, cancelReconnect } = useTurnReconnect({
+  chatStreams, currentSessionId, switchSession, getChatRun, reconnectingSids,
+  ensureGoalPlaceholder, takeGoalPlaceholder, streamAnswer: (o) => streamAnswer(o),
 })
-
-// 断线重挂（与 DSH 同口径）：连接是连接、轮次是轮次。通道断了只说明这条流没了，
-// 服务端那一轮照样在跑——按会话登记一条重挂循环，退避重试到接上、或探到那一轮已收场为止。
-// 循环本体在 ./turnReconnect.js（transport 层，可单测）；这里只注入引擎状态与副作用。
-// （reconnectingSids 声明在 loading 上方：它要参与「这个会话还在答」的判定。）
-const turnReconnect = createTurnReconnect({
-  onDisconnect: (msg, sid) => { msg.retrying = true; msg.loading = true; reconnectingSids.add(sid) },
-  onEnd: sid => reconnectingSids.delete(sid),
-  clearRetrying: msg => { msg.retrying = false },
-  isViewing: sid => currentSessionId.value === sid,
-  hasStream: sid => chatStreams.has(sid),
-  online: () => typeof navigator === 'undefined' || navigator.onLine !== false,
-  attach: async (sid, msg) => (await attachRunningTurn(sid, msg)).status,
-  // 探到那一轮已收场：按历史重显真实结果（绝不挂「本轮失败」）
-  settleByHistory: (msg, sid) => finishResumedShell(msg, null, sid),
-  setTimer: (fn, ms) => setTimeout(fn, ms),
-  clearTimer: t => clearTimeout(t),
-  onOnline: fn => window.addEventListener('online', fn),
-  offOnline: fn => window.removeEventListener('online', fn)
-})
-
-/** 取消该会话的重挂（切走 / 停止本轮 / 页面卸载），返回那颗还没收场的消息 */
-const cancelReconnect = sid => turnReconnect.stop(sid)
 
 // 接流快照 reducer 在 ./streamReducer.js（reducer 层），引擎只注入状态与派生函数。
 /**
@@ -787,298 +488,96 @@ const cancelReconnect = sid => turnReconnect.stop(sid)
  * （见 attachRunningTurn），此时不发 POST /chat，改开 GET /chat/resume 通道，
  * 正文与工具卡片等由第一帧 snapshot 补齐、之后与实时流走同一套回调。
  */
-const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1, deepThink = false,
-                      attachments = [], skills = [], mentions = [], prev = null, historyRefs = [],
-                      editMessageId = '', editUserMsg = null, planMode = false, resume = false,
-                      fromSteer = false, planBase = null) => {
-  // prev = 自动重试上下文 { sid, agentId, model }：沿用原会话与原选择，不读当前 UI 态
-  //（重试定时器触发时用户可能已切到别的会话/换了模型）
-  const sid = prev ? prev.sid : currentSessionId.value
-  const agentId = prev ? prev.agentId : (currentAgentId.value || '')
-  // 作答方在发问这一刻就是确定的：归属随气泡一起写上，不等 done 才补——否则整段流式期间
-  // 「由 X 回答」一直空着。没选智能体（空 agentId 走全局配置）就没有归属，不编一个名字顶上。
-  const turnAgentName = agentId ? (agentList.value.find(a => a.id === agentId)?.name || '') : ''
-  // 会话已有 ID 时**不再**随发送带模型：会话里存的那一份是权威（选择器改动即时 PUT 落库，后端也按它作答）。
-  // 把页签内存里的那一份发上去，等于用一个端的选择盖掉另一个端刚改过的值——A 端刚切到
-  // 可用模型，B 端一句重发又把已停用的写回会话，两边来回盖、每轮都在重建实例。
-  // 只有还没有会话 ID 的首问才随载荷带过去（那时 PUT 无处可落，后端补建会话后据此落库）
-  const model = prev ? prev.model : (currentSessionId.value ? '' : (currentOverrideModel.value || ''))
-  // 重新生成：被替换的旧回答 ID 必须在下面 fresh 覆盖之前捕获（fresh 会把 messageId 置空，
-  // 覆盖后再读就永远是空 → 后端不软删旧回答 → 刷新后同一问题出现两条答案）
-  const replacedMessageId = replaceMsg && replaceMsg.messageId ? replaceMsg.messageId : ''
-  // 流式回调统一改写 msg 对象（而非 messages.value[idx]）：切走会话后 messages 数组已换人，
-  // 下标会指错位置；对象引用由 chatStreams 持有，切回来时 switchSession 把它接回视图尾部
-  // model 留空，等 done/接流快照带后端那份权威值回来：前端预填的是「生效引用」（覆盖>个人默认），
-  // 后端落库的是模型名那一段，两边写法不同却都叫 model——拿引用去和上一条的落库值比，
-  // 同一个模型会被判成「已切换」，done 一到又自己消失（刷新后更是从来没有过这条线）
+// 13 处调用点仍是位置参数（sendFlow/planActions/steerDispatch/versionActions/移动壳等），
+// 这里保持原签名不变、内部收敛成一份 opts，避免大范围改调用方。
+// 参数位多（13 处调用点用位置参数），这里用 rest 收尾把 17 个参数压到 4 个具名 + 1 个 rest。
+const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, ...rest) => {
+  const [autoRetry = 1, deepThink = false, attachments = [], skills = [], mentions = [],
+    prev = null, historyRefs = [], editMessageId = '', editUserMsg = null,
+    planMode = false, resume = false, fromSteer = false, planBase = null] = rest
+  const ctx = openTurn({ question, imgs, replaceMsg, isFirstMessage, autoRetry, deepThink,
+    attachments, skills, mentions, prev, historyRefs, editMessageId, editUserMsg, planMode, resume,
+    fromSteer, planBase })
+  const handlers = buildHandlers(ctx)
+  if (resume) resumeChat(ctx.sid, handlers)
+  else sendQuestion(ctx.sid, question, imgs, handlers)
+}
+
+/** 开一轮：建气泡、登记通道、装配 deps 与两个回调工厂。返回本轮上下文。 */
+/** 建（或复用被替换的）本轮 AI 气泡：接流时沿用原起表点，避免数字跳回 0。 */
+function makeTurnMessage (replaceMsg, resume, agentId, turnAgentName) {
   const fresh = { role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkLoading: false, time: Date.now(), turnClockFromServer: false, turnMs: 0, humanWaitMs: 0, artifacts: [], toolCalls: [], skillHits: [], plan: null, planCard: null, timeline: [], errorCard: null, model: '', goalWaiting: false, agentId: agentId || '', agentName: turnAgentName }
-  // 接流时被替换的那颗气泡沿用它的起表点：目标占位气泡的起表点是用户按下回车那一刻，
-  // 断线重挂的残影是这一轮真实的开轮时刻——两者都不能在接上的一瞬跳回 0（数字变小读成计时坏了）。
-  // 服务端快照随后会用 elapsedMs 再对一次表（见 streamReducer 的 earlierStart）。
   const heldStartAt = resume && replaceMsg ? Number(replaceMsg.time) || 0 : 0
   const msg = replaceMsg ? Object.assign(replaceMsg, fresh, { messageId: null, fb: null }) : reactive(fresh)
   if (heldStartAt) msg.time = heldStartAt
-  // 用户自己发起一轮（非接流）：占位那一行让位给它，一屏不许有两颗「正在溯源」
+  return msg
+}
+
+function openTurn (t) {
+  const { question, imgs, replaceMsg, isFirstMessage, deepThink, attachments, skills, mentions,
+    prev, historyRefs, editMessageId, editUserMsg, planMode, resume, fromSteer, planBase, autoRetry } = t
+  // prev = 自动重试上下文 { sid, agentId, model }：沿用原会话与原选择，不读当前 UI 态
+  const sid = prev ? prev.sid : currentSessionId.value
+  const agentId = prev ? prev.agentId : (currentAgentId.value || '')
+  const turnAgentName = agentId ? (agentList.value.find(a => a.id === agentId)?.name || '') : ''
+  // 会话已有 ID 时不随发送带模型：会话里那份是权威（见原注释）
+  const model = prev ? prev.model : (currentSessionId.value ? '' : (currentOverrideModel.value || ''))
+  const replacedMessageId = replaceMsg && replaceMsg.messageId ? replaceMsg.messageId : ''
+  const msg = makeTurnMessage(replaceMsg, resume, agentId, turnAgentName)
   if (!resume) dropGoalPlaceholder()
-  // 气泡只长在「正在看的会话」上：后台补发的插话（prev 指向别的会话）由 chatStreams 持有，
-  // 切回去时 switchSession 接回视图尾部——直接 push 会把旧会话的气泡推进当前会话的列表
   if (!replaceMsg && currentSessionId.value === sid) messages.value.push(msg)
-  const viewing = () => currentSessionId.value === sid  // 只有正在看这个会话才滚动/贴底
-  // 流式期间：先按新高度重算留白、等它落屏，再贴底——留白让贴底落点停在本轮问题置顶处，
-  // 回答长过一屏后留白归零，贴底就自然变成跟着最新内容走（用户上翻仍会解除跟随）
-  // 快照回放期间暂停贴底：子智能体帧可能有上百条，逐帧滚动会让页面抖成筛子；回放完再统一滚一次
+  const viewing = () => currentSessionId.value === sid
   let replayingSnapshot = false
   const liveScroll = () => { if (!replayingSnapshot && viewing()) hooks.scrollFollow?.() }
   const abort = new AbortController()
   const st = { msg, abort }
   chatStreams.set(sid, st)
-
-  // 「服务端受理过这一轮」的唯一证据：它发过帧（POST 通道第一帧是 turn_start，接流第一帧是 snapshot）。
-  // 没受理过 = 这条提问压根没送到，与「通道断了但答案还在跑」是两件事，收尾口径不同。
   let admitted = false
   let transportError = ''
-  // 本轮真的失败（服务端 error 帧 / 业务失败 / 提问没送出去）：保半程内容 + 错误卡 + 重新生成。
-  // 断线**不走这里**——那是连接的事，见下面 beginReconnect。
   const failNow = (error, kind) => failTurn(msg, {
-    error, kind,
-    flushNow: () => flushNow(),
-    settlePreparingCards,
-    settleAbortedPlan,
+    error, kind, flushNow: () => flushNow(), settlePreparingCards, settleAbortedPlan,
     dropStream: () => { if (chatStreams.get(sid) === st) chatStreams.delete(sid) },
-    notify: m => message.error(m),
-    viewing,
-    scroll: () => liveScroll()
+    notify: m => message.error(m), viewing, scroll: () => liveScroll()
   })
-  // 重挂循环：探测 → 接流 → 退避再试（分支判据在 ./reconnectPolicy.js，循环本体在 ./turnReconnect.js）。
-  // 本函数只负责把这一轮的事实交给它：受理过没有、断的是不是接流通道、没送出去时怎么收尾。
   const beginReconnect = () => {
-    // 旧通道已经死了：从在跑登记里摘掉它，下一次接流才进得去
     if (chatStreams.get(sid) === st) chatStreams.delete(sid)
-    turnReconnect.start(sid, msg, {
-      admitted, resume, error: transportError,
-      onFail: e => failNow(e, 'unreachable')
-    })
+    turnReconnect.start(sid, msg, { admitted, resume, error: transportError, onFail: e => failNow(e, 'unreachable') })
   }
-  // 顶部那条整轮用时从开流第一秒就要跟着跳，不能等第一张工具卡才起表：纯检索、纯思考那几分钟
-  // 同样在跑，没这一句它停在「0 秒」不动，看着像卡死
   ensureTick()
-  // 首条消息发出即把会话抬进侧栏列表（列表隐藏空会话，等 onDone 才刷新的话长回答期间不可见）
   if (isFirstMessage) markSessionActive(sid, question)
-  // 本轮视角归位：留白补足并落屏后贴底，问题正好落在视口最上（与空会话首问同一落点）
   if (viewing()) hooks.scrollForce?.()
-  // 流式渲染节流（token/过程批量落屏、接流去重）在 ./streamBuffer.js
-  const { flushNow, resetFromContent, appendToken, appendProcess, gotToken } = createStreamBuffer({
-    msg,
-    extendText: (m, from, to) => extendTimelineText(m, from, to),
-    extendProcess: (m, from, to) => extendTimelineProcess(m, from, to),
-    scroll: () => liveScroll()
+  const { flushNow, resetFromContent, gotToken } = createStreamBuffer({
+    msg, extendText: (m, from, to) => extendTimelineText(m, from, to),
+    extendProcess: (m, from, to) => extendTimelineProcess(m, from, to), scroll: () => liveScroll()
   })
-  // 思考帧（增量成段/终稿校正/断段）在 ./streamThoughtFrames.js
   const thought = createThoughtFrames({ msg, flushNow, scroll: () => liveScroll() })
-  const handlers = {
-    signal: abort.signal,
-    // 服务端起表基准（开流第一帧，时长形式）：把秒表锚到服务端收到提问那一刻。
-    // 没有它，秒表只能按本地「按下回车」起表，收尾换成落库那份服务端墙钟时会掉一个网络往返
-    // 外壳与引擎各发一帧、同一基准（后者 prepMs 更准），
-    // 重锚只校正基准，不会改变已显示的量级。绝对时刻不下发，两端钟差进不来。
-    onTurnStart: payload => {
-      // 服务端起表基准（开流第一帧）：合并语义在 streamMerge.applyTurnStart 单源，与分享页共用
-      admitted = true
-      applyTurnStart(msg, payload, alignTick)
-      // 新一轮开始：通知页面清掉上一轮的只读浏览器快照镜像
-      hooks.onTurnStart?.(payload, msg)
-    },
-    // 浏览器只读快照：新事件经 CHAT_EVENT_CB 映射到这里，转给页面自己的镜像状态（不进账本）
-    onBrowserSnapshot: (payload, ev) => hooks.onBrowserSnapshot?.(payload, ev),
-    // 团队实时事件：团队面板/胶囊在旁侧监听同一个 window 事件做去抖重拉。
-    // 只做通知（不把团队帧塞进正文时间线），面板自己按根会话 id 拉最新成员/任务/消息。
-    onTeamMember: () => dispatchTeamEvent(),
-    onTeamMessage: () => dispatchTeamEvent(),
-    onTeamTask: () => dispatchTeamEvent(),
-    onSnapshot: payload => {
-      // 接流的第一帧（只有 resume 那条通道会有这一帧）：本轮已产出的东西一次铺进气泡
-      let snap = null
-      try { snap = typeof payload === 'string' ? JSON.parse(payload) : payload } catch (e) { snap = null }
-      if (!reduceTurnSnapshot(msg, snap, sid, { setTodos, autoCompactSid, liveCompactedSid, planCardFromRecord, alignTick })) {
-        // 这一轮其实已经收尾（或压根不在跑/不是本人的）：这颗空气泡不该留下，按历史重显真实结果
-        finishResumedShell(msg, st, sid, false)
-        return
-      }
-      admitted = true
-      resetFromContent(msg.content)
-      // 快照里属于「运行期增量」的几份：复用实时事件同一套回调重建（./streamReducer.js）
-      replayingSnapshot = true
-      try {
-        replaySnapshotExtras(msg, snap, handlers)
-      } finally {
-        replayingSnapshot = false
-      }
-      // 正在长的思考段：快照接上时必须沿用同一条段，否则下一片增量会另起一段
-      thought.setOpen(snap.thinkingOpen)
-      // 插话段已在快照里，历史里那条同名用户消息要退场（插话已应用后才接流的入口）
-      if (currentSessionId.value === sid) messages.value = dropSteeredUserRows(messages.value)
-      // 快照里的计划卡可能带血缘（调整自 vN）：补一次双向指认，旧卡的「查看新一轮」不必等刷新
-      if (msg.planCard) linkPlanLineage(messages.value)
-      liveScroll()
-    },
-    ...buildTurnRequest({
-      deepThink, planMode, planBase, reasoningLevel: reasoningLevelParam.value,
-      attachments, skills, mentions, historyRefs,
-      replaceMsg, replacedMessageId, editMessageId, fromSteer, agentId, model
-    }),
-    model,
-    onThinking: t => thought.append(t),
-    onThinkingDone: payload => thought.finish(payload),
-    onToken: (t, ev) => { appendToken(t, ev); msg.thinkLoading = false; thought.closeRound() },
-    onProcess: (t, ev) => {
-      // 过程独白（<process> 标签内，与正文分流）：累积与落屏在 ./streamBuffer.js
-      thought.closeRound()
-      appendProcess(t, ev)
-    },
-    onPlan: p => applyPlanFrame(msg, p),
-    onTodo: payload => applyTodoFrame(sid, payload, setTodos),
-    onDeepState: payload => applyGoalState(sid, payload, setGoal),
-    onDeepTurn: payload => applyGoalTurn(payload, { currentSid: () => currentSessionId.value, sid, onNewTurn: () => { attachRunningTurn(sid).catch(() => {}) } }),
-    onUsage: payload => applyUsageFrame(msg, payload),
-    onRetrieved: payload => applyRetrievedFrame(msg, payload, liveScroll),
-    onSkillHit: payload => applySkillHitFrame(msg, payload, liveScroll),
-    onApprovalRequired: payload => applyApprovalCardFrame(msg, payload, liveScroll),
-    onAskUser: payload => {
-      // 智能体提问（人在回路，一卡多问）：提问面板挂到当前 AI 气泡状态上，桌面壳据此把底部输入框整块
-      // 替换成提问面板；用户逐题翻页作答、一次性批量提交后模型继续走。
-      // 每题 options 第一项是模型给的推荐项（仅提示用）——超时与忽略都不会替你选答案
-      try {
-        attachAskCard(msg, typeof payload === 'string' ? JSON.parse(payload) : payload)
-        liveScroll()
-      } catch (e) { /* 忽略 */ }
-    },
-    // 计划帧的血缘由 msg.planCard.adjustFrom 自己维护（applyPlanDelta 首帧写、linkPlanLineage 双向指认），
-    // 这里没有可用的 userMsg 作用域——传 null 走 handler 默认值，不要再引用那个不存在的变量。
-    // 之前写的是裸 userMsg（从未定义），每帧都 ReferenceError、被外层 catch 吞掉，表现为计划卡不更新。
-    onDeepPlanDelta: t => applyPlanDelta(msg, t, { userMsg: null, onScroll: liveScroll }),
-    onDeepPlanApproval: payload => applyPlanApproval(msg, payload, { userMsg: null, messages: messages.value, onScroll: liveScroll }),
-    onDeepPlanCancelled: () => applyPlanCancelled(msg, { onScroll: liveScroll }),
-    onDeepPlanSuperseded: () => applyPlanSuperseded(msg, { onScroll: liveScroll }),
-    onImage: imgs2 => {
-      // 配图全量替换、非法帧不动状态：合并语义在 streamMerge.applyImageFrame 单源，与分享页共用
-      applyImageFrame(msg, imgs2)
-    },
-    onArtifact: payload => {
-      try {
-        const a = typeof payload === 'string' ? JSON.parse(payload) : payload
-        if (!a || !a.url) return
-        if (!Array.isArray(msg.artifacts)) msg.artifacts = []
-        msg.artifacts.push(a)
-        // 产物按生成时刻插入时间线（只记下标），刷新后仍在原位而不是堆到气泡底部
-        pushTimelineArtifact(msg, msg.artifacts.length - 1)
-        // 入场动效只认「实时到达」的这一件：历史恢复不会走这里，刷新不会满屏乱动
-        msg.freshArtifactId = a.id || a.filename || ''
-        if (msg._freshTimer) clearTimeout(msg._freshTimer)
-        msg._freshTimer = setTimeout(() => {
-          msg.freshArtifactId = ''
-          msg._freshTimer = 0
-        }, 900)
-        liveScroll()
-      } catch (e) { /* 忽略 */ }
-    },
-    // 插话帧到达时先把 120ms 节流里攒着的正文落屏并封口：位置锚点是「模型听到这句之前
-    // 已经写出的全部正文」，少算这一段 token，气泡就会落在真实插入点前面一点。
-    onSteer: payload => { flushNow(false); applySteerFrame(payload, msg); liveScroll() },
-    onToolStatus: rec => applyToolStatus(msg, rec, {
-      thinkRoundEnd: () => thought.closeRound(),
-      ensureTick: () => ensureTick(),
-      liveScroll: () => liveScroll(),
-      isDispatchTool: name => isDispatchTool(name),
-      pushTimelineTool: (m, card) => pushTimelineTool(m, card),
-      retireAskCard: m => retireAskCard(m)
-    }),
-    onToolOutput: payload => appendToolOutput(msg, payload),
-    onSubagentStep: payload => applySubagentStep(msg, payload, {
-      isDispatchTool: name => isDispatchTool(name),
-      consultNameOf: x => consultNameOf(x),
-      stepBriefOf: c => stepBriefOf(c),
-      onScroll: () => liveScroll()
-    }),
-    onRunCodeProgress: payload => applyRunCodeProgress(msg, payload),
-    // 会话内 @ 智能体（§4）：本轮由用户 @ 提及的智能体作答（会话绑定不变），归属同步改写
-    // （done 的 delegatedAgentName 会再校正一次，两处同值）
-    onAgentDelegated: payload => applyAgentDelegated(msg, payload, liveScroll),
-    onDone: contentJson => {
-      flushNow()   // 终态保底：把缓冲里未刷的正文与时间线刷进响应式（停止生成/最终正文对比都依赖它）
-      const { sources, related, messageId, degradations } = applyDonePayload(msg, contentJson, {
-        sid, resume, agentId, editUserMsg,
-        currentSid: () => currentSessionId.value,
-        messages,
-        planCardFromRecord,
-        settleAbortedPlan,
-        linkPlanLineage: list => linkPlanLineage(list),
-        flushPendingSteers: (left, origin) => flushPendingSteers(left, origin),
-        rememberSettled: (sid2, turnId) => streamLifecycle.rememberSettled(sid2, turnId),
-        liveCompactedSid,
-        applyDoneCore: (m, p) => applyDoneCore(m, p),
-        mergeDoneToolCalls: (m, calls) => mergeDoneToolCalls(m, calls),
-        restoreTimeline: (m, tl) => restoreTimeline(m, tl),
-        ensureThinkSegment: m => ensureThinkSegment(m),
-        applyBlocks: (m, blocks) => applyBlocks(m, blocks)
-      })
-      // 收尾口径在 ./turnDoneCloseout.js（定格本轮：卡片收场/收束语/来源用量/侧栏归位/多版本）
-      closeoutDoneTurn(msg, {
-        st, prev,
-        sources, related, messageId, degradations,
-        isFirstMessage,
-        settlePreparingCards,
-        markStoppedTurn,
-        stopPlaceholder: STOP_PLACEHOLDER,
-        onModelFallback: () => {
-          modelMap.value = { ...modelMap.value, [sid]: '' }
-          modelIssueMap.value = { ...modelIssueMap.value, [sid]: '' }
-          loadSessions()
-        },
-        dropStream: () => { if (chatStreams.get(sid) === st) chatStreams.delete(sid) },
-        scroll: () => liveScroll(),
-        touchRow: () => touchSessionRow(sid),
-        reloadSessions: () => loadSessions()
-      })
-    },
-    onWarn: w => { msg.warnMsg = w; liveScroll() },
-    // 轮内自动压缩（框架在推理前把早期对话折进摘要）：那两次摘要模型调用的字全被按 purpose 滤掉，
-    // 不带这一帧就是二十多秒纯静默，用户只能读成「卡住了」。
-    // 进度说在气泡那条本来就在走的状态行上（本轮唯一那一条状态文案），不另起一行：
-    // 一轮里框架可以压好几次，另起的那条每压完一次撤走、下一次又长出来，还和提问上方的留痕同时挂着。
-    onCompactState: payload => applyCompactState(msg, payload, { sid, autoCompactSid, liveCompactedSid, onScroll: liveScroll }),
-    onError: (e, kind) => {
-      transportError = String(e || '')
-      // 自动重试收紧到「提问还没送到服务端」这一种：连接压根没建起来，重发就是重发一条没送出去的提问。
-      // 服务端受理过（admitted）就绝不能重发——那会变成一轮全新问答（重复落库、重复计费），
-      // 而它本来只断了一条通道。判定用 navigator.onLine 优先（移动端可靠维护），再退回 fetch 的典型网络错误特征。
-      const netDown = (typeof navigator !== 'undefined' && navigator.onLine === false) ||
-        /Failed to fetch|NetworkError|ERR_INTERNET|ERR_NETWORK|network ?error/i.test(String(e))
-      if (autoRetry > 0 && !admitted && !gotToken() && netDown) {
-        msg.retrying = true
-        liveScroll()
-        setTimeout(() => {
-          // 记录仍是本轮且气泡还在流式态才重试；用户已停止/记录已被清理则直接收尾
-          if (chatStreams.get(sid) === st && msg.loading) {
-            streamAnswer(question, imgs, msg, false, 0, deepThink, attachments, skills, mentions, { sid, agentId, model }, historyRefs, '', null, planMode, false, false, planBase)
-          } else {
-            msg.retrying = false
-            if (chatStreams.get(sid) === st) chatStreams.delete(sid)
-          }
-        }, 2500)
-        return
-      }
-      // 传输断开 ≠ 本轮失败（DSH 同一口径）：服务端那一轮与连接解耦，断线期间它照跑，
-      // 这里只把它重新挂回来。原通道（POST /chat）和接流通道一视同仁——两者断在传输层时
-      // 该做的事完全一样，不再按「是不是接流来的」分叉。
-      if (kind === 'interrupted') { beginReconnect(); return }
-      // 走到这里是本轮真的失败（服务端 error 帧 / 业务失败）：保半程内容 + 错误卡 + 重新生成
-      failNow(e, kind)
-    }
+  const deps = {
+    stopPlaceholder: '（已停止本轮）', resetFromContent, hooks, stepBriefOf, pushTimelineTool, isDispatchTool,
+    consultNameOf, appendToolOutput, applyAgentDelegated, applyApprovalCardFrame, applyGoalState, applyGoalTurn,
+    applyImageFrame, applyPlanApproval, applyPlanCancelled, applyPlanDelta, applyPlanFrame, applyPlanSuperseded,
+    applyRetrievedFrame, applyRunCodeProgress, applySkillHitFrame, applySteerFrame, applySubagentStep, applyTodoFrame,
+    applyToolStatus, applyTurnStart, applyUsageFrame, attachAskCard, attachRunningTurn, currentSessionId,
+    ensureTick, messages, reasoningLevelParam, retireAskCard, setGoal, setTodos,
+    dispatchTeamEvent, buildTurnRequest, pushTimelineArtifact, linkPlanLineage, dropSteeredUserRows, replaySnapshotExtras,
+    finishResumedShell, reduceTurnSnapshot, alignTick, planCardFromRecord, liveCompactedSid, autoCompactSid,
+    msg, sid, st, thought, liveScroll, abort,
+    agentId, attachments, deepThink, editMessageId, flushNow, fromSteer,
+    historyRefs, mentions, model, planBase, planMode, replaceMsg,
+    replacedMessageId, resume, skills, streamAnswer, imgs, question,
+    autoRetry, beginReconnect, failNow, gotToken, prev, isFirstMessage,
+    editUserMsg, modelMap, modelIssueMap, loadSessions, touchSessionRow, streamLifecycle,
+    applyDonePayload, closeoutDoneTurn, applyCompactState,
   }
-  // 传输分岔：本地发起的轮发 POST /chat；接流只开一条 GET /chat/resume 挂到服务端那一轮上，
-  // 事件派发与 done/error 收尾两条路径完全共用（这是刻意的设计——两套 UI 语义不许分叉）
-  if (resume) resumeChat(sid, handlers)
-  else sendQuestion(sid, question, imgs, handlers)
+  const turnCtx = { handlers: null, get admitted () { return admitted }, set admitted (v) { admitted = v }, get transportError () { return transportError }, set transportError (v) { transportError = v }, get replayingSnapshot () { return replayingSnapshot }, set replayingSnapshot (v) { replayingSnapshot = v } }
+  return { sid, imgs, deps, turn: turnCtx }
+}
+
+/** 装配两个回调工厂（帧回调在前、收尾在后，顺序与原对象字面量一致），并回填 handlers 供快照重放。 */
+function buildHandlers (ctx) {
+  const handlers = { ...createFrameHandlers(ctx.deps, ctx.turn), ...createClosingHandlers(ctx.deps, ctx.turn) }
+  // onSnapshot 里 replaySnapshotExtras 要用同一份 handlers 重放工具输出/早产卡帧
+  ctx.turn.handlers = handlers
+  return handlers
 }
 const switchVersion = (mi, delta) => switchVersionImpl(mi, delta, { messages: () => messages.value })
 const regenerate = mi => regenerateImpl(mi, {
@@ -1088,56 +587,15 @@ const regenerate = mi => regenerateImpl(mi, {
   notifyWarning: msg => message.warning(msg),
   streamAnswer
 })
-// ==================== 分支版本切换（持久化多版本：编辑重发 + 重新生成刷新后仍可切） ====================
-const { variantSwitching, switchBranch } = createBranchSwitcher({
-  messages: () => messages.value,
-  isLoading: () => loading.value,
-  switchVersion,
-  switchApi: switchMessageVariant,
-  reload: () => switchSession(currentSessionId.value),
-  notifyWarning: msg => message.warning(msg)
+// 分支切换 / 停止 / 插话队列装配已抽到 useSteerAndVersion.js。
+const { variantSwitching, switchBranch, stop, steerQueue, steerResend, steer, stageSteer,
+        sendSteer, editSteer, dropSteer, moveSteer, dropApplied,
+        enqueuePlanAdjust } = useSteerAndVersion({
+  messages, loading, currentSessionId, chatStreams, text, goalTerminal,
+  switchVersion, switchSession, cancelReconnect, finishResumedShell,
+  switchMessageVariant, stopChatTurn, steerChatTurn, enqueueSteer,
+  steerQueueList, steerQueued, dropQueued, attachImage, attachUploaded, notify: message,
 })
-
-// 收口口径（工具卡定格/停止标注）在 ./turnCloseout.js；停止动作在 ./stopTurn.js
-const stop = createStopTurn({
-  currentSid: () => currentSessionId.value,
-  streams: chatStreams,
-  stopApi: stopChatTurn,
-  notifyWarning: msg => message.warning(msg),
-  // 通道断了、正在重挂时本地已经没有流：停止仍要落到服务端（否则那一轮转后台跑完还占着会话锁）
-  reconnect: {
-    take: sid => cancelReconnect(sid),
-    settle: (msg, sid) => finishResumedShell(msg, null, sid)
-  }
-})
-
-// 运行中插话队列（服务端持有、刷新可恢复）在 ./steerQueue.js（actions 层）
-const { steerQueue, steerResend, steer, stageSteer, sendSteer, editSteer, dropSteer, moveSteer, dropApplied,
-        restoreSteerQueue, enqueuePlanAdjust } = createSteerQueue({
-  currentSid: () => currentSessionId.value,
-  hasLiveStream: sid => chatStreams.has(sid),
-  steerApi: steerChatTurn,
-  enqueueApi: enqueueSteer,
-  listApi: steerQueueList,
-  steerItemApi: steerQueued,
-  dropApi: dropQueued,
-  notify: (msg, level) => (level === 'info' ? message.info(msg) : message.warning(msg)),
-  textOf: () => text.value,
-  setText: v => { text.value = v },
-  // 取回队列条目时材料一并回到输入框（图按 data URL 还原，附件按 fileId 挂回）
-  attachImage: u => attachImage(u),
-  attachUploaded: a => attachUploaded(a)
-})
-
-/**
- * 插话队列的恢复与刷新：队列本身由服务端持有（刷新不丢），前端在三个时刻读一次投影——
- * 进/切会话、本轮开跑（服务端刚 drain 过）、目标终态（服务端已把排队项收敛）。
- * 不再有前端重试定时器：drain 由引擎在框架 inbox/opened 时触发。
- * 只刷新当前会话的「排队/已送出」那段，本地还没同步上去的草稿原样留着。
- */
-watch(currentSessionId, sid => { if (sid) restoreSteerQueue(sid) }, { immediate: true })
-watch(loading, v => { if (v) restoreSteerQueue() })
-watch(goalTerminal, v => { if (v) restoreSteerQueue() })
 
 // ==================== 发送与流式回答（SSE） ====================
 // 主流程在 ./sendFlow.js；这里只装配引擎侧的 refs 与动作。
@@ -1155,210 +613,27 @@ const send = createSend({
   notifyWarning: msg => message.warning(msg)
 })
 
-/**
- * {@code steer} 帧：框架把这句写进了正在跑的这一轮（后端按 inbox/applied 发，位置就是那一刻）。
- * 两件事：撤下队列里等它的那一条（没有也不报错——别的设备上看不到发起方的队列），以及把它长进
- * 这一轮回答的时间线里。
- */
-function applySteerFrame (payload, msg) {
-  let f = payload
-  try { if (typeof payload === 'string') f = JSON.parse(payload) } catch (e) { return }
-  const t = f && typeof f.text === 'string' ? f.text : ''
-  if (!t) return
-  const id = f.messageId || ''
-  dropApplied(id)
-  if (id) messages.value = messages.value.filter(m => !(m.role === 'user' && m.messageId === id))
-  pushTimelineSteer(msg, t, id, Array.isArray(f.images) ? f.images : [],
-                    Array.isArray(f.attachments) ? f.attachments : [])
-}
-
-/** 按原载荷把一条插话作为完整新一轮发出（与计划「继续对话」同一条通路）
- *  `fromSteer` 让后端在那句话后面补一句身份声明（"这是上一轮还没答完时补的方向，不是新提问"）——
- *  不带它，模型会当成用户又问了一遍（短问答必现：它会复述「你消息里的 X 这一段…」），
- *  插话最核心的「改了方向立刻生效」就废了。 */
-function sendSteerRound (s, origin = null) {
-  // origin：发起那一轮的会话与作答智能体（收尾自动派发时用户可能已切走，新一轮必须回到原会话）。
-  // 复用自动重试的 prev 通道：「沿用原会话，不读当前 UI 态」。atHome=人还看着这个会话才进气泡列表
-  const back = origin ? { sid: origin.sid, agentId: origin.agentId || '', model: '' } : null
-  const atHome = !back || back.sid === currentSessionId.value
-  const userMsg = reactive({ role: 'user', content: s.text, images: s.images || [],
-                        attachments: s.attsMeta || [], attachData: s.atts || [],
-                        skills: s.skills || [], mentions: s.mentions || [], historyRefs: s.historyRefs || [],
-                        deepThink: !!s.deepThink, planMode: !!s.planMode, fromSteer: true,
-                        time: Date.now(), messageId: null })
-  if (atHome) messages.value.push(userMsg)
-  streamAnswer(s.text, s.images || [], null, atHome && messages.value.length === 1, 1, !!s.deepThink,
-               s.atts || [], s.skills || [], s.mentions || [], back, s.historyRefs || '', '', userMsg,
-               !!s.planMode, false, true)
-}
-
-/**
- * 补发后端没收上的那句插话：它没进过这一轮的上下文，所以界面上也不该长在这一轮的回答里
- * （那句只留在队列条上，收尾时随这里一起撤下），而是作为<b>新一轮的问题</b>重新出现。
- * <p>库里它仍是点「立即发送」那一刻落的同一条用户消息：后端带 fromSteer 时跳过重复落库，
- * 这颗新气泡直接挂上那个 messageId，刷新后也只有这一条。
- */
-function resendSteer (t, origin = null) {
-  const back = origin ? { sid: origin.sid, agentId: origin.agentId || '', model: '' } : null
-  const atHome = !back || back.sid === currentSessionId.value
-  const existing = t.messageId
-          ? messages.value.find(m => m.role === 'user' && m.messageId === t.messageId)
-          : null
-  // 附件带着引用补发：那句话没进过本轮上下文，随行的材料同样没进去，不能只把字再发一遍
-  const attsMeta = Array.isArray(t.attachments) ? t.attachments : []
-  const atts = attsMeta.filter(a => a && a.fileId).map(a => ({ name: a.name, mime: a.mime, fileId: a.fileId }))
-  const userMsg = existing || reactive({ role: 'user', content: t.text, images: [],
-                        attachments: attsMeta, attachData: atts, skills: [], mentions: [], historyRefs: [],
-                        deepThink: false, planMode: false, fromSteer: true,
-                        time: Date.now(), messageId: t.messageId || null })
-  if (atHome && !existing) messages.value.push(userMsg)
-  streamAnswer(t.text, [], null, false, 1, false, atts, [], [], back, '', '', userMsg,
-               false, false, true)
-}
-
-/**
- * 本轮收尾时结算插话：先补发后端没收上的那句，再把还挂在本地队列里的（没点过「立即发送」的、
- * 带材料本轮塞不进去的）作为新一轮交给模型。
- * <p>为什么收尾要自动发：本轮已经结束了，"插话"没有可插入的对象，`/chat/steer` 必然被拒；
- * 用户打的那句话不能因此丢掉。带材料的本来就只有这条路。
- * <p>一次只派一条（同一会话同时只能跑一轮），剩下的等它结束再派——done 会再次走到这里。
- * @param backendLeft 后端 done 里回来的 pendingSteers：[{ text, messageId }]
- */
-function flushPendingSteers (backendLeft = [], origin = null) {
-  for (const raw of backendLeft) {
-    const t = typeof raw === 'string' ? { text: raw, messageId: '' } : (raw || {})
-    if (!t.text) continue
-    // 本地队列里同文那条撤下（用户点了发送、又在这句还没退场时手动重打一遍）：补发已经带上它了，
-    // 发两遍等于替用户把同一句话讲两次
-    steerQueue.value = steerQueue.value.filter(s => s.text !== t.text)
-    // 条目带上 origin：补发可能隔了别的轮才轮到（if (loading) return 的排队），到时当前会话
-    // 已换人——发回原会话靠条目自己记的那份，不靠当时的 currentSessionId
-    if (!steerResend.value.some(x => x.text === t.text)) {
-      steerResend.value.push({ ...t, sid: origin?.sid || '', agentId: origin?.agentId || '' })
-    }
-  }
-  // 本轮已经收尾，队列里还挂着「等这一轮听到」的那几条没有对象可插了：上面没被补发接走的，
-  // 就是模型已经收到过的（那一帧的留痕长在回答里，或刷新后由库里那条用户消息回显）——
-  // 留在条上会被读成「我说了但没人理」。
-  steerQueue.value = steerQueue.value.filter(s => !s.awaiting)
-  if (loading.value) return   // 已经有人在跑了（用户抢先发了新消息）：留着，下轮结束再结算
-  const left = steerResend.value.shift()
-  if (left) {
-    resendSteer(left, left.sid ? { sid: left.sid, agentId: left.agentId } : null)
-    return
-  }
-  const next = steerQueue.value.find(s => !s.sending && !s.planAdjust)
-  if (!next) return
-  steerQueue.value = steerQueue.value.filter(s => s !== next)
-  sendSteerRound(next, origin)
-}
-
-/**
- * 离开一个会话（切换/新建/删除当前会话）时结算插话队列。steerQueue 与 steerResend 都是
- * 模块级单例、不分会话：不清的话，条目会以「上一会话那轮还没说完的话」的样子挂在新会话的
- * 输入框上（用户读成新会话的事），旧会话后台轮收尾时更会按当时的 currentSessionId 派发——串话。
- * <p>结算口径：
- * <ul>
- * <li>已送出/在途的（awaiting/sending）：效果已经落在旧会话那一轮里，条目直接撤下。旧会话收尾时
- *     后端按 pendingSteers 交给收尾结算，不依赖这两份本地数组。</li>
- * <li>没发出去的草稿（含带材料等下一轮的 deferred）：文字放回输入框（不覆盖正在打的字，多条按行
- *     合并），材料跟随 editSteer 同一口径不还原——用户自己决定重发还是删掉，说什么都不静默丢。</li>
- * <li>steerResend（后端交回「说过、模型没收到」的）：内容已随 messageId 落在旧会话库里，不丢；
- *     不在这里补发——补发目标是旧会话，而用户已经离开了，轮到它时由带 origin 的收尾结算处理。</li>
- * </ul>
- */
-function settleSteerOnLeave () {
-  if (!steerQueue.value.length && !steerResend.value.length) return
-  // 只有「还没同步到服务端」的本地草稿需要放回输入框；已经在服务端排队的条目留在那边，
-  // 回这个会话时由队列投影恢复——两处都留一份就会变成同一句话发两遍
-  const drafts = steerQueue.value
-    .filter(s => s.local && !s.awaiting && !s.sending)
-    .map(s => String(s.text || '').trim())
-    .filter(Boolean)
-  steerQueue.value = []
-  steerResend.value = []
-  if (!drafts.length) return
-  const add = drafts.join('\n')
-  const cur = String(text.value || '').trim()
-  text.value = !cur ? add : (cur.includes(add) ? cur : cur + ' ' + add)
-  message.info('没发出的插话已放回输入框（它属于上一个会话）')
-}
+// 插话派发已抽到 useSteerDispatch.js。这里解构出同名函数，下面调用点不改。
+const { applySteerFrame, settleSteerOnLeave } = useSteerDispatch({
+  messages, currentSessionId, loading, text, steerQueue, steerResend, dropApplied, pushTimelineSteer,
+  streamAnswer, notify: message,
+})
 // 手动压缩与摘要面板已抽到 useCompactSession.js。这里解构出同名符号，下面读写点不改。
 const {
-  manualCompacting,
-  autoCompactSid,
-  liveCompactedSid,
-  compacting,
-  compactNotice,
-  compactContext,
-  compactSummaryOpen,
-  compactSummaryLoading,
-  compactSummary,
-  openCompactSummary,
-  recompactWith,
+  manualCompacting, autoCompactSid, liveCompactedSid, compacting, compactNotice, compactContext,
+  compactSummaryOpen, compactSummaryLoading, compactSummary, openCompactSummary, recompactWith,
 } = useCompactSession({
   currentSessionId, loading, notify: message,
   compactApi: compactSessionApi, summaryApi: sessionHistorySummaryApi,
 })
 
-// ==================== 挂载初始化 ====================
-// 原 ChatPage onMounted 的引擎侧主体（window/document 监听与 refreshSetupGuide 留在视图）：
-// 先 loadSessions，再拉智能体/技能候选（不阻塞首屏），然后按 sid / newChatTick / autoPick
-// 三分支落位，聚焦输入框，最后拉配置类数据（检索调试入口/排障显示开关/个人默认模型/模型展示映射）。
-const ready = async () => {
-  await loadSessions()
-  loadAgents()       // 智能体下拉候选（不阻塞首屏）
-  loadSkills()       // 技能菜单候选（输入框「+」菜单，不阻塞首屏）
-  const sid = route.query.sid
-  if (sid) {
-    await switchSession(sid)
-  } else if (sessionStore.newChatTick > sessionStore.newChatSeen) {
-    // 其它页面点过「新建对话」后跳转过来：消费该信号，直接进空会话；
-    // 「试一试」带的预选智能体一并消费，落进新会话的下一问待选值
-    sessionStore.newChatSeen = sessionStore.newChatTick
-    await createNewSession(takeNewSessionAgent())
-  } else {
-    await autoPick()
-  }
-  hooks.focusInput?.()
-  // 检索调试入口是管理员调参（chat.retrievalDebugEnabled，配置里标 debug）：只有管理员才拉 /config
-  // ——/config 是管理端点，普通用户调它会 403，触发全局 403 提示（角色未授权），故只对管理员读
-  if (isAdminSync()) {
-    getConfig().then(r => {
-      if (!r.success) return
-      debugEntryVisible.value = r.data?.chat?.retrievalDebugEnabled?.value === 'true'
-    }).catch(() => {})
-  }
-  // 同一个开关的「显示」语义走公开端点：归属徽标/派遣提示/引用分值的显隐对所有人生效（含普通用户）
-  getRuntimeConfig().then(r => {
-    if (!r.success) return
-    debugDisplayVisible.value = r.data?.ui?.debugEntry === true
-    // 个人显示偏好：缺省/未下发时保持默认开
-    showRelatedSuggestions.value = r.data?.ui?.showRelatedSuggestions !== false
-  }).catch(() => {})
-  getUserPreference().then(r => {
-    userDefaultModel.value = (r && r.data && r.data.defaultModel) || ''
-    userDefaultModelIssue.value = (r && r.data && r.data.defaultModelIssue) || ''
-  }).catch(() => {})
-  loadModelIndex().then(idx => { modelIndex.value = idx || {} }).catch(() => {})
-}
-
-// 产物签名定时续签：签名有效期 1 小时，切会话/历史恢复时换过一次只覆盖「刚进来」的那批；
-// 页面连续开着不动（排查问题、投屏演示、跑长任务）超过一小时后，卡片上的 URL 又会全部过期。
-// 每 30 分钟换一次，留足冗余；无产物时定时器空转（首行 byId 为空直接返回，不发请求）。
-// 标签页隐藏时跳过——不可见的页面不需要能下载，省掉无谓请求。
-let signTimer = null
-const stopSignTimer = () => { if (signTimer) { window.clearInterval(signTimer); signTimer = null } }
-if (typeof window !== 'undefined') {
-  signTimer = window.setInterval(() => {
-    if (document.visibilityState === 'hidden') return
-    refreshArtifactSigns()
-  }, 30 * 60 * 1000)
-  // 视图卸载时清掉，避免定时器随会话累积（引擎每进一次聊天页就 new 一个）。
-  // onUnmounted 必须在 setup 的同步执行期注册才有当前实例上下文，所以包一层 try：
-  // 引擎也可能被非组件场景调用，此时退化成由 ready 前的分支自行清理。
-  try { onUnmounted(stopSignTimer) } catch (e) { /* 无当前实例：定时器随页面存活，可接受 */ }
-}
+// 挂载初始化与产物签名续签已抽到 useEngineBootstrap.js。
+const { ready } = useEngineBootstrap({
+  loadSessions, loadAgents, loadSkills, route, switchSession, sessionStore,
+  createNewSession, takeNewSessionAgent, autoPick, hooks,
+  debugEntryVisible, debugDisplayVisible, showRelatedSuggestions,
+  userDefaultModel, userDefaultModelIssue, modelIndex, refreshArtifactSigns,
+})
 
 // 本会话沙盒目录的状态与取数已抽到 useSandboxFiles.js（含三个重拉 watch）。
 // 这里解构出同名变量，下面所有读写点一行不改。

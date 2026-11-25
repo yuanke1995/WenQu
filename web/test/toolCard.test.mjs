@@ -45,7 +45,7 @@ test('定位展开：不在时间线里时只打开卡片本身', () => {
 
 test('定位锚：派遣卡的两种渲染形态（工具卡 / 过程簇帽体行）都带 data-spawn', () => {
   const files = {
-    ChatPage: ['src/views/ChatPage.vue', ['tl-card', 'tl-live-row']],
+    ChatMessageList: ['src/views/chatpage/ChatMessageList.vue', ['tl-card', 'tl-live-row']],
     MobileMsgRow: ['src/h5/MobileMsgRow.vue', ['card tool-card', 'live-row']]
   }
   const missing = []

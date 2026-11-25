@@ -24,14 +24,18 @@ test('后端读点：公开运行时配置按登录用户读回个人开关', ()
 
 test('引擎：从公开运行时配置读入 showRelatedSuggestions 并对外暴露', () => {
   const src = read('src/chat/useChatEngine.js')
+  // ref 声明仍在引擎；读公开运行时配置那一步随 ready() 抽进了 useEngineBootstrap。
+  const boot = read('src/chat/useEngineBootstrap.js')
   assert.match(src, /const showRelatedSuggestions = ref\(true\)/)
-  assert.match(src, /ui\?\.showRelatedSuggestions !== false/)
+  assert.match(boot, /ui\?\.showRelatedSuggestions !== false/)
   assert.match(src, /debugEntryVisible, debugDisplayVisible, showRelatedSuggestions,/)
 })
 
 test('PC：ChatPage 的「接下来可以」按 showRelatedSuggestions 渲染', () => {
+  // 消息流在 ChatPage 拆分后落在子组件，上下文经 store 注入（前缀可选）。
+  const list = read('src/views/chatpage/ChatMessageList.vue')
+  assert.match(list, /m === store\.panelAi && store\.showRelatedSuggestions && m\.related/)
   const src = read('src/views/ChatPage.vue')
-  assert.match(src, /m === panelAi && showRelatedSuggestions && m\.related/)
   assert.match(src, /debugEntryVisible, debugDisplayVisible, showRelatedSuggestions,/)
 })
 
@@ -53,13 +57,17 @@ test('个人设置：对话显示分组 + 默认开感知的开关提交', () =>
 })
 
 test('后端生成：关掉即不注入推荐提示词、并进实例指纹、也不落库', () => {
-  const src = read('../src/main/java/com/wenqu/ai/agentx/AgentscopeChatEngine.java')
-  // 实例指纹那处随 bindingOf 抽进 AgentxAgentBinding（行为等价，只是换了文件）；另两处仍在引擎。
+  // 三处读点随重构分散到协作类（行为等价，语义未变）：
+  //  · 提示词注入 → AgentxPromptContext（先算 relatedSuggestions 布尔再决定挂 RelatedPrompt）
+  //  · 实例指纹   → AgentxAgentBinding.bindingOf
+  //  · 落库过滤   → AgentxTurnFinisher
+  const prompt = read('../src/main/java/com/wenqu/ai/agentx/AgentxPromptContext.java')
   const binding = read('../src/main/java/com/wenqu/ai/agentx/AgentxAgentBinding.java')
-  // 提示词按用户开关决定挂不挂 RelatedPrompt（读点可能带 agentBinding. 前缀）
-  assert.match(src, /(?:agentBinding\.)?relatedSuggestionsEnabled\(cmd\.getUserId\(\)\)\s*\?\s*com\.wenqu\.ai\.agent\.chat\.RelatedPrompt\.line\(\)/)
-  // 开关并进常驻实例指纹：拨动后下一轮重建才生效（抽到 AgentxAgentBinding 的 bindingOf）
+  const finisher = read('../src/main/java/com/wenqu/ai/agentx/AgentxTurnFinisher.java')
+  // 提示词按用户开关决定挂不挂 RelatedPrompt
+  assert.match(prompt, /relatedSuggestions\s*\?\s*com\.wenqu\.ai\.agent\.chat\.RelatedPrompt\.line\(\)/)
+  // 开关并进常驻实例指纹：拨动后下一轮重建才生效
   assert.match(binding, /key = key \+ "\|rel=" \+ relatedSuggestionsEnabled\(cmd\.getUserId\(\)\)/)
   // 关掉时不把 related 写进消息（即使模型偶发吐了也不会存）
-  assert.match(src, /relatedChips\.isEmpty\(\) \|\| !(?:agentBinding\.)?relatedSuggestionsEnabled\(cmd\.getUserId\(\)\)/)
+  assert.match(finisher, /relatedChips\.isEmpty\(\) \|\| !agentBinding\.relatedSuggestionsEnabled\(c\.cmd\.getUserId\(\)\)/)
 })
