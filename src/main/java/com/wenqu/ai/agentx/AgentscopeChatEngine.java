@@ -120,7 +120,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     private static final int DRAIN_PAGE = 200;
 
     /**
-     * 跟随循环问一次「权威状态」的最长间隔（毫秒），见 {@link TurnMirror}。
+     * 跟随循环问一次「权威状态」的最长间隔（毫秒），见 {@link AgentxTurnMirror}。
      * <p>镜像跟事件，但框架算任务状态时还看两件<b>不落事件</b>的事：租约过期（{@code receipt} 把
      * running 降级成 interrupted）和 inbox 里的 rejected。光跟事件就永远看不见这两件，所以每一跳之外
      * 再按这个间隔回查一次。取 2 秒的依据：那一跑真死掉时，最坏晚 2 秒才收，而机器预算与看门狗都在
@@ -901,8 +901,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 永远停在 queued，而「没启动」这件事框架自己不报错——不另设一条早于整轮预算的判据，
         // 用户看到的就只是「转了五分钟然后说超时」，一个字也没有。
         long launchDeadline = startedAt + LAUNCH_GRACE_MS;
-        // 会话状态跟事件认（见 TurnMirror）。起轮种一次权威待办，之后每一跳只认这一跳读到的事件。
-        TurnMirror mirror = new TurnMirror();
+        // 会话状态跟事件认（见 AgentxTurnMirror）。起轮种一次权威待办，之后每一跳只认这一跳读到的事件。
+        AgentxTurnMirror mirror = new AgentxTurnMirror();
         mirror.resyncPending(session);
         // 兜底复查时刻：租约过期与 inbox 拒绝不落事件，只能按 STATE_RECHECK_MS 回查权威值
 
@@ -2663,7 +2663,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 没有快照这个循环可以永不返回。快照之后新到的事件交给下一拍。
      */
     private long drain(AgentSession session, long cursor, long emitFrom, String turnId, RunChannel channel,
-                       AgentxTurnRecording recording, TurnMirror mirror) {
+                       AgentxTurnRecording recording, AgentxTurnMirror mirror) {
         SessionLog eventLog = session.log();
         long through = eventLog.head().seq();
         while (cursor < through) {
@@ -2696,73 +2696,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * <p><b>仍然保留的两处权威读</b>：起轮时 {@link #resyncPending} 种一次（本轮游标之前挂着的待办
      * 不在 drain 的范围里），收尾那几处照旧现读——镜像只可能晚一跳看见，不会把已提交的事件读丢。
      */
-    private static final class TurnMirror {
-        private final Map<String, SessionEvent> pending = new java.util.LinkedHashMap<>();
-        private boolean pendingChanged;
-        private boolean taskChanged;
-        private boolean messageChanged;
-
-        void observe(SessionEvent event) {
-            switch (event.type()) {
-                case "interaction/requested", "interaction/resolved" -> {
-                    Map<String, Object> data = event.data() == null ? Map.of() : event.data();
-                    String requestId = String.valueOf(data.get("requestId"));
-                    if ("interaction/requested".equals(event.type())) pending.put(requestId, event);
-                    else pending.remove(requestId);
-                    pendingChanged = true;
-                }
-                case "inbox/accepted", "inbox/started", "inbox/closed", "inbox/handled", "inbox/rejected",
-                     "run/end" -> taskChanged = true;
-                case "message/user", "message/assistant", "tool/result", "turn/output", "migration/baseline" ->
-                        messageChanged = true;
-                default -> {
-                }
-            }
-        }
-
-        /** 取走并清空「本跳有没有……」——取走即清，循环里那几条 continue 才不会把脏位带进下一跳。 */
-        boolean takePendingChanged() {
-            boolean v = pendingChanged;
-            pendingChanged = false;
-            return v;
-        }
-
-        boolean takeTaskChanged() {
-            boolean v = taskChanged;
-            taskChanged = false;
-            return v;
-        }
-
-        boolean takeMessageChanged() {
-            boolean v = messageChanged;
-            messageChanged = false;
-            return v;
-        }
-
-        boolean hasPending() {
-            return !pending.isEmpty();
-        }
-
-        /**
-         * 交给外部的一份副本。
-         * <p>不递内部那张表：{@code sessions.notePending} 存下的引用会被恢复端点跨线程读，
-         * 而镜像在同一个循环的下一跳还会改它。
-         */
-        Map<String, SessionEvent> pendingSnapshot() {
-            return new java.util.LinkedHashMap<>(pending);
-        }
-
-        /**
-         * 用权威值重种待办表：代价是一次全量读，一轮只做一次。
-         * <p>起轮时本轮游标之前挂着的待办（上一轮没答完的那张卡）不在 drain 的范围里，不种就看不见；
-         * 种完把脏位置真，让第一跳照旧把这一批卡报出去。
-         */
-        void resyncPending(AgentSession session) {
-            pending.clear();
-            pending.putAll(session.pending());
-            pendingChanged = true;
-        }
-    }
 
     /** 框架技能正文读取工具名：tool/requested 出现这三把之一，就是模型在按需读一条技能。 */
     private static final java.util.Set<String> SKILL_READ_TOOLS = java.util.Set.of(
@@ -4447,7 +4380,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * <p>与 {@link #finish} 里的终值同源同算法（都走 {@link #usageOf}），前端只把它挂在
      * {@code tokensPreview} 上：落库、累计、输出侧仍只认 done 的 tokens，这里不另立口径。
      * <p>按 transcript 条数变化触发，不按循环节拍：分类拆分要对全量上下文做 BPE 计数，
-     * 200ms 一跳空转会把跟随线程烧在数 token 上。变化本身由 {@link TurnMirror} 从事件上认，
+     * 200ms 一跳空转会把跟随线程烧在数 token 上。变化本身由 {@link AgentxTurnMirror} 从事件上认，
      * 因为「问它变了几条」要先做一次全量读——那比数 token 还贵。发不出去只是容量圆环晚一帧，不该带走这一轮的答案，
      * 所以异常只告警不上抛。
      */
