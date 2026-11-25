@@ -59,7 +59,7 @@ import { createSend } from './sendFlow.js'
 import { settleAbortedPlan } from './planAbort.js'
 import { failTurn } from './turnFail.js'
 import { createSessionSwitch } from './sessionSwitch.js'
-import { planText } from './planText.js'
+import { planCardFromRecord, linkPlanLineage } from './planCards.js'
 import { applyPlanDelta, applyPlanApproval, applyPlanCancelled, applyPlanSuperseded } from './streamPlanFrames.js'
 import { createStreamBuffer } from './streamBuffer.js'
 import { applyCompactState, applyPlanFrame, applyGoalState, applyGoalTurn } from './streamStateFrames.js'
@@ -88,7 +88,7 @@ import { planExecProgress, planTodosOfTurn, planAdjustsOf, planVersionOf, planSt
 import { applyTurnStart, applyImageFrame, applyDoneCore } from './streamMerge'
 // 裁决完卡片立刻让铃铛角标重算（后端会把已处理的待办通知收敛为已读），不等 30s 轮询
 import { emitNotifChanged } from './useNotifications'
-import { planReplannedAtOf, setPlanReplanned } from './planUiState'
+import { setPlanReplanned } from './planUiState'
 
 export function useChatEngine (hooks = {}) {
   const route = useRoute()
@@ -1063,68 +1063,7 @@ let restoredPoll = null
 const stopRestoredPoll = () => { if (restoredPoll) { clearInterval(restoredPoll); restoredPoll = null } }
 
 
-/**
- * 落库计划快照 → 气泡计划卡字段（历史回显与待批准卡重建共用）：
- * plan=末版正文（卡片主体），versions=已产各版（不含末版，供「修改记录」逐版回看），feedback=产出末版的用户意见。
- * 老消息无 versions 字段 → 退化为单版。
- */
-const planCardFromRecord = (rec, statusOverride, sid = '') => {
-  const all = (rec && Array.isArray(rec.versions) ? rec.versions : [])
-    .filter(v => v && planText(v.plan))
-  const st = rec && (rec.status === 'rejected' || rec.status === 'superseded') ? rec.status : 'approved'
-  const card = {
-    plan: '', status: statusOverride || st,
-    busy: false, editText: '', versions: [], feedback: '',
-    auto: !!(rec && rec.auto),   // 按消息意图自动开启（历史回显照常标「自动开启」）
-    // 计划卡的稳定 id 与血缘。旧记录没有 id → 空串，界面按无血缘处理
-    id: (rec && typeof rec.id === 'string') ? rec.id : '',
-    adjustFrom: (rec && typeof rec.planBaseId === 'string' && rec.planBaseId)
-      ? {
-          cardId: rec.planBaseId,
-          version: Number(rec.planBaseVersion) || 1,
-          done: Number(rec.planBaseDone) || 0,
-          total: Number(rec.planBaseTotal) || 0,
-          failed: Number(rec.planBaseFailed) || 0
-        }
-      : null
-  }
-  if (all.length) {
-    const last = all[all.length - 1]
-    card.plan = planText(last.plan)
-    card.feedback = last.feedback || ''
-    card.versions = all.slice(0, -1).map(v => ({ plan: planText(v.plan), feedback: v.feedback || '' }))
-  } else if (rec) {
-    card.plan = planText(rec.plan)
-  }
-  // 本机「重新计划」标记：新计划落库前刷新，旧卡也保持「已重新规划」而不是退回「已批准」
-  if (sid && card.id && card.status === 'approved') {
-    const at = planReplannedAtOf(sid, card.id)
-    if (at) card.replannedAt = at
-  }
-  return card
-}
 
-/**
- * 历史计划血缘：新卡记着 planBaseId，旧卡没有反向字段；载入后按 id 双向补齐，
- * 让「查看新一轮」在刷新/换设备后仍可点。缺 id 的存量卡不连——宁可不显示，也不猜错关系。
- */
-function linkPlanLineage (list) {
-  if (!Array.isArray(list)) return
-  const byId = new Map()
-  for (const m of list) {
-    const id = m && m.planCard && m.planCard.id
-    if (id) byId.set(id, m.planCard)
-  }
-  for (const m of list) {
-    const c = m && m.planCard
-    const from = c && c.adjustFrom
-    if (!c || !from || !from.cardId || !c.id) continue
-    const base = byId.get(from.cardId)
-    if (base && !base.replannedBy) {
-      base.replannedBy = { cardId: c.id, version: planVersionOf(c) }
-    }
-  }
-}
 
 /**
  * 会话加载/切换后恢复待批准计划卡（计划模式，与提问卡恢复同一套语义）：计划已落库、等待批准期间
