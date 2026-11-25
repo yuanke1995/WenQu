@@ -1991,6 +1991,9 @@
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch, shallowRef, h } from 'vue'
 import { useMemberLiveView } from '../chat/useMemberLiveView'
+import { usePanelResize } from './usePanelResize'
+import { useBrowserSnapshots } from './useBrowserSnapshots'
+import { useGoalBarText } from './useGoalBarText'
 import { useRouter, useRoute } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import { LoadingOutlined, DownOutlined, CaretRightOutlined, CheckOutlined, CloseCircleOutlined, FileTextOutlined, DownloadOutlined, GlobalOutlined, ApiOutlined,
@@ -2015,18 +2018,8 @@ import { exportAnswerMd, exportSessionMarkdown } from './exportMd'
 import { fmtTokens } from '../utils/token'
 import { chatDone, guideSnoozed, refreshSetupGuide, setupGuide } from '../utils/setupGuide'
 
-/** 追问改写未执行的原因 → 用户能看懂的一句话（界面不出现 no-history 这类开发术语） */
-const rewriteSkipText = r => ({
-  'no-history': '本会话还没有可参考的前文',
-  blank: '检索词为空',
-  'too-long': '检索词已足够完整',
-  standalone: '检索词已足够独立',
-  'no-model': '未取到本轮模型',
-  timeout: '改写超时，已按原词检索',
-  failed: '改写失败，已按原词检索',
-  'empty-output': '改写没有返回可用结果',
-  unchanged: '与原检索词一致'
-}[r] || '本轮未改写')
+// 追问改写原因文案见 ./rewriteSkipText
+import { rewriteSkipText } from './rewriteSkipText'
 import { copyText } from '../utils/clipboard'
 import { localExecutorId } from '../utils/localExecutor'
 import { useSessionShare } from './shareSession'
@@ -2157,42 +2150,11 @@ const icons = { CompressOutlined, AimOutlined, FileTextOutlined, PlusOutlined,
 
 // 浏览器能力只读镜像：SSE 事件 browser_snapshot → onBrowserSnapshot 回调（引擎经 hooks 转来）。
 // 同一轮最多保留最近 20 条、最新在前；turn_start / 切会话时清空旧快照。
-const browserSnapshots = ref([])
-const MAX_BROWSER_SNAPSHOTS = 20
-const clearBrowserSnapshots = () => { browserSnapshots.value = [] }
-const onBrowserSnapshot = payload => {
-  let snap = payload
-  if (typeof snap === 'string') {
-    try { snap = JSON.parse(snap) } catch (e) { return }
-  }
-  if (!snap || typeof snap !== 'object') return
-  browserSnapshots.value = [snap, ...browserSnapshots.value].slice(0, MAX_BROWSER_SNAPSHOTS)
-}
+// 浏览器快照栈已抽到 useBrowserSnapshots.js
+const { browserSnapshots, clearBrowserSnapshots, onBrowserSnapshot } = useBrowserSnapshots()
 
-// 右栏宽度拖拽：宽屏两栏此消彼长，拖动只改 --rp-w（作用在 .chat2 上）。
-// 上限 = 视口宽的 2/3（同时消息区至少留 360px），下限 280。宽度存 localStorage。
-const RP_W_KEY = 'wenqu.rpWidth'
-const RP_MIN = 280, CHAT_MIN = 360
-const rpMax = () => Math.max(RP_MIN, Math.min(window.innerWidth * 2 / 3, window.innerWidth - CHAT_MIN))
-const rpWidth = ref(Math.max(RP_MIN, Math.min(rpMax(), Number(localStorage.getItem(RP_W_KEY)) || 420)))
-watch(rpWidth, v => { localStorage.setItem(RP_W_KEY, String(v)); applyRpWidth() })
-const chat2Ref = ref(null)
-const applyRpWidth = () => chat2Ref.value?.style.setProperty('--rp-w', rpWidth.value + 'px')
-onMounted(() => { rpWidth.value = Math.max(RP_MIN, Math.min(rpMax(), rpWidth.value)); applyRpWidth() })
-const startPanelResize = e => {
-  const startX = e.clientX, startW = rpWidth.value
-  const onMove = ev => rpWidth.value = Math.max(RP_MIN, Math.min(rpMax(), startW - (ev.clientX - startX)))
-  const onUp = () => {
-    window.removeEventListener('mousemove', onMove)
-    window.removeEventListener('mouseup', onUp)
-    document.body.style.userSelect = ''
-    document.body.style.cursor = ''
-  }
-  document.body.style.userSelect = 'none'
-  document.body.style.cursor = 'col-resize'
-  window.addEventListener('mousemove', onMove)
-  window.addEventListener('mouseup', onUp)
-}
+// 右栏宽度拖拽已抽到 usePanelResize.js（chat2Ref 绑到 .chat2，startPanelResize 绑拖拽热区）。
+const { chat2Ref, rpWidth, startPanelResize } = usePanelResize()
 
 // 引擎先装配：所有视图域的 getter 都能安全读取；视图回调经 page 惰性取值。
 const engine = useChatEngine({
@@ -2281,25 +2243,8 @@ const {
 watch(currentSessionId, () => clearBrowserSnapshots())
 
 // 目标条的进度读数：轮次之外再给「已跑多久 / 预算占多少」，让条子一屏读完
-const goalElapsedText = computed(() => {
-  const b = sessionGoal.value && sessionGoal.value.budget
-  const ms = Number(b && b.ms) || 0
-  if (ms <= 0) return ''
-  const s = Math.round(ms / 1000)
-  if (s < 60) return `已跑 ${s} 秒`
-  const m = Math.floor(s / 60)
-  const r = s % 60
-  if (m < 60) return `已跑 ${m} 分${r ? ' ' + r + ' 秒' : ''}`
-  return `已跑 ${Math.floor(m / 60)} 小时${m % 60 ? ' ' + (m % 60) + ' 分' : ''}`
-})
-const goalRoundsCount = computed(() => {
-  const g = sessionGoal.value
-  return Number(g && g.budget && g.budget.rounds) || Number(g && g.round) || 0
-})
-const goalNextVersionLabel = computed(() => {
-  const n = Number(sessionGoal.value && sessionGoal.value.objectiveVersion) || 0
-  return 'v' + (n + 2)
-})
+// 目标条文本口径已抽到 useGoalBarText.js
+const { goalElapsedText, goalRoundsCount, goalNextVersionLabel } = useGoalBarText({ sessionGoal })
 
 // 顶栏状态胶囊 + 右栏分段（见 ../chat/useHeadStatus）
 const {
