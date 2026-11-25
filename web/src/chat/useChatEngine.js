@@ -33,11 +33,9 @@ import {
 
 
 
-         deliverySubjectOf, deliveryCardOf, artifactPendingOf,
+         artifactPendingOf,
          turnSteerRows,
          rememberAgents, isDispatchTool, consultNameOf, stepBriefOf, applyBlocks } from './projections'
-import { goalDeliveryOf, turnDeliveriesOf, deliveriesByMessage } from './deliveries.js'
-import { downloadDeliveryPackage } from './deliveryDownload.js'
 import { createThinkingLevels } from './thinkingLevels.js'
 import { createSkillPicker } from './skillPicker.js'
 import { createMentionPicker } from './mentionPicker.js'
@@ -47,6 +45,7 @@ import { useSandboxProcs } from './useSandboxProcs.js'
 import { useContextPanel } from './useContextPanel.js'
 import { useGoalProjection } from './useGoalProjection.js'
 import { useCompactSession } from './useCompactSession.js'
+import { useDeliveryPackages } from './useDeliveryPackages.js'
 import { createAgentPicker } from './agentPicker.js'
 import { createModelSelection } from './modelSelection.js'
 import { createTurnDividers } from './turnDividers.js'
@@ -435,64 +434,16 @@ const sessionGoal = computed(() => goalsMap.value[currentSessionId.value] || nul
 function setGoal (sid, doc) { goalsMap.value = { ...goalsMap.value, [sid]: doc } }
 
 // ==================== 交付包（产物 → 一个可验收的交付对象） ====================
-/* 归属判据：目标第一轮可能沿用用户触发那一轮的普通 turnId，其余各轮都带 goal:{goalId}: 前缀。
- * 不按「从第一轮往后全收」——用户在目标运行中插话的那几轮也可能产出文件，但那不是目标的交付物。 */
-const goalDelivery = computed(() => goalDeliveryOf(messages.value, sessionGoal.value))
-
-/** 一条回答（或一个旧目标的多轮）的交付包：普通问答按轮聚合，旧目标按 goalId 聚回一个包。
- *  当前目标的产物已经进了 goalDelivery，这里跳过它的各轮，避免同一批文件出两张卡。 */
-const turnDeliveries = computed(() => turnDeliveriesOf(messages.value, {
-  currentGoalId: sessionGoal.value ? sessionGoal.value.goalId : '',
-  currentTurns: goalDelivery.value ? goalDelivery.value.turnIds : []
-}))
-
-/** 本会话的全部交付包（目标包在前，其余按回答倒序——汇总面里最近一次交付最该先看到） */
-const deliveryPackages = computed(() => {
-  const out = []
-  if (goalDelivery.value) out.push(goalDelivery.value)
-  for (let i = turnDeliveries.value.length - 1; i >= 0; i--) out.push(turnDeliveries.value[i])
-  return out
+// 投影与 ZIP 下载已抽到 useDeliveryPackages.js。sessionGoal 定义在本块之后，
+// 故以惰性 getter 传入（computed 求值时它已初始化）。这里解构接回同名符号，模板引用不变。
+const {
+  goalDelivery, turnDeliveries, deliveryPackages,
+  deliveryOfMessage, deliveryCardOfMessage, freshDeliveryOf, downloadDeliveryZip,
+} = useDeliveryPackages({
+  messages, sessionGoalOf: () => sessionGoal,
+  downloadArtifactsZip, notify: message,
 })
 
-/** 消息 → 交付包（渲染时按消息 O(1) 取；不做每行扫包列表，长会话里那是 O(n²)）。
- *  键用消息对象本身：流式气泡还没有 messageId/turnId，对象身份就在——第一件产物到达即可锚定自己的包，
- *  done 落库后仍是同一对象，卡不换、入场动效不重播。 */
-const deliveryByMsg = computed(() => deliveriesByMessage(goalDelivery.value, turnDeliveries.value))
-
-/** 某条回答对应的交付包（目标包只挂在它最后一轮上；其余按轮各一份） */
-const deliveryOfMessage = m => (m && deliveryByMsg.value.get(m)) || null
-/** 值得支一张卡的消息：单件普通回答也成卡（与多件同一套视觉），目标包保持包形态 */
-const deliveryCardOfMessage = m => deliveryCardOf(deliveryOfMessage(m))
-/** 这张交付卡里是否有「刚刚实时到达」的产物：入场动效只认它，历史恢复不播 */
-const freshDeliveryOf = m => {
-  const id = m && m.freshArtifactId
-  if (!id) return false
-  const d = deliveryCardOfMessage(m)
-  return !!(d && Array.isArray(d.files) && d.files.some(f =>
-    String((f && f.id) || '') === String(id) || String((f && f.filename) || '') === String(id)))
-}
-
-/** 一轮交付包的主语：取该轮之前最近一条用户问题（"做一个问渠官网，…" → "问渠官网"） */
-// eslint-disable-next-line no-unused-vars -- 交付主题口径保留，尚未接入新交付面板
-function turnSubjectOf (aiIndex) {
-  for (let j = aiIndex - 1; j >= 0; j--) {
-    const u = messages.value[j]
-    if (u && u.role === 'user' && String(u.content || '').trim()) {
-      return deliverySubjectOf(String(u.content).replace(/[`*#>]/g, '').trim())
-    }
-  }
-  return ''
-}
-
-/** 下载一个交付包的全部文件（ZIP）：复用产物页那条接口，不再各写一份打包逻辑 */
-const downloadDeliveryZip = async delivery => {
-  const pkg = delivery && delivery.files ? delivery : goalDelivery.value
-  try {
-    await downloadDeliveryPackage(pkg, downloadArtifactsZip)
-  } catch (e) {
-    message.error((e && e.message) || '打包下载失败')
-  }
-}
 
 /** 目标模式开不开：只认当前智能体那一格（服务端 AgentService 已归一成 1/0）。
  *  平台级总闸已去掉——判据与后端 GoalService.enabledFor 同源（引擎侧目标上下文注入也看它），
