@@ -203,6 +203,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     private final AgentxModelConfig modelConfig;
     /** 本轮用量统计与检索状态行 */
     private final AgentxTurnUsage turnUsage;
+    /** 工具卡载荷（tool_status 帧 JSON）构建 */
+    private final AgentxToolCardBuilder toolCardBuilder;
     /** 计划卡快照构建（接流/新页签重建计划卡，本类只在需要时调它） */
     private final AgentxPlanCardSnapshot planCardSnapshot;
     /**
@@ -427,6 +429,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         this.qaLog = qaLog;
         this.persister = new com.wenqu.ai.agent.chat.TurnPersister(sessionService, qaLog);
         this.displayNames = new ToolDisplayNames(toolRegistry, mcpToolLabelService);
+        this.toolCardBuilder = new AgentxToolCardBuilder(displayNames);
         this.skillRepository = skillRepository;
         this.skillStatsStore = skillStatsStore;
         this.orgService = orgService;
@@ -2106,7 +2109,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             recording.toolCall(name, status, args, elapsed, beganAt, charged, result);
             try {
                 AgentxEmitUtil.emit(channel, RunEventType.TOOL_STATUS,
-                        toolCard(recording.uid, name, status, elapsed, beganAt, charged, args, result, null,
+                        toolCardBuilder.toolCard(recording.uid, name, status, elapsed, beganAt, charged, args, result, null,
                                 recording.hooks.step().index()));
             } catch (RuntimeException gone) {
                 log.info("[agentx] 待办终态帧没发出去（通道已收），落库那份仍在: session={} tool={}",
@@ -2720,7 +2723,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 实时工具卡。发 "running" 会让前端把这张当终态卡 push 出去，随后的 done 又找不到可合并的
                 // start 卡再 push 一张——一次调用渲染成两张，其中停在 "running" 的那张显示为失败(❌)。
                 AgentxEmitUtil.emit(channel, RunEventType.TOOL_STATUS,
-                        toolCard(recording.uid, recording.lastToolName, "start", 0L, beganAt, 0L, recording.lastToolInput, null, null,
+                        toolCardBuilder.toolCard(recording.uid, recording.lastToolName, "start", 0L, beganAt, 0L, recording.lastToolInput, null, null,
                                 recording.hooks.step().index()));
             }
             case "tool/result" -> {
@@ -2757,7 +2760,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 String terminal = failed ? "error" : (denied ? "denied" : "done");
                 java.util.Map<String, Object> subChat = recording.toolCall(name, terminal, args, elapsed, beganAt, charged, resultText);
                 // 前台等待到点的提问：这一帧不是「问完了」，卡片仍可答（答案稍后作为新发言送达）
-                AgentxEmitUtil.emit(channel, RunEventType.TOOL_STATUS, toolCard(recording.uid, name, terminal,
+                AgentxEmitUtil.emit(channel, RunEventType.TOOL_STATUS, toolCardBuilder.toolCard(recording.uid, name, terminal,
                         elapsed, beganAt, charged, args, resultText, subChat, recording.hooks.step().index(),
                         false, 0L, null, recording.isAskContinued(toolCallIdOf(data))));
             }
@@ -3985,61 +3988,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * <p>{@code startedAtMs} 用<b>服务端</b>墙上时刻：并发派发时各张卡的起止只有落在同一个钟上才减得出
      * 「从第一个操作到最后一个操作」的真实跨度；拿前端收到帧的本地时刻去减，接流/后台节流就会把跨度算歪。
      */
-    private String toolCard(String uid, String name, String status, long elapsedMs, long startedAtMs, long waitedMs,
-                            String args, String result, java.util.Map<String, Object> subChat, int stepId) {
-        return toolCard(uid, name, status, elapsedMs, startedAtMs, waitedMs, args, result, subChat, stepId,
-                false, 0L, null, false);
-    }
-
-    /**
-     * 工具卡载荷的完整版：在上一份的基础上多一组「早产进度」字段（{@code preparing/chars/brief}）
-     * 与 {@code askContinued}。
-     * <p>{@code preparing=true} 表示这次调用还在生成入参、工具尚未开始执行；前端把这张卡渲染成进行中，
-     * 并在正式 {@code tool/requested} 帧到达时原地升级（不新增第二张卡）。
-     * <p>{@code askContinued=true} 表示这张提问卡的前台等待已到点、按 pending 送回了模型：卡片仍可作答，
-     * 前端据此保留提问面板，而不是按终态撤卡。
-     */
-    private String toolCard(String uid, String name, String status, long elapsedMs, long startedAtMs, long waitedMs,
-                            String args, String result, java.util.Map<String, Object> subChat, int stepId,
-                            boolean preparing, long chars, String brief, boolean askContinued) {
-        StringBuilder sb = new StringBuilder("{\"name\":\"").append(esc(name)).append("\"");
-        String label = displayNames.label(uid, name);
-        if (label != null) sb.append(",\"label\":\"").append(esc(label)).append("\"");
-        String hint = displayNames.hint(uid, name);
-        if (hint != null) sb.append(",\"hint\":\"").append(esc(hint)).append("\"");
-        sb.append(",\"status\":\"").append(status)
-                .append("\",\"elapsedMs\":").append(elapsedMs);
-        // 被挡下是独立终态：前端据此显示「被挡下」、不计入「已执行」。
-        // status=denied 之外再带一个布尔位，历史卡片/旧前端都能按字段读，不必猜状态词。
-        if ("denied".equals(status)) sb.append(",\"denied\":true");
-        // 步骤归属：清单里当时唯一 doing 的那一项（-1=还没进到某一步，不写字段）。
-        // 执行详情靠它把工具与产物归到具体步骤；缺了这块，前端只能按调用顺序猜，串步是常态。
-        if (stepId >= 0) sb.append(",\"stepId\":").append(stepId);
-        // 只在真有值时写：缺它 = 这一把没计时（前端不显示），写成 0 = 谎称这一把从 1970 年跑起 / 跑了 0 毫秒
-        if (startedAtMs > 0L) sb.append(",\"startedAtMs\":").append(startedAtMs);
-        if (waitedMs > 0L) sb.append(",\"waitedMs\":").append(waitedMs);
-        // 早产卡：这次调用还在生成入参（工具尚未执行），字数用于「正在生成 N 字」那一行摘要
-        if (preparing) {
-            sb.append(",\"preparing\":true");
-            if (chars > 0L) sb.append(",\"chars\":").append(chars);
-            if (brief != null && !brief.isBlank()) sb.append(",\"brief\":\"").append(esc(brief)).append("\"");
-        }
-        // 入参随卡片下发：前端工具卡展开要显示「这把工具拿什么去做的」，缺它展开就是一张空卡。
-        // 必须按字符串下发（和落库那份同形，见 AgentxTurnRecording#toolCall）：前端读 args 的四处全是
-        // JSON.parse(t.args)，裸拼对象会让流式时的标题行与入参段都成 [object Object]（刷新读落库那份却正常），
-        // 还顺带废掉「同一次 start 只建一张卡」的入参比对（两个对象永不 ===）
-        // 与落库那份同一把尺：超长字段折成预览，否则整份文件正文会随每一帧 SSE 重发一遍
-        if (args != null && !args.isBlank()) {
-            sb.append(",\"args\":").append(com.alibaba.fastjson2.JSON.toJSONString(AgentxTurnRecording.toolArgsForDisplay(args)));
-        }
-        // 输出（截断）：展开卡的「输出」段读它；缺了只剩入参，看不到工具到底返回了什么
-        if (result != null && !result.isBlank()) sb.append(",\"result\":").append(com.alibaba.fastjson2.JSON.toJSONString(result));
-        // 咨询卡（子智能体/取数助手等）的终态一问一答：直播与刷新同一份 subChat（落库那份同源），
-        // 漏发就是「直播只见一张空卡、刷新才长出结果」——与下方 done 帧、刷新读库三条路径必须同构
-        if (subChat != null && !subChat.isEmpty()) sb.append(",\"subChat\":").append(com.alibaba.fastjson2.JSON.toJSONString(subChat));
-        if (askContinued) sb.append(",\"askContinued\":true");
-        return sb.append("}").toString();
-    }
 
 
 
@@ -4056,7 +4004,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         if (tick == null) return;
         try {
             AgentxEmitUtil.emit(channel, RunEventType.TOOL_STATUS,
-                    toolCard(recording.uid, tick.name(), "start", 0L, tick.startedAtMs(), 0L,
+                    toolCardBuilder.toolCard(recording.uid, tick.name(), "start", 0L, tick.startedAtMs(), 0L,
                             null, null, null, recording.hooks.step().index(),
                             true, tick.chars(), tick.brief(), false));
         } catch (RuntimeException gone) {
