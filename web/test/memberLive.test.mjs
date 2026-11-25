@@ -94,8 +94,10 @@ test('接流层：done 帧收尾一次；快照不带 done 则保持接流', () 
   assert.deepEqual(ends, ['done'], '多路终态只通知一次')
 })
 
-test('接流层：一条流没有任何 snapshot 就结束 = 没有直播可看，不标重连、不重连', () => {
-  // 后端在没有直播台时回空流；把它当断线会让成员页标题一直闪「重连中」
+test('接流层：空流（后端没有直播台）不标重连、不重连——走的是 onError 而不是 onDone', () => {
+  // 真实路径：后端在没有直播台时回「200 + 0 字节」，streamChatSse 读到 EOF 且没收到 done，
+  // 于是报 onError('连接被提前关闭…', 'interrupted')。判定必须在这条路上，
+  // 否则成员一空闲、每进一次页面都会闪「重连中」并无限退避重连。
   const starts = [], ends = [], statuses = [], timers = []
   const live = createMemberLive({
     subscribe: (sid, o) => { starts.push(o) },
@@ -107,10 +109,24 @@ test('接流层：一条流没有任何 snapshot 就结束 = 没有直播可看�
     clearTimer: () => {}
   })
   live.start('memb-empty')
-  starts[0].onDone()
+  starts[0].onError('连接被提前关闭，回答未正常结束，请重试', 'interrupted')
   assert.deepEqual(ends, ['closed'], '收场理由是「没有直播」而不是断线')
   assert.deepEqual(statuses, ['live', 'closed'], '状态不经过 reconnecting')
   assert.equal(timers.length, 0, '不排重连')
+})
+
+test('接流层：onDone 但从未收到 snapshot（例如快照前就收尾）同样按「没有直播」处理', () => {
+  const starts = [], ends = [], statuses = []
+  const live = createMemberLive({
+    subscribe: (sid, o) => { starts.push(o) },
+    onFrame: () => {}, onSnapshot: () => {},
+    onEnd: why => ends.push(why), onStatus: st => statuses.push(st), onWarn: () => {},
+    setTimer: () => 0, clearTimer: () => {}
+  })
+  live.start('memb-empty2')
+  starts[0].onDone()
+  assert.deepEqual(ends, ['closed'])
+  assert.deepEqual(statuses, ['live', 'closed'])
 })
 
 test('接流层：断线后退避重连，重连拿到快照即恢复直播（不退回历史）', () => {

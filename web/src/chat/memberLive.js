@@ -74,16 +74,8 @@ export const createMemberLive = ctx => {
         // 快照就带着 done：这一轮在我们进页面之前已跑完——历史里已有结果，直播到此为止
         if (snap && snap.done) endWith('done', token)
       },
-      onDone: () => {
-        // 没收到过 snapshot 就结束了 = 后端没有这一场的直播台（204/空流）。
-        // 这不是「断线」，而是「现在没东西可看」：不能标成重连中，也不必重连——
-        // 历史里已经有这一轮的结果，再重连只会让标题一直闪「重连中」。
-        if (!token.sawFrames) {
-          endWith('closed', token)
-          return
-        }
-        endWith('done', token)
-      },
+      // 正常收尾（收到 done 帧）
+      onDone: () => endWith(token.sawFrames ? 'done' : 'closed', token),
       onError: (err, kind) => onBroken(token, err, kind)
     })
   }
@@ -95,6 +87,15 @@ export const createMemberLive = ctx => {
    */
   const onBroken = (token, err, kind) => {
     if (token.ended) return
+    // 一帧 snapshot 都没收到过就断了 = 后端根本没有这一场的直播台（空流 / 204）。
+    // 这不是「看着看着断了」，而是「现在没有东西可看」：收场退回历史即可，
+    // 标成重连中会让标题一直闪「重连中」并无限退避重连（成员空闲时每进一次页面都必然发生）。
+    // 空流在 streamChatSse 里走的是「连接被提前关闭」那条（EOF 且没收到 done），
+    // 所以判定必须放在这里，而不是只放在 onDone。
+    if (!token.sawFrames) {
+      endWith('closed', token)
+      return
+    }
     // 用户主动断开（切走成员/关页）不算问题
     if (kind === 'aborted' || (err && /abort/i.test(String(err)))) return
     if (state !== token) return

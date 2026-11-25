@@ -157,6 +157,7 @@ public class TeamMemberLiveFeed {
     public void relay(String sessionId, RunEvent event) {
         if (event == null || event.type() == null) return;
         Feed f = sessionId == null ? null : feeds.get(sessionId);
+        // 没有直播台就丢弃：大多数轮（普通问答、定时任务）本来就不该有台，这里不能打日志刷屏
         if (f == null || f.done) return;
         if (!RELAYABLE.contains(event.type())) return;
         f.lastActiveAt = System.currentTimeMillis();
