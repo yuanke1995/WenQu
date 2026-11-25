@@ -63,19 +63,16 @@
 
     <!-- agentx -->
     <!--
-      引擎构造器是「40+ 协作类的装配点」：36 个参数、103 行、引用 157 个类型，都超阈值。
-      这是 4957→1173 行拆分后遗留的<b>存量债</b>——FileLength 已达标（本条不再豁免文件长度），
-      但把构造器再拆需要引入「装配配置类」并改 AgentxConfiguration 的调用面，
-      属于独立工程，且原注释已注明必须配实机验证。拆完即可删除本条。
+      引擎构造器：40+ 协作类的装配点，36 个参数、103 行、类体引用 157 个类型。
+      FileLength 已达标（1173 ≤ 1200，本条不再豁免文件长度）；CyclomaticComplexity / NPath
+      本来就没超，也未豁免。仅豁免装配点固有的三项：
+        · MethodLength / ExecutableStatementCount —— 36 个 final 字段只能在构造器里赋值
+          （Java 语言限制，抽成私有方法会编译失败），语句数因此降不下来；
+        · ClassFanOutComplexity —— 按类统计引用类型数，装配点天然引用全部协作类。
+      彻底解法是引入「装配配置类」并把 AgentxConfiguration 的调用面改掉，
+      属独立工程且动主链路，需配实机验证。拆完即可删除本条。
     -->
     <suppress files="[\\/]agentx[\\/]AgentscopeChatEngine\.java\z" checks="MethodLength|ClassFanOutComplexity|ExecutableStatementCount"/>
-    <!--
-      引擎（4602 行，阈值 1200；2026-11 起点 4957，已抽 AgentxModelConfig / TurnMirror / ToolDescription）。
-      剩余阻塞：buildAgent(334行)、followTurn(414行)、finish(304行) 处于问答主链路，
-      与十几个内层状态深耦合。2026-11 曾试抽 translate 层（427行），因与 6 个私有方法互引、
-      编译错误连锁而回退——确认必须配实机浏览器验证（工具调用/审批卡/断线重连）才能动。
-      删除本条目的前置条件：文件 ≤1200 行且所有方法 ≤80 行，非「拆了一块就算」。
-    -->
     <suppress files="[\\/]agentx[\\/]AgentxConfiguration\.java\z" checks="ClassFanOutComplexity"/>
     <suppress files="[\\/]agentx[\\/]AgentxDestructiveCommands\.java\z" checks="MethodLength|CyclomaticComplexity|NPathComplexity|ExecutableStatementCount"/>
     <suppress files="[\\/]agentx[\\/]AgentxFrameworkToolGate\.java\z" checks="ClassFanOutComplexity|NPathComplexity"/>
