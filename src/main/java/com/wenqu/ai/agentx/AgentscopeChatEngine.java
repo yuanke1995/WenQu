@@ -483,7 +483,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             if (stateStoreResolved) return cachedStateStore;
             cachedStateStore = RedisAgentStateStore.builder()
                     .jedisClient(requireRedis())
-                    .keyPrefix(firstNonBlank(configService.get("chat.agentscopeRedisPrefix"), "agentscope:session:"))
+                    .keyPrefix(AgentxTextUtil.firstNonBlank(configService.get("chat.agentscopeRedisPrefix"), "agentscope:session:"))
                     .build();
             stateStoreResolved = true;
             return cachedStateStore;
@@ -546,9 +546,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         }
     }
 
-    private static String firstNonBlank(String... values) {
-        return AgentxTextUtil.firstNonBlank(values);
-    }
 
     @Override
     public String name() {
@@ -891,7 +888,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         //  - 播报起点是接回/开轮那一刻，历史帧不重放给观众（前端按 pos 去重只护得住同一条气泡，
         //    跨轮重放等于把上一轮的正文再打一遍）。
         TurnFollowLoop loop = new TurnFollowLoop();
-        loop.seed(turnStartSeq(session, current == null ? null : current.turnId(), startCursor), startCursor);
+        loop.seed(AgentxTextUtil.turnStartSeq(session, current == null ? null : current.turnId(), startCursor), startCursor);
         // 连续多步没有带回新信息：由引擎叫停（不再等模型自己停下来）
         // 等待预算用尽：卡片已落终态，收尾时不再对用户说「答完会自动接着跑」
         // 本轮有没有真的被框架启动。投递循环 100ms 一跳，正常几百毫秒内就离队；被闸门跳过时它会
@@ -915,7 +912,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
 
             @Override
             public long machineMs() {
-                return AgentscopeChatEngine.machineMs(startedAt, interactions.humanWaitMs(),
+                return AgentxTextUtil.machineMs(startedAt, interactions.humanWaitMs(),
                         interactions.waitingOnHuman(), interactions.waitBeganAt());
             }
 
@@ -1074,7 +1071,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 会对不上，把正常答完的那一轮也报成超时。
         boolean ranOutBudget = false;
         if (!loop.stopped() && !loop.neverLaunched() && !superseded
-                && TurnFollowLoop.budgetExhausted(machineMs(startedAt, interactions.humanWaitMs(), interactions.waitingOnHuman(), interactions.waitBeganAt()), machineBudgetMs)) {
+                && TurnFollowLoop.budgetExhausted(AgentxTextUtil.machineMs(startedAt, interactions.humanWaitMs(), interactions.waitingOnHuman(), interactions.waitBeganAt()), machineBudgetMs)) {
             session.interrupt();
             ranOutBudget = true;
             channel.emit(RunEventType.WARN, com.wenqu.ai.agent.chat.TurnRecorder.TURN_BUDGET_NOTE);
@@ -1903,14 +1900,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         return v <= 0 ? Integer.MAX_VALUE : v;
     }
 
-    /**
-     * 本轮到目前为止花掉的「机器时间」：墙钟减去人在回路的等待，<b>含正挂在卡上的这一段</b>。
-     * <p>少了在途那一段就是拿墙钟当机器预算用：{@code humanWaitMs} 只在待办清空时才累加，用户对着
-     * 计划卡读五分钟，循环下一跳算出来的机器时间就已经涨满 300s，整轮在人还没裁决时被静默收口。
-     */
-    private static long machineMs(long startedAt, long humanWaitMs, boolean waitingOnHuman, long waitBeganAt) {
-        return AgentxTextUtil.machineMs(startedAt, humanWaitMs, waitingOnHuman, waitBeganAt);
-    }
 
     /**
      * 开局就判不了的收场：error 说清原因，再补一条最小 done——SSE 读循环「流关闭却没有 done」
@@ -2115,7 +2104,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             // 落库那份先写、无条件：刷新读的就是它（那句解释也要一起落，刷新后卡片才说得出为什么没跑）
             recording.toolCall(name, status, args, elapsed, beganAt, charged, result);
             try {
-                emit(channel, RunEventType.TOOL_STATUS,
+                AgentxEmitUtil.emit(channel, RunEventType.TOOL_STATUS,
                         toolCard(recording.uid, name, status, elapsed, beganAt, charged, args, result, null,
                                 recording.hooks.step().index()));
             } catch (RuntimeException gone) {
@@ -2220,17 +2209,14 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         }
         if (reason == null) {
             log.info("[PROFILE] profile=chat reason=no-intent session={} q={}",
-                    cmd.getSessionId(), briefQuestion(q));
+                    cmd.getSessionId(), AgentxTextUtil.briefQuestion(q));
             return false;
         }
         log.info("[PROFILE] profile=workspace reason={} session={} q={}",
-                reason, cmd.getSessionId(), briefQuestion(q));
+                reason, cmd.getSessionId(), AgentxTextUtil.briefQuestion(q));
         return true;
     }
 
-    private static String briefQuestion(String q) {
-        return AgentxTextUtil.briefQuestion(q);
-    }
 
     /**
      * 「接下来可以」推荐追问是否按本轮生成（个人设置 → 问答偏好 → 对话显示，键 ui.showRelatedSuggestions）。
@@ -2479,19 +2465,16 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                     && ew.kind() != com.wenqu.ai.service.EffectiveWorkspace.Kind.EXPLICIT_SSH) return "";
             String root = ew.primaryRoot();
             if (root == null || root.isBlank()) return "";
-            return localEnvText(root, ew.fallbackNotice());
+            return AgentxTextUtil.localEnvText(root, ew.fallbackNotice());
         }
         com.wenqu.ai.service.SessionWorkspaceService.Workspace ws = sandboxService == null ? null
                 : sandboxService.sessionWorkspaceOf(cmd.getSessionId(), cmd.getUserId());
         if (ws == null || !ws.local()) return "";
         String root = ws.rootPath();
         if (root == null || root.isBlank()) return "";
-        return localEnvText(root, ws.fallbackNotice());
+        return AgentxTextUtil.localEnvText(root, ws.fallbackNotice());
     }
 
-    private static String localEnvText(String root, String notice) {
-        return AgentxTextUtil.localEnvText(root, notice);
-    }
 
     /**
      * 只记账不播报的通道：读历史事件时用它——事件照样进 {@link AgentxTurnRecording}（工具卡、思考全文都要落库），
@@ -2527,14 +2510,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         }
     };
 
-    /**
-     * 本轮在框架 Session Log 里的起点：按框架自己的 turnId 找最早那条属于本轮的事件。
-     * <p>为什么不能只按「开轮/接回时刻的 head」定：续跑那一跑里批准之前跑掉的那几次工具同属这一轮，
-     * 从接回时刻起读会让落库的工具卡只剩批准之后的半截。找不到（这一轮还没写过事件）就退回 fallback。
-     */
-    private static long turnStartSeq(AgentSession session, String frameworkTurnId, long fallback) {
-        return AgentxTextUtil.turnStartSeq(session, frameworkTurnId, fallback);
-    }
 
     /**
      * 按游标读增量事件并翻译，返回新游标——同一条事件不会被读第二次。
@@ -2681,7 +2656,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                             continue;
                         }
                         recording.thinking(thinkingDelta);
-                        emit(channel, RunEventType.THINKING, thinkingDelta);
+                        AgentxEmitUtil.emit(channel, RunEventType.THINKING, thinkingDelta);
                     } else if ("text".equals(b.get("type"))) {
                         String rawText = str(b.get("text"));
                         if (aggregateTail && rawText.length() > 0 && recording.answerContains(rawText)) {
@@ -2696,7 +2671,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                         if (processFirst) AgentxEmitUtil.emitProcess(channel, recording, parsed.process());
                         if (!parsed.text().isEmpty()) {
                             recording.answer(parsed.text());
-                            emit(channel, RunEventType.TOKEN, parsed.text());
+                            AgentxEmitUtil.emit(channel, RunEventType.TOKEN, parsed.text());
                         }
                         // 过程独白（<process> 标签内）按增量实时下发 PROCESS：正文走 TOKEN，
                         // 过程另走一条通道，前端 onProcess 累积成「执行过程」灰字块。收尾帧在 finish() 里补齐。
@@ -2743,7 +2718,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 进行中必须是 "start"（不是 "running"）：前端 onToolStatus 只认 status==='start' 才建/合并
                 // 实时工具卡。发 "running" 会让前端把这张当终态卡 push 出去，随后的 done 又找不到可合并的
                 // start 卡再 push 一张——一次调用渲染成两张，其中停在 "running" 的那张显示为失败(❌)。
-                emit(channel, RunEventType.TOOL_STATUS,
+                AgentxEmitUtil.emit(channel, RunEventType.TOOL_STATUS,
                         toolCard(recording.uid, recording.lastToolName, "start", 0L, beganAt, 0L, recording.lastToolInput, null, null,
                                 recording.hooks.step().index()));
             }
@@ -2781,7 +2756,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 String terminal = failed ? "error" : (denied ? "denied" : "done");
                 java.util.Map<String, Object> subChat = recording.toolCall(name, terminal, args, elapsed, beganAt, charged, resultText);
                 // 前台等待到点的提问：这一帧不是「问完了」，卡片仍可答（答案稍后作为新发言送达）
-                emit(channel, RunEventType.TOOL_STATUS, toolCard(recording.uid, name, terminal,
+                AgentxEmitUtil.emit(channel, RunEventType.TOOL_STATUS, toolCard(recording.uid, name, terminal,
                         elapsed, beganAt, charged, args, resultText, subChat, recording.hooks.step().index(),
                         false, 0L, null, recording.isAskContinued(toolCallIdOf(data))));
             }
@@ -2800,7 +2775,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                     channel.emit(RunEventType.PLAN, com.alibaba.fastjson2.JSON.toJSONString(list));
                 } else if (!str(plan).isBlank()) {
                     recording.planDelta(str(plan));
-                    emit(channel, RunEventType.DEEP_PLAN_DELTA, str(plan));
+                    AgentxEmitUtil.emit(channel, RunEventType.DEEP_PLAN_DELTA, str(plan));
                 }
             }
             case "run/end" -> recording.runEnded = true;
@@ -2825,7 +2800,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                         com.wenqu.ai.agent.chat.SteerQueueHooks queueHooks = steerQueueHooks;
                         if (queueHooks != null) queueHooks.applied(channel.sessionId(), receiptId);
                         com.wenqu.ai.agent.chat.SteerReceipts.SteerAck ack =
-                                steerAckOf(turnId, receiptId);
+                                AgentxPlanSteerUtil.steerAckOf(turnId, receiptId);
                         if (ack == null) continue;
                         recording.steer(ack.text(), ack.messageId(), ack.images(), ack.attachments());
                         Map<String, Object> frame = new java.util.LinkedHashMap<>();
@@ -2835,7 +2810,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                         if (ack.attachments() != null && !ack.attachments().isEmpty()) {
                             frame.put("attachments", ack.attachments());
                         }
-                        emit(channel, RunEventType.STEER, com.alibaba.fastjson2.JSON.toJSONString(frame));
+                        AgentxEmitUtil.emit(channel, RunEventType.STEER, com.alibaba.fastjson2.JSON.toJSONString(frame));
                     }
                 }
             }
@@ -3525,7 +3500,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                     raw.add(r.getPath());
                 }
             }
-            for (String p : raw) out.add(realRoot(p));
+            for (String p : raw) out.add(AgentxTextUtil.realRoot(p));
         } catch (Exception e) {
             log.warn("[agentx] 工作区根解析失败（越界写确认按无根处理）session={}: {}",
                     cmd.getSessionId(), e.getMessage());
@@ -3533,9 +3508,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         return out;
     }
 
-    private static String realRoot(String raw) {
-        return AgentxTextUtil.realRoot(raw);
-    }
 
 
     /**
@@ -3642,14 +3614,14 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         if (finalOutcome) {
             if (all.isEmpty()) return null;
             Map<String, Object> last = all.get(all.size() - 1);
-            for (int i = 0; i < all.size() - 1; i++) prior.add(planVersionOut(all.get(i)));
+            for (int i = 0; i < all.size() - 1; i++) prior.add(AgentxPlanSteerUtil.planVersionOut(all.get(i)));
             card.put("status", "approve".equals(outcome) ? "approved"
                     : "supersede".equals(outcome) ? "superseded" : "rejected");
             card.put("plan", str(last.get("plan")));
             card.put("feedback", str(last.get("feedback")));
             card.put("versions", prior);
         } else if (!draft.isEmpty()) {
-            for (Map<String, Object> v : all) prior.add(planVersionOut(v));
+            for (Map<String, Object> v : all) prior.add(AgentxPlanSteerUtil.planVersionOut(v));
             card.put("status", "drafting");
             card.put("plan", draft);
             card.put("feedback", revising ? (revisionFeedback == null ? "" : revisionFeedback) : "");
@@ -3662,7 +3634,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             }
         } else if (recording.planPendingNow() && !all.isEmpty()) {
             Map<String, Object> last = all.get(all.size() - 1);
-            for (int i = 0; i < all.size() - 1; i++) prior.add(planVersionOut(all.get(i)));
+            for (int i = 0; i < all.size() - 1; i++) prior.add(AgentxPlanSteerUtil.planVersionOut(all.get(i)));
             card.put("status", "pending");
             card.put("plan", str(last.get("plan")));
             card.put("feedback", str(last.get("feedback")));
@@ -3692,13 +3664,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         return card;
     }
 
-    /** 版本链下发形状：只有 PlanCard/PlanViewer 读的正文与意见，不把内部的批准 ID 摆到界面数据里 */
-    private static Map<String, Object> planVersionOut(Map<String, Object> v) {
-        Map<String, Object> out = new java.util.LinkedHashMap<>();
-        out.put("plan", v == null ? "" : str(v.get("plan")));
-        out.put("feedback", v == null ? "" : str(v.get("feedback")));
-        return out;
-    }
 
     /**
      * 收尾：落库、下发 done 帧、进问答台账。
@@ -3946,7 +3911,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 本轮来源清单与外发文本会一起丢掉，「答案可溯源」在外部链路静默失效。
         // 键序与拼接版逐字一致（下游有多个消费方按名取字段，含前端与子轮回取）。
         // WriteMapNullValue 保持「显式给 null」的语义（缺键会让前端读不到）。
-        List<Map<String, Object>> pendingSteers = awaiting ? null : unsentSteers(turnId, recording);
+        List<Map<String, Object>> pendingSteers = awaiting ? null : AgentxPlanSteerUtil.unsentSteers(turnId, recording);
         if (pendingSteers != null && pendingSteers.isEmpty()) pendingSteers = null;
         String payload = TurnDonePayload.toJson(TurnDonePayload.Input.builder()
                 .finalContent(body)
@@ -4016,41 +3981,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         }
     }
 
-    /**
-     * 本轮送进过框架会话、但<b>没被写进上下文</b>的插话（要交回前端补发的那几条）。
-     * <p>按把手取：收据与落库的那条用户消息同行，都在本轮的把手上；把手已经换成别的轮（新轮已经开始、
-     * 或已经被摘掉）时一条都不报——把上一轮的插话挂到这一轮的 done 上，前端会把它再发一遍。
-     * <p>只在「这一跑真的结束了」之后认账（{@code run/end}）：那一跑还活着时，插话会在它下一次
-     * 调模型前被应用——在这里交回前端等于让用户同一句话讲两遍。撞整轮机器预算退出的那一支现在
-     * 当场就把它叫停了（见 {@code ranOutBudget}），所以那种收尾也拿得到 {@code run/end}。
-     */
-    /** 按框架收据找回那句插话（用户原话＋它落库的消息 ID）。收据号本轮唯一，配不上就是本轮没这句话。 */
-    private static com.wenqu.ai.agent.chat.SteerReceipts.SteerAck steerAckOf(String turnId, String receiptId) {
-        return com.wenqu.ai.agent.chat.SteerReceipts.find(turnId, receiptId);
-    }
 
-    private static List<Map<String, Object>> unsentSteers(String turnId, AgentxTurnRecording recording) {
-        List<Map<String, Object>> out = new java.util.ArrayList<>();
-        if (!recording.runEnded) return out;
-        for (com.wenqu.ai.agent.chat.SteerReceipts.SteerAck ack
-                : com.wenqu.ai.agent.chat.SteerReceipts.unsent(turnId, recording.appliedSteers)) {
-            if (ack == null || ack.receiptId() == null) continue;
-            Map<String, Object> item = new java.util.LinkedHashMap<>();
-            item.put("text", ack.text());
-            // 随它落库的那条用户消息 ID：前端复用同一颗气泡补发，不另推一条，刷新后也不会变两条
-            item.put("messageId", ack.messageId() == null ? "" : ack.messageId());
-            // 附件带着引用一起交回：补发是新一轮，没有这份引用模型就再也看不到那句话带的材料
-            // （图片交回的是展示 URL，补发请求只收 data URL，故不在此列——它已随消息行落库回显）
-            if (ack.attachments() != null && !ack.attachments().isEmpty()) {
-                item.put("attachments", ack.attachments());
-            }
-            out.add(item);
-        }
-        if (!out.isEmpty()) {
-            log.info("[STEER] 本轮收下的插话有 {} 条没进上下文，交回前端续发: turn={}", out.size(), turnId);
-        }
-        return out;
-    }
 
     /** 本轮的 turnId（轮级互斥外壳登记的）；外壳没登记时退回会话号，只为留痕不悬空。 */
     private String turnIdOf(ChatCommand cmd) {
@@ -4208,9 +4139,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         sessionService.updateHistorySummary(cmd.getSessionId(), live.text(), live.coveredMessages());
     }
 
-    private static void emit(RunChannel channel, RunEventType type, String content) {
-        AgentxEmitUtil.emit(channel, type, content);
-    }
 
 
 
@@ -4352,7 +4280,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 System.currentTimeMillis());
         if (tick == null) return;
         try {
-            emit(channel, RunEventType.TOOL_STATUS,
+            AgentxEmitUtil.emit(channel, RunEventType.TOOL_STATUS,
                     toolCard(recording.uid, tick.name(), "start", 0L, tick.startedAtMs(), 0L,
                             null, null, null, recording.hooks.step().index(),
                             true, tick.chars(), tick.brief(), false));
