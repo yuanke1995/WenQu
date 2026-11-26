@@ -8,7 +8,6 @@ import com.wenqu.ai.engine.RunEventType;
 import com.wenqu.ai.agentx.turn.TurnFollowLoop;
 import com.wenqu.ai.agentx.turn.TurnInteractionCoordinator;
 import com.wenqu.ai.agentx.AgentxTextUtil;
-import io.agentscope.core.session.SessionEvent;
 import com.wenqu.ai.service.GoalService;
 import com.wenqu.ai.service.ModelRegistryService;
 import com.wenqu.ai.service.TurnNotifyService;
@@ -51,13 +50,13 @@ public class AgentxTurnSettler {
         ModelOutputParser.Delta finishTail = c.recording.related.finish();
         c.recording.answer(finishTail.text());
         c.recording.process(finishTail.process());
-        String answer = c.recording.answerText();
+        c.answer = c.recording.answerText();
         // 这一轮到底有没有真的流出过正文——下面撞步数上限那一段要靠它决定「补一段收尾」还是「别补」：
         // 空正文时下面那条回退取的就是框架收尾消息本身，再补一遍等于把同一段话印两次
-        final boolean streamedBody = !c.answer.isBlank();
+        c.streamedBody = !c.answer.isBlank();
         // 失败判据必须排在回填前面：回填不问这一轮是不是失败的那一跑，上游 401 的轮因此会顶着
         // 「答好了」的样子把上一轮的正文存进历史，失败一个字没提。
-        String failure = AgentxHistoryText.runFailure(c.session, c.current);
+        c.failure = AgentxHistoryText.runFailure(c.session, c.current);
         // 上游把连接直接收了、没给带 finishReason/usage 的末块：框架那一跑看到的是「正常结束」，
         // executionError 为空、done 帧照发——屏幕上是一段凭空短掉的正文，刷新后连「这一轮断过」
         // 都读不出来。
@@ -70,7 +69,7 @@ public class AgentxTurnSettler {
         // 界面那一句人话（emitRunFailure 生成的），通知要抄它而不是抄上游原始串：
         // 原始串形如「HTTP transport error during streaming: HTTP request failed with status 403…」，
         // 是英文、带响应体碎片，用户在铃铛里读不出「该充值还是该换模型」
-        String spokenFailure = null;
+        c.spokenFailure = null;
         // 框架把「重试烧完」压成一句 Retries exhausted: 2/2，真正的 429/额度文案留在它挂住的
         // 那次失败里；只看这句会把「额度耗尽」说成「模型无响应」，指的方向正好反了。
         // 只往<b>已判定失败</b>的那一句并原文——重试成功的那一轮同样会记一次错误，
@@ -114,7 +113,7 @@ public class AgentxTurnSettler {
         // 文件也没机会交付出去。只在<b>流里确有正文</b>时补：空正文那一支上面已经把这条收尾消息
         // 回退取走了（同一个 ModelOutputParser 喂两遍还会把推荐芯片数成两份）。
         String wrapUp = AgentxHistoryText.maxIterationsWrapUp(c.session, c.historyBefore);
-        boolean cutByMaxIters = wrapUp != null && !c.loop.stopped() && !c.loop.timedOut() && !c.loop.neverLaunched() && c.failure == null;
+        c.cutByMaxIters = wrapUp != null && !c.loop.stopped() && !c.loop.timedOut() && !c.loop.neverLaunched() && c.failure == null;
         if (c.cutByMaxIters && c.streamedBody) {
             // 过同一个剥离器：这条收尾正文同样可能被模型塞进 <related>／<process>，
             // 而推荐芯片只在 related 那一份状态上算，绕过它等于这一轮最后那颗芯片凭空少一源
@@ -134,9 +133,9 @@ public class AgentxTurnSettler {
         // 来了历史里还多出一条气泡（同一个问题两个助手回答）。
         // 继续对话取代的那一轮不算「暂时没人跟」：中断之后不会再有跟随者，而这一版的「已被取代」
         // 必须随行落库（历史里要有这一版计划，新一轮也靠它取上一版），所以放行到 persist。
-        boolean awaiting = !c.loop.timedOut() && !c.superseded && !c.pendingAtClose.isEmpty();
-        long wallMs = System.currentTimeMillis() - c.startedAt;
-        long machineMs = Math.max(0L, c.wallMs - c.interactions.humanWaitMs());
+        c.awaiting = !c.loop.timedOut() && !c.superseded && !c.pendingAtClose.isEmpty();
+        c.wallMs = System.currentTimeMillis() - c.startedAt;
+        c.machineMs = Math.max(0L, c.wallMs - c.interactions.humanWaitMs());
         // 报出去的「本轮耗时」说的是机器干活用了多久，不是这一轮在墙上挂了多久：人在计划卡上读了
         // 三分钟，读成「它答了三分多钟」就是把人自己的时间记到了机器账上。同一句里把两个数都留下，
         // 截断与卡死排障要看的是墙钟，成本与性能看的是机器时间——少一个数就必然有人拿错一个数对账。
@@ -195,10 +194,10 @@ public class AgentxTurnSettler {
     public void settlePlan(AgentxFollowCtx c) {
         // 计划卡裁决的界面终态：拒绝=deep_plan_cancelled、继续对话=deep_plan_superseded。不补的表现为
         // 用户已经拒了计划，那张卡却还挂着「等待中」（控制流仍归框架判，这里只补留痕帧与 done 标记）
-        String planOutcomeRaw = sessions.takePlanOutcome(sessions.key(c.cmd));
+        c.planOutcomeRaw = sessions.takePlanOutcome(sessions.key(c.cmd));
         TurnInteractionCoordinator.PlanOutcome planOutcome =
                 TurnInteractionCoordinator.planOutcome(c.planOutcomeRaw);
-        boolean superseded = planOutcome == TurnInteractionCoordinator.PlanOutcome.SUPERSEDED;
+        c.superseded = planOutcome == TurnInteractionCoordinator.PlanOutcome.SUPERSEDED;
         if (c.superseded) c.channel.emit(RunEventType.DEEP_PLAN_SUPERSEDED, "{}");
         else if (planOutcome == TurnInteractionCoordinator.PlanOutcome.CANCELLED) {
             c.channel.emit(RunEventType.DEEP_PLAN_CANCELLED, "{}");
@@ -208,7 +207,7 @@ public class AgentxTurnSettler {
         // 在途那一步跑完之后不再起新的模型调用；已经流出半截的正文照旧走下面的收尾落库，不丢。
         // 判据用同一个 c.machineMs——与上面 while 的退出条件一字不差，否则「退出了」与「预算用尽」
         // 会对不上，把正常答完的那一轮也报成超时。
-        boolean ranOutBudget = false;
+        c.ranOutBudget = false;
         if (!c.loop.stopped() && !c.loop.neverLaunched() && !c.superseded
                 && TurnFollowLoop.budgetExhausted(AgentxTextUtil.machineMs(c.startedAt, c.interactions.humanWaitMs(), c.interactions.waitingOnHuman(), c.interactions.waitBeganAt()), c.machineBudgetMs)) {
             c.session.interrupt();
@@ -264,7 +263,7 @@ public class AgentxTurnSettler {
         // 日志上一次就是十几秒，下面四处各读一遍等于
         // 四份白付。abandon 结算掉的卡在快照里仍挂着——那几支已经把 timedOut 置真，c.awaiting
         // 的 !timedOut 正好把这笔陈旧性挡掉；真还在等人的卡快照如实保留，语义不变。
-        Map<String, SessionEvent> pendingAtClose = c.session.pending();
+        c.pendingAtClose = c.session.pending();
         if (!c.loop.stopped() && !c.loop.timedOut() && !c.superseded && !c.loop.neverLaunched() && !c.pendingAtClose.isEmpty()) {
             c.channel.emit(RunEventType.WARN, "本轮已超时结束，等你确认的那一步已作废");
             c.loop.timeout();
