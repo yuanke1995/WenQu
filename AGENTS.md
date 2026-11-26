@@ -65,3 +65,18 @@ grep -cE '^\s+private final ' path/to/Controller.java
   - 新文件不在白名单里，从第一天起必须合规。
 - 只想跳过检查快速编译：`mvn -Dcheckstyle.skip=true compile`；
   提交前仍须跑一次完整的 `mvn verify`。
+### 七、前端重构安全网（2026-11 事故后立）
+
+2026-11 两次拆分（ChatPage 白屏、useChatEngine 每轮问答在 `abort.signal` 处抛错）暴露出：
+lint / vite build / 零件单测都拦不住「装配层」错误——对象拆成两份、字段漏接、值为 undefined，
+编译期全是合法的。以下四条是硬闸门，改前端时必须一起过：
+
+1. `cd web && npm run typecheck`：`tsc --checkJs` 棘轮。检查范围由文件头 `// @ts-check` 决定，
+   **新增 JS 模块从第一天就带这行**；存量文件只许增加、不许删（`web/test/typecheckRatchet.test.mjs` 守着）。
+2. `cd web && npm test`：除零件单测外，`test/chatTurnFlow.test.mjs` 会按真实帧序回放整轮问答
+   （turn_start → thinking → token → tool → todo → done）。改 `openTurn` / `streamAnswerHandlers`
+   的接线必须让它保持绿色。
+3. `cd web && npm run e2e`：Playwright 整页冒烟（后端全部 mock），覆盖「页面能开 + 发问能跑完 +
+   刷新历史还在」。运行不依赖 8090/线上；首次需 `npx playwright install chromium`（CI 已自动做）。
+4. 大对象跨函数传递（deps / turn / chatCtx）时，**拆之前先加一条装配对账或帧序回放**；
+   拆分 diff 里不许夹带接口改名，搬迁和行为变更分两个 commit。

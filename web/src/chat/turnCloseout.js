@@ -1,3 +1,4 @@
+// @ts-check
 // 收口口径（纯函数）：中断时定格还在跑的工具卡、把「已停止本轮」补到正文尾部。
 import { TURN_STOP_SUFFIX } from './turnStatus.js'
 

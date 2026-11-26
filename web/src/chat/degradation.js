@@ -1,3 +1,4 @@
+// @ts-check
 // 降级/警示条的展示口径：同一件事在这一屏只画一遍（不消音）。
 import { turnMarker } from './turnStatus.js'
 

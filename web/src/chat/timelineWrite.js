@@ -1,3 +1,4 @@
+// @ts-check
 // 时间线写入口与落库恢复：纯数据结构操作，不读 .value。
 // 段区间指向正文/思考/过程原文，不复制文本；工具/产物段只存下标，渲染时取回对象。
 
@@ -61,6 +62,7 @@ export const pushTimelineSteer = (m, text, messageId, images = [], attachments =
 
 /** 用后端落库/下发的段数组重建时间线：文本/思考段用区间，工具/产物按索引取回对象；缺数据跳过。 */
 export const restoreTimeline = (m, segs) => {
+  /** @type {any[]} */
   const out = []
   for (const s of segs || []) {
     if (!s || !s.kind) continue

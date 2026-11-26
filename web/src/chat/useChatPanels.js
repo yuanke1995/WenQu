@@ -1,8 +1,10 @@
+// @ts-check
 // 聊天页右侧浮层与折叠状态：事件抽屉、「引用来源」分组折叠、输入框容量浮层。
 import { ref, reactive, computed } from 'vue'
 
 /**
  * @param ctx.viewport () => ({ w, h })（测试可注入）
+ * @param {object} ctx 注入项
  * @param ctx.schedule/cancel 定时器（测试可注入）
  */
 export const useChatPanels = ({ viewport = () => ({ w: window.innerWidth, h: window.innerHeight }),
@@ -44,6 +46,7 @@ export const useChatPanels = ({ viewport = () => ({ w: window.innerWidth, h: win
       const rect = el.getBoundingClientRect()
       const { w: vw, h: vh } = viewport()
       const w = 300
+      /** @type {any} */
       let pos
       if (rect.top >= 360) {
         // 底部工具栏圆环：卡悬在圆环上方、右沿与圆环右沿对齐

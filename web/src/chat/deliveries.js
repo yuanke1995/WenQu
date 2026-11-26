@@ -1,3 +1,4 @@
+// @ts-check
 // 交付包的会话级聚合（selectors）：消息列表 + 当前目标 → 目标包 / 各轮包 / 消息索引。
 // 纯函数，不读 .value；useChatEngine 只负责把它们包成 computed。
 import { deliveryOf, deliverySubjectOf } from './delivery.js'
@@ -43,7 +44,7 @@ export const goalDeliveryOf = (messages, goal) => {
   const badgeTone = g.status === 'ACHIEVED' ? 'ok'
     : g.status === 'FAILED' ? 'warn'
       : g.status === 'CANCELLED' ? 'muted' : 'live'
-  const pkg = deliveryOf(files, {
+  const pkg = /** @type {Record<string, any> | null} */ (deliveryOf(files, {
     name: (deliverySubjectOf(g.objective) || '本次交付') + ' · 交付包',
     versionLabel: 'v' + ((Number(g.objectiveVersion) || 0) + 1),
     round: Number(g.round) || 0,
@@ -54,7 +55,7 @@ export const goalDeliveryOf = (messages, goal) => {
     goalId: g.goalId,
     turnIds,
     anchorKey
-  })
+  }))
   if (pkg) pkg.anchorMsg = anchorMsg
   return pkg
 }
@@ -99,12 +100,12 @@ export const turnDeliveriesOf = (messages, { currentGoalId = '', currentTurns = 
     g.anchorMsg = m
   }
   for (const g of groups.values()) {
-    const pkg = deliveryOf(g.files, {
+    const pkg = /** @type {Record<string, any> | null} */ (deliveryOf(g.files, {
       name: (turnSubjectOf(list, g.firstIndex) || '本次交付') + ' · 交付',
       scope: 'turn',
       turnIds: g.turnIds,
       anchorKey: g.anchorKey
-    })
+    }))
     if (pkg) {
       pkg.anchorMsg = g.anchorMsg
       out.push(pkg)

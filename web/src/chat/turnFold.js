@@ -1,3 +1,4 @@
+// @ts-check
 // 过程块的折叠/可见性判据：纯函数，不读 .value（跑动中的耗时由调用方传入）。
 import { turnAnswerText } from './turnBody.js'
 import { turnProcessRows } from './turnProcess.js'

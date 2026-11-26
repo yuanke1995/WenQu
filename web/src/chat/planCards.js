@@ -1,3 +1,4 @@
+// @ts-check
 // 计划卡的构建与血缘补齐（纯函数，从 useChatEngine 抽出）。
 // planCardFromRecord：把一条落库的计划记录重建为前端用的 planCard 对象（历史恢复/接流快照都读它）；
 // linkPlanLineage：历史计划血缘——新卡记 planBaseId、旧卡无反向字段，载入后按 id 双向补齐。

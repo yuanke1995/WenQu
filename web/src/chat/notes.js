@@ -1,3 +1,4 @@
+// @ts-check
 // 分组条与行尾思考/独白（note/tail）的统一口径：纯函数，不读 .value。
 import { thinkSlice, thinkPeek, thinkGrowing, thinkSegOpen, toggleThinkSeg, procSlice, procOpen, toggleProc, peekText } from './segments.js'
 

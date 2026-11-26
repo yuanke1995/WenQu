@@ -1,6 +1,8 @@
+// @ts-check
 // 引用角标联动与行跳转（视图胶水，DOM 可注入）：正文角标高亮/闪烁定位、来源行点击、计划行跳转。
 /**
  * @param ctx.doc document 等价物（测试注入）
+ * @param {object} ctx 注入项
  * @param ctx.schedule 定时器（测试注入）
  * @param ctx.messagesOf () => 消息列表
  * @param ctx.lastAiOf () => 最后一条已完成回答
@@ -25,7 +27,7 @@ export const useSourceFocus = ({ hoveredRef, doc = document, schedule = setTimeo
   // 整行本身一律开原文弹窗——用户点这一行要的是「看这段的原文」，不是被弹回正文再看一遍。
   const locateSource = (s, openSource) => {
     const idx = msgIndexOfLastAi()
-    const el = idx >= 0 ? doc.querySelector('.md[data-msg-index="' + idx + '"] .ref-sup[data-ref="' + s.ref + '"]') : null
+    const el = idx >= 0 ? /** @type {HTMLElement | null} */ (doc.querySelector('.md[data-msg-index="' + idx + '"] .ref-sup[data-ref="' + s.ref + '"]')) : null
     if (el) {
       el.scrollIntoView({ block: 'center', behavior: 'smooth' })
       el.classList.remove('ref-flash')
@@ -38,7 +40,7 @@ export const useSourceFocus = ({ hoveredRef, doc = document, schedule = setTimeo
   }
   /** 计划行跳转：滚到该行并闪一圈（同一行连点也能重播） */
   const jumpToPlanRow = mi => {
-    const el = doc.querySelector('.row[data-row-index="' + mi + '"]')
+    const el = /** @type {HTMLElement | null} */ (doc.querySelector('.row[data-row-index="' + mi + '"]'))
     if (!el) return
     el.scrollIntoView({ block: 'center', behavior: 'smooth' })
     el.classList.remove('plan-jump')

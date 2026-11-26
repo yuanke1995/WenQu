@@ -1,3 +1,4 @@
+// @ts-check
 // 服务端 blocks → 现有视图字段的确定性投影。
 // 独立成纯模块：不依赖 Vue / 页面 store，便于单测，也避免聊天页状态被测试脚本拉起。
 
@@ -11,6 +12,7 @@ export const applyBlocks = (m, payload) => {
   let processText = ''
   const toolCalls = []
   const artifacts = []
+  /** @type {any[]} */
   const timeline = []
   for (const b of payload.blocks) {
     if (!b || !b.kind) continue

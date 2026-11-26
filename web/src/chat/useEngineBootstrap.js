@@ -1,3 +1,4 @@
+// @ts-check
 // 引擎的挂载初始化与产物签名续签（从 useChatEngine 抽出）。
 // ready：先 loadSessions，再拉智能体/技能候选（不阻塞首屏），按 sid / newChatTick / autoPick
 // 三分支落位，聚焦输入框，最后拉配置类数据。

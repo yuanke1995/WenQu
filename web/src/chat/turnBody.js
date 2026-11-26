@@ -1,3 +1,4 @@
+// @ts-check
 // 本轮正文流的分段：正文切片 + 插话位置。纯函数，不读 .value。
 
 export const turnAnswerText = m => String((m && m.content) || '')
@@ -33,6 +34,7 @@ export const turnBodyRows = m => {
     }
   }
   if (!cuts.length) return content ? [{ kind: 'text', key: 't0', content, last: true }] : []
+  /** @type {any[]} */
   const rows = []
   let pos = 0
   cuts.forEach((c, ci) => {

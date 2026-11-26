@@ -1,0 +1,20 @@
+{
+  // 类型检查棘轮（只许变好）：checkJs 关掉，靠文件头的 `// @ts-check` 逐个开启。
+  // 新增文件从第一天就带 @ts-check；存量文件允许暂时没有，但要陆续补上、不许回退。
+  // 目的：让「字段不存在 / 拼错 / 参数对不上」在 CI 里编译期就红，
+  // 而不是像 2026-11 拆分事故那样等用户按回车才炸。
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": false,
+    "noEmit": true,
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "skipLibCheck": true,
+    "strict": false,
+    "noImplicitAny": false,
+    "types": ["vite/client"]
+  },
+  "include": ["src/**/*.js"]
+}

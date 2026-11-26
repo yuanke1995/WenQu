@@ -1,3 +1,4 @@
+// @ts-check
 // 工具卡标题摘要、入参/输出格式、运行中实时输出。纯函数，不读 .value。
 import { consultNameOf, isDispatchTool } from './consult.js'
 import { toolLabel } from './tools.js'

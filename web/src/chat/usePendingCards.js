@@ -1,3 +1,4 @@
+// @ts-check
 // 待办卡恢复（从 useChatEngine 抽出）：会话加载/切换后，把服务端仍挂着、唤醒句柄还在的
 // 提问卡与计划卡重建回界面。审批卡与恢复态轮询共用 restoredPoll，留在主文件。
 // 依赖全部显式注入；planCardFromRecord/linkPlanLineage 从 planCards 纯模块引入。

@@ -1,3 +1,4 @@
+// @ts-check
 // 思考能力三态与强度档位：纯常量/查表，双端共用。
 
 export const THINK_CAPS = {

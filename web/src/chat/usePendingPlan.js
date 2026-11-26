@@ -1,3 +1,4 @@
+// @ts-check
 // 待批准的计划卡 + 倒计时（从 useChatEngine 抽出）。
 // 倒着找最后一条还挂着 pending/revising 计划的助手消息；仅待确认卡挂 deadline 时走 1 秒心跳。
 import { ref, computed, watch, onUnmounted } from 'vue'

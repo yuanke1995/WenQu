@@ -1,3 +1,4 @@
+// @ts-check
 // 路由 query 与侧栏信号驱动的会话切换（从 useChatEngine 抽出）：
 // query.sid 切会话、query.approval 通知深链定位、newChatTick 新建、autoPickTick 自动落点，
 // 以及工具审批卡的动作装配（resolveApproval）。

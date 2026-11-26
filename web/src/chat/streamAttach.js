@@ -1,3 +1,4 @@
+// @ts-check
 // 接流入口（transport 层）：探测服务端是否还有在跑的轮，有则开 GET /chat/resume 接上。
 // 状态与回调全部注入，便于单测；引擎只提供 chatStreams/生命周期/占位气泡/开流函数。
 //

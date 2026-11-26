@@ -1,3 +1,4 @@
+// @ts-check
 // 计划正文归一化成**字符串**：卡片主体最终交给 renderMd 渲染，喂进去非字符串就是屏幕上那个
 // `[object Object]`（框架 plan_exit 的入参只有一句 summary，后端把整个入参对象当 plan 下发）。
 // 这里做最后一道闸——对象按常见字段名（content/plan/text/summary）取值，都取不到才退成可读的 JSON，

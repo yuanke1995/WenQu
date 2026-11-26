@@ -1,3 +1,4 @@
+// @ts-check
 // 目标模式入口（从 useChatEngine 抽出）：startGoal（建行即开跑）与 goalAct（目标动作）。
 // 依赖经入参注入；goalBarVisible 与 goalAct 互相引用，两侧都以惰性 getter/箭头传入，
 // 调用时机在装配完成之后，不触发 TDZ。

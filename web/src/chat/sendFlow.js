@@ -1,3 +1,4 @@
+// @ts-check
 // 发送主流程（actions 层）：本轮载荷组装、上传门禁、生成中转插话、清空输入框、开新一轮回答。
 // 所有状态经 refs 注入，模块自身不依赖 store 与路由。
 import { reactive } from 'vue'

@@ -75,3 +75,8 @@ config/application-local.yml
 /.wenqu/
 /docs/
 /tmp_db_copy/
+
+# ===== Playwright 冒烟：浏览器二进制与报告留本地，不入库 =====
+/web/.playwright-browsers/
+/web/test-results/
+/web/playwright-report/

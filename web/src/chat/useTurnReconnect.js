@@ -1,3 +1,4 @@
+// @ts-check
 // 接流与断线重挂（从 useChatEngine 抽出）：接流生命周期、接流入口、重挂循环与取消。
 // 只注入引擎状态与副作用；循环本体仍在 ./turnReconnect.js（transport 层，可单测）。
 import { createStreamLifecycle } from './streamLifecycle.js'

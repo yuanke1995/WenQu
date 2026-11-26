@@ -1,3 +1,4 @@
+// @ts-check
 // 提问卡（askUser）的纯投影：工具入参 questions + result 答案 → 一张卡要渲染的数据。
 // 入参 args 是 JSON 字符串（可能被截断）；result 单问是纯文本，多问是与问题下标对齐的 JSON 数组。
 

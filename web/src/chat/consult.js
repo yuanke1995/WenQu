@@ -1,3 +1,4 @@
+// @ts-check
 // 委派/咨询另一位助手的展示口径：子对话视图、任务原文、定位锚、顶栏子智能体一行。
 // 数据来自后端随工具卡落库的 subChat，刷新/换设备/历史回看与实时同构。
 import { toolDuration } from './tools.js'

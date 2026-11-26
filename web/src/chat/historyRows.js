@@ -1,3 +1,4 @@
+// @ts-check
 // 历史回显的行映射（纯函数）：后端消息行 → 视图消息。
 // 计划卡重建、时间线恢复、显示块投影与思考分段补写都经依赖注入，模块自身不读任何响应式状态。
 
@@ -19,7 +20,7 @@ export const dropSteeredUserRows = list => {
 /**
  * @param rows 后端历史行
  * @param sid 会话 ID（计划卡重建需要）
- * @param deps { planCardFromRecord, restoreTimeline, applyBlocks, ensureThinkSegment }
+ * @param {{planCardFromRecord: Function, restoreTimeline: Function, applyBlocks: Function, ensureThinkSegment: Function}} deps 历史行映射用到的纯函数
  */
 export const buildHistoryList = (rows, sid, { planCardFromRecord, restoreTimeline, applyBlocks, ensureThinkSegment }) => {
   const list = (rows || [])

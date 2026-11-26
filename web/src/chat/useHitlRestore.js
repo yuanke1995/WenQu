@@ -1,3 +1,4 @@
+// @ts-check
 // HITL 恢复（从 useChatEngine 抽出）：待批准审批卡的恢复、通知深链落点、恢复态答案轮询、
 // 以及提问卡动作上下文（askCtx/askSubmitAll/ignoreAsk）。restoredPoll 这个「同一时刻只留一份」
 // 的轮询句柄随块一起搬进来，因此 stopRestoredPoll/pollRestoredAnswer 由本模块导出、主文件解构接回。

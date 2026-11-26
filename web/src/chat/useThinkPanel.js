@@ -1,3 +1,4 @@
+// @ts-check
 // 深度思考面板（宽屏：悬浮模型下拉行弹出；触屏：常驻入口点开底部 sheet）。
 // 面板内档位/上下文/能力判断全部经 thinkHoverModel 取「当前模型」——做成读写 computed：
 // 宽屏返回真实悬浮值，触屏返回生效模型，20 处消费点一行都不用改。
@@ -12,6 +13,7 @@ const THINK_LEAVE_DELAY = 200  // 留出移入面板的时间
 
 /**
  * @param ctx.isCoarse ref<boolean>
+ * @param {object} ctx 注入项
  * @param ctx.effectiveModel/currentOverrideModel/modelIndex ref/computed
  * @param ctx.thinkCapsOf/levelOptionsOf/currentLevelOf/deepOnOf 引擎侧档位口径
  * @param ctx.fmtWindow (n) => string

@@ -1,15 +1,24 @@
+// @ts-check
 // done 载荷合并（纯函数 + 注入）：把服务端那一份落库结果合进本轮气泡。
 // 计划卡终态、插话结算、编辑重发回填、工具终态、时间线与显示块都在这里，解析失败按旧版/停止生成处理。
 
 /**
  * @param msg 本轮回答消息
  * @param contentJson done 帧原始载荷
- * @param ctx.sid/resume/prev agentId（本轮会话、是否接流、作答智能体）
- * @param ctx.editUserMsg 编辑重发时的本地用户消息（回填落库 ID）
+ * @param {object} ctx 注入项（含下面这些回调）
+ * @param {any} ctx.sid 本轮会话
+ * @param {boolean} ctx.resume 是否接流
+ * @param {any} ctx.agentId 本轮作答智能体
+ * @param {any} ctx.editUserMsg 编辑重发时的本地用户消息（回填落库 ID）
  * @param ctx.currentSid () => string
  * @param ctx.messages ref
- * @param ctx.planCardFromRecord/applyDoneCore/mergeDoneToolCalls/restoreTimeline/ensureThinkSegment/applyBlocks
- * @param ctx.settleAbortedPlan 计划卡中断收尾
+ * @param {Function} ctx.planCardFromRecord 计划记录 → 卡片
+ * @param {Function} ctx.applyDoneCore 公共字段合并
+ * @param {Function} ctx.mergeDoneToolCalls 工具终态原地合并
+ * @param {Function} ctx.restoreTimeline 时间线重建
+ * @param {Function} ctx.ensureThinkSegment 思考段补段
+ * @param {Function} ctx.applyBlocks 显示块落盘
+ * @param {Function} ctx.settleAbortedPlan 计划卡中断收尾
  * @param ctx.linkPlanLineage 计划血缘重连
  * @param ctx.flushPendingSteers 插话队列结算
  * @param ctx.rememberSettled (sid, turnId) => void 记本页已收场

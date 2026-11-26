@@ -1,3 +1,4 @@
+// @ts-check
 // 历史消息引用（输入框 # 引用本轮上下文）：候选池、已选、上限与增删（仅本轮生效，不落库）。
 import { ref, computed } from 'vue'
 import { histItemDigest } from './projections'

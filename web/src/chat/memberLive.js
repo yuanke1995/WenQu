@@ -1,3 +1,4 @@
+// @ts-check
 // 团队成员轮直播的接流层（transport）：成员页打开时挂上，页面关掉就摘。
 //
 // 为什么需要这一层：成员轮由框架唤醒在后台起跑、没有请求线程，它的 SSE 出口是一次性的
@@ -19,12 +20,16 @@ import { CHAT_EVENT_CB } from './eventContract.generated.js'
 const CALLBACK_OF = name => CHAT_EVENT_CB[name] || null
 
 /**
+ * @param {object} ctx 注入项
  * @param ctx.subscribe (sid, opts) => void  真实接流口（页面注入 subscribeMemberLive）；
  *       单测注入桩函数，让这一层不依赖 api.js 那整条网络栈
  * @param ctx.onFrame   (cb, content, frame) => void  逐帧回调：cb 已是 CHAT_EVENT_CB 里的回调名
  * @param ctx.onSnapshot(snap, sid) => void           快照到达（含 frames 与 done；sid=这条直播的会话）
  * @param ctx.onEnd     (reason) => void              'done' 轮结束 / 'closed' 无直播或连不上
  * @param ctx.onWarn    (text) => void                传输层问题（断线等），不打断页面
+ * @param ctx.onStatus  (status, sid) => void          直播状态回写（只读镜像用）
+ * @param ctx.clearTimer (t) => void                   取消定时器
+ * @param ctx.setTimer  (fn, ms) => timer              设定定时器
  */
 export const createMemberLive = ctx => {
   let state = null // { sid, abort, ended, attempts, timer }

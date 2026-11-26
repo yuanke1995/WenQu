@@ -1,3 +1,4 @@
+// @ts-check
 // 插话派发（从 useChatEngine 抽出）：steer 帧落到时间线、把插话作为新一轮发出、
 // 补发后端没收上的那句、本轮/切会话时结算队列。依赖经显式入参注入（含 streamAnswer 回调）。
 import { reactive } from 'vue'

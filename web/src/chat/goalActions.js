@@ -1,3 +1,4 @@
+// @ts-check
 // 目标条动作（actions 层）：pause/resume/edit/cancel/delete 的统一出口。
 // 失败先落在目标文档的 actionError 上（条子就在眼前），画不出来时才退回提示层。
 export const goalAct = async (action, extra, ctx) => {

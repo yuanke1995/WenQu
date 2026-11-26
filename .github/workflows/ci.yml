@@ -66,10 +66,35 @@ jobs:
         run: npm ci
       - name: lint (编码约束闸门)
         run: npm run lint
-      - name: unit test (pure modules)
+      # 类型检查棘轮：@ts-check 标记的文件必须过 tsc，字段拼错/参数对不上的改动在这里拦下
+      - name: typecheck (tsc --checkJs 棘轮)
+        run: npm run typecheck
+      - name: unit test (pure modules + 帧序回放)
         run: npm test
       - name: vite build
         run: npm run build
+
+  e2e:
+    name: Frontend smoke (Playwright, mock SSE)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: npm ci
+        run: npm ci
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      # 整页冒烟：页面能开 + 发问能跑完 + 刷新后历史还在（后端全部 mock）
+      - name: Smoke (发问/流式/done/刷新)
+        run: npm run e2e
 
   sdk:
     name: SDK version / build / tests (${{ matrix.os }})

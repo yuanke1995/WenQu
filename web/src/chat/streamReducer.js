@@ -1,3 +1,4 @@
+// @ts-check
 // 接流快照 reducer：把服务端 snapshot 铺进气泡（纯字段写入 + 通过 ctx 注入引擎级状态）。
 import { earlierStart, resumedStartAt } from './turnTiming.js'
 import { restoreTimeline } from './timelineWrite.js'
@@ -5,7 +6,7 @@ import { ensureThinkSegment } from './segments.js'
 import { applyBlocks } from './blocks.js'
 
 /**
- * @param ctx { setTodos, autoCompactSid, liveCompactedSid, planCardFromRecord }
+ * @param {Record<string, any>} ctx { setTodos, autoCompactSid, liveCompactedSid, planCardFromRecord }
  * @returns 是否真的应用了快照（running!==true 返回 false，调用方走历史回显）
  */
 export const applyTurnSnapshot = (msg, snap, sid, ctx) => {

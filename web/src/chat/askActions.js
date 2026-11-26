@@ -1,3 +1,4 @@
+// @ts-check
 // 提问卡动作（actions 层）：一次性批量提交 / 忽略（与超时同语义）。
 import { askAnswerText, continuedAnswerPayload } from './askUser.js'
 

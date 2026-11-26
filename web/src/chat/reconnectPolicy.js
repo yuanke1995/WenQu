@@ -1,3 +1,4 @@
+// @ts-check
 // 传输断线后的重挂策略（纯函数，不读 Vue、不开定时器）。
 // 口径与 DSH 一致：连接是连接、轮次是轮次。连接断了只说明「这条通道没了」，
 // 服务端那一轮照样在跑；客户端要做的只是按退避重新挂回去，直到挂上或探到那一轮已经收场。
@@ -8,7 +9,7 @@ export const RECONNECT_MAX_MS = 10_000
 /**
  * 第 attempt 次重挂前的等待（attempt 从 0 起）：指数退避、封顶后不再增长，
  * 实际等待取 50~100% 的抖动——一批断在同一台代理上的客户端不会齐步砸回去。
- * @param opts.random 注入 [0,1) 随机源，单测用
+ * @param {{baseMs?: number, maxMs?: number, random?: () => number}} [opts] 策略覆盖；random 注入 [0,1) 随机源，单测用
  */
 export const reconnectDelay = (attempt, opts = {}) => {
   const baseMs = Number(opts.baseMs) > 0 ? Number(opts.baseMs) : RECONNECT_BASE_MS

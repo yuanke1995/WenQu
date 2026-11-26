@@ -1,3 +1,4 @@
+// @ts-check
 // 右栏锚点轨的数据源：每条提问 + 它之后的第一条回答（纯函数）。
 export const buildQaAnchors = list => {
   const out = []

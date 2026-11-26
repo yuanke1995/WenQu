@@ -1,3 +1,4 @@
+// @ts-check
 // 计划卡实时帧（纯函数 + 注入）：草稿增量、批准终稿、被拒/取代收束。
 // 卡片对象挂在 msg.planCard 上；血缘回链与滚动由调用侧注入。
 import { planText } from './planText.js'

@@ -1,3 +1,4 @@
+// @ts-check
 // 过程块状态行：标题（turnHead）与无三角纯文字行（turnTop）。纯函数，耗时由调用方传入。
 import { durZh } from '../utils/duration.js'
 import { turnMarker } from './turnStatus.js'

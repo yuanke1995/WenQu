@@ -1,3 +1,4 @@
+// @ts-check
 // 会话生命周期（从 useChatEngine 抽出）：历史重试、新建/删除/自动落点、
 // 跨页「新建对话」带的预选智能体消费。
 import { ref } from 'vue'

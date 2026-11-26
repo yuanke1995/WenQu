@@ -1,3 +1,4 @@
+// @ts-check
 // 过程段聚簇：思考/过程/工具连续游程合成一簇，正文段断簇。
 // 纯函数，不读 .value；投影层只做转出。
 export const CLUSTER_RUN = { think: 1, process: 1, group: 1 }

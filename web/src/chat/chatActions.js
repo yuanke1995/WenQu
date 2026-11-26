@@ -1,3 +1,4 @@
+// @ts-check
 // 会话动作的纯判据：拖动落点、动作分派、分享态、技能表单、键盘意图与调试阶段投影。
 // 无 Vue 与副作用依赖；视图状态、提示与引擎调用在 useChatActions.js。
 
@@ -127,7 +128,7 @@ export const panelNavIntent = (e, { addOpen, addTab, addFromRoot, addHi }) => {
   return null
 }
 
-/** @ / # / 唤起面板：触发位置限行首或空白/开括号后，避免邮箱与 URL 误开。 */
+/** 「@ / # /」唤起面板：触发位置限行首或空白/开括号后，避免邮箱与 URL 误开。 */
 export const panelTriggerChar = (e, before) => {
   if (e.key !== '@' && e.key !== '#' && e.key !== '/') return null
   if (e.ctrlKey || e.metaKey || e.altKey) return null

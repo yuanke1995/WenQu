@@ -1,9 +1,11 @@
+// @ts-check
 // 聊天区滚动：贴底跟随、尾随留白（问题置顶）、右轨锚点（悬浮预览 + 当前轮点亮）。
 // DOM 读取经注入（styleOf/元素对象），便于在无 DOM 的单测里验证判据。
 import { ref, computed, nextTick } from 'vue'
 
 /**
  * @param ctx.box ref<HTMLElement> 消息滚动容器
+ * @param {object} ctx 注入项
  * @param ctx.messages ref<消息[]>（换会话时重置贴底与留白）
  * @param ctx.qaAnchors ref<锚点[]>（轨上点亮用）
  * @param ctx.styleOf (el) => CSSStyleDeclaration（测试注入）

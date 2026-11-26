@@ -1,3 +1,4 @@
+// @ts-check
 // 执行过程（事件账本）的展示口径。
 // 账本里存的是「帧」，人要看的是「这一轮做了什么」——这里把帧翻成人话，
 // 并把 usage / retrieved 这类累计快照合并成一个节点（它们不是多次调用）。
@@ -264,6 +265,10 @@ function retrievalNode (events) {
  * - usage / retrieved 全局合并成一个节点（同一轮的累计快照，不是多次调用）
  * - tool 按发生顺序编号，编号就是「对照正文」的锚点
  * - 其余事件各占一个节点，保持时间顺序
+ */
+/**
+ * @param {any} turn 一轮事件
+ * @param {{message?: any}} [opts]
  */
 export function buildTurnView (turn, { message } = {}) {
   const events = Array.isArray(turn && turn.events) ? turn.events : []

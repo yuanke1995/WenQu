@@ -1,3 +1,4 @@
+// @ts-check
 // 消息文本的展示口径：历史列表标题/摘要、时间、错误分类文案。纯函数，不读 .value。
 
 export const histItemTitle = m => String((m && m.content) || '').replace(/[#*`>\-\n]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60)

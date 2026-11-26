@@ -1,3 +1,4 @@
+// @ts-check
 // 本轮发送参数（请求体字段，与事件回调同放在 opts 里交给 api）：
 // 思考/计划模式/血缘/强度/材料/引用/重发/编辑/插话/作答方/会话级模型。
 export const buildTurnRequest = ({

@@ -1,3 +1,4 @@
+// @ts-check
 // 交付包投影（产物 → 一个可验收的交付对象）：目标包 / 逐轮包 / 消息↔包索引 / ZIP 下载。
 // 从 useChatEngine 抽出：这些是纯投影 + 一个下载动作，依赖只有 messages/sessionGoal 与两个下载入口。
 import { computed } from 'vue'

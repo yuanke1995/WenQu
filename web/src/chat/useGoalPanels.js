@@ -1,3 +1,4 @@
+// @ts-check
 // 目标条上的取消二次确认、过程抽屉、交付抽屉，以及随目标/会话变化的收口。
 import { ref, computed, watch } from 'vue'
 import { goalPanelActionPlan, goalTurnAnchor, goalKeyOf } from './goalPanels.js'

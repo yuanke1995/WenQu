@@ -1,8 +1,10 @@
+// @ts-check
 // 会话切换编排（actions/编排层）：切到指定会话、按需补拉会话级数据、加载历史并接回在跑的轮、
 // 恢复各类待办卡、同步地址栏；失败时区分「拉取失败」与「归属/已删除」两类回退。
 // 所有引擎状态与副作用经注入，模块自身不读 store/router。
 
 /**
+ * @param {object} ctx 注入项（引擎状态 + 副作用）
  * @param ctx.currentSid () => string
  * @param ctx.setCurrentSid sid => void
  * @param ctx.settleSteer 离开上一会话时结算插话队列
@@ -23,6 +25,7 @@
  * @param ctx.historyError ref
  * @param ctx.chatStreams Map（会话 → 在跑的流）
  * @param ctx.messages ref
+ * @param ctx.dropSteered list => list（撤掉已被插话段用掉的用户行）
  * @param ctx.linkPlanLineage list => void
  * @param ctx.ensureTurnTodos (sid, list) => void
  * @param ctx.refreshArtifactSigns () => void
@@ -34,6 +37,8 @@
  * @param ctx.scrollForce () => void
  * @param ctx.loadSessions () => Promise
  * @param ctx.autoPick () => Promise
+ * @param ctx.urlSid () => string 地址栏里的 sid
+ * @param ctx.replaceHome () => void 回空白对话页
  */
 export const createSessionSwitch = (ctx) => {
   // 同一 sid 只允许一个 getHistory 在飞，重复调用直接复用它的结果。

@@ -1,3 +1,4 @@
+// @ts-check
 // 编辑重发的页面态：编辑卡开在哪一轮、卡内随行材料、重发判据与动作出口。
 // 纯判据在 editResend.js；取数、提示、输入管线与引擎调用由调用方注入。
 import { ref, reactive, computed, nextTick } from 'vue'

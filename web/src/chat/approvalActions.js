@@ -1,3 +1,4 @@
+// @ts-check
 // 工具执行审批动作（actions 层）：批准/拒绝，后端以结果回给模型继续回答。
 // scope='session' = 本次会话都允许（同一工具后续不再弹卡），其余情况只批这一步。
 export const resolveApproval = async (m, card, approved, ctx, scope) => {

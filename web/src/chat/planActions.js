@@ -1,3 +1,4 @@
+// @ts-check
 // 计划卡裁决动作（actions 层）：批准/拒绝、同一轮退回重出。
 export const submitPlanApproval = async (m, action, ctx) => {
   const c = m && m.planCard

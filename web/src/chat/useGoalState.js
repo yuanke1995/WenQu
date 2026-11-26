@@ -1,3 +1,4 @@
+// @ts-check
 // 会话目标（目标模式）状态 + 后台续跑轮轮询 + 占位气泡（从 useChatEngine 抽出）。
 // 目标由 SSE goal_state 帧写入、切会话/刷新按需回捞；RUNNING 时 2.5s 一跳探测接流轮、每三跳取一次面板。
 // goalPlaceholder 是本模块私有可变状态，对外经 dropGoalPlaceholderIfOther / goalPlaceholderFor 暴露。

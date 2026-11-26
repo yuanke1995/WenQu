@@ -1,3 +1,4 @@
+// @ts-check
 // 会话工作区摘要与会话级权限档位：头部标识、就绪提示、档位名册、执行器刷新与目录打开。
 import { ref, computed, watch } from 'vue'
 import { resolveEffectivePermission, permissionLabelOf } from './permission.js'

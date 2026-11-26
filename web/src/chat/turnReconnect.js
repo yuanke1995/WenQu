@@ -1,3 +1,4 @@
+// @ts-check
 // 断线重挂控制器（transport 层）：一条按会话的重试循环，「探测 → 接流 → 退避再试」。
 // 与 DSH 同口径：连接是连接、轮次是轮次。通道断了只说明这条流没了，服务端那一轮照样在跑；
 // 客户端要做的是把它重新挂回去（GET /chat/resume），**绝不重发 POST /chat**——那会变成一轮
@@ -5,6 +6,7 @@
 import { reconnectDelay, reconnectNext } from './reconnectPolicy.js'
 
 /**
+ * @param {object} ctx 注入项（含下面这些回调与定时器）
  * @param ctx.onDisconnect (msg, sid) => void  通道断了：标成「重连中」（气泡仍是在进行中）
  * @param ctx.onEnd sid => void            循环结束（接上 / 收场 / 被取消），用于撤掉「重连中」登记
  * @param ctx.clearRetrying (msg) => void  不再重挂时摘掉「重连中」标注
@@ -13,7 +15,10 @@ import { reconnectDelay, reconnectNext } from './reconnectPolicy.js'
  * @param ctx.online () => boolean         设备是否有网（离线时暂停，等 online 再续）
  * @param ctx.attach (sid, msg) => Promise<'attached'|'idle'|'busy'|'running'|'unknown'>
  * @param ctx.settleByHistory (msg, sid) => void  探到那一轮已收场：按历史重显真实结果
- * @param ctx.setTimer / clearTimer / onOnline / offOnline  定时器与 online 监听的注入点
+ * @param {Function} ctx.setTimer 定时器
+ * @param {Function} ctx.clearTimer 取消定时器
+ * @param {Function} ctx.onOnline 注册 online 监听
+ * @param {Function} ctx.offOnline 撤销 online 监听
  */
 export const createTurnReconnect = ctx => {
   const loops = new Map()   // sid → { sid, msg, attempt, timer, onOnline, cancelled, onFail }
@@ -83,10 +88,11 @@ export const createTurnReconnect = ctx => {
   return {
     /**
      * 通道断了：登记一条重挂循环。
-     * @param opts.admitted 服务端是否受理过这一轮（发过帧）
-     * @param opts.resume   断的是不是接流通道（接流通道断了同样要重挂）
-     * @param opts.error    断线的原始错误（未送达时的错误卡正文）
-     * @param opts.onFail   未送达收尾（错误卡 + 重新生成）
+     * @param {object} opts 本轮事实与收尾回调
+     * @param {any} [opts.admitted] 服务端是否受理过这一轮（发过帧）
+     * @param {any} [opts.resume]   断的是不是接流通道（接流通道断了同样要重挂）
+     * @param {any} [opts.error]    断线的原始错误（未送达时的错误卡正文）
+     * @param {Function} [opts.onFail] 未送达收尾（错误卡 + 重新生成）
      */
     start (sid, msg, opts = {}) {
       if (!sid || !msg) return

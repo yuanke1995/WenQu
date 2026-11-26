@@ -1,3 +1,4 @@
+// @ts-check
 // 编辑重发的纯判据：从原消息播种编辑卡、组装重发载荷、判定「空内容 / 未改动」、
 // 随行材料的增删限额与键盘意图。依赖以参数注入，视图状态在 useEditResend.js。
 
@@ -70,7 +71,10 @@ export const editResendArgs = (payload, editMessageId, newUser) => [
   payload.histRefs.map(mid => ({ messageId: mid })), editMessageId, newUser
 ]
 
-/** 编辑卡键盘：输入法组合中放行；「+」面板优先消费导航；Enter 重发、Esc 取消。 */
+/** 编辑卡键盘：输入法组合中放行；「+」面板优先消费导航；Enter 重发、Esc 取消。
+ * @param {any} e 键盘事件
+ * @param {{panelOpen?: boolean, panelNav?: (e: any) => boolean}} [opts] 面板态与导航消费
+ */
 export const editKeydownIntent = (e, { panelOpen = false, panelNav = () => false } = {}) => {
   if (e.isComposing || e.keyCode === 229) return null
   if (panelOpen && panelNav(e)) return 'panel'
@@ -79,7 +83,7 @@ export const editKeydownIntent = (e, { panelOpen = false, panelNav = () => false
   return null
 }
 
-/** @ 引用增删：智能体委派是单主语，选中另一位即替换；其余类型受总数上限约束。 */
+/** 「@」引用增删：智能体委派是单主语，选中另一位即替换；其余类型受总数上限约束。 */
 export const toggleMentionRows = (rows, type, item, max) => {
   let next = [...rows]
   const hit = next.findIndex(mm => mm.type === type && mm.id === item.id)

@@ -1,3 +1,4 @@
+// @ts-check
 // 工具卡开合与「让这张卡真的看得见」的定位展开：纯状态操作，不读 .value。
 import { turnOpen } from './turnFold.js'
 import { turnProcessRows } from './turnProcess.js'

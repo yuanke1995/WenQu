@@ -1,3 +1,4 @@
+// @ts-check
 // 思考档位状态：按模型的开关/强度记忆（localStorage 立即可用 + 登录后的服务端记忆）、
 // 可选项与最终下发参数。悬浮面板、移动端模型面板与发送链路共用这一份口径；纯查表常量在 ./thinking.js。
 import { ref, computed } from 'vue'

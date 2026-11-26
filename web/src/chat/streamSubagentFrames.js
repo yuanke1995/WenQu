@@ -1,10 +1,14 @@
+// @ts-check
 // 子智能体分支步骤帧（纯函数 + 注入）：派遣卡上的「当前步骤」与迷你时间线、完整过程抽屉的帧累积。
 // 帧形如 {i, agent, type, content}；i 在咨询这条通路上恒为 0，归行只能认 agent 名字。
 
 /**
  * @param msg 本轮回答消息
  * @param raw 帧载荷
- * @param ctx.isDispatchTool/consultNameOf/stepBriefOf 派遣工具判定、咨询名、步骤摘要（纯函数）
+ * @param {object} ctx 注入项（含下面这些纯函数与滚动）
+ * @param {Function} ctx.isDispatchTool 派遣工具判定
+ * @param {Function} ctx.consultNameOf 咨询名
+ * @param {Function} ctx.stepBriefOf 步骤摘要
  * @param ctx.onScroll 跟随滚动
  */
 export const applySubagentStep = (msg, raw, ctx) => {

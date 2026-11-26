@@ -1,3 +1,4 @@
+// @ts-check
 // ==================== 会话内查找（PC 快捷键 / 移动顶栏入口共用） ====================
 // 从 ChatPage.vue 抽出来的原因：这个功能要在移动壳里再做一遍入口，而复制一份 130 行
 // 的 Range/Highlight 逻辑必然两端分叉（那边改了行契约这边不跟着改就是静默失效）。
@@ -75,7 +76,8 @@ export const useChatSearch = ({ boxRef, messages }) => {
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, makeTextFilter())
     while (walker.nextNode()) {
       const node = walker.currentNode
-      const rowIdx = node.parentElement?.closest('[data-row-index]')?.dataset.rowIndex
+      const row = /** @type {HTMLElement | null | undefined} */ (node.parentElement?.closest('[data-row-index]'))
+      const rowIdx = row?.dataset.rowIndex
       const target = (currentMsgIdx != null && rowIdx === String(currentMsgIdx)) ? cur : null
       const low = (node.nodeValue || '').toLowerCase()
       let from = 0

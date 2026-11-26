@@ -1,3 +1,4 @@
+// @ts-check
 // 计划折叠态、完整计划抽屉、批准后调整面板的页面态与动作出口。
 // 纯判据在 planPanels.js；引擎取值、动作与提示由调用方经 ctx 注入。
 import { ref, reactive, computed, watch } from 'vue'
@@ -6,11 +7,26 @@ import { historyRefPreviewText, mentionNamesOf, planHeadTextOf, shouldAutoExpand
          adjustFailureText, planPanelKeydownIntent } from './planPanels.js'
 
 /**
+ * @param {object} ctx 注入项
  * @param ctx.messages () => 消息数组（引擎取值函数）
- * @param ctx.currentSessionId/currentSessionTitle/curPlanCard/planExpired/sessionPlans/pendingPlan/pendingMentions/isNarrow ref/computed
- * @param ctx.planStateText/planExecProgressOf/planAdjustsOfMsg 引擎纯函数
- * @param ctx.submitPlanApproval/revisePlanInPlace/continuePlanConversation/adjustPlanAfterApproval/jumpToPlan/stopNow 动作函数
- * @param ctx.notify 通知对象，需带 .info(text)
+ * @param {any} ctx.currentSessionId 当前会话 id
+ * @param {any} ctx.currentSessionTitle 会话标题
+ * @param {any} ctx.curPlanCard 当前气泡的计划卡
+ * @param {any} ctx.planExpired 计划是否过期
+ * @param {any} ctx.sessionPlans 会话级计划清单
+ * @param {any} ctx.pendingPlan 待批计划
+ * @param {any} ctx.pendingMentions 「@」引用待选
+ * @param {any} ctx.isNarrow 是否窄屏
+ * @param {Function} ctx.planStateText 计划状态文案
+ * @param {Function} ctx.planExecProgressOf 计划执行进度
+ * @param {Function} ctx.planAdjustsOfMsg 计划调整记录
+ * @param {Function} ctx.submitPlanApproval 批准计划
+ * @param {Function} ctx.revisePlanInPlace 就地改稿
+ * @param {Function} ctx.continuePlanConversation 带着意见继续对话
+ * @param {Function} ctx.adjustPlanAfterApproval 批准后调整
+ * @param {Function} ctx.jumpToPlan 跳到计划行
+ * @param {Function} ctx.stopNow 停止本轮
+ * @param {any} ctx.notify 通知对象，需带 .info(text)
  */
 export const usePlanPanels = ctx => {
   const messages = ctx.messages

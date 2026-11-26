@@ -14,11 +14,13 @@
     "build": "node ../scripts/build-web.mjs",
     "postbuild": "node ../scripts/mac/check-h5-budget.mjs",
     "test": "node ../scripts/run-tests.mjs test",
+    "e2e": "playwright test",
     "check:h5": "node ../scripts/mac/check-h5-budget.mjs",
     "preview": "vite preview",
     "dev:web": "vite",
     "lint": "eslint .",
-    "lint:report": "eslint . -f json -o ../target/eslint-report.json || true"
+    "lint:report": "eslint . -f json -o ../target/eslint-report.json || true",
+    "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
     "@ant-design/icons-vue": "^7.0.0",
@@ -37,12 +39,14 @@
     "vue-router": "^4.3.0"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.0",
+    "@playwright/test": "^1.65.1",
     "@vitejs/plugin-vue": "^5.0.0",
-    "unplugin-vue-components": "^32.1.0",
-    "vite": "^5.0.0",
     "eslint": "^9.39.0",
     "eslint-plugin-vue": "^9.33.0",
-    "@eslint/js": "^9.39.0",
-    "globals": "^15.14.0"
+    "globals": "^15.14.0",
+    "typescript": "^5.9.3",
+    "unplugin-vue-components": "^32.1.0",
+    "vite": "^5.0.0"
   }
 }

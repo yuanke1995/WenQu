@@ -1,9 +1,13 @@
+// @ts-check
 // 智能体选择状态：清单、会话级待选值（下一问用谁）、当前作答方与归属徽标去重。
 // 会话不锁定作答方：每轮按请求解析，换人立即生效；这里只维护「下一问用谁」的前端待选值。
 import { ref, computed } from 'vue'
 
-export const createAgentPicker = ({ currentSid, messages, listAgentsApi, listConsultableApi,
-                                    remember = () => {}, onPick = () => {} }) => {
+export const createAgentPicker = ({
+  currentSid, messages, listAgentsApi, listConsultableApi,
+  remember = /** @type {(rows: any[]) => void} */ (() => {}),
+  onPick = () => {},
+}) => {
   const agentList = ref([])          // 全部主智能体（不含子智能体）
   // 会话ID → 用户为本会话挑的作答智能体（''=默认助手）。纯前端待选值：后端没有"首问锁定"，
   // 每轮都按请求里的 agentId 解析，所以这一项就是"下一问用谁"，换人立即生效、不需要开新会话。

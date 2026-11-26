@@ -1,3 +1,4 @@
+// @ts-check
 // 回答/提问上方的分隔线判据：模型切换、上下文压缩（持久标记与流式实时两档）。
 export const createTurnDividers = ({ modelIndexOf, messages, isLive, liveCompactedSid, currentSid }) => {
   /** 模型引用 → 展示名（模型库友好名优先，查不到回退原始引用 provider/model） */

@@ -1,3 +1,4 @@
+// @ts-check
 // 输入框取材的**纯判定层**：把「一个 File 该进哪条管线、被拒时该说什么」从两个调用方里抽出来。
 //
 // 为什么要有这一层：这条口径要同时给登录态对话页与分享页用，且它最不该各写一份——
@@ -93,7 +94,7 @@ export const DEFAULT_LIMITS = { maxImages: MAX_IMAGES, maxFiles: MAX_FILES, maxF
  * @param {number} imgCount 当前已挂起的图片数（不含本批已接受的）
  * @param {number} fileCount 当前已挂起的附件数
  * @param {{maxImages?:number,maxFiles?:number,maxFileMb?:number}} [limits] 限额覆盖（分享页用服务端下发值）
- * @returns {{kind:'image'|'file',label:string,ext:string}|{kind:'reject',reason:string,label:string,ext:string,limit:number}}
+ * @returns {{kind:'image'|'file',label:string,ext?:string}|{kind:'reject',reason:string,label:string,ext:string,limit:number}}
  */
 export function classifyIntake (f, imgCount = 0, fileCount = 0, limits) {
   const { maxImages, maxFiles, maxFileMb } = { ...DEFAULT_LIMITS, ...(limits || {}) }

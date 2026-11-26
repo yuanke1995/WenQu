@@ -1,3 +1,4 @@
+// @ts-check
 // 成员页的「直播态」气泡（state 层）：把 /team/member/{sid}/live 的帧拼成一条可渲染的消息对象。
 //
 // 为什么不是直接复用主问答的 streamAnswer：那条函数的一整套副作用（建气泡、登记 chatStreams、
@@ -31,6 +32,7 @@ const freshLiveMsg = (sid, name) => reactive({
 })
 
 /**
+ * @param {object} ctx 注入项（含下面这些回调）
  * @param ctx.appendMessage (msg) => void   直播气泡进视图（未在列表里才追加）
  * @param ctx.reload        (sid, why) => void 收尾：按历史重载那一条会话（落库那份是权威）
  * @param ctx.onScroll      () => void      跟随滚动
@@ -62,7 +64,7 @@ export const createMemberLiveState = ctx => {
    * 快照到达：第一次进来时按这一条会话建直播态；之后只是确认「这一轮还没收尾」。
    * 积压帧已含全部 token，这里不补正文。
    *
-   * @param snap  {done, frames}（frames 由接流层按顺序逐帧派发给 onFrame，这里不重复消费）
+   * @param {{done?: boolean, frames?: any[]}} snap frames 由接流层按顺序逐帧派发给 onFrame，这里不重复消费
    * @param sid2  这条直播对应的会话 id（接流层从订阅结果里给）
    */
   const applySnapshot = (snap, sid2) => {

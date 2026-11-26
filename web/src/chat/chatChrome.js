@@ -1,3 +1,4 @@
+// @ts-check
 // 聊天页外壳的纯判据：输入框 chip 键与描述、占位文案、锚点文案、右栏开合、
 // 全局键盘意图、浮层命中与列表映射。响应式状态与副作用在 useChatChrome.js。
 
@@ -33,6 +34,7 @@ export const processMsgOf = list => {
 }
 
 /** 主输入框占位文案：生成中的插话、目标待发、窄屏不提示 Enter/Shift+Enter。 */
+/** @param {{loading?: any, goalTurnStreaming?: any, goalArmed?: any, hasSessionGoal?: any, isNarrow?: any}} ctx 输入卡状态 */
 export const composerPlaceholderOf = ({ loading, goalTurnStreaming, goalArmed, hasSessionGoal }) => {
   if (loading) {
     if (goalTurnStreaming) return '插话：先回答你这句，目标随后自动继续'
@@ -43,8 +45,14 @@ export const composerPlaceholderOf = ({ loading, goalTurnStreaming, goalArmed, h
   return '问点什么…'
 }
 
-/** 右栏锚点预览卡两行：问题截一行、回答摘录；截断口径由调用方注入。 */
+/** 右栏锚点预览卡两行：问题截一行、回答摘录；截断口径由调用方注入。
+ * @param {any} a
+ * @param {(s: string, max?: number) => string} [oneLine]
+ */
 export const anchorQOf = (a, oneLine = (s => s)) => oneLine(a.q, 64) || '（随行图片 / 附件提问）'
+/** @param {any} a
+ * @param {(s: string, max?: number) => string} [oneLine]
+ */
 export const anchorAOf = (a, oneLine = (s => s)) =>
   a.loading ? '回答生成中…' : (a.hasAi ? oneLine(a.a, 120) : '')
 

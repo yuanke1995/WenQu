@@ -1,14 +1,16 @@
+// @ts-check
 // 流式文本缓冲（token/过程）：token 只进缓冲，按节流批量刷进响应式与时间线文本区间；
 // 终态路径 flushNow 保底，最终态完整、不丢已流出内容。接流去重也在这里（dropResumedOverlap）。
 import { dropResumedOverlap } from './streamLifecycle.js'
 
 /**
- * @param msg 本轮回答消息
- * @param ctx.extendText (msg, from, to) => void 推进时间线 text 段区间
- * @param ctx.extendProcess (msg, from, to) => void 推进时间线 process 段区间
- * @param ctx.scroll () => void 跟随滚动（仅 keepScroll=true 时）
- * @param ctx.schedule 定时器（测试可注入）
- * @param ctx.throttleMs 节流窗口，默认 120ms
+ * @param {object} options 注入项
+ * @param {any} options.msg 本轮回答消息
+ * @param {(msg: any, from: number, to: number) => void} options.extendText 推进时间线 text 段区间
+ * @param {(msg: any, from: number, to: number) => void} options.extendProcess 推进时间线 process 段区间
+ * @param {() => void} options.scroll 跟随滚动（仅 keepScroll=true 时）
+ * @param {Function} [options.schedule] 定时器（测试可注入）
+ * @param {number} [options.throttleMs] 节流窗口，默认 120ms
  */
 export const createStreamBuffer = ({ msg, extendText, extendProcess, scroll,
                                      schedule = setTimeout, throttleMs = 120 }) => {

@@ -1,3 +1,4 @@
+// @ts-check
 // 会话动作出口：深度执行、插话排序、查找/分享、复制与导出、固化技能、删除与调试。
 // 纯判据在 chatActions.js；引擎值、提示、动作与 hooks 由 ctx 注入。
 import { ref, reactive, computed, watch, onMounted, onUnmounted, getCurrentInstance, h } from 'vue'

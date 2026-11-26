@@ -1,3 +1,4 @@
+// @ts-check
 // 整轮用时的秒针：1s 一跳的 tick 驱动重渲染，让「卡住」变成可见的进行中。
 // 模块内唯一的响应式状态是 nowTick；挂表/摘表由消费方成对调用，卸载时 stopTick。
 import { ref } from 'vue'

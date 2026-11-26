@@ -1,3 +1,4 @@
+// @ts-check
 // done 收尾（纯函数 + 注入）：把一整轮回答定格——早产卡/提问卡/审批卡收场、空正文收束语、
 // 用量与来源回填、模型降级同步、在跑登记摘除、侧栏归位、多版本追加。
 // payload 的解析与合并（plain fields）仍在调用侧，这里只收「收尾动作」。
@@ -5,6 +6,7 @@ import { snapshotVersion } from './versions.js'
 
 /**
  * @param msg 本轮回答消息
+ * @param {object} ctx 注入项（含下面这些状态与回调）
  * @param ctx.st 本轮流记录（serverStopped/surrendered）
  * @param ctx.sources/related/messageId/degradations done 载荷解析结果
  * @param ctx.prev 自动重试来源（非空表示这是重试，不追加新版本）
@@ -16,6 +18,10 @@ import { snapshotVersion } from './versions.js'
  * @param ctx.scroll 收尾贴底/保位
  * @param ctx.touchRow 侧栏会话行归位
  * @param ctx.reloadSessions 重拉会话列表
+ * @param ctx.stopPlaceholder 空正文时的收束语（「已停止生成」）
+ * @param {any[]} ctx.related 推荐追问
+ * @param {any} ctx.messageId 落库后的回答消息 ID
+ * @param {any[]} ctx.degradations 降级记录
  */
 export const closeoutDoneTurn = (msg, ctx) => {
   // 早产卡收口：本轮结束仍没等到正式 tool/requested 的那张（入参没生成完/被叫停）——标成未执行，

@@ -1,9 +1,11 @@
+// @ts-check
 // 工具状态帧（纯函数 + 注入）：start/progress/终态的卡片合并与实时输出累积。
 // 卡片对象挂在 msg.toolCalls 上，时间线写入口与秒表由调用侧注入。
 
 /**
  * @param msg 本轮回答消息
  * @param raw 帧载荷（字符串或对象）
+ * @param {object} ctx 注入项（含下面这些回调）
  * @param ctx.thinkRoundEnd () => void 断思考段（工具事件是「这一段想完了」的信号）
  * @param ctx.ensureTick 秒表保活
  * @param ctx.liveScroll 跟随滚动

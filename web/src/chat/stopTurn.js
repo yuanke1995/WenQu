@@ -1,3 +1,4 @@
+// @ts-check
 // 停止本轮（actions 层）：先请服务端真停，再掐本地通道并就地定格工具卡。
 import { closeRunningTools, markStoppedTurn } from './turnCloseout.js'
 

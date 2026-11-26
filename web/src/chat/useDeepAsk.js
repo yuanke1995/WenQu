@@ -1,3 +1,4 @@
+// @ts-check
 // ChatPage 的深度执行入口、智能体提问面板、摘要重新压缩与收尾副作用。
 // 引擎值、页面动作与 DOM 全局全部经 ctx 注入；纯判据在 deepAsk.js。
 import { ref, computed, watch, nextTick, onMounted, onUnmounted, getCurrentInstance } from 'vue'

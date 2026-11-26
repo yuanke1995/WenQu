@@ -1,3 +1,4 @@
+// @ts-check
 // 技能选用状态（输入框「+」菜单）：清单加载、本轮点名（最多 3 个）、头像底色。
 // 只在内存里，不落存储；发送后由发送链路清空 pickedSkills。
 import { ref } from 'vue'
@@ -5,7 +6,8 @@ import { ref } from 'vue'
 export const SKILL_AVA_COLORS = ['#e8f1ff', '#fff3e0', '#e8f5e9', '#fdeaf3', '#ede7f6', '#e0f4f1']
 export const MAX_PICKED_SKILLS = 3
 
-export const createSkillPicker = ({ listApi, currentSid, notifyWarning = () => {} }) => {
+export const createSkillPicker = ({ listApi, currentSid,
+  notifyWarning = /** @type {(msg: string) => void} */ (() => {}) }) => {
   const skillList = ref([])      // 可用技能（内置 + 本人 + 本会话工作区的只读清单）
   const pickedSkills = ref([])   // 本轮选用的技能名（发送后清空）
   const skillDoc = ref('')       // 正在看正文的那条技能名（''=没打开）；存名字而不是条目快照，

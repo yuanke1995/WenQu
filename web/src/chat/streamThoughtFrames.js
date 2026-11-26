@@ -1,9 +1,11 @@
+// @ts-check
 // 思考帧（纯函数 + 注入）：增量成段/接段、终稿校正、断段信号。
 // 思考段与正文分段：正文走节流，思考即时到达——先落正文再记段，否则段会被记在尚未落屏的正文之前。
 import { pushTimelineThink, extendTimelineThink } from './timelineWrite.js'
 
 /**
  * @param msg 本轮回答消息
+ * @param {object} ctx 注入项（含下面这些回调）
  * @param ctx.flushNow (keepScroll) => void 落屏节流中的正文
  * @param ctx.scroll () => void
  * @param ctx.extendThink/pushThink 段区间推进/新段（默认取 projections 的同一口径）

@@ -1,3 +1,4 @@
+// @ts-check
 // ==================== 站内通知：共用取数口径 ====================
 // PC 铃铛（AppLayout 侧栏 foot 的 popover）与移动壳（顶栏铃铛 → 通知 sheet）共用这一份：
 // 未读数 30s 轮询 + 列表拉取 + 乐观置已读（失败回滚）。
@@ -209,7 +210,7 @@ const NOTIF_AUDIENCE = {
 
 /**
  * 该类型对当前身份是否可见/可达。
- * @param {{admin?:boolean, superadmin?:boolean, enterprise?:boolean}} id 身份口径（superadmin 同时视为 admin）
+ * 身份口径：superadmin 同时视为 admin。
  */
 export function notifAudienceOk (type, { admin = false, superadmin = false, enterprise = false } = {}) {
   const a = NOTIF_AUDIENCE[type]

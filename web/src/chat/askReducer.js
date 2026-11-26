@@ -1,3 +1,4 @@
+// @ts-check
 // 提问卡 reducer（恢复态/实时共用）：构建卡片、挂卡排队、撤卡顶上。
 
 export function buildAskCard (j, remainingMs) {

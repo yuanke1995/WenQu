@@ -1,3 +1,4 @@
+// @ts-check
 // 交付包的聚合口径：一组产物收成一个包（入口、分组、体量），卡片与抽屉都吃这一份。
 // 纯函数、不读 .value，可在 Node 里直接测；深度执行再在包上面加版本与验收。
 import { fmtSize } from '../utils/format.js'

@@ -1,3 +1,4 @@
+// @ts-check
 // 手动压缩会话上下文（/compact）+ 早期对话摘要面板（从 useChatEngine 抽出）。
 // 后端一律走 AgentScope 框架的 ConversationCompactor，问渠侧不再有第二套摘要阈值/开关；
 // 这里只负责显式发起压缩、并在当场/事后展示摘要结果。

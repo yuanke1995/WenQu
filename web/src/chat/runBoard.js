@@ -1,3 +1,4 @@
+// @ts-check
 // run_code 扇出看板与运行中水位：纯展示判据，不读 .value。
 import { toolDuration } from './tools.js'
 

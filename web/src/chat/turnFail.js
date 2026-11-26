@@ -1,8 +1,10 @@
+// @ts-check
 // 流失败收尾（纯函数 + 注入）：保留已流出的半程内容，挂独立错误卡，收掉各类进行中卡片。
 // 自动重试与接流重连的分支不在这里（它们要重新开流，属于传输层控制流）。
 
 /**
  * @param msg 本轮回答消息
+ * @param {object} ctx 注入项（含下面这些回调）
  * @param ctx.error 原始异常（错误卡正文）
  * @param ctx.kind  分类（interrupted=断线/冻结；其它=业务错误）
  * @param ctx.flushNow 把节流缓冲落屏（保住半程正文与时间线）

@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * 执行计划的结构化投影（纯函数，无 UI 依赖）。
  *
@@ -110,7 +111,8 @@ export function planChain (card) {
  * 批准之后看用户表态：点过就按点的（本轮正在跑也照收），没点过则在执行中自动铺开、跑完收回一行。
  * 「没点过」必须是 undefined 而不是 false，否则自动展开期间点收起会被记成「展开」，那颗折叠键就按不动。
  */
-export const planCardExpanded = ({ live, running, choice } = {}) => {
+export const planCardExpanded = (card = {}) => {
+  const { live, running, choice } = card
   if (live) return true
   return choice === undefined ? !!running : !!choice
 }

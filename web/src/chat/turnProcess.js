@@ -1,3 +1,4 @@
+// @ts-check
 // 过程块投影：时间线里的思考/过程/工具段按发生顺序聚簇，text 段属于正文流不进过程块。
 // 无时间线时退回工具终态清单（正文重建回退）。纯函数，不读 .value。
 import { clusterize, markGrowingCluster } from './processCluster.js'
@@ -43,5 +44,5 @@ export const turnProcessRows = m => {
     const tools = toolCallsView(m.toolCalls)
     if (tools.length) out.push({ kind: 'group', tools })
   }
-  return markGrowingCluster(clusterize(out), m)
+  return markGrowingCluster(clusterize(out))
 }
