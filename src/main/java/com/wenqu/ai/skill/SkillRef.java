@@ -19,7 +19,10 @@ import java.util.regex.Pattern;
  */
 public final class SkillRef {
 
-    private static final Pattern NAME = Pattern.compile("[a-z0-9][a-z0-9._-]{0,99}");
+    // 技能名允许中文：内置/示例技能的 SKILL.md frontmatter name 就是中文（如「多来源交叉核对」），
+    // 与 UserSkillStore.NAME_OK（[\\p{IsHan}A-Za-z0-9_-]）保持同一口径；raw 已 toLowerCase，
+    // 所以这里只需 a-z。空格/斜杠/冒号仍不允许——它们会破坏裸名与 {uid}/{name} 的解析。
+    private static final Pattern NAME = Pattern.compile("[\\p{IsHan}a-z0-9][\\p{IsHan}a-z0-9._-]{0,99}");
 
     private final String source;
     private final String owner;
@@ -81,7 +84,7 @@ public final class SkillRef {
     private static String name(String raw) {
         String n = raw == null ? "" : raw.trim().toLowerCase(Locale.ROOT);
         if (!NAME.matcher(n).matches()) {
-            throw new BizException("技能名须为 1–100 位小写字母/数字/._-: " + raw);
+            throw new BizException("技能名须为 1–100 位字母（含中文）/数字/._-: " + raw);
         }
         return n;
     }

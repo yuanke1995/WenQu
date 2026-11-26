@@ -44,6 +44,19 @@ class SkillRefTest {
     }
 
     @Test
+    @DisplayName("中文技能名可用（内置技能的 frontmatter name 就是中文）")
+    void chineseName() {
+        SkillRef bare = SkillRef.parse("多来源交叉核对");
+        assertThat(bare.name()).isEqualTo("多来源交叉核对");
+        assertThat(bare.canonical()).isFalse();
+
+        SkillRef builtin = SkillRef.parse("builtin:多来源交叉核对");
+        assertThat(builtin.source()).isEqualTo(WenquSkillRepository.SOURCE_BUILTIN);
+        assertThat(builtin.name()).isEqualTo("多来源交叉核对");
+        assertThat(builtin.canonicalText()).isEqualTo("builtin:多来源交叉核对");
+    }
+
+    @Test
     @DisplayName("非法引用 fail-loud")
     void invalid() {
         assertThatThrownBy(() -> SkillRef.parse("user:review")).isInstanceOf(BizException.class);
