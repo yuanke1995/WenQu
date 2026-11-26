@@ -13,6 +13,10 @@ import com.wenqu.ai.service.KeywordExtractor;
 import com.wenqu.ai.service.KeywordIndexService;
 import com.wenqu.ai.service.QaLogService;
 import com.wenqu.ai.service.QaIndexService;
+import com.wenqu.ai.service.KnowledgeBaseService;
+import com.wenqu.ai.service.KnowledgeChunkAssembler;
+import com.wenqu.ai.service.ResourceVisibilityService;
+import com.wenqu.ai.service.RoleService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -47,8 +51,6 @@ import com.wenqu.ai.security.Permission;
 public class KnowledgeController {
     /** 统一审计事件：同一份格式串派生日志与结构化事件，不再两处抄 */
     private final AuditService audit;
-
-
     private final KnowledgeMapper knowledgeMapper;
     private final AiDocumentMapper documentMapper;
     private final DocumentService documentService;
@@ -57,13 +59,15 @@ public class KnowledgeController {
     private final DocumentMetaCache documentMetaCache;
     private final KeywordExtractor keywordExtractor;
     private final KeywordIndexService keywordIndexService;
-    private final com.wenqu.ai.service.ResourceVisibilityService visibility;
-    private final com.wenqu.ai.service.KnowledgeBaseService kbService;
+    private final ResourceVisibilityService visibility;
+    private final KnowledgeBaseService kbService;
     /** 官方内置库的知识块在管理侧仅管理员可读（判定用） */
-    private final com.wenqu.ai.service.RoleService roleService;
+    private final RoleService roleService;
+    /** 知识块出参装配：图片在这里现场签名（库里存原始 URL，直接下发必然 401） */
+    private final KnowledgeChunkAssembler knowledgeChunkAssembler;
 
-    private com.wenqu.ai.service.ResourceVisibilityService.Principal principal() {
-        return new com.wenqu.ai.service.ResourceVisibilityService.Principal(
+    private ResourceVisibilityService.Principal principal() {
+        return new ResourceVisibilityService.Principal(
                 RequestUser.uid(), RequestUser.departmentId(), RequestUser.role());
     }
 
@@ -117,20 +121,9 @@ public class KnowledgeController {
                         new LambdaQueryWrapper<Knowledge>()
                                 .eq(Knowledge::getDocId, docId)
                                 .orderByAsc(Knowledge::getChunkIndex))
-                .stream().map(k -> {
-                    Map<String, Object> m = new LinkedHashMap<>();
-                    m.put("id", k.getId());
-                    m.put("title", k.getTitle());
-                    m.put("chunkIndex", k.getChunkIndex());
-                    m.put("titlePath", k.getTitlePath());
-                    m.put("vectorId", k.getVectorId());   // 空 = 未向量化（前端角标）
-                    m.put("status", k.getStatus());       // 块级启停用：0=生效, 1=停用
-                    m.put("content", k.getContent());
-                    m.put("qaCount", qaCounts.getOrDefault(k.getId(), 0));   // 解析期生成的问答对条数
-                    m.put("images", k.getImages() != null && !k.getImages().isBlank()
-                            ? com.alibaba.fastjson2.JSON.parseArray(k.getImages()) : List.of());
-                    return m;
-                }).toList();
+                // images 必须由 assembly 现场签名：库里的原始 URL 直接给前端，展开块即 401
+                .stream().map(k -> knowledgeChunkAssembler.listRow(k, qaCounts.getOrDefault(k.getId(), 0)))
+                .toList();
         return ResultJson.ok(list);
     }
 

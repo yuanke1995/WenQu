@@ -78,5 +78,6 @@ config/application-local.yml
 
 # ===== Playwright 冒烟：浏览器二进制与报告留本地，不入库 =====
 /web/.playwright-browsers/
+/web/.pw-browsers/
 /web/test-results/
 /web/playwright-report/
