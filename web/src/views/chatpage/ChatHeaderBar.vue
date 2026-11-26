@@ -167,7 +167,18 @@
 </template>
 
 <script setup>
+import { ExclamationCircleOutlined } from '@ant-design/icons-vue'
+import ChatComposerArea from './ChatComposerArea.vue'
+import ChatMessageList from './ChatMessageList.vue'
+import DeliveryPanel from '../../components/DeliveryPanel.vue'
+import GoalViewer from '../../components/GoalViewer.vue'
+import SessionEventsPanel from '../../components/SessionEventsPanel.vue'
+import SkillContentModal from '../../components/SkillContentModal.vue'
+import SubagentPill from '../../components/SubagentPill.vue'
+import TeamPill from '../../components/TeamPill.vue'
+import { CloseOutlined, DownOutlined, FolderOpenOutlined, HistoryOutlined, SearchOutlined, ShareAltOutlined, UpOutlined } from '@ant-design/icons-vue'
 import { inject } from 'vue'
+import MobileChatHead from '../../h5/MobileChatHead.vue'
 // 父页 provide('chatCtx')：一个 reactive 上下文（含 ref 与动作）
 const store = inject('chatCtx')
 const set = (k, v) => { store[k] = v }

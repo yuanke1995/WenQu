@@ -690,8 +690,33 @@
 </template>
 
 <script setup>
-import { defineProps } from 'vue'
-defineProps({ store: { type: Object, required: true } })
+import AnswerBody from '../../components/AnswerBody.vue'
+import AnswerHeader from '../../components/AnswerHeader.vue'
+import ArtifactPendingCard from '../../components/ArtifactPendingCard.vue'
+import AskRecordCard from '../../components/AskRecordCard.vue'
+import BrandMark from '../../components/BrandMark.vue'
+import ChatThread from '../../chat/ChatThread.vue'
+import DeliveryCard from '../../components/DeliveryCard.vue'
+import GoalTerminalCard from '../../components/GoalTerminalCard.vue'
+import MsgDivider from '../../components/MsgDivider.vue'
+import NoteBody from '../../components/NoteBody.vue'
+import NoteTag from '../../components/NoteTag.vue'
+import PlanCard from '../../components/PlanCard.vue'
+import SetupGuide from '../../components/SetupGuide.vue'
+import SourceList from '../../chat/SourceList.vue'
+import SubAgentChatCard from '../../components/SubAgentChatCard.vue'
+import ToolSpillButton from '../../components/ToolSpillButton.vue'
+import TurnChangesCard from '../../components/TurnChangesCard.vue'
+import WelcomeCopy from '../../components/WelcomeCopy.vue'
+import { ArrowRightOutlined, BugOutlined, BulbOutlined, CaretRightOutlined, CheckOutlined, ClockCircleOutlined, CloseCircleOutlined, CompressOutlined, CopyOutlined, DatabaseOutlined, DeleteOutlined, DislikeOutlined, DownOutlined, DownloadOutlined, EditOutlined, ExclamationCircleOutlined, FileTextOutlined, HistoryOutlined, InfoCircleOutlined, LoadingOutlined, MoreOutlined, PauseCircleOutlined, PlusOutlined, RedoOutlined, RobotOutlined, ScheduleOutlined, SwapOutlined, ThunderboltOutlined } from '@ant-design/icons-vue'
+import { inject } from 'vue'
+import { vFollowBottom, vEdgeFade } from '../../chat/followBottom'
+// 父页 provide('chatCtx')：一个 reactive 上下文（含 ref 与动作）。
+// 与其它 chatpage/*.vue 同一套取法——不要再改成 required prop：
+// 父页是 <ChatMessageList /> 无参渲染，改成 prop 会让 store 变 undefined，整块消息流读不出东西。
+const store = inject('chatCtx')
+const set = (k, v) => { store[k] = v }
+const setRef = (k, el) => { store[k] = el }
 </script>
 
 <style scoped src="./ChatMessageList.css"></style>

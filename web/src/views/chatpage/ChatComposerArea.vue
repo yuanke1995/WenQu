@@ -12,7 +12,7 @@
         :replace-box="!!(store.pendingAsk || store.pendingPlan)"
         @attach="store.toggleAddPanel" @send="store.sendNow" @stop="store.stopNow" @files="store.onDropFiles"
         @paste="store.onComposerPaste" @keydown="store.onInputKeydown" @input="store.syncPanelQuery"
-        @click="store.syncPanelQuery" @update:keys="onKeys" @chip-click="store.onChipClick" @ready="store.syncChips">
+        @click="store.syncPanelQuery" @update:keys="store.onKeys" @chip-click="store.onChipClick" @ready="store.syncChips">
         <template #above>
           <!-- 工作区没准备好（未绑目录 / 执行器离线）：一句人话 + 一个能直接点的动作，不挡对话 -->
           <div v-if="store.workspaceSetupHint" class="local-ws-hint" role="status" aria-live="polite">
@@ -630,6 +630,12 @@
 </template>
 
 <script setup>
+import { FolderOpenOutlined, SafetyCertificateOutlined } from '@ant-design/icons-vue'
+import AgentAvatar from '../../components/AgentAvatar.vue'
+import ChatInput from '../../chat/ChatInput.vue'
+import ModelSelect from '../../components/ModelSelect.vue'
+import PendingAtts from '../../chat/PendingAtts.vue'
+import { AimOutlined, CaretRightOutlined, CheckOutlined, ClockCircleOutlined, CloseOutlined, DatabaseOutlined, DeleteOutlined, DownOutlined, EditOutlined, ExclamationCircleOutlined, FileTextOutlined, InfoCircleOutlined, LeftOutlined, LoadingOutlined, OrderedListOutlined, RobotOutlined, SettingOutlined, ThunderboltOutlined } from '@ant-design/icons-vue'
 import { inject } from 'vue'
 // 父页 provide('chatCtx')：一个 reactive 上下文（含 ref 与动作）
 const store = inject('chatCtx')

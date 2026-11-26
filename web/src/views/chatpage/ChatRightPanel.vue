@@ -235,6 +235,10 @@
 </template>
 
 <script setup>
+import BrowserPanel from '../../components/BrowserPanel.vue'
+import RightProcessCard from '../../components/RightProcessCard.vue'
+import TeamPanel from '../../components/TeamPanel.vue'
+import { ApiOutlined, CaretRightOutlined, CheckOutlined, CloseOutlined, DownloadOutlined, ExportOutlined, EyeOutlined, FileTextOutlined, FolderOpenOutlined, FolderOutlined, GlobalOutlined, SaveOutlined } from '@ant-design/icons-vue'
 import { inject } from 'vue'
 // 父页 provide('chatCtx')：一个 reactive 上下文（含 ref 与动作）
 const store = inject('chatCtx')

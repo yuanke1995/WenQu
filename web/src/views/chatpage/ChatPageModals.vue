@@ -143,6 +143,7 @@
 </template>
 
 <script setup>
+import { CopyOutlined, EditOutlined, ShareAltOutlined } from '@ant-design/icons-vue'
 import { inject } from 'vue'
 // 父页 provide('chatCtx')：一个 reactive 上下文（含 ref 与动作）
 const store = inject('chatCtx')

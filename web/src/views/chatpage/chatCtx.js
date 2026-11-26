@@ -271,6 +271,7 @@ export const CHAT_CTX_KEYS = [
   'onAskPanelKeydown',
   'onAttachChange',
   'onChipClick',
+  'onKeys',
   'onComposerPaste',
   'onCtxCapEnter',
   'onCtxCapLeave',
@@ -495,7 +496,7 @@ export const CHAT_CTX_KEYS = [
   'workspaceRefreshing',
   'workspaceSetupHint',
   'wsTitle',
-  '})',]
+]
 
 /** 按名从作用域对象取出一份上下文（缺键说明清单与作用域漂了，直接抛，别静默 undefined）。 */
 export function pickChatCtx (scope) {

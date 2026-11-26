@@ -357,16 +357,24 @@ const { switchSession, historyLoads } = createSessionSwitch({
 const { retryHistory, creatingSession, workspaceEpoch, createNewSession,
         handleDeleteSession, autoPick, takeNewSessionAgent } = useSessionLifecycle({
   currentSessionId, messages, historyError, sessionStore, chatStreams, agentMap, hooks,
-  switchSession, settleSteerOnLeave, router, newSession, deleteSessionApi, loadSessions,
+  switchSession, router, newSession, deleteSessionApi, loadSessions,
+  // settleSteerOnLeave 由 useSteerDispatch 在本函数后面才装配（它依赖 streamAnswer），
+  // 直接传标识符会触发 TDZ（Cannot access before initialization）→ 整个 setup 抛错白屏。
+  // 传惰性包装：真正被调用时（切会话那一刻）它早已初始化。
+  settleSteerOnLeave: () => settleSteerOnLeave(),
   isLoggedIn, notify: message,
 })
 
 // 路由 watcher 与审批动作已抽到 useChatRouting.js。
 const { resolveApproval } = useChatRouting({
-  route, hooks, currentSessionId, historyLoads, switchSession, handleApprovalDeepLink,
+  route, hooks, currentSessionId, historyLoads, switchSession,
   createNewSession, autoPick, takeNewSessionAgent, sessionStore, chatStreams, messages,
   notify: message, emitNotifChanged, pollRestoredAnswer: sid => pollRestoredAnswer(sid),
-  approveToolCall, approvalLeftSecOf,
+  approveToolCall,
+  // 这两个由本函数后面的 useHitlRestore / useApprovalClock 装配，此处直接传标识符会 TDZ。
+  // useChatRouting 只在路由 watcher 与点击时调用它们，惰性包装等价。
+  handleApprovalDeepLink: (...a) => handleApprovalDeepLink(...a),
+  approvalLeftSecOf: (...a) => approvalLeftSecOf(...a),
 })
 
 // 待批准计划卡与倒计时已抽到 usePendingPlan.js。这里解构接回同名符号。
@@ -376,7 +384,9 @@ const { pendingPlan, curPlanCard, planExpired, planCountdownText } = usePendingP
 // 目标模式入口（startGoal / goalAct）已抽到 useGoalEntry.js。
 const { startGoal, goalAct } = useGoalEntry({
   currentSessionId, messages, hooks, currentAgentId, sessionGoal, goalsMap, setGoal,
-  goalRunning, goalBarVisible, watchGoalTurn, startGoalApi, goalActionApi, markSessionActive, notify: message,
+  goalRunning, watchGoalTurn, startGoalApi, goalActionApi, markSessionActive, notify: message,
+  // goalBarVisible 在下面才由目标投影装配；对方以 .value 读，getter 同样是惰性求值。
+  goalBarVisible: { get value () { return goalBarVisible.value } },
 })
 
 // 目标条状态投影与就地编辑已抽到 useGoalProjection.js（投影函数从 projections.js 直接导入）。
@@ -402,10 +412,14 @@ const {
 } = usePlanActions({
   currentSessionId, messages, loading, hooks, deepThinkOn, effectiveModel,
   goalRunning: { get value () { return goalRunning.value } },
-  chatStreams, steer, stop, streamAnswer: (...a) => streamAnswer(...a), notify: message,
+  chatStreams, streamAnswer: (...a) => streamAnswer(...a), notify: message,
+  // steer/stop/enqueuePlanAdjust 在本函数后面才装配（依赖 streamAnswer），对方只在回调里调用。
+  steer: (...a) => steer(...a),
+  stop: (...a) => stop(...a),
   resolvePlanApproval, revisePlanApproval, supersedePlanApproval, emitNotifChanged,
   stopRestoredPoll: () => stopRestoredPoll(), pollRestoredAnswer: sid => pollRestoredAnswer(sid),
-  switchSession, enqueuePlanAdjust,
+  switchSession,
+  enqueuePlanAdjust: (...a) => enqueuePlanAdjust(...a),
   planExecProgressOf, setPlanReplanned, planVersionOf, planStepCount,
 })
 /**
