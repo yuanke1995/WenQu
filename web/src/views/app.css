@@ -16,6 +16,7 @@
   --app-accent: #2e6be6;          /* 主色 */
   --app-accent-hover: #1f5bd8;
   --app-accent-weak: #eef2f7;     /* 主色弱底（选中态/hover 底） */
+  --app-accent-faint: #fbfdff;    /* 主色极弱底（基线卡片/结论条这类淡高亮面） */
   --app-danger: #d4552e;
   --app-ok: #3b8f4e;
   --app-warn: #c77c14;
@@ -119,6 +120,7 @@ html[data-theme='dark'] {
   --app-accent: #5b8cf0;
   --app-accent-hover: #7aa3f5;
   --app-accent-weak: #1e2636;
+  --app-accent-faint: #1c232e;    /* 主色极弱底（暗）：比 --app-panel 略偏蓝，保持淡高亮层次 */
   --app-danger: #e07a5a;
   --app-ok: #57a86a;
   --app-warn: #d9a03f;

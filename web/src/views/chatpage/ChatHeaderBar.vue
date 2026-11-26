@@ -71,7 +71,8 @@
       <!-- 执行过程（事件账本）：按轮列出这一会话跑过什么——工具步与耗时、审批/提问/计划三张卡、
            产物、子智能体编排、停止与失败。这份记录不参与智能体的回答，只服务事后回看与排障。
            取数与渲染在共用组件里（移动壳的底部 sheet 用同一份，不各写一遍） -->
-      <a-modal :open="store.eventsOpen" :title="store.eventsTitle" width="min(880px, 94vw)" :footer="null">
+      <a-modal :open="store.eventsOpen" :title="store.eventsTitle" width="min(880px, 94vw)" :footer="null"
+               @cancel="set('eventsOpen', false)">
         <SessionEventsPanel :open="store.eventsOpen" :session-id="store.currentSessionId || ''" :turn-id="store.eventsTurn"
                             :message="store.eventsMsg" :question="store.eventsQuestion" />
       </a-modal>
@@ -84,18 +85,19 @@
       <!-- 交付抽屉：与目标过程抽屉同款（右侧 420px）。卡片 / 目标条 / 终态卡三处都落到这里，
            关掉仍回到对话原位；清单分组与批量动作只在面板里出现。 -->
       <a-drawer :open="store.deliveryOpen" placement="right" :width="420"
-                :body-style="{ padding: '0' }" :title="store.deliveryTarget ? store.deliveryTarget.name : '交付包'">
+                :body-style="{ padding: '0' }" :title="store.deliveryTarget ? store.deliveryTarget.name : '交付包'"
+                @close="set('deliveryOpen', false)">
         <DeliveryPanel :delivery="store.deliveryTarget" @zip="store.downloadDeliveryZip" />
       </a-drawer>
 
       <!-- 技能正文查看：写入已交给助手，读的这一侧要能审（正文是逐字进提示词的）；移动壳用同一份组件 -->
       <SkillContentModal :open="!!store.skillDoc" :name="store.skillDoc" :entry="store.skillDocEntry"
                          :session-id="store.currentSessionId || ''"
-                         @update:open="v => { if (!v) skillDoc = '' }" />
+                         @update:open="v => { if (!v) store.skillDoc = '' }" />
 
       <!-- 固化为技能：预填本轮「问题→做法」成一条 SKILL.md，三个字段都可改；提交落当前账号的技能目录 -->
       <a-modal :open="store.solidifyOpen" title="固化为技能" width="min(640px, 94vw)"
-               :confirm-loading="store.solidifyBusy" @ok="store.submitSolidify">
+               :confirm-loading="store.solidifyBusy" @ok="store.submitSolidify" @cancel="set('solidifyOpen', false)">
         <div class="sf-field">
           <div class="sf-label">技能名<span class="sf-sub">汉字/字母/数字/下划线/连字符，≤64 字符</span></div>
           <a-input v-model:value="store.solidifyForm.name" :maxlength="64" placeholder="这类做法叫什么" />

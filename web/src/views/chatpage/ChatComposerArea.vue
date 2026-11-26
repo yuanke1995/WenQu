@@ -348,7 +348,7 @@
         <button class="app-icon-btn add-close" title="关闭" @click="store.closeAddPanel"><close-outlined /></button>
         </div>
         <!-- 引用页的四类候选各自计数（技能=可选清单长度，勾选数看行上的对勾）；子页签只换列表，不重置搜索词 -->
-        <div v-if="store.addTab === 'store.ref'" class="mention-tabs add-subtabs">
+        <div v-if="store.addTab === 'ref'" class="mention-tabs add-subtabs">
         <button v-for="s in store.REF_SUB_TABS" :key="s.key" class="mention-tab" :class="{ on: store.mentionTab === s.key }"
         type="button" @click="store.switchRefTab(s.key)">
         <component :is="s.icon" /> {{ s.label }} {{ s.count() }}
@@ -372,7 +372,7 @@
         <span v-if="r.kbd" class="add-kbd">{{ r.kbd }}</span>
         </div>
         </template>
-        <template v-else-if="store.addTab === 'store.ref'">
+        <template v-else-if="store.addTab === 'ref'">
         <!-- 技能清单不走库/文档那次请求，别被它的「加载中」挡住 -->
         <div v-if="store.mentionLoading && store.mentionTab !== 'skill'" class="mention-empty">加载中…</div>
         <template v-else-if="store.mentionTab === 'kb'">
@@ -544,14 +544,14 @@
         <template #right>
           <!-- 上下文容量圆环：本轮真实 prompt 占窗口比（与右栏容量卡同源数据），悬浮弹明细卡；会话尚无对话（无落库 tokens）时不显示。
           触屏无 hover，额外挂 click/@keydown（role/tabindex 只在触屏下加，避免改变宽屏的无障碍语义与 Tab 序） -->
-          <span v-if="store.ctxTokens && store.ctxCapData.window > 0" class="store-ring" :class="store.ctxRingLevel" aria-label="上下文容量"
+          <span v-if="store.ctxTokens && store.ctxCapData.window > 0" class="ctx-ring" :class="store.ctxRingLevel" aria-label="上下文容量"
           :role="store.isCoarse ? 'button' : null" :tabindex="store.isCoarse ? 0 : null"
           @mouseenter="store.showCtxCap($event.currentTarget)" @mouseleave="store.hideCtxCap()"
           @click="store.isCoarse && store.showCtxCap($event.currentTarget)"
           @keydown.enter="store.isCoarse && store.showCtxCap($event.currentTarget)">
           <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
-          <circle class="store-ring-bg" cx="10" cy="10" r="7.5" fill="none" stroke-width="2.5" />
-          <circle class="store-ring-val" cx="10" cy="10" r="7.5" fill="none" stroke-width="2.5"
+          <circle class="ctx-ring-bg" cx="10" cy="10" r="7.5" fill="none" stroke-width="2.5" />
+          <circle class="ctx-ring-val" cx="10" cy="10" r="7.5" fill="none" stroke-width="2.5"
           stroke-linecap="round" :stroke-dasharray="store.ctxRingDash" transform="rotate(-90 10 10)" />
           </svg>
           </span>

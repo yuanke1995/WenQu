@@ -47,6 +47,8 @@ const props = defineProps({
    * 公开分享页只给最后一轮——中间那轮重跑会与后面几轮的历史错位。
    */
   canRegenerate: { type: Function, default: () => () => true },
+  /** 「重新生成」是否交给页面的「更多」菜单承载（主对话页口径）；分享页保持 false，由动作行直接给按钮 */
+  regenerateInMore: { type: Boolean, default: false },
   /** 会话当前目标（回声胶囊的状态词只认它那一条 goalId；分享页不给就只标身份） */
   goal: { type: Object, default: null }
 })
@@ -137,6 +139,7 @@ function questionFor (i) {
 
       <AnswerActions v-if="showActions(m)" :content="m.content" :message-id="m.messageId" :fb="m.fb"
                      :loading="!!m.loading" :can-regenerate="canRegenerate(m, i)"
+                     :regenerate-in-more="regenerateInMore"
                      @feedback="r => emit('feedback', m, i, r)" @regenerate="emit('regenerate', m, i)">
         <template #prefix><slot name="actions-prefix" :m="m" :i="i" /></template>
         <template #more><slot name="actions-more" :m="m" :i="i" /></template>

@@ -469,6 +469,19 @@ test('「+」面板：双入口写入目标、切页签、退回一级', () => {
   assert.equal(p.addOpen.value, false)
 })
 
+test('「+」面板：editingIdx 以 ref 形态传入也不炸（ChatPage 实际传的是 ref）', () => {
+  // 回归：ChatPage 给 useCommandPanels 的 editingIdx 是 `page.editResend.editingIdx`（ref），
+  // 而本 composable 早期直接写成 ctx.editingIdx()。主输入框因 addTarget!=='edit' 短路不触发，
+  // 只有编辑卡点「+」才会在渲染期抛 TypeError: ctx.editingIdx is not a function（整页异常）。
+  const { ctx, refs } = makeCtx()
+  const p = useCommandPanels({ ...ctx, editingIdx: refs.editingIdx })
+  refs.editingIdx.value = 0
+  p.toggleEditAddPanel()
+  assert.equal(p.addTarget.value, 'edit')
+  assert.equal(p.addOnEdit.value, true)
+  assert.equal(p.addRootRows.value.length, 3)
+})
+
 test('确认高亮：root 进页签、ref/hist 勾选、cmd 执行命令，空候选返回 false', () => {
   const { ctx, refs, calls } = makeCtx()
   const p = useCommandPanels(ctx)

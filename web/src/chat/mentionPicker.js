@@ -53,17 +53,28 @@ export const createMentionPicker = ({ listKbApi, listDocApi, agentList, notify }
     if (mentionHi.value >= n) mentionHi.value = 0
   }
 
+  /**
+   * 官方内置库（builtin=1，问渠使用手册）不进 @ 引用候选：
+   * 手册随版本分发、由帮助中心与默认检索覆盖，十几篇篇目灌进「文档」页签只会淹没用户自己的资料；
+   * 管理员在管理页仍可见（/kb、/document 列表接口按管理口径放行），这里只是消费侧不再提供勾选。
+   * 文档跟随所属库，故按内置库 id 一并排除（非管理员两端本就不可见，此处自然无副作用）。
+   */
+  const builtinKbIdsOf = kbs =>
+    new Set(kbs.filter(k => Number(k.builtin) === 1).map(k => k.id))
+
   /** 候选懒加载（首次打开面板时拉取）：库按共享范围过滤（/kb/list 已做），文档同理（/document/list 已做） */
   const loadMentionCandidates = async () => {
     mentionLoading.value = true
     try {
       const [kbRes, docRes] = await Promise.all([listKbApi(), listDocApi()])
-      mentionKbs.value = (kbRes?.data || []).map(k => ({
-        id: k.id, name: k.name, desc: k.description || '', docCount: k.docCount
-      }))
-      mentionDocs.value = (docRes?.data || []).map(d => ({
-        id: d.id, fileName: d.fileName, kbId: d.kbId, status: d.status
-      }))
+      const kbs = kbRes?.data || []
+      const builtinKbIds = builtinKbIdsOf(kbs)
+      mentionKbs.value = kbs
+        .filter(k => !builtinKbIds.has(k.id))
+        .map(k => ({ id: k.id, name: k.name, desc: k.description || '', docCount: k.docCount }))
+      mentionDocs.value = (docRes?.data || [])
+        .filter(d => !(d.kbId && builtinKbIds.has(d.kbId)))
+        .map(d => ({ id: d.id, fileName: d.fileName, kbId: d.kbId, status: d.status }))
     } catch (e) {
       notify.error('引用候选加载失败：' + (e.message || ''))
     } finally {

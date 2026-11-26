@@ -11,11 +11,13 @@
  *   <li>复制在组件内完成（{@code copyText} 是共享工具，两边语义完全相同）；</li>
  *   <li>评价 emit 出去——主对话页点👎会弹一个可选的意见框，分享页是一击提交（访客是路人，
  *       多一步就少一大截反馈量），这个差别属于页面策略，不属于按钮；</li>
- *   <li>重新生成 emit 出去——两边的重发载荷不同（主对话页要带技能/@引用/#历史引用）。</li>
+ *   <li>重新生成 emit 出去——两边的重发载荷不同（主对话页要带技能/@引用/#历史引用）。
+ *       主对话页把它收进「更多」菜单（传 {@code regenerateInMore}），本组件就不再单独画那颗按钮；
+ *       分享页没有更多菜单，仍由本组件直接给按钮。</li>
  * </ul>
  *
  * <p>按钮一律「图标 + 悬浮说明」而不是「图标 + 文字」：主对话页就是这个口径，
- * 窄屏也放得下四个。页面自己的附加物走插槽：{@code #prefix}（版本切换器）、
+ * 窄屏也放得下。页面自己的附加物走插槽：{@code #prefix}（版本切换器）、
  * {@code #more}（更多菜单，只在有 messageId 时出现）、{@code #extra}（用量/时间，始终出现）。
  */
 import { message } from 'ant-design-vue'
@@ -41,7 +43,13 @@ const props = defineProps({
    * 主对话页每一轮都给（它有多版本切换器兜着，切回旧版本是明确支持的）。
    * 这是页面策略，所以做成开关而不是让组件去猜。
    */
-  canRegenerate: { type: Boolean, default: true }
+  canRegenerate: { type: Boolean, default: true },
+  /**
+   * 「重新生成」是否已由页面收进它自己的 {@code #more} 菜单。
+   * <p>为 true 时本组件不再单独画那颗按钮（主对话页口径）；分享页没有更多菜单，
+   * 保持 false，由本组件直接给按钮。
+   */
+  regenerateInMore: { type: Boolean, default: false }
 })
 const emit = defineEmits(['feedback', 'regenerate'])
 
@@ -67,15 +75,20 @@ async function doCopy () {
         <button class="fb-btn" type="button" :class="{ 'fb-active': fb === 0 }" :disabled="fb != null"
                 @click="emit('feedback', 0)"><dislike-outlined /><span class="fb-label">没帮助</span></button>
       </a-tooltip>
-      <a-tooltip v-if="canRegenerate" title="重新生成这条回答">
+      <a-tooltip v-if="canRegenerate && !regenerateInMore" title="重新生成这条回答">
         <button class="fb-btn" type="button" :disabled="loading" @click="emit('regenerate')">
           <reload-outlined /><span class="fb-label">重新生成</span>
         </button>
       </a-tooltip>
       <slot name="more" />
-      <span class="fb-sep" aria-hidden="true"></span>
     </template>
-    <slot name="extra" />
+    <!-- 用量/时间等元信息：与前面的按钮分开成一组，显隐交给所在页面控制
+         （主对话页做成「悬浮才显示」——悬停这条消息时淡入，见 ChatThread.vue）。
+         分隔线随这一组一起走：元信息整组不显示时不会留一条悬空竖线。 -->
+    <span v-if="$slots.extra" class="fb-meta">
+      <span v-if="messageId" class="fb-sep" aria-hidden="true"></span>
+      <slot name="extra" />
+    </span>
   </div>
 </template>
 
@@ -94,6 +107,15 @@ async function doCopy () {
 .fb-btn:disabled { cursor: default; opacity: .55; }
 .fb-btn :deep(svg) { width: 14px; height: 14px; }
 .fb-sep { width: 1px; height: 12px; background: var(--app-border); margin: 0 4px; flex: none; }
+/* 元信息组（分隔线 + 用量/时间）：独立成组，显隐由所在页面控制。
+   主对话页要的是「悬浮到这一行才显示」——指悬浮到本条动作行时淡入，所以触发点放在
+   本组件的根 .fb-row 上；触屏没有 hover，不加规则保持常显，否则手机上看不到用量与时间。 */
+.fb-meta { display: inline-flex; align-items: center; }
+@media (hover: hover) {
+  .fb-meta { opacity: 0; pointer-events: none; transition: opacity .12s ease; }
+  .fb-row:hover .fb-meta,
+  .fb-row:focus-within .fb-meta { opacity: 1; pointer-events: auto; }
+}
 /* 已评价态：钉在强调色上，用户一眼看出自己评过哪一条（同一条不能再评，按钮同时被禁用） */
 .fb-active { color: var(--app-accent); }
 /* 窄屏：保留文字（触屏没有悬浮说明），只把热区做到 34px；再窄才收掉文字 */

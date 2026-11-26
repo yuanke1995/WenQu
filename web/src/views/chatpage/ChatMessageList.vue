@@ -33,6 +33,7 @@
              消息分隔线、@引用/#历史引用、过程块与工具卡、错误卡、计划与审批卡、产物、
              版本切换器与更多菜单、就地编辑卡。次第换不掉，能换的只是「画什么」。 -->
         <ChatThread :messages="store.messages" :editing-index="store.editingIdx" :can-regenerate="() => true"
+                    regenerate-in-more
                     :goal="store.sessionGoal"
                     runnable :session-id="store.currentSessionId" @paste-view="store.openPasteView"
                     @feedback="(m, i, r) => store.openFeedback(m, r)"
@@ -106,7 +107,7 @@
                       </template>
                       <caret-right-outlined class="tl-caret" :class="{ open: store.thinkSegOpen(m, seg) }" />
                     </button>
-                    <div v-show="store.thinkSegOpen(m, seg)" v-follow-bottom="thinkGrowing(m, seg)" class="tl-think">
+                    <div v-show="store.thinkSegOpen(m, seg)" v-follow-bottom="store.thinkGrowing(m, seg)" class="tl-think">
                       <AnswerBody :content="store.thinkSlice(m, seg)" :streaming="store.thinkGrowing(m, seg)" />
                     </div>
                   </div>
@@ -499,8 +500,12 @@
                   <button class="app-icon-btn" title="更多"><more-outlined /></button>
                   <template #overlay>
                     <a-menu @click="({ key }) => store.onMoreAction(key, i)">
+                      <!-- 重新生成：从常驻动作行收进「更多」，让动作行只留复制/评价这类轻动作。
+                           点它按原提问（含技能/@引用/#历史引用）整轮重跑，生成中不可点 -->
+                      <a-menu-item key="regenerate" :disabled="!!m.loading"><reload-outlined style="margin-right:8px" />重新生成</a-menu-item>
+                      <a-menu-divider />
                       <!-- 固化为技能：把这一轮「问题→做法」沉淀成一条可复用的 SKILL.md（弹窗预填、改两行就能用）。
-                           收进「更多」菜单，与重新生成等常驻动作分开；只挂在落库的 AI 回答上（#more 插槽本就在 messageId 判据内） -->
+                           只挂在落库的 AI 回答上（#more 插槽本就在 messageId 判据内） -->
                       <a-menu-item key="solidify" title="把这一轮的做法固化为技能"><thunderbolt-outlined style="margin-right:8px" />固化为技能</a-menu-item>
                       <a-menu-item v-if="store.debugEntryVisible" key="debug"><bug-outlined style="margin-right:8px" />检索调试</a-menu-item>
                       <!-- 加入评测集 = 差评回流固化到检索评测集（/api/ai/eval 仅管理员可用），属调参排障动作：
@@ -574,7 +579,7 @@
                  （随行内容播种自原消息；深度思考/技能/# 历史引用沿用原轮不展示）。
                  确认后从这一轮整段重新生成，旧分支软删留档可切回 -->
             <div v-if="m.role === 'user' && store.editingIdx === i" class="msg-inline-edit">
-              <textarea :ref="el => setRef('setEditingRef', el)" :value="store.editingText" @update:value="v => set('editingText', v)" class="msg-inline-edit-input" rows="1"
+              <textarea :ref="el => store.setEditingRef(el)" :value="store.editingText" @update:value="v => set('editingText', v)" class="msg-inline-edit-input" rows="1"
                         placeholder="编辑这一问题…" @input="store.autosizeEditing" @paste="store.onEditPaste" @keydown="store.onEditKeydown" />
               <div v-if="store.editImgs.length" class="pending-imgs">
                 <div v-for="(u, pi) in store.editImgs" :key="pi" class="pending-img">
@@ -651,7 +656,7 @@
                         @click="store.confirmEdit">发送</button>
               </div>
               <div class="add-mount"></div>
-              <input :ref="el => setRef('setEditAttachInputRef', el)" type="file" multiple style="display:none" @change="store.onEditAttachChange" />
+              <input :ref="el => store.setEditAttachInputRef(el)" type="file" multiple style="display:none" @change="store.onEditAttachChange" />
             </div>
             <!-- 目标终态卡：挂在「设为目标」那条回声下（goalId 认，刷新从历史重建）。
                  删除记录后 sessionGoal 变 null，这张卡随之一并消失 -->
@@ -708,7 +713,7 @@ import SubAgentChatCard from '../../components/SubAgentChatCard.vue'
 import ToolSpillButton from '../../components/ToolSpillButton.vue'
 import TurnChangesCard from '../../components/TurnChangesCard.vue'
 import WelcomeCopy from '../../components/WelcomeCopy.vue'
-import { ArrowRightOutlined, BugOutlined, BulbOutlined, CaretRightOutlined, CheckOutlined, ClockCircleOutlined, CloseCircleOutlined, CompressOutlined, CopyOutlined, DatabaseOutlined, DeleteOutlined, DislikeOutlined, DownOutlined, DownloadOutlined, EditOutlined, ExclamationCircleOutlined, FileTextOutlined, HistoryOutlined, InfoCircleOutlined, LoadingOutlined, MoreOutlined, PauseCircleOutlined, PlusOutlined, RedoOutlined, RobotOutlined, ScheduleOutlined, SwapOutlined, ThunderboltOutlined } from '@ant-design/icons-vue'
+import { ArrowRightOutlined, BugOutlined, BulbOutlined, CaretRightOutlined, CheckOutlined, ClockCircleOutlined, CloseCircleOutlined, CompressOutlined, CopyOutlined, DatabaseOutlined, DeleteOutlined, DislikeOutlined, DownOutlined, DownloadOutlined, EditOutlined, ExclamationCircleOutlined, FileTextOutlined, HistoryOutlined, InfoCircleOutlined, LoadingOutlined, MoreOutlined, PauseCircleOutlined, PlusOutlined, RedoOutlined, ReloadOutlined, RobotOutlined, ScheduleOutlined, SwapOutlined, ThunderboltOutlined } from '@ant-design/icons-vue'
 import { inject } from 'vue'
 import { vFollowBottom, vEdgeFade } from '../../chat/followBottom'
 // 父页 provide('chatCtx')：一个 reactive 上下文（含 ref 与动作）。

@@ -1493,6 +1493,17 @@ onUnmounted(() => { stopRunPoll(); stopAnswerPoll() })
 .ev-pane { animation: ev-fade .18s ease; }
 @keyframes ev-fade { from { opacity: .4; transform: translateY(2px); } to { opacity: 1; transform: none; } }
 .ev-sp { flex: 1; }
+/* 状态徽标：本页此前没有任何 .tag 样式，标签在 flex 容器里被压成竖排，
+   且继承正文字色——暗色基线卡片（浅底）上几乎不可见。统一成小圆角徽标，
+   颜色走 token，亮/暗两套自适应。 */
+.tag { flex: none; display: inline-flex; align-items: center; height: 18px; padding: 0 6px;
+       border-radius: 4px; font-size: 10px; line-height: 1; white-space: nowrap;
+       background: var(--app-bg-layer-3); color: var(--app-text2); }
+.tag.blue { background: var(--app-accent-weak); color: var(--app-accent); }
+.tag.grey { background: var(--app-bg-layer-3); color: var(--app-text3); }
+.tag.ok { background: var(--app-ok-weak); color: var(--app-ok); }
+.tag.warn { background: var(--app-warn-weak); color: var(--app-warn-text); }
+.tag.err { background: var(--app-danger-weak); color: var(--app-danger); }
 .ev-muted { font-size: 11px; color: var(--app-text3); }
 .ev-ok { color: var(--app-ok); }
 .ev-warn { color: var(--app-warn-text); }
@@ -1580,7 +1591,7 @@ onUnmounted(() => { stopRunPoll(); stopAnswerPoll() })
 .ev-kchips { display: inline-flex; gap: 4px; }
 .ev-group-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; }
 .ev-group { border: 1px solid var(--app-border); border-radius: 8px; background: var(--app-panel); padding: 10px; display: flex; flex-direction: column; min-height: 210px; }
-.ev-group.base { border-color: var(--app-accent-border); background: #fbfdff; }
+.ev-group.base { border-color: var(--app-accent-border); background: var(--app-accent-faint); }
 .ev-group.off { opacity: .55; }
 .ev-group-h { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
 .ev-group-name { font-weight: 600; padding-left: 0; }
@@ -1600,7 +1611,7 @@ onUnmounted(() => { stopRunPoll(); stopAnswerPoll() })
 .ev-progress { display: inline-flex; align-items: center; gap: 7px; font-size: 11px; color: var(--app-text2); }
 .ev-progress-track { width: 150px; height: 6px; border-radius: 3px; background: var(--app-bg-layer-3, #f2f4f7); overflow: hidden; }
 .ev-progress-track i { display: block; height: 100%; background: var(--app-accent); border-radius: 3px; transition: width .2s; }
-.ev-conclusion { display: flex; align-items: center; gap: 10px; padding: 9px 12px; margin: 10px 0; border: 1px solid var(--app-accent-border); background: #f6f9ff; border-radius: 8px; font-size: 12px; color: var(--app-text2); }
+.ev-conclusion { display: flex; align-items: center; gap: 10px; padding: 9px 12px; margin: 10px 0; border: 1px solid var(--app-accent-border); background: var(--app-accent-faint); border-radius: 8px; font-size: 12px; color: var(--app-text2); }
 .ev-conclusion > div { flex: 1; }
 .ev-ci { font-size: 9.5px; color: var(--app-text3); margin-top: 1px; }
 .ev-exp-foot { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-top: 10px; font-size: 11px; color: var(--app-text2); }

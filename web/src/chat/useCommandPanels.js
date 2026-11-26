@@ -14,6 +14,10 @@ export const useCommandPanels = (ctx = {}) => {
   const tick = ctx.nextTick || nextTick
   const defer = ctx.setTimeout || ((fn, ms) => setTimeout(fn, ms))
   const message = ctx.notify || { info() {}, warning() {} }
+  /** 值入口两种形态都允许：惰性 getter（() => x.value）或直接给的 ref。
+   *  ChatPage 里两种都有（`editingIdx` 传的就是 ref）；统一在这里读，
+   *  别把 ref 当函数调用——那会在渲染期抛 TypeError，整块消息流变白。 */
+  const readVal = v => typeof v === 'function' ? v() : (v && typeof v === 'object' && 'value' in v ? v.value : v)
   const { CompressOutlined, AimOutlined, FileTextOutlined, PlusOutlined,
           PaperClipOutlined, BookOutlined, HistoryOutlined, ThunderboltOutlined,
           DatabaseOutlined, RobotOutlined, AppstoreOutlined } = ctx.icons || {}
@@ -219,7 +223,7 @@ export const useCommandPanels = (ctx = {}) => {
   // ==================== 「+」面板（附件 / 引用资料 / 历史 / 命令） ====================
   // 唯一的候选面板，两个入口共用同一块：主输入框点「+」或敲 @，就地编辑卡点「+」。
   // 入口决定写入目标 addTarget，选中结果与计数全部经 addStore 这一层读写。
-  const addOnEdit = computed(() => addTarget.value === 'edit' && ctx.editingIdx() != null)
+  const addOnEdit = computed(() => addTarget.value === 'edit' && readVal(ctx.editingIdx) != null)
   /** 编辑态下面板整块搬进卡内挂载点；主输入框那一份靠 disabled 原地不动。 */
   const EDIT_ADD_MOUNT = '.msg-inline-edit .add-mount'
   /** 目标适配器：面板不关心自己往哪写，两套随行内容在这一层收敛成同一套读写接口。 */

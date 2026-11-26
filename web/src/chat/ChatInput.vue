@@ -13,8 +13,9 @@
  * <ul>
  *   <li>{@code #above}      —— 卡片之外的同一列（插话队列）</li>
  *   <li>默认插槽            —— 卡片内、正文之上（+ 面板 / @ 面板 / 斜杠面板）</li>
- *   <li>{@code #left-lead}  —— 工具条左端、附件键**之前**（智能体胶囊）</li>
- *   <li>{@code #left}       —— 工具条左端、附件键**之后**（目标）</li>
+ *   <li>附件键（+）           —— 工具条最左端，任何左端插槽**之前**</li>
+ *   <li>{@code #left-lead}  —— 工具条左端、附件键**之后**（权限 / 智能体胶囊）</li>
+ *   <li>{@code #left}       —— 工具条左端、left-lead**之后**（目标）</li>
  *   <li>{@code #right}      —— 工具条右端、发送键**之前**（模型 / 思考 / 用量）</li>
  * </ul>
  *
@@ -182,11 +183,11 @@ const showStop = computed(() => props.sending && !(props.steerable && props.canS
       </div>
       <div class="ci-toolbar">
         <div class="ci-left">
-          <slot name="left-lead" />
           <button v-if="canAttach" class="app-icon-btn ci-attach" :class="{ 'ci-btn-on': attachOn }"
                   :title="attachTitle" :aria-label="attachTitle" @click="emit('attach')">
             <plus-outlined />
           </button>
+          <slot name="left-lead" />
           <slot name="left" />
         </div>
         <div class="ci-right">

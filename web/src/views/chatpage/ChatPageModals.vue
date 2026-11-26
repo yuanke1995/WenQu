@@ -1,5 +1,6 @@
 <template>
-    <a-modal :open="store.shareVisible" title="分享这段对话" :footer="null" width="520px">
+    <a-modal :open="store.shareVisible" title="分享这段对话" :footer="null" width="520px"
+             @cancel="set('shareVisible', false)">
       <a-spin :spinning="store.shareLoading">
         <template v-if="store.shareInfo.enabled">
           <div class="share-link-row">
@@ -30,18 +31,21 @@
     </a-modal>
 
     <!-- 回答反馈弹窗 -->
-    <a-modal :open="store.feedbackVisible" title="反馈" :footer="null" :width="440">
+    <a-modal :open="store.feedbackVisible" title="反馈" :footer="null" :width="440"
+             @cancel="set('feedbackVisible', false)">
       <a-textarea v-model:value="store.feedbackText" placeholder="可选：告诉我们哪里不满意" :rows="3" />
       <button class="app-btn" style="margin-top:12px" :disabled="store.feedbackSubmitting" @click="store.doSubmitFeedback">提交反馈</button>
     </a-modal>
 
     <!-- 免责声明 -->
-    <a-modal :open="store.disclaimerVisible" title="免责声明" :footer="null" :width="560">
+    <a-modal :open="store.disclaimerVisible" title="免责声明" :footer="null" :width="560"
+             @cancel="set('disclaimerVisible', false)">
       <div class="md" style="max-height:60vh;overflow-y:auto" v-html="store.renderMd(store.DISCLAIMER_TEXT, [])"></div>
     </a-modal>
 
     <!-- 检索调试弹窗 -->
-    <a-modal :open="store.debugVisible" title="检索调试（为什么这么答）" :footer="null" :width="780">
+    <a-modal :open="store.debugVisible" title="检索调试（为什么这么答）" :footer="null" :width="780"
+             @cancel="set('debugVisible', false)">
       <div style="display:flex;gap:8px;margin-bottom:12px">
         <a-input v-model:value="store.debugQuestion" placeholder="输入要调试的问题" @press-enter="store.runDebug" />
         <button class="app-btn" :disabled="store.debugLoading" @click="store.runDebug">调试</button>
@@ -89,7 +93,8 @@
 
     <!-- 早期对话摘要：分隔线「查看摘要」打开。内容在打开那一刻快照下来（见引擎 openCompactSummary），
          否则发送下一轮会清掉当场结果、弹窗跟着变空 -->
-    <a-modal :open="store.compactSummaryOpen" :footer="null" width="720px">
+    <a-modal :open="store.compactSummaryOpen" :footer="null" width="720px"
+             @cancel="set('compactSummaryOpen', false)">
       <template #title>
         <div class="csum-head">
           <span class="csum-title">早期对话摘要</span>
@@ -132,7 +137,8 @@
 
     <!-- 粘贴文本卡片点开看全文：正文只留在本轮内存里（随问答落库的是名称/体积），
          所以刷新后回看历史卡片会明确提示不可预览，而不是点了没反应 -->
-    <a-modal :open="store.pasteView.open" :title="store.pasteTitle(store.pasteView.name)" :footer="null" width="640px">
+    <a-modal :open="store.pasteView.open" :title="store.pasteTitle(store.pasteView.name)" :footer="null" width="640px"
+             @cancel="store.pasteView.open = false">
       <div class="paste-view-bar">
         <span class="paste-view-meta">{{ store.pasteView.text.length }} 字</span>
         <button class="app-btn ghost" @click="store.copyText(store.pasteView.text, '已复制全文')"><copy-outlined /> 复制全文</button>

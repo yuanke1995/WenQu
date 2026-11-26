@@ -172,6 +172,7 @@ test('纯判据：拖动落点、插话摘要、来源后缀、配对提问、�
 test('纯判据：更多动作分派与分享态', () => {
   const msgs = [{ role: 'user', content: '问题' }, { role: 'assistant', content: '答', turnId: 't9' }]
   assert.deepEqual(pure.moreActionPlan('debug', 1, msgs), { kind: 'debug', mi: 1 })
+  assert.deepEqual(pure.moreActionPlan('regenerate', 1, msgs), { kind: 'regenerate', mi: 1 })
   assert.deepEqual(pure.moreActionPlan('addEval', 1, msgs), { kind: 'addEval', mi: 1 })
   assert.deepEqual(pure.moreActionPlan('deleteRound', 1, msgs), { kind: 'deleteRound', mi: 1 })
   assert.deepEqual(pure.moreActionPlan('export', 1, msgs), { kind: 'export', mi: 1 })

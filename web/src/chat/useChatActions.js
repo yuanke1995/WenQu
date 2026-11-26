@@ -188,7 +188,8 @@ export const useChatActions = ctx => {
   const onMoreAction = (key, mi) => {
     const plan = moreActionPlan(key, mi, ctx.messages())
     if (!plan) return
-    if (plan.kind === 'solidify') openSolidify(plan.mi)
+    if (plan.kind === 'regenerate') ctx.regenerate(plan.mi)
+    else if (plan.kind === 'solidify') openSolidify(plan.mi)
     else if (plan.kind === 'debug') openDebug(plan.mi)
     else if (plan.kind === 'addEval') addToEval(plan.mi)
     else if (plan.kind === 'deleteRound') deleteRound(plan.mi)
