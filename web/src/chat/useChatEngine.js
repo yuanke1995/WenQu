@@ -1,10 +1,11 @@
+// @ts-check
 import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { isAdminSync, isLoggedIn } from '../utils/auth'
 import { message } from 'ant-design-vue'
 import { applyPlanFrame, applyGoalState, applyGoalTurn } from './streamStateFrames.js'
 import { applyPlanDelta, applyPlanApproval, applyPlanCancelled, applyPlanSuperseded } from './streamPlanFrames.js'
-import { applyImageFrame, applyTurnStart } from './streamMerge.js'
+import { applyImageFrame, applyTurnStart, applyDoneCore } from './streamMerge.js'
 import { applyRetrievedFrame, applySkillHitFrame, applyAgentDelegated, applyApprovalCardFrame, applyRunCodeProgress, applyTodoFrame, applyUsageFrame } from './streamInfoFrames.js'
 import { applySubagentStep } from './streamSubagentFrames.js'
 import { applyToolStatus, appendToolOutput } from './streamToolFrames.js'
@@ -40,7 +41,8 @@ import {
 
 
          artifactPendingOf,
-         rememberAgents, applyBlocks } from './projections'
+         rememberAgents, applyBlocks, mergeDoneToolCalls } from './projections'
+import { STOP_PLACEHOLDER, markStoppedTurn } from './turnCloseout.js'
 import { createThinkingLevels } from './thinkingLevels.js'
 import { createSkillPicker } from './skillPicker.js'
 import { createMentionPicker } from './mentionPicker.js'
@@ -77,7 +79,7 @@ import { useHistoryRefs } from './useHistoryRefs.js'
 import { usePendingPlan } from './usePendingPlan.js'
 import { pushTimelineTool } from './timelineWrite.js'
 import { isDispatchTool, consultNameOf, stepBriefOf } from './projections'
-import { createFrameHandlers, createClosingHandlers } from './streamAnswerHandlers.js'
+import { createFrameHandlers, createClosingHandlers, guardTurn } from './streamAnswerHandlers.js'
 import { useHitlRestore } from './useHitlRestore.js'
 import { createStreamBuffer } from './streamBuffer.js'
 import { applyCompactState } from './streamStateFrames.js'
@@ -239,8 +241,8 @@ const {
   ctxCapData, ctxRingDash, ctxRingLevel,
   panelAi, sessionArtifacts, sessionRetrieval, sessionTokens, refreshArtifactSigns,
 } = useContextPanel({
-  ctxTokens, effectiveModel, modelIndex, messages, lastAi,
-  refreshApi: refreshArtifactSignsApi, notify: message,
+  ctxTokens, effectiveModel, modelIndex, messages,
+  refreshApi: refreshArtifactSignsApi,
 })
 // ==================== 图片（「+」菜单选择 / 拖入 / 粘贴 → 压缩为 dataURL） ====================
 // 压缩参数、附件白名单与各项限额已抽到 ./intake.js：分享页要用同一份口径，
@@ -418,7 +420,7 @@ const {
   chatStreams, streamAnswer: (...a) => streamAnswer(...a), notify: message,
   // steer/stop/enqueuePlanAdjust 在本函数后面才装配（依赖 streamAnswer），对方只在回调里调用。
   steer: (...a) => steer(...a),
-  stop: (...a) => stop(...a),
+  stop: (...a) => stop.call(null, ...a),
   resolvePlanApproval, revisePlanApproval, supersedePlanApproval, emitNotifChanged,
   stopRestoredPoll: () => stopRestoredPoll(), pollRestoredAnswer: sid => pollRestoredAnswer(sid),
   switchSession,
@@ -496,7 +498,7 @@ const {
 // 接流与断线重挂已抽到 useTurnReconnect.js。
 const { finishResumedShell, streamLifecycle, attachRunningTurn, turnReconnect, cancelReconnect } = useTurnReconnect({
   chatStreams, currentSessionId, switchSession, getChatRun, reconnectingSids,
-  ensureGoalPlaceholder, takeGoalPlaceholder, streamAnswer: (o) => streamAnswer(o),
+  ensureGoalPlaceholder, takeGoalPlaceholder, streamAnswer: (...a) => streamAnswer(...a),
 })
 
 // 接流快照 reducer 在 ./streamReducer.js（reducer 层），引擎只注入状态与派生函数。
@@ -563,13 +565,13 @@ function openTurn (t) {
   ensureTick()
   if (isFirstMessage) markSessionActive(sid, question)
   if (viewing()) hooks.scrollForce?.()
-  const { flushNow, resetFromContent, gotToken } = createStreamBuffer({
+  const { flushNow, resetFromContent, appendToken, appendProcess, gotToken } = createStreamBuffer({
     msg, extendText: (m, from, to) => extendTimelineText(m, from, to),
     extendProcess: (m, from, to) => extendTimelineProcess(m, from, to), scroll: () => liveScroll()
   })
   const thought = createThoughtFrames({ msg, flushNow, scroll: () => liveScroll() })
   const deps = {
-    stopPlaceholder: '（已停止本轮）', resetFromContent, hooks, stepBriefOf, pushTimelineTool, isDispatchTool,
+    STOP_PLACEHOLDER, resetFromContent, hooks, stepBriefOf, pushTimelineTool, isDispatchTool,
     consultNameOf, appendToolOutput, applyAgentDelegated, applyApprovalCardFrame, applyGoalState, applyGoalTurn,
     applyImageFrame, applyPlanApproval, applyPlanCancelled, applyPlanDelta, applyPlanFrame, applyPlanSuperseded,
     applyRetrievedFrame, applyRunCodeProgress, applySkillHitFrame, applySteerFrame, applySubagentStep, applyTodoFrame,
@@ -584,14 +586,30 @@ function openTurn (t) {
     autoRetry, beginReconnect, failNow, gotToken, prev, isFirstMessage,
     editUserMsg, modelMap, modelIssueMap, loadSessions, touchSessionRow, streamLifecycle,
     applyDonePayload, closeoutDoneTurn, applyCompactState,
+    // 收尾与快照回放用到的其余协作者：少一个都不会在装配时报错，只会在对应帧到达时静默失效
+    appendToken, appendProcess, applyBlocks, applyDoneCore, chatStreams, ensureThinkSegment,
+    flushPendingSteers, markStoppedTurn, mergeDoneToolCalls, restoreTimeline, settleAbortedPlan,
+    settlePreparingCards,
   }
-  const turnCtx = { handlers: null, get admitted () { return admitted }, set admitted (v) { admitted = v }, get transportError () { return transportError }, set transportError (v) { transportError = v }, get replayingSnapshot () { return replayingSnapshot }, set replayingSnapshot (v) { replayingSnapshot = v } }
-  return { sid, imgs, deps, turn: turnCtx }
+  // 本轮上下文 = 引擎依赖 + 可变的轮内事实（admitted/transportError/replayingSnapshot/handlers）。
+  // 只合成一份交给两个回调工厂：分成 deps/turn 两份时，工厂从错误的那一份取字段就是 undefined，
+  // 2026-11 拆分时正因此让每轮问答在 signal: abort.signal 处直接抛错。
+  const turn = {
+    ...deps,
+    handlers: null,
+    get admitted () { return admitted }, set admitted (v) { admitted = v },
+    get transportError () { return transportError }, set transportError (v) { transportError = v },
+    get replayingSnapshot () { return replayingSnapshot }, set replayingSnapshot (v) { replayingSnapshot = v },
+  }
+  return { sid, imgs, turn }
 }
 
 /** 装配两个回调工厂（帧回调在前、收尾在后，顺序与原对象字面量一致），并回填 handlers 供快照重放。 */
 function buildHandlers (ctx) {
-  const handlers = { ...createFrameHandlers(ctx.deps, ctx.turn), ...createClosingHandlers(ctx.deps, ctx.turn) }
+  // DEV：字段缺/装配成 undefined 时，在开流那一瞬抛（见 streamAnswerHandlers.guardTurn）。
+  // 生产不挂 Proxy：热路径每帧都要读，且线上宁可答半截也不要整轮起不来。
+  const turn = import.meta.env && import.meta.env.DEV ? guardTurn(ctx.turn) : ctx.turn
+  const handlers = { ...createFrameHandlers(turn), ...createClosingHandlers(turn) }
   // onSnapshot 里 replaySnapshotExtras 要用同一份 handlers 重放工具输出/早产卡帧
   ctx.turn.handlers = handlers
   return handlers
@@ -631,7 +649,7 @@ const send = createSend({
 })
 
 // 插话派发已抽到 useSteerDispatch.js。这里解构出同名函数，下面调用点不改。
-const { applySteerFrame, settleSteerOnLeave } = useSteerDispatch({
+const { applySteerFrame, flushPendingSteers, settleSteerOnLeave } = useSteerDispatch({
   messages, currentSessionId, loading, text, steerQueue, steerResend, dropApplied, pushTimelineSteer,
   streamAnswer, notify: message,
 })

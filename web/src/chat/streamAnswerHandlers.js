@@ -1,14 +1,17 @@
+// @ts-check
 // 一轮问答的 SSE 回调表（从 useChatEngine 的 streamAnswer 外提）。
 //
 // 拆两个工厂：createFrameHandlers（逐帧：turn_start/snapshot/token/工具卡/计划帧…）
 // 与 createClosingHandlers（收尾：done/警告/压缩进度/错误与重试）。
-// 二者都接收「引擎依赖 deps」与「本轮局部 turn」，返回回调表的一半；
-// streamAnswer 里用 { ...createFrameHandlers(deps, turn), ...createClosingHandlers(deps, turn) } 拼回。
+// 二者都接收同一个「本轮上下文 turn」（openTurn 里由引擎依赖 + 轮内可变事实合成一份），
+// 返回回调表的一半；buildHandlers 里用 { ...createFrameHandlers(turn), ...createClosingHandlers(turn) } 拼回。
+// 只传一份而不是 deps/turn 两份：拆成两份后工厂从错的那一份取字段全是 undefined，装配期不报错，
+// 每轮问答直到 signal: abort.signal 才炸（2026-11 拆分事故）。
 //
 // 为什么外提：ESLint 的 max-lines-per-function 把嵌套函数计入父函数，
 // 两个工厂留在 streamAnswer 内会让它超 150 行；外提后各自独立计算。
 
-export const createFrameHandlers = (deps, turn) => {
+export const createFrameHandlers = turn => {
   const {
     appendToolOutput,
     applyAgentDelegated,
@@ -46,18 +49,8 @@ export const createFrameHandlers = (deps, turn) => {
     hooks,
     dispatchTeamEvent,
     buildTurnRequest,
-    resetFromContent,
-    pushTimelineArtifact,
-    linkPlanLineage,
-    dropSteeredUserRows,
-    replaySnapshotExtras,
-    finishResumedShell,
-    reduceTurnSnapshot,
     alignTick,
-    planCardFromRecord,
-    liveCompactedSid,
-    autoCompactSid,
-  } = deps
+  } = turn
   const {
     abort,
 
@@ -69,7 +62,6 @@ export const createFrameHandlers = (deps, turn) => {
     editMessageId,
     flushNow,
     fromSteer,
-    handlers,
     historyRefs,
     liveScroll,
     mentions,
@@ -82,17 +74,9 @@ export const createFrameHandlers = (deps, turn) => {
 
     sid,
     skills,
-    st,
     thought,
   } = turn
-  const snapDeps = {
-    msg, sid, st, thought, messages, currentSessionId, liveScroll, handlers,
-    setTodos, autoCompactSid, liveCompactedSid, planCardFromRecord, alignTick,
-    reduceTurnSnapshot, finishResumedShell, resetFromContent, replaySnapshotExtras,
-    dropSteeredUserRows, linkPlanLineage, pushTimelineArtifact,
-    setAdmitted: v => { turn.admitted = v },
-    setReplaying: v => { turn.replayingSnapshot = v },
-  }
+  const snapDeps = createSnapDeps(turn)
   const setAdmitted = v => { turn.admitted = v }
   return {
     signal: abort.signal,
@@ -175,7 +159,47 @@ export const createFrameHandlers = (deps, turn) => {
   }
 }
 
-export const createClosingHandlers = (deps, turn) => {
+/**
+ * 开发期护栏（只在 DEV 挂载）：本轮上下文里每个字段都必须真有值。
+ * <p>拆分事故里最贵的不是「字段根本不存在」（静态对账能抓），而是「键在、值是 undefined」——
+ * 装配期一声不响，等对应帧到达才炸，而且只在用户操作到那一步时炸。Proxy 把「读到 undefined」
+ * 变成开流第一帧就抛的显式错误，堆栈直接指向漏装配的字段名。
+ */
+export const guardTurn = turn => new Proxy(turn, {
+  get (target, key) {
+    if (typeof key !== 'string') return target[key]
+    if (!(key in target)) {
+      throw new Error(`[turn] 读取了未装配的字段「${key}」：检查 openTurn 的 deps 与本模块的解构是否一致`)
+    }
+    const v = target[key]
+    if (v === undefined) {
+      throw new Error(`[turn] 字段「${key}」装配成了 undefined：检查注入方（工厂/useXxx）是否真的返回了它`)
+    }
+    return v
+  },
+})
+
+/** 快照铺底要用的那组依赖（applySnapshot / applyArtifact 共用），从本轮上下文里取。 */
+const createSnapDeps = turn => {
+  const {
+    msg, sid, st, thought, messages, currentSessionId, liveScroll, setTodos,
+    autoCompactSid, liveCompactedSid, planCardFromRecord, alignTick, reduceTurnSnapshot,
+    finishResumedShell, resetFromContent, replaySnapshotExtras, dropSteeredUserRows,
+    linkPlanLineage, pushTimelineArtifact,
+  } = turn
+  return {
+    msg, sid, st, thought, messages, currentSessionId, liveScroll,
+    // handlers 在 buildHandlers 里装配完才回填，这里必须是惰性读取
+    get handlers () { return turn.handlers },
+    setTodos, autoCompactSid, liveCompactedSid, planCardFromRecord, alignTick,
+    reduceTurnSnapshot, finishResumedShell, resetFromContent, replaySnapshotExtras,
+    dropSteeredUserRows, linkPlanLineage, pushTimelineArtifact,
+    setAdmitted: v => { turn.admitted = v },
+    setReplaying: v => { turn.replayingSnapshot = v },
+  }
+}
+
+export const createClosingHandlers = turn => {
   const {
     STOP_PLACEHOLDER,
     applyBlocks,
@@ -202,7 +226,7 @@ export const createClosingHandlers = (deps, turn) => {
     settlePreparingCards,
     streamLifecycle,
     touchSessionRow,
-  } = deps
+  } = turn
   const {
 
     agentId,
