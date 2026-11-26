@@ -314,7 +314,6 @@
           <cloud-download-outlined /> {{ fetching ? '拉取中…' : '从服务拉取' }}
         </button>
         <button class="app-btn" @click="openModelAdd">添加模型</button>
-        <span class="pv-hint" style="margin-left:auto">保存后生效</span>
       </div>
 
       <!-- 拉取候选：搜索 + 按行添加（类型在下方表格可改，无需勾选） -->
@@ -394,7 +393,6 @@
         <button class="app-btn primary" :disabled="savingModels" @click="saveModels">
           {{ savingModels ? '保存中…' : `保存（${models.filter(m => m.modelId && m.modelId.trim() && m.enabled !== false).length} 个启用）` }}
         </button>
-        <span class="pv-hint">未启用的模型不会出现在选择器中</span>
       </div>
     </a-modal>
 
@@ -484,8 +482,6 @@
             </div>
           </div>
           <div class="pm-hint">
-            窗口与最大输出按厂商口径填 token 数（1M 填 1000000）。对话类模型窗口必填，向量/重排/OCR/语音等能力型可留空；最大输出留空=不主动限制（按厂商默认）。
-            带进对话的知识资料由检索参数决定，不受这里影响。
             <span v-if="budgetConflict" class="pm-hint-bad">
               最大输出 {{ fmtWindow(editForm.maxOutput) }} 已不小于窗口预算 {{ budgetConflict.toLocaleString('en-US') }} token
               （窗口 {{ fmtWindow(editForm.contextWindow) }} × 0.7），保存会被拒。
