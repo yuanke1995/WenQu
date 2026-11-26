@@ -395,6 +395,9 @@ const g = {
   currentSessionId: () => currentSessionId.value,
   currentSessionTitle: () => currentSessionTitle.value,
   currentLevelOf, currentOverrideModel: () => currentOverrideModel.value,
+  // 思考能力/档位（模型胶囊的档位标记、悬浮面板的强度文案消费）：拆分 ChatPage 时这三条
+  // 从上下文里漏回过一次，胶囊上的「中/高/超高」会静默消失（不报错，只是标记不渲染）
+  thinkCapsOf, levelOptionsOf, deepOnOf,
   effectiveModel: () => effectiveModel.value,
   lastAi: () => lastAi.value,
   modelIndex: () => modelIndex.value,
