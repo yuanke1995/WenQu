@@ -12,6 +12,7 @@ import com.wenqu.ai.util.ClientIp;
 import com.wenqu.ai.util.RequestUser;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Component;
 
 /**
  * 问答开轮之前「能不能问、问进哪个会话、用哪个智能体」这一段准入逻辑。
@@ -26,6 +27,7 @@ import lombok.RequiredArgsConstructor;
  *
  * @author yuanke
  */
+@Component
 @RequiredArgsConstructor
 public class ChatTurnAdmission {
 

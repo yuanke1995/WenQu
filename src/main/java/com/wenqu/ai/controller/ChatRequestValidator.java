@@ -16,6 +16,7 @@ import com.wenqu.ai.service.SessionService;
 import com.wenqu.ai.util.RequestUser;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -30,6 +31,7 @@ import java.util.List;
  *
  * @author yuanke
  */
+@Component
 @RequiredArgsConstructor
 public class ChatRequestValidator {
 

@@ -12,6 +12,7 @@ import com.wenqu.ai.util.RequestUser;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.List;
@@ -28,12 +29,13 @@ import java.util.Map;
  * @author yuanke
  */
 @Slf4j
+@Service
 @RequiredArgsConstructor
 public class ChatTurnLauncher {
 
     private final ChatService chatService;
     private final SessionService sessionService;
-    private final com.wenqu.ai.service.PlanLineageService planLineage;
+    private final PlanLineageService planLineage;
     private final ChatTurnAdmission admission;
     private final ChatRequestValidator validator;
 
