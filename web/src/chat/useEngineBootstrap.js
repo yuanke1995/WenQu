@@ -3,9 +3,9 @@
 // 三分支落位，聚焦输入框，最后拉配置类数据。
 // 签名续签：产物 URL 的 HMAC 签名 1 小时过期，页面长开需每 30 分钟换一批。
 import { onUnmounted } from 'vue'
-import { isAdminSync } from '../utils/auth'
+import { isAdminSync, isLoggedIn } from '../utils/auth'
 import {
-  getConfig, getRuntimeConfig, getUserPreference,
+  getConfig, getRuntimeConfig, getUserPreference, getThinkLevels,
 } from '../api'
 import { loadModelIndex } from '../utils/modelRef'
 
@@ -14,6 +14,7 @@ export const useEngineBootstrap = ({
   createNewSession, takeNewSessionAgent, autoPick, hooks,
   debugEntryVisible, debugDisplayVisible, showRelatedSuggestions,
   userDefaultModel, userDefaultModelIssue, modelIndex, refreshArtifactSigns,
+  hydrateThinkLevels,
 }) => {
   // ==================== 挂载初始化 ====================
   const ready = async () => {
@@ -51,6 +52,12 @@ export const useEngineBootstrap = ({
       userDefaultModel.value = (r && r.data && r.data.defaultModel) || ''
       userDefaultModelIssue.value = (r && r.data && r.data.defaultModelIssue) || ''
     }).catch(() => {})
+    // 个人按模型的思考档位：登录后回灌本人记忆（服务端为准，跨设备）；未登录/分享页保持纯本机记忆
+    if (isLoggedIn()) {
+      getThinkLevels().then(r => {
+        if (r && r.success) hydrateThinkLevels((r.data && r.data.levels) || {})
+      }).catch(() => {})
+    }
     loadModelIndex().then(idx => { modelIndex.value = idx || {} }).catch(() => {})
   }
 

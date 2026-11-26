@@ -1,10 +1,15 @@
-// 思考档位状态：按模型的开关/强度记忆（localStorage）、可选项与最终下发参数。
-// 悬浮面板、移动端模型面板与发送链路共用这一份口径；纯查表常量在 ./thinking.js。
+// 思考档位状态：按模型的开关/强度记忆（localStorage 立即可用 + 登录后的服务端记忆）、
+// 可选项与最终下发参数。悬浮面板、移动端模型面板与发送链路共用这一份口径；纯查表常量在 ./thinking.js。
 import { ref, computed } from 'vue'
 import { THINK_CAPS, REASONING_LEVELS, THINK_LEVEL_ON, levelLabel } from './thinking.js'
 
 const KEY_THINK = 'ai_deep_think'
 const KEY_LEVEL = 'ai_think_level'
+
+// 服务端口径（c_ai_user_model_think.think_level）↔ 前端内部值：
+// off=关闭；on=开思考但不下发强度（模型未登记档位时前端用 __on__ 表示）；其余=具体档位
+const fromServerLevel = v => (v === 'on' ? THINK_LEVEL_ON : v)
+const toServerLevel = v => (v === THINK_LEVEL_ON ? 'on' : v)
 
 const readMap = (storage, key) => {
   try {
@@ -19,8 +24,10 @@ const readMap = (storage, key) => {
  * @param effectiveModelOf () => 当前生效的模型引用
  * @param isBusy         () => 是否有轮次在跑（跑动中禁改档位：改了也不影响已发出的这一轮）
  * @param storage        localStorage 等价物，测试可注入
+ * @param remote         服务端记忆（登录后才有）：{save(ref, level)}。未登录/分享页传 null，退回纯本机记忆
  */
-export const createThinkingLevels = ({ modelIndexOf, effectiveModelOf, isBusy = () => false, storage = globalThis.localStorage }) => {
+export const createThinkingLevels = ({ modelIndexOf, effectiveModelOf, isBusy = () => false,
+  storage = globalThis.localStorage, remote = null }) => {
   /** 按模型引用取思考能力 / 支持档位（悬浮面板与发送链路共用同一套口径） */
   const thinkCapsOf = ref => THINK_CAPS[modelIndexOf()[ref]?.thinking || 'switchable'] || THINK_CAPS.switchable
   const reasoningLevelsOf = ref => {
@@ -31,6 +38,44 @@ export const createThinkingLevels = ({ modelIndexOf, effectiveModelOf, isBusy = 
   const deepThinkMap = ref(readMap(storage, KEY_THINK))
   /** 等级选择的按模型记忆（与开关同一套 per-model 风格）。 */
   const levelMap = ref(readMap(storage, KEY_LEVEL))
+
+  /** 本地落盘：存储不可用时静默（服务端记忆仍是登录用户的准） */
+  const writeLocal = () => {
+    try {
+      storage.setItem(KEY_THINK, JSON.stringify(deepThinkMap.value))
+      storage.setItem(KEY_LEVEL, JSON.stringify(levelMap.value))
+    } catch (e) { /* 存储不可用忽略 */ }
+  }
+
+  /** 服务端记忆写穿透：失败不阻塞面板（本机 localStorage 已是立即可用的值） */
+  const saveRemote = (ref, v) => {
+    if (!remote || !remote.save) return
+    try {
+      Promise.resolve(remote.save(ref, toServerLevel(v))).catch(() => {})
+    } catch (e) { /* 忽略：下一轮仍按本机值 */ }
+  }
+
+  /** 登录后回灌服务端记忆：服务端为准；只有本机选过、服务端还没有行的模型补写上行（换设备不丢已选档位） */
+  const hydrateThinkLevels = serverLevels => {
+    const srv = (serverLevels && typeof serverLevels === 'object') ? serverLevels : {}
+    const nextOn = { ...deepThinkMap.value }
+    const nextLevel = { ...levelMap.value }
+    for (const ref of Object.keys(srv)) {
+      const raw = srv[ref]
+      if (!ref || ref === '__default' || typeof raw !== 'string' || !raw) continue
+      const v = fromServerLevel(raw)
+      nextOn[ref] = v === 'off' ? 0 : 1
+      nextLevel[ref] = v
+    }
+    deepThinkMap.value = nextOn
+    levelMap.value = nextLevel
+    writeLocal()
+    if (!remote || !remote.save) return
+    for (const ref of Object.keys(nextLevel)) {
+      if (ref === '__default' || ref in srv) continue
+      if (nextLevel[ref]) saveRemote(ref, nextLevel[ref])
+    }
+  }
 
   /** 某模型本轮是否思考：恒思考强制开；否则按模型记忆（等级下拉的「关闭思考」写 0，选档位/开启写 1） */
   const deepOnOf = ref => {
@@ -71,17 +116,15 @@ export const createThinkingLevels = ({ modelIndexOf, effectiveModelOf, isBusy = 
     return levels[0] || THINK_LEVEL_ON
   }
   /** 写入某模型的思考强度（面板点档位按悬浮模型写；不传=生效模型）：
-   *  等级与开关联动记忆，选档位/开启=开思考、选关闭=关思考，落 localStorage 立即生效 */
+   *  等级与开关联动记忆，选档位/开启=开思考、选关闭=关思考；本机立即生效并尽力同步到本人名下（按模型一行） */
   const setThinkLevel = (v, modelRef) => {
     const target = modelRef || effectiveModelOf()
     if (isBusy() || thinkCapsOf(target).locked) return
     const on = v !== 'off'
     deepThinkMap.value = { ...deepThinkMap.value, [target]: on ? 1 : 0 }
     levelMap.value = { ...levelMap.value, [target]: v }
-    try {
-      storage.setItem(KEY_THINK, JSON.stringify(deepThinkMap.value))
-      storage.setItem(KEY_LEVEL, JSON.stringify(levelMap.value))
-    } catch (e) { /* 存储不可用忽略 */ }
+    writeLocal()
+    saveRemote(target, v)
   }
   /** 生效模型的当前档位 / 本轮下发给后端的思考强度（空串=不指定，后端回落模型登记默认档位） */
   const currentThinkLevel = computed(() => currentLevelOf(effectiveModelOf()))
@@ -92,5 +135,6 @@ export const createThinkingLevels = ({ modelIndexOf, effectiveModelOf, isBusy = 
   })
 
   return { thinkCapsOf, reasoningLevelsOf, deepThinkMap, levelMap, deepOnOf, deepThinkOn,
-           levelOptionsOf, currentLevelOf, setThinkLevel, currentThinkLevel, reasoningLevelParam }
+           levelOptionsOf, currentLevelOf, setThinkLevel, currentThinkLevel, reasoningLevelParam,
+           hydrateThinkLevels }
 }

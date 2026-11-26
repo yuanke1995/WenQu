@@ -222,6 +222,9 @@ public class SecurityConfig implements WebMvcConfigurer {
         if (isProviderSelfEndpoint(method, path)) return true;
         // 个人偏好（本人默认模型 + 记忆开关）：读改自己的设置；自助改密（非管理员只能改自己，Controller 内校验）
         if (path.equals("/api/ai/user/preference")) return true;
+        // 个人按模型的思考档位记忆（本人资产，跨设备）：运行设置里选过的「中/高/超高/极致」随人走，
+        // 归属一律取登录 uid。与 /user/preference 同属 self:preference——漏放行会让整组端点对普通用户 403
+        if (path.equals("/api/ai/user/think-levels")) return true;
         // 我的侧栏布局（个人资产）：读改自己的菜单顺序/显隐，归属一律取登录 uid（MenuController 内），
         // 只重排/隐藏「本人已有」的菜单（保存时按角色白名单过滤），与 /user/preference 同口径故全员可用。
         // 必须显式放行：/api/ai/menu/** 整体是权限管理页的管理端点，未放行时普通用户点侧栏齿轮直接 403

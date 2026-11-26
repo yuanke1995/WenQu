@@ -2229,6 +2229,16 @@ export const setUserPreference = payload =>
     body: JSON.stringify(typeof payload === 'string' ? { defaultModel: payload } : (payload || {}))
   })
 
+// ---- 个人按模型的思考档位（运行设置里「中/高/超高/极致」等，跟随本人跨设备） ----
+// 读：{levels:{"providerId/modelId":"off|on|low|medium|high|xhigh|max"}}，未设置=不在表里
+export const getThinkLevels = () => request('/user/think-levels')
+// 写：一次一个模型；level 空串=清除该模型的选择（回到模型登记默认档位）
+export const saveThinkLevel = (model, level) =>
+  request('/user/think-levels', {
+    method: 'PUT',
+    body: JSON.stringify({ model: model || '', level: level || '' })
+  })
+
 // ---- 个人可覆盖配置（个人设置 → 问答偏好；config-schema 标 personal 的字段，当前=知识块填充上限 + 联网搜索整套） ----
 // GET 返回 {fields, tips, values, globals}：values=本人覆盖（按表单 path），globals=系统全局参照；空值=跟随系统
 // 敏感键（如 webSearch.apiKey）values 里是 ******** 掩码，password 控件不回填

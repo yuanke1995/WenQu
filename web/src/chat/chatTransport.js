@@ -5,6 +5,7 @@ export {
   sendQuestion, resumeChat, getChatRun, newSession, getHistory, deleteSessionApi,
   switchMessageVariant, compactSessionApi, sessionHistorySummaryApi, getConfig, getRuntimeConfig,
   listAvailableAgents, listConsultableAgents, listAvailableSkills, getUserPreference,
+  getThinkLevels, saveThinkLevel,
   approveToolCall, getToolApproval, answerAgentAsk, ignoreAgentAsk, stopChatTurn, steerChatTurn,
   enqueueSteer, steerQueueList, steerQueued, dropQueued,
   listPendingAsks, listPendingApprovals, resolvePlanApproval, supersedePlanApproval,

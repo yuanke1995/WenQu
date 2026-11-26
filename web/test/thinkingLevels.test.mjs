@@ -7,13 +7,14 @@ const storageOf = (init = {}) => {
   return { getItem: k => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, v), dump: () => Object.fromEntries(m) }
 }
 
-const setup = ({ models = {}, effective = 'a/x', busy = false, storage = storageOf() } = {}) => {
+const setup = ({ models = {}, effective = 'a/x', busy = false, storage = storageOf(), remote = null } = {}) => {
   let busyNow = busy
   const t = createThinkingLevels({
     modelIndexOf: () => models,
     effectiveModelOf: () => effective,
     isBusy: () => busyNow,
-    storage
+    storage,
+    remote
   })
   return { t, storage, setBusy: v => { busyNow = v } }
 }
@@ -95,4 +96,49 @@ test('未知模型引用按可开关口径兜底', () => {
   assert.deepEqual(t.thinkCapsOf('z/none'), { visible: true, locked: false, on: null })
   assert.equal(t.currentLevelOf('z/none'), 'off')
   assert.equal(t.deepThinkOn.value, false)
+})
+
+test('服务端回灌：服务端为准，本机独有的模型补写上行（换设备不丢）', () => {
+  const saved = []
+  const remote = { save: (ref, level) => { saved.push([ref, level]) } }
+  const { t, storage } = setup({
+    models: {
+      'a/x': { thinking: 'switchable', reasoningLevels: ['low', 'high'] },
+      'b/y': { thinking: 'switchable', reasoningLevels: ['low', 'max'] }
+    },
+    storage: storageOf({
+      ai_deep_think: JSON.stringify({ 'a/x': 1, 'b/y': 1 }),
+      ai_think_level: JSON.stringify({ 'a/x': 'high', 'b/y': 'max' })
+    }),
+    remote
+  })
+  t.hydrateThinkLevels({ 'a/x': 'low' })
+  assert.equal(t.currentLevelOf('a/x'), 'low')
+  assert.deepEqual(saved, [['b/y', 'max']])
+  assert.equal(t.currentLevelOf('b/y'), 'max')
+  assert.deepEqual(JSON.parse(storage.dump().ai_think_level), { 'a/x': 'low', 'b/y': 'max' })
+})
+
+test('改档位写穿透服务端：档位 / 关闭 / 开启未指定强度三种口径', async () => {
+  const saved = []
+  const remote = { save: (ref, level) => { saved.push([ref, level]); return Promise.resolve() } }
+  const { t } = setup({
+    models: {
+      'a/x': { thinking: 'switchable', reasoningLevels: ['low', 'high'] },
+      'b/y': { thinking: 'switchable' }
+    },
+    effective: 'a/x',
+    remote
+  })
+  t.setThinkLevel('high')
+  t.setThinkLevel('off')
+  t.setThinkLevel('__on__', 'b/y')
+  await Promise.resolve()
+  assert.deepEqual(saved, [['a/x', 'high'], ['a/x', 'off'], ['b/y', 'on']])
+})
+
+test('未登录（无 remote）：只落本机，不抛错', () => {
+  const { t, storage } = setup({ models: { 'a/x': { thinking: 'switchable', reasoningLevels: ['low'] } } })
+  t.setThinkLevel('low')
+  assert.deepEqual(JSON.parse(storage.dump().ai_think_level), { 'a/x': 'low' })
 })

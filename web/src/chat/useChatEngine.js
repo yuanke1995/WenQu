@@ -16,7 +16,7 @@ import { sendQuestion, resumeChat, getChatRun, newSession, getHistory, deleteSes
 // 发送与 SSE 流式回答、审批、重新生成与分支切换。与视图的接缝全部收在 hooks 里
 // （滚动、收面板、聚焦），PC 端由 ChatPage 按原行为传参；移动壳可传自己的落点
 // （如 '/m/chat'）与滚动实现复用同一套引擎。纯函数/常量见 ./projections.js。
-         listAvailableSkills, approveToolCall, getToolApproval, answerAgentAsk, ignoreAgentAsk, stopChatTurn, steerChatTurn,
+         listAvailableSkills, approveToolCall, getToolApproval, answerAgentAsk, ignoreAgentAsk, stopChatTurn, steerChatTurn, saveThinkLevel,
          enqueueSteer, steerQueueList, steerQueued, dropQueued,
          listPendingAsks, listPendingApprovals, resolvePlanApproval, supersedePlanApproval, revisePlanApproval, listPendingPlans, updateSessionModelApi, getSessionModelApi,
          listKnowledgeBases, listDocuments, uploadChatAttachment, getSessionTodosApi,
@@ -121,10 +121,13 @@ const setPlanMode = v => {
 }
 // 思考档位状态（按模型记忆 / 可选项 / 下发参数）在 ./thinkingLevels.js
 const { thinkCapsOf, reasoningLevelsOf, deepThinkMap, levelMap, deepOnOf, deepThinkOn,
-        levelOptionsOf, currentLevelOf, setThinkLevel, currentThinkLevel, reasoningLevelParam } = createThinkingLevels({
+        levelOptionsOf, currentLevelOf, setThinkLevel, currentThinkLevel, reasoningLevelParam,
+        hydrateThinkLevels } = createThinkingLevels({
   modelIndexOf: () => modelIndex.value,
   effectiveModelOf: () => effectiveModel.value,
-  isBusy: () => loading.value
+  isBusy: () => loading.value,
+  // 登录用户额外把选择同步到本人名下（按模型一行）；未登录/分享页只留本机记忆
+  remote: isLoggedIn() ? { save: saveThinkLevel } : null
 })
 const canSend = computed(() => !!(text.value.trim() || pendingImages.value.length || pendingFiles.value.length))
 // ==================== 技能（输入框「+」菜单选用，仅对本轮生效） ====================
@@ -647,6 +650,7 @@ const { ready } = useEngineBootstrap({
   createNewSession, takeNewSessionAgent, autoPick, hooks,
   debugEntryVisible, debugDisplayVisible, showRelatedSuggestions,
   userDefaultModel, userDefaultModelIssue, modelIndex, refreshArtifactSigns,
+  hydrateThinkLevels,
 })
 
 // 本会话沙盒目录的状态与取数已抽到 useSandboxFiles.js（含三个重拉 watch）。
@@ -711,7 +715,7 @@ onUnmounted(() => {
     goalEditing, goalEdit, goalEditBusy, goalEditSaveable, startGoalInlineEdit, saveGoalEdit,
     // 思考能力 / 档位
     thinkCapsOf, reasoningLevelsOf, deepThinkMap, deepOnOf, deepThinkOn, levelOptionsOf, currentLevelOf,
-    levelMap, setThinkLevel, currentThinkLevel, reasoningLevelParam,
+    levelMap, setThinkLevel, currentThinkLevel, reasoningLevelParam, hydrateThinkLevels,
     // 技能
     skillList, pickedSkills, loadSkills, toggleSkill, skillAvaStyle, skillDoc,
     // 智能体
