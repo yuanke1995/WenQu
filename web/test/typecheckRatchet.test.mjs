@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 
 // 类型检查棘轮：checkJs 是全局关的，靠文件头 `// @ts-check` 逐个开启。
 // 没有这条守卫，谁把某个文件头的 @ts-check 一删，它就从 CI 里静默退出类型检查——
@@ -34,7 +34,7 @@ const walk = dir => {
 
 const files = walk('src')
 const tagged = new Set(
-  files.filter(f => readFileSync(f, 'utf8').startsWith('// @ts-check')).map(f => f.split('/').pop())
+  files.filter(f => readFileSync(f, 'utf8').startsWith('// @ts-check')).map(f => basename(f))   // Windows 下分隔符是 \，不能按 '/' 切
 )
 
 test(`带 @ts-check 的源文件不少于 ${BASELINE} 个（棘轮：只许增加）`, () => {
