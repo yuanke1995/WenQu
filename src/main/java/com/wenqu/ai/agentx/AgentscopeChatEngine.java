@@ -599,8 +599,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         AgentSession session = opened.session();
         AgentBinding binding = opened.binding();
         com.wenqu.ai.service.EffectiveWorkspace ew = opened.ew();
-        sessionWarmup.warm(cmd, session, sessions::abandoned);
-        gateReset.reset(cmd, turnId, tools, pool, turnChannel);
+        // 暖场（事件日志换代 + 归档失败残留）与三道按轮闸归零由 turnContext.assemble 统一做，
+        // 这里不再重复调用一次——重复执行虽然当前幂等，但白跑两遍且将来任一 reset 变成非幂等就会出问题。
         AgentxTurnContext.Assembled assembled = turnContext.assemble(cmd, session, turnChannel, hooks,
                 bound.spills(), binding, turnId, imgNote, chatSeesImages, userImgs, pool,
                 () -> turnChangeService.driftNote(cmd.getSessionId(), changes, DRIFT_NOTE_WAIT_MS));

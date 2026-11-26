@@ -29,9 +29,7 @@ public class AgentxTurnPrelude {
 
     public Result prepare(ChatCommand cmd, RunChannel channel, String turnId,
                           java.util.List<String> userImgUrls) {
-        log.info("[PERM] session={} turn={} source={} depth={} agent={} {}",
-                cmd.getSessionId(), turnId, cmd.getSource(), cmd.getSubagentDepth(), cmd.getAgentId(),
-                tools.policyFor(cmd).describe());
+        // [PERM] 生效策略已在 chat() 用已解析的 policy 打过一行，这里不再重复计算并重复打印。
         // 附件/@/#历史引用随用户消息一并持久化，刷新后回显不丢
         String userMessageId = cmd.isRegenerate() || cmd.isFromSteer() ? null
                 : turnSupport.appendQuestion(cmd, turnId, userImgUrls);
