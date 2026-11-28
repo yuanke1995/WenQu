@@ -1426,11 +1426,11 @@ const sections = computed(() => {
   const secs = []
   const mains = sortAgents(pool.filter(a => !isSub(a)))
   if (mains.length) {
-    secs.push({ key: 'main', title: '主智能体', hint: '可在对话页直接选用', members: mains })
+    secs.push({ key: 'main', title: '主智能体', hint: '', members: mains })
   }
   const subs = sortAgents(pool.filter(isSub))
   if (subs.length) {
-    secs.push({ key: 'sub', title: '子智能体', hint: '不直接参与对话，供主智能体并行委派', members: subs })
+    secs.push({ key: 'sub', title: '子智能体', hint: '', members: subs })
   }
   return secs
 })

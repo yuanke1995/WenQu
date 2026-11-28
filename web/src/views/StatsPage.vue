@@ -2,7 +2,6 @@
   <div class="app-page">
     <div class="app-page-head">
       <h3 class="app-page-title">使用统计</h3>
-      <span class="app-pill">应用用量</span>
       <button class="app-btn ghost" style="margin-left:auto" :disabled="loading" @click="load">刷新</button>
     </div>
 
@@ -10,7 +9,6 @@
     <div class="app-page-body stats-body">
       <!-- ==================== 统计卡（全时段口径） ==================== -->
       <div class="app-card stat-cards">
-        <span class="stat-scope" title="下方趋势图与模型用量按所选时间范围统计">全时段口径</span>
         <div class="stat-grid">
           <div v-for="c in cardCells" :key="c.label" class="stat-cell">
             <div class="stat-num">{{ c.value }}</div>
@@ -124,8 +122,7 @@
 
       <!-- ==================== 按用途占比 ==================== -->
       <div v-if="kindView.length" class="app-card kind-card">
-        <div class="app-card-title">这些用量花在什么地方
-          <span class="card-sub">记忆提炼、压缩等辅助调用，没有对应消息</span>
+        <div class="app-card-title">成份
         </div>
         <!-- 一条堆叠条看构成：占比悬殊时，逐行短条会缩成一个点，看不出份额关系 -->
         <div class="kind-stack">

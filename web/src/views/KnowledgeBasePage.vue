@@ -3,7 +3,6 @@
     <div class="app-page-head">
       <div class="head-title">
         <h3 class="app-page-title">知识库</h3>
-        <span class="head-hint-plain">文档的容器，检索按库隔离</span>
       </div>
       <div class="head-acts">
         <a-input-search ref="searchRef" v-model:value="search" placeholder="搜索知识库、描述…" allow-clear style="width:200px" />

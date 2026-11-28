@@ -3,7 +3,7 @@
     <div class="app-page-head art-head">
       <h1 class="app-page-title">我的产物</h1>
       <span :class="['head-hint-plain', 'art-head-hint', { 'art-selection-hint': selectionMode }]">
-        {{ selectionMode ? `已选 ${selectedIds.length} 项` : '模型在回答里生成的可下载文件' }}
+        {{ selectionMode && selectedIds.length > 0 ? `已选 ${selectedIds.length} 项` : '' }}
       </span>
       <div class="art-head-tools">
         <a-input ref="searchRef" v-model:value="filters.keyword" class="art-search"

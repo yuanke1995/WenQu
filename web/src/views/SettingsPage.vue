@@ -14,7 +14,7 @@
       <template v-if="showEngine">
         <span class="tier-stat-main"><b>{{ tierStats.total }}</b> 项全部可见</span>
         <span class="key-dim">= {{ tierStats.must }} 必需 · {{ tierStats.tuned }} 调优 · {{ tierStats.engine }} 工程参数</span>
-        <span class="tier-stat-off">工程参数已铺开<span class="key-dim">（面板头开关可收起）</span></span>
+        <span class="tier-stat-off">工程参数已铺开</span>
       </template>
       <template v-else>
         <span class="tier-stat-main"><b>{{ tierStats.visible }}</b> 项可见</span>

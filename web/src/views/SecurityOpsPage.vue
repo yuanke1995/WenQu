@@ -3,11 +3,7 @@
     <div class="app-page-head">
       <div class="head-title">
         <h1 class="app-page-title">安全与运维</h1>
-        <span class="head-hint-plain">运行状态 · 访问安全 · 治理通告</span>
       </div>
-      <span v-if="report" class="ops-head-last">
-        上次巡检 {{ shortTime(report.at) }} · {{ report.tookMs || 0 }}ms
-      </span>
       <div class="ops-head-actions">
         <button class="app-btn" type="button" :disabled="running" @click="runCheckup">
           {{ running ? '巡检中…' : '立即巡检' }}

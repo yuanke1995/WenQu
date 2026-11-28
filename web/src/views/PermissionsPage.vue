@@ -3,7 +3,6 @@
     <div class="app-page-head">
       <div class="head-title">
         <h1 class="app-page-title">权限管理</h1>
-        <span class="head-hint-plain">角色 · 菜单 · 接口 · 接入治理</span>
       </div>
       <div class="pg-head-acts">
         <button class="app-btn ghost" type="button" @click="openEffective('')">

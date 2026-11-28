@@ -3,7 +3,6 @@
     <div class="app-page-head">
       <div class="head-title">
         <h3 class="app-page-title">成员管理</h3>
-        <span class="head-hint-plain">管理账号、部门与角色 · 身份归属与下达</span>
       </div>
       <div class="head-acts">
         <button class="app-btn ghost" @click="goTab('invites')"><MailOutlined /> 邀请成员</button>

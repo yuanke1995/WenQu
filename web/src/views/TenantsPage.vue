@@ -3,9 +3,6 @@
     <div class="app-page-head">
       <h1 class="app-page-title">租户与开通</h1>
       <span class="head-count" v-if="superadmin">共 <b>{{ tenants.length }}</b> 个租户</span>
-      <span class="head-hint-plain">{{ superadmin
-        ? '开通、启停、划人与审批是平台级动作；申请入口在登录页与 /apply'
-        : '这里只显示你所在的租户；开通、审批与套餐由平台级管理员处理' }}</span>
       <button v-if="superadmin" class="app-btn" style="margin-left:auto" @click="openCreate">
         <plus-outlined /> 新租户
       </button>

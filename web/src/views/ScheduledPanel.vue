@@ -10,8 +10,6 @@
             @click="setFilter('attention')" @keydown.enter="setFilter('attention')">
         <warning-outlined /> {{ attentionCount }} 个需关注
       </span>
-      <i class="vline" />
-      <span class="head-hint">到点自动执行，结果写进任务专属会话；停用或归档不会补跑</span>
       <div class="head-r">
         <a-input v-model:value="keyword" class="sched-search" size="small" allow-clear
                  placeholder="搜索名称或指令">
